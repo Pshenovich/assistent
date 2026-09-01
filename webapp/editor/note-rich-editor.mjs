@@ -807,10 +807,31 @@ function activeHeadingPos(headings, selectionPos) {
   return active;
 }
 
-function gotoEditorHeading(editor, pos) {
+function findHeadingElementAtPos(editor, pos) {
+  if (!editor || !editor.view) return null;
+  try {
+    var found = editor.view.domAtPos(pos + 1);
+    var node = found && found.node;
+    var el = node && node.nodeType === 1 ? node : node && node.parentElement;
+    if (!el || !el.closest) return null;
+    return el.closest("h1, h2, h3, h4, h5, h6");
+  } catch (_) {
+    return null;
+  }
+}
+
+function gotoEditorHeading(editor, pos, scrollParent) {
   if (!editor || !editor.state || !editor.state.doc) return;
   var target = Math.max(0, Math.min(pos + 1, editor.state.doc.content.size));
   editor.chain().focus().setTextSelection(target).scrollIntoView().run();
+  window.requestAnimationFrame(function () {
+    var headingEl = findHeadingElementAtPos(editor, pos);
+    if (!headingEl || !scrollParent || !scrollParent.getBoundingClientRect) return;
+    var headRect = headingEl.getBoundingClientRect();
+    var scrollRect = scrollParent.getBoundingClientRect();
+    var top = scrollParent.scrollTop + headRect.top - scrollRect.top - 18;
+    scrollParent.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+  });
 }
 
 function mountToc(tocEl, editor, options) {
@@ -818,6 +839,7 @@ function mountToc(tocEl, editor, options) {
   options = options || {};
   var onNavigate =
     typeof options.onTocNavigate === "function" ? options.onTocNavigate : function () {};
+  var scrollParent = options.scrollParent || null;
 
   function renderToc() {
     var headings = collectEditorHeadings(editor);
@@ -843,7 +865,7 @@ function mountToc(tocEl, editor, options) {
       btn.textContent = item.text;
       btn.title = item.text;
       btn.addEventListener("click", function () {
-        gotoEditorHeading(editor, item.pos);
+        gotoEditorHeading(editor, item.pos, scrollParent);
         onNavigate(item);
       });
       tocEl.appendChild(btn);
@@ -1302,6 +1324,7 @@ function mount(container, options) {
   var cleanupToolbar = mountToolbar(toolbar, editor);
   var cleanupToc = mountToc(options.tocParent, editor, {
     onTocNavigate: options.onTocNavigate,
+    scrollParent: options.scrollParent,
   });
 
   function bindTapFocus(container) {

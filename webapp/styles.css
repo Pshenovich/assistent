@@ -4872,9 +4872,14 @@ html.note-editor-kb-open
 }
 
 .note-editor-toc-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   align-self: flex-start;
   margin: 0 0 10px;
-  padding: 8px 12px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 999px;
   font-family: inherit;
@@ -4937,6 +4942,7 @@ html.note-editor-kb-open
   display: block;
   width: 100%;
   min-width: 0;
+  min-height: 0;
   padding: 9px 10px;
   border: none;
   border-radius: 10px;
@@ -4945,9 +4951,9 @@ html.note-editor-kb-open
   line-height: 1.25;
   color: var(--vkui--color_text_secondary, var(--text-secondary));
   text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  overflow: visible;
   background: transparent;
   cursor: pointer;
 }
@@ -5029,6 +5035,10 @@ html.modal-sheet-open body {
 }
 
 @media (max-width: 959px) {
+  .note-editor-toc-toggle {
+    display: none !important;
+  }
+
   .note-editor-doc-layout {
     display: block;
   }
@@ -5098,25 +5108,63 @@ html.modal-sheet-open body {
 }
 
 @media (min-width: 960px) {
-  .note-editor-doc-layout {
-    align-items: flex-start;
-    gap: 20px;
+  .note-editor-modal-content .note-editor-page {
+    position: relative;
   }
 
-  .note-editor-toc-toggle,
+  .note-editor-doc-layout {
+    align-items: flex-start;
+    gap: 0;
+    padding-left: 56px;
+  }
+
   .note-editor-toc-close,
   .note-editor-toc-backdrop {
     display: none !important;
   }
 
+  .note-editor-toc-toggle {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 5;
+    margin: 0;
+    color: var(--vkui--color_text_secondary, var(--text-secondary));
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .note-editor-toc-toggle:hover,
+  .note-editor-page--toc-open .note-editor-toc-toggle {
+    color: var(--vkui--color_text_accent, var(--accent));
+    background: rgba(82, 158, 244, 0.14);
+  }
+
   .note-editor-toc-panel {
     position: sticky;
     top: calc(var(--note-editor-chrome-top, 54px) + 16px);
-    flex: 0 0 15rem;
+    flex: 0 0 0;
+    width: 0;
+    max-width: 0;
     max-height: calc(100dvh - var(--note-editor-chrome-top, 54px) - 44px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    margin-right: 0;
+    border: 0;
     border-radius: 16px;
+    opacity: 0;
+    pointer-events: none;
+    overflow: hidden;
     background: rgba(255, 255, 255, 0.04);
+    transition: flex-basis 0.18s ease, max-width 0.18s ease, opacity 0.18s ease,
+      margin-right 0.18s ease;
+  }
+
+  .note-editor-page--toc-open .note-editor-toc-panel {
+    flex-basis: 15rem;
+    width: 15rem;
+    max-width: 15rem;
+    margin-right: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    opacity: 1;
+    pointer-events: auto;
   }
 }
 
