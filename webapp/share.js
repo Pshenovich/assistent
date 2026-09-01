@@ -69,6 +69,76 @@
     return '<pre class="transcript">' + escapeHtml(raw || "—") + "</pre>";
   }
 
+  function headingLevel(el) {
+    return Number(String((el && el.tagName) || "H2").replace(/^H/i, "")) || 2;
+  }
+
+  function headingIdBase(text, index) {
+    var base = String(text || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9а-яё]+/gi, "-")
+      .replace(/^-+|-+$/g, "");
+    return "share-heading-" + (base || String(index + 1));
+  }
+
+  function ensureHeadingId(el, index) {
+    if (el.id) return el.id;
+    var base = headingIdBase(el.textContent, index);
+    var id = base;
+    var n = 2;
+    while (document.getElementById(id) && document.getElementById(id) !== el) {
+      id = base + "-" + n;
+      n += 1;
+    }
+    el.id = id;
+    return id;
+  }
+
+  function buildShareToc(bodyEl) {
+    var toc = document.getElementById("share-toc");
+    var list = document.getElementById("share-toc-list");
+    var wrap = document.querySelector(".wrap");
+    if (!toc || !list || !bodyEl) return;
+    list.innerHTML = "";
+    var headings = Array.prototype.slice.call(
+      bodyEl.querySelectorAll("h1, h2, h3, h4, h5, h6")
+    ).filter(function (el) {
+      return String(el.textContent || "").trim();
+    });
+    if (!headings.length) {
+      toc.classList.add("hidden");
+      if (wrap) wrap.classList.remove("has-toc");
+      return;
+    }
+    headings.forEach(function (heading, index) {
+      var id = ensureHeadingId(heading, index);
+      var link = document.createElement("a");
+      link.className = "share-toc-link share-toc-link--level-" + headingLevel(heading);
+      link.href = "#" + encodeURIComponent(id);
+      link.textContent = String(heading.textContent || "").trim();
+      link.addEventListener("click", function (e) {
+        e.preventDefault();
+        heading.scrollIntoView({ block: "start", behavior: "smooth" });
+        try {
+          history.replaceState(null, "", "#" + encodeURIComponent(id));
+        } catch (_) {}
+      });
+      list.appendChild(link);
+    });
+    toc.classList.remove("hidden");
+    if (wrap) wrap.classList.add("has-toc");
+
+    if (location.hash) {
+      window.requestAnimationFrame(function () {
+        var target = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+        if (target && target.scrollIntoView) {
+          target.scrollIntoView({ block: "start" });
+        }
+      });
+    }
+  }
+
   function showError(msg) {
     var status = document.getElementById("share-status");
     var err = document.getElementById("share-error");
@@ -117,7 +187,10 @@
       if (status) status.classList.add("hidden");
       if (labelEl) labelEl.textContent = label;
       if (titleEl) titleEl.textContent = title;
-      if (bodyEl) bodyEl.innerHTML = renderBody(data);
+      if (bodyEl) {
+        bodyEl.innerHTML = renderBody(data);
+        buildShareToc(bodyEl);
+      }
       if (doc) doc.classList.remove("hidden");
     })
     .catch(function (e) {
