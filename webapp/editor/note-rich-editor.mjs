@@ -823,14 +823,23 @@ function findHeadingElementAtPos(editor, pos) {
 function gotoEditorHeading(editor, pos, scrollParent) {
   if (!editor || !editor.state || !editor.state.doc) return;
   var target = Math.max(0, Math.min(pos + 1, editor.state.doc.content.size));
-  editor.chain().focus().setTextSelection(target).run();
+  try {
+    editor.view.dispatch(
+      editor.state.tr.setSelection(TextSelection.create(editor.state.doc, target))
+    );
+  } catch (_) {}
   window.requestAnimationFrame(function () {
     var headingEl = findHeadingElementAtPos(editor, pos);
     if (!headingEl || !scrollParent || !scrollParent.getBoundingClientRect) return;
     var headRect = headingEl.getBoundingClientRect();
     var scrollRect = scrollParent.getBoundingClientRect();
     var top = scrollParent.scrollTop + headRect.top - scrollRect.top;
-    scrollParent.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+    scrollParent.scrollTo({ top: Math.max(0, top), behavior: "auto" });
+    try {
+      if (editor.view && editor.view.dom && editor.view.dom.focus) {
+        editor.view.dom.focus({ preventScroll: true });
+      }
+    } catch (_) {}
   });
 }
 

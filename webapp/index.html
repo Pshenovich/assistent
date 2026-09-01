@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260901-toc-scroll">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260901-toc-sticky">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -43,7 +43,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20260901-toc-scroll" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20260901-toc-sticky" />
   <!-- Same-origin, async: не блокирует парсер, если сеть/VPN тормозит. -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" async></script>
 </head>
@@ -1027,11 +1027,11 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20260901-toc-scroll"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20260901-toc-sticky"><\/script>'
         );
       }
     })();
   </script>
-  <script src="/webapp/app.js?v=20260901-toc-scroll" defer></script>
+  <script src="/webapp/app.js?v=20260901-toc-sticky" defer></script>
 </body>
 </html>
