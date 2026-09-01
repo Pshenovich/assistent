@@ -1,11 +1,11 @@
 /* Mini App service worker: кэш оболочки для быстрого повторного открытия PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260901-toc-drawer";
+var CACHE_VERSION = "miniapp-v1-20260901-toc-scroll";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
-  "./styles.css?v=20260901-toc-drawer",
-  "./app.js?v=20260901-toc-drawer",
+  "./styles.css?v=20260901-toc-scroll",
+  "./app.js?v=20260901-toc-scroll",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",

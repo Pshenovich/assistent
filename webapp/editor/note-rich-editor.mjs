@@ -783,7 +783,7 @@ function collectEditorHeadings(editor) {
     addHeading(node.attrs && node.attrs.level, node.textContent, pos);
     return true;
   });
-  if (editor.view && editor.view.dom) {
+  if (!items.length && editor.view && editor.view.dom) {
     editor.view.dom.querySelectorAll("h1, h2, h3, h4, h5, h6").forEach(function (el) {
       try {
         var pos = editor.view.posAtDOM(el, 0);
@@ -823,13 +823,13 @@ function findHeadingElementAtPos(editor, pos) {
 function gotoEditorHeading(editor, pos, scrollParent) {
   if (!editor || !editor.state || !editor.state.doc) return;
   var target = Math.max(0, Math.min(pos + 1, editor.state.doc.content.size));
-  editor.chain().focus().setTextSelection(target).scrollIntoView().run();
+  editor.chain().focus().setTextSelection(target).run();
   window.requestAnimationFrame(function () {
     var headingEl = findHeadingElementAtPos(editor, pos);
     if (!headingEl || !scrollParent || !scrollParent.getBoundingClientRect) return;
     var headRect = headingEl.getBoundingClientRect();
     var scrollRect = scrollParent.getBoundingClientRect();
-    var top = scrollParent.scrollTop + headRect.top - scrollRect.top - 18;
+    var top = scrollParent.scrollTop + headRect.top - scrollRect.top;
     scrollParent.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
   });
 }

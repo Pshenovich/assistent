@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260901-toc-drawer";
+  var WEBAPP_BUILD = "20260901-toc-scroll";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260901-toc-drawer";
+  const NOTE_EDITOR_ASSET_V = "20260901-toc-scroll";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -5941,12 +5941,12 @@
   function noteEditorPageInnerHtml(titleLabel) {
     var titleAria = escapeHtml(titleLabel || "Заголовок");
     return (
+      '<div class="note-editor-doc-layout">' +
       '<button type="button" class="note-editor-toc-toggle" aria-controls="note-editor-toc-panel" aria-expanded="false" title="Оглавление" aria-label="Оглавление">' +
       '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
       '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1" fill="currentColor" stroke="none"/>' +
       "</svg>" +
       "</button>" +
-      '<div class="note-editor-doc-layout">' +
       '<div class="note-editor-toc-backdrop" data-note-toc-close aria-hidden="true"></div>' +
       '<aside class="note-editor-toc-panel" id="note-editor-toc-panel" aria-label="Оглавление">' +
       '<div class="note-editor-toc-head">' +

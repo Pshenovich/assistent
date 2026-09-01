@@ -5114,8 +5114,7 @@ html.modal-sheet-open body {
 
   .note-editor-doc-layout {
     align-items: flex-start;
-    gap: 0;
-    padding-left: 56px;
+    gap: 12px;
   }
 
   .note-editor-toc-close,
@@ -5124,10 +5123,8 @@ html.modal-sheet-open body {
   }
 
   .note-editor-toc-toggle {
-    position: absolute;
-    top: 0;
-    left: 0;
-    z-index: 5;
+    position: relative;
+    flex: 0 0 auto;
     margin: 0;
     color: var(--vkui--color_text_secondary, var(--text-secondary));
     background: rgba(255, 255, 255, 0.06);
@@ -5146,7 +5143,7 @@ html.modal-sheet-open body {
     width: 0;
     max-width: 0;
     max-height: calc(100dvh - var(--note-editor-chrome-top, 54px) - 44px);
-    margin-right: 0;
+    margin-right: -12px;
     border: 0;
     border-radius: 16px;
     opacity: 0;
@@ -5161,7 +5158,7 @@ html.modal-sheet-open body {
     flex-basis: 15rem;
     width: 15rem;
     max-width: 15rem;
-    margin-right: 20px;
+    margin-right: 8px;
     border: 1px solid rgba(255, 255, 255, 0.1);
     opacity: 1;
     pointer-events: auto;
