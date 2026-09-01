@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>App Gallery Screenshots — Obuchat Assistant</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+      max-width: 44rem;
+      margin: 2rem auto;
+      padding: 0 1rem 2.5rem;
+      color: #e8e8ee;
+      background: #0b0b14;
+      line-height: 1.55;
+      font-size: 0.9375rem;
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 0.75rem; color: #fff; }
+    h2 { font-size: 1.05rem; margin: 1.5rem 0 0.5rem; color: #fff; }
+    p, li { color: #b4b4c0; }
+    ol { padding-left: 1.25rem; }
+    a { color: #4d8eff; }
+    code { font-size: 0.85em; background: #1a1a28; padding: 0.1em 0.35em; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>App Gallery Screenshot Checklist</h1>
+  <p>Capture these screens with the <strong>test Telegram + Zoom accounts</strong>, then upload to Zoom Marketplace → App Submission → App Gallery. Recommended size: 1280×720 or 1920×1080 PNG.</p>
+
+  <ol>
+    <li>
+      <strong>Home URL landing</strong><br />
+      Open <a href="https://assistant.obuchat.me/zoom/home">assistant.obuchat.me/zoom/home</a> in a browser. Show title, bot link, and Mini App link.
+    </li>
+    <li>
+      <strong>Telegram — Connect Zoom prompt</strong><br />
+      In the test bot chat, show <code>/zoom_auth</code> or the Profile → Zoom → Connect button in Mini App before OAuth.
+    </li>
+    <li>
+      <strong>Zoom OAuth consent</strong><br />
+      Screenshot the Zoom permission screen listing meeting scopes (Production Client ID).
+    </li>
+    <li>
+      <strong>Mini App — Zoom connected</strong><br />
+      Profile → Zoom section showing connected name/email and Disconnect button.
+    </li>
+    <li>
+      <strong>Instant meeting created</strong><br />
+      Send <code>zoom</code> in Telegram; capture bot reply with join URL.
+    </li>
+    <li>
+      <strong>Calendar event with Zoom link</strong> (optional if Google Calendar connected)<br />
+      Mini App calendar or Google Calendar event showing auto-attached Zoom link.
+    </li>
+    <li>
+      <strong>Meeting recordings in Profile</strong><br />
+      Mini App → Profile → Zoom recordings list (meeting-bot recordings; may be empty with caption explaining feature).
+    </li>
+    <li>
+      <strong>Disconnect Zoom</strong> (optional)<br />
+      Profile → Zoom → Disconnect confirmation.
+    </li>
+  </ol>
+
+  <p>Minimum for resubmission: screenshots 1–5 and 7. Upload in Zoom Marketplace portal — images are not stored in this repository.</p>
+</body>
+</html>

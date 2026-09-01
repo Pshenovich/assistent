@@ -1,0 +1,235 @@
+"""Вызов chat/completions: OpenRouter, при сбое — CometAPI (OpenAI-совместимый). Запись usage в SQLite."""
+
+from __future__ import annotations
+
+import os
+from contextvars import ContextVar
+from typing import Any
+
+import requests
+
+from assistant.lib.usage_store import insert_usage_event
+
+
+# Telegram user context for usage accounting.
+# Заполняется из bot.py на входе в хендлеры.
+_current_tg_user_id: ContextVar[str | None] = ContextVar(
+    "current_tg_user_id", default=None
+)
+_current_tg_user_username: ContextVar[str | None] = ContextVar(
+    "current_tg_user_username", default=None
+)
+
+
+def set_openrouter_usage_telegram_user(
+    *,
+    telegram_user_id: int | str | None,
+    telegram_username: str | None = None,
+) -> None:
+    """Устанавливает текущего Telegram-пользователя для записи usage в SQLite."""
+    if telegram_user_id is None or str(telegram_user_id).strip() == "":
+        _current_tg_user_id.set(None)
+        _current_tg_user_username.set(None)
+        return
+    _current_tg_user_id.set(str(telegram_user_id).strip())
+    _current_tg_user_username.set(
+        (telegram_username or "").strip() or None  # username может отсутствовать
+    )
+
+
+def get_openrouter_usage_telegram_user() -> tuple[str | None, str | None]:
+    """Текущий Telegram-пользователь для записи usage (в т.ч. из worker-thread после copy_context)."""
+    return _current_tg_user_id.get(), _current_tg_user_username.get()
+
+
+def is_llm_configured() -> bool:
+    """Есть ли ключ для LLM: OpenRouter и/или Comet (основной или только фолбэк)."""
+    return bool(os.getenv("OPENROUTER_KEY", "").strip() or os.getenv("COMET_API_KEY", "").strip())
+
+
+def _openrouter_chat_url() -> str:
+    return os.getenv(
+        "OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions"
+    ).strip()
+
+
+def _comet_chat_url() -> str:
+    """Полный URL chat/completions. Если в .env указали только .../v1 — дописываем путь."""
+    default = "https://api.cometapi.com/v1/chat/completions"
+    raw = (os.getenv("COMET_API_URL") or "").strip().rstrip("/")
+    if not raw:
+        return default
+    if raw.endswith("/v1"):
+        return raw + "/chat/completions"
+    if "/chat/completions" in raw:
+        return raw
+    return default
+
+
+def _comet_model_for_request(openrouter_model: str | None) -> str:
+    """Имя модели для Comet: явный COMET_FALLBACK_MODEL или эвристика по префиксу vendor/."""
+    explicit = os.getenv("COMET_FALLBACK_MODEL", "").strip()
+    if explicit:
+        return explicit
+    m = (openrouter_model or "").strip()
+    if m.startswith("openai/"):
+        return m[7:]
+    if "/" in m:
+        return m.split("/", 1)[1]
+    return m or "gpt-4o-mini"
+
+
+def _post_json(
+    url: str,
+    api_key: str,
+    payload: dict[str, Any],
+    *,
+    extra_headers: dict[str, str],
+    timeout: float,
+) -> dict[str, Any]:
+    headers: dict[str, str] = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+    headers.update(extra_headers)
+    r = requests.post(url, headers=headers, json=payload, timeout=timeout)
+    r.raise_for_status()
+    data = r.json()
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Ответ не JSON-объект: {type(data).__name__}")
+    return data
+
+
+def _format_api_error_body(data: dict[str, Any]) -> str:
+    err = data.get("error")
+    if isinstance(err, dict):
+        return str(err.get("message") or err.get("code") or err.get("type") or err)
+    if err is not None:
+        return str(err)
+    if data.get("message"):
+        return str(data.get("message"))
+    return str(data)[:500]
+
+
+def _raise_if_bad_chat_completion(provider: str, data: dict[str, Any]) -> None:
+    """OpenRouter/Comet иногда отвечают HTTP 200 с error в теле или без choices — тогда нужен фолбэк."""
+    if data.get("error") is not None:
+        raise RuntimeError(f"{provider}: {_format_api_error_body(data)}")
+    if str(data.get("object") or "").strip() == "error":
+        raise RuntimeError(f"{provider}: {_format_api_error_body(data)}")
+    choices = data.get("choices")
+    if not isinstance(choices, list) or len(choices) == 0:
+        raise RuntimeError(f"{provider}: в ответе нет choices")
+    first = choices[0]
+    if not isinstance(first, dict):
+        raise RuntimeError(f"{provider}: некорректный choices[0]")
+    msg = first.get("message")
+    if not isinstance(msg, dict):
+        raise RuntimeError(f"{provider}: нет message в choices[0]")
+    if msg.get("tool_calls"):
+        return
+    content = msg.get("content")
+    if content is None:
+        raise RuntimeError(f"{provider}: пустой message.content")
+    if isinstance(content, str) and not content.strip():
+        raise RuntimeError(f"{provider}: пустой текст ответа (content)")
+
+
+def _log_usage(
+    data: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    operation: str,
+    provider: str,
+) -> None:
+    usage = data.get("usage")
+    if not isinstance(usage, dict):
+        usage = {}
+    # OpenRouter часто кладёт cost внутри usage; у части клиентов/прокси cost бывает только на верхнем уровне ответа.
+    if usage.get("cost") is None:
+        top = data.get("cost")
+        if isinstance(top, (int, float)):
+            usage = {**usage, "cost": float(top)}
+        elif isinstance(top, str):
+            try:
+                usage = {**usage, "cost": float(top.strip())}
+            except ValueError:
+                pass
+    if provider == "comet":
+        usage = {**usage, "provider": "comet"}
+    gid = data.get("id")
+    uid = _current_tg_user_id.get()
+    uname = _current_tg_user_username.get()
+    insert_usage_event(
+        operation=operation,
+        model=(data.get("model") or payload.get("model")),
+        generation_id=str(gid).strip() if gid else None,
+        usage=usage,
+        telegram_user_id=uid,
+        telegram_username=uname,
+    )
+
+
+def openrouter_chat_completion(
+    payload: dict[str, Any],
+    *,
+    operation: str,
+    timeout: float = 120,
+) -> dict[str, Any]:
+    """POST chat/completions; при успехе логирует usage. Сначала OpenRouter, при ошибке — CometAPI."""
+    or_key = os.getenv("OPENROUTER_KEY", "").strip()
+    comet_key = os.getenv("COMET_API_KEY", "").strip()
+    if not or_key and not comet_key:
+        raise RuntimeError("Не заданы OPENROUTER_KEY или COMET_API_KEY в .env")
+
+    primary_err: BaseException | None = None
+
+    if or_key:
+        extra: dict[str, str] = {}
+        ref = os.getenv("OPENROUTER_HTTP_REFERER", "").strip()
+        if ref:
+            extra["HTTP-Referer"] = ref
+        title_hdr = os.getenv("OPENROUTER_X_TITLE", "").strip()
+        if title_hdr:
+            extra["X-Title"] = title_hdr
+        try:
+            data = _post_json(
+                _openrouter_chat_url(),
+                or_key,
+                payload,
+                extra_headers=extra,
+                timeout=timeout,
+            )
+            _raise_if_bad_chat_completion("openrouter", data)
+            _log_usage(data, payload, operation=operation, provider="openrouter")
+            return data
+        except BaseException as e:
+            primary_err = e
+            if comet_key:
+                print(f"[openrouter_client] openrouter_failed op={operation!r} err={e!r} -> comet")
+            else:
+                raise
+
+    if not comet_key:
+        assert primary_err is not None
+        raise primary_err
+
+    payload_c = dict(payload)
+    payload_c["model"] = _comet_model_for_request(payload.get("model"))
+    try:
+        data_c = _post_json(
+            _comet_chat_url(),
+            comet_key,
+            payload_c,
+            extra_headers={},
+            timeout=timeout,
+        )
+        _raise_if_bad_chat_completion("comet", data_c)
+        _log_usage(data_c, payload_c, operation=operation, provider="comet")
+        return data_c
+    except BaseException as e:
+        if primary_err is not None:
+            raise RuntimeError(
+                f"Comet: {e!r}; до этого OpenRouter: {primary_err!r}"
+            ) from e
+        raise

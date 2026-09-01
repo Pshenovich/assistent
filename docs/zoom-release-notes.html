@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Release Notes for App Review — Obuchat Assistant</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+      max-width: 44rem;
+      margin: 2rem auto;
+      padding: 0 1rem 2.5rem;
+      color: #e8e8ee;
+      background: #0b0b14;
+      line-height: 1.55;
+      font-size: 0.9375rem;
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 0.75rem; color: #fff; }
+    h2 { font-size: 1.05rem; margin: 1.5rem 0 0.5rem; color: #fff; }
+    p, li { color: #b4b4c0; }
+    ul, ol { padding-left: 1.25rem; }
+    a { color: #4d8eff; }
+    code { font-size: 0.85em; background: #1a1a28; padding: 0.1em 0.35em; border-radius: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; margin: 0.75rem 0; }
+    th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #2a2a3a; vertical-align: top; }
+    th { color: #fff; }
+  </style>
+</head>
+<body>
+  <h1>Obuchat Assistant — Release Notes for App Review</h1>
+  <p>Version submitted: July 2026 · Distribution: <strong>Unlisted</strong> · App type: User-managed OAuth (General app)</p>
+
+  <h2>Summary</h2>
+  <p>
+    <strong>Obuchat Assistant</strong> is a Telegram bot and Mini App that helps users manage calendar events,
+    reminders, and Zoom meetings from chat. The Zoom integration lets an authenticated user create instant or
+    scheduled meetings, reschedule or delete meetings via natural language, attach Zoom links to Google Calendar
+    events, view meeting-bot recording metadata in Profile, and disconnect Zoom from the Mini App or via Zoom account settings.
+  </p>
+  <p>
+    This is <strong>not</strong> a Zoom in-client app. There is no UI inside the Zoom meeting client.
+    Users connect Zoom through OAuth initiated from Telegram (<code>/zoom_auth</code>) or Mini App → Profile → Zoom → Connect.
+    After authorization, all Zoom API calls run server-side on behalf of the user who granted consent.
+  </p>
+
+  <h2>Authorization URL (Production)</h2>
+  <p><strong>Regenerate in Zoom Marketplace before each resubmit</strong> (Production tab → Local Test → Authorization URL → Generate/Regenerate → Copy). Required after scope or redirect changes.</p>
+  <p>Static reference URL (in-bot OAuth via <code>/zoom_auth</code> also adds <code>state</code> and <code>scope</code> at runtime):</p>
+  <p><code>https://zoom.us/oauth/authorize?response_type=code&amp;client_id=25bg0QtHTVyrLWzx1WQwgQ&amp;redirect_uri=https://assistant.obuchat.me/oauth/zoom/callback</code></p>
+  <p>Use the portal-generated URL in App Submission if it differs (e.g. includes updated <code>scope=</code>).</p>
+
+  <h2>Redirect URLs</h2>
+  <table>
+    <tr><th>Environment</th><th>OAuth redirect URL</th></tr>
+    <tr><td>Production</td><td><code>https://assistant.obuchat.me/oauth/zoom/callback</code></td></tr>
+    <tr><td>Development / staging</td><td><code>https://stagassistant.obuchat.me/oauth/zoom/callback</code></td></tr>
+  </table>
+
+  <h2>How to access the app (reviewer steps)</h2>
+  <ol>
+    <li>Open Home URL: <a href="https://assistant.obuchat.me/zoom/home">https://assistant.obuchat.me/zoom/home</a></li>
+    <li>Click <strong>Open bot in Telegram</strong> → <a href="https://t.me/PshAssistent_bot">https://t.me/PshAssistent_bot</a></li>
+    <li>Log in with test credentials from Marketplace <strong>Account Credentials</strong> (dedicated Telegram phone + Zoom email/password; test Telegram user pre-approved).</li>
+    <li>Send <code>/zoom_auth</code> or open Mini App → Profile → Zoom → Connect and complete OAuth (<strong>Production</strong> Client ID).</li>
+    <li>Test scopes using the steps in the <a href="zoom-test-plan.html">Test Plan</a>.</li>
+  </ol>
+
+  <h2>OAuth scopes requested (all required)</h2>
+  <table>
+    <tr><th>Scope</th><th>Purpose</th></tr>
+    <tr><td><code>user:read:user</code></td><td>Display connected Zoom account (name/email) in Mini App Profile.</td></tr>
+    <tr><td><code>user:read:token</code></td><td>Yes — note-taking agent: Leo joins the meeting via Zoom SDK (OBF) to record, transcribe, and summarize. Not used for ZAK.</td></tr>
+    <tr><td><code>meeting:write:meeting</code></td><td>Create instant meetings (<code>zoom</code> command) and scheduled meetings linked to calendar events.</td></tr>
+    <tr><td><code>meeting:read:list_meetings</code></td><td>List upcoming meetings (<code>GET /users/me/meetings</code>) so delete/reschedule can resolve the target, then call DELETE/PATCH.</td></tr>
+    <tr><td><code>meeting:update:meeting</code></td><td>Reschedule meetings via natural language (<code>PATCH /meetings/{id}</code>).</td></tr>
+    <tr><td><code>meeting:delete:meeting</code></td><td>Remove Zoom meetings on user request (<code>DELETE /meetings/{id}</code>).</td></tr>
+  </table>
+  <p><code>user:read:zak</code> is <strong>not</strong> used and must not be selected. Meeting recordings in Profile come from our meeting-bot pipeline (Vexa), not the Zoom Cloud Recording API — <code>cloud_recording:read:recording</code> is <strong>not</strong> requested.</p>
+
+  <h2>Webhooks &amp; deauthorization</h2>
+  <ul>
+    <li>Event subscription URL: <code>https://assistant.obuchat.me/webhook</code> — <code>meeting.ended</code> (post-meeting notification).</li>
+    <li>Deauthorization URL: <code>https://assistant.obuchat.me/webhook/deauthorize</code> — on <code>app_deauthorized</code>, we delete stored OAuth tokens and Zoom profile metadata within 24 hours.</li>
+    <li>In-app disconnect: Mini App → Profile → Zoom → Disconnect (revokes token at Zoom and deletes local credentials).</li>
+  </ul>
+
+  <h2>Data handling &amp; security</h2>
+  <ul>
+    <li>All traffic over HTTPS (TLS 1.2+). OAuth tokens stored server-side with restricted file permissions (<code>chmod 600</code>).</li>
+    <li>Secrets (client secret, webhook secret) are in server environment variables only — not in client-side code.</li>
+    <li>Privacy Policy: <a href="/webapp/legal/privacy-en.html">privacy-en.html</a></li>
+    <li>Support: <a href="support.html">support.html</a> · <a href="mailto:support@obuchat.me">support@obuchat.me</a></li>
+  </ul>
+
+  <h2>Short Description (Marketplace listing)</h2>
+  <p><code>Create, reschedule, and delete Zoom meetings from Telegram. Auto-attach links to Google Calendar and view recordings in the Mini App profile.</code> (148 characters)</p>
+
+  <h2>What changed in this submission</h2>
+  <ul>
+    <li>Dedicated test Telegram + Zoom credentials in Account Credentials (pre-approved allowlist).</li>
+    <li>Separate Development redirect URL: <code>https://stagassistant.obuchat.me/oauth/zoom/callback</code> (Production unchanged).</li>
+    <li>Removed optional markings from all scopes; disabled Zoom App (in-client) and Meeting surface.</li>
+    <li>Fixed <code>delete zoom</code> / <code>reschedule zoom</code>: always issue Zoom <code>DELETE</code>/<code>PATCH</code> (and <code>GET /users/me/meetings</code> when <code>meeting:read:list_meetings</code> is granted); corrected meeting lookup so reschedule no longer misses the meeting just created.</li>
+    <li>Clarified <code>user:read:token</code> for the note-taking meeting bot (OBF); removed <code>user:read:zak</code> (unused).</li>
+    <li>Developer Contact email: <code>support@obuchat.me</code>.</li>
+    <li>Updated App Gallery screenshots (see <a href="zoom-app-gallery-screenshots.html">screenshot checklist</a>).</li>
+    <li>Portal checklist: <a href="zoom-marketplace-portal-checklist.html">zoom-marketplace-portal-checklist.html</a></li>
+  </ul>
+
+  <h2>Known limitations</h2>
+  <ul>
+    <li>Requires a Telegram account; there is no Zoom-only login.</li>
+    <li>Access gate applies to new Telegram users; the dedicated Marketplace test account is pre-approved.</li>
+    <li>Google Calendar integration is optional; Zoom instant meetings work without Calendar.</li>
+  </ul>
+
+  <h2>Related documents</h2>
+  <ul>
+    <li><a href="zoom.html">Integration guide</a></li>
+    <li><a href="zoom-test-plan.html">Test plan</a></li>
+    <li><a href="/webapp/legal/privacy-en.html">Privacy Policy</a></li>
+  </ul>
+</body>
+</html>

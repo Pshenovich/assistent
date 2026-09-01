@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ru" class="tg-dark vkui--vkIOS--dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#19191a" />
+  <title>{{TITLE}}</title>
+  <meta name="description" content="{{LABEL}}" />
+  <meta property="og:title" content="{{TITLE}}" />
+  <meta property="og:description" content="{{LABEL}}" />
+  <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: var(--vkui--color_background, #19191a);
+      --text: var(--vkui--color_text_primary, #e1e3e6);
+      --muted: var(--vkui--color_text_secondary, #909499);
+      --faint: var(--vkui--color_text_tertiary, #76787a);
+      --border: var(--vkui--color_separator_primary, rgba(255, 255, 255, 0.12));
+      --accent: var(--vkui--color_icon_accent, #529ef4);
+      --surface: var(--vkui--color_background_content, #19191a);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: var(--vkui--font_family_base, -apple-system, system-ui, "Helvetica Neue", Roboto, sans-serif);
+      color: var(--text);
+      background: var(--bg);
+    }
+    .wrap {
+      max-width: 46rem;
+      margin: 0 auto;
+      padding: 1.75rem 1.25rem 4rem;
+    }
+    .label {
+      margin: 0 0 0.75rem;
+      color: var(--muted);
+      font-size: 0.75rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    #share-title {
+      margin: 0 0 1rem;
+      padding: 0;
+      color: var(--text);
+      font-size: var(--vkui--font_title1--font_size--regular, 24px);
+      font-weight: var(--vkui--font_title1--font_weight--regular, 600);
+      line-height: var(--vkui--font_title1--line_height--regular, 28px);
+      letter-spacing: -0.01em;
+      overflow-wrap: anywhere;
+    }
+    #share-body {
+      color: var(--text);
+      background: transparent;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      font-size: var(--vkui--font_paragraph--font_size--regular, 15px);
+      font-weight: var(--vkui--font_paragraph--font_weight--regular, 400);
+      line-height: var(--vkui--font_paragraph--line_height--regular, 20px);
+    }
+    #share-body > :first-child { margin-top: 0; }
+    #share-body > :last-child { margin-bottom: 0; }
+    #share-body h1,
+    #share-body h2,
+    #share-body h3,
+    #share-body h4,
+    #share-body h5,
+    #share-body h6 {
+      margin: 0.75rem 0 0.375rem;
+      font-size: inherit;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+    #share-body p { margin: 0.375rem 0; }
+    #share-body ul,
+    #share-body ol {
+      margin: 0.375rem 0;
+      padding-left: 1.25rem;
+    }
+    #share-body li { margin: 0.25rem 0; }
+    #share-body li > p { margin: 0; }
+    #share-body blockquote {
+      margin: 0.375rem 0;
+      padding-left: 0.75rem;
+      border-left: 3px solid var(--border);
+      color: var(--muted);
+    }
+    #share-body a { color: var(--accent); }
+    #share-body strong, #share-body b { font-weight: 600; }
+    #share-body em, #share-body i { font-style: italic; }
+    #share-body s, #share-body del, #share-body strike { text-decoration: line-through; }
+    #share-body u { text-decoration: underline; }
+    #share-body img,
+    #share-body .note-editor-image {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin: 0.75rem 0;
+      border-radius: 12px;
+    }
+    #share-body table {
+      width: 100%;
+      margin: 0.75rem 0;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 0.875rem;
+    }
+    #share-body th,
+    #share-body td {
+      padding: 0.4rem 0.5rem;
+      border: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+      word-break: break-word;
+    }
+    #share-body th {
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.06);
+    }
+    #share-body ul.note-task-list,
+    #share-body ul[data-type="taskList"] {
+      list-style: none;
+      margin: 0.375rem 0;
+      padding-left: 0;
+    }
+    #share-body .note-task,
+    #share-body ul[data-type="taskList"] > li {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+      margin: 0.25rem 0;
+      list-style: none;
+    }
+    #share-body .note-task::marker,
+    #share-body ul[data-type="taskList"] > li::marker { content: ""; }
+    #share-body .note-task > label,
+    #share-body ul[data-type="taskList"] li > label {
+      display: inline-flex;
+      flex: 0 0 auto;
+      margin: 0;
+    }
+    #share-body ul[data-type="taskList"] li > label > span { display: none; }
+    #share-body .note-task input[type="checkbox"],
+    #share-body ul[data-type="taskList"] li input[type="checkbox"] {
+      flex-shrink: 0;
+      width: 1rem;
+      height: 1rem;
+      margin: 0.15rem 0 0;
+      accent-color: var(--accent);
+    }
+    #share-body .note-task-text {
+      flex: 1 1 auto;
+      min-width: 0;
+      line-height: 1.45;
+    }
+    #share-body .note-task-text > p { margin: 0; display: inline; }
+    #share-body .note-task--checked .note-task-text,
+    #share-body ul[data-type="taskList"] li[data-checked="true"] > div,
+    #share-body ul[data-type="taskList"] li[data-checked="true"] p {
+      text-decoration: line-through;
+      color: var(--faint);
+    }
+    #share-body ul[data-type="taskList"] li > div {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    #share-body pre,
+    #share-body .transcript {
+      margin: 0;
+      font-family: inherit;
+      font-size: inherit;
+      line-height: inherit;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .status, .error {
+      margin: 2.5rem auto 0;
+      max-width: 28rem;
+      text-align: center;
+      color: var(--muted);
+    }
+    .error { color: #f3b4b4; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <p id="share-status" class="status">Загрузка…</p>
+    <p id="share-error" class="error hidden"></p>
+    <article id="share-doc" class="hidden">
+      <p id="share-label" class="label"></p>
+      <h1 id="share-title"></h1>
+      <div id="share-body" class="note-body-html"></div>
+    </article>
+  </main>
+  <script src="/webapp/note-html.js?v=20260830-share-layout"></script>
+  <script src="/webapp/share.js?v=20260830-share-layout"></script>
+</body>
+</html>

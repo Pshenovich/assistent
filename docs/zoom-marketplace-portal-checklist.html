@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Zoom Marketplace Portal Checklist — Obuchat Assistant</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+      max-width: 44rem;
+      margin: 2rem auto;
+      padding: 0 1rem 2.5rem;
+      color: #e8e8ee;
+      background: #0b0b14;
+      line-height: 1.55;
+      font-size: 0.9375rem;
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 0.75rem; color: #fff; }
+    h2 { font-size: 1.05rem; margin: 1.5rem 0 0.5rem; color: #fff; }
+    p, li { color: #b4b4c0; }
+    ol, ul { padding-left: 1.25rem; }
+    a { color: #4d8eff; }
+    code { font-size: 0.85em; background: #1a1a28; padding: 0.1em 0.35em; border-radius: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; margin: 0.75rem 0; }
+    th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #2a2a3a; vertical-align: top; }
+    th { color: #fff; }
+    input[type="checkbox"] { margin-right: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Zoom Marketplace Portal Checklist</h1>
+  <p>Complete these steps in <a href="https://marketplace.zoom.us/develop/apps">developers.zoom.us</a> before resubmitting Obuchat Assistant.</p>
+
+  <h2>1. Account Credentials</h2>
+  <ul>
+    <li>Fill <code>docs/zoom-marketplace-credentials.template.txt</code> with real Telegram phone + Zoom email/password.</li>
+    <li>Paste into <strong>App Submission → Account Credentials</strong>.</li>
+    <li>Run <code>scripts/add_zoom_reviewer_allowlist.sh [TELEGRAM_USER_ID]</code> on production after creating the test Telegram account.</li>
+  </ul>
+
+  <h2>2. App Gallery images</h2>
+  <p>See <a href="zoom-app-gallery-screenshots.html">screenshot checklist</a> — upload 5–7 images in App Submission → App Gallery.</p>
+
+  <h2>3. Short Description (≤150 characters)</h2>
+  <p>Paste into App Submission → Short Description:</p>
+  <p><code>Create, reschedule, and delete Zoom meetings from Telegram. Auto-attach links to Google Calendar and view recordings in the Mini App profile.</code></p>
+  <p class="muted" style="color:#888">148 characters.</p>
+
+  <h2>4. Developer Contact Email</h2>
+  <ul>
+    <li>Set <strong>Developer Contact Information → Email</strong> to <code>support@obuchat.me</code> (corporate domain).</li>
+    <li>Do not use a personal Gmail/Yahoo address.</li>
+  </ul>
+
+  <h2>5. Regenerate Authorization URL (required before submit)</h2>
+  <p>Do this <strong>after</strong> all scope, Surface, and redirect changes are saved. Zoom requires a fresh URL when app configuration changed.</p>
+  <ol>
+    <li>Open your app at <a href="https://marketplace.zoom.us/user/build">marketplace.zoom.us → Develop → Manage</a>.</li>
+    <li>Switch to the <strong>Production</strong> tab (not Development — first-time submission must use Production Client ID).</li>
+    <li>Go to <strong>Local Test</strong> (or <strong>Share App</strong> / App Submission if shown there).</li>
+    <li>Find <strong>Authorization URL</strong> → click <strong>Generate</strong> or <strong>Regenerate</strong> → <strong>Copy</strong>.</li>
+    <li>Paste the copied URL into <strong>App Submission</strong> if there is an Authorization URL field, and into <strong>Release notes for app reviewer</strong>.</li>
+    <li>Verify the URL contains <code>client_id=25bg0QtHTVyrLWzx1WQwgQ</code> and <code>redirect_uri=https://assistant.obuchat.me/oauth/zoom/callback</code> (URL-encoded is OK).</li>
+  </ol>
+  <p>Expected base (bot adds <code>state</code> + <code>scope</code> at runtime via <code>/zoom_auth</code>):</p>
+  <p><code>https://zoom.us/oauth/authorize?response_type=code&amp;client_id=25bg0QtHTVyrLWzx1WQwgQ&amp;redirect_uri=https://assistant.obuchat.me/oauth/zoom/callback</code></p>
+  <p>If the portal-generated URL also includes a <code>scope=</code> parameter, use the portal version — it reflects your current 5 scopes.</p>
+
+  <h2>6. Redirect URLs (Development vs Production)</h2>
+  <table>
+    <tr><th>Tab</th><th>OAuth Redirect URL</th></tr>
+    <tr><td>Production</td><td><code>https://assistant.obuchat.me/oauth/zoom/callback</code></td></tr>
+    <tr><td>Development</td><td><code>https://stagassistant.obuchat.me/oauth/zoom/callback</code></td></tr>
+  </table>
+  <p>Use matching Client ID + Secret from each tab on the corresponding server only.</p>
+
+  <h2>7. Scopes — remove Optional; disable Zoom App (in-client)</h2>
+  <ul>
+    <li><strong>Scopes:</strong> uncheck <em>Optional</em> for all five required scopes (see release notes).</li>
+    <li><strong>App type:</strong> General OAuth only — disable <strong>Zoom App</strong> / in-client / Surface option.</li>
+  </ul>
+
+  <h2>8. Surface → Meeting</h2>
+  <p>Unselect <strong>Meeting</strong> under Features → Surface. This app does not run inside the Zoom meeting client.</p>
+
+  <h2>9. Scopes list (exactly 6 — remove everything else)</h2>
+  <p>Keep <strong>only</strong> these. Remove <code>user:read:zak</code>, <code>zoomapp:inmeeting</code>, <code>cloud_recording:read:recording</code>.</p>
+  <ul>
+    <li><code>user:read:user</code></li>
+    <li><code>user:read:token</code> — required for note-taking agent (OBF / Zoom SDK join)</li>
+    <li><code>meeting:write:meeting</code></li>
+    <li><code>meeting:read:list_meetings</code> — required so delete/reschedule can list then DELETE/PATCH</li>
+    <li><code>meeting:update:meeting</code></li>
+    <li><code>meeting:delete:meeting</code></li>
+  </ul>
+  <p>After changing scopes: Save → regenerate Production Authorization URL → ask reviewers to re-authorize (revoke under Added Apps, then <code>/zoom_auth</code> again).</p>
+
+  <h2>Pre-submit checklist</h2>
+  <ol>
+    <li>Account Credentials filled with real test accounts</li>
+    <li>5–7 App Gallery screenshots uploaded</li>
+    <li>Short Description pasted</li>
+    <li>Developer Contact = support@obuchat.me</li>
+    <li>Dev and Prod redirect URLs differ</li>
+    <li>No optional scope markings; Zoom App / in-client disabled</li>
+    <li>Meeting surface unselected</li>
+    <li>Authorization URL regenerated on <strong>Production</strong> tab (after scope/Surface changes)</li>
+    <li>Test plan URL in submission points to <code>https://assistant.obuchat.me/docs/zoom-test-plan.html</code></li>
+  </ol>
+</body>
+</html>

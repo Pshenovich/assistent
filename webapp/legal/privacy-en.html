@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Privacy Policy — Obuchat Assistant</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    .legal-page { max-width: 40rem; margin: 0 auto; padding: 1.25rem 1rem 2.5rem; color: var(--text); }
+    .legal-page h1 { font-size: 1.25rem; margin: 0 0 1rem; }
+    .legal-page h2 { font-size: 1rem; margin: 1.25rem 0 0.5rem; }
+    .legal-page p, .legal-page li { font-size: 0.875rem; line-height: 1.55; color: var(--text-secondary); }
+    .legal-page ul { padding-left: 1.25rem; }
+    .legal-back { display: inline-block; margin-bottom: 1rem; font-size: 0.875rem; color: var(--accent); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <main class="legal-page">
+    <a class="legal-back" href="../index.html">← Back to app</a>
+    <h1>Privacy Policy</h1>
+    <p>Effective date: June 4, 2026. <strong>Obuchat Assistant</strong> (“we”, “us”) operates a Telegram bot and Mini App at <code>assistant.obuchat.me</code> for calendar, tasks, reminders, and integrations including Zoom.</p>
+    <p>Operator contact: <a href="mailto:privacy@obuchat.me">privacy@obuchat.me</a></p>
+
+    <h2>1. Information we collect</h2>
+    <ul>
+      <li><strong>Telegram account data:</strong> user ID, username, and display name — required to authenticate you in the bot and Mini App.</li>
+      <li><strong>Messages and files you send:</strong> text, voice, and attachments — processed only when you use a feature (calendar, notes, transcription, Zoom commands, etc.).</li>
+      <li><strong>OAuth tokens and integration settings</strong> for services you connect (Google Calendar, Todoist, Zoom, Yandex Disk) — stored on our servers to act on your behalf.</li>
+      <li><strong>Technical logs:</strong> timestamps, errors, and usage metrics (e.g. API calls) — for reliability, security, and billing.</li>
+    </ul>
+
+    <h2>2. Zoom-specific data</h2>
+    <p>When you connect Zoom via OAuth, we may store and process:</p>
+    <ul>
+      <li>Zoom user ID, display name, and email (from <code>user:read:user</code>).</li>
+      <li>OAuth access and refresh tokens — to create, update, and delete meetings on your behalf.</li>
+      <li>Meeting metadata you trigger through the assistant (topic, start time, join URL, meeting ID) — to fulfill your requests and sync with Google Calendar when enabled.</li>
+      <li>Webhook events such as <code>meeting.ended</code> (host ID, meeting topic, meeting ID) — only to support in-app notifications related to your meetings.</li>
+    </ul>
+    <p>We do <strong>not</strong> download or store Zoom cloud recording files. Meeting recordings made by Leo’s meeting bot may be uploaded to <strong>your</strong> Yandex Disk if you connect that integration (see below).</p>
+
+    <h2>3. Yandex Disk</h2>
+    <p>If you connect Yandex Disk via OAuth, we store your OAuth token and account profile (login, email) to upload Zoom meeting recordings you trigger through Leo: the audio/video file plus PDF transcript and summary into a folder named <code>Leo/Записи встреч</code> on your disk. Without connecting Yandex Disk, no files are sent to Yandex.</p>
+
+    <h2>4. How we use information</h2>
+    <ul>
+      <li>Provide assistant features you request.</li>
+      <li>Authenticate you and maintain integrations you authorize.</li>
+      <li>Operate, secure, and improve the service.</li>
+      <li>Respond to support requests and comply with legal obligations.</li>
+    </ul>
+
+    <h2>5. Sharing with third parties</h2>
+    <p>We share data only with:</p>
+    <ul>
+      <li>Services you connect (Google, Todoist, Zoom, Yandex, OpenRouter, and similar) — to perform actions you request.</li>
+      <li>Infrastructure providers that host and operate the service — under contractual confidentiality and security obligations.</li>
+    </ul>
+    <p>We do not sell personal information.</p>
+
+    <h2>6. Retention</h2>
+    <ul>
+      <li><strong>OAuth tokens and Zoom profile fields</strong> — until you disconnect Zoom in the Mini App, we receive a Zoom deauthorization notification, or you delete the integration from your Zoom account.</li>
+      <li><strong>Message content</strong> — retained only as long as needed for the requested feature (e.g. calendar parsing, transcription history where enabled).</li>
+      <li><strong>Technical logs</strong> — typically up to 90 days, unless a longer period is required for security investigations or legal compliance.</li>
+    </ul>
+
+    <h2>7. Security</h2>
+    <p>Data is transmitted over HTTPS (TLS 1.2+). OAuth tokens are stored on secured servers with restricted file permissions. Secrets are not published in client-side code.</p>
+
+    <h2>8. Your rights and data deletion</h2>
+    <p>You may:</p>
+    <ul>
+      <li>Disconnect Zoom in <strong>Mini App → Profile → Zoom → Disconnect</strong> or remove Obuchat Assistant from your Zoom account (Manage → Added Apps → Remove).</li>
+      <li>Disconnect Yandex Disk in <strong>Mini App → Profile → Yandex Disk → Disconnect</strong>.</li>
+      <li>Request access, correction, or deletion of your data by emailing <a href="mailto:privacy@obuchat.me">privacy@obuchat.me</a> or contacting us through the Telegram bot.</li>
+    </ul>
+    <p>After disconnection or deauthorization, we delete stored Zoom OAuth tokens and Zoom profile metadata linked to your account within <strong>24 hours</strong>. Aggregated technical logs without personal identifiers may be retained longer.</p>
+
+    <h2>9. International transfers</h2>
+    <p>Data may be processed on servers located outside your country. We apply appropriate safeguards for cross-border processing where required by law.</p>
+
+    <h2>10. Changes</h2>
+    <p>The current version is always available at this URL. Material changes will be communicated through the bot or Mini App.</p>
+
+    <p><a href="privacy.html">Русская версия</a> · <a href="/docs/zoom.html">Zoom integration guide</a> · <a href="/docs/support.html">Support</a></p>
+  </main>
+</body>
+</html>

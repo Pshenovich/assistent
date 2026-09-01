@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Zoom Integration — Obuchat Assistant</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+      max-width: 40rem;
+      margin: 2rem auto;
+      padding: 0 1rem 2.5rem;
+      color: #e8e8ee;
+      background: #0b0b14;
+      line-height: 1.55;
+      font-size: 0.9375rem;
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 0.75rem; color: #fff; }
+    h2 { font-size: 1.05rem; margin: 1.5rem 0 0.5rem; color: #fff; }
+    p, li { color: #b4b4c0; }
+    ul, ol { padding-left: 1.25rem; }
+    a { color: #4d8eff; }
+    .muted { color: #888; font-size: 0.875rem; }
+    code { font-size: 0.85em; background: #1a1a28; padding: 0.1em 0.35em; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Obuchat Assistant — Zoom Integration Guide</h1>
+  <p class="muted">How to add, use, and remove the Zoom integration.</p>
+
+  <h2>Prerequisites</h2>
+  <ul>
+    <li>A Telegram account and access to the Obuchat Assistant bot.</li>
+    <li>A Zoom account with permission to host meetings.</li>
+    <li>Optional: Google Calendar connected for automatic Zoom links on calendar events.</li>
+  </ul>
+
+  <h2>Adding the app</h2>
+  <ol>
+    <li>Open <strong>Obuchat Assistant</strong> in Telegram — link on the <a href="https://assistant.obuchat.me/zoom/home">Home URL</a> or your invite.</li>
+    <li>Complete access approval if your workspace requires it (contact <a href="mailto:support@obuchat.me">support@obuchat.me</a>).</li>
+    <li>Send <code>/zoom_auth</code> or open <strong>Mini App → Profile → Zoom → Connect</strong>.</li>
+    <li>Sign in to Zoom and approve permissions: create, update, and delete meetings; read your user profile; OBF token for meeting-bot join.</li>
+    <li>Return to Telegram — you should see a confirmation that Zoom is connected.</li>
+  </ol>
+  <p class="muted">This integration runs in Telegram and our Mini App — not inside the Zoom meeting client.</p>
+
+  <h2>Using Zoom</h2>
+  <ul>
+    <li><strong>Instant meeting:</strong> Send <code>zoom</code> or <code>give me a zoom link</code> — the bot replies with a join URL.</li>
+    <li><strong>Calendar meetings:</strong> With Google Calendar connected, new or updated events can include an automatic Zoom link in the event description.</li>
+    <li><strong>Reschedule:</strong> <code>move zoom to 3pm</code> or <code>reschedule zoom to 15:00 tomorrow</code>.</li>
+    <li><strong>Remove Zoom from an event:</strong> <code>delete zoom</code> — removes the Zoom meeting; the calendar event may remain.</li>
+    <li><strong>Disconnect in-app:</strong> Mini App → Profile → Zoom → Disconnect (revokes tokens and deletes stored credentials).</li>
+  </ul>
+
+  <h2>Removing the app from Zoom</h2>
+  <ol>
+    <li>Sign in to the <a href="https://marketplace.zoom.us/">Zoom App Marketplace</a>.</li>
+    <li>Click <strong>Manage</strong> → <strong>Added Apps</strong> (or search for <strong>Obuchat Assistant</strong>).</li>
+    <li>Select the app → <strong>Remove</strong> → confirm.</li>
+  </ol>
+  <p><strong>What happens after removal:</strong></p>
+  <ul>
+    <li>Zoom sends a deauthorization notification to our servers.</li>
+    <li>We delete your stored Zoom OAuth tokens, Zoom user ID, email, and display name linked to your Telegram account within <strong>24 hours</strong>.</li>
+    <li>Meeting links already placed in Google Calendar or Telegram chat history are not automatically removed — you may edit those manually.</li>
+    <li>Aggregated technical logs (without personal content) may be retained up to 90 days for security.</li>
+    <li>To use Zoom features again, run <code>/zoom_auth</code> and re-authorize.</li>
+  </ul>
+
+  <h2>Data &amp; permissions</h2>
+  <ul>
+    <li>We store OAuth tokens on secured servers (HTTPS in transit; restricted file permissions at rest) to call the Zoom API on your behalf.</li>
+    <li>We read your Zoom profile (name, email, user ID) to show connection status in the Mini App.</li>
+    <li>We do not sell personal data. See the <a href="/webapp/legal/privacy-en.html">Privacy Policy</a>.</li>
+  </ul>
+
+  <h2>Troubleshooting</h2>
+  <ul>
+    <li><strong>“Zoom not connected”</strong> — Run <code>/zoom_auth</code> again and complete OAuth in one browser tab (do not refresh the callback page).</li>
+    <li><strong>OAuth error / invalid_grant</strong> — Request a new link with <code>/zoom_auth</code>; ensure redirect URL in Zoom App settings is <code>https://assistant.obuchat.me/oauth/zoom/callback</code>.</li>
+    <li><strong>Access denied in bot</strong> — Your Telegram account may need administrator approval; email <a href="mailto:support@obuchat.me">support@obuchat.me</a> with your Telegram user ID.</li>
+    <li><strong>Meeting not found for reschedule/delete</strong> — Use a more specific description or date, or pick from the numbered list when multiple meetings match.</li>
+  </ul>
+
+  <h2>Support</h2>
+  <p><a href="support.html">Support page</a> · <a href="mailto:support@obuchat.me">support@obuchat.me</a></p>
+  <p>Home URL: <a href="https://assistant.obuchat.me/zoom/home">https://assistant.obuchat.me/zoom/home</a></p>
+  <p class="muted">Mini App: <a href="https://assistant.obuchat.me/webapp/">https://assistant.obuchat.me/webapp/</a></p>
+</body>
+</html>

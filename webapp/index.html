@@ -1,0 +1,1037 @@
+<!DOCTYPE html>
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260831-note-restore">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <title>Ассистент</title>
+  <link rel="manifest" href="/webapp/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/webapp/icons/icon-180.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/webapp/icons/icon-192.png" />
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var ua = navigator.userAgent || "";
+      if (/android/i.test(ua)) {
+        root.classList.add("tg-android");
+      }
+      var standalone =
+        (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
+        window.navigator.standalone === true;
+      var inTg =
+        !standalone &&
+        (/Telegram/i.test(ua) ||
+          !!(window.TelegramWebviewProxy) ||
+          /tgWebApp/i.test(String(location.href || "") + String(location.hash || "")));
+      if (inTg && navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          regs.forEach(function (reg) {
+            try {
+              reg.unregister();
+            } catch (_) {}
+          });
+        });
+      }
+      try {
+        var hasSession =
+          !!localStorage.getItem("miniapp_session") ||
+          localStorage.getItem("miniapp_session_hint") === "1";
+        if (standalone || hasSession) root.classList.add("boot-open-app");
+      } catch (_) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20260831-vpn-pwa" />
+  <!-- Same-origin, async: не блокирует парсер, если сеть/VPN тормозит. -->
+  <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" async></script>
+</head>
+<body>
+  <div id="gate" class="gate hidden">
+    <div class="gate-card">
+      <h1 class="gate-title">Ассистент</h1>
+      <p class="gate-text">Войдите через Telegram, чтобы открыть профиль, календарь и интеграции.</p>
+      <div id="gate-telegram-login" class="gate-telegram-login" aria-live="polite"></div>
+      <p id="gate-login-status" class="gate-login-status muted small hidden"></p>
+      <p id="gate-login-err" class="error hidden"></p>
+      <p class="gate-text gate-alt">
+        Или откройте мини-приложение из бота <span id="gate-bot-link">в Telegram</span>.
+      </p>
+      <p class="gate-text gate-dev-hint hidden" id="gate-dev-hint">
+        Локально: <code>MINIAPP_DEV_MODE=1</code>, <code>MINIAPP_DEV_TELEGRAM_USER_ID</code>, перезапуск
+        <code>uvicorn</code>, затем <code>?dev=1</code>.
+      </p>
+    </div>
+  </div>
+
+  <div id="app" class="app">
+    <main class="main-scroll panels-stage">
+      <!-- Актуальное -->
+      <section id="panel-actual" class="panel" role="tabpanel">
+        <div id="actual-hero" class="hero-card"></div>
+        <div class="section">
+          <div class="section-head-row">
+            <span class="section-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+              </svg>
+            </span>
+            <h2 class="section-head-inline">Напоминания</h2>
+            <span id="reminders-badge" class="pill-badge hidden">0</span>
+          </div>
+          <div id="reminders-list" class="stack"></div>
+          <p id="reminders-empty" class="muted empty-hint hidden">Напоминаний нет</p>
+          <p id="reminders-error" class="error hidden"></p>
+        </div>
+        <div class="section">
+          <div class="section-head-row section-head-row--meetings">
+            <button type="button" class="cal-nav-btn" id="meetings-prev" aria-label="Предыдущий день">‹</button>
+            <div class="section-head-center">
+              <h2 class="section-head-inline" id="meetings-head-title">Встречи</h2>
+              <span id="meetings-badge" class="pill-badge hidden">0</span>
+            </div>
+            <button type="button" class="cal-nav-btn" id="meetings-next" aria-label="Следующий день">›</button>
+          </div>
+          <div id="meetings-list" class="meetings-stack"></div>
+          <p id="meetings-empty" class="muted empty-hint hidden">Нет встреч на этот день</p>
+          <p id="meetings-error" class="error hidden"></p>
+        </div>
+        <button
+          type="button"
+          id="actual-create-btn"
+          class="notes-fab actual-fab"
+          aria-label="Добавить"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          title="Добавить"
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
+        <div id="actual-create-menu" class="actual-create-menu hidden" role="menu" aria-label="Добавить">
+          <button type="button" class="actual-create-menu-btn" data-actual-action="voice" role="menuitem">Голосовое</button>
+          <button type="button" class="actual-create-menu-btn" data-actual-action="reminder" role="menuitem">Напоминание</button>
+          <button type="button" class="actual-create-menu-btn" data-actual-action="meeting" role="menuitem">Встреча</button>
+        </div>
+      </section>
+
+      <!-- Сохранённое -->
+      <section id="panel-notes" class="panel hidden" role="tabpanel" hidden>
+        <div id="notes-root">
+          <div class="notes-subtabs-row">
+            <div class="subtab-bar" role="tablist" aria-label="Тип записей">
+              <button type="button" class="subtab-btn active" data-subtab="notes">Заметки</button>
+              <button type="button" class="subtab-btn" data-subtab="transcriptions">Транскрипции</button>
+              <button type="button" class="subtab-btn" data-subtab="summaries">Саммари</button>
+            </div>
+          </div>
+          <div class="notes-filter-bar">
+            <div class="notes-search-wrap">
+              <input
+                type="search"
+                id="notes-search-input"
+                class="notes-search-input"
+                placeholder="Поиск…"
+                autocomplete="off"
+                enterkeyhint="search"
+                aria-label="Поиск записей"
+              />
+              <button
+                type="button"
+                id="notes-tag-filter-btn"
+                class="notes-search-tag-btn"
+                aria-label="Фильтр по тегам"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                  <circle cx="7" cy="7" r="1.5" fill="currentColor" stroke="none"/>
+                </svg>
+                <span id="notes-tag-filter-badge" class="notes-search-tag-badge hidden" aria-hidden="true"></span>
+              </button>
+              <div id="notes-tag-filter-menu" class="notes-tag-filter-menu hidden" role="listbox" aria-label="Теги"></div>
+            </div>
+          </div>
+          <div id="notes-pane-notes" class="notes-pane notes-pane--stack"></div>
+          <div id="notes-pane-transcriptions" class="notes-pane notes-pane--stack hidden"></div>
+          <div id="notes-pane-summaries" class="notes-pane notes-pane--stack hidden"></div>
+          <p id="notes-global-error" class="error hidden"></p>
+        </div>
+        <button
+          type="button"
+          id="notes-create-btn"
+          class="notes-fab hidden"
+          aria-label="Создать заметку"
+          title="Новая заметка"
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
+        <div id="notes-detail" class="notes-detail hidden">
+          <div class="notes-detail-sticky">
+            <div class="detail-toolbar">
+              <button type="button" class="btn-text" id="notes-detail-back">← Назад</button>
+              <span id="notes-detail-title" class="detail-title"></span>
+              <span class="detail-toolbar-trail">
+                <button type="button" class="btn-icon-tile hidden" id="notes-detail-del" aria-label="Удалить" title="Удалить">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14zM10 11v6M14 11v6" />
+                  </svg>
+                </button>
+              </span>
+            </div>
+          </div>
+          <div id="notes-detail-body" class="detail-body"></div>
+          <footer id="notes-detail-footer" class="notes-detail-footer hidden" aria-hidden="true"></footer>
+        </div>
+      </section>
+
+      <!-- Профиль -->
+      <section id="panel-profile" class="panel hidden" role="tabpanel" hidden>
+        <div id="profile-main">
+          <div class="profile-head" id="profile-head"></div>
+          <div id="profile-tariff-card" class="tariff-card"></div>
+          <button type="button" class="expenses-card" id="profile-expenses-open">
+            <div class="expenses-card-inner">
+              <div class="expenses-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 17l6-6 4 4 8-10" />
+                  <path d="M14 5h7v7" />
+                </svg>
+              </div>
+              <div>
+                <p class="expenses-label">Расходы за 7 дней</p>
+                <p class="expenses-total" id="profile-expenses-total">—</p>
+              </div>
+            </div>
+            <span class="chevron">›</span>
+          </button>
+          <button type="button" class="expenses-card" id="profile-contacts-open">
+            <div class="expenses-card-inner">
+              <div class="expenses-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
+              </div>
+              <div>
+                <p class="expenses-label">Мои контакты</p>
+                <p class="expenses-total contacts-card-sub" id="profile-contacts-count">—</p>
+              </div>
+            </div>
+            <span class="chevron">›</span>
+          </button>
+          <button type="button" class="expenses-card" id="profile-calendars-open">
+            <div class="expenses-card-inner">
+              <div class="expenses-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" />
+                  <path d="M16 2v4M8 2v4M3 10h18" />
+                </svg>
+              </div>
+              <div>
+                <p class="expenses-label">Календари</p>
+                <p class="expenses-total contacts-card-sub" id="profile-calendars-hint">Напоминания и занятость</p>
+              </div>
+            </div>
+            <span class="chevron">›</span>
+          </button>
+          <button type="button" class="expenses-card" id="profile-knowledge-base-open">
+            <div class="expenses-card-inner">
+              <div class="expenses-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+                </svg>
+              </div>
+              <div>
+                <p class="expenses-label">База знаний</p>
+                <p class="expenses-total contacts-card-sub" id="profile-knowledge-base-hint">Корпоративные документы</p>
+              </div>
+            </div>
+            <span class="chevron">›</span>
+          </button>
+          <div class="services-card">
+            <h3 class="services-title">Подключённые сервисы</h3>
+            <p class="services-sub">Интеграции для автоматизации</p>
+            <div class="svc-row" data-svc="google">
+              <div class="svc-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" />
+                  <path d="M16 2v4M8 2v4M3 10h18" />
+                </svg>
+              </div>
+              <div class="svc-text">
+                <p class="svc-name">Google Calendar</p>
+                <p class="svc-desc svc-desc--status" data-status-line>Синхронизация встреч</p>
+              </div>
+              <div class="svc-actions">
+                <button type="button" class="btn btn-sm primary" data-action="connect">Подключить</button>
+                <button type="button" class="btn btn-sm ghost hidden" data-action="disconnect">Отключить</button>
+              </div>
+            </div>
+            <div class="svc-divider" aria-hidden="true"></div>
+            <div class="svc-row svc-row--zoom" data-svc="zoom">
+              <div class="svc-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M15 10l4-3v10l-4-3M5 7h8a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z" />
+                </svg>
+              </div>
+              <div class="svc-text">
+                <p class="svc-name">Zoom</p>
+                <p class="svc-desc svc-desc--status" data-zoom-line>Создание ссылок на встречи</p>
+              </div>
+              <div class="svc-actions">
+                <button type="button" class="btn btn-sm primary" data-action="connect">Подключить</button>
+                <button type="button" class="btn btn-sm ghost hidden" data-action="disconnect">Отключить</button>
+              </div>
+            </div>
+            <div class="svc-divider" aria-hidden="true"></div>
+            <div class="svc-row svc-row--telemost" data-svc="telemost">
+              <div class="svc-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="6" width="18" height="12" rx="2" />
+                  <path d="M7 10h4v4H7z" />
+                  <path d="M15 10l4 2-4 2z" />
+                </svg>
+              </div>
+              <div class="svc-text">
+                <p class="svc-name">Телемост</p>
+                <p class="svc-desc svc-desc--status" data-telemost-line>Создание ссылок на встречи</p>
+              </div>
+              <div class="svc-actions">
+                <button type="button" class="btn btn-sm primary" data-action="connect">Подключить</button>
+                <button type="button" class="btn btn-sm ghost hidden" data-action="disconnect">Отключить</button>
+              </div>
+            </div>
+            <div class="svc-divider" aria-hidden="true"></div>
+            <div class="svc-row svc-row--yandex-disk" data-svc="yandex-disk">
+              <div class="svc-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 7h16v10H4z" />
+                  <path d="M8 11h8M8 14h5" />
+                </svg>
+              </div>
+              <div class="svc-text">
+                <p class="svc-name">Яндекс Диск</p>
+                <p class="svc-desc svc-desc--status" data-yandex-disk-line>Записи Zoom-встреч</p>
+              </div>
+              <div class="svc-actions">
+                <button type="button" class="btn btn-sm primary" data-action="connect">Подключить</button>
+                <button type="button" class="btn btn-sm ghost hidden" data-action="disconnect">Отключить</button>
+              </div>
+            </div>
+            <div class="svc-divider" aria-hidden="true"></div>
+            <div class="svc-row svc-row--bitrix" data-svc="bitrix">
+              <div class="svc-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9 11l3 3L22 4" />
+                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                </svg>
+              </div>
+              <div class="svc-text">
+                <p class="svc-name">Битрикс24</p>
+                <p class="svc-desc svc-desc--status" data-bitrix-line>Задачи и CRM через MCP</p>
+              </div>
+              <div class="svc-actions">
+                <button type="button" class="btn btn-sm primary" data-action="connect">Подключить</button>
+                <button type="button" class="btn btn-sm ghost hidden" data-action="disconnect">Отключить</button>
+              </div>
+            </div>
+            <p class="error hidden" data-error></p>
+          </div>
+          <footer class="profile-legal-footer">
+            <a href="/webapp/legal/privacy.html" class="profile-legal-link" data-legal="privacy">Политика конфиденциальности</a>
+            <span class="profile-legal-sep" aria-hidden="true">·</span>
+            <a href="/webapp/legal/terms.html" class="profile-legal-link" data-legal="terms">Пользовательское соглашение</a>
+          </footer>
+        </div>
+
+        <div id="profile-payment" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-payment-back">← Назад</button>
+            <span class="detail-title">Пополнить баланс</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body subscreen-body--payment">
+            <div class="pay-section">
+              <p class="field-label field-label--caps">Сумма пополнения</p>
+              <div class="amount-chips" id="payment-amount-chips">
+                <button type="button" class="amount-chip" data-rub="200">₽200</button>
+                <button type="button" class="amount-chip amount-chip--active" data-rub="500">₽500</button>
+                <button type="button" class="amount-chip" data-rub="1000">₽1000</button>
+                <button type="button" class="amount-chip" data-rub="2000">₽2000</button>
+              </div>
+              <div class="amount-custom-wrap">
+                <span class="amount-rub-prefix">₽</span>
+                <input type="text" inputmode="decimal" id="payment-custom-amount" class="amount-custom-input" value="500" autocomplete="off" />
+              </div>
+            </div>
+            <div class="pay-section">
+              <p class="field-label field-label--caps">Способ оплаты</p>
+              <div id="payment-methods" class="payment-methods"></div>
+            </div>
+            <label class="field pay-section">
+              <span class="field-label field-label--caps">Промокод</span>
+              <div class="promo-row">
+                <input type="text" id="payment-promo-input" class="field-input" placeholder="Введите промокод" autocomplete="off" />
+                <button type="button" class="btn promo-apply-btn" id="payment-promo-apply">Применить</button>
+              </div>
+            </label>
+            <p id="payment-promo-msg" class="billing-msg muted small hidden"></p>
+            <p id="payment-promo-err" class="error hidden"></p>
+            <div class="pay-summary-card" id="payment-summary">
+              <div class="pay-summary-row">
+                <span>Сумма</span>
+                <span id="payment-sum-line">₽ 500</span>
+              </div>
+              <div class="pay-summary-row pay-summary-row--total">
+                <span>Итого</span>
+                <span id="payment-total-line">₽ 500</span>
+              </div>
+            </div>
+          </div>
+          <div class="pay-footer">
+            <button type="button" class="btn pay-submit-btn" id="payment-submit">Оплатить ₽ 500</button>
+          </div>
+        </div>
+
+        <div id="profile-booking" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-booking-back">← Назад</button>
+            <span class="detail-title">Ассистент бронирования</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body">
+            <div class="pay-section booking-help">
+              <p class="field-label field-label--caps">Что это</p>
+              <p class="muted small">
+                Отдельный Telegram-аккаунт пишет менеджерам ресторанов от вашего имени.
+                Ваш личный аккаунт и серверный ассистент владельца не используются.
+              </p>
+              <p class="field-label field-label--caps">Шаг 1 — API на my.telegram.org</p>
+              <p class="muted small">
+                Войдите на <strong>my.telegram.org</strong> → <em>API development tools</em> → создайте приложение
+                (название любое). Скопируйте <strong>api_id</strong> и <strong>api_hash</strong> сюда.
+                Обычно достаточно войти с основного номера; сессию ниже создаёте уже для отдельного аккаунта ассистента.
+              </p>
+              <p class="field-label field-label--caps">Шаг 2 — отдельный аккаунт</p>
+              <p class="muted small">
+                Зарегистрируйте второй номер в Telegram (или используйте запасной). Именно с этим номером
+                на шаге 3 придёт код входа. Этот аккаунт будет писать ресторанам.
+              </p>
+            </div>
+            <label class="field">
+              <span class="field-label">api_id</span>
+              <input type="text" inputmode="numeric" id="booking-api-id" class="field-input" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span class="field-label">api_hash</span>
+              <input type="text" id="booking-api-hash" class="field-input" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span class="field-label">Имя для ресторана</span>
+              <input type="text" id="booking-display-name" class="field-input" placeholder="Как представлять вас" autocomplete="name" />
+            </label>
+            <label class="field">
+              <span class="field-label">Ваш телефон для брони</span>
+              <input type="tel" id="booking-owner-phone" class="field-input" placeholder="+79001234567" autocomplete="tel" />
+            </label>
+            <label class="field">
+              <span class="field-label">Род ассистента в сообщениях</span>
+              <select id="booking-gender" class="field-input">
+                <option value="male">Мужской (Хотел забронировать)</option>
+                <option value="female">Женский (Хотела забронировать)</option>
+              </select>
+            </label>
+            <button type="button" class="btn" id="booking-save-config">Сохранить настройки</button>
+            <p id="booking-config-msg" class="billing-msg muted small hidden"></p>
+            <p id="booking-config-err" class="error hidden"></p>
+            <div class="svc-divider svc-divider--spaced" aria-hidden="true"></div>
+            <p class="field-label field-label--caps">Шаг 3 — вход ассистента</p>
+            <label class="field">
+              <span class="field-label">Номер аккаунта ассистента</span>
+              <input type="tel" id="booking-assistant-phone" class="field-input" placeholder="+79009876543" autocomplete="tel" />
+            </label>
+            <button type="button" class="btn ghost" id="booking-send-code">Отправить код в Telegram</button>
+            <label class="field">
+              <span class="field-label">Код из Telegram</span>
+              <input type="text" id="booking-login-code" class="field-input" inputmode="numeric" autocomplete="one-time-code" />
+            </label>
+            <label class="field">
+              <span class="field-label">Пароль 2FA (если включён)</span>
+              <input type="password" id="booking-login-password" class="field-input" autocomplete="current-password" />
+            </label>
+            <button type="button" class="btn" id="booking-confirm-login">Подтвердить вход</button>
+            <p id="booking-login-msg" class="billing-msg muted small hidden"></p>
+            <p id="booking-login-err" class="error hidden"></p>
+            <div class="svc-divider svc-divider--spaced" aria-hidden="true"></div>
+            <p class="field-label field-label--caps">WhatsApp (рестораны по телефону)</p>
+            <p class="muted small">
+              Отдельный номер с WhatsApp. В приложении WhatsApp: Связанные устройства → привязать по QR.
+              Если у заведения есть телефон, ассистент напишет в WhatsApp.
+            </p>
+            <div id="booking-wa-qr-wrap" class="booking-qr-wrap hidden">
+              <img id="booking-wa-qr-img" class="booking-qr-img" alt="QR WhatsApp" />
+            </div>
+            <button type="button" class="btn ghost" id="booking-wa-start">Подключить WhatsApp (QR)</button>
+            <button type="button" class="btn hidden" id="booking-wa-disconnect">Отключить WhatsApp</button>
+            <p id="booking-wa-msg" class="billing-msg muted small hidden"></p>
+            <p id="booking-wa-err" class="error hidden"></p>
+          </div>
+        </div>
+
+        <div id="profile-expenses" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-expenses-back">← Назад</button>
+            <span class="detail-title">Расходы</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body" id="profile-expenses-body"></div>
+        </div>
+
+        <div id="profile-contacts" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-contacts-back">← Назад</button>
+            <span class="detail-title">Мои контакты</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body subscreen-body--contacts">
+            <p class="muted small contacts-hint">
+              Контакты подставляются в гостей календаря по имени или email.
+            </p>
+            <div class="contacts-form-card" id="contacts-form-card">
+              <p class="field-label field-label--caps" id="contacts-form-title">Новый контакт</p>
+              <input type="hidden" id="contacts-edit-email" value="" />
+              <label class="field">
+                <span class="field-label">Имя</span>
+                <input type="text" id="contacts-f-name" class="field-input" autocomplete="name" />
+              </label>
+              <label class="field">
+                <span class="field-label">Email</span>
+                <input type="email" id="contacts-f-email" class="field-input" autocomplete="email" />
+              </label>
+              <label class="field">
+                <span class="field-label">Telegram (без @)</span>
+                <input type="text" id="contacts-f-tg" class="field-input" autocomplete="off" placeholder="username" />
+              </label>
+              <label class="field">
+                <span class="field-label">Другие имена (через запятую)</span>
+                <input type="text" id="contacts-f-aliases" class="field-input" autocomplete="off" placeholder="Вова, Владимир" />
+              </label>
+              <div class="contacts-form-actions">
+                <button type="button" class="btn" id="contacts-save">Сохранить</button>
+                <button type="button" class="btn ghost hidden" id="contacts-cancel-edit">Отмена</button>
+              </div>
+              <p id="contacts-form-msg" class="billing-msg muted small hidden"></p>
+              <p id="contacts-form-err" class="error hidden"></p>
+            </div>
+            <p class="field-label field-label--caps">Список</p>
+            <div id="contacts-list" class="stack contacts-list"></div>
+            <p id="contacts-empty" class="empty-state hidden">Пока нет контактов — добавьте выше.</p>
+            <p id="contacts-err" class="error hidden"></p>
+          </div>
+        </div>
+
+        <div id="profile-calendars" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-calendars-back">← Назад</button>
+            <span class="detail-title">Календари</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body subscreen-body--contacts">
+            <div id="meeting-reminders-setting" class="svc-row calendars-row calendars-setting-row hidden">
+              <div class="svc-text">
+                <p class="svc-name">Напоминание о встречах</p>
+                <p class="svc-desc muted small" id="meeting-reminders-setting-hint">За 15 минут до начала</p>
+              </div>
+              <button
+                type="button"
+                class="svc-toggle svc-toggle--on"
+                id="meeting-reminders-toggle"
+                aria-pressed="true"
+                aria-label="Напоминание о встречах"
+              >
+                <span class="svc-toggle-knob"></span>
+              </button>
+            </div>
+            <p id="meeting-reminders-setting-err" class="error hidden"></p>
+            <p class="muted small contacts-hint">
+              Отключите календари, которые не нужны для напоминаний и свободных слотов (например, праздники или личный календарь).
+            </p>
+            <p id="calendars-save-status" class="calendars-save-status hidden" aria-live="polite"></p>
+            <div id="calendars-list" class="stack contacts-list"></div>
+            <p id="calendars-empty" class="empty-state hidden">Подключите Google Calendar в боте.</p>
+            <p id="calendars-err" class="error hidden"></p>
+          </div>
+        </div>
+
+        <div id="profile-zoom" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-zoom-back">← Назад</button>
+            <span class="detail-title">Zoom</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body">
+            <div class="pay-section booking-help">
+              <p class="field-label field-label--caps">Подключение</p>
+              <p class="muted small" id="profile-zoom-status">Проверка…</p>
+              <p class="muted small">
+                После OAuth закройте вкладку браузера и вернитесь сюда — статус обновится автоматически.
+                Для облачных записей нужен тариф Zoom Pro или выше.
+              </p>
+              <p class="muted small" id="profile-zoom-free-hint">
+                Бесплатный Zoom: облачная запись недоступна. После встречи бот напомнит в Telegram —
+                отправьте локальный MP4/M4A файлом (можно без подписи в течение 48 ч).
+              </p>
+            </div>
+            <button type="button" class="btn" id="profile-zoom-connect">Подключить Zoom</button>
+            <button type="button" class="btn ghost hidden" id="profile-zoom-disconnect">Отключить</button>
+            <p id="profile-zoom-msg" class="billing-msg muted small hidden"></p>
+            <p id="profile-zoom-err" class="error hidden"></p>
+            <div id="zoom-auto-record-setting" class="svc-row calendars-row calendars-setting-row hidden">
+              <div class="svc-text">
+                <p class="svc-name">Автозапись встреч</p>
+                <p class="svc-desc muted small" id="zoom-auto-record-hint">Leo подключится к Zoom и запишет встречу</p>
+              </div>
+              <button
+                type="button"
+                class="svc-toggle"
+                id="zoom-auto-record-toggle"
+                role="switch"
+                aria-checked="false"
+                aria-label="Автозапись Zoom-встреч"
+              >
+                <span class="svc-toggle-knob"></span>
+              </button>
+            </div>
+            <p id="zoom-auto-record-err" class="error hidden"></p>
+            <div class="svc-divider svc-divider--spaced" aria-hidden="true"></div>
+            <p class="field-label field-label--caps">Записи встреч</p>
+            <div id="profile-zoom-recordings" class="stack"></div>
+            <p id="profile-zoom-recordings-empty" class="empty-state hidden">Записей пока нет. Включите автозапись или пришлите боту ссылку на Zoom.</p>
+          </div>
+        </div>
+
+        <div id="profile-telemost" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-telemost-back">← Назад</button>
+            <span class="detail-title">Телемост</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body">
+            <div class="pay-section booking-help">
+              <p class="field-label field-label--caps">Подключение</p>
+              <p class="muted small" id="profile-telemost-status">Проверка…</p>
+              <p class="muted small">
+                API Телемоста доступен для аккаунтов Яндекс 360 для бизнеса на домене организации.
+                После OAuth закройте вкладку браузера и вернитесь сюда.
+              </p>
+              <p class="muted small hidden" id="profile-telemost-org-warn">
+                Аккаунт @yandex.ru: Телемост в браузере доступен, но Leo не может создавать комнаты через API.
+                Создайте ссылку на telemost.yandex.ru вручную или подключите корпоративную почту на домене компании.
+              </p>
+              <p class="field-label field-label--caps">Шаг 1 — авторизация</p>
+              <p class="muted small">
+                Откройте страницу Яндекса, войдите в аккаунт и разрешите доступ. На странице появится код подтверждения.
+              </p>
+            </div>
+            <button type="button" class="btn" id="profile-telemost-auth">Открыть авторизацию Яндекса</button>
+            <div class="svc-divider svc-divider--spaced" aria-hidden="true"></div>
+            <p class="field-label field-label--caps">Шаг 2 — код подтверждения</p>
+            <label class="field">
+              <span class="field-label">Код</span>
+              <input
+                type="text"
+                id="profile-telemost-code"
+                class="field-input"
+                autocomplete="one-time-code"
+                inputmode="text"
+                placeholder="Вставьте код со страницы Яндекса"
+              />
+            </label>
+            <button type="button" class="btn ghost" id="profile-telemost-submit">Подтвердить код</button>
+            <button type="button" class="btn ghost hidden" id="profile-telemost-disconnect">Отключить</button>
+            <p id="profile-telemost-msg" class="billing-msg muted small hidden"></p>
+            <p id="profile-telemost-err" class="error hidden"></p>
+            <div id="telemost-auto-record-setting" class="svc-row calendars-row calendars-setting-row hidden">
+              <div class="svc-text">
+                <p class="svc-name">Автоконспектирование</p>
+                <p class="svc-desc muted small" id="telemost-auto-record-hint">
+                  Яндекс пришлёт конспект на почту; Leo доставит саммари в Telegram при доступе mail:imap_ro
+                </p>
+              </div>
+              <button
+                type="button"
+                class="svc-toggle"
+                id="telemost-auto-record-toggle"
+                role="switch"
+                aria-checked="false"
+                aria-label="Автоконспектирование Телемоста"
+              >
+                <span class="svc-toggle-knob"></span>
+              </button>
+            </div>
+            <p id="telemost-auto-record-err" class="error hidden"></p>
+          </div>
+        </div>
+
+        <div id="profile-yandex-disk" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-yandex-disk-back">← Назад</button>
+            <span class="detail-title">Яндекс Диск</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body">
+            <div class="pay-section booking-help">
+              <p class="field-label field-label--caps">Подключение</p>
+              <p class="muted small" id="profile-yandex-disk-status">Проверка…</p>
+              <p class="muted small">
+                Записи Zoom-встреч сохраняются в папку «Leo/Записи встреч» на вашем Яндекс Диске:
+                аудио/видео, PDF транскрипции и саммари.
+              </p>
+              <p class="field-label field-label--caps">Шаг 1 — авторизация</p>
+              <p class="muted small">
+                Откройте страницу Яндекса, войдите в аккаунт и разрешите доступ. На странице появится код подтверждения.
+              </p>
+            </div>
+            <button type="button" class="btn" id="profile-yandex-disk-auth">Открыть авторизацию Яндекса</button>
+            <div class="svc-divider svc-divider--spaced" aria-hidden="true"></div>
+            <p class="field-label field-label--caps">Шаг 2 — код подтверждения</p>
+            <label class="field">
+              <span class="field-label">Код со страницы Яндекса</span>
+              <input
+                type="text"
+                id="profile-yandex-disk-code"
+                class="field-input"
+                autocomplete="one-time-code"
+                placeholder="Вставьте код"
+              />
+            </label>
+            <button type="button" class="btn" id="profile-yandex-disk-submit">Подключить</button>
+            <button type="button" class="btn ghost hidden" id="profile-yandex-disk-disconnect">Отключить</button>
+            <p id="profile-yandex-disk-msg" class="billing-msg muted small hidden"></p>
+            <p id="profile-yandex-disk-err" class="error hidden"></p>
+          </div>
+        </div>
+
+        <div id="profile-bitrix" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-bitrix-back">← Назад</button>
+            <span class="detail-title">Битрикс24</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body">
+            <div class="pay-section booking-help">
+              <p class="field-label field-label--caps">Подключение</p>
+              <p class="muted small" id="profile-bitrix-status">Проверка…</p>
+              <p class="muted small">
+                После подключения вы сможете управлять задачами, сделками и CRM в Битрикс24
+                свободными командами в чате с ботом.
+              </p>
+              <p class="field-label field-label--caps">Как получить токен</p>
+              <ol class="muted small bitrix-steps">
+                <li>Откройте свой Битрикс и нажмите <strong>Настройки → Настройки Битрикс24</strong></li>
+                <li>В меню выберите <strong>MCP → Работа с Битрикс24 из внешних AI-систем</strong></li>
+                <li>Далее в меню Битрикс откройте <strong>Приложения → MCP-подключения</strong></li>
+                <li>Нажмите кнопку <strong>«Получить токен подключения»</strong></li>
+                <li>Вставьте токен в поле ниже</li>
+              </ol>
+            </div>
+            <label class="field">
+              <span class="field-label">Токен подключения</span>
+              <input
+                type="password"
+                id="profile-bitrix-token"
+                class="field-input"
+                autocomplete="off"
+                placeholder="Токен из Битрикс24 (можно с Bearer или без)"
+              />
+            </label>
+            <button type="button" class="btn" id="profile-bitrix-submit">Подключить</button>
+            <button type="button" class="btn ghost hidden" id="profile-bitrix-disconnect">Отключить</button>
+            <p id="profile-bitrix-msg" class="billing-msg muted small hidden"></p>
+            <p id="profile-bitrix-err" class="error hidden"></p>
+          </div>
+        </div>
+
+        <div id="profile-knowledge-base" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-knowledge-base-back">← Назад</button>
+            <span class="detail-title">База знаний</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body">
+            <div class="pay-section">
+              <p class="field-label field-label--caps">Мои базы</p>
+              <div id="profile-kb-list" class="stack"></div>
+              <p id="profile-kb-empty" class="empty-state hidden">Баз знаний пока нет. Добавьте ссылку ниже.</p>
+            </div>
+            <div class="pay-section">
+              <p class="field-label field-label--caps">Добавить базу</p>
+              <label class="field">
+                <span class="field-label">Название</span>
+                <input type="text" id="profile-kb-title" class="field-input" placeholder="База компании" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span class="field-label">Ссылка</span>
+                <input type="url" id="profile-kb-url" class="field-input" placeholder="Google Docs, Notion, Яндекс Диск, Битрикс24" autocomplete="off" />
+              </label>
+              <label class="field hidden" id="profile-kb-notion-wrap">
+                <span class="field-label">Notion Integration Token</span>
+                <input type="password" id="profile-kb-notion-token" class="field-input" autocomplete="off" placeholder="secret_… (только для Notion)" />
+              </label>
+              <p class="muted small">
+                Google Docs — документ с доступом по ссылке. Notion — добавьте интеграцию на страницу.
+                Яндекс Диск — папка с .txt/.md. Битрикс24 — ссылка вида …/knowledge/код_базы/ (нужен REST-вебхук на сервере).
+              </p>
+              <button type="button" class="btn" id="profile-kb-add">Подключить и проиндексировать</button>
+            </div>
+            <div class="pay-section hidden" id="profile-kb-members-section">
+              <p class="field-label field-label--caps">Доступ участников</p>
+              <p class="muted small" id="profile-kb-members-kb-title"></p>
+              <div id="profile-kb-members-list" class="stack"></div>
+              <label class="field">
+                <span class="field-label">Добавить по @username</span>
+                <input type="text" id="profile-kb-member-username" class="field-input" placeholder="@username" autocomplete="off" />
+              </label>
+              <button type="button" class="btn ghost" id="profile-kb-member-add">Выдать доступ</button>
+            </div>
+            <p id="profile-kb-msg" class="billing-msg muted small hidden"></p>
+            <p id="profile-kb-err" class="error hidden"></p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="tabbar-backdrop" aria-hidden="true"></div>
+    <div class="tabbar-wrap">
+      <p class="sidebar-brand">Ассистент</p>
+      <nav class="tabbar" role="tablist" aria-label="Разделы">
+        <button type="button" class="tabbar-btn active" data-tab="actual" role="tab" aria-selected="true">
+          <span class="tabbar-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+            </svg>
+          </span>
+          <span class="tabbar-label">Актуальное</span>
+        </button>
+        <button type="button" class="tabbar-btn" data-tab="notes" role="tab" aria-selected="false">
+          <span class="tabbar-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" />
+            </svg>
+          </span>
+          <span class="tabbar-label">Сохранённое</span>
+        </button>
+        <button type="button" class="tabbar-btn" data-tab="profile" role="tab" aria-selected="false">
+          <span class="tabbar-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
+          </span>
+          <span class="tabbar-label">Профиль</span>
+        </button>
+      </nav>
+    </div>
+  </div>
+
+  <div id="gpt-overlay" class="gpt-overlay hidden" aria-hidden="true">
+    <div class="gpt-overlay-backdrop" id="gpt-overlay-backdrop"></div>
+    <div class="gpt-sheet" role="dialog" aria-modal="true" aria-labelledby="gpt-brand-title">
+      <div class="gpt-sheet-toolbar">
+        <button type="button" class="btn-text" id="gpt-close">← Назад</button>
+        <div class="gpt-sheet-brand">
+          <div class="gpt-brand-avatar" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <rect x="4" y="8" width="16" height="10" rx="2" />
+              <circle cx="9" cy="13" r="1.2" fill="currentColor" stroke="none" />
+              <path d="M12 13h5M12 16h3" />
+              <path d="M9 6V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1" />
+            </svg>
+          </div>
+          <div class="gpt-brand-text">
+            <p id="gpt-brand-title" class="gpt-brand-title">GPT Ассистент</p>
+            <p id="gpt-context-line" class="gpt-context-line"></p>
+          </div>
+        </div>
+      </div>
+      <div class="gpt-scroll">
+        <div id="gpt-messages" class="gpt-messages"></div>
+        <div id="gpt-hints-block" class="gpt-hints-block hidden">
+          <p class="gpt-hints-label">Подсказки</p>
+          <div class="gpt-hints-scroll">
+            <button type="button" class="gpt-hint-chip" data-hint="Сделай краткое резюме">Сделай краткое резюме</button>
+            <button type="button" class="gpt-hint-chip" data-hint="Выдели ключевые задачи">Выдели ключевые задачи</button>
+            <button type="button" class="gpt-hint-chip" data-hint="Что обсудили подробно?">Что обсудили подробно?</button>
+          </div>
+        </div>
+      </div>
+      <div class="gpt-compose-bar">
+        <div class="gpt-compose-inner">
+          <textarea id="gpt-input" class="gpt-input" rows="1" placeholder="Спросите GPT…"></textarea>
+          <button type="button" class="gpt-send-fab" id="gpt-send" aria-label="Отправить">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="voice-overlay" class="modal-overlay voice-overlay hidden" aria-hidden="true">
+    <div class="modal modal--sheet voice-sheet" role="dialog" aria-modal="true" aria-labelledby="voice-title">
+      <div class="modal-form">
+        <div class="modal-header">
+          <button type="button" class="modal-header-btn modal-header-btn--close" id="voice-close" aria-label="Закрыть" title="Закрыть">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+          <h2 id="voice-title" class="modal-title">Голосовое</h2>
+          <span class="modal-header-btn modal-header-btn--placeholder" aria-hidden="true"></span>
+        </div>
+        <div class="modal-body voice-body">
+          <div id="voice-recorder" class="voice-recorder">
+            <div id="voice-status" class="voice-status">Нажмите «Начать запись» и продиктуйте сообщение.</div>
+            <div class="voice-actions">
+              <button type="button" class="btn primary" id="voice-record-start">Начать запись</button>
+              <button type="button" class="btn ghost hidden" id="voice-record-stop">Остановить</button>
+            </div>
+            <p id="voice-error" class="error hidden"></p>
+          </div>
+          <div id="voice-transcript-wrap" class="voice-transcript-wrap hidden">
+            <label class="field">
+              <span class="field-label">Транскрипция</span>
+              <textarea id="voice-transcript-input" class="field-textarea voice-transcript-input" rows="4"></textarea>
+            </label>
+            <button type="button" class="btn primary voice-send-btn" id="voice-send">Отправить</button>
+          </div>
+          <div id="voice-chat" class="voice-chat hidden" aria-live="polite"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tags-manage-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal--sheet tags-manage-sheet" role="dialog" aria-modal="true" aria-labelledby="tags-manage-title">
+      <div class="modal-form">
+        <div class="modal-header">
+          <button type="button" class="modal-header-btn modal-header-btn--close" id="tags-manage-close" aria-label="Закрыть" title="Закрыть">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+          <h2 id="tags-manage-title" class="modal-title">Теги</h2>
+          <span class="modal-header-btn modal-header-btn--placeholder" aria-hidden="true"></span>
+        </div>
+        <div class="modal-body tags-manage-body">
+          <div id="tags-manage-list" class="tags-manage-list"></div>
+          <div class="tags-manage-create">
+            <input
+              type="text"
+              id="tags-manage-new-input"
+              class="field-input tags-manage-new-input"
+              placeholder="Новый тег"
+              maxlength="40"
+              aria-label="Название нового тега"
+            />
+            <button type="button" id="tags-manage-create-btn" class="btn primary tags-manage-create-btn">Создать</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="note-unsaved-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="note-unsaved-title">
+      <h2 id="note-unsaved-title" class="modal-title">Несохранённые изменения</h2>
+      <p class="modal-text">Сохранить изменения перед выходом?</p>
+      <div class="modal-actions modal-actions--stack">
+        <button type="button" class="btn primary" id="note-unsaved-save">Сохранить изменения</button>
+        <button type="button" class="btn btn-text-danger" id="note-unsaved-discard">Отменить изменения</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="note-editor-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal--sheet note-editor-sheet" role="dialog" aria-modal="true" aria-labelledby="note-editor-modal-title">
+      <div class="modal-form note-editor-modal-form">
+        <button type="button" class="btn-text note-editor-web-back hidden" id="note-editor-web-back">
+          ← Назад
+        </button>
+        <div class="modal-header note-editor-modal-header" aria-hidden="true">
+          <h2 id="note-editor-modal-title" class="modal-title">Заметка</h2>
+        </div>
+        <div class="modal-body note-editor-modal-body">
+          <div id="note-editor-tags-wrap" class="note-editor-pad note-editor-pad--tags hidden"></div>
+          <div id="note-editor-modal-body" class="note-editor-modal-content"></div>
+        </div>
+        <div id="note-editor-toolbar-wrap" class="note-editor-toolbar-wrap note-editor-toolbar-wrap--bottom hidden">
+          <div class="note-editor-toolbar-row">
+            <div id="note-editor-format-toolbar-host" class="note-editor-format-toolbar-host"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal--sheet" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <form id="modal-form" class="modal-form">
+        <input type="hidden" id="modal-kind" value="" />
+        <input type="hidden" id="modal-reminder-id" />
+        <input type="hidden" id="modal-event-id" />
+        <input type="hidden" id="modal-calendar-id" />
+        <div class="modal-header">
+          <button type="button" class="modal-header-btn modal-header-btn--close" id="modal-cancel" aria-label="Закрыть" title="Закрыть">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+          <h2 id="modal-title" class="modal-title">Редактирование</h2>
+          <button type="submit" class="modal-header-btn modal-header-btn--save" id="modal-save" aria-label="Сохранить" title="Сохранить">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div id="modal-fields"></div>
+          <button type="button" class="btn btn-text-danger modal-delete-btn hidden" id="modal-delete">Удалить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var host = String(location.hostname || "").toLowerCase();
+      var local = host === "127.0.0.1" || host === "localhost" || host === "[::1]";
+      var dev =
+        local ||
+        /[?&]dev=1(?:&|$)/.test(location.search) ||
+        localStorage.getItem("miniapp_dev") === "1";
+      if (dev) {
+        try {
+          localStorage.setItem("miniapp_dev", "1");
+        } catch (_) {}
+        document.write(
+          '<script src="/webapp/dev-mock-data.js?v=20260831-vpn-pwa"><\/script>'
+        );
+      }
+    })();
+  </script>
+  <script src="/webapp/app.js?v=20260831-note-restore" defer></script>
+</body>
+</html>

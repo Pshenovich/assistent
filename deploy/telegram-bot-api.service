@@ -1,0 +1,16 @@
+[Unit]
+Description=Telegram Bot API server (local mode, large file downloads)
+Documentation=file:///opt/assistant/docs/local-bot-api.md
+After=docker.service network-online.target
+Wants=docker.service
+Before=assistant-bot.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+TimeoutStartSec=300
+ExecStart=/opt/assistant/deploy/run-telegram-bot-api.sh
+
+[Install]
+WantedBy=multi-user.target

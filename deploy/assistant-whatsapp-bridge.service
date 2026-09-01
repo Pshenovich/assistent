@@ -1,0 +1,22 @@
+[Unit]
+Description=WhatsApp bridge (Baileys) for booking assistant
+After=network.target
+
+[Service]
+Type=simple
+# Как у assistant-bot (иначе status=217/USER). Пример:
+# User=root
+# Group=root
+# Узнать: systemctl show assistant-bot -p User --value
+WorkingDirectory=/opt/assistant/whatsapp_bridge
+Environment=NODE_ENV=production
+Environment=PORT=8765
+Environment=SESSIONS_DIR=/opt/assistant/booking_whatsapp_sessions
+Environment=INCOMING_WEBHOOK_URL=http://127.0.0.1:8776/internal/booking/whatsapp/incoming
+# Environment=INCOMING_WEBHOOK_SECRET=
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

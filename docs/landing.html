@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0b14" />
+  <title>Leo — AI-ассистент для встреч и календаря</title>
+  <meta
+    name="description"
+    content="Leo помогает вести календарь, создает Zoom-встречи, напоминает о важном и превращает записи встреч в понятные итоги прямо в Telegram."
+  />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0b14;
+      --bg-soft: #11111f;
+      --card: rgba(255, 255, 255, 0.06);
+      --card-strong: rgba(77, 142, 255, 0.16);
+      --border: rgba(255, 255, 255, 0.12);
+      --text: #f6f7fb;
+      --muted: #b4b4c0;
+      --muted-strong: #d7d9e5;
+      --accent: #4d8eff;
+      --accent-strong: #7aa8ff;
+      --shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(77, 142, 255, 0.28), transparent 34rem),
+        radial-gradient(circle at 90% 8%, rgba(112, 72, 232, 0.2), transparent 30rem),
+        var(--bg);
+      line-height: 1.55;
+      font-size: 1rem;
+    }
+
+    a { color: inherit; }
+
+    .page {
+      width: min(72rem, 100%);
+      margin: 0 auto;
+      padding: 1.5rem 1.25rem 3rem;
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 3.5rem;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.7rem;
+      font-weight: 750;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 2.25rem;
+      height: 2.25rem;
+      place-items: center;
+      border-radius: 0.8rem;
+      background: linear-gradient(135deg, var(--accent), #8f75ff);
+      color: white;
+      box-shadow: 0 12px 32px rgba(77, 142, 255, 0.35);
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .nav-links a {
+      text-decoration: none;
+    }
+
+    .nav-links a:hover { color: var(--text); }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.12fr) minmax(18rem, 0.88fr);
+      gap: 2rem;
+      align-items: center;
+      margin-bottom: 5rem;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin: 0 0 1rem;
+      padding: 0.38rem 0.7rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--accent-strong);
+      background: rgba(77, 142, 255, 0.08);
+      font-size: 0.88rem;
+      font-weight: 650;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      max-width: 46rem;
+      margin-bottom: 1rem;
+      font-size: clamp(2.65rem, 7vw, 5.4rem);
+      line-height: 0.94;
+      letter-spacing: -0.07em;
+    }
+
+    .hero-text {
+      max-width: 39rem;
+      margin-bottom: 1.6rem;
+      color: var(--muted-strong);
+      font-size: clamp(1.1rem, 2vw, 1.3rem);
+    }
+
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.85rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 3rem;
+      padding: 0.78rem 1.15rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.06);
+      text-decoration: none;
+      font-weight: 700;
+      transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      border-color: rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .btn.primary {
+      border: 0;
+      color: white;
+      background: linear-gradient(135deg, var(--accent), #7c6cff);
+      box-shadow: 0 16px 38px rgba(77, 142, 255, 0.3);
+    }
+
+    .btn[aria-disabled="true"] {
+      cursor: wait;
+      opacity: 0.72;
+      pointer-events: none;
+    }
+
+    .hero-note {
+      margin: 0.75rem 0 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .assistant-card,
+    .section-card,
+    .feature-card,
+    .price-card {
+      border: 1px solid var(--border);
+      border-radius: 1.5rem;
+      background: var(--card);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
+    }
+
+    .assistant-card {
+      padding: 1.2rem;
+    }
+
+    .chat {
+      display: grid;
+      gap: 0.85rem;
+    }
+
+    .bubble {
+      width: fit-content;
+      max-width: 92%;
+      padding: 0.85rem 1rem;
+      border-radius: 1.1rem;
+      color: var(--muted-strong);
+      background: rgba(255, 255, 255, 0.08);
+      font-size: 0.95rem;
+    }
+
+    .bubble.user {
+      justify-self: end;
+      color: white;
+      background: rgba(77, 142, 255, 0.22);
+    }
+
+    .bubble strong {
+      color: white;
+    }
+
+    .chat-meta {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+
+    .metric {
+      padding: 0.8rem;
+      border-radius: 1rem;
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 1.05rem;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .section {
+      margin-bottom: 4.5rem;
+    }
+
+    .section-head {
+      max-width: 43rem;
+      margin-bottom: 1.4rem;
+    }
+
+    .section-kicker {
+      margin-bottom: 0.45rem;
+      color: var(--accent-strong);
+      font-size: 0.88rem;
+      font-weight: 750;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    h2 {
+      margin-bottom: 0.65rem;
+      font-size: clamp(2rem, 4vw, 3.2rem);
+      line-height: 1.02;
+      letter-spacing: -0.055em;
+    }
+
+    .section-head p,
+    .section-card p,
+    .feature-card p,
+    .price-card p {
+      color: var(--muted);
+    }
+
+    .feature-showcase {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      padding-bottom: 2.1rem;
+    }
+
+    .feature-story {
+      position: sticky;
+      top: 2rem;
+      display: grid;
+      min-height: min(38rem, calc(100vh - 4rem));
+      grid-template-columns: minmax(0, 0.95fr) minmax(20rem, 1.05fr);
+      gap: 1.25rem;
+      align-items: center;
+      margin-bottom: clamp(1.4rem, 5vh, 2.8rem);
+      padding: 1.2rem;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 1.8rem;
+      background:
+        linear-gradient(180deg, rgba(11, 11, 20, 0.92), rgba(11, 11, 20, 0.86)),
+        var(--bg);
+      box-shadow: var(--shadow);
+      transform: translateY(var(--stack-shift, 0)) scale(var(--stack-scale, 1));
+      transform-origin: center top;
+      will-change: transform, opacity;
+    }
+
+    .feature-story:nth-child(1) { z-index: 1; }
+    .feature-story:nth-child(2) { z-index: 2; }
+    .feature-story:nth-child(3) { z-index: 3; }
+    .feature-story:nth-child(4) { z-index: 4; }
+    .feature-story:nth-child(5) { z-index: 5; }
+    .feature-story:nth-child(6) { z-index: 6; }
+
+    .feature-copy,
+    .chat-demo {
+      border: 1px solid var(--border);
+      border-radius: 1.5rem;
+      background: var(--card);
+      backdrop-filter: blur(16px);
+    }
+
+    .feature-copy {
+      padding: 1.35rem;
+      box-shadow: none;
+    }
+
+    .feature-number {
+      display: inline-flex;
+      margin-bottom: 0.95rem;
+      padding: 0.32rem 0.62rem;
+      border-radius: 999px;
+      color: var(--accent-strong);
+      background: rgba(77, 142, 255, 0.1);
+      font-size: 0.82rem;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .feature-copy h3 {
+      margin-bottom: 0.5rem;
+      font-size: clamp(1.55rem, 3vw, 2.35rem);
+      line-height: 1.05;
+      letter-spacing: -0.04em;
+    }
+
+    .feature-copy p {
+      margin-bottom: 1rem;
+      color: var(--muted);
+      font-size: 1rem;
+    }
+
+    .feature-copy ul {
+      display: grid;
+      gap: 0.65rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .feature-copy li {
+      position: relative;
+      padding-left: 1rem;
+      color: var(--muted-strong);
+      font-size: 0.95rem;
+    }
+
+    .feature-copy li::before {
+      position: absolute;
+      left: 0;
+      color: var(--accent-strong);
+      content: "•";
+    }
+
+    .chat-demo {
+      position: relative;
+      overflow: hidden;
+      padding: 1rem;
+      box-shadow: var(--shadow);
+    }
+
+    .chat-demo::before {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 15% 15%, rgba(77, 142, 255, 0.16), transparent 14rem),
+        radial-gradient(circle at 85% 20%, rgba(124, 108, 255, 0.12), transparent 12rem);
+      content: "";
+    }
+
+    .chat-demo-head {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .chat-demo-title {
+      color: var(--text);
+      font-weight: 750;
+    }
+
+    .chat-demo-body {
+      position: relative;
+      display: grid;
+      gap: 0.72rem;
+    }
+
+    .chat-demo .bubble {
+      opacity: 0;
+      animation: chatBubbleIn 7.2s ease-in-out infinite;
+      transform: translateY(0.6rem) scale(0.98);
+    }
+
+    .chat-demo .bubble:nth-child(1) { animation-delay: 0s; }
+    .chat-demo .bubble:nth-child(2) { animation-delay: 0.7s; }
+    .chat-demo .bubble:nth-child(3) { animation-delay: 1.4s; }
+    .chat-demo .bubble:nth-child(4) { animation-delay: 2.1s; }
+    .chat-demo .bubble:nth-child(5) { animation-delay: 2.8s; }
+
+    .chat-demo .bubble.result {
+      border: 1px solid rgba(77, 142, 255, 0.25);
+      background: rgba(77, 142, 255, 0.12);
+    }
+
+    @keyframes chatBubbleIn {
+      0% {
+        opacity: 0;
+        transform: translateY(0.6rem) scale(0.98);
+      }
+      9%,
+      78% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+      100% {
+        opacity: 0;
+        transform: translateY(-0.25rem) scale(0.99);
+      }
+    }
+
+    .section-card {
+      display: grid;
+      grid-template-columns: 0.9fr 1.1fr;
+      gap: 1.5rem;
+      padding: 1.4rem;
+      background: var(--card-strong);
+    }
+
+    .scenario-list {
+      display: grid;
+      gap: 0.85rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .scenario-list li {
+      padding: 0.85rem 1rem;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 1rem;
+      color: var(--muted-strong);
+      background: rgba(0, 0, 0, 0.13);
+    }
+
+    .integration-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1rem;
+    }
+
+    .integration-card {
+      padding: 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: 1.5rem;
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .integration-card h3 {
+      margin-bottom: 0.45rem;
+      font-size: 1.2rem;
+    }
+
+    .integration-card p {
+      margin-bottom: 0;
+      color: var(--muted);
+    }
+
+    .pricing-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+    }
+
+    .price-card {
+      display: flex;
+      min-height: 16rem;
+      flex-direction: column;
+      padding: 1.25rem;
+      box-shadow: none;
+    }
+
+    .price-card.featured {
+      border-color: rgba(77, 142, 255, 0.5);
+      background: rgba(77, 142, 255, 0.14);
+    }
+
+    .price-label {
+      margin-bottom: 1rem;
+      color: var(--accent-strong);
+      font-size: 0.86rem;
+      font-weight: 750;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .price {
+      margin-bottom: 0.35rem;
+      font-size: 2.45rem;
+      font-weight: 800;
+      letter-spacing: -0.055em;
+    }
+
+    .minutes {
+      margin-bottom: 1.1rem;
+      color: var(--muted-strong);
+      font-weight: 700;
+    }
+
+    .price-card p {
+      margin-bottom: 1.2rem;
+      font-size: 0.95rem;
+    }
+
+    .price-card .btn {
+      width: 100%;
+      margin-top: auto;
+    }
+
+    .final-cta {
+      padding: 2rem;
+      text-align: center;
+      background:
+        linear-gradient(135deg, rgba(77, 142, 255, 0.2), rgba(124, 108, 255, 0.14)),
+        var(--card);
+    }
+
+    .final-cta h2 {
+      max-width: 45rem;
+      margin-right: auto;
+      margin-left: auto;
+    }
+
+    .final-cta p {
+      max-width: 36rem;
+      margin-right: auto;
+      margin-bottom: 1.4rem;
+      margin-left: auto;
+      color: var(--muted-strong);
+    }
+
+    .footer {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 0.75rem;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .footer a {
+      color: var(--muted);
+      text-decoration: none;
+    }
+
+    .footer a:hover { color: var(--text); }
+
+    @media (max-width: 860px) {
+      .page { padding-top: 1rem; }
+      .nav { margin-bottom: 2.3rem; }
+      .nav-links { display: none; }
+      .hero,
+      .section-card {
+        grid-template-columns: 1fr;
+      }
+      .feature-story,
+      .integration-grid,
+      .pricing-grid {
+        grid-template-columns: 1fr;
+      }
+      .feature-story {
+        top: 0.75rem;
+        min-height: calc(100vh - 1.5rem);
+        margin-bottom: 1.6rem;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
+      }
+      .chat-demo {
+        position: relative;
+        top: auto;
+        padding: 0.85rem;
+      }
+      .feature-copy,
+      .chat-demo {
+        background: #11111f;
+      }
+      .hero { margin-bottom: 3.5rem; }
+      .section { margin-bottom: 3.3rem; }
+      .chat-meta { grid-template-columns: 1fr; }
+      .final-cta { padding: 1.4rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="nav" aria-label="Навигация">
+      <a class="brand" href="/" aria-label="Leo">
+        <span class="brand-mark" aria-hidden="true">L</span>
+        <span>Leo</span>
+      </a>
+      <nav class="nav-links" aria-label="Разделы лендинга">
+        <a href="#features">Возможности</a>
+        <a href="#integrations">Интеграции</a>
+        <a href="#pricing">Тарифы</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="hero-title">
+        <div>
+          <p class="eyebrow">AI-ассистент в Telegram</p>
+          <h1 id="hero-title">Leo держит встречи, календарь и заметки под контролем</h1>
+          <p class="hero-text">
+            Пишите боту обычными словами или голосом: Leo создаст Zoom-встречу, добавит участников в календарь,
+            напомнит о созвоне, запишет встречу, сделает транскрибацию и найдет нужный фрагмент в заметках.
+          </p>
+          <div class="cta-row">
+            <a class="btn primary js-bot-cta" href="#start" aria-disabled="true">Начать бесплатно</a>
+            <a class="btn" href="#pricing">Посмотреть тарифы</a>
+          </div>
+          <p class="hero-note js-bot-status">Подключаем ссылку на Telegram-бота...</p>
+        </div>
+
+        <aside class="assistant-card" aria-label="Пример работы Leo">
+          <div class="chat">
+            <div class="bubble user">Создай встречу с Марией завтра в 15:00 и добавь Zoom</div>
+            <div class="bubble">
+              <strong>Готово.</strong><br />
+              Событие добавлено в Google Calendar, Zoom-ссылка уже в описании. Напомню за 15 минут.
+            </div>
+            <div class="bubble user">После встречи сделай краткое саммари</div>
+            <div class="bubble">
+              <strong>Leo:</strong> зафиксирую договоренности, задачи и следующие шаги.
+            </div>
+          </div>
+          <div class="chat-meta">
+            <div class="metric">
+              <strong>1 чат</strong>
+              <span>вместо набора сервисов</span>
+            </div>
+            <div class="metric">
+              <strong>24/7</strong>
+              <span>напоминания и заметки</span>
+            </div>
+            <div class="metric">
+              <strong>минуты</strong>
+              <span>для встреч и записей</span>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section id="features" class="section" aria-labelledby="features-title">
+        <div class="section-head">
+          <p class="section-kicker">Возможности</p>
+          <h2 id="features-title">Один ассистент для всего цикла работы со встречами</h2>
+          <p>
+            Leo помогает до встречи, во время созвона и после него: планирует, напоминает, записывает,
+            расшифровывает, собирает саммари и хранит знания так, чтобы их можно было быстро найти.
+          </p>
+        </div>
+
+        <div class="feature-showcase">
+          <article class="feature-story">
+            <div class="feature-copy">
+              <span class="feature-number">01 / Встречи</span>
+              <h3>Создать, записать и разобрать встречу в одном чате</h3>
+              <p>Все, что обычно приходится делать вокруг созвона, Leo собирает в одном сценарии.</p>
+              <ul>
+                <li>Быстро создает Zoom-встречу по короткой команде.</li>
+                <li>Запись встреч: подключает запись, чтобы не вести протокол вручную.</li>
+                <li>Транскрибация встреч: переводит разговор в текст после созвона.</li>
+                <li>Саммари встреч: собирает решения, договоренности и следующие шаги.</li>
+              </ul>
+            </div>
+            <aside class="chat-demo" aria-label="Пример работы Leo со встречами">
+              <div class="chat-demo-head">
+                <span class="chat-demo-title">Leo в Telegram</span>
+                <span>Встречи</span>
+              </div>
+              <div class="chat-demo-body">
+                <div class="bubble user">Создай Zoom с командой сегодня в 16:00 и включи запись</div>
+                <div class="bubble result"><strong>Готово.</strong> Zoom-ссылка создана, запись подключена.</div>
+                <div class="bubble user">После встречи пришли транскрибацию и саммари</div>
+                <div class="bubble"><strong>Leo:</strong> зафиксирую текст разговора, решения и следующие шаги.</div>
+                <div class="bubble result"><strong>Итог:</strong> 3 решения, 5 задач, дедлайн до пятницы.</div>
+              </div>
+            </aside>
+          </article>
+
+          <article class="feature-story">
+            <div class="feature-copy">
+              <span class="feature-number">02 / Календарь</span>
+              <h3>Планировать встречи без ручного заполнения календаря</h3>
+              <p>Leo понимает обычные фразы и превращает их в события Google Calendar.</p>
+              <ul>
+                <li>Создает встречи и добавляет участников.</li>
+                <li>Показывает список встреч на указанную дату.</li>
+                <li>Помогает проверить занятость других участников.</li>
+                <li>Напоминает о встрече заранее, чтобы вы не опоздали.</li>
+              </ul>
+            </div>
+            <aside class="chat-demo" aria-label="Пример работы Leo с календарем">
+              <div class="chat-demo-head">
+                <span class="chat-demo-title">Leo в Telegram</span>
+                <span>Календарь</span>
+              </div>
+              <div class="chat-demo-body">
+                <div class="bubble user">Поставь встречу с Анной и Олегом завтра на 11:30</div>
+                <div class="bubble result"><strong>Нашел свободный слот.</strong> Анна и Олег доступны.</div>
+                <div class="bubble">Создать событие на 11:30 и отправить приглашения?</div>
+                <div class="bubble user">Да, и напомни за 15 минут</div>
+                <div class="bubble result"><strong>Готово.</strong> Событие в календаре, участники добавлены.</div>
+              </div>
+            </aside>
+          </article>
+
+          <article class="feature-story">
+            <div class="feature-copy">
+              <span class="feature-number">03 / Напоминания</span>
+              <h3>Держать обязательства вне головы</h3>
+              <p>Просите Leo напомнить о задаче, звонке, дедлайне или личном деле обычной фразой.</p>
+              <ul>
+                <li>Понимает естественные формулировки: «завтра утром», «через 2 часа», «в пятницу».</li>
+                <li>Возвращает важные дела в Telegram, где вы точно их увидите.</li>
+                <li>Помогает не держать мелкие обязательства в голове.</li>
+              </ul>
+            </div>
+            <aside class="chat-demo" aria-label="Пример работы Leo с напоминаниями">
+              <div class="chat-demo-head">
+                <span class="chat-demo-title">Leo в Telegram</span>
+                <span>Напоминания</span>
+              </div>
+              <div class="chat-demo-body">
+                <div class="bubble user">Напомни завтра в 9:30 отправить клиенту договор</div>
+                <div class="bubble result"><strong>Запомнил.</strong> Завтра в 9:30 напомню.</div>
+                <div class="bubble user">И еще через 2 часа проверить оплату</div>
+                <div class="bubble result"><strong>Готово.</strong> Второе напоминание тоже поставил.</div>
+                <div class="bubble"><strong>Leo:</strong> важные дела вернутся в чат вовремя.</div>
+              </div>
+            </aside>
+          </article>
+
+          <article class="feature-story">
+            <div class="feature-copy">
+              <span class="feature-number">04 / Записи</span>
+              <h3>Находить нужное в заметках, саммари и транскрипциях</h3>
+              <p>Leo превращает разрозненные заметки, саммари и транскрипции в рабочую базу знаний.</p>
+              <ul>
+                <li>Создает заметки из текста, голоса или итогов встречи.</li>
+                <li>Ищет по заметкам, саммари и транскрипциям.</li>
+                <li>Помогает быстро вспомнить, что обсуждали с клиентом или командой.</li>
+              </ul>
+            </div>
+            <aside class="chat-demo" aria-label="Пример поиска по записям">
+              <div class="chat-demo-head">
+                <span class="chat-demo-title">Leo в Telegram</span>
+                <span>Записи</span>
+              </div>
+              <div class="chat-demo-body">
+                <div class="bubble user">Найди, что мы решили по тарифам на встрече с Марией</div>
+                <div class="bubble result"><strong>Нашел в саммари.</strong> Обсуждали 3 тарифа и лимиты минут.</div>
+                <div class="bubble">Ключевое: стартовый тариф 600 минут, командный 2000 минут.</div>
+                <div class="bubble user">Сохрани это как заметку для лендинга</div>
+                <div class="bubble result"><strong>Заметка создана.</strong> Добавил ссылку на исходное саммари.</div>
+              </div>
+            </aside>
+          </article>
+
+          <article class="feature-story">
+            <div class="feature-copy">
+              <span class="feature-number">05 / Управление</span>
+              <h3>Писать, говорить или работать из мини-приложения</h3>
+              <p>Работайте так, как удобно в моменте: текстом, голосом, через мини-приложение или в группе.</p>
+              <ul>
+                <li>Принимает голосовые сообщения, когда некогда печатать.</li>
+                <li>Понимает обычный текст без сложных команд.</li>
+                <li>Дает удобное мини-приложение для профиля, календаря и интеграций.</li>
+                <li>Работает в групповых чатах, когда ассистент нужен всей команде.</li>
+              </ul>
+            </div>
+            <aside class="chat-demo" aria-label="Пример удобного управления Leo">
+              <div class="chat-demo-head">
+                <span class="chat-demo-title">Leo в Telegram</span>
+                <span>Управление</span>
+              </div>
+              <div class="chat-demo-body">
+                <div class="bubble user">Голосовое: «перенеси встречу с командой на пятницу»</div>
+                <div class="bubble result"><strong>Распознал голос.</strong> Встреча «Команда» найдена.</div>
+                <div class="bubble">В пятницу свободно в 12:00 и 16:30. Какой слот выбрать?</div>
+                <div class="bubble user">16:30, и напиши в общий чат</div>
+                <div class="bubble result"><strong>Готово.</strong> Календарь обновлен, команда уведомлена.</div>
+              </div>
+            </aside>
+          </article>
+
+          <article class="feature-story">
+            <div class="feature-copy">
+              <span class="feature-number">06 / Фокус</span>
+              <h3>Меньше переключений между сервисами</h3>
+              <p>Leo связывает Telegram, Zoom и Google Calendar в один рабочий поток.</p>
+              <ul>
+                <li>Команда остается в привычном чате.</li>
+                <li>Ссылки, записи, напоминания и итоги не теряются между сервисами.</li>
+                <li>Рутина вокруг встреч занимает минуты, а не отдельный слот в календаре.</li>
+              </ul>
+            </div>
+            <aside class="chat-demo" aria-label="Пример единого рабочего потока">
+              <div class="chat-demo-head">
+                <span class="chat-demo-title">Leo в Telegram</span>
+                <span>Рабочий поток</span>
+              </div>
+              <div class="chat-demo-body">
+                <div class="bubble user">Что у меня сегодня и где ссылки?</div>
+                <div class="bubble result"><strong>Сегодня 4 встречи.</strong> У двух уже есть Zoom-ссылки.</div>
+                <div class="bubble">В 15:00 клиентский созвон: ссылка, повестка и прошлое саммари рядом.</div>
+                <div class="bubble user">Открой последнее саммари и напомни за 10 минут</div>
+                <div class="bubble result"><strong>Готово.</strong> Контекст встречи собран в одном месте.</div>
+              </div>
+            </aside>
+          </article>
+        </div>
+      </section>
+
+      <section id="integrations" class="section" aria-labelledby="integrations-title">
+        <div class="section-head">
+          <p class="section-kicker">Интеграции</p>
+          <h2 id="integrations-title">Leo подключается к инструментам, где уже живут ваши встречи</h2>
+          <p>
+            Интеграции нужны не ради галочки: они позволяют Leo создавать реальные события,
+            добавлять ссылки и возвращать контекст встречи туда, где команда работает каждый день.
+          </p>
+        </div>
+
+        <div class="integration-grid">
+          <article class="integration-card">
+            <h3>Zoom</h3>
+            <p>
+              Leo создает Zoom-встречи, добавляет ссылки в календарные события и помогает работать с записями:
+              от созвона до транскрибации и саммари.
+            </p>
+          </article>
+          <article class="integration-card">
+            <h3>Google Calendar</h3>
+            <p>
+              Leo создает события, добавляет участников, показывает расписание на выбранную дату,
+              помогает проверять занятость и напоминает о предстоящих встречах.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="scenarios" class="section section-card" aria-labelledby="scenarios-title">
+        <div>
+          <p class="section-kicker">Для чего</p>
+          <h2 id="scenarios-title">Leo особенно полезен там, где много созвонов</h2>
+          <p>
+            Ассистент снимает рутину с основателей, менеджеров, консультантов и команд,
+            которым важно быстро фиксировать контекст и решения.
+          </p>
+        </div>
+        <ul class="scenario-list">
+          <li>Создать встречу, добавить Zoom и получить напоминание без открытия календаря.</li>
+          <li>Записать созвон, получить транскрибацию и краткое саммари вместо ручного протокола.</li>
+          <li>Найти старую договоренность по заметкам, саммари и транскрипциям.</li>
+          <li>Работать с ассистентом голосом, текстом, через мини-приложение или прямо в групповом чате.</li>
+        </ul>
+      </section>
+
+      <section id="pricing" class="section" aria-labelledby="pricing-title">
+        <div class="section-head">
+          <p class="section-kicker">Тарифы</p>
+          <h2 id="pricing-title">Выберите объем минут под ваш ритм встреч</h2>
+          <p>
+            Минуты расходуются на обработку встреч и записей в течение месяца. Начать можно бесплатно,
+            а подходящий тариф подключить, когда появится регулярный поток встреч.
+          </p>
+        </div>
+
+        <div class="pricing-grid">
+          <article class="price-card">
+            <div class="price-label">Старт</div>
+            <div class="price">850 р.</div>
+            <div class="minutes">600 минут в месяц</div>
+            <p>Для личного календаря, коротких созвонов и первых регулярных записей.</p>
+            <a class="btn js-bot-cta" href="#start" aria-disabled="true">Начать бесплатно</a>
+          </article>
+          <article class="price-card featured">
+            <div class="price-label">Команда</div>
+            <div class="price">2490 р.</div>
+            <div class="minutes">2000 минут в месяц</div>
+            <p>Для активной рабочей недели, нескольких проектов и частых встреч с клиентами.</p>
+            <a class="btn primary js-bot-cta" href="#start" aria-disabled="true">Начать бесплатно</a>
+          </article>
+          <article class="price-card">
+            <div class="price-label">Профи</div>
+            <div class="price">4490 р.</div>
+            <div class="minutes">4000 минут в месяц</div>
+            <p>Для плотного расписания, командных созвонов и большого объема записей.</p>
+            <a class="btn js-bot-cta" href="#start" aria-disabled="true">Начать бесплатно</a>
+          </article>
+        </div>
+      </section>
+
+      <section class="final-cta assistant-card" aria-labelledby="final-cta-title">
+        <h2 id="final-cta-title">Попробуйте Leo на ближайшей встрече</h2>
+        <p>
+          Напишите боту в Telegram, подключите календарь и поручите ему первую задачу:
+          встречу, напоминание, Zoom-ссылку или саммари.
+        </p>
+        <a class="btn primary js-bot-cta" href="#start" aria-disabled="true">Начать бесплатно</a>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>Leo by Obuchat Assistant</span>
+      <span>
+        <a href="/docs/support.html">Поддержка</a> ·
+        <a href="/webapp/legal/privacy-en.html">Privacy</a> ·
+        <a href="/webapp/legal/terms-en.html">Terms</a>
+      </span>
+    </footer>
+  </div>
+  <script src="/docs/landing.js?v=20260618-stack-mobile" defer></script>
+</body>
+</html>

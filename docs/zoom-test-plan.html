@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Zoom Marketplace Test Plan — Obuchat Assistant</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+      max-width: 44rem;
+      margin: 2rem auto;
+      padding: 0 1rem 2.5rem;
+      color: #e8e8ee;
+      background: #0b0b14;
+      line-height: 1.55;
+      font-size: 0.9375rem;
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 0.75rem; color: #fff; }
+    h2 { font-size: 1.05rem; margin: 1.5rem 0 0.5rem; color: #fff; }
+    p, li { color: #b4b4c0; }
+    ol, ul { padding-left: 1.25rem; }
+    a { color: #4d8eff; }
+    code { font-size: 0.85em; background: #1a1a28; padding: 0.1em 0.35em; border-radius: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; margin: 0.75rem 0; }
+    th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #2a2a3a; vertical-align: top; }
+    th { color: #fff; }
+    .warn { color: #f0c060; }
+  </style>
+</head>
+<body>
+  <h1>Obuchat Assistant — Zoom Marketplace Test Plan</h1>
+  <p>For Zoom Marketplace Security &amp; Privacy review.</p>
+  <p><strong>App type:</strong> User-managed OAuth (General app). <strong>Not</strong> a Zoom in-client / in-meeting app. Users interact via Telegram and our Mini App only.</p>
+
+  <h2>Entry points</h2>
+  <ul>
+    <li>Production Authorization URL: <code>https://zoom.us/oauth/authorize?response_type=code&amp;client_id=25bg0QtHTVyrLWzx1WQwgQ&amp;redirect_uri=https://assistant.obuchat.me/oauth/zoom/callback</code></li>
+    <li>Production OAuth redirect: <code>https://assistant.obuchat.me/oauth/zoom/callback</code></li>
+    <li>Development OAuth redirect: <code>https://stagassistant.obuchat.me/oauth/zoom/callback</code></li>
+    <li>Home URL: <a href="https://assistant.obuchat.me/zoom/home">https://assistant.obuchat.me/zoom/home</a></li>
+    <li>Documentation: <a href="zoom.html">zoom.html</a></li>
+    <li>Privacy Policy: <a href="/webapp/legal/privacy-en.html">privacy-en.html</a></li>
+    <li>Deauthorization endpoint: <code>https://assistant.obuchat.me/webhook/deauthorize</code></li>
+  </ul>
+
+  <h2>Test credentials</h2>
+  <p><strong>Single-user flow</strong> (one Telegram user ↔ one Zoom account). No multi-role app.</p>
+  <p>Full login credentials (Telegram phone + Zoom email/password) are provided in the <strong>Zoom Marketplace submission → Account Credentials</strong> field. The test Telegram account is pre-approved on our production allowlist (no access gate).</p>
+  <table>
+    <tr><th>Service</th><th>Credentials (see Marketplace submission)</th></tr>
+    <tr>
+      <td>Telegram</td>
+      <td>
+        Bot: <a href="https://t.me/PshAssistent_bot">https://t.me/PshAssistent_bot</a><br />
+        Dedicated test phone number (login via Telegram app; 2FA disabled).<br />
+        User ID pre-approved on production allowlist.
+      </td>
+    </tr>
+    <tr>
+      <td>Zoom</td>
+      <td>
+        Dedicated Zoom test account (email + password in submission).<br />
+        Connect via OAuth (<code>/zoom_auth</code>) after logging into Telegram.<br />
+        Dummy scheduled meeting may be pre-loaded on the test account.
+      </td>
+    </tr>
+  </table>
+  <p><strong>Important:</strong> OAuth on production uses <strong>Production</strong> Client ID (<code>25bg0QtHTVyrLWzx1WQwgQ</code>) on <code>assistant.obuchat.me</code> — not the Development Client ID.</p>
+
+  <h2>Reviewer steps (end-to-end)</h2>
+  <ol>
+    <li>Open <a href="https://assistant.obuchat.me/zoom/home">Home URL</a> → <strong>Open bot in Telegram</strong>.</li>
+    <li>Log into Telegram with the <strong>test phone number</strong> from Account Credentials.</li>
+    <li>Open the bot, send <code>/start</code>.</li>
+    <li>Send <code>/zoom_auth</code> or Mini App → Profile → Zoom → Connect.</li>
+    <li>Sign in to Zoom with the <strong>test Zoom credentials</strong> from Account Credentials. Confirm Zoom shows as connected in Profile.</li>
+    <li>Run scope tests below.</li>
+  </ol>
+
+  <h2>OAuth scopes and test steps</h2>
+  <p>All scopes below are <strong>required</strong> (not optional) in our Marketplace submission.</p>
+  <table>
+    <tr><th>Scope</th><th>How to test</th></tr>
+    <tr>
+      <td><code>user:read:user</code></td>
+      <td>
+        <ol>
+          <li>Complete OAuth as above.</li>
+          <li>Mini App → Profile — Zoom shows connected name/email from Zoom profile.</li>
+        </ol>
+      </td>
+    </tr>
+    <tr>
+      <td><code>user:read:token</code></td>
+      <td>
+        <ol>
+          <li>Used by Leo’s <strong>note-taking agent</strong>: after a meeting is created with auto-record, Leo joins via Zoom SDK using an OBF token (not ZAK).</li>
+          <li>After the meeting, transcription/summary appear in Mini App → Profile → Zoom recordings.</li>
+        </ol>
+      </td>
+    </tr>
+    <tr>
+      <td><code>meeting:write:meeting</code></td>
+      <td>
+        <ol>
+          <li>Send <code>zoom</code> in the bot.</li>
+          <li>Bot replies with a Zoom join URL (instant meeting).</li>
+          <li>English also works: <code>delete zoom</code>, <code>reschedule zoom to 15:00 tomorrow</code>.</li>
+        </ol>
+      </td>
+    </tr>
+    <tr>
+      <td><code>meeting:read:list_meetings</code></td>
+      <td>
+        <ol>
+          <li>Used before delete/reschedule: <code>GET /users/me/meetings</code> (visible in Marketplace Call logs).</li>
+          <li>Then <code>DELETE</code> or <code>PATCH /meetings/{id}</code> — also visible in Call logs.</li>
+        </ol>
+      </td>
+    </tr>
+    <tr>
+      <td><code>meeting:update:meeting</code></td>
+      <td>
+        <ol>
+          <li>Create a <strong>scheduled</strong> meeting: <code>meeting tomorrow at 3pm with zoom</code>.</li>
+          <li>Send: <code>reschedule zoom to 4pm tomorrow</code>.</li>
+          <li>Bot confirms the meeting was moved. Call logs show <code>PATCH /meetings/{id}</code> (not a new <code>POST</code>).</li>
+          <li>Instant meetings (<code>zoom</code> only) cannot be rescheduled — create a scheduled meeting first.</li>
+        </ol>
+      </td>
+    </tr>
+    <tr>
+      <td><code>meeting:delete:meeting</code></td>
+      <td>
+        <ol>
+          <li>Send <code>zoom</code> — bot returns join URL.</li>
+          <li>Send <code>delete zoom</code> — bot confirms deletion. Call logs show <code>DELETE /meetings/{id}</code>.</li>
+        </ol>
+      </td>
+    </tr>
+  </table>
+  <p><strong>Meeting recordings:</strong> Mini App → Profile → Zoom shows meeting-bot recordings (not Zoom Cloud Recording API). Enable auto-record or send a Zoom link to the bot, then check the recordings list after the meeting ends.</p>
+
+  <h2>Deauthorization (required)</h2>
+  <ol>
+    <li>Connect Zoom as above.</li>
+    <li>In Zoom: <strong>Manage → Added Apps</strong> → remove Obuchat Assistant.</li>
+    <li>Our endpoint <code>/webhook/deauthorize</code> receives <code>app_deauthorized</code> and deletes stored OAuth tokens within 24 hours.</li>
+    <li>In Telegram, <code>/zoom_auth</code> is required again before creating meetings.</li>
+  </ol>
+
+  <h2>Manual disconnect (in-app)</h2>
+  <ol>
+    <li>Mini App → Profile → Zoom → Disconnect.</li>
+    <li>Tokens are revoked at Zoom and deleted locally.</li>
+  </ol>
+
+  <h2>Event subscription</h2>
+  <p><code>meeting.ended</code> — optional post-meeting notification to the host in Telegram.</p>
+
+  <h2>Not a Zoom in-client app (no Meeting surface)</h2>
+  <p>Obuchat Assistant is a <strong>General OAuth</strong> app only. It does <strong>not</strong> run inside the Zoom desktop or mobile meeting client. There is no in-meeting UI, no <strong>Meeting</strong> product under Surface, no Zoom App (in-client) mode, and no Zoom Apps SDK embed. Reviewers should not expect any UI inside an active Zoom meeting — all interaction is through Telegram chat and the web Mini App at <code>assistant.obuchat.me</code>.</p>
+</body>
+</html>

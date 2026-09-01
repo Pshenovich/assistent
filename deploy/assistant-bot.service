@@ -1,0 +1,17 @@
+[Unit]
+Description=Telegram assistant bot (KomAssist)
+After=network.target telegram-bot-api.service
+Wants=telegram-bot-api.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/assistant
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/assistant/.venv/bin/python bot.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
