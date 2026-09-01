@@ -768,14 +768,32 @@ function clearToParagraph(editor) {
 
 function collectEditorHeadings(editor) {
   var items = [];
+  var byPos = {};
   if (!editor || !editor.state || !editor.state.doc) return items;
+  function addHeading(level, text, pos) {
+    var label = String(text || "").trim().replace(/\s+/g, " ");
+    if (!label) return;
+    var key = String(pos);
+    if (byPos[key]) return;
+    byPos[key] = true;
+    items.push({ level: Number(level) || 3, text: label, pos: pos });
+  }
   editor.state.doc.descendants(function (node, pos) {
     if (!node || !node.type || node.type.name !== "heading") return true;
-    var text = String(node.textContent || "").trim().replace(/\s+/g, " ");
-    if (!text) return true;
-    var level = Number(node.attrs && node.attrs.level) || 3;
-    items.push({ level: level, text: text, pos: pos });
+    addHeading(node.attrs && node.attrs.level, node.textContent, pos);
     return true;
+  });
+  if (editor.view && editor.view.dom) {
+    editor.view.dom.querySelectorAll("h1, h2, h3, h4, h5, h6").forEach(function (el) {
+      try {
+        var pos = editor.view.posAtDOM(el, 0);
+        var level = Number(String(el.tagName || "H3").replace(/^H/i, "")) || 3;
+        addHeading(level, el.textContent, pos);
+      } catch (_) {}
+    });
+  }
+  items.sort(function (a, b) {
+    return a.pos - b.pos;
   });
   return items;
 }
@@ -871,6 +889,9 @@ function mountToolbar(toolbarEl, editor) {
     '<button type="button" class="note-tg-btn" data-menu="plus" title="Блок" aria-label="Блок">' +
     svgIcon("plus") +
     "</button>" +
+    '<button type="button" class="note-tg-btn" data-menu="heading" title="Заголовок" aria-label="Заголовок">' +
+    svgIcon("heading") +
+    "</button>" +
     '<button type="button" class="note-tg-btn" data-menu="list" title="Список" aria-label="Список">' +
     svgIcon("list") +
     "</button>" +
@@ -897,6 +918,9 @@ function mountToolbar(toolbarEl, editor) {
     '<button type="button" class="note-tg-btn" data-action="link" title="Ссылка" aria-label="Ссылка">' +
     svgIcon("link") +
     "</button>" +
+    '<button type="button" class="note-tg-btn" data-menu="heading" title="Заголовок" aria-label="Заголовок">' +
+    svgIcon("heading") +
+    "</button>" +
     '<button type="button" class="note-tg-btn" data-menu="list-sel" title="Список" aria-label="Список">' +
     svgIcon("list") +
     "</button>" +
@@ -904,10 +928,21 @@ function mountToolbar(toolbarEl, editor) {
     svgIcon("quote") +
     "</button>" +
     "</div>" +
-    '<div class="note-tg-menu hidden" data-menu-panel="plus" role="menu">' +
-    '<button type="button" class="note-tg-menu-item" data-cmd="heading">' +
+    '<div class="note-tg-menu hidden" data-menu-panel="heading" role="menu">' +
+    '<button type="button" class="note-tg-menu-item" data-cmd="heading-2" data-check="heading-2">' +
     svgIcon("heading") +
-    "<span>Заголовок</span></button>" +
+    "<span>Заголовок 2</span></button>" +
+    '<button type="button" class="note-tg-menu-item" data-cmd="heading-3" data-check="heading-3">' +
+    svgIcon("heading") +
+    "<span>Заголовок 3</span></button>" +
+    '<button type="button" class="note-tg-menu-item" data-cmd="heading-4" data-check="heading-4">' +
+    svgIcon("heading") +
+    "<span>Заголовок 4</span></button>" +
+    '<button type="button" class="note-tg-menu-item" data-cmd="paragraph" data-check="plain">' +
+    svgIcon("text") +
+    "<span>Обычный текст</span></button>" +
+    "</div>" +
+    '<div class="note-tg-menu hidden" data-menu-panel="plus" role="menu">' +
     '<button type="button" class="note-tg-menu-item" data-cmd="paragraph">' +
     svgIcon("text") +
     "<span>Обычный текст</span></button>" +
@@ -951,7 +986,14 @@ function mountToolbar(toolbarEl, editor) {
 
   function runCmd(cmd) {
     // Keep editor focused — menu taps would otherwise blur first and drop the click.
-    if (cmd === "heading") {
+    if (/^heading-\d$/.test(String(cmd || ""))) {
+      var level = parseInt(String(cmd).slice(-1), 10);
+      if (editor.isActive("heading", { level: level })) {
+        clearToParagraph(editor);
+      } else {
+        editor.chain().focus().clearNodes().setHeading({ level: level }).run();
+      }
+    } else if (cmd === "heading") {
       if (editor.isActive("heading", { level: 3 })) {
         clearToParagraph(editor);
       } else {
@@ -1116,9 +1158,13 @@ function mountToolbar(toolbarEl, editor) {
         btn.classList.toggle("note-tg-btn--active", editor.isActive(markMap[action]));
       });
     });
+    toolbarEl.querySelectorAll('[data-menu="heading"]').forEach(function (btn) {
+      btn.classList.toggle("note-tg-btn--active", editor.isActive("heading"));
+    });
 
     toolbarEl.querySelectorAll(".note-tg-menu-item[data-check]").forEach(function (item) {
       var check = item.getAttribute("data-check");
+      var headingMatch = String(check || "").match(/^heading-(\d)$/);
       var on =
         check === "plain"
           ? !(
@@ -1128,6 +1174,8 @@ function mountToolbar(toolbarEl, editor) {
               editor.isActive("heading") ||
               editor.isActive("blockquote")
             )
+          : headingMatch
+          ? editor.isActive("heading", { level: parseInt(headingMatch[1], 10) })
           : editor.isActive(check);
       item.classList.toggle("note-tg-menu-item--active", on);
     });
@@ -1172,7 +1220,7 @@ function mount(container, options) {
     element: content,
     extensions: [
       StarterKit.configure({
-        heading: { levels: [2, 3, 4] },
+        heading: { levels: [1, 2, 3, 4, 5, 6] },
       }),
       Underline,
       Link.configure({ openOnClick: false, autolink: true, linkOnPaste: true }),

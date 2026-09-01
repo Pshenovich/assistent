@@ -1833,6 +1833,7 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
 }
 
 .note-tg-menu[data-menu-panel="list"],
+.note-tg-menu[data-menu-panel="heading"],
 .note-tg-menu[data-menu-panel="list-sel"] {
   left: auto;
   right: 12px;
@@ -4957,6 +4958,12 @@ html.note-editor-kb-open
 
 .note-editor-toc-item--level-4 {
   padding-left: 32px;
+  font-size: 0.8125rem;
+}
+
+.note-editor-toc-item--level-5,
+.note-editor-toc-item--level-6 {
+  padding-left: 44px;
   font-size: 0.8125rem;
 }
 
