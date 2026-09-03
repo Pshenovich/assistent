@@ -118,11 +118,13 @@ def calendar_create_event(
     *,
     telegram_user_id: int,
     telegram_username: str | None = None,
+    calendar_id: str | None = None,
 ) -> dict[str, Any]:
     return cal_svc.create_event(
         int(telegram_user_id),
         parsed,
         telegram_username=telegram_username,
+        calendar_id=calendar_id,
     )
 
 

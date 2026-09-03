@@ -142,6 +142,7 @@ def create_event(
     *,
     telegram_username: str | None = None,
     skip_attendee_names: set[str] | None = None,
+    calendar_id: str | None = None,
 ) -> dict[str, Any]:
     svc = _service(user_id)
     tz_name = _tz_name_for(user_id)
@@ -173,17 +174,19 @@ def create_event(
     )
     if attendees:
         body["attendees"] = attendees
-    insert_cal = GOOGLE_CALENDAR_ID
+    insert_cal = cal_sources.resolve_calendar_id(
+        user_id, (calendar_id or GOOGLE_CALENDAR_ID).strip() or GOOGLE_CALENDAR_ID
+    )
+    cal_sources.assert_calendar_writable(user_id, insert_cal)
     event = svc.events().insert(
         calendarId=insert_cal,
         body=body,
         sendUpdates="all" if attendees else "none",
     ).execute()
     link = str(event.get("htmlLink") or "").strip()
-    stored_cal = cal_sources.resolve_calendar_id(user_id, insert_cal)
     return {
         "event_id": str(event.get("id") or ""),
-        "calendar_id": stored_cal,
+        "calendar_id": insert_cal,
         "html_link": link,
         "summary": event.get("summary") or title,
         "start": start,

@@ -3549,6 +3549,7 @@ async def miniapp_calendar_event_create(
 
     title = str(body.title or "").strip()
     start = str(body.start or "").strip()
+    calendar_id = str(body.calendar_id or "").strip() or None
     if not title:
         raise HTTPException(status_code=400, detail="Укажите название встречи")
     if not start:
@@ -3576,6 +3577,7 @@ async def miniapp_calendar_event_create(
             parsed,
             telegram_user_id=int(principal.telegram_user_id),
             telegram_username=str(uname).strip() or None,
+            calendar_id=calendar_id,
         )
 
     try:
