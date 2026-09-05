@@ -4977,6 +4977,19 @@ class _WebappStaticFiles(StaticFiles):
         return response
 
 
+class _PublicHtmlStaticFiles(StaticFiles):
+    """Публичные HTML-страницы без авторизации и без агрессивного кэша."""
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if path.endswith(".html") or path in ("", "/", "."):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+        elif path.endswith((".css", ".js", ".png", ".svg", ".ico", ".jpg", ".jpeg", ".webp")):
+            response.headers["Cache-Control"] = "public, max-age=3600"
+        return response
+
+
 _SHARE_PAGE_NO_CACHE = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
@@ -5011,6 +5024,22 @@ async def public_share_page(token: str) -> HTMLResponse:
     html = html.replace("{{TITLE}}", html_lib.escape(str(payload.get("title") or "Документ")))
     html = html.replace("{{LABEL}}", html_lib.escape(str(payload.get("label") or "Документ")))
     return HTMLResponse(content=html, headers=dict(_SHARE_PAGE_NO_CACHE))
+
+
+_news_static_dir = Path(__file__).resolve().parent / "news"
+if _news_static_dir.is_dir():
+
+    @app.api_route("/news", methods=["GET", "HEAD"], include_in_schema=False)
+    async def news_redirect_to_slash(request: Request) -> RedirectResponse:
+        qs = request.url.query
+        target = "/news/" + (f"?{qs}" if qs else "")
+        return RedirectResponse(url=target, status_code=307)
+
+    app.mount(
+        "/news",
+        _PublicHtmlStaticFiles(directory=str(_news_static_dir), html=True),
+        name="news_static",
+    )
 
 
 _webapp_static_dir = Path(__file__).resolve().parent / "webapp"

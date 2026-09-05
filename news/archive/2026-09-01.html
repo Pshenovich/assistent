@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Обучат: отраслевой дайджест за 01.09.2026</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-soft: #1f2937;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --border: rgba(148, 163, 184, 0.22);
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f8fafc;
+        --panel: #ffffff;
+        --panel-soft: #f1f5f9;
+        --text: #0f172a;
+        --muted: #475569;
+        --accent: #0369a1;
+        --border: rgba(15, 23, 42, 0.12);
+      }
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 40px 0 64px;
+    }
+    header {
+      margin-bottom: 28px;
+    }
+    .eyebrow {
+      color: var(--accent);
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-size: 13px;
+    }
+    h1 {
+      margin: 8px 0 10px;
+      font-size: clamp(32px, 5vw, 56px);
+      line-height: 1.05;
+    }
+    h2 {
+      margin: 0 0 16px;
+      font-size: 26px;
+    }
+    h3 {
+      margin: 8px 0;
+      font-size: 19px;
+      line-height: 1.25;
+    }
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    .lead {
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 18px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+      gap: 22px;
+      align-items: start;
+    }
+    .section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 24px;
+      margin-bottom: 22px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.12);
+    }
+    .card {
+      padding: 18px 0;
+      border-top: 1px solid var(--border);
+    }
+    .card:first-of-type {
+      border-top: 0;
+      padding-top: 0;
+    }
+    .meta,
+    .why,
+    .footer {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .why {
+      margin-bottom: 0;
+    }
+    ul {
+      padding-left: 22px;
+      margin: 0;
+    }
+    li + li {
+      margin-top: 10px;
+    }
+    .pill {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--panel-soft);
+      color: var(--muted);
+      font-size: 13px;
+      margin: 3px 6px 3px 0;
+    }
+    .strategy-list {
+      display: grid;
+      gap: 12px;
+    }
+    .strategy-item {
+      position: relative;
+    }
+    .strategy-trigger {
+      width: 100%;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      justify-content: space-between;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px 16px;
+      background: var(--panel-soft);
+      color: var(--text);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .strategy-trigger:hover,
+    .strategy-trigger[aria-expanded="true"] {
+      border-color: var(--accent);
+    }
+    .strategy-hint {
+      flex: 0 0 auto;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .strategy-tooltip {
+      position: absolute;
+      z-index: 10;
+      left: 16px;
+      right: 16px;
+      top: calc(100% + 8px);
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--panel);
+      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.28);
+    }
+    .strategy-tooltip p {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .strategy-tooltip ul {
+      list-style: none;
+      padding: 0;
+    }
+    .strategy-tooltip li + li {
+      margin-top: 12px;
+    }
+    .strategy-tooltip span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+    @media (max-width: 860px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      .strategy-tooltip {
+        position: static;
+        margin-top: 8px;
+      }
+      .strategy-trigger {
+        display: block;
+      }
+      .strategy-hint {
+        display: block;
+        margin-top: 8px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">Обучат · ежедневный отраслевой дайджест</div>
+      <h1>Обучат: отраслевой дайджест за 01.09.2026</h1>
+      <p class="lead">Собрано и отфильтровано для владельца бизнеса и CPO: AI в продажах, речевая аналитика, CRM, контакт-центры, конкуренты и идеи для продукта.</p>
+      <p class="meta">Обновлено: 01.09.2026 07:20 МСК · релевантных материалов: 120</p>
+    </header>
+
+    <div class="grid">
+      <section>
+        <div class="section">
+          <h2>Главное для стратегии</h2>
+          <div class="strategy-list">
+            <div class="strategy-item">
+              <button class="strategy-trigger" type="button" aria-expanded="false" aria-controls="strategy-tip-0">
+                <span>AI-агенты становятся основной рамкой продаж и клиентского сервиса: важно показывать не только аналитику, но и действие в CRM/коммуникациях.</span>
+                <span class="strategy-hint">На основе чего?</span>
+              </button>
+              <div class="strategy-tooltip" id="strategy-tip-0" role="tooltip" hidden>
+                <p>Вывод основан на этих материалах:</p>
+                <ul>
+            <li>
+              <a href="https://habr.com/ru/companies/infostart/articles/1076632/?utm_campaign=1076632&amp;utm_source=habrahabr&amp;utm_medium=rss" target="_blank" rel="noopener noreferrer">ИИ в автотестах 1С: где агент помогает, а где лучше обойтись обычной автоматизацией</a>
+              <span>Habr AI · 31.08.2026 12:37</span>
+            </li>
+            </ul>
+              </div>
+            </div>
+            
+
+            <div class="strategy-item">
+              <button class="strategy-trigger" type="button" aria-expanded="false" aria-controls="strategy-tip-1">
+                <span>Контакт-центры движутся к единой платформе: голос, чаты, QA, подсказки и автоматизация должны читаться как один сценарий, а не набор модулей.</span>
+                <span class="strategy-hint">На основе чего?</span>
+              </button>
+              <div class="strategy-tooltip" id="strategy-tip-1" role="tooltip" hidden>
+                <p>Вывод основан на этих материалах:</p>
+                <ul>
+            <li>
+              <a href="https://news.google.com/rss/articles/CBMiugFBVV95cUxPVUQ4azJfOVZHTlRPLURMZXBfbVJyN0ZMdFJVVFBldjYwc2c0Y2M3WGxiM093VFZxc3N1ZEhWNmdQOTF6aDR2LU9iQ3NVUmsxUUVNal9vbUJtUEk2Ykx6cDBLOWlhSzdYNHVsWkJaYy1hMXIxQVpYekVHamtjaUh2TFhJSUJJNVRpWndmSF8zUHhrSFAzM0hGNFdfUFJ3S2s3UE5NaGplREhZZ0JYc1BnZndWMU83Tl9Senc?oc=5" target="_blank" rel="noopener noreferrer">Adobe&#x27;s AI-Driven CXO Growth Strengthens Against CRM &amp; Microsoft - TradingView</a>
+              <span>Google News: Salesforce Agentforce OR HubSpot AI OR Microsoft Dynamics AI CRM · 31.08.2026 18:32</span>
+            </li>
+            
+
+            <li>
+              <a href="https://news.google.com/rss/articles/CBMiZEFVX3lxTFBEM1U4ZnloV2ZUczk1NmpfbUV2VFhnZ2JZZEZFMjVRMGdOaG54ZVNLQ2JDVWMxU0ZVZUdnWFoyVUZqNkRPUmZBSGE4dk1aX0I2MnFSTVZUcmt3NW9QYmFsdm9TMk7SAVhBVV95cUxQNlc1UW1jZXFUd1N5VWpJMzJiYlBSZFJqc1ZxSDNfMDU1aGluZ1NfTlI1OHgwT253c1ZlZFhPM0JnMmhLQWVwcjB1TzVuUHZ2M1dmUE5OMDIt?oc=5" target="_blank" rel="noopener noreferrer">Создание PHP SDK для Битрикс24 - Хабр</a>
+              <span>Google News: Bitrix24 AI OR Битрикс24 ИИ OR amoCRM AI OR amoCRM ИИ · 31.08.2026 11:00</span>
+            </li>
+            
+
+            <li>
+              <a href="https://news.google.com/rss/articles/CBMi-wFBVV95cUxOU2tBUERQdlE1OG1wWmFGSHU4b09sVkNtNHpCeGl4QUNXVy14UFoyOG9YXzNlWDl2eUswS0ZYdG5BVTh3RzNZZWJfbmJSQVd3TzJVVTd0N2MyaGRTcHM0YkJFOUpOc0kyVDhSM29wekw5eTZUU290aGN1MTdhdDQzMnVXaHNXeXFERmJLczF2eWtpbXhvS0dXV18taloxQVA5YkE5bXVldUdIQlI0WWxZUnVaMkh6WHVLWEYyMC14eXdtc3hPbHBta1JMQll2cHFoZ05ESkFoazBjTURTbXQzTjVoenVBbVBqT1FCbEszenpDNjFoOW10SzI5Zw?oc=5" target="_blank" rel="noopener noreferrer">Voiso Highlights Contact Center Conversations for Buyer Intelligence and Demand Generation - FinancialContent</a>
+              <span>Google News: conversation intelligence OR speech analytics OR sales AI · 31.08.2026 11:28</span>
+            </li>
+            </ul>
+              </div>
+            </div>
+            
+
+            <div class="strategy-item">
+              <button class="strategy-trigger" type="button" aria-expanded="false" aria-controls="strategy-tip-2">
+                <span>Интеграция с CRM остается критическим фактором покупки: автозаполнение, next best action и контроль сделок стоит делать заметными в позиционировании.</span>
+                <span class="strategy-hint">На основе чего?</span>
+              </button>
+              <div class="strategy-tooltip" id="strategy-tip-2" role="tooltip" hidden>
+                <p>Вывод основан на этих материалах:</p>
+                <ul>
+            <li>
+              <a href="https://www.salesforce.com/blog/the-gift-of-subscriber-signals/" target="_blank" rel="noopener noreferrer">The Gift of Subscriber Signals</a>
+              <span>Salesforce Blog · 31.08.2026 17:36</span>
+            </li>
+            </ul>
+              </div>
+            </div>
+            </div>
+        </div>
+
+        <div class="section">
+          <h2>Топ материалов дня</h2>
+          
+    <article class="card">
+      <div class="meta">Google News: Salesforce Agentforce OR HubSpot AI OR Microsoft Dynamics AI CRM · crm_ai · 31.08.2026 18:32 · score 32</div>
+      <h3><a href="https://news.google.com/rss/articles/CBMiugFBVV95cUxPVUQ4azJfOVZHTlRPLURMZXBfbVJyN0ZMdFJVVFBldjYwc2c0Y2M3WGxiM093VFZxc3N1ZEhWNmdQOTF6aDR2LU9iQ3NVUmsxUUVNal9vbUJtUEk2Ykx6cDBLOWlhSzdYNHVsWkJaYy1hMXIxQVpYekVHamtjaUh2TFhJSUJJNVRpWndmSF8zUHhrSFAzM0hGNFdfUFJ3S2s3UE5NaGplREhZZ0JYc1BnZndWMU83Tl9Senc?oc=5" target="_blank" rel="noopener noreferrer">Adobe&#x27;s AI-Driven CXO Growth Strengthens Against CRM &amp; Microsoft - TradingView</a></h3>
+      <p>Adobe&#x27;s AI-Driven CXO Growth Strengthens Against CRM &amp; Microsoft TradingView</p>
+      <p class="why">Почему важно: crm, salesforce agentforce, hubspot, microsoft dynamics</p>
+    </article>
+    
+
+    <article class="card">
+      <div class="meta">Google News: Bitrix24 AI OR Битрикс24 ИИ OR amoCRM AI OR amoCRM ИИ · russian_crm · 31.08.2026 11:00 · score 26</div>
+      <h3><a href="https://news.google.com/rss/articles/CBMiZEFVX3lxTFBEM1U4ZnloV2ZUczk1NmpfbUV2VFhnZ2JZZEZFMjVRMGdOaG54ZVNLQ2JDVWMxU0ZVZUdnWFoyVUZqNkRPUmZBSGE4dk1aX0I2MnFSTVZUcmt3NW9QYmFsdm9TMk7SAVhBVV95cUxQNlc1UW1jZXFUd1N5VWpJMzJiYlBSZFJqc1ZxSDNfMDU1aGluZ1NfTlI1OHgwT253c1ZlZFhPM0JnMmhLQWVwcjB1TzVuUHZ2M1dmUE5OMDIt?oc=5" target="_blank" rel="noopener noreferrer">Создание PHP SDK для Битрикс24 - Хабр</a></h3>
+      <p>Создание PHP SDK для Битрикс24 Хабр</p>
+      <p class="why">Почему важно: crm, bitrix24, amocrm</p>
+    </article>
+    
+
+    <article class="card">
+      <div class="meta">Google News: conversation intelligence OR speech analytics OR sales AI · conversation_intelligence · 31.08.2026 11:28 · score 22</div>
+      <h3><a href="https://news.google.com/rss/articles/CBMi-wFBVV95cUxOU2tBUERQdlE1OG1wWmFGSHU4b09sVkNtNHpCeGl4QUNXVy14UFoyOG9YXzNlWDl2eUswS0ZYdG5BVTh3RzNZZWJfbmJSQVd3TzJVVTd0N2MyaGRTcHM0YkJFOUpOc0kyVDhSM29wekw5eTZUU290aGN1MTdhdDQzMnVXaHNXeXFERmJLczF2eWtpbXhvS0dXV18taloxQVA5YkE5bXVldUdIQlI0WWxZUnVaMkh6WHVLWEYyMC14eXdtc3hPbHBta1JMQll2cHFoZ05ESkFoazBjTURTbXQzTjVoenVBbVBqT1FCbEszenpDNjFoOW10SzI5Zw?oc=5" target="_blank" rel="noopener noreferrer">Voiso Highlights Contact Center Conversations for Buyer Intelligence and Demand Generation - FinancialContent</a></h3>
+      <p>Voiso Highlights Contact Center Conversations for Buyer Intelligence and Demand Generation FinancialContent</p>
+      <p class="why">Почему важно: conversation intelligence, speech analytics, sales ai</p>
+    </article>
+    
+
+    <article class="card">
+      <div class="meta">Salesforce Blog · crm_ai · 31.08.2026 21:32 · score 15</div>
+      <h3><a href="https://www.salesforce.com/blog/dreamforce-agenda-schedule/" target="_blank" rel="noopener noreferrer">Build Your Dreamforce 2026 Agenda</a></h3>
+      <p>With 1,600+ sessions to choose from, build a Dreamforce agenda that turns big ideas into real business impact.</p>
+      <p class="why">Почему важно: crm</p>
+    </article>
+    
+
+    <article class="card">
+      <div class="meta">Salesforce Blog · crm_ai · 31.08.2026 18:02 · score 15</div>
+      <h3><a href="https://www.salesforce.com/blog/global-consent-manager/" target="_blank" rel="noopener noreferrer">Scaling Trust: How to Build a Foundation for Global Privacy</a></h3>
+      <p>Compliance is a requirement, but building trust is the goal. Learn how to scale consent management without the growing pains.</p>
+      <p class="why">Почему важно: crm</p>
+    </article>
+    
+
+    <article class="card">
+      <div class="meta">Salesforce Blog · crm_ai · 31.08.2026 17:36 · score 15</div>
+      <h3><a href="https://www.salesforce.com/blog/the-gift-of-subscriber-signals/" target="_blank" rel="noopener noreferrer">The Gift of Subscriber Signals</a></h3>
+      <p>Engagement, or lack thereof, is the best present your customers can give you this holiday season.</p>
+      <p class="why">Почему важно: crm</p>
+    </article>
+    
+
+    <article class="card">
+      <div class="meta">Salesforce Blog · crm_ai · 31.08.2026 16:00 · score 15</div>
+      <h3><a href="https://www.salesforce.com/blog/small-business/business-process-mapping/" target="_blank" rel="noopener noreferrer">What is Business Process Mapping and What Tools Do You Need?</a></h3>
+      <p>Business owners, it’s time to map it out.</p>
+      <p class="why">Почему важно: crm</p>
+    </article>
+    
+
+    <article class="card">
+      <div class="meta">Salesforce Blog · crm_ai · 28.08.2026 20:53 · score 12</div>
+      <h3><a href="https://www.salesforce.com/blog/three-perfect-days-at-dreamforce-a-marketers-guide/" target="_blank" rel="noopener noreferrer">Three Perfect Days at Dreamforce — A Marketer’s Guide</a></h3>
+      <p>Looking to make the most out of Dreamforce 2026? Then this guide is for you. See how Marketer&#x27;s can spend three perfect days at Dreamforce - what to see, what not to miss, and tips to maximize your time.</p>
+      <p class="why">Почему важно: crm</p>
+    </article>
+    
+
+    <article class="card">
+      <div class="meta">Salesforce Blog · crm_ai · 28.08.2026 16:00 · score 12</div>
+      <h3><a href="https://www.salesforce.com/blog/small-business/scale-a-sales-team/" target="_blank" rel="noopener noreferrer">How to Scale a Sales Team in One Quarter: Top Tips</a></h3>
+      <p>Bigger sales, bigger success. Not bigger budgets. Here&#x27;s how to scale sales in one quarter or less.</p>
+      <p class="why">Почему важно: crm</p>
+    </article>
+    
+
+    <article class="card">
+      <div class="meta">Habr AI · russian_ai · 31.08.2026 12:37 · score 11</div>
+      <h3><a href="https://habr.com/ru/companies/infostart/articles/1076632/?utm_campaign=1076632&amp;utm_source=habrahabr&amp;utm_medium=rss" target="_blank" rel="noopener noreferrer">ИИ в автотестах 1С: где агент помогает, а где лучше обойтись обычной автоматизацией</a></h3>
+      <p>ИИ-агент способен пройти путь от анализа задачи до создания и запуска сценария в Vanessa Automation. Но практический результат зависит не столько от выбранной модели, сколько от качества тест-плана, ограничений для агента и организации всей цепочки....</p>
+      <p class="why">Почему важно: ии-агент, бот</p>
+    </article>
+    
+        </div>
+
+        <div class="section">
+          <h2>Конкуренты и рынок</h2>
+          
+    <article class="card">
+      <div class="meta">Google News: conversation intelligence OR speech analytics OR sales AI · conversation_intelligence · 31.08.2026 11:28 · score 22</div>
+      <h3><a href="https://news.google.com/rss/articles/CBMi-wFBVV95cUxOU2tBUERQdlE1OG1wWmFGSHU4b09sVkNtNHpCeGl4QUNXVy14UFoyOG9YXzNlWDl2eUswS0ZYdG5BVTh3RzNZZWJfbmJSQVd3TzJVVTd0N2MyaGRTcHM0YkJFOUpOc0kyVDhSM29wekw5eTZUU290aGN1MTdhdDQzMnVXaHNXeXFERmJLczF2eWtpbXhvS0dXV18taloxQVA5YkE5bXVldUdIQlI0WWxZUnVaMkh6WHVLWEYyMC14eXdtc3hPbHBta1JMQll2cHFoZ05ESkFoazBjTURTbXQzTjVoenVBbVBqT1FCbEszenpDNjFoOW10SzI5Zw?oc=5" target="_blank" rel="noopener noreferrer">Voiso Highlights Contact Center Conversations for Buyer Intelligence and Demand Generation - FinancialContent</a></h3>
+      <p>Voiso Highlights Contact Center Conversations for Buyer Intelligence and Demand Generation FinancialContent</p>
+      <p class="why">Почему важно: conversation intelligence, speech analytics, sales ai</p>
+    </article>
+    
+        </div>
+      </section>
+
+      <aside>
+        <div class="section">
+          <h2>Идеи для Обучат</h2>
+          <ul><li>Сделать отдельную коммуникацию для российского SMB: быстрое подключение, русская речь, локальные CRM и понятная стоимость за использование.</li>
+<li>Добавлять в карточку клиента не только саммари, но и конкретное следующее действие для менеджера.</li>
+<li>Выделять повторяющиеся причины потерь и возражения как отдельный управленческий отчет для руководителя продаж.</li>
+<li>Следить за real-time agent assist: если рынок уходит в подсказки во время диалога, это может стать отдельным premium-модулем.</li>
+<li>Показывать ценность через экономию времени менеджера на заполнении CRM и рост конверсии, а не через количество проанализированных минут.</li></ul>
+        </div>
+
+        <div class="section">
+          <h2>Сигналы к проверке</h2>
+          <ul><li>Проверить, какие из найденных новостей подтверждены первоисточником, а какие являются пересказом или vendor PR.</li>
+<li>Отдельно оценивать новости конкурентов: появилась ли новая функция, новый сегмент, новая интеграция или изменение pricing.</li>
+<li>Если тема повторяется 3+ дня подряд, переносить ее из наблюдения в продуктовую гипотезу.</li></ul>
+        </div>
+
+        <div class="section">
+          <h2>Watchlist</h2>
+          <p>Gong, Clari, CallMiner, Observe.AI, Cresta, Rechka, Bitrix24, amoCRM</p>
+        </div>
+      </aside>
+    </div>
+
+    <footer class="footer">
+      <p>Проверенные источники: TechCrunch AI, VentureBeat AI, SaaStr, CX Today, No Jitter, Salesforce Blog, HubSpot Sales Blog, Microsoft Dynamics 365 Blog, Zoom Blog, CNews, Habr AI, VC.ru, Google News: conversation intelligence OR speech analytics OR sales AI, Google News: Gong OR Chorus.ai OR Clari OR Salesloft OR Outreach AI sales, Google News: contact center AI OR agent assist OR CCaaS AI, Google News: Salesforce Agentforce OR HubSpot AI OR Microsoft Dynamics AI CRM, Google News: речевая аналитика OR анализ звонков OR ИИ продажи, Google News: Bitrix24 AI OR Битрикс24 ИИ OR amoCRM AI OR amoCRM ИИ, Google News: контакт центр ИИ OR голосовой бот OR ИИ агент клиентский сервис, Google News: TAdviser CRM ИИ речевая аналитика контакт центр</p>
+      <p>Архив выпусков хранится в <code>/news/archive/YYYY-MM-DD.html</code>.</p>
+    </footer>
+  </main>
+  <script>
+    const triggers = document.querySelectorAll(".strategy-trigger");
+
+    function closeAll(except) {
+      triggers.forEach((trigger) => {
+        if (trigger === except) return;
+        trigger.setAttribute("aria-expanded", "false");
+        const tooltip = document.getElementById(trigger.getAttribute("aria-controls"));
+        if (tooltip) tooltip.hidden = true;
+      });
+    }
+
+    triggers.forEach((trigger) => {
+      trigger.addEventListener("click", () => {
+        const tooltip = document.getElementById(trigger.getAttribute("aria-controls"));
+        const shouldOpen = trigger.getAttribute("aria-expanded") !== "true";
+        closeAll(trigger);
+        trigger.setAttribute("aria-expanded", String(shouldOpen));
+        if (tooltip) tooltip.hidden = !shouldOpen;
+      });
+    });
+
+    document.addEventListener("click", (event) => {
+      if (!event.target.closest(".strategy-item")) closeAll();
+    });
+  </script>
+</body>
+</html>
