@@ -25,17 +25,30 @@ class NotesStoreTests(unittest.TestCase):
         self.assertEqual(updated["title"], "New")
         self.assertTrue(notes_store.delete_note(42, n["id"]))
 
-    def test_knowledge_note_is_singleton_and_hidden(self) -> None:
+    def test_knowledge_notes_are_many_and_hidden_from_notes(self) -> None:
+        a = notes_store.create_note(
+            9, "Продукты", "описание", role=notes_store.KNOWLEDGE_ROLE
+        )
+        b = notes_store.create_note(
+            9, "Процессы", "регламенты", role=notes_store.KNOWLEDGE_ROLE
+        )
+        listed_kb = notes_store.list_knowledge_notes(9)
+        self.assertEqual(len(listed_kb), 2)
+        self.assertEqual({n["title"] for n in listed_kb}, {"Продукты", "Процессы"})
+        notes_store.create_note(9, "Обычная", "текст")
+        listed = notes_store.list_notes(9)
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["title"], "Обычная")
+        self.assertTrue(notes_store.delete_note(9, a["id"]))
+        self.assertEqual(len(notes_store.list_knowledge_notes(9)), 1)
+        self.assertEqual(notes_store.list_knowledge_notes(9)[0]["id"], b["id"])
+
+    def test_ensure_knowledge_note_creates_first_only(self) -> None:
         kb = notes_store.ensure_knowledge_note(9)
         self.assertEqual(kb["title"], "База знаний")
         self.assertTrue(kb["is_knowledge"])
         again = notes_store.ensure_knowledge_note(9)
         self.assertEqual(kb["id"], again["id"])
-        notes_store.create_note(9, "Обычная", "текст")
-        listed = notes_store.list_notes(9)
-        self.assertEqual(len(listed), 1)
-        self.assertEqual(listed[0]["title"], "Обычная")
-        self.assertFalse(notes_store.delete_note(9, kb["id"]))
         self.assertIsNotNone(notes_store.get_knowledge_note(9))
 
     def test_search(self) -> None:

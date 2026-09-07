@@ -1134,6 +1134,19 @@ html.tg-miniapp-fullscreen #panel-notes:not(.hidden) .notes-subtabs-row {
   padding-top: calc((var(--tg-content-safe-area-inset-top, 0px) + 44px) / 3);
 }
 
+.knowledge-list-head {
+  margin: 0 0 var(--space-4);
+  padding-top: var(--space-1);
+}
+
+.knowledge-list-head .lead {
+  margin-bottom: 0;
+}
+
+html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
+  padding-top: calc((var(--tg-content-safe-area-inset-top, 0px) + 44px) / 3);
+}
+
 .notes-filter-bar {
   margin: 0 0 var(--space-4);
 }
@@ -1264,6 +1277,10 @@ html.tg-miniapp-fullscreen #panel-notes:not(.hidden) .notes-subtabs-row {
   font-size: 16px;
   color: var(--text);
   background: var(--surface);
+}
+
+#knowledge-search-input {
+  padding-right: 0.75rem;
 }
 
 .notes-search-tag-btn {
@@ -6393,7 +6410,8 @@ html.modal-sheet-open body {
   /* kept for compatibility if injected elsewhere */
 }
 
-#panel-notes.panel:not(.hidden) {
+#panel-notes.panel:not(.hidden),
+#panel-knowledge.panel:not(.hidden) {
   display: block;
 }
 

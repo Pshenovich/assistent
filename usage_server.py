@@ -4422,14 +4422,51 @@ async def miniapp_journal_pdf(
 
 
 @miniapp_router.get("/notes/knowledge")
-async def miniapp_knowledge_note(
+async def miniapp_knowledge_notes(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import notes as notes_store
+    from assistant.stores import tags as tags_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _load() -> list[dict[str, Any]]:
+        notes = notes_store.list_knowledge_notes(uid)
+        tag_items = [("local", str(n.get("id"))) for n in notes]
+        mapping = tags_store.tags_by_items(uid, tag_items)
+        for n in notes:
+            n["tags"] = mapping.get(("local", str(n.get("id"))), [])
+        return notes
+
+    try:
+        notes = await run_in_threadpool(_load)
+    except Exception:
+        notes = await run_in_threadpool(notes_store.list_knowledge_notes, uid)
+        for n in notes:
+            n.setdefault("tags", [])
+    return {"notes": notes}
+
+
+@miniapp_router.post("/notes/knowledge")
+async def miniapp_knowledge_note_create(
+    body: _MiniappLocalNoteCreate,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     from assistant.stores import notes as notes_store
 
+    title = (body.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Укажите заголовок")
+    desc = (body.description or "").strip()
     uid = int(principal.telegram_user_id)
-    note = await run_in_threadpool(notes_store.ensure_knowledge_note, uid)
-    return {"note": note}
+
+    def _local() -> dict[str, Any]:
+        return notes_store.create_note(
+            uid, title, desc, role=notes_store.KNOWLEDGE_ROLE
+        )
+
+    item = await run_in_threadpool(_local)
+    return {"ok": True, "id": item["id"], "item": item}
 
 
 @miniapp_router.post("/notes/local")
@@ -4509,8 +4546,6 @@ async def miniapp_local_note_delete(
     uid = int(principal.telegram_user_id)
 
     def _run() -> bool:
-        if notes_store.is_knowledge_note(uid, note_id):
-            return False
         return notes_store.delete_note(uid, note_id)
 
     ok = await run_in_threadpool(_run)

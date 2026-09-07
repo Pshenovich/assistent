@@ -40,33 +40,43 @@ def attach_knowledge_note(
     from assistant.stores import notes as notes_store
 
     try:
-        note = notes_store.get_knowledge_note(user_id)
+        notes = notes_store.list_knowledge_notes(user_id)
     except Exception:
         return pack
-    if not note:
+    kb_docs: list[dict[str, Any]] = []
+    for note in notes:
+        html = str(note.get("body") or "")
+        text = share_body_to_text(html).strip()
+        if not text:
+            continue
+        title = str(note.get("title") or "База знаний").strip() or "База знаний"
+        kb_docs.append(
+            {
+                "filename": title,
+                "kind": "knowledge",
+                "text": text,
+                "html": html,
+                "updated_at": note.get("updated_at"),
+            }
+        )
+    if not kb_docs:
         return pack
-    html = str(note.get("body") or "")
-    text = share_body_to_text(html).strip()
-    if not text:
-        return pack
-    title = str(note.get("title") or "База знаний").strip() or "База знаний"
-    live_doc = {
-        "filename": title,
-        "kind": "knowledge",
-        "text": text,
-    }
     out = dict(pack or {})
-    docs = [live_doc] + [
+    docs = kb_docs + [
         d
         for d in (out.get("_documents") or [])
         if isinstance(d, dict) and d.get("kind") not in {"live", "knowledge"}
     ]
     out["_documents"] = docs
+    first = kb_docs[0]
+    single = len(kb_docs) == 1
     out["_live_share"] = {
-        "title": title,
-        "text": text,
-        "html": html,
-        "updated_at": note.get("updated_at"),
+        "title": first["filename"] if single else "",
+        "text": first["text"]
+        if single
+        else "\n\n".join(f"{d['filename']}\n{d['text']}" for d in kb_docs),
+        "html": first.get("html") if single else "",
+        "updated_at": first.get("updated_at") if single else "",
     }
     out.pop("_live_share_error", None)
     return out

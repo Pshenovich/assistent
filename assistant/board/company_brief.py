@@ -228,9 +228,9 @@ def pack_sections(pack: dict[str, Any] | None) -> list[dict[str, str]]:
             continue
         seen.add(body)
         name = str(doc.get("filename") or "Документ")
-        updated = ""
-        html = ""
-        if doc.get("kind") in {"live", "knowledge"} and live:
+        updated = str(doc.get("updated_at") or "")
+        html = str(doc.get("html") or "")
+        if not html and doc.get("kind") in {"live", "knowledge"} and live:
             updated = str(live.get("updated_at") or "")
             html = str(live.get("html") or "")
         out.extend(

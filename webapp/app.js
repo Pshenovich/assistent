@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260907-chrome-bar2";
+  var WEBAPP_BUILD = "20260907-kb-docs";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -231,7 +231,9 @@
   let miniappDev = false;
   var meetingsPageDate = null;
   var notesDataCache = null;
+  var knowledgeDataCache = null;
   var notesSearchQuery = "";
+  var knowledgeSearchQuery = "";
   var notesActiveTagIds = [];
   var tagPickerSaveTimer = null;
   var tagPickerActiveClose = null;
@@ -846,7 +848,55 @@
     });
   }
 
+  function noteCacheEntry(item, extra) {
+    var lid = localNoteIdFrom(item);
+    extra = extra || {};
+    return Object.assign(
+      {
+        id: lid,
+        title: item.title || item.content || "",
+        content: item.content || item.title || "",
+        description: item.description || item.body || "",
+        body: item.body || item.description || "",
+        todoist_id: item.todoist_id || null,
+        tags: Array.isArray(item.tags) ? item.tags : [],
+        source: "local",
+      },
+      extra
+    );
+  }
+
+  function isKnowledgeNoteItem(item) {
+    return !!(item && (item.is_knowledge || item.role === "knowledge"));
+  }
+
+  function prependKnowledgeInCache(item) {
+    if (!knowledgeDataCache) knowledgeDataCache = { notes: [] };
+    if (!knowledgeDataCache.notes) knowledgeDataCache.notes = [];
+    var lid = localNoteIdFrom(item);
+    if (!lid) return;
+    knowledgeDataCache.notes = knowledgeDataCache.notes.filter(function (x) {
+      return String(x.id) !== String(lid);
+    });
+    var entry = noteCacheEntry(item, { role: "knowledge", is_knowledge: true });
+    knowledgeDataCache.notes.unshift(entry);
+    writeMiniappCache("knowledge", knowledgeDataCache);
+    renderKnowledgePaneFromData(knowledgeDataCache);
+  }
+
+  function removeKnowledgeFromCache(id) {
+    if (!knowledgeDataCache || !knowledgeDataCache.notes) return;
+    knowledgeDataCache.notes = knowledgeDataCache.notes.filter(function (x) {
+      return String(x.id) !== String(id);
+    });
+    writeMiniappCache("knowledge", knowledgeDataCache);
+  }
+
   function prependLocalInCache(item) {
+    if (isKnowledgeNoteItem(item)) {
+      prependKnowledgeInCache(item);
+      return;
+    }
     if (!notesDataCache) notesDataCache = { local_notes: [] };
     if (!notesDataCache.local_notes) notesDataCache.local_notes = [];
     var lid = localNoteIdFrom(item);
@@ -854,16 +904,7 @@
     notesDataCache.local_notes = notesDataCache.local_notes.filter(function (x) {
       return String(x.id) !== String(lid);
     });
-    notesDataCache.local_notes.unshift({
-      id: lid,
-      title: item.title || item.content || "",
-      content: item.content || item.title || "",
-      description: item.description || item.body || "",
-      body: item.body || item.description || "",
-      todoist_id: item.todoist_id || null,
-      tags: Array.isArray(item.tags) ? item.tags : [],
-      source: "local",
-    });
+    notesDataCache.local_notes.unshift(noteCacheEntry(item));
   }
 
   function removeLocalFromCache(id) {
@@ -1487,6 +1528,7 @@
       method: "DELETE",
     });
     removeLocalFromCache(id);
+    removeKnowledgeFromCache(id);
   }
 
   async function apiFetchReal(path, opts) {
@@ -1810,8 +1852,10 @@
       }
     }
     if (name === "knowledge") {
+      closeNotesDetail();
+      if (isNoteEditorModalOpen()) handleNoteEditorModalClose();
       loadNoteEditorScripts().catch(function () {});
-      openKnowledgeNote();
+      loadKnowledgeNotes();
     }
     if (name !== "notes" && name !== "knowledge") {
       closeNotesDetail();
@@ -1839,12 +1883,9 @@
       if (name === "profile" && currentProfileScreen !== "main") {
         profileScreen("main");
       }
-      if (name === "notes") {
+      if (name === "notes" || name === "knowledge") {
         closeNotesDetail();
         if (isNoteEditorModalOpen()) handleNoteEditorModalClose();
-      }
-      if (name === "knowledge") {
-        openKnowledgeNote();
       }
       postTabSwitch(name, prev);
       return;
@@ -3819,7 +3860,7 @@
 
   async function refreshKnowledgeBaseHint() {
     var hint = document.getElementById("profile-knowledge-base-hint");
-    if (hint) hint.textContent = "Заметка о компании для PAIE";
+    if (hint) hint.textContent = "Документы компании для PAIE";
   }
 
   async function loadKnowledgeBaseMembers(kbId) {
@@ -4017,17 +4058,130 @@
     }
   }
 
-  function openKnowledgeNote() {
-    loadNoteEditorScripts().catch(function () {});
-    apiFetch("/notes/knowledge", { method: "GET" })
-      .then(function (data) {
-        var note = data && data.note;
-        if (!note) throw new Error("Не удалось открыть базу знаний");
-        openLocalNoteDetailReady(note, { isLocal: true, knowledge: true }, false, String(note.id));
+  function knowledgeItemMatchesFilter(item) {
+    var q = String(knowledgeSearchQuery || "")
+      .trim()
+      .toLowerCase();
+    if (!q) return true;
+    var title =
+      sanitizeNoteTitle(item.title || item.content || "") ||
+      String(item.title || item.content || "");
+    var preview = notePlainExcerpt(item.description || item.body || "", 500);
+    var tagNames = noteTagsOf(item)
+      .map(function (t) {
+        return String(t.name || "");
       })
-      .catch(function (e) {
-        alert((e && e.message) || "Не удалось открыть базу знаний");
+      .join(" ");
+    var hay = (title + " " + preview + " " + tagNames).toLowerCase();
+    return hay.indexOf(q) >= 0;
+  }
+
+  function renderKnowledgePaneFromData(data) {
+    var pane = document.getElementById("knowledge-pane");
+    if (!pane) return;
+    pane.innerHTML = "";
+    var all = (data && data.notes) || [];
+    var list = all.filter(knowledgeItemMatchesFilter);
+    if (!all.length) {
+      pane.innerHTML =
+        '<p class="muted empty-hint">Документов пока нет. Нажмите «+», чтобы создать.</p>';
+      return;
+    }
+    if (!list.length) {
+      pane.innerHTML =
+        '<p class="muted empty-hint">Ничего не найдено. Измените поиск.</p>';
+      return;
+    }
+    list.forEach(function (n) {
+      var noteId = localNoteIdFrom(n);
+      var id = noteId != null ? String(noteId) : "";
+      var card = document.createElement("div");
+      card.className = "note-card";
+      var inner = document.createElement("div");
+      inner.className = "note-card-inner";
+      var titleRaw =
+        sanitizeNoteTitle(n.title || n.content || "") ||
+        (n.title || n.content || "(без названия)");
+      var descRaw = notePlainExcerpt(n.description || n.body || "", 280);
+      var descHtml = linkifyEscaped(escapeHtml(descRaw));
+      inner.innerHTML =
+        '<p class="note-card-excerpt">' +
+        escapeHtml(titleRaw) +
+        "</p>" +
+        (descRaw
+          ? '<p class="note-card-excerpt note-card-excerpt--secondary muted">' +
+            descHtml +
+            (descRaw.length >= 280 ? "…" : "") +
+            "</p>"
+          : "");
+      appendTagChipsRow(inner, noteTagsOf(n), { prepend: true, head: true });
+      card.appendChild(inner);
+      card.addEventListener("click", function () {
+        openKnowledgeNoteDetail(n);
       });
+      pane.appendChild(
+        wrapWithSwipeDelete(
+          card,
+          async function () {
+            await deleteLocalNoteById(id);
+            if (knowledgeDataCache) renderKnowledgePaneFromData(knowledgeDataCache);
+          },
+          { removeStack: true, confirmMessage: "Удалить документ?" }
+        )
+      );
+    });
+  }
+
+  async function loadKnowledgeNotes() {
+    var err = document.getElementById("knowledge-global-error");
+    if (err) {
+      err.textContent = "";
+      setHidden(err, true);
+    }
+    if (knowledgeDataCache) {
+      renderKnowledgePaneFromData(knowledgeDataCache);
+    } else {
+      var cached = readMiniappCache("knowledge");
+      if (cached) {
+        knowledgeDataCache = cached;
+        renderKnowledgePaneFromData(cached);
+      }
+    }
+    try {
+      var data = await apiFetch("/notes/knowledge", { method: "GET" });
+      knowledgeDataCache = { notes: (data && data.notes) || [] };
+      writeMiniappCache("knowledge", knowledgeDataCache);
+      renderKnowledgePaneFromData(knowledgeDataCache);
+    } catch (e) {
+      if (!knowledgeDataCache && err) {
+        err.textContent = e.message || String(e);
+        setHidden(err, false);
+      }
+    }
+    syncKnowledgeCreateFab();
+  }
+
+  function openNewKnowledgeNote() {
+    openLocalNoteDetail(
+      {
+        id: "",
+        title: "",
+        content: "",
+        description: "",
+        role: "knowledge",
+        is_knowledge: true,
+      },
+      { create: true, isLocal: true, knowledge: true }
+    );
+  }
+
+  function openKnowledgeNoteDetail(n, opts) {
+    opts = Object.assign({ isLocal: true, knowledge: true }, opts || {});
+    openLocalNoteDetail(n, opts);
+  }
+
+  function openKnowledgeNote() {
+    setTab("knowledge");
   }
 
   async function addKnowledgeBase() {
@@ -6239,6 +6393,19 @@
       (!notesRoot || !notesRoot.classList.contains("hidden")) &&
       !isNoteEditorModalOpen();
     setHidden(createBtn, !show);
+    syncKnowledgeCreateFab();
+  }
+
+  function syncKnowledgeCreateFab() {
+    var createBtn = document.getElementById("knowledge-create-btn");
+    if (!createBtn) return;
+    var knowledgePanel = document.getElementById("panel-knowledge");
+    var show =
+      currentTab === "knowledge" &&
+      knowledgePanel &&
+      !knowledgePanel.classList.contains("hidden") &&
+      !isNoteEditorModalOpen();
+    setHidden(createBtn, !show);
   }
 
   function syncActualCreateFab() {
@@ -7071,12 +7238,20 @@
     if (!noteUsesKnowledge()) return "";
     try {
       var data = await apiFetch("/notes/knowledge", { method: "GET" });
-      var html = data && data.note && data.note.body;
-      if (!html) return "";
-      var tmp = document.createElement("div");
-      tmp.innerHTML = html;
-      var text = String(tmp.innerText || tmp.textContent || "").trim();
-      if (text.length > 6000) text = text.slice(0, 5999) + "…";
+      var notes = (data && data.notes) || [];
+      var parts = [];
+      notes.forEach(function (note) {
+        var html = note && note.body;
+        if (!html) return;
+        var tmp = document.createElement("div");
+        tmp.innerHTML = html;
+        var text = String(tmp.innerText || tmp.textContent || "").trim();
+        if (!text) return;
+        var title = String((note && note.title) || "Документ").trim() || "Документ";
+        parts.push("## " + title + "\n" + text);
+      });
+      var text = parts.join("\n\n");
+      if (text.length > 12000) text = text.slice(0, 11999) + "…";
       return text;
     } catch (_) {
       return "";
@@ -8846,7 +9021,7 @@
     var proceed = function () {
       openLocalNoteDetailReady(n, opts, noteIsCreate, noteId);
     };
-    if (noteIsCreate || !noteId) {
+    if (noteIsCreate || !noteId || opts.knowledge || isKnowledgeNoteItem(n)) {
       proceed();
       return;
     }
@@ -8872,6 +9047,7 @@
     const cleanTitle =
       sanitizeNoteTitle(n.title || n.content || "") || String(n.title || n.content || "");
     const cleanBody = sanitizeNoteBody(n.description || n.body || "");
+    var isKnowledge = !!(opts && opts.knowledge) || isKnowledgeNoteItem(n);
 
     const wrap = document.createElement("div");
     wrap.className = "note-editor-page";
@@ -8889,7 +9065,9 @@
       }
       mountShareControls("local", noteId);
     }
-    wrap.innerHTML = noteEditorPageInnerHtml("Заголовок заметки");
+    wrap.innerHTML = noteEditorPageInnerHtml(
+      isKnowledge ? "Заголовок документа" : "Заголовок заметки"
+    );
     var tocControls = bindNoteEditorTocControls(wrap);
     var editorPad = wrap.querySelector(".note-editor-pad--body");
     var titleInput = wrap.querySelector("#note-editor-title-input");
@@ -8910,7 +9088,7 @@
         return;
       }
       if (noteIsCreate || !noteId) {
-        var createRes = await apiFetch("/notes/local", {
+        var createRes = await apiFetch(isKnowledge ? "/notes/knowledge" : "/notes/local", {
           method: "POST",
           body: JSON.stringify({
             title: fields.title,
@@ -8921,11 +9099,19 @@
         var created =
           (createRes && createRes.item) ||
           { id: createRes.id, title: fields.title, description: fields.description };
+        if (isKnowledge) {
+          created.role = created.role || "knowledge";
+          created.is_knowledge = true;
+        }
         noteId = String(created.id || "");
         noteIsCreate = false;
         n.id = noteId;
-        prependLocalInCache(created);
-        if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+        if (isKnowledge) {
+          prependKnowledgeInCache(created);
+        } else {
+          prependLocalInCache(created);
+          if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+        }
         if (noteId && tagsWrap && tagsWrap.classList.contains("hidden")) {
           try {
             mountTagPicker(tagsWrap, "local", noteId, noteTagsOf(n), function (tags) {
@@ -8944,14 +9130,21 @@
             description: fields.description,
           }),
         });
-        prependLocalInCache({
+        var patched = {
           id: noteId,
           title: fields.title,
           description: fields.description,
           body: fields.description,
           todoist_id: n.todoist_id,
           tags: noteTagsOf(n),
-        });
+        };
+        if (isKnowledge) {
+          patched.role = "knowledge";
+          patched.is_knowledge = true;
+          prependKnowledgeInCache(patched);
+        } else {
+          prependLocalInCache(patched);
+        }
       }
       var detailBodyDraft = getNoteEditorBodyEl();
       if (detailBodyDraft && detailBodyDraft._noteEditor) {
@@ -8981,7 +9174,7 @@
       }
       var fields = readFields();
       if (!fields.title) {
-        alert("Введите заголовок заметки");
+        alert(isKnowledge ? "Введите заголовок документа" : "Введите заголовок заметки");
         var titleEl = document.getElementById("note-editor-title-input");
         if (titleEl) titleEl.focus();
         return false;
@@ -9013,7 +9206,15 @@
         runSave: runSave,
       };
     }
-    openNoteEditorModal(noteIsCreate ? "Новая заметка" : "Заметка");
+    openNoteEditorModal(
+      noteIsCreate
+        ? isKnowledge
+          ? "Новый документ"
+          : "Новая заметка"
+        : isKnowledge
+          ? "Документ"
+          : "Заметка"
+    );
     mountNoteRichEditor(editorPad, cleanBody, schedulePatch, {
       tocParent: tocControls.tocParent,
       onTocNavigate: tocControls.close,
@@ -9666,6 +9867,13 @@
       });
     }
 
+    var knowledgeCreateBtn = document.getElementById("knowledge-create-btn");
+    if (knowledgeCreateBtn) {
+      knowledgeCreateBtn.addEventListener("click", function () {
+        openNewKnowledgeNote();
+      });
+    }
+
     var actualCreateBtn = document.getElementById("actual-create-btn");
     if (actualCreateBtn) {
       actualCreateBtn.addEventListener("click", function (e) {
@@ -9711,6 +9919,14 @@
       notesSearchInput.addEventListener("input", function () {
         notesSearchQuery = notesSearchInput.value || "";
         if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+      });
+    }
+
+    var knowledgeSearchInput = document.getElementById("knowledge-search-input");
+    if (knowledgeSearchInput) {
+      knowledgeSearchInput.addEventListener("input", function () {
+        knowledgeSearchQuery = knowledgeSearchInput.value || "";
+        if (knowledgeDataCache) renderKnowledgePaneFromData(knowledgeDataCache);
       });
     }
 
@@ -9848,13 +10064,7 @@
     var kbOpenBtn = document.getElementById("profile-knowledge-base-open");
     if (kbOpenBtn) {
       kbOpenBtn.addEventListener("click", function () {
-        openKnowledgeNote();
-      });
-    }
-    var knowledgeOpenNote = document.getElementById("knowledge-open-note");
-    if (knowledgeOpenNote) {
-      knowledgeOpenNote.addEventListener("click", function () {
-        openKnowledgeNote();
+        setTab("knowledge");
       });
     }
     var kbBack = document.getElementById("profile-knowledge-base-back");

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260907-chrome-bar2">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260907-kb-docs">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -43,7 +43,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20260907-chrome-bar2" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20260907-kb-docs" />
   <link rel="preload" href="/webapp/note-rich-editor.js?v=20260907-chrome-bar2" as="script" />
   <!-- Same-origin, async: не блокирует парсер, если сеть/VPN тормозит. -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" async></script>
@@ -193,11 +193,38 @@
       </section>
 
       <section id="panel-knowledge" class="panel hidden" role="tabpanel" hidden>
-        <div class="profile-head">
-          <h1>База знаний</h1>
-          <p class="muted">Контекст о компании для ответов PAIE</p>
+        <div id="knowledge-root">
+          <div class="knowledge-list-head">
+            <h1 class="screen-title">База знаний</h1>
+            <p class="muted lead lead-tight">Документы компании для ответов PAIE и Donatello</p>
+          </div>
+          <div class="notes-filter-bar">
+            <div class="notes-search-wrap">
+              <input
+                type="search"
+                id="knowledge-search-input"
+                class="notes-search-input"
+                placeholder="Поиск…"
+                autocomplete="off"
+                enterkeyhint="search"
+                aria-label="Поиск документов"
+              />
+            </div>
+          </div>
+          <div id="knowledge-pane" class="notes-pane notes-pane--stack"></div>
+          <p id="knowledge-global-error" class="error hidden"></p>
         </div>
-        <button type="button" class="btn" id="knowledge-open-note">Открыть базу знаний</button>
+        <button
+          type="button"
+          id="knowledge-create-btn"
+          class="notes-fab hidden"
+          aria-label="Создать документ"
+          title="Новый документ"
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
       </section>
 
       <!-- Профиль -->
@@ -261,7 +288,7 @@
               </div>
               <div>
                 <p class="expenses-label">База знаний</p>
-                <p class="expenses-total contacts-card-sub" id="profile-knowledge-base-hint">Заметка о компании для PAIE</p>
+                <p class="expenses-total contacts-card-sub" id="profile-knowledge-base-hint">Документы компании для PAIE</p>
               </div>
             </div>
             <span class="chevron">›</span>
@@ -1055,6 +1082,6 @@
   <script src="/webapp/note-html.js?v=20260907-chrome-bar2" defer></script>
   <script src="/webapp/note-comments.js?v=20260907-chrome-bar2" defer></script>
   <script src="/webapp/note-rich-editor.js?v=20260907-chrome-bar2" defer></script>
-  <script src="/webapp/app.js?v=20260907-chrome-bar2" defer></script>
+  <script src="/webapp/app.js?v=20260907-kb-docs" defer></script>
 </body>
 </html>

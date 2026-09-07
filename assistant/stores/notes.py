@@ -236,20 +236,27 @@ def is_knowledge_note(user_id: int | str, note_id: int) -> bool:
     return bool(row and row.get("is_knowledge"))
 
 
-def get_knowledge_note(user_id: int | str) -> Optional[dict[str, Any]]:
+def list_knowledge_notes(
+    user_id: int | str, *, limit: int = 200
+) -> list[dict[str, Any]]:
     uid = str(int(user_id))
+    lim = max(1, min(int(limit), 500))
     with _LOCK:
         cur = _conn().execute(
             """
             SELECT * FROM local_notes
             WHERE user_id = ? AND role = ?
-            ORDER BY id ASC
-            LIMIT 1
+            ORDER BY updated_at DESC
+            LIMIT ?
             """,
-            (uid, KNOWLEDGE_ROLE),
+            (uid, KNOWLEDGE_ROLE, lim),
         )
-        row = cur.fetchone()
-    return _row_to_dict(row) if row else None
+        return [_row_to_dict(r) for r in cur.fetchall()]
+
+
+def get_knowledge_note(user_id: int | str) -> Optional[dict[str, Any]]:
+    notes = list_knowledge_notes(user_id, limit=1)
+    return notes[0] if notes else None
 
 
 def ensure_knowledge_note(user_id: int | str) -> dict[str, Any]:
@@ -261,8 +268,6 @@ def ensure_knowledge_note(user_id: int | str) -> dict[str, Any]:
 
 def delete_note(user_id: int | str, note_id: int) -> bool:
     uid = str(int(user_id))
-    if is_knowledge_note(uid, note_id):
-        return False
     with _LOCK:
         cur = _conn().execute(
             "DELETE FROM local_notes WHERE user_id = ? AND id = ?",

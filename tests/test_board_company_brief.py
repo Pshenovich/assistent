@@ -226,3 +226,37 @@ class CompanyBriefTest(unittest.TestCase):
         notes_store._CONN = None  # type: ignore[attr-defined]
         store.reset_connection()
         tmp.cleanup()
+
+    def test_multiple_knowledge_notes_in_company_context(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from assistant.board.context import attach_knowledge_note
+        from assistant.stores import notes as notes_store
+
+        tmp = tempfile.TemporaryDirectory()
+        os.environ["NOTES_DB_PATH"] = str(Path(tmp.name) / "notes.sqlite")
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        notes_store.create_note(
+            14,
+            "Продукты",
+            "<h2>Боты</h2><p>Диалог стоит 10 рублей</p>",
+            role=notes_store.KNOWLEDGE_ROLE,
+        )
+        notes_store.create_note(
+            14,
+            "Процессы",
+            "<h2>Онбординг</h2><p>Новых сотрудников ведёт наставник</p>",
+            role=notes_store.KNOWLEDGE_ROLE,
+        )
+        notes_store.create_note(14, "Пустой", "", role=notes_store.KNOWLEDGE_ROLE)
+        pack = attach_knowledge_note(None, 14)
+        self.assertIsNotNone(pack)
+        names = {d["filename"] for d in pack["_documents"]}
+        self.assertEqual(names, {"Продукты", "Процессы"})
+        self.assertTrue(all(d.get("html") for d in pack["_documents"]))
+        text = format_company_context(pack, query="онбординг наставник")
+        self.assertIn("база знаний", text.lower())
+        self.assertIn("наставник", text.lower())
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        tmp.cleanup()
