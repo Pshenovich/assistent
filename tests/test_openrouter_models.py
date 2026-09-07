@@ -1,6 +1,7 @@
 import unittest
 
 from assistant.integrations.openrouter_client import (
+    build_gpt_picker_models,
     normalize_openrouter_models,
     sanitize_openrouter_model_id,
 )
@@ -44,6 +45,23 @@ class OpenRouterModelsTests(unittest.TestCase):
         self.assertNotIn("openai/text-embedding-3-large", ids)
         names = {m["id"]: m["name"] for m in out["models"]}
         self.assertEqual(names["openai/gpt-5.4"], "GPT-5.4")
+
+    def test_gpt_picker_ignores_gemini_fallback_catalog(self) -> None:
+        out = build_gpt_picker_models({"google/gemini-2.5-flash"})
+        ids = [m["id"] for m in out["models"]]
+        self.assertEqual(out["default"], "openai/gpt-5.6-sol")
+        self.assertIn("openai/gpt-5.6-sol", ids)
+        self.assertIn("openai/gpt-4o", ids)
+        self.assertNotIn("google/gemini-2.5-flash", ids)
+
+    def test_gpt_picker_keeps_only_listed_openai_from_full_catalog(self) -> None:
+        out = build_gpt_picker_models(
+            {"openai/gpt-5.4", "openai/gpt-4o", "openai/gpt-3.5-turbo"},
+            ask="openai/gpt-4o",
+        )
+        ids = [m["id"] for m in out["models"]]
+        self.assertEqual(out["default"], "openai/gpt-4o")
+        self.assertEqual(set(ids), {"openai/gpt-5.4", "openai/gpt-4o"})
 
 
 if __name__ == "__main__":

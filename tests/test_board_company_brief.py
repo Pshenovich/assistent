@@ -130,8 +130,9 @@ class CompanyBriefTest(unittest.TestCase):
             {"title": "Бот", "company_brief": "КОМПАНИЯ\nКаталог:\n• Боты — 10 ₽"},
         )
         with patch("assistant.board.context.load_company_pack") as load:
+            load.return_value = None
             ctx = build_agent_context(meeting_id=meeting["id"], agent="P")
-        load.assert_not_called()
+        load.assert_called()
         self.assertIn("Боты — 10 ₽", ctx["text"])
         self.assertNotIn("Прошивка", ctx["text"])
         store.reset_connection()
@@ -158,4 +159,39 @@ class CompanyBriefTest(unittest.TestCase):
         self.assertIn("база знаний", text.lower())
         self.assertIn("Боты", text)
         notes_store._CONN = None  # type: ignore[attr-defined]
+        tmp.cleanup()
+
+    def test_knowledge_note_overrides_stored_brief(self) -> None:
+        from assistant.board import store
+        from assistant.board.context import build_agent_context
+        from assistant.stores import notes as notes_store
+        import tempfile
+        from pathlib import Path
+
+        tmp = tempfile.TemporaryDirectory()
+        os.environ["BOARD_DB_PATH"] = str(Path(tmp.name) / "board.sqlite")
+        os.environ["NOTES_DB_PATH"] = str(Path(tmp.name) / "notes.sqlite")
+        os.environ["BOARD_COMPANY_SHARE_URL"] = "off"
+        store.reset_connection()
+        store.init_db()
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        kb = notes_store.ensure_knowledge_note(12)
+        notes_store.update_note(
+            12, kb["id"], body="<h2>Клиника</h2><p>Пакет сопровождения 15 000 ₽</p>"
+        )
+        company = store.get_or_create_company_for_chat(12)
+        meeting = store.create_meeting(
+            user_id=12, chat_id=12, question="Сколько стоит сопровождение?", company_id=company["id"]
+        )
+        store.set_analysis(
+            meeting["id"],
+            {"title": "Сопровождение", "company_brief": "КОМПАНИЯ\nКаталог:\n• Боты — 10 ₽"},
+        )
+        ctx = build_agent_context(meeting_id=meeting["id"], agent="P")
+        self.assertIn("база знаний", ctx["text"].lower())
+        self.assertIn("Клиника", ctx["text"])
+        self.assertIn("15 000", ctx["text"])
+        self.assertNotIn("Боты — 10 ₽", ctx["text"])
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        store.reset_connection()
         tmp.cleanup()

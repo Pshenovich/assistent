@@ -3910,10 +3910,10 @@ async def miniapp_gpt_models(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     del principal
-    from assistant.integrations.openrouter_client import list_openrouter_models
+    from assistant.integrations.openrouter_client import list_gpt_picker_models
 
     def _run() -> dict[str, Any]:
-        return list_openrouter_models()
+        return list_gpt_picker_models()
 
     return await run_in_threadpool(_run)
 

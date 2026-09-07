@@ -60,6 +60,17 @@ _MODELS_SKIP = ("embed", "whisper", "tts-", "-tts", "moderation", "rerank")
 _MODELS_CACHE: tuple[float, dict[str, Any]] | None = None
 _MODELS_TTL_SEC = 600.0
 
+# Короткий список для свитчера GPT в заметке (не весь каталог OpenRouter).
+GPT_PICKER_MODELS: tuple[tuple[str, str], ...] = (
+    ("openai/gpt-5.6-sol", "GPT-5.6 Sol"),
+    ("openai/gpt-5.5", "GPT-5.5"),
+    ("openai/gpt-5.4", "GPT-5.4"),
+    ("openai/gpt-5", "GPT-5"),
+    ("openai/gpt-4.1", "GPT-4.1"),
+    ("openai/gpt-4o", "GPT-4o"),
+    ("openai/gpt-4o-mini", "GPT-4o mini"),
+)
+
 
 def default_openrouter_model() -> str:
     return (
@@ -370,3 +381,34 @@ def list_openrouter_models(*, force: bool = False) -> dict[str, Any]:
         out = normalize_openrouter_models([], default=default)
     _MODELS_CACHE = (now, out)
     return out
+
+
+def build_gpt_picker_models(
+    catalog_ids: set[str],
+    *,
+    ask: str | None = None,
+) -> dict[str, Any]:
+    catalog_has_openai = any(mid.startswith("openai/") for mid in catalog_ids)
+    models: list[dict[str, str]] = []
+    for mid, name in GPT_PICKER_MODELS:
+        if catalog_has_openai and mid not in catalog_ids:
+            continue
+        models.append({"id": mid, "name": name})
+    if not models:
+        models = [{"id": mid, "name": name} for mid, name in GPT_PICKER_MODELS]
+    ask_id = sanitize_openrouter_model_id(ask)
+    default = models[0]["id"]
+    if ask_id and any(row["id"] == ask_id for row in models):
+        default = ask_id
+    models.sort(key=lambda row: (0 if row["id"] == default else 1, row["name"].lower()))
+    return {"models": models, "default": default}
+
+
+def list_gpt_picker_models(*, force: bool = False) -> dict[str, Any]:
+    """Модели для выбора в режиме GPT: несколько актуальных GPT, не Gemini PAIE."""
+    catalog = list_openrouter_models(force=force)
+    available = {m["id"] for m in catalog.get("models") or []}
+    return build_gpt_picker_models(
+        available,
+        ask=os.getenv("OPENROUTER_MODEL_ASK", ""),
+    )

@@ -266,6 +266,17 @@ html.boot-open-app #app.hidden {
   pointer-events: none;
 }
 
+.app.app--immersive:has(#note-editor-overlay:not(.hidden)) .tabbar-wrap,
+.app.app--immersive:has(#note-editor-overlay:not(.hidden)) .tabbar-backdrop {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: none;
+}
+
+.app.app--immersive:has(#note-editor-overlay:not(.hidden)) .tabbar {
+  pointer-events: auto;
+}
+
 .app.app--immersive .main-scroll {
   overflow: hidden;
   padding-bottom: calc(var(--space-4) + var(--tabbar-safe));
@@ -1716,7 +1727,7 @@ html.tg-miniapp-fullscreen #panel-notes:not(.hidden) .notes-subtabs-row {
   z-index: 30;
   flex-shrink: 0;
   margin: 0;
-  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  padding: 10px 12px 10px;
   border-bottom: none;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(25, 25, 26, 0.96);
@@ -3255,9 +3266,6 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   --note-composer-muted: #909090;
   --note-composer-ink: #19191a;
   box-sizing: border-box;
-  position: sticky;
-  bottom: 8px;
-  z-index: 6;
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -3267,6 +3275,15 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   border-radius: 32px;
   background: var(--vkui--color_background_content, #19191a);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+}
+
+#note-editor-overlay .note-editor-modal-form > .note-paie-reply-form {
+  position: relative;
+  z-index: 5;
+  flex-shrink: 0;
+  margin-top: 8px;
+  margin-bottom: 12px;
+  overflow: visible;
 }
 
 .note-paie-composer-input,
@@ -5284,15 +5301,21 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   --note-editor-pad-x: 16px;
   --note-editor-pad-y: 16px;
   align-items: stretch;
+  bottom: var(--tabbar-stack);
+  overflow: hidden;
   background: var(--vkui--color_background, var(--bg));
   backdrop-filter: none;
+}
+
+html.note-editor-kb-open #note-editor-overlay {
+  bottom: 0;
 }
 
 #note-editor-overlay .note-editor-web-back {
   position: absolute;
   top: max(10px, env(safe-area-inset-top, 0px));
   left: max(12px, env(safe-area-inset-left, 0px));
-  z-index: 40;
+  z-index: 80;
   min-height: 36px;
   padding: 0 12px 0 0;
   border: none;
@@ -5301,6 +5324,10 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   color: var(--vkui--color_text_accent, #529ef4);
   background: transparent;
   cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
 }
 
 #note-editor-overlay .note-editor-web-back.hidden {
@@ -5418,7 +5445,7 @@ html.note-editor-web-back-visible
   margin: 0;
   max-width: none;
   padding-top: 10px;
-  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: 10px;
 }
 
 html.note-editor-kb-open
@@ -5539,6 +5566,7 @@ html.note-editor-kb-open
 
 .note-editor-modal-form {
   position: relative;
+  z-index: 0;
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -5552,6 +5580,8 @@ html.note-editor-kb-open
 }
 
 .note-editor-modal-body {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -5594,7 +5624,7 @@ html.note-editor-kb-open
   flex-shrink: 0;
   max-width: none;
   margin: 0;
-  padding: 10px var(--space-4) calc(10px + env(safe-area-inset-bottom, 0px));
+  padding: 10px var(--space-4) 10px;
   border-bottom: none;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(25, 25, 26, 0.96);

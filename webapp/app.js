@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260907-composer";
+  var WEBAPP_BUILD = "20260907-note-touch";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260907-composer";
+  const NOTE_EDITOR_ASSET_V = "20260907-note-touch";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -4208,19 +4208,7 @@
     var tg = window.Telegram && window.Telegram.WebApp;
 
     if (noteEditorOpen) {
-      var visibleH = noteEditorVisibleHeightPx();
-      if (visibleH > 0) {
-        sheet.style.height = visibleH + "px";
-        sheet.style.maxHeight = visibleH + "px";
-      } else {
-        sheet.style.height = "100%";
-        sheet.style.maxHeight = "100%";
-      }
-      // Keep sheet aligned with visual viewport when iOS shifts offsetTop.
       var offsetTop = vv && typeof vv.offsetTop === "number" ? vv.offsetTop : 0;
-      sheet.style.transform = offsetTop > 0 ? "translateY(" + Math.round(offsetTop) + "px)" : "";
-      body.style.paddingBottom = "";
-
       var stable =
         tg && typeof tg.viewportStableHeight === "number" ? tg.viewportStableHeight : 0;
       var tgH = tg && typeof tg.viewportHeight === "number" ? tg.viewportHeight : 0;
@@ -4232,8 +4220,25 @@
           Math.round(window.innerHeight - vv.height - (vv.offsetTop || 0))
         );
       }
-      root.classList.toggle("note-editor-kb-open", kbGuess > 40);
+      var kbOpen = kbGuess > 40;
+      root.classList.toggle("note-editor-kb-open", kbOpen);
       root.style.setProperty("--note-editor-kb-inset", kbGuess + "px");
+      body.style.paddingBottom = "";
+      if (kbOpen) {
+        var visibleH = noteEditorVisibleHeightPx();
+        if (visibleH > 0) {
+          sheet.style.height = visibleH + "px";
+          sheet.style.maxHeight = visibleH + "px";
+        } else {
+          sheet.style.height = "100%";
+          sheet.style.maxHeight = "100%";
+        }
+        sheet.style.transform = offsetTop > 0 ? "translateY(" + Math.round(offsetTop) + "px)" : "";
+      } else {
+        sheet.style.height = "100%";
+        sheet.style.maxHeight = "100%";
+        sheet.style.transform = "";
+      }
       return;
     }
 
@@ -6490,14 +6495,31 @@
       gptModelsState.models = Array.isArray(res && res.models) ? res.models : [];
       gptModelsState.defaultId = String((res && res.default) || "").trim();
       gptModelsState.loaded = true;
+      var allowed = {};
+      gptModelsState.models.forEach(function (m) {
+        if (m && m.id) allowed[m.id] = true;
+      });
       var current = selectedGptModelId();
-      if (!current && gptModelsState.defaultId) {
-        setSelectedGptModelId(gptModelsState.defaultId);
+      if (!current || !allowed[current]) {
+        setSelectedGptModelId(
+          gptModelsState.defaultId ||
+            (gptModelsState.models[0] && gptModelsState.models[0].id) ||
+            ""
+        );
       }
     } catch (_) {
-      gptModelsState.models = gptModelsState.defaultId
-        ? [{ id: gptModelsState.defaultId, name: gptModelShortName(gptModelsState.defaultId) }]
-        : [];
+      gptModelsState.models = [
+        { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol" },
+        { id: "openai/gpt-5.5", name: "GPT-5.5" },
+        { id: "openai/gpt-5.4", name: "GPT-5.4" },
+        { id: "openai/gpt-5", name: "GPT-5" },
+        { id: "openai/gpt-4.1", name: "GPT-4.1" },
+        { id: "openai/gpt-4o", name: "GPT-4o" },
+        { id: "openai/gpt-4o-mini", name: "GPT-4o mini" },
+      ];
+      gptModelsState.defaultId = "openai/gpt-5.6-sol";
+      gptModelsState.loaded = true;
+      setSelectedGptModelId(gptModelsState.defaultId);
     } finally {
       gptModelsState.loading = false;
       syncGptModelButton();
@@ -6511,6 +6533,26 @@
     el.style.height = Math.min(el.scrollHeight, 136) + "px";
   }
 
+  function parkNoteComposerFooter() {
+    var form = document.getElementById("note-paie-reply-form");
+    var modalForm = document.querySelector("#note-editor-overlay .note-editor-modal-form");
+    var toolbar = document.getElementById("note-editor-toolbar-wrap");
+    if (!form || !modalForm) return;
+    if (form.parentElement === modalForm) return;
+    if (toolbar && toolbar.parentNode === modalForm) {
+      toolbar.insertAdjacentElement("afterend", form);
+    } else {
+      modalForm.appendChild(form);
+    }
+  }
+
+  function unparkNoteComposerFooter() {
+    var form = document.querySelector(
+      "#note-editor-overlay .note-editor-modal-form > #note-paie-reply-form"
+    );
+    if (form) form.remove();
+  }
+
   function bindNotePaieReplyForm(threadEl) {
     var form = document.getElementById("note-paie-reply-form");
     if (!form || !form.querySelector(".note-paie-send")) {
@@ -6519,6 +6561,8 @@
       else if (threadEl) threadEl.insertAdjacentHTML("beforeend", html);
       form = document.getElementById("note-paie-reply-form");
     }
+    parkNoteComposerFooter();
+    form = document.getElementById("note-paie-reply-form");
     if (!form || form._bound) return;
     form._bound = true;
     var input = document.getElementById("note-paie-reply-input");
@@ -7898,6 +7942,7 @@
       destroyActiveNoteRichEditor();
       clearNoteEditorToolbarWrap();
       clearNoteEditorTagsWrap();
+      unparkNoteComposerFooter();
       if (body) {
         body._noteEditor = null;
         body.innerHTML = "";

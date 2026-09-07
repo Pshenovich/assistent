@@ -158,13 +158,22 @@ def build_agent_context(
     analysis = meeting.get("analysis") if isinstance(meeting.get("analysis"), dict) else {}
     objective = str(analysis.get("decision_required") or meeting.get("title") or "")
     query = str(meeting.get("original_question") or "")
-    company_text = str(analysis.get("company_brief") or "").strip()
-    company = None
-    if not company_text:
-        company = load_company_pack(
-            str(meeting["company_id"]) if meeting.get("company_id") else None
-        )
-        company_text = _fmt_company(company, query=query)
+    stored_brief = str(analysis.get("company_brief") or "").strip()
+    company = load_company_pack(
+        str(meeting["company_id"]) if meeting.get("company_id") else None,
+        user_id=meeting.get("user_id"),
+    )
+    live_text = _fmt_company(company, query=query).strip()
+    has_kb = any(
+        isinstance(d, dict) and d.get("kind") == "knowledge"
+        for d in ((company or {}).get("_documents") or [])
+    )
+    if has_kb:
+        company_text = live_text
+    elif stored_brief:
+        company_text = stored_brief
+    else:
+        company_text = live_text
 
     default_task = (
         "Assume the current consensus may be wrong. Find the strongest reason not to implement it."
