@@ -191,6 +191,8 @@ class BoardScenarioTest(unittest.IsolatedAsyncioTestCase):
         os.environ["BOARD_DELAY_MIN_SEC"] = "0"
         os.environ["BOARD_DELAY_MAX_SEC"] = "0"
         os.environ["BOARD_MAX_MEETING_SEC"] = "120"
+        os.environ["BOARD_EXTRA_ROUNDS"] = "0"
+        os.environ["BOARD_HIGH_CONFIDENCE"] = "0.75"
         os.environ.pop("BOARD_COMPANY_SHARE_URL", None)
         store.reset_connection()
         store.init_db()
@@ -229,6 +231,40 @@ class BoardScenarioTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("EXECUTIVE DECISION" in t for t in pub.texts))
         self.assertIn("board_analyze", provider.ops)
         self.assertTrue(any(o.startswith("board_agent_") for o in provider.ops))
+
+    async def test_low_confidence_runs_extra_round(self) -> None:
+        os.environ["BOARD_EXTRA_ROUNDS"] = "1"
+        os.environ["BOARD_HIGH_CONFIDENCE"] = "0.8"
+
+        class _LowThenHigh(_ScriptedProvider):
+            def __init__(self) -> None:
+                super().__init__()
+                self.chairs = 0
+
+            def generate_json(self, *, system: str, user: str, operation: str, temperature: float = 0.4):
+                data = super().generate_json(
+                    system=system, user=user, operation=operation, temperature=temperature
+                )
+                if operation == "board_chair":
+                    self.chairs += 1
+                    data = dict(data)
+                    data["confidence"] = 0.4 if self.chairs == 1 else 0.91
+                return data
+
+        provider = _LowThenHigh()
+        pub = _FakePublisher()
+        svc = MeetingService(publisher=pub, provider=provider)
+        meeting = svc.start_meeting(user_id=1, chat_id=11, question="Масштабировать отдел?")
+        saved = await svc.run(meeting["id"])
+        self.assertIsNotNone(saved)
+        self.assertEqual(provider.chairs, 2)
+        self.assertGreaterEqual(saved.get("confidence") or 0, 0.8)
+        agents = [
+            m["agent"]
+            for m in store.list_messages(meeting["id"])
+            if m["agent"] in {"P", "A", "E", "I"}
+        ]
+        self.assertGreaterEqual(len(agents), 8)
 
     async def test_user_inject_during_meeting(self) -> None:
         provider = _ScriptedProvider()

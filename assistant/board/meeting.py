@@ -13,13 +13,19 @@ from assistant.board.memory import find_related_decisions
 from assistant.board.models import (
     PAEI_AGENTS,
     ROUND1_ORDER,
-    SEVERITY_ROUNDS,
     AgentResponse,
     ChairDecision,
     ProblemAnalysis,
 )
 from assistant.board.llm import public_llm_error
-from assistant.board.orchestrator import DebateOrchestrator, limits_hit, max_rounds, needs_challenge
+from assistant.board.orchestrator import (
+    DebateOrchestrator,
+    extra_rounds,
+    high_confidence_threshold,
+    limits_hit,
+    max_rounds,
+    needs_challenge,
+)
 from assistant.board.renderer import (
     decision_keyboard_rows,
     format_agent_message,
@@ -59,14 +65,41 @@ class MeetingService:
         *,
         publisher: Any,
         provider: Any | None = None,
+        on_progress: Any | None = None,
     ) -> None:
         self.publisher = publisher
         self.provider = provider
+        self.on_progress = on_progress
         self.orch = DebateOrchestrator(provider=provider)
         self.engine = self.orch.engine
         self.decisions = DecisionService(provider=provider)
         self._last_turn_error: BaseException | None = None
         self.followups = True
+        self._progress_extra = False
+
+    def _emit_progress(
+        self,
+        meeting_id: str,
+        *,
+        phase: str | None = None,
+        speaking: str | None = None,
+    ) -> None:
+        fn = self.on_progress
+        if not callable(fn):
+            return
+        meeting = store.get_meeting(meeting_id) or {}
+        payload = {
+            "meeting_id": meeting_id,
+            "phase": phase or str(meeting.get("status") or ""),
+            "round": int(meeting.get("current_round") or 1),
+            "max_rounds": int(meeting.get("max_rounds") or max_rounds()),
+            "speaking": speaking,
+            "extra": self._progress_extra,
+        }
+        try:
+            fn(payload)
+        except Exception as e:
+            print(f"[board] progress_err={e!r}")
 
     async def _set_status(self, meeting: dict[str, Any], text: str) -> None:
         fn = getattr(self.publisher, "update_status", None)
@@ -140,6 +173,7 @@ class MeetingService:
             )
 
             store.set_meeting_status(meeting_id, "ANALYZING")
+            self._emit_progress(meeting_id, phase="ANALYZING")
             try:
                 analysis = await asyncio.to_thread(
                     self.orch.analyze, str(meeting.get("original_question") or "")
@@ -151,7 +185,7 @@ class MeetingService:
                     decision_required=str(meeting.get("original_question") or ""),
                     title=str(meeting.get("original_question") or "")[:80],
                 )
-            cap = min(max_rounds(), SEVERITY_ROUNDS.get(analysis.severity, 3))
+            cap = max_rounds()
             store.set_analysis(
                 meeting_id,
                 {
@@ -168,6 +202,7 @@ class MeetingService:
                 },
             )
             store.update_meeting(meeting_id, max_rounds=cap, title=analysis.title, status="DISCUSSION")
+            self._emit_progress(meeting_id, phase="DISCUSSION")
 
             past = find_related_decisions(
                 str(meeting.get("chat_id")), str(meeting.get("original_question") or "")
@@ -266,18 +301,6 @@ class MeetingService:
                         store.update_meeting(meeting_id, current_round=rnd + 1)
 
             meeting = store.get_meeting(meeting_id) or {}
-            severity = str((meeting.get("analysis") or {}).get("severity") or "MEDIUM")
-            if not challenge_done and needs_challenge(
-                severity=severity,
-                agreement_rate=0.9,
-                round_no=2,
-                challenge_done=False,
-            ):
-                if not rt.stop.is_set():
-                    await self._run_challenge(
-                        meeting_id, past, unavailable, rt, spoken=spoken
-                    )
-
             if rt.stop.is_set():
                 store.set_meeting_status(meeting_id, "STOPPED")
                 events.emit(events.MEETING_STOPPED, meeting_id=meeting_id)
@@ -285,7 +308,13 @@ class MeetingService:
                 await self.publisher.publish_text(meeting, "Совещание остановлено.")
                 return None
 
-            return await self._synthesize(meeting_id, unavailable)
+            return await self._synthesize(
+                meeting_id,
+                unavailable,
+                past=past,
+                spoken=spoken,
+                rt=rt,
+            )
         except Exception as e:
             print(f"[board] meeting_err id={meeting_id} err={e!r}")
             store.set_meeting_status(meeting_id, "ERROR", error_message=str(e)[:500])
@@ -313,6 +342,7 @@ class MeetingService:
         spoken = spoken if spoken is not None else []
         store.set_meeting_status(meeting_id, "CHALLENGE")
         events.emit(events.CHALLENGE_STARTED, meeting_id=meeting_id)
+        self._emit_progress(meeting_id, phase="CHALLENGE")
         meeting = store.get_meeting(meeting_id) or {}
         rnd = int(meeting.get("current_round") or 1)
         await self._set_status(
@@ -363,6 +393,7 @@ class MeetingService:
             ),
         )
         await self.publisher.before_agent(meeting, agent)
+        self._emit_progress(meeting_id, phase=mode, speaking=agent)
         try:
             resp: AgentResponse = await asyncio.to_thread(
                 self.engine.respond,
@@ -413,7 +444,9 @@ class MeetingService:
         )
         return True
 
-    async def _synthesize(self, meeting_id: str, unavailable: list[str]) -> dict[str, Any] | None:
+    async def _chair_once(
+        self, meeting_id: str, unavailable: list[str]
+    ) -> ChairDecision | None:
         store.set_meeting_status(meeting_id, "SYNTHESIS")
         events.emit(events.MEETING_READY_FOR_SYNTHESIS, meeting_id=meeting_id)
         meeting = store.get_meeting(meeting_id) or {}
@@ -421,15 +454,16 @@ class MeetingService:
             meeting,
             format_board_status(phase="SYNTHESIS", unavailable=unavailable),
         )
+        self._emit_progress(meeting_id, phase="SYNTHESIS", speaking="CHAIR")
         try:
-            decision: ChairDecision = await asyncio.to_thread(
+            return await asyncio.to_thread(
                 self.decisions.synthesize, meeting_id, unavailable=unavailable
             )
         except Exception as e:
             print(f"[board] chair_retry err={e!r}")
             await asyncio.sleep(1)
             try:
-                decision = await asyncio.to_thread(
+                return await asyncio.to_thread(
                     self.decisions.synthesize, meeting_id, unavailable=unavailable
                 )
             except Exception as e2:
@@ -439,10 +473,70 @@ class MeetingService:
                     meeting, "Не удалось сформировать итоговое решение. Попробуйте /new."
                 )
                 return None
+
+    async def _extra_debate(
+        self,
+        meeting_id: str,
+        past: list[dict[str, Any]],
+        unavailable: list[str],
+        spoken: list[str],
+        rt: MeetingRuntime,
+        *,
+        extra_count: int,
+    ) -> None:
+        store.update_meeting(meeting_id, status="DISCUSSION")
+        self._progress_extra = True
+        self._emit_progress(meeting_id, phase="DISCUSSION")
+        for _ in range(max(0, extra_count)):
+            if rt.stop.is_set() or len(unavailable) >= 4:
+                break
+            for agent in ROUND1_ORDER:
+                if rt.stop.is_set() or agent in unavailable:
+                    continue
+                await self._turn(
+                    meeting_id,
+                    agent,
+                    mode="DISCUSSION",
+                    past=past,
+                    unavailable=unavailable,
+                    spoken=spoken,
+                )
+            meeting = store.get_meeting(meeting_id) or {}
+            rnd = int(meeting.get("current_round") or 1)
+            store.update_meeting(meeting_id, current_round=rnd + 1)
+
+    async def _synthesize(
+        self,
+        meeting_id: str,
+        unavailable: list[str],
+        *,
+        past: list[dict[str, Any]],
+        spoken: list[str],
+        rt: MeetingRuntime,
+    ) -> dict[str, Any] | None:
+        decision = await self._chair_once(meeting_id, unavailable)
+        if not decision:
+            return None
+        bonus = extra_rounds()
+        if decision.confidence < high_confidence_threshold() and bonus > 0 and not rt.stop.is_set():
+            print(
+                f"[board] low_confidence={decision.confidence:.2f} "
+                f"threshold={high_confidence_threshold():.2f} extra={bonus}"
+            )
+            meeting = store.get_meeting(meeting_id) or {}
+            cap = int(meeting.get("max_rounds") or max_rounds())
+            store.update_meeting(meeting_id, max_rounds=cap + bonus)
+            await self._extra_debate(
+                meeting_id, past, unavailable, spoken, rt, extra_count=bonus
+            )
+            again = await self._chair_once(meeting_id, unavailable)
+            if again:
+                decision = again
         saved = self.decisions.persist(meeting_id, decision, followups=self.followups)
         store.set_meeting_status(meeting_id, "COMPLETED")
         no = store.meeting_number(meeting_id)
         markup = decision_keyboard_rows(meeting_id)
+        meeting = store.get_meeting(meeting_id) or {}
         await self._finish_status(meeting)
         await self.publisher.publish_text(
             meeting, format_decision(decision, meeting_no=no), markup=markup

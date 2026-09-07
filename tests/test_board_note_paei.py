@@ -106,6 +106,7 @@ class NotePaeiTest(unittest.IsolatedAsyncioTestCase):
         os.environ["BOARD_DELAY_MIN_SEC"] = "0"
         os.environ["BOARD_DELAY_MAX_SEC"] = "0"
         os.environ["BOARD_MAX_MEETING_SEC"] = "120"
+        os.environ["BOARD_EXTRA_ROUNDS"] = "0"
         os.environ.pop("BOARD_COMPANY_SHARE_URL", None)
         notes_store._CONN = None  # type: ignore[attr-defined]
         store.reset_connection()
@@ -183,3 +184,20 @@ class NotePaeiTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(comments[0]["author_name"], "CHAIR")
         self.assertIn("пилот", comments[0]["body"].lower())
         self.assertEqual(result["comment"]["id"], comments[0]["id"])
+        self.assertIn("PAIE", comments[0]["body"])
+
+    async def test_progress_callback_during_run(self) -> None:
+        note = notes_store.create_note(4, "Пилот", "Нужен пилот, не масштаб.")
+        seen: list[str] = []
+
+        def on_progress(payload: dict) -> None:
+            seen.append(str(payload.get("phase") or ""))
+
+        await run_note_paei(
+            user_id=4,
+            kind="local",
+            item_id=note["id"],
+            provider=_ScriptedProvider(),
+            on_progress=on_progress,
+        )
+        self.assertTrue(any(p in {"ANALYZING", "DISCUSSION", "SYNTHESIS"} for p in seen))

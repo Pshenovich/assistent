@@ -4624,6 +4624,7 @@ async def miniapp_note_paei_start(
         "status": str(job.get("status") or "running"),
         "comment_id": job.get("comment_id"),
         "error": job.get("error"),
+        "progress": job.get("progress") if isinstance(job.get("progress"), dict) else None,
     }
 
 
@@ -4647,6 +4648,7 @@ async def miniapp_note_paei_status(
         "comment_id": job.get("comment_id"),
         "error": job.get("error"),
         "meeting_id": job.get("meeting_id"),
+        "progress": job.get("progress") if isinstance(job.get("progress"), dict) else None,
     }
 
 
@@ -5310,7 +5312,7 @@ async def public_share_comments_list(token: str, request: Request) -> dict[str, 
     from assistant.stores import share_comments as share_comments_store
 
     link = await _resolve_public_share_or_404(token)
-    if not share_comments_store.comments_allowed_for_link(link):
+    if not share_comments_store.comments_visible_for_link(link):
         raise HTTPException(status_code=403, detail="Комментарии недоступны")
     rows = await run_in_threadpool(
         share_comments_store.list_comments,

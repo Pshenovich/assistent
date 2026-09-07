@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 import threading
 import time
 from typing import Any
 
-from assistant.board import llm as board_llm
-from assistant.board.context import load_prompt
-from assistant.board.share_source import resolve_company_share, share_body_to_text
+from assistant.board import store
+from assistant.board.meeting import MeetingService
+from assistant.board.orchestrator import max_rounds
+from assistant.board.share_source import share_body_to_text
 from assistant.stores import share_comments
 
 CHAIR_AUTHOR_ID = 0
@@ -17,11 +17,26 @@ CHAIR_AUTHOR_NAME = "CHAIR"
 CHAIR_AUTHOR_USERNAME = "PAIE"
 NOTE_BODY_LIMIT = 12_000
 COMMENT_LIMIT = 3900
-JOB_STALE_SEC = 8 * 60
-COMPANY_CTX_LIMIT = 3_500
+JOB_STALE_SEC = 12 * 60
 
 _jobs_lock = threading.Lock()
 _jobs: dict[str, dict[str, Any]] = {}
+
+
+class NullPublisher:
+    async def before_agent(self, meeting: dict[str, Any], agent: str) -> None:
+        return None
+
+    async def publish_text(
+        self, meeting: dict[str, Any], text: str, *, markup: Any = None
+    ) -> int | None:
+        return None
+
+    async def update_status(self, meeting: dict[str, Any], text: str) -> None:
+        return None
+
+    async def clear_status(self, meeting: dict[str, Any]) -> None:
+        return None
 
 
 def job_key(user_id: int | str, kind: str, item_id: str | int) -> str:
@@ -32,6 +47,35 @@ def get_job(user_id: int | str, kind: str, item_id: str | int) -> dict[str, Any]
     with _jobs_lock:
         row = _jobs.get(job_key(user_id, kind, item_id))
         return dict(row) if row else None
+
+
+def _progress_view(raw: dict[str, Any] | None) -> dict[str, Any]:
+    p = dict(raw or {})
+    phase = str(p.get("phase") or "")
+    rnd = max(1, int(p.get("round") or 1))
+    maxr = max(1, int(p.get("max_rounds") or max_rounds()))
+    speaking = str(p.get("speaking") or "").strip().upper()
+    extra = bool(p.get("extra"))
+    label = "PAIE разбирает заметку…"
+    pct = 8
+    if phase == "ANALYZING":
+        label, pct = "Анализ заметки…", 10
+    elif phase == "CHALLENGE":
+        label = f"Круг {rnd}/{maxr} · challenge"
+        pct = min(80, 22 + int((rnd / maxr) * 50))
+        if speaking:
+            label += f" · говорит {speaking}"
+    elif phase == "SYNTHESIS":
+        label, pct = "CHAIR формирует решение…", 92
+    elif phase in {"DISCUSSION", "CREATED"}:
+        prefix = "Доп. круг" if extra else "Круг"
+        label = f"{prefix} {rnd}/{maxr}"
+        pct = min(86, 14 + int((rnd / maxr) * 62))
+        if speaking:
+            label += f" · говорит {speaking}"
+    p["label"] = label
+    p["pct"] = max(4, min(96, int(pct)))
+    return p
 
 
 def begin_job(user_id: int | str, kind: str, item_id: str | int) -> tuple[dict[str, Any], bool]:
@@ -51,6 +95,9 @@ def begin_job(user_id: int | str, kind: str, item_id: str | int) -> tuple[dict[s
             "comment_id": None,
             "meeting_id": None,
             "started_at": now,
+            "progress": _progress_view(
+                {"phase": "ANALYZING", "round": 1, "max_rounds": max_rounds()}
+            ),
         }
         _jobs[key] = row
         return dict(row), True
@@ -59,6 +106,8 @@ def begin_job(user_id: int | str, kind: str, item_id: str | int) -> tuple[dict[s
 def _update_job(key: str, **fields: Any) -> None:
     with _jobs_lock:
         row = _jobs.get(key) or {}
+        if "progress" in fields and isinstance(fields["progress"], dict):
+            fields["progress"] = _progress_view(fields["progress"])
         row.update(fields)
         _jobs[key] = row
 
@@ -162,52 +211,42 @@ def load_note_for_paei(user_id: int | str, kind: str, item_id: str | int) -> tup
     raise ValueError("Некорректный тип записи")
 
 
-def _company_excerpt() -> str:
-    try:
-        _url, doc, _err = resolve_company_share()
-    except Exception:
-        return ""
-    if not doc:
-        return ""
-    text = str(doc.get("text") or "").strip()
-    if not text:
-        return ""
-    if len(text) > COMPANY_CTX_LIMIT:
-        text = text[: COMPANY_CTX_LIMIT - 1] + "…"
-    return text
-
-
-def _build_user_prompt(title: str, body: str) -> str:
-    excerpt = (body or "").strip() or "(пустая заметка)"
-    if len(excerpt) > NOTE_BODY_LIMIT:
-        excerpt = excerpt[: NOTE_BODY_LIMIT - 1] + "…"
-    parts = [f"Заметка «{title}»", "", excerpt]
-    company = _company_excerpt()
-    if company:
-        parts.extend(["", "Контекст компании:", company])
-    return "\n".join(parts)
-
-
 async def run_note_paei(
     *,
     user_id: int,
     kind: str,
     item_id: str | int,
     provider: Any | None = None,
+    on_progress: Any | None = None,
 ) -> dict[str, Any]:
+    store.init_db()
     title, body = load_note_for_paei(user_id, kind, item_id)
-    user_prompt = _build_user_prompt(title, body)
-    payload = await asyncio.to_thread(
-        board_llm.generate_json,
-        system=load_prompt("NOTE_PAEI"),
-        user=user_prompt,
-        operation="board_note_paei",
-        temperature=0.2,
-        provider=provider,
+    excerpt = (body or "").strip() or "(пустая заметка)"
+    if len(excerpt) > NOTE_BODY_LIMIT:
+        excerpt = excerpt[: NOTE_BODY_LIMIT - 1] + "…"
+    question = (
+        f"Разбери заметку «{title}» как управленческий совет PAEI (P • A • E • I). "
+        "Сформулируй исполнимое решение CHAIR.\n\n"
+        f"{excerpt}"
     )
-    if not isinstance(payload, dict) or not str(payload.get("decision") or "").strip():
-        raise RuntimeError("PAIE не вернул решение")
-    text = format_chair_comment(payload)
+    svc = MeetingService(
+        publisher=NullPublisher(), provider=provider, on_progress=on_progress
+    )
+    svc.followups = False
+    meeting = svc.start_meeting(
+        user_id=int(user_id),
+        chat_id=int(user_id),
+        question=question,
+        title=title[:80],
+        extra_instruction="Источник: заметка миниаппа Leo. Опирайся на текст заметки.",
+    )
+    if callable(on_progress):
+        on_progress({"phase": "ANALYZING", "round": 1, "max_rounds": max_rounds(), "meeting_id": meeting["id"]})
+    saved = await svc.run(str(meeting["id"]))
+    if not saved:
+        row = store.get_meeting(str(meeting["id"])) or {}
+        raise RuntimeError(str(row.get("error_message") or "Совещание не дало решения"))
+    text = format_chair_comment(saved)
     comment = share_comments.add_comment(
         user_id,
         kind,
@@ -218,17 +257,32 @@ async def run_note_paei(
         body=text,
         quote=title[:500],
     )
-    return {"comment": comment, "payload": payload}
+    return {
+        "meeting_id": str(meeting["id"]),
+        "decision_id": saved.get("id"),
+        "comment": comment,
+    }
 
 
 async def run_note_paei_job(user_id: int, kind: str, item_id: str | int) -> None:
     key = job_key(user_id, kind, item_id)
+
+    def on_progress(payload: dict[str, Any]) -> None:
+        fields: dict[str, Any] = {"progress": payload}
+        mid = payload.get("meeting_id")
+        if mid:
+            fields["meeting_id"] = mid
+        _update_job(key, **fields)
+
     try:
-        result = await run_note_paei(user_id=user_id, kind=kind, item_id=item_id)
+        result = await run_note_paei(
+            user_id=user_id, kind=kind, item_id=item_id, on_progress=on_progress
+        )
         comment = result.get("comment") or {}
         _update_job(
             key,
             status="done",
+            meeting_id=result.get("meeting_id"),
             comment_id=comment.get("id"),
             error=None,
         )

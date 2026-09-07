@@ -211,3 +211,7 @@ def comments_allowed_for_link(link: dict[str, Any] | None) -> bool:
     if not link:
         return False
     return share_links_store.normalize_access(link.get("access")) == "comment"
+
+
+def comments_visible_for_link(link: dict[str, Any] | None) -> bool:
+    return bool(link)

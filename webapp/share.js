@@ -192,9 +192,7 @@
         buildShareToc(bodyEl);
       }
       if (doc) doc.classList.remove("hidden");
-      if (data && data.access === "comment") {
-        setupShareComments();
-      }
+      setupShareComments(data && data.access === "comment");
     })
     .catch(function (e) {
       showError(e.message || "Документ недоступен");
@@ -488,7 +486,7 @@
     if (form) form.classList.add("hidden");
   }
 
-  function setupShareComments() {
+  function setupShareComments(canComment) {
     var box = document.getElementById("share-comments");
     var wrap = document.querySelector(".wrap");
     var root = bodyRoot();
@@ -496,11 +494,17 @@
     if (!box || !root) return;
     box.classList.remove("hidden");
     if (wrap) wrap.classList.add("has-comments");
+    var hint = document.getElementById("share-comments-hint");
+    var login = document.getElementById("share-comments-login");
+    if (!canComment) {
+      if (hint) hint.classList.add("hidden");
+      if (login) login.classList.add("hidden");
+    }
     var form = document.getElementById("share-comments-form");
     var input = document.getElementById("share-comments-input");
     var loginBtn = document.getElementById("share-comments-login-btn");
     var cancelBtn = document.getElementById("share-comments-cancel");
-    if (form) {
+    if (canComment && form) {
       form.addEventListener("submit", function (e) {
         e.preventDefault();
         var text = String((input && input.value) || "").trim();
@@ -537,8 +541,8 @@
           });
       });
     }
-    if (cancelBtn) cancelBtn.addEventListener("click", hideComposer);
-    if (loginBtn) {
+    if (canComment && cancelBtn) cancelBtn.addEventListener("click", hideComposer);
+    if (canComment && loginBtn) {
       loginBtn.addEventListener("click", function () {
         if (commentsState.draft) savePending(commentsState.draft);
         jsonFetch("/api/miniapp/auth/config")
@@ -554,7 +558,7 @@
       });
     }
     function onSelect(e) {
-      if (!api) return;
+      if (!canComment || !api) return;
       if (e && api.isCommentBubbleEvent && api.isCommentBubbleEvent(e)) return;
       var draft = api.selectionAnchor(root);
       if (!draft || !draft.quote) {
@@ -572,6 +576,10 @@
     });
     window.addEventListener("scroll", relayoutCommentCards, { passive: true });
     window.addEventListener("resize", relayoutCommentCards);
+    if (!canComment) {
+      loadComments();
+      return;
+    }
     var pendingAuth = parseTgAuthResultFromHash();
     var boot = Promise.resolve();
     if (pendingAuth && pendingAuth.hash) {

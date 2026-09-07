@@ -76,6 +76,8 @@ class ShareLinksTests(unittest.TestCase):
         share_links.create_or_get_share(8, "local", 2, access="view")
         switched = share_links.get_active_share(8, "local", 2)
         self.assertFalse(share_comments.comments_allowed_for_link(switched))
+        self.assertTrue(share_comments.comments_visible_for_link(view))
+        self.assertTrue(share_comments.comments_visible_for_link(comment))
 
 
 class ShareCommentsTests(unittest.TestCase):

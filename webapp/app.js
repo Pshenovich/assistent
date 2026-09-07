@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260907-paie-fast";
+  var WEBAPP_BUILD = "20260907-paie-rounds";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260907-paie-fast";
+  const NOTE_EDITOR_ASSET_V = "20260907-paie-rounds";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -6272,25 +6272,33 @@
     });
   }
 
-  function setNotePaeiStatus(text) {
+  function setNotePaeiStatus(text, progress) {
     var panel = document.getElementById("note-editor-comments");
     if (!panel) return;
     var el = document.getElementById("note-editor-paei-status");
     if (!el) {
-      el = document.createElement("p");
+      el = document.createElement("div");
       el.id = "note-editor-paei-status";
       el.className = "note-paei-status";
       var title = panel.querySelector(".note-comments-title");
       if (title && title.nextSibling) panel.insertBefore(el, title.nextSibling);
       else panel.insertBefore(el, panel.firstChild);
     }
-    if (!text) {
+    var label = (progress && progress.label) || text || "";
+    if (!label) {
       el.classList.add("hidden");
-      el.textContent = "";
+      el.innerHTML = "";
       return;
     }
+    var pct = progress && progress.pct != null ? Number(progress.pct) : 12;
+    if (isNaN(pct)) pct = 12;
+    pct = Math.max(4, Math.min(100, pct));
     el.classList.remove("hidden");
-    el.textContent = text;
+    el.innerHTML =
+      '<span class="note-paei-progress-label"></span>' +
+      '<span class="note-paei-progress-track"><span class="note-paei-progress-fill"></span></span>';
+    el.querySelector(".note-paei-progress-label").textContent = label;
+    el.querySelector(".note-paei-progress-fill").style.width = pct + "%";
   }
 
   function notePaeiPath() {
@@ -6322,12 +6330,16 @@
           var status = (data && data.status) || "idle";
           if (status === "running") {
             tries += 1;
-            if (tries > 50) {
+            setNotePaeiStatus(
+              (data.progress && data.progress.label) || "PAIE разбирает заметку…",
+              data.progress
+            );
+            if (tries > 180) {
               live._paeiRunning = false;
               setNotePaeiStatus("PAIE всё ещё работает. Обновите заметку чуть позже.");
               return;
             }
-            setTimeout(tick, 3000);
+            setTimeout(tick, 2500);
             return;
           }
           live._paeiRunning = false;
@@ -6351,7 +6363,7 @@
             setNotePaeiStatus(e.message || "Не удалось проверить статус PAIE");
             return;
           }
-          setTimeout(tick, 3000);
+          setTimeout(tick, 2500);
         });
     }
     setTimeout(tick, 2500);
@@ -6363,7 +6375,7 @@
     if (!wrap || !path || wrap._paeiRunning) return;
     wrap._paeiRunning = true;
     syncNoteCommentsPanel();
-    setNotePaeiStatus("PAIE разбирает заметку…");
+    setNotePaeiStatus("Анализ заметки…", { label: "Анализ заметки…", pct: 10 });
     apiFetch(path, { method: "POST" })
       .then(function (data) {
         var status = (data && data.status) || "running";
@@ -6378,6 +6390,9 @@
           wrap._paeiRunning = false;
           setNotePaeiStatus((data && data.error) || "Не удалось запустить PAIE");
           return;
+        }
+        if (data && data.progress) {
+          setNotePaeiStatus(data.progress.label, data.progress);
         }
         pollNotePaei(path);
       })
@@ -6397,7 +6412,10 @@
         if (!wrap || wrap._shareId !== String(itemId)) return;
         if (data && data.status === "running") {
           wrap._paeiRunning = true;
-          setNotePaeiStatus("PAIE разбирает заметку…");
+          setNotePaeiStatus(
+            (data.progress && data.progress.label) || "PAIE разбирает заметку…",
+            data.progress
+          );
           pollNotePaei(notePaeiPath());
         }
       })
@@ -6847,7 +6865,7 @@
       panel.className = "note-comments note-comments-rail";
       panel.innerHTML =
         '<h3 class="note-comments-title">Комментарии</h3>' +
-        '<p id="note-editor-paei-status" class="note-paei-status hidden"></p>' +
+        '<div id="note-editor-paei-status" class="note-paei-status hidden"></div>' +
         '<p class="note-comments-empty">Выделите текст в заметке или запустите PAIE в меню.</p>' +
         '<form id="note-editor-comment-form" class="note-comments-form hidden">' +
         '<p id="note-editor-comment-quote" class="share-comment-quote"></p>' +

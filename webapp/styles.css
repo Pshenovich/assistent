@@ -2793,12 +2793,33 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
 
 .note-paei-status {
   margin: 0 0 0.7rem;
-  padding: 0.45rem 0.55rem;
+  padding: 0.55rem 0.65rem 0.65rem;
   border-radius: var(--radius-sm);
   background: var(--accent-subtle);
   color: var(--text);
   font-size: 0.8125rem;
-  line-height: 1.4;
+  line-height: 1.35;
+}
+
+.note-paei-progress-label {
+  display: block;
+}
+
+.note-paei-progress-track {
+  display: block;
+  height: 4px;
+  margin-top: 0.45rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.note-paei-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.35s ease;
 }
 
 .note-paei-status.hidden {

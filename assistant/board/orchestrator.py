@@ -35,6 +35,20 @@ def max_rounds() -> int:
         return 4
 
 
+def extra_rounds() -> int:
+    try:
+        return max(0, int(os.getenv("BOARD_EXTRA_ROUNDS", "2") or "2"))
+    except ValueError:
+        return 2
+
+
+def high_confidence_threshold() -> float:
+    try:
+        return min(0.95, max(0.5, float(os.getenv("BOARD_HIGH_CONFIDENCE", "0.75") or "0.75")))
+    except ValueError:
+        return 0.75
+
+
 def max_messages() -> int:
     try:
         return max(4, int(os.getenv("BOARD_MAX_MESSAGES", "16") or "16"))
