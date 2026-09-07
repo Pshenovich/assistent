@@ -5428,7 +5428,10 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
 }
 
 #note-editor-overlay .note-editor-web-back-bar #note-editor-tags-wrap .tag-picker-add-wrap,
-#note-editor-overlay .note-editor-web-back-bar #note-editor-tags-wrap .tag-picker-add-btn {
+#note-editor-overlay .note-editor-web-back-bar #note-editor-tags-wrap .tag-picker-add-btn,
+#note-editor-overlay .note-editor-web-back-bar #note-editor-tags-wrap .note-more-wrap,
+#note-editor-overlay .note-editor-web-back-bar #note-editor-tags-wrap .note-more-btn,
+#note-editor-overlay .note-editor-web-back-bar #note-editor-tags-wrap .note-more-menu {
   pointer-events: auto;
 }
 

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260907-kb-chrome";
+  var WEBAPP_BUILD = "20260907-kb-more";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -5798,8 +5798,10 @@
   function bindTagPickerDocClickOnce() {
     if (tagPickerDocClickBound) return;
     tagPickerDocClickBound = true;
-    document.addEventListener("click", function () {
+    document.addEventListener("click", function (e) {
       if (tagPickerActiveClose) tagPickerActiveClose();
+      var more = document.getElementById("note-editor-more-wrap");
+      if (more && e.target && more.contains(e.target)) return;
       closeNoteMoreMenu();
     });
   }
