@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260907-kb-more";
+  var WEBAPP_BUILD = "20260907-chair-composer";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260907-chrome-bar2";
+  const NOTE_EDITOR_ASSET_V = "20260907-chair-composer";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -6485,6 +6485,8 @@
       wrap._shareUrl = "";
       wrap._shareAccess = "view";
       wrap._paeiRunning = false;
+      wrap._commentChairId = null;
+      wrap._commentDraft = null;
       if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
     }
   }
@@ -6610,6 +6612,7 @@
       '<span class="note-paie-kb-toggle-dot" aria-hidden="true"></span>' +
       "База знаний" +
       "</button>" +
+      '<p class="share-comment-quote note-paie-reply-quote hidden"></p>' +
       '<textarea id="note-paie-reply-input" class="note-paie-composer-input" rows="2" maxlength="4000" placeholder="' +
       noteAskPlaceholder("paie") +
       '"></textarea>' +
@@ -6933,12 +6936,39 @@
 
   function openChairCommentForm(groupEl, draft) {
     if (!groupEl) return;
-    var form = groupEl.querySelector(".note-paie-comment-form");
-    var quoteEl = groupEl.querySelector(".note-paie-comment-quote");
-    var input = groupEl.querySelector(".note-paie-comment-input");
-    if (!form) return;
-    form.classList.remove("hidden");
-    form._draft = draft || null;
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var chairId = parseInt(groupEl.getAttribute("data-chair-id") || "", 10);
+    if (wrap) {
+      wrap._commentChairId = chairId || null;
+      wrap._commentDraft = draft || null;
+    }
+    setNoteAskMode("comment");
+    var form = document.getElementById("note-paie-reply-form");
+    var input = document.getElementById("note-paie-reply-input");
+    if (form && form.scrollIntoView) {
+      form.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+    if (input) {
+      try {
+        input.focus();
+      } catch (_) {}
+    }
+    syncNoteFormatToolbarForComposer();
+  }
+
+  function syncNoteComposerCommentTarget() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var form = document.getElementById("note-paie-reply-form");
+    if (form && !form.querySelector(".note-paie-reply-quote")) {
+      var p = document.createElement("p");
+      p.className = "share-comment-quote note-paie-reply-quote hidden";
+      var ta = form.querySelector("#note-paie-reply-input");
+      if (ta) form.insertBefore(p, ta);
+      else form.insertBefore(p, form.firstChild);
+    }
+    var quoteEl = form && form.querySelector(".note-paie-reply-quote");
+    var draft = wrap && wrap._commentDraft;
+    var chairId = wrap && wrap._commentChairId;
     if (quoteEl) {
       if (draft && draft.quote) {
         quoteEl.textContent = "«" + String(draft.quote) + "»";
@@ -6948,12 +6978,21 @@
         quoteEl.classList.add("hidden");
       }
     }
-    if (form.scrollIntoView) form.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    if (input) {
-      try {
-        input.focus();
-      } catch (_) {}
+    var input = document.getElementById("note-paie-reply-input");
+    if (input && noteAskMode() === "comment") {
+      input.placeholder = chairId
+        ? "Комментарий к ответу CHAIR"
+        : noteAskPlaceholder("comment");
     }
+  }
+
+  function clearNoteComposerCommentTarget() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) {
+      wrap._commentChairId = null;
+      wrap._commentDraft = null;
+    }
+    syncNoteComposerCommentTarget();
   }
 
   function renderNotePaieMessage(c, kind, itemId) {
@@ -7023,34 +7062,6 @@
       nested.appendChild(renderNotePaieMessage(c, kind, itemId));
     });
     wrap.appendChild(nested);
-    var form = document.createElement("form");
-    form.className = "note-paie-comment-form hidden";
-    form.innerHTML =
-      '<p class="share-comment-quote note-paie-comment-quote hidden"></p>' +
-      '<textarea class="note-comments-input note-paie-comment-input" rows="3" maxlength="4000" placeholder="Комментарий к ответу CHAIR"></textarea>' +
-      '<div class="share-comments-form-actions">' +
-      '<button type="submit" class="btn">Отправить</button>' +
-      '<button type="button" class="btn-text note-paie-comment-cancel">Отмена</button>' +
-      "</div>";
-    form.addEventListener("submit", function (e) {
-      e.preventDefault();
-      var input = form.querySelector(".note-paie-comment-input");
-      postNoteChairAnswerComment(
-        kind,
-        itemId,
-        group.chair.id,
-        input && input.value,
-        form._draft
-      );
-    });
-    var cancel = form.querySelector(".note-paie-comment-cancel");
-    if (cancel) {
-      cancel.addEventListener("click", function () {
-        form.classList.add("hidden");
-        form._draft = null;
-      });
-    }
-    wrap.appendChild(form);
     return wrap;
   }
 
@@ -7224,6 +7235,8 @@
     if (input) {
       input.placeholder = noteAskPlaceholder(current);
     }
+    if (current !== "comment") clearNoteComposerCommentTarget();
+    else syncNoteComposerCommentTarget();
     if (current === "gpt") loadGptModels();
     else closeNoteComposerMenus();
     syncNotePaieReplyForm();
@@ -7352,8 +7365,10 @@
     var body = String(text || "").trim();
     if (!wrap || !wrap._shareKind || !wrap._shareId || !body) return;
     var api = window.NoteComments;
-    var root = noteEditorCommentRoot();
-    var draft = api && api.selectionAnchor ? api.selectionAnchor(root) : null;
+    var chairId = wrap._commentChairId;
+    var draft =
+      wrap._commentDraft ||
+      (api && api.selectionAnchor ? api.selectionAnchor(noteEditorCommentRoot()) : null);
     var input = document.getElementById("note-paie-reply-input");
     try {
       await apiFetch(
@@ -7369,10 +7384,12 @@
             quote: (draft && draft.quote) || "",
             prefix: (draft && draft.prefix) || "",
             suffix: (draft && draft.suffix) || "",
+            parent_id: chairId || null,
           }),
         }
       );
       if (input) input.value = "";
+      clearNoteComposerCommentTarget();
       shareHaptic();
       refreshNoteCommentsList();
     } catch (e) {

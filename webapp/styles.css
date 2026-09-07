@@ -3299,6 +3299,11 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
 }
 
+.note-paie-reply-form .note-paie-reply-quote {
+  margin: 0;
+  align-self: stretch;
+}
+
 .note-paie-kb-toggle {
   display: inline-flex;
   align-items: center;
