@@ -3177,9 +3177,10 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   }
 
   .note-paie-reply-form {
+    z-index: 40;
     margin-left: var(--note-editor-pad-x, 16px);
     margin-right: var(--note-editor-pad-x, 16px);
-    bottom: var(--note-editor-pad-x, 16px);
+    bottom: 8px;
   }
 }
 
@@ -5908,6 +5909,24 @@ html.modal-sheet-open body {
 @media (max-width: 959px) {
   .note-editor-doc-layout {
     display: block;
+  }
+
+  #note-editor-overlay .note-editor-modal-body {
+    padding-bottom: 0;
+  }
+
+  #note-editor-overlay.note-editor-overlay--fullscreen .note-editor-toolbar-wrap:not(.hidden),
+  #note-editor-overlay.note-editor-overlay--fullscreen
+    .note-editor-toolbar-wrap--bottom:not(.hidden),
+  .note-editor-sheet > .note-editor-modal-form > .note-editor-toolbar-wrap:not(.hidden),
+  .note-editor-sheet
+    > .note-editor-modal-form
+    > .note-editor-toolbar-wrap--bottom:not(.hidden) {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
   }
 
   .note-editor-toc-toggle {
