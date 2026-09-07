@@ -1746,7 +1746,8 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   margin-bottom: 0;
 }
 
-.note-editor-toolbar-wrap.hidden {
+.note-editor-toolbar-wrap.hidden,
+#note-editor-overlay .note-editor-toolbar-wrap.is-composer-hidden {
   display: none !important;
 }
 
@@ -3178,7 +3179,7 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   .note-paie-reply-form {
     margin-left: var(--note-editor-pad-x, 16px);
     margin-right: var(--note-editor-pad-x, 16px);
-    bottom: 12px;
+    bottom: var(--note-editor-pad-x, 16px);
   }
 }
 
@@ -3512,7 +3513,7 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   color: inherit;
   background: rgba(255, 255, 255, 0.06);
   font: inherit;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .note-paie-model-search:focus {
@@ -3566,6 +3567,19 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   .note-paie-mode-compact-label,
   .note-paie-model-label {
     max-width: 6.5rem;
+  }
+
+  .note-paie-composer-input,
+  .note-paie-reply-form .note-comments-input {
+    font-size: 16px;
+  }
+
+  html.note-editor-kb-open #note-editor-overlay .note-editor-toolbar-wrap,
+  html:has(#note-paie-reply-form:focus-within) #note-editor-overlay .note-editor-toolbar-wrap,
+  html:has(#note-paie-reply-form .note-paie-menu:not(.hidden))
+    #note-editor-overlay
+    .note-editor-toolbar-wrap {
+    display: none !important;
   }
 }
 
@@ -5894,6 +5908,10 @@ html.modal-sheet-open body {
 @media (max-width: 959px) {
   .note-editor-doc-layout {
     display: block;
+  }
+
+  .note-editor-toc-toggle {
+    display: none !important;
   }
 
   .note-editor-toc-backdrop {

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260907-toc-none";
+  var WEBAPP_BUILD = "20260907-composer-dock";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260907-toc-none";
+  const NOTE_EDITOR_ASSET_V = "20260907-composer-dock";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -4141,6 +4141,31 @@
     return ov.querySelector(".note-editor-modal-body");
   }
 
+  function isMobileNoteLayout() {
+    return !!(window.matchMedia && window.matchMedia("(max-width: 959px)").matches);
+  }
+
+  function composerUiActive() {
+    var form = document.getElementById("note-paie-reply-form");
+    if (!form) return false;
+    var active = document.activeElement;
+    if (active && form.contains(active)) return true;
+    return !!form.querySelector(".note-paie-menu:not(.hidden)");
+  }
+
+  function noteComposerMenuOpen() {
+    var form = document.getElementById("note-paie-reply-form");
+    return !!(form && form.querySelector(".note-paie-menu:not(.hidden)"));
+  }
+
+  function syncNoteFormatToolbarForComposer() {
+    var wrap = document.getElementById("note-editor-toolbar-wrap");
+    if (!wrap) return;
+    var hide =
+      isNoteEditorModalOpen() && isMobileNoteLayout() && composerUiActive();
+    wrap.classList.toggle("is-composer-hidden", hide);
+  }
+
   function noteEditorVisibleHeightPx() {
     var tg = window.Telegram && window.Telegram.WebApp;
     var vv = window.visualViewport;
@@ -4196,6 +4221,7 @@
     if (noteScroll) noteScroll.style.paddingBottom = "";
     document.documentElement.style.removeProperty("--note-editor-kb-inset");
     document.documentElement.classList.remove("note-editor-kb-open");
+    syncNoteFormatToolbarForComposer();
   }
 
   function updateModalSheetForKeyboard() {
@@ -4208,6 +4234,7 @@
     var tg = window.Telegram && window.Telegram.WebApp;
 
     if (noteEditorOpen) {
+      if (isMobileNoteLayout() && noteComposerMenuOpen()) return;
       var visibleH = noteEditorVisibleHeightPx();
       if (visibleH > 0) {
         sheet.style.height = visibleH + "px";
@@ -4266,14 +4293,20 @@
         "input, textarea, select, .ProseMirror, .note-rich-editor-mount"
       );
       if (!field || !body.contains(field)) return;
+      if (field.closest && field.closest(".note-paie-model-search, .note-paie-menu")) {
+        syncNoteFormatToolbarForComposer();
+        return;
+      }
       updateModalSheetForKeyboard();
       scrollModalFieldIntoView(field);
+      syncNoteFormatToolbarForComposer();
     });
     document.addEventListener("focusout", function () {
       if (!modalSheetOpen) return;
       window.setTimeout(function () {
         if (!modalSheetOpen) return;
         updateModalSheetForKeyboard();
+        syncNoteFormatToolbarForComposer();
       }, 80);
     });
     if (window.visualViewport) {
@@ -4300,6 +4333,7 @@
     document.documentElement.classList.add("modal-sheet-open");
     bindModalSheetMobileOnce();
     updateModalSheetForKeyboard();
+    syncNoteFormatToolbarForComposer();
   }
 
   function onModalSheetClose() {
@@ -6003,13 +6037,16 @@
 
   function noteEditorPageInnerHtml(titleLabel) {
     var titleAria = escapeHtml(titleLabel || "Заголовок");
+    var tocToggle = isMobileNoteLayout()
+      ? ""
+      : '<button type="button" class="note-editor-toc-toggle" aria-controls="note-editor-toc-panel" aria-expanded="false" title="Оглавление" aria-label="Оглавление">' +
+        '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1" fill="currentColor" stroke="none"/>' +
+        "</svg>" +
+        "</button>";
     return (
       '<div class="note-editor-doc-layout">' +
-      '<button type="button" class="note-editor-toc-toggle" aria-controls="note-editor-toc-panel" aria-expanded="false" title="Оглавление" aria-label="Оглавление">' +
-      '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-      '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1" fill="currentColor" stroke="none"/>' +
-      "</svg>" +
-      "</button>" +
+      tocToggle +
       '<div class="note-editor-toc-backdrop" data-note-toc-close aria-hidden="true"></div>' +
       '<aside class="note-editor-toc-panel" id="note-editor-toc-panel" aria-label="Оглавление">' +
       '<div class="note-editor-toc-head">' +
@@ -6439,6 +6476,7 @@
       btn.classList.remove("is-open");
       btn.setAttribute("aria-expanded", "false");
     });
+    syncNoteFormatToolbarForComposer();
   }
 
   function renderGptModelMenu(query) {
@@ -6575,6 +6613,7 @@
           compact.classList.add("is-open");
           compact.setAttribute("aria-expanded", "true");
         }
+        syncNoteFormatToolbarForComposer();
       });
     }
     if (modelBtn) {
@@ -6587,12 +6626,13 @@
           modelMenu.classList.remove("hidden");
           modelBtn.classList.add("is-open");
           modelBtn.setAttribute("aria-expanded", "true");
-          if (modelSearch) {
+          if (modelSearch && !isMobileNoteLayout()) {
             try {
               modelSearch.focus();
             } catch (_) {}
           }
         }
+        syncNoteFormatToolbarForComposer();
       });
     }
     if (modelSearch) {
@@ -6613,6 +6653,12 @@
         e.stopPropagation();
       });
     }
+    form.addEventListener("focusin", function () {
+      syncNoteFormatToolbarForComposer();
+    });
+    form.addEventListener("focusout", function () {
+      window.setTimeout(syncNoteFormatToolbarForComposer, 80);
+    });
     if (input) {
       input.addEventListener("input", function () {
         autosizeNoteComposer(input);
