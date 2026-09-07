@@ -39,7 +39,7 @@ from assistant.board.share_source import (
     normalize_share_url,
     resolve_company_share,
 )
-from assistant.bot.access_gate import ensure_access
+from assistant.bot.access_gate import ensure_access, handle_access_callback
 from assistant.bot.group_gate import is_bot_mentioned, is_group_chat_type, is_reply_to_bot
 from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
 from assistant.lib.message_context import strip_bot_mention
@@ -625,6 +625,12 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("company", cmd_company))
     app.add_handler(CommandHandler("company_clear", cmd_company_clear))
     app.add_handler(CommandHandler("me", cmd_me))
+    app.add_handler(
+        CallbackQueryHandler(
+            handle_access_callback,
+            pattern=r"^acc:",
+        )
+    )
     app.add_handler(CallbackQueryHandler(handle_callback, pattern=r"^bd:"))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

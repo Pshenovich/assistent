@@ -5,18 +5,38 @@ from __future__ import annotations
 import os
 
 import requests
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Update
 from telegram.ext import ContextTypes
 
 from assistant.lib import telegram_access_allowlist as access
 
 
-def is_user_allowed(user_id: int, username: str | None = None) -> bool:
+def access_scope_from_context(context: ContextTypes.DEFAULT_TYPE | None) -> str:
+    token = ""
+    if context is not None:
+        bot = getattr(context, "bot", None)
+        token = str(getattr(bot, "token", "") or "").strip()
+    donatello = (
+        os.getenv("TG_DONATELLO_BOT_TOKEN", "").strip()
+        or os.getenv("BOARD_BOT_TOKEN", "").strip()
+    )
+    if donatello and token and token == donatello:
+        return "donatello"
+    return "leo"
+
+
+def _product_name(scope: str | None) -> str:
+    return "Donatello" if access.normalize_scope(scope) == "donatello" else "Leo"
+
+
+def is_user_allowed(
+    user_id: int, username: str | None = None, *, scope: str | None = None
+) -> bool:
     if not access.gate_enabled():
         return True
     if user_id in access.approver_user_ids():
         return True
-    if access.is_extra_allowed(username, user_id):
+    if access.is_extra_allowed(username, user_id, scope=scope):
         return True
     return False
 
@@ -29,14 +49,14 @@ def miniapp_access_message(
     last_name: str = "",
 ) -> tuple[bool, str]:
     """Проверка доступа для мини-приложения; при новой заявке уведомляет администраторов."""
-    if is_user_allowed(user_id, username):
+    if is_user_allowed(user_id, username, scope="leo"):
         return True, ""
-    if access.is_denied(user_id):
+    if access.is_denied(user_id, scope="leo"):
         return (
             False,
             "Доступ к боту не предоставлен. Обратитесь к администратору.",
         )
-    if access.is_pending(user_id):
+    if access.is_pending(user_id, scope="leo"):
         return (
             False,
             "Заявка на доступ уже отправлена. Ожидайте одобрения администратора.",
@@ -46,6 +66,7 @@ def miniapp_access_message(
         username=username,
         first_name=first_name,
         last_name=last_name,
+        scope="leo",
     )
     _notify_approvers_sync(
         token=token,
@@ -53,6 +74,7 @@ def miniapp_access_message(
         username=username,
         first_name=first_name,
         last_name=last_name,
+        scope="leo",
     )
     return (
         False,
@@ -61,14 +83,26 @@ def miniapp_access_message(
     )
 
 
-def _telegram_api_base() -> str:
+def _telegram_api_base(*, bot_token: str | None = None) -> str:
     api_base = os.getenv("TELEGRAM_BOT_API_BASE_URL", "").strip().rstrip("/")
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    token = (bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")).strip()
     if not token:
         return ""
     if api_base:
         return f"{api_base}/bot{token}"
     return f"https://api.telegram.org/bot{token}"
+
+
+def _bot_token_for_scope(scope: str | None, *, context_token: str | None = None) -> str:
+    ctx = (context_token or "").strip()
+    if ctx:
+        return ctx
+    if access.normalize_scope(scope) == "donatello":
+        return (
+            os.getenv("TG_DONATELLO_BOT_TOKEN", "").strip()
+            or os.getenv("BOARD_BOT_TOKEN", "").strip()
+        )
+    return os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
 
 def _notify_approvers_sync(
@@ -78,12 +112,17 @@ def _notify_approvers_sync(
     username: str | None,
     first_name: str,
     last_name: str,
+    scope: str | None = None,
+    bot_token: str | None = None,
 ) -> None:
-    api = _telegram_api_base()
+    api = _telegram_api_base(
+        bot_token=_bot_token_for_scope(scope, context_token=bot_token)
+    )
     if not api:
         return
+    product = _product_name(scope)
     text = (
-        "Новая заявка на доступ к Leo:\n\n"
+        f"Новая заявка на доступ к {product}:\n\n"
         + access.format_user_brief(
             user_id=user_id,
             username=username,
@@ -122,19 +161,20 @@ async def ensure_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
     if not user or user.is_bot:
         return False
     uid = int(user.id)
-    if is_user_allowed(uid, user.username):
+    scope = access_scope_from_context(context)
+    if is_user_allowed(uid, user.username, scope=scope):
         return True
 
-    msg = update.message or update.callback_query.message if update.callback_query else None
+    msg = update.effective_message
 
-    if access.is_denied(uid):
+    if access.is_denied(uid, scope=scope):
         if msg:
             await msg.reply_text(
                 "Доступ к боту не предоставлен. Обратитесь к администратору."
             )
         return False
 
-    if access.is_pending(uid):
+    if access.is_pending(uid, scope=scope):
         if msg:
             await msg.reply_text(
                 "Заявка на доступ уже отправлена. Ожидайте одобрения администратора."
@@ -146,18 +186,22 @@ async def ensure_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
         username=user.username,
         first_name=str(user.first_name or ""),
         last_name=str(user.last_name or ""),
+        scope=scope,
     )
     if msg:
         await msg.reply_text(
             "Заявка на доступ отправлена администратору. "
             "Когда вас одобрят, напишите /start снова."
         )
+    bot_token = str(getattr(getattr(context, "bot", None), "token", "") or "")
     _notify_approvers_sync(
         token=token,
         user_id=int(user.id),
         username=user.username,
         first_name=str(user.first_name or ""),
         last_name=str(user.last_name or ""),
+        scope=scope,
+        bot_token=bot_token,
     )
     return False
 
@@ -178,27 +222,30 @@ async def handle_access_callback(
     if len(parts) != 3:
         return
     action, token = parts[1], parts[2]
-    uid = access.consume_action_token(token)
+    scope = access_scope_from_context(context)
+    product = _product_name(scope)
+    uid = access.consume_action_token(token, scope=scope)
     if not uid:
         await q.edit_message_text("Заявка устарела или уже обработана.")
         return
     if action == "ok":
-        pending = access.get_pending_user(int(uid)) or {}
+        pending = access.get_pending_user(int(uid), scope=scope) or {}
         access.add_approved_user(
             username=pending.get("username") or None,
             user_id=int(uid),
+            scope=scope,
         )
         await q.edit_message_text(f"Доступ разрешён (ID {uid}).")
         try:
             await context.bot.send_message(
                 int(uid),
-                "Вам открыт доступ к Leo. Напишите /start, чтобы начать.",
+                f"Вам открыт доступ к {product}. Напишите /start, чтобы начать.",
             )
         except Exception:
             pass
         return
     if action == "no":
-        access.deny_user(int(uid))
+        access.deny_user(int(uid), scope=scope)
         await q.edit_message_text(f"Доступ отклонён (ID {uid}).")
         try:
             await context.bot.send_message(

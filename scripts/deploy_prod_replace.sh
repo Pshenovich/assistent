@@ -110,7 +110,7 @@ _restore_services_on_fail() {
   if [[ "$SERVICES_STOPPED" -eq 1 ]]; then
     echo "==> Восстановление сервисов после сбоя деплоя" >&2
     "${SSH[@]}" "${SSH_USER}@${SSH_HOST}" \
-      "systemctl start assistant-bot assistant-usage 2>/dev/null || true" \
+      "systemctl start assistant-bot assistant-usage executive-board-bot 2>/dev/null || true" \
       2>/dev/null || true
   fi
 }
@@ -121,7 +121,7 @@ _ssh_retry "echo ssh_ok" >/dev/null
 
 echo "==> Остановка сервисов на ${SSH_HOST}"
 _remote_bash 'set -euo pipefail
-systemctl stop assistant-bot assistant-usage assistant-whatsapp-bridge 2>/dev/null || true
+systemctl stop assistant-bot assistant-usage executive-board-bot assistant-whatsapp-bridge 2>/dev/null || true
 systemctl disable assistant-whatsapp-bridge 2>/dev/null || true'
 SERVICES_STOPPED=1
 
@@ -152,9 +152,13 @@ echo "==> Синхронизация кода (без .env, .venv, пользо�
   --exclude 'usage.sqlite' \
   --exclude 'notes.sqlite' \
   --exclude 'allowed_telegram_access.json' \
+  --exclude 'allowed_telegram_access_donatello.json' \
   --exclude 'access_requests.json' \
+  --exclude 'access_requests_donatello.json' \
   --exclude 'data/allowed_telegram_access.json' \
+  --exclude 'data/allowed_telegram_access_donatello.json' \
   --exclude 'data/access_requests.json' \
+  --exclude 'data/access_requests_donatello.json' \
   --exclude 'data/meeting_reminders_sent.json' \
   --exclude 'data/meeting_recordings.sqlite' \
   --exclude 'data/board.sqlite' \
@@ -256,6 +260,7 @@ fi
 
 cp -f deploy/assistant-bot.service /etc/systemd/system/assistant-bot.service
 cp -f deploy/assistant-usage.service /etc/systemd/system/assistant-usage.service
+cp -f deploy/executive-board-bot.service /etc/systemd/system/executive-board-bot.service
 systemctl daemon-reload
 
 if [[ ! -d .venv ]]; then
@@ -301,17 +306,17 @@ if [[ -f /etc/nginx/sites-available/assistant.obuchat.me ]]; then
   nginx -t && systemctl reload nginx
 fi
 
-systemctl enable assistant-bot assistant-usage
-systemctl restart assistant-bot assistant-usage
+systemctl enable assistant-bot assistant-usage executive-board-bot
+systemctl restart assistant-bot assistant-usage executive-board-bot
 sleep 2
-systemctl is-active assistant-bot assistant-usage
+systemctl is-active assistant-bot assistant-usage executive-board-bot
 
 if [[ -x scripts/setup_vexa_meeting_bot.sh ]]; then
   echo "==> Vexa meeting bot"
   bash scripts/setup_vexa_meeting_bot.sh || {
     echo "WARN: setup_vexa_meeting_bot.sh не завершился — проверьте docker logs vexa" >&2
   }
-  systemctl restart assistant-bot assistant-usage 2>/dev/null || true
+  systemctl restart assistant-bot assistant-usage executive-board-bot 2>/dev/null || true
 fi
 REMOTE_SETUP
 )

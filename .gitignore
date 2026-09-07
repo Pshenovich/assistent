@@ -13,7 +13,9 @@ __pycache__/
 .pytest_cache/
 data/
 allowed_telegram_access.json
+allowed_telegram_access_donatello.json
 access_requests.json
+access_requests_donatello.json
 meeting_reminders_sent.json
 reminders.json
 google_user_tokens/
