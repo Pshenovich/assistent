@@ -229,6 +229,98 @@
     }
     .error { color: #f3b4b4; }
     .hidden { display: none !important; }
+    .share-comments {
+      margin-top: 2rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--border);
+    }
+    .share-comments-title {
+      margin: 0 0 0.85rem;
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .share-comments-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .share-comments-empty,
+    .share-comments-hint,
+    .share-comments-error {
+      margin: 0 0 0.75rem;
+      color: var(--muted);
+      font-size: 0.875rem;
+    }
+    .share-comments-error { color: #f3b4b4; }
+    .share-comment {
+      padding: 0.75rem 0.85rem;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .share-comment-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.35rem 0.75rem;
+      margin-bottom: 0.35rem;
+    }
+    .share-comment-head strong { font-size: 0.875rem; }
+    .share-comment-head time { color: var(--muted); font-size: 0.75rem; }
+    .share-comment-body {
+      margin: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 0.9375rem;
+      line-height: 1.45;
+    }
+    .share-comment-delete {
+      margin-top: 0.45rem;
+      padding: 0;
+      border: none;
+      color: var(--muted);
+      background: none;
+      font: inherit;
+      font-size: 0.75rem;
+      cursor: pointer;
+    }
+    .share-comments-form {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.5rem;
+      margin-top: 0.9rem;
+    }
+    .share-comments-input {
+      width: 100%;
+      min-height: 4.5rem;
+      padding: 0.65rem 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      color: inherit;
+      background: var(--surface);
+      font: inherit;
+      resize: vertical;
+    }
+    .share-comments-btn {
+      min-height: 40px;
+      padding: 0.5rem 0.9rem;
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      background: var(--accent);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .share-comments-btn--ghost {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.08);
+    }
     @media (min-width: 960px) {
       .wrap.has-toc {
         display: grid;
@@ -258,9 +350,23 @@
       <p id="share-label" class="label"></p>
       <h1 id="share-title"></h1>
       <div id="share-body" class="note-body-html"></div>
+      <section id="share-comments" class="share-comments hidden">
+        <h2 class="share-comments-title">Комментарии</h2>
+        <p id="share-comments-error" class="share-comments-error hidden"></p>
+        <div id="share-comments-list" class="share-comments-list"></div>
+        <div id="share-comments-login" class="hidden">
+          <p class="share-comments-hint">Чтобы оставить комментарий, войдите через Telegram.</p>
+          <button type="button" class="share-comments-btn" id="share-comments-login-btn">Войти через Telegram</button>
+        </div>
+        <form id="share-comments-form" class="share-comments-form hidden">
+          <p id="share-comments-me" class="share-comments-hint"></p>
+          <textarea id="share-comments-input" class="share-comments-input" rows="3" maxlength="4000" placeholder="Написать комментарий"></textarea>
+          <button type="submit" class="share-comments-btn">Отправить</button>
+        </form>
+      </section>
     </article>
   </main>
-  <script src="/webapp/note-html.js?v=20260901-share-toc"></script>
-  <script src="/webapp/share.js?v=20260901-share-toc"></script>
+  <script src="/webapp/note-html.js?v=20260907-share-comments"></script>
+  <script src="/webapp/share.js?v=20260907-share-comments"></script>
 </body>
 </html>

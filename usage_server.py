@@ -2395,6 +2395,14 @@ class _MiniappItemTagsBody(BaseModel):
     tag_ids: list[int] = Field(default_factory=list)
 
 
+class _MiniappShareCreate(BaseModel):
+    access: Optional[str] = None
+
+
+class _MiniappShareCommentCreate(BaseModel):
+    body: str = ""
+
+
 class _MiniappGptChatTurn(BaseModel):
     role: str
     content: str
@@ -2562,16 +2570,86 @@ def _public_share_url(token: str) -> str:
 
 
 def _share_response(link: dict[str, Any]) -> dict[str, Any]:
+    from assistant.stores import share_links as share_links_store
+
     token = str(link.get("token") or "")
     return {
         "shared": True,
         "token": token,
         "url": _public_share_url(token),
         "created_at": link.get("created_at"),
+        "access": share_links_store.normalize_access(link.get("access")),
     }
 
 
+def _comment_author_from_principal(principal: _MiniappPrincipal) -> tuple[str, str, str | None]:
+    u = principal.user or {}
+    first = str(u.get("first_name") or "").strip()
+    last = str(u.get("last_name") or "").strip()
+    name = " ".join(p for p in (first, last) if p).strip()
+    username = str(u.get("username") or "").strip() or None
+    if not name:
+        name = f"@{username}" if username else "Пользователь"
+    return str(int(principal.telegram_user_id)), name, username
+
+
+def _comment_api(row: dict[str, Any], *, viewer_uid: str | None = None) -> dict[str, Any]:
+    owner = str(row.get("owner_user_id") or "")
+    author = str(row.get("author_user_id") or "")
+    can_delete = bool(viewer_uid) and viewer_uid in {owner, author}
+    return {
+        "id": int(row["id"]),
+        "author_user_id": author,
+        "author_name": str(row.get("author_name") or "Пользователь"),
+        "author_username": row.get("author_username"),
+        "body": str(row.get("body") or ""),
+        "created_at": row.get("created_at"),
+        "can_delete": can_delete,
+    }
+
+
+def _optional_share_viewer(request: Request) -> _MiniappPrincipal | None:
+    try:
+        dev = _miniapp_dev_principal_if_allowed(request)
+        if dev is not None:
+            return dev
+    except HTTPException:
+        pass
+    return _principal_from_browser_session_request(request)
+
+
+def _safe_share_return_path(raw: str | None) -> str | None:
+    from urllib.parse import urlparse
+
+    value = (raw or "").strip()
+    if not value:
+        return None
+    parsed = urlparse(value)
+    path = parsed.path or ""
+    if not path.startswith("/share/"):
+        return None
+    token = path[len("/share/") :].split("/", 1)[0].split("?", 1)[0]
+    if not token or len(token) < 16 or len(token) > 80:
+        return None
+    if any(
+        c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+        for c in token
+    ):
+        return None
+    if parsed.netloc:
+        base = _public_webapp_base()
+        if base:
+            base_host = urlparse(base).netloc
+            if parsed.netloc != base_host:
+                return None
+        elif parsed.netloc not in {"127.0.0.1:8080", "localhost:8080"}:
+            return None
+    return f"/share/{token}"
+
+
 def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
+    from assistant.stores import share_links as share_links_store
+
     kind = str(link.get("item_kind") or "")
     item_id = str(link.get("item_id") or "").strip()
     uid = str(link.get("user_id") or "").strip()
@@ -2594,6 +2672,7 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
             "title": title[:500],
             "body": str(note.get("body") or "")[:120000],
             "updated_at": note.get("updated_at"),
+            "access": share_links_store.normalize_access(link.get("access")),
         }
     if kind == "journal":
         try:
@@ -2626,6 +2705,7 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
             "title": title[:500],
             "body": journal_text_from_raw(raw_s)[:120000],
             "updated_at": item.get("ts_utc"),
+            "access": share_links_store.normalize_access(link.get("access")),
         }
     return None
 
@@ -3042,16 +3122,17 @@ def _miniapp_telegram_login_from_mapping(
 
 @miniapp_router.get("/auth/telegram/callback")
 async def miniapp_auth_telegram_callback(request: Request) -> RedirectResponse:
-    """OAuth return_to с query-параметрами (редко; обычно Telegram шлёт #tgAuthResult на /webapp/)."""
+    """OAuth return_to с query-параметрами (редко; обычно Telegram шлёт #tgAuthResult на return_to)."""
     data = {k: request.query_params[k] for k in request.query_params}
-    base = _public_webapp_base()
-    if not base:
-        base = str(request.base_url).rstrip("/")
+    share_next = _safe_share_return_path(
+        data.pop("return_to", None) or request.cookies.get("leo_login_return")
+    )
     webapp_url = webapp_entry_url()
+    next_url = share_next or webapp_url
     if not data.get("hash"):
-        return RedirectResponse(url=webapp_url, status_code=302)
+        return RedirectResponse(url=next_url, status_code=302)
     _, _, token, _exp = _miniapp_telegram_login_from_mapping(data)
-    resp = RedirectResponse(url=webapp_url, status_code=302)
+    resp = RedirectResponse(url=next_url, status_code=302)
     _attach_miniapp_session_cookie(resp, token)
     return resp
 
@@ -4141,6 +4222,9 @@ async def miniapp_journal_delete(
     from assistant.stores import share_links as share_links_store
 
     await run_in_threadpool(share_links_store.revoke_share, uid, "journal", event_id)
+    from assistant.stores import share_comments as share_comments_store
+
+    await run_in_threadpool(share_comments_store.delete_all_for_item, uid, "journal", event_id)
     return {"ok": True}
 
 
@@ -4315,6 +4399,9 @@ async def miniapp_local_note_delete(
     from assistant.stores import share_links as share_links_store
 
     await run_in_threadpool(share_links_store.revoke_share, uid, "local", note_id)
+    from assistant.stores import share_comments as share_comments_store
+
+    await run_in_threadpool(share_comments_store.delete_all_for_item, uid, "local", note_id)
     return {"ok": True}
 
 
@@ -4329,7 +4416,7 @@ async def miniapp_share_get(
     uid = str(int(principal.telegram_user_id))
     link = await run_in_threadpool(share_links_store.get_active_share, uid, kind, item_id)
     if not link:
-        return {"shared": False, "url": None, "token": None}
+        return {"shared": False, "url": None, "token": None, "access": None}
     return _share_response(link)
 
 
@@ -4337,6 +4424,7 @@ async def miniapp_share_get(
 async def miniapp_share_create(
     kind: str,
     item_id: str,
+    body: Optional[_MiniappShareCreate] = None,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     from assistant.stores import share_links as share_links_store
@@ -4344,9 +4432,10 @@ async def miniapp_share_create(
     uid = str(int(principal.telegram_user_id))
     if not await run_in_threadpool(_owner_can_share_item, uid, kind, item_id):
         raise HTTPException(status_code=404, detail="Запись не найдена")
+    access = (body.access if body else None)
     try:
         link = await run_in_threadpool(
-            share_links_store.create_or_get_share, uid, kind, item_id
+            share_links_store.create_or_get_share, uid, kind, item_id, access
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -4363,7 +4452,79 @@ async def miniapp_share_revoke(
 
     uid = str(int(principal.telegram_user_id))
     revoked = await run_in_threadpool(share_links_store.revoke_share, uid, kind, item_id)
-    return {"shared": False, "revoked": bool(revoked)}
+    return {"shared": False, "revoked": bool(revoked), "access": None}
+
+
+@miniapp_router.get("/notes/{kind}/{item_id}/comments")
+async def miniapp_share_comments_list(
+    kind: str,
+    item_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import share_comments as share_comments_store
+
+    uid = str(int(principal.telegram_user_id))
+    if not await run_in_threadpool(_owner_can_share_item, uid, kind, item_id):
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    rows = await run_in_threadpool(share_comments_store.list_comments, uid, kind, item_id)
+    return {"comments": [_comment_api(r, viewer_uid=uid) for r in rows]}
+
+
+@miniapp_router.post("/notes/{kind}/{item_id}/comments")
+async def miniapp_share_comments_create(
+    kind: str,
+    item_id: str,
+    body: _MiniappShareCommentCreate,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import share_comments as share_comments_store
+
+    uid = str(int(principal.telegram_user_id))
+    if not await run_in_threadpool(_owner_can_share_item, uid, kind, item_id):
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    author_id, author_name, author_username = _comment_author_from_principal(principal)
+    try:
+        row = await run_in_threadpool(
+            share_comments_store.add_comment,
+            uid,
+            kind,
+            item_id,
+            author_user_id=author_id,
+            author_name=author_name,
+            author_username=author_username,
+            body=body.body,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "comment": _comment_api(row, viewer_uid=uid)}
+
+
+@miniapp_router.delete("/notes/{kind}/{item_id}/comments/{comment_id}")
+async def miniapp_share_comments_delete(
+    kind: str,
+    item_id: str,
+    comment_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import share_comments as share_comments_store
+
+    uid = str(int(principal.telegram_user_id))
+    if not await run_in_threadpool(_owner_can_share_item, uid, kind, item_id):
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    row = await run_in_threadpool(share_comments_store.get_comment, comment_id)
+    if (
+        not row
+        or str(row.get("owner_user_id") or "") != uid
+        or str(row.get("item_kind") or "") != kind
+        or str(row.get("item_id") or "") != str(item_id)
+    ):
+        raise HTTPException(status_code=404, detail="Комментарий не найден")
+    deleted = await run_in_threadpool(
+        share_comments_store.delete_comment, comment_id, requester_user_id=uid
+    )
+    if not deleted:
+        raise HTTPException(status_code=403, detail="Нельзя удалить этот комментарий")
+    return {"ok": True}
 
 
 @miniapp_router.post("/notes/todoist")
@@ -5007,6 +5168,92 @@ async def public_share_json(token: str) -> dict[str, Any]:
     if not payload:
         raise HTTPException(status_code=404, detail="Документ недоступен")
     return payload
+
+
+async def _resolve_public_share_or_404(token: str) -> dict[str, Any]:
+    from assistant.stores import share_links as share_links_store
+
+    link = await run_in_threadpool(share_links_store.resolve_share, token)
+    if not link:
+        raise HTTPException(status_code=404, detail="Документ недоступен")
+    payload = await run_in_threadpool(_public_share_payload, link)
+    if not payload:
+        raise HTTPException(status_code=404, detail="Документ недоступен")
+    return link
+
+
+@app.get("/api/public/share/{token}/comments")
+async def public_share_comments_list(token: str, request: Request) -> dict[str, Any]:
+    from assistant.stores import share_comments as share_comments_store
+
+    link = await _resolve_public_share_or_404(token)
+    if not share_comments_store.comments_allowed_for_link(link):
+        raise HTTPException(status_code=403, detail="Комментарии недоступны")
+    rows = await run_in_threadpool(
+        share_comments_store.list_comments,
+        link["user_id"],
+        link["item_kind"],
+        link["item_id"],
+    )
+    viewer = _optional_share_viewer(request)
+    viewer_uid = str(int(viewer.telegram_user_id)) if viewer else None
+    return {"comments": [_comment_api(r, viewer_uid=viewer_uid) for r in rows]}
+
+
+@app.post("/api/public/share/{token}/comments")
+async def public_share_comments_create(
+    token: str,
+    body: _MiniappShareCommentCreate,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import share_comments as share_comments_store
+
+    link = await _resolve_public_share_or_404(token)
+    if not share_comments_store.comments_allowed_for_link(link):
+        raise HTTPException(status_code=403, detail="Комментарии недоступны")
+    author_id, author_name, author_username = _comment_author_from_principal(principal)
+    try:
+        row = await run_in_threadpool(
+            share_comments_store.add_comment,
+            link["user_id"],
+            link["item_kind"],
+            link["item_id"],
+            author_user_id=author_id,
+            author_name=author_name,
+            author_username=author_username,
+            body=body.body,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "comment": _comment_api(row, viewer_uid=author_id)}
+
+
+@app.delete("/api/public/share/{token}/comments/{comment_id}")
+async def public_share_comments_delete(
+    token: str,
+    comment_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import share_comments as share_comments_store
+
+    link = await _resolve_public_share_or_404(token)
+    if not share_comments_store.comments_allowed_for_link(link):
+        raise HTTPException(status_code=403, detail="Комментарии недоступны")
+    row = await run_in_threadpool(share_comments_store.get_comment, comment_id)
+    if (
+        not row
+        or str(row.get("owner_user_id") or "") != str(link.get("user_id") or "")
+        or str(row.get("item_kind") or "") != str(link.get("item_kind") or "")
+        or str(row.get("item_id") or "") != str(link.get("item_id") or "")
+    ):
+        raise HTTPException(status_code=404, detail="Комментарий не найден")
+    uid = str(int(principal.telegram_user_id))
+    deleted = await run_in_threadpool(
+        share_comments_store.delete_comment, comment_id, requester_user_id=uid
+    )
+    if not deleted:
+        raise HTTPException(status_code=403, detail="Нельзя удалить этот комментарий")
+    return {"ok": True}
 
 
 @app.get("/share/{token}")

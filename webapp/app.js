@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260901-toc-sticky";
+  var WEBAPP_BUILD = "20260907-share-comments";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -6163,12 +6163,15 @@
 
   function hideShareControls() {
     closeNoteMoreMenu();
+    closeShareAccessSheet();
+    hideNoteCommentsPanel();
     var wrap = document.getElementById("note-editor-more-wrap");
     if (wrap) {
       wrap._shareKind = "";
       wrap._shareId = "";
       wrap._shareShared = false;
       wrap._shareUrl = "";
+      wrap._shareAccess = "view";
       if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
     }
   }
@@ -6231,10 +6234,18 @@
 
     if (!shared) {
       addItem("Поделиться ссылкой", function () {
-        createAndCopyShareLink();
+        closeNoteMoreMenu();
+        openShareAccessSheet();
       });
       return;
     }
+    addItem(
+      wrap._shareAccess === "comment" ? "Сменить доступ · комментарии" : "Сменить доступ · просмотр",
+      function () {
+        closeNoteMoreMenu();
+        openShareAccessSheet();
+      }
+    );
     addItem("Скопировать ссылку", function () {
       copyExistingShareLink();
     });
@@ -6267,7 +6278,72 @@
     else closeNoteMoreMenu();
   }
 
-  async function createAndCopyShareLink() {
+  function applyShareState(wrap, data) {
+    if (!wrap) return;
+    wrap._shareShared = !!(data && data.shared);
+    wrap._shareUrl = (data && data.url) || "";
+    wrap._shareAccess = data && data.access === "comment" ? "comment" : "view";
+    syncNoteCommentsPanel();
+  }
+
+  function selectedShareAccess() {
+    var checked = document.querySelector('input[name="note-share-access"]:checked');
+    return checked && checked.value === "comment" ? "comment" : "view";
+  }
+
+  function closeShareAccessSheet() {
+    var ov = document.getElementById("note-share-sheet-overlay");
+    if (ov) ov.classList.add("hidden");
+  }
+
+  function openShareAccessSheet() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || !wrap._shareKind || !wrap._shareId) return;
+    var ov = document.getElementById("note-share-sheet-overlay");
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = "note-share-sheet-overlay";
+      ov.className = "note-share-sheet-overlay hidden";
+      ov.innerHTML =
+        '<div class="note-share-sheet" role="dialog" aria-labelledby="note-share-sheet-title">' +
+        '<h3 id="note-share-sheet-title" class="note-share-sheet-title">Доступ по ссылке</h3>' +
+        '<label class="note-share-option">' +
+        '<input type="radio" name="note-share-access" value="view" />' +
+        "<span><strong>Просмотр</strong><small>Любой со ссылкой сможет читать</small></span>" +
+        "</label>" +
+        '<label class="note-share-option">' +
+        '<input type="radio" name="note-share-access" value="comment" />' +
+        "<span><strong>Комментарии</strong><small>Можно читать и оставлять комментарии после входа</small></span>" +
+        "</label>" +
+        '<div class="note-share-sheet-actions">' +
+        '<button type="button" class="btn" id="note-share-sheet-copy">Скопировать ссылку</button>' +
+        '<button type="button" class="btn-text" id="note-share-sheet-cancel">Отмена</button>' +
+        "</div>" +
+        "</div>";
+      ov.addEventListener("click", function (e) {
+        if (e.target === ov) closeShareAccessSheet();
+      });
+      document.body.appendChild(ov);
+      var copyBtn = document.getElementById("note-share-sheet-copy");
+      var cancelBtn = document.getElementById("note-share-sheet-cancel");
+      if (copyBtn) {
+        copyBtn.addEventListener("click", function () {
+          createAndCopyShareLink(selectedShareAccess());
+        });
+      }
+      if (cancelBtn) cancelBtn.addEventListener("click", closeShareAccessSheet);
+    }
+    var access = wrap._shareShared && wrap._shareAccess === "comment" ? "comment" : "view";
+    var radios = ov.querySelectorAll('input[name="note-share-access"]');
+    radios.forEach(function (radio) {
+      radio.checked = radio.value === access;
+    });
+    var copy = document.getElementById("note-share-sheet-copy");
+    if (copy) copy.textContent = wrap._shareShared ? "Сохранить и скопировать" : "Скопировать ссылку";
+    ov.classList.remove("hidden");
+  }
+
+  async function createAndCopyShareLink(access) {
     var wrap = document.getElementById("note-editor-more-wrap");
     var kind = wrap && wrap._shareKind;
     var itemId = wrap && wrap._shareId;
@@ -6275,12 +6351,12 @@
     try {
       var data = await apiFetch(
         "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/share",
-        { method: "POST" }
+        { method: "POST", body: JSON.stringify({ access: access || "view" }) }
       );
-      wrap._shareShared = true;
-      wrap._shareUrl = (data && data.url) || "";
+      applyShareState(wrap, data);
       await copyShareUrl(wrap._shareUrl);
       closeNoteMoreMenu();
+      closeShareAccessSheet();
       shareHaptic();
     } catch (e) {
       alert(e.message || String(e));
@@ -6296,11 +6372,10 @@
       if (!url && kind && itemId) {
         var data = await apiFetch(
           "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/share",
-          { method: "POST" }
+          { method: "POST", body: JSON.stringify({ access: wrap._shareAccess || "view" }) }
         );
-        url = (data && data.url) || "";
-        wrap._shareShared = true;
-        wrap._shareUrl = url;
+        applyShareState(wrap, data);
+        url = wrap._shareUrl;
       }
       await copyShareUrl(url);
       closeNoteMoreMenu();
@@ -6315,7 +6390,7 @@
     var kind = wrap && wrap._shareKind;
     var itemId = wrap && wrap._shareId;
     if (!kind || !itemId) return;
-    if (!confirm("Закрыть публичный доступ по ссылке?")) return;
+    if (!(await confirmDialog("Закрыть публичный доступ по ссылке?"))) return;
     try {
       await apiFetch(
         "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/share",
@@ -6323,10 +6398,168 @@
       );
       wrap._shareShared = false;
       wrap._shareUrl = "";
+      wrap._shareAccess = "view";
       closeNoteMoreMenu();
+      closeShareAccessSheet();
+      hideNoteCommentsPanel();
     } catch (e) {
       alert(e.message || String(e));
     }
+  }
+
+  function hideNoteCommentsPanel() {
+    var panel = document.getElementById("note-editor-comments");
+    if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+  }
+
+  function formatShareCommentWhen(iso) {
+    if (!iso) return "";
+    try {
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return String(iso);
+      return d.toLocaleString("ru-RU", {
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch (_) {
+      return String(iso);
+    }
+  }
+
+  function shareCommentAuthorLabel(c) {
+    var name = String((c && c.author_name) || "Пользователь").trim();
+    var uname = String((c && c.author_username) || "").trim();
+    if (uname && name.toLowerCase() !== "@" + uname.toLowerCase()) {
+      return name + " · @" + uname;
+    }
+    return name;
+  }
+
+  function renderNoteCommentsList(listEl, comments, kind, itemId) {
+    if (!listEl) return;
+    listEl.innerHTML = "";
+    if (!comments || !comments.length) {
+      var empty = document.createElement("p");
+      empty.className = "note-comments-empty";
+      empty.textContent = "Пока нет комментариев";
+      listEl.appendChild(empty);
+      return;
+    }
+    comments.forEach(function (c) {
+      var item = document.createElement("article");
+      item.className = "note-comment";
+      var head = document.createElement("div");
+      head.className = "note-comment-head";
+      var who = document.createElement("strong");
+      who.textContent = shareCommentAuthorLabel(c);
+      var when = document.createElement("time");
+      when.textContent = formatShareCommentWhen(c.created_at);
+      head.appendChild(who);
+      head.appendChild(when);
+      var body = document.createElement("p");
+      body.className = "note-comment-body";
+      body.textContent = String((c && c.body) || "");
+      item.appendChild(head);
+      item.appendChild(body);
+      if (c && c.can_delete) {
+        var del = document.createElement("button");
+        del.type = "button";
+        del.className = "note-comment-delete";
+        del.textContent = "Удалить";
+        del.addEventListener("click", function () {
+          deleteNoteComment(kind, itemId, c.id);
+        });
+        item.appendChild(del);
+      }
+      listEl.appendChild(item);
+    });
+  }
+
+  async function loadNoteComments(kind, itemId, listEl) {
+    if (!listEl) return;
+    try {
+      var data = await apiFetch(
+        "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
+        { method: "GET" }
+      );
+      renderNoteCommentsList(listEl, (data && data.comments) || [], kind, itemId);
+    } catch (e) {
+      listEl.innerHTML = "";
+      var err = document.createElement("p");
+      err.className = "note-comments-empty";
+      err.textContent = e.message || "Не удалось загрузить комментарии";
+      listEl.appendChild(err);
+    }
+  }
+
+  async function postNoteComment(kind, itemId, text, listEl, input) {
+    var body = String(text || "").trim();
+    if (!body) return;
+    try {
+      await apiFetch(
+        "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
+        { method: "POST", body: JSON.stringify({ body: body }) }
+      );
+      if (input) input.value = "";
+      await loadNoteComments(kind, itemId, listEl);
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
+  async function deleteNoteComment(kind, itemId, commentId) {
+    if (!(await confirmDialog("Удалить комментарий?"))) return;
+    try {
+      await apiFetch(
+        "/notes/" +
+          encodeURIComponent(kind) +
+          "/" +
+          encodeURIComponent(itemId) +
+          "/comments/" +
+          encodeURIComponent(String(commentId)),
+        { method: "DELETE" }
+      );
+      var listEl = document.querySelector("#note-editor-comments .note-comments-list");
+      await loadNoteComments(kind, itemId, listEl);
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
+  function syncNoteCommentsPanel() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var col = document.querySelector("#note-editor-modal-body .note-editor-main-column");
+    if (!wrap || !col || !wrap._shareShared || wrap._shareAccess !== "comment") {
+      hideNoteCommentsPanel();
+      return;
+    }
+    var kind = wrap._shareKind;
+    var itemId = wrap._shareId;
+    var panel = document.getElementById("note-editor-comments");
+    if (!panel) {
+      panel = document.createElement("section");
+      panel.id = "note-editor-comments";
+      panel.className = "note-comments";
+      panel.innerHTML =
+        '<h3 class="note-comments-title">Комментарии</h3>' +
+        '<div class="note-comments-list"></div>' +
+        '<form class="note-comments-form">' +
+        '<textarea class="note-comments-input" rows="3" maxlength="4000" placeholder="Написать комментарий"></textarea>' +
+        '<button type="submit" class="btn">Отправить</button>' +
+        "</form>";
+      col.appendChild(panel);
+      var form = panel.querySelector(".note-comments-form");
+      var input = panel.querySelector(".note-comments-input");
+      if (form) {
+        form.addEventListener("submit", function (e) {
+          e.preventDefault();
+          postNoteComment(kind, itemId, input && input.value, panel.querySelector(".note-comments-list"), input);
+        });
+      }
+    }
+    loadNoteComments(kind, itemId, panel.querySelector(".note-comments-list"));
   }
 
   function mountShareControls(kind, itemId) {
@@ -6340,6 +6573,7 @@
     wrap._shareId = String(itemId);
     wrap._shareShared = false;
     wrap._shareUrl = "";
+    wrap._shareAccess = "view";
     var btn = document.createElement("button");
     btn.type = "button";
     btn.id = "note-editor-more-btn";
@@ -6369,8 +6603,7 @@
     })
       .then(function (data) {
         if (wrap._shareId !== String(itemId)) return;
-        wrap._shareShared = !!(data && data.shared);
-        wrap._shareUrl = (data && data.url) || "";
+        applyShareState(wrap, data);
       })
       .catch(function () {});
   }
@@ -7306,6 +7539,7 @@
     if (modalBody) {
       modalBody.innerHTML = "";
       modalBody.appendChild(wrap);
+      syncNoteCommentsPanel();
       modalBody._noteEditorFlush = async function () {
         if (saveTimer) {
           clearTimeout(saveTimer);
@@ -7429,6 +7663,7 @@
     if (modalBody) {
       modalBody.innerHTML = "";
       modalBody.appendChild(wrap);
+      syncNoteCommentsPanel();
       modalBody._noteEditorFlush = async function () {
         if (saveTimer) {
           clearTimeout(saveTimer);

@@ -2785,6 +2785,177 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   background: var(--accent-subtle);
 }
 
+.note-share-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.note-share-sheet-overlay.hidden {
+  display: none !important;
+}
+
+.note-share-sheet {
+  width: min(22rem, 100%);
+  padding: 1.1rem 1.15rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface, #19191a);
+  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.28));
+}
+
+.note-share-sheet-title {
+  margin: 0 0 0.85rem;
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+.note-share-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  margin: 0 0 0.65rem;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.note-share-option:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-subtle, rgba(82, 158, 244, 0.12));
+}
+
+.note-share-option input {
+  margin-top: 0.2rem;
+  accent-color: var(--accent);
+}
+
+.note-share-option strong {
+  display: block;
+  font-size: 0.9375rem;
+}
+
+.note-share-option small {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--text-secondary, #909499);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.note-share-sheet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.85rem;
+}
+
+.note-comments {
+  margin: 1.5rem 0 2rem;
+  padding: 0;
+}
+
+.note-comments-title {
+  margin: 0 0 0.75rem;
+  color: var(--text-secondary, #909499);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.note-comments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.note-comments-empty {
+  margin: 0;
+  color: var(--text-secondary, #909499);
+  font-size: 0.875rem;
+}
+
+.note-comment {
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.note-comment-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.note-comment-head strong {
+  font-size: 0.875rem;
+}
+
+.note-comment-head time {
+  color: var(--text-secondary, #909499);
+  font-size: 0.75rem;
+}
+
+.note-comment-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+
+.note-comment-delete {
+  margin-top: 0.45rem;
+  padding: 0;
+  border: none;
+  color: var(--text-secondary, #909499);
+  background: none;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.note-comments-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+
+.note-comments-input {
+  width: 100%;
+  min-height: 4.5rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: inherit;
+  background: var(--surface, #19191a);
+  font: inherit;
+  resize: vertical;
+}
+
+.note-comments-form .btn {
+  align-self: flex-start;
+}
+
+@media (min-width: 640px) {
+  .note-share-sheet-overlay {
+    align-items: center;
+  }
+}
+
 .note-editor-pad--title-in-body {
   padding-top: var(--note-editor-pad-y);
   padding-bottom: var(--space-2);

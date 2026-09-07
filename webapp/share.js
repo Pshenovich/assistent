@@ -192,8 +192,259 @@
         buildShareToc(bodyEl);
       }
       if (doc) doc.classList.remove("hidden");
+      if (data && data.access === "comment") {
+        setupShareComments();
+      }
     })
     .catch(function (e) {
       showError(e.message || "Документ недоступен");
     });
+
+  function jsonFetch(url, opts) {
+    var o = opts || {};
+    return fetch(url, Object.assign({ credentials: "same-origin" }, o)).then(function (res) {
+      return res.text().then(function (text) {
+        var body = null;
+        try {
+          body = text ? JSON.parse(text) : null;
+        } catch (_) {
+          body = null;
+        }
+        if (!res.ok) {
+          var detail = body && (body.detail || body.message);
+          var err = new Error(typeof detail === "string" ? detail : "Ошибка запроса");
+          err.status = res.status;
+          throw err;
+        }
+        return body;
+      });
+    });
+  }
+
+  function formatWhen(iso) {
+    if (!iso) return "";
+    try {
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return String(iso);
+      return d.toLocaleString("ru-RU", {
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch (_) {
+      return String(iso);
+    }
+  }
+
+  function authorLabel(c) {
+    var name = String((c && c.author_name) || "Пользователь").trim();
+    var uname = String((c && c.author_username) || "").trim();
+    if (uname && name.toLowerCase() !== "@" + uname.toLowerCase()) {
+      return name + " · @" + uname;
+    }
+    return name;
+  }
+
+  function setCommentsError(msg) {
+    var el = document.getElementById("share-comments-error");
+    if (!el) return;
+    if (msg) {
+      el.textContent = msg;
+      el.classList.remove("hidden");
+    } else {
+      el.textContent = "";
+      el.classList.add("hidden");
+    }
+  }
+
+  function renderComments(comments) {
+    var list = document.getElementById("share-comments-list");
+    if (!list) return;
+    list.innerHTML = "";
+    if (!comments || !comments.length) {
+      var empty = document.createElement("p");
+      empty.className = "share-comments-empty";
+      empty.textContent = "Пока нет комментариев";
+      list.appendChild(empty);
+      return;
+    }
+    comments.forEach(function (c) {
+      var item = document.createElement("article");
+      item.className = "share-comment";
+      var head = document.createElement("div");
+      head.className = "share-comment-head";
+      var who = document.createElement("strong");
+      who.textContent = authorLabel(c);
+      var when = document.createElement("time");
+      when.textContent = formatWhen(c.created_at);
+      head.appendChild(who);
+      head.appendChild(when);
+      var body = document.createElement("p");
+      body.className = "share-comment-body";
+      body.textContent = String((c && c.body) || "");
+      item.appendChild(head);
+      item.appendChild(body);
+      if (c && c.can_delete) {
+        var del = document.createElement("button");
+        del.type = "button";
+        del.className = "share-comment-delete";
+        del.textContent = "Удалить";
+        del.addEventListener("click", function () {
+          if (!confirm("Удалить комментарий?")) return;
+          jsonFetch("/api/public/share/" + encodeURIComponent(token) + "/comments/" + encodeURIComponent(String(c.id)), {
+            method: "DELETE",
+          })
+            .then(loadComments)
+            .catch(function (e) {
+              setCommentsError(e.message || "Не удалось удалить");
+            });
+        });
+        item.appendChild(del);
+      }
+      list.appendChild(item);
+    });
+  }
+
+  function loadComments() {
+    return jsonFetch("/api/public/share/" + encodeURIComponent(token) + "/comments")
+      .then(function (data) {
+        setCommentsError("");
+        renderComments((data && data.comments) || []);
+      })
+      .catch(function (e) {
+        setCommentsError(e.message || "Не удалось загрузить комментарии");
+      });
+  }
+
+  function parseTgAuthResultFromHash() {
+    var hash = location.hash || "";
+    var m = hash.match(/tgAuthResult=([A-Za-z0-9\-_=]+)/);
+    if (!m) return null;
+    try {
+      var data = m[1].replace(/-/g, "+").replace(/_/g, "/");
+      var pad = data.length % 4;
+      if (pad > 1) data += "====".slice(pad);
+      return JSON.parse(atob(data));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function clearTgAuthHash() {
+    if (!location.hash) return;
+    var h = location.hash.replace(/[#&?]tgAuthResult=[^&]*/g, "").replace(/^#&/, "#");
+    if (h === "#") h = "";
+    history.replaceState(null, "", location.pathname + location.search + h);
+  }
+
+  function setLoginReturnCookie() {
+    document.cookie = "leo_login_return=/share/" + encodeURIComponent(token) + "; Path=/; Max-Age=600; SameSite=Lax";
+  }
+
+  function completeTelegramLogin(user) {
+    return jsonFetch("/api/miniapp/auth/telegram", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(user),
+    });
+  }
+
+  function startTelegramOAuth(botId) {
+    setLoginReturnCookie();
+    var returnTo = window.location.origin + "/share/" + encodeURIComponent(token);
+    window.location.href =
+      "https://oauth.telegram.org/auth?bot_id=" +
+      encodeURIComponent(String(botId)) +
+      "&origin=" +
+      encodeURIComponent(window.location.origin) +
+      "&return_to=" +
+      encodeURIComponent(returnTo);
+  }
+
+  function showLoggedIn(me) {
+    var login = document.getElementById("share-comments-login");
+    var form = document.getElementById("share-comments-form");
+    var meEl = document.getElementById("share-comments-me");
+    if (login) login.classList.add("hidden");
+    if (form) form.classList.remove("hidden");
+    if (meEl) {
+      var name = String((me && me.first_name) || "").trim() || (me && me.username ? "@" + me.username : "Вы");
+      meEl.textContent = "Комментируете как " + name;
+    }
+  }
+
+  function showLogin() {
+    var login = document.getElementById("share-comments-login");
+    var form = document.getElementById("share-comments-form");
+    if (login) login.classList.remove("hidden");
+    if (form) form.classList.add("hidden");
+  }
+
+  function setupShareComments() {
+    var box = document.getElementById("share-comments");
+    if (!box) return;
+    box.classList.remove("hidden");
+    var form = document.getElementById("share-comments-form");
+    var input = document.getElementById("share-comments-input");
+    var loginBtn = document.getElementById("share-comments-login-btn");
+    if (form) {
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var text = String((input && input.value) || "").trim();
+        if (!text) return;
+        jsonFetch("/api/public/share/" + encodeURIComponent(token) + "/comments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ body: text }),
+        })
+          .then(function () {
+            if (input) input.value = "";
+            setCommentsError("");
+            return loadComments();
+          })
+          .catch(function (e) {
+            if (e.status === 401) {
+              showLogin();
+              setCommentsError("Войдите через Telegram, чтобы комментировать");
+              return;
+            }
+            setCommentsError(e.message || "Не удалось отправить");
+          });
+      });
+    }
+    if (loginBtn) {
+      loginBtn.addEventListener("click", function () {
+        jsonFetch("/api/miniapp/auth/config")
+          .then(function (cfg) {
+            if (!cfg || !cfg.telegram_login_enabled || !cfg.bot_id) {
+              throw new Error("Вход через Telegram сейчас недоступен");
+            }
+            startTelegramOAuth(cfg.bot_id);
+          })
+          .catch(function (e) {
+            setCommentsError(e.message || "Вход недоступен");
+          });
+      });
+    }
+    var pendingAuth = parseTgAuthResultFromHash();
+    var boot = Promise.resolve();
+    if (pendingAuth && pendingAuth.hash) {
+      clearTgAuthHash();
+      boot = completeTelegramLogin(pendingAuth).catch(function (e) {
+        setCommentsError(e.message || "Не удалось войти");
+      });
+    }
+    boot
+      .then(function () {
+        return jsonFetch("/api/miniapp/me");
+      })
+      .then(function (me) {
+        showLoggedIn(me);
+      })
+      .catch(function () {
+        showLogin();
+      })
+      .then(loadComments);
+  }
 })();
