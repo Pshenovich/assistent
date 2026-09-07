@@ -1958,6 +1958,16 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   user-select: text;
 }
 
+.note-rich-editor-body,
+.note-rich-editor-body.ProseMirror,
+.note-rich-editor-body:focus,
+.note-rich-editor-body.ProseMirror-focused,
+.note-rich-editor-body:focus-visible {
+  outline: none;
+  box-shadow: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
 .note-rich-editor-body p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   float: left;
@@ -5344,8 +5354,16 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   z-index: 50;
   display: flex;
   align-items: center;
+  gap: 8px;
   min-height: 44px;
-  padding: max(8px, env(safe-area-inset-top, 0px)) 4px 4px 8px;
+  padding: max(
+      8px,
+      env(safe-area-inset-top, 0px),
+      var(--tg-content-safe-area-inset-top, 0px)
+    )
+    8px 4px 8px;
+  position: relative;
+  box-sizing: border-box;
 }
 
 #note-editor-overlay .note-editor-web-back-bar.hidden {
@@ -5356,7 +5374,8 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   position: relative;
   top: auto;
   left: auto;
-  z-index: auto;
+  z-index: 2;
+  flex-shrink: 0;
   min-height: 36px;
   padding: 0 12px 0 4px;
   border: none;
@@ -5373,6 +5392,35 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   display: none !important;
 }
 
+#note-editor-overlay .note-editor-web-back-bar #note-editor-tags-wrap:not(.hidden) {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: auto;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  border: none;
+  background: transparent;
+  pointer-events: none;
+}
+
+#note-editor-overlay .note-editor-web-back-bar #note-editor-tags-wrap .tag-picker-add-wrap,
+#note-editor-overlay .note-editor-web-back-bar #note-editor-tags-wrap .tag-picker-add-btn {
+  pointer-events: auto;
+}
+
+#note-editor-overlay .note-editor-web-back-bar .note-more-wrap {
+  z-index: 2;
+  top: 50%;
+  right: 4px;
+}
+
 #note-editor-overlay .note-editor-modal-header {
   display: none;
 }
@@ -5381,61 +5429,17 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   padding-top: 0;
   padding-right: 0;
   padding-left: 0;
-  --note-editor-chrome-top: calc(var(--tg-content-safe-area-inset-top, 0px) + 54px);
+  --note-editor-chrome-top: 0px;
 }
 
 html.note-editor-web-back-visible
   #note-editor-overlay.note-editor-overlay--fullscreen
   .note-editor-modal-body {
-  --note-editor-chrome-top: 12px;
+  --note-editor-chrome-top: 0px;
 }
 
-/* Title/body used to sit below the top format toolbar; with bottom toolbar
-   they need explicit offset under Telegram chrome / back button. */
 #note-editor-overlay.note-editor-overlay--fullscreen .note-editor-modal-content {
-  padding-top: calc(var(--note-editor-chrome-top) + var(--space-2));
-}
-
-#note-editor-overlay.note-editor-overlay--fullscreen
-  .note-editor-modal-body:has(#note-editor-tags-wrap:not(.hidden))
-  .note-editor-modal-content {
-  /* Tags strip already reserves chrome space at the top */
   padding-top: var(--space-2);
-}
-
-/* Теги — дропдаун по центру под системными кнопками */
-#note-editor-overlay.note-editor-overlay--fullscreen #note-editor-tags-wrap:not(.hidden) {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  position: sticky;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 3;
-  width: 100%;
-  max-width: none;
-  min-width: 0;
-  box-sizing: border-box;
-  margin: 0;
-  min-height: calc(var(--note-editor-chrome-top) + 8px);
-  padding-top: calc(var(--tg-content-safe-area-inset-top, 0px) + 12px);
-  padding-bottom: 8px;
-  padding-left: var(--space-4);
-  padding-right: var(--space-4);
-  overflow: visible;
-  border-bottom: none;
-  background: var(--vkui--color_background_secondary, #2c2c2e);
-}
-
-#note-editor-overlay.note-editor-overlay--fullscreen #note-editor-tags-wrap:not(.hidden).tag-picker {
-  flex-wrap: nowrap;
-  padding-top: calc(var(--tg-content-safe-area-inset-top, 0px) + 12px);
-  padding-bottom: 8px;
-}
-
-#note-editor-overlay.note-editor-overlay--fullscreen #note-editor-tags-wrap.tag-picker--dropdown {
-  justify-content: center;
 }
 
 #note-editor-overlay.note-editor-overlay--fullscreen .note-more-wrap {
@@ -5635,8 +5639,7 @@ html.note-editor-kb-open
   user-select: text;
 }
 
-.note-editor-modal-body #note-editor-tags-wrap:not(.hidden),
-#note-editor-overlay #note-editor-tags-wrap:not(.hidden) {
+.note-editor-modal-body #note-editor-tags-wrap:not(.hidden) {
   position: sticky;
   top: 0;
   left: 0;
@@ -5911,6 +5914,18 @@ html.modal-sheet-open body {
     padding-bottom: 0;
   }
 
+  #note-editor-overlay .note-editor-modal-content {
+    padding-bottom: 0;
+  }
+
+  #note-editor-overlay .note-editor-pad--body,
+  #note-editor-overlay .note-rich-editor,
+  #note-editor-overlay .note-rich-editor-surface,
+  #note-editor-overlay .note-rich-editor-body {
+    flex: 0 0 auto;
+    min-height: 0;
+  }
+
   #note-editor-overlay.note-editor-overlay--fullscreen .note-editor-toolbar-wrap:not(.hidden),
   #note-editor-overlay.note-editor-overlay--fullscreen
     .note-editor-toolbar-wrap--bottom:not(.hidden),
@@ -5923,6 +5938,7 @@ html.modal-sheet-open body {
     right: 0;
     bottom: 0;
     z-index: 20;
+    padding-bottom: 10px;
   }
 
   .note-editor-toc-toggle {

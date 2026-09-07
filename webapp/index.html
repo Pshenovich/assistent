@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260907-toolbar-idle">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260907-chrome-bar2">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -43,8 +43,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20260907-toolbar-idle" />
-  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260907-toolbar-idle" as="script" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20260907-chrome-bar2" />
+  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260907-chrome-bar2" as="script" />
   <!-- Same-origin, async: не блокирует парсер, если сеть/VPN тормозит. -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" async></script>
 </head>
@@ -989,12 +989,12 @@
           <button type="button" class="btn-text note-editor-web-back" id="note-editor-web-back">
             ← Назад
           </button>
+          <div id="note-editor-tags-wrap" class="note-editor-pad note-editor-pad--tags hidden"></div>
         </div>
         <div class="modal-header note-editor-modal-header" aria-hidden="true">
           <h2 id="note-editor-modal-title" class="modal-title">Заметка</h2>
         </div>
         <div class="modal-body note-editor-modal-body">
-          <div id="note-editor-tags-wrap" class="note-editor-pad note-editor-pad--tags hidden"></div>
           <div id="note-editor-modal-body" class="note-editor-modal-content"></div>
         </div>
         <div id="note-editor-toolbar-wrap" class="note-editor-toolbar-wrap note-editor-toolbar-wrap--bottom hidden">
@@ -1047,14 +1047,14 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20260907-toolbar-idle"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20260907-chrome-bar2"><\/script>'
         );
       }
     })();
   </script>
-  <script src="/webapp/note-html.js?v=20260907-toolbar-idle" defer></script>
-  <script src="/webapp/note-comments.js?v=20260907-toolbar-idle" defer></script>
-  <script src="/webapp/note-rich-editor.js?v=20260907-toolbar-idle" defer></script>
-  <script src="/webapp/app.js?v=20260907-toolbar-idle" defer></script>
+  <script src="/webapp/note-html.js?v=20260907-chrome-bar2" defer></script>
+  <script src="/webapp/note-comments.js?v=20260907-chrome-bar2" defer></script>
+  <script src="/webapp/note-rich-editor.js?v=20260907-chrome-bar2" defer></script>
+  <script src="/webapp/app.js?v=20260907-chrome-bar2" defer></script>
 </body>
 </html>
