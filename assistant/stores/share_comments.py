@@ -51,8 +51,30 @@ def is_paie_comment(row: dict[str, Any] | None) -> bool:
         return False
     uname = str(row.get("author_username") or "").strip().lower()
     name = str(row.get("author_name") or "").strip().upper()
-    uid = str(row.get("author_user_id") or "").strip()
-    return uname == "paie" or name == "CHAIR" or uid == "0"
+    return uname == "paie" or name == "CHAIR"
+
+
+GPT_PREFIX = "__gpt__"
+GPT_AUTHOR_NAME = "GPT"
+GPT_AUTHOR_USERNAME = "gpt"
+
+
+def is_gpt_comment(row: dict[str, Any] | None) -> bool:
+    if not row:
+        return False
+    uname = str(row.get("author_username") or "").strip().lower()
+    name = str(row.get("author_name") or "").strip().upper()
+    return uname == "gpt" or name == "GPT"
+
+
+def is_gpt_turn(row: dict[str, Any] | None) -> bool:
+    if not row:
+        return False
+    if is_gpt_comment(row):
+        return True
+    if str(row.get("prefix") or "").strip() != GPT_PREFIX:
+        return False
+    return not str(row.get("quote") or "").strip()
 
 
 def parent_id_of(row: dict[str, Any] | None) -> int | None:
@@ -84,11 +106,13 @@ def paie_thread(comments: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
             cid = int(row["id"])
             if cid in ids:
                 continue
+            if is_gpt_turn(row):
+                continue
             pid = parent_id_of(row)
             if pid and pid in ids:
                 ids.add(cid)
                 changed = True
-    return [row for row in rows if int(row["id"]) in ids]
+    return [row for row in rows if int(row["id"]) in ids and not is_gpt_turn(row)]
 
 
 def paie_thread_root_id(comments: list[dict[str, Any]] | None) -> int | None:

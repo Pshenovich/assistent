@@ -2447,6 +2447,7 @@ class _MiniappShareCommentCreate(BaseModel):
     prefix: str = ""
     suffix: str = ""
     parent_id: Optional[int] = None
+    as_role: Optional[str] = None
 
 
 class _MiniappNotePaeiStart(BaseModel):
@@ -2667,6 +2668,7 @@ def _comment_api(row: dict[str, Any], *, viewer_uid: str | None = None) -> dict[
         "suffix": str(row.get("suffix") or ""),
         "parent_id": parent_id,
         "is_paie": share_comments_store.is_paie_comment(row),
+        "is_gpt": share_comments_store.is_gpt_comment(row),
         "can_delete": can_delete,
     }
 
@@ -4570,6 +4572,11 @@ async def miniapp_share_comments_create(
     if not await run_in_threadpool(_owner_can_share_item, uid, kind, item_id):
         raise HTTPException(status_code=404, detail="Запись не найдена")
     author_id, author_name, author_username = _comment_author_from_principal(principal)
+    prefix = body.prefix
+    if str(body.as_role or "").strip().lower() == "gpt":
+        author_name = share_comments_store.GPT_AUTHOR_NAME
+        author_username = share_comments_store.GPT_AUTHOR_USERNAME
+        prefix = share_comments_store.GPT_PREFIX
     try:
         row = await run_in_threadpool(
             share_comments_store.add_comment,
@@ -4581,7 +4588,7 @@ async def miniapp_share_comments_create(
             author_username=author_username,
             body=body.body,
             quote=body.quote,
-            prefix=body.prefix,
+            prefix=prefix,
             suffix=body.suffix,
             parent_id=body.parent_id,
         )

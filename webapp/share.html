@@ -242,6 +242,24 @@
     mark.note-comment-hl.is-active {
       background: rgba(82, 158, 244, 0.48);
     }
+    .share-body-wrap {
+      position: relative;
+      overflow: visible;
+    }
+    .note-comment-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2;
+    }
+    .note-comment-overlay-hl {
+      position: absolute;
+      background: rgba(82, 158, 244, 0.28);
+      border-radius: 2px;
+    }
+    .note-comment-overlay-hl.is-active {
+      background: rgba(82, 158, 244, 0.48);
+    }
     .note-comment-bubble {
       position: fixed;
       z-index: 320;
@@ -276,6 +294,12 @@
     }
     .share-comments-list.is-anchored {
       display: block;
+      position: relative;
+    }
+    .share-comments-list.is-anchored .share-comment {
+      position: absolute;
+      left: 0;
+      right: 0;
     }
     .share-comments-title {
       margin: 0 0 0.75rem;
@@ -352,15 +376,46 @@
     .share-paie-list {
       display: flex;
       flex-direction: column;
-      gap: 0.75rem;
+      gap: 1.1rem;
+    }
+    .share-paie-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
     }
     .share-paie-msg.is-chair {
       background: rgba(82, 158, 244, 0.08);
     }
+    .share-paie-msg.is-chair .share-comment-body {
+      -webkit-user-select: text;
+      user-select: text;
+      cursor: text;
+    }
     .share-paie-msg.is-reply {
-      margin-left: 0.75rem;
       background: rgba(255, 255, 255, 0.04);
     }
+    .share-paie-nested {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-left: 0.85rem;
+    }
+    .share-paie-comment-btn {
+      padding: 0;
+      border: none;
+      color: var(--accent);
+      background: none;
+      font: inherit;
+      font-size: 0.8125rem;
+      cursor: pointer;
+    }
+    .share-paie-comment-form {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      margin-left: 0.85rem;
+    }
+    .share-paie-comment-form.hidden { display: none; }
     .share-paie-reply-form {
       margin-top: 0.9rem;
     }
@@ -420,8 +475,7 @@
       .wrap.has-toc.has-comments {
         grid-template-columns: 14rem minmax(0, 42rem) 18rem;
       }
-      .wrap.has-toc .share-toc,
-      .wrap.has-comments .share-comments-rail {
+      .wrap.has-toc .share-toc {
         position: sticky;
         top: 1.25rem;
         max-height: calc(100vh - 2.5rem);
@@ -429,6 +483,13 @@
         margin-top: 0;
         padding-top: 0;
         border-top: 0;
+      }
+      .wrap.has-comments .share-comments-rail {
+        margin-top: 0;
+        padding-top: 0;
+        border-top: 0;
+        align-self: stretch;
+        overflow: visible;
       }
       .wrap.has-toc .share-toc {
         margin: 0;
@@ -456,7 +517,10 @@
     <article id="share-doc" class="share-doc-row hidden">
       <p id="share-label" class="label"></p>
       <h1 id="share-title"></h1>
-      <div id="share-body" class="note-body-html"></div>
+      <div id="share-body-wrap" class="share-body-wrap">
+        <div id="share-body" class="note-body-html"></div>
+        <div id="share-comment-overlay" class="note-comment-overlay"></div>
+      </div>
       <section id="share-paie-thread" class="share-paie-thread hidden">
         <h2 class="share-comments-title">Комментарий CHAIR</h2>
         <div id="share-paie-list" class="share-paie-list"></div>
@@ -469,9 +533,8 @@
       </section>
     </article>
     <aside id="share-comments" class="share-comments-rail hidden">
-      <h2 class="share-comments-title">Комментарии</h2>
       <p id="share-comments-error" class="share-comments-error hidden"></p>
-      <p id="share-comments-hint" class="share-comments-hint">Выделите текст в документе, чтобы оставить комментарий.</p>
+      <p id="share-comments-hint" class="share-comments-hint hidden"></p>
       <div id="share-comments-login" class="hidden">
         <p class="share-comments-hint">Чтобы комментировать, войдите через Telegram.</p>
         <button type="button" class="share-comments-btn" id="share-comments-login-btn">Войти через Telegram</button>
@@ -488,8 +551,8 @@
       <div id="share-comments-list" class="share-comments-list"></div>
     </aside>
   </main>
-  <script src="/webapp/note-html.js?v=20260907-paie-footer"></script>
-  <script src="/webapp/note-comments.js?v=20260907-paie-footer"></script>
-  <script src="/webapp/share.js?v=20260907-paie-footer"></script>
+  <script src="/webapp/note-html.js?v=20260907-comment-anchor"></script>
+  <script src="/webapp/note-comments.js?v=20260907-comment-anchor"></script>
+  <script src="/webapp/share.js?v=20260907-comment-anchor"></script>
 </body>
 </html>

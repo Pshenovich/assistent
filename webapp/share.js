@@ -238,6 +238,7 @@
   function authorLabel(c) {
     var api = commentsApi();
     if (api && api.isPaieComment && api.isPaieComment(c)) return "CHAIR";
+    if (api && api.isGptComment && api.isGptComment(c)) return "GPT";
     var name = String((c && c.author_name) || "Пользователь").trim();
     var uname = String((c && c.author_username) || "").trim();
     if (uname && name.toLowerCase() !== "@" + uname.toLowerCase()) {
@@ -264,6 +265,7 @@
     highlights: {},
     draft: null,
     canComment: false,
+    activeId: null,
   };
   var PENDING_KEY = "leo_share_pending_comment";
 
@@ -292,7 +294,7 @@
   }
 
   function setActiveComment(id) {
-    var marks = document.querySelectorAll("mark.note-comment-hl");
+    var marks = document.querySelectorAll("mark.note-comment-hl, .note-comment-overlay-hl");
     marks.forEach(function (m) {
       m.classList.toggle("is-active", String(m.getAttribute("data-comment-id")) === String(id || ""));
     });
@@ -300,6 +302,7 @@
     cards.forEach(function (c) {
       c.classList.toggle("is-active", String(c.getAttribute("data-comment-id")) === String(id || ""));
     });
+    commentsState.activeId = id || null;
   }
 
   function renderCommentCard(c) {
@@ -344,9 +347,25 @@
       item.appendChild(del);
     }
     item.addEventListener("click", function () {
+      commentsState.activeId = c.id;
       setActiveComment(c.id);
-      var mark = commentsState.highlights[String(c.id)];
-      if (mark && mark.scrollIntoView) mark.scrollIntoView({ block: "center", behavior: "smooth" });
+      paintShareHighlights(c.id);
+      var api = commentsApi();
+      var root = bodyRoot();
+      var range =
+        api && api.rangeForAnchor && c.quote
+          ? api.rangeForAnchor(root, c.quote, c.prefix, c.suffix)
+          : null;
+      if (range) {
+        var node = range.startContainer;
+        var el = node && node.nodeType === 1 ? node : node && node.parentElement;
+        if (el && el.scrollIntoView) el.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+      window.requestAnimationFrame(function () {
+        paintShareHighlights(c.id);
+        setActiveComment(c.id);
+        relayoutCommentCards();
+      });
     });
     return item;
   }
@@ -354,34 +373,178 @@
   function relayoutCommentCards() {
     var api = commentsApi();
     var list = document.getElementById("share-comments-list");
-    if (!api || !api.alignCards || !list) return;
-    api.alignCards(list, commentsState.highlights);
+    var root = bodyRoot();
+    if (!api || !api.alignCardsByAnchors || !list) return;
+    var anchored =
+      api.selectionComments && commentsState.list
+        ? api.selectionComments(commentsState.list)
+        : commentsState.list;
+    api.alignCardsByAnchors(list, root, anchored || []);
   }
 
-  function renderPaieCard(c) {
+  function paintShareHighlights(activeId) {
+    var api = commentsApi();
+    var root = bodyRoot();
+    var overlay = document.getElementById("share-comment-overlay");
+    var list = document.getElementById("share-comments-list");
+    if (!api || !api.paintOverlay || !overlay || !root) return;
+    var anchored =
+      api.selectionComments && commentsState.list
+        ? api.selectionComments(commentsState.list)
+        : commentsState.list;
+    api.paintOverlay(root, overlay, anchored || [], activeId || commentsState.activeId);
+    overlay.querySelectorAll(".note-comment-overlay-hl").forEach(function (span) {
+      span.style.pointerEvents = "auto";
+      span.style.cursor = "pointer";
+      span.addEventListener("click", function (e) {
+        e.preventDefault();
+        var id = span.getAttribute("data-comment-id");
+        setActiveComment(id);
+        paintShareHighlights(id);
+        var card = list && list.querySelector('[data-comment-id="' + id + '"]');
+        if (card && card.scrollIntoView) card.scrollIntoView({ block: "nearest" });
+      });
+    });
+  }
+
+  function renderPaieCard(c, opts) {
+    opts = opts || {};
     var item = renderCommentCard(c);
     var api = commentsApi();
     var chair = !!(api && api.isPaieComment && api.isPaieComment(c));
     item.classList.add("share-paie-msg");
     item.classList.add(chair ? "is-chair" : "is-reply");
-    var quote = item.querySelector(".share-comment-quote");
-    if (quote && quote.parentNode) quote.parentNode.removeChild(quote);
+    if (chair || opts.stripQuote) {
+      var quote = item.querySelector(".share-comment-quote");
+      if (quote && quote.parentNode) quote.parentNode.removeChild(quote);
+    }
     return item;
+  }
+
+  function openShareChairCommentForm(groupEl, draft) {
+    if (!groupEl) return;
+    if (!commentsState.canComment) return;
+    if (!commentsState.me) {
+      showLogin();
+      setCommentsError("Войдите через Telegram, чтобы комментировать ответ CHAIR");
+      return;
+    }
+    var form = groupEl.querySelector(".share-paie-comment-form");
+    var quoteEl = groupEl.querySelector(".share-paie-comment-quote");
+    var input = groupEl.querySelector(".share-paie-comment-input");
+    if (!form) return;
+    form.classList.remove("hidden");
+    form._draft = draft || null;
+    if (quoteEl) {
+      if (draft && draft.quote) {
+        quoteEl.textContent = "«" + String(draft.quote) + "»";
+        quoteEl.classList.remove("hidden");
+      } else {
+        quoteEl.textContent = "";
+        quoteEl.classList.add("hidden");
+      }
+    }
+    if (input) {
+      try {
+        input.focus();
+      } catch (_) {}
+    }
+  }
+
+  function postShareChairComment(chairId, text, draft, input) {
+    var body = String(text || "").trim();
+    if (!body) return;
+    jsonFetch("/api/public/share/" + encodeURIComponent(token) + "/comments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        body: body,
+        quote: (draft && draft.quote) || "",
+        prefix: (draft && draft.prefix) || "",
+        suffix: (draft && draft.suffix) || "",
+        parent_id: chairId,
+      }),
+    })
+      .then(function () {
+        if (input) input.value = "";
+        setCommentsError("");
+        return loadComments();
+      })
+      .catch(function (err) {
+        if (err.status === 401) {
+          showLogin();
+          setCommentsError("Войдите через Telegram, чтобы комментировать");
+          return;
+        }
+        setCommentsError(err.message || "Не удалось отправить");
+      });
+  }
+
+  function renderShareChairGroup(group) {
+    var wrap = document.createElement("div");
+    wrap.className = "share-paie-group";
+    wrap.setAttribute("data-chair-id", String(group.chair.id));
+    wrap.appendChild(renderPaieCard(group.chair, { stripQuote: true }));
+    if (commentsState.canComment) {
+      var actions = document.createElement("div");
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "share-paie-comment-btn";
+      btn.textContent = "Комментировать";
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openShareChairCommentForm(wrap, null);
+      });
+      actions.appendChild(btn);
+      wrap.appendChild(actions);
+    }
+    var nested = document.createElement("div");
+    nested.className = "share-paie-nested";
+    (group.comments || []).forEach(function (c) {
+      nested.appendChild(renderPaieCard(c));
+    });
+    wrap.appendChild(nested);
+    if (commentsState.canComment) {
+      var form = document.createElement("form");
+      form.className = "share-comments-form share-paie-comment-form hidden";
+      form.innerHTML =
+        '<p class="share-comment-quote share-paie-comment-quote hidden"></p>' +
+        '<textarea class="share-comments-input share-paie-comment-input" rows="3" maxlength="4000" placeholder="Комментарий к ответу CHAIR"></textarea>' +
+        '<div class="share-comments-form-actions">' +
+        '<button type="submit" class="share-comments-btn">Отправить</button>' +
+        '<button type="button" class="share-comments-btn share-comments-btn--ghost">Отмена</button>' +
+        "</div>";
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var input = form.querySelector(".share-paie-comment-input");
+        postShareChairComment(group.chair.id, input && input.value, form._draft, input);
+      });
+      var cancel = form.querySelector(".share-comments-btn--ghost");
+      if (cancel) {
+        cancel.addEventListener("click", function () {
+          form.classList.add("hidden");
+          form._draft = null;
+        });
+      }
+      wrap.appendChild(form);
+    }
+    return wrap;
   }
 
   function renderSharePaieThread(thread) {
     var box = document.getElementById("share-paie-thread");
     var list = document.getElementById("share-paie-list");
     var form = document.getElementById("share-paie-reply-form");
+    var api = commentsApi();
     if (!box || !list) return;
+    var groups = api && api.paieThreadGroups ? api.paieThreadGroups(thread) : [];
     list.innerHTML = "";
-    (thread || []).forEach(function (c) {
-      list.appendChild(renderPaieCard(c));
+    groups.forEach(function (group) {
+      list.appendChild(renderShareChairGroup(group));
     });
     box.classList.toggle("hidden", !thread || !thread.length);
-    if (form) {
-      form.classList.toggle("hidden", !commentsState.canComment || !thread.length);
-    }
+    if (form) form.classList.add("hidden");
   }
 
   function paintComments() {
@@ -395,33 +558,16 @@
     var thread = api && api.paieThread ? api.paieThread(all) : [];
     var anchored = api && api.selectionComments ? api.selectionComments(all) : all;
     list.innerHTML = "";
-    commentsState.highlights = api ? api.applyHighlights(root, anchored) : {};
+    paintShareHighlights(commentsState.activeId);
     anchored.forEach(function (c) {
       list.appendChild(renderCommentCard(c));
     });
     renderSharePaieThread(thread);
-    if (rail) {
-      rail.classList.toggle(
-        "hidden",
-        !commentsState.canComment && !anchored.length
-      );
-    }
-    if (wrap) {
-      wrap.classList.toggle(
-        "has-comments",
-        !!(commentsState.canComment || anchored.length)
-      );
-    }
+    var title = document.querySelector("#share-comments .share-comments-title");
+    if (title) title.classList.add("hidden");
+    if (rail) rail.classList.toggle("hidden", !anchored.length);
+    if (wrap) wrap.classList.toggle("has-comments", !!anchored.length);
     window.requestAnimationFrame(relayoutCommentCards);
-    root.querySelectorAll("mark.note-comment-hl").forEach(function (mark) {
-      mark.addEventListener("click", function (e) {
-        e.preventDefault();
-        var id = mark.getAttribute("data-comment-id");
-        setActiveComment(id);
-        var card = list.querySelector('[data-comment-id="' + id + '"]');
-        if (card && card.scrollIntoView) card.scrollIntoView({ block: "nearest" });
-      });
-    });
   }
 
   function loadComments() {
@@ -440,6 +586,13 @@
     commentsState.draft = null;
     var form = document.getElementById("share-comments-form");
     if (form) form.classList.add("hidden");
+    var api = commentsApi();
+    var anchored =
+      api && api.selectionComments ? api.selectionComments(commentsState.list) : commentsState.list;
+    var rail = document.getElementById("share-comments");
+    var wrap = document.querySelector(".wrap");
+    if (rail) rail.classList.toggle("hidden", !(anchored && anchored.length));
+    if (wrap) wrap.classList.toggle("has-comments", !!(anchored && anchored.length));
   }
 
   function showComposer(draft) {
@@ -447,6 +600,10 @@
     var form = document.getElementById("share-comments-form");
     var quoteEl = document.getElementById("share-comments-quote");
     var input = document.getElementById("share-comments-input");
+    var rail = document.getElementById("share-comments");
+    var wrap = document.querySelector(".wrap");
+    if (rail) rail.classList.remove("hidden");
+    if (wrap) wrap.classList.add("has-comments");
     if (quoteEl) quoteEl.textContent = draft && draft.quote ? "«" + draft.quote + "»" : "";
     if (form) form.classList.remove("hidden");
     if (input) {
@@ -540,8 +697,7 @@
     var api = commentsApi();
     if (!box || !root) return;
     commentsState.canComment = !!canComment;
-    box.classList.remove("hidden");
-    if (wrap) wrap.classList.add("has-comments");
+    box.classList.add("hidden");
     var hint = document.getElementById("share-comments-hint");
     var login = document.getElementById("share-comments-login");
     if (!canComment) {
@@ -663,8 +819,33 @@
       if (api && api.isCommentBubbleEvent && api.isCommentBubbleEvent(e)) return;
       if (api) api.hideBubble();
     });
-    window.addEventListener("scroll", relayoutCommentCards, { passive: true });
-    window.addEventListener("resize", relayoutCommentCards);
+    function onShareLayout() {
+      relayoutCommentCards();
+      paintShareHighlights(commentsState.activeId);
+    }
+    window.addEventListener("scroll", onShareLayout, { passive: true });
+    window.addEventListener("resize", onShareLayout);
+    var paieBox = document.getElementById("share-paie-thread");
+    if (paieBox && !paieBox._chairSelectBound) {
+      paieBox._chairSelectBound = true;
+      function onChairSelect() {
+        if (!canComment || !api) return;
+        var sel = window.getSelection && window.getSelection();
+        if (!sel || sel.rangeCount < 1 || sel.isCollapsed) return;
+        var node = sel.anchorNode && sel.anchorNode.parentElement;
+        var body =
+          node && node.closest
+            ? node.closest(".share-paie-msg.is-chair .share-comment-body")
+            : null;
+        if (!body) return;
+        var draft = api.selectionAnchor(body);
+        if (!draft || !draft.quote) return;
+        var group = body.closest(".share-paie-group");
+        if (group) openShareChairCommentForm(group, draft);
+      }
+      paieBox.addEventListener("mouseup", onChairSelect);
+      paieBox.addEventListener("pointerup", onChairSelect);
+    }
     if (!canComment) {
       loadComments();
       return;

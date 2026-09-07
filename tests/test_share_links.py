@@ -205,6 +205,60 @@ class ShareCommentsTests(unittest.TestCase):
         self.assertEqual([c["id"] for c in thread], [chair["id"], reply["id"]])
         self.assertEqual(share_comments.paie_thread_root_id(listed), chair["id"])
         self.assertNotIn(side["id"], [c["id"] for c in thread])
+        follow = share_comments.add_comment(
+            8,
+            "local",
+            3,
+            author_user_id=0,
+            author_name="CHAIR",
+            author_username="PAIE",
+            body="Тогда месяц, но с KPI на 14-й день.",
+            parent_id=chair["id"],
+        )
+        note = share_comments.add_comment(
+            8,
+            "local",
+            3,
+            author_user_id=8,
+            author_name="Анна",
+            body="Ок, беру на контроль",
+            quote="KPI на 14-й день",
+            parent_id=follow["id"],
+        )
+        listed = share_comments.list_comments(8, "local", 3)
+        thread = share_comments.paie_thread(listed)
+        self.assertEqual(note["parent_id"], follow["id"])
+        self.assertEqual(note["quote"], "KPI на 14-й день")
+        self.assertIn(follow["id"], [c["id"] for c in thread])
+        self.assertIn(note["id"], [c["id"] for c in thread])
+        gpt_q = share_comments.add_comment(
+            8,
+            "local",
+            3,
+            author_user_id=8,
+            author_name="Анна",
+            body="Кратко: в чём суть?",
+            prefix=share_comments.GPT_PREFIX,
+        )
+        gpt_a = share_comments.add_comment(
+            8,
+            "local",
+            3,
+            author_user_id=8,
+            author_name="GPT",
+            author_username="gpt",
+            body="Пилот на месяц с KPI.",
+            prefix=share_comments.GPT_PREFIX,
+            parent_id=gpt_q["id"],
+        )
+        listed = share_comments.list_comments(8, "local", 3)
+        thread = share_comments.paie_thread(listed)
+        self.assertTrue(share_comments.is_gpt_comment(gpt_a))
+        self.assertFalse(share_comments.is_gpt_comment(gpt_q))
+        self.assertTrue(share_comments.is_gpt_turn(gpt_q))
+        self.assertFalse(share_comments.is_paie_comment(gpt_a))
+        self.assertNotIn(gpt_q["id"], [c["id"] for c in thread])
+        self.assertNotIn(gpt_a["id"], [c["id"] for c in thread])
         with self.assertRaises(ValueError):
             share_comments.add_comment(
                 8,

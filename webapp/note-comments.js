@@ -239,7 +239,7 @@
     if (!root) return map;
     var planned = [];
     (comments || []).forEach(function (c) {
-      if (!c || !c.id || !c.quote || isPaieComment(c)) return;
+      if (!c || !c.id || !c.quote || isPaieComment(c) || isGptTurn(c)) return;
       var range = rangeForAnchor(root, c.quote, c.prefix, c.suffix);
       if (range) planned.push({ c: c, range: range });
     });
@@ -329,23 +329,46 @@
 
   function desiredTopFromRect(rect, listEl) {
     if (!rect || !listEl || !listEl.getBoundingClientRect) return null;
-    return rect.top - listEl.getBoundingClientRect().top + listEl.scrollTop;
+    return rect.top - listEl.getBoundingClientRect().top + (listEl.scrollTop || 0);
+  }
+
+  function isDesktopCommentsLayout() {
+    return !!(window.matchMedia && window.matchMedia("(min-width: 960px)").matches);
   }
 
   function alignCardTops(listEl, tops) {
     if (!listEl) return;
-    listEl.classList.add("is-anchored");
     var cards = Array.prototype.slice.call(listEl.querySelectorAll("[data-comment-id]"));
+    var desktop = isDesktopCommentsLayout();
+    if (!desktop) {
+      listEl.classList.remove("is-anchored");
+      listEl.style.minHeight = "";
+      cards.forEach(function (card) {
+        card.style.position = "";
+        card.style.left = "";
+        card.style.right = "";
+        card.style.top = "";
+        card.style.marginTop = "";
+      });
+      return;
+    }
+    listEl.classList.add("is-anchored");
     var cursor = 0;
+    var maxBottom = 0;
     cards.forEach(function (card) {
       var id = card.getAttribute("data-comment-id");
       var desired = tops[id];
-      if (desired == null || isNaN(desired)) desired = cursor;
+      if (desired == null || isNaN(desired) || desired < 0) desired = cursor;
       if (desired < cursor) desired = cursor;
-      var margin = Math.max(0, Math.round(desired - cursor));
-      card.style.marginTop = margin + "px";
-      cursor = cursor + margin + card.offsetHeight + 8;
+      card.style.position = "absolute";
+      card.style.left = "0";
+      card.style.right = "0";
+      card.style.marginTop = "0";
+      card.style.top = Math.round(desired) + "px";
+      cursor = desired + card.offsetHeight + 8;
+      if (cursor > maxBottom) maxBottom = cursor;
     });
+    listEl.style.minHeight = Math.max(0, Math.round(maxBottom)) + "px";
   }
 
   function alignCards(listEl, highlightMap) {
@@ -367,7 +390,7 @@
     if (!listEl) return;
     var tops = {};
     (comments || []).forEach(function (c) {
-      if (!c || !c.id || !c.quote || isPaieComment(c)) return;
+      if (!c || !c.id || !c.quote || isPaieComment(c) || isGptTurn(c)) return;
       var range = rangeForAnchor(root, c.quote, c.prefix, c.suffix);
       if (!range) return;
       var rect = range.getBoundingClientRect();
@@ -382,10 +405,9 @@
     if (!overlay) return;
     overlay.innerHTML = "";
     if (!root) return;
-    var host = overlay.offsetParent || overlay.parentNode;
-    var hostRect = host && host.getBoundingClientRect ? host.getBoundingClientRect() : { left: 0, top: 0 };
+    var overlayRect = overlay.getBoundingClientRect ? overlay.getBoundingClientRect() : { left: 0, top: 0 };
     (comments || []).forEach(function (c) {
-      if (!c || !c.quote || isPaieComment(c)) return;
+      if (!c || !c.quote || isPaieComment(c) || isGptTurn(c)) return;
       var range = rangeForAnchor(root, c.quote, c.prefix, c.suffix);
       if (!range) return;
       var rects = range.getClientRects();
@@ -397,8 +419,8 @@
           "note-comment-overlay-hl" +
           (String(c.id) === String(activeId || "") ? " is-active" : "");
         span.setAttribute("data-comment-id", String(c.id));
-        span.style.left = r.left - hostRect.left + overlay.scrollLeft + "px";
-        span.style.top = r.top - hostRect.top + overlay.scrollTop + "px";
+        span.style.left = r.left - overlayRect.left + overlay.scrollLeft + "px";
+        span.style.top = r.top - overlayRect.top + overlay.scrollTop + "px";
         span.style.width = r.width + "px";
         span.style.height = r.height + "px";
         overlay.appendChild(span);
@@ -411,8 +433,22 @@
     if (c.is_paie) return true;
     var uname = String(c.author_username || "").trim().toLowerCase();
     var name = String(c.author_name || "").trim().toUpperCase();
-    var uid = String(c.author_user_id || "").trim();
-    return uname === "paie" || name === "CHAIR" || uid === "0";
+    return uname === "paie" || name === "CHAIR";
+  }
+
+  function isGptComment(c) {
+    if (!c) return false;
+    if (c.is_gpt) return true;
+    var uname = String(c.author_username || "").trim().toLowerCase();
+    var name = String(c.author_name || "").trim().toUpperCase();
+    return uname === "gpt" || name === "GPT";
+  }
+
+  function isGptTurn(c) {
+    if (!c) return false;
+    if (isGptComment(c)) return true;
+    if (String(c.prefix || "").trim() !== "__gpt__") return false;
+    return !String(c.quote || "").trim();
   }
 
   function parentIdOf(c) {
@@ -435,7 +471,7 @@
       rows.forEach(function (c) {
         if (!c || !c.id) return;
         var id = String(c.id);
-        if (ids[id]) return;
+        if (ids[id] || isGptTurn(c)) return;
         var pid = parentIdOf(c);
         if (pid && ids[String(pid)]) {
           ids[id] = true;
@@ -444,7 +480,7 @@
       });
     }
     return rows.filter(function (c) {
-      return c && c.id && ids[String(c.id)];
+      return c && c.id && ids[String(c.id)] && !isGptTurn(c);
     });
   }
 
@@ -456,15 +492,59 @@
     return thread.length ? thread[0].id : null;
   }
 
+  function gptThread(comments) {
+    return (comments || []).filter(function (c) {
+      return c && c.id && isGptTurn(c);
+    });
+  }
+
   function selectionComments(comments) {
-    var thread = paieThread(comments);
-    var ids = {};
-    thread.forEach(function (c) {
-      if (c && c.id) ids[String(c.id)] = true;
+    var skip = {};
+    paieThread(comments).forEach(function (c) {
+      if (c && c.id) skip[String(c.id)] = true;
+    });
+    gptThread(comments).forEach(function (c) {
+      if (c && c.id) skip[String(c.id)] = true;
     });
     return (comments || []).filter(function (c) {
-      return c && c.id && !ids[String(c.id)];
+      return c && c.id && !skip[String(c.id)];
     });
+  }
+
+  function paieThreadGroups(comments) {
+    var thread = paieThread(comments);
+    var byId = {};
+    var chairs = [];
+    thread.forEach(function (c) {
+      if (!c || !c.id) return;
+      byId[String(c.id)] = c;
+      if (isPaieComment(c)) chairs.push(c);
+    });
+    function chairAncestorId(c) {
+      var pid = parentIdOf(c);
+      var guard = 0;
+      while (pid && guard < 24) {
+        guard += 1;
+        var parent = byId[String(pid)];
+        if (!parent) break;
+        if (isPaieComment(parent)) return parent.id;
+        pid = parentIdOf(parent);
+      }
+      return chairs.length ? chairs[0].id : 0;
+    }
+    var groups = chairs.map(function (ch) {
+      return { chair: ch, comments: [] };
+    });
+    var index = {};
+    groups.forEach(function (g) {
+      index[String(g.chair.id)] = g;
+    });
+    thread.forEach(function (c) {
+      if (!c || isPaieComment(c)) return;
+      var cid = chairAncestorId(c);
+      if (cid && index[String(cid)]) index[String(cid)].comments.push(c);
+    });
+    return groups;
   }
 
   global.NoteComments = {
@@ -480,8 +560,13 @@
     alignCardsByAnchors: alignCardsByAnchors,
     collapseWs: collapseWs,
     isPaieComment: isPaieComment,
+    isGptComment: isGptComment,
+    isGptTurn: isGptTurn,
+    parentIdOf: parentIdOf,
     paieThread: paieThread,
+    paieThreadGroups: paieThreadGroups,
     paieThreadRootId: paieThreadRootId,
+    gptThread: gptThread,
     selectionComments: selectionComments,
   };
 })(window);

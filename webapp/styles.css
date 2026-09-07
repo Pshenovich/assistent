@@ -2985,7 +2985,14 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
 
 .note-comments-list.is-anchored {
   display: block;
+  position: relative;
   gap: 0;
+}
+
+.note-comments-list.is-anchored .note-comment {
+  position: absolute;
+  left: 0;
+  right: 0;
 }
 
 @media (min-width: 960px) {
@@ -2995,11 +3002,14 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
     margin-top: 0;
     padding-left: 0.85rem;
     border-left: 1px solid var(--border);
-    position: sticky;
-    top: calc(var(--note-editor-chrome-top, 54px) + 16px);
-    max-height: calc(100dvh - var(--note-editor-chrome-top, 54px) - 44px);
-    overflow-y: auto;
+    position: relative;
+    align-self: stretch;
+    overflow: visible;
   }
+}
+
+.note-comments-rail.hidden {
+  display: none;
 }
 
 .note-comments-title {
@@ -3091,16 +3101,60 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
 .note-paie-thread-list {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 1.1rem;
+}
+
+.note-paie-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
 }
 
 .note-paie-msg.is-chair {
   background: rgba(82, 158, 244, 0.08);
 }
 
+.note-paie-msg.is-chair .note-comment-body {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
 .note-paie-msg.is-reply {
-  margin-left: 0.75rem;
   background: rgba(255, 255, 255, 0.04);
+}
+
+.note-paie-nested {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-left: 0.85rem;
+}
+
+.note-paie-msg-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.note-paie-comment-btn {
+  padding: 0;
+  border: none;
+  color: var(--vkui--color_text_accent, var(--accent));
+  background: none;
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.note-paie-comment-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-left: 0.85rem;
+}
+
+.note-paie-comment-form.hidden {
+  display: none;
 }
 
 .note-paie-reply-form {
@@ -3108,6 +3162,50 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   flex-direction: column;
   gap: 0.5rem;
   margin-top: 0.9rem;
+}
+
+.note-paie-mode-switch {
+  display: flex;
+  gap: 0;
+  width: fit-content;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.note-paie-mode {
+  padding: 0.35rem 0.85rem;
+  border: none;
+  border-radius: 999px;
+  color: var(--text-secondary, #909499);
+  background: transparent;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.note-paie-mode.is-active {
+  color: var(--text);
+  background: rgba(82, 158, 244, 0.22);
+}
+
+.note-paie-mode:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.note-paie-gpt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.35rem;
+}
+
+.note-paie-msg.is-gpt {
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .note-paie-reply-form.hidden {
