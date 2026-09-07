@@ -5,61 +5,17 @@ from __future__ import annotations
 from typing import Any
 
 from assistant.board import store
-from assistant.board.docs import kind_label
+from assistant.board.company_brief import format_company_context
 from assistant.board.models import AGENT_META
 
-_COMPANY_CTX_LIMIT = 20_000
-_KIND_PRIORITY = {"live": 0, "products": 1, "team": 2, "general": 4}
+
+def _fmt_company(ctx: dict[str, Any] | None, *, query: str = "") -> str:
+    return format_company_context(ctx, query=query)
 
 
-def _fmt_company(ctx: dict[str, Any] | None) -> str:
-    if not ctx:
-        return "(не задан — используй /company или пришлите документ)"
-    chunks: list[tuple[int, str]] = []
-    docs = ctx.get("_documents") or []
-    notes = (ctx.get("raw_text") or "").strip()
-    if notes:
-        chunks.append((3, notes))
-    seen_kind_text = {notes} if notes else set()
-    for doc in docs:
-        kind = str(doc.get("kind") or "general")
-        name = str(doc.get("filename") or "document")
-        body = (doc.get("text") or "").strip()
-        if not body or body in seen_kind_text:
-            continue
-        seen_kind_text.add(body)
-        if kind == "live":
-            label = "КОМПАНИЯ (живой документ)"
-        else:
-            label = kind_label(kind).upper()
-        chunks.append((_KIND_PRIORITY.get(kind, 4), f"{label} ({name})\n{body}"))
-    if not chunks:
-        parts = []
-        for key in (
-            "description",
-            "business_model",
-            "products",
-            "customers",
-            "kpis",
-            "team",
-            "goals",
-            "constraints",
-        ):
-            val = (ctx.get(key) or "").strip()
-            if val:
-                parts.append(f"{key}: {val}")
-        return "\n".join(parts)[:_COMPANY_CTX_LIMIT] if parts else "(пусто)"
-    chunks.sort(key=lambda item: item[0])
-    out: list[str] = []
-    used = 0
-    for _, text in chunks:
-        remain = _COMPANY_CTX_LIMIT - used
-        if remain <= 80:
-            break
-        piece = text if len(text) <= remain else text[: remain - 1] + "…"
-        out.append(piece)
-        used += len(piece) + 2
-    return "\n\n".join(out) or "(пусто)"
+def load_company_pack(company_id: str | None) -> dict[str, Any] | None:
+    pack = store.get_company_pack(str(company_id)) if company_id else None
+    return attach_live_share(pack)
 
 
 def attach_live_share(pack: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -128,10 +84,6 @@ def build_agent_context(
     meeting = store.get_meeting(meeting_id) or {}
     messages = store.list_messages(meeting_id)
     rounds = store.list_rounds(meeting_id)
-    company = None
-    if meeting.get("company_id"):
-        company = store.get_company_pack(str(meeting["company_id"]))
-    company = attach_live_share(company)
     user_ctx = store.get_user_context(str(meeting.get("user_id") or ""))
     own = [m for m in messages if m.get("agent") == agent]
     others = [m for m in messages if m.get("agent") not in {agent, "CHAIR"}]
@@ -161,6 +113,14 @@ def build_agent_context(
     extra = (meeting.get("extra_instruction") or "").strip()
     analysis = meeting.get("analysis") if isinstance(meeting.get("analysis"), dict) else {}
     objective = str(analysis.get("decision_required") or meeting.get("title") or "")
+    query = str(meeting.get("original_question") or "")
+    company_text = str(analysis.get("company_brief") or "").strip()
+    company = None
+    if not company_text:
+        company = load_company_pack(
+            str(meeting["company_id"]) if meeting.get("company_id") else None
+        )
+        company_text = _fmt_company(company, query=query)
 
     default_task = (
         "Assume the current consensus may be wrong. Find the strongest reason not to implement it."
@@ -170,12 +130,16 @@ def build_agent_context(
     your_task = task or default_task
     if extra:
         your_task = f"{your_task}\n\nADDITIONAL INSTRUCTION:\n{extra}"
+    your_task += (
+        "\n\nПродукты, цены, команду и ограничения бери из COMPANY CONTEXT. "
+        "Не выдумывай продукты, которых нет в каталоге."
+    )
 
     text = f"""ORIGINAL QUESTION
 {meeting.get("original_question") or ""}
 
 COMPANY CONTEXT
-{_fmt_company(company)}
+{company_text}
 
 USER CONTEXT
 {_fmt_user(user_ctx)}

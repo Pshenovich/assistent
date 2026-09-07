@@ -238,7 +238,7 @@ async def run_note_paei(
         chat_id=int(user_id),
         question=question,
         title=title[:80],
-        extra_instruction="Источник: заметка миниаппа Leo. Опирайся на текст заметки.",
+        extra_instruction="Источник: заметка миниаппа Leo. Опирайся на текст заметки и каталог компании.",
     )
     if callable(on_progress):
         on_progress({"phase": "ANALYZING", "round": 1, "max_rounds": max_rounds(), "meeting_id": meeting["id"]})

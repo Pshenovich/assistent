@@ -193,7 +193,7 @@ class BoardScenarioTest(unittest.IsolatedAsyncioTestCase):
         os.environ["BOARD_MAX_MEETING_SEC"] = "120"
         os.environ["BOARD_EXTRA_ROUNDS"] = "0"
         os.environ["BOARD_HIGH_CONFIDENCE"] = "0.75"
-        os.environ.pop("BOARD_COMPANY_SHARE_URL", None)
+        os.environ["BOARD_COMPANY_SHARE_URL"] = "off"
         store.reset_connection()
         store.init_db()
 

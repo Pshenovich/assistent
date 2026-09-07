@@ -27,7 +27,10 @@ DEFAULT_SHARE_URL = (
 
 
 def default_company_share_url() -> str:
-    return (os.getenv("BOARD_COMPANY_SHARE_URL") or "").strip()
+    raw = (os.getenv("BOARD_COMPANY_SHARE_URL") or "").strip()
+    if raw.lower() in {"0", "off", "none", "false"}:
+        return ""
+    return raw or DEFAULT_SHARE_URL
 
 
 def parse_share_token(raw: str) -> str | None:
@@ -60,7 +63,10 @@ def normalize_share_url(raw: str) -> str:
     return f"{public_base_url()}/share/{token}"
 
 
-def share_api_url(token: str) -> str:
+def share_api_url(token: str, source: str = "") -> str:
+    parsed = urlparse((source or "").strip())
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}/api/public/share/{token}"
     return f"{public_base_url()}/api/public/share/{token}"
 
 
@@ -78,10 +84,12 @@ def share_body_to_text(raw: str) -> str:
 
 def _doc_from_payload(url: str, payload: dict[str, Any], *, stale: bool = False) -> dict[str, Any]:
     title = str(payload.get("title") or "Документ компании").strip() or "Документ компании"
-    text = share_body_to_text(str(payload.get("body") or ""))
+    body = str(payload.get("body") or "")
+    text = share_body_to_text(body)
     return {
         "url": url,
         "title": title,
+        "html": body if uses_html_markup(body) else "",
         "text": text,
         "updated_at": payload.get("updated_at"),
         "kind": payload.get("kind"),
@@ -89,9 +97,9 @@ def _doc_from_payload(url: str, payload: dict[str, Any], *, stale: bool = False)
     }
 
 
-def _fetch_http(token: str) -> dict[str, Any] | None:
+def _fetch_http(token: str, source: str = "") -> dict[str, Any] | None:
     req = urllib.request.Request(
-        share_api_url(token),
+        share_api_url(token, source),
         headers={"Accept": "application/json", "User-Agent": "LeoExecutiveBoard/1.0"},
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
@@ -138,7 +146,7 @@ def fetch_share_document(url_or_token: str) -> dict[str, Any]:
     payload: dict[str, Any] | None = None
     last_err: Exception | None = None
     try:
-        payload = _fetch_http(token)
+        payload = _fetch_http(token, url)
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError, OSError) as e:
         last_err = e
         print(f"[board.share] http_fail token={token[:8]}… err={e!r}")

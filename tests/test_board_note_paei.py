@@ -107,7 +107,7 @@ class NotePaeiTest(unittest.IsolatedAsyncioTestCase):
         os.environ["BOARD_DELAY_MAX_SEC"] = "0"
         os.environ["BOARD_MAX_MEETING_SEC"] = "120"
         os.environ["BOARD_EXTRA_ROUNDS"] = "0"
-        os.environ.pop("BOARD_COMPANY_SHARE_URL", None)
+        os.environ["BOARD_COMPANY_SHARE_URL"] = "off"
         notes_store._CONN = None  # type: ignore[attr-defined]
         store.reset_connection()
         store.init_db()

@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from assistant.board import events, store
+from assistant.board.company_brief import format_company_context
+from assistant.board.context import load_company_pack
 from assistant.board.decision import DecisionService
 from assistant.board.engine import is_shallow_response
 from assistant.board.memory import find_related_decisions
@@ -174,9 +176,18 @@ class MeetingService:
 
             store.set_meeting_status(meeting_id, "ANALYZING")
             self._emit_progress(meeting_id, phase="ANALYZING")
+            company_pack = load_company_pack(
+                str(meeting["company_id"]) if meeting.get("company_id") else None
+            )
+            company_brief = format_company_context(
+                company_pack, query=str(meeting.get("original_question") or "")
+            )
+            company_index = format_company_context(company_pack, index_only=True)
             try:
                 analysis = await asyncio.to_thread(
-                    self.orch.analyze, str(meeting.get("original_question") or "")
+                    self.orch.analyze,
+                    str(meeting.get("original_question") or ""),
+                    company=company_index,
                 )
             except Exception as e:
                 print(f"[board] analyze_err={e!r}")
@@ -199,6 +210,7 @@ class MeetingService:
                     "severity": analysis.severity,
                     "reversibility": analysis.reversibility,
                     "title": analysis.title,
+                    "company_brief": company_brief,
                 },
             )
             store.update_meeting(meeting_id, max_rounds=cap, title=analysis.title, status="DISCUSSION")

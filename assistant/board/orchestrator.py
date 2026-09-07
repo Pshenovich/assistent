@@ -173,16 +173,23 @@ class DebateOrchestrator:
         self.provider = provider
         self.engine = engine or AgentEngine(provider=provider)
 
-    def analyze(self, question: str) -> ProblemAnalysis:
+    def analyze(self, question: str, *, company: str = "") -> ProblemAnalysis:
+        user = question
+        brief = (company or "").strip()
+        if brief:
+            user = (
+                f"{question}\n\nCOMPANY CONTEXT (compact catalog, not the full doc):\n{brief}"
+            )
         raw = board_llm.generate_json(
             system=(
                 "Ты аналитик управленческой проблемы. Верни JSON: "
                 "problem, decision_required, known_facts, assumptions, "
                 "missing_information, decision_type, severity "
                 "(LOW|MEDIUM|HIGH|CRITICAL), reversibility "
-                "(REVERSIBLE|PARTIALLY_REVERSIBLE|IRREVERSIBLE), title (до 80 символов)."
+                "(REVERSIBLE|PARTIALLY_REVERSIBLE|IRREVERSIBLE), title (до 80 символов). "
+                "Факты о продуктах и юните компании бери из COMPANY CONTEXT, не выдумывай."
             ),
-            user=question,
+            user=user,
             operation="board_analyze",
             temperature=0.2,
             provider=self.provider,

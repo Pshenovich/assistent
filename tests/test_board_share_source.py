@@ -7,6 +7,8 @@ import unittest
 from unittest.mock import patch
 
 from assistant.board.share_source import (
+    DEFAULT_SHARE_URL,
+    default_company_share_url,
     fetch_share_document,
     looks_like_share_source,
     normalize_share_url,
@@ -64,6 +66,15 @@ class ShareSourceTest(unittest.TestCase):
         self.assertTrue(url.endswith("/share/lYS_LYaj9MI3aIGHJib2Tyn1nNLAZ-eO"))
         self.assertIsNone(err)
         self.assertIn("каталог", doc["text"])
+
+    def test_resolve_uses_builtin_default(self) -> None:
+        payload = {"title": "Все продукты", "body": "каталог"}
+        with patch.object(share_source, "_fetch_http", return_value=payload):
+            url, doc, err = resolve_company_share("")
+        self.assertEqual(url, DEFAULT_SHARE_URL)
+        self.assertIsNone(err)
+        self.assertIn("каталог", doc["text"])
+        self.assertEqual(default_company_share_url(), DEFAULT_SHARE_URL)
 
     def test_normalize_keeps_host(self) -> None:
         url = "https://assistent.networ.ru/share/lYS_LYaj9MI3aIGHJib2Tyn1nNLAZ-eO?x=1"
