@@ -2785,6 +2785,26 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   background: var(--accent-subtle);
 }
 
+.note-more-menu-item:disabled,
+.note-more-menu-item.is-busy {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.note-paei-status {
+  margin: 0 0 0.7rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: var(--radius-sm);
+  background: var(--accent-subtle);
+  color: var(--text);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.note-paei-status.hidden {
+  display: none;
+}
+
 .note-share-sheet-overlay {
   position: fixed;
   inset: 0;
@@ -2857,8 +2877,97 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
 }
 
 .note-comments {
-  margin: 1.5rem 0 2rem;
-  padding: 0;
+  margin: 0;
+  padding: 0 0 1.5rem;
+}
+
+.note-comments-rail {
+  min-width: 0;
+  margin-top: 1rem;
+}
+
+.note-comments-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0 0 0.85rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: rgba(82, 158, 244, 0.1);
+}
+
+.note-comments-form.hidden {
+  display: none;
+}
+
+.note-comment-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.note-comment-overlay-hl {
+  position: absolute;
+  background: rgba(82, 158, 244, 0.28);
+  border-radius: 2px;
+}
+
+.note-comment-overlay-hl.is-active {
+  background: rgba(82, 158, 244, 0.48);
+}
+
+.note-comment-bubble {
+  position: fixed;
+  z-index: 180;
+  min-height: 36px;
+  padding: 0.4rem 0.75rem;
+  border: none;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--accent);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+
+.note-comment.is-active {
+  border-color: var(--accent);
+  background: rgba(82, 158, 244, 0.12);
+}
+
+.share-comment-quote {
+  margin: 0 0 0.45rem;
+  color: var(--text-secondary, #909499);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+.share-comments-form-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.note-comments-list.is-anchored {
+  display: block;
+  gap: 0;
+}
+
+@media (min-width: 960px) {
+  .note-comments-rail {
+    flex: 0 0 17rem;
+    width: 17rem;
+    margin-top: 0;
+    padding-left: 0.85rem;
+    border-left: 1px solid var(--border);
+    position: sticky;
+    top: calc(var(--note-editor-chrome-top, 54px) + 16px);
+    max-height: calc(100dvh - var(--note-editor-chrome-top, 54px) - 44px);
+    overflow-y: auto;
+  }
 }
 
 .note-comments-title {

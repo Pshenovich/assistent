@@ -1,11 +1,11 @@
 /* Mini App service worker: кэш оболочки для быстрого повторного открытия PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260907-share-comments";
+var CACHE_VERSION = "miniapp-v1-20260907-paie-menu";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
-  "./styles.css?v=20260907-share-comments",
-  "./app.js?v=20260907-share-comments",
+  "./styles.css?v=20260907-paie-menu",
+  "./app.js?v=20260907-paie-menu",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",

@@ -258,51 +258,124 @@
     }
   }
 
-  function renderComments(comments) {
-    var list = document.getElementById("share-comments-list");
-    if (!list) return;
-    list.innerHTML = "";
-    if (!comments || !comments.length) {
-      var empty = document.createElement("p");
-      empty.className = "share-comments-empty";
-      empty.textContent = "Пока нет комментариев";
-      list.appendChild(empty);
-      return;
+  var commentsState = {
+    me: null,
+    list: [],
+    highlights: {},
+    draft: null,
+  };
+  var PENDING_KEY = "leo_share_pending_comment";
+
+  function commentsApi() {
+    return window.NoteComments;
+  }
+
+  function bodyRoot() {
+    return document.getElementById("share-body");
+  }
+
+  function savePending(draft) {
+    try {
+      sessionStorage.setItem(PENDING_KEY, JSON.stringify(draft || {}));
+    } catch (_) {}
+  }
+
+  function takePending() {
+    try {
+      var raw = sessionStorage.getItem(PENDING_KEY);
+      sessionStorage.removeItem(PENDING_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      return null;
     }
-    comments.forEach(function (c) {
-      var item = document.createElement("article");
-      item.className = "share-comment";
-      var head = document.createElement("div");
-      head.className = "share-comment-head";
-      var who = document.createElement("strong");
-      who.textContent = authorLabel(c);
-      var when = document.createElement("time");
-      when.textContent = formatWhen(c.created_at);
-      head.appendChild(who);
-      head.appendChild(when);
-      var body = document.createElement("p");
-      body.className = "share-comment-body";
-      body.textContent = String((c && c.body) || "");
-      item.appendChild(head);
-      item.appendChild(body);
-      if (c && c.can_delete) {
-        var del = document.createElement("button");
-        del.type = "button";
-        del.className = "share-comment-delete";
-        del.textContent = "Удалить";
-        del.addEventListener("click", function () {
-          if (!confirm("Удалить комментарий?")) return;
-          jsonFetch("/api/public/share/" + encodeURIComponent(token) + "/comments/" + encodeURIComponent(String(c.id)), {
-            method: "DELETE",
-          })
-            .then(loadComments)
-            .catch(function (e) {
-              setCommentsError(e.message || "Не удалось удалить");
-            });
-        });
-        item.appendChild(del);
-      }
-      list.appendChild(item);
+  }
+
+  function setActiveComment(id) {
+    var marks = document.querySelectorAll("mark.note-comment-hl");
+    marks.forEach(function (m) {
+      m.classList.toggle("is-active", String(m.getAttribute("data-comment-id")) === String(id || ""));
+    });
+    var cards = document.querySelectorAll("#share-comments-list .share-comment");
+    cards.forEach(function (c) {
+      c.classList.toggle("is-active", String(c.getAttribute("data-comment-id")) === String(id || ""));
+    });
+  }
+
+  function renderCommentCard(c) {
+    var item = document.createElement("article");
+    item.className = "share-comment";
+    item.setAttribute("data-comment-id", String(c.id));
+    if (c.quote) {
+      var q = document.createElement("p");
+      q.className = "share-comment-quote";
+      q.textContent = "«" + String(c.quote) + "»";
+      item.appendChild(q);
+    }
+    var head = document.createElement("div");
+    head.className = "share-comment-head";
+    var who = document.createElement("strong");
+    who.textContent = authorLabel(c);
+    var when = document.createElement("time");
+    when.textContent = formatWhen(c.created_at);
+    head.appendChild(who);
+    head.appendChild(when);
+    var body = document.createElement("p");
+    body.className = "share-comment-body";
+    body.textContent = String((c && c.body) || "");
+    item.appendChild(head);
+    item.appendChild(body);
+    if (c && c.can_delete) {
+      var del = document.createElement("button");
+      del.type = "button";
+      del.className = "share-comment-delete";
+      del.textContent = "Удалить";
+      del.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (!confirm("Удалить комментарий?")) return;
+        jsonFetch("/api/public/share/" + encodeURIComponent(token) + "/comments/" + encodeURIComponent(String(c.id)), {
+          method: "DELETE",
+        })
+          .then(loadComments)
+          .catch(function (err) {
+            setCommentsError(err.message || "Не удалось удалить");
+          });
+      });
+      item.appendChild(del);
+    }
+    item.addEventListener("click", function () {
+      setActiveComment(c.id);
+      var mark = commentsState.highlights[String(c.id)];
+      if (mark && mark.scrollIntoView) mark.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return item;
+  }
+
+  function relayoutCommentCards() {
+    var api = commentsApi();
+    var list = document.getElementById("share-comments-list");
+    if (!api || !api.alignCards || !list) return;
+    api.alignCards(list, commentsState.highlights);
+  }
+
+  function paintComments() {
+    var api = commentsApi();
+    var root = bodyRoot();
+    var list = document.getElementById("share-comments-list");
+    if (!list || !root) return;
+    list.innerHTML = "";
+    commentsState.highlights = api ? api.applyHighlights(root, commentsState.list) : {};
+    commentsState.list.forEach(function (c) {
+      list.appendChild(renderCommentCard(c));
+    });
+    window.requestAnimationFrame(relayoutCommentCards);
+    root.querySelectorAll("mark.note-comment-hl").forEach(function (mark) {
+      mark.addEventListener("click", function (e) {
+        e.preventDefault();
+        var id = mark.getAttribute("data-comment-id");
+        setActiveComment(id);
+        var card = list.querySelector('[data-comment-id="' + id + '"]');
+        if (card && card.scrollIntoView) card.scrollIntoView({ block: "nearest" });
+      });
     });
   }
 
@@ -310,11 +383,45 @@
     return jsonFetch("/api/public/share/" + encodeURIComponent(token) + "/comments")
       .then(function (data) {
         setCommentsError("");
-        renderComments((data && data.comments) || []);
+        commentsState.list = (data && data.comments) || [];
+        paintComments();
       })
       .catch(function (e) {
         setCommentsError(e.message || "Не удалось загрузить комментарии");
       });
+  }
+
+  function hideComposer() {
+    commentsState.draft = null;
+    var form = document.getElementById("share-comments-form");
+    if (form) form.classList.add("hidden");
+  }
+
+  function showComposer(draft) {
+    commentsState.draft = draft;
+    var form = document.getElementById("share-comments-form");
+    var quoteEl = document.getElementById("share-comments-quote");
+    var input = document.getElementById("share-comments-input");
+    if (quoteEl) quoteEl.textContent = draft && draft.quote ? "«" + draft.quote + "»" : "";
+    if (form) form.classList.remove("hidden");
+    if (input) {
+      input.value = "";
+      input.focus();
+    }
+  }
+
+  function startCommentFromSelection() {
+    var api = commentsApi();
+    var root = bodyRoot();
+    var draft = api && api.selectionAnchor(root);
+    if (!draft || !draft.quote) return;
+    if (!commentsState.me) {
+      savePending(draft);
+      showLogin();
+      setCommentsError("Войдите через Telegram, чтобы комментировать выделенный текст");
+      return;
+    }
+    showComposer(draft);
   }
 
   function parseTgAuthResultFromHash() {
@@ -363,11 +470,10 @@
   }
 
   function showLoggedIn(me) {
+    commentsState.me = me || null;
     var login = document.getElementById("share-comments-login");
-    var form = document.getElementById("share-comments-form");
     var meEl = document.getElementById("share-comments-me");
     if (login) login.classList.add("hidden");
-    if (form) form.classList.remove("hidden");
     if (meEl) {
       var name = String((me && me.first_name) || "").trim() || (me && me.username ? "@" + me.username : "Вы");
       meEl.textContent = "Комментируете как " + name;
@@ -375,6 +481,7 @@
   }
 
   function showLogin() {
+    commentsState.me = null;
     var login = document.getElementById("share-comments-login");
     var form = document.getElementById("share-comments-form");
     if (login) login.classList.remove("hidden");
@@ -383,28 +490,45 @@
 
   function setupShareComments() {
     var box = document.getElementById("share-comments");
-    if (!box) return;
+    var wrap = document.querySelector(".wrap");
+    var root = bodyRoot();
+    var api = commentsApi();
+    if (!box || !root) return;
     box.classList.remove("hidden");
+    if (wrap) wrap.classList.add("has-comments");
     var form = document.getElementById("share-comments-form");
     var input = document.getElementById("share-comments-input");
     var loginBtn = document.getElementById("share-comments-login-btn");
+    var cancelBtn = document.getElementById("share-comments-cancel");
     if (form) {
       form.addEventListener("submit", function (e) {
         e.preventDefault();
         var text = String((input && input.value) || "").trim();
+        var draft = commentsState.draft;
         if (!text) return;
+        if (!draft || !draft.quote) {
+          setCommentsError("Выделите текст в документе");
+          return;
+        }
         jsonFetch("/api/public/share/" + encodeURIComponent(token) + "/comments", {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ body: text }),
+          body: JSON.stringify({
+            body: text,
+            quote: draft.quote,
+            prefix: draft.prefix || "",
+            suffix: draft.suffix || "",
+          }),
         })
           .then(function () {
             if (input) input.value = "";
+            hideComposer();
             setCommentsError("");
             return loadComments();
           })
           .catch(function (e) {
             if (e.status === 401) {
+              savePending(draft);
               showLogin();
               setCommentsError("Войдите через Telegram, чтобы комментировать");
               return;
@@ -413,8 +537,10 @@
           });
       });
     }
+    if (cancelBtn) cancelBtn.addEventListener("click", hideComposer);
     if (loginBtn) {
       loginBtn.addEventListener("click", function () {
+        if (commentsState.draft) savePending(commentsState.draft);
         jsonFetch("/api/miniapp/auth/config")
           .then(function (cfg) {
             if (!cfg || !cfg.telegram_login_enabled || !cfg.bot_id) {
@@ -427,6 +553,24 @@
           });
       });
     }
+    function onSelect() {
+      if (!api) return;
+      var draft = api.selectionAnchor(root);
+      if (!draft || !draft.quote) {
+        api.hideBubble();
+        return;
+      }
+      api.showBubble(draft.rect, startCommentFromSelection);
+    }
+    root.addEventListener("mouseup", onSelect);
+    root.addEventListener("keyup", onSelect);
+    document.addEventListener("mousedown", function (e) {
+      var bubble = document.getElementById("note-comment-bubble");
+      if (bubble && bubble.contains(e.target)) return;
+      if (api) api.hideBubble();
+    });
+    window.addEventListener("scroll", relayoutCommentCards, { passive: true });
+    window.addEventListener("resize", relayoutCommentCards);
     var pendingAuth = parseTgAuthResultFromHash();
     var boot = Promise.resolve();
     if (pendingAuth && pendingAuth.hash) {
@@ -442,6 +586,8 @@
       .then(function (data) {
         if (data && data.user) {
           showLoggedIn(data.user);
+          var pending = takePending();
+          if (pending && pending.quote) showComposer(pending);
         } else {
           showLogin();
         }

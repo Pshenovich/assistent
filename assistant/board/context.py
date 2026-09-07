@@ -1,0 +1,249 @@
+"""Структурированный контекст хода агента."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from assistant.board import store
+from assistant.board.docs import kind_label
+from assistant.board.models import AGENT_META
+
+_COMPANY_CTX_LIMIT = 20_000
+_KIND_PRIORITY = {"live": 0, "products": 1, "team": 2, "general": 4}
+
+
+def _fmt_company(ctx: dict[str, Any] | None) -> str:
+    if not ctx:
+        return "(не задан — используй /company или пришлите документ)"
+    chunks: list[tuple[int, str]] = []
+    docs = ctx.get("_documents") or []
+    notes = (ctx.get("raw_text") or "").strip()
+    if notes:
+        chunks.append((3, notes))
+    seen_kind_text = {notes} if notes else set()
+    for doc in docs:
+        kind = str(doc.get("kind") or "general")
+        name = str(doc.get("filename") or "document")
+        body = (doc.get("text") or "").strip()
+        if not body or body in seen_kind_text:
+            continue
+        seen_kind_text.add(body)
+        if kind == "live":
+            label = "КОМПАНИЯ (живой документ)"
+        else:
+            label = kind_label(kind).upper()
+        chunks.append((_KIND_PRIORITY.get(kind, 4), f"{label} ({name})\n{body}"))
+    if not chunks:
+        parts = []
+        for key in (
+            "description",
+            "business_model",
+            "products",
+            "customers",
+            "kpis",
+            "team",
+            "goals",
+            "constraints",
+        ):
+            val = (ctx.get(key) or "").strip()
+            if val:
+                parts.append(f"{key}: {val}")
+        return "\n".join(parts)[:_COMPANY_CTX_LIMIT] if parts else "(пусто)"
+    chunks.sort(key=lambda item: item[0])
+    out: list[str] = []
+    used = 0
+    for _, text in chunks:
+        remain = _COMPANY_CTX_LIMIT - used
+        if remain <= 80:
+            break
+        piece = text if len(text) <= remain else text[: remain - 1] + "…"
+        out.append(piece)
+        used += len(piece) + 2
+    return "\n\n".join(out) or "(пусто)"
+
+
+def attach_live_share(pack: dict[str, Any] | None) -> dict[str, Any] | None:
+    from assistant.board.share_source import resolve_company_share
+
+    stored = str((pack or {}).get("source_url") or "").strip()
+    url, doc, err = resolve_company_share(stored)
+    if not url and not pack:
+        return pack
+    out = dict(pack or {})
+    if url:
+        out["source_url"] = url
+    docs = list(out.get("_documents") or [])
+    if doc and (doc.get("text") or "").strip():
+        live_doc = {
+            "filename": str(doc.get("title") or "Документ компании"),
+            "kind": "live",
+            "text": str(doc.get("text") or ""),
+        }
+        docs = [live_doc] + [d for d in docs if d.get("kind") != "live"]
+        out["_live_share"] = doc
+        out.pop("_live_share_error", None)
+    elif err:
+        out["_live_share_error"] = err
+    out["_documents"] = docs
+    if (
+        not (out.get("raw_text") or "").strip()
+        and not docs
+        and not out.get("source_url")
+        and not any(out.get(k) for k in ("products", "team", "description"))
+    ):
+        return pack
+    return out
+
+
+def _fmt_user(ctx: dict[str, Any] | None) -> str:
+    if not ctx:
+        return "(не задан — используй /me)"
+    raw = (ctx.get("raw_text") or "").strip()
+    if raw:
+        return raw[:2000]
+    parts = []
+    for key in ("role", "goals", "decision_style", "preferences", "priorities"):
+        val = (ctx.get(key) or "").strip()
+        if val:
+            parts.append(f"{key}: {val}")
+    return "\n".join(parts)[:2000] if parts else "(пусто)"
+
+
+def _fmt_message(msg: dict[str, Any]) -> str:
+    agent = str(msg.get("agent") or "?")
+    title = AGENT_META.get(agent, {}).get("title", agent)
+    body = (msg.get("content") or "").strip()
+    mid = str(msg.get("id") or "")[:8]
+    return f"[{agent} #{mid}] {title}\n{body}"
+
+
+def build_agent_context(
+    *,
+    meeting_id: str,
+    agent: str,
+    mode: str = "DISCUSSION",
+    task: str = "",
+    past_decisions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    meeting = store.get_meeting(meeting_id) or {}
+    messages = store.list_messages(meeting_id)
+    rounds = store.list_rounds(meeting_id)
+    company = None
+    if meeting.get("company_id"):
+        company = store.get_company_pack(str(meeting["company_id"]))
+    company = attach_live_share(company)
+    user_ctx = store.get_user_context(str(meeting.get("user_id") or ""))
+    own = [m for m in messages if m.get("agent") == agent]
+    others = [m for m in messages if m.get("agent") not in {agent, "CHAIR"}]
+    last = messages[-1] if messages else None
+
+    by_agent: dict[str, list[str]] = {"P": [], "A": [], "E": [], "I": [], "USER": []}
+    for m in messages:
+        a = str(m.get("agent") or "")
+        if a in by_agent:
+            by_agent[a].append((m.get("content") or "").strip())
+
+    unresolved = []
+    if rounds:
+        last_round = rounds[-1]
+        unresolved.append(str(last_round.get("open_questions") or ""))
+        unresolved.append(str(last_round.get("disagreements") or ""))
+
+    past_text = ""
+    if past_decisions:
+        lines = []
+        for d in past_decisions[:5]:
+            lines.append(
+                f"- {d.get('created_at','')[:10]}: {d.get('problem','')} → {d.get('decision','')}"
+            )
+        past_text = "\n".join(lines)
+
+    extra = (meeting.get("extra_instruction") or "").strip()
+    analysis = meeting.get("analysis") if isinstance(meeting.get("analysis"), dict) else {}
+    objective = str(analysis.get("decision_required") or meeting.get("title") or "")
+
+    default_task = (
+        "Assume the current consensus may be wrong. Find the strongest reason not to implement it."
+        if mode == "CHALLENGE"
+        else "Respond to the strongest unresolved argument. Do not repeat your first position."
+    )
+    your_task = task or default_task
+    if extra:
+        your_task = f"{your_task}\n\nADDITIONAL INSTRUCTION:\n{extra}"
+
+    text = f"""ORIGINAL QUESTION
+{meeting.get("original_question") or ""}
+
+COMPANY CONTEXT
+{_fmt_company(company)}
+
+USER CONTEXT
+{_fmt_user(user_ctx)}
+
+CURRENT OBJECTIVE
+{objective}
+
+DECISION TYPE / SEVERITY / REVERSIBILITY
+{analysis.get("decision_type", "general")} / {analysis.get("severity", "MEDIUM")} / {analysis.get("reversibility", "PARTIALLY_REVERSIBLE")}
+
+KNOWN FACTS
+{chr(10).join(f"- {x}" for x in (analysis.get("known_facts") or [])[:8]) or "-"}
+
+ASSUMPTIONS
+{chr(10).join(f"- {x}" for x in (analysis.get("assumptions") or [])[:8]) or "-"}
+
+RELEVANT PAST DECISIONS
+{past_text or "(нет)"}
+
+DISCUSSION SO FAR
+P:
+{chr(10).join(by_agent["P"]) or "(ещё не говорил)"}
+
+A:
+{chr(10).join(by_agent["A"]) or "(ещё не говорил)"}
+
+E:
+{chr(10).join(by_agent["E"]) or "(ещё не говорил)"}
+
+I:
+{chr(10).join(by_agent["I"]) or "(ещё не говорил)"}
+
+USER:
+{chr(10).join(by_agent["USER"]) or "(нет уточнений)"}
+
+YOUR PREVIOUS POSITION
+{(own[-1].get("content") if own else "(это первый ход)") or ""}
+
+OTHER AGENTS' ARGUMENTS
+{chr(10).join(_fmt_message(m) for m in others[-8:]) or "(пока только исходный вопрос)"}
+
+LAST MESSAGE
+{_fmt_message(last) if last else "(нет)"}
+
+UNRESOLVED
+{chr(10).join(u for u in unresolved if u.strip()) or "(ещё нет сводки раунда)"}
+
+MODE
+{mode}
+
+YOUR TASK
+{your_task}
+"""
+    return {
+        "company_context": company,
+        "user_context": user_ctx,
+        "original_question": meeting.get("original_question"),
+        "meeting_summary": rounds[-1].get("summary") if rounds else "",
+        "recent_messages": messages[-12:],
+        "unresolved_arguments": unresolved,
+        "previous_position": own[-1].get("content") if own else "",
+        "text": text.strip(),
+        "mode": mode,
+    }
+
+
+def load_prompt(name: str) -> str:
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent / "prompts" / f"{name}.md"
+    return path.read_text(encoding="utf-8").strip()

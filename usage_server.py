@@ -1047,6 +1047,30 @@ def _access_qs(request: Request) -> str:
     return f"?access_token={quote(t)}" if t else ""
 
 
+@dash.get("/board")
+@dash.get("/board/")
+async def board_dashboard_index(request: Request) -> HTMLResponse:
+    _require_token(request)
+    from assistant.board.dashboard import render_index
+
+    return _dash_html(
+        render_index(board_base=_dash_url("/board"), qs=_access_qs(request))
+    )
+
+
+@dash.get("/board/{decision_id}")
+async def board_dashboard_decision(decision_id: str, request: Request) -> HTMLResponse:
+    _require_token(request)
+    from assistant.board.dashboard import render_decision
+
+    html_page = render_decision(
+        decision_id, board_base=_dash_url("/board"), qs=_access_qs(request)
+    )
+    if not html_page:
+        raise HTTPException(status_code=404, detail="Решение не найдено")
+    return _dash_html(html_page)
+
+
 @dash.get("/api/summary")
 async def api_summary(request: Request) -> JSONResponse:
     _require_token(request)
@@ -2418,6 +2442,9 @@ class _MiniappShareCreate(BaseModel):
 
 class _MiniappShareCommentCreate(BaseModel):
     body: str = ""
+    quote: str = ""
+    prefix: str = ""
+    suffix: str = ""
 
 
 class _MiniappGptChatTurn(BaseModel):
@@ -2621,6 +2648,9 @@ def _comment_api(row: dict[str, Any], *, viewer_uid: str | None = None) -> dict[
         "author_username": row.get("author_username"),
         "body": str(row.get("body") or ""),
         "created_at": row.get("created_at"),
+        "quote": str(row.get("quote") or ""),
+        "prefix": str(row.get("prefix") or ""),
+        "suffix": str(row.get("suffix") or ""),
         "can_delete": can_delete,
     }
 
@@ -4534,6 +4564,9 @@ async def miniapp_share_comments_create(
             author_name=author_name,
             author_username=author_username,
             body=body.body,
+            quote=body.quote,
+            prefix=body.prefix,
+            suffix=body.suffix,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -4566,6 +4599,54 @@ async def miniapp_share_comments_delete(
     if not deleted:
         raise HTTPException(status_code=403, detail="Нельзя удалить этот комментарий")
     return {"ok": True}
+
+
+@miniapp_router.post("/notes/{kind}/{item_id}/paei")
+async def miniapp_note_paei_start(
+    kind: str,
+    item_id: str,
+    background_tasks: BackgroundTasks,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.board.note_paei import begin_job, run_note_paei_job
+
+    uid = str(int(principal.telegram_user_id))
+    if not await run_in_threadpool(_owner_can_share_item, uid, kind, item_id):
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    job, started = begin_job(uid, kind, item_id)
+    if started:
+        background_tasks.add_task(
+            run_note_paei_job, int(principal.telegram_user_id), kind, item_id
+        )
+    return {
+        "ok": True,
+        "status": str(job.get("status") or "running"),
+        "comment_id": job.get("comment_id"),
+        "error": job.get("error"),
+    }
+
+
+@miniapp_router.get("/notes/{kind}/{item_id}/paei")
+async def miniapp_note_paei_status(
+    kind: str,
+    item_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.board.note_paei import get_job
+
+    uid = str(int(principal.telegram_user_id))
+    if not await run_in_threadpool(_owner_can_share_item, uid, kind, item_id):
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    job = get_job(uid, kind, item_id)
+    if not job:
+        return {"ok": True, "status": "idle"}
+    return {
+        "ok": True,
+        "status": str(job.get("status") or "idle"),
+        "comment_id": job.get("comment_id"),
+        "error": job.get("error"),
+        "meeting_id": job.get("meeting_id"),
+    }
 
 
 @miniapp_router.post("/notes/todoist")
@@ -5273,6 +5354,9 @@ async def public_share_comments_create(
             author_name=author_name,
             author_username=author_username,
             body=body.body,
+            quote=body.quote,
+            prefix=body.prefix,
+            suffix=body.suffix,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

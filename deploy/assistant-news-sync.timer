@@ -1,0 +1,10 @@
+[Unit]
+Description=Run public Obuchat news digest sync daily
+
+[Timer]
+OnCalendar=*-*-* 04:20:00 UTC
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Generate public Obuchat news digest
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/assistant
+EnvironmentFile=-/opt/assistant/.env
+EnvironmentFile=-/opt/obuchat-news/.env
+Environment=OBUCHAT_NEWS_APP_DIR=/opt/obuchat-news
+Environment=OBUCHAT_NEWS_WEB_DIR=/opt/assistant/news
+Environment=OBUCHAT_NEWS_LOG_DIR=/var/log/obuchat-news
+ExecStart=/usr/bin/env bash /opt/obuchat-news/scripts/run_server_daily_news.sh

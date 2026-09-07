@@ -100,6 +100,7 @@ class ShareCommentsTests(unittest.TestCase):
         )
         self.assertEqual(row["body"], "Привет")
         self.assertEqual(row["author_name"], "Анна")
+        self.assertEqual(row["quote"], "")
         listed = share_comments.list_comments(10, "local", 4)
         self.assertEqual(len(listed), 1)
         self.assertFalse(share_comments.delete_comment(row["id"], requester_user_id=99))
@@ -148,6 +149,23 @@ class ShareCommentsTests(unittest.TestCase):
         )
         self.assertEqual(share_comments.delete_all_for_item(3, "journal", 9), 2)
         self.assertEqual(share_comments.list_comments(3, "journal", 9), [])
+
+    def test_comment_keeps_text_anchor(self) -> None:
+        row = share_comments.add_comment(
+            1,
+            "local",
+            2,
+            author_user_id=3,
+            author_name="Катя",
+            body="Уточнить",
+            quote="режим работы",
+            prefix="Адрес и ",
+            suffix=" филиала",
+        )
+        self.assertEqual(row["quote"], "режим работы")
+        self.assertEqual(row["prefix"], "Адрес и ")
+        listed = share_comments.list_comments(1, "local", 2)
+        self.assertEqual(listed[0]["suffix"], " филиала")
 
 
 if __name__ == "__main__":

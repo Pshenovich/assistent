@@ -12,6 +12,8 @@ from assistant.stores import share_links as share_links_store
 _LOCK = notes_store._LOCK  # type: ignore[attr-defined]
 _VALID_KINDS = frozenset({"local", "journal"})
 MAX_BODY_LEN = 4000
+MAX_QUOTE_LEN = 500
+MAX_CTX_LEN = 80
 
 
 def _conn() -> sqlite3.Connection:
@@ -27,7 +29,10 @@ def _conn() -> sqlite3.Connection:
             author_name TEXT NOT NULL,
             author_username TEXT,
             body TEXT NOT NULL,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            quote TEXT NOT NULL DEFAULT '',
+            prefix TEXT NOT NULL DEFAULT '',
+            suffix TEXT NOT NULL DEFAULT ''
         )
         """
     )
@@ -35,8 +40,19 @@ def _conn() -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_share_comments_item "
         "ON share_comments(owner_user_id, item_kind, item_id, created_at)"
     )
+    _ensure_anchor_columns(conn)
     conn.commit()
     return conn
+
+
+def _ensure_anchor_columns(conn: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(share_comments)")}
+    for col in ("quote", "prefix", "suffix"):
+        if col not in cols:
+            conn.execute(
+                f"ALTER TABLE share_comments ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
+            )
+    conn.commit()
 
 
 def _now_iso() -> str:
@@ -57,7 +73,12 @@ def _kind_id(item_kind: str, item_id: str | int) -> tuple[str, str]:
     return kind, iid
 
 
+def _clip(raw: str | None, limit: int) -> str:
+    return str(raw or "").replace("\u0000", "")[:limit]
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    keys = set(row.keys())
     return {
         "id": int(row["id"]),
         "owner_user_id": str(row["owner_user_id"] or ""),
@@ -68,6 +89,9 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "author_username": str(row["author_username"] or "") or None,
         "body": str(row["body"] or ""),
         "created_at": row["created_at"],
+        "quote": str(row["quote"] if "quote" in keys else "") or "",
+        "prefix": str(row["prefix"] if "prefix" in keys else "") or "",
+        "suffix": str(row["suffix"] if "suffix" in keys else "") or "",
     }
 
 
@@ -107,6 +131,9 @@ def add_comment(
     author_name: str,
     author_username: str | None = None,
     body: str,
+    quote: str = "",
+    prefix: str = "",
+    suffix: str = "",
 ) -> dict[str, Any]:
     kind, iid = _kind_id(item_kind, item_id)
     text = (body or "").strip()
@@ -114,6 +141,9 @@ def add_comment(
         raise ValueError("Введите текст комментария")
     if len(text) > MAX_BODY_LEN:
         raise ValueError(f"Комментарий слишком длинный (максимум {MAX_BODY_LEN} символов)")
+    q = _clip(quote, MAX_QUOTE_LEN).strip()
+    pre = _clip(prefix, MAX_CTX_LEN)
+    suf = _clip(suffix, MAX_CTX_LEN)
     owner = _uid(owner_user_id)
     author = _uid(author_user_id)
     name = (author_name or "").strip() or "Пользователь"
@@ -125,11 +155,11 @@ def add_comment(
             INSERT INTO share_comments (
                 owner_user_id, item_kind, item_id,
                 author_user_id, author_name, author_username,
-                body, created_at
+                body, created_at, quote, prefix, suffix
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (owner, kind, iid, author, name[:120], uname, text, ts),
+            (owner, kind, iid, author, name[:120], uname, text, ts, q, pre, suf),
         )
         _conn().commit()
         cid = int(cur.lastrowid)
