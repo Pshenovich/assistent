@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260907-paie-rounds";
+  var WEBAPP_BUILD = "20260907-editor-load";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260907-paie-rounds";
+  const NOTE_EDITOR_ASSET_V = "20260907-editor-load";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -168,31 +168,58 @@
   function loadNoteEditorScripts() {
     if (getNoteRichEditorApi()) return Promise.resolve();
     if (noteEditorScriptsPromise) return noteEditorScriptsPromise;
-    noteEditorScriptsPromise = new Promise(function (resolve, reject) {
-      function injectScript(src) {
-        return new Promise(function (res, rej) {
-          var s = document.createElement("script");
-          s.src = src;
-          s.async = true;
-          s.onload = function () {
-            res();
-          };
-          s.onerror = function () {
-            rej(new Error("Не удалось загрузить " + src));
-          };
-          document.head.appendChild(s);
-        });
-      }
-      injectScript("/webapp/note-html.js?v=" + NOTE_EDITOR_ASSET_V)
-        .then(function () {
-          return injectScript("/webapp/note-comments.js?v=" + NOTE_EDITOR_ASSET_V);
-        })
-        .then(function () {
-          return injectScript("/webapp/note-rich-editor.js?v=" + NOTE_EDITOR_ASSET_V);
-        })
-        .then(resolve)
-        .catch(reject);
-    });
+    function injectScript(src) {
+      return new Promise(function (res, rej) {
+        var existing = document.querySelector('script[src="' + src + '"]');
+        if (existing) {
+          var waited = 0;
+          var timer = setInterval(function () {
+            waited += 50;
+            if (src.indexOf("note-rich-editor.js") !== -1) {
+              if (getNoteRichEditorApi()) {
+                clearInterval(timer);
+                res();
+                return;
+              }
+            } else if (waited >= 80) {
+              clearInterval(timer);
+              res();
+              return;
+            }
+            if (waited >= 25000) {
+              clearInterval(timer);
+              rej(new Error("Таймаут " + src));
+            }
+          }, 50);
+          return;
+        }
+        var s = document.createElement("script");
+        s.src = src;
+        s.async = false;
+        s.onload = function () {
+          res();
+        };
+        s.onerror = function () {
+          rej(new Error("Не удалось загрузить " + src));
+        };
+        document.head.appendChild(s);
+      });
+    }
+    noteEditorScriptsPromise = injectScript("/webapp/note-html.js?v=" + NOTE_EDITOR_ASSET_V)
+      .then(function () {
+        return injectScript("/webapp/note-comments.js?v=" + NOTE_EDITOR_ASSET_V);
+      })
+      .then(function () {
+        return injectScript("/webapp/note-rich-editor.js?v=" + NOTE_EDITOR_ASSET_V);
+      })
+      .then(function () {
+        if (getNoteRichEditorApi()) return;
+        throw new Error("Редактор не инициализировался");
+      })
+      .catch(function (err) {
+        noteEditorScriptsPromise = null;
+        throw err;
+      });
     return noteEditorScriptsPromise;
   }
 
@@ -5903,6 +5930,37 @@
     return api;
   }
 
+  function mountFallbackNoteEditor(container, body, onUpdate) {
+    if (!container) return null;
+    container.innerHTML = "";
+    var warn = document.createElement("p");
+    warn.className = "muted small";
+    warn.textContent = "Упрощённый редактор: полный не загрузился.";
+    var ed = document.createElement("div");
+    ed.className = "note-rich-editor-body note-editor-fallback";
+    ed.contentEditable = "true";
+    ed.setAttribute("role", "textbox");
+    ed.innerHTML = body || "";
+    ed.addEventListener("input", function () {
+      if (typeof onUpdate === "function") onUpdate();
+    });
+    container.appendChild(warn);
+    container.appendChild(ed);
+    return {
+      getHtml: function () {
+        return ed.innerHTML || "";
+      },
+      prepareForSave: function () {},
+      focus: function () {
+        ed.focus();
+      },
+      bindTapFocus: function () {},
+      destroy: function () {
+        container.innerHTML = "";
+      },
+    };
+  }
+
   function setNoteEditorTocOpen(page, open) {
     if (!page) return;
     page.classList.toggle("note-editor-page--toc-open", !!open);
@@ -5991,29 +6049,30 @@
         loading.remove();
         var NoteRichEditor = getNoteRichEditorApi();
         if (!NoteRichEditor || typeof NoteRichEditor.mount !== "function") {
-          var fallback = document.createElement("p");
-          fallback.className = "error";
-          fallback.textContent = "Редактор не загружен. Обновите страницу.";
-          mountPoint.appendChild(fallback);
-          return null;
+          return mountFallbackNoteEditor(mountPoint, body, onUpdate);
         }
-        var editor = NoteRichEditor.mount(mountPoint, {
-          body: body,
-          placeholder: "Начните писать…",
-          onUpdate: onUpdate,
-          toolbarParent: formatHost || null,
-          tocParent: options.tocParent || null,
-          onTocNavigate: options.onTocNavigate || null,
-          scrollParent: options.scrollParent || null,
-        });
-        if (editor && typeof editor.bindTapFocus === "function" && !isIOSDevice()) {
-          editor.bindTapFocus(container);
+        try {
+          var editor = NoteRichEditor.mount(mountPoint, {
+            body: body,
+            placeholder: "Начните писать…",
+            onUpdate: onUpdate,
+            toolbarParent: formatHost || null,
+            tocParent: options.tocParent || null,
+            onTocNavigate: options.onTocNavigate || null,
+            scrollParent: options.scrollParent || null,
+          });
+          if (editor && typeof editor.bindTapFocus === "function" && !isIOSDevice()) {
+            editor.bindTapFocus(container);
+          }
+          return editor;
+        } catch (err) {
+          console.error("NoteRichEditor.mount", err);
+          return mountFallbackNoteEditor(mountPoint, body, onUpdate);
         }
-        return editor;
       })
-      .catch(function () {
-        loading.textContent = "Не удалось загрузить редактор. Обновите страницу.";
-        return null;
+      .catch(function (err) {
+        console.error("loadNoteEditorScripts", err);
+        return mountFallbackNoteEditor(mountPoint, body, onUpdate);
       });
   }
 

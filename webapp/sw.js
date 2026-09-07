@@ -1,11 +1,14 @@
 /* Mini App service worker: кэш оболочки для быстрого повторного открытия PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260907-paie-rounds";
+var CACHE_VERSION = "miniapp-v1-20260907-editor-load";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
-  "./styles.css?v=20260907-paie-rounds",
-  "./app.js?v=20260907-paie-rounds",
+  "./styles.css?v=20260907-editor-load",
+  "./app.js?v=20260907-editor-load",
+  "./note-html.js?v=20260907-editor-load",
+  "./note-comments.js?v=20260907-editor-load",
+  "./note-rich-editor.js?v=20260907-editor-load",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",
@@ -150,7 +153,7 @@ self.addEventListener("fetch", function (event) {
             .catch(function () {});
           return cached;
         }
-        return fetchWithTimeout(request, 4000).then(function (response) {
+        return fetchWithTimeout(request, 20000).then(function (response) {
           cachePut(SHELL_CACHE, request, response);
           return response;
         });

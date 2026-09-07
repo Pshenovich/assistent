@@ -1950,12 +1950,11 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   flex-direction: column;
 }
 
-.note-rich-editor-body {
-  flex: 0 1 auto;
-  min-height: 8rem;
-  overflow: visible;
-  outline: none;
-  color: var(--vkui--color_text_primary, var(--text));
+.note-editor-fallback {
+  min-height: 12rem;
+  padding: 0.25rem 0 2rem;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .note-rich-editor-body p.is-editor-empty:first-child::before {

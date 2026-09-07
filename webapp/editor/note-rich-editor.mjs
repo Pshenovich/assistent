@@ -1411,9 +1411,11 @@ function mount(container, options) {
   };
 }
 
-globalThis.NoteRichEditor = {
+var noteRichEditorApi = {
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,
   canonicalBody: canonicalBody,
 };
+if (typeof window !== "undefined") window.NoteRichEditor = noteRichEditorApi;
+else globalThis.NoteRichEditor = noteRichEditorApi;
