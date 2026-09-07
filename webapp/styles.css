@@ -3575,11 +3575,7 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
     font-size: 16px;
   }
 
-  html.note-editor-kb-open #note-editor-overlay .note-editor-toolbar-wrap,
-  html:has(#note-paie-reply-form:focus-within) #note-editor-overlay .note-editor-toolbar-wrap,
-  html:has(#note-paie-reply-form .note-paie-menu:not(.hidden))
-    #note-editor-overlay
-    .note-editor-toolbar-wrap {
+  #note-editor-overlay .note-editor-toolbar-wrap:not(.is-format-active) {
     display: none !important;
   }
 }

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260907-composer-low";
+  var WEBAPP_BUILD = "20260907-toolbar-idle";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260907-composer-low";
+  const NOTE_EDITOR_ASSET_V = "20260907-toolbar-idle";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -4158,12 +4158,27 @@
     return !!(form && form.querySelector(".note-paie-menu:not(.hidden)"));
   }
 
+  function noteFormatUiActive() {
+    if (composerUiActive()) return false;
+    var active = document.activeElement;
+    if (!active || !active.closest) return false;
+    if (active.closest(".note-editor-toolbar-wrap, .note-link-popover, .note-rich-editor-toolbar")) {
+      return true;
+    }
+    return isNoteRichEditorField(active) || !!active.closest(".note-rich-editor-mount");
+  }
+
   function syncNoteFormatToolbarForComposer() {
     var wrap = document.getElementById("note-editor-toolbar-wrap");
     if (!wrap) return;
-    var hide =
-      isNoteEditorModalOpen() && isMobileNoteLayout() && composerUiActive();
-    wrap.classList.toggle("is-composer-hidden", hide);
+    if (!isNoteEditorModalOpen() || !isMobileNoteLayout()) {
+      wrap.classList.remove("is-composer-hidden");
+      wrap.classList.remove("is-format-active");
+      return;
+    }
+    var show = noteFormatUiActive();
+    wrap.classList.toggle("is-format-active", show);
+    wrap.classList.toggle("is-composer-hidden", !show);
   }
 
   function noteEditorVisibleHeightPx() {
@@ -4301,6 +4316,28 @@
       scrollModalFieldIntoView(field);
       syncNoteFormatToolbarForComposer();
     });
+    document.addEventListener(
+      "pointerdown",
+      function (e) {
+        if (!modalSheetOpen || !isNoteEditorModalOpen() || !isMobileNoteLayout()) return;
+        var t = e.target;
+        if (!t || !t.closest || !t.closest("#note-editor-overlay")) return;
+        var wrap = document.getElementById("note-editor-toolbar-wrap");
+        if (!wrap || wrap.classList.contains("hidden")) return;
+        if (
+          t.closest(
+            ".note-rich-editor-mount, .ProseMirror, .note-editor-toolbar-wrap, .note-link-popover"
+          )
+        ) {
+          wrap.classList.add("is-format-active");
+          wrap.classList.remove("is-composer-hidden");
+          return;
+        }
+        wrap.classList.remove("is-format-active");
+        wrap.classList.add("is-composer-hidden");
+      },
+      true
+    );
     document.addEventListener("focusout", function () {
       if (!modalSheetOpen) return;
       window.setTimeout(function () {
@@ -6072,7 +6109,10 @@
     options = options || {};
     var toolbarWrap = document.getElementById("note-editor-toolbar-wrap");
     var formatHost = document.getElementById("note-editor-format-toolbar-host");
-    if (toolbarWrap) setHidden(toolbarWrap, false);
+    if (toolbarWrap) {
+      setHidden(toolbarWrap, false);
+      syncNoteFormatToolbarForComposer();
+    }
     if (formatHost) formatHost.innerHTML = "";
     var mountPoint = document.createElement("div");
     mountPoint.id = "td-desc";
