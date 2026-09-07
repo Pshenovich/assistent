@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260907-chair-composer";
+  var WEBAPP_BUILD = "20260907-chair-reply";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260907-chair-composer";
+  const NOTE_EDITOR_ASSET_V = "20260907-chair-reply";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -6612,7 +6612,14 @@
       '<span class="note-paie-kb-toggle-dot" aria-hidden="true"></span>' +
       "База знаний" +
       "</button>" +
-      '<p class="share-comment-quote note-paie-reply-quote hidden"></p>' +
+      '<div class="note-paie-reply-target hidden">' +
+      '<span class="note-paie-reply-target-bar" aria-hidden="true"></span>' +
+      '<div class="note-paie-reply-target-copy">' +
+      '<p class="note-paie-reply-target-who">CHAIR</p>' +
+      '<p class="note-paie-reply-target-quote"></p>' +
+      "</div>" +
+      '<button type="button" class="note-paie-reply-target-clear" aria-label="Отменить ответ">&times;</button>' +
+      "</div>" +
       '<textarea id="note-paie-reply-input" class="note-paie-composer-input" rows="2" maxlength="4000" placeholder="' +
       noteAskPlaceholder("paie") +
       '"></textarea>' +
@@ -6810,6 +6817,22 @@
       else if (noteAskMode() === "comment") submitNoteFooterComment(input && input.value);
       else submitNotePaieReply(input && input.value);
     });
+    var replyClear = form.querySelector(".note-paie-reply-target-clear");
+    if (replyClear && !replyClear._bound) {
+      replyClear._bound = true;
+      replyClear.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        clearNoteComposerCommentTarget();
+        var ta = document.getElementById("note-paie-reply-input");
+        if (ta) {
+          ta.placeholder = noteAskPlaceholder(noteAskMode());
+          try {
+            ta.focus();
+          } catch (_) {}
+        }
+      });
+    }
     form.querySelectorAll(".note-paie-mode, .note-paie-mode-menu [data-mode]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         setNoteAskMode(btn.getAttribute("data-mode"));
@@ -6926,7 +6949,7 @@
         var sel = api.selectionAnchor(body);
         if (!sel || !sel.quote) return;
         var group = body.closest(".note-paie-group");
-        if (group) openChairCommentForm(group, sel);
+        if (group) openChairReply(group, sel);
       }
       el.addEventListener("mouseup", onChairSelect);
       el.addEventListener("pointerup", onChairSelect);
@@ -6934,15 +6957,40 @@
     return el;
   }
 
-  function openChairCommentForm(groupEl, draft) {
+  function clipReplyQuote(text) {
+    var raw = String(text || "").replace(/\s+/g, " ").trim();
+    if (!raw) return "";
+    if (raw.length > 160) return raw.slice(0, 159) + "…";
+    return raw;
+  }
+
+  function chairReplyDraft(groupEl, draft) {
+    if (draft && String(draft.quote || "").trim()) {
+      return {
+        quote: clipReplyQuote(draft.quote),
+        prefix: draft.prefix || "",
+        suffix: draft.suffix || "",
+      };
+    }
+    var bodyEl =
+      groupEl && groupEl.querySelector
+        ? groupEl.querySelector(".note-paie-msg.is-chair .note-comment-body")
+        : null;
+    var quote = clipReplyQuote(bodyEl && bodyEl.textContent);
+    if (!quote) quote = "Ответ CHAIR";
+    return { quote: quote, prefix: "", suffix: "" };
+  }
+
+  function openChairReply(groupEl, draft) {
     if (!groupEl) return;
     var wrap = document.getElementById("note-editor-more-wrap");
     var chairId = parseInt(groupEl.getAttribute("data-chair-id") || "", 10);
     if (wrap) {
       wrap._commentChairId = chairId || null;
-      wrap._commentDraft = draft || null;
+      wrap._commentDraft = chairReplyDraft(groupEl, draft);
     }
-    setNoteAskMode("comment");
+    setNoteAskMode("paie");
+    syncNoteComposerCommentTarget();
     var form = document.getElementById("note-paie-reply-form");
     var input = document.getElementById("note-paie-reply-input");
     if (form && form.scrollIntoView) {
@@ -6956,33 +7004,68 @@
     syncNoteFormatToolbarForComposer();
   }
 
+  function ensureNoteComposerReplyTarget(form) {
+    if (!form) return null;
+    var el = form.querySelector(".note-paie-reply-target");
+    if (el) return el;
+    var old = form.querySelector(".note-paie-reply-quote");
+    el = document.createElement("div");
+    el.className = "note-paie-reply-target hidden";
+    el.innerHTML =
+      '<span class="note-paie-reply-target-bar" aria-hidden="true"></span>' +
+      '<div class="note-paie-reply-target-copy">' +
+      '<p class="note-paie-reply-target-who">CHAIR</p>' +
+      '<p class="note-paie-reply-target-quote"></p>' +
+      "</div>" +
+      '<button type="button" class="note-paie-reply-target-clear" aria-label="Отменить ответ">&times;</button>';
+    var ta = form.querySelector("#note-paie-reply-input");
+    if (old && old.parentNode) old.parentNode.replaceChild(el, old);
+    else if (ta) form.insertBefore(el, ta);
+    else form.insertBefore(el, form.firstChild);
+    var clear = el.querySelector(".note-paie-reply-target-clear");
+    if (clear && !clear._bound) {
+      clear._bound = true;
+      clear.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        clearNoteComposerCommentTarget();
+        var input = document.getElementById("note-paie-reply-input");
+        if (input) {
+          input.placeholder = noteAskPlaceholder(noteAskMode());
+          try {
+            input.focus();
+          } catch (_) {}
+        }
+      });
+    }
+    return el;
+  }
+
   function syncNoteComposerCommentTarget() {
     var wrap = document.getElementById("note-editor-more-wrap");
     var form = document.getElementById("note-paie-reply-form");
-    if (form && !form.querySelector(".note-paie-reply-quote")) {
-      var p = document.createElement("p");
-      p.className = "share-comment-quote note-paie-reply-quote hidden";
-      var ta = form.querySelector("#note-paie-reply-input");
-      if (ta) form.insertBefore(p, ta);
-      else form.insertBefore(p, form.firstChild);
-    }
-    var quoteEl = form && form.querySelector(".note-paie-reply-quote");
+    var targetEl = ensureNoteComposerReplyTarget(form);
+    var quoteEl = targetEl && targetEl.querySelector(".note-paie-reply-target-quote");
     var draft = wrap && wrap._commentDraft;
     var chairId = wrap && wrap._commentChairId;
-    if (quoteEl) {
-      if (draft && draft.quote) {
-        quoteEl.textContent = "«" + String(draft.quote) + "»";
-        quoteEl.classList.remove("hidden");
-      } else {
-        quoteEl.textContent = "";
-        quoteEl.classList.add("hidden");
-      }
-    }
+    var quote = draft && String(draft.quote || "").trim();
+    var active = !!(chairId && quote);
+    if (form) form.classList.toggle("is-replying", active);
+    if (targetEl) targetEl.classList.toggle("hidden", !active);
+    if (quoteEl) quoteEl.textContent = quote || "";
+    document.querySelectorAll(".note-paie-group").forEach(function (group) {
+      var id = parseInt(group.getAttribute("data-chair-id") || "", 10);
+      group.classList.toggle("is-reply-target", active && id === chairId);
+    });
     var input = document.getElementById("note-paie-reply-input");
-    if (input && noteAskMode() === "comment") {
-      input.placeholder = chairId
-        ? "Комментарий к ответу CHAIR"
-        : noteAskPlaceholder("comment");
+    if (input && active) {
+      if (noteAskMode() === "comment") {
+        input.placeholder = "Комментарий к ответу CHAIR";
+      } else if (noteAskMode() === "paie") {
+        input.placeholder = "Уточнение к этому ответу CHAIR";
+      }
+    } else if (input) {
+      input.placeholder = noteAskPlaceholder(noteAskMode());
     }
   }
 
@@ -7048,11 +7131,12 @@
     var commentBtn = document.createElement("button");
     commentBtn.type = "button";
     commentBtn.className = "note-paie-comment-btn";
-    commentBtn.textContent = "Комментировать";
+    commentBtn.textContent = "Ответить";
+    commentBtn.setAttribute("aria-label", "Ответить CHAIR");
     commentBtn.addEventListener("click", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      openChairCommentForm(wrap, null);
+      openChairReply(wrap, null);
     });
     actions.appendChild(commentBtn);
     wrap.appendChild(actions);
@@ -7110,6 +7194,7 @@
     if (form) {
       form.classList.remove("hidden");
       syncNotePaieReplyForm(running);
+      syncNoteComposerCommentTarget();
     }
     refreshNoteEditorTocExtras();
   }
@@ -7235,7 +7320,7 @@
     if (input) {
       input.placeholder = noteAskPlaceholder(current);
     }
-    if (current !== "comment") clearNoteComposerCommentTarget();
+    if (current === "gpt") clearNoteComposerCommentTarget();
     else syncNoteComposerCommentTarget();
     if (current === "gpt") loadGptModels();
     else closeNoteComposerMenus();
@@ -7619,6 +7704,8 @@
       return;
     }
     if (!body) return;
+    var draft = wrap._commentDraft;
+    var replyToId = wrap._commentChairId || null;
     wrap._paeiRunning = true;
     ensureNotePaieThread();
     setNotePaeiStatus("CHAIR читает уточнение…", {
@@ -7638,11 +7725,14 @@
       body: JSON.stringify({
         reply: body,
         parent_id: rootId,
+        reply_to_id: replyToId,
+        quote: (draft && draft.quote) || "",
         use_knowledge: noteUsesKnowledge(),
       }),
     })
       .then(function (data) {
         if (input) input.value = "";
+        clearNoteComposerCommentTarget();
         refreshNoteCommentsList();
         var status = (data && data.status) || "running";
         if (status === "done") {

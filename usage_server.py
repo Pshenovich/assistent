@@ -2453,6 +2453,8 @@ class _MiniappShareCommentCreate(BaseModel):
 class _MiniappNotePaeiStart(BaseModel):
     reply: str = ""
     parent_id: Optional[int] = None
+    reply_to_id: Optional[int] = None
+    quote: str = ""
     use_knowledge: bool = True
 
 
@@ -4709,6 +4711,7 @@ async def miniapp_note_paei_start(
     payload = body or _MiniappNotePaeiStart()
     reply_text = (payload.reply or "").strip()
     parent_id = payload.parent_id
+    quote_text = (payload.quote or "").strip()
     use_knowledge = payload.use_knowledge is not False
     if reply_text:
         comments = await run_in_threadpool(
@@ -4725,6 +4728,16 @@ async def miniapp_note_paei_start(
         author_id, author_name, author_username = _comment_author_from_principal(
             principal
         )
+        reply_to_id = None
+        raw_reply_to = payload.reply_to_id
+        if raw_reply_to not in (None, "", 0, "0"):
+            try:
+                tid = int(raw_reply_to)
+            except (TypeError, ValueError):
+                tid = 0
+            if tid > 0 and any(int(c.get("id") or 0) == tid for c in comments):
+                reply_to_id = tid
+        user_parent = reply_to_id or root_id
         try:
             await run_in_threadpool(
                 share_comments_store.add_comment,
@@ -4735,13 +4748,20 @@ async def miniapp_note_paei_start(
                 author_name=author_name,
                 author_username=author_username,
                 body=reply_text,
-                quote="",
-                parent_id=root_id,
+                quote=quote_text,
+                parent_id=user_parent,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         job, started = begin_job(
-            uid, kind, item_id, reply=reply_text, parent_id=int(root_id), use_knowledge=use_knowledge
+            uid,
+            kind,
+            item_id,
+            reply=reply_text,
+            parent_id=int(root_id),
+            use_knowledge=use_knowledge,
+            quote=quote_text,
+            reply_to_id=reply_to_id,
         )
         followup_parent = int(root_id)
     else:

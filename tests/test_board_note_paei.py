@@ -98,6 +98,17 @@ class _ScriptedProvider:
         raise AssertionError(operation)
 
 
+class _CaptureProvider(_ScriptedProvider):
+    def __init__(self) -> None:
+        self.users: list[str] = []
+
+    def generate_json(self, *, system: str, user: str, operation: str, temperature: float = 0.4):
+        self.users.append(str(user or ""))
+        return super().generate_json(
+            system=system, user=user, operation=operation, temperature=temperature
+        )
+
+
 class NotePaeiTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -237,3 +248,37 @@ class NotePaeiTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ответ CHAIR", follow["body"])
         self.assertEqual(share_comments.paie_thread_root_id(comments), root_id)
         self.assertEqual(len(share_comments.paie_thread(comments)), 3)
+
+    async def test_followup_reply_to_marks_target_but_chairs_root(self) -> None:
+        note = notes_store.create_note(5, "Пилот", "Нужен пилот на 2 недели.")
+        first = await run_note_paei(
+            user_id=5,
+            kind="local",
+            item_id=note["id"],
+            provider=_ScriptedProvider(),
+        )
+        root_id = first["comment"]["id"]
+        second = await run_note_paei(
+            user_id=5,
+            kind="local",
+            item_id=note["id"],
+            provider=_ScriptedProvider(),
+            reply="Можно сразу на месяц?",
+            parent_id=root_id,
+        )
+        later_id = second["comment"]["id"]
+        cap = _CaptureProvider()
+        third = await run_note_paei(
+            user_id=5,
+            kind="local",
+            item_id=note["id"],
+            provider=cap,
+            reply="Имею в виду KPI из второго ответа",
+            parent_id=root_id,
+            reply_to_id=later_id,
+            quote="пилот на 2 недели",
+        )
+        self.assertEqual(third["comment"]["parent_id"], root_id)
+        blob = "\n".join(cap.users)
+        self.assertIn("отвечает именно на это сообщение", blob)
+        self.assertIn("Имею в виду KPI из второго ответа", blob)

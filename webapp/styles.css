@@ -3304,6 +3304,68 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   align-self: stretch;
 }
 
+.note-paie-reply-target {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  margin: 0 0 -12px;
+  padding: 0 2px;
+}
+
+.note-paie-reply-target.hidden {
+  display: none;
+}
+
+.note-paie-reply-target-bar {
+  flex: 0 0 3px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--note-composer-accent);
+}
+
+.note-paie-reply-target-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.note-paie-reply-target-who,
+.note-paie-reply-target-quote {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-paie-reply-target-who {
+  color: var(--note-composer-accent);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.note-paie-reply-target-quote {
+  color: var(--note-composer-muted);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.note-paie-reply-target-clear {
+  flex: 0 0 auto;
+  align-self: center;
+  margin: 0;
+  padding: 0 4px;
+  border: none;
+  color: var(--note-composer-muted);
+  background: none;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.note-paie-group.is-reply-target .note-paie-msg.is-chair {
+  box-shadow: inset 3px 0 0 var(--note-composer-accent, var(--accent));
+}
+
 .note-paie-kb-toggle {
   display: inline-flex;
   align-items: center;

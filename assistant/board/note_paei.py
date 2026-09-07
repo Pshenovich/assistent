@@ -91,6 +91,8 @@ def begin_job(
     reply: str = "",
     parent_id: int | None = None,
     use_knowledge: bool = True,
+    quote: str = "",
+    reply_to_id: int | None = None,
 ) -> tuple[dict[str, Any], bool]:
     key = job_key(user_id, kind, item_id)
     now = time.time()
@@ -111,6 +113,8 @@ def begin_job(
             "started_at": now,
             "reply": reply_text,
             "parent_id": parent_id,
+            "quote": (quote or "").strip(),
+            "reply_to_id": reply_to_id,
             "use_knowledge": bool(use_knowledge),
             "progress": _progress_view(
                 {
@@ -255,6 +259,46 @@ def _thread_prompt(comments: list[dict[str, Any]]) -> str:
     return _clip_prompt("\n\n".join(parts), 8000)
 
 
+def _comment_by_id(
+    comments: list[dict[str, Any]], comment_id: int | None
+) -> dict[str, Any] | None:
+    if comment_id in (None, "", 0, "0"):
+        return None
+    try:
+        cid = int(comment_id)
+    except (TypeError, ValueError):
+        return None
+    if cid <= 0:
+        return None
+    for row in comments:
+        try:
+            if int(row.get("id") or 0) == cid:
+                return row
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _reply_target_prompt(
+    comments: list[dict[str, Any]],
+    *,
+    reply_to_id: int | None = None,
+    quote: str = "",
+) -> str:
+    target = _comment_by_id(comments, reply_to_id)
+    if target:
+        who = "CHAIR" if share_comments.is_paie_comment(target) else (
+            str(target.get("author_name") or "").strip() or "Автор"
+        )
+        body = _clip_prompt(str(target.get("body") or ""), 1800)
+        if body:
+            return f"Автор отвечает именно на это сообщение ({who}):\n{body}\n\n"
+    quote_text = _clip_prompt((quote or "").strip(), 500)
+    if quote_text:
+        return f"Автор отвечает на этот фрагмент:\n«{quote_text}»\n\n"
+    return ""
+
+
 async def run_note_paei(
     *,
     user_id: int,
@@ -265,6 +309,8 @@ async def run_note_paei(
     reply: str = "",
     parent_id: int | None = None,
     use_knowledge: bool = True,
+    quote: str = "",
+    reply_to_id: int | None = None,
 ) -> dict[str, Any]:
     store.init_db()
     title, body = load_note_for_paei(user_id, kind, item_id)
@@ -280,6 +326,9 @@ async def run_note_paei(
         )
         if history:
             question += f"Переписка по заметке:\n{history}\n\n"
+        question += _reply_target_prompt(
+            comments, reply_to_id=reply_to_id, quote=quote
+        )
         question += f"Новое уточнение автора:\n{reply_text}\n\n"
         question += (
             "Ответь на уточнение как CHAIR. Не пересказывай весь документ, "
@@ -361,11 +410,15 @@ async def run_note_paei_job(
     reply: str = "",
     parent_id: int | None = None,
     use_knowledge: bool = True,
+    quote: str = "",
+    reply_to_id: int | None = None,
 ) -> None:
     key = job_key(user_id, kind, item_id)
     job = get_job(user_id, kind, item_id) or {}
     reply_text = (reply or job.get("reply") or "").strip()
     thread_parent = parent_id if parent_id is not None else job.get("parent_id")
+    quote_text = (quote or job.get("quote") or "").strip()
+    target_id = reply_to_id if reply_to_id is not None else job.get("reply_to_id")
     if "use_knowledge" in job:
         use_knowledge = bool(job.get("use_knowledge"))
     try:
@@ -374,6 +427,10 @@ async def run_note_paei_job(
         )
     except (TypeError, ValueError):
         thread_parent = None
+    try:
+        target_id = int(target_id) if target_id not in (None, "", 0, "0") else None
+    except (TypeError, ValueError):
+        target_id = None
 
     def on_progress(payload: dict[str, Any]) -> None:
         fields: dict[str, Any] = {"progress": payload}
@@ -391,6 +448,8 @@ async def run_note_paei_job(
             reply=reply_text,
             parent_id=thread_parent,
             use_knowledge=use_knowledge,
+            quote=quote_text,
+            reply_to_id=target_id,
         )
         comment = result.get("comment") or {}
         _update_job(
