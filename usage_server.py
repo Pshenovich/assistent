@@ -2418,6 +2418,7 @@ class _MiniappLocalNotePatch(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     sync_todoist: Optional[bool] = None
+    kb_enabled: Optional[bool] = None
 
 
 class _MiniappJournalPatch(BaseModel):
@@ -4499,7 +4500,12 @@ async def miniapp_local_note_patch(
 ) -> dict[str, Any]:
     from assistant.stores import notes as notes_store
 
-    if body.title is None and body.description is None and body.sync_todoist is None:
+    if (
+        body.title is None
+        and body.description is None
+        and body.sync_todoist is None
+        and body.kb_enabled is None
+    ):
         raise HTTPException(status_code=400, detail="Укажите title и/или description")
     uid = int(principal.telegram_user_id)
 
@@ -4509,6 +4515,7 @@ async def miniapp_local_note_patch(
             note_id,
             title=body.title,
             body=body.description,
+            kb_enabled=body.kb_enabled,
         )
         if item is None:
             return None

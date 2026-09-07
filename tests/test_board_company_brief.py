@@ -250,6 +250,10 @@ class CompanyBriefTest(unittest.TestCase):
             role=notes_store.KNOWLEDGE_ROLE,
         )
         notes_store.create_note(14, "Пустой", "", role=notes_store.KNOWLEDGE_ROLE)
+        off = notes_store.create_note(
+            14, "Секрет", "<p>Нельзя в контекст</p>", role=notes_store.KNOWLEDGE_ROLE
+        )
+        notes_store.update_note(14, off["id"], kb_enabled=False)
         pack = attach_knowledge_note(None, 14)
         self.assertIsNotNone(pack)
         names = {d["filename"] for d in pack["_documents"]}

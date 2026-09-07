@@ -53,6 +53,7 @@ def _conn() -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_local_notes_user ON local_notes(user_id)"
     )
     _ensure_role_column(_CONN)
+    _ensure_kb_enabled_column(_CONN)
     _CONN.commit()
     return _CONN
 
@@ -71,6 +72,23 @@ def _ensure_role_column(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_local_notes_user_role "
         "ON local_notes(user_id, role)"
     )
+
+
+def _ensure_kb_enabled_column(conn: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(local_notes)")}
+    if "kb_enabled" not in cols:
+        conn.execute(
+            "ALTER TABLE local_notes ADD COLUMN kb_enabled INTEGER NOT NULL DEFAULT 1"
+        )
+
+
+def note_kb_enabled(note: dict[str, Any] | None) -> bool:
+    if not note:
+        return True
+    raw = note.get("kb_enabled")
+    if raw in (False, 0, "0", "false", "False"):
+        return False
+    return True
 
 
 def _now_iso() -> str:
@@ -99,6 +117,9 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "source": "local",
         "role": role,
         "is_knowledge": role == KNOWLEDGE_ROLE,
+        "kb_enabled": note_kb_enabled(
+            {"kb_enabled": row["kb_enabled"] if "kb_enabled" in row.keys() else 1}
+        ),
     }
 
 
@@ -206,6 +227,7 @@ def update_note(
     title: Optional[str] = None,
     body: Optional[str] = None,
     todoist_id: Optional[str] = None,
+    kb_enabled: Optional[bool] = None,
 ) -> Optional[dict[str, Any]]:
     uid = str(int(user_id))
     existing = get_note(uid, note_id)
@@ -217,15 +239,20 @@ def update_note(
     if body is not None and not _plain_note_text(new_body) and _plain_note_text(existing["body"] or ""):
         new_body = existing["body"]
     tid = existing.get("todoist_id") if todoist_id is None else todoist_id
+    enabled = (
+        1
+        if (existing.get("kb_enabled") if kb_enabled is None else bool(kb_enabled))
+        else 0
+    )
     ts = _now_iso()
     with _LOCK:
         _conn().execute(
             """
             UPDATE local_notes
-            SET title = ?, body = ?, todoist_id = ?, updated_at = ?
+            SET title = ?, body = ?, todoist_id = ?, kb_enabled = ?, updated_at = ?
             WHERE user_id = ? AND id = ?
             """,
-            (new_title, new_body, tid, ts, uid, int(note_id)),
+            (new_title, new_body, tid, enabled, ts, uid, int(note_id)),
         )
         _conn().commit()
     return get_note(uid, note_id)

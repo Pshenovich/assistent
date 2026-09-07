@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260907-chair-reply";
+  var WEBAPP_BUILD = "20260907-kb-gpt";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260907-chair-reply";
+  const NOTE_EDITOR_ASSET_V = "20260907-kb-gpt";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -861,6 +861,7 @@
         todoist_id: item.todoist_id || null,
         tags: Array.isArray(item.tags) ? item.tags : [],
         source: "local",
+        kb_enabled: item.kb_enabled !== false && item.kb_enabled !== 0 && item.kb_enabled !== "0",
       },
       extra
     );
@@ -4115,7 +4116,52 @@
             "</p>"
           : "");
       appendTagChipsRow(inner, noteTagsOf(n), { prepend: true, head: true });
+      var toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className =
+        "svc-toggle knowledge-card-toggle" +
+        (n.kb_enabled === false || n.kb_enabled === 0 || n.kb_enabled === "0" ? "" : " svc-toggle--on");
+      toggle.setAttribute("role", "switch");
+      toggle.setAttribute(
+        "aria-checked",
+        n.kb_enabled === false || n.kb_enabled === 0 || n.kb_enabled === "0" ? "false" : "true"
+      );
+      toggle.innerHTML = '<span class="svc-toggle-knob" aria-hidden="true"></span>';
+      function stopToggle(e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      toggle.addEventListener("pointerdown", stopToggle);
+      toggle.addEventListener("click", function (e) {
+        stopToggle(e);
+        if (!id) return;
+        var next = !(
+          n.kb_enabled === false ||
+          n.kb_enabled === 0 ||
+          n.kb_enabled === "0"
+        )
+          ? false
+          : true;
+        n.kb_enabled = next;
+        toggle.classList.toggle("svc-toggle--on", next);
+        toggle.setAttribute("aria-checked", next ? "true" : "false");
+        if (knowledgeDataCache && knowledgeDataCache.notes) {
+          knowledgeDataCache.notes.forEach(function (row) {
+            if (String(row.id) === String(id)) row.kb_enabled = next;
+          });
+          writeMiniappCache("knowledge", knowledgeDataCache);
+        }
+        apiFetch("/notes/local/" + encodeURIComponent(id), {
+          method: "PATCH",
+          body: JSON.stringify({ kb_enabled: next }),
+        }).catch(function () {
+          n.kb_enabled = !next;
+          toggle.classList.toggle("svc-toggle--on", !next);
+          toggle.setAttribute("aria-checked", !next ? "true" : "false");
+        });
+      });
       card.appendChild(inner);
+      card.appendChild(toggle);
       card.addEventListener("click", function () {
         openKnowledgeNoteDetail(n);
       });
@@ -4333,6 +4379,38 @@
     var show = noteFormatUiActive();
     wrap.classList.toggle("is-format-active", show);
     wrap.classList.toggle("is-composer-hidden", !show);
+  }
+
+  function noteGptIconHtml() {
+    return (
+      '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+      '<path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A6.066 6.066 0 0 0 19.019 19.82a5.988 5.988 0 0 0 3.997-2.9 6.052 6.052 0 0 0-.739-7.098ZM13.254 21.3a4.47 4.47 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494ZM3.6 17.49a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.49 19.86a4.504 4.504 0 0 1-5.89-2.37Zm-.963-8.02a4.482 4.482 0 0 1 2.352-1.972V12.1a.77.77 0 0 0 .388.676l5.815 3.358-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.637 9.47Zm16.08-.352-4.784-2.77a.766.766 0 0 0-.78 0L7.311 9.718V7.386a.066.066 0 0 1 .028-.061l4.83-2.787a4.504 4.504 0 0 1 6.68 4.66l-.14-.08Zm1.34 3.043-2.021-1.167a.077.077 0 0 1-.037-.053V5.357a.08.08 0 0 1 .033-.061l4.83 2.787a4.504 4.504 0 0 1-.49 8.129l-.141-.085-4.773-2.758a.794.794 0 0 0-.393-.68Zm-9.75 1.17L7.59 10.16l2.02-1.164a.08.08 0 0 1 .072 0l4.83 2.786a.077.077 0 0 1 .037.052v2.332l-2.02 1.168a.074.074 0 0 1-.072 0Z"/>' +
+      "</svg>"
+    );
+  }
+
+  function syncNoteGptToolbarButton(show) {
+    var wrap = document.getElementById("note-editor-toolbar-wrap");
+    var btn = document.getElementById("note-editor-gpt-btn");
+    if (btn) {
+      if (!btn.innerHTML.trim()) btn.innerHTML = noteGptIconHtml();
+      setHidden(btn, !show);
+    }
+    if (wrap) wrap.classList.toggle("has-gpt-btn", !!show);
+  }
+
+  function bindNoteGptToolbarButton() {
+    var btn = document.getElementById("note-editor-gpt-btn");
+    if (!btn || btn._bound) return;
+    btn._bound = true;
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var body = getNoteEditorBodyEl();
+      if (body && typeof body._openNoteGpt === "function") {
+        body._openNoteGpt();
+      }
+    });
   }
 
   function noteEditorVisibleHeightPx() {
@@ -6443,6 +6521,7 @@
     var formatHost = document.getElementById("note-editor-format-toolbar-host");
     if (formatHost) formatHost.innerHTML = "";
     if (toolbarWrap) setHidden(toolbarWrap, true);
+    syncNoteGptToolbarButton(false);
   }
 
   function clearNoteEditorTagsWrap() {
@@ -7345,6 +7424,9 @@
       var notes = (data && data.notes) || [];
       var parts = [];
       notes.forEach(function (note) {
+        if (note && (note.kb_enabled === false || note.kb_enabled === 0 || note.kb_enabled === "0")) {
+          return;
+        }
         var html = note && note.body;
         if (!html) return;
         var tmp = document.createElement("div");
@@ -9194,10 +9276,29 @@
         description: readActiveNoteEditorHtml(),
       };
     }
-    async function persistNoteDraft() {
+    function ensureNoteShareMounted(id) {
+      if (!id) return;
+      var wrap = document.getElementById("note-editor-more-wrap");
+      if (wrap && wrap._shareKind === "local" && String(wrap._shareId) === String(id)) {
+        ensureNotePaieThread();
+        return wrap;
+      }
+      mountShareControls("local", id);
+      return document.getElementById("note-editor-more-wrap");
+    }
+
+    async function persistNoteDraft(opts) {
+      opts = opts || {};
       var fields = readFields();
-      if (!fields.title) return;
-      if (!noteIsCreate && noteId && isTrivialNoteHtml(fields.description)) {
+      var title = String(fields.title || "").trim();
+      if (!title) {
+        if (!opts.defaultTitle) return;
+        title = String(opts.defaultTitle).trim();
+        if (!title) return;
+        if (titleInput) titleInput.value = title;
+        fields.title = title;
+      }
+      if (!noteIsCreate && noteId && isTrivialNoteHtml(fields.description) && !opts.keepEmpty) {
         return;
       }
       if (noteIsCreate || !noteId) {
@@ -9235,6 +9336,7 @@
             console.error("mountTagPicker", err);
           }
         }
+        if (noteId && !isKnowledge) ensureNoteShareMounted(noteId);
       } else {
         await apiFetch("/notes/local/" + encodeURIComponent(noteId), {
           method: "PATCH",
@@ -9267,6 +9369,32 @@
         );
       }
     }
+
+    async function openNoteGptComposer() {
+      if (isKnowledge) return;
+      try {
+        await persistNoteDraft({ defaultTitle: "Новый чат", keepEmpty: true });
+      } catch (e) {
+        alert(e.message || String(e));
+        return;
+      }
+      if (!noteId) return;
+      ensureNoteShareMounted(noteId);
+      ensureNotePaieThread();
+      setNoteAskMode("gpt");
+      var form = document.getElementById("note-paie-reply-form");
+      var input = document.getElementById("note-paie-reply-input");
+      if (form && form.scrollIntoView) {
+        form.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+      if (input) {
+        try {
+          input.focus();
+        } catch (_) {}
+      }
+      syncNoteFormatToolbarForComposer();
+    }
+
     function schedulePatch() {
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(function () {
@@ -9318,7 +9446,10 @@
         },
         runSave: runSave,
       };
+      modalBody._openNoteGpt = openNoteGptComposer;
     }
+    bindNoteGptToolbarButton();
+    syncNoteGptToolbarButton(!isKnowledge);
     openNoteEditorModal(
       noteIsCreate
         ? isKnowledge
@@ -9391,6 +9522,7 @@
       mountShareControls("journal", journalId);
     }
     wrap.innerHTML = noteEditorPageInnerHtml("Заголовок");
+    syncNoteGptToolbarButton(false);
     var tocControls = bindNoteEditorTocControls(wrap);
     var editorPad = wrap.querySelector(".note-editor-pad--body");
     var titleInput = wrap.querySelector("#note-editor-title-input");

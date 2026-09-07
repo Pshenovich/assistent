@@ -1754,6 +1754,15 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   min-height: 44px;
 }
 
+.note-tg-btn--gpt {
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.note-tg-btn--gpt.hidden {
+  display: none;
+}
+
 .note-editor-format-toolbar-host {
   flex: 1;
   min-width: 0;
@@ -2194,6 +2203,22 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   position: relative;
   padding-left: var(--space-1);
   padding-right: 2.25rem;
+}
+
+.note-card:has(.knowledge-card-toggle) {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.note-card:has(.knowledge-card-toggle) .note-card-inner {
+  flex: 1;
+  min-width: 0;
+  padding-right: 0;
+}
+
+.knowledge-card-toggle {
+  margin-left: auto;
 }
 
 .note-card-action-btn {
@@ -3669,8 +3694,12 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
     font-size: 16px;
   }
 
-  #note-editor-overlay .note-editor-toolbar-wrap:not(.is-format-active) {
+  #note-editor-overlay .note-editor-toolbar-wrap:not(.is-format-active):not(.has-gpt-btn) {
     display: none !important;
+  }
+
+  #note-editor-overlay .note-editor-toolbar-wrap:not(.is-format-active).has-gpt-btn .note-editor-format-toolbar-host {
+    display: none;
   }
 }
 

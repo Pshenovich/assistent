@@ -45,6 +45,8 @@ def attach_knowledge_note(
         return pack
     kb_docs: list[dict[str, Any]] = []
     for note in notes:
+        if not notes_store.note_kb_enabled(note):
+            continue
         html = str(note.get("body") or "")
         text = share_body_to_text(html).strip()
         if not text:

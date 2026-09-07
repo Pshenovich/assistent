@@ -51,6 +51,17 @@ class NotesStoreTests(unittest.TestCase):
         self.assertEqual(kb["id"], again["id"])
         self.assertIsNotNone(notes_store.get_knowledge_note(9))
 
+    def test_knowledge_toggle_defaults_on_and_can_disable(self) -> None:
+        kb = notes_store.create_note(
+            3, "Прайс", "10 рублей", role=notes_store.KNOWLEDGE_ROLE
+        )
+        self.assertTrue(kb["kb_enabled"])
+        self.assertTrue(notes_store.note_kb_enabled(kb))
+        updated = notes_store.update_note(3, kb["id"], kb_enabled=False)
+        assert updated is not None
+        self.assertFalse(updated["kb_enabled"])
+        self.assertFalse(notes_store.note_kb_enabled(updated))
+
     def test_search(self) -> None:
         notes_store.create_note(7, "Филиалы в Куркино", "Адрес и режим работы")
         notes_store.create_note(7, "Другое", "Про встречи")
