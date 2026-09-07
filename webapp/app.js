@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260907-kb-docs";
+  var WEBAPP_BUILD = "20260907-kb-chrome";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -5446,11 +5446,15 @@
     var bitrix = document.getElementById("profile-bitrix");
     var knowledgeBase = document.getElementById("profile-knowledge-base");
     var panelNotes = document.getElementById("panel-notes");
+    var panelKnowledge = document.getElementById("panel-knowledge");
     var panelProfile = document.getElementById("panel-profile");
     var notesPanelVisible = panelNotes && !panelNotes.classList.contains("hidden");
+    var knowledgePanelVisible =
+      panelKnowledge && !panelKnowledge.classList.contains("hidden");
     var profilePanelVisible = panelProfile && !panelProfile.classList.contains("hidden");
     var notesOpen = detail && !detail.classList.contains("hidden") && notesPanelVisible;
-    var noteEditorOpen = isNoteEditorModalOpen() && notesPanelVisible;
+    var noteEditorOpen =
+      isNoteEditorModalOpen() && (notesPanelVisible || knowledgePanelVisible);
     var payOpen = pay && !pay.classList.contains("hidden") && profilePanelVisible;
     var expOpen = exp && !exp.classList.contains("hidden") && profilePanelVisible;
     var bookingOpen =
