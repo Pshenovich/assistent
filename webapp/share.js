@@ -553,8 +553,9 @@
           });
       });
     }
-    function onSelect() {
+    function onSelect(e) {
       if (!api) return;
+      if (e && api.isCommentBubbleEvent && api.isCommentBubbleEvent(e)) return;
       var draft = api.selectionAnchor(root);
       if (!draft || !draft.quote) {
         api.hideBubble();
@@ -563,10 +564,10 @@
       api.showBubble(draft.rect, startCommentFromSelection);
     }
     root.addEventListener("mouseup", onSelect);
+    root.addEventListener("pointerup", onSelect);
     root.addEventListener("keyup", onSelect);
     document.addEventListener("mousedown", function (e) {
-      var bubble = document.getElementById("note-comment-bubble");
-      if (bubble && bubble.contains(e.target)) return;
+      if (api && api.isCommentBubbleEvent && api.isCommentBubbleEvent(e)) return;
       if (api) api.hideBubble();
     });
     window.addEventListener("scroll", relayoutCommentCards, { passive: true });

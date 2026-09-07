@@ -191,7 +191,14 @@
       suffix = hay.text.slice(idx + qLen, idx + qLen + CTX);
     }
     var rects = range.getClientRects();
-    var rect = rects.length ? rects[rects.length - 1] : range.getBoundingClientRect();
+    var rect = null;
+    for (var i = rects.length - 1; i >= 0; i--) {
+      if (rects[i].width >= 1 && rects[i].height >= 1) {
+        rect = rects[i];
+        break;
+      }
+    }
+    if (!rect) rect = range.getBoundingClientRect();
     return { quote: quote, prefix: prefix, suffix: suffix, rect: rect };
   }
 
@@ -250,34 +257,74 @@
     return map;
   }
 
+  var BUBBLE_SIZE = 32;
+  var BUBBLE_GAP = 6;
+
+  function isCommentBubbleEvent(e) {
+    var t = e && e.target;
+    if (!t) return false;
+    if (t.id === "note-comment-bubble") return true;
+    return !!(t.closest && t.closest("#note-comment-bubble"));
+  }
+
   function hideBubble() {
     var el = document.getElementById("note-comment-bubble");
     if (el && el.parentNode) el.parentNode.removeChild(el);
   }
 
+  function placeBubble(btn, rect) {
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    var left = rect.right + BUBBLE_GAP;
+    var top = rect.top + (rect.height - BUBBLE_SIZE) / 2;
+    if (left + BUBBLE_SIZE > vw - 8) left = rect.left - BUBBLE_SIZE - BUBBLE_GAP;
+    if (left < 8) left = 8;
+    if (top < 8) top = 8;
+    if (top + BUBBLE_SIZE > vh - 8) top = vh - BUBBLE_SIZE - 8;
+    btn.style.top = Math.round(top) + "px";
+    btn.style.left = Math.round(left) + "px";
+  }
+
   function showBubble(rect, onClick) {
-    hideBubble();
-    if (!rect) return;
-    var btn = document.createElement("button");
-    btn.type = "button";
-    btn.id = "note-comment-bubble";
-    btn.className = "note-comment-bubble";
-    btn.textContent = "Комментировать";
-    var top = Math.max(8, rect.bottom + 8);
-    var left = Math.max(8, Math.min(window.innerWidth - 180, rect.left));
-    btn.style.top = top + "px";
-    btn.style.left = left + "px";
-    btn.addEventListener("mousedown", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    });
-    btn.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
+    if (!rect) {
       hideBubble();
-      if (typeof onClick === "function") onClick();
-    });
-    document.body.appendChild(btn);
+      return;
+    }
+    var btn = document.getElementById("note-comment-bubble");
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.id = "note-comment-bubble";
+      btn.className = "note-comment-bubble";
+      btn.setAttribute("aria-label", "Комментировать");
+      btn.setAttribute("title", "Комментировать");
+      btn.innerHTML =
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+        '<path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z"/>' +
+        "</svg>";
+      function stopSel(e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      function activate(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (btn._fired) return;
+        btn._fired = true;
+        var fn = btn._onComment;
+        hideBubble();
+        if (typeof fn === "function") fn();
+      }
+      btn.addEventListener("pointerdown", stopSel);
+      btn.addEventListener("mousedown", stopSel);
+      btn.addEventListener("touchstart", stopSel, { passive: false });
+      btn.addEventListener("pointerup", activate);
+      btn.addEventListener("click", activate);
+      document.body.appendChild(btn);
+    }
+    btn._onComment = onClick;
+    btn._fired = false;
+    placeBubble(btn, rect);
   }
 
   function desiredTopFromRect(rect, listEl) {
@@ -367,6 +414,7 @@
     paintOverlay: paintOverlay,
     showBubble: showBubble,
     hideBubble: hideBubble,
+    isCommentBubbleEvent: isCommentBubbleEvent,
     alignCards: alignCards,
     alignCardsByAnchors: alignCardsByAnchors,
     collapseWs: collapseWs,

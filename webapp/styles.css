@@ -2920,18 +2920,30 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
 
 .note-comment-bubble {
   position: fixed;
-  z-index: 180;
-  min-height: 36px;
-  padding: 0.4rem 0.75rem;
+  z-index: 320;
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
-  border-radius: 999px;
+  border-radius: 50%;
   color: #fff;
   background: var(--accent);
-  font: inherit;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.note-comment-bubble svg {
+  display: block;
+  pointer-events: none;
 }
 
 .note-comment.is-active {

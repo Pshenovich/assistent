@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
+import time
 from typing import Any
 
-from assistant.board import store
-from assistant.board.meeting import MeetingService
-from assistant.board.share_source import share_body_to_text
+from assistant.board import llm as board_llm
+from assistant.board.context import load_prompt
+from assistant.board.share_source import resolve_company_share, share_body_to_text
 from assistant.stores import share_comments
 
 CHAIR_AUTHOR_ID = 0
@@ -15,25 +17,11 @@ CHAIR_AUTHOR_NAME = "CHAIR"
 CHAIR_AUTHOR_USERNAME = "PAIE"
 NOTE_BODY_LIMIT = 12_000
 COMMENT_LIMIT = 3900
+JOB_STALE_SEC = 8 * 60
+COMPANY_CTX_LIMIT = 3_500
 
 _jobs_lock = threading.Lock()
 _jobs: dict[str, dict[str, Any]] = {}
-
-
-class NullPublisher:
-    async def before_agent(self, meeting: dict[str, Any], agent: str) -> None:
-        return None
-
-    async def publish_text(
-        self, meeting: dict[str, Any], text: str, *, markup: Any = None
-    ) -> int | None:
-        return None
-
-    async def update_status(self, meeting: dict[str, Any], text: str) -> None:
-        return None
-
-    async def clear_status(self, meeting: dict[str, Any]) -> None:
-        return None
 
 
 def job_key(user_id: int | str, kind: str, item_id: str | int) -> str:
@@ -48,10 +36,13 @@ def get_job(user_id: int | str, kind: str, item_id: str | int) -> dict[str, Any]
 
 def begin_job(user_id: int | str, kind: str, item_id: str | int) -> tuple[dict[str, Any], bool]:
     key = job_key(user_id, kind, item_id)
+    now = time.time()
     with _jobs_lock:
         current = _jobs.get(key)
         if current and current.get("status") == "running":
-            return dict(current), False
+            started = float(current.get("started_at") or 0)
+            if not started or now - started < JOB_STALE_SEC:
+                return dict(current), False
         row = {
             "status": "running",
             "kind": kind,
@@ -59,6 +50,7 @@ def begin_job(user_id: int | str, kind: str, item_id: str | int) -> tuple[dict[s
             "error": None,
             "comment_id": None,
             "meeting_id": None,
+            "started_at": now,
         }
         _jobs[key] = row
         return dict(row), True
@@ -117,6 +109,16 @@ def format_chair_comment(payload: dict[str, Any]) -> str:
         lines.append("")
         lines.append("Не делать")
         lines.extend(f"• {x}" for x in dont[:4])
+    paei = payload.get("paei") if isinstance(payload.get("paei"), dict) else {}
+    takes = []
+    for letter in ("P", "A", "E", "I"):
+        take = str(paei.get(letter) or "").strip()
+        if take:
+            takes.append(f"{letter}: {take}")
+    if takes:
+        lines.append("")
+        lines.append("PAEI")
+        lines.extend(takes)
     conf = payload.get("confidence")
     if conf not in (None, ""):
         try:
@@ -160,6 +162,32 @@ def load_note_for_paei(user_id: int | str, kind: str, item_id: str | int) -> tup
     raise ValueError("Некорректный тип записи")
 
 
+def _company_excerpt() -> str:
+    try:
+        _url, doc, _err = resolve_company_share()
+    except Exception:
+        return ""
+    if not doc:
+        return ""
+    text = str(doc.get("text") or "").strip()
+    if not text:
+        return ""
+    if len(text) > COMPANY_CTX_LIMIT:
+        text = text[: COMPANY_CTX_LIMIT - 1] + "…"
+    return text
+
+
+def _build_user_prompt(title: str, body: str) -> str:
+    excerpt = (body or "").strip() or "(пустая заметка)"
+    if len(excerpt) > NOTE_BODY_LIMIT:
+        excerpt = excerpt[: NOTE_BODY_LIMIT - 1] + "…"
+    parts = [f"Заметка «{title}»", "", excerpt]
+    company = _company_excerpt()
+    if company:
+        parts.extend(["", "Контекст компании:", company])
+    return "\n".join(parts)
+
+
 async def run_note_paei(
     *,
     user_id: int,
@@ -167,30 +195,19 @@ async def run_note_paei(
     item_id: str | int,
     provider: Any | None = None,
 ) -> dict[str, Any]:
-    store.init_db()
     title, body = load_note_for_paei(user_id, kind, item_id)
-    excerpt = (body or "").strip() or "(пустая заметка)"
-    if len(excerpt) > NOTE_BODY_LIMIT:
-        excerpt = excerpt[: NOTE_BODY_LIMIT - 1] + "…"
-    question = (
-        f"Разбери заметку «{title}» как управленческий совет PAEI (P • A • E • I). "
-        "Сформулируй исполнимое решение CHAIR.\n\n"
-        f"{excerpt}"
+    user_prompt = _build_user_prompt(title, body)
+    payload = await asyncio.to_thread(
+        board_llm.generate_json,
+        system=load_prompt("NOTE_PAEI"),
+        user=user_prompt,
+        operation="board_note_paei",
+        temperature=0.2,
+        provider=provider,
     )
-    svc = MeetingService(publisher=NullPublisher(), provider=provider)
-    svc.followups = False
-    meeting = svc.start_meeting(
-        user_id=int(user_id),
-        chat_id=int(user_id),
-        question=question,
-        title=title[:80],
-        extra_instruction="Источник: заметка миниаппа Leo. Опирайся на текст заметки.",
-    )
-    saved = await svc.run(str(meeting["id"]))
-    if not saved:
-        row = store.get_meeting(str(meeting["id"])) or {}
-        raise RuntimeError(str(row.get("error_message") or "Совещание не дало решения"))
-    text = format_chair_comment(saved)
+    if not isinstance(payload, dict) or not str(payload.get("decision") or "").strip():
+        raise RuntimeError("PAIE не вернул решение")
+    text = format_chair_comment(payload)
     comment = share_comments.add_comment(
         user_id,
         kind,
@@ -201,11 +218,7 @@ async def run_note_paei(
         body=text,
         quote=title[:500],
     )
-    return {
-        "meeting_id": str(meeting["id"]),
-        "decision_id": saved.get("id"),
-        "comment": comment,
-    }
+    return {"comment": comment, "payload": payload}
 
 
 async def run_note_paei_job(user_id: int, kind: str, item_id: str | int) -> None:
@@ -216,7 +229,6 @@ async def run_note_paei_job(user_id: int, kind: str, item_id: str | int) -> None
         _update_job(
             key,
             status="done",
-            meeting_id=result.get("meeting_id"),
             comment_id=comment.get("id"),
             error=None,
         )

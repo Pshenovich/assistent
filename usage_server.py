@@ -4605,9 +4605,10 @@ async def miniapp_share_comments_delete(
 async def miniapp_note_paei_start(
     kind: str,
     item_id: str,
-    background_tasks: BackgroundTasks,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    import asyncio
+
     from assistant.board.note_paei import begin_job, run_note_paei_job
 
     uid = str(int(principal.telegram_user_id))
@@ -4615,8 +4616,8 @@ async def miniapp_note_paei_start(
         raise HTTPException(status_code=404, detail="Запись не найдена")
     job, started = begin_job(uid, kind, item_id)
     if started:
-        background_tasks.add_task(
-            run_note_paei_job, int(principal.telegram_user_id), kind, item_id
+        asyncio.create_task(
+            run_note_paei_job(int(principal.telegram_user_id), kind, item_id)
         )
     return {
         "ok": True,

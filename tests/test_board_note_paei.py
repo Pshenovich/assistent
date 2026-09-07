@@ -22,6 +22,18 @@ from assistant.board import store
 class _ScriptedProvider:
     def generate_json(self, *, system: str, user: str, operation: str, temperature: float = 0.4):
         del system, user, temperature
+        if operation == "board_note_paei":
+            return {
+                "problem": "Заметка про запуск",
+                "decision": "Запустить пилот на 2 недели, затем решить о масштабе.",
+                "why": ["мало данных для полного запуска"],
+                "actions": [{"action": "Собрать KPI пилота", "owner": "P", "deadline": "", "success_metric": ""}],
+                "kpis": ["конверсия"],
+                "risks": ["затянем решение"],
+                "do_not_do": ["масштабировать сразу"],
+                "confidence": 0.8,
+                "paei": {"P": "сначала метрика", "A": "риск хаоса", "E": "пилот", "I": "не пугать команду"},
+            }
         if operation == "board_analyze":
             return {
                 "problem": "Что делать с заметкой",
@@ -121,6 +133,16 @@ class NotePaeiTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Не масштабировать", text)
         self.assertIn("84%", text)
 
+    def test_format_includes_paei_takes(self) -> None:
+        text = format_chair_comment(
+            {
+                "decision": "Пилот",
+                "paei": {"P": "KPI сначала", "E": "эксперимент"},
+            }
+        )
+        self.assertIn("P: KPI сначала", text)
+        self.assertIn("E: эксперимент", text)
+
     def test_load_local_note(self) -> None:
         note = notes_store.create_note(7, "Продукты", "<p>Тариф Pro</p>")
         title, body = load_note_for_paei(7, "local", note["id"])
@@ -135,6 +157,18 @@ class NotePaeiTest(unittest.IsolatedAsyncioTestCase):
         second, started2 = begin_job(1, "local", 9)
         self.assertFalse(started2)
         self.assertEqual(get_job(1, "local", 9)["status"], "running")
+
+    def test_begin_job_restarts_stale(self) -> None:
+        first, started = begin_job(1, "local", 4)
+        self.assertTrue(started)
+        job = get_job(1, "local", 4)
+        assert job is not None
+        from assistant.board import note_paei as note_paei_mod
+
+        note_paei_mod._jobs[note_paei_mod.job_key(1, "local", 4)]["started_at"] = 1
+        again, started2 = begin_job(1, "local", 4)
+        self.assertTrue(started2)
+        self.assertEqual(again["status"], "running")
 
     async def test_run_writes_chair_comment(self) -> None:
         note = notes_store.create_note(3, "Запуск", "Хотим сразу масштабировать отдел продаж.")

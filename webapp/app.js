@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260907-paie-menu";
+  var WEBAPP_BUILD = "20260907-paie-fast";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260907-paie-menu";
+  const NOTE_EDITOR_ASSET_V = "20260907-paie-fast";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -6322,12 +6322,12 @@
           var status = (data && data.status) || "idle";
           if (status === "running") {
             tries += 1;
-            if (tries > 90) {
+            if (tries > 50) {
               live._paeiRunning = false;
               setNotePaeiStatus("PAIE всё ещё работает. Обновите заметку чуть позже.");
               return;
             }
-            setTimeout(tick, 4000);
+            setTimeout(tick, 3000);
             return;
           }
           live._paeiRunning = false;
@@ -6351,7 +6351,7 @@
             setNotePaeiStatus(e.message || "Не удалось проверить статус PAIE");
             return;
           }
-          setTimeout(tick, 4000);
+          setTimeout(tick, 3000);
         });
     }
     setTimeout(tick, 2500);
@@ -6363,7 +6363,7 @@
     if (!wrap || !path || wrap._paeiRunning) return;
     wrap._paeiRunning = true;
     syncNoteCommentsPanel();
-    setNotePaeiStatus("PAIE разбирает заметку… это может занять пару минут.");
+    setNotePaeiStatus("PAIE разбирает заметку…");
     apiFetch(path, { method: "POST" })
       .then(function (data) {
         var status = (data && data.status) || "running";
@@ -6759,7 +6759,8 @@
     if (!api || panel._commentSelectBound) return;
     panel._commentSelectBound = true;
     var draft = null;
-    function onSelect() {
+    function onSelect(e) {
+      if (e && api.isCommentBubbleEvent && api.isCommentBubbleEvent(e)) return;
       var root = noteEditorCommentRoot();
       var sel = api.selectionAnchor(root);
       if (!sel || !sel.quote) {
@@ -6776,23 +6777,29 @@
         if (form) {
           form.classList.remove("hidden");
           form._draft = draft;
+          if (form.scrollIntoView) form.scrollIntoView({ block: "nearest", behavior: "smooth" });
         }
-        if (input) input.focus();
+        if (input) {
+          try {
+            input.focus();
+          } catch (_) {}
+        }
       });
     }
     function onDocMouseDown(e) {
-      var bubble = document.getElementById("note-comment-bubble");
-      if (bubble && bubble.contains(e.target)) return;
+      if (api.isCommentBubbleEvent && api.isCommentBubbleEvent(e)) return;
       api.hideBubble();
     }
     var scrollParent = document.querySelector("#note-editor-overlay .note-editor-modal-body");
     document.addEventListener("mouseup", onSelect);
+    document.addEventListener("pointerup", onSelect);
     document.addEventListener("keyup", onSelect);
     document.addEventListener("mousedown", onDocMouseDown);
     if (scrollParent) scrollParent.addEventListener("scroll", refreshNoteCommentAnchors, { passive: true });
     window.addEventListener("resize", refreshNoteCommentAnchors);
     panel._commentSelectUnbind = function () {
       document.removeEventListener("mouseup", onSelect);
+      document.removeEventListener("pointerup", onSelect);
       document.removeEventListener("keyup", onSelect);
       document.removeEventListener("mousedown", onDocMouseDown);
       if (scrollParent) scrollParent.removeEventListener("scroll", refreshNoteCommentAnchors);

@@ -222,6 +222,7 @@ if [[ -f .env ]]; then
   grep -q '^TELEGRAM_BOT_MAX_DOWNLOAD_MB=' .env || echo 'TELEGRAM_BOT_MAX_DOWNLOAD_MB=500' >> .env
   grep -q '^TELEGRAM_LOCAL_BOT_API_MAX_DOWNLOAD_MB=' .env || echo 'TELEGRAM_LOCAL_BOT_API_MAX_DOWNLOAD_MB=500' >> .env
   grep -q '^BITRIX_MCP_URL=' .env || echo 'BITRIX_MCP_URL=https://mcp.bitrix24.tech/mcp/' >> .env
+  grep -q '^OPENROUTER_MODEL_BOARD=' .env || echo 'OPENROUTER_MODEL_BOARD=google/gemini-2.5-flash' >> .env
 fi
 
 PYTHON_BIN=""
