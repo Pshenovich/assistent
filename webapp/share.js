@@ -95,6 +95,38 @@
     return id;
   }
 
+  function appendShareDiscussionToc() {
+    var toc = document.getElementById("share-toc");
+    var list = document.getElementById("share-toc-list");
+    var wrap = document.querySelector(".wrap");
+    var thread = document.getElementById("share-paie-thread");
+    if (!toc || !list) return;
+    var prev = list.querySelector("[data-toc-discussion]");
+    if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
+    var hasThread = !!(thread && !thread.classList.contains("hidden"));
+    if (hasThread) {
+      var link = document.createElement("a");
+      link.className = "share-toc-link share-toc-link--level-1";
+      link.setAttribute("data-toc-discussion", "1");
+      link.href = "#share-paie-thread";
+      link.textContent = "Обсуждение";
+      link.addEventListener("click", function (e) {
+        e.preventDefault();
+        if (thread && thread.scrollIntoView) {
+          thread.scrollIntoView({ block: "start", behavior: "smooth" });
+        }
+      });
+      list.appendChild(link);
+    }
+    if (!list.children.length) {
+      toc.classList.add("hidden");
+      if (wrap) wrap.classList.remove("has-toc");
+      return;
+    }
+    toc.classList.remove("hidden");
+    if (wrap) wrap.classList.add("has-toc");
+  }
+
   function buildShareToc(bodyEl) {
     var toc = document.getElementById("share-toc");
     var list = document.getElementById("share-toc-list");
@@ -106,11 +138,6 @@
     ).filter(function (el) {
       return String(el.textContent || "").trim();
     });
-    if (!headings.length) {
-      toc.classList.add("hidden");
-      if (wrap) wrap.classList.remove("has-toc");
-      return;
-    }
     headings.forEach(function (heading, index) {
       var id = ensureHeadingId(heading, index);
       var link = document.createElement("a");
@@ -126,6 +153,12 @@
       });
       list.appendChild(link);
     });
+    appendShareDiscussionToc();
+    if (!list.children.length) {
+      toc.classList.add("hidden");
+      if (wrap) wrap.classList.remove("has-toc");
+      return;
+    }
     toc.classList.remove("hidden");
     if (wrap) wrap.classList.add("has-toc");
 
@@ -399,6 +432,14 @@
       span.addEventListener("click", function (e) {
         e.preventDefault();
         var id = span.getAttribute("data-comment-id");
+        var found = null;
+        (commentsState.list || []).forEach(function (c) {
+          if (c && String(c.id) === String(id)) found = c;
+        });
+        if (api.isMobileCommentsLayout && api.isMobileCommentsLayout()) {
+          if (found && api.showCommentSheet) api.showCommentSheet(found);
+          return;
+        }
         setActiveComment(id);
         paintShareHighlights(id);
         var card = list && list.querySelector('[data-comment-id="' + id + '"]');
@@ -563,6 +604,7 @@
       list.appendChild(renderCommentCard(c));
     });
     renderSharePaieThread(thread);
+    appendShareDiscussionToc();
     var title = document.querySelector("#share-comments .share-comments-title");
     if (title) title.classList.add("hidden");
     if (rail) rail.classList.toggle("hidden", !anchored.length);

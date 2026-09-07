@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260907-comment-anchor">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260907-kb-discuss">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -43,8 +43,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20260907-comment-anchor" />
-  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260907-comment-anchor" as="script" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20260907-kb-discuss" />
+  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260907-kb-discuss" as="script" />
   <!-- Same-origin, async: не блокирует парсер, если сеть/VPN тормозит. -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" async></script>
 </head>
@@ -192,6 +192,14 @@
         </div>
       </section>
 
+      <section id="panel-knowledge" class="panel hidden" role="tabpanel" hidden>
+        <div class="profile-head">
+          <h1>База знаний</h1>
+          <p class="muted">Контекст о компании для ответов PAIE</p>
+        </div>
+        <button type="button" class="btn" id="knowledge-open-note">Открыть базу знаний</button>
+      </section>
+
       <!-- Профиль -->
       <section id="panel-profile" class="panel hidden" role="tabpanel" hidden>
         <div id="profile-main">
@@ -253,7 +261,7 @@
               </div>
               <div>
                 <p class="expenses-label">База знаний</p>
-                <p class="expenses-total contacts-card-sub" id="profile-knowledge-base-hint">Корпоративные документы</p>
+                <p class="expenses-total contacts-card-sub" id="profile-knowledge-base-hint">Заметка о компании для PAIE</p>
               </div>
             </div>
             <span class="chevron">›</span>
@@ -833,6 +841,15 @@
           </span>
           <span class="tabbar-label">Сохранённое</span>
         </button>
+        <button type="button" class="tabbar-btn tabbar-btn--knowledge" data-tab="knowledge" role="tab" aria-selected="false">
+          <span class="tabbar-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+          </span>
+          <span class="tabbar-label">База знаний</span>
+        </button>
         <button type="button" class="tabbar-btn" data-tab="profile" role="tab" aria-selected="false">
           <span class="tabbar-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1028,14 +1045,14 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20260907-comment-anchor"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20260907-kb-discuss"><\/script>'
         );
       }
     })();
   </script>
-  <script src="/webapp/note-html.js?v=20260907-comment-anchor" defer></script>
-  <script src="/webapp/note-comments.js?v=20260907-comment-anchor" defer></script>
-  <script src="/webapp/note-rich-editor.js?v=20260907-comment-anchor" defer></script>
-  <script src="/webapp/app.js?v=20260907-comment-anchor" defer></script>
+  <script src="/webapp/note-html.js?v=20260907-kb-discuss" defer></script>
+  <script src="/webapp/note-comments.js?v=20260907-kb-discuss" defer></script>
+  <script src="/webapp/note-rich-editor.js?v=20260907-kb-discuss" defer></script>
+  <script src="/webapp/app.js?v=20260907-kb-discuss" defer></script>
 </body>
 </html>

@@ -177,7 +177,8 @@ class MeetingService:
             store.set_meeting_status(meeting_id, "ANALYZING")
             self._emit_progress(meeting_id, phase="ANALYZING")
             company_pack = load_company_pack(
-                str(meeting["company_id"]) if meeting.get("company_id") else None
+                str(meeting["company_id"]) if meeting.get("company_id") else None,
+                user_id=meeting.get("user_id"),
             )
             company_brief = format_company_context(
                 company_pack, query=str(meeting.get("original_question") or "")

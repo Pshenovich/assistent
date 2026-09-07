@@ -13,9 +13,53 @@ def _fmt_company(ctx: dict[str, Any] | None, *, query: str = "") -> str:
     return format_company_context(ctx, query=query)
 
 
-def load_company_pack(company_id: str | None) -> dict[str, Any] | None:
+def load_company_pack(
+    company_id: str | None, *, user_id: int | str | None = None
+) -> dict[str, Any] | None:
     pack = store.get_company_pack(str(company_id)) if company_id else None
-    return attach_live_share(pack)
+    pack = attach_live_share(pack)
+    return attach_knowledge_note(pack, user_id)
+
+
+def attach_knowledge_note(
+    pack: dict[str, Any] | None, user_id: int | str | None
+) -> dict[str, Any] | None:
+    if user_id in (None, "", 0, "0"):
+        return pack
+    from assistant.board.share_source import share_body_to_text
+    from assistant.stores import notes as notes_store
+
+    try:
+        note = notes_store.get_knowledge_note(user_id)
+    except Exception:
+        return pack
+    if not note:
+        return pack
+    html = str(note.get("body") or "")
+    text = share_body_to_text(html).strip()
+    if not text:
+        return pack
+    title = str(note.get("title") or "База знаний").strip() or "База знаний"
+    live_doc = {
+        "filename": title,
+        "kind": "knowledge",
+        "text": text,
+    }
+    out = dict(pack or {})
+    docs = [live_doc] + [
+        d
+        for d in (out.get("_documents") or [])
+        if isinstance(d, dict) and d.get("kind") not in {"live", "knowledge"}
+    ]
+    out["_documents"] = docs
+    out["_live_share"] = {
+        "title": title,
+        "text": text,
+        "html": html,
+        "updated_at": note.get("updated_at"),
+    }
+    out.pop("_live_share_error", None)
+    return out
 
 
 def attach_live_share(pack: dict[str, Any] | None) -> dict[str, Any] | None:

@@ -4403,6 +4403,17 @@ async def miniapp_journal_pdf(
     }
 
 
+@miniapp_router.get("/notes/knowledge")
+async def miniapp_knowledge_note(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    note = await run_in_threadpool(notes_store.ensure_knowledge_note, uid)
+    return {"note": note}
+
+
 @miniapp_router.post("/notes/local")
 async def miniapp_local_note_create(
     body: _MiniappLocalNoteCreate,
@@ -4480,6 +4491,8 @@ async def miniapp_local_note_delete(
     uid = int(principal.telegram_user_id)
 
     def _run() -> bool:
+        if notes_store.is_knowledge_note(uid, note_id):
+            return False
         return notes_store.delete_note(uid, note_id)
 
     ok = await run_in_threadpool(_run)

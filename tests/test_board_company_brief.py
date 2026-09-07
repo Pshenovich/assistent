@@ -136,3 +136,26 @@ class CompanyBriefTest(unittest.TestCase):
         self.assertNotIn("Прошивка", ctx["text"])
         store.reset_connection()
         tmp.cleanup()
+
+    def test_knowledge_note_becomes_company_context(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from assistant.board.context import attach_knowledge_note
+        from assistant.stores import notes as notes_store
+
+        tmp = tempfile.TemporaryDirectory()
+        os.environ["NOTES_DB_PATH"] = str(Path(tmp.name) / "notes.sqlite")
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        kb = notes_store.ensure_knowledge_note(11)
+        notes_store.update_note(
+            11, kb["id"], body="<h2>Боты</h2><p>Диалог стоит 10 рублей</p>"
+        )
+        pack = attach_knowledge_note(None, 11)
+        self.assertIsNotNone(pack)
+        self.assertEqual(pack["_documents"][0]["kind"], "knowledge")
+        text = format_company_context(pack, query="сколько стоит диалог бота")
+        self.assertIn("база знаний", text.lower())
+        self.assertIn("Боты", text)
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        tmp.cleanup()

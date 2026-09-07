@@ -25,6 +25,19 @@ class NotesStoreTests(unittest.TestCase):
         self.assertEqual(updated["title"], "New")
         self.assertTrue(notes_store.delete_note(42, n["id"]))
 
+    def test_knowledge_note_is_singleton_and_hidden(self) -> None:
+        kb = notes_store.ensure_knowledge_note(9)
+        self.assertEqual(kb["title"], "База знаний")
+        self.assertTrue(kb["is_knowledge"])
+        again = notes_store.ensure_knowledge_note(9)
+        self.assertEqual(kb["id"], again["id"])
+        notes_store.create_note(9, "Обычная", "текст")
+        listed = notes_store.list_notes(9)
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["title"], "Обычная")
+        self.assertFalse(notes_store.delete_note(9, kb["id"]))
+        self.assertIsNotNone(notes_store.get_knowledge_note(9))
+
     def test_search(self) -> None:
         notes_store.create_note(7, "Филиалы в Куркино", "Адрес и режим работы")
         notes_store.create_note(7, "Другое", "Про встречи")

@@ -52,8 +52,25 @@ def _conn() -> sqlite3.Connection:
     _CONN.execute(
         "CREATE INDEX IF NOT EXISTS idx_local_notes_user ON local_notes(user_id)"
     )
+    _ensure_role_column(_CONN)
     _CONN.commit()
     return _CONN
+
+
+KNOWLEDGE_ROLE = "knowledge"
+KNOWLEDGE_TITLE = "База знаний"
+
+
+def _ensure_role_column(conn: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(local_notes)")}
+    if "role" not in cols:
+        conn.execute(
+            "ALTER TABLE local_notes ADD COLUMN role TEXT NOT NULL DEFAULT ''"
+        )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_local_notes_user_role "
+        "ON local_notes(user_id, role)"
+    )
 
 
 def _now_iso() -> str:
@@ -65,6 +82,11 @@ def _plain_note_text(html: str) -> str:
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    role = ""
+    try:
+        role = str(row["role"] or "")
+    except (IndexError, KeyError):
+        role = ""
     return {
         "id": int(row["id"]),
         "title": str(row["title"] or ""),
@@ -75,6 +97,8 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "source": "local",
+        "role": role,
+        "is_knowledge": role == KNOWLEDGE_ROLE,
     }
 
 
@@ -111,19 +135,28 @@ def search_notes(
     return [n for _, _, n in scored[:lim]]
 
 
-def list_notes(user_id: int | str, *, limit: int = 200) -> list[dict[str, Any]]:
+def list_notes(
+    user_id: int | str, *, limit: int = 200, include_knowledge: bool = False
+) -> list[dict[str, Any]]:
     uid = str(int(user_id))
     lim = max(1, min(int(limit), 500))
-    with _LOCK:
-        cur = _conn().execute(
-            """
+    sql = """
             SELECT * FROM local_notes
             WHERE user_id = ?
             ORDER BY updated_at DESC
             LIMIT ?
-            """,
-            (uid, lim),
-        )
+            """
+    params: tuple[Any, ...] = (uid, lim)
+    if not include_knowledge:
+        sql = """
+            SELECT * FROM local_notes
+            WHERE user_id = ? AND IFNULL(role, '') != ?
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """
+        params = (uid, KNOWLEDGE_ROLE, lim)
+    with _LOCK:
+        cur = _conn().execute(sql, params)
         return [_row_to_dict(r) for r in cur.fetchall()]
 
 
@@ -144,18 +177,20 @@ def create_note(
     body: str = "",
     *,
     todoist_id: Optional[str] = None,
+    role: str = "",
 ) -> dict[str, Any]:
     uid = str(int(user_id))
     title = (title or "").strip() or "(без названия)"
     body = (body or "").strip()
+    note_role = (role or "").strip()
     ts = _now_iso()
     with _LOCK:
         cur = _conn().execute(
             """
-            INSERT INTO local_notes (user_id, title, body, todoist_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO local_notes (user_id, title, body, todoist_id, created_at, updated_at, role)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (uid, title, body, todoist_id, ts, ts),
+            (uid, title, body, todoist_id, ts, ts, note_role),
         )
         _conn().commit()
         nid = int(cur.lastrowid)
@@ -196,8 +231,38 @@ def update_note(
     return get_note(uid, note_id)
 
 
+def is_knowledge_note(user_id: int | str, note_id: int) -> bool:
+    row = get_note(user_id, note_id)
+    return bool(row and row.get("is_knowledge"))
+
+
+def get_knowledge_note(user_id: int | str) -> Optional[dict[str, Any]]:
+    uid = str(int(user_id))
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            SELECT * FROM local_notes
+            WHERE user_id = ? AND role = ?
+            ORDER BY id ASC
+            LIMIT 1
+            """,
+            (uid, KNOWLEDGE_ROLE),
+        )
+        row = cur.fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def ensure_knowledge_note(user_id: int | str) -> dict[str, Any]:
+    existing = get_knowledge_note(user_id)
+    if existing:
+        return existing
+    return create_note(user_id, KNOWLEDGE_TITLE, "", role=KNOWLEDGE_ROLE)
+
+
 def delete_note(user_id: int | str, note_id: int) -> bool:
     uid = str(int(user_id))
+    if is_knowledge_note(uid, note_id):
+        return False
     with _LOCK:
         cur = _conn().execute(
             "DELETE FROM local_notes WHERE user_id = ? AND id = ?",

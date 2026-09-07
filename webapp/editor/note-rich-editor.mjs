@@ -846,6 +846,8 @@ function gotoEditorHeading(editor, pos, scrollParent) {
 function mountToc(tocEl, editor, options) {
   if (!tocEl || !editor) return function () {};
   options = options || {};
+  var extraItems =
+    typeof options.extraTocItems === "function" ? options.extraTocItems : null;
   var onNavigate =
     typeof options.onTocNavigate === "function" ? options.onTocNavigate : function () {};
   var scrollParent = options.scrollParent || null;
@@ -855,14 +857,6 @@ function mountToc(tocEl, editor, options) {
     var selectionPos = editor.state && editor.state.selection ? editor.state.selection.from : 0;
     var activePos = activeHeadingPos(headings, selectionPos);
     tocEl.innerHTML = "";
-
-    if (!headings.length) {
-      var empty = document.createElement("p");
-      empty.className = "note-editor-toc-empty";
-      empty.textContent = "Добавьте заголовки, чтобы увидеть оглавление.";
-      tocEl.appendChild(empty);
-      return;
-    }
 
     headings.forEach(function (item) {
       var btn = document.createElement("button");
@@ -879,7 +873,16 @@ function mountToc(tocEl, editor, options) {
       });
       tocEl.appendChild(btn);
     });
+    if (extraItems) extraItems(tocEl);
+    if (!tocEl.children.length) {
+      var empty = document.createElement("p");
+      empty.className = "note-editor-toc-empty";
+      empty.textContent = "Добавьте заголовки, чтобы увидеть оглавление.";
+      tocEl.appendChild(empty);
+    }
   }
+
+  tocEl._refreshToc = renderToc;
 
   editor.on("transaction", renderToc);
   editor.on("selectionUpdate", renderToc);
@@ -1334,6 +1337,7 @@ function mount(container, options) {
   var cleanupToc = mountToc(options.tocParent, editor, {
     onTocNavigate: options.onTocNavigate,
     scrollParent: options.scrollParent,
+    extraTocItems: options.extraTocItems,
   });
 
   function bindTapFocus(container) {

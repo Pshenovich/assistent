@@ -507,8 +507,124 @@
       if (c && c.id) skip[String(c.id)] = true;
     });
     return (comments || []).filter(function (c) {
-      return c && c.id && !skip[String(c.id)];
+      return c && c.id && !skip[String(c.id)] && String(c.quote || "").trim();
     });
+  }
+
+  function generalComments(comments) {
+    var skip = {};
+    paieThread(comments).forEach(function (c) {
+      if (c && c.id) skip[String(c.id)] = true;
+    });
+    gptThread(comments).forEach(function (c) {
+      if (c && c.id) skip[String(c.id)] = true;
+    });
+    return (comments || []).filter(function (c) {
+      return c && c.id && !skip[String(c.id)] && !String(c.quote || "").trim();
+    });
+  }
+
+  function hasDiscussion(comments) {
+    if (paieThread(comments).length) return true;
+    if (gptThread(comments).length) return true;
+    if (generalComments(comments).length) return true;
+    return false;
+  }
+
+  function isMobileCommentsLayout() {
+    return !isDesktopCommentsLayout();
+  }
+
+  function bindOverlayClicks(overlay, onPick) {
+    if (!overlay || typeof onPick !== "function") return;
+    overlay.querySelectorAll(".note-comment-overlay-hl").forEach(function (span) {
+      span.style.pointerEvents = "auto";
+      span.style.cursor = "pointer";
+      span.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        onPick(span.getAttribute("data-comment-id"));
+      });
+    });
+  }
+
+  function commentSheetRoot() {
+    var el = document.getElementById("note-comment-sheet");
+    if (el) return el;
+    el = document.createElement("div");
+    el.id = "note-comment-sheet";
+    el.className = "note-comment-sheet hidden";
+    el.setAttribute("aria-hidden", "true");
+    el.innerHTML =
+      '<div class="note-comment-sheet-backdrop" data-sheet-dismiss="1"></div>' +
+      '<div class="note-comment-sheet-panel" role="dialog" aria-modal="true" aria-label="Комментарий">' +
+      '<div class="note-comment-sheet-handle"></div>' +
+      '<button type="button" class="note-comment-sheet-close" data-sheet-dismiss="1">Закрыть</button>' +
+      '<div class="note-comment-sheet-body"></div>' +
+      "</div>";
+    document.body.appendChild(el);
+    el.addEventListener("click", function (e) {
+      var t = e.target;
+      if (t && t.getAttribute && t.getAttribute("data-sheet-dismiss")) hideCommentSheet();
+    });
+    return el;
+  }
+
+  function hideCommentSheet() {
+    var el = document.getElementById("note-comment-sheet");
+    if (!el) return;
+    el.classList.add("hidden");
+    el.setAttribute("aria-hidden", "true");
+    var body = el.querySelector(".note-comment-sheet-body");
+    if (body) body.innerHTML = "";
+  }
+
+  function showCommentSheet(comment) {
+    if (!comment) return;
+    var el = commentSheetRoot();
+    var body = el.querySelector(".note-comment-sheet-body");
+    if (!body) return;
+    body.innerHTML = "";
+    var card = document.createElement("article");
+    card.className = "note-comment note-comment-sheet-card";
+    if (comment.quote) {
+      var q = document.createElement("p");
+      q.className = "share-comment-quote";
+      q.textContent = "«" + String(comment.quote) + "»";
+      card.appendChild(q);
+    }
+    var head = document.createElement("div");
+    head.className = "note-comment-head";
+    var who = document.createElement("strong");
+    who.textContent = String(comment.author_name || "Пользователь");
+    var uname = String(comment.author_username || "").trim();
+    if (uname && who.textContent.toLowerCase().indexOf("@" + uname.toLowerCase()) < 0) {
+      who.textContent += " · @" + uname;
+    }
+    var when = document.createElement("time");
+    var whenText = String(comment.created_at || "");
+    try {
+      var d = new Date(comment.created_at);
+      if (!isNaN(d.getTime())) {
+        whenText = d.toLocaleString("ru-RU", {
+          day: "numeric",
+          month: "short",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
+    } catch (_) {}
+    when.textContent = whenText;
+    head.appendChild(who);
+    head.appendChild(when);
+    var p = document.createElement("p");
+    p.className = "note-comment-body";
+    p.textContent = String(comment.body || "");
+    card.appendChild(head);
+    card.appendChild(p);
+    body.appendChild(card);
+    el.classList.remove("hidden");
+    el.setAttribute("aria-hidden", "false");
   }
 
   function paieThreadGroups(comments) {
@@ -567,6 +683,12 @@
     paieThreadGroups: paieThreadGroups,
     paieThreadRootId: paieThreadRootId,
     gptThread: gptThread,
+    generalComments: generalComments,
+    hasDiscussion: hasDiscussion,
     selectionComments: selectionComments,
+    isMobileCommentsLayout: isMobileCommentsLayout,
+    bindOverlayClicks: bindOverlayClicks,
+    showCommentSheet: showCommentSheet,
+    hideCommentSheet: hideCommentSheet,
   };
 })(window);

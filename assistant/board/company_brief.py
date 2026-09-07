@@ -230,7 +230,7 @@ def pack_sections(pack: dict[str, Any] | None) -> list[dict[str, str]]:
         name = str(doc.get("filename") or "Документ")
         updated = ""
         html = ""
-        if doc.get("kind") == "live" and live:
+        if doc.get("kind") in {"live", "knowledge"} and live:
             updated = str(live.get("updated_at") or "")
             html = str(live.get("html") or "")
         out.extend(
@@ -340,7 +340,11 @@ def format_company_context(
         return "(пусто)"
 
     budget = ctx_char_budget()
-    header_bits = ["КОМПАНИЯ (живой документ)"]
+    is_kb = any(
+        isinstance(d, dict) and d.get("kind") == "knowledge"
+        for d in (pack.get("_documents") or [])
+    )
+    header_bits = ["КОМПАНИЯ (база знаний)" if is_kb else "КОМПАНИЯ (живой документ)"]
     if title:
         header_bits.append(f"«{title}»")
     if updated:
