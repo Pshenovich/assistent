@@ -49,9 +49,10 @@ def gpt_openrouter_answer_with_context(
     context: str,
     *,
     history: list[dict[str, str]] | None = None,
+    model: str | None = None,
 ) -> dict:
     del history
-    answer = nlu_llm.answer_with_context(question, context)
+    answer = nlu_llm.answer_with_context(question, context, model=model)
     return {"answer": answer, "bullets": []}
 
 

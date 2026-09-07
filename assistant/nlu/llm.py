@@ -299,9 +299,9 @@ def format_note(text: str) -> dict[str, str] | None:
     return {"title": title}
 
 
-def answer_with_context(question: str, context: str) -> str:
+def answer_with_context(question: str, context: str, model: str | None = None) -> str:
     user = f"Контекст:\n{context[:12000]}\n\nВопрос:\n{question}"
-    return _chat(ASK_SYSTEM, user, operation="ask", model=_model_ask())
+    return _chat(ASK_SYSTEM, user, operation="ask", model=model or _model_ask())
 
 
 def parse_journal_qa_query(

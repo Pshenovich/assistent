@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260907-kb-discuss";
+  var WEBAPP_BUILD = "20260907-composer";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260907-kb-discuss";
+  const NOTE_EDITOR_ASSET_V = "20260907-composer";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -6332,6 +6332,284 @@
     });
   }
 
+  var GPT_MODEL_LS = "leo_gpt_model";
+  var gptModelsState = { loaded: false, loading: false, models: [], defaultId: "" };
+
+  function noteComposerAsset(name) {
+    return "/webapp/icons/" + name + ".svg?v=" + WEBAPP_BUILD;
+  }
+
+  function noteAskModeLabel(mode) {
+    if (mode === "gpt") return "GPT";
+    if (mode === "comment") return "Текст";
+    return "PAIE";
+  }
+
+  function noteAskPlaceholder(mode) {
+    if (mode === "gpt") return "Свободный запрос к GPT по заметке";
+    if (mode === "comment") return "Введите текст заметки";
+    return "Уточнение или новая информация — CHAIR ответит";
+  }
+
+  function notePaieReplyFormHtml() {
+    var arrow = noteComposerAsset("arrow-up-right");
+    var chevronFill = noteComposerAsset("chevron-up-on-fill");
+    var chevronMuted = noteComposerAsset("chevron-up-muted");
+    return (
+      '<form id="note-paie-reply-form" class="note-paie-reply-form">' +
+      '<textarea id="note-paie-reply-input" class="note-paie-composer-input" rows="2" maxlength="4000" placeholder="' +
+      noteAskPlaceholder("paie") +
+      '"></textarea>' +
+      '<div class="note-paie-composer-bar">' +
+      '<div class="note-paie-composer-left">' +
+      '<div class="note-paie-mode-switch" role="tablist" aria-label="Режим">' +
+      '<button type="button" class="note-paie-mode is-active" data-mode="paie">PAIE</button>' +
+      '<button type="button" class="note-paie-mode" data-mode="gpt">GPT</button>' +
+      '<button type="button" class="note-paie-mode" data-mode="comment">Текст</button>' +
+      "</div>" +
+      '<button type="button" class="note-paie-mode-compact" aria-haspopup="listbox" aria-expanded="false">' +
+      '<span class="note-paie-mode-compact-label">PAIE</span>' +
+      '<img class="note-paie-chevron" src="' +
+      chevronFill +
+      '" alt="" width="24" height="24">' +
+      "</button>" +
+      '<div class="note-paie-menu note-paie-mode-menu hidden" role="listbox">' +
+      '<button type="button" class="note-paie-menu-item is-active" data-mode="paie">PAIE</button>' +
+      '<button type="button" class="note-paie-menu-item" data-mode="gpt">GPT</button>' +
+      '<button type="button" class="note-paie-menu-item" data-mode="comment">Текст</button>' +
+      "</div>" +
+      '<button type="button" class="note-paie-model-btn" aria-haspopup="listbox" aria-expanded="false">' +
+      '<span class="note-paie-model-label">Модель</span>' +
+      '<img class="note-paie-chevron" src="' +
+      chevronMuted +
+      '" alt="" width="24" height="24">' +
+      "</button>" +
+      '<div class="note-paie-menu note-paie-menu--models hidden">' +
+      '<input type="search" class="note-paie-model-search" placeholder="Поиск модели" autocomplete="off">' +
+      '<div class="note-paie-menu-list"></div>' +
+      "</div></div>" +
+      '<button type="submit" class="note-paie-send" id="note-paie-reply-submit" disabled aria-label="Отправить">' +
+      '<img class="note-paie-send-icon" src="' +
+      arrow +
+      '" alt="" width="24" height="24">' +
+      "</button></div></form>"
+    );
+  }
+
+  function selectedGptModelId() {
+    try {
+      var stored = String(localStorage.getItem(GPT_MODEL_LS) || "").trim();
+      if (stored) return stored;
+    } catch (_) {}
+    return gptModelsState.defaultId || "";
+  }
+
+  function setSelectedGptModelId(id) {
+    var next = String(id || "").trim();
+    try {
+      if (next) localStorage.setItem(GPT_MODEL_LS, next);
+    } catch (_) {}
+    syncGptModelButton();
+  }
+
+  function gptModelShortName(id) {
+    var found = gptModelsState.models.find(function (m) {
+      return m.id === id;
+    });
+    if (found && found.name) return found.name;
+    var raw = String(id || "");
+    if (!raw) return "Модель";
+    return raw.split("/").pop() || raw;
+  }
+
+  function closeNoteComposerMenus(except) {
+    var form = document.getElementById("note-paie-reply-form");
+    if (!form) return;
+    form.querySelectorAll(".note-paie-menu").forEach(function (menu) {
+      if (except && menu === except) return;
+      menu.classList.add("hidden");
+    });
+    form.querySelectorAll(".note-paie-mode-compact, .note-paie-model-btn").forEach(function (btn) {
+      btn.classList.remove("is-open");
+      btn.setAttribute("aria-expanded", "false");
+    });
+  }
+
+  function renderGptModelMenu(query) {
+    var form = document.getElementById("note-paie-reply-form");
+    var list = form && form.querySelector(".note-paie-menu--models .note-paie-menu-list");
+    if (!list) return;
+    var q = String(query || "").trim().toLowerCase();
+    var selected = selectedGptModelId();
+    var rows = gptModelsState.models.filter(function (m) {
+      if (!q) return true;
+      return (
+        String(m.name || "").toLowerCase().indexOf(q) >= 0 ||
+        String(m.id || "").toLowerCase().indexOf(q) >= 0
+      );
+    });
+    list.innerHTML = "";
+    if (!rows.length) {
+      var empty = document.createElement("p");
+      empty.className = "note-paie-menu-empty";
+      empty.textContent = gptModelsState.loading ? "Загрузка…" : "Нет моделей";
+      list.appendChild(empty);
+      return;
+    }
+    rows.forEach(function (m) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "note-paie-menu-item" + (m.id === selected ? " is-active" : "");
+      btn.setAttribute("data-model-id", m.id);
+      btn.textContent = m.name || m.id;
+      btn.title = m.id;
+      btn.addEventListener("click", function () {
+        setSelectedGptModelId(m.id);
+        closeNoteComposerMenus();
+      });
+      list.appendChild(btn);
+    });
+  }
+
+  function syncGptModelButton() {
+    var form = document.getElementById("note-paie-reply-form");
+    var label = form && form.querySelector(".note-paie-model-label");
+    if (label) label.textContent = gptModelShortName(selectedGptModelId());
+  }
+
+  async function loadGptModels() {
+    if (gptModelsState.loaded || gptModelsState.loading) {
+      syncGptModelButton();
+      renderGptModelMenu();
+      return;
+    }
+    gptModelsState.loading = true;
+    renderGptModelMenu();
+    try {
+      var res = await apiFetch("/gpt/models");
+      gptModelsState.models = Array.isArray(res && res.models) ? res.models : [];
+      gptModelsState.defaultId = String((res && res.default) || "").trim();
+      gptModelsState.loaded = true;
+      var current = selectedGptModelId();
+      if (!current && gptModelsState.defaultId) {
+        setSelectedGptModelId(gptModelsState.defaultId);
+      }
+    } catch (_) {
+      gptModelsState.models = gptModelsState.defaultId
+        ? [{ id: gptModelsState.defaultId, name: gptModelShortName(gptModelsState.defaultId) }]
+        : [];
+    } finally {
+      gptModelsState.loading = false;
+      syncGptModelButton();
+      renderGptModelMenu();
+    }
+  }
+
+  function autosizeNoteComposer(el) {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 136) + "px";
+  }
+
+  function bindNotePaieReplyForm(threadEl) {
+    var form = document.getElementById("note-paie-reply-form");
+    if (!form || !form.querySelector(".note-paie-send")) {
+      var html = notePaieReplyFormHtml();
+      if (form) form.outerHTML = html;
+      else if (threadEl) threadEl.insertAdjacentHTML("beforeend", html);
+      form = document.getElementById("note-paie-reply-form");
+    }
+    if (!form || form._bound) return;
+    form._bound = true;
+    var input = document.getElementById("note-paie-reply-input");
+    var compact = form.querySelector(".note-paie-mode-compact");
+    var modeMenu = form.querySelector(".note-paie-mode-menu");
+    var modelBtn = form.querySelector(".note-paie-model-btn");
+    var modelMenu = form.querySelector(".note-paie-menu--models");
+    var modelSearch = form.querySelector(".note-paie-model-search");
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      closeNoteComposerMenus();
+      if (noteAskMode() === "gpt") submitNoteGptQuestion(input && input.value);
+      else if (noteAskMode() === "comment") submitNoteFooterComment(input && input.value);
+      else submitNotePaieReply(input && input.value);
+    });
+    form.querySelectorAll(".note-paie-mode, .note-paie-mode-menu [data-mode]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        setNoteAskMode(btn.getAttribute("data-mode"));
+        closeNoteComposerMenus();
+      });
+    });
+    if (compact) {
+      compact.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var open = modeMenu && modeMenu.classList.contains("hidden");
+        closeNoteComposerMenus(open ? modeMenu : null);
+        if (modeMenu && open) {
+          modeMenu.classList.remove("hidden");
+          compact.classList.add("is-open");
+          compact.setAttribute("aria-expanded", "true");
+        }
+      });
+    }
+    if (modelBtn) {
+      modelBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var open = modelMenu && modelMenu.classList.contains("hidden");
+        closeNoteComposerMenus(open ? modelMenu : null);
+        if (modelMenu && open) {
+          loadGptModels();
+          modelMenu.classList.remove("hidden");
+          modelBtn.classList.add("is-open");
+          modelBtn.setAttribute("aria-expanded", "true");
+          if (modelSearch) {
+            try {
+              modelSearch.focus();
+            } catch (_) {}
+          }
+        }
+      });
+    }
+    if (modelSearch) {
+      modelSearch.addEventListener("input", function () {
+        renderGptModelMenu(modelSearch.value);
+      });
+      modelSearch.addEventListener("click", function (e) {
+        e.stopPropagation();
+      });
+    }
+    if (modeMenu) {
+      modeMenu.addEventListener("click", function (e) {
+        e.stopPropagation();
+      });
+    }
+    if (modelMenu) {
+      modelMenu.addEventListener("click", function (e) {
+        e.stopPropagation();
+      });
+    }
+    if (input) {
+      input.addEventListener("input", function () {
+        autosizeNoteComposer(input);
+        syncNotePaieReplyForm();
+      });
+      input.addEventListener("keydown", function (e) {
+        if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+          e.preventDefault();
+          if (typeof form.requestSubmit === "function") form.requestSubmit();
+          else form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+        }
+      });
+    }
+    if (!document._noteComposerMenuBound) {
+      document._noteComposerMenuBound = true;
+      document.addEventListener("click", function () {
+        closeNoteComposerMenus();
+      });
+    }
+    syncGptModelButton();
+  }
+
   function ensureNotePaieThread() {
     var col = document.querySelector("#note-editor-modal-body .note-editor-main-column");
     if (!col) return null;
@@ -6346,34 +6624,10 @@
         '<div class="note-paie-thread-list"></div>' +
         '<div class="note-paie-gpt-list"></div>' +
         '<div class="note-paie-user-list"></div>' +
-        '<form id="note-paie-reply-form" class="note-paie-reply-form">' +
-        '<div class="note-paie-mode-switch" role="tablist" aria-label="Режим вопроса">' +
-        '<button type="button" class="note-paie-mode is-active" data-mode="paie">PAIE</button>' +
-        '<button type="button" class="note-paie-mode" data-mode="gpt">GPT</button>' +
-        '<button type="button" class="note-paie-mode" data-mode="comment">Комментарий</button>' +
-        "</div>" +
-        '<textarea id="note-paie-reply-input" class="note-comments-input" rows="3" maxlength="4000" placeholder="Уточнение или новая информация — CHAIR ответит"></textarea>' +
-        '<div class="share-comments-form-actions">' +
-        '<button type="submit" class="btn" id="note-paie-reply-submit">Спросить CHAIR</button>' +
-        "</div></form>";
+        notePaieReplyFormHtml();
       col.appendChild(el);
     }
-    var form = document.getElementById("note-paie-reply-form");
-    if (form && !form._bound) {
-      form._bound = true;
-      form.addEventListener("submit", function (e) {
-        e.preventDefault();
-        var input = document.getElementById("note-paie-reply-input");
-        if (noteAskMode() === "gpt") submitNoteGptQuestion(input && input.value);
-        else if (noteAskMode() === "comment") submitNoteFooterComment(input && input.value);
-        else submitNotePaieReply(input && input.value);
-      });
-      el.querySelectorAll(".note-paie-mode").forEach(function (btn) {
-        btn.addEventListener("click", function () {
-          setNoteAskMode(btn.getAttribute("data-mode"));
-        });
-      });
-    }
+    bindNotePaieReplyForm(el);
     setNoteAskMode(noteAskMode());
     if (!el._chairSelectBound) {
       el._chairSelectBound = true;
@@ -6611,21 +6865,25 @@
     if (wrap) {
       wrap._askMode = mode === "gpt" || mode === "comment" ? mode : "paie";
     }
+    var current = noteAskMode();
+    var form = document.getElementById("note-paie-reply-form");
     var el = document.getElementById("note-paie-thread");
     if (el) {
-      el.querySelectorAll(".note-paie-mode").forEach(function (btn) {
-        btn.classList.toggle("is-active", btn.getAttribute("data-mode") === noteAskMode());
+      el.querySelectorAll(".note-paie-mode, .note-paie-mode-menu [data-mode]").forEach(function (btn) {
+        btn.classList.toggle("is-active", btn.getAttribute("data-mode") === current);
       });
+    }
+    if (form) {
+      form.classList.toggle("is-gpt-mode", current === "gpt");
+      var compactLabel = form.querySelector(".note-paie-mode-compact-label");
+      if (compactLabel) compactLabel.textContent = noteAskModeLabel(current);
     }
     var input = document.getElementById("note-paie-reply-input");
     if (input) {
-      input.placeholder =
-        noteAskMode() === "gpt"
-          ? "Свободный вопрос по заметке"
-          : noteAskMode() === "comment"
-            ? "Комментарий к заметке или выделенному тексту"
-            : "Уточнение или новая информация — CHAIR ответит";
+      input.placeholder = noteAskPlaceholder(current);
     }
+    if (current === "gpt") loadGptModels();
+    else closeNoteComposerMenus();
     syncNotePaieReplyForm();
   }
 
@@ -6681,6 +6939,7 @@
           message: body,
           context: activeNoteGptContext(),
           history: history,
+          model: selectedGptModelId() || undefined,
         }),
       });
       var ans = String((res && res.answer) || "").trim() || "—";
@@ -6793,17 +7052,25 @@
     if (input) input.disabled = busy;
     var modeEl = document.getElementById("note-paie-thread");
     if (modeEl) {
-      modeEl.querySelectorAll(".note-paie-mode").forEach(function (btn) {
-        btn.disabled = busy;
-      });
+      modeEl.querySelectorAll(".note-paie-mode, .note-paie-mode-compact, .note-paie-model-btn").forEach(
+        function (btn) {
+          btn.disabled = busy;
+        }
+      );
     }
     if (submit) {
-      submit.disabled = busy;
-      if (gptBusy) submit.textContent = "GPT отвечает…";
-      else if (paieRunning) submit.textContent = "CHAIR отвечает…";
-      else if (noteAskMode() === "gpt") submit.textContent = "Спросить GPT";
-      else if (noteAskMode() === "comment") submit.textContent = "Отправить";
-      else submit.textContent = hasChair ? "Спросить CHAIR" : "Запустить PAIE";
+      var hasText = !!(input && String(input.value || "").trim());
+      var canLaunchPaie = noteAskMode() === "paie" && !hasChair;
+      var ready = !busy && (hasText || canLaunchPaie);
+      submit.disabled = !ready;
+      submit.classList.toggle("is-ready", ready);
+      var label = "Отправить";
+      if (gptBusy) label = "GPT отвечает…";
+      else if (paieRunning) label = "CHAIR отвечает…";
+      else if (noteAskMode() === "gpt") label = "Спросить GPT";
+      else if (noteAskMode() === "comment") label = "Отправить";
+      else label = hasChair ? "Спросить CHAIR" : "Запустить PAIE";
+      submit.setAttribute("aria-label", label);
     }
   }
 
@@ -6974,7 +7241,8 @@
     if (input) input.disabled = true;
     if (submit) {
       submit.disabled = true;
-      submit.textContent = "CHAIR отвечает…";
+      submit.classList.remove("is-ready");
+      submit.setAttribute("aria-label", "CHAIR отвечает…");
     }
     apiFetch(path, {
       method: "POST",

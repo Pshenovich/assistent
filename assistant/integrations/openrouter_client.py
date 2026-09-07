@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re
+import time
 from contextvars import ContextVar
 from typing import Any
 
@@ -51,6 +53,97 @@ def _openrouter_chat_url() -> str:
     return os.getenv(
         "OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions"
     ).strip()
+
+
+_MODEL_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.+:/-]{0,127}$")
+_MODELS_SKIP = ("embed", "whisper", "tts-", "-tts", "moderation", "rerank")
+_MODELS_CACHE: tuple[float, dict[str, Any]] | None = None
+_MODELS_TTL_SEC = 600.0
+
+
+def default_openrouter_model() -> str:
+    return (
+        os.getenv("OPENROUTER_MODEL_ASK", "").strip()
+        or os.getenv("OPENROUTER_MODEL", "").strip()
+        or os.getenv("OPENROUTER_MODEL_BOARD", "").strip()
+        or "openai/gpt-4o-mini"
+    )
+
+
+def sanitize_openrouter_model_id(raw: str | None) -> str | None:
+    s = (raw or "").strip()
+    if not s or not _MODEL_ID_RE.fullmatch(s):
+        return None
+    return s
+
+
+def _openrouter_models_url() -> str:
+    chat = _openrouter_chat_url().rstrip("/")
+    if chat.endswith("/chat/completions"):
+        return chat[: -len("/chat/completions")] + "/models"
+    return "https://openrouter.ai/api/v1/models"
+
+
+def _model_short_name(item: dict[str, Any]) -> str:
+    name = str(item.get("name") or "").strip()
+    if ": " in name:
+        name = name.split(": ", 1)[1].strip()
+    if name:
+        return name
+    mid = str(item.get("id") or "").strip()
+    return mid.split("/")[-1] if mid else ""
+
+
+def _is_text_chat_model(item: dict[str, Any]) -> bool:
+    mid = str(item.get("id") or "").lower()
+    if not mid or any(token in mid for token in _MODELS_SKIP):
+        return False
+    arch = item.get("architecture") if isinstance(item.get("architecture"), dict) else {}
+    outputs = arch.get("output_modalities") or arch.get("modality")
+    if isinstance(outputs, list):
+        return "text" in [str(x).lower() for x in outputs]
+    if isinstance(outputs, str):
+        return "text" in outputs.lower()
+    return True
+
+
+def normalize_openrouter_models(
+    raw_items: list[Any],
+    *,
+    default: str,
+) -> dict[str, Any]:
+    models: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        if not _is_text_chat_model(item):
+            continue
+        mid = sanitize_openrouter_model_id(str(item.get("id") or ""))
+        if not mid or mid in seen:
+            continue
+        seen.add(mid)
+        models.append({"id": mid, "name": _model_short_name(item) or mid})
+    default_id = sanitize_openrouter_model_id(default) or "openai/gpt-4o-mini"
+    if default_id not in seen:
+        models.insert(0, {"id": default_id, "name": default_id.split("/")[-1]})
+        seen.add(default_id)
+
+    popular = ("openai/", "anthropic/", "google/", "x-ai/", "meta-llama/")
+
+    def _sort_key(row: dict[str, str]) -> tuple[int, int, str]:
+        mid = row["id"]
+        if mid == default_id:
+            return (0, 0, row["name"].lower())
+        rank = 9
+        for i, prefix in enumerate(popular):
+            if mid.startswith(prefix):
+                rank = i + 1
+                break
+        return (1, rank, row["name"].lower())
+
+    models.sort(key=_sort_key)
+    return {"models": models, "default": default_id}
 
 
 def _comet_chat_url() -> str:
@@ -233,3 +326,47 @@ def openrouter_chat_completion(
                 f"Comet: {e!r}; до этого OpenRouter: {primary_err!r}"
             ) from e
         raise
+
+
+def list_openrouter_models(*, force: bool = False) -> dict[str, Any]:
+    """Каталог текстовых моделей OpenRouter для выбора в миниаппе."""
+    global _MODELS_CACHE
+    default = default_openrouter_model()
+    now = time.monotonic()
+    if (
+        not force
+        and _MODELS_CACHE is not None
+        and now - _MODELS_CACHE[0] < _MODELS_TTL_SEC
+    ):
+        return _MODELS_CACHE[1]
+
+    or_key = os.getenv("OPENROUTER_KEY", "").strip()
+    if not or_key:
+        out = normalize_openrouter_models([], default=default)
+        _MODELS_CACHE = (now, out)
+        return out
+
+    extra: dict[str, str] = {}
+    ref = os.getenv("OPENROUTER_HTTP_REFERER", "").strip()
+    if ref:
+        extra["HTTP-Referer"] = ref
+    title_hdr = os.getenv("OPENROUTER_X_TITLE", "").strip()
+    if title_hdr:
+        extra["X-Title"] = title_hdr
+    headers = {
+        "Authorization": f"Bearer {or_key}",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+    headers.update(extra)
+    try:
+        r = requests.get(_openrouter_models_url(), headers=headers, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+        items = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            items = []
+        out = normalize_openrouter_models(items, default=default)
+    except BaseException:
+        out = normalize_openrouter_models([], default=default)
+    _MODELS_CACHE = (now, out)
+    return out

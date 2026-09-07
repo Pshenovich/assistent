@@ -2464,6 +2464,7 @@ class _MiniappGptChatBody(BaseModel):
     message: str = ""
     context: str = ""
     history: list[_MiniappGptChatTurn] = Field(default_factory=list)
+    model: Optional[str] = None
 
 
 class _MiniappBookingAssistantConfigBody(BaseModel):
@@ -3904,12 +3905,26 @@ async def miniapp_calendar_event_telemost_link(
     return {"join_url": join, "already": bool(data.get("already"))}
 
 
+@miniapp_router.get("/gpt/models")
+async def miniapp_gpt_models(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    del principal
+    from assistant.integrations.openrouter_client import list_openrouter_models
+
+    def _run() -> dict[str, Any]:
+        return list_openrouter_models()
+
+    return await run_in_threadpool(_run)
+
+
 @miniapp_router.post("/gpt/chat")
 async def miniapp_gpt_chat(
     body: _MiniappGptChatBody,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     from assistant.compat.miniapp_shims import gpt_openrouter_answer_with_context
+    from assistant.integrations.openrouter_client import sanitize_openrouter_model_id
 
     q = (body.message or "").strip()
     if not q:
@@ -3923,6 +3938,7 @@ async def miniapp_gpt_chat(
         if not c:
             continue
         hist.append({"role": r, "content": c[:24000]})
+    model = sanitize_openrouter_model_id(body.model)
 
     tg_uname: str | None = None
     if isinstance(principal.user, dict):
@@ -3943,6 +3959,7 @@ async def miniapp_gpt_chat(
                 q,
                 (body.context or "").strip(),
                 history=hist or None,
+                model=model,
             )
         finally:
             set_openrouter_usage_telegram_user(telegram_user_id=None)
