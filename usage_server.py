@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from fastapi import (
     APIRouter,
     BackgroundTasks,
+    Body,
     Depends,
     FastAPI,
     File,
@@ -2445,6 +2446,12 @@ class _MiniappShareCommentCreate(BaseModel):
     quote: str = ""
     prefix: str = ""
     suffix: str = ""
+    parent_id: Optional[int] = None
+
+
+class _MiniappNotePaeiStart(BaseModel):
+    reply: str = ""
+    parent_id: Optional[int] = None
 
 
 class _MiniappGptChatTurn(BaseModel):
@@ -2641,6 +2648,13 @@ def _comment_api(row: dict[str, Any], *, viewer_uid: str | None = None) -> dict[
     owner = str(row.get("owner_user_id") or "")
     author = str(row.get("author_user_id") or "")
     can_delete = bool(viewer_uid) and viewer_uid in {owner, author}
+    from assistant.stores import share_comments as share_comments_store
+
+    parent_id = row.get("parent_id")
+    try:
+        parent_id = int(parent_id) if parent_id not in (None, "", 0, "0") else None
+    except (TypeError, ValueError):
+        parent_id = None
     return {
         "id": int(row["id"]),
         "author_user_id": author,
@@ -2651,6 +2665,8 @@ def _comment_api(row: dict[str, Any], *, viewer_uid: str | None = None) -> dict[
         "quote": str(row.get("quote") or ""),
         "prefix": str(row.get("prefix") or ""),
         "suffix": str(row.get("suffix") or ""),
+        "parent_id": parent_id,
+        "is_paie": share_comments_store.is_paie_comment(row),
         "can_delete": can_delete,
     }
 
@@ -4567,6 +4583,7 @@ async def miniapp_share_comments_create(
             quote=body.quote,
             prefix=body.prefix,
             suffix=body.suffix,
+            parent_id=body.parent_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -4605,19 +4622,66 @@ async def miniapp_share_comments_delete(
 async def miniapp_note_paei_start(
     kind: str,
     item_id: str,
+    body: Optional[_MiniappNotePaeiStart] = Body(default=None),
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     import asyncio
 
-    from assistant.board.note_paei import begin_job, run_note_paei_job
+    from assistant.board.note_paei import begin_job, get_job, run_note_paei_job
+    from assistant.stores import share_comments as share_comments_store
 
     uid = str(int(principal.telegram_user_id))
     if not await run_in_threadpool(_owner_can_share_item, uid, kind, item_id):
         raise HTTPException(status_code=404, detail="Запись не найдена")
-    job, started = begin_job(uid, kind, item_id)
+    payload = body or _MiniappNotePaeiStart()
+    reply_text = (payload.reply or "").strip()
+    parent_id = payload.parent_id
+    if reply_text:
+        comments = await run_in_threadpool(
+            share_comments_store.list_comments, uid, kind, item_id
+        )
+        root_id = parent_id or share_comments_store.paie_thread_root_id(comments)
+        if not root_id:
+            raise HTTPException(
+                status_code=400, detail="Сначала дождитесь комментария CHAIR"
+            )
+        running = get_job(uid, kind, item_id)
+        if running and str(running.get("status") or "") == "running":
+            raise HTTPException(status_code=409, detail="Дождитесь ответа CHAIR")
+        author_id, author_name, author_username = _comment_author_from_principal(
+            principal
+        )
+        try:
+            await run_in_threadpool(
+                share_comments_store.add_comment,
+                uid,
+                kind,
+                item_id,
+                author_user_id=author_id,
+                author_name=author_name,
+                author_username=author_username,
+                body=reply_text,
+                quote="",
+                parent_id=root_id,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        job, started = begin_job(
+            uid, kind, item_id, reply=reply_text, parent_id=int(root_id)
+        )
+        followup_parent = int(root_id)
+    else:
+        job, started = begin_job(uid, kind, item_id)
+        followup_parent = None
     if started:
         asyncio.create_task(
-            run_note_paei_job(int(principal.telegram_user_id), kind, item_id)
+            run_note_paei_job(
+                int(principal.telegram_user_id),
+                kind,
+                item_id,
+                reply=reply_text,
+                parent_id=followup_parent,
+            )
         )
     return {
         "ok": True,
@@ -5360,6 +5424,7 @@ async def public_share_comments_create(
             quote=body.quote,
             prefix=body.prefix,
             suffix=body.suffix,
+            parent_id=body.parent_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

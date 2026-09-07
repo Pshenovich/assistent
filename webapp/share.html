@@ -343,6 +343,27 @@
       font-size: 0.75rem;
       cursor: pointer;
     }
+    .share-paie-thread {
+      margin-top: 2rem;
+      padding-top: 1.35rem;
+      border-top: 1px solid var(--border);
+    }
+    .share-paie-thread.hidden { display: none; }
+    .share-paie-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .share-paie-msg.is-chair {
+      background: rgba(82, 158, 244, 0.08);
+    }
+    .share-paie-msg.is-reply {
+      margin-left: 0.75rem;
+      background: rgba(255, 255, 255, 0.04);
+    }
+    .share-paie-reply-form {
+      margin-top: 0.9rem;
+    }
     .share-comments-form {
       display: flex;
       flex-direction: column;
@@ -436,6 +457,16 @@
       <p id="share-label" class="label"></p>
       <h1 id="share-title"></h1>
       <div id="share-body" class="note-body-html"></div>
+      <section id="share-paie-thread" class="share-paie-thread hidden">
+        <h2 class="share-comments-title">Комментарий CHAIR</h2>
+        <div id="share-paie-list" class="share-paie-list"></div>
+        <form id="share-paie-reply-form" class="share-comments-form share-paie-reply-form hidden">
+          <textarea id="share-paie-reply-input" class="share-comments-input" rows="3" maxlength="4000" placeholder="Уточнение или дополнительная информация"></textarea>
+          <div class="share-comments-form-actions">
+            <button type="submit" class="share-comments-btn">Ответить</button>
+          </div>
+        </form>
+      </section>
     </article>
     <aside id="share-comments" class="share-comments-rail hidden">
       <h2 class="share-comments-title">Комментарии</h2>
@@ -457,8 +488,8 @@
       <div id="share-comments-list" class="share-comments-list"></div>
     </aside>
   </main>
-  <script src="/webapp/note-html.js?v=20260907-editor-load"></script>
-  <script src="/webapp/note-comments.js?v=20260907-editor-load"></script>
-  <script src="/webapp/share.js?v=20260907-editor-load"></script>
+  <script src="/webapp/note-html.js?v=20260907-paie-footer"></script>
+  <script src="/webapp/note-comments.js?v=20260907-paie-footer"></script>
+  <script src="/webapp/share.js?v=20260907-paie-footer"></script>
 </body>
 </html>

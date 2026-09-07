@@ -32,7 +32,8 @@ def _conn() -> sqlite3.Connection:
             created_at TEXT NOT NULL,
             quote TEXT NOT NULL DEFAULT '',
             prefix TEXT NOT NULL DEFAULT '',
-            suffix TEXT NOT NULL DEFAULT ''
+            suffix TEXT NOT NULL DEFAULT '',
+            parent_id INTEGER
         )
         """
     )
@@ -45,6 +46,61 @@ def _conn() -> sqlite3.Connection:
     return conn
 
 
+def is_paie_comment(row: dict[str, Any] | None) -> bool:
+    if not row:
+        return False
+    uname = str(row.get("author_username") or "").strip().lower()
+    name = str(row.get("author_name") or "").strip().upper()
+    uid = str(row.get("author_user_id") or "").strip()
+    return uname == "paie" or name == "CHAIR" or uid == "0"
+
+
+def parent_id_of(row: dict[str, Any] | None) -> int | None:
+    if not row:
+        return None
+    raw = row.get("parent_id")
+    if raw in (None, "", 0, "0"):
+        return None
+    try:
+        pid = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return pid if pid > 0 else None
+
+
+def paie_thread(comments: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    rows = list(comments or [])
+    ids: set[int] = set()
+    for row in rows:
+        if is_paie_comment(row):
+            ids.add(int(row["id"]))
+            pid = parent_id_of(row)
+            if pid:
+                ids.add(pid)
+    changed = True
+    while changed:
+        changed = False
+        for row in rows:
+            cid = int(row["id"])
+            if cid in ids:
+                continue
+            pid = parent_id_of(row)
+            if pid and pid in ids:
+                ids.add(cid)
+                changed = True
+    return [row for row in rows if int(row["id"]) in ids]
+
+
+def paie_thread_root_id(comments: list[dict[str, Any]] | None) -> int | None:
+    thread = paie_thread(comments)
+    for row in thread:
+        if is_paie_comment(row) and parent_id_of(row) is None:
+            return int(row["id"])
+    if thread:
+        return int(thread[0]["id"])
+    return None
+
+
 def _ensure_anchor_columns(conn: sqlite3.Connection) -> None:
     cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(share_comments)")}
     for col in ("quote", "prefix", "suffix"):
@@ -52,6 +108,8 @@ def _ensure_anchor_columns(conn: sqlite3.Connection) -> None:
             conn.execute(
                 f"ALTER TABLE share_comments ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
             )
+    if "parent_id" not in cols:
+        conn.execute("ALTER TABLE share_comments ADD COLUMN parent_id INTEGER")
     conn.commit()
 
 
@@ -92,6 +150,11 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "quote": str(row["quote"] if "quote" in keys else "") or "",
         "prefix": str(row["prefix"] if "prefix" in keys else "") or "",
         "suffix": str(row["suffix"] if "suffix" in keys else "") or "",
+        "parent_id": (
+            int(row["parent_id"])
+            if "parent_id" in keys and row["parent_id"] not in (None, "")
+            else None
+        ),
     }
 
 
@@ -122,6 +185,33 @@ def get_comment(comment_id: int) -> Optional[dict[str, Any]]:
     return _row_to_dict(row) if row else None
 
 
+def _resolve_parent_id(
+    conn: sqlite3.Connection,
+    owner: str,
+    kind: str,
+    iid: str,
+    parent_id: int | str | None,
+) -> int | None:
+    if parent_id in (None, "", 0, "0"):
+        return None
+    try:
+        pid = int(parent_id)
+    except (TypeError, ValueError) as e:
+        raise ValueError("Некорректный комментарий для ответа") from e
+    if pid <= 0:
+        return None
+    cur = conn.execute(
+        """
+        SELECT id FROM share_comments
+        WHERE id = ? AND owner_user_id = ? AND item_kind = ? AND item_id = ?
+        """,
+        (pid, owner, kind, iid),
+    )
+    if cur.fetchone() is None:
+        raise ValueError("Комментарий для ответа не найден")
+    return pid
+
+
 def add_comment(
     owner_user_id: int | str,
     item_kind: str,
@@ -134,6 +224,7 @@ def add_comment(
     quote: str = "",
     prefix: str = "",
     suffix: str = "",
+    parent_id: int | str | None = None,
 ) -> dict[str, Any]:
     kind, iid = _kind_id(item_kind, item_id)
     text = (body or "").strip()
@@ -150,18 +241,20 @@ def add_comment(
     uname = (author_username or "").strip().lstrip("@") or None
     ts = _now_iso()
     with _LOCK:
-        cur = _conn().execute(
+        conn = _conn()
+        pid = _resolve_parent_id(conn, owner, kind, iid, parent_id)
+        cur = conn.execute(
             """
             INSERT INTO share_comments (
                 owner_user_id, item_kind, item_id,
                 author_user_id, author_name, author_username,
-                body, created_at, quote, prefix, suffix
+                body, created_at, quote, prefix, suffix, parent_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (owner, kind, iid, author, name[:120], uname, text, ts, q, pre, suf),
+            (owner, kind, iid, author, name[:120], uname, text, ts, q, pre, suf, pid),
         )
-        _conn().commit()
+        conn.commit()
         cid = int(cur.lastrowid)
     item = get_comment(cid)
     if not item:

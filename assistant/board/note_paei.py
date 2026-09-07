@@ -56,17 +56,22 @@ def _progress_view(raw: dict[str, Any] | None) -> dict[str, Any]:
     maxr = max(1, int(p.get("max_rounds") or max_rounds()))
     speaking = str(p.get("speaking") or "").strip().upper()
     extra = bool(p.get("extra"))
-    label = "PAIE разбирает заметку…"
+    followup = bool(p.get("followup"))
+    label = "CHAIR отвечает…" if followup else "PAIE разбирает заметку…"
     pct = 8
     if phase == "ANALYZING":
-        label, pct = "Анализ заметки…", 10
+        label, pct = (
+            ("CHAIR читает уточнение…", 12) if followup else ("Анализ заметки…", 10)
+        )
     elif phase == "CHALLENGE":
         label = f"Круг {rnd}/{maxr} · challenge"
         pct = min(80, 22 + int((rnd / maxr) * 50))
         if speaking:
             label += f" · говорит {speaking}"
     elif phase == "SYNTHESIS":
-        label, pct = "CHAIR формирует решение…", 92
+        label, pct = (
+            ("CHAIR отвечает…", 92) if followup else ("CHAIR формирует решение…", 92)
+        )
     elif phase in {"DISCUSSION", "CREATED"}:
         prefix = "Доп. круг" if extra else "Круг"
         label = f"{prefix} {rnd}/{maxr}"
@@ -78,9 +83,17 @@ def _progress_view(raw: dict[str, Any] | None) -> dict[str, Any]:
     return p
 
 
-def begin_job(user_id: int | str, kind: str, item_id: str | int) -> tuple[dict[str, Any], bool]:
+def begin_job(
+    user_id: int | str,
+    kind: str,
+    item_id: str | int,
+    *,
+    reply: str = "",
+    parent_id: int | None = None,
+) -> tuple[dict[str, Any], bool]:
     key = job_key(user_id, kind, item_id)
     now = time.time()
+    reply_text = (reply or "").strip()
     with _jobs_lock:
         current = _jobs.get(key)
         if current and current.get("status") == "running":
@@ -95,8 +108,15 @@ def begin_job(user_id: int | str, kind: str, item_id: str | int) -> tuple[dict[s
             "comment_id": None,
             "meeting_id": None,
             "started_at": now,
+            "reply": reply_text,
+            "parent_id": parent_id,
             "progress": _progress_view(
-                {"phase": "ANALYZING", "round": 1, "max_rounds": max_rounds()}
+                {
+                    "phase": "ANALYZING",
+                    "round": 1,
+                    "max_rounds": max_rounds(),
+                    "followup": bool(reply_text),
+                }
             ),
         }
         _jobs[key] = row
@@ -107,7 +127,10 @@ def _update_job(key: str, **fields: Any) -> None:
     with _jobs_lock:
         row = _jobs.get(key) or {}
         if "progress" in fields and isinstance(fields["progress"], dict):
-            fields["progress"] = _progress_view(fields["progress"])
+            payload = dict(fields["progress"])
+            if row.get("reply"):
+                payload["followup"] = True
+            fields["progress"] = _progress_view(payload)
         row.update(fields)
         _jobs[key] = row
 
@@ -120,8 +143,8 @@ def _as_list(val: Any) -> list[str]:
     return []
 
 
-def format_chair_comment(payload: dict[str, Any]) -> str:
-    lines = ["PAIE · решение CHAIR", ""]
+def format_chair_comment(payload: dict[str, Any], *, heading: str | None = None) -> str:
+    lines = [heading or "PAIE · решение CHAIR", ""]
     decision = str(payload.get("decision") or "").strip()
     if decision:
         lines.append(decision)
@@ -211,6 +234,25 @@ def load_note_for_paei(user_id: int | str, kind: str, item_id: str | int) -> tup
     raise ValueError("Некорректный тип записи")
 
 
+def _clip_prompt(text: str, limit: int) -> str:
+    raw = (text or "").strip()
+    if len(raw) <= limit:
+        return raw
+    return raw[: limit - 1] + "…"
+
+
+def _thread_prompt(comments: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for row in share_comments.paie_thread(comments):
+        who = "CHAIR" if share_comments.is_paie_comment(row) else (
+            str(row.get("author_name") or "").strip() or "Автор"
+        )
+        body = _clip_prompt(str(row.get("body") or ""), 1800)
+        if body:
+            parts.append(f"{who}:\n{body}")
+    return _clip_prompt("\n\n".join(parts), 8000)
+
+
 async def run_note_paei(
     *,
     user_id: int,
@@ -218,17 +260,42 @@ async def run_note_paei(
     item_id: str | int,
     provider: Any | None = None,
     on_progress: Any | None = None,
+    reply: str = "",
+    parent_id: int | None = None,
 ) -> dict[str, Any]:
     store.init_db()
     title, body = load_note_for_paei(user_id, kind, item_id)
-    excerpt = (body or "").strip() or "(пустая заметка)"
-    if len(excerpt) > NOTE_BODY_LIMIT:
-        excerpt = excerpt[: NOTE_BODY_LIMIT - 1] + "…"
-    question = (
-        f"Разбери заметку «{title}» как управленческий совет PAEI (P • A • E • I). "
-        "Сформулируй исполнимое решение CHAIR.\n\n"
-        f"{excerpt}"
-    )
+    excerpt = _clip_prompt((body or "").strip() or "(пустая заметка)", NOTE_BODY_LIMIT)
+    reply_text = (reply or "").strip()
+    comments = share_comments.list_comments(user_id, kind, item_id)
+    root_id = parent_id or share_comments.paie_thread_root_id(comments)
+    if reply_text:
+        history = _thread_prompt(comments)
+        question = (
+            f"Автор заметки «{title}» уточняет предыдущее решение CHAIR.\n\n"
+            f"Текст заметки:\n{excerpt}\n\n"
+        )
+        if history:
+            question += f"Переписка по заметке:\n{history}\n\n"
+        question += f"Новое уточнение автора:\n{reply_text}\n\n"
+        question += (
+            "Ответь на уточнение как CHAIR. Не пересказывай весь документ, "
+            "если достаточно поправки к решению."
+        )
+        extra = (
+            "Источник: заметка миниаппа Leo. Это follow-up к комментарию CHAIR. "
+            "Опирайся на текст заметки, прошлый ответ и уточнение автора."
+        )
+        heading = "PAIE · ответ CHAIR"
+    else:
+        question = (
+            f"Разбери заметку «{title}» как управленческий совет PAEI (P • A • E • I). "
+            "Сформулируй исполнимое решение CHAIR.\n\n"
+            f"{excerpt}"
+        )
+        extra = "Источник: заметка миниаппа Leo. Опирайся на текст заметки и каталог компании."
+        heading = "PAIE · решение CHAIR"
+        root_id = None
     svc = MeetingService(
         publisher=NullPublisher(), provider=provider, on_progress=on_progress
     )
@@ -238,15 +305,23 @@ async def run_note_paei(
         chat_id=int(user_id),
         question=question,
         title=title[:80],
-        extra_instruction="Источник: заметка миниаппа Leo. Опирайся на текст заметки и каталог компании.",
+        extra_instruction=extra,
     )
     if callable(on_progress):
-        on_progress({"phase": "ANALYZING", "round": 1, "max_rounds": max_rounds(), "meeting_id": meeting["id"]})
+        on_progress(
+            {
+                "phase": "ANALYZING",
+                "round": 1,
+                "max_rounds": max_rounds(),
+                "meeting_id": meeting["id"],
+                "followup": bool(reply_text),
+            }
+        )
     saved = await svc.run(str(meeting["id"]))
     if not saved:
         row = store.get_meeting(str(meeting["id"])) or {}
         raise RuntimeError(str(row.get("error_message") or "Совещание не дало решения"))
-    text = format_chair_comment(saved)
+    text = format_chair_comment(saved, heading=heading)
     comment = share_comments.add_comment(
         user_id,
         kind,
@@ -255,7 +330,8 @@ async def run_note_paei(
         author_name=CHAIR_AUTHOR_NAME,
         author_username=CHAIR_AUTHOR_USERNAME,
         body=text,
-        quote=title[:500],
+        quote="",
+        parent_id=root_id,
     )
     return {
         "meeting_id": str(meeting["id"]),
@@ -264,8 +340,24 @@ async def run_note_paei(
     }
 
 
-async def run_note_paei_job(user_id: int, kind: str, item_id: str | int) -> None:
+async def run_note_paei_job(
+    user_id: int,
+    kind: str,
+    item_id: str | int,
+    *,
+    reply: str = "",
+    parent_id: int | None = None,
+) -> None:
     key = job_key(user_id, kind, item_id)
+    job = get_job(user_id, kind, item_id) or {}
+    reply_text = (reply or job.get("reply") or "").strip()
+    thread_parent = parent_id if parent_id is not None else job.get("parent_id")
+    try:
+        thread_parent = (
+            int(thread_parent) if thread_parent not in (None, "", 0, "0") else None
+        )
+    except (TypeError, ValueError):
+        thread_parent = None
 
     def on_progress(payload: dict[str, Any]) -> None:
         fields: dict[str, Any] = {"progress": payload}
@@ -276,7 +368,12 @@ async def run_note_paei_job(user_id: int, kind: str, item_id: str | int) -> None
 
     try:
         result = await run_note_paei(
-            user_id=user_id, kind=kind, item_id=item_id, on_progress=on_progress
+            user_id=user_id,
+            kind=kind,
+            item_id=item_id,
+            on_progress=on_progress,
+            reply=reply_text,
+            parent_id=thread_parent,
         )
         comment = result.get("comment") or {}
         _update_job(

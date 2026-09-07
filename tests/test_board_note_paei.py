@@ -185,6 +185,8 @@ class NotePaeiTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("пилот", comments[0]["body"].lower())
         self.assertEqual(result["comment"]["id"], comments[0]["id"])
         self.assertIn("PAIE", comments[0]["body"])
+        self.assertEqual(comments[0]["quote"], "")
+        self.assertIsNone(comments[0]["parent_id"])
 
     async def test_progress_callback_during_run(self) -> None:
         note = notes_store.create_note(4, "Пилот", "Нужен пилот, не масштаб.")
@@ -201,3 +203,37 @@ class NotePaeiTest(unittest.IsolatedAsyncioTestCase):
             on_progress=on_progress,
         )
         self.assertTrue(any(p in {"ANALYZING", "DISCUSSION", "SYNTHESIS"} for p in seen))
+
+    async def test_followup_reply_threads_to_chair(self) -> None:
+        note = notes_store.create_note(5, "Пилот", "Нужен пилот на 2 недели.")
+        first = await run_note_paei(
+            user_id=5,
+            kind="local",
+            item_id=note["id"],
+            provider=_ScriptedProvider(),
+        )
+        root_id = first["comment"]["id"]
+        share_comments.add_comment(
+            5,
+            "local",
+            note["id"],
+            author_user_id=5,
+            author_name="Анна",
+            body="Можно сразу на месяц?",
+            parent_id=root_id,
+        )
+        second = await run_note_paei(
+            user_id=5,
+            kind="local",
+            item_id=note["id"],
+            provider=_ScriptedProvider(),
+            reply="Можно сразу на месяц?",
+            parent_id=root_id,
+        )
+        comments = share_comments.list_comments(5, "local", note["id"])
+        self.assertEqual(len(comments), 3)
+        follow = second["comment"]
+        self.assertEqual(follow["parent_id"], root_id)
+        self.assertIn("ответ CHAIR", follow["body"])
+        self.assertEqual(share_comments.paie_thread_root_id(comments), root_id)
+        self.assertEqual(len(share_comments.paie_thread(comments)), 3)

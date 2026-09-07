@@ -169,6 +169,53 @@ class ShareCommentsTests(unittest.TestCase):
         listed = share_comments.list_comments(1, "local", 2)
         self.assertEqual(listed[0]["suffix"], " филиала")
 
+    def test_parent_id_and_paie_thread(self) -> None:
+        chair = share_comments.add_comment(
+            8,
+            "local",
+            3,
+            author_user_id=0,
+            author_name="CHAIR",
+            author_username="PAIE",
+            body="Решение: пилот",
+        )
+        self.assertIsNone(chair["parent_id"])
+        self.assertTrue(share_comments.is_paie_comment(chair))
+        reply = share_comments.add_comment(
+            8,
+            "local",
+            3,
+            author_user_id=8,
+            author_name="Анна",
+            body="А если продлить до месяца?",
+            parent_id=chair["id"],
+        )
+        self.assertEqual(reply["parent_id"], chair["id"])
+        side = share_comments.add_comment(
+            8,
+            "local",
+            3,
+            author_user_id=9,
+            author_name="Борис",
+            body="Про выделенный абзац",
+            quote="пилот",
+        )
+        listed = share_comments.list_comments(8, "local", 3)
+        thread = share_comments.paie_thread(listed)
+        self.assertEqual([c["id"] for c in thread], [chair["id"], reply["id"]])
+        self.assertEqual(share_comments.paie_thread_root_id(listed), chair["id"])
+        self.assertNotIn(side["id"], [c["id"] for c in thread])
+        with self.assertRaises(ValueError):
+            share_comments.add_comment(
+                8,
+                "local",
+                3,
+                author_user_id=8,
+                author_name="Анна",
+                body="битый parent",
+                parent_id=999999,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

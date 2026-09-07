@@ -236,6 +236,8 @@
   }
 
   function authorLabel(c) {
+    var api = commentsApi();
+    if (api && api.isPaieComment && api.isPaieComment(c)) return "CHAIR";
     var name = String((c && c.author_name) || "Пользователь").trim();
     var uname = String((c && c.author_username) || "").trim();
     if (uname && name.toLowerCase() !== "@" + uname.toLowerCase()) {
@@ -261,6 +263,7 @@
     list: [],
     highlights: {},
     draft: null,
+    canComment: false,
   };
   var PENDING_KEY = "leo_share_pending_comment";
 
@@ -355,16 +358,60 @@
     api.alignCards(list, commentsState.highlights);
   }
 
+  function renderPaieCard(c) {
+    var item = renderCommentCard(c);
+    var api = commentsApi();
+    var chair = !!(api && api.isPaieComment && api.isPaieComment(c));
+    item.classList.add("share-paie-msg");
+    item.classList.add(chair ? "is-chair" : "is-reply");
+    var quote = item.querySelector(".share-comment-quote");
+    if (quote && quote.parentNode) quote.parentNode.removeChild(quote);
+    return item;
+  }
+
+  function renderSharePaieThread(thread) {
+    var box = document.getElementById("share-paie-thread");
+    var list = document.getElementById("share-paie-list");
+    var form = document.getElementById("share-paie-reply-form");
+    if (!box || !list) return;
+    list.innerHTML = "";
+    (thread || []).forEach(function (c) {
+      list.appendChild(renderPaieCard(c));
+    });
+    box.classList.toggle("hidden", !thread || !thread.length);
+    if (form) {
+      form.classList.toggle("hidden", !commentsState.canComment || !thread.length);
+    }
+  }
+
   function paintComments() {
     var api = commentsApi();
     var root = bodyRoot();
     var list = document.getElementById("share-comments-list");
+    var rail = document.getElementById("share-comments");
+    var wrap = document.querySelector(".wrap");
     if (!list || !root) return;
+    var all = commentsState.list || [];
+    var thread = api && api.paieThread ? api.paieThread(all) : [];
+    var anchored = api && api.selectionComments ? api.selectionComments(all) : all;
     list.innerHTML = "";
-    commentsState.highlights = api ? api.applyHighlights(root, commentsState.list) : {};
-    commentsState.list.forEach(function (c) {
+    commentsState.highlights = api ? api.applyHighlights(root, anchored) : {};
+    anchored.forEach(function (c) {
       list.appendChild(renderCommentCard(c));
     });
+    renderSharePaieThread(thread);
+    if (rail) {
+      rail.classList.toggle(
+        "hidden",
+        !commentsState.canComment && !anchored.length
+      );
+    }
+    if (wrap) {
+      wrap.classList.toggle(
+        "has-comments",
+        !!(commentsState.canComment || anchored.length)
+      );
+    }
     window.requestAnimationFrame(relayoutCommentCards);
     root.querySelectorAll("mark.note-comment-hl").forEach(function (mark) {
       mark.addEventListener("click", function (e) {
@@ -492,6 +539,7 @@
     var root = bodyRoot();
     var api = commentsApi();
     if (!box || !root) return;
+    commentsState.canComment = !!canComment;
     box.classList.remove("hidden");
     if (wrap) wrap.classList.add("has-comments");
     var hint = document.getElementById("share-comments-hint");
@@ -542,6 +590,47 @@
       });
     }
     if (canComment && cancelBtn) cancelBtn.addEventListener("click", hideComposer);
+    var paieForm = document.getElementById("share-paie-reply-form");
+    var paieInput = document.getElementById("share-paie-reply-input");
+    if (canComment && paieForm && !paieForm._bound) {
+      paieForm._bound = true;
+      paieForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var text = String((paieInput && paieInput.value) || "").trim();
+        if (!text) return;
+        if (!commentsState.me) {
+          showLogin();
+          setCommentsError("Войдите через Telegram, чтобы ответить");
+          return;
+        }
+        var api = commentsApi();
+        var rootId = api && api.paieThreadRootId ? api.paieThreadRootId(commentsState.list) : null;
+        jsonFetch("/api/public/share/" + encodeURIComponent(token) + "/comments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({
+            body: text,
+            quote: "",
+            prefix: "",
+            suffix: "",
+            parent_id: rootId,
+          }),
+        })
+          .then(function () {
+            if (paieInput) paieInput.value = "";
+            setCommentsError("");
+            return loadComments();
+          })
+          .catch(function (err) {
+            if (err.status === 401) {
+              showLogin();
+              setCommentsError("Войдите через Telegram, чтобы ответить");
+              return;
+            }
+            setCommentsError(err.message || "Не удалось отправить");
+          });
+      });
+    }
     if (canComment && loginBtn) {
       loginBtn.addEventListener("click", function () {
         if (commentsState.draft) savePending(commentsState.draft);

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260907-editor-load";
+  var WEBAPP_BUILD = "20260907-paie-footer";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260907-editor-load";
+  const NOTE_EDITOR_ASSET_V = "20260907-paie-footer";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -6331,22 +6331,122 @@
     });
   }
 
+  function ensureNotePaieThread() {
+    var col = document.querySelector("#note-editor-modal-body .note-editor-main-column");
+    if (!col) return null;
+    var el = document.getElementById("note-paie-thread");
+    if (el) return el;
+    el = document.createElement("section");
+    el.id = "note-paie-thread";
+    el.className = "note-paie-thread hidden";
+    el.innerHTML =
+      '<h3 class="note-paie-thread-title">Комментарий CHAIR</h3>' +
+      '<div id="note-editor-paei-status" class="note-paei-status hidden"></div>' +
+      '<div class="note-paie-thread-list"></div>' +
+      '<form id="note-paie-reply-form" class="note-paie-reply-form hidden">' +
+      '<textarea id="note-paie-reply-input" class="note-comments-input" rows="3" maxlength="4000" placeholder="Уточнение или дополнительная информация для CHAIR"></textarea>' +
+      '<div class="share-comments-form-actions">' +
+      '<button type="submit" class="btn" id="note-paie-reply-submit">Ответить</button>' +
+      "</div></form>";
+    col.appendChild(el);
+    var form = document.getElementById("note-paie-reply-form");
+    if (form && !form._bound) {
+      form._bound = true;
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var input = document.getElementById("note-paie-reply-input");
+        submitNotePaieReply(input && input.value);
+      });
+    }
+    return el;
+  }
+
+  function renderNotePaieMessage(c, kind, itemId) {
+    var item = document.createElement("article");
+    var api = window.NoteComments;
+    var chair = !!(api && api.isPaieComment && api.isPaieComment(c));
+    item.className = "note-comment note-paie-msg" + (chair ? " is-chair" : " is-reply");
+    item.setAttribute("data-comment-id", String(c.id));
+    var head = document.createElement("div");
+    head.className = "note-comment-head";
+    var who = document.createElement("strong");
+    who.textContent = shareCommentAuthorLabel(c);
+    var when = document.createElement("time");
+    when.textContent = formatShareCommentWhen(c.created_at);
+    head.appendChild(who);
+    head.appendChild(when);
+    var body = document.createElement("p");
+    body.className = "note-comment-body";
+    body.textContent = String((c && c.body) || "");
+    item.appendChild(head);
+    item.appendChild(body);
+    if (c && c.can_delete) {
+      var del = document.createElement("button");
+      del.type = "button";
+      del.className = "note-comment-delete";
+      del.textContent = "Удалить";
+      del.addEventListener("click", function (e) {
+        e.stopPropagation();
+        deleteNoteComment(kind, itemId, c.id);
+      });
+      item.appendChild(del);
+    }
+    return item;
+  }
+
+  function renderNotePaieThread(comments, kind, itemId) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var running = !!(wrap && wrap._paeiRunning);
+    var el = ensureNotePaieThread();
+    if (!el) return;
+    var list = el.querySelector(".note-paie-thread-list");
+    var form = document.getElementById("note-paie-reply-form");
+    var status = document.getElementById("note-editor-paei-status");
+    var statusOn = !!(status && !status.classList.contains("hidden"));
+    if (list) {
+      list.innerHTML = "";
+      (comments || []).forEach(function (c) {
+        list.appendChild(renderNotePaieMessage(c, kind, itemId));
+      });
+    }
+    var hasThread = !!(comments && comments.length);
+    el.classList.toggle("hidden", !hasThread && !running && !statusOn);
+    if (form) {
+      form.classList.toggle("hidden", !hasThread);
+      syncNotePaieReplyForm(running);
+    }
+  }
+
+  function syncNotePaieReplyForm(running) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var busy = running != null ? !!running : !!(wrap && wrap._paeiRunning);
+    var input = document.getElementById("note-paie-reply-input");
+    var submit = document.getElementById("note-paie-reply-submit");
+    if (input) input.disabled = busy;
+    if (submit) {
+      submit.disabled = busy;
+      submit.textContent = busy ? "CHAIR отвечает…" : "Ответить";
+    }
+  }
+
   function setNotePaeiStatus(text, progress) {
-    var panel = document.getElementById("note-editor-comments");
-    if (!panel) return;
     var el = document.getElementById("note-editor-paei-status");
     if (!el) {
-      el = document.createElement("div");
-      el.id = "note-editor-paei-status";
-      el.className = "note-paei-status";
-      var title = panel.querySelector(".note-comments-title");
-      if (title && title.nextSibling) panel.insertBefore(el, title.nextSibling);
-      else panel.insertBefore(el, panel.firstChild);
+      var thread = ensureNotePaieThread();
+      el = thread ? document.getElementById("note-editor-paei-status") : null;
     }
+    if (!el) return;
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var panel = document.getElementById("note-editor-comments");
     var label = (progress && progress.label) || text || "";
     if (!label) {
       el.classList.add("hidden");
       el.innerHTML = "";
+      renderNotePaieThread(
+        (panel && panel._paieComments) || [],
+        wrap && wrap._shareKind,
+        wrap && wrap._shareId
+      );
       return;
     }
     var pct = progress && progress.pct != null ? Number(progress.pct) : 12;
@@ -6358,6 +6458,9 @@
       '<span class="note-paei-progress-track"><span class="note-paei-progress-fill"></span></span>';
     el.querySelector(".note-paei-progress-label").textContent = label;
     el.querySelector(".note-paei-progress-fill").style.width = pct + "%";
+    var threadEl = document.getElementById("note-paie-thread");
+    if (threadEl) threadEl.classList.remove("hidden");
+    syncNotePaieReplyForm();
   }
 
   function notePaeiPath() {
@@ -6434,8 +6537,13 @@
     if (!wrap || !path || wrap._paeiRunning) return;
     wrap._paeiRunning = true;
     syncNoteCommentsPanel();
+    ensureNotePaieThread();
     setNotePaeiStatus("Анализ заметки…", { label: "Анализ заметки…", pct: 10 });
-    apiFetch(path, { method: "POST" })
+    var thread = document.getElementById("note-paie-thread");
+    if (thread && thread.scrollIntoView) {
+      thread.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+    apiFetch(path, { method: "POST", body: JSON.stringify({}) })
       .then(function (data) {
         var status = (data && data.status) || "running";
         if (status === "done") {
@@ -6461,6 +6569,66 @@
       });
   }
 
+  function submitNotePaieReply(text) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var path = notePaeiPath();
+    var body = String(text || "").trim();
+    if (!wrap || !path || wrap._paeiRunning || !body) return;
+    var panel = document.getElementById("note-editor-comments");
+    var api = window.NoteComments;
+    var rootId =
+      api && api.paieThreadRootId
+        ? api.paieThreadRootId((panel && panel._allComments) || [])
+        : null;
+    wrap._paeiRunning = true;
+    ensureNotePaieThread();
+    setNotePaeiStatus("CHAIR читает уточнение…", {
+      label: "CHAIR читает уточнение…",
+      pct: 12,
+    });
+    var input = document.getElementById("note-paie-reply-input");
+    var submit = document.getElementById("note-paie-reply-submit");
+    if (input) input.disabled = true;
+    if (submit) {
+      submit.disabled = true;
+      submit.textContent = "CHAIR отвечает…";
+    }
+    apiFetch(path, {
+      method: "POST",
+      body: JSON.stringify({ reply: body, parent_id: rootId }),
+    })
+      .then(function (data) {
+        if (input) input.value = "";
+        refreshNoteCommentsList();
+        var status = (data && data.status) || "running";
+        if (status === "done") {
+          wrap._paeiRunning = false;
+          setNotePaeiStatus("");
+          shareHaptic();
+          refreshNoteCommentsList();
+          return;
+        }
+        if (status === "error") {
+          wrap._paeiRunning = false;
+          setNotePaeiStatus((data && data.error) || "Не удалось отправить уточнение");
+          return;
+        }
+        if (data && data.progress) {
+          setNotePaeiStatus(data.progress.label, data.progress);
+        }
+        pollNotePaei(path);
+      })
+      .catch(function (e) {
+        wrap._paeiRunning = false;
+        setNotePaeiStatus(e.message || "Не удалось отправить уточнение");
+        renderNotePaieThread(
+          (panel && panel._paieComments) || [],
+          wrap._shareKind,
+          wrap._shareId
+        );
+      });
+  }
+
   function resumeNotePaeiIfRunning(kind, itemId) {
     apiFetch(
       "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/paei",
@@ -6471,6 +6639,7 @@
         if (!wrap || wrap._shareId !== String(itemId)) return;
         if (data && data.status === "running") {
           wrap._paeiRunning = true;
+          ensureNotePaieThread();
           setNotePaeiStatus(
             (data.progress && data.progress.label) || "PAIE разбирает заметку…",
             data.progress
@@ -6643,6 +6812,8 @@
       } catch (_) {}
     }
     if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+    var thread = document.getElementById("note-paie-thread");
+    if (thread && thread.parentNode) thread.parentNode.removeChild(thread);
     var overlay = document.getElementById("note-editor-comment-overlay");
     if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
     var layout = document.querySelector("#note-editor-modal-body .note-editor-doc-layout");
@@ -6679,7 +6850,7 @@
     if (!comments || !comments.length) {
       var empty = document.createElement("p");
       empty.className = "note-comments-empty";
-      empty.textContent = "Пока нет комментариев";
+      empty.textContent = "Выделите текст в заметке, чтобы оставить комментарий";
       listEl.appendChild(empty);
       paintEditorCommentOverlay([]);
       return;
@@ -6755,6 +6926,8 @@
   }
 
   function shareCommentAuthorLabel(c) {
+    var api = window.NoteComments;
+    if (api && api.isPaieComment && api.isPaieComment(c)) return "CHAIR";
     var name = String((c && c.author_name) || "Пользователь").trim();
     var uname = String((c && c.author_username) || "").trim();
     if (uname && name.toLowerCase() !== "@" + uname.toLowerCase()) {
@@ -6771,9 +6944,17 @@
         { method: "GET" }
       );
       var comments = (data && data.comments) || [];
+      var api = window.NoteComments;
+      var thread = api && api.paieThread ? api.paieThread(comments) : [];
+      var anchored = api && api.selectionComments ? api.selectionComments(comments) : comments;
       var panel = document.getElementById("note-editor-comments");
-      if (panel) panel._commentsCache = comments;
-      renderNoteCommentsList(listEl, comments, kind, itemId);
+      if (panel) {
+        panel._commentsCache = anchored;
+        panel._allComments = comments;
+        panel._paieComments = thread;
+      }
+      renderNoteCommentsList(listEl, anchored, kind, itemId);
+      renderNotePaieThread(thread, kind, itemId);
     } catch (e) {
       listEl.innerHTML = "";
       var err = document.createElement("p");
@@ -6924,8 +7105,6 @@
       panel.className = "note-comments note-comments-rail";
       panel.innerHTML =
         '<h3 class="note-comments-title">Комментарии</h3>' +
-        '<div id="note-editor-paei-status" class="note-paei-status hidden"></div>' +
-        '<p class="note-comments-empty">Выделите текст в заметке или запустите PAIE в меню.</p>' +
         '<form id="note-editor-comment-form" class="note-comments-form hidden">' +
         '<p id="note-editor-comment-quote" class="share-comment-quote"></p>' +
         '<textarea class="note-comments-input" rows="3" maxlength="4000" placeholder="Комментарий к выделенному тексту"></textarea>' +
@@ -6937,6 +7116,7 @@
       layout.appendChild(panel);
       bindEditorCommentSelection(kind, itemId, panel);
     }
+    ensureNotePaieThread();
     if (pad && !document.getElementById("note-editor-comment-overlay")) {
       pad.style.position = "relative";
       var overlay = document.createElement("div");

@@ -3067,6 +3067,53 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   cursor: pointer;
 }
 
+.note-paie-thread {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 1.35rem var(--note-editor-pad-x, 16px) 2rem;
+  border-top: 1px solid var(--vkui--color_separator_primary, var(--border));
+}
+
+.note-paie-thread.hidden {
+  display: none;
+}
+
+.note-paie-thread-title {
+  margin: 0 0 0.85rem;
+  color: var(--text-secondary, #909499);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.note-paie-thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.note-paie-msg.is-chair {
+  background: rgba(82, 158, 244, 0.08);
+}
+
+.note-paie-msg.is-reply {
+  margin-left: 0.75rem;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.note-paie-reply-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+
+.note-paie-reply-form.hidden {
+  display: none;
+}
+
 .note-comments-form {
   display: flex;
   flex-direction: column;
