@@ -195,3 +195,34 @@ class CompanyBriefTest(unittest.TestCase):
         notes_store._CONN = None  # type: ignore[attr-defined]
         store.reset_connection()
         tmp.cleanup()
+
+    def test_knowledge_can_be_disabled_for_a_meeting(self) -> None:
+        from assistant.board import store
+        from assistant.board.context import build_agent_context
+        from assistant.stores import notes as notes_store
+        import tempfile
+        from pathlib import Path
+
+        tmp = tempfile.TemporaryDirectory()
+        os.environ["BOARD_DB_PATH"] = str(Path(tmp.name) / "board.sqlite")
+        os.environ["NOTES_DB_PATH"] = str(Path(tmp.name) / "notes.sqlite")
+        os.environ["BOARD_COMPANY_SHARE_URL"] = "off"
+        store.reset_connection()
+        store.init_db()
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        kb = notes_store.ensure_knowledge_note(13)
+        notes_store.update_note(13, kb["id"], body="<p>Секретный пакет 15 000</p>")
+        company = store.get_or_create_company_for_chat(13)
+        meeting = store.create_meeting(
+            user_id=13,
+            chat_id=13,
+            question="Личная заметка",
+            company_id=company["id"],
+            extra_instruction="[knowledge:off]\nНе подмешивай базу знаний.",
+        )
+        ctx = build_agent_context(meeting_id=meeting["id"], agent="P")
+        self.assertNotIn("Секретный пакет", ctx["text"])
+        self.assertNotIn("[knowledge:off]", ctx["text"])
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        store.reset_connection()
+        tmp.cleanup()

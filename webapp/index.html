@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260907-toc-hits">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260907-toc-none">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -43,8 +43,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20260907-toc-hits" />
-  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260907-toc-hits" as="script" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20260907-toc-none" />
+  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260907-toc-none" as="script" />
   <!-- Same-origin, async: не блокирует парсер, если сеть/VPN тормозит. -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" async></script>
 </head>
@@ -985,6 +985,11 @@
   <div id="note-editor-overlay" class="modal-overlay hidden" aria-hidden="true">
     <div class="modal modal--sheet note-editor-sheet" role="dialog" aria-modal="true" aria-labelledby="note-editor-modal-title">
       <div class="modal-form note-editor-modal-form">
+        <div id="note-editor-web-back-bar" class="note-editor-web-back-bar hidden">
+          <button type="button" class="btn-text note-editor-web-back" id="note-editor-web-back">
+            ← Назад
+          </button>
+        </div>
         <div class="modal-header note-editor-modal-header" aria-hidden="true">
           <h2 id="note-editor-modal-title" class="modal-title">Заметка</h2>
         </div>
@@ -997,9 +1002,6 @@
             <div id="note-editor-format-toolbar-host" class="note-editor-format-toolbar-host"></div>
           </div>
         </div>
-        <button type="button" class="btn-text note-editor-web-back hidden" id="note-editor-web-back">
-          ← Назад
-        </button>
       </div>
     </div>
   </div>
@@ -1045,14 +1047,14 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20260907-toc-hits"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20260907-toc-none"><\/script>'
         );
       }
     })();
   </script>
-  <script src="/webapp/note-html.js?v=20260907-toc-hits" defer></script>
-  <script src="/webapp/note-comments.js?v=20260907-toc-hits" defer></script>
-  <script src="/webapp/note-rich-editor.js?v=20260907-toc-hits" defer></script>
-  <script src="/webapp/app.js?v=20260907-toc-hits" defer></script>
+  <script src="/webapp/note-html.js?v=20260907-toc-none" defer></script>
+  <script src="/webapp/note-comments.js?v=20260907-toc-none" defer></script>
+  <script src="/webapp/note-rich-editor.js?v=20260907-toc-none" defer></script>
+  <script src="/webapp/app.js?v=20260907-toc-none" defer></script>
 </body>
 </html>

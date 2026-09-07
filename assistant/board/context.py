@@ -14,11 +14,21 @@ def _fmt_company(ctx: dict[str, Any] | None, *, query: str = "") -> str:
 
 
 def load_company_pack(
-    company_id: str | None, *, user_id: int | str | None = None
+    company_id: str | None,
+    *,
+    user_id: int | str | None = None,
+    include_knowledge: bool = True,
 ) -> dict[str, Any] | None:
     pack = store.get_company_pack(str(company_id)) if company_id else None
     pack = attach_live_share(pack)
-    return attach_knowledge_note(pack, user_id)
+    if include_knowledge:
+        pack = attach_knowledge_note(pack, user_id)
+    return pack
+
+
+def meeting_include_knowledge(meeting: dict[str, Any] | None) -> bool:
+    extra = str((meeting or {}).get("extra_instruction") or "")
+    return "[knowledge:off]" not in extra
 
 
 def attach_knowledge_note(
@@ -155,6 +165,7 @@ def build_agent_context(
         past_text = "\n".join(lines)
 
     extra = (meeting.get("extra_instruction") or "").strip()
+    extra = extra.replace("[knowledge:off]", "").strip()
     analysis = meeting.get("analysis") if isinstance(meeting.get("analysis"), dict) else {}
     objective = str(analysis.get("decision_required") or meeting.get("title") or "")
     query = str(meeting.get("original_question") or "")
@@ -162,6 +173,7 @@ def build_agent_context(
     company = load_company_pack(
         str(meeting["company_id"]) if meeting.get("company_id") else None,
         user_id=meeting.get("user_id"),
+        include_knowledge=meeting_include_knowledge(meeting),
     )
     live_text = _fmt_company(company, query=query).strip()
     has_kb = any(

@@ -90,6 +90,7 @@ def begin_job(
     *,
     reply: str = "",
     parent_id: int | None = None,
+    use_knowledge: bool = True,
 ) -> tuple[dict[str, Any], bool]:
     key = job_key(user_id, kind, item_id)
     now = time.time()
@@ -110,6 +111,7 @@ def begin_job(
             "started_at": now,
             "reply": reply_text,
             "parent_id": parent_id,
+            "use_knowledge": bool(use_knowledge),
             "progress": _progress_view(
                 {
                     "phase": "ANALYZING",
@@ -262,6 +264,7 @@ async def run_note_paei(
     on_progress: Any | None = None,
     reply: str = "",
     parent_id: int | None = None,
+    use_knowledge: bool = True,
 ) -> dict[str, Any]:
     store.init_db()
     title, body = load_note_for_paei(user_id, kind, item_id)
@@ -284,9 +287,12 @@ async def run_note_paei(
         )
         extra = (
             "Источник: заметка миниаппа Leo. Это follow-up к комментарию CHAIR. "
-            "Опирайся на текст заметки, прошлый ответ, уточнение автора и "
-            "COMPANY CONTEXT (вкладка «База знаний»)."
+            "Опирайся на текст заметки, прошлый ответ и уточнение автора."
         )
+        if use_knowledge:
+            extra += " Используй COMPANY CONTEXT (вкладка «База знаний»)."
+        else:
+            extra += " Не подмешивай вкладку «База знаний»."
         heading = "PAIE · ответ CHAIR"
     else:
         question = (
@@ -294,12 +300,15 @@ async def run_note_paei(
             "Сформулируй исполнимое решение CHAIR.\n\n"
             f"{excerpt}"
         )
-        extra = (
-            "Источник: заметка миниаппа Leo. Опирайся на текст заметки и "
-            "COMPANY CONTEXT (вкладка «База знаний», иначе живой каталог компании)."
-        )
+        extra = "Источник: заметка миниаппа Leo. Опирайся на текст заметки."
+        if use_knowledge:
+            extra += " COMPANY CONTEXT — вкладка «База знаний», иначе живой каталог компании."
+        else:
+            extra += " Не подмешивай вкладку «База знаний»."
         heading = "PAIE · решение CHAIR"
         root_id = None
+    if not use_knowledge:
+        extra = "[knowledge:off]\n" + extra
     svc = MeetingService(
         publisher=NullPublisher(), provider=provider, on_progress=on_progress
     )
@@ -351,11 +360,14 @@ async def run_note_paei_job(
     *,
     reply: str = "",
     parent_id: int | None = None,
+    use_knowledge: bool = True,
 ) -> None:
     key = job_key(user_id, kind, item_id)
     job = get_job(user_id, kind, item_id) or {}
     reply_text = (reply or job.get("reply") or "").strip()
     thread_parent = parent_id if parent_id is not None else job.get("parent_id")
+    if "use_knowledge" in job:
+        use_knowledge = bool(job.get("use_knowledge"))
     try:
         thread_parent = (
             int(thread_parent) if thread_parent not in (None, "", 0, "0") else None
@@ -378,6 +390,7 @@ async def run_note_paei_job(
             on_progress=on_progress,
             reply=reply_text,
             parent_id=thread_parent,
+            use_knowledge=use_knowledge,
         )
         comment = result.get("comment") or {}
         _update_job(

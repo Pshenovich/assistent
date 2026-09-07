@@ -2453,6 +2453,7 @@ class _MiniappShareCommentCreate(BaseModel):
 class _MiniappNotePaeiStart(BaseModel):
     reply: str = ""
     parent_id: Optional[int] = None
+    use_knowledge: bool = True
 
 
 class _MiniappGptChatTurn(BaseModel):
@@ -4673,6 +4674,7 @@ async def miniapp_note_paei_start(
     payload = body or _MiniappNotePaeiStart()
     reply_text = (payload.reply or "").strip()
     parent_id = payload.parent_id
+    use_knowledge = payload.use_knowledge is not False
     if reply_text:
         comments = await run_in_threadpool(
             share_comments_store.list_comments, uid, kind, item_id
@@ -4704,11 +4706,11 @@ async def miniapp_note_paei_start(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         job, started = begin_job(
-            uid, kind, item_id, reply=reply_text, parent_id=int(root_id)
+            uid, kind, item_id, reply=reply_text, parent_id=int(root_id), use_knowledge=use_knowledge
         )
         followup_parent = int(root_id)
     else:
-        job, started = begin_job(uid, kind, item_id)
+        job, started = begin_job(uid, kind, item_id, use_knowledge=use_knowledge)
         followup_parent = None
     if started:
         asyncio.create_task(
@@ -4718,6 +4720,7 @@ async def miniapp_note_paei_start(
                 item_id,
                 reply=reply_text,
                 parent_id=followup_parent,
+                use_knowledge=use_knowledge,
             )
         )
     return {

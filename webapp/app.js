@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260907-toc-hits";
+  var WEBAPP_BUILD = "20260907-toc-none";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260907-toc-hits";
+  const NOTE_EDITOR_ASSET_V = "20260907-toc-none";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -5281,8 +5281,10 @@
     if (kbb) setHidden(kbb, false);
 
     var webEditorBack = document.getElementById("note-editor-web-back");
+    var webEditorBackBar = document.getElementById("note-editor-web-back-bar");
     var showWebEditorBack = !!(noteEditorOpen && !native);
     if (webEditorBack) setHidden(webEditorBack, !showWebEditorBack);
+    if (webEditorBackBar) setHidden(webEditorBackBar, !showWebEditorBack);
     document.documentElement.classList.toggle(
       "note-editor-web-back-visible",
       showWebEditorBack
@@ -6357,6 +6359,10 @@
     var chevronMuted = noteComposerAsset("chevron-up-muted");
     return (
       '<form id="note-paie-reply-form" class="note-paie-reply-form">' +
+      '<button type="button" class="note-paie-kb-toggle is-on" aria-pressed="true" title="Включить базу знаний в ответ">' +
+      '<span class="note-paie-kb-toggle-dot" aria-hidden="true"></span>' +
+      "База знаний" +
+      "</button>" +
       '<textarea id="note-paie-reply-input" class="note-paie-composer-input" rows="2" maxlength="4000" placeholder="' +
       noteAskPlaceholder("paie") +
       '"></textarea>' +
@@ -6536,7 +6542,9 @@
       else if (threadEl) threadEl.insertAdjacentHTML("beforeend", html);
       form = document.getElementById("note-paie-reply-form");
     }
-    if (!form || form._bound) return;
+    if (!form) return;
+    bindNoteKnowledgeToggle(form);
+    if (form._bound) return;
     form._bound = true;
     var input = document.getElementById("note-paie-reply-input");
     var compact = form.querySelector(".note-paie-mode-compact");
@@ -6870,6 +6878,66 @@
     if (tocEl && typeof tocEl._refreshToc === "function") tocEl._refreshToc();
   }
 
+  function noteKnowledgeStorageKey() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || !wrap._shareKind || !wrap._shareId) return "";
+    return "leo_note_kb:" + wrap._shareKind + ":" + wrap._shareId;
+  }
+
+  function noteUsesKnowledge() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap && typeof wrap._useKnowledge === "boolean") return wrap._useKnowledge;
+    var key = noteKnowledgeStorageKey();
+    if (key) {
+      try {
+        var raw = localStorage.getItem(key);
+        if (raw === "0") return false;
+        if (raw === "1") return true;
+      } catch (_) {}
+    }
+    return true;
+  }
+
+  function setNoteUsesKnowledge(on) {
+    var next = !!on;
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) wrap._useKnowledge = next;
+    var key = noteKnowledgeStorageKey();
+    if (key) {
+      try {
+        localStorage.setItem(key, next ? "1" : "0");
+      } catch (_) {}
+    }
+    syncNoteKnowledgeToggle();
+  }
+
+  function syncNoteKnowledgeToggle() {
+    var form = document.getElementById("note-paie-reply-form");
+    var btn = form && form.querySelector(".note-paie-kb-toggle");
+    if (!btn) return;
+    var on = noteUsesKnowledge();
+    btn.classList.toggle("is-on", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+    btn.title = on
+      ? "База знаний включена в ответ. Нажмите, чтобы выключить"
+      : "База знаний выключена. Нажмите, чтобы включить";
+  }
+
+  function bindNoteKnowledgeToggle(form) {
+    var btn = form && form.querySelector(".note-paie-kb-toggle");
+    if (!btn || btn._bound) {
+      syncNoteKnowledgeToggle();
+      return;
+    }
+    btn._bound = true;
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      setNoteUsesKnowledge(!noteUsesKnowledge());
+    });
+    syncNoteKnowledgeToggle();
+  }
+
   function noteAskMode() {
     var wrap = document.getElementById("note-editor-more-wrap");
     var mode = wrap && wrap._askMode;
@@ -6892,6 +6960,7 @@
     }
     if (form) {
       form.classList.toggle("is-gpt-mode", current === "gpt");
+      form.classList.toggle("is-comment-mode", current === "comment");
       var compactLabel = form.querySelector(".note-paie-mode-compact-label");
       if (compactLabel) compactLabel.textContent = noteAskModeLabel(current);
     }
@@ -6913,6 +6982,22 @@
     var text = (title ? title + "\n\n" : "") + body;
     if (text.length > 12000) text = text.slice(0, 11999) + "…";
     return text;
+  }
+
+  async function knowledgeTextForAsk() {
+    if (!noteUsesKnowledge()) return "";
+    try {
+      var data = await apiFetch("/notes/knowledge", { method: "GET" });
+      var html = data && data.note && data.note.body;
+      if (!html) return "";
+      var tmp = document.createElement("div");
+      tmp.innerHTML = html;
+      var text = String(tmp.innerText || tmp.textContent || "").trim();
+      if (text.length > 6000) text = text.slice(0, 5999) + "…";
+      return text;
+    } catch (_) {
+      return "";
+    }
   }
 
   async function submitNoteGptQuestion(text) {
@@ -6950,11 +7035,14 @@
       );
       var parentId = saved && saved.comment && saved.comment.id;
       refreshNoteCommentsList();
+      var kb = await knowledgeTextForAsk();
+      var ctx = activeNoteGptContext();
+      if (kb) ctx = "База знаний:\n" + kb + "\n\nЗаметка:\n" + ctx;
       var res = await apiFetch("/gpt/chat", {
         method: "POST",
         body: JSON.stringify({
           message: body,
-          context: activeNoteGptContext(),
+          context: ctx,
           history: history,
           model: selectedGptModelId() || undefined,
         }),
@@ -7205,7 +7293,10 @@
     if (thread && thread.scrollIntoView) {
       thread.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
-    apiFetch(path, { method: "POST", body: JSON.stringify({}) })
+    apiFetch(path, {
+      method: "POST",
+      body: JSON.stringify({ use_knowledge: noteUsesKnowledge() }),
+    })
       .then(function (data) {
         var status = (data && data.status) || "running";
         if (status === "done") {
@@ -7263,7 +7354,11 @@
     }
     apiFetch(path, {
       method: "POST",
-      body: JSON.stringify({ reply: body, parent_id: rootId }),
+      body: JSON.stringify({
+        reply: body,
+        parent_id: rootId,
+        use_knowledge: noteUsesKnowledge(),
+      }),
     })
       .then(function (data) {
         if (input) input.value = "";
