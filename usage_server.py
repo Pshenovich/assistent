@@ -2250,10 +2250,12 @@ def _miniapp_dev_principal_if_allowed(request: Request) -> _MiniappPrincipal | N
     return _MiniappPrincipal(uid, user)
 
 
-async def require_miniapp_user(request: Request) -> _MiniappPrincipal:
+async def _resolve_miniapp_principal(
+    request: Request, *, enforce_access: bool
+) -> _MiniappPrincipal:
     dev_principal = _miniapp_dev_principal_if_allowed(request)
     if dev_principal is not None:
-        return dev_principal
+        return _enforce_miniapp_access(dev_principal) if enforce_access else dev_principal
     auth_header = (request.headers.get("Authorization") or "").strip()
     # Mini App в Telegram: initData важнее браузерной session-cookie.
     if auth_header.lower().startswith("tma "):
@@ -2270,10 +2272,15 @@ async def require_miniapp_user(request: Request) -> _MiniappPrincipal:
                 uid = int(user.get("id"))
             except ValueError as e:
                 raise HTTPException(status_code=401, detail=str(e)) from e
-            return _enforce_miniapp_access(_MiniappPrincipal(uid, user))
+            principal = _MiniappPrincipal(uid, user)
+            return _enforce_miniapp_access(principal) if enforce_access else principal
     session_principal = _principal_from_browser_session_request(request)
     if session_principal is not None:
-        return _enforce_miniapp_access(session_principal)
+        return (
+            _enforce_miniapp_access(session_principal)
+            if enforce_access
+            else session_principal
+        )
     raw = _tma_init_data_from_header(auth_header)
     if raw is None and request.method in ("POST", "PUT", "PATCH"):
         ct = (request.headers.get("content-type") or "").lower()
@@ -2301,7 +2308,17 @@ async def require_miniapp_user(request: Request) -> _MiniappPrincipal:
         uid = int(user.get("id"))
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e)) from e
-    return _enforce_miniapp_access(_MiniappPrincipal(uid, user))
+    principal = _MiniappPrincipal(uid, user)
+    return _enforce_miniapp_access(principal) if enforce_access else principal
+
+
+async def require_miniapp_user(request: Request) -> _MiniappPrincipal:
+    return await _resolve_miniapp_principal(request, enforce_access=True)
+
+
+async def require_share_commenter(request: Request) -> _MiniappPrincipal:
+    """Telegram-сессия для комментариев по ссылке: без allowlist мини-приложения."""
+    return await _resolve_miniapp_principal(request, enforce_access=False)
 
 
 def _enforce_miniapp_access(principal: _MiniappPrincipal) -> _MiniappPrincipal:
@@ -2615,7 +2632,31 @@ def _optional_share_viewer(request: Request) -> _MiniappPrincipal | None:
             return dev
     except HTTPException:
         pass
-    return _principal_from_browser_session_request(request)
+    session_principal = _principal_from_browser_session_request(request)
+    if session_principal is not None:
+        return session_principal
+    raw = _tma_init_data_from_header((request.headers.get("Authorization") or "").strip())
+    if not raw:
+        return None
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not bot_token:
+        return None
+    try:
+        user = user_payload_from_init_data(raw, bot_token=bot_token)
+        return _MiniappPrincipal(int(user.get("id")), user)
+    except (TypeError, ValueError):
+        return None
+
+
+def _share_viewer_public(principal: _MiniappPrincipal | None) -> dict[str, Any] | None:
+    if principal is None:
+        return None
+    u = principal.user or {}
+    return {
+        "id": int(principal.telegram_user_id),
+        "username": u.get("username"),
+        "first_name": u.get("first_name"),
+    }
 
 
 def _safe_share_return_path(raw: str | None) -> str | None:
@@ -5200,11 +5241,21 @@ async def public_share_comments_list(token: str, request: Request) -> dict[str, 
     return {"comments": [_comment_api(r, viewer_uid=viewer_uid) for r in rows]}
 
 
+@app.get("/api/public/share/{token}/me")
+async def public_share_me(token: str, request: Request) -> dict[str, Any]:
+    from assistant.stores import share_comments as share_comments_store
+
+    link = await _resolve_public_share_or_404(token)
+    if not share_comments_store.comments_allowed_for_link(link):
+        raise HTTPException(status_code=403, detail="Комментарии недоступны")
+    return {"user": _share_viewer_public(_optional_share_viewer(request))}
+
+
 @app.post("/api/public/share/{token}/comments")
 async def public_share_comments_create(
     token: str,
     body: _MiniappShareCommentCreate,
-    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    principal: _MiniappPrincipal = Depends(require_share_commenter),
 ) -> dict[str, Any]:
     from assistant.stores import share_comments as share_comments_store
 
@@ -5232,7 +5283,7 @@ async def public_share_comments_create(
 async def public_share_comments_delete(
     token: str,
     comment_id: int,
-    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    principal: _MiniappPrincipal = Depends(require_share_commenter),
 ) -> dict[str, Any]:
     from assistant.stores import share_comments as share_comments_store
 

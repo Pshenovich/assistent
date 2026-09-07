@@ -437,10 +437,14 @@
     }
     boot
       .then(function () {
-        return jsonFetch("/api/miniapp/me");
+        return jsonFetch("/api/public/share/" + encodeURIComponent(token) + "/me");
       })
-      .then(function (me) {
-        showLoggedIn(me);
+      .then(function (data) {
+        if (data && data.user) {
+          showLoggedIn(data.user);
+        } else {
+          showLogin();
+        }
       })
       .catch(function () {
         showLogin();
