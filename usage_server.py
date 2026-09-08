@@ -6125,6 +6125,9 @@ async def public_share_request_edit(
     if req.get("new"):
         await run_in_threadpool(_notify_edit_request, req, title)
     return {"ok": True, "status": req.get("status")}
+
+
+@app.get("/share/{token}")
 async def public_share_page(token: str) -> HTMLResponse:
     from assistant.stores import share_links as share_links_store
 
