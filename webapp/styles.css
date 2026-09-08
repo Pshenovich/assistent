@@ -5802,6 +5802,193 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   margin-top: 0.65rem;
 }
 
+.event-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.event-sheet-title {
+  width: 100%;
+  margin: 0;
+  padding: 0.85rem 1rem;
+  border: none;
+  border-radius: 14px;
+  background: var(--surface-elevated);
+  color: var(--text);
+  font: inherit;
+  font-size: 1.0625rem;
+  line-height: 1.3;
+}
+
+.event-sheet-title::placeholder {
+  color: var(--text-tertiary);
+}
+
+.event-sheet-title:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-border);
+}
+
+.event-sheet-group {
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--surface-elevated);
+}
+
+.event-sheet-group.meeting-attendees-field {
+  overflow: visible;
+}
+
+.event-sheet-group.meeting-attendees-field > .event-sheet-row {
+  border-radius: 14px;
+}
+
+.event-sheet-group.meeting-attendees-field:has(#m-ev-attendees-editor:not(.hidden)) > .event-sheet-row {
+  border-radius: 14px 14px 0 0;
+}
+
+.event-sheet-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 0.45rem 0.9rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.event-sheet-row + .event-sheet-row,
+.event-sheet-row + .event-sheet-attendees,
+.event-sheet-row + .event-sheet-desc {
+  border-top: 0.5px solid var(--border);
+}
+
+.event-sheet-row--nav {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.event-sheet-row--nav:active {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.event-sheet-row-label,
+.event-sheet-row .field-label {
+  display: block;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 400;
+  color: var(--text);
+}
+
+.event-sheet-row-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 1rem;
+}
+
+.event-sheet-chevron {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.event-sheet-row--nav[aria-expanded="true"] .event-sheet-chevron {
+  transform: rotate(180deg);
+}
+
+.event-sheet-pills {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.event-sheet-pill {
+  max-width: 9.5rem;
+  margin: 0;
+  padding: 0.35rem 0.65rem;
+  border: none;
+  border-radius: 8px;
+  background: rgba(120, 120, 128, 0.28);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.2;
+  color-scheme: dark;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.event-sheet-pill::-webkit-calendar-picker-indicator {
+  opacity: 0.7;
+}
+
+.event-sheet-attendees {
+  padding: 0.55rem 0.9rem 0.85rem;
+  overflow: visible;
+}
+
+.event-sheet-attendees .meeting-attendee-add {
+  overflow: visible;
+}
+
+.event-sheet-attendees .meeting-attendee-suggest {
+  position: static;
+  z-index: 20;
+  margin-top: 6px;
+  max-height: min(40vh, 14rem);
+}
+
+.event-sheet-attendees .meeting-attendee-chips {
+  margin-bottom: 0.45rem;
+}
+
+.event-sheet-desc {
+  display: block;
+  width: 100%;
+  min-height: 5.5rem;
+  margin: 0;
+  padding: 0.7rem 0.9rem 0.9rem;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.event-sheet-desc.hidden {
+  display: none;
+}
+
+.event-sheet-link-row {
+  display: flex;
+  gap: 8px;
+}
+
+.event-sheet-link-row .modal-link-action {
+  flex: 1;
+  justify-content: center;
+  min-height: 44px;
+  margin: 0;
+  padding: 0.55rem 0.75rem;
+  border-radius: 14px;
+  background: var(--surface-elevated) !important;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.event-sheet-link-row .modal-link-action:active {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
 .reminder-card-checklist {
   margin: 0.35rem 0 0;
   padding: 0;

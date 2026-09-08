@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260908-stable2";
+  var WEBAPP_BUILD = "20260908-eventsheet2";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260908-stable2";
+  const NOTE_EDITOR_ASSET_V = "20260908-eventsheet2";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -4988,6 +4988,57 @@
     return 60 * 60 * 1000;
   }
 
+  function datetimeLocalParts(value) {
+    var s = String(value || "");
+    var m = s.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
+    return { date: m ? m[1] : "", time: m ? m[2] : "" };
+  }
+
+  function joinDatetimeLocal(date, time) {
+    if (!date || !time) return "";
+    return date + "T" + time;
+  }
+
+  function syncHiddenFromEventPills(which) {
+    var hidden = document.getElementById("m-ev-" + which);
+    var dateEl = document.getElementById("m-ev-" + which + "-date");
+    var timeEl = document.getElementById("m-ev-" + which + "-time");
+    if (!hidden || !dateEl || !timeEl) return;
+    hidden.value = joinDatetimeLocal(dateEl.value, timeEl.value);
+    try {
+      hidden.dispatchEvent(new Event("input", { bubbles: true }));
+      hidden.dispatchEvent(new Event("change", { bubbles: true }));
+    } catch (_) {}
+  }
+
+  function syncEventPillsFromHidden(which) {
+    var hidden = document.getElementById("m-ev-" + which);
+    var dateEl = document.getElementById("m-ev-" + which + "-date");
+    var timeEl = document.getElementById("m-ev-" + which + "-time");
+    if (!hidden || !dateEl || !timeEl) return;
+    var p = datetimeLocalParts(hidden.value);
+    if (p.date) dateEl.value = p.date;
+    if (p.time) timeEl.value = p.time;
+  }
+
+  function bindEventDateTimePills() {
+    ["start", "end"].forEach(function (which) {
+      var dateEl = document.getElementById("m-ev-" + which + "-date");
+      var timeEl = document.getElementById("m-ev-" + which + "-time");
+      function onChange() {
+        syncHiddenFromEventPills(which);
+      }
+      if (dateEl) {
+        dateEl.addEventListener("change", onChange);
+        dateEl.addEventListener("input", onChange);
+      }
+      if (timeEl) {
+        timeEl.addEventListener("change", onChange);
+        timeEl.addEventListener("input", onChange);
+      }
+    });
+  }
+
   function applyMeetingSlot(startMs) {
     var dur = meetingDurationMs();
     var startEl = document.getElementById("m-ev-start");
@@ -4995,6 +5046,8 @@
     if (!startEl || !endEl) return;
     startEl.value = isoToDatetimeLocalValue(new Date(startMs).toISOString());
     endEl.value = isoToDatetimeLocalValue(new Date(startMs + dur).toISOString());
+    syncEventPillsFromHidden("start");
+    syncEventPillsFromHidden("end");
   }
 
   function paintMeetingAvailability(host, data) {
@@ -5172,6 +5225,12 @@
         chip.appendChild(del);
         chipsEl.appendChild(chip);
       });
+      var sum = host.querySelector("#m-ev-attendees-summary");
+      if (sum) {
+        if (!items.length) sum.textContent = "Нет";
+        else if (items.length === 1) sum.textContent = items[0].name || items[0].email;
+        else sum.textContent = String(items.length);
+      }
     }
 
     function hideSuggest() {
@@ -5410,9 +5469,16 @@
     syncAppOverlay();
   }
 
+  function eventSheetChevronHtml() {
+    return (
+      '<svg class="event-sheet-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">' +
+      '<path d="M6 9l6 6 6-6"/></svg>'
+    );
+  }
+
   function openEventModal(ev) {
     ev = ev || {};
-    document.getElementById("modal-title").textContent = "Встреча";
+    document.getElementById("modal-title").textContent = ev.id ? "Встреча" : "Новое";
     document.getElementById("modal-kind").value = "event";
     document.getElementById("modal-reminder-id").value = "";
     document.getElementById("modal-event-id").value = ev.id || "";
@@ -5423,22 +5489,45 @@
     const eRaw = en.dateTime || (en.date ? en.date + "T10:00:00" : "");
     const fields = document.getElementById("modal-fields");
     fields.innerHTML =
-      '<label class="field"><span class="field-label">Название</span>' +
-      '<input id="m-ev-sum" type="text" class="field-input" /></label>' +
-      '<label class="field"><span class="field-label">Начало</span>' +
-      '<input id="m-ev-start" type="datetime-local" class="field-input" /></label>' +
-      '<label class="field"><span class="field-label">Конец</span>' +
-      '<input id="m-ev-end" type="datetime-local" class="field-input" /></label>' +
-      '<div class="field meeting-attendees-field">' +
-      '<span class="field-label">Участники</span>' +
+      '<div class="event-sheet">' +
+      '<input id="m-ev-sum" type="text" class="event-sheet-title" placeholder="Название" autocomplete="off" />' +
+      '<input type="hidden" id="m-ev-start" />' +
+      '<input type="hidden" id="m-ev-end" />' +
+      '<div class="event-sheet-group">' +
+      '<div class="event-sheet-row">' +
+      '<span class="event-sheet-row-label">Начало</span>' +
+      '<span class="event-sheet-pills">' +
+      '<input id="m-ev-start-date" type="date" class="event-sheet-pill" />' +
+      '<input id="m-ev-start-time" type="time" class="event-sheet-pill" />' +
+      "</span></div>" +
+      '<div class="event-sheet-row">' +
+      '<span class="event-sheet-row-label">Конец</span>' +
+      '<span class="event-sheet-pills">' +
+      '<input id="m-ev-end-date" type="date" class="event-sheet-pill" />' +
+      '<input id="m-ev-end-time" type="time" class="event-sheet-pill" />' +
+      "</span></div></div>" +
+      '<div class="event-sheet-group meeting-attendees-field">' +
+      '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-ev-attendees-toggle" aria-expanded="false">' +
+      '<span class="event-sheet-row-label">Участники</span>' +
+      '<span class="event-sheet-row-value"><span id="m-ev-attendees-summary">Нет</span>' +
+      eventSheetChevronHtml() +
+      "</span></button>" +
+      '<div id="m-ev-attendees-editor" class="event-sheet-attendees hidden">' +
       '<div id="m-ev-attendees-chips" class="meeting-attendee-chips"></div>' +
       '<div class="meeting-attendee-add">' +
       '<input id="m-ev-attendee-input" type="text" class="field-input" placeholder="Контакт или email" autocomplete="off" />' +
       '<div id="m-ev-attendee-suggest" class="meeting-attendee-suggest hidden" role="listbox"></div>' +
-      "</div></div>" +
+      "</div></div></div>" +
       '<div id="m-ev-avail" class="meeting-avail hidden"></div>' +
-      '<label class="field"><span class="field-label">Описание</span>' +
-      '<textarea id="m-ev-desc" class="field-textarea" rows="4"></textarea></label>';
+      '<div class="event-sheet-group">' +
+      '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-ev-desc-toggle" aria-expanded="false">' +
+      '<span class="field-label">Описание</span>' +
+      eventSheetChevronHtml() +
+      "</button>" +
+      '<textarea id="m-ev-desc" class="field-textarea event-sheet-desc hidden" rows="4"></textarea>' +
+      "</div>" +
+      '<div class="event-sheet-link-row"></div>' +
+      "</div>";
     document.getElementById("m-ev-sum").value = ev.summary || "";
     document.getElementById("m-ev-start").value = isoToDatetimeLocalValue(
       sRaw || defaultDatetimeLocalValue(60)
@@ -5446,7 +5535,44 @@
     document.getElementById("m-ev-end").value = isoToDatetimeLocalValue(
       eRaw || defaultDatetimeLocalValue(120)
     );
+    syncEventPillsFromHidden("start");
+    syncEventPillsFromHidden("end");
+    bindEventDateTimePills();
     document.getElementById("m-ev-desc").value = ev.description || "";
+    var attEditor = document.getElementById("m-ev-attendees-editor");
+    var attToggle = document.getElementById("m-ev-attendees-toggle");
+    if ((ev.attendees || []).length && attEditor && attToggle) {
+      attEditor.classList.remove("hidden");
+      attToggle.setAttribute("aria-expanded", "true");
+    }
+    if (attToggle && attEditor) {
+      attToggle.addEventListener("click", function () {
+        var open = attEditor.classList.contains("hidden");
+        attEditor.classList.toggle("hidden", !open);
+        attToggle.setAttribute("aria-expanded", open ? "true" : "false");
+        if (open) {
+          var inp = document.getElementById("m-ev-attendee-input");
+          if (inp) inp.focus();
+        }
+      });
+    }
+    function setEventDescOpen(open, opts) {
+      var ta = document.getElementById("m-ev-desc");
+      var toggle = document.getElementById("m-ev-desc-toggle");
+      if (!ta) return;
+      ta.classList.toggle("hidden", !open);
+      if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open && opts && opts.focus) ta.focus();
+    }
+    var descToggle = document.getElementById("m-ev-desc-toggle");
+    var hasDesc = !!(ev.description && String(ev.description).trim());
+    setEventDescOpen(hasDesc);
+    if (descToggle) {
+      descToggle.addEventListener("click", function () {
+        var ta = document.getElementById("m-ev-desc");
+        setEventDescOpen(!!(ta && ta.classList.contains("hidden")), { focus: true });
+      });
+    }
     meetingAttendeesApi = mountMeetingAttendees(
       document.querySelector(".meeting-attendees-field"),
       ev.attendees || []
@@ -5455,18 +5581,11 @@
       var btn = document.createElement("button");
       btn.type = "button";
       btn.className = "rem-checklist-add modal-link-action";
-      btn.innerHTML =
-        '<span class="rem-checklist-add-icon" aria-hidden="true">' +
-        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round">' +
-        '<path d="M12 5v14M5 12h14"/>' +
-        "</svg></span>" +
-        '<span class="rem-checklist-add-label">' +
-        label +
-        "</span>";
+      btn.textContent = label;
       return btn;
     }
 
-    const zoomBtn = makeLinkActionBtn("Создать ссылку на встречу в Zoom");
+    const zoomBtn = makeLinkActionBtn("Zoom");
     zoomBtn.addEventListener("click", async function () {
       const id = document.getElementById("modal-event-id").value;
       if (!id) {
@@ -5489,6 +5608,7 @@
           var cur = (ta && ta.value) || "";
           var line = "Zoom: " + join;
           ta.value = cur.trim() ? cur.trim() + "\n\n" + line : line;
+          setEventDescOpen(true);
         }
         var msg = (r && r.already) ? "Ссылка уже была в календаре." : "Ссылка Zoom добавлена.";
         const tg = window.Telegram && window.Telegram.WebApp;
@@ -5503,8 +5623,10 @@
         alert(e.message || String(e));
       }
     });
-    fields.appendChild(zoomBtn);
-    const telemostBtn = makeLinkActionBtn("Создать ссылку на встречу в Телемосте");
+    var linkRow = fields.querySelector(".event-sheet-link-row");
+    if (linkRow) linkRow.appendChild(zoomBtn);
+    else fields.appendChild(zoomBtn);
+    const telemostBtn = makeLinkActionBtn("Телемост");
     telemostBtn.addEventListener("click", async function () {
       const id = document.getElementById("modal-event-id").value;
       if (!id) {
@@ -5527,6 +5649,7 @@
           var cur = (ta && ta.value) || "";
           var line = "Телемост: " + join;
           ta.value = cur.trim() ? cur.trim() + "\n\n" + line : line;
+          setEventDescOpen(true);
         }
         var msg = (r && r.already) ? "Ссылка уже была в календаре." : "Ссылка Телемост добавлена.";
         const tg = window.Telegram && window.Telegram.WebApp;
@@ -5541,7 +5664,8 @@
         alert(e.message || String(e));
       }
     });
-    fields.appendChild(telemostBtn);
+    if (linkRow) linkRow.appendChild(telemostBtn);
+    else fields.appendChild(telemostBtn);
     document.getElementById("modal-delete").classList.toggle("hidden", !ev.id);
     document.getElementById("modal-overlay").classList.remove("hidden");
     document.getElementById("modal-overlay").setAttribute("aria-hidden", "false");
