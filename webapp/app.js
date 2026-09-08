@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260908-eventsheet2";
+  var WEBAPP_BUILD = "20260908-remdisc";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260908-eventsheet2";
+  const NOTE_EDITOR_ASSET_V = "20260908-remdisc";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -4623,6 +4623,11 @@
   }
 
   function updateModalSheetForKeyboard() {
+    if (isNoteDiscussionOpen() && !isDesktopLayout()) {
+      freezeNoteEditorUnderDiscussion();
+      updateDiscussionOverlayForKeyboard();
+      return;
+    }
     var sheet = getActiveModalSheet();
     var body = sheet && sheet.querySelector(".modal-body");
     if (!sheet || !body) return;
@@ -4662,6 +4667,24 @@
       return;
     }
 
+    var eventModal = !!(sheet.closest && sheet.closest("#modal-overlay"));
+    if (eventModal && !isDesktopLayout()) {
+      var visibleH = noteEditorVisibleHeightPx();
+      if (visibleH > 0) {
+        sheet.style.height = visibleH + "px";
+        sheet.style.maxHeight = visibleH + "px";
+      } else {
+        sheet.style.height = "100%";
+        sheet.style.maxHeight = "100%";
+      }
+      var offsetTop = vv && typeof vv.offsetTop === "number" ? vv.offsetTop : 0;
+      sheet.style.transform =
+        offsetTop > 0 ? "translateY(" + Math.round(offsetTop) + "px)" : "";
+      body.style.paddingBottom = "";
+      root.style.removeProperty("--note-editor-kb-inset");
+      root.classList.remove("note-editor-kb-open");
+      return;
+    }
     if (!vv) return;
     var kb = Math.max(0, Math.round(window.innerHeight - vv.height - (vv.offsetTop || 0)));
     var visibleH = Math.round(vv.height);
@@ -4731,10 +4754,10 @@
     });
     if (window.visualViewport) {
       window.visualViewport.addEventListener("resize", function () {
-        if (modalSheetOpen) updateModalSheetForKeyboard();
+        if (modalSheetOpen || isNoteDiscussionOpen()) updateModalSheetForKeyboard();
       });
       window.visualViewport.addEventListener("scroll", function () {
-        if (modalSheetOpen) updateModalSheetForKeyboard();
+        if (modalSheetOpen || isNoteDiscussionOpen()) updateModalSheetForKeyboard();
       });
     }
     var tg = window.Telegram && window.Telegram.WebApp;
@@ -5437,6 +5460,37 @@
     };
   }
 
+  function bindReminderWhenPills() {
+    var hidden = document.getElementById("m-rem-when");
+    var dateEl = document.getElementById("m-rem-when-date");
+    var timeEl = document.getElementById("m-rem-when-time");
+    function syncHidden() {
+      if (!hidden || !dateEl || !timeEl) return;
+      hidden.value = joinDatetimeLocal(dateEl.value, timeEl.value);
+    }
+    function syncPills() {
+      if (!hidden || !dateEl || !timeEl) return;
+      var p = datetimeLocalParts(hidden.value);
+      if (p.date) dateEl.value = p.date;
+      if (p.time) timeEl.value = p.time;
+    }
+    if (dateEl) {
+      dateEl.addEventListener("change", syncHidden);
+      dateEl.addEventListener("input", syncHidden);
+    }
+    if (timeEl) {
+      timeEl.addEventListener("change", syncHidden);
+      timeEl.addEventListener("input", syncHidden);
+    }
+    syncPills();
+  }
+
+  function autosizeReminderTitle(el) {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.max(el.scrollHeight, 52) + "px";
+  }
+
   function openReminderModal(r) {
     r = r || {};
     document.getElementById("modal-title").textContent = "Напоминание";
@@ -5446,18 +5500,29 @@
     document.getElementById("modal-calendar-id").value = "";
     const fields = document.getElementById("modal-fields");
     fields.innerHTML =
-      '<label class="field"><span class="field-label">Текст</span>' +
-      '<textarea id="m-rem-task" class="field-textarea" rows="3"></textarea></label>' +
-      '<div class="field rem-checklist-field">' +
-      '<span class="field-label">Задачи</span>' +
+      '<div class="event-sheet">' +
+      '<textarea id="m-rem-task" class="event-sheet-title event-sheet-title--area" rows="1" placeholder="Текст" autocomplete="off"></textarea>' +
+      '<input type="hidden" id="m-rem-when" />' +
+      '<div class="event-sheet-group">' +
+      '<div class="event-sheet-row">' +
+      '<span class="event-sheet-row-label">Когда</span>' +
+      '<span class="event-sheet-pills">' +
+      '<input id="m-rem-when-date" type="date" class="event-sheet-pill" />' +
+      '<input id="m-rem-when-time" type="time" class="event-sheet-pill" />' +
+      "</span></div></div>" +
+      '<div class="event-sheet-group event-sheet-checklist-group">' +
       '<div id="m-rem-checklist-host" class="rem-checklist-host"></div>' +
-      "</div>" +
-      '<label class="field"><span class="field-label">Когда</span>' +
-      '<input id="m-rem-when" type="datetime-local" class="field-input" /></label>';
-    document.getElementById("m-rem-task").value = r.task || "";
+      "</div></div>";
+    var taskEl = document.getElementById("m-rem-task");
+    taskEl.value = r.task || "";
+    autosizeReminderTitle(taskEl);
+    taskEl.addEventListener("input", function () {
+      autosizeReminderTitle(taskEl);
+    });
     document.getElementById("m-rem-when").value = isoToDatetimeLocalValue(
       r.when_iso || defaultDatetimeLocalValue(60)
     );
+    bindReminderWhenPills();
     reminderChecklistApi = mountReminderChecklist(
       document.getElementById("m-rem-checklist-host"),
       r.checklist
@@ -8083,6 +8148,75 @@
     return !!(ov && !ov.classList.contains("hidden"));
   }
 
+  function freezeNoteEditorUnderDiscussion() {
+    var sheet = document.querySelector("#note-editor-overlay .modal--sheet");
+    var body = sheet && sheet.querySelector(".modal-body");
+    if (sheet) {
+      sheet.style.transform = "";
+      sheet.style.height = "100%";
+      sheet.style.maxHeight = "100%";
+    }
+    if (body) body.style.paddingBottom = "";
+    document.documentElement.classList.remove("note-editor-kb-open");
+    document.documentElement.style.removeProperty("--note-editor-kb-inset");
+  }
+
+  function resetDiscussionOverlayViewport() {
+    var ov = document.getElementById("note-discussion-overlay");
+    var sheet = ov && ov.querySelector(".note-discussion-sheet");
+    if (ov) {
+      ov.style.top = "";
+      ov.style.left = "";
+      ov.style.right = "";
+      ov.style.bottom = "";
+      ov.style.width = "";
+      ov.style.height = "";
+      ov.style.maxHeight = "";
+      ov.style.transform = "";
+    }
+    if (sheet) {
+      sheet.style.height = "";
+      sheet.style.maxHeight = "";
+      sheet.style.transform = "";
+    }
+  }
+
+  function updateDiscussionOverlayForKeyboard() {
+    var ov = document.getElementById("note-discussion-overlay");
+    var sheet = ov && ov.querySelector(".note-discussion-sheet");
+    if (!ov || !sheet || ov.classList.contains("hidden")) return;
+    if (isDesktopLayout()) {
+      resetDiscussionOverlayViewport();
+      return;
+    }
+    var vv = window.visualViewport;
+    var visibleH = noteEditorVisibleHeightPx();
+    var offsetTop = vv && typeof vv.offsetTop === "number" ? vv.offsetTop : 0;
+    var offsetLeft = vv && typeof vv.offsetLeft === "number" ? vv.offsetLeft : 0;
+    var width = vv && typeof vv.width === "number" ? Math.round(vv.width) : 0;
+    ov.style.bottom = "auto";
+    ov.style.right = "auto";
+    ov.style.top = Math.round(offsetTop) + "px";
+    ov.style.left = Math.round(offsetLeft) + "px";
+    ov.style.width = width > 0 ? width + "px" : "100%";
+    if (visibleH > 0) {
+      ov.style.height = visibleH + "px";
+      ov.style.maxHeight = visibleH + "px";
+    } else {
+      ov.style.height = "100%";
+      ov.style.maxHeight = "100%";
+    }
+    sheet.style.height = "100%";
+    sheet.style.maxHeight = "100%";
+    ov.style.transform = "";
+    sheet.style.transform = "";
+    if (window.scrollY || window.scrollX) {
+      try {
+        window.scrollTo(0, 0);
+      } catch (_) {}
+    }
+  }
+
   function bindNoteDiscussionOverlayOnce() {
     var ov = document.getElementById("note-discussion-overlay");
     if (!ov || ov._bound) return ov;
@@ -8112,6 +8246,28 @@
       if (desk.addEventListener) desk.addEventListener("change", onDesk);
       else if (desk.addListener) desk.addListener(onDesk);
     }
+    document.addEventListener(
+      "touchmove",
+      function (e) {
+        if (!isNoteDiscussionOpen() || isDesktopLayout()) return;
+        var t = e.target;
+        if (!t || !t.closest) {
+          e.preventDefault();
+          return;
+        }
+        if (!t.closest("#note-discussion-overlay")) {
+          e.preventDefault();
+          return;
+        }
+        if (t.closest(".note-discussion-scroll")) return;
+        if (t.closest("textarea, input, .note-paie-menu, .note-paie-model-search")) return;
+        e.preventDefault();
+      },
+      { passive: false }
+    );
+    ov.addEventListener("focusin", function () {
+      if (isNoteDiscussionOpen()) updateDiscussionOverlayForKeyboard();
+    });
     return ov;
   }
 
@@ -8157,9 +8313,11 @@
     }
     closeNoteAnswerMenu();
     closeNoteComposerMenus();
+    resetDiscussionOverlayViewport();
     syncNoteDiscussionOpenClass();
     syncAppOverlay();
     syncTelegramNativeBack();
+    if (isNoteEditorModalOpen()) updateModalSheetForKeyboard();
   }
 
   function highlightDiscussionMessage(id) {
@@ -8302,7 +8460,7 @@
     var input = document.getElementById("note-paie-reply-input");
     var shouldFocus =
       opts.focus === true ||
-      (!opts.fromDesktopSync && !opts.scrollToId && opts.focus !== false && !isDesktopLayout());
+      (!!opts.draft && !isDesktopLayout() && opts.focus !== false);
     if (input && shouldFocus) {
       try {
         input.focus();
@@ -8319,6 +8477,7 @@
     syncAppOverlay();
     syncTelegramNativeBack();
     syncNoteFormatToolbarForComposer();
+    updateModalSheetForKeyboard();
   }
 
   function ensureNotePaieThread() {
