@@ -1757,6 +1757,7 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
 .note-tg-btn--gpt {
   flex-shrink: 0;
   background: rgba(255, 255, 255, 0.08);
+  touch-action: manipulation;
 }
 
 .note-tg-btn--gpt.hidden {
@@ -3670,6 +3671,28 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   font-size: 14px;
 }
 
+.note-discussion-overlay .note-paie-composer-left {
+  gap: 4px;
+}
+
+.note-discussion-overlay .note-paie-mode-switch {
+  display: none;
+}
+
+.note-discussion-overlay .note-paie-mode-compact {
+  display: inline-flex;
+}
+
+.note-discussion-overlay .note-paie-mode-compact-label,
+.note-discussion-overlay .note-paie-model-label {
+  max-width: 4.75rem;
+}
+
+.note-discussion-overlay .note-paie-composer-input,
+.note-discussion-overlay .note-paie-reply-form .note-comments-input {
+  font-size: 16px;
+}
+
 @media (max-width: 959px) {
   .note-paie-composer-left {
     gap: 4px;
@@ -3934,6 +3957,8 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   font: inherit;
   text-align: left;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .note-discussion-card-title {
@@ -6402,6 +6427,11 @@ html.modal-sheet-open body {
     padding-bottom: 0;
   }
 
+  #note-editor-overlay:has(#note-editor-toolbar-wrap.has-gpt-btn:not(.hidden))
+    .note-editor-modal-content {
+    padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px));
+  }
+
   #note-editor-overlay .note-editor-pad--body,
   #note-editor-overlay .note-rich-editor,
   #note-editor-overlay .note-rich-editor-surface,
@@ -7239,6 +7269,11 @@ html.modal-sheet-open body {
     padding: 0;
     background: var(--bg);
     backdrop-filter: none;
+    transition: right 180ms ease;
+  }
+
+  html.note-discussion-open #note-editor-overlay {
+    right: var(--max-w);
   }
 
   #note-editor-overlay .note-editor-sheet {
@@ -7249,6 +7284,22 @@ html.modal-sheet-open body {
     border: none;
     border-radius: 0;
     box-shadow: none;
+  }
+
+  .note-discussion-overlay {
+    left: auto;
+    right: 0;
+    width: var(--max-w);
+    max-width: var(--max-w);
+    justify-content: stretch;
+    border-left: 1px solid var(--border);
+    box-shadow: -12px 0 32px rgba(0, 0, 0, 0.28);
+  }
+
+  .note-discussion-sheet {
+    max-width: none;
+    height: 100%;
+    max-height: 100%;
   }
 
   .gpt-overlay {

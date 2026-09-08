@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260908-discuss";
+  var WEBAPP_BUILD = "20260908-tap";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260908-discuss";
+  const NOTE_EDITOR_ASSET_V = "20260908-tap";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -4373,14 +4373,12 @@
   function syncNoteFormatToolbarForComposer() {
     var wrap = document.getElementById("note-editor-toolbar-wrap");
     if (!wrap) return;
+    wrap.classList.remove("is-composer-hidden");
     if (!isNoteEditorModalOpen() || !isMobileNoteLayout()) {
-      wrap.classList.remove("is-composer-hidden");
       wrap.classList.remove("is-format-active");
       return;
     }
-    var show = noteFormatUiActive();
-    wrap.classList.toggle("is-format-active", show);
-    wrap.classList.toggle("is-composer-hidden", !show);
+    wrap.classList.toggle("is-format-active", noteFormatUiActive());
   }
 
   function noteGptIconHtml() {
@@ -4556,19 +4554,19 @@
         if (!modalSheetOpen || !isNoteEditorModalOpen() || !isMobileNoteLayout()) return;
         var t = e.target;
         if (!t || !t.closest || !t.closest("#note-editor-overlay")) return;
+        if (t.closest("#note-editor-gpt-btn, .note-discussion-card")) return;
         var wrap = document.getElementById("note-editor-toolbar-wrap");
         if (!wrap || wrap.classList.contains("hidden")) return;
+        wrap.classList.remove("is-composer-hidden");
         if (
           t.closest(
-            ".note-rich-editor-mount, .ProseMirror, .note-editor-toolbar-wrap, .note-link-popover"
+            ".note-rich-editor-mount, .ProseMirror, .note-editor-format-toolbar-host, .note-link-popover"
           )
         ) {
           wrap.classList.add("is-format-active");
-          wrap.classList.remove("is-composer-hidden");
           return;
         }
         wrap.classList.remove("is-format-active");
-        wrap.classList.add("is-composer-hidden");
       },
       true
     );
@@ -7059,6 +7057,15 @@
     return ov;
   }
 
+  function syncNoteDiscussionOpenClass() {
+    var open = isNoteDiscussionOpen();
+    document.documentElement.classList.toggle("note-discussion-open", open);
+    var sheet = document.querySelector("#note-discussion-overlay .note-discussion-sheet");
+    if (sheet) {
+      sheet.setAttribute("aria-modal", open && isDesktopLayout() ? "false" : "true");
+    }
+  }
+
   function closeNoteDiscussion() {
     var ov = document.getElementById("note-discussion-overlay");
     if (ov) {
@@ -7067,6 +7074,7 @@
     }
     closeNoteAnswerMenu();
     closeNoteComposerMenus();
+    syncNoteDiscussionOpenClass();
     syncAppOverlay();
     syncTelegramNativeBack();
   }
@@ -7149,6 +7157,7 @@
     }
     var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
     if (scroll) scroll.scrollTop = scroll.scrollHeight;
+    syncNoteDiscussionOpenClass();
     syncAppOverlay();
     syncTelegramNativeBack();
     syncNoteFormatToolbarForComposer();
