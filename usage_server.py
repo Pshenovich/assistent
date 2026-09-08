@@ -2425,6 +2425,8 @@ class _MiniappLocalNotePatch(BaseModel):
     description: Optional[str] = None
     sync_todoist: Optional[bool] = None
     kb_enabled: Optional[bool] = None
+    expected_updated_at: Optional[str] = None
+    expected_revision: Optional[int] = None
 
 
 class _MiniappJournalPatch(BaseModel):
@@ -2446,6 +2448,16 @@ class _MiniappItemTagsBody(BaseModel):
 
 class _MiniappShareCreate(BaseModel):
     access: Optional[str] = None
+
+
+class _MiniappNoteMemberAdd(BaseModel):
+    email: Optional[str] = None
+    telegram_user_id: Optional[int] = None
+    telegram_username: Optional[str] = None
+
+
+class _MiniappNoteCollabBody(BaseModel):
+    cursor: Optional[int] = None
 
 
 class _MiniappShareCommentCreate(BaseModel):
@@ -2773,6 +2785,7 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
             "body": str(note.get("body") or "")[:120000],
             "updated_at": note.get("updated_at"),
             "access": share_links_store.normalize_access(link.get("access")),
+            "item_id": item_id,
         }
     if kind == "journal":
         try:
@@ -2813,6 +2826,89 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
 def _owner_can_share_item(uid: str, kind: str, item_id: str) -> bool:
     fake = {"user_id": uid, "item_kind": kind, "item_id": item_id}
     return _public_share_payload(fake) is not None
+
+
+def _resolve_item_owner(uid: str, kind: str, item_id: str) -> str | None:
+    """Владелец записи, если зритель — владелец или участник (для local)."""
+    kind = (kind or "").strip()
+    if kind == "local":
+        from assistant.stores import notes as notes_store
+
+        try:
+            nid = int(item_id)
+        except (TypeError, ValueError):
+            return None
+        note = notes_store.get_accessible_note(uid, nid, with_sharing=False)
+        if not note:
+            return None
+        return str(note.get("owner_user_id") or "") or None
+    if _owner_can_share_item(uid, kind, item_id):
+        return str(uid)
+    return None
+
+
+def _remember_principal_profile(principal: _MiniappPrincipal) -> None:
+    try:
+        from assistant.stores import note_members
+
+        u = principal.user or {}
+        note_members.upsert_profile(
+            int(principal.telegram_user_id),
+            username=u.get("username"),
+            first_name=str(u.get("first_name") or "") or None,
+            last_name=str(u.get("last_name") or "") or None,
+            photo_url=str(u.get("photo_url") or "") or None,
+        )
+    except Exception:
+        pass
+
+
+def _principal_display_name(principal: _MiniappPrincipal) -> str:
+    _, name, username = _comment_author_from_principal(principal)
+    return name or (f"@{username}" if username else "Пользователь")
+
+
+def _notify_member_added(
+    *,
+    member_user_id: int,
+    title: str,
+    note_id: int,
+    adder_name: str,
+) -> None:
+    from assistant.lib.telegram_notify import send_message
+    from assistant.stores import note_members
+
+    link = note_members.note_title_link_html(title, note_id)
+    who = html_lib.escape(adder_name or "Участник")
+    send_message(
+        int(member_user_id),
+        f"{who} добавил(а) вас в заметку {link}.",
+    )
+
+
+def _notify_edit_request(req: dict[str, Any], title: str) -> None:
+    from assistant.lib.telegram_notify import send_message
+    from assistant.stores import note_members
+
+    link = note_members.note_title_link_html(title, int(req["note_id"]))
+    who = note_members.requester_label(
+        req.get("requester_username"),
+        req.get("requester_name"),
+        str(req.get("requester_user_id") or ""),
+    )
+    kb = {
+        "inline_keyboard": [
+            [
+                {"text": "Отклонить", "callback_data": f"ned:no:{req['token']}"},
+                {"text": "Разрешить", "callback_data": f"ned:ok:{req['token']}"},
+            ]
+        ]
+    }
+    send_message(
+        int(req["owner_user_id"]),
+        f"{link}\nпользователь {who} просит права редактировать",
+        reply_markup=kb,
+    )
 
 
 def _event_meet_url(ev: dict[str, Any]) -> Optional[str]:
@@ -3339,6 +3435,7 @@ async def miniapp_auth_logout() -> JSONResponse:
 @miniapp_router.get("/me")
 async def miniapp_me(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict:
     u = principal.user
+    await run_in_threadpool(_remember_principal_profile, principal)
     return {
         "id": u.get("id"),
         "username": u.get("username"),
@@ -4365,7 +4462,7 @@ async def miniapp_item_tags_set(
             raise HTTPException(status_code=400, detail="Некорректный id заметки") from e
 
         def _check_local() -> bool:
-            return notes_store.get_note(uid, nid) is not None
+            return notes_store.get_accessible_note(uid, nid, with_sharing=False) is not None
 
         if not await run_in_threadpool(_check_local):
             raise HTTPException(status_code=404, detail="Заметка не найдена")
@@ -4638,13 +4735,26 @@ async def miniapp_local_note_patch(
     uid = int(principal.telegram_user_id)
 
     def _run() -> dict[str, Any] | None:
-        item = notes_store.update_note(
-            uid,
-            note_id,
-            title=body.title,
-            body=body.description,
-            kb_enabled=body.kb_enabled,
-        )
+        access = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
+        if access is None:
+            return None
+        owner = str(access.get("owner_user_id") or uid)
+        try:
+            item = notes_store.update_note(
+                owner,
+                note_id,
+                title=body.title,
+                body=body.description,
+                kb_enabled=body.kb_enabled,
+                expected_updated_at=body.expected_updated_at,
+                expected_revision=body.expected_revision,
+                actor_user_id=uid,
+            )
+        except notes_store.NoteConflictError as e:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Заметка изменена другим участником", "item": e.note},
+            ) from e
         if item is None:
             return None
         if body.sync_todoist and item.get("todoist_id"):
@@ -4656,7 +4766,7 @@ async def miniapp_local_note_patch(
                 description=body.description,
                 telegram_user_id=uid,
             )
-        elif body.sync_todoist and not item.get("todoist_id"):
+        elif body.sync_todoist and not item.get("todoist_id") and str(item.get("owner_user_id") or "") == str(uid):
             from assistant.compat.miniapp_shims import add_todoist_note
 
             tid = add_todoist_note(
@@ -4664,7 +4774,7 @@ async def miniapp_local_note_patch(
                 item.get("body") or "",
                 telegram_user_id=uid,
             )
-            item = notes_store.update_note(uid, note_id, todoist_id=tid) or item
+            item = notes_store.update_note(owner, note_id, todoist_id=tid, actor_user_id=uid) or item
         return item
 
     item = await run_in_threadpool(_run)
@@ -4682,19 +4792,217 @@ async def miniapp_local_note_delete(
 
     uid = int(principal.telegram_user_id)
 
-    def _run() -> bool:
-        return notes_store.delete_note(uid, note_id)
+    def _run() -> str:
+        access = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
+        if access is None:
+            return "missing"
+        owner = str(access.get("owner_user_id") or uid)
+        if owner == str(uid):
+            return "deleted" if notes_store.delete_note(uid, note_id) else "missing"
+        from assistant.stores import note_members
 
-    ok = await run_in_threadpool(_run)
-    if not ok:
+        return "left" if note_members.remove_member(owner, note_id, uid) else "missing"
+
+    action = await run_in_threadpool(_run)
+    if action == "missing":
         raise HTTPException(status_code=404, detail="Заметка не найдена")
-    from assistant.stores import share_links as share_links_store
+    if action == "deleted":
+        from assistant.stores import share_links as share_links_store
 
-    await run_in_threadpool(share_links_store.revoke_share, uid, "local", note_id)
-    from assistant.stores import share_comments as share_comments_store
+        await run_in_threadpool(share_links_store.revoke_share, str(uid), "local", note_id)
+        from assistant.stores import share_comments as share_comments_store
 
-    await run_in_threadpool(share_comments_store.delete_all_for_item, uid, "local", note_id)
+        await run_in_threadpool(share_comments_store.delete_all_for_item, str(uid), "local", note_id)
+    return {"ok": True, "left": action == "left"}
+
+
+@miniapp_router.get("/notes/local/{note_id}")
+async def miniapp_local_note_get(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    item = await run_in_threadpool(notes_store.get_accessible_note, uid, note_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return {"ok": True, "item": item}
+
+
+@miniapp_router.get("/notes/local/{note_id}/members")
+async def miniapp_note_members_list(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    note = await run_in_threadpool(notes_store.get_accessible_note, uid, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return {"ok": True, "members": note.get("members") or []}
+
+
+@miniapp_router.post("/notes/local/{note_id}/members")
+async def miniapp_note_members_add(
+    note_id: int,
+    body: _MiniappNoteMemberAdd,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import note_members
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    await run_in_threadpool(_remember_principal_profile, principal)
+
+    def _run() -> tuple[dict[str, Any], dict[str, Any]]:
+        note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
+        if not note:
+            raise HTTPException(status_code=404, detail="Заметка не найдена")
+        owner = str(note.get("owner_user_id") or uid)
+        member_id, _contact = note_members.resolve_contact_telegram_id(
+            owner_user_id=uid,
+            email=body.email,
+            telegram_user_id=body.telegram_user_id,
+            telegram_username=body.telegram_username,
+            owner_username=_miniapp_tg_username(principal),
+        )
+        if int(member_id) == int(owner):
+            raise HTTPException(status_code=400, detail="Это владелец заметки")
+        member = note_members.add_member(owner, note_id, member_id)
+        fresh = notes_store.get_accessible_note(uid, note_id)
+        return member, fresh or note
+
+    try:
+        member, note = await run_in_threadpool(_run)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except HTTPException:
+        raise
+    title = str((note or {}).get("title") or "Без названия")
+    await run_in_threadpool(
+        partial(
+            _notify_member_added,
+            member_user_id=int(member["user_id"]),
+            title=title,
+            note_id=int(note_id),
+            adder_name=_principal_display_name(principal),
+        )
+    )
+    return {"ok": True, "member": member, "item": note}
+
+
+@miniapp_router.delete("/notes/local/{note_id}/members/{member_id}")
+async def miniapp_note_members_remove(
+    note_id: int,
+    member_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import note_members
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> bool:
+        note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
+        if not note:
+            return False
+        owner = str(note.get("owner_user_id") or uid)
+        if str(uid) != owner and int(member_id) != uid:
+            raise HTTPException(
+                status_code=403, detail="Удалять участников может только автор"
+            )
+        return note_members.remove_member(owner, note_id, member_id)
+
+    try:
+        ok = await run_in_threadpool(_run)
+    except HTTPException:
+        raise
+    if not ok:
+        raise HTTPException(status_code=404, detail="Участник не найден")
     return {"ok": True}
+
+
+@miniapp_router.post("/notes/local/{note_id}/collab")
+async def miniapp_note_collab(
+    note_id: int,
+    body: Optional[_MiniappNoteCollabBody] = None,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import note_members
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    payload = body or _MiniappNoteCollabBody()
+
+    def _run() -> dict[str, Any] | None:
+        note = notes_store.get_accessible_note(uid, note_id)
+        if not note:
+            return None
+        owner = str(note.get("owner_user_id") or uid)
+        _, name, username = _comment_author_from_principal(principal)
+        peers = note_members.heartbeat(
+            owner,
+            note_id,
+            uid,
+            cursor=payload.cursor,
+            display_name=name,
+            username=username,
+        )
+        others = [p for p in peers if str(p.get("user_id")) != str(uid)]
+        return {
+            "ok": True,
+            "item": note,
+            "peers": others,
+            "members": note.get("members") or [],
+        }
+
+    data = await run_in_threadpool(_run)
+    if not data:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return data
+
+
+@miniapp_router.delete("/notes/local/{note_id}/collab")
+async def miniapp_note_collab_leave(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import note_members
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> None:
+        note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
+        if not note:
+            return
+        owner = str(note.get("owner_user_id") or uid)
+        note_members.leave_presence(owner, note_id, uid)
+
+    await run_in_threadpool(_run)
+    return {"ok": True}
+
+
+@miniapp_router.get("/users/{user_id}/photo")
+async def miniapp_user_photo(
+    user_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> Response:
+    from assistant.stores import note_members
+
+    viewer = int(principal.telegram_user_id)
+    if int(user_id) != viewer:
+        allowed = await run_in_threadpool(
+            note_members.shares_any_note_with, viewer, int(user_id)
+        )
+        if not allowed:
+            raise HTTPException(status_code=404, detail="Фото недоступно")
+    blob = await run_in_threadpool(note_members.cached_profile_photo, int(user_id))
+    if not blob:
+        raise HTTPException(status_code=404, detail="Фото недоступно")
+    return Response(content=blob, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=600"})
 
 
 @miniapp_router.get("/notes/{kind}/{item_id}/share")
@@ -4706,7 +5014,10 @@ async def miniapp_share_get(
     from assistant.stores import share_links as share_links_store
 
     uid = str(int(principal.telegram_user_id))
-    link = await run_in_threadpool(share_links_store.get_active_share, uid, kind, item_id)
+    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    if not owner:
+        return {"shared": False, "url": None, "token": None, "access": None}
+    link = await run_in_threadpool(share_links_store.get_active_share, owner, kind, item_id)
     if not link:
         return {"shared": False, "url": None, "token": None, "access": None}
     return _share_response(link)
@@ -4722,12 +5033,13 @@ async def miniapp_share_create(
     from assistant.stores import share_links as share_links_store
 
     uid = str(int(principal.telegram_user_id))
-    if not await run_in_threadpool(_owner_can_share_item, uid, kind, item_id):
+    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    if not owner:
         raise HTTPException(status_code=404, detail="Запись не найдена")
     access = (body.access if body else None)
     try:
         link = await run_in_threadpool(
-            share_links_store.create_or_get_share, uid, kind, item_id, access
+            share_links_store.create_or_get_share, owner, kind, item_id, access
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -4743,7 +5055,10 @@ async def miniapp_share_revoke(
     from assistant.stores import share_links as share_links_store
 
     uid = str(int(principal.telegram_user_id))
-    revoked = await run_in_threadpool(share_links_store.revoke_share, uid, kind, item_id)
+    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    if not owner:
+        return {"shared": False, "revoked": False, "access": None}
+    revoked = await run_in_threadpool(share_links_store.revoke_share, owner, kind, item_id)
     return {"shared": False, "revoked": bool(revoked), "access": None}
 
 
@@ -4756,9 +5071,10 @@ async def miniapp_share_comments_list(
     from assistant.stores import share_comments as share_comments_store
 
     uid = str(int(principal.telegram_user_id))
-    if not await run_in_threadpool(_owner_can_share_item, uid, kind, item_id):
+    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    if not owner:
         raise HTTPException(status_code=404, detail="Запись не найдена")
-    rows = await run_in_threadpool(share_comments_store.list_comments, uid, kind, item_id)
+    rows = await run_in_threadpool(share_comments_store.list_comments, owner, kind, item_id)
     return {"comments": [_comment_api(r, viewer_uid=uid) for r in rows]}
 
 
@@ -4772,7 +5088,8 @@ async def miniapp_share_comments_create(
     from assistant.stores import share_comments as share_comments_store
 
     uid = str(int(principal.telegram_user_id))
-    if not await run_in_threadpool(_owner_can_share_item, uid, kind, item_id):
+    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    if not owner:
         raise HTTPException(status_code=404, detail="Запись не найдена")
     author_id, author_name, author_username = _comment_author_from_principal(principal)
     prefix = body.prefix
@@ -4783,7 +5100,7 @@ async def miniapp_share_comments_create(
     try:
         row = await run_in_threadpool(
             share_comments_store.add_comment,
-            uid,
+            owner,
             kind,
             item_id,
             author_user_id=author_id,
@@ -4810,12 +5127,13 @@ async def miniapp_share_comments_delete(
     from assistant.stores import share_comments as share_comments_store
 
     uid = str(int(principal.telegram_user_id))
-    if not await run_in_threadpool(_owner_can_share_item, uid, kind, item_id):
+    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    if not owner:
         raise HTTPException(status_code=404, detail="Запись не найдена")
     row = await run_in_threadpool(share_comments_store.get_comment, comment_id)
     if (
         not row
-        or str(row.get("owner_user_id") or "") != uid
+        or str(row.get("owner_user_id") or "") != owner
         or str(row.get("item_kind") or "") != kind
         or str(row.get("item_id") or "") != str(item_id)
     ):
@@ -4841,7 +5159,8 @@ async def miniapp_note_paei_start(
     from assistant.stores import share_comments as share_comments_store
 
     uid = str(int(principal.telegram_user_id))
-    if not await run_in_threadpool(_owner_can_share_item, uid, kind, item_id):
+    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    if not owner:
         raise HTTPException(status_code=404, detail="Запись не найдена")
     payload = body or _MiniappNotePaeiStart()
     reply_text = (payload.reply or "").strip()
@@ -4850,14 +5169,14 @@ async def miniapp_note_paei_start(
     use_knowledge = payload.use_knowledge is not False
     if reply_text:
         comments = await run_in_threadpool(
-            share_comments_store.list_comments, uid, kind, item_id
+            share_comments_store.list_comments, owner, kind, item_id
         )
         root_id = parent_id or share_comments_store.paie_thread_root_id(comments)
         if not root_id:
             raise HTTPException(
                 status_code=400, detail="Сначала дождитесь комментария CHAIR"
             )
-        running = get_job(uid, kind, item_id)
+        running = get_job(owner, kind, item_id)
         if running and str(running.get("status") or "") == "running":
             raise HTTPException(status_code=409, detail="Дождитесь ответа CHAIR")
         author_id, author_name, author_username = _comment_author_from_principal(
@@ -4876,7 +5195,7 @@ async def miniapp_note_paei_start(
         try:
             await run_in_threadpool(
                 share_comments_store.add_comment,
-                uid,
+                owner,
                 kind,
                 item_id,
                 author_user_id=author_id,
@@ -4889,7 +5208,7 @@ async def miniapp_note_paei_start(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         job, started = begin_job(
-            uid,
+            owner,
             kind,
             item_id,
             reply=reply_text,
@@ -4900,12 +5219,12 @@ async def miniapp_note_paei_start(
         )
         followup_parent = int(root_id)
     else:
-        job, started = begin_job(uid, kind, item_id, use_knowledge=use_knowledge)
+        job, started = begin_job(owner, kind, item_id, use_knowledge=use_knowledge)
         followup_parent = None
     if started:
         asyncio.create_task(
             run_note_paei_job(
-                int(principal.telegram_user_id),
+                int(owner),
                 kind,
                 item_id,
                 reply=reply_text,
@@ -4931,9 +5250,10 @@ async def miniapp_note_paei_status(
     from assistant.board.note_paei import get_job
 
     uid = str(int(principal.telegram_user_id))
-    if not await run_in_threadpool(_owner_can_share_item, uid, kind, item_id):
+    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    if not owner:
         raise HTTPException(status_code=404, detail="Запись не найдена")
-    job = get_job(uid, kind, item_id)
+    job = get_job(owner, kind, item_id)
     if not job:
         return {"ok": True, "status": "idle"}
     return {
@@ -5577,7 +5897,7 @@ _SHARE_PAGE_NO_CACHE = {
 
 
 @app.get("/api/public/share/{token}")
-async def public_share_json(token: str) -> dict[str, Any]:
+async def public_share_json(token: str, request: Request) -> dict[str, Any]:
     from assistant.stores import share_links as share_links_store
 
     link = await run_in_threadpool(share_links_store.resolve_share, token)
@@ -5586,7 +5906,44 @@ async def public_share_json(token: str) -> dict[str, Any]:
     payload = await run_in_threadpool(_public_share_payload, link)
     if not payload:
         raise HTTPException(status_code=404, detail="Документ недоступен")
+    viewer = _optional_share_viewer(request)
+    payload["viewer"] = _public_share_viewer_flags(link, viewer)
     return payload
+
+
+def _public_share_viewer_flags(
+    link: dict[str, Any], principal: _MiniappPrincipal | None
+) -> dict[str, Any]:
+    kind = str(link.get("item_kind") or "")
+    owner = str(link.get("user_id") or "")
+    item_id = str(link.get("item_id") or "")
+    if principal is None:
+        return {
+            "logged_in": False,
+            "is_owner": False,
+            "is_member": False,
+            "can_copy": kind == "local",
+            "can_request_edit": kind == "local",
+            "user": None,
+        }
+    uid = str(int(principal.telegram_user_id))
+    is_owner = uid == owner
+    is_member = is_owner
+    if kind == "local" and item_id and not is_owner:
+        from assistant.stores import note_members
+
+        try:
+            is_member = note_members.is_member(owner, int(item_id), uid)
+        except (TypeError, ValueError):
+            is_member = False
+    return {
+        "logged_in": True,
+        "is_owner": is_owner,
+        "is_member": bool(is_member),
+        "can_copy": kind == "local" and not is_owner,
+        "can_request_edit": kind == "local" and not is_member,
+        "user": _share_viewer_public(principal),
+    }
 
 
 async def _resolve_public_share_or_404(token: str) -> dict[str, Any]:
@@ -5689,7 +6046,85 @@ async def public_share_comments_delete(
     return {"ok": True}
 
 
-@app.get("/share/{token}")
+@app.post("/api/public/share/{token}/copy")
+async def public_share_copy(
+    token: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import notes as notes_store
+
+    link = await _resolve_public_share_or_404(token)
+    if str(link.get("item_kind") or "") != "local":
+        raise HTTPException(status_code=400, detail="В свои заметки можно добавить только заметку")
+    owner = str(link.get("user_id") or "")
+    try:
+        nid = int(link.get("item_id") or 0)
+    except (TypeError, ValueError):
+        nid = 0
+    if not owner or nid <= 0:
+        raise HTTPException(status_code=404, detail="Документ недоступен")
+    uid = int(principal.telegram_user_id)
+    if str(uid) == owner:
+        note = await run_in_threadpool(notes_store.get_note, owner, nid)
+        if not note:
+            raise HTTPException(status_code=404, detail="Документ недоступен")
+        return {"ok": True, "item": note, "copied": False}
+
+    def _copy() -> dict[str, Any] | None:
+        src = notes_store.get_note(owner, nid)
+        if not src:
+            return None
+        return notes_store.create_note(
+            uid, str(src.get("title") or "Без названия"), str(src.get("body") or "")
+        )
+
+    item = await run_in_threadpool(_copy)
+    if not item:
+        raise HTTPException(status_code=404, detail="Документ недоступен")
+    return {"ok": True, "item": item, "copied": True}
+
+
+@app.post("/api/public/share/{token}/request-edit")
+async def public_share_request_edit(
+    token: str,
+    principal: _MiniappPrincipal = Depends(require_share_commenter),
+) -> dict[str, Any]:
+    from assistant.stores import note_members
+    from assistant.stores import notes as notes_store
+
+    link = await _resolve_public_share_or_404(token)
+    if str(link.get("item_kind") or "") != "local":
+        raise HTTPException(
+            status_code=400, detail="Запросить редактирование можно только для заметки"
+        )
+    owner = str(link.get("user_id") or "")
+    try:
+        nid = int(link.get("item_id") or 0)
+    except (TypeError, ValueError):
+        nid = 0
+    if not owner or nid <= 0:
+        raise HTTPException(status_code=404, detail="Документ недоступен")
+    await run_in_threadpool(_remember_principal_profile, principal)
+    author_id, author_name, author_username = _comment_author_from_principal(principal)
+    try:
+        req = await run_in_threadpool(
+            partial(
+                note_members.create_edit_request,
+                owner_user_id=owner,
+                note_id=nid,
+                requester_user_id=author_id,
+                requester_username=author_username,
+                requester_name=author_name,
+                share_token=token,
+            )
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    note = await run_in_threadpool(notes_store.get_note, owner, nid)
+    title = str((note or {}).get("title") or "Без названия")
+    if req.get("new"):
+        await run_in_threadpool(_notify_edit_request, req, title)
+    return {"ok": True, "status": req.get("status")}
 async def public_share_page(token: str) -> HTMLResponse:
     from assistant.stores import share_links as share_links_store
 

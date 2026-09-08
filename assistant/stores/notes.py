@@ -54,6 +54,7 @@ def _conn() -> sqlite3.Connection:
     )
     _ensure_role_column(_CONN)
     _ensure_kb_enabled_column(_CONN)
+    _ensure_revision_column(_CONN)
     _CONN.commit()
     return _CONN
 
@@ -82,6 +83,14 @@ def _ensure_kb_enabled_column(conn: sqlite3.Connection) -> None:
         )
 
 
+def _ensure_revision_column(conn: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(local_notes)")}
+    if "revision" not in cols:
+        conn.execute(
+            "ALTER TABLE local_notes ADD COLUMN revision INTEGER NOT NULL DEFAULT 1"
+        )
+
+
 def note_kb_enabled(note: dict[str, Any] | None) -> bool:
     if not note:
         return True
@@ -105,6 +114,17 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         role = str(row["role"] or "")
     except (IndexError, KeyError):
         role = ""
+    owner = ""
+    try:
+        owner = str(row["user_id"] or "")
+    except (IndexError, KeyError):
+        owner = ""
+    revision = 1
+    try:
+        if "revision" in row.keys():
+            revision = int(row["revision"] or 1)
+    except (IndexError, KeyError, TypeError, ValueError):
+        revision = 1
     return {
         "id": int(row["id"]),
         "title": str(row["title"] or ""),
@@ -117,6 +137,9 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "source": "local",
         "role": role,
         "is_knowledge": role == KNOWLEDGE_ROLE,
+        "owner_user_id": owner,
+        "user_id": owner,
+        "revision": max(1, revision),
         "kb_enabled": note_kb_enabled(
             {"kb_enabled": row["kb_enabled"] if "kb_enabled" in row.keys() else 1}
         ),
@@ -178,7 +201,11 @@ def list_notes(
         params = (uid, KNOWLEDGE_ROLE, lim)
     with _LOCK:
         cur = _conn().execute(sql, params)
-        return [_row_to_dict(r) for r in cur.fetchall()]
+        own = [_row_to_dict(r) for r in cur.fetchall()]
+    notes = _merge_shared_notes(uid, own, include_knowledge=include_knowledge)
+    notes.sort(key=lambda n: str(n.get("updated_at") or ""), reverse=True)
+    notes = notes[:lim]
+    return [_with_sharing(n, uid) for n in notes]
 
 
 def get_note(user_id: int | str, note_id: int) -> Optional[dict[str, Any]]:
@@ -190,6 +217,69 @@ def get_note(user_id: int | str, note_id: int) -> Optional[dict[str, Any]]:
         )
         row = cur.fetchone()
     return _row_to_dict(row) if row else None
+
+
+def get_note_by_id(note_id: int) -> Optional[dict[str, Any]]:
+    with _LOCK:
+        cur = _conn().execute(
+            "SELECT * FROM local_notes WHERE id = ?",
+            (int(note_id),),
+        )
+        row = cur.fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def get_accessible_note(
+    user_id: int | str, note_id: int, *, with_sharing: bool = True
+) -> Optional[dict[str, Any]]:
+    uid = str(int(user_id))
+    own = get_note(uid, note_id)
+    if own:
+        return _with_sharing(own, uid) if with_sharing else own
+    from assistant.stores import note_members
+
+    shared = note_members.get_shared_note(uid, int(note_id))
+    if not shared:
+        return None
+    return _with_sharing(shared, uid) if with_sharing else shared
+
+
+def _merge_shared_notes(
+    uid: str, own: list[dict[str, Any]], *, include_knowledge: bool
+) -> list[dict[str, Any]]:
+    seen = {int(n["id"]) for n in own}
+    out = list(own)
+    try:
+        from assistant.stores import note_members
+    except Exception:
+        return out
+    for owner, nid in note_members.list_note_ids_for_member(uid):
+        if nid in seen:
+            continue
+        note = get_note(owner, nid)
+        if not note:
+            continue
+        if not include_knowledge and note.get("is_knowledge"):
+            continue
+        seen.add(nid)
+        out.append(note)
+    return out
+
+
+def _with_sharing(note: dict[str, Any], viewer_id: int | str) -> dict[str, Any]:
+    uid = str(int(viewer_id))
+    owner = str(note.get("owner_user_id") or note.get("user_id") or "")
+    out = dict(note)
+    out["owner_user_id"] = owner
+    out["is_owner"] = owner == uid
+    out["can_edit"] = True
+    try:
+        from assistant.stores import note_members
+
+        out["members"] = note_members.list_members_public(owner, int(note["id"]))
+    except Exception:
+        out["members"] = []
+    return out
 
 
 def create_note(
@@ -220,6 +310,12 @@ def create_note(
     return out
 
 
+class NoteConflictError(Exception):
+    def __init__(self, note: dict[str, Any]) -> None:
+        super().__init__("Заметка изменена другим участником")
+        self.note = note
+
+
 def update_note(
     user_id: int | str,
     note_id: int,
@@ -228,11 +324,23 @@ def update_note(
     body: Optional[str] = None,
     todoist_id: Optional[str] = None,
     kb_enabled: Optional[bool] = None,
+    expected_updated_at: Optional[str] = None,
+    expected_revision: Optional[int] = None,
+    actor_user_id: Optional[int | str] = None,
 ) -> Optional[dict[str, Any]]:
     uid = str(int(user_id))
     existing = get_note(uid, note_id)
     if not existing:
         return None
+    if expected_revision is not None:
+        try:
+            if int(existing.get("revision") or 1) != int(expected_revision):
+                raise NoteConflictError(existing)
+        except (TypeError, ValueError) as e:
+            raise NoteConflictError(existing) from e
+    if expected_updated_at is not None:
+        if str(existing.get("updated_at") or "") != str(expected_updated_at):
+            raise NoteConflictError(existing)
     new_title = existing["title"] if title is None else (title or "").strip() or "(без названия)"
     new_body = existing["body"] if body is None else (body or "").strip()
     # Автосохранение пустого редактора не должно затирать текст заметки.
@@ -245,17 +353,21 @@ def update_note(
         else 0
     )
     ts = _now_iso()
+    new_rev = int(existing.get("revision") or 1) + 1
     with _LOCK:
         _conn().execute(
             """
             UPDATE local_notes
-            SET title = ?, body = ?, todoist_id = ?, kb_enabled = ?, updated_at = ?
+            SET title = ?, body = ?, todoist_id = ?, kb_enabled = ?,
+                updated_at = ?, revision = ?
             WHERE user_id = ? AND id = ?
             """,
-            (new_title, new_body, tid, enabled, ts, uid, int(note_id)),
+            (new_title, new_body, tid, enabled, ts, new_rev, uid, int(note_id)),
         )
         _conn().commit()
-    return get_note(uid, note_id)
+    viewer = actor_user_id if actor_user_id is not None else uid
+    out = get_note(uid, note_id)
+    return _with_sharing(out, viewer) if out else None
 
 
 def is_knowledge_note(user_id: int | str, note_id: int) -> bool:
@@ -301,7 +413,15 @@ def delete_note(user_id: int | str, note_id: int) -> bool:
             (uid, int(note_id)),
         )
         _conn().commit()
-        return cur.rowcount > 0
+        ok = cur.rowcount > 0
+    if ok:
+        try:
+            from assistant.stores import note_members
+
+            note_members.delete_all_for_note(uid, int(note_id))
+        except Exception:
+            pass
+    return ok
 
 
 def upsert_by_todoist_id(

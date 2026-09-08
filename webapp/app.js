@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260908-busy";
+  var WEBAPP_BUILD = "20260908-moremenu";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260908-busy";
+  const NOTE_EDITOR_ASSET_V = "20260908-moremenu";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -862,6 +862,11 @@
         tags: Array.isArray(item.tags) ? item.tags : [],
         source: "local",
         kb_enabled: item.kb_enabled !== false && item.kb_enabled !== 0 && item.kb_enabled !== "0",
+        owner_user_id: item.owner_user_id || item.user_id || "",
+        is_owner: item.is_owner !== false,
+        revision: item.revision || 1,
+        updated_at: item.updated_at || "",
+        members: Array.isArray(item.members) ? item.members : [],
       },
       extra
     );
@@ -1579,6 +1584,9 @@
       const msg = apiErrorMessage(body, res.statusText || "Ошибка");
       const err = new Error(msg);
       err.status = res.status;
+      if (res.status === 409 && body && body.detail && typeof body.detail === "object") {
+        err.conflictItem = body.detail.item || null;
+      }
       throw err;
     }
     return body;
@@ -6731,6 +6739,15 @@
       getHtml: function () {
         return ed.innerHTML || "";
       },
+      setHtml: function (html) {
+        ed.innerHTML = html || "";
+      },
+      getCursor: function () {
+        return 0;
+      },
+      coordsAtPos: function () {
+        return null;
+      },
       appendText: function (text) {
         var raw = String(text || "").replace(/\s+$/, "");
         if (!raw) return;
@@ -6816,6 +6833,7 @@
       'placeholder="Заголовок" aria-label="' +
       titleAria +
       '" maxlength="500" rows="1" autocapitalize="sentences" spellcheck="true"></textarea>' +
+      '<div id="note-editor-members" class="note-editor-members hidden"></div>' +
       "</div>" +
       '<div class="note-editor-pad note-editor-pad--body"></div>' +
       "</div>" +
@@ -6853,6 +6871,7 @@
             body: body,
             placeholder: "Начните писать…",
             onUpdate: onUpdate,
+            onSelection: options.onSelection || null,
             toolbarParent: formatHost || null,
             tocParent: options.tocParent || null,
             onTocNavigate: options.onTocNavigate || null,
@@ -7049,8 +7068,297 @@
       wrap._paeiRunning = false;
       wrap._commentChairId = null;
       wrap._commentDraft = null;
+      wrap._noteMembers = [];
+      wrap._noteRevision = 1;
+      wrap._noteUpdatedAt = "";
+      wrap._isNoteOwner = true;
       if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
     }
+  }
+
+  var noteCollabState = {
+    timer: null,
+    noteId: "",
+    applying: false,
+    lastTypedAt: 0,
+    photoBlobs: {},
+  };
+
+  function noteMemberInitials(member) {
+    var name = String((member && (member.name || member.username)) || "").trim();
+    if (!name) return "?";
+    var parts = name.replace(/^@/, "").split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+    return name.replace(/^@/, "").slice(0, 2).toUpperCase();
+  }
+
+  function applyNoteMemberPhoto(img, userId) {
+    var uid = String(userId || "");
+    if (!img || !uid) return;
+    if (noteCollabState.photoBlobs[uid]) {
+      img.src = noteCollabState.photoBlobs[uid];
+      img.classList.add("has-photo");
+      return;
+    }
+    fetch(API + "/users/" + encodeURIComponent(uid) + "/photo", {
+      credentials: "same-origin",
+      headers: authHeaders(),
+    })
+      .then(function (res) {
+        return res.ok ? res.blob() : null;
+      })
+      .then(function (blob) {
+        if (!blob || !blob.size) return;
+        var url = URL.createObjectURL(blob);
+        noteCollabState.photoBlobs[uid] = url;
+        img.src = url;
+        img.classList.add("has-photo");
+      })
+      .catch(function () {});
+  }
+
+  function noteMemberAvatarNode(member, opts) {
+    opts = opts || {};
+    var el = document.createElement("span");
+    el.className = "note-member-avatar" + (opts.online ? " is-online" : "");
+    if (member && member.color) el.style.setProperty("--note-member-color", member.color);
+    el.title = String((member && (member.name || member.username)) || "Участник");
+    var img = document.createElement("img");
+    img.alt = "";
+    el.appendChild(img);
+    var fallback = document.createElement("span");
+    fallback.className = "note-member-avatar-fallback";
+    fallback.textContent = noteMemberInitials(member);
+    el.appendChild(fallback);
+    if (member && member.user_id) applyNoteMemberPhoto(img, member.user_id);
+    return el;
+  }
+
+  function appendNoteCardAvatars(inner, members) {
+    var list = (members || []).filter(function (m) {
+      return m && m.user_id;
+    });
+    if (list.length < 2) return;
+    var wrap = document.createElement("div");
+    wrap.className = "note-card-avatars";
+    list.slice(0, 4).forEach(function (m) {
+      wrap.appendChild(noteMemberAvatarNode(m));
+    });
+    if (list.length > 4) {
+      var more = document.createElement("span");
+      more.className = "note-member-avatar note-member-avatar-more";
+      more.textContent = "+" + (list.length - 4);
+      wrap.appendChild(more);
+    }
+    var title = inner.querySelector(".note-card-excerpt");
+    if (title) {
+      var row = document.createElement("div");
+      row.className = "note-card-title-row";
+      title.parentNode.insertBefore(row, title);
+      row.appendChild(title);
+      row.appendChild(wrap);
+    } else {
+      inner.appendChild(wrap);
+    }
+  }
+
+  function renderOpenNoteMembers(members, peers) {
+    var row = document.getElementById("note-editor-members");
+    if (!row) return;
+    var list = members || [];
+    var online = peers || [];
+    var onlineIds = {};
+    online.forEach(function (p) {
+      onlineIds[String(p.user_id)] = p;
+    });
+    row.innerHTML = "";
+    if (list.length <= 1 && !online.length) {
+      row.classList.add("hidden");
+      return;
+    }
+    row.classList.remove("hidden");
+    var people = document.createElement("div");
+    people.className = "note-editor-members-people";
+    list.forEach(function (m) {
+      var chip = document.createElement("span");
+      chip.className = "note-editor-member-chip";
+      var live = onlineIds[String(m.user_id)];
+      chip.appendChild(noteMemberAvatarNode(m, { online: !!live }));
+      var label = document.createElement("span");
+      label.textContent = m.is_owner
+        ? (m.name || "Автор") + " · автор"
+        : m.name || m.username || "Участник";
+      chip.appendChild(label);
+      people.appendChild(chip);
+    });
+    row.appendChild(people);
+    if (online.length) {
+      var live = document.createElement("p");
+      live.className = "note-editor-members-live";
+      live.textContent =
+        online.length === 1
+          ? online[0].name + " сейчас в заметке"
+          : online
+              .map(function (p) {
+                return p.name;
+              })
+              .join(", ") + " сейчас в заметке";
+      row.appendChild(live);
+    }
+  }
+
+  function ensureNoteCollabOverlay() {
+    var pad = document.querySelector("#note-editor-overlay .note-editor-pad--body");
+    if (!pad) return null;
+    var overlay = document.getElementById("note-collab-cursors");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "note-collab-cursors";
+      overlay.className = "note-collab-cursors";
+      pad.style.position = "relative";
+      pad.appendChild(overlay);
+    }
+    return overlay;
+  }
+
+  function paintRemoteCursors(peers) {
+    var overlay = ensureNoteCollabOverlay();
+    var editor = getActiveNoteRichEditor();
+    if (!overlay) return;
+    overlay.innerHTML = "";
+    if (!editor || typeof editor.coordsAtPos !== "function") return;
+    var pad = overlay.parentNode;
+    if (!pad || !pad.getBoundingClientRect) return;
+    var padRect = pad.getBoundingClientRect();
+    (peers || []).forEach(function (p) {
+      if (p.cursor == null) return;
+      var coords = editor.coordsAtPos(p.cursor);
+      if (!coords) return;
+      var caret = document.createElement("div");
+      caret.className = "note-collab-caret";
+      caret.style.left = coords.left - padRect.left + pad.scrollLeft + "px";
+      caret.style.top = coords.top - padRect.top + pad.scrollTop + "px";
+      caret.style.height = Math.max(16, coords.bottom - coords.top) + "px";
+      caret.style.background = p.color || "#529ef4";
+      var flag = document.createElement("span");
+      flag.className = "note-collab-caret-label";
+      flag.style.background = p.color || "#529ef4";
+      flag.textContent = String(p.name || "Участник").split(" ")[0];
+      caret.appendChild(flag);
+      overlay.appendChild(caret);
+    });
+  }
+
+  function stopNoteCollab() {
+    if (noteCollabState.timer) {
+      clearInterval(noteCollabState.timer);
+      noteCollabState.timer = null;
+    }
+    var id = noteCollabState.noteId;
+    noteCollabState.noteId = "";
+    if (id) {
+      apiFetch("/notes/local/" + encodeURIComponent(id) + "/collab", {
+        method: "DELETE",
+      }).catch(function () {});
+    }
+    var overlay = document.getElementById("note-collab-cursors");
+    if (overlay) overlay.innerHTML = "";
+  }
+
+  function applyRemoteSharedNote(item, force) {
+    if (!item) return;
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) {
+      wrap._noteRevision = item.revision || wrap._noteRevision;
+      wrap._noteUpdatedAt = item.updated_at || wrap._noteUpdatedAt;
+      wrap._noteMembers = item.members || wrap._noteMembers || [];
+      wrap._isNoteOwner = item.is_owner !== false;
+    }
+    prependLocalInCache(item);
+    var typing = Date.now() - noteCollabState.lastTypedAt < 1600;
+    if (typing && !force) return;
+    var titleInput = document.getElementById("note-editor-title-input");
+    var editor = getActiveNoteRichEditor();
+    noteCollabState.applying = true;
+    try {
+      if (titleInput && item.title != null && titleInput.value !== String(item.title || "")) {
+        titleInput.value = String(item.title || "");
+        titleInput.dispatchEvent(new Event("input"));
+      }
+      var nextBody = String(item.body || item.description || "");
+      if (editor && typeof editor.getHtml === "function" && typeof editor.setHtml === "function") {
+        if (editor.getHtml() !== nextBody) editor.setHtml(nextBody, { preserveCursor: true });
+      }
+    } finally {
+      noteCollabState.applying = false;
+    }
+  }
+
+  function noteCollabTick() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var id = noteCollabState.noteId;
+    if (!wrap || !id || String(wrap._shareId) !== String(id)) {
+      stopNoteCollab();
+      return;
+    }
+    var editor = getActiveNoteRichEditor();
+    var cursor = editor && typeof editor.getCursor === "function" ? editor.getCursor() : null;
+    apiFetch("/notes/local/" + encodeURIComponent(id) + "/collab", {
+      method: "POST",
+      body: JSON.stringify({ cursor: cursor }),
+    })
+      .then(function (data) {
+        if (noteCollabState.noteId !== String(id)) return;
+        var item = data && data.item;
+        var peers = (data && data.peers) || [];
+        var members = (data && data.members) || (wrap._noteMembers || []);
+        wrap._noteMembers = members;
+        renderOpenNoteMembers(members, peers);
+        paintRemoteCursors(peers);
+        if (!item) return;
+        var remoteRev = Number(item.revision || 0);
+        var localRev = Number(wrap._noteRevision || 0);
+        if (remoteRev > localRev) applyRemoteSharedNote(item, false);
+        else {
+          wrap._noteRevision = item.revision || wrap._noteRevision;
+          wrap._noteUpdatedAt = item.updated_at || wrap._noteUpdatedAt;
+        }
+      })
+      .catch(function () {});
+  }
+
+  function startNoteCollab(noteId, note) {
+    stopNoteCollab();
+    if (!noteId) return;
+    noteCollabState.noteId = String(noteId);
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap && note) {
+      wrap._noteMembers = note.members || [];
+      wrap._noteRevision = note.revision || 1;
+      wrap._noteUpdatedAt = note.updated_at || "";
+      wrap._isNoteOwner = note.is_owner !== false;
+      renderOpenNoteMembers(wrap._noteMembers, []);
+    }
+    noteCollabTick();
+    noteCollabState.timer = setInterval(noteCollabTick, 1400);
+  }
+
+  function pendingNoteIdFromLocation() {
+    try {
+      var q = new URLSearchParams(location.search || "");
+      var n = q.get("note") || q.get("n");
+      if (n && /^\d+$/.test(n)) return n;
+    } catch (_) {}
+    var hash = String(location.hash || "").replace(/^#/, "");
+    var hm = hash.match(/(?:^|&)note=(\d+)/) || hash.match(/^note=(\d+)/);
+    if (hm) return hm[1];
+    var tg = window.Telegram && window.Telegram.WebApp;
+    var start = tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param;
+    if (start) {
+      var sm = String(start).match(/^note[_-]?(\d+)$/i);
+      if (sm) return sm[1];
+    }
+    return "";
   }
 
   function copyShareUrl(url) {
@@ -7122,6 +7430,13 @@
       },
       !!wrap._paeiRunning
     );
+
+    if (wrap._shareKind === "local") {
+      addItem("Участники", function () {
+        closeNoteMoreMenu();
+        openShareAccessSheet();
+      });
+    }
 
     if (!shared) {
       addItem("Поделиться ссылкой", function () {
@@ -8798,6 +9113,38 @@
       .catch(function () {});
   }
 
+  function positionNoteMoreMenu() {
+    var menu = document.getElementById("note-editor-more-menu");
+    var btn = document.getElementById("note-editor-more-btn");
+    if (!menu || !btn || menu.classList.contains("hidden")) return;
+    var rect = btn.getBoundingClientRect();
+    var gap = 6;
+    var margin = 8;
+    menu.style.position = "fixed";
+    menu.style.right = "auto";
+    menu.style.left = "0px";
+    menu.style.top = "0px";
+    menu.style.zIndex = "130";
+    var mw = menu.offsetWidth || 200;
+    var mh = menu.offsetHeight || 0;
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    var left = rect.right - mw;
+    if (left < margin) left = margin;
+    if (left + mw > vw - margin) left = Math.max(margin, vw - mw - margin);
+    var top = rect.bottom + gap;
+    if (top + mh > vh - margin && rect.top - gap - mh >= margin) {
+      top = rect.top - gap - mh;
+    }
+    menu.style.left = left + "px";
+    menu.style.top = top + "px";
+    var placed = menu.getBoundingClientRect();
+    var dx = left - placed.left;
+    var dy = top - placed.top;
+    if (dx) menu.style.left = left + dx + "px";
+    if (dy) menu.style.top = top + dy + "px";
+  }
+
   function openNoteMoreMenu() {
     var menu = document.getElementById("note-editor-more-menu");
     var btn = document.getElementById("note-editor-more-btn");
@@ -8806,12 +9153,7 @@
     fillNoteMoreMenu();
     menu.classList.remove("hidden");
     btn.setAttribute("aria-expanded", "true");
-    var rect = btn.getBoundingClientRect();
-    menu.style.position = "fixed";
-    menu.style.top = rect.bottom + 6 + "px";
-    menu.style.right = Math.max(8, window.innerWidth - rect.right) + "px";
-    menu.style.left = "auto";
-    menu.style.zIndex = "130";
+    positionNoteMoreMenu();
   }
 
   function toggleNoteMoreMenu(e) {
@@ -8850,7 +9192,17 @@
       ov.className = "note-share-sheet-overlay hidden";
       ov.innerHTML =
         '<div class="note-share-sheet" role="dialog" aria-labelledby="note-share-sheet-title">' +
-        '<h3 id="note-share-sheet-title" class="note-share-sheet-title">Доступ по ссылке</h3>' +
+        '<h3 id="note-share-sheet-title" class="note-share-sheet-title">Совместный доступ</h3>' +
+        '<div class="note-share-members-block">' +
+        '<p class="note-share-section-label">Участники</p>' +
+        '<div id="note-share-members-list" class="note-share-members-list"></div>' +
+        '<div class="note-share-member-add">' +
+        '<input id="note-share-member-input" type="text" class="field-input" placeholder="Контакт из записной книжки" autocomplete="off" />' +
+        '<div id="note-share-member-suggest" class="meeting-attendee-suggest hidden" role="listbox"></div>' +
+        "</div>" +
+        '<p id="note-share-members-hint" class="note-share-members-hint muted small">Добавьте человека из контактов — заметка появится у него в списке с правом редактировать.</p>' +
+        "</div>" +
+        '<p class="note-share-section-label">Ссылка</p>' +
         '<label class="note-share-option">' +
         '<input type="radio" name="note-share-access" value="view" />' +
         "<span><strong>Просмотр</strong><small>Любой со ссылкой сможет читать</small></span>" +
@@ -8861,7 +9213,7 @@
         "</label>" +
         '<div class="note-share-sheet-actions">' +
         '<button type="button" class="btn" id="note-share-sheet-copy">Скопировать ссылку</button>' +
-        '<button type="button" class="btn-text" id="note-share-sheet-cancel">Отмена</button>' +
+        '<button type="button" class="btn-text" id="note-share-sheet-cancel">Закрыть</button>' +
         "</div>" +
         "</div>";
       ov.addEventListener("click", function (e) {
@@ -8876,6 +9228,7 @@
         });
       }
       if (cancelBtn) cancelBtn.addEventListener("click", closeShareAccessSheet);
+      bindShareMemberPicker();
     }
     var access = wrap._shareShared && wrap._shareAccess === "comment" ? "comment" : "view";
     var radios = ov.querySelectorAll('input[name="note-share-access"]');
@@ -8884,7 +9237,218 @@
     });
     var copy = document.getElementById("note-share-sheet-copy");
     if (copy) copy.textContent = wrap._shareShared ? "Сохранить и скопировать" : "Скопировать ссылку";
+    var membersBlock = ov.querySelector(".note-share-members-block");
+    if (membersBlock) {
+      membersBlock.classList.toggle("hidden", wrap._shareKind !== "local");
+    }
+    paintShareMembersList();
     ov.classList.remove("hidden");
+    if (wrap._shareKind === "local") loadShareMemberContacts();
+  }
+
+  var shareMemberContacts = [];
+  var shareMemberSuggestIndex = 0;
+
+  function bindShareMemberPicker() {
+    var input = document.getElementById("note-share-member-input");
+    var suggest = document.getElementById("note-share-member-suggest");
+    if (!input || !suggest || input._bound) return;
+    input._bound = true;
+    input.addEventListener("input", function () {
+      shareMemberSuggestIndex = 0;
+      paintShareMemberSuggest();
+    });
+    input.addEventListener("focus", paintShareMemberSuggest);
+    input.addEventListener("keydown", function (e) {
+      var rows = suggest.querySelectorAll(".meeting-attendee-suggest-item");
+      if (e.key === "ArrowDown" && rows.length) {
+        e.preventDefault();
+        shareMemberSuggestIndex = Math.min(rows.length - 1, shareMemberSuggestIndex + 1);
+        paintShareMemberSuggest();
+      } else if (e.key === "ArrowUp" && rows.length) {
+        e.preventDefault();
+        shareMemberSuggestIndex = Math.max(0, shareMemberSuggestIndex - 1);
+        paintShareMemberSuggest();
+      } else if (e.key === "Enter") {
+        var active = rows[shareMemberSuggestIndex];
+        if (active && active._contact) {
+          e.preventDefault();
+          addShareMemberFromContact(active._contact);
+        }
+      } else if (e.key === "Escape") {
+        suggest.classList.add("hidden");
+      }
+    });
+    document.addEventListener("mousedown", function (e) {
+      if (suggest.classList.contains("hidden")) return;
+      if (suggest.contains(e.target) || input.contains(e.target)) return;
+      suggest.classList.add("hidden");
+    });
+  }
+
+  function loadShareMemberContacts() {
+    apiFetch("/contacts", { method: "GET" })
+      .then(function (data) {
+        shareMemberContacts = (data && data.items) || [];
+      })
+      .catch(function () {
+        shareMemberContacts = [];
+      });
+  }
+
+  function shareMemberAlreadyAdded(contact) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var members = (wrap && wrap._noteMembers) || [];
+    var email = String((contact && contact.email) || "").trim().toLowerCase();
+    var uname = String((contact && contact.telegram_username) || "")
+      .trim()
+      .replace(/^@/, "")
+      .toLowerCase();
+    var tid = String((contact && contact.telegram_user_id) || "");
+    return members.some(function (m) {
+      if (tid && String(m.user_id) === tid) return true;
+      var mu = String(m.username || "")
+        .replace(/^@/, "")
+        .toLowerCase();
+      return !!(uname && mu && mu === uname);
+    });
+  }
+
+  function paintShareMemberSuggest() {
+    var input = document.getElementById("note-share-member-input");
+    var suggest = document.getElementById("note-share-member-suggest");
+    if (!input || !suggest) return;
+    var q = String(input.value || "").trim().toLowerCase();
+    var rows = shareMemberContacts.filter(function (c) {
+      if (!c) return false;
+      if (shareMemberAlreadyAdded(c)) return false;
+      var hay = [c.name, c.email, c.telegram_username, (c.aliases || []).join(" ")]
+        .join(" ")
+        .toLowerCase();
+      return !q || hay.indexOf(q) >= 0;
+    }).slice(0, 8);
+    suggest.innerHTML = "";
+    if (!rows.length) {
+      suggest.classList.add("hidden");
+      return;
+    }
+    if (shareMemberSuggestIndex >= rows.length) shareMemberSuggestIndex = 0;
+    rows.forEach(function (c, i) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "meeting-attendee-suggest-item" + (i === shareMemberSuggestIndex ? " is-active" : "");
+      btn._contact = c;
+      var name = document.createElement("span");
+      name.className = "meeting-attendee-suggest-name";
+      name.textContent = c.name || c.email || "Контакт";
+      btn.appendChild(name);
+      var meta = document.createElement("span");
+      meta.className = "meeting-attendee-suggest-meta";
+      var tg = String(c.telegram_username || "").trim();
+      meta.textContent = tg
+        ? "@" + tg.replace(/^@/, "")
+        : "Нужен Telegram в контакте";
+      btn.appendChild(meta);
+      btn.addEventListener("click", function () {
+        addShareMemberFromContact(c);
+      });
+      suggest.appendChild(btn);
+    });
+    suggest.classList.remove("hidden");
+  }
+
+  function paintShareMembersList() {
+    var list = document.getElementById("note-share-members-list");
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!list || !wrap) return;
+    var members = wrap._noteMembers || [];
+    list.innerHTML = "";
+    if (!members.length) {
+      var empty = document.createElement("p");
+      empty.className = "muted small";
+      empty.textContent = "Пока только вы";
+      list.appendChild(empty);
+      return;
+    }
+    members.forEach(function (m) {
+      var row = document.createElement("div");
+      row.className = "note-share-member-row";
+      row.appendChild(noteMemberAvatarNode(m));
+      var copy = document.createElement("div");
+      copy.className = "note-share-member-copy";
+      var name = document.createElement("strong");
+      name.textContent = m.name || m.username || "Участник";
+      copy.appendChild(name);
+      var role = document.createElement("small");
+      role.textContent = m.is_owner ? "Автор" : "Редактирование";
+      copy.appendChild(role);
+      row.appendChild(copy);
+      if (!m.is_owner) {
+        var del = document.createElement("button");
+        del.type = "button";
+        del.className = "note-share-member-remove";
+        del.setAttribute("aria-label", "Убрать");
+        del.textContent = "×";
+        del.addEventListener("click", function () {
+          removeShareMember(m.user_id);
+        });
+        row.appendChild(del);
+      }
+      list.appendChild(row);
+    });
+  }
+
+  async function addShareMemberFromContact(contact) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var suggest = document.getElementById("note-share-member-suggest");
+    var input = document.getElementById("note-share-member-input");
+    if (!wrap || wrap._shareKind !== "local" || !wrap._shareId) return;
+    if (suggest) suggest.classList.add("hidden");
+    try {
+      var data = await apiFetch(
+        "/notes/local/" + encodeURIComponent(wrap._shareId) + "/members",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            email: contact && contact.email ? contact.email : undefined,
+            telegram_username: contact && contact.telegram_username ? contact.telegram_username : undefined,
+            telegram_user_id: contact && contact.telegram_user_id ? contact.telegram_user_id : undefined,
+          }),
+        }
+      );
+      if (data && data.item) {
+        wrap._noteMembers = data.item.members || wrap._noteMembers;
+        prependLocalInCache(data.item);
+        renderOpenNoteMembers(wrap._noteMembers, []);
+      }
+      if (input) input.value = "";
+      paintShareMembersList();
+      shareHaptic();
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
+  async function removeShareMember(memberId) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || !wrap._shareId || !memberId) return;
+    try {
+      await apiFetch(
+        "/notes/local/" +
+          encodeURIComponent(wrap._shareId) +
+          "/members/" +
+          encodeURIComponent(String(memberId)),
+        { method: "DELETE" }
+      );
+      wrap._noteMembers = (wrap._noteMembers || []).filter(function (m) {
+        return String(m.user_id) !== String(memberId);
+      });
+      paintShareMembersList();
+      renderOpenNoteMembers(wrap._noteMembers, []);
+    } catch (e) {
+      alert(e.message || String(e));
+    }
   }
 
   async function createAndCopyShareLink(access) {
@@ -9276,6 +9840,10 @@
     wrap._shareAccess = "view";
     wrap._paeiRunning = false;
     wrap._askMode = "paie";
+    wrap._noteMembers = [];
+    wrap._noteRevision = 1;
+    wrap._noteUpdatedAt = "";
+    wrap._isNoteOwner = true;
     var btn = document.createElement("button");
     btn.type = "button";
     btn.id = "note-editor-more-btn";
@@ -9337,6 +9905,7 @@
       body._noteEditorFlush = null;
     }
     flushP.finally(function () {
+      stopNoteCollab();
       destroyActiveNoteRichEditor();
       clearNoteEditorToolbarWrap();
       clearNoteEditorTagsWrap();
@@ -9455,6 +10024,44 @@
     }
     renderNotesTagFilterBar();
     renderNotesPanesFromData(data);
+    openPendingSharedNote(data);
+  }
+
+  var noteDeepLinkConsumed = false;
+
+  function openPendingSharedNote(data) {
+    if (noteDeepLinkConsumed) return;
+    var pending = pendingNoteIdFromLocation();
+    if (!pending) return;
+    noteDeepLinkConsumed = true;
+    function go(note) {
+      if (!note) return;
+      setTab("notes");
+      openNoteDetail(note, { isLocal: true });
+      try {
+        var u = new URL(location.href);
+        u.searchParams.delete("note");
+        u.searchParams.delete("n");
+        if (/note=/.test(u.hash)) u.hash = "";
+        history.replaceState(null, "", u.pathname + u.search + u.hash);
+      } catch (_) {}
+    }
+    var found = ((data && data.local_notes) || []).find(function (x) {
+      return String(x.id) === String(pending);
+    });
+    if (found) {
+      go(found);
+      return;
+    }
+    apiFetch("/notes/local/" + encodeURIComponent(pending), { method: "GET" })
+      .then(function (res) {
+        if (res && res.item) {
+          prependLocalInCache(res.item);
+          if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+          go(res.item);
+        }
+      })
+      .catch(function () {});
   }
 
   function renderNotesPanesFromData(data) {
@@ -9505,6 +10112,7 @@
               "</p>"
             : "");
         appendTagChipsRow(inner, noteTagsOf(n), { prepend: true, head: true });
+        appendNoteCardAvatars(inner, n.members);
         card.appendChild(inner);
         card.addEventListener("click", function () {
           openNoteDetail(n, { isLocal: isLocal });
@@ -9515,7 +10123,7 @@
             async function () {
               await deleteLocalNoteById(id);
             },
-            { removeStack: true, confirmMessage: "Удалить заметку?" }
+            { removeStack: true, confirmMessage: n.is_owner === false ? "Убрать заметку из списка?" : "Удалить заметку?" }
           )
         );
       }
@@ -10166,6 +10774,7 @@
 
     async function persistNoteDraft(opts) {
       opts = opts || {};
+      if (noteCollabState.applying && !opts.force) return;
       var fields = readFields();
       var title = String(fields.title || "").trim();
       if (!title) {
@@ -10215,27 +10824,56 @@
         }
         if (noteId && !isKnowledge) ensureNoteShareMounted(noteId);
       } else {
-        await apiFetch("/notes/local/" + encodeURIComponent(noteId), {
-          method: "PATCH",
-          body: JSON.stringify({
-            title: fields.title,
-            description: fields.description,
-          }),
-        });
-        var patched = {
-          id: noteId,
+        var moreWrap = document.getElementById("note-editor-more-wrap");
+        var patchBody = {
           title: fields.title,
           description: fields.description,
-          body: fields.description,
-          todoist_id: n.todoist_id,
-          tags: noteTagsOf(n),
         };
-        if (isKnowledge) {
-          patched.role = "knowledge";
-          patched.is_knowledge = true;
-          prependKnowledgeInCache(patched);
-        } else {
-          prependLocalInCache(patched);
+        if (moreWrap && moreWrap._noteRevision) {
+          patchBody.expected_revision = moreWrap._noteRevision;
+        }
+        if (moreWrap && moreWrap._noteUpdatedAt) {
+          patchBody.expected_updated_at = moreWrap._noteUpdatedAt;
+        }
+        try {
+          var patchRes = await apiFetch("/notes/local/" + encodeURIComponent(noteId), {
+            method: "PATCH",
+            body: JSON.stringify(patchBody),
+          });
+          var patchedItem = (patchRes && patchRes.item) || {
+            id: noteId,
+            title: fields.title,
+            description: fields.description,
+            body: fields.description,
+            todoist_id: n.todoist_id,
+            tags: noteTagsOf(n),
+            members: moreWrap && moreWrap._noteMembers,
+            revision: moreWrap && moreWrap._noteRevision,
+            updated_at: moreWrap && moreWrap._noteUpdatedAt,
+            is_owner: moreWrap ? moreWrap._isNoteOwner : n.is_owner,
+            owner_user_id: n.owner_user_id,
+          };
+          if (patchRes && patchRes.item) {
+            n = Object.assign(n, patchRes.item);
+            if (moreWrap) {
+              moreWrap._noteRevision = patchRes.item.revision || moreWrap._noteRevision;
+              moreWrap._noteUpdatedAt = patchRes.item.updated_at || moreWrap._noteUpdatedAt;
+              moreWrap._noteMembers = patchRes.item.members || moreWrap._noteMembers;
+            }
+          }
+          if (isKnowledge) {
+            patchedItem.role = "knowledge";
+            patchedItem.is_knowledge = true;
+            prependKnowledgeInCache(patchedItem);
+          } else {
+            prependLocalInCache(patchedItem);
+          }
+        } catch (e) {
+          if (e && e.status === 409 && e.conflictItem) {
+            applyRemoteSharedNote(e.conflictItem, true);
+            return;
+          }
+          throw e;
         }
       }
       var detailBodyDraft = getNoteEditorBodyEl();
@@ -10261,6 +10899,8 @@
     }
 
     function schedulePatch() {
+      if (noteCollabState.applying) return;
+      noteCollabState.lastTypedAt = Date.now();
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(function () {
         persistNoteDraft().catch(function () {});
@@ -10331,6 +10971,9 @@
       extraTocItems: function (tocEl) {
         appendNoteDiscussionToc(tocEl, tocControls.close);
       },
+      onSelection: function () {
+        noteCollabState.lastTypedAt = Date.now();
+      },
     }).then(function (editor) {
       noteRichEditor = editor;
       var detailBodyMount = getNoteEditorBodyEl();
@@ -10343,6 +10986,7 @@
         );
       }
       refreshNoteCommentAnchors();
+      if (!noteIsCreate && noteId && !isKnowledge) startNoteCollab(noteId, n);
     });
     bindNoteTitleAutoresize(titleInput);
     if (titleInput) titleInput.addEventListener("input", schedulePatch);

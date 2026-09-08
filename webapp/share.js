@@ -225,7 +225,23 @@
         buildShareToc(bodyEl);
       }
       if (doc) doc.classList.remove("hidden");
-      setupShareComments(data && data.access === "comment");
+      var pendingAuth = parseTgAuthResultFromHash();
+      var ready = Promise.resolve(data);
+      if (pendingAuth && pendingAuth.hash) {
+        clearTgAuthHash();
+        ready = completeTelegramLogin(pendingAuth)
+          .then(function () {
+            return jsonFetch("/api/public/share/" + encodeURIComponent(token));
+          })
+          .catch(function () {
+            return data;
+          });
+      }
+      return ready.then(function (fresh) {
+        var payload = fresh || data;
+        setupShareActions(payload);
+        setupShareComments(payload && payload.access === "comment");
+      });
     })
     .catch(function (e) {
       showError(e.message || "Документ недоступен");
@@ -301,6 +317,7 @@
     activeId: null,
   };
   var PENDING_KEY = "leo_share_pending_comment";
+  var PENDING_ACTION_KEY = "leo_share_pending_action";
 
   function commentsApi() {
     return window.NoteComments;
@@ -713,6 +730,160 @@
       encodeURIComponent(window.location.origin) +
       "&return_to=" +
       encodeURIComponent(returnTo);
+  }
+
+  function savePendingAction(action) {
+    try {
+      sessionStorage.setItem(PENDING_ACTION_KEY, action || "");
+    } catch (_) {}
+  }
+
+  function takePendingAction() {
+    try {
+      var raw = sessionStorage.getItem(PENDING_ACTION_KEY) || "";
+      sessionStorage.removeItem(PENDING_ACTION_KEY);
+      return raw;
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function setShareActionStatus(msg) {
+    var el = document.getElementById("share-actions-status");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.classList.toggle("hidden", !msg);
+  }
+
+  function ensureLoginThen(action) {
+    savePendingAction(action);
+    return jsonFetch("/api/miniapp/auth/config")
+      .then(function (cfg) {
+        if (!cfg || !cfg.telegram_login_enabled || !cfg.bot_id) {
+          throw new Error("Войдите через Telegram, чтобы продолжить");
+        }
+        startTelegramOAuth(cfg.bot_id);
+      });
+  }
+
+  function copySharedNote() {
+    setShareActionStatus("Добавляю…");
+    return jsonFetch("/api/public/share/" + encodeURIComponent(token) + "/copy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: "{}",
+    })
+      .then(function (data) {
+        var id = data && data.item && data.item.id;
+        setShareActionStatus(
+          data && data.copied === false
+            ? "Это ваша заметка"
+            : "Добавлено в ваши заметки"
+        );
+        if (id) {
+          window.location.href = "/webapp/?note=" + encodeURIComponent(String(id));
+        }
+      })
+      .catch(function (e) {
+        if (e.status === 401) {
+          return ensureLoginThen("copy");
+        }
+        setShareActionStatus(e.message || "Не удалось добавить");
+      });
+  }
+
+  function requestSharedEdit() {
+    setShareActionStatus("Отправляю запрос…");
+    return jsonFetch("/api/public/share/" + encodeURIComponent(token) + "/request-edit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: "{}",
+    })
+      .then(function () {
+        setShareActionStatus("Запрос отправлен автору в Leo");
+        var btn = document.getElementById("share-action-request");
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = "Запрос отправлен";
+        }
+      })
+      .catch(function (e) {
+        if (e.status === 401) {
+          return ensureLoginThen("request");
+        }
+        setShareActionStatus(e.message || "Не удалось отправить запрос");
+      });
+  }
+
+  function setupShareActions(data) {
+    var box = document.getElementById("share-actions");
+    if (!box) return;
+    box.innerHTML = "";
+    if (!data || data.kind !== "local") {
+      box.classList.add("hidden");
+      return;
+    }
+    var viewer = (data && data.viewer) || {};
+    var loggedIn = !!viewer.logged_in;
+    var canCopy = viewer.can_copy !== false;
+    var canRequest = !!viewer.can_request_edit;
+    var isMember = !!viewer.is_member && !viewer.is_owner;
+    if (!canCopy && !canRequest && !isMember && viewer.is_owner) {
+      box.classList.add("hidden");
+      return;
+    }
+    box.classList.remove("hidden");
+    if (isMember) {
+      var open = document.createElement("button");
+      open.type = "button";
+      open.className = "share-actions-btn";
+      open.textContent = "Открыть в Leo";
+      open.addEventListener("click", function () {
+        var nid = data.item_id;
+        window.location.href = "/webapp/" + (nid ? "?note=" + encodeURIComponent(String(nid)) : "");
+      });
+      box.appendChild(open);
+    }
+    if (canCopy && !viewer.is_owner) {
+      var copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.className = "share-actions-btn" + (isMember ? " share-actions-btn--ghost" : "");
+      copyBtn.textContent = "Добавить в свои заметки";
+      copyBtn.addEventListener("click", function () {
+        if (!loggedIn) {
+          ensureLoginThen("copy").catch(function (e) {
+            setShareActionStatus(e.message || "Нужен вход");
+          });
+          return;
+        }
+        copySharedNote();
+      });
+      box.appendChild(copyBtn);
+    }
+    if (canRequest) {
+      var reqBtn = document.createElement("button");
+      reqBtn.type = "button";
+      reqBtn.id = "share-action-request";
+      reqBtn.className = "share-actions-btn share-actions-btn--ghost";
+      reqBtn.textContent = "Запросить редактирование";
+      reqBtn.addEventListener("click", function () {
+        if (!loggedIn) {
+          ensureLoginThen("request").catch(function (e) {
+            setShareActionStatus(e.message || "Нужен вход");
+          });
+          return;
+        }
+        requestSharedEdit();
+      });
+      box.appendChild(reqBtn);
+    }
+    var status = document.createElement("p");
+    status.id = "share-actions-status";
+    status.className = "share-actions-status hidden";
+    box.appendChild(status);
+    var pending = takePendingAction();
+    if (pending === "copy" && loggedIn) copySharedNote();
+    else if (pending === "request" && loggedIn) requestSharedEdit();
   }
 
   function showLoggedIn(me) {

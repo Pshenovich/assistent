@@ -1215,8 +1215,10 @@ async def handle(
         return
     if intent == "free_slots":
         try:
-            slots = cal_svc.free_slots_day(uid, day)
-            await msg.reply_text(cal_svc.format_free_slots(slots, day))
+            body = cal_svc.free_slots_message(
+                uid, parsed, day, telegram_username=user.username
+            )
+            await msg.reply_text(body)
         except Exception as e:
             await msg.reply_text(f"Ошибка: {e}")
         return

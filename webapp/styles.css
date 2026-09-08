@@ -2777,10 +2777,12 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
 
 .note-more-wrap {
   position: absolute;
-  top: 50%;
+  top: 0;
+  bottom: 0;
   right: var(--note-editor-pad-x, 1rem);
   z-index: 2;
-  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
 }
 
 .note-more-btn {
@@ -2941,6 +2943,209 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   color: var(--text-secondary, #909499);
   font-size: 0.75rem;
   line-height: 1.35;
+}
+
+.note-card-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.note-card-title-row .note-card-excerpt {
+  flex: 1;
+  min-width: 0;
+}
+
+.note-card-avatars {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  padding-top: 0.05rem;
+}
+
+.note-card-avatars .note-member-avatar {
+  margin-left: -0.4rem;
+}
+
+.note-card-avatars .note-member-avatar:first-child {
+  margin-left: 0;
+}
+
+.note-member-avatar {
+  --note-member-color: #529ef4;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  overflow: hidden;
+  border: 2px solid var(--surface, #19191a);
+  border-radius: 50%;
+  background: var(--note-member-color);
+  color: #fff;
+  font-size: 0.55rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.note-member-avatar.is-online {
+  box-shadow: 0 0 0 2px var(--note-member-color);
+}
+
+.note-member-avatar img {
+  position: absolute;
+  inset: 0;
+  display: none;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.note-member-avatar img.has-photo {
+  display: block;
+}
+
+.note-member-avatar img.has-photo + .note-member-avatar-fallback {
+  display: none;
+}
+
+.note-member-avatar-more {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-secondary, #909499);
+  font-size: 0.6rem;
+}
+
+.note-editor-members {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.35rem 0 0;
+}
+
+.note-editor-members.hidden {
+  display: none;
+}
+
+.note-editor-members-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.55rem;
+}
+
+.note-editor-member-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-secondary, #909499);
+  font-size: 0.8125rem;
+  line-height: 1.3;
+}
+
+.note-editor-members-live {
+  margin: 0;
+  color: var(--accent, #529ef4);
+  font-size: 0.75rem;
+}
+
+.note-collab-cursors {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.note-collab-caret {
+  position: absolute;
+  width: 2px;
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.note-collab-caret-label {
+  position: absolute;
+  top: -1.15rem;
+  left: 0;
+  padding: 0.08rem 0.28rem;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.note-share-sheet {
+  max-height: min(88dvh, 40rem);
+  overflow: auto;
+}
+
+.note-share-section-label {
+  margin: 0.15rem 0 0.45rem;
+  color: var(--text-secondary, #909499);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.note-share-members-block {
+  margin: 0 0 0.85rem;
+}
+
+.note-share-members-block.hidden {
+  display: none;
+}
+
+.note-share-members-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0 0 0.55rem;
+}
+
+.note-share-member-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.note-share-member-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.note-share-member-copy strong {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.note-share-member-copy small {
+  color: var(--text-secondary, #909499);
+  font-size: 0.75rem;
+}
+
+.note-share-member-remove {
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  color: var(--text-secondary, #909499);
+  background: transparent;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.note-share-member-add {
+  position: relative;
+}
+
+.note-share-members-hint {
+  margin: 0.45rem 0 0;
 }
 
 .note-share-sheet-actions {
@@ -6156,7 +6361,8 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
 
 #note-editor-overlay .note-editor-web-back-bar .note-more-wrap {
   z-index: 2;
-  top: 50%;
+  top: 0;
+  bottom: 0;
   right: 4px;
 }
 

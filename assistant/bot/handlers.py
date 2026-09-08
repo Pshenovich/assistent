@@ -18,6 +18,7 @@ from telegram.ext import (
 from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
 
 from assistant.bot.access_gate import ensure_access, handle_access_callback
+from assistant.bot.note_edit_requests import handle_note_edit_callback
 from assistant.bot.onboarding import handle_onboarding_callback, send_start_onboarding
 from assistant.bot.operation_cancel import try_cancel_operation
 from assistant.bot.group_gate import should_process_message
@@ -364,6 +365,12 @@ def register_handlers(app: Application) -> None:
         CallbackQueryHandler(
             handle_access_callback,
             pattern=r"^acc:",
+        )
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            handle_note_edit_callback,
+            pattern=r"^ned:",
         )
     )
     app.add_handler(

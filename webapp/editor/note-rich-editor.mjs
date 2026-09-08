@@ -1320,6 +1320,14 @@ function mount(container, options) {
     onUpdate: function () {
       if (typeof options.onUpdate === "function") options.onUpdate();
     },
+    onSelectionUpdate: function (props) {
+      if (typeof options.onSelection === "function") {
+        var ed = props && props.editor;
+        if (ed && ed.state && ed.state.selection) {
+          options.onSelection(ed.state.selection.from);
+        }
+      }
+    },
   });
 
   editor.view.dom.addEventListener(
@@ -1397,6 +1405,34 @@ function mount(container, options) {
   return {
     getHtml: function () {
       return exportBody(editor);
+    },
+    setHtml: function (html, opts) {
+      opts = opts || {};
+      var parsed = importBody(html || "");
+      var keep = !!opts.preserveCursor;
+      var from = editor.state.selection.from;
+      editor.commands.setContent(parsed, false);
+      if (keep) {
+        var max = editor.state.doc.content.size;
+        var pos = Math.max(1, Math.min(from, max));
+        try {
+          editor.commands.setTextSelection(pos);
+        } catch (_) {}
+      }
+    },
+    getCursor: function () {
+      return editor.state.selection.from;
+    },
+    coordsAtPos: function (pos) {
+      try {
+        var n = Number(pos);
+        if (!isFinite(n) || n < 0) return null;
+        var max = editor.state.doc.content.size;
+        var safe = Math.max(0, Math.min(n, max));
+        return editor.view.coordsAtPos(safe);
+      } catch (_) {
+        return null;
+      }
     },
     appendText: function (text) {
       var raw = String(text || "").replace(/\s+$/, "");

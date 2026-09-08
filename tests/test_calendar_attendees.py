@@ -29,6 +29,19 @@ class CalendarAttendeesTests(unittest.TestCase):
     def test_skip_today_word(self):
         self.assertEqual(extract_attendee_names_from_text("встреча сегодня в 11"), [])
 
+    def test_extract_slots_u_person(self):
+        names = extract_attendee_names_from_text(
+            "свободные слоты у Андрея Мыздрикова сегодня"
+        )
+        self.assertTrue(any("андрей" in n.lower() or "андрея" in n.lower() for n in names))
+        self.assertTrue(any("мыздрик" in n.lower() for n in names))
+
+    def test_skip_u_menya(self):
+        self.assertEqual(
+            extract_attendee_names_from_text("свободные слоты у меня сегодня"),
+            [],
+        )
+
     def test_extract_telegram_username(self):
         names = extract_telegram_usernames_from_text("встреча с @ivanov завтра")
         self.assertEqual(names, ["@ivanov"])

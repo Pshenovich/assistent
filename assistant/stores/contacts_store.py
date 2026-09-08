@@ -125,39 +125,78 @@ def _migration_sources_for_user(
     return out
 
 
-def _primary_file_is_empty(path: Path) -> bool:
+def _rows_from_payload(data: Any) -> list[dict[str, Any]]:
+    """Достаёт контакты из list или dict ({items|contacts: [...]} / email→row)."""
+    raw_rows: list[Any]
+    if isinstance(data, list):
+        raw_rows = data
+    elif isinstance(data, dict):
+        if isinstance(data.get("items"), list):
+            raw_rows = data["items"]
+        elif isinstance(data.get("contacts"), list):
+            raw_rows = data["contacts"]
+        else:
+            raw_rows = [v for v in data.values() if isinstance(v, dict)]
+    else:
+        raw_rows = []
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for x in raw_rows:
+        if not isinstance(x, dict):
+            continue
+        row = _normalize_row(x)
+        if not row:
+            continue
+        email = str(row.get("email") or "")
+        if email in seen:
+            continue
+        seen.add(email)
+        items.append(row)
+    return items
+
+
+def _read_contact_rows(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
-        return True
+        return []
     try:
-        raw = path.read_bytes()
-        if not raw.strip() or raw.strip() in (b"[]", b"{}"):
-            return True
-        data = json.loads(raw.decode("utf-8"))
-        if isinstance(data, list) and not data:
-            return True
-        if isinstance(data, dict) and not data:
-            return True
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw) if raw.strip() else []
     except Exception:
-        return True
-    return False
+        return []
+    return _rows_from_payload(data)
+
+
+def _write_contacts_file(path: Path, items: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    payload = json.dumps(items, ensure_ascii=False, indent=2)
+    tmp.write_text(payload + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _primary_file_is_empty(path: Path) -> bool:
+    """Пуст, если файла нет или после нормализации не осталось ни одного контакта."""
+    return not _read_contact_rows(path)
 
 
 def _migrate_contacts_to_primary(
     primary: Path, sources: list[Path], *, uid: int
 ) -> bool:
-    """Копирует legacy → primary, если primary отсутствует или пуст. Возвращает True если скопировали."""
-    if primary.is_file() and not _primary_file_is_empty(primary):
+    """Копирует legacy → primary, если primary отсутствует или без валидных контактов."""
+    if not _primary_file_is_empty(primary):
         return False
     for src in sources:
-        if not src.is_file() or src.resolve() == primary.resolve():
+        try:
+            if not src.is_file() or src.resolve() == primary.resolve():
+                continue
+        except OSError:
+            continue
+        rows = _read_contact_rows(src)
+        if not rows:
             continue
         try:
-            raw = src.read_bytes()
-            if not raw.strip() or raw.strip() in (b"[]", b"{}"):
-                continue
-            primary.parent.mkdir(parents=True, exist_ok=True)
-            primary.write_bytes(raw)
-            print(f"[contacts_store] migrated uid={uid} from {src}")
+            _write_contacts_file(primary, rows)
+            print(f"[contacts_store] migrated uid={uid} n={len(rows)} from {src}")
             return True
         except OSError as e:
             print(f"[contacts_store] migrate uid={uid} from {src} err={e!r}")
@@ -324,20 +363,7 @@ def load_contacts(
             mtime = 0.0
         if cache.get("items") and abs(float(cache.get("mtime") or 0.0) - mtime) < 1e-6:
             return list(cache["items"])
-        try:
-            raw = path.read_text(encoding="utf-8")
-            data = json.loads(raw) if raw.strip() else []
-        except Exception as e:
-            print(f"[contacts_store] read_failed={e!r}")
-            return []
-        items: list[dict[str, Any]] = []
-        if isinstance(data, list):
-            for x in data:
-                if not isinstance(x, dict):
-                    continue
-                row = _normalize_row(x)
-                if row:
-                    items.append(row)
+        items = _read_contact_rows(path)
         cache["items"] = items
         cache["mtime"] = mtime
         return list(items)
@@ -358,12 +384,8 @@ def save_contacts(
             row = _normalize_row(x)
             if row:
                 normalized.append(row)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    payload = json.dumps(normalized, ensure_ascii=False, indent=2)
     with _lock:
-        tmp.write_text(payload + "\n", encoding="utf-8")
-        os.replace(tmp, path)
+        _write_contacts_file(path, normalized)
         cache = _CONTACTS_CACHE_BY_PATH.setdefault(str(path), {"items": [], "mtime": 0.0})
         try:
             cache["mtime"] = path.stat().st_mtime

@@ -126,6 +126,59 @@ class TestContactsStore(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["email"], "maria@test.com")
 
+    def test_migrates_when_primary_has_invalid_rows(self) -> None:
+        root = Path(self.tmp.name)
+        uid = contacts_store.LEGACY_CONTACTS_OWNER_TELEGRAM_ID
+        user_dir = root / "contacts_user"
+        user_dir.mkdir(parents=True, exist_ok=True)
+        user_dir.joinpath(f"{uid}.json").write_text(
+            json.dumps([{"name": "Без почты", "aliases": []}]),
+            encoding="utf-8",
+        )
+        (root / "contacts.json").write_text(
+            json.dumps(
+                [{"name": "Гаря", "email": "garya@test.com", "aliases": []}],
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        with mock.patch.object(contacts_store, "ROOT", root):
+            with mock.patch.object(
+                contacts_store, "contacts_user_primary_dir", return_value=user_dir
+            ):
+                contacts_store._CONTACTS_CACHE_BY_PATH.clear()
+                items = contacts_store.load_contacts(
+                    telegram_user_id=uid, telegram_username="pshenovich"
+                )
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["email"], "garya@test.com")
+
+    def test_reads_dict_wrapped_contacts(self) -> None:
+        root = Path(self.tmp.name)
+        user_dir = root / "contacts_user"
+        user_dir.mkdir(parents=True, exist_ok=True)
+        user_dir.joinpath(f"{self.uid}.json").write_text(
+            json.dumps(
+                {
+                    "contacts": [
+                        {"name": "Ира", "email": "ira@test.com", "aliases": []}
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        with mock.patch.object(
+            contacts_store, "resolve_contacts_path",
+            side_effect=lambda **kw: user_dir / f"{int(kw['telegram_user_id'])}.json",
+        ):
+            contacts_store._CONTACTS_CACHE_BY_PATH.clear()
+            items = contacts_store.load_contacts(telegram_user_id=self.uid)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["email"], "ira@test.com")
+
     def test_migrates_from_assistant_backup_dir(self) -> None:
         root = Path(self.tmp.name)
         user_dir = root / "contacts_user"

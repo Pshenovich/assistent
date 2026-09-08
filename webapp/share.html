@@ -91,7 +91,7 @@
       text-transform: uppercase;
     }
     #share-title {
-      margin: 0 0 1rem;
+      margin: 0 0 0.65rem;
       padding: 0;
       color: var(--text);
       font-size: var(--vkui--font_title1--font_size--regular, 24px);
@@ -99,6 +99,34 @@
       line-height: var(--vkui--font_title1--line_height--regular, 28px);
       letter-spacing: -0.01em;
       overflow-wrap: anywhere;
+    }
+    .share-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      margin: 0 0 1rem;
+    }
+    .share-actions.hidden { display: none; }
+    .share-actions-btn {
+      min-height: 36px;
+      padding: 0.4rem 0.85rem;
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      background: var(--accent);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .share-actions-btn--ghost {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .share-actions-status {
+      width: 100%;
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.8125rem;
     }
     #share-body {
       color: var(--text);
@@ -602,6 +630,7 @@
     <article id="share-doc" class="share-doc-row hidden">
       <p id="share-label" class="label"></p>
       <h1 id="share-title"></h1>
+      <div id="share-actions" class="share-actions hidden"></div>
       <div id="share-body-wrap" class="share-body-wrap">
         <div id="share-body" class="note-body-html"></div>
         <div id="share-comment-overlay" class="note-comment-overlay"></div>
@@ -636,8 +665,8 @@
       <div id="share-comments-list" class="share-comments-list"></div>
     </aside>
   </main>
-  <script src="/webapp/note-html.js?v=20260907-kb-discuss"></script>
-  <script src="/webapp/note-comments.js?v=20260908-hl"></script>
-  <script src="/webapp/share.js?v=20260908-hl"></script>
+  <script src="/webapp/note-html.js?v=20260908-moremenu"></script>
+  <script src="/webapp/note-comments.js?v=20260908-moremenu"></script>
+  <script src="/webapp/share.js?v=20260908-moremenu"></script>
 </body>
 </html>
