@@ -748,6 +748,40 @@
     }
   }
 
+  function shareActionSvg(kind) {
+    if (kind === "copy") {
+      return (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' +
+        '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>' +
+        '<path d="M14 2v6h6"/><path d="M12 11v6"/><path d="M9 14h6"/>' +
+        "</svg>"
+      );
+    }
+    if (kind === "request") {
+      return (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' +
+        '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>' +
+        "</svg>"
+      );
+    }
+    return (
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' +
+      '<path d="M7 17 17 7"/><path d="M8 7h9v9"/>' +
+      "</svg>"
+    );
+  }
+
+  function makeShareActionLink(opts) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "share-action-link";
+    if (opts.id) btn.id = opts.id;
+    btn.innerHTML = shareActionSvg(opts.kind) + '<span class="share-action-link-label"></span>';
+    btn.querySelector(".share-action-link-label").textContent = opts.label;
+    btn.addEventListener("click", opts.onClick);
+    return btn;
+  }
+
   function setShareActionStatus(msg) {
     var el = document.getElementById("share-actions-status");
     if (!el) return;
@@ -804,7 +838,8 @@
         var btn = document.getElementById("share-action-request");
         if (btn) {
           btn.disabled = true;
-          btn.textContent = "Запрос отправлен";
+          var label = btn.querySelector(".share-action-link-label");
+          if (label) label.textContent = "Запрос отправлен";
         }
       })
       .catch(function (e) {
@@ -834,48 +869,52 @@
     }
     box.classList.remove("hidden");
     if (isMember) {
-      var open = document.createElement("button");
-      open.type = "button";
-      open.className = "share-actions-btn";
-      open.textContent = "Открыть в Leo";
-      open.addEventListener("click", function () {
-        var nid = data.item_id;
-        window.location.href = "/webapp/" + (nid ? "?note=" + encodeURIComponent(String(nid)) : "");
-      });
-      box.appendChild(open);
+      box.appendChild(
+        makeShareActionLink({
+          kind: "open",
+          label: "Открыть в Leo",
+          onClick: function () {
+            var nid = data.item_id;
+            window.location.href =
+              "/webapp/" + (nid ? "?note=" + encodeURIComponent(String(nid)) : "");
+          },
+        })
+      );
     }
     if (canCopy && !viewer.is_owner) {
-      var copyBtn = document.createElement("button");
-      copyBtn.type = "button";
-      copyBtn.className = "share-actions-btn" + (isMember ? " share-actions-btn--ghost" : "");
-      copyBtn.textContent = "Добавить в свои заметки";
-      copyBtn.addEventListener("click", function () {
-        if (!loggedIn) {
-          ensureLoginThen("copy").catch(function (e) {
-            setShareActionStatus(e.message || "Нужен вход");
-          });
-          return;
-        }
-        copySharedNote();
-      });
-      box.appendChild(copyBtn);
+      box.appendChild(
+        makeShareActionLink({
+          kind: "copy",
+          label: "Добавить в свои заметки",
+          onClick: function () {
+            if (!loggedIn) {
+              ensureLoginThen("copy").catch(function (e) {
+                setShareActionStatus(e.message || "Нужен вход");
+              });
+              return;
+            }
+            copySharedNote();
+          },
+        })
+      );
     }
     if (canRequest) {
-      var reqBtn = document.createElement("button");
-      reqBtn.type = "button";
-      reqBtn.id = "share-action-request";
-      reqBtn.className = "share-actions-btn share-actions-btn--ghost";
-      reqBtn.textContent = "Запросить редактирование";
-      reqBtn.addEventListener("click", function () {
-        if (!loggedIn) {
-          ensureLoginThen("request").catch(function (e) {
-            setShareActionStatus(e.message || "Нужен вход");
-          });
-          return;
-        }
-        requestSharedEdit();
-      });
-      box.appendChild(reqBtn);
+      box.appendChild(
+        makeShareActionLink({
+          id: "share-action-request",
+          kind: "request",
+          label: "Запросить редактирование",
+          onClick: function () {
+            if (!loggedIn) {
+              ensureLoginThen("request").catch(function (e) {
+                setShareActionStatus(e.message || "Нужен вход");
+              });
+              return;
+            }
+            requestSharedEdit();
+          },
+        })
+      );
     }
     var status = document.createElement("p");
     status.id = "share-actions-status";
