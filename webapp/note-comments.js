@@ -524,11 +524,14 @@
     });
   }
 
+  function discussionCount(comments) {
+    return (comments || []).filter(function (c) {
+      return c && c.id;
+    }).length;
+  }
+
   function hasDiscussion(comments) {
-    if (paieThread(comments).length) return true;
-    if (gptThread(comments).length) return true;
-    if (generalComments(comments).length) return true;
-    return false;
+    return discussionCount(comments) > 0;
   }
 
   function isMobileCommentsLayout() {
@@ -684,8 +687,9 @@
     paieThreadRootId: paieThreadRootId,
     gptThread: gptThread,
     generalComments: generalComments,
-    hasDiscussion: hasDiscussion,
     selectionComments: selectionComments,
+    discussionCount: discussionCount,
+    hasDiscussion: hasDiscussion,
     isMobileCommentsLayout: isMobileCommentsLayout,
     bindOverlayClicks: bindOverlayClicks,
     showCommentSheet: showCommentSheet,

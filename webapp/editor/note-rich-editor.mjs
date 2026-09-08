@@ -1398,6 +1398,16 @@ function mount(container, options) {
     getHtml: function () {
       return exportBody(editor);
     },
+    appendText: function (text) {
+      var raw = String(text || "").replace(/\s+$/, "");
+      if (!raw) return;
+      var lines = raw.split("\n");
+      var nodes = lines.map(function (line) {
+        if (!line) return { type: "paragraph" };
+        return { type: "paragraph", content: [{ type: "text", text: line }] };
+      });
+      editor.chain().focus("end").insertContent(nodes).run();
+    },
     prepareForSave: function () {
       editor.view.dom.blur();
     },

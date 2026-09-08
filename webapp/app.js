@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260907-kb-gpt";
+  var WEBAPP_BUILD = "20260908-discuss";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260907-kb-gpt";
+  const NOTE_EDITOR_ASSET_V = "20260908-discuss";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -1665,6 +1665,7 @@
     var exp = document.getElementById("profile-expenses");
     var booking = document.getElementById("profile-booking");
     var gpt = document.getElementById("gpt-overlay");
+    var discussion = document.getElementById("note-discussion-overlay");
     var noteEditor = document.getElementById("note-editor-overlay");
     var modal = document.getElementById("modal-overlay");
     var voice = document.getElementById("voice-overlay");
@@ -1677,6 +1678,7 @@
       (exp && !exp.classList.contains("hidden")) ||
       (booking && !booking.classList.contains("hidden")) ||
       (gpt && !gpt.classList.contains("hidden")) ||
+      (discussion && !discussion.classList.contains("hidden")) ||
       (modal && !modal.classList.contains("hidden")) ||
       (voice && !voice.classList.contains("hidden")) ||
       (noteUnsaved && !noteUnsaved.classList.contains("hidden")) ||
@@ -5372,6 +5374,10 @@
     var tg = window.Telegram && window.Telegram.WebApp;
     if (!tg || !tg.BackButton || typeof tg.BackButton.onClick !== "function") return;
     tg.BackButton.onClick(function () {
+      if (isNoteDiscussionOpen()) {
+        closeNoteDiscussion();
+        return;
+      }
       if (isNoteEditorModalOpen()) {
         handleNoteEditorModalClose();
         return;
@@ -6258,6 +6264,16 @@
       getHtml: function () {
         return ed.innerHTML || "";
       },
+      appendText: function (text) {
+        var raw = String(text || "").replace(/\s+$/, "");
+        if (!raw) return;
+        raw.split("\n").forEach(function (line) {
+          var p = document.createElement("p");
+          p.textContent = line;
+          ed.appendChild(p);
+        });
+        if (typeof onUpdate === "function") onUpdate();
+      },
       prepareForSave: function () {},
       focus: function () {
         ed.focus();
@@ -6676,9 +6692,26 @@
   }
 
   function noteAskPlaceholder(mode) {
-    if (mode === "gpt") return "Свободный запрос к GPT по заметке";
-    if (mode === "comment") return "Введите текст заметки";
-    return "Уточнение или новая информация — CHAIR ответит";
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var quoted = !!(wrap && wrap._commentDraft && String(wrap._commentDraft.quote || "").trim());
+    if (mode === "gpt") {
+      return quoted ? "Спросите GPT про выделенный текст" : "Свободный запрос к GPT по заметке";
+    }
+    if (mode === "comment") {
+      return quoted ? "Комментарий к выделенному тексту" : "Напишите комментарий";
+    }
+    return quoted
+      ? "Уточнение по выделенному тексту"
+      : "Уточнение или новая информация — CHAIR ответит";
+  }
+
+  function noteKnowledgeIconHtml() {
+    return (
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>' +
+      '<path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>' +
+      "</svg>"
+    );
   }
 
   function notePaieReplyFormHtml() {
@@ -6687,14 +6720,10 @@
     var chevronMuted = noteComposerAsset("chevron-up-muted");
     return (
       '<form id="note-paie-reply-form" class="note-paie-reply-form">' +
-      '<button type="button" class="note-paie-kb-toggle is-on" aria-pressed="true" title="Включить базу знаний в ответ">' +
-      '<span class="note-paie-kb-toggle-dot" aria-hidden="true"></span>' +
-      "База знаний" +
-      "</button>" +
       '<div class="note-paie-reply-target hidden">' +
       '<span class="note-paie-reply-target-bar" aria-hidden="true"></span>' +
       '<div class="note-paie-reply-target-copy">' +
-      '<p class="note-paie-reply-target-who">CHAIR</p>' +
+      '<p class="note-paie-reply-target-who">Фрагмент</p>' +
       '<p class="note-paie-reply-target-quote"></p>' +
       "</div>" +
       '<button type="button" class="note-paie-reply-target-clear" aria-label="Отменить ответ">&times;</button>' +
@@ -6730,6 +6759,9 @@
       '<input type="search" class="note-paie-model-search" placeholder="Поиск модели" autocomplete="off">' +
       '<div class="note-paie-menu-list"></div>' +
       "</div></div>" +
+      '<button type="button" class="note-paie-kb-toggle is-on" aria-pressed="true" title="База знаний">' +
+      noteKnowledgeIconHtml() +
+      "</button>" +
       '<button type="submit" class="note-paie-send" id="note-paie-reply-submit" disabled aria-label="Отправить">' +
       '<img class="note-paie-send-icon" src="' +
       arrow +
@@ -6873,7 +6905,7 @@
 
   function bindNotePaieReplyForm(threadEl) {
     var form = document.getElementById("note-paie-reply-form");
-    if (!form || !form.querySelector(".note-paie-send")) {
+    if (!form || !form.querySelector(".note-paie-composer-bar > .note-paie-kb-toggle")) {
       var html = notePaieReplyFormHtml();
       if (form) form.outerHTML = html;
       else if (threadEl) threadEl.insertAdjacentHTML("beforeend", html);
@@ -6989,50 +7021,145 @@
     }
     if (!document._noteComposerMenuBound) {
       document._noteComposerMenuBound = true;
-      document.addEventListener("click", function () {
+      document.addEventListener("click", function (e) {
+        var t = e && e.target;
+        if (t && t.closest && t.closest(".note-discuss-actions")) return;
         closeNoteComposerMenus();
+        closeNoteAnswerMenu();
       });
     }
     syncGptModelButton();
   }
 
-  function ensureNotePaieThread() {
-    var col = document.querySelector("#note-editor-modal-body .note-editor-main-column");
-    if (!col) return null;
-    var el = document.getElementById("note-paie-thread");
-    if (!el) {
-      el = document.createElement("section");
-      el.id = "note-paie-thread";
-      el.className = "note-paie-thread";
-      el.innerHTML =
-        '<h3 class="note-paie-thread-title hidden">Комментарий CHAIR</h3>' +
-        '<div id="note-editor-paei-status" class="note-paei-status hidden"></div>' +
-        '<div class="note-paie-thread-list"></div>' +
-        '<div class="note-paie-gpt-list"></div>' +
-        '<div class="note-paie-user-list"></div>' +
-        notePaieReplyFormHtml();
-      col.appendChild(el);
+  function isNoteDiscussionOpen() {
+    var ov = document.getElementById("note-discussion-overlay");
+    return !!(ov && !ov.classList.contains("hidden"));
+  }
+
+  function bindNoteDiscussionOverlayOnce() {
+    var ov = document.getElementById("note-discussion-overlay");
+    if (!ov || ov._bound) return ov;
+    ov._bound = true;
+    var closeBtn = document.getElementById("note-discussion-close");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        closeNoteDiscussion();
+      });
     }
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && isNoteDiscussionOpen()) {
+        if (document.getElementById("note-link-overlay") &&
+            !document.getElementById("note-link-overlay").classList.contains("hidden")) {
+          return;
+        }
+        closeNoteDiscussion();
+      }
+    });
+    return ov;
+  }
+
+  function closeNoteDiscussion() {
+    var ov = document.getElementById("note-discussion-overlay");
+    if (ov) {
+      ov.classList.add("hidden");
+      ov.setAttribute("aria-hidden", "true");
+    }
+    closeNoteAnswerMenu();
+    closeNoteComposerMenus();
+    syncAppOverlay();
+    syncTelegramNativeBack();
+  }
+
+  function ruMessageCount(n) {
+    var num = Number(n) || 0;
+    var n10 = num % 10;
+    var n100 = num % 100;
+    if (n10 === 1 && n100 !== 11) return num + " сообщение";
+    if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return num + " сообщения";
+    return num + " сообщений";
+  }
+
+  function discussionComments(comments) {
+    return (comments || []).filter(function (c) {
+      return c && c.id;
+    });
+  }
+
+  function renderNoteDiscussionCard(comments) {
+    var col = document.querySelector("#note-editor-modal-body .note-editor-main-column");
+    var card = document.getElementById("note-discussion-card");
+    var rows = discussionComments(comments);
+    if (!col || !rows.length) {
+      if (card && card.parentNode) card.parentNode.removeChild(card);
+      return;
+    }
+    if (!card) {
+      card = document.createElement("button");
+      card.type = "button";
+      card.id = "note-discussion-card";
+      card.className = "note-discussion-card";
+      card.innerHTML =
+        '<div><p class="note-discussion-card-title">Обсуждение</p>' +
+        '<p class="note-discussion-card-meta"></p></div>' +
+        '<span class="note-discussion-card-chevron" aria-hidden="true">›</span>';
+      card.addEventListener("click", function (e) {
+        e.preventDefault();
+        openNoteDiscussion();
+      });
+      col.appendChild(card);
+    }
+    var meta = card.querySelector(".note-discussion-card-meta");
+    if (meta) meta.textContent = ruMessageCount(rows.length);
+  }
+
+  function openNoteDiscussion(opts) {
+    opts = opts || {};
+    bindNoteDiscussionOverlayOnce();
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || !wrap._shareKind || !wrap._shareId) return;
+    ensureNotePaieThread();
+    if (opts.mode) setNoteAskMode(opts.mode);
+    if (opts.draft) {
+      wrap._commentDraft = {
+        quote: String(opts.draft.quote || "").trim(),
+        prefix: opts.draft.prefix || "",
+        suffix: opts.draft.suffix || "",
+      };
+      wrap._commentChairId = opts.chairId || null;
+      if (!opts.mode) setNoteAskMode("comment");
+    }
+    syncNoteComposerCommentTarget();
+    var ov = document.getElementById("note-discussion-overlay");
+    if (ov) {
+      ov.classList.remove("hidden");
+      ov.setAttribute("aria-hidden", "false");
+    }
+    var panel = document.getElementById("note-editor-comments");
+    renderNotePaieThread(
+      (panel && panel._allComments) || [],
+      wrap._shareKind,
+      wrap._shareId
+    );
+    var input = document.getElementById("note-paie-reply-input");
+    if (input) {
+      try {
+        input.focus();
+      } catch (_) {}
+    }
+    var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
+    if (scroll) scroll.scrollTop = scroll.scrollHeight;
+    syncAppOverlay();
+    syncTelegramNativeBack();
+    syncNoteFormatToolbarForComposer();
+  }
+
+  function ensureNotePaieThread() {
+    bindNoteDiscussionOverlayOnce();
+    var el = document.getElementById("note-paie-thread");
+    if (!el) return null;
     bindNotePaieReplyForm(el);
     setNoteAskMode(noteAskMode());
-    if (!el._chairSelectBound) {
-      el._chairSelectBound = true;
-      function onChairSelect(e) {
-        var api = window.NoteComments;
-        var target = e && e.target;
-        var body =
-          target && target.closest
-            ? target.closest(".note-paie-msg.is-chair .note-comment-body")
-            : null;
-        if (!api || !body) return;
-        var sel = api.selectionAnchor(body);
-        if (!sel || !sel.quote) return;
-        var group = body.closest(".note-paie-group");
-        if (group) openChairReply(group, sel);
-      }
-      el.addEventListener("mouseup", onChairSelect);
-      el.addEventListener("pointerup", onChairSelect);
-    }
     return el;
   }
 
@@ -7064,23 +7191,11 @@
     if (!groupEl) return;
     var wrap = document.getElementById("note-editor-more-wrap");
     var chairId = parseInt(groupEl.getAttribute("data-chair-id") || "", 10);
-    if (wrap) {
-      wrap._commentChairId = chairId || null;
-      wrap._commentDraft = chairReplyDraft(groupEl, draft);
-    }
-    setNoteAskMode("paie");
-    syncNoteComposerCommentTarget();
-    var form = document.getElementById("note-paie-reply-form");
-    var input = document.getElementById("note-paie-reply-input");
-    if (form && form.scrollIntoView) {
-      form.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    }
-    if (input) {
-      try {
-        input.focus();
-      } catch (_) {}
-    }
-    syncNoteFormatToolbarForComposer();
+    openNoteDiscussion({
+      mode: "paie",
+      chairId: chairId || null,
+      draft: chairReplyDraft(groupEl, draft),
+    });
   }
 
   function ensureNoteComposerReplyTarget(form) {
@@ -7127,11 +7242,13 @@
     var quoteEl = targetEl && targetEl.querySelector(".note-paie-reply-target-quote");
     var draft = wrap && wrap._commentDraft;
     var chairId = wrap && wrap._commentChairId;
+    var whoEl = targetEl && targetEl.querySelector(".note-paie-reply-target-who");
     var quote = draft && String(draft.quote || "").trim();
-    var active = !!(chairId && quote);
+    var active = !!quote;
+    if (whoEl) whoEl.textContent = chairId ? "CHAIR" : "Фрагмент";
     if (form) form.classList.toggle("is-replying", active);
     if (targetEl) targetEl.classList.toggle("hidden", !active);
-    if (quoteEl) quoteEl.textContent = quote || "";
+    if (quoteEl) quoteEl.textContent = clipReplyQuote(quote) || "";
     document.querySelectorAll(".note-paie-group").forEach(function (group) {
       var id = parseInt(group.getAttribute("data-chair-id") || "", 10);
       group.classList.toggle("is-reply-target", active && id === chairId);
@@ -7157,125 +7274,324 @@
     syncNoteComposerCommentTarget();
   }
 
-  function renderNotePaieMessage(c, kind, itemId) {
-    var item = document.createElement("article");
+  function isAssistantComment(c) {
     var api = window.NoteComments;
-    var chair = !!(api && api.isPaieComment && api.isPaieComment(c));
-    var gpt = !!(api && api.isGptComment && api.isGptComment(c));
-    item.className =
-      "note-comment note-paie-msg" +
-      (chair ? " is-chair" : gpt ? " is-gpt is-reply" : " is-reply");
+    if (!c) return false;
+    if (api && api.isPaieComment && api.isPaieComment(c)) return true;
+    if (api && api.isGptComment && api.isGptComment(c)) return true;
+    return false;
+  }
+
+  function closeNoteAnswerMenu() {
+    document.querySelectorAll(".note-discuss-menu").forEach(function (menu) {
+      menu.classList.add("hidden");
+    });
+    document.querySelectorAll(".note-discuss-more").forEach(function (btn) {
+      btn.setAttribute("aria-expanded", "false");
+    });
+  }
+
+  function showNoteToast(text) {
+    var el = document.getElementById("note-toast");
+    if (!el) return;
+    el.textContent = String(text || "");
+    el.classList.remove("hidden");
+    if (el._timer) window.clearTimeout(el._timer);
+    el._timer = window.setTimeout(function () {
+      el.classList.add("hidden");
+    }, 2400);
+  }
+
+  function appendAnswerToCurrentNote(text) {
+    var raw = String(text || "").trim();
+    if (!raw) return;
+    var inst = getActiveNoteRichEditor();
+    if (inst && typeof inst.appendText === "function") {
+      inst.appendText(raw);
+      showNoteToast("Добавлено в заметку");
+      shareHaptic();
+      return;
+    }
+    showNoteToast("Не удалось вставить в заметку");
+  }
+
+  async function createTaskNoteFromAnswer(text) {
+    var raw = String(text || "").trim();
+    if (!raw) return;
+    var title = raw.split(/\n/)[0].trim();
+    if (title.length > 80) title = title.slice(0, 79) + "…";
+    if (!title) title = "Задача";
+    var html = raw
+      .split("\n")
+      .map(function (line) {
+        return "<p>" + escapeHtml(line || " ") + "</p>";
+      })
+      .join("");
+    try {
+      var createRes = await apiFetch("/notes/local", {
+        method: "POST",
+        body: JSON.stringify({
+          title: title,
+          description: html,
+          sync_todoist: false,
+        }),
+      });
+      var created = (createRes && createRes.item) || { id: createRes && createRes.id, title: title };
+      prependLocalInCache(created);
+      if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+      showNoteToast("Заметка создана");
+      shareHaptic();
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
+  function closeNoteLinkPicker() {
+    var ov = document.getElementById("note-link-overlay");
+    if (ov) {
+      ov.classList.add("hidden");
+      ov.setAttribute("aria-hidden", "true");
+    }
+  }
+
+  function bindNoteLinkPickerOnce() {
+    var ov = document.getElementById("note-link-overlay");
+    if (!ov || ov._bound) return ov;
+    ov._bound = true;
+    var backdrop = document.getElementById("note-link-backdrop");
+    var cancel = document.getElementById("note-link-cancel");
+    var search = document.getElementById("note-link-search");
+    if (backdrop) backdrop.addEventListener("click", closeNoteLinkPicker);
+    if (cancel) cancel.addEventListener("click", closeNoteLinkPicker);
+    if (search) {
+      search.addEventListener("input", function () {
+        renderNoteLinkList(search.value, ov._answerText || "");
+      });
+    }
+    return ov;
+  }
+
+  function noteLinkPreview(item) {
+    return notePlainExcerpt(item.description || item.body || "", 80);
+  }
+
+  function renderNoteLinkList(query, answerText) {
+    var list = document.getElementById("note-link-list");
+    if (!list) return;
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var currentId = wrap && wrap._shareKind === "local" ? String(wrap._shareId || "") : "";
+    var q = String(query || "").trim().toLowerCase();
+    var notes = ((notesDataCache && notesDataCache.local_notes) || []).filter(function (n) {
+      var id = String((n && n.id) || "");
+      if (!id || id === currentId) return false;
+      if (!q) return true;
+      var title = String(n.title || n.content || "").toLowerCase();
+      var preview = noteLinkPreview(n).toLowerCase();
+      return title.indexOf(q) >= 0 || preview.indexOf(q) >= 0;
+    });
+    list.innerHTML = "";
+    if (!notes.length) {
+      var empty = document.createElement("p");
+      empty.className = "note-link-empty";
+      empty.textContent = q ? "Ничего не найдено" : "Других заметок нет";
+      list.appendChild(empty);
+      return;
+    }
+    notes.forEach(function (n) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "note-link-item";
+      var title = document.createElement("p");
+      title.className = "note-link-item-title";
+      title.textContent = String(n.title || n.content || "Без названия");
+      var preview = document.createElement("p");
+      preview.className = "note-link-item-preview";
+      preview.textContent = noteLinkPreview(n) || " ";
+      btn.appendChild(title);
+      btn.appendChild(preview);
+      btn.addEventListener("click", function () {
+        linkAnswerToNote(n.id, answerText);
+      });
+      list.appendChild(btn);
+    });
+  }
+
+  async function linkAnswerToNote(noteId, text) {
+    var raw = String(text || "").trim();
+    var id = localNoteIdFrom({ id: noteId });
+    if (!raw || !id) return;
+    try {
+      await apiFetch("/notes/local/" + encodeURIComponent(String(id)) + "/comments", {
+        method: "POST",
+        body: JSON.stringify({
+          body: raw,
+          quote: "",
+          prefix: "",
+          suffix: "",
+          as_role: "gpt",
+        }),
+      });
+      closeNoteLinkPicker();
+      showNoteToast("Ответ добавлен в комментарии заметки");
+      shareHaptic();
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
+  function openNoteLinkPicker(answerText) {
+    bindNoteLinkPickerOnce();
+    var ov = document.getElementById("note-link-overlay");
+    if (!ov) return;
+    ov._answerText = String(answerText || "");
+    var search = document.getElementById("note-link-search");
+    if (search) search.value = "";
+    function show() {
+      renderNoteLinkList("", ov._answerText);
+      ov.classList.remove("hidden");
+      ov.setAttribute("aria-hidden", "false");
+      if (search) {
+        try {
+          search.focus();
+        } catch (_) {}
+      }
+    }
+    if (notesDataCache && notesDataCache.local_notes) {
+      show();
+      return;
+    }
+    apiFetch("/notes?limit=120", { method: "GET" })
+      .then(function (data) {
+        notesDataCache = data || notesDataCache;
+        if (data) writeMiniappCache("notes", data);
+        show();
+      })
+      .catch(function () {
+        show();
+      });
+  }
+
+  function copyAnswerText(text) {
+    copyShareUrl(String(text || "")).then(
+      function () {
+        showNoteToast("Скопировано");
+        shareHaptic();
+      },
+      function () {
+        showNoteToast("Не удалось скопировать");
+      }
+    );
+  }
+
+  function bindNoteAnswerMenu(btn, menu, text) {
+    if (!btn || !menu) return;
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var open = menu.classList.contains("hidden");
+      closeNoteAnswerMenu();
+      if (open) {
+        menu.classList.remove("hidden");
+        btn.setAttribute("aria-expanded", "true");
+      }
+    });
+    menu.querySelectorAll("[data-answer-action]").forEach(function (item) {
+      item.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var action = item.getAttribute("data-answer-action");
+        closeNoteAnswerMenu();
+        if (action === "into-note") appendAnswerToCurrentNote(text);
+        else if (action === "task") createTaskNoteFromAnswer(text);
+        else if (action === "link") openNoteLinkPicker(text);
+        else if (action === "copy") copyAnswerText(text);
+      });
+    });
+  }
+
+  function renderDiscussionMessage(c) {
+    var item = document.createElement("article");
+    var assistant = isAssistantComment(c);
+    item.className = "note-discuss-msg " + (assistant ? "is-assistant" : "is-user");
     item.setAttribute("data-comment-id", String(c.id));
-    if (!chair && c.quote) {
+    if (c.quote) {
       var q = document.createElement("p");
-      q.className = "share-comment-quote";
+      q.className = "note-discuss-quote";
       q.textContent = "«" + String(c.quote) + "»";
       item.appendChild(q);
     }
-    var head = document.createElement("div");
-    head.className = "note-comment-head";
-    var who = document.createElement("strong");
-    who.textContent = shareCommentAuthorLabel(c);
-    var when = document.createElement("time");
-    when.textContent = formatShareCommentWhen(c.created_at);
-    head.appendChild(who);
-    head.appendChild(when);
-    var body = document.createElement("p");
-    body.className = "note-comment-body";
-    body.textContent = String((c && c.body) || "");
-    item.appendChild(head);
-    item.appendChild(body);
-    if (c && c.can_delete) {
-      var del = document.createElement("button");
-      del.type = "button";
-      del.className = "note-comment-delete";
-      del.textContent = "Удалить";
-      del.addEventListener("click", function (e) {
-        e.stopPropagation();
-        deleteNoteComment(kind, itemId, c.id);
-      });
-      item.appendChild(del);
+    var role = document.createElement("p");
+    role.className = "note-discuss-role";
+    role.textContent = assistant ? shareCommentAuthorLabel(c) : "Вы";
+    item.appendChild(role);
+    var bubble = document.createElement("div");
+    bubble.className = "note-discuss-bubble";
+    bubble.textContent = String((c && c.body) || "");
+    item.appendChild(bubble);
+    if (assistant && String((c && c.body) || "").trim()) {
+      var actions = document.createElement("div");
+      actions.className = "note-discuss-actions";
+      var more = document.createElement("button");
+      more.type = "button";
+      more.className = "note-discuss-more";
+      more.setAttribute("aria-label", "Действия");
+      more.setAttribute("aria-expanded", "false");
+      more.textContent = "···";
+      var menu = document.createElement("div");
+      menu.className = "note-discuss-menu hidden";
+      menu.innerHTML =
+        '<button type="button" class="note-discuss-menu-item" data-answer-action="into-note">📌 В заметку</button>' +
+        '<button type="button" class="note-discuss-menu-item" data-answer-action="task">📋 Создать задачу</button>' +
+        '<button type="button" class="note-discuss-menu-item" data-answer-action="link">🔗 Связать с заметкой</button>' +
+        '<button type="button" class="note-discuss-menu-item" data-answer-action="copy">📄 Копировать</button>';
+      actions.appendChild(more);
+      actions.appendChild(menu);
+      bindNoteAnswerMenu(more, menu, String(c.body || ""));
+      item.appendChild(actions);
     }
     return item;
-  }
-
-  function renderNotePaieChairGroup(group, kind, itemId) {
-    var wrap = document.createElement("div");
-    wrap.className = "note-paie-group";
-    wrap.setAttribute("data-chair-id", String(group.chair.id));
-    var item = renderNotePaieMessage(group.chair, kind, itemId);
-    wrap.appendChild(item);
-    var actions = document.createElement("div");
-    actions.className = "note-paie-msg-actions";
-    var commentBtn = document.createElement("button");
-    commentBtn.type = "button";
-    commentBtn.className = "note-paie-comment-btn";
-    commentBtn.textContent = "Ответить";
-    commentBtn.setAttribute("aria-label", "Ответить CHAIR");
-    commentBtn.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      openChairReply(wrap, null);
-    });
-    actions.appendChild(commentBtn);
-    wrap.appendChild(actions);
-    var nested = document.createElement("div");
-    nested.className = "note-paie-nested";
-    (group.comments || []).forEach(function (c) {
-      nested.appendChild(renderNotePaieMessage(c, kind, itemId));
-    });
-    wrap.appendChild(nested);
-    return wrap;
   }
 
   function renderNotePaieThread(comments, kind, itemId) {
     var wrap = document.getElementById("note-editor-more-wrap");
     var running = !!(wrap && wrap._paeiRunning);
-    var el = ensureNotePaieThread();
-    if (!el) return;
-    var list = el.querySelector(".note-paie-thread-list");
-    var gptList = el.querySelector(".note-paie-gpt-list");
-    var userList = el.querySelector(".note-paie-user-list");
+    ensureNotePaieThread();
+    var list = document.getElementById("note-discussion-messages");
     var form = document.getElementById("note-paie-reply-form");
-    var title = el.querySelector(".note-paie-thread-title");
     var status = document.getElementById("note-editor-paei-status");
     var statusOn = !!(status && !status.classList.contains("hidden"));
-    var api = window.NoteComments;
-    var groups = api && api.paieThreadGroups ? api.paieThreadGroups(comments) : [];
-    var gptTurns = api && api.gptThread ? api.gptThread(comments) : [];
-    var general = api && api.generalComments ? api.generalComments(comments) : [];
+    var rows = discussionComments(comments).slice().sort(function (a, b) {
+      var at = Date.parse(a && a.created_at) || 0;
+      var bt = Date.parse(b && b.created_at) || 0;
+      if (at !== bt) return at - bt;
+      return Number(a.id || 0) - Number(b.id || 0);
+    });
     if (list) {
       list.innerHTML = "";
-      groups.forEach(function (group) {
-        list.appendChild(renderNotePaieChairGroup(group, kind, itemId));
-      });
-    }
-    if (gptList) {
-      gptList.innerHTML = "";
-      gptTurns.forEach(function (c) {
-        gptList.appendChild(renderNotePaieMessage(c, kind, itemId));
-      });
-    }
-    if (userList) {
-      userList.innerHTML = "";
-      general.forEach(function (c) {
-        userList.appendChild(renderNotePaieMessage(c, kind, itemId));
-      });
-    }
-    el.classList.remove("hidden");
-    if (title) {
-      title.textContent = groups.length ? "Комментарий CHAIR" : "Обсуждение";
-      title.classList.toggle(
-        "hidden",
-        !groups.length && !gptTurns.length && !general.length && !statusOn && !running
-      );
+      if (!rows.length && !statusOn && !running) {
+        var empty = document.createElement("p");
+        empty.className = "note-discussion-empty";
+        empty.textContent = "Задайте вопрос или оставьте комментарий";
+        list.appendChild(empty);
+      } else {
+        rows.forEach(function (c) {
+          list.appendChild(renderDiscussionMessage(c));
+        });
+      }
     }
     if (form) {
       form.classList.remove("hidden");
       syncNotePaieReplyForm(running);
       syncNoteComposerCommentTarget();
     }
+    renderNoteDiscussionCard(comments);
     refreshNoteEditorTocExtras();
+    if (isNoteDiscussionOpen()) {
+      var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
+      if (scroll) scroll.scrollTop = scroll.scrollHeight;
+    }
+    void kind;
+    void itemId;
   }
 
   function noteHasDiscussion(comments) {
@@ -7295,10 +7611,7 @@
     btn.setAttribute("data-toc-discussion", "1");
     btn.textContent = "Обсуждение";
     btn.addEventListener("click", function () {
-      var thread = document.getElementById("note-paie-thread");
-      if (thread && thread.scrollIntoView) {
-        thread.scrollIntoView({ block: "start", behavior: "smooth" });
-      }
+      openNoteDiscussion();
       if (typeof onNavigate === "function") onNavigate();
     });
     tocEl.appendChild(btn);
@@ -7350,7 +7663,7 @@
     btn.classList.toggle("is-on", on);
     btn.setAttribute("aria-pressed", on ? "true" : "false");
     btn.title = on
-      ? "База знаний включена в ответ. Нажмите, чтобы выключить"
+      ? "База знаний включена. Нажмите, чтобы выключить"
       : "База знаний выключена. Нажмите, чтобы включить";
   }
 
@@ -7399,8 +7712,7 @@
     if (input) {
       input.placeholder = noteAskPlaceholder(current);
     }
-    if (current === "gpt") clearNoteComposerCommentTarget();
-    else syncNoteComposerCommentTarget();
+    syncNoteComposerCommentTarget();
     if (current === "gpt") loadGptModels();
     else closeNoteComposerMenus();
     syncNotePaieReplyForm();
@@ -7464,6 +7776,8 @@
     syncNotePaieReplyForm(true);
     var input = document.getElementById("note-paie-reply-input");
     if (input) input.value = "";
+    var draft = wrap._commentDraft;
+    var quote = (draft && draft.quote) || "";
     try {
       var saved = await apiFetch(
         "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
@@ -7471,7 +7785,7 @@
           method: "POST",
           body: JSON.stringify({
             body: body,
-            quote: "",
+            quote: quote,
             prefix: "__gpt__",
             suffix: "",
           }),
@@ -7480,8 +7794,9 @@
       var parentId = saved && saved.comment && saved.comment.id;
       refreshNoteCommentsList();
       var kb = await knowledgeTextForAsk();
-      var ctx = activeNoteGptContext();
-      if (kb) ctx = "База знаний:\n" + kb + "\n\nЗаметка:\n" + ctx;
+      var ctx = "Заметка:\n" + activeNoteGptContext();
+      if (quote) ctx = "Выделенный текст:\n" + quote + "\n\n" + ctx;
+      if (kb) ctx = "База знаний:\n" + kb + "\n\n" + ctx;
       var res = await apiFetch("/gpt/chat", {
         method: "POST",
         body: JSON.stringify({
@@ -7508,7 +7823,7 @@
           method: "POST",
           body: JSON.stringify({
             body: ans,
-            quote: "",
+            quote: quote,
             prefix: "__gpt__",
             suffix: "",
             parent_id: parentId || null,
@@ -7517,6 +7832,7 @@
         }
       );
       shareHaptic();
+      clearNoteComposerCommentTarget();
       refreshNoteCommentsList();
     } catch (e) {
       alert(e.message || String(e));
@@ -7605,11 +7921,13 @@
     if (input) input.disabled = busy;
     var modeEl = document.getElementById("note-paie-thread");
     if (modeEl) {
-      modeEl.querySelectorAll(".note-paie-mode, .note-paie-mode-compact, .note-paie-model-btn").forEach(
-        function (btn) {
+      modeEl
+        .querySelectorAll(
+          ".note-paie-mode, .note-paie-mode-compact, .note-paie-model-btn, .note-paie-kb-toggle"
+        )
+        .forEach(function (btn) {
           btn.disabled = busy;
-        }
-      );
+        });
     }
     if (submit) {
       var hasText = !!(input && String(input.value || "").trim());
@@ -7736,11 +8054,8 @@
     wrap._paeiRunning = true;
     syncNoteCommentsPanel();
     ensureNotePaieThread();
+    openNoteDiscussion({ mode: "paie" });
     setNotePaeiStatus("Анализ заметки…", { label: "Анализ заметки…", pct: 10 });
-    var thread = document.getElementById("note-paie-thread");
-    if (thread && thread.scrollIntoView) {
-      thread.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    }
     apiFetch(path, {
       method: "POST",
       body: JSON.stringify({ use_knowledge: noteUsesKnowledge() }),
@@ -7782,6 +8097,12 @@
         ? api.paieThreadRootId((panel && panel._allComments) || [])
         : null;
     if (!rootId) {
+      if (body) {
+        submitNoteFooterComment(body).then(function () {
+          startNotePaei();
+        });
+        return;
+      }
       startNotePaei();
       return;
     }
@@ -8024,6 +8345,9 @@
       window.NoteComments.hideBubble();
       if (window.NoteComments.hideCommentSheet) window.NoteComments.hideCommentSheet();
     }
+    closeNoteDiscussion();
+    closeNoteLinkPicker();
+    closeNoteAnswerMenu();
     var panel = document.getElementById("note-editor-comments");
     if (panel && typeof panel._commentSelectUnbind === "function") {
       try {
@@ -8031,8 +8355,10 @@
       } catch (_) {}
     }
     if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
-    var thread = document.getElementById("note-paie-thread");
-    if (thread && thread.parentNode) thread.parentNode.removeChild(thread);
+    var card = document.getElementById("note-discussion-card");
+    if (card && card.parentNode) card.parentNode.removeChild(card);
+    var messages = document.getElementById("note-discussion-messages");
+    if (messages) messages.innerHTML = "";
     var overlay = document.getElementById("note-editor-comment-overlay");
     if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
     var layout = document.querySelector("#note-editor-modal-body .note-editor-doc-layout");
@@ -8057,26 +8383,10 @@
   }
 
   function onEditorHighlightClick(id, comments) {
-    var api = window.NoteComments;
-    var found = null;
-    (comments || []).forEach(function (c) {
-      if (c && String(c.id) === String(id)) found = c;
-    });
-    if (api && api.isMobileCommentsLayout && api.isMobileCommentsLayout()) {
-      if (found && api.showCommentSheet) api.showCommentSheet(found);
-      return;
-    }
     var panel = document.getElementById("note-editor-comments");
     if (panel) panel._activeCommentId = id;
-    var listEl = panel && panel.querySelector(".note-comments-list");
-    if (listEl) {
-      listEl.querySelectorAll(".note-comment").forEach(function (el) {
-        el.classList.toggle("is-active", el.getAttribute("data-comment-id") === String(id));
-      });
-    }
     paintEditorCommentOverlay(comments, id);
-    var card = listEl && listEl.querySelector('[data-comment-id="' + id + '"]');
-    if (card && card.scrollIntoView) card.scrollIntoView({ block: "nearest" });
+    openNoteDiscussion();
   }
 
   function refreshNoteCommentAnchors() {
@@ -8091,77 +8401,17 @@
     }
   }
 
-  function syncSelectionCommentsRail(hasCards) {
+  function syncSelectionCommentsRail() {
     var panel = document.getElementById("note-editor-comments");
     var layout = document.querySelector("#note-editor-modal-body .note-editor-doc-layout");
-    var form = document.getElementById("note-editor-comment-form");
-    var formOpen = !!(form && !form.classList.contains("hidden"));
-    var show = !!hasCards || formOpen;
-    if (panel) panel.classList.toggle("hidden", !show);
-    if (layout) layout.classList.toggle("has-comments", show);
+    if (panel) panel.classList.add("hidden");
+    if (layout) layout.classList.remove("has-comments");
   }
 
-  function renderNoteCommentsList(listEl, comments, kind, itemId) {
-    if (!listEl) return;
-    listEl.innerHTML = "";
-    if (!comments || !comments.length) {
-      paintEditorCommentOverlay([]);
-      syncSelectionCommentsRail(false);
-      return;
-    }
-    syncSelectionCommentsRail(true);
-    comments.forEach(function (c) {
-      var item = document.createElement("article");
-      item.className = "note-comment";
-      item.setAttribute("data-comment-id", String(c.id));
-      if (c.quote) {
-        var q = document.createElement("p");
-        q.className = "share-comment-quote";
-        q.textContent = "«" + String(c.quote) + "»";
-        item.appendChild(q);
-      }
-      var head = document.createElement("div");
-      head.className = "note-comment-head";
-      var who = document.createElement("strong");
-      who.textContent = shareCommentAuthorLabel(c);
-      var when = document.createElement("time");
-      when.textContent = formatShareCommentWhen(c.created_at);
-      head.appendChild(who);
-      head.appendChild(when);
-      var body = document.createElement("p");
-      body.className = "note-comment-body";
-      body.textContent = String((c && c.body) || "");
-      item.appendChild(head);
-      item.appendChild(body);
-      if (c && c.can_delete) {
-        var del = document.createElement("button");
-        del.type = "button";
-        del.className = "note-comment-delete";
-        del.textContent = "Удалить";
-        del.addEventListener("click", function (e) {
-          e.stopPropagation();
-          deleteNoteComment(kind, itemId, c.id);
-        });
-        item.appendChild(del);
-      }
-      item.addEventListener("click", function () {
-        var panel = document.getElementById("note-editor-comments");
-        if (panel) panel._activeCommentId = c.id;
-        listEl.querySelectorAll(".note-comment").forEach(function (el) {
-          el.classList.toggle("is-active", el === item);
-        });
-        paintEditorCommentOverlay(comments, c.id);
-        var api = window.NoteComments;
-        var root = noteEditorCommentRoot();
-        var range = api && api.rangeForAnchor && api.rangeForAnchor(root, c.quote, c.prefix, c.suffix);
-        if (range && range.startContainer && range.startContainer.parentElement) {
-          range.startContainer.parentElement.scrollIntoView({ block: "center", behavior: "smooth" });
-        }
-        window.requestAnimationFrame(refreshNoteCommentAnchors);
-      });
-      listEl.appendChild(item);
-    });
-    window.requestAnimationFrame(refreshNoteCommentAnchors);
+  function renderNoteCommentsList(listEl, comments) {
+    if (listEl) listEl.innerHTML = "";
+    paintEditorCommentOverlay(comments || []);
+    syncSelectionCommentsRail();
   }
 
   function formatShareCommentWhen(iso) {
@@ -8285,21 +8535,7 @@
       }
       draft = sel;
       api.showBubble(sel.rect, function () {
-        var form = document.getElementById("note-editor-comment-form");
-        var quoteEl = document.getElementById("note-editor-comment-quote");
-        var input = panel.querySelector(".note-comments-input");
-        if (quoteEl) quoteEl.textContent = "«" + sel.quote + "»";
-        if (form) {
-          form.classList.remove("hidden");
-          form._draft = draft;
-          syncSelectionCommentsRail(true);
-          if (form.scrollIntoView) form.scrollIntoView({ block: "nearest", behavior: "smooth" });
-        }
-        if (input) {
-          try {
-            input.focus();
-          } catch (_) {}
-        }
+        openNoteDiscussion({ mode: "comment", draft: sel });
       });
     }
     function onDocMouseDown(e) {
@@ -9380,19 +9616,7 @@
       }
       if (!noteId) return;
       ensureNoteShareMounted(noteId);
-      ensureNotePaieThread();
-      setNoteAskMode("gpt");
-      var form = document.getElementById("note-paie-reply-form");
-      var input = document.getElementById("note-paie-reply-input");
-      if (form && form.scrollIntoView) {
-        form.scrollIntoView({ block: "nearest", behavior: "smooth" });
-      }
-      if (input) {
-        try {
-          input.focus();
-        } catch (_) {}
-      }
-      syncNoteFormatToolbarForComposer();
+      openNoteDiscussion({ mode: "gpt" });
     }
 
     function schedulePatch() {

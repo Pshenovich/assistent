@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260907-kb-gpt">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260908-discuss">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -43,8 +43,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20260907-kb-gpt" />
-  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260907-kb-gpt" as="script" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20260908-discuss" />
+  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260908-discuss" as="script" />
   <!-- Same-origin, async: не блокирует парсер, если сеть/VPN тормозит. -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" async></script>
 </head>
@@ -1066,6 +1066,39 @@
     </div>
   </div>
 
+  <div id="note-discussion-overlay" class="note-discussion-overlay hidden" aria-hidden="true">
+    <div class="note-discussion-sheet" role="dialog" aria-modal="true" aria-labelledby="note-discussion-title">
+      <div class="note-discussion-header">
+        <button type="button" class="modal-header-btn modal-header-btn--close" id="note-discussion-close" aria-label="Закрыть" title="Закрыть">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+        <h2 id="note-discussion-title" class="note-discussion-title">Обсуждение</h2>
+        <span class="note-discussion-header-spacer" aria-hidden="true"></span>
+      </div>
+      <div class="note-discussion-scroll">
+        <div id="note-editor-paei-status" class="note-paei-status hidden"></div>
+        <div id="note-discussion-messages" class="note-discussion-messages"></div>
+      </div>
+      <div id="note-paie-thread" class="note-discussion-compose"></div>
+    </div>
+  </div>
+
+  <div id="note-link-overlay" class="note-link-overlay hidden" aria-hidden="true">
+    <div class="note-link-backdrop" id="note-link-backdrop"></div>
+    <div class="note-link-sheet" role="dialog" aria-modal="true" aria-labelledby="note-link-title">
+      <div class="note-link-head">
+        <h3 id="note-link-title" class="note-link-title">Связать с заметкой</h3>
+        <button type="button" class="btn-text" id="note-link-cancel">Отмена</button>
+      </div>
+      <input type="search" id="note-link-search" class="note-link-search" placeholder="Поиск заметок" autocomplete="off" />
+      <div id="note-link-list" class="note-link-list"></div>
+    </div>
+  </div>
+
+  <div id="note-toast" class="note-toast hidden" role="status" aria-live="polite"></div>
+
   <script>
     (function () {
       var host = String(location.hostname || "").toLowerCase();
@@ -1079,14 +1112,14 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20260907-kb-gpt"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20260908-discuss"><\/script>'
         );
       }
     })();
   </script>
-  <script src="/webapp/note-html.js?v=20260907-kb-gpt" defer></script>
-  <script src="/webapp/note-comments.js?v=20260907-kb-gpt" defer></script>
-  <script src="/webapp/note-rich-editor.js?v=20260907-kb-gpt" defer></script>
-  <script src="/webapp/app.js?v=20260907-kb-gpt" defer></script>
+  <script src="/webapp/note-html.js?v=20260908-discuss" defer></script>
+  <script src="/webapp/note-comments.js?v=20260908-discuss" defer></script>
+  <script src="/webapp/note-rich-editor.js?v=20260908-discuss" defer></script>
+  <script src="/webapp/app.js?v=20260908-discuss" defer></script>
 </body>
 </html>
