@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260908-stable";
+  var WEBAPP_BUILD = "20260908-stable2";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260908-stable";
+  const NOTE_EDITOR_ASSET_V = "20260908-stable2";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -1531,7 +1531,7 @@
       var saveBtn = document.getElementById("note-unsaved-save");
       var discardBtn = document.getElementById("note-unsaved-discard");
       if (!ov || !saveBtn || !discardBtn) {
-        resolve("cancel");
+        resolve("save");
         return;
       }
       function cleanup() {
@@ -1565,14 +1565,48 @@
     });
   }
 
-  async function handleNoteEditorModalClose() {
+  function setNoteEditorSaveHint(msg) {
+    var el = document.getElementById("note-editor-save-hint");
+    var title = document.getElementById("note-editor-title-input");
+    if (!el && title && title.parentNode) {
+      el = document.createElement("p");
+      el.id = "note-editor-save-hint";
+      el.className = "error small hidden";
+      title.parentNode.appendChild(el);
+    }
+    if (!el) return;
+    if (!msg) {
+      el.textContent = "";
+      el.classList.add("hidden");
+      return;
+    }
+    el.textContent = String(msg);
+    el.classList.remove("hidden");
+  }
+
+  async function handleNoteEditorModalClose(opts) {
+    opts = opts || {};
+    if (!opts.skipPrompt && isNoteEditorDirty()) {
+      var choice = await showNoteUnsavedDialog();
+      if (choice === "cancel") return false;
+      if (choice === "discard") {
+        var discardBody = getNoteEditorBodyEl();
+        if (discardBody) discardBody._noteEditorFlush = null;
+        closeNoteEditorModal();
+        return true;
+      }
+    }
     var body = getNoteEditorBodyEl();
     if (body && typeof body._noteEditorFlush === "function") {
       try {
         await body._noteEditorFlush();
-      } catch (_) {}
+      } catch (e) {
+        alert(e.message || "Не удалось сохранить заметку");
+        return false;
+      }
     }
     closeNoteEditorModal();
+    return true;
   }
 
   async function handleNotesDetailBack() {
@@ -1944,18 +1978,18 @@
       loadNotes();
       if (prev === "knowledge") {
         closeNotesDetail();
-        if (isNoteEditorModalOpen()) handleNoteEditorModalClose();
+        if (isNoteEditorModalOpen()) handleNoteEditorModalClose({ skipPrompt: true });
       }
     }
     if (name === "knowledge") {
       closeNotesDetail();
-      if (isNoteEditorModalOpen()) handleNoteEditorModalClose();
+      if (isNoteEditorModalOpen()) handleNoteEditorModalClose({ skipPrompt: true });
       loadNoteEditorScripts().catch(function () {});
       loadKnowledgeNotes();
     }
     if (name !== "notes" && name !== "knowledge") {
       closeNotesDetail();
-      if (isNoteEditorModalOpen()) handleNoteEditorModalClose();
+      if (isNoteEditorModalOpen()) handleNoteEditorModalClose({ skipPrompt: true });
     }
     if (name !== "profile" && currentProfileScreen !== "main") {
       profileScreen("main");
@@ -1981,7 +2015,7 @@
       }
       if (name === "notes" || name === "knowledge") {
         closeNotesDetail();
-        if (isNoteEditorModalOpen()) handleNoteEditorModalClose();
+        if (isNoteEditorModalOpen()) handleNoteEditorModalClose({ skipPrompt: true });
       }
       postTabSwitch(name, prev);
       return;
@@ -2331,6 +2365,15 @@
     if (yandexDisk) setHidden(yandexDisk, name !== "yandex-disk");
     if (bitrix) setHidden(bitrix, name !== "bitrix");
     if (knowledgeBase) setHidden(knowledgeBase, name !== "knowledge-base");
+    if (name !== "booking") stopBookingWaQrPoll();
+    if (
+      name !== "zoom" &&
+      name !== "telemost" &&
+      name !== "yandex-disk" &&
+      name !== "bitrix"
+    ) {
+      stopZoomStatusPoll();
+    }
     if (name !== "main" && prev !== name) {
       var sub = document.getElementById("profile-" + name);
       pulseMotionEnter(sub);
@@ -9120,6 +9163,9 @@
       .catch(function (e) {
         wrap._paeiRunning = false;
         setNotePaeiStatus(e.message || "Не удалось запустить PAIE");
+      })
+      .finally(function () {
+        syncNotePaieReplyForm();
       });
   }
 
@@ -9201,6 +9247,9 @@
           wrap._shareKind,
           wrap._shareId
         );
+      })
+      .finally(function () {
+        syncNotePaieReplyForm();
       });
   }
 
@@ -10022,6 +10071,8 @@
       body._noteEditorFlush = null;
     }
     flushP.finally(function () {
+      closeNoteDiscussion(true);
+      closeShareAccessSheet();
       stopNoteCollab();
       destroyActiveNoteRichEditor();
       clearNoteEditorToolbarWrap();
@@ -10202,7 +10253,8 @@
     var errParts = [];
     if (data.local_error) errParts.push(String(data.local_error));
     if (errParts.length && !local.length) {
-      pn.innerHTML = '<p class="error">' + errParts.join(" · ") + "</p>";
+      pn.innerHTML = '<p class="error"></p>';
+      pn.querySelector(".error").textContent = errParts.join(" · ");
     } else if (!local.length) {
       pn.innerHTML =
         localAll.length && (notesSearchQuery.trim() || notesActiveTagIds.length)
@@ -11005,6 +11057,7 @@
           fields.description
         );
       }
+      setNoteEditorSaveHint("");
     }
 
     async function openNoteGptComposer() {
@@ -11025,7 +11078,13 @@
       noteCollabState.lastTypedAt = Date.now();
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(function () {
-        persistNoteDraft().catch(function () {});
+        persistNoteDraft()
+          .then(function () {
+            setNoteEditorSaveHint("");
+          })
+          .catch(function (e) {
+            setNoteEditorSaveHint(e.message || "Не удалось сохранить заметку");
+          });
       }, 1500);
     }
 
@@ -11193,7 +11252,13 @@
     function schedulePatch() {
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(function () {
-        persistJournalDraft().catch(function () {});
+        persistJournalDraft()
+          .then(function () {
+            setNoteEditorSaveHint("");
+          })
+          .catch(function (e) {
+            setNoteEditorSaveHint(e.message || "Не удалось сохранить запись");
+          });
       }, 1500);
     }
 
@@ -11294,7 +11359,10 @@
             body: JSON.stringify({ title: title, description: description }),
           });
           mergeTodoInCache(id, title, description);
-        } catch (_) {}
+          setNoteEditorSaveHint("");
+        } catch (e) {
+          setNoteEditorSaveHint(e.message || "Не удалось сохранить заметку");
+        }
       }, 1500);
     }
     if (!isCreate) {
@@ -11503,12 +11571,18 @@
         try {
           body = text ? JSON.parse(text) : null;
         } catch (_) {
-          body = { detail: text };
+          body = {
+            detail: looksLikeHtmlError(text)
+              ? httpStatusFallback(res.status, "Ошибка входа")
+              : text || res.statusText,
+          };
         }
         if (!res.ok) {
-          var msg =
-            (body && (body.detail || body.message)) || res.statusText || "Ошибка входа";
-          throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+          var msg = apiErrorMessage(
+            body,
+            httpStatusFallback(res.status, "Ошибка входа")
+          );
+          throw new Error(msg);
         }
         return body;
       });

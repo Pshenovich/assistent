@@ -4335,7 +4335,8 @@ async def miniapp_notes_bundle(
         )
     except Exception as e:
         local_notes = []
-        local_err = str(e)
+        local_err = "Не удалось загрузить заметки. Обновите страницу чуть позже."
+        print(f"[miniapp_notes] local_fail err={e!r}")
     out_journal: list[dict[str, Any]] = []
     transcriptions: list[dict[str, Any]] = []
     summaries: list[dict[str, Any]] = []
@@ -4372,7 +4373,8 @@ async def miniapp_notes_bundle(
     try:
         all_tags = await run_in_threadpool(_attach_tags)
     except Exception as e:
-        tags_err = str(e)
+        tags_err = "Не удалось загрузить теги."
+        print(f"[miniapp_notes] tags_fail err={e!r}")
         for n in local_notes:
             n.setdefault("tags", [])
         for row in transcriptions + summaries:
@@ -5303,6 +5305,7 @@ async def miniapp_todoist_note_create(
     uid = int(principal.telegram_user_id)
     tid: str | None = None
     if body.sync_todoist:
+        from assistant.compat.miniapp_shims import add_todoist_note
 
         def _todoist() -> str:
             return add_todoist_note(title, desc, telegram_user_id=uid)
