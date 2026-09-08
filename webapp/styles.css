@@ -2978,16 +2978,23 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
 .note-comment-overlay {
   position: absolute;
   inset: 0;
+  z-index: 0;
+  overflow: hidden;
   pointer-events: none;
-  z-index: 2;
+}
+
+.note-editor-pad--body .note-rich-editor,
+.note-editor-pad--body .note-rich-editor-surface,
+.note-editor-pad--body .note-rich-editor-body {
+  position: relative;
+  z-index: 1;
 }
 
 .note-comment-overlay-hl {
   position: absolute;
   background: rgba(82, 158, 244, 0.28);
   border-radius: 2px;
-  pointer-events: auto;
-  cursor: pointer;
+  pointer-events: none;
 }
 
 .note-comment-overlay-hl.is-active {
@@ -3830,6 +3837,7 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   display: flex;
   flex-direction: column;
   max-width: 92%;
+  cursor: pointer;
 }
 
 .note-discuss-msg.is-user {
@@ -3840,6 +3848,12 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
 .note-discuss-msg.is-assistant {
   align-self: flex-start;
   align-items: flex-start;
+}
+
+.note-discuss-msg.is-topic {
+  outline: 2px solid rgba(82, 158, 244, 0.55);
+  outline-offset: 4px;
+  border-radius: 12px;
 }
 
 .note-discuss-role {
@@ -7300,6 +7314,10 @@ html.modal-sheet-open body {
     max-width: none;
     height: 100%;
     max-height: 100%;
+  }
+
+  html.note-discussion-open .note-discussion-card {
+    display: none !important;
   }
 
   .gpt-overlay {

@@ -407,7 +407,7 @@
     if (!root) return;
     var overlayRect = overlay.getBoundingClientRect ? overlay.getBoundingClientRect() : { left: 0, top: 0 };
     (comments || []).forEach(function (c) {
-      if (!c || !c.quote || isPaieComment(c) || isGptTurn(c)) return;
+      if (!c || !String(c.quote || "").trim()) return;
       var range = rangeForAnchor(root, c.quote, c.prefix, c.suffix);
       if (!range) return;
       var rects = range.getClientRects();
@@ -538,11 +538,62 @@
     return !isDesktopCommentsLayout();
   }
 
+  function quotedComments(comments) {
+    return (comments || []).filter(function (c) {
+      return c && c.id && String(c.quote || "").trim();
+    });
+  }
+
+  function topicRoot(comments, id) {
+    var byId = {};
+    (comments || []).forEach(function (c) {
+      if (c && c.id) byId[String(c.id)] = c;
+    });
+    var cur = byId[String(id || "")];
+    if (!cur) return null;
+    var guard = 0;
+    while (cur && parentIdOf(cur) && byId[String(parentIdOf(cur))] && guard++ < 80) {
+      cur = byId[String(parentIdOf(cur))];
+    }
+    var quote = String((cur && cur.quote) || "").trim();
+    if (!quote) return cur;
+    var same = quotedComments(comments).filter(function (c) {
+      return String(c.quote || "").trim() === quote;
+    });
+    same.sort(function (a, b) {
+      var at = Date.parse(a && a.created_at) || 0;
+      var bt = Date.parse(b && b.created_at) || 0;
+      if (at !== bt) return at - bt;
+      return Number(a && a.id ? a.id : 0) - Number(b && b.id ? b.id : 0);
+    });
+    return same[0] || cur;
+  }
+
+  function commentAtPoint(root, comments, x, y) {
+    if (!root) return null;
+    var hits = [];
+    quotedComments(comments).forEach(function (c) {
+      var range = rangeForAnchor(root, c.quote, c.prefix, c.suffix);
+      if (!range) return;
+      var rects = range.getClientRects();
+      for (var i = 0; i < rects.length; i++) {
+        var r = rects[i];
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+          hits.push({ c: c, area: r.width * r.height });
+          break;
+        }
+      }
+    });
+    if (!hits.length) return null;
+    hits.sort(function (a, b) {
+      return a.area - b.area;
+    });
+    return topicRoot(comments, hits[0].c.id) || hits[0].c;
+  }
+
   function bindOverlayClicks(overlay, onPick) {
     if (!overlay || typeof onPick !== "function") return;
     overlay.querySelectorAll(".note-comment-overlay-hl").forEach(function (span) {
-      span.style.pointerEvents = "auto";
-      span.style.cursor = "pointer";
       span.addEventListener("click", function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -688,6 +739,9 @@
     gptThread: gptThread,
     generalComments: generalComments,
     selectionComments: selectionComments,
+    quotedComments: quotedComments,
+    topicRoot: topicRoot,
+    commentAtPoint: commentAtPoint,
     discussionCount: discussionCount,
     hasDiscussion: hasDiscussion,
     isMobileCommentsLayout: isMobileCommentsLayout,

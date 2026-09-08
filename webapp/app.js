@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260908-tap";
+  var WEBAPP_BUILD = "20260908-close";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260908-tap";
+  const NOTE_EDITOR_ASSET_V = "20260908-close";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -4403,13 +4403,20 @@
     var btn = document.getElementById("note-editor-gpt-btn");
     if (!btn || btn._bound) return;
     btn._bound = true;
-    btn.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
+    function openGpt(e) {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
       var body = getNoteEditorBodyEl();
       if (body && typeof body._openNoteGpt === "function") {
         body._openNoteGpt();
       }
+    }
+    btn.addEventListener("click", openGpt);
+    btn.addEventListener("touchend", function (e) {
+      e.preventDefault();
+      openGpt(e);
     });
   }
 
@@ -7054,6 +7061,15 @@
         closeNoteDiscussion();
       }
     });
+    if (window.matchMedia) {
+      var desk = window.matchMedia("(min-width: 960px)");
+      var onDesk = function (e) {
+        if (e.matches) syncDesktopNoteDiscussion();
+        else if (isNoteDiscussionOpen()) closeNoteDiscussion(true);
+      };
+      if (desk.addEventListener) desk.addEventListener("change", onDesk);
+      else if (desk.addListener) desk.addListener(onDesk);
+    }
     return ov;
   }
 
@@ -7066,7 +7082,32 @@
     }
   }
 
-  function closeNoteDiscussion() {
+  function shouldKeepNoteDiscussionOpen() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    return (
+      isDesktopLayout() &&
+      isNoteEditorModalOpen() &&
+      wrap &&
+      wrap._shareKind &&
+      wrap._shareId &&
+      !wrap._discussionDismissed
+    );
+  }
+
+  function syncDesktopNoteDiscussion() {
+    if (!shouldKeepNoteDiscussionOpen()) return;
+    if (isNoteDiscussionOpen()) {
+      syncNoteDiscussionOpenClass();
+      return;
+    }
+    openNoteDiscussion({ fromDesktopSync: true, focus: false });
+  }
+
+  function closeNoteDiscussion(force) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!force && isDesktopLayout() && isNoteEditorModalOpen() && wrap) {
+      wrap._discussionDismissed = true;
+    }
     var ov = document.getElementById("note-discussion-overlay");
     if (ov) {
       ov.classList.add("hidden");
@@ -7077,6 +7118,66 @@
     syncNoteDiscussionOpenClass();
     syncAppOverlay();
     syncTelegramNativeBack();
+  }
+
+  function highlightDiscussionMessage(id) {
+    document.querySelectorAll("#note-discussion-messages .note-discuss-msg.is-topic").forEach(function (n) {
+      n.classList.remove("is-topic");
+    });
+    if (!id) return;
+    var el = document.querySelector(
+      '#note-discussion-messages [data-comment-id="' + String(id) + '"]'
+    );
+    if (el) el.classList.add("is-topic");
+  }
+
+  function scrollDiscussionToComment(id) {
+    if (!id) return;
+    var el = document.querySelector(
+      '#note-discussion-messages [data-comment-id="' + String(id) + '"]'
+    );
+    var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
+    if (!el || !scroll) return;
+    var er = el.getBoundingClientRect();
+    var sr = scroll.getBoundingClientRect();
+    scroll.scrollTop += er.top - sr.top - 16;
+    highlightDiscussionMessage(id);
+  }
+
+  function scrollNoteToQuote(comment) {
+    if (!comment || !String(comment.quote || "").trim()) return;
+    var api = window.NoteComments;
+    var root = noteEditorCommentRoot();
+    if (!api || !api.rangeForAnchor || !root) return;
+    var range = api.rangeForAnchor(root, comment.quote, comment.prefix, comment.suffix);
+    if (!range) return;
+    var node = range.startContainer;
+    var el = node && (node.nodeType === 1 ? node : node.parentElement);
+    if (el && el.scrollIntoView) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }
+
+  function revealNoteDiscussionTopic(comment, opts) {
+    opts = opts || {};
+    if (!comment) return;
+    var panel = document.getElementById("note-editor-comments");
+    var comments = (panel && panel._allComments) || [];
+    var api = window.NoteComments;
+    var rootC = comment;
+    if (api && api.topicRoot) rootC = api.topicRoot(comments, comment.id) || comment;
+    if (panel && rootC && rootC.id) panel._activeCommentId = rootC.id;
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) wrap._discussionPinId = rootC && rootC.id;
+    paintEditorCommentOverlay(comments, rootC && rootC.id);
+    openNoteDiscussion({
+      focus: false,
+      scrollToId: rootC && rootC.id,
+    });
+    if (opts.fromDiscussion) {
+      scrollNoteToQuote(rootC || comment);
+      if (!isDesktopLayout()) closeNoteDiscussion(true);
+    }
   }
 
   function ruMessageCount(n) {
@@ -7115,6 +7216,10 @@
         e.preventDefault();
         openNoteDiscussion();
       });
+      card.addEventListener("touchend", function (e) {
+        e.preventDefault();
+        openNoteDiscussion();
+      });
       col.appendChild(card);
     }
     var meta = card.querySelector(".note-discussion-card-meta");
@@ -7137,6 +7242,9 @@
       wrap._commentChairId = opts.chairId || null;
       if (!opts.mode) setNoteAskMode("comment");
     }
+    if (opts.scrollToId) wrap._discussionPinId = opts.scrollToId;
+    else if (!opts.fromDesktopSync) wrap._discussionPinId = null;
+    if (!opts.fromDesktopSync) wrap._discussionDismissed = false;
     syncNoteComposerCommentTarget();
     var ov = document.getElementById("note-discussion-overlay");
     if (ov) {
@@ -7150,13 +7258,21 @@
       wrap._shareId
     );
     var input = document.getElementById("note-paie-reply-input");
-    if (input) {
+    var shouldFocus =
+      opts.focus === true ||
+      (!opts.fromDesktopSync && !opts.scrollToId && opts.focus !== false && !isDesktopLayout());
+    if (input && shouldFocus) {
       try {
         input.focus();
       } catch (_) {}
     }
-    var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
-    if (scroll) scroll.scrollTop = scroll.scrollHeight;
+    var pinId = wrap._discussionPinId || opts.scrollToId;
+    if (pinId) {
+      scrollDiscussionToComment(pinId);
+    } else if (!opts.fromDesktopSync) {
+      var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
+      if (scroll) scroll.scrollTop = scroll.scrollHeight;
+    }
     syncNoteDiscussionOpenClass();
     syncAppOverlay();
     syncTelegramNativeBack();
@@ -7558,6 +7674,12 @@
       bindNoteAnswerMenu(more, menu, String(c.body || ""));
       item.appendChild(actions);
     }
+    item.addEventListener("click", function (e) {
+      if (e.target && e.target.closest && e.target.closest(".note-discuss-more, .note-discuss-menu")) {
+        return;
+      }
+      revealNoteDiscussionTopic(c, { fromDiscussion: true });
+    });
     return item;
   }
 
@@ -7596,8 +7718,12 @@
     renderNoteDiscussionCard(comments);
     refreshNoteEditorTocExtras();
     if (isNoteDiscussionOpen()) {
-      var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
-      if (scroll) scroll.scrollTop = scroll.scrollHeight;
+      var pinId = wrap && wrap._discussionPinId;
+      if (pinId) scrollDiscussionToComment(pinId);
+      else {
+        var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
+        if (scroll) scroll.scrollTop = scroll.scrollHeight;
+      }
     }
     void kind;
     void itemId;
@@ -8354,7 +8480,7 @@
       window.NoteComments.hideBubble();
       if (window.NoteComments.hideCommentSheet) window.NoteComments.hideCommentSheet();
     }
-    closeNoteDiscussion();
+    closeNoteDiscussion(true);
     closeNoteLinkPicker();
     closeNoteAnswerMenu();
     var panel = document.getElementById("note-editor-comments");
@@ -8383,25 +8509,27 @@
     var root = noteEditorCommentRoot();
     var overlay = document.getElementById("note-editor-comment-overlay");
     if (!api || !api.paintOverlay || !overlay) return;
-    api.paintOverlay(root, overlay, comments || [], activeId);
-    if (api.bindOverlayClicks) {
-      api.bindOverlayClicks(overlay, function (id) {
-        onEditorHighlightClick(id, comments || []);
-      });
-    }
+    var panel = document.getElementById("note-editor-comments");
+    var all = comments || (panel && panel._allComments) || [];
+    api.paintOverlay(root, overlay, all, activeId);
   }
 
   function onEditorHighlightClick(id, comments) {
-    var panel = document.getElementById("note-editor-comments");
-    if (panel) panel._activeCommentId = id;
-    paintEditorCommentOverlay(comments, id);
-    openNoteDiscussion();
+    var rows = comments || [];
+    var found = null;
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i] && String(rows[i].id) === String(id)) {
+        found = rows[i];
+        break;
+      }
+    }
+    revealNoteDiscussionTopic(found || { id: id });
   }
 
   function refreshNoteCommentAnchors() {
     var panel = document.getElementById("note-editor-comments");
     if (!panel) return;
-    var comments = panel._commentsCache || [];
+    var comments = panel._allComments || panel._commentsCache || [];
     paintEditorCommentOverlay(comments, panel._activeCommentId);
     var api = window.NoteComments;
     var listEl = panel.querySelector(".note-comments-list");
@@ -8419,7 +8547,8 @@
 
   function renderNoteCommentsList(listEl, comments) {
     if (listEl) listEl.innerHTML = "";
-    paintEditorCommentOverlay(comments || []);
+    var panel = document.getElementById("note-editor-comments");
+    paintEditorCommentOverlay((panel && panel._allComments) || comments || []);
     syncSelectionCommentsRail();
   }
 
@@ -8470,6 +8599,7 @@
       }
       renderNoteCommentsList(listEl, anchored, kind, itemId);
       renderNotePaieThread(comments, kind, itemId);
+      syncDesktopNoteDiscussion();
     } catch (e) {
       listEl.innerHTML = "";
       var err = document.createElement("p");
@@ -8477,6 +8607,7 @@
       err.textContent = e.message || "Не удалось загрузить комментарии";
       listEl.appendChild(err);
       ensureNotePaieThread();
+      syncDesktopNoteDiscussion();
     }
   }
 
@@ -8551,11 +8682,34 @@
       if (api.isCommentBubbleEvent && api.isCommentBubbleEvent(e)) return;
       api.hideBubble();
     }
+    function onQuoteClick(e) {
+      if (!isNoteEditorModalOpen()) return;
+      if (
+        e.target &&
+        e.target.closest &&
+        e.target.closest(
+          "#note-editor-gpt-btn, .note-discussion-card, .note-comment-bubble, .note-editor-toolbar-wrap"
+        )
+      ) {
+        return;
+      }
+      var root = noteEditorCommentRoot();
+      if (!root || !root.contains(e.target)) return;
+      var sel = window.getSelection && window.getSelection();
+      if (sel && !sel.isCollapsed) return;
+      var live = document.getElementById("note-editor-comments");
+      var comments = (live && live._allComments) || [];
+      if (!api.commentAtPoint) return;
+      var hit = api.commentAtPoint(root, comments, e.clientX, e.clientY);
+      if (!hit) return;
+      revealNoteDiscussionTopic(hit, { fromNote: true });
+    }
     var scrollParent = document.querySelector("#note-editor-overlay .note-editor-modal-body");
     document.addEventListener("mouseup", onSelect);
     document.addEventListener("pointerup", onSelect);
     document.addEventListener("keyup", onSelect);
     document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("click", onQuoteClick);
     if (scrollParent) scrollParent.addEventListener("scroll", refreshNoteCommentAnchors, { passive: true });
     window.addEventListener("resize", refreshNoteCommentAnchors);
     panel._commentSelectUnbind = function () {
@@ -8563,6 +8717,7 @@
       document.removeEventListener("pointerup", onSelect);
       document.removeEventListener("keyup", onSelect);
       document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("click", onQuoteClick);
       if (scrollParent) scrollParent.removeEventListener("scroll", refreshNoteCommentAnchors);
       window.removeEventListener("resize", refreshNoteCommentAnchors);
     };
@@ -8628,6 +8783,7 @@
       pad.appendChild(overlay);
     }
     loadNoteComments(kind, itemId, panel.querySelector(".note-comments-list"));
+    syncDesktopNoteDiscussion();
   }
 
   function mountShareControls(kind, itemId) {
@@ -9625,7 +9781,7 @@
       }
       if (!noteId) return;
       ensureNoteShareMounted(noteId);
-      openNoteDiscussion({ mode: "gpt" });
+      openNoteDiscussion({ mode: "gpt", focus: true });
     }
 
     function schedulePatch() {
