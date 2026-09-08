@@ -2,7 +2,7 @@
 
 import unittest
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from assistant.services import meeting_invites as inv
 
@@ -53,6 +53,36 @@ class TestMeetingInvites(unittest.TestCase):
         out = inv.format_invite_after_answer_html(base, inv.RSVP_ACCEPTED)
         self.assertIn("Приду", out)
         self.assertNotIn("Вы сможете", out)
+
+    def test_miniapp_notify_filters_new_emails(self) -> None:
+        import asyncio
+        import os
+        from unittest.mock import AsyncMock
+
+        async def run() -> None:
+            bot = MagicMock()
+            cm = MagicMock()
+            cm.__aenter__ = AsyncMock(return_value=bot)
+            cm.__aexit__ = AsyncMock(return_value=None)
+            with patch.object(inv, "invites_enabled", return_value=True), patch.dict(
+                os.environ, {"TELEGRAM_BOT_TOKEN": "token"}
+            ), patch.object(inv, "Bot", return_value=cm), patch.object(
+                inv, "notify_invitees", new_callable=AsyncMock, return_value=1
+            ) as notify:
+                await inv.notify_invitees_for_miniapp(
+                    organizer_uid=1,
+                    organizer_user={"username": "me", "first_name": "Art"},
+                    result={
+                        "event_id": "e1",
+                        "calendar_id": "primary",
+                        "attendee_emails": ["a@x.com", "b@x.com"],
+                    },
+                    only_emails=["b@x.com"],
+                )
+            payload = notify.call_args.kwargs["result"]
+            self.assertEqual(payload["attendee_emails"], ["b@x.com"])
+
+        asyncio.run(run())
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260908-hl";
+  var WEBAPP_BUILD = "20260908-att";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260908-hl";
+  const NOTE_EDITOR_ASSET_V = "20260908-att";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -4784,6 +4784,437 @@
   }
 
   var reminderChecklistApi = null;
+  var meetingAttendeesApi = null;
+  var MEETING_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
+
+  function meetingEmailKey(email) {
+    return String(email || "").trim().toLowerCase();
+  }
+
+  function mergeBusyMs(intervals) {
+    var items = (intervals || [])
+      .map(function (it) {
+        var a = new Date(it.start).getTime();
+        var b = new Date(it.end).getTime();
+        if (isNaN(a) || isNaN(b) || b <= a) return null;
+        return { start: a, end: b };
+      })
+      .filter(Boolean)
+      .sort(function (x, y) {
+        return x.start - y.start;
+      });
+    var out = [];
+    items.forEach(function (it) {
+      if (out.length && it.start <= out[out.length - 1].end) {
+        out[out.length - 1].end = Math.max(out[out.length - 1].end, it.end);
+      } else {
+        out.push({ start: it.start, end: it.end });
+      }
+    });
+    return out;
+  }
+
+  function invertBusyToFree(workStart, workEnd, busy) {
+    var free = [];
+    var cursor = workStart;
+    (busy || []).forEach(function (b) {
+      var s = Math.max(b.start, workStart);
+      var e = Math.min(b.end, workEnd);
+      if (s > cursor) free.push({ start: cursor, end: s });
+      if (e > cursor) cursor = Math.max(cursor, e);
+    });
+    if (cursor < workEnd) free.push({ start: cursor, end: workEnd });
+    return free;
+  }
+
+  function snapMsTo15(ms) {
+    var d = new Date(ms);
+    d.setSeconds(0, 0);
+    var m = d.getMinutes();
+    d.setMinutes(Math.round(m / 15) * 15);
+    return d.getTime();
+  }
+
+  function meetingDurationMs() {
+    var sEl = document.getElementById("m-ev-start");
+    var eEl = document.getElementById("m-ev-end");
+    var a = sEl ? new Date(sEl.value).getTime() : NaN;
+    var b = eEl ? new Date(eEl.value).getTime() : NaN;
+    if (!isNaN(a) && !isNaN(b) && b > a) return b - a;
+    return 60 * 60 * 1000;
+  }
+
+  function applyMeetingSlot(startMs) {
+    var dur = meetingDurationMs();
+    var startEl = document.getElementById("m-ev-start");
+    var endEl = document.getElementById("m-ev-end");
+    if (!startEl || !endEl) return;
+    startEl.value = isoToDatetimeLocalValue(new Date(startMs).toISOString());
+    endEl.value = isoToDatetimeLocalValue(new Date(startMs + dur).toISOString());
+  }
+
+  function paintMeetingAvailability(host, data) {
+    if (!host) return;
+    host.innerHTML = "";
+    var people = (data && data.people) || [];
+    if (!people.length) {
+      host.classList.add("hidden");
+      return;
+    }
+    host.classList.remove("hidden");
+    var workStart = new Date(data.work_start).getTime();
+    var workEnd = new Date(data.work_end).getTime();
+    if (isNaN(workStart) || isNaN(workEnd) || workEnd <= workStart) {
+      host.classList.add("hidden");
+      return;
+    }
+    var span = workEnd - workStart;
+    var head = document.createElement("div");
+    head.className = "meeting-avail-head";
+    head.textContent = "Занятость";
+    host.appendChild(head);
+    var scroll = document.createElement("div");
+    scroll.className = "meeting-avail-scroll";
+    var grid = document.createElement("div");
+    grid.className = "meeting-avail-grid";
+    var hours = document.createElement("div");
+    hours.className = "meeting-avail-hours";
+    var tick = new Date(workStart);
+    tick.setMinutes(0, 0, 0);
+    if (tick.getTime() < workStart) tick.setHours(tick.getHours() + 1);
+    while (tick.getTime() < workEnd) {
+      var cell = document.createElement("span");
+      cell.className = "meeting-avail-hour";
+      cell.textContent = String(tick.getHours()).padStart(2, "0");
+      hours.appendChild(cell);
+      tick.setHours(tick.getHours() + 1);
+    }
+    grid.appendChild(hours);
+
+    function addRow(label, busy, opts) {
+      opts = opts || {};
+      var row = document.createElement("div");
+      row.className = "meeting-avail-row";
+      var lab = document.createElement("div");
+      lab.className = "meeting-avail-label" + (opts.muted ? " is-muted" : "");
+      lab.textContent = label;
+      lab.title = label;
+      var track = document.createElement("div");
+      track.className = "meeting-avail-track" + (opts.joint ? " meeting-avail-track--joint" : "");
+      (busy || []).forEach(function (b) {
+        var left = ((b.start - workStart) / span) * 100;
+        var width = ((b.end - b.start) / span) * 100;
+        if (width <= 0) return;
+        var block = document.createElement("span");
+        block.className = opts.joint ? "meeting-avail-free" : "meeting-avail-busy";
+        block.style.left = Math.max(0, left) + "%";
+        block.style.width = Math.min(100 - Math.max(0, left), width) + "%";
+        track.appendChild(block);
+      });
+      if (opts.joint) {
+        track.addEventListener("click", function (e) {
+          var rect = track.getBoundingClientRect();
+          if (!rect.width) return;
+          var ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+          var t = snapMsTo15(workStart + ratio * span);
+          var hit = null;
+          (busy || []).forEach(function (b) {
+            if (t >= b.start && t < b.end) hit = b;
+          });
+          if (!hit) return;
+          var start = Math.max(hit.start, Math.min(t, hit.end - meetingDurationMs()));
+          if (start < hit.start) start = hit.start;
+          applyMeetingSlot(start);
+        });
+      }
+      row.appendChild(lab);
+      row.appendChild(track);
+      grid.appendChild(row);
+    }
+
+    var union = [];
+    var calendarPeople = 0;
+    people.forEach(function (p) {
+      if (p && p.calendar) {
+        calendarPeople += 1;
+        union = union.concat(p.busy || []);
+      }
+    });
+    var jointFree = invertBusyToFree(workStart, workEnd, mergeBusyMs(union));
+    if (calendarPeople) {
+      addRow("Все свободны", jointFree, { joint: true });
+    }
+    people.forEach(function (p) {
+      var label = String((p && p.label) || p.email || "Участник");
+      if (p && p.calendar) {
+        addRow(label, mergeBusyMs(p.busy || []));
+      } else {
+        addRow(label + " — нет календаря", [], { muted: true });
+      }
+    });
+    scroll.appendChild(grid);
+    host.appendChild(scroll);
+    var hint = document.createElement("p");
+    hint.className = "meeting-avail-hint muted small";
+    hint.textContent = calendarPeople
+      ? "Нажмите на зелёный слот, чтобы поставить время"
+      : "Слоты появятся, когда у участников будет календарь в Leo";
+    host.appendChild(hint);
+  }
+
+  function mountMeetingAttendees(host, initial) {
+    var items = [];
+    var contacts = [];
+    if (!host) {
+      return {
+        getEmails: function () {
+          return [];
+        },
+      };
+    }
+    var suggestEl = host.querySelector("#m-ev-attendee-suggest");
+    var inputEl = host.querySelector("#m-ev-attendee-input");
+    var chipsEl = host.querySelector("#m-ev-attendees-chips");
+    var availEl = document.getElementById("m-ev-avail");
+    var availTimer = null;
+    var suggestIndex = 0;
+    if (!host || !suggestEl || !inputEl || !chipsEl) {
+      return {
+        getEmails: function () {
+          return [];
+        },
+      };
+    }
+
+    function emails() {
+      return items.map(function (it) {
+        return it.email;
+      });
+    }
+
+    function hasEmail(em) {
+      var key = meetingEmailKey(em);
+      return items.some(function (it) {
+        return it.email === key;
+      });
+    }
+
+    function paintChips() {
+      chipsEl.innerHTML = "";
+      items.forEach(function (it, idx) {
+        var chip = document.createElement("span");
+        chip.className = "meeting-attendee-chip";
+        if (it.calendar) {
+          var dot = document.createElement("span");
+          dot.className = "meeting-attendee-chip-cal";
+          dot.title = "Календарь подключён";
+          chip.appendChild(dot);
+        }
+        var text = document.createElement("span");
+        text.className = "meeting-attendee-chip-text";
+        text.textContent = it.name || it.email;
+        chip.appendChild(text);
+        var del = document.createElement("button");
+        del.type = "button";
+        del.className = "meeting-attendee-chip-remove";
+        del.setAttribute("aria-label", "Убрать");
+        del.textContent = "×";
+        del.addEventListener("click", function () {
+          items.splice(idx, 1);
+          paintChips();
+          scheduleAvail();
+        });
+        chip.appendChild(del);
+        chipsEl.appendChild(chip);
+      });
+    }
+
+    function hideSuggest() {
+      suggestEl.classList.add("hidden");
+      suggestEl.innerHTML = "";
+    }
+
+    function addPerson(person) {
+      var em = meetingEmailKey(person && person.email);
+      if (!em || !MEETING_EMAIL_RE.test(em) || hasEmail(em)) {
+        hideSuggest();
+        return false;
+      }
+      items.push({
+        email: em,
+        name: String((person && person.name) || "").trim(),
+        calendar: !!(person && person.calendar_connected),
+      });
+      paintChips();
+      if (inputEl) inputEl.value = "";
+      hideSuggest();
+      scheduleAvail();
+      return true;
+    }
+
+    function visibleSuggestions() {
+      var q = String((inputEl && inputEl.value) || "").trim().toLowerCase();
+      var out = [];
+      contacts.forEach(function (c) {
+        if (!c || hasEmail(c.email)) return;
+        if (q) {
+          var hay = [c.name, c.email, c.telegram_username, (c.aliases || []).join(" ")]
+            .join(" ")
+            .toLowerCase();
+          if (hay.indexOf(q) < 0) return;
+        }
+        out.push(c);
+      });
+      return out.slice(0, 8);
+    }
+
+    function paintSuggest() {
+      var q = String((inputEl && inputEl.value) || "").trim();
+      var rows = visibleSuggestions();
+      suggestEl.innerHTML = "";
+      if (!rows.length && !(q && MEETING_EMAIL_RE.test(q) && !hasEmail(q))) {
+        hideSuggest();
+        return;
+      }
+      suggestEl.classList.remove("hidden");
+      rows.forEach(function (c, i) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className =
+          "meeting-attendee-suggest-item" + (i === suggestIndex ? " is-active" : "");
+        var name = document.createElement("span");
+        name.className = "meeting-attendee-suggest-name";
+        name.textContent = c.name || c.email;
+        var meta = document.createElement("span");
+        meta.className = "meeting-attendee-suggest-meta";
+        meta.textContent =
+          (c.email || "") + (c.calendar_connected ? " · календарь" : "");
+        btn.appendChild(name);
+        btn.appendChild(meta);
+        btn.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+        });
+        btn.addEventListener("click", function () {
+          addPerson(c);
+        });
+        suggestEl.appendChild(btn);
+      });
+      if (q && MEETING_EMAIL_RE.test(q) && !hasEmail(q)) {
+        var extra = document.createElement("button");
+        extra.type = "button";
+        extra.className = "meeting-attendee-suggest-item";
+        extra.textContent = "Добавить " + q;
+        extra.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+        });
+        extra.addEventListener("click", function () {
+          addPerson({ email: q, name: q, calendar_connected: false });
+        });
+        suggestEl.appendChild(extra);
+      }
+    }
+
+    function commitInput() {
+      var q = String((inputEl && inputEl.value) || "").trim();
+      var rows = visibleSuggestions();
+      if (rows[suggestIndex]) {
+        addPerson(rows[suggestIndex]);
+        return;
+      }
+      if (q && MEETING_EMAIL_RE.test(q)) {
+        addPerson({ email: q, name: q, calendar_connected: false });
+      }
+    }
+
+    function scheduleAvail() {
+      if (availTimer) window.clearTimeout(availTimer);
+      availTimer = window.setTimeout(refreshAvail, 250);
+    }
+
+    function refreshAvail() {
+      var startEl = document.getElementById("m-ev-start");
+      var day = String((startEl && startEl.value) || "").slice(0, 10);
+      if (!availEl || !day) return;
+      apiFetch("/calendar/availability", {
+        method: "POST",
+        body: JSON.stringify({ date: day, attendees: emails() }),
+      })
+        .then(function (data) {
+          paintMeetingAvailability(availEl, data);
+        })
+        .catch(function () {
+          if (availEl) availEl.classList.add("hidden");
+        });
+    }
+
+    (initial || []).forEach(function (raw) {
+      var em = meetingEmailKey(raw && (raw.email || raw));
+      if (!em || !MEETING_EMAIL_RE.test(em) || hasEmail(em)) return;
+      items.push({
+        email: em,
+        name: String((raw && raw.name) || "").trim(),
+        calendar: !!(raw && raw.calendar_connected),
+      });
+    });
+    paintChips();
+
+    apiFetch("/contacts", { method: "GET" })
+      .then(function (data) {
+        contacts = data.items || [];
+        items.forEach(function (it) {
+          contacts.forEach(function (c) {
+            if (meetingEmailKey(c.email) === it.email) {
+              if (!it.name) it.name = c.name || "";
+              it.calendar = !!c.calendar_connected;
+            }
+          });
+        });
+        paintChips();
+      })
+      .catch(function () {});
+
+    if (inputEl) {
+      inputEl.addEventListener("input", function () {
+        suggestIndex = 0;
+        paintSuggest();
+      });
+      inputEl.addEventListener("focus", function () {
+        suggestIndex = 0;
+        paintSuggest();
+      });
+      inputEl.addEventListener("blur", function () {
+        window.setTimeout(hideSuggest, 120);
+      });
+      inputEl.addEventListener("keydown", function (e) {
+        var rows = visibleSuggestions();
+        if (e.key === "ArrowDown" && rows.length) {
+          e.preventDefault();
+          suggestIndex = Math.min(rows.length - 1, suggestIndex + 1);
+          paintSuggest();
+        } else if (e.key === "ArrowUp" && rows.length) {
+          e.preventDefault();
+          suggestIndex = Math.max(0, suggestIndex - 1);
+          paintSuggest();
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopPropagation();
+          commitInput();
+        } else if (e.key === "Escape") {
+          hideSuggest();
+        }
+      });
+    }
+    var startEl = document.getElementById("m-ev-start");
+    if (startEl) {
+      startEl.addEventListener("change", scheduleAvail);
+      startEl.addEventListener("input", scheduleAvail);
+    }
+    refreshAvail();
+    return {
+      getEmails: emails,
+      refreshAvail: refreshAvail,
+    };
+  }
 
   function openReminderModal(r) {
     r = r || {};
@@ -4836,6 +5267,14 @@
       '<input id="m-ev-start" type="datetime-local" class="field-input" /></label>' +
       '<label class="field"><span class="field-label">Конец</span>' +
       '<input id="m-ev-end" type="datetime-local" class="field-input" /></label>' +
+      '<div class="field meeting-attendees-field">' +
+      '<span class="field-label">Участники</span>' +
+      '<div id="m-ev-attendees-chips" class="meeting-attendee-chips"></div>' +
+      '<div class="meeting-attendee-add">' +
+      '<input id="m-ev-attendee-input" type="text" class="field-input" placeholder="Контакт или email" autocomplete="off" />' +
+      '<div id="m-ev-attendee-suggest" class="meeting-attendee-suggest hidden" role="listbox"></div>' +
+      "</div></div>" +
+      '<div id="m-ev-avail" class="meeting-avail hidden"></div>' +
       '<label class="field"><span class="field-label">Описание</span>' +
       '<textarea id="m-ev-desc" class="field-textarea" rows="4"></textarea></label>';
     document.getElementById("m-ev-sum").value = ev.summary || "";
@@ -4846,6 +5285,10 @@
       eRaw || defaultDatetimeLocalValue(120)
     );
     document.getElementById("m-ev-desc").value = ev.description || "";
+    meetingAttendeesApi = mountMeetingAttendees(
+      document.querySelector(".meeting-attendees-field"),
+      ev.attendees || []
+    );
     function makeLinkActionBtn(label) {
       var btn = document.createElement("button");
       btn.type = "button";
@@ -4977,6 +5420,7 @@
         start: datetimeLocalToIso(document.getElementById("m-ev-start").value),
         end: datetimeLocalToIso(document.getElementById("m-ev-end").value),
         description: document.getElementById("m-ev-desc").value,
+        attendees: meetingAttendeesApi ? meetingAttendeesApi.getEmails() : [],
       };
       try {
         await apiFetch(id ? "/calendar/events/" + encodeURIComponent(id) : "/calendar/events", {

@@ -25,6 +25,7 @@ from assistant.lib.calendar_attendees import infer_event_title_from_text, resolv
 from assistant.lib.calendar_event_utils import (
     calendar_busy_from_events,
     calendar_event_is_cancelled,
+    calendar_merge_busy_intervals,
 )
 from assistant.lib.user_timezone import resolve_user_tz_name
 from assistant.services import calendar_sources as cal_sources
@@ -125,6 +126,23 @@ def _resolve_attendees(
         if e not in seen:
             seen.add(e)
             out.append({"email": e})
+    return out
+
+
+def event_attendee_emails(ev: dict[str, Any] | None) -> list[str]:
+    """Email гостей Google-события без организатора."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for row in (ev or {}).get("attendees") or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("self") or row.get("organizer"):
+            continue
+        em = str(row.get("email") or "").strip().lower()
+        if not em or em in seen:
+            continue
+        seen.add(em)
+        out.append(em)
     return out
 
 
@@ -265,6 +283,131 @@ def _work_window(user_id: int, day_iso: str) -> tuple[datetime, datetime]:
     )
 
 
+def _busy_intervals_to_iso(
+    intervals: list[tuple[datetime, datetime]],
+) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for start, end in intervals:
+        if not isinstance(start, datetime) or not isinstance(end, datetime):
+            continue
+        if end <= start:
+            continue
+        out.append({"start": start.isoformat(), "end": end.isoformat()})
+    return out
+
+
+def busy_intervals_day(
+    user_id: int,
+    day_iso: str,
+    *,
+    tz: Any | None = None,
+    work_start: datetime | None = None,
+    work_end: datetime | None = None,
+) -> list[tuple[datetime, datetime]]:
+    """Занятые интервалы дня без названий событий."""
+    try:
+        if work_start is None or work_end is None:
+            work_start, work_end = _work_window(user_id, day_iso)
+        if tz is None:
+            tz = work_start.tzinfo or _tz_for(user_id)
+        events = _raw_events_for_day(user_id, day_iso)
+    except Exception:
+        return []
+    return calendar_busy_from_events(
+        events, tz=tz, work_start=work_start, work_end=work_end
+    )
+
+
+def availability_for_attendees(
+    owner_id: int,
+    day_iso: str,
+    attendee_emails: list[str],
+    *,
+    telegram_username: str | None = None,
+) -> dict[str, Any]:
+    """Занятость постановщика и участников с календарём Leo. Без названий встреч."""
+    from assistant.lib.calendar_attendees import (
+        contact_display_name,
+        leo_calendar_user_id,
+    )
+    from assistant.stores import contacts_store as contacts
+
+    day = str(day_iso or "").strip()[:10]
+    datetime.strptime(day, "%Y-%m-%d")
+    work_start, work_end = _work_window(int(owner_id), day)
+    tz = work_start.tzinfo or _tz_for(int(owner_id))
+    owner_has_cal = google_calendar_oauth.user_token_path(int(owner_id)).is_file()
+    owner_busy = (
+        busy_intervals_day(
+            int(owner_id),
+            day,
+            tz=tz,
+            work_start=work_start,
+            work_end=work_end,
+        )
+        if owner_has_cal
+        else []
+    )
+    people: list[dict[str, Any]] = [
+        {
+            "id": "organizer",
+            "email": "",
+            "label": "Вы",
+            "kind": "organizer",
+            "calendar": bool(owner_has_cal),
+            "busy": _busy_intervals_to_iso(owner_busy),
+        }
+    ]
+    book = contacts.load_contacts(
+        telegram_user_id=int(owner_id), telegram_username=telegram_username
+    )
+    by_email: dict[str, dict[str, Any]] = {}
+    for row in book:
+        em = str((row or {}).get("email") or "").strip().lower()
+        if em:
+            by_email[em] = row
+    seen: set[str] = set()
+    for raw in attendee_emails or []:
+        em = str(raw or "").strip().lower()
+        if not em or "@" not in em or em in seen:
+            continue
+        seen.add(em)
+        hit = by_email.get(em)
+        uid = leo_calendar_user_id(hit, em)
+        if uid and int(uid) == int(owner_id):
+            continue
+        label = ""
+        if hit:
+            label = str(contact_display_name(hit) or hit.get("name") or "").strip()
+        has_cal = bool(uid)
+        busy: list[tuple[datetime, datetime]] = []
+        if has_cal and uid:
+            busy = busy_intervals_day(
+                int(uid),
+                day,
+                tz=tz,
+                work_start=work_start,
+                work_end=work_end,
+            )
+        people.append(
+            {
+                "id": em,
+                "email": em,
+                "label": label or em,
+                "kind": "contact" if hit else "email",
+                "calendar": has_cal,
+                "busy": _busy_intervals_to_iso(busy),
+            }
+        )
+    return {
+        "date": day,
+        "timezone": _tz_name_for(int(owner_id)),
+        "work_start": work_start.isoformat(),
+        "work_end": work_end.isoformat(),
+        "people": people,
+    }
+
+
 def earliest_bookable_start(
     user_id: int,
     day_iso: str,
@@ -291,6 +434,25 @@ def earliest_bookable_start(
     )
 
 
+def _gaps_from_busy(
+    busy: list[tuple[datetime, datetime]],
+    *,
+    work_start: datetime,
+    work_end: datetime,
+    cursor: datetime,
+) -> list[tuple[datetime, datetime]]:
+    min_slot = timedelta(minutes=max(15, SLOT_MIN_MINUTES))
+    slots: list[tuple[datetime, datetime]] = []
+    cur = cursor
+    for bs, be in busy:
+        if cur < bs and (bs - cur) >= min_slot:
+            slots.append((cur, bs))
+        cur = max(cur, be)
+    if cur < work_end and (work_end - cur) >= min_slot:
+        slots.append((cur, work_end))
+    return slots
+
+
 def free_slots_day(
     user_id: int,
     day_iso: str,
@@ -303,25 +465,128 @@ def free_slots_day(
     busy = calendar_busy_from_events(
         events, tz=tz, work_start=work_start, work_end=work_end
     )
-    min_slot = timedelta(minutes=max(15, SLOT_MIN_MINUTES))
-    slots: list[tuple[datetime, datetime]] = []
     cursor = max(work_start, earliest_bookable_start(user_id, day_iso))
-    for bs, be in busy:
-        if cursor < bs and (bs - cursor) >= min_slot:
-            slots.append((cursor, bs))
-        cursor = max(cursor, be)
-    if cursor < work_end and (work_end - cursor) >= min_slot:
-        slots.append((cursor, work_end))
-    return slots
+    return _gaps_from_busy(
+        busy, work_start=work_start, work_end=work_end, cursor=cursor
+    )
 
 
-def format_free_slots(slots: list[tuple[datetime, datetime]], day_iso: str) -> str:
+def free_slots_day_via_freebusy(
+    viewer_id: int,
+    calendar_ids: list[str],
+    day_iso: str,
+) -> list[tuple[datetime, datetime]] | None:
+    """Слоты чужого календаря через FreeBusy (email как id). None — календарь не виден."""
+    ids = [str(x).strip() for x in calendar_ids if str(x).strip()]
+    if not ids:
+        return None
+    try:
+        svc = _service(viewer_id)
+    except Exception:
+        return None
+    work_start, work_end = _work_window(viewer_id, day_iso)
+    body = {
+        "timeMin": work_start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "timeMax": work_end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "items": [{"id": cid} for cid in ids],
+    }
+    try:
+        res = svc.freebusy().query(body=body).execute()
+    except Exception:
+        return None
+    calendars = res.get("calendars") or {}
+    extra: list[tuple[datetime, datetime]] = []
+    any_ok = False
+    for cid in ids:
+        cal = calendars.get(cid) or {}
+        if not isinstance(cal, dict):
+            continue
+        if cal.get("errors"):
+            continue
+        any_ok = True
+        for block in cal.get("busy") or []:
+            if not isinstance(block, dict):
+                continue
+            bs = block.get("start")
+            be = block.get("end")
+            if not bs or not be:
+                continue
+            try:
+                b_start = datetime.fromisoformat(str(bs).replace("Z", "+00:00"))
+                b_end = datetime.fromisoformat(str(be).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            extra.append(
+                (
+                    b_start.astimezone(work_start.tzinfo),
+                    b_end.astimezone(work_start.tzinfo),
+                )
+            )
+    if not any_ok:
+        return None
+    busy = calendar_merge_busy_intervals(extra)
+    cursor = max(work_start, earliest_bookable_start(viewer_id, day_iso))
+    return _gaps_from_busy(
+        busy, work_start=work_start, work_end=work_end, cursor=cursor
+    )
+
+
+def format_free_slots(
+    slots: list[tuple[datetime, datetime]],
+    day_iso: str,
+    *,
+    person: str | None = None,
+) -> str:
+    who = f" у {person}" if (person or "").strip() else ""
     if not slots:
-        return f"На {day_iso} свободных окон в рабочее время нет."
+        return f"На {day_iso} свободных окон{who} в рабочее время нет."
     parts = []
     for s, e in slots:
         parts.append(f"{s.strftime('%H:%M')}–{e.strftime('%H:%M')}")
-    return f"Свободно {day_iso}: " + ", ".join(parts)
+    return f"Свободно{who} {day_iso}: " + ", ".join(parts)
+
+
+def free_slots_message(
+    owner_id: int,
+    parsed: dict[str, Any],
+    day_iso: str,
+    *,
+    telegram_username: str | None = None,
+) -> str:
+    from assistant.lib.calendar_attendees import resolve_free_slots_person
+
+    target = resolve_free_slots_person(
+        owner_id, parsed, telegram_username=telegram_username
+    )
+    kind = str(target.get("kind") or "owner")
+    label = str(target.get("label") or "").strip()
+    if kind == "missing_contact":
+        return (
+            f"В контактах нет «{label}». Добавьте человека в адресную книгу "
+            "с email — тогда можно смотреть его слоты."
+        )
+    if kind == "missing_calendar":
+        return (
+            f"Календарь {label} недоступен: нет привязки к боту и нет email "
+            "для проверки занятости."
+        )
+    via_email = bool(target.get("via_email"))
+    email = str(target.get("email") or "").strip()
+    uid = int(target.get("user_id") or owner_id)
+    person = label if kind == "person" else None
+    try:
+        if via_email and email:
+            slots = free_slots_day_via_freebusy(int(owner_id), [email], day_iso)
+            if slots is None:
+                return (
+                    f"Не удалось посмотреть календарь {label}: человек не подключал "
+                    "Google Календарь в боте, и ваш аккаунт не видит его занятость."
+                )
+        else:
+            slots = free_slots_day(uid, day_iso)
+    except Exception as e:
+        return f"Ошибка календаря: {e}"
+    return format_free_slots(slots, day_iso, person=person)
 
 
 def search_events(
@@ -433,14 +698,22 @@ def update_event(
         end = _parse_dt(end_s, user_id) if end_s else start + timedelta(minutes=max(15, dur))
         body["start"] = {"dateTime": start.isoformat(), "timeZone": tz_name}
         body["end"] = {"dateTime": end.isoformat(), "timeZone": tz_name}
+    if "description" in parsed:
+        body["description"] = str(parsed.get("description") or "")
+    if "location" in parsed:
+        body["location"] = str(parsed.get("location") or "").strip()
+    prev_emails = event_attendee_emails(ev)
     attendees = _resolve_attendees(parsed, user_id)
-    if parsed.get("attendee_names") is not None or parsed.get("attendees"):
+    attendees_touched = (
+        parsed.get("attendee_names") is not None or parsed.get("attendees") is not None
+    )
+    if attendees_touched:
         body["attendees"] = attendees
     patched = svc.events().patch(
         calendarId=cal_id,
         eventId=event_id,
         body=body,
-        sendUpdates="all" if attendees else "none",
+        sendUpdates="all" if (attendees if attendees_touched else prev_emails) else "none",
     ).execute()
     st = _event_start_local(patched, user_id)
     en_raw = (patched.get("end") or {}).get("dateTime")
@@ -452,6 +725,9 @@ def update_event(
             )
         except ValueError:
             pass
+    attendee_emails = (
+        [a["email"] for a in attendees] if attendees_touched else list(prev_emails)
+    )
     return {
         "event_id": event_id,
         "calendar_id": cal_id,
@@ -459,6 +735,8 @@ def update_event(
         "summary": patched.get("summary") or title,
         "start": st,
         "end": en,
+        "attendee_emails": attendee_emails,
+        "previous_attendee_emails": prev_emails,
     }
 
 

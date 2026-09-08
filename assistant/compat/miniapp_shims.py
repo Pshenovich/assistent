@@ -130,6 +130,21 @@ def calendar_create_event(
     )
 
 
+def calendar_availability(
+    *,
+    telegram_user_id: int,
+    day_iso: str,
+    attendees: list[str],
+    telegram_username: str | None = None,
+) -> dict[str, Any]:
+    return cal_svc.availability_for_attendees(
+        int(telegram_user_id),
+        day_iso,
+        attendees,
+        telegram_username=telegram_username,
+    )
+
+
 def calendar_delete_event(
     event_id: str,
     *,

@@ -2381,6 +2381,12 @@ class _MiniappCalendarEventUpdate(BaseModel):
     end: Optional[str] = None
     description: Optional[str] = None
     location: Optional[str] = None
+    attendees: Optional[list[str]] = None
+
+
+class _MiniappCalendarAvailabilityBody(BaseModel):
+    date: str = ""
+    attendees: list[str] = Field(default_factory=list)
 
 
 class _MiniappCalendarExcludedBody(BaseModel):
@@ -2855,6 +2861,35 @@ def _gcal_json_time_fragment(src: Any) -> dict[str, str]:
     return out
 
 
+def _serialize_event_attendees(ev: dict[str, Any]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for row in (ev or {}).get("attendees") or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("self") or row.get("organizer"):
+            continue
+        em = str(row.get("email") or "").strip().lower()
+        if not em or em in seen:
+            continue
+        seen.add(em)
+        name = str(row.get("displayName") or "").strip()
+        out.append({"email": em, "name": name})
+    return out
+
+
+def _normalize_attendee_emails(raw: Any) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw or []:
+        em = str(item or "").strip().lower()
+        if not em or "@" not in em or em in seen:
+            continue
+        seen.add(em)
+        out.append(em)
+    return out
+
+
 def _serialize_calendar_event(ev: dict[str, Any]) -> dict[str, Any]:
     from assistant.lib.calendar_event_utils import calendar_entry_kind_label
 
@@ -2874,6 +2909,7 @@ def _serialize_calendar_event(ev: dict[str, Any]) -> dict[str, Any]:
         "meet_url": _event_meet_url(ev),
         "description": str(ev.get("description") or "")[:8000],
         "location": str(ev.get("location") or "").strip(),
+        "attendees": _serialize_event_attendees(ev),
     }
 
 
@@ -3010,6 +3046,7 @@ def _local_dev_calendar_events(day_iso: str, timezone_name: str) -> list[dict[st
                 "meet_url": meet or None,
                 "description": "[Локальный тестовый слот]",
                 "location": loc,
+                "attendees": [],
             }
         )
     return out
@@ -3519,16 +3556,17 @@ def _miniapp_tg_username(principal: _MiniappPrincipal) -> str | None:
 async def miniapp_contacts_list(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    from assistant.lib.calendar_attendees import enrich_contacts_calendar_flags
     from assistant.stores import contacts_store
 
-    items = await run_in_threadpool(
-        partial(
-            contacts_store.load_contacts,
+    def _load() -> list:
+        items = contacts_store.load_contacts(
             telegram_user_id=int(principal.telegram_user_id),
             telegram_username=_miniapp_tg_username(principal),
         )
-    )
-    return {"items": items}
+        return enrich_contacts_calendar_flags(list(items or []))
+
+    return {"items": await run_in_threadpool(_load)}
 
 
 @miniapp_router.post("/contacts")
@@ -3715,6 +3753,39 @@ async def miniapp_calendar_today(
     )
 
 
+@miniapp_router.post("/calendar/availability")
+async def miniapp_calendar_availability(
+    body: _MiniappCalendarAvailabilityBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.compat.miniapp_shims import calendar_availability
+
+    day = str(body.date or "").strip()[:10]
+    if not day:
+        raise HTTPException(status_code=400, detail="Укажите дату")
+    try:
+        datetime.strptime(day, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Дата должна быть YYYY-MM-DD") from None
+    emails = _normalize_attendee_emails(body.attendees)
+    uname = _miniapp_tg_username(principal)
+
+    def _run() -> dict[str, Any]:
+        return calendar_availability(
+            telegram_user_id=int(principal.telegram_user_id),
+            day_iso=day,
+            attendees=emails,
+            telegram_username=uname,
+        )
+
+    try:
+        return await run_in_threadpool(_run)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+
 @miniapp_router.post("/calendar/events")
 async def miniapp_calendar_event_create(
     body: _MiniappCalendarEventUpdate,
@@ -3741,6 +3812,7 @@ async def miniapp_calendar_event_create(
         parsed["description"] = str(body.description)
     if body.location is not None:
         parsed["location"] = str(body.location).strip()
+    parsed["attendees"] = _normalize_attendee_emails(body.attendees)
     uname = (
         principal.user.get("username")
         if isinstance(principal.user, dict)
@@ -3777,7 +3849,18 @@ async def miniapp_calendar_event_create(
         "meet_url": "",
         "description": str(body.description or ""),
         "location": str(body.location or "").strip(),
+        "attendees": [{"email": e, "name": ""} for e in parsed.get("attendees") or []],
     }
+    try:
+        from assistant.services import meeting_invites as inv
+
+        await inv.notify_invitees_for_miniapp(
+            organizer_uid=int(principal.telegram_user_id),
+            organizer_user=principal.user if isinstance(principal.user, dict) else {},
+            result=created,
+        )
+    except Exception as e:
+        print(f"[miniapp_calendar] invite_notify_create err={e!r}")
     return {"event": ser}
 
 
@@ -3800,6 +3883,8 @@ async def miniapp_calendar_event_update(
         parsed["description"] = str(body.description)
     if body.location is not None:
         parsed["location"] = str(body.location).strip()
+    if body.attendees is not None:
+        parsed["attendees"] = _normalize_attendee_emails(body.attendees)
     if not parsed:
         raise HTTPException(status_code=400, detail="Нет полей для обновления")
     uname = (
@@ -3828,6 +3913,27 @@ async def miniapp_calendar_event_update(
     ser = _serialize_calendar_event(ev)
     if body.calendar_id and str(body.calendar_id).strip():
         ser["calendar_id"] = str(body.calendar_id).strip()
+    emails = [str(e).strip().lower() for e in (ev.get("attendee_emails") or []) if str(e).strip()]
+    if emails and not ser.get("attendees"):
+        ser["attendees"] = [{"email": e, "name": ""} for e in emails]
+    try:
+        prev = {
+            str(e).strip().lower()
+            for e in (ev.get("previous_attendee_emails") or [])
+            if str(e).strip()
+        }
+        added = [e for e in emails if e not in prev]
+        if added:
+            from assistant.services import meeting_invites as inv
+
+            await inv.notify_invitees_for_miniapp(
+                organizer_uid=int(principal.telegram_user_id),
+                organizer_user=principal.user if isinstance(principal.user, dict) else {},
+                result=ev,
+                only_emails=added,
+            )
+    except Exception as e:
+        print(f"[miniapp_calendar] invite_notify_update err={e!r}")
     return {"event": ser}
 
 

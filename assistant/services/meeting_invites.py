@@ -318,3 +318,49 @@ async def handle_invite_rsvp_callback(
         await q.answer("Не удалось сохранить ответ.", show_alert=True)
         print(f"[meeting_invite] rsvp uid={invitee_uid} err={e!r}")
     return True
+
+
+class _MiniappOrganizer:
+    def __init__(self, user: dict[str, Any] | None) -> None:
+        u = user or {}
+        self.username = str(u.get("username") or "").strip() or None
+        self.first_name = str(u.get("first_name") or "").strip() or "Организатор"
+        self.last_name = str(u.get("last_name") or "").strip()
+
+
+async def notify_invitees_for_miniapp(
+    *,
+    organizer_uid: int,
+    organizer_user: dict[str, Any] | None,
+    result: dict[str, Any],
+    only_emails: list[str] | None = None,
+) -> int:
+    """RSVP в Telegram после создания/правки встречи из миниаппа."""
+    if not invites_enabled():
+        return 0
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        return 0
+    payload = dict(result or {})
+    if only_emails is not None:
+        allow = {str(e).strip().lower() for e in only_emails if str(e).strip()}
+        payload["attendee_emails"] = [
+            str(e).strip().lower()
+            for e in (payload.get("attendee_emails") or [])
+            if str(e).strip().lower() in allow
+        ]
+        if not payload["attendee_emails"]:
+            return 0
+    uname = str((organizer_user or {}).get("username") or "").strip() or None
+    try:
+        async with Bot(token) as bot:
+            return await notify_invitees(
+                bot,
+                organizer=_MiniappOrganizer(organizer_user),
+                organizer_uid=int(organizer_uid),
+                result=payload,
+                organizer_username=uname,
+            )
+    except Exception as e:
+        print(f"[meeting_invite] miniapp notify organizer={organizer_uid} err={e!r}")
+        return 0

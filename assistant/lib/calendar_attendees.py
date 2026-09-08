@@ -27,6 +27,19 @@ _RE_WITH_NAME = re.compile(
     r"(?<!\w)с\s+([А-Яа-я][а-яё]{2,30})(?=\s+(?:сегодня|завтра|послезавтра|в\s+\d|на\s+|\d{1,2}[:\.]))",
     re.IGNORECASE,
 )
+_RE_PERSON_U = re.compile(
+    r"(?<!\w)(?:у|для)\s+"
+    r"([^\s,]+(?:\s+[^\s,]+){0,2})"
+    r"(?=\s+(?:сегодня|завтра|послезавтра|в\s+\d|на\s+|этот|этой|$)|$|[.,!?])",
+    re.IGNORECASE,
+)
+_RE_SLOTS_OF_PERSON = re.compile(
+    r"(?:свободн\w*\s+(?:слот\w*|окн\w*|время)|слот\w*)\s+"
+    r"(?:у\s+|для\s+)?"
+    r"([^\s,]+(?:\s+[^\s,]+){0,2})"
+    r"(?=\s+(?:сегодня|завтра|послезавтра|в\s+\d|на\s+|этот|этой|$)|$|[.,!?])",
+    re.IGNORECASE,
+)
 _RE_TG_USERNAME = re.compile(r"@([a-zA-Z][a-zA-Z0-9_]{4,31})")
 _SKIP_NAMES = frozenset(
     {
@@ -41,6 +54,17 @@ _SKIP_NAMES = frozenset(
         "тобой",
         "вами",
         "нами",
+        "меня",
+        "нас",
+        "вас",
+        "него",
+        "нее",
+        "неё",
+        "них",
+        "слоты",
+        "слотов",
+        "окна",
+        "время",
     }
 )
 
@@ -75,17 +99,35 @@ def infer_event_title_from_text(text: str) -> str:
     return ""
 
 
+def _person_name_ok(name: str, seen: set[str]) -> bool:
+    key = _norm_name(name)
+    if len(key) < 2 or key in seen:
+        return False
+    tokens = key.split()
+    if any(t in _SKIP_NAMES for t in tokens):
+        return False
+    if key in _SKIP_NAMES:
+        return False
+    return True
+
+
+def _trim_extracted_name(name: str) -> str:
+    tokens = (name or "").strip(" .,!?").split()
+    while tokens and _norm_name(tokens[-1]) in _SKIP_NAMES:
+        tokens.pop()
+    return " ".join(tokens)
+
+
 def extract_attendee_names_from_text(text: str) -> list[str]:
-    """Эвристика: «встреча с Гарей», «с Гарей сегодня в 11»."""
+    """Эвристика: «встреча с Гарей», «слоты у Андрея Мыздрикова сегодня»."""
     out: list[str] = []
     seen: set[str] = set()
-    for rx in (_RE_MEETING_WITH, _RE_WITH_NAME):
+    for rx in (_RE_MEETING_WITH, _RE_WITH_NAME, _RE_PERSON_U, _RE_SLOTS_OF_PERSON):
         for m in rx.finditer(text or ""):
-            name = (m.group(1) or "").strip()
-            key = _norm_name(name)
-            if len(key) < 2 or key in _SKIP_NAMES or key in seen:
+            name = _trim_extracted_name(m.group(1) or "")
+            if not _person_name_ok(name, seen):
                 continue
-            seen.add(key)
+            seen.add(_norm_name(name))
             out.append(name)
     return out
 
@@ -135,6 +177,27 @@ def _contact_name_fields(contact: dict[str, Any]) -> list[str]:
     return [f for f in fields if str(f).strip()]
 
 
+def _token_match_score(needle: str, candidate: str) -> int:
+    """Сколько токенов имени совпало. Для ФИО требуем ≥2, чтобы не путать двух Андреев."""
+    nt = [t for t in _norm_name(needle).split() if t]
+    ct = [t for t in _norm_name(candidate).split() if t]
+    if not nt or not ct:
+        return 0
+    used: set[int] = set()
+    matched = 0
+    for a in nt:
+        for i, b in enumerate(ct):
+            if i in used:
+                continue
+            if names_match(a, b):
+                matched += 1
+                used.add(i)
+                break
+    if len(nt) >= 2 and matched < 2:
+        return 0
+    return matched
+
+
 def find_contact_by_name(
     user_id: int, name: str, *, telegram_username: str | None = None
 ) -> dict[str, Any] | None:
@@ -142,6 +205,8 @@ def find_contact_by_name(
     tg_needle = ""
     if needle.startswith("@"):
         tg_needle = normalize_telegram_username(needle)
+    best: dict[str, Any] | None = None
+    best_score = 0
     for c in contacts.load_contacts(
         telegram_user_id=user_id, telegram_username=telegram_username
     ):
@@ -152,12 +217,21 @@ def find_contact_by_name(
             if ctg and ctg == tg_needle:
                 return c
         keys = name_lookup_keys(name)
+        score = 0
         for field in _contact_name_fields(c):
+            if not field:
+                continue
             if keys & name_lookup_keys(field):
-                return c
-            if field and names_match(name, field):
-                return c
-    return None
+                score = max(score, 10 + len(_norm_name(field)))
+            token_score = _token_match_score(name, field)
+            if token_score:
+                score = max(score, token_score * 3 + len(_norm_name(field)))
+            elif names_match(name, field):
+                score = max(score, 1)
+        if score > best_score:
+            best = c
+            best_score = score
+    return best if best_score else None
 
 
 def find_contact_by_telegram_user(
@@ -470,3 +544,104 @@ def attendee_calendar_user_id(contact: dict[str, Any]) -> int | None:
     if tg:
         return telegram_registry.lookup_user_id(tg)
     return None
+
+
+def leo_calendar_user_id(contact: dict[str, Any] | None, email: str = "") -> int | None:
+    """Telegram uid контакта с подключённым Google Calendar в Leo."""
+    from assistant.integrations import google_calendar_oauth
+    from assistant.lib.calendar_user_lookup import lookup_user_id_by_calendar_email
+
+    uid = attendee_calendar_user_id(contact) if contact else None
+    em = str(email or (contact or {}).get("email") or "").strip().lower()
+    if not uid and em:
+        uid = lookup_user_id_by_calendar_email(em)
+    if not uid:
+        return None
+    if google_calendar_oauth.user_token_path(int(uid)).is_file():
+        return int(uid)
+    return None
+
+
+def enrich_contacts_calendar_flags(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for raw in items or []:
+        if not isinstance(raw, dict):
+            continue
+        row = dict(raw)
+        uid = leo_calendar_user_id(row, str(row.get("email") or ""))
+        row["calendar_connected"] = bool(uid)
+        out.append(row)
+    return out
+
+
+def resolve_free_slots_person(
+    owner_id: int,
+    parsed: dict[str, Any],
+    *,
+    telegram_username: str | None = None,
+) -> dict[str, Any]:
+    """Чей календарь смотреть для free_slots.
+
+    kind: owner | person | missing_contact
+    """
+    names = [
+        str(n).strip()
+        for n in (parsed.get("attendee_names") or [])
+        if str(n).strip()
+    ]
+    if not names:
+        return {"kind": "owner", "user_id": int(owner_id), "label": "", "email": ""}
+
+    from assistant.integrations import google_calendar_oauth
+    from assistant.lib.calendar_user_lookup import lookup_user_id_by_calendar_email
+
+    raw = names[0]
+    if raw.startswith("@"):
+        uid = telegram_registry.lookup_user_id(raw)
+        label = raw
+        email = ""
+        hit = find_contact_by_name(
+            owner_id, raw, telegram_username=telegram_username
+        )
+        if hit:
+            label = contact_display_name(hit) or str(hit.get("name") or raw)
+            email = str(hit.get("email") or "").strip().lower()
+            uid = uid or attendee_calendar_user_id(hit)
+    else:
+        hit = find_contact_by_name(
+            owner_id, raw, telegram_username=telegram_username
+        )
+        if not hit:
+            return {
+                "kind": "missing_contact",
+                "user_id": None,
+                "label": raw,
+                "email": "",
+            }
+        label = contact_display_name(hit) or str(hit.get("name") or raw)
+        email = str(hit.get("email") or "").strip().lower()
+        uid = attendee_calendar_user_id(hit)
+        if email:
+            uid = uid or lookup_user_id_by_calendar_email(email)
+
+    if uid and google_calendar_oauth.user_token_path(int(uid)).is_file():
+        return {
+            "kind": "person",
+            "user_id": int(uid),
+            "label": label,
+            "email": email,
+        }
+    if email:
+        return {
+            "kind": "person",
+            "user_id": int(owner_id),
+            "label": label,
+            "email": email,
+            "via_email": True,
+        }
+    return {
+        "kind": "missing_calendar",
+        "user_id": None,
+        "label": label,
+        "email": email,
+    }

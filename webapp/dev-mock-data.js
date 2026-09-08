@@ -516,6 +516,9 @@
         start: { dateTime: start },
         end: { dateTime: end },
         description: String(evBody.description || ""),
+        attendees: (evBody.attendees || []).map(function (em) {
+          return { email: String(em || "").trim().toLowerCase(), name: "" };
+        }).filter(function (a) { return a.email; }),
       };
       if (!eventsByDate[day]) eventsByDate[day] = [];
       eventsByDate[day].push(event);
@@ -523,6 +526,53 @@
         return String((a.start || {}).dateTime || "").localeCompare(String((b.start || {}).dateTime || ""));
       });
       return { event: event };
+    }
+
+    if (basePath === "/calendar/availability" && method === "POST") {
+      var avBody = {};
+      try {
+        avBody = opts && opts.body ? JSON.parse(opts.body) : {};
+      } catch (_) {}
+      var avDay = String(avBody.date || todayYmd()).slice(0, 10);
+      function isoAt(h, m) {
+        return (
+          avDay +
+          "T" +
+          String(h).padStart(2, "0") +
+          ":" +
+          String(m).padStart(2, "0") +
+          ":00+03:00"
+        );
+      }
+      var people = [
+        {
+          id: "organizer",
+          email: "",
+          label: "Вы",
+          kind: "organizer",
+          calendar: true,
+          busy: [{ start: isoAt(11, 0), end: isoAt(12, 0) }],
+        },
+      ];
+      (avBody.attendees || []).forEach(function (em, i) {
+        var email = String(em || "").trim().toLowerCase();
+        if (!email) return;
+        people.push({
+          id: email,
+          email: email,
+          label: email,
+          kind: "email",
+          calendar: i === 0,
+          busy: i === 0 ? [{ start: isoAt(14, 0), end: isoAt(15, 30) }] : [],
+        });
+      });
+      return {
+        date: avDay,
+        timezone: "Europe/Moscow",
+        work_start: isoAt(9, 0),
+        work_end: isoAt(18, 0),
+        people: people,
+      };
     }
 
     if (basePath === "/voice/transcribe" && method === "POST") {
