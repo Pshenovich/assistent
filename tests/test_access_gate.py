@@ -12,12 +12,25 @@ def test_approver_from_env(monkeypatch):
 def test_add_and_allow_user(tmp_path, monkeypatch):
     monkeypatch.setenv("TELEGRAM_ACCESS_ALLOWLIST_PATH", str(tmp_path / "allowed.json"))
     monkeypatch.setenv("TELEGRAM_ACCESS_REQUESTS_PATH", str(tmp_path / "req.json"))
+    monkeypatch.setenv("TELEGRAM_REGISTRY_PATH", str(tmp_path / "reg.json"))
     access.add_approved_user(username="testuser", user_id=42)
     assert access.is_extra_allowed("testuser", 42)
     assert not access.is_pending(42)
+    from assistant.stores import telegram_registry
+
+    assert telegram_registry.lookup_user_id("testuser") == 42
 
 
-def test_deny_user(tmp_path, monkeypatch):
+def test_lookup_pending_user_id(tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ACCESS_REQUESTS_PATH", str(tmp_path / "req.json"))
+    access.register_pending_request(
+        user_id=555,
+        username="artyawn",
+        first_name="Art",
+        last_name="",
+    )
+    assert access.lookup_pending_user_id("@Artyawn") == 555
+    assert access.lookup_pending_user_id("nobody") is None
     monkeypatch.setenv("TELEGRAM_ACCESS_REQUESTS_PATH", str(tmp_path / "req.json"))
     access.deny_user(99)
     assert access.is_denied(99)
@@ -26,6 +39,7 @@ def test_deny_user(tmp_path, monkeypatch):
 def test_leo_approval_does_not_grant_donatello(tmp_path, monkeypatch):
     monkeypatch.setenv("TELEGRAM_ACCESS_ALLOWLIST_PATH", str(tmp_path / "leo.json"))
     monkeypatch.setenv("TELEGRAM_ACCESS_REQUESTS_PATH", str(tmp_path / "leo_req.json"))
+    monkeypatch.setenv("TELEGRAM_REGISTRY_PATH", str(tmp_path / "reg.json"))
     monkeypatch.setenv(
         "TELEGRAM_ACCESS_DONATELLO_ALLOWLIST_PATH", str(tmp_path / "don.json")
     )
@@ -41,6 +55,7 @@ def test_leo_approval_does_not_grant_donatello(tmp_path, monkeypatch):
 def test_donatello_approval_does_not_grant_leo(tmp_path, monkeypatch):
     monkeypatch.setenv("TELEGRAM_ACCESS_ALLOWLIST_PATH", str(tmp_path / "leo.json"))
     monkeypatch.setenv("TELEGRAM_ACCESS_REQUESTS_PATH", str(tmp_path / "leo_req.json"))
+    monkeypatch.setenv("TELEGRAM_REGISTRY_PATH", str(tmp_path / "reg.json"))
     monkeypatch.setenv(
         "TELEGRAM_ACCESS_DONATELLO_ALLOWLIST_PATH", str(tmp_path / "don.json")
     )

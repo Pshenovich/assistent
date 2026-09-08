@@ -431,6 +431,13 @@ def resolve_contact_telegram_id(
         except (TypeError, ValueError):
             direct = 0
         telegram_username = telegram_username or contact.get("telegram_username")
+        if not telegram_username:
+            extras = [contact.get("name"), *((contact.get("aliases") or []) if isinstance(contact.get("aliases"), list) else [])]
+            for extra in extras:
+                cand = normalize_telegram_username(str(extra or ""))
+                if cand:
+                    telegram_username = cand
+                    break
     uname = normalize_telegram_username(telegram_username or "")
     if direct <= 0 and uname:
         found = telegram_registry.lookup_user_id(uname)
@@ -440,9 +447,20 @@ def resolve_contact_telegram_id(
         profile_uid = _lookup_profile_by_username(uname)
         if profile_uid:
             direct = profile_uid
+    if direct <= 0 and uname:
+        try:
+            from assistant.lib import telegram_access_allowlist as access
+
+            pending_uid = access.lookup_pending_user_id(uname)
+            if pending_uid:
+                direct = int(pending_uid)
+        except Exception:
+            pass
     if direct <= 0:
+        who = f"@{uname}" if uname else "контакта"
         raise ValueError(
-            "У контакта нет Telegram. Нужен @username, и человек должен хотя бы раз открыть Leo."
+            f"Не удалось найти {who} в Leo. Пусть человек откроет мини-приложение "
+            "или напишет боту /start — после этого повторите добавление."
         )
     if contact:
         upsert_profile(

@@ -161,6 +161,14 @@ async def ensure_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
     if not user or user.is_bot:
         return False
     uid = int(user.id)
+    try:
+        from assistant.stores import telegram_registry
+
+        telegram_registry.register_user(
+            telegram_user_id=uid, telegram_username=user.username
+        )
+    except Exception:
+        pass
     scope = access_scope_from_context(context)
     if is_user_allowed(uid, user.username, scope=scope):
         return True

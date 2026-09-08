@@ -149,6 +149,14 @@ def add_approved_user(
     if username:
         names.add(username.strip().lstrip("@").lower())
     save_allowlist(names, ids, scope=scope)
+    try:
+        from assistant.stores import telegram_registry
+
+        telegram_registry.register_user(
+            telegram_user_id=int(user_id), telegram_username=username
+        )
+    except Exception:
+        pass
     clear_request_state(int(user_id), scope=scope)
 
 
@@ -185,6 +193,29 @@ def is_denied(user_id: int, *, scope: str | None = None) -> bool:
     data = _load_requests(scope)
     denied = data.get("denied_ids") or []
     return int(user_id) in {int(x) for x in denied}
+
+
+def lookup_pending_user_id(
+    username: str, *, scope: str | None = None
+) -> int | None:
+    """Ищет telegram id в заявках на доступ по @username."""
+    un = (username or "").strip().lstrip("@").lower()
+    if not un:
+        return None
+    pending = _load_requests(scope).get("pending") or {}
+    if not isinstance(pending, dict):
+        return None
+    for uid, rec in pending.items():
+        if not isinstance(rec, dict):
+            continue
+        ru = str(rec.get("username") or "").strip().lstrip("@").lower()
+        if ru != un:
+            continue
+        try:
+            return int(uid)
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def is_pending(user_id: int, *, scope: str | None = None) -> bool:

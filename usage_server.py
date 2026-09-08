@@ -2275,12 +2275,24 @@ def _miniapp_dev_principal_if_allowed(request: Request) -> _MiniappPrincipal | N
     return _MiniappPrincipal(uid, user)
 
 
+async def _finish_miniapp_principal(
+    principal: _MiniappPrincipal, *, enforce_access: bool
+) -> _MiniappPrincipal:
+    try:
+        await run_in_threadpool(_remember_principal_profile, principal)
+    except Exception:
+        pass
+    return _enforce_miniapp_access(principal) if enforce_access else principal
+
+
 async def _resolve_miniapp_principal(
     request: Request, *, enforce_access: bool
 ) -> _MiniappPrincipal:
     dev_principal = _miniapp_dev_principal_if_allowed(request)
     if dev_principal is not None:
-        return _enforce_miniapp_access(dev_principal) if enforce_access else dev_principal
+        return await _finish_miniapp_principal(
+            dev_principal, enforce_access=enforce_access
+        )
     auth_header = (request.headers.get("Authorization") or "").strip()
     # Mini App в Telegram: initData важнее браузерной session-cookie.
     if auth_header.lower().startswith("tma "):
@@ -2298,13 +2310,13 @@ async def _resolve_miniapp_principal(
             except ValueError as e:
                 raise HTTPException(status_code=401, detail=str(e)) from e
             principal = _MiniappPrincipal(uid, user)
-            return _enforce_miniapp_access(principal) if enforce_access else principal
+            return await _finish_miniapp_principal(
+                principal, enforce_access=enforce_access
+            )
     session_principal = _principal_from_browser_session_request(request)
     if session_principal is not None:
-        return (
-            _enforce_miniapp_access(session_principal)
-            if enforce_access
-            else session_principal
+        return await _finish_miniapp_principal(
+            session_principal, enforce_access=enforce_access
         )
     raw = _tma_init_data_from_header(auth_header)
     if raw is None and request.method in ("POST", "PUT", "PATCH"):
@@ -2334,7 +2346,7 @@ async def _resolve_miniapp_principal(
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e)) from e
     principal = _MiniappPrincipal(uid, user)
-    return _enforce_miniapp_access(principal) if enforce_access else principal
+    return await _finish_miniapp_principal(principal, enforce_access=enforce_access)
 
 
 async def require_miniapp_user(request: Request) -> _MiniappPrincipal:

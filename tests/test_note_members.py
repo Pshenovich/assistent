@@ -127,6 +127,28 @@ class NoteMembersTests(unittest.TestCase):
         note_members.leave_presence(1, note["id"], 2)
         self.assertEqual(note_members.list_peers(1, note["id"], exclude_user_id=1), [])
 
+    def test_resolve_contact_via_registry(self) -> None:
+        os.environ["TELEGRAM_REGISTRY_PATH"] = os.path.join(self._tmpdir.name, "reg.json")
+        from assistant.stores import telegram_registry
+
+        telegram_registry.register_user(
+            telegram_user_id=777, telegram_username="artyawn"
+        )
+        uid, _ = note_members.resolve_contact_telegram_id(
+            owner_user_id=1, telegram_username="@Artyawn"
+        )
+        self.assertEqual(uid, 777)
+
+    def test_resolve_missing_user_mentions_username(self) -> None:
+        os.environ["TELEGRAM_REGISTRY_PATH"] = os.path.join(
+            self._tmpdir.name, "reg-empty.json"
+        )
+        with self.assertRaises(ValueError) as ctx:
+            note_members.resolve_contact_telegram_id(
+                owner_user_id=1, telegram_username="missinguser"
+            )
+        self.assertIn("@missinguser", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -159,6 +159,8 @@ echo "==> Синхронизация кода (без .env, .venv, пользо�
   --exclude 'data/allowed_telegram_access_donatello.json' \
   --exclude 'data/access_requests.json' \
   --exclude 'data/access_requests_donatello.json' \
+  --exclude 'data/telegram_registry.json' \
+  --exclude 'telegram_registry.json' \
   --exclude 'data/meeting_reminders_sent.json' \
   --exclude 'data/meeting_recordings.sqlite' \
   --exclude 'data/board.sqlite' \
