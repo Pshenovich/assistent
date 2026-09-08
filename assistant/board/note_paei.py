@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from assistant.board import store
@@ -21,6 +24,63 @@ JOB_STALE_SEC = 12 * 60
 
 _jobs_lock = threading.Lock()
 _jobs: dict[str, dict[str, Any]] = {}
+_RESTART_ERROR = "PAIE прервался из-за перезапуска сервера. Запустите ещё раз."
+
+
+def jobs_file() -> Path:
+    raw = os.getenv("PAEI_JOBS_PATH", "").strip()
+    if raw:
+        p = Path(raw).expanduser()
+        return p.resolve() if p.is_absolute() else (Path.cwd() / p).resolve()
+    return store.db_path().parent / "paei_jobs.json"
+
+
+def _write_jobs(jobs: dict[str, dict[str, Any]]) -> None:
+    try:
+        path = jobs_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(jobs, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+    except Exception as exc:
+        print(f"[board.paei] persist_fail err={exc!r}")
+
+
+def _persist_jobs() -> None:
+    with _jobs_lock:
+        snap = {k: dict(v) for k, v in _jobs.items()}
+    _write_jobs(snap)
+
+
+def recover_jobs_after_restart() -> None:
+    """После рестарта uvicorn running-джобы нельзя продолжить — помечаем ошибкой."""
+    path = jobs_file()
+    if not path.is_file():
+        return
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"[board.paei] recover_read_fail err={exc!r}")
+        return
+    if not isinstance(raw, dict):
+        return
+    now = time.time()
+    loaded: dict[str, dict[str, Any]] = {}
+    for key, val in raw.items():
+        if not isinstance(val, dict):
+            continue
+        row = dict(val)
+        if str(row.get("status") or "") == "running":
+            row["status"] = "error"
+            row["error"] = _RESTART_ERROR
+        started = float(row.get("started_at") or 0)
+        if started and now - started > 36 * 3600:
+            continue
+        loaded[str(key)] = row
+    with _jobs_lock:
+        _jobs.clear()
+        _jobs.update(loaded)
+    _write_jobs(loaded)
 
 
 class NullPublisher:
@@ -139,7 +199,9 @@ def begin_job(
             ),
         }
         _jobs[key] = row
-        return dict(row), True
+        out = dict(row)
+    _persist_jobs()
+    return out, True
 
 
 def _update_job(key: str, **fields: Any) -> None:
@@ -152,6 +214,7 @@ def _update_job(key: str, **fields: Any) -> None:
             fields["progress"] = _progress_view(payload)
         row.update(fields)
         _jobs[key] = row
+    _persist_jobs()
 
 
 def _as_list(val: Any) -> list[str]:

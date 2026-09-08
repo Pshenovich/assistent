@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260908-paie502";
+  var WEBAPP_BUILD = "20260908-stable";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260908-paie502";
+  const NOTE_EDITOR_ASSET_V = "20260908-stable";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -1393,6 +1393,36 @@
     return fallback || "Ошибка";
   }
 
+  function sleepMs(ms) {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  function isTransientApiError(err) {
+    if (!err) return true;
+    if (err.name === "AbortError") return false;
+    var code = Number(err.status) || 0;
+    if (
+      code === 400 ||
+      code === 401 ||
+      code === 403 ||
+      code === 404 ||
+      code === 409 ||
+      code === 422
+    ) {
+      return false;
+    }
+    return code === 0 || code === 500 || code === 502 || code === 503 || code === 504;
+  }
+
+  function onId(id, event, handler) {
+    var el = document.getElementById(id);
+    if (!el) return null;
+    el.addEventListener(event, handler);
+    return el;
+  }
+
   function apiErrorMessage(body, fallback) {
     if (!body) return fallback || "Ошибка";
     var d = body.detail != null ? body.detail : body.message;
@@ -1565,8 +1595,7 @@
     removeKnowledgeFromCache(id);
   }
 
-  async function apiFetchReal(path, opts) {
-    const o = opts || {};
+  async function apiFetchOnce(path, o) {
     const headers = Object.assign({}, authHeaders(), o.headers || {});
     if (
       o.body &&
@@ -1627,6 +1656,23 @@
     return body;
   }
 
+  async function apiFetchReal(path, opts) {
+    const o = opts || {};
+    const method = String(o.method || "GET").toUpperCase();
+    const maxTries = method === "GET" || method === "HEAD" ? 12 : 1;
+    var lastErr = null;
+    for (var i = 0; i < maxTries; i++) {
+      try {
+        return await apiFetchOnce(path, o);
+      } catch (e) {
+        lastErr = e;
+        if (i >= maxTries - 1 || !isTransientApiError(e)) throw e;
+        await sleepMs(Math.min(3000, 400 * Math.pow(1.6, i)));
+      }
+    }
+    throw lastErr;
+  }
+
   async function apiFetch(path, opts) {
     if (
       miniappDev &&
@@ -1640,8 +1686,10 @@
 
   function showGate() {
     document.documentElement.classList.remove("boot-open-app");
-    document.getElementById("gate").classList.remove("hidden");
-    document.getElementById("app").classList.add("hidden");
+    var gate = document.getElementById("gate");
+    var app = document.getElementById("app");
+    if (gate) gate.classList.remove("hidden");
+    if (app) app.classList.add("hidden");
   }
 
   function showAccessBlocked(msg) {
@@ -1690,8 +1738,10 @@
   }
 
   function showApp() {
-    document.getElementById("gate").classList.add("hidden");
-    document.getElementById("app").classList.remove("hidden");
+    var gate = document.getElementById("gate");
+    var app = document.getElementById("app");
+    if (gate) gate.classList.add("hidden");
+    if (app) app.classList.remove("hidden");
   }
 
   function setHidden(el, hidden) {
@@ -2979,19 +3029,26 @@
         "</p>" +
         '<button type="button" class="tariff-pay" id="profile-open-pay">Пополнить баланс</button>';
 
-      document.getElementById("profile-open-pay").addEventListener("click", function () {
-        profileScreen("payment");
-        renderPaymentMethods();
-        syncPaymentSummary();
-      });
+      var payBtn = document.getElementById("profile-open-pay");
+      if (payBtn) {
+        payBtn.addEventListener("click", function () {
+          profileScreen("payment");
+          renderPaymentMethods();
+          syncPaymentSummary();
+        });
+      }
 
       try {
         const ex = await apiFetch("/usage/expenses?days=14", { method: "GET" });
         const total = typeof ex.total_rub === "number" ? ex.total_rub : 0;
-        document.getElementById("profile-expenses-total").textContent =
-          "₽ " + total.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+        var expTotal = document.getElementById("profile-expenses-total");
+        if (expTotal) {
+          expTotal.textContent =
+            "₽ " + total.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+        }
       } catch (_) {
-        document.getElementById("profile-expenses-total").textContent = "—";
+        var expTotalFail = document.getElementById("profile-expenses-total");
+        if (expTotalFail) expTotalFail.textContent = "—";
       }
       await refreshProfileContactsCount();
       await refreshKnowledgeBaseHint();
@@ -3003,6 +3060,7 @@
 
   async function loadExpensesDetail() {
     const body = document.getElementById("profile-expenses-body");
+    if (!body) return;
     body.innerHTML = "<p class=\"muted small\">Загрузка…</p>";
     try {
       const ex = await apiFetch("/usage/expenses?days=14", { method: "GET" });
@@ -7267,7 +7325,12 @@
     var padRect = pad.getBoundingClientRect();
     (peers || []).forEach(function (p) {
       if (p.cursor == null) return;
-      var coords = editor.coordsAtPos(p.cursor);
+      var coords = null;
+      try {
+        coords = editor.coordsAtPos(p.cursor);
+      } catch (_) {
+        return;
+      }
       if (!coords) return;
       var caret = document.createElement("div");
       caret.className = "note-collab-caret";
@@ -9157,6 +9220,11 @@
             data.progress
           );
           pollNotePaei(notePaeiPath());
+          return;
+        }
+        if (data && data.status === "error") {
+          ensureNotePaieThread();
+          setNotePaeiStatus((data && data.error) || "Не удалось завершить PAIE");
         }
       })
       .catch(function () {});
@@ -10044,8 +10112,10 @@
   async function loadNotes() {
     setNotesSubTab(notesSubTab);
     const err = document.getElementById("notes-global-error");
-    err.textContent = "";
-    setHidden(err, true);
+    if (err) {
+      err.textContent = "";
+      setHidden(err, true);
+    }
     if (notesDataCache) {
       renderNotesPanesFromData(notesDataCache);
     } else {
@@ -10060,14 +10130,16 @@
       data = await apiFetch("/notes?limit=120", { method: "GET" });
     } catch (e) {
       if (!notesDataCache) {
-        err.textContent = e.message || String(e);
-        setHidden(err, false);
+        if (err) {
+          err.textContent = e.message || String(e);
+          setHidden(err, false);
+        }
       }
       return;
     }
     notesDataCache = data;
     writeMiniappCache("notes", data);
-    if (data.journal_error) {
+    if (data.journal_error && err) {
       err.textContent = data.journal_error;
       setHidden(err, false);
     }
@@ -10118,6 +10190,7 @@
     const pn = document.getElementById("notes-pane-notes");
     const pt = document.getElementById("notes-pane-transcriptions");
     const ps = document.getElementById("notes-pane-summaries");
+    if (!pn || !pt || !ps) return;
     pn.innerHTML = "";
     pt.innerHTML = "";
     ps.innerHTML = "";
@@ -11467,22 +11540,18 @@
   };
 
   function tryExistingBrowserSession() {
-    return fetch(API + "/me", {
-      method: "GET",
-      credentials: "same-origin",
-      headers: { Accept: "application/json" },
-    }).then(function (res) {
-      if (!res.ok) return false;
-      return res.json().then(function (me) {
+    return apiFetch("/me", { method: "GET" })
+      .then(function (me) {
         cachedMe = me;
         if (me.bot_username) cachedBotUsername = me.bot_username;
         setSessionHint(true);
         persistBrowserSessionFromCurrentAuth();
         return true;
+      })
+      .catch(function (e) {
+        if (isTransientApiError(e)) return "offline";
+        return false;
       });
-    }).catch(function () {
-      return false;
-    });
   }
 
   function persistBrowserSessionFromCurrentAuth() {
@@ -11513,10 +11582,7 @@
         (miniappDev || /[?&]dev=1(?:&|$)/.test(window.location.search || ""));
       devHint.classList.toggle("hidden", !showDev);
     }
-    fetch(API + "/auth/config", { headers: { Accept: "application/json" } })
-      .then(function (res) {
-        return res.json();
-      })
+    apiFetch("/auth/config", { method: "GET" })
       .then(function (cfg) {
         setGateStatus("");
         var u = (cfg && cfg.bot_username) || "";
@@ -11654,7 +11720,7 @@
       });
     });
 
-    document.getElementById("notes-detail-back").addEventListener("click", handleNotesDetailBack);
+    onId("notes-detail-back", "click", handleNotesDetailBack);
 
     var noteEditorWebBack = document.getElementById("note-editor-web-back");
     if (noteEditorWebBack) {
@@ -11786,19 +11852,19 @@
       });
     }
 
-    document.getElementById("meetings-prev").addEventListener("click", function () {
+    onId("meetings-prev", "click", function () {
       shiftMeetingsPage(-1);
     });
-    document.getElementById("meetings-next").addEventListener("click", function () {
+    onId("meetings-next", "click", function () {
       shiftMeetingsPage(1);
     });
 
-    document.getElementById("gpt-close").addEventListener("click", closeGptChat);
-    document.getElementById("gpt-overlay-backdrop").addEventListener("click", closeGptChat);
-    document.getElementById("gpt-send").addEventListener("click", function () {
+    onId("gpt-close", "click", closeGptChat);
+    onId("gpt-overlay-backdrop", "click", closeGptChat);
+    onId("gpt-send", "click", function () {
       gptSendMessage();
     });
-    document.getElementById("gpt-input").addEventListener("keydown", function (e) {
+    onId("gpt-input", "keydown", function (e) {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         gptSendMessage();
@@ -11845,7 +11911,7 @@
       });
     });
 
-    document.getElementById("profile-expenses-open").addEventListener("click", async function () {
+    onId("profile-expenses-open", "click", async function () {
       profileScreen("expenses");
       await loadExpensesDetail();
     });
@@ -12123,10 +12189,10 @@
         }
       }
     });
-    document.getElementById("profile-expenses-back").addEventListener("click", function () {
+    onId("profile-expenses-back", "click", function () {
       profileScreen("main");
     });
-    document.getElementById("profile-payment-back").addEventListener("click", function () {
+    onId("profile-payment-back", "click", function () {
       profileScreen("main");
     });
     var bookingBack = document.getElementById("profile-booking-back");
@@ -12148,11 +12214,11 @@
     var bookingWaDiscBtn = document.getElementById("booking-wa-disconnect");
     if (bookingWaDiscBtn) bookingWaDiscBtn.addEventListener("click", bookingWaDisconnect);
 
-    document.getElementById("payment-submit").addEventListener("click", function () {
+    onId("payment-submit", "click", function () {
       alert("Оплата пока недоступна. Выберите способ и промокод можно сохранить позже.");
     });
 
-    document.getElementById("payment-promo-apply").addEventListener("click", async function () {
+    onId("payment-promo-apply", "click", async function () {
       const inp = document.getElementById("payment-promo-input");
       const code = (inp && inp.value) || "";
       const ok = document.getElementById("payment-promo-msg");
@@ -12201,14 +12267,12 @@
       });
     }
 
-    document.getElementById("modal-cancel").addEventListener("click", closeModal);
-    document.getElementById("modal-delete").addEventListener("click", modalDelete);
-    document
-      .getElementById("modal-overlay")
-      .addEventListener("click", function (e) {
-        if (e.target.id === "modal-overlay") closeModal();
-      });
-    document.getElementById("modal-form").addEventListener("submit", modalSubmit);
+    onId("modal-cancel", "click", closeModal);
+    onId("modal-delete", "click", modalDelete);
+    onId("modal-overlay", "click", function (e) {
+      if (e.target.id === "modal-overlay") closeModal();
+    });
+    onId("modal-form", "submit", modalSubmit);
 
     apiFetch("/me", { method: "GET" })
       .then(function (me) {
@@ -12246,7 +12310,12 @@
     function startApp() {
       if (bootAppStarted) return;
       bootAppStarted = true;
-      bootApp(tg);
+      try {
+        bootApp(tg);
+      } catch (e) {
+        bootAppStarted = false;
+        console.error("bootApp", e);
+      }
     }
 
     if (isInsideTelegramClient() && !hasTma && !miniappDev) {
@@ -12266,7 +12335,7 @@
           persistBrowserSessionFromCurrentAuth();
         })
         .catch(function (e) {
-          if (isInsideTelegramClient()) {
+          if (e && e.status === 401 && isInsideTelegramClient()) {
             showTelegramAuthError(e.message || String(e));
           }
         });
@@ -12293,19 +12362,18 @@
     if (getStoredSession() || hasSessionHint() || isStandalonePwa()) {
       startApp();
       tryExistingBrowserSession().then(function (ok) {
-        if (!ok && !getStoredSession()) {
-          setSessionHint(false);
-          gateLoginBootstrapped = false;
-          showGate();
-          bootstrapGateLogin();
-        }
+        if (ok === true || ok === "offline" || getStoredSession()) return;
+        setSessionHint(false);
+        gateLoginBootstrapped = false;
+        showGate();
+        bootstrapGateLogin();
       });
       return;
     }
 
     startApp();
     tryExistingBrowserSession().then(function (ok) {
-      if (ok) {
+      if (ok === true || ok === "offline") {
         return;
       }
       gateLoginBootstrapped = false;
@@ -12340,6 +12408,16 @@
   }
 
   registerServiceWorker();
+
+  window.addEventListener("unhandledrejection", function (e) {
+    try {
+      if (e && typeof e.preventDefault === "function") e.preventDefault();
+    } catch (_) {}
+    console.error("unhandledrejection", e && e.reason);
+  });
+  window.addEventListener("error", function (e) {
+    console.error("window.error", (e && e.error) || (e && e.message) || e);
+  });
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);

@@ -190,24 +190,7 @@
     return;
   }
 
-  fetch("/api/public/share/" + encodeURIComponent(token), {
-    headers: { Accept: "application/json" },
-  })
-    .then(function (res) {
-      return res.text().then(function (text) {
-        var body = null;
-        try {
-          body = text ? JSON.parse(text) : null;
-        } catch (_) {
-          body = null;
-        }
-        if (!res.ok) {
-          var detail = body && (body.detail || body.message);
-          throw new Error(typeof detail === "string" ? detail : "Документ недоступен");
-        }
-        return body;
-      });
-    })
+  jsonFetch("/api/public/share/" + encodeURIComponent(token))
     .then(function (data) {
       var title = String((data && data.title) || "Без названия");
       var label = String((data && data.label) || "Документ");
@@ -249,23 +232,51 @@
 
   function jsonFetch(url, opts) {
     var o = opts || {};
-    return fetch(url, Object.assign({ credentials: "same-origin" }, o)).then(function (res) {
-      return res.text().then(function (text) {
-        var body = null;
-        try {
-          body = text ? JSON.parse(text) : null;
-        } catch (_) {
-          body = null;
-        }
-        if (!res.ok) {
-          var detail = body && (body.detail || body.message);
-          var err = new Error(typeof detail === "string" ? detail : "Ошибка запроса");
-          err.status = res.status;
-          throw err;
-        }
-        return body;
+    var method = String((o.method || "GET")).toUpperCase();
+    var tries = 0;
+    var maxTries = method === "GET" || method === "HEAD" ? 8 : 1;
+
+    function once() {
+      return fetch(url, Object.assign({ credentials: "same-origin" }, o)).then(function (res) {
+        return res.text().then(function (text) {
+          var body = null;
+          try {
+            body = text ? JSON.parse(text) : null;
+          } catch (_) {
+            body = null;
+          }
+          if (!res.ok) {
+            var detail = body && (body.detail || body.message);
+            if (typeof detail === "string" && looksLikeHtml(detail)) detail = "";
+            if (!detail && looksLikeHtml(text)) {
+              detail =
+                res.status === 502 || res.status === 503 || res.status === 504
+                  ? "Сервер временно недоступен. Обновите страницу через несколько секунд."
+                  : "";
+            }
+            var err = new Error(detail || "Ошибка запроса");
+            err.status = res.status;
+            throw err;
+          }
+          return body;
+        });
       });
-    });
+    }
+
+    function tick() {
+      return once().catch(function (e) {
+        tries += 1;
+        var code = e && e.status;
+        var transient =
+          !code || code === 500 || code === 502 || code === 503 || code === 504;
+        if (!transient || tries >= maxTries) throw e;
+        return new Promise(function (resolve) {
+          setTimeout(resolve, Math.min(2500, 400 * tries));
+        }).then(tick);
+      });
+    }
+
+    return tick();
   }
 
   function formatWhen(iso) {

@@ -114,6 +114,7 @@ class NotePaeiTest(unittest.IsolatedAsyncioTestCase):
         self._tmp = tempfile.TemporaryDirectory()
         os.environ["BOARD_DB_PATH"] = str(Path(self._tmp.name) / "board.sqlite")
         os.environ["NOTES_DB_PATH"] = str(Path(self._tmp.name) / "notes.sqlite")
+        os.environ["PAEI_JOBS_PATH"] = str(Path(self._tmp.name) / "paei_jobs.json")
         os.environ["BOARD_DELAY_MIN_SEC"] = "0"
         os.environ["BOARD_DELAY_MAX_SEC"] = "0"
         os.environ["BOARD_MAX_MEETING_SEC"] = "120"
@@ -145,6 +146,21 @@ class NotePaeiTest(unittest.IsolatedAsyncioTestCase):
             _public_job_error(RuntimeError("модель не ответила")),
             "модель не ответила",
         )
+
+    def test_running_job_survives_restart_as_error(self) -> None:
+        from assistant.board import note_paei as note_paei_mod
+
+        job, started = begin_job(7, "local", 42)
+        self.assertTrue(started)
+        self.assertEqual(job["status"], "running")
+        note_paei_mod._jobs.clear()
+        self.assertIsNone(get_job(7, "local", 42))
+        note_paei_mod.recover_jobs_after_restart()
+        recovered = get_job(7, "local", 42)
+        self.assertIsNotNone(recovered)
+        assert recovered is not None
+        self.assertEqual(recovered["status"], "error")
+        self.assertIn("перезапуска", recovered.get("error") or "")
 
     def test_format_chair_comment(self) -> None:
         text = format_chair_comment(

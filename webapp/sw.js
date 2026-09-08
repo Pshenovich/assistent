@@ -1,17 +1,17 @@
 /* Mini App service worker: кэш оболочки для быстрого повторного открытия PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260908-paie502";
+var CACHE_VERSION = "miniapp-v1-20260908-stable";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
-  "./styles.css?v=20260908-paie502",
-  "./app.js?v=20260908-paie502",
-  "./note-html.js?v=20260908-paie502",
-  "./note-comments.js?v=20260908-paie502",
-  "./note-rich-editor.js?v=20260908-paie502",
-  "./icons/arrow-up-right.svg?v=20260908-paie502",
-  "./icons/chevron-up-muted.svg?v=20260908-paie502",
-  "./icons/chevron-up-on-fill.svg?v=20260908-paie502",
+  "./styles.css?v=20260908-stable",
+  "./app.js?v=20260908-stable",
+  "./note-html.js?v=20260908-stable",
+  "./note-comments.js?v=20260908-stable",
+  "./note-rich-editor.js?v=20260908-stable",
+  "./icons/arrow-up-right.svg?v=20260908-stable",
+  "./icons/chevron-up-muted.svg?v=20260908-stable",
+  "./icons/chevron-up-on-fill.svg?v=20260908-stable",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",
@@ -143,24 +143,19 @@ self.addEventListener("fetch", function (event) {
       path.endsWith(".ico"))
   ) {
     event.respondWith(
-      caches.match(request).then(function (cached) {
-        if (cached) {
-          fetchWithTimeout(request, 4000)
-            .then(function (response) {
-              if (response && response.ok) {
-                caches.open(SHELL_CACHE).then(function (cache) {
-                  cache.put(request, response);
-                });
-              }
-            })
-            .catch(function () {});
-          return cached;
-        }
-        return fetchWithTimeout(request, 20000).then(function (response) {
-          cachePut(SHELL_CACHE, request, response);
+      fetchWithTimeout(request, 6000)
+        .then(function (response) {
+          if (response && response.ok) {
+            cachePut(SHELL_CACHE, request, response);
+          }
           return response;
-        });
-      })
+        })
+        .catch(function () {
+          return caches.match(request).then(function (cached) {
+            if (cached) return cached;
+            return fetch(request);
+          });
+        })
     );
   }
 });

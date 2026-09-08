@@ -65,6 +65,16 @@ from assistant.lib.webapp_public import webapp_entry_url  # noqa: E402
 app = FastAPI(title="OpenRouter usage")
 
 
+@app.on_event("startup")
+def _recover_note_paei_jobs() -> None:
+    try:
+        from assistant.board.note_paei import recover_jobs_after_restart
+
+        recover_jobs_after_restart()
+    except Exception as exc:
+        print(f"[board.paei] recover_fail err={exc!r}")
+
+
 def _default_security_csp(*, allow_any_frame_ancestor: bool = False) -> str:
     """CSP для мини-приложения / Zoom Home URL (in-client browser)."""
     extra = (os.getenv("SECURITY_CSP_EXTRA", "") or "").strip()

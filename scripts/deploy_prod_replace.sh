@@ -164,6 +164,7 @@ echo "==> Синхронизация кода (без .env, .venv, пользо�
   --exclude 'data/meeting_reminders_sent.json' \
   --exclude 'data/meeting_recordings.sqlite' \
   --exclude 'data/board.sqlite' \
+  --exclude 'data/paei_jobs.json' \
   --exclude 'data/knowledge_bases.sqlite' \
   --exclude 'data/users/' \
   --exclude 'data/telegram-bot-api/' \
