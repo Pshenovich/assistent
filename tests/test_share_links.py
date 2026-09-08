@@ -259,6 +259,20 @@ class ShareCommentsTests(unittest.TestCase):
         self.assertFalse(share_comments.is_paie_comment(gpt_a))
         self.assertNotIn(gpt_q["id"], [c["id"] for c in thread])
         self.assertNotIn(gpt_a["id"], [c["id"] for c in thread])
+        gpt_quoted = share_comments.add_comment(
+            8,
+            "local",
+            3,
+            author_user_id=8,
+            author_name="Анна",
+            body="Что это значит?",
+            prefix=share_comments.GPT_PREFIX,
+            quote="пилот",
+        )
+        self.assertTrue(share_comments.is_gpt_turn(gpt_quoted))
+        listed = share_comments.list_comments(8, "local", 3)
+        thread = share_comments.paie_thread(listed)
+        self.assertNotIn(gpt_quoted["id"], [c["id"] for c in thread])
         with self.assertRaises(ValueError):
             share_comments.add_comment(
                 8,

@@ -72,9 +72,7 @@ def is_gpt_turn(row: dict[str, Any] | None) -> bool:
         return False
     if is_gpt_comment(row):
         return True
-    if str(row.get("prefix") or "").strip() != GPT_PREFIX:
-        return False
-    return not str(row.get("quote") or "").strip()
+    return str(row.get("prefix") or "").strip() == GPT_PREFIX
 
 
 def parent_id_of(row: dict[str, Any] | None) -> int | None:

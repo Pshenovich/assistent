@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260908-close";
+  var WEBAPP_BUILD = "20260908-hl";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260908-close";
+  const NOTE_EDITOR_ASSET_V = "20260908-hl";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -7900,12 +7900,26 @@
     var panel = document.getElementById("note-editor-comments");
     var api = window.NoteComments;
     var history = [];
-    var prior = api && api.gptThread ? api.gptThread((panel && panel._allComments) || []) : [];
+    var prior = discussionComments((panel && panel._allComments) || []).slice().sort(function (a, b) {
+      var at = Date.parse(a && a.created_at) || 0;
+      var bt = Date.parse(b && b.created_at) || 0;
+      if (at !== bt) return at - bt;
+      return Number(a.id || 0) - Number(b.id || 0);
+    });
     prior.forEach(function (c) {
-      history.push({
-        role: api && api.isGptComment && api.isGptComment(c) ? "assistant" : "user",
-        content: String((c && c.body) || ""),
-      });
+      var content = String((c && c.body) || "").trim();
+      if (!content) return;
+      var quote = String((c && c.quote) || "").trim();
+      if (quote) content = "Про текст: «" + quote + "»\n\n" + content;
+      if (api && api.isGptComment && api.isGptComment(c)) {
+        history.push({ role: "assistant", content: content });
+        return;
+      }
+      if (api && api.isPaieComment && api.isPaieComment(c)) {
+        history.push({ role: "user", content: "CHAIR:\n" + content });
+        return;
+      }
+      history.push({ role: "user", content: content });
     });
     wrap._gptBusy = true;
     syncNotePaieReplyForm(true);

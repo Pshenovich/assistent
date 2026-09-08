@@ -234,13 +234,15 @@
     .hidden { display: none !important; }
     #share-body { user-select: text; -webkit-user-select: text; }
     mark.note-comment-hl {
-      background: rgba(82, 158, 244, 0.28);
+      background: rgba(82, 158, 244, 0.14);
       color: inherit;
       border-radius: 2px;
       cursor: pointer;
+      box-shadow: -4px 0 0 0 rgba(82, 158, 244, 0.72);
     }
     mark.note-comment-hl.is-active {
-      background: rgba(82, 158, 244, 0.48);
+      background: rgba(82, 158, 244, 0.24);
+      box-shadow: -4px 0 0 0 rgb(82, 158, 244);
     }
     .share-body-wrap {
       position: relative;
@@ -254,13 +256,23 @@
     }
     .note-comment-overlay-hl {
       position: absolute;
-      background: rgba(82, 158, 244, 0.28);
+      background: rgba(82, 158, 244, 0.14);
       border-radius: 2px;
       pointer-events: auto;
       cursor: pointer;
     }
     .note-comment-overlay-hl.is-active {
-      background: rgba(82, 158, 244, 0.48);
+      background: rgba(82, 158, 244, 0.24);
+    }
+    .note-comment-overlay-bar {
+      position: absolute;
+      width: 3px;
+      border-radius: 2px;
+      background: rgba(82, 158, 244, 0.72);
+      pointer-events: none;
+    }
+    .note-comment-overlay-bar.is-active {
+      background: rgb(82, 158, 244);
     }
     .note-comment-bubble {
       position: fixed;
@@ -625,7 +637,7 @@
     </aside>
   </main>
   <script src="/webapp/note-html.js?v=20260907-kb-discuss"></script>
-  <script src="/webapp/note-comments.js?v=20260907-kb-discuss"></script>
-  <script src="/webapp/share.js?v=20260907-kb-discuss"></script>
+  <script src="/webapp/note-comments.js?v=20260908-hl"></script>
+  <script src="/webapp/share.js?v=20260908-hl"></script>
 </body>
 </html>

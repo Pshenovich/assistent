@@ -327,7 +327,9 @@
   }
 
   function setActiveComment(id) {
-    var marks = document.querySelectorAll("mark.note-comment-hl, .note-comment-overlay-hl");
+    var marks = document.querySelectorAll(
+      "mark.note-comment-hl, .note-comment-overlay-hl, .note-comment-overlay-bar"
+    );
     marks.forEach(function (m) {
       m.classList.toggle("is-active", String(m.getAttribute("data-comment-id")) === String(id || ""));
     });

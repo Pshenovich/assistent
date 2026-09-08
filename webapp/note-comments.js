@@ -411,20 +411,39 @@
       var range = rangeForAnchor(root, c.quote, c.prefix, c.suffix);
       if (!range) return;
       var rects = range.getClientRects();
+      var active = String(c.id) === String(activeId || "");
+      var minL = Infinity;
+      var minT = Infinity;
+      var maxB = -Infinity;
+      var painted = false;
       for (var i = 0; i < rects.length; i++) {
         var r = rects[i];
         if (r.width < 1 || r.height < 1) continue;
         var span = document.createElement("span");
-        span.className =
-          "note-comment-overlay-hl" +
-          (String(c.id) === String(activeId || "") ? " is-active" : "");
+        span.className = "note-comment-overlay-hl" + (active ? " is-active" : "");
         span.setAttribute("data-comment-id", String(c.id));
         span.style.left = r.left - overlayRect.left + overlay.scrollLeft + "px";
         span.style.top = r.top - overlayRect.top + overlay.scrollTop + "px";
         span.style.width = r.width + "px";
         span.style.height = r.height + "px";
         overlay.appendChild(span);
+        painted = true;
+        if (r.left < minL) minL = r.left;
+        if (r.top < minT) minT = r.top;
+        if (r.bottom > maxB) maxB = r.bottom;
       }
+      if (!painted) return;
+      var bar = document.createElement("span");
+      var barW = 3;
+      var gap = 4;
+      bar.className = "note-comment-overlay-bar" + (active ? " is-active" : "");
+      bar.setAttribute("data-comment-id", String(c.id));
+      bar.style.left =
+        Math.max(0, minL - overlayRect.left + overlay.scrollLeft - gap - barW) + "px";
+      bar.style.top = minT - overlayRect.top + overlay.scrollTop + "px";
+      bar.style.width = barW + "px";
+      bar.style.height = Math.max(1, maxB - minT) + "px";
+      overlay.appendChild(bar);
     });
   }
 
@@ -447,8 +466,7 @@
   function isGptTurn(c) {
     if (!c) return false;
     if (isGptComment(c)) return true;
-    if (String(c.prefix || "").trim() !== "__gpt__") return false;
-    return !String(c.quote || "").trim();
+    return String(c.prefix || "").trim() === "__gpt__";
   }
 
   function parentIdOf(c) {

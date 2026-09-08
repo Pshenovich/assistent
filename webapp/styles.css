@@ -2992,13 +2992,25 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
 
 .note-comment-overlay-hl {
   position: absolute;
-  background: rgba(82, 158, 244, 0.28);
+  background: rgba(82, 158, 244, 0.14);
   border-radius: 2px;
   pointer-events: none;
 }
 
 .note-comment-overlay-hl.is-active {
-  background: rgba(82, 158, 244, 0.48);
+  background: rgba(82, 158, 244, 0.24);
+}
+
+.note-comment-overlay-bar {
+  position: absolute;
+  width: 3px;
+  border-radius: 2px;
+  background: rgba(82, 158, 244, 0.72);
+  pointer-events: none;
+}
+
+.note-comment-overlay-bar.is-active {
+  background: rgb(82, 158, 244);
 }
 
 .note-comment-bubble {

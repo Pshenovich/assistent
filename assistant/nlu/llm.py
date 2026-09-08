@@ -66,13 +66,19 @@ def _chat(
     timeout: float = 120,
     temperature: float = 0.1,
     max_tokens: int | None = None,
+    history: list[dict[str, str]] | None = None,
 ) -> str:
+    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+    for it in history or []:
+        role = str((it or {}).get("role") or "").strip().lower()
+        content = str((it or {}).get("content") or "").strip()
+        if role not in ("user", "assistant") or not content:
+            continue
+        messages.append({"role": role, "content": content[:24000]})
+    messages.append({"role": "user", "content": user})
     payload: dict[str, Any] = {
         "model": model or _model(),
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
+        "messages": messages,
         "temperature": temperature,
     }
     if max_tokens is not None:
@@ -299,9 +305,20 @@ def format_note(text: str) -> dict[str, str] | None:
     return {"title": title}
 
 
-def answer_with_context(question: str, context: str, model: str | None = None) -> str:
+def answer_with_context(
+    question: str,
+    context: str,
+    model: str | None = None,
+    history: list[dict[str, str]] | None = None,
+) -> str:
     user = f"Контекст:\n{context[:12000]}\n\nВопрос:\n{question}"
-    return _chat(ASK_SYSTEM, user, operation="ask", model=model or _model_ask())
+    return _chat(
+        ASK_SYSTEM,
+        user,
+        operation="ask",
+        model=model or _model_ask(),
+        history=history,
+    )
 
 
 def parse_journal_qa_query(
