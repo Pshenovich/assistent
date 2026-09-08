@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260908-moremenu";
+  var WEBAPP_BUILD = "20260908-paie502";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260908-moremenu";
+  const NOTE_EDITOR_ASSET_V = "20260908-paie502";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -1368,10 +1368,38 @@
     };
   }
 
+  function looksLikeHtmlError(text) {
+    var s = String(text || "")
+      .replace(/^\uFEFF/, "")
+      .trim();
+    if (!s) return false;
+    var head = s.slice(0, 320).toLowerCase();
+    if (head.charAt(0) !== "<") return /502 bad gateway/i.test(s);
+    return (
+      head.indexOf("<html") >= 0 ||
+      head.indexOf("<!doctype") >= 0 ||
+      head.indexOf("<head") >= 0 ||
+      head.indexOf("<body") >= 0 ||
+      head.indexOf("<center") >= 0 ||
+      head.indexOf("bad gateway") >= 0
+    );
+  }
+
+  function httpStatusFallback(status, fallback) {
+    var n = Number(status) || 0;
+    if (n === 502 || n === 503 || n === 504) {
+      return "Сервер временно недоступен. Попробуйте ещё раз через несколько секунд.";
+    }
+    return fallback || "Ошибка";
+  }
+
   function apiErrorMessage(body, fallback) {
     if (!body) return fallback || "Ошибка";
     var d = body.detail != null ? body.detail : body.message;
-    if (typeof d === "string" && d.trim()) return d.trim();
+    if (typeof d === "string" && d.trim()) {
+      if (looksLikeHtmlError(d)) return fallback || "Ошибка";
+      return d.trim();
+    }
     if (Array.isArray(d)) {
       return d
         .map(function (x) {
@@ -1554,7 +1582,11 @@
     try {
       body = text ? JSON.parse(text) : null;
     } catch (_) {
-      body = { detail: text || res.statusText };
+      body = {
+        detail: looksLikeHtmlError(text)
+          ? httpStatusFallback(res.status, res.statusText)
+          : text || res.statusText,
+      };
     }
     if (!res.ok) {
       if (res.status === 403 && hasTelegramWebAppAuth() && !miniappDev) {
@@ -1581,7 +1613,10 @@
           bootstrapGateLogin();
         }
       }
-      const msg = apiErrorMessage(body, res.statusText || "Ошибка");
+      const msg = apiErrorMessage(
+        body,
+        httpStatusFallback(res.status, res.statusText || "Ошибка")
+      );
       const err = new Error(msg);
       err.status = res.status;
       if (res.status === 409 && body && body.detail && typeof body.detail === "object") {
@@ -8881,6 +8916,10 @@
     var wrap = document.getElementById("note-editor-more-wrap");
     var panel = document.getElementById("note-editor-comments");
     var label = (progress && progress.label) || text || "";
+    if (looksLikeHtmlError(label)) {
+      label = "Сервер временно недоступен. Попробуйте запустить PAIE ещё раз.";
+      progress = null;
+    }
     if (!label) {
       el.classList.add("hidden");
       el.innerHTML = "";
@@ -8957,10 +8996,20 @@
             refreshNoteCommentsList();
             return;
           }
-          setNotePaeiStatus("");
+          setNotePaeiStatus("PAIE прервался. Запустите ещё раз.");
         })
         .catch(function (e) {
           tries += 1;
+          var code = e && e.status;
+          var transient = code === 502 || code === 503 || code === 504 || !code;
+          if (transient && tries <= 24) {
+            setNotePaeiStatus("Сервер временно недоступен, пробую снова…", {
+              label: "Сервер временно недоступен, пробую снова…",
+              pct: 16,
+            });
+            setTimeout(tick, 3000);
+            return;
+          }
           if (tries > 8) {
             var w = document.getElementById("note-editor-more-wrap");
             if (w) w._paeiRunning = false;

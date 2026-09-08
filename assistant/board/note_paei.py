@@ -39,6 +39,19 @@ class NullPublisher:
         return None
 
 
+def _public_job_error(exc: BaseException) -> str:
+    text = str(exc or "").strip() or "Не удалось завершить PAIE"
+    head = text[:400].lower()
+    if (
+        "<html" in head
+        or "<!doctype" in head
+        or "bad gateway" in head
+        or "<head>" in head
+    ):
+        return "Сервер модели временно недоступен. Запустите PAIE ещё раз."
+    return text[:400]
+
+
 def job_key(user_id: int | str, kind: str, item_id: str | int) -> str:
     return f"{int(user_id)}:{kind}:{item_id}"
 
@@ -461,4 +474,4 @@ async def run_note_paei_job(
         )
     except Exception as e:
         print(f"[board.paei] note_fail user={user_id} kind={kind} item={item_id} err={e!r}")
-        _update_job(key, status="error", error=str(e)[:400])
+        _update_job(key, status="error", error=_public_job_error(e))

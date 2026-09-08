@@ -131,6 +131,21 @@ class NotePaeiTest(unittest.IsolatedAsyncioTestCase):
         notes_store._CONN = None  # type: ignore[attr-defined]
         self._tmp.cleanup()
 
+    def test_public_job_error_strips_nginx_html(self) -> None:
+        from assistant.board.note_paei import _public_job_error
+
+        html = (
+            "<html> <head><title>502 Bad Gateway</title></head> "
+            "<body><center><h1>502 Bad Gateway</h1></center></body></html>"
+        )
+        msg = _public_job_error(RuntimeError(html))
+        self.assertNotIn("<html", msg.lower())
+        self.assertIn("временно недоступен", msg)
+        self.assertEqual(
+            _public_job_error(RuntimeError("модель не ответила")),
+            "модель не ответила",
+        )
+
     def test_format_chair_comment(self) -> None:
         text = format_chair_comment(
             {
