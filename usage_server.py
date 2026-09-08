@@ -2386,7 +2386,7 @@ class _MiniappCalendarEventUpdate(BaseModel):
 
 class _MiniappCalendarAvailabilityBody(BaseModel):
     date: str = ""
-    attendees: list[str] = Field(default_factory=list)
+    attendees: list[Any] = Field(default_factory=list)
 
 
 class _MiniappCalendarExcludedBody(BaseModel):
@@ -2882,11 +2882,31 @@ def _normalize_attendee_emails(raw: Any) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for item in raw or []:
-        em = str(item or "").strip().lower()
+        if isinstance(item, dict):
+            em = str(item.get("email") or "").strip().lower()
+        else:
+            em = str(item or "").strip().lower()
         if not em or "@" not in em or em in seen:
             continue
         seen.add(em)
         out.append(em)
+    return out
+
+
+def _normalize_attendee_refs(raw: Any) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw or []:
+        uname = ""
+        if isinstance(item, dict):
+            em = str(item.get("email") or "").strip().lower()
+            uname = str(item.get("telegram_username") or "").strip().lstrip("@")
+        else:
+            em = str(item or "").strip().lower()
+        if not em or "@" not in em or em in seen:
+            continue
+        seen.add(em)
+        out.append({"email": em, "telegram_username": uname})
     return out
 
 
@@ -3768,6 +3788,7 @@ async def miniapp_calendar_availability(
     except ValueError:
         raise HTTPException(status_code=400, detail="Дата должна быть YYYY-MM-DD") from None
     emails = _normalize_attendee_emails(body.attendees)
+    refs = _normalize_attendee_refs(body.attendees)
     uname = _miniapp_tg_username(principal)
 
     def _run() -> dict[str, Any]:
@@ -3776,6 +3797,7 @@ async def miniapp_calendar_availability(
             day_iso=day,
             attendees=emails,
             telegram_username=uname,
+            attendee_refs=refs,
         )
 
     try:

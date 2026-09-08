@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260908-att";
+  var WEBAPP_BUILD = "20260908-busy";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260908-att";
+  const NOTE_EDITOR_ASSET_V = "20260908-busy";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -4935,7 +4935,8 @@
     var union = [];
     var calendarPeople = 0;
     people.forEach(function (p) {
-      if (p && p.calendar) {
+      var hasCal = !!(p && (p.calendar || ((p.busy || []).length > 0)));
+      if (hasCal) {
         calendarPeople += 1;
         union = union.concat(p.busy || []);
       }
@@ -5044,6 +5045,9 @@
         email: em,
         name: String((person && person.name) || "").trim(),
         calendar: !!(person && person.calendar_connected),
+        telegram_username: String((person && person.telegram_username) || "")
+          .trim()
+          .replace(/^@/, ""),
       });
       paintChips();
       if (inputEl) inputEl.value = "";
@@ -5137,7 +5141,15 @@
       if (!availEl || !day) return;
       apiFetch("/calendar/availability", {
         method: "POST",
-        body: JSON.stringify({ date: day, attendees: emails() }),
+        body: JSON.stringify({
+          date: day,
+          attendees: items.map(function (it) {
+            return {
+              email: it.email,
+              telegram_username: it.telegram_username || "",
+            };
+          }),
+        }),
       })
         .then(function (data) {
           paintMeetingAvailability(availEl, data);
@@ -5154,6 +5166,9 @@
         email: em,
         name: String((raw && raw.name) || "").trim(),
         calendar: !!(raw && raw.calendar_connected),
+        telegram_username: String((raw && raw.telegram_username) || "")
+          .trim()
+          .replace(/^@/, ""),
       });
     });
     paintChips();
@@ -5166,6 +5181,9 @@
             if (meetingEmailKey(c.email) === it.email) {
               if (!it.name) it.name = c.name || "";
               it.calendar = !!c.calendar_connected;
+              if (!it.telegram_username) {
+                it.telegram_username = String(c.telegram_username || "").replace(/^@/, "");
+              }
             }
           });
         });

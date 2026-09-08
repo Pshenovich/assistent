@@ -546,19 +546,44 @@ def attendee_calendar_user_id(contact: dict[str, Any]) -> int | None:
     return None
 
 
-def leo_calendar_user_id(contact: dict[str, Any] | None, email: str = "") -> int | None:
+def leo_calendar_user_id(
+    contact: dict[str, Any] | None,
+    email: str = "",
+    *,
+    telegram_username: str | None = None,
+) -> int | None:
     """Telegram uid контакта с подключённым Google Calendar в Leo."""
     from assistant.integrations import google_calendar_oauth
     from assistant.lib.calendar_user_lookup import lookup_user_id_by_calendar_email
 
-    uid = attendee_calendar_user_id(contact) if contact else None
+    candidates: list[int] = []
+    seen: set[int] = set()
+
+    def _add(uid: int | None) -> None:
+        if not uid:
+            return
+        n = int(uid)
+        if n <= 0 or n in seen:
+            return
+        seen.add(n)
+        candidates.append(n)
+
+    if contact:
+        _add(attendee_calendar_user_id(contact))
+    uname = str(
+        telegram_username
+        or (contact or {}).get("telegram_username")
+        or (contact or {}).get("tg_username")
+        or ""
+    ).strip()
+    if uname:
+        _add(telegram_registry.lookup_user_id(uname))
     em = str(email or (contact or {}).get("email") or "").strip().lower()
-    if not uid and em:
-        uid = lookup_user_id_by_calendar_email(em)
-    if not uid:
-        return None
-    if google_calendar_oauth.user_token_path(int(uid)).is_file():
-        return int(uid)
+    if em:
+        _add(lookup_user_id_by_calendar_email(em))
+    for uid in candidates:
+        if google_calendar_oauth.user_token_path(int(uid)).is_file():
+            return int(uid)
     return None
 
 

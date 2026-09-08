@@ -136,12 +136,14 @@ def calendar_availability(
     day_iso: str,
     attendees: list[str],
     telegram_username: str | None = None,
+    attendee_refs: list[dict] | None = None,
 ) -> dict[str, Any]:
     return cal_svc.availability_for_attendees(
         int(telegram_user_id),
         day_iso,
         attendees,
         telegram_username=telegram_username,
+        attendee_refs=attendee_refs,
     )
 
 

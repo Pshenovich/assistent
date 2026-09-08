@@ -296,6 +296,132 @@ def _busy_intervals_to_iso(
     return out
 
 
+def _clip_busy_window(
+    start: datetime,
+    end: datetime,
+    *,
+    work_start: datetime,
+    work_end: datetime,
+) -> tuple[datetime, datetime] | None:
+    tz = work_start.tzinfo
+    if tz is not None:
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=tz)
+        else:
+            start = start.astimezone(tz)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=tz)
+        else:
+            end = end.astimezone(tz)
+    s = max(start, work_start)
+    e = min(end, work_end)
+    if s < e:
+        return (s, e)
+    return None
+
+
+def _busy_from_freebusy_payload(
+    res: dict[str, Any],
+    calendar_ids: list[str],
+    *,
+    work_start: datetime,
+    work_end: datetime,
+) -> tuple[list[tuple[datetime, datetime]], bool]:
+    calendars = res.get("calendars") or {}
+    extra: list[tuple[datetime, datetime]] = []
+    any_ok = False
+    for cid in calendar_ids:
+        cal = calendars.get(cid) or calendars.get(str(cid).lower()) or {}
+        if not isinstance(cal, dict):
+            continue
+        if cal.get("errors"):
+            continue
+        any_ok = True
+        for block in cal.get("busy") or []:
+            if not isinstance(block, dict):
+                continue
+            bs = block.get("start")
+            be = block.get("end")
+            if not bs or not be:
+                continue
+            try:
+                b_start = datetime.fromisoformat(str(bs).replace("Z", "+00:00"))
+                b_end = datetime.fromisoformat(str(be).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            clipped = _clip_busy_window(
+                b_start, b_end, work_start=work_start, work_end=work_end
+            )
+            if clipped:
+                extra.append(clipped)
+    return calendar_merge_busy_intervals(extra), any_ok
+
+
+def busy_intervals_via_freebusy(
+    user_id: int,
+    work_start: datetime,
+    work_end: datetime,
+    *,
+    calendar_ids: list[str] | None = None,
+) -> list[tuple[datetime, datetime]]:
+    """Занятость по FreeBusy токена пользователя (без названий встреч)."""
+    try:
+        svc = _service(int(user_id))
+        ids = [str(x).strip() for x in (calendar_ids or []) if str(x).strip()]
+        if not ids:
+            ids = list(cal_sources.get_active_calendar_ids(int(user_id)) or [])
+        if not ids:
+            ids = ["primary"]
+        body = {
+            "timeMin": work_start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "timeMax": work_end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "items": [{"id": cid} for cid in ids],
+        }
+        res = svc.freebusy().query(body=body).execute()
+    except Exception as e:
+        print(f"[calendar] freebusy uid={user_id} err={e!r}")
+        return []
+    busy, _ok = _busy_from_freebusy_payload(
+        res if isinstance(res, dict) else {},
+        ids,
+        work_start=work_start,
+        work_end=work_end,
+    )
+    return busy
+
+
+def busy_intervals_via_viewer_email(
+    viewer_id: int,
+    email: str,
+    work_start: datetime,
+    work_end: datetime,
+) -> list[tuple[datetime, datetime]] | None:
+    """Занятость чужого календаря через FreeBusy зрителя. None — календарь не виден."""
+    em = str(email or "").strip()
+    if not em or "@" not in em:
+        return None
+    try:
+        svc = _service(int(viewer_id))
+        body = {
+            "timeMin": work_start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "timeMax": work_end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "items": [{"id": em}],
+        }
+        res = svc.freebusy().query(body=body).execute()
+    except Exception as e:
+        print(f"[calendar] freebusy viewer={viewer_id} email={em} err={e!r}")
+        return None
+    busy, any_ok = _busy_from_freebusy_payload(
+        res if isinstance(res, dict) else {},
+        [em],
+        work_start=work_start,
+        work_end=work_end,
+    )
+    if not any_ok:
+        return None
+    return busy
+
+
 def busy_intervals_day(
     user_id: int,
     day_iso: str,
@@ -310,12 +436,18 @@ def busy_intervals_day(
             work_start, work_end = _work_window(user_id, day_iso)
         if tz is None:
             tz = work_start.tzinfo or _tz_for(user_id)
+        busy = busy_intervals_via_freebusy(
+            int(user_id), work_start, work_end
+        )
+        if busy:
+            return busy
         events = _raw_events_for_day(user_id, day_iso)
-    except Exception:
+        return calendar_busy_from_events(
+            events, tz=tz, work_start=work_start, work_end=work_end
+        )
+    except Exception as e:
+        print(f"[calendar] busy_intervals uid={user_id} day={day_iso} err={e!r}")
         return []
-    return calendar_busy_from_events(
-        events, tz=tz, work_start=work_start, work_end=work_end
-    )
 
 
 def availability_for_attendees(
@@ -324,6 +456,7 @@ def availability_for_attendees(
     attendee_emails: list[str],
     *,
     telegram_username: str | None = None,
+    attendee_refs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Занятость постановщика и участников с календарём Leo. Без названий встреч."""
     from assistant.lib.calendar_attendees import (
@@ -331,6 +464,7 @@ def availability_for_attendees(
         leo_calendar_user_id,
     )
     from assistant.stores import contacts_store as contacts
+    from assistant.stores.contacts_store import normalize_telegram_username
 
     day = str(day_iso or "").strip()[:10]
     datetime.strptime(day, "%Y-%m-%d")
@@ -366,22 +500,31 @@ def availability_for_attendees(
         em = str((row or {}).get("email") or "").strip().lower()
         if em:
             by_email[em] = row
+    refs: list[dict[str, Any]] = []
+    if attendee_refs:
+        refs = [r for r in attendee_refs if isinstance(r, dict)]
+    else:
+        refs = [{"email": e, "telegram_username": ""} for e in (attendee_emails or [])]
     seen: set[str] = set()
-    for raw in attendee_emails or []:
-        em = str(raw or "").strip().lower()
+    for raw in refs:
+        em = str((raw or {}).get("email") or "").strip().lower()
         if not em or "@" not in em or em in seen:
             continue
         seen.add(em)
         hit = by_email.get(em)
-        uid = leo_calendar_user_id(hit, em)
+        uname = normalize_telegram_username(
+            str((raw or {}).get("telegram_username") or "")
+        )
+        uid = leo_calendar_user_id(hit, em, telegram_username=uname or None)
         if uid and int(uid) == int(owner_id):
             continue
         label = ""
         if hit:
             label = str(contact_display_name(hit) or hit.get("name") or "").strip()
-        has_cal = bool(uid)
         busy: list[tuple[datetime, datetime]] = []
-        if has_cal and uid:
+        has_cal = False
+        if uid:
+            has_cal = True
             busy = busy_intervals_day(
                 int(uid),
                 day,
@@ -389,6 +532,13 @@ def availability_for_attendees(
                 work_start=work_start,
                 work_end=work_end,
             )
+        else:
+            via = busy_intervals_via_viewer_email(
+                int(owner_id), em, work_start, work_end
+            )
+            if via is not None:
+                has_cal = True
+                busy = via
         people.append(
             {
                 "id": em,
