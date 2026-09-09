@@ -7924,10 +7924,12 @@ html.modal-sheet-open body {
 }
 
 @media (min-width: 960px) {
-  .note-paie-composer-input,
-  .note-paie-reply-form .note-comments-input,
-  .note-paie-composer-input.is-multiline,
-  .note-paie-reply-form .note-comments-input.is-multiline {
+  #note-paie-reply-input,
+  #note-discussion-overlay .note-paie-composer-input,
+  #note-discussion-overlay .note-paie-reply-form .note-comments-input,
+  #note-paie-reply-input.is-multiline,
+  #note-discussion-overlay .note-paie-composer-input.is-multiline,
+  #note-discussion-overlay .note-paie-reply-form .note-comments-input.is-multiline {
     padding-right: 4px;
     padding-bottom: 4px;
     padding-left: 4px;
@@ -8377,6 +8379,15 @@ html.modal-sheet-open body {
     --page-x: 2rem;
     --page-bottom: 6.5rem;
     --tabbar-stack: 0px;
+  }
+
+  #note-paie-reply-input,
+  #note-discussion-overlay .note-paie-composer-input,
+  #note-paie-reply-input.is-multiline,
+  #note-discussion-overlay .note-paie-composer-input.is-multiline {
+    padding-right: 4px;
+    padding-bottom: 4px;
+    padding-left: 4px;
   }
 
   html.tg-miniapp-fullscreen {
