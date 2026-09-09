@@ -57,6 +57,24 @@ def summary_model_name() -> str:
     return _model_summary()
 
 
+def _user_content(text: str, images: list[dict[str, str]] | None) -> Any:
+    if not images:
+        return text
+    parts: list[dict[str, Any]] = [{"type": "text", "text": text or "Опиши вложение."}]
+    for img in images:
+        mime = str((img or {}).get("mime") or "image/jpeg").split(";")[0].strip() or "image/jpeg"
+        b64 = str((img or {}).get("b64") or "").strip()
+        if not b64:
+            continue
+        parts.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"},
+            }
+        )
+    return parts if len(parts) > 1 else text
+
+
 def _chat(
     system: str,
     user: str,
@@ -68,19 +86,49 @@ def _chat(
     max_tokens: int | None = None,
     history: list[dict[str, str]] | None = None,
     context_prefix: str | None = None,
+    images: list[dict[str, str]] | None = None,
 ) -> str:
+    return _chat_result(
+        system,
+        user,
+        operation=operation,
+        model=model,
+        timeout=timeout,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        history=history,
+        context_prefix=context_prefix,
+        images=images,
+    )[0]
+
+
+def _chat_result(
+    system: str,
+    user: str,
+    *,
+    operation: str,
+    model: str | None = None,
+    timeout: float = 120,
+    temperature: float = 0.1,
+    max_tokens: int | None = None,
+    history: list[dict[str, str]] | None = None,
+    context_prefix: str | None = None,
+    images: list[dict[str, str]] | None = None,
+) -> tuple[str, list[dict[str, str]]]:
+    from assistant.integrations.openrouter_client import extract_chat_message_media
+
     system_text = system
     extra = (context_prefix or "").strip()
     if extra:
         system_text = f"{system}\n\n{extra}"
-    messages: list[dict[str, str]] = [{"role": "system", "content": system_text}]
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system_text}]
     for it in history or []:
         role = str((it or {}).get("role") or "").strip().lower()
         content = str((it or {}).get("content") or "").strip()
         if role not in ("user", "assistant") or not content:
             continue
         messages.append({"role": role, "content": content[:24000]})
-    messages.append({"role": "user", "content": user})
+    messages.append({"role": "user", "content": _user_content(user, images)})
     payload: dict[str, Any] = {
         "model": model or _model(),
         "messages": messages,
@@ -89,7 +137,10 @@ def _chat(
     if max_tokens is not None:
         payload["max_tokens"] = int(max_tokens)
     data = openrouter_chat_completion(payload, operation=operation, timeout=timeout)
-    return (data["choices"][0]["message"]["content"] or "").strip()
+    text, out_images = extract_chat_message_media(data)
+    if not text and not out_images:
+        text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+    return text, out_images
 
 
 def parse_calendar(
@@ -320,7 +371,36 @@ def answer_with_context(
     note_text: str = "",
     quote: str = "",
     knowledge_brief: str = "",
+    images: list[dict[str, str]] | None = None,
+    file_notes: str = "",
 ) -> str:
+    return answer_with_context_result(
+        question,
+        context,
+        model=model,
+        history=history,
+        note_title=note_title,
+        note_text=note_text,
+        quote=quote,
+        knowledge_brief=knowledge_brief,
+        images=images,
+        file_notes=file_notes,
+    )["answer"]
+
+
+def answer_with_context_result(
+    question: str,
+    context: str = "",
+    model: str | None = None,
+    history: list[dict[str, str]] | None = None,
+    *,
+    note_title: str = "",
+    note_text: str = "",
+    quote: str = "",
+    knowledge_brief: str = "",
+    images: list[dict[str, str]] | None = None,
+    file_notes: str = "",
+) -> dict[str, Any]:
     from assistant.nlu.ask_context import assemble_ask_messages
 
     extra, user = assemble_ask_messages(
@@ -331,14 +411,32 @@ def answer_with_context(
         quote=quote,
         knowledge_brief=knowledge_brief,
     )
-    return _chat(
-        ASK_SYSTEM,
-        user,
-        operation="ask",
-        model=model or _model_ask(),
-        history=history,
-        context_prefix=extra or None,
-    )
+    notes = (file_notes or "").strip()
+    if notes:
+        user = (user or "").rstrip() + "\n\n" + notes
+    if images and not (question or "").strip() and not (user or "").strip():
+        user = "Опиши вложение и ответь по нему."
+    if images:
+        text, out_images = _chat_result(
+            ASK_SYSTEM,
+            user,
+            operation="ask",
+            model=model or _model_ask(),
+            history=history,
+            context_prefix=extra or None,
+            images=images,
+        )
+    else:
+        text = _chat(
+            ASK_SYSTEM,
+            user,
+            operation="ask",
+            model=model or _model_ask(),
+            history=history,
+            context_prefix=extra or None,
+        )
+        out_images = []
+    return {"answer": text, "images": out_images}
 
 
 def parse_journal_qa_query(

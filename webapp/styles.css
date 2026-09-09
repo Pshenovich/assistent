@@ -1090,6 +1090,7 @@ html.boot-open-app #app.hidden {
 
 .tabbar-icon {
   display: flex;
+  flex-shrink: 0;
   line-height: 0;
 }
 
@@ -1107,6 +1108,14 @@ html.boot-open-app #app.hidden {
 }
 
 .sidebar-brand {
+  display: none;
+}
+
+.sidebar-head {
+  display: none;
+}
+
+.sidebar-toggle {
   display: none;
 }
 
@@ -3780,6 +3789,143 @@ html.note-editor-open #note-editor-overlay {
   display: none;
 }
 
+.note-paie-composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.note-paie-composer-row .note-paie-composer-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.note-paie-attach {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  margin: 0 0 2px;
+  padding: 0;
+  border: none;
+  border-radius: 100px;
+  color: var(--note-composer-muted);
+  background: var(--note-composer-border);
+  cursor: pointer;
+}
+
+.note-paie-attach:hover,
+.note-paie-attach:focus-visible {
+  color: var(--note-composer-ink);
+}
+
+.note-paie-attach:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.note-paie-attach svg {
+  display: block;
+}
+
+.note-paie-reply-form.is-drop-attach {
+  outline: 2px dashed var(--note-composer-accent);
+  outline-offset: 2px;
+}
+
+.note-paie-attach-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.note-paie-attach-preview.hidden {
+  display: none;
+}
+
+.note-paie-attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 8px 4px 4px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.note-paie-attach-chip.is-image {
+  padding-left: 4px;
+}
+
+.note-paie-attach-chip img {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.note-paie-attach-chip-name {
+  overflow: hidden;
+  max-width: 9rem;
+  color: var(--text);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-paie-attach-chip-remove {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  color: var(--note-composer-muted);
+  background: transparent;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.note-discuss-attach-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.note-discuss-bubble > .note-discuss-attach-list:first-child {
+  margin-top: 0;
+}
+
+.note-discuss-attach-img {
+  display: block;
+  max-width: 100%;
+  max-height: 16rem;
+  border-radius: 12px;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.note-discuss-attach-file {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.06);
+  font: inherit;
+  font-size: 0.875rem;
+  text-align: left;
+  cursor: pointer;
+}
+
 .note-paie-composer-input,
 .note-paie-reply-form .note-comments-input {
   width: 100%;
@@ -4205,7 +4351,9 @@ html.note-editor-open #note-editor-overlay {
   display: flex;
   flex: 1;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
@@ -4221,6 +4369,8 @@ html.note-editor-open #note-editor-overlay {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-width: 0;
+  max-width: 100%;
   padding-bottom: 8px;
 }
 
@@ -4235,6 +4385,8 @@ html.note-editor-open #note-editor-overlay {
 .note-discuss-msg {
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
+  min-width: 0;
   max-width: 92%;
   cursor: pointer;
 }
@@ -4369,12 +4521,18 @@ html.note-editor-open #note-editor-overlay {
 }
 
 .note-discuss-bubble {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
   padding: 12px 16px;
   border-radius: 18px;
   font-size: 0.9375rem;
   line-height: 1.45;
   overflow-wrap: anywhere;
+  word-break: break-word;
   white-space: pre-wrap;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
   -webkit-user-select: text;
   user-select: text;
 }
@@ -4408,6 +4566,30 @@ html.note-editor-open #note-editor-overlay {
 
 .note-discuss-bubble--md > :last-child {
   margin-bottom: 0;
+}
+
+.note-discuss-bubble h1,
+.note-discuss-bubble h2,
+.note-discuss-bubble h3,
+.note-discuss-bubble h4,
+.note-discuss-bubble h5,
+.note-discuss-bubble h6 {
+  margin: 0.65em 0 0.3em;
+  font-size: 1em;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.note-discuss-bubble h1 {
+  font-size: 1.05em;
+}
+
+.note-discuss-bubble .note-table-scroll {
+  max-width: 100%;
+  margin: 0.5rem 0 0.35rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
 }
 
 .note-discuss-bubble--md code {
@@ -5062,6 +5244,7 @@ html.note-editor-open #note-editor-overlay {
   padding: 0;
 }
 
+.journal-summary-html h1,
 .journal-summary-html h2,
 .journal-summary-html h3,
 .journal-summary-html h4,
@@ -5073,6 +5256,11 @@ html.note-editor-open #note-editor-overlay {
   line-height: 1.35;
 }
 
+.journal-summary-html h1 {
+  font-size: 1rem;
+}
+
+.journal-summary-html h1:first-child,
 .journal-summary-html h2:first-child,
 .journal-summary-html h3:first-child,
 .journal-summary-html h4:first-child {
@@ -7580,6 +7768,67 @@ html.modal-sheet-open body {
     min-width: 8rem;
     white-space: normal;
   }
+
+  #note-discussion-overlay .note-discuss-bubble {
+    padding: 10px 12px;
+    font-size: 0.9375rem;
+  }
+
+  #note-discussion-overlay .note-discuss-bubble.journal-summary-html,
+  #note-discussion-overlay .note-discuss-bubble.note-body-html,
+  #note-discussion-overlay .note-discuss-bubble--md {
+    padding: 10px 12px;
+    font-size: 0.9375rem;
+    line-height: 1.45;
+  }
+
+  #note-discussion-overlay .note-discuss-bubble table,
+  #note-discussion-overlay .note-discuss-bubble.note-body-html table,
+  #note-discussion-overlay .note-discuss-bubble.journal-summary-html table {
+    display: table;
+    width: max-content;
+    min-width: 100%;
+    max-width: none;
+    white-space: normal;
+  }
+
+  #note-discussion-overlay .note-discuss-bubble table tbody,
+  #note-discussion-overlay .note-discuss-bubble.note-body-html table tbody,
+  #note-discussion-overlay .note-discuss-bubble.journal-summary-html table tbody {
+    display: table-row-group;
+    min-width: 0;
+    width: auto;
+  }
+
+  #note-discussion-overlay .note-discuss-bubble table th,
+  #note-discussion-overlay .note-discuss-bubble table td,
+  #note-discussion-overlay .note-discuss-bubble.note-body-html table th,
+  #note-discussion-overlay .note-discuss-bubble.note-body-html table td,
+  #note-discussion-overlay .note-discuss-bubble.journal-summary-html table th,
+  #note-discussion-overlay .note-discuss-bubble.journal-summary-html table td {
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  #note-discussion-overlay .note-paie-reply-form {
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 24px;
+  }
+
+  #note-discussion-overlay .note-paie-mode-compact,
+  #note-discussion-overlay .note-paie-model-btn {
+    height: 40px;
+    padding: 8px 12px;
+    font-size: 14px;
+  }
+
+  #note-discussion-overlay .note-paie-kb-toggle,
+  #note-discussion-overlay .note-paie-send,
+  #note-discussion-overlay .note-paie-attach {
+    width: 40px;
+    height: 40px;
+  }
 }
 
 @media (min-width: 960px) {
@@ -8021,6 +8270,7 @@ html.modal-sheet-open body {
 @media (min-width: 960px) {
   :root {
     --sidebar-w: 15.25rem;
+    --sidebar-w-collapsed: 4.5rem;
     --content-max: 70rem;
     --discuss-w: var(--max-w);
     --page-x: 2rem;
@@ -8058,6 +8308,10 @@ html.modal-sheet-open body {
     padding-bottom: var(--page-bottom);
   }
 
+  html.sidebar-collapsed {
+    --sidebar-w: var(--sidebar-w-collapsed);
+  }
+
   .tabbar-backdrop {
     top: 0;
     right: auto;
@@ -8066,6 +8320,7 @@ html.modal-sheet-open body {
     width: var(--sidebar-w);
     height: auto;
     border-right: 1px solid var(--border);
+    transition: width 180ms ease;
   }
 
   .tabbar-wrap {
@@ -8081,19 +8336,111 @@ html.modal-sheet-open body {
     margin: 0;
     padding: 1.25rem 0.85rem 1.25rem;
     padding-bottom: 1.25rem;
+    overflow: hidden;
     border-right: 1px solid var(--border);
     pointer-events: auto;
+    transition: width 180ms ease, padding 180ms ease;
+  }
+
+  .sidebar-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.25rem;
+    flex-shrink: 0;
+    margin: 0 0 1.15rem;
+    min-width: 0;
   }
 
   .sidebar-brand {
     display: block;
-    flex-shrink: 0;
-    margin: 0 0 1.15rem;
-    padding: 0.55rem 0.85rem 0.15rem;
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    padding: 0.55rem 0.35rem 0.15rem 0.5rem;
+    overflow: hidden;
     font-size: 1.125rem;
     font-weight: 700;
     letter-spacing: -0.03em;
     color: var(--text);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sidebar-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: 10px;
+    color: var(--text-secondary);
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .sidebar-toggle:hover,
+  .sidebar-toggle:focus-visible {
+    color: var(--text);
+    background: var(--surface-muted);
+  }
+
+  .sidebar-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .sidebar-toggle svg {
+    display: block;
+    transition: transform 180ms ease;
+  }
+
+  html.sidebar-collapsed .tabbar-wrap {
+    padding-left: 0.45rem;
+    padding-right: 0.45rem;
+  }
+
+  html.sidebar-collapsed .sidebar-head {
+    justify-content: center;
+    margin-bottom: 0.85rem;
+  }
+
+  html.sidebar-collapsed .sidebar-brand {
+    display: none;
+  }
+
+  html.sidebar-collapsed .sidebar-toggle svg {
+    transform: scaleX(-1);
+  }
+
+  html.sidebar-collapsed .tabbar-btn {
+    justify-content: center;
+    gap: 0;
+    padding-left: 0.45rem;
+    padding-right: 0.45rem;
+  }
+
+  html.sidebar-collapsed .tabbar-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tabbar-backdrop,
+    .tabbar-wrap,
+    .main-scroll,
+    #note-editor-overlay,
+    #notes-detail:not(.hidden),
+    .profile-subscreen:not(.hidden) {
+      transition: none;
+    }
   }
 
   .tabbar {
@@ -8108,11 +8455,13 @@ html.modal-sheet-open body {
   }
 
   .tabbar-btn {
+    position: relative;
     flex: 0 0 auto;
     flex-direction: row;
     justify-content: flex-start;
     gap: 0.75rem;
     padding: 0.72rem 0.85rem;
+    overflow: hidden;
     border-radius: 12px;
     font-size: 0.9375rem;
     font-weight: 600;
@@ -8156,6 +8505,7 @@ html.modal-sheet-open body {
     max-width: none;
     height: 100dvh;
     padding: 1.75rem 2.25rem var(--page-bottom);
+    transition: margin-left 180ms ease, width 180ms ease;
   }
 
   .main-scroll > .panel {
@@ -8282,6 +8632,7 @@ html.modal-sheet-open body {
     right: 0;
     max-width: none;
     margin: 0;
+    transition: left 180ms ease;
   }
 
   #notes-detail:not(.hidden) > .notes-detail-sticky,
@@ -8343,7 +8694,7 @@ html.modal-sheet-open body {
     padding: 0;
     background: var(--bg);
     backdrop-filter: none;
-    transition: right 180ms ease, width 180ms ease;
+    transition: right 180ms ease, width 180ms ease, left 180ms ease;
   }
 
   html:not(.note-discussion-open)

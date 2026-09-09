@@ -298,6 +298,12 @@ def delete_comment(
     req = _uid(requester_user_id)
     if req != item["author_user_id"] and req != item["owner_user_id"]:
         return False
+    try:
+        from assistant.stores import comment_files
+
+        comment_files.delete_for_comment(int(comment_id))
+    except Exception:
+        pass
     with _LOCK:
         cur = _conn().execute(
             "DELETE FROM share_comments WHERE id = ?",

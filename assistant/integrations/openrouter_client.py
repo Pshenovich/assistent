@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import re
 import time
@@ -233,10 +234,88 @@ def _raise_if_bad_chat_completion(provider: str, data: dict[str, Any]) -> None:
     if msg.get("tool_calls"):
         return
     content = msg.get("content")
-    if content is None:
+    images = msg.get("images")
+    has_images = isinstance(images, list) and bool(images)
+    if isinstance(content, list) and content:
+        return
+    if content is None and not has_images:
         raise RuntimeError(f"{provider}: пустой message.content")
-    if isinstance(content, str) and not content.strip():
+    if isinstance(content, str) and not content.strip() and not has_images:
         raise RuntimeError(f"{provider}: пустой текст ответа (content)")
+
+
+def _data_url_to_image(url: str) -> dict[str, str] | None:
+    raw = (url or "").strip()
+    if not raw.startswith("data:"):
+        return None
+    try:
+        header, b64 = raw.split(",", 1)
+    except ValueError:
+        return None
+    mime = "image/png"
+    if header.startswith("data:") and ";" in header:
+        mime = header[5:].split(";", 1)[0].strip() or mime
+    try:
+        blob = base64.b64decode(b64, validate=False)
+    except Exception:
+        return None
+    if not blob:
+        return None
+    return {"mime": mime, "b64": base64.b64encode(blob).decode("ascii")}
+
+
+def extract_chat_message_media(data: dict[str, Any]) -> tuple[str, list[dict[str, str]]]:
+    """Текст и картинки (base64) из chat/completions message."""
+    choices = data.get("choices") if isinstance(data, dict) else None
+    if not isinstance(choices, list) or not choices:
+        return "", []
+    msg = choices[0].get("message") if isinstance(choices[0], dict) else None
+    if not isinstance(msg, dict):
+        return "", []
+    texts: list[str] = []
+    images: list[dict[str, str]] = []
+
+    def _take_url(url: str) -> None:
+        parsed = _data_url_to_image(url)
+        if parsed:
+            images.append(parsed)
+
+    content = msg.get("content")
+    if isinstance(content, str):
+        texts.append(content)
+    elif isinstance(content, list):
+        for part in content:
+            if isinstance(part, str):
+                texts.append(part)
+                continue
+            if not isinstance(part, dict):
+                continue
+            kind = str(part.get("type") or "").strip().lower()
+            if kind in ("text", "output_text"):
+                texts.append(str(part.get("text") or part.get("output_text") or ""))
+            elif kind in ("image_url", "image"):
+                url = ""
+                img = part.get("image_url") or part.get("image") or {}
+                if isinstance(img, str):
+                    url = img
+                elif isinstance(img, dict):
+                    url = str(img.get("url") or img.get("data") or "")
+                if not url:
+                    url = str(part.get("url") or "")
+                _take_url(url)
+    extra = msg.get("images")
+    if isinstance(extra, list):
+        for part in extra:
+            if isinstance(part, str):
+                _take_url(part)
+            elif isinstance(part, dict):
+                img = part.get("image_url") or part.get("image") or part
+                if isinstance(img, str):
+                    _take_url(img)
+                elif isinstance(img, dict):
+                    _take_url(str(img.get("url") or img.get("data") or ""))
+    text = "\n".join(t.strip() for t in texts if str(t).strip()).strip()
+    return text, images
 
 
 def _log_usage(

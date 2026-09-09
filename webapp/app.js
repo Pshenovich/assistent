@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260909-gpt-status";
+  var WEBAPP_BUILD = "20260909-discuss-files";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260909-gpt-status";
+  const NOTE_EDITOR_ASSET_V = "20260909-discuss-files";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -1963,6 +1963,46 @@
     return cssLenToPx(raw, 244);
   }
 
+  var SIDEBAR_COLLAPSED_LS = "leo_sidebar_collapsed";
+
+  function isSidebarCollapsed() {
+    return document.documentElement.classList.contains("sidebar-collapsed");
+  }
+
+  function syncSidebarToggleUi() {
+    var collapsed = isSidebarCollapsed();
+    var btn = document.getElementById("sidebar-toggle");
+    var label = collapsed ? "Развернуть меню" : "Свернуть меню";
+    if (btn) {
+      btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      btn.setAttribute("aria-label", label);
+      btn.setAttribute("title", label);
+    }
+    document.querySelectorAll(".tabbar-btn").forEach(function (tab) {
+      var text = tab.querySelector(".tabbar-label");
+      var name = text ? String(text.textContent || "").trim() : "";
+      if (collapsed && name) tab.setAttribute("title", name);
+      else tab.removeAttribute("title");
+    });
+  }
+
+  function applySidebarCollapsed(collapsed) {
+    var root = document.documentElement;
+    if (collapsed) root.classList.add("sidebar-collapsed");
+    else root.classList.remove("sidebar-collapsed");
+    try {
+      if (collapsed) localStorage.setItem(SIDEBAR_COLLAPSED_LS, "1");
+      else localStorage.removeItem(SIDEBAR_COLLAPSED_LS);
+    } catch (_) {}
+    syncSidebarToggleUi();
+    if (isDesktopLayout()) applyNotePaneWidths();
+  }
+
+  function toggleSidebarCollapsed() {
+    if (!isDesktopLayout()) return;
+    applySidebarCollapsed(!isSidebarCollapsed());
+  }
+
   function noteStageWidthPx() {
     return Math.max(0, window.innerWidth - sidebarWidthPx());
   }
@@ -2147,6 +2187,7 @@
       });
     }
     window.addEventListener("resize", function () {
+      syncSidebarToggleUi();
       if (isNoteEditorModalOpen() || isNoteDiscussionOpen()) applyNotePaneWidths();
     });
   }
@@ -8327,9 +8368,16 @@
       "</div>" +
       '<button type="button" class="note-paie-reply-target-clear" aria-label="Отменить ответ">&times;</button>' +
       "</div>" +
+      '<div class="note-paie-composer-row">' +
+      '<button type="button" class="note-paie-attach" id="note-paie-attach" aria-label="Прикрепить фото или файл" title="Прикрепить фото или файл">' +
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>' +
+      "</svg></button>" +
+      '<input type="file" id="note-paie-attach-input" class="hidden" multiple accept="image/*,.pdf,.txt,.md,.csv,.json,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip">' +
       '<textarea id="note-paie-reply-input" class="note-paie-composer-input" rows="2" maxlength="4000" placeholder="' +
       noteAskPlaceholder("paie") +
-      '"></textarea>' +
+      '"></textarea></div>' +
+      '<div id="note-paie-attach-preview" class="note-paie-attach-preview hidden"></div>' +
       '<div class="note-paie-composer-bar">' +
       '<div class="note-paie-composer-left">' +
       '<div class="note-paie-mode-switch" role="tablist" aria-label="Режим">' +
@@ -8503,9 +8551,257 @@
     el.style.height = Math.min(el.scrollHeight, 136) + "px";
   }
 
+  var DISCUSS_ATTACH_MAX = 8;
+  var DISCUSS_ATTACH_MAX_BYTES = 12 * 1024 * 1024;
+  var discussFileBlobUrls = {};
+
+  function discussPendingFiles() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap) return [];
+    if (!wrap._discussPending) wrap._discussPending = [];
+    return wrap._discussPending;
+  }
+
+  function clearDiscussPendingFiles() {
+    var list = discussPendingFiles();
+    list.forEach(function (item) {
+      if (item && item.previewUrl) {
+        try {
+          URL.revokeObjectURL(item.previewUrl);
+        } catch (_) {}
+      }
+    });
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) wrap._discussPending = [];
+    renderDiscussAttachPreview();
+  }
+
+  function discussFileKind(file) {
+    var type = String((file && file.type) || "").toLowerCase();
+    if (type.indexOf("image/") === 0) return "image";
+    var name = String((file && file.name) || "").toLowerCase();
+    if (/\.(png|jpe?g|gif|webp|heic|heif)$/.test(name)) return "image";
+    return "file";
+  }
+
+  function addDiscussPendingFiles(fileList) {
+    var pending = discussPendingFiles();
+    var files = Array.prototype.slice.call(fileList || []);
+    files.forEach(function (file) {
+      if (!file || pending.length >= DISCUSS_ATTACH_MAX) return;
+      if (file.size > DISCUSS_ATTACH_MAX_BYTES) {
+        alert("Файл «" + (file.name || "файл") + "» слишком большой (максимум 12 МБ)");
+        return;
+      }
+      pending.push({
+        file: file,
+        name: file.name || "file",
+        mime: file.type || "",
+        size: file.size || 0,
+        kind: discussFileKind(file),
+        previewUrl: file.type && file.type.indexOf("image/") === 0 ? URL.createObjectURL(file) : "",
+      });
+    });
+    renderDiscussAttachPreview();
+    syncNotePaieReplyForm();
+  }
+
+  function removeDiscussPendingFile(idx) {
+    var pending = discussPendingFiles();
+    var item = pending[idx];
+    if (item && item.previewUrl) {
+      try {
+        URL.revokeObjectURL(item.previewUrl);
+      } catch (_) {}
+    }
+    pending.splice(idx, 1);
+    renderDiscussAttachPreview();
+    syncNotePaieReplyForm();
+  }
+
+  function renderDiscussAttachPreview() {
+    var host = document.getElementById("note-paie-attach-preview");
+    if (!host) return;
+    var pending = discussPendingFiles();
+    host.innerHTML = "";
+    if (!pending.length) {
+      host.classList.add("hidden");
+      return;
+    }
+    host.classList.remove("hidden");
+    pending.forEach(function (item, idx) {
+      var chip = document.createElement("div");
+      chip.className = "note-paie-attach-chip" + (item.kind === "image" ? " is-image" : "");
+      if (item.kind === "image" && item.previewUrl) {
+        var img = document.createElement("img");
+        img.src = item.previewUrl;
+        img.alt = item.name || "Фото";
+        chip.appendChild(img);
+      }
+      var name = document.createElement("span");
+      name.className = "note-paie-attach-chip-name";
+      name.textContent = item.name || "Файл";
+      chip.appendChild(name);
+      var rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "note-paie-attach-chip-remove";
+      rm.setAttribute("aria-label", "Убрать файл");
+      rm.textContent = "×";
+      rm.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        removeDiscussPendingFile(idx);
+      });
+      chip.appendChild(rm);
+      host.appendChild(chip);
+    });
+  }
+
+  function bindDiscussAttachOnce(form) {
+    var btn = document.getElementById("note-paie-attach");
+    var input = document.getElementById("note-paie-attach-input");
+    if (!btn || !input || btn._bound) return;
+    btn._bound = true;
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      if (btn.disabled) return;
+      input.click();
+    });
+    input.addEventListener("change", function () {
+      if (input.files && input.files.length) addDiscussPendingFiles(input.files);
+      input.value = "";
+    });
+    if (form && !form._attachDropBound) {
+      form._attachDropBound = true;
+      form.addEventListener("dragover", function (e) {
+        if (!e.dataTransfer) return;
+        e.preventDefault();
+        form.classList.add("is-drop-attach");
+      });
+      form.addEventListener("dragleave", function () {
+        form.classList.remove("is-drop-attach");
+      });
+      form.addEventListener("drop", function (e) {
+        form.classList.remove("is-drop-attach");
+        if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+        e.preventDefault();
+        addDiscussPendingFiles(e.dataTransfer.files);
+      });
+    }
+  }
+
+  async function uploadDiscussPendingFiles(kind, itemId) {
+    var pending = discussPendingFiles().slice();
+    var ids = [];
+    var i;
+    for (i = 0; i < pending.length; i++) {
+      var item = pending[i];
+      var fd = new FormData();
+      fd.append("file", item.file, item.name || "file");
+      var res = await apiFetch(
+        "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/discuss-files",
+        { method: "POST", body: fd }
+      );
+      var row = res && res.file;
+      if (!row || !row.id) throw new Error("Не удалось загрузить файл");
+      ids.push(row.id);
+    }
+    return ids;
+  }
+
+  function discussAuthFileUrl(att) {
+    return API + String((att && att.url) || "");
+  }
+
+  async function discussFileObjectUrl(att) {
+    var key = String((att && att.id) || "");
+    if (!key) return "";
+    if (discussFileBlobUrls[key]) return discussFileBlobUrls[key];
+    var res = await fetch(discussAuthFileUrl(att), {
+      credentials: "same-origin",
+      headers: authHeaders(),
+    });
+    if (!res.ok) throw new Error("Не удалось открыть файл");
+    var blob = await res.blob();
+    var url = URL.createObjectURL(blob);
+    discussFileBlobUrls[key] = url;
+    return url;
+  }
+
+  function renderDiscussAttachments(host, attachments) {
+    var list = (attachments || []).filter(Boolean);
+    if (!host || !list.length) return;
+    var wrap = document.createElement("div");
+    wrap.className = "note-discuss-attach-list";
+    list.forEach(function (att) {
+      if (String(att.kind || "") === "image") {
+        var img = document.createElement("img");
+        img.className = "note-discuss-attach-img";
+        img.alt = att.name || "Фото";
+        wrap.appendChild(img);
+        discussFileObjectUrl(att)
+          .then(function (src) {
+            img.src = src;
+          })
+          .catch(function () {
+            img.replaceWith(renderDiscussFileChip(att));
+          });
+        return;
+      }
+      wrap.appendChild(renderDiscussFileChip(att));
+    });
+    host.appendChild(wrap);
+  }
+
+  function renderDiscussFileChip(att) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "note-discuss-attach-file";
+    btn.textContent = att.name || "Файл";
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      discussFileObjectUrl(att)
+        .then(function (src) {
+          var a = document.createElement("a");
+          a.href = src;
+          a.download = att.name || "file";
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        })
+        .catch(function (err) {
+          alert(err.message || String(err));
+        });
+    });
+    return btn;
+  }
+
+  function renderPendingAttachThumbs(host) {
+    var pending = discussPendingFiles();
+    if (!host || !pending.length) return;
+    var wrap = document.createElement("div");
+    wrap.className = "note-discuss-attach-list";
+    pending.forEach(function (item) {
+      if (item.kind === "image" && item.previewUrl) {
+        var img = document.createElement("img");
+        img.className = "note-discuss-attach-img";
+        img.src = item.previewUrl;
+        img.alt = item.name || "Фото";
+        wrap.appendChild(img);
+      } else {
+        var chip = document.createElement("span");
+        chip.className = "note-discuss-attach-file";
+        chip.textContent = item.name || "Файл";
+        wrap.appendChild(chip);
+      }
+    });
+    host.appendChild(wrap);
+  }
+
   function bindNotePaieReplyForm(threadEl) {
     var form = document.getElementById("note-paie-reply-form");
-    if (!form || !form.querySelector(".note-paie-composer-bar > .note-paie-kb-toggle")) {
+    if (!form || !form.querySelector("#note-paie-attach")) {
       var html = notePaieReplyFormHtml();
       if (form) form.outerHTML = html;
       else if (threadEl) threadEl.insertAdjacentHTML("beforeend", html);
@@ -8513,6 +8809,7 @@
     }
     if (!form) return;
     bindNoteKnowledgeToggle(form);
+    bindDiscussAttachOnce(form);
     if (form._bound) return;
     form._bound = true;
     var input = document.getElementById("note-paie-reply-input");
@@ -9522,16 +9819,19 @@
     role.textContent = assistant ? shareCommentAuthorLabel(c) : "Вы";
     item.appendChild(role);
     var bodyText = String((c && c.body) || "");
+    var attachments = (c && c.attachments) || [];
+    var hideClipBody = bodyText.trim() === "📎" && attachments.length;
     var bubble = document.createElement("div");
     bubble.className = "note-discuss-bubble";
-    if (assistant && bodyText.trim()) {
-      bubble.className = "note-discuss-bubble note-discuss-bubble--md journal-summary-html note-body-html";
+    if (assistant && bodyText.trim() && !hideClipBody) {
+      bubble.className = "note-discuss-bubble note-discuss-bubble--md journal-summary-html";
       bubble.innerHTML = wrapTablesForScroll(simpleMarkdownToHtml(bodyText));
-    } else {
+    } else if (!hideClipBody && bodyText.trim()) {
       bubble.textContent = bodyText;
     }
-    item.appendChild(bubble);
-    if (String((c && c.body) || "").trim()) {
+    renderDiscussAttachments(bubble, attachments);
+    if (bubble.childNodes.length) item.appendChild(bubble);
+    if (String((c && c.body) || "").trim() || attachments.length) {
       var actions = document.createElement("div");
       actions.className = "note-discuss-actions";
       var more = document.createElement("button");
@@ -9859,10 +10159,13 @@
     role.className = "note-discuss-role";
     role.textContent = "Вы";
     item.appendChild(role);
-    var bubble = document.createElement("div");
-    bubble.className = "note-discuss-bubble";
-    bubble.textContent = String(text || "");
-    item.appendChild(bubble);
+    if (text) {
+      var bubble = document.createElement("div");
+      bubble.className = "note-discuss-bubble";
+      bubble.textContent = String(text || "");
+      item.appendChild(bubble);
+    }
+    renderPendingAttachThumbs(item);
     var meta = document.createElement("p");
     meta.className = "note-discuss-send-state";
     meta.textContent = "Отправляю…";
@@ -9893,6 +10196,14 @@
     var history = [];
     prior.forEach(function (c) {
       var content = String((c && c.body) || "").trim();
+      var names = ((c && c.attachments) || [])
+        .map(function (a) {
+          return a && a.name;
+        })
+        .filter(Boolean);
+      if (names.length) {
+        content = (content && content !== "📎" ? content + "\n" : "") + "[вложения: " + names.join(", ") + "]";
+      }
       if (!content) return;
       var quote = String((c && c.quote) || "").trim();
       if (quote) content = "Про текст: «" + quote + "»\n\n" + content;
@@ -9952,7 +10263,8 @@
   async function submitNoteGptQuestion(text) {
     var wrap = document.getElementById("note-editor-more-wrap");
     var body = String(text || "").trim();
-    if (!wrap || !wrap._shareKind || !wrap._shareId || wrap._gptBusy || !body) return;
+    var pending = discussPendingFiles();
+    if (!wrap || !wrap._shareKind || !wrap._shareId || wrap._gptBusy || (!body && !pending.length)) return;
     var kind = wrap._shareKind;
     var itemId = wrap._shareId;
     var panel = document.getElementById("note-editor-comments");
@@ -9967,6 +10279,8 @@
     appendOptimisticUserMessage(body, quote);
     setGptDiscussPhase("sending");
     try {
+      var fileIds = await uploadDiscussPendingFiles(kind, itemId);
+      clearDiscussPendingFiles();
       var saved = await apiFetch(
         "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
         {
@@ -9976,6 +10290,7 @@
             quote: quote,
             prefix: "__gpt__",
             suffix: "",
+            file_ids: fileIds,
           }),
         }
       );
@@ -9995,9 +10310,12 @@
           use_knowledge: !!noteUsesKnowledge(),
           history: history,
           model: selectedGptModelId() || undefined,
+          file_ids: fileIds,
+          item_kind: kind,
+          item_id: itemId,
         }),
       });
-      var ans = String((res && res.answer) || "").trim() || "—";
+      var ans = String((res && res.answer) || "").trim();
       var bullets = (res && res.bullets) || [];
       if (bullets.length) {
         ans +=
@@ -10008,6 +10326,12 @@
             })
             .join("\n");
       }
+      var gptFileIds = ((res && res.files) || [])
+        .map(function (f) {
+          return f && f.id;
+        })
+        .filter(Boolean);
+      if (!ans) ans = gptFileIds.length ? "📎" : "—";
       setGptDiscussPhase("saving");
       await apiFetch(
         "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
@@ -10020,6 +10344,7 @@
             suffix: "",
             parent_id: parentId || null,
             as_role: "gpt",
+            file_ids: gptFileIds,
           }),
         }
       );
@@ -10045,7 +10370,8 @@
   async function submitNoteFooterComment(text) {
     var wrap = document.getElementById("note-editor-more-wrap");
     var body = String(text || "").trim();
-    if (!wrap || !wrap._shareKind || !wrap._shareId || !body) return;
+    var pending = discussPendingFiles();
+    if (!wrap || !wrap._shareKind || !wrap._shareId || (!body && !pending.length)) return;
     var api = window.NoteComments;
     var chairId = wrap._commentChairId;
     var draft =
@@ -10053,6 +10379,7 @@
       (api && api.selectionAnchor ? api.selectionAnchor(noteEditorCommentRoot()) : null);
     var input = document.getElementById("note-paie-reply-input");
     try {
+      var fileIds = await uploadDiscussPendingFiles(wrap._shareKind, wrap._shareId);
       await apiFetch(
         "/notes/" +
           encodeURIComponent(wrap._shareKind) +
@@ -10067,10 +10394,12 @@
             prefix: (draft && draft.prefix) || "",
             suffix: (draft && draft.suffix) || "",
             parent_id: chairId || null,
+            file_ids: fileIds,
           }),
         }
       );
       if (input) input.value = "";
+      clearDiscussPendingFiles();
       clearNoteComposerCommentTarget();
       shareHaptic();
       refreshNoteCommentsList();
@@ -10120,11 +10449,13 @@
       api.paieThreadRootId((panel && panel._allComments) || [])
     );
     if (input) input.disabled = busy;
+    var attachBtn = document.getElementById("note-paie-attach");
+    if (attachBtn) attachBtn.disabled = busy;
     var modeEl = document.getElementById("note-paie-thread");
     if (modeEl) {
       modeEl
         .querySelectorAll(
-          ".note-paie-mode, .note-paie-mode-compact, .note-paie-model-btn, .note-paie-kb-toggle"
+          ".note-paie-mode, .note-paie-mode-compact, .note-paie-model-btn, .note-paie-kb-toggle, .note-paie-attach"
         )
         .forEach(function (btn) {
           btn.disabled = busy;
@@ -10132,8 +10463,9 @@
     }
     if (submit) {
       var hasText = !!(input && String(input.value || "").trim());
+      var hasFiles = discussPendingFiles().length > 0;
       var canLaunchPaie = noteAskMode() === "paie" && !hasChair;
-      var ready = !busy && (hasText || canLaunchPaie);
+      var ready = !busy && (hasText || hasFiles || canLaunchPaie);
       submit.disabled = !ready;
       submit.classList.toggle("is-ready", ready);
       var label = "Отправить";
@@ -13235,6 +13567,15 @@
         setTab(btn.getAttribute("data-tab"));
       });
     });
+
+    var sidebarToggle = document.getElementById("sidebar-toggle");
+    if (sidebarToggle) {
+      sidebarToggle.addEventListener("click", function (e) {
+        e.preventDefault();
+        toggleSidebarCollapsed();
+      });
+    }
+    syncSidebarToggleUi();
 
     document.querySelectorAll(".subtab-btn").forEach(function (b) {
       b.addEventListener("click", function () {

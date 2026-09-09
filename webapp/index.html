@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260909-gpt-status">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260909-discuss-files">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -39,12 +39,15 @@
           !!localStorage.getItem("miniapp_session") ||
           localStorage.getItem("miniapp_session_hint") === "1";
         if (standalone || hasSession) root.classList.add("boot-open-app");
+        if (localStorage.getItem("leo_sidebar_collapsed") === "1") {
+          root.classList.add("sidebar-collapsed");
+        }
       } catch (_) {}
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20260909-gpt-status" />
-  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260909-gpt-status" as="script" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20260909-discuss-files" />
+  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260909-discuss-files" as="script" />
   <!-- Same-origin, async: не блокирует парсер, если сеть/VPN тормозит. -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" async></script>
 </head>
@@ -847,8 +850,17 @@
     </main>
 
     <div class="tabbar-backdrop" aria-hidden="true"></div>
-    <div class="tabbar-wrap">
-      <p class="sidebar-brand">Ассистент</p>
+    <div class="tabbar-wrap" id="app-sidebar">
+      <div class="sidebar-head">
+        <p class="sidebar-brand">Ассистент</p>
+        <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-controls="app-sidebar" aria-expanded="true" aria-label="Свернуть меню" title="Свернуть меню">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M9 3v18" />
+            <path d="m16 15-3-3 3-3" />
+          </svg>
+        </button>
+      </div>
       <nav class="tabbar" role="tablist" aria-label="Разделы">
         <button type="button" class="tabbar-btn active" data-tab="actual" role="tab" aria-selected="true">
           <span class="tabbar-icon" aria-hidden="true">
@@ -1119,14 +1131,14 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20260909-gpt-status"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20260909-discuss-files"><\/script>'
         );
       }
     })();
   </script>
-  <script src="/webapp/note-html.js?v=20260909-gpt-status" defer></script>
-  <script src="/webapp/note-comments.js?v=20260909-gpt-status" defer></script>
-  <script src="/webapp/note-rich-editor.js?v=20260909-gpt-status" defer></script>
-  <script src="/webapp/app.js?v=20260909-gpt-status" defer></script>
+  <script src="/webapp/note-html.js?v=20260909-discuss-files" defer></script>
+  <script src="/webapp/note-comments.js?v=20260909-discuss-files" defer></script>
+  <script src="/webapp/note-rich-editor.js?v=20260909-discuss-files" defer></script>
+  <script src="/webapp/app.js?v=20260909-discuss-files" defer></script>
 </body>
 </html>

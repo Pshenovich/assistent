@@ -54,8 +54,10 @@ def gpt_openrouter_answer_with_context(
     note_text: str = "",
     quote: str = "",
     knowledge_brief: str = "",
+    images: list[dict[str, str]] | None = None,
+    file_notes: str = "",
 ) -> dict:
-    answer = nlu_llm.answer_with_context(
+    out = nlu_llm.answer_with_context_result(
         question,
         context,
         model=model,
@@ -64,8 +66,14 @@ def gpt_openrouter_answer_with_context(
         note_text=note_text,
         quote=quote,
         knowledge_brief=knowledge_brief,
+        images=images,
+        file_notes=file_notes,
     )
-    return {"answer": answer, "bullets": []}
+    return {
+        "answer": str(out.get("answer") or ""),
+        "bullets": [],
+        "images": out.get("images") if isinstance(out.get("images"), list) else [],
+    }
 
 
 def _calendar_tz():

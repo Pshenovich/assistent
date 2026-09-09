@@ -2550,6 +2550,7 @@ class _MiniappShareCommentCreate(BaseModel):
     suffix: str = ""
     parent_id: Optional[int] = None
     as_role: Optional[str] = None
+    file_ids: list[int] = Field(default_factory=list)
 
 
 class _MiniappNotePaeiStart(BaseModel):
@@ -2574,6 +2575,9 @@ class _MiniappGptChatBody(BaseModel):
     use_knowledge: bool = False
     history: list[_MiniappGptChatTurn] = Field(default_factory=list)
     model: Optional[str] = None
+    file_ids: list[int] = Field(default_factory=list)
+    item_kind: Optional[str] = None
+    item_id: Optional[str] = None
 
 
 class _MiniappBookingAssistantConfigBody(BaseModel):
@@ -2755,6 +2759,20 @@ def _comment_author_from_principal(principal: _MiniappPrincipal) -> tuple[str, s
     return str(int(principal.telegram_user_id)), name, username
 
 
+def _comment_file_api(row: dict[str, Any]) -> dict[str, Any]:
+    kind = str(row.get("item_kind") or "")
+    item_id = str(row.get("item_id") or "")
+    fid = int(row["id"])
+    return {
+        "id": fid,
+        "name": str(row.get("filename") or "file"),
+        "mime": str(row.get("mime") or "application/octet-stream"),
+        "size": int(row.get("size") or 0),
+        "kind": str(row.get("kind") or "file"),
+        "url": f"/notes/{kind}/{item_id}/discuss-files/{fid}",
+    }
+
+
 def _comment_api(row: dict[str, Any], *, viewer_uid: str | None = None) -> dict[str, Any]:
     owner = str(row.get("owner_user_id") or "")
     author = str(row.get("author_user_id") or "")
@@ -2766,6 +2784,15 @@ def _comment_api(row: dict[str, Any], *, viewer_uid: str | None = None) -> dict[
         parent_id = int(parent_id) if parent_id not in (None, "", 0, "0") else None
     except (TypeError, ValueError):
         parent_id = None
+    attachments = []
+    try:
+        from assistant.stores import comment_files
+
+        attachments = [
+            _comment_file_api(f) for f in comment_files.list_for_comment(int(row["id"]))
+        ]
+    except Exception:
+        attachments = []
     return {
         "id": int(row["id"]),
         "author_user_id": author,
@@ -2780,6 +2807,7 @@ def _comment_api(row: dict[str, Any], *, viewer_uid: str | None = None) -> dict[
         "is_paie": share_comments_store.is_paie_comment(row),
         "is_gpt": share_comments_store.is_gpt_comment(row),
         "can_delete": can_delete,
+        "attachments": attachments,
     }
 
 
@@ -4243,7 +4271,8 @@ async def miniapp_gpt_chat(
     from assistant.integrations.openrouter_client import sanitize_openrouter_model_id
 
     q = (body.message or "").strip()
-    if not q:
+    file_ids = [int(x) for x in (body.file_ids or []) if int(x) > 0]
+    if not q and not file_ids:
         raise HTTPException(status_code=400, detail="Пустое сообщение")
     hist: list[dict[str, str]] = []
     for it in body.history[:50]:
@@ -4262,6 +4291,102 @@ async def miniapp_gpt_chat(
         if ru:
             tg_uname = str(ru).strip() or None
 
+    def _load_prompt_media() -> tuple[list[dict[str, str]], str]:
+        from assistant.stores import comment_files
+
+        images: list[dict[str, str]] = []
+        notes: list[str] = []
+        uid = str(int(principal.telegram_user_id))
+        for fid in file_ids[:8]:
+            item = comment_files.get_file(fid)
+            if not item:
+                continue
+            if item["author_user_id"] != uid and item["owner_user_id"] != uid:
+                continue
+            if str(item.get("kind") or "") == "image":
+                path = comment_files.disk_path(fid)
+                if not path.is_file():
+                    continue
+                blob = path.read_bytes()
+                if len(blob) > 5 * 1024 * 1024:
+                    continue
+                import base64
+
+                images.append(
+                    {
+                        "mime": str(item.get("mime") or "image/jpeg"),
+                        "b64": base64.b64encode(blob).decode("ascii"),
+                    }
+                )
+                notes.append("Изображение: " + str(item.get("filename") or "photo"))
+            else:
+                preview = comment_files.extract_text_preview(item)
+                label = str(item.get("filename") or "file")
+                if preview:
+                    notes.append(f"Файл «{label}»:\n{preview}")
+                else:
+                    notes.append(f"Прикреплён файл «{label}» ({item.get('mime') or 'file'}).")
+        return images, "\n\n".join(notes).strip()
+
+    def _save_generated(out: dict[str, Any]) -> list[dict[str, Any]]:
+        from assistant.stores import comment_files
+
+        kind = str(body.item_kind or "").strip()
+        iid = str(body.item_id or "").strip()
+        if kind not in ("local", "journal") or not iid:
+            return []
+        owner = _resolve_item_owner(str(int(principal.telegram_user_id)), kind, iid)
+        if not owner:
+            return []
+        uid = int(principal.telegram_user_id)
+        saved: list[dict[str, Any]] = []
+        answer = str(out.get("answer") or "")
+        cleaned, blocks = comment_files.parse_generated_file_blocks(answer)
+        if blocks:
+            out["answer"] = cleaned
+        for name, text in blocks:
+            row = comment_files.save_bytes(
+                owner_user_id=owner,
+                item_kind=kind,
+                item_id=iid,
+                author_user_id=uid,
+                filename=name,
+                mime="text/plain",
+                data=text.encode("utf-8"),
+            )
+            saved.append(_comment_file_api(row))
+        import base64
+
+        for i, img in enumerate(out.get("images") or []):
+            if not isinstance(img, dict):
+                continue
+            b64 = str(img.get("b64") or "").strip()
+            mime = str(img.get("mime") or "image/png").split(";")[0]
+            if not b64:
+                continue
+            try:
+                blob = base64.b64decode(b64)
+            except Exception:
+                continue
+            ext = "png"
+            if "jpeg" in mime or "jpg" in mime:
+                ext = "jpg"
+            elif "webp" in mime:
+                ext = "webp"
+            elif "gif" in mime:
+                ext = "gif"
+            row = comment_files.save_bytes(
+                owner_user_id=owner,
+                item_kind=kind,
+                item_id=iid,
+                author_user_id=uid,
+                filename=f"gpt-image-{i + 1}.{ext}",
+                mime=mime,
+                data=blob,
+            )
+            saved.append(_comment_file_api(row))
+        return saved
+
     def _run() -> dict[str, Any] | None:
         from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
         from assistant.nlu.ask_context import pack_knowledge_brief
@@ -4269,8 +4394,9 @@ async def miniapp_gpt_chat(
         uid = int(principal.telegram_user_id)
         kb_brief = ""
         kb_version = ""
+        images, file_notes = _load_prompt_media()
+        prompt = q or "Опиши вложение и ответь по нему."
         if body.use_knowledge:
-            # Ретрив по заметке, не по текущему вопросу: префикс стабилен в треде.
             query = " ".join(
                 p
                 for p in (
@@ -4278,7 +4404,7 @@ async def miniapp_gpt_chat(
                     (body.note_text or "").strip()[:800],
                 )
                 if p
-            ) or q
+            ) or prompt
             kb_brief, kb_version = pack_knowledge_brief(uid, query)
         try:
             set_openrouter_usage_telegram_user(
@@ -4286,7 +4412,7 @@ async def miniapp_gpt_chat(
                 telegram_username=tg_uname,
             )
             out = gpt_openrouter_answer_with_context(
-                q,
+                prompt,
                 (body.context or "").strip(),
                 history=hist or None,
                 model=model,
@@ -4294,11 +4420,16 @@ async def miniapp_gpt_chat(
                 note_text=(body.note_text or "").strip(),
                 quote=(body.quote or "").strip(),
                 knowledge_brief=kb_brief,
+                images=images or None,
+                file_notes=file_notes,
             )
             if out is None:
                 return None
             if kb_version:
                 out = {**out, "kb_version": kb_version}
+            generated = _save_generated(out)
+            if generated:
+                out = {**out, "files": generated}
             return out
         finally:
             set_openrouter_usage_telegram_user(telegram_user_id=None)
@@ -4311,10 +4442,12 @@ async def miniapp_gpt_chat(
         raise HTTPException(status_code=502, detail=str(e)) from e
     if not out:
         raise HTTPException(status_code=502, detail="Пустой ответ модели")
+    files = out.get("files") if isinstance(out.get("files"), list) else []
     return {
         "answer": str(out.get("answer") or ""),
         "bullets": out.get("bullets") if isinstance(out.get("bullets"), list) else [],
         "kb_version": str(out.get("kb_version") or ""),
+        "files": files,
     }
 
 
@@ -5280,6 +5413,13 @@ async def miniapp_share_comments_create(
         author_name = share_comments_store.GPT_AUTHOR_NAME
         author_username = share_comments_store.GPT_AUTHOR_USERNAME
         prefix = share_comments_store.GPT_PREFIX
+    text = (body.body or "").strip()
+    file_ids = [int(x) for x in (body.file_ids or []) if int(x) > 0]
+    if not text:
+        if file_ids:
+            text = "📎"
+        else:
+            raise HTTPException(status_code=400, detail="Введите текст комментария")
     try:
         row = await run_in_threadpool(
             share_comments_store.add_comment,
@@ -5289,12 +5429,25 @@ async def miniapp_share_comments_create(
             author_user_id=author_id,
             author_name=author_name,
             author_username=author_username,
-            body=body.body,
+            body=text,
             quote=body.quote,
             prefix=prefix,
             suffix=body.suffix,
             parent_id=body.parent_id,
         )
+        if file_ids:
+            from assistant.stores import comment_files
+
+            await run_in_threadpool(
+                comment_files.link_to_comment,
+                file_ids,
+                comment_id=int(row["id"]),
+                owner_user_id=owner,
+                item_kind=kind,
+                item_id=item_id,
+                author_user_id=author_id,
+            )
+            row = await run_in_threadpool(share_comments_store.get_comment, int(row["id"])) or row
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return {"ok": True, "comment": _comment_api(row, viewer_uid=uid)}
@@ -5327,6 +5480,67 @@ async def miniapp_share_comments_delete(
     if not deleted:
         raise HTTPException(status_code=403, detail="Нельзя удалить этот комментарий")
     return {"ok": True}
+
+
+@miniapp_router.post("/notes/{kind}/{item_id}/discuss-files")
+async def miniapp_discuss_file_upload(
+    kind: str,
+    item_id: str,
+    file: UploadFile = File(...),
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import comment_files
+
+    uid = str(int(principal.telegram_user_id))
+    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    if not owner:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    data = await file.read()
+    filename = str(file.filename or "file").strip() or "file"
+    mime = str(file.content_type or "").strip()
+    try:
+        row = await run_in_threadpool(
+            comment_files.save_bytes,
+            owner_user_id=owner,
+            item_kind=kind,
+            item_id=item_id,
+            author_user_id=uid,
+            filename=filename,
+            mime=mime,
+            data=data,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "file": _comment_file_api(row)}
+
+
+@miniapp_router.get("/notes/{kind}/{item_id}/discuss-files/{file_id}")
+async def miniapp_discuss_file_get(
+    kind: str,
+    item_id: str,
+    file_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> Response:
+    from assistant.stores import comment_files
+
+    uid = str(int(principal.telegram_user_id))
+    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    if not owner:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    row = await run_in_threadpool(comment_files.get_file, file_id)
+    if (
+        not row
+        or str(row.get("owner_user_id") or "") != owner
+        or str(row.get("item_kind") or "") != kind
+        or str(row.get("item_id") or "") != str(item_id)
+    ):
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    path = comment_files.disk_path(file_id)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    filename = str(row.get("filename") or "file")
+    mime = str(row.get("mime") or "application/octet-stream")
+    return FileResponse(path, media_type=mime, filename=filename)
 
 
 @miniapp_router.post("/notes/{kind}/{item_id}/paei")
