@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260909-create-note";
+  var WEBAPP_BUILD = "20260909-cal-two-days";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260909-create-note";
+  const NOTE_EDITOR_ASSET_V = "20260909-cal-two-days";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -254,15 +254,24 @@
     return String(n).padStart(2, "0");
   }
 
-  function shiftMeetingsPage(delta) {
-    var base = meetingsPageDate;
-    if (!base) {
-      var now = new Date();
-      base = now.getFullYear() + "-" + pad2(now.getMonth() + 1) + "-" + pad2(now.getDate());
-    }
+  function todayIsoLocal() {
+    var now = new Date();
+    return now.getFullYear() + "-" + pad2(now.getMonth() + 1) + "-" + pad2(now.getDate());
+  }
+
+  function addDaysIso(iso, days) {
+    var base = iso || todayIsoLocal();
     var d = new Date(base + "T12:00:00");
-    d.setDate(d.getDate() + delta);
-    meetingsPageDate = d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+    d.setDate(d.getDate() + Number(days || 0));
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+
+  function meetingsPageStep() {
+    return isDesktopLayout() ? 2 : 1;
+  }
+
+  function shiftMeetingsPage(delta) {
+    meetingsPageDate = addDaysIso(meetingsPageDate || todayIsoLocal(), delta);
     loadActual();
   }
 
@@ -281,12 +290,46 @@
     return apiFetch("/calendar/today" + q, { method: "GET" });
   }
 
+  function eventStartMs(ev) {
+    var raw = ev && ev.start && ev.start.dateTime;
+    if (!raw) return null;
+    var t = Date.parse(raw);
+    return isFinite(t) ? t : null;
+  }
+
+  function eventEndMs(ev) {
+    var raw = ev && ev.end && ev.end.dateTime;
+    if (raw) {
+      var t = Date.parse(raw);
+      if (isFinite(t)) return t;
+    }
+    return eventStartMs(ev);
+  }
+
+  function formatNowClock() {
+    return new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  }
+
+  function renderMeetingNowMarker() {
+    var el = document.createElement("div");
+    el.className = "meeting-now";
+    var clock = formatNowClock();
+    el.setAttribute("aria-label", "Сейчас " + clock);
+    var time = document.createElement("span");
+    time.className = "meeting-now-time";
+    time.textContent = clock;
+    var line = document.createElement("span");
+    line.className = "meeting-now-line";
+    el.appendChild(time);
+    el.appendChild(line);
+    return el;
+  }
+
   function paintMeetingsList(ui, calData) {
     var listM = document.getElementById(ui.listId);
     var emptyM = document.getElementById(ui.emptyId);
     var errM = document.getElementById(ui.errId);
-    var badgeM = ui.badgeId ? document.getElementById(ui.badgeId) : null;
-    var headMeet = ui.headId ? document.getElementById(ui.headId) : null;
+    var titleEl = ui.titleId ? document.getElementById(ui.titleId) : null;
     if (!listM) return;
     listM.innerHTML = "";
     if (errM) {
@@ -294,22 +337,35 @@
       setHidden(errM, true);
     }
     var calDate = (calData && calData.date) || "";
-    if (headMeet) headMeet.textContent = formatMeetingsHead(calDate);
+    if (titleEl) titleEl.textContent = formatMeetingsDayTitle(calDate);
+    var dayCol = ui.dayId ? document.getElementById(ui.dayId) : null;
+    if (dayCol) dayCol.classList.toggle("meetings-day--today", calDate === todayIsoLocal());
     var evs = (calData && calData.events) || [];
+    var showNow = !!(ui.showNow && calDate && calDate === todayIsoLocal());
+    var nowMs = Date.now();
+    var placedNow = false;
+    function maybeNow(beforeMs) {
+      if (!showNow || placedNow) return;
+      if (beforeMs == null || nowMs < beforeMs) {
+        listM.appendChild(renderMeetingNowMarker());
+        placedNow = true;
+      }
+    }
+    evs.forEach(function (ev, i) {
+      var startMs = eventStartMs(ev);
+      if (startMs != null) maybeNow(startMs);
+      var card = renderMeetingCard(ev, i, evs.length);
+      var endMs = eventEndMs(ev);
+      if (showNow && endMs != null && endMs < nowMs) card.classList.add("is-past");
+      listM.appendChild(card);
+    });
+    if (showNow && !placedNow) listM.appendChild(renderMeetingNowMarker());
     if (!evs.length) {
       setHidden(emptyM, false);
       if (emptyM) emptyM.textContent = meetingsEmptyMessage(calData);
-      if (badgeM) setHidden(badgeM, true);
       return;
     }
     setHidden(emptyM, true);
-    if (badgeM) {
-      setHidden(badgeM, false);
-      badgeM.textContent = String(evs.length);
-    }
-    evs.forEach(function (ev, i) {
-      listM.appendChild(renderMeetingCard(ev, i, evs.length));
-    });
   }
 
   async function loadMeetingsInto(ui, dateIso) {
@@ -333,13 +389,28 @@
     return calData;
   }
 
+  var lastMeetingsLeft = null;
+  var lastMeetingsRight = null;
+  var meetingsNowTimer = null;
+
   var meetingsUiMain = {
     listId: "meetings-list",
     emptyId: "meetings-empty",
     errId: "meetings-error",
-    badgeId: "meetings-badge",
-    headId: "meetings-head-title",
+    titleId: "meetings-day-left-title",
+    dayId: "meetings-day-left",
     trackDate: true,
+    showNow: true,
+  };
+
+  var meetingsUiNext = {
+    listId: "meetings-list-next",
+    emptyId: "meetings-empty-next",
+    errId: null,
+    titleId: "meetings-day-right-title",
+    dayId: "meetings-day-right",
+    trackDate: false,
+    showNow: true,
   };
 
   function formatMeetingsHead(iso) {
@@ -354,6 +425,90 @@
     } catch (_) {
       return "Встречи";
     }
+  }
+
+  function formatMeetingsHeadRange(isoA, isoB) {
+    if (!isoA) return "Встречи";
+    if (!isoB || isoB === isoA) return formatMeetingsHead(isoA);
+    try {
+      var a = new Date(isoA + "T12:00:00");
+      var b = new Date(isoB + "T12:00:00");
+      if (isNaN(a.getTime()) || isNaN(b.getTime())) return formatMeetingsHead(isoA);
+      var sameMonth = a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
+      var left = a.toLocaleDateString("ru-RU", {
+        day: "numeric",
+        month: sameMonth ? undefined : "short",
+      });
+      var right = b.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+      return "Встречи · " + left + "–" + right;
+    } catch (_) {
+      return formatMeetingsHead(isoA);
+    }
+  }
+
+  function formatMeetingsDayTitle(iso) {
+    if (!iso) return "";
+    try {
+      var d = new Date(iso + "T12:00:00");
+      if (isNaN(d.getTime())) return "";
+      var dayMonth = d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+      var today = todayIsoLocal();
+      if (iso === today) return "Сегодня · " + dayMonth;
+      if (iso === addDaysIso(today, 1)) return "Завтра · " + dayMonth;
+      if (iso === addDaysIso(today, -1)) return "Вчера · " + dayMonth;
+      var wd = d.toLocaleDateString("ru-RU", { weekday: "short" });
+      return wd + " · " + dayMonth;
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function syncMeetingsHead(leftIso, rightIso) {
+    var dual = isDesktopLayout();
+    var head = document.getElementById("meetings-head-title");
+    var prev = document.getElementById("meetings-prev");
+    var next = document.getElementById("meetings-next");
+    if (head) {
+      head.textContent = dual && rightIso ? formatMeetingsHeadRange(leftIso, rightIso) : formatMeetingsHead(leftIso);
+    }
+    if (prev) prev.setAttribute("aria-label", dual ? "Предыдущие два дня" : "Предыдущий день");
+    if (next) next.setAttribute("aria-label", dual ? "Следующие два дня" : "Следующий день");
+    var board = document.getElementById("meetings-board");
+    if (board) board.classList.toggle("meetings-board--dual", dual);
+  }
+
+  function updateMeetingsBadge(leftData, rightData) {
+    var badgeM = document.getElementById("meetings-badge");
+    if (!badgeM) return;
+    var n =
+      (((leftData && leftData.events) || []).length) +
+      (((rightData && rightData.events) || []).length);
+    setHidden(badgeM, n <= 0);
+    badgeM.textContent = String(n);
+  }
+
+  function ensureMeetingsNowTimer() {
+    if (meetingsNowTimer) return;
+    meetingsNowTimer = window.setInterval(function () {
+      if (lastMeetingsLeft && lastMeetingsLeft.date === todayIsoLocal()) {
+        paintMeetingsList(meetingsUiMain, lastMeetingsLeft);
+      } else if (lastMeetingsRight && lastMeetingsRight.date === todayIsoLocal()) {
+        paintMeetingsList(meetingsUiNext, lastMeetingsRight);
+      }
+    }, 60000);
+  }
+
+  function paintMeetingsBoard(leftData, rightData) {
+    var dual = isDesktopLayout();
+    lastMeetingsLeft = leftData || { events: [] };
+    lastMeetingsRight = dual ? rightData || { events: [], date: addDaysIso((leftData && leftData.date) || meetingsPageDate, 1) } : null;
+    var leftIso = (leftData && leftData.date) || "";
+    var rightIso = lastMeetingsRight && lastMeetingsRight.date;
+    syncMeetingsHead(leftIso, rightIso);
+    paintMeetingsList(meetingsUiMain, lastMeetingsLeft);
+    if (dual) paintMeetingsList(meetingsUiNext, lastMeetingsRight);
+    updateMeetingsBadge(lastMeetingsLeft, dual ? lastMeetingsRight : null);
+    ensureMeetingsNowTimer();
   }
 
   function heroDateLineFor(iso) {
@@ -6515,7 +6670,7 @@
     return row;
   }
 
-  function paintActual(remData, calData) {
+  function paintActual(remData, calData, calDataNext) {
     const hero = document.getElementById("actual-hero");
     const listEl = document.getElementById("reminders-list");
     const emptyR = document.getElementById("reminders-empty");
@@ -6538,6 +6693,8 @@
       return !x.done;
     });
     const evs = (calData && calData.events) || [];
+    const nextEvs = (calDataNext && calDataNext.events) || [];
+    const meetingsCount = isDesktopLayout() ? evs.length + nextEvs.length : evs.length;
 
     hero.innerHTML =
       '<div class="hero-inner">' +
@@ -6550,7 +6707,7 @@
       active.length +
       "</p></div>" +
       '<div class="hero-stat"><p class="hero-stat-label">Встреч</p><p class="hero-stat-value">' +
-      evs.length +
+      meetingsCount +
       "</p></div></div></div>";
 
     if (!active.length) {
@@ -6565,24 +6722,33 @@
       });
     }
 
-    paintMeetingsList(meetingsUiMain, calData);
+    paintMeetingsBoard(calData, calDataNext);
   }
 
   async function loadActual() {
     const errR = document.getElementById("reminders-error");
     const errM = document.getElementById("meetings-error");
-    var cacheKind = "actual_" + (meetingsPageDate || "today");
+    var dual = isDesktopLayout();
+    var leftIso = meetingsPageDate || todayIsoLocal();
+    var cacheKind = "actual_" + leftIso + (dual ? "_2" : "");
     var cached = readMiniappCache(cacheKind);
     if (cached) {
-      paintActual(cached.remData || { items: [] }, cached.calData || { events: [] });
+      paintActual(
+        cached.remData || { items: [] },
+        cached.calData || { events: [] },
+        cached.calDataNext || null
+      );
     }
 
     var remData = { items: [] };
     var calData = { events: [], connected: false };
-    var results = await Promise.allSettled([
+    var calDataNext = null;
+    var fetches = [
       apiFetch("/reminders", { method: "GET" }),
-      fetchCalendarDay(meetingsPageDate),
-    ]);
+      fetchCalendarDay(meetingsPageDate || leftIso),
+    ];
+    if (dual) fetches.push(fetchCalendarDay(addDaysIso(leftIso, 1)));
+    var results = await Promise.allSettled(fetches);
 
     if (results[0].status === "fulfilled") {
       remData = results[0].value;
@@ -6596,7 +6762,7 @@
 
     if (results[1].status === "fulfilled") {
       calData = results[1].value;
-      if (calData && calData.date && !meetingsPageDate) {
+      if (calData && calData.date) {
         meetingsPageDate = calData.date;
       }
       if (errM) {
@@ -6609,8 +6775,23 @@
       setHidden(errM, false);
     }
 
-    paintActual(remData, calData);
-    writeMiniappCache(cacheKind, { remData: remData, calData: calData });
+    if (dual && results[2]) {
+      if (results[2].status === "fulfilled") {
+        calDataNext = results[2].value;
+      } else {
+        calDataNext = {
+          events: [],
+          date: addDaysIso((calData && calData.date) || leftIso, 1),
+        };
+      }
+    }
+
+    paintActual(remData, calData, calDataNext);
+    writeMiniappCache(cacheKind, {
+      remData: remData,
+      calData: calData,
+      calDataNext: calDataNext,
+    });
   }
 
   /* ——— Заметки и нативная кнопка «Назад» (Telegram) ——— */
@@ -9044,6 +9225,7 @@
         applyNotePaneWidths();
         if (e.matches) syncDesktopNoteDiscussion();
         else if (isNoteDiscussionOpen()) closeNoteDiscussion(true);
+        loadActual();
       };
       if (desk.addEventListener) desk.addEventListener("change", onDesk);
       else if (desk.addListener) desk.addListener(onDesk);
@@ -13752,10 +13934,10 @@
     }
 
     onId("meetings-prev", "click", function () {
-      shiftMeetingsPage(-1);
+      shiftMeetingsPage(-meetingsPageStep());
     });
     onId("meetings-next", "click", function () {
-      shiftMeetingsPage(1);
+      shiftMeetingsPage(meetingsPageStep());
     });
 
     onId("gpt-close", "click", closeGptChat);

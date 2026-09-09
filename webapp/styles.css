@@ -855,6 +855,61 @@ html.boot-open-app #app.hidden {
   background: rgba(82, 158, 244, 0.2);
 }
 
+.meeting-now {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0.2rem 0;
+}
+
+.meeting-now-time {
+  flex-shrink: 0;
+  width: 2.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  color: var(--danger);
+}
+
+.meeting-now-line {
+  position: relative;
+  flex: 1;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--danger);
+}
+
+.meeting-now-line::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: var(--radius-full);
+  background: var(--danger);
+  transform: translate(-10%, -50%);
+}
+
+.meeting-row.is-past {
+  opacity: 0.55;
+}
+
+.meetings-day-title {
+  display: none;
+  margin: 0 0 var(--space-3);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-secondary);
+}
+
+.meetings-day--next {
+  display: none;
+}
+
 .meeting-card-wrap {
   flex: 1;
   min-width: 0;
@@ -8540,7 +8595,13 @@ html.modal-sheet-open body {
     align-self: center;
   }
 
-  #reminders-list.stack,
+  #reminders-list.stack {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--space-3);
+    align-items: stretch;
+  }
+
   .notes-pane--stack {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -8548,23 +8609,47 @@ html.modal-sheet-open body {
     align-items: stretch;
   }
 
-  #meetings-list.meetings-stack {
+  #reminders-list .reminder-card {
+    padding: var(--space-3);
+    padding-right: calc(var(--space-3) + 1.75rem);
+  }
+
+  #reminders-list .reminder-text {
+    font-size: 0.8125rem;
+  }
+
+  .meetings-board {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-5);
+    align-items: start;
+  }
+
+  .meetings-day-title {
     display: block;
-    column-count: 2;
-    column-gap: var(--space-4);
   }
 
-  #meetings-list .meeting-row {
-    width: 100%;
-    margin: 0 0 var(--space-4);
+  .meetings-day--next {
+    display: block;
     min-width: 0;
-    break-inside: avoid;
-    page-break-inside: avoid;
-    -webkit-column-break-inside: avoid;
   }
 
-  #meetings-list .meeting-row:last-child {
-    margin-bottom: 0;
+  .meetings-day--today .meetings-day-title {
+    color: var(--accent);
+  }
+
+  #meetings-list.meetings-stack,
+  #meetings-list-next.meetings-stack {
+    display: flex;
+    flex-direction: column;
+    column-count: unset;
+  }
+
+  #meetings-list .meeting-row,
+  #meetings-list-next .meeting-row {
+    width: 100%;
+    margin: 0;
+    min-width: 0;
   }
 
   #reminders-list .swipe-row,

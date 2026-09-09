@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260909-create-note">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260909-cal-two-days">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -46,8 +46,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20260909-create-note" />
-  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260909-create-note" as="script" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20260909-cal-two-days" />
+  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260909-cal-two-days" as="script" />
   <!-- Same-origin, async: не блокирует парсер, если сеть/VPN тормозит. -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" async></script>
 </head>
@@ -98,8 +98,18 @@
             </div>
             <button type="button" class="cal-nav-btn" id="meetings-next" aria-label="Следующий день">›</button>
           </div>
-          <div id="meetings-list" class="meetings-stack"></div>
-          <p id="meetings-empty" class="muted empty-hint hidden">Нет встреч на этот день</p>
+          <div id="meetings-board" class="meetings-board">
+            <div class="meetings-day" id="meetings-day-left">
+              <p class="meetings-day-title" id="meetings-day-left-title"></p>
+              <div id="meetings-list" class="meetings-stack"></div>
+              <p id="meetings-empty" class="muted empty-hint hidden">Нет встреч на этот день</p>
+            </div>
+            <div class="meetings-day meetings-day--next" id="meetings-day-right">
+              <p class="meetings-day-title" id="meetings-day-right-title"></p>
+              <div id="meetings-list-next" class="meetings-stack"></div>
+              <p id="meetings-empty-next" class="muted empty-hint hidden">Нет встреч на этот день</p>
+            </div>
+          </div>
           <p id="meetings-error" class="error hidden"></p>
         </div>
         <button
@@ -1131,14 +1141,14 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20260909-create-note"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20260909-cal-two-days"><\/script>'
         );
       }
     })();
   </script>
-  <script src="/webapp/note-html.js?v=20260909-create-note" defer></script>
-  <script src="/webapp/note-comments.js?v=20260909-create-note" defer></script>
-  <script src="/webapp/note-rich-editor.js?v=20260909-create-note" defer></script>
-  <script src="/webapp/app.js?v=20260909-create-note" defer></script>
+  <script src="/webapp/note-html.js?v=20260909-cal-two-days" defer></script>
+  <script src="/webapp/note-comments.js?v=20260909-cal-two-days" defer></script>
+  <script src="/webapp/note-rich-editor.js?v=20260909-cal-two-days" defer></script>
+  <script src="/webapp/app.js?v=20260909-cal-two-days" defer></script>
 </body>
 </html>
