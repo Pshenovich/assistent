@@ -400,9 +400,10 @@ def build_gpt_picker_models(
     if not models:
         models = [{"id": mid, "name": name} for mid, name in GPT_PICKER_MODELS]
     ask_id = sanitize_openrouter_model_id(ask)
+    preferred = ask_id or "openai/gpt-4.1"
     default = models[0]["id"]
-    if ask_id and any(row["id"] == ask_id for row in models):
-        default = ask_id
+    if any(row["id"] == preferred for row in models):
+        default = preferred
     models.sort(key=lambda row: (0 if row["id"] == default else 1, row["name"].lower()))
     return {"models": models, "default": default}
 

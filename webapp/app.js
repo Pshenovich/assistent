@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260909-pwa-notes";
+  var WEBAPP_BUILD = "20260909-discuss-ux";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260909-pwa-notes";
+  const NOTE_EDITOR_ASSET_V = "20260909-discuss-ux";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -1938,6 +1938,217 @@
 
   function isDesktopLayout() {
     return window.matchMedia && window.matchMedia("(min-width: 960px)").matches;
+  }
+
+  var NOTE_PANE_W_LS = "leo_note_pane_w";
+  var DISCUSS_PANE_W_LS = "leo_discuss_pane_w";
+  var MIN_NOTE_PANE_W = 360;
+  var MIN_DISCUSS_PANE_W = 280;
+  var NOTE_PANE_SNAP_FULL = 28;
+
+  function cssLenToPx(value, fallback) {
+    var s = String(value || "").trim();
+    var n = parseFloat(s);
+    if (!isFinite(n) || n <= 0) return fallback;
+    if (/rem$/i.test(s)) {
+      var fs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      return Math.round(n * fs);
+    }
+    return Math.round(n);
+  }
+
+  function sidebarWidthPx() {
+    if (!isDesktopLayout()) return 0;
+    var raw = getComputedStyle(document.documentElement).getPropertyValue("--sidebar-w");
+    return cssLenToPx(raw, 244);
+  }
+
+  function noteStageWidthPx() {
+    return Math.max(0, window.innerWidth - sidebarWidthPx());
+  }
+
+  function defaultDiscussWidthPx() {
+    var raw = getComputedStyle(document.documentElement).getPropertyValue("--max-w");
+    return cssLenToPx(raw, 416);
+  }
+
+  function readStoredPx(key) {
+    try {
+      var n = parseInt(localStorage.getItem(key) || "", 10);
+      if (isFinite(n) && n > 0) return n;
+    } catch (_) {}
+    return 0;
+  }
+
+  function writeStoredPx(key, px) {
+    try {
+      if (px > 0) localStorage.setItem(key, String(Math.round(px)));
+      else localStorage.removeItem(key);
+    } catch (_) {}
+  }
+
+  function clampDiscussWidthPx(px) {
+    var stage = noteStageWidthPx();
+    var maxW = Math.max(MIN_DISCUSS_PANE_W, stage - MIN_NOTE_PANE_W);
+    var n = Math.round(px);
+    if (!isFinite(n) || n <= 0) n = defaultDiscussWidthPx();
+    return Math.min(Math.max(n, MIN_DISCUSS_PANE_W), maxW);
+  }
+
+  function clampNotePaneWidthPx(px, allowFull) {
+    var stage = noteStageWidthPx();
+    var n = Math.round(px);
+    if (!isFinite(n) || n <= 0) return 0;
+    if (allowFull && n >= stage - NOTE_PANE_SNAP_FULL) return 0;
+    var maxW = Math.max(MIN_NOTE_PANE_W, stage);
+    return Math.min(Math.max(n, MIN_NOTE_PANE_W), maxW);
+  }
+
+  function applyNotePaneWidths() {
+    bindNotePaneResizersOnce();
+    var root = document.documentElement;
+    var ov = document.getElementById("note-editor-overlay");
+    var discussEl = document.getElementById("note-discussion-resizer");
+    var noteEl = document.getElementById("note-editor-resizer");
+    if (!isDesktopLayout()) {
+      root.style.removeProperty("--discuss-w");
+      root.style.removeProperty("--note-pane-w");
+      if (ov) ov.classList.remove("note-editor-overlay--sized");
+      return;
+    }
+    var stage = noteStageWidthPx();
+    var discussW = clampDiscussWidthPx(readStoredPx(DISCUSS_PANE_W_LS) || defaultDiscussWidthPx());
+    root.style.setProperty("--discuss-w", discussW + "px");
+    if (discussEl) {
+      discussEl.setAttribute("aria-valuemin", String(MIN_DISCUSS_PANE_W));
+      discussEl.setAttribute("aria-valuemax", String(Math.max(MIN_DISCUSS_PANE_W, stage - MIN_NOTE_PANE_W)));
+      discussEl.setAttribute("aria-valuenow", String(discussW));
+    }
+    var noteW = 0;
+    if (!isNoteDiscussionOpen()) {
+      noteW = clampNotePaneWidthPx(readStoredPx(NOTE_PANE_W_LS), false);
+      if (noteW && ov) {
+        root.style.setProperty("--note-pane-w", noteW + "px");
+        ov.classList.add("note-editor-overlay--sized");
+      } else {
+        root.style.removeProperty("--note-pane-w");
+        if (ov) ov.classList.remove("note-editor-overlay--sized");
+      }
+    } else {
+      root.style.removeProperty("--note-pane-w");
+      if (ov) ov.classList.remove("note-editor-overlay--sized");
+    }
+    if (noteEl) {
+      noteEl.setAttribute("aria-valuemin", String(MIN_NOTE_PANE_W));
+      noteEl.setAttribute("aria-valuemax", String(stage));
+      noteEl.setAttribute("aria-valuenow", String(noteW || stage));
+    }
+  }
+
+  function bindNotePaneResizersOnce() {
+    if (document.documentElement._notePaneResizersBound) return;
+    document.documentElement._notePaneResizersBound = true;
+    var noteHandle = document.getElementById("note-editor-resizer");
+    var discussHandle = document.getElementById("note-discussion-resizer");
+
+    function startDrag(kind, e) {
+      if (!isDesktopLayout()) return;
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      e.preventDefault();
+      var handle = e.currentTarget;
+      var root = document.documentElement;
+      var live =
+        kind === "discuss"
+          ? clampDiscussWidthPx(readStoredPx(DISCUSS_PANE_W_LS) || defaultDiscussWidthPx())
+          : clampNotePaneWidthPx(readStoredPx(NOTE_PANE_W_LS) || noteStageWidthPx(), false);
+      root.classList.add("note-pane-resizing");
+      try {
+        handle.setPointerCapture(e.pointerId);
+      } catch (_) {}
+      function onMove(ev) {
+        if (kind === "discuss") {
+          live = clampDiscussWidthPx(window.innerWidth - ev.clientX);
+          root.style.setProperty("--discuss-w", live + "px");
+          if (handle.setAttribute) handle.setAttribute("aria-valuenow", String(live));
+        } else {
+          live = clampNotePaneWidthPx(ev.clientX - sidebarWidthPx(), true);
+          var ov = document.getElementById("note-editor-overlay");
+          if (live) {
+            root.style.setProperty("--note-pane-w", live + "px");
+            if (ov) ov.classList.add("note-editor-overlay--sized");
+          } else {
+            root.style.removeProperty("--note-pane-w");
+            if (ov) ov.classList.remove("note-editor-overlay--sized");
+          }
+          if (handle.setAttribute) {
+            handle.setAttribute("aria-valuenow", String(live || noteStageWidthPx()));
+          }
+        }
+      }
+      function onUp() {
+        root.classList.remove("note-pane-resizing");
+        if (kind === "discuss") writeStoredPx(DISCUSS_PANE_W_LS, live);
+        else writeStoredPx(NOTE_PANE_W_LS, live);
+        applyNotePaneWidths();
+        handle.removeEventListener("pointermove", onMove);
+        handle.removeEventListener("pointerup", onUp);
+        handle.removeEventListener("pointercancel", onUp);
+      }
+      handle.addEventListener("pointermove", onMove);
+      handle.addEventListener("pointerup", onUp);
+      handle.addEventListener("pointercancel", onUp);
+    }
+
+    if (noteHandle) {
+      noteHandle.addEventListener("pointerdown", function (e) {
+        startDrag("note", e);
+      });
+      noteHandle.addEventListener("keydown", function (e) {
+        if (!isDesktopLayout() || isNoteDiscussionOpen()) return;
+        var stage = noteStageWidthPx();
+        var cur = readStoredPx(NOTE_PANE_W_LS) || stage;
+        var step = e.shiftKey ? 48 : 16;
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          writeStoredPx(NOTE_PANE_W_LS, clampNotePaneWidthPx(cur - step, true));
+          applyNotePaneWidths();
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          writeStoredPx(NOTE_PANE_W_LS, clampNotePaneWidthPx(cur + step, true));
+          applyNotePaneWidths();
+        } else if (e.key === "Home") {
+          e.preventDefault();
+          writeStoredPx(NOTE_PANE_W_LS, 0);
+          applyNotePaneWidths();
+        }
+      });
+    }
+    if (discussHandle) {
+      discussHandle.addEventListener("pointerdown", function (e) {
+        startDrag("discuss", e);
+      });
+      discussHandle.addEventListener("keydown", function (e) {
+        if (!isDesktopLayout() || !isNoteDiscussionOpen()) return;
+        var cur = clampDiscussWidthPx(readStoredPx(DISCUSS_PANE_W_LS) || defaultDiscussWidthPx());
+        var step = e.shiftKey ? 48 : 16;
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          writeStoredPx(DISCUSS_PANE_W_LS, clampDiscussWidthPx(cur + step));
+          applyNotePaneWidths();
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          writeStoredPx(DISCUSS_PANE_W_LS, clampDiscussWidthPx(cur - step));
+          applyNotePaneWidths();
+        } else if (e.key === "Home") {
+          e.preventDefault();
+          writeStoredPx(DISCUSS_PANE_W_LS, defaultDiscussWidthPx());
+          applyNotePaneWidths();
+        }
+      });
+    }
+    window.addEventListener("resize", function () {
+      if (isNoteEditorModalOpen() || isNoteDiscussionOpen()) applyNotePaneWidths();
+    });
   }
 
   function pulseMotionEnter(el) {
@@ -4266,7 +4477,7 @@
             (descRaw.length >= 280 ? "…" : "") +
             "</p>"
           : "");
-      appendTagChipsRow(inner, noteTagsOf(n), { prepend: true, head: true });
+      appendTagChipsRow(inner, noteTagsOf(n));
       var toggle = document.createElement("button");
       toggle.type = "button";
       toggle.className =
@@ -4550,6 +4761,8 @@
     }
     var content = document.getElementById("note-editor-modal-body");
     if (content) content.style.paddingBottom = "";
+    var scrollEl = document.querySelector("#note-editor-overlay .note-editor-modal-body");
+    if (scrollEl) scrollEl.style.paddingBottom = "";
   }
 
   function lockNoteEditorBackground() {
@@ -4599,6 +4812,33 @@
     }
   }
 
+  function noteEditorToolbarHeightPx() {
+    var toolbar = document.getElementById("note-editor-toolbar-wrap");
+    if (
+      !toolbar ||
+      toolbar.classList.contains("hidden") ||
+      toolbar.classList.contains("is-composer-hidden")
+    ) {
+      return 0;
+    }
+    var h = Math.ceil(toolbar.getBoundingClientRect().height);
+    return h > 0 ? h : 64;
+  }
+
+  function syncNoteEditorEndPad() {
+    var scrollEl = getNoteEditorScrollEl();
+    var content = document.getElementById("note-editor-modal-body");
+    if (content) content.style.paddingBottom = "";
+    if (!scrollEl) return;
+    if (!isNoteEditorModalOpen() || !isMobileNoteLayout()) {
+      scrollEl.style.paddingBottom = "";
+      return;
+    }
+    var toolbarH = noteEditorToolbarHeightPx();
+    var extraLines = 112;
+    scrollEl.style.paddingBottom = Math.round(toolbarH + extraLines) + "px";
+  }
+
   function pinNoteEditorOverlayToVisualViewport() {
     var ov = document.getElementById("note-editor-overlay");
     var sheet = ov && ov.querySelector(".note-editor-sheet");
@@ -4638,11 +4878,7 @@
     var kbOpen = kbGuess > 40;
     document.documentElement.classList.toggle("note-editor-kb-open", kbOpen);
     document.documentElement.style.setProperty("--note-editor-kb-inset", kbGuess + "px");
-    var content = document.getElementById("note-editor-modal-body");
-    if (content) {
-      var extra = kbOpen ? Math.round(Math.max(140, sheetH * 0.45)) : 0;
-      content.style.paddingBottom = extra ? extra + "px" : "";
-    }
+    syncNoteEditorEndPad();
     if (kbOpen && !noteEditorKbWasOpen) {
       window.setTimeout(function () {
         scrollNoteCaretIntoView(true);
@@ -4694,7 +4930,7 @@
           toolbarH = Math.max(0, bodyRect.bottom - tb.top);
         }
       }
-      var margin = 20;
+      var margin = isMobileNoteLayout() ? 72 : 20;
       var bottomLimit = bodyRect.bottom - toolbarH - margin;
       var topLimit = bodyRect.top + margin;
       var bottom = caretRect.bottom != null ? caretRect.bottom : caretRect.top;
@@ -4752,6 +4988,7 @@
       return;
     }
     wrap.classList.toggle("is-format-active", noteFormatUiActive());
+    syncNoteEditorEndPad();
   }
 
   function noteGptIconHtml() {
@@ -4770,6 +5007,7 @@
       setHidden(btn, !show);
     }
     if (wrap) wrap.classList.toggle("has-gpt-btn", !!show);
+    syncNoteEditorEndPad();
   }
 
   function bindNoteGptToolbarButton() {
@@ -8039,7 +8277,8 @@
   }
 
   var GPT_MODEL_LS = "leo_gpt_model";
-  var gptModelsState = { loaded: false, loading: false, models: [], defaultId: "" };
+  var GPT_MODEL_DEFAULT = "openai/gpt-4.1";
+  var gptModelsState = { loaded: false, loading: false, models: [], defaultId: GPT_MODEL_DEFAULT };
 
   function noteComposerAsset(name) {
     return "/webapp/icons/" + name + ".svg?v=" + WEBAPP_BUILD;
@@ -8079,7 +8318,7 @@
     var chevronFill = noteComposerAsset("chevron-up-on-fill");
     var chevronMuted = noteComposerAsset("chevron-up-muted");
     return (
-      '<form id="note-paie-reply-form" class="note-paie-reply-form">' +
+      '<form id="note-paie-reply-form" class="note-paie-reply-form is-gpt-mode">' +
       '<div class="note-paie-reply-target hidden">' +
       '<span class="note-paie-reply-target-bar" aria-hidden="true"></span>' +
       '<div class="note-paie-reply-target-copy">' +
@@ -8094,23 +8333,23 @@
       '<div class="note-paie-composer-bar">' +
       '<div class="note-paie-composer-left">' +
       '<div class="note-paie-mode-switch" role="tablist" aria-label="Режим">' +
-      '<button type="button" class="note-paie-mode is-active" data-mode="paie">PAIE</button>' +
-      '<button type="button" class="note-paie-mode" data-mode="gpt">GPT</button>' +
+      '<button type="button" class="note-paie-mode" data-mode="paie">PAIE</button>' +
+      '<button type="button" class="note-paie-mode is-active" data-mode="gpt">GPT</button>' +
       '<button type="button" class="note-paie-mode" data-mode="comment">Текст</button>' +
       "</div>" +
       '<button type="button" class="note-paie-mode-compact" aria-haspopup="listbox" aria-expanded="false">' +
-      '<span class="note-paie-mode-compact-label">PAIE</span>' +
+      '<span class="note-paie-mode-compact-label">GPT</span>' +
       '<img class="note-paie-chevron" src="' +
       chevronFill +
       '" alt="" width="24" height="24">' +
       "</button>" +
       '<div class="note-paie-menu note-paie-mode-menu hidden" role="listbox">' +
-      '<button type="button" class="note-paie-menu-item is-active" data-mode="paie">PAIE</button>' +
-      '<button type="button" class="note-paie-menu-item" data-mode="gpt">GPT</button>' +
+      '<button type="button" class="note-paie-menu-item" data-mode="paie">PAIE</button>' +
+      '<button type="button" class="note-paie-menu-item is-active" data-mode="gpt">GPT</button>' +
       '<button type="button" class="note-paie-menu-item" data-mode="comment">Текст</button>' +
       "</div>" +
       '<button type="button" class="note-paie-model-btn" aria-haspopup="listbox" aria-expanded="false">' +
-      '<span class="note-paie-model-label">Модель</span>' +
+      '<span class="note-paie-model-label">GPT-4.1</span>' +
       '<img class="note-paie-chevron" src="' +
       chevronMuted +
       '" alt="" width="24" height="24">' +
@@ -8135,7 +8374,7 @@
       var stored = String(localStorage.getItem(GPT_MODEL_LS) || "").trim();
       if (stored) return stored;
     } catch (_) {}
-    return gptModelsState.defaultId || "";
+    return gptModelsState.defaultId || GPT_MODEL_DEFAULT;
   }
 
   function setSelectedGptModelId(id) {
@@ -8223,7 +8462,7 @@
     try {
       var res = await apiFetch("/gpt/models");
       gptModelsState.models = Array.isArray(res && res.models) ? res.models : [];
-      gptModelsState.defaultId = String((res && res.default) || "").trim();
+      gptModelsState.defaultId = String((res && res.default) || "").trim() || GPT_MODEL_DEFAULT;
       gptModelsState.loaded = true;
       var allowed = {};
       gptModelsState.models.forEach(function (m) {
@@ -8232,9 +8471,10 @@
       var current = selectedGptModelId();
       if (!current || !allowed[current]) {
         setSelectedGptModelId(
-          gptModelsState.defaultId ||
+          (allowed[GPT_MODEL_DEFAULT] && GPT_MODEL_DEFAULT) ||
+            gptModelsState.defaultId ||
             (gptModelsState.models[0] && gptModelsState.models[0].id) ||
-            ""
+            GPT_MODEL_DEFAULT
         );
       }
     } catch (_) {
@@ -8247,9 +8487,9 @@
         { id: "openai/gpt-4o", name: "GPT-4o" },
         { id: "openai/gpt-4o-mini", name: "GPT-4o mini" },
       ];
-      gptModelsState.defaultId = "openai/gpt-5.6-sol";
+      gptModelsState.defaultId = GPT_MODEL_DEFAULT;
       gptModelsState.loaded = true;
-      setSelectedGptModelId(gptModelsState.defaultId);
+      if (!selectedGptModelId()) setSelectedGptModelId(GPT_MODEL_DEFAULT);
     } finally {
       gptModelsState.loading = false;
       syncGptModelButton();
@@ -8469,6 +8709,7 @@
     var ov = document.getElementById("note-discussion-overlay");
     if (!ov || ov._bound) return ov;
     ov._bound = true;
+    bindDiscussClarifyOnce();
     var closeBtn = document.getElementById("note-discussion-close");
     if (closeBtn) {
       closeBtn.addEventListener("click", function (e) {
@@ -8488,6 +8729,7 @@
     if (window.matchMedia) {
       var desk = window.matchMedia("(min-width: 960px)");
       var onDesk = function (e) {
+        applyNotePaneWidths();
         if (e.matches) syncDesktopNoteDiscussion();
         else if (isNoteDiscussionOpen()) closeNoteDiscussion(true);
       };
@@ -8526,6 +8768,7 @@
     if (sheet) {
       sheet.setAttribute("aria-modal", open && isDesktopLayout() ? "false" : "true");
     }
+    applyNotePaneWidths();
   }
 
   function shouldKeepNoteDiscussionOpen() {
@@ -8561,6 +8804,7 @@
     }
     closeNoteAnswerMenu();
     closeNoteComposerMenus();
+    hideDiscussClarify();
     resetDiscussionOverlayViewport();
     syncNoteDiscussionOpenClass();
     syncAppOverlay();
@@ -8689,6 +8933,8 @@
       };
       wrap._commentChairId = opts.chairId || null;
       if (!opts.mode) setNoteAskMode("comment");
+    } else if (!opts.mode) {
+      setNoteAskMode("gpt");
     }
     if (opts.scrollToId) wrap._discussionPinId = opts.scrollToId;
     else if (!opts.fromDesktopSync) wrap._discussionPinId = null;
@@ -8819,7 +9065,9 @@
     var whoEl = targetEl && targetEl.querySelector(".note-paie-reply-target-who");
     var quote = draft && String(draft.quote || "").trim();
     var active = !!quote;
-    if (whoEl) whoEl.textContent = chairId ? "CHAIR" : "Фрагмент";
+    if (whoEl) {
+      whoEl.textContent = chairId ? "CHAIR" : noteAskMode() === "gpt" ? "GPT" : "Фрагмент";
+    }
     if (form) form.classList.toggle("is-replying", active);
     if (targetEl) targetEl.classList.toggle("hidden", !active);
     if (quoteEl) quoteEl.textContent = clipReplyQuote(quote) || "";
@@ -9057,8 +9305,47 @@
     );
   }
 
-  function bindNoteAnswerMenu(btn, menu, text) {
+  function discussMenuIcon(name) {
+    var common =
+      'width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
+    var paths = {
+      note:
+        '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M15 3v6h6"/>',
+      task: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+      link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+      copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+      trash:
+        '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
+      clarify:
+        '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/>',
+    };
+    return (
+      '<span class="note-discuss-menu-icon"><svg ' +
+      common +
+      ">" +
+      (paths[name] || "") +
+      "</svg></span>"
+    );
+  }
+
+  function discussMenuItem(action, icon, label, extraClass) {
+    return (
+      '<button type="button" class="note-discuss-menu-item' +
+      (extraClass ? " " + extraClass : "") +
+      '" data-answer-action="' +
+      action +
+      '">' +
+      discussMenuIcon(icon) +
+      "<span>" +
+      label +
+      "</span></button>"
+    );
+  }
+
+  function bindNoteAnswerMenu(btn, menu, comment) {
     if (!btn || !menu) return;
+    var text = String((comment && comment.body) || "");
+    var commentId = comment && comment.id;
     btn.addEventListener("click", function (e) {
       e.preventDefault();
       e.stopPropagation();
@@ -9079,14 +9366,141 @@
         else if (action === "task") createTaskNoteFromAnswer(text);
         else if (action === "link") openNoteLinkPicker(text);
         else if (action === "copy") copyAnswerText(text);
+        else if (action === "delete") {
+          var wrap = document.getElementById("note-editor-more-wrap");
+          if (wrap && wrap._shareKind && wrap._shareId && commentId) {
+            deleteNoteComment(wrap._shareKind, wrap._shareId, commentId);
+          }
+        }
       });
     });
+  }
+
+  function hideDiscussClarify() {
+    var el = document.getElementById("note-discuss-clarify");
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  function showDiscussClarify(rect, onClick) {
+    if (!rect) {
+      hideDiscussClarify();
+      return;
+    }
+    var btn = document.getElementById("note-discuss-clarify");
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.id = "note-discuss-clarify";
+      btn.className = "note-discuss-clarify";
+      btn.innerHTML = discussMenuIcon("clarify") + "<span>Уточнить</span>";
+      function stopSel(e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      function activate(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (btn._fired) return;
+        btn._fired = true;
+        var fn = btn._onClarify;
+        hideDiscussClarify();
+        if (typeof fn === "function") fn();
+      }
+      btn.addEventListener("pointerdown", stopSel);
+      btn.addEventListener("mousedown", stopSel);
+      btn.addEventListener("touchstart", stopSel, { passive: false });
+      btn.addEventListener("pointerup", activate);
+      btn.addEventListener("click", activate);
+      document.body.appendChild(btn);
+    }
+    btn._onClarify = onClick;
+    btn._fired = false;
+    var vw = window.innerWidth;
+    var left = rect.left + rect.width / 2 - 52;
+    var top = rect.top - 40;
+    if (left < 8) left = 8;
+    if (left + 110 > vw - 8) left = vw - 118;
+    if (top < 8) top = rect.bottom + 8;
+    btn.style.top = Math.round(top) + "px";
+    btn.style.left = Math.round(left) + "px";
+  }
+
+  function applyDiscussClarify(draft) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || !draft || !String(draft.quote || "").trim()) return;
+    wrap._commentDraft = {
+      quote: String(draft.quote || "").trim(),
+      prefix: draft.prefix || "",
+      suffix: draft.suffix || "",
+    };
+    wrap._commentChairId = null;
+    setNoteAskMode("gpt");
+    syncNoteComposerCommentTarget();
+    var input = document.getElementById("note-paie-reply-input");
+    if (input) {
+      try {
+        input.focus();
+      } catch (_) {}
+    }
+    var sel = window.getSelection && window.getSelection();
+    if (sel && sel.removeAllRanges) sel.removeAllRanges();
+    hideDiscussClarify();
+  }
+
+  function discussionSelectionDraft() {
+    var sel = window.getSelection && window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount < 1) return null;
+    var node = sel.anchorNode;
+    var el = node && (node.nodeType === 1 ? node : node.parentElement);
+    var bubble =
+      el && el.closest ? el.closest(".note-discuss-msg.is-gpt .note-discuss-bubble") : null;
+    if (!bubble) return null;
+    if (sel.focusNode && !bubble.contains(sel.focusNode)) return null;
+    var api = window.NoteComments;
+    var draft = api && api.selectionAnchor ? api.selectionAnchor(bubble) : null;
+    if (draft && draft.quote) return draft;
+    var text = String(sel.toString() || "").replace(/\s+/g, " ").trim();
+    if (!text) return null;
+    var range = sel.getRangeAt(0);
+    var rect = range.getBoundingClientRect ? range.getBoundingClientRect() : null;
+    return { quote: text, prefix: "", suffix: "", rect: rect };
+  }
+
+  function bindDiscussClarifyOnce() {
+    if (document._discussClarifyBound) return;
+    document._discussClarifyBound = true;
+    function onSelect(e) {
+      if (e && e.target && e.target.closest && e.target.closest("#note-discuss-clarify")) {
+        return;
+      }
+      if (!isNoteDiscussionOpen()) {
+        hideDiscussClarify();
+        return;
+      }
+      var draft = discussionSelectionDraft();
+      if (!draft || !draft.rect) {
+        hideDiscussClarify();
+        return;
+      }
+      showDiscussClarify(draft.rect, function () {
+        applyDiscussClarify(draft);
+      });
+    }
+    document.addEventListener("mouseup", onSelect);
+    document.addEventListener("pointerup", onSelect);
+    document.addEventListener("keyup", onSelect);
+    document.addEventListener("scroll", hideDiscussClarify, true);
   }
 
   function renderDiscussionMessage(c) {
     var item = document.createElement("article");
     var assistant = isAssistantComment(c);
-    item.className = "note-discuss-msg " + (assistant ? "is-assistant" : "is-user");
+    var api = window.NoteComments;
+    var isGpt = !!(api && api.isGptComment && api.isGptComment(c));
+    item.className =
+      "note-discuss-msg " +
+      (assistant ? "is-assistant" : "is-user") +
+      (isGpt ? " is-gpt" : "");
     item.setAttribute("data-comment-id", String(c.id));
     if (c.quote) {
       var q = document.createElement("p");
@@ -9098,11 +9512,17 @@
     role.className = "note-discuss-role";
     role.textContent = assistant ? shareCommentAuthorLabel(c) : "Вы";
     item.appendChild(role);
+    var bodyText = String((c && c.body) || "");
     var bubble = document.createElement("div");
     bubble.className = "note-discuss-bubble";
-    bubble.textContent = String((c && c.body) || "");
+    if (assistant && bodyText.trim()) {
+      bubble.className = "note-discuss-bubble note-discuss-bubble--md journal-summary-html note-body-html";
+      bubble.innerHTML = wrapTablesForScroll(simpleMarkdownToHtml(bodyText));
+    } else {
+      bubble.textContent = bodyText;
+    }
     item.appendChild(bubble);
-    if (assistant && String((c && c.body) || "").trim()) {
+    if (String((c && c.body) || "").trim()) {
       var actions = document.createElement("div");
       actions.className = "note-discuss-actions";
       var more = document.createElement("button");
@@ -9114,19 +9534,22 @@
       var menu = document.createElement("div");
       menu.className = "note-discuss-menu hidden";
       menu.innerHTML =
-        '<button type="button" class="note-discuss-menu-item" data-answer-action="into-note">📌 В заметку</button>' +
-        '<button type="button" class="note-discuss-menu-item" data-answer-action="task">📋 Создать задачу</button>' +
-        '<button type="button" class="note-discuss-menu-item" data-answer-action="link">🔗 Связать с заметкой</button>' +
-        '<button type="button" class="note-discuss-menu-item" data-answer-action="copy">📄 Копировать</button>';
+        discussMenuItem("into-note", "note", "В заметку") +
+        discussMenuItem("task", "task", "Создать задачу") +
+        discussMenuItem("link", "link", "Связать с заметкой") +
+        discussMenuItem("copy", "copy", "Копировать") +
+        discussMenuItem("delete", "trash", "Удалить", "note-discuss-menu-item--danger");
       actions.appendChild(more);
       actions.appendChild(menu);
-      bindNoteAnswerMenu(more, menu, String(c.body || ""));
+      bindNoteAnswerMenu(more, menu, c);
       item.appendChild(actions);
     }
     item.addEventListener("click", function (e) {
-      if (e.target && e.target.closest && e.target.closest(".note-discuss-more, .note-discuss-menu")) {
+      if (e.target && e.target.closest && e.target.closest(".note-discuss-more, .note-discuss-menu, #note-discuss-clarify")) {
         return;
       }
+      var sel = window.getSelection && window.getSelection();
+      if (sel && !sel.isCollapsed) return;
       revealNoteDiscussionTopic(c, { fromDiscussion: true });
     });
     return item;
@@ -9269,14 +9692,14 @@
   function noteAskMode() {
     var wrap = document.getElementById("note-editor-more-wrap");
     var mode = wrap && wrap._askMode;
-    if (mode === "gpt" || mode === "comment") return mode;
-    return "paie";
+    if (mode === "paie" || mode === "comment") return mode;
+    return "gpt";
   }
 
   function setNoteAskMode(mode) {
     var wrap = document.getElementById("note-editor-more-wrap");
     if (wrap) {
-      wrap._askMode = mode === "gpt" || mode === "comment" ? mode : "paie";
+      wrap._askMode = mode === "paie" || mode === "comment" ? mode : "gpt";
     }
     var current = noteAskMode();
     var form = document.getElementById("note-paie-reply-form");
@@ -10542,7 +10965,7 @@
     wrap._shareUrl = "";
     wrap._shareAccess = "view";
     wrap._paeiRunning = false;
-    wrap._askMode = "paie";
+    wrap._askMode = "gpt";
     wrap._noteMembers = [];
     wrap._noteRevision = 1;
     wrap._noteUpdatedAt = "";
@@ -10595,6 +11018,7 @@
     applyTelegramSafeAreaInsets();
     onModalSheetOpen();
     updateModalSheetForKeyboard();
+    applyNotePaneWidths();
     syncAppOverlay();
     syncTelegramNativeBack();
     syncNotesCreateFab();
@@ -10845,6 +11269,18 @@
       e.stopPropagation();
     });
 
+    if (n.pinned) {
+      var pinIcon = document.createElement("span");
+      pinIcon.className = "note-card-pin";
+      pinIcon.setAttribute("aria-label", "Закреплена");
+      pinIcon.title = "Закреплена";
+      pinIcon.innerHTML =
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+        '<path d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.2v6h1.6v-6H18v-2c-1.66 0-3-1.34-3-3z"/>' +
+        "</svg>";
+      actions.appendChild(pinIcon);
+    }
+
     if (isOwner && n.shared && n.share_url) {
       var shareWrap = document.createElement("div");
       shareWrap.className = "note-card-menu-wrap";
@@ -11050,8 +11486,8 @@
               (descRaw.length >= 280 ? "…" : "") +
               "</p>"
             : "");
-        appendTagChipsRow(inner, noteTagsOf(n), { prepend: true, head: true });
         appendNoteCardAvatars(inner, n.members);
+        appendTagChipsRow(inner, noteTagsOf(n));
         mountNoteCardActions(card, inner, n);
         card.appendChild(inner);
         card.addEventListener("click", function () {
@@ -11111,7 +11547,7 @@
         if (isJournalPdfOp(row.operation)) {
           inner.appendChild(createJournalPdfButton(jid));
         }
-        appendTagChipsRow(inner, noteTagsOf(row), { prepend: true, head: true });
+        appendTagChipsRow(inner, noteTagsOf(row));
         card.appendChild(inner);
         card.addEventListener("click", function () {
           openJournalEditorDetail(row);
@@ -11236,6 +11672,9 @@
       /(^|\n)[-*•]\s/.test(s) ||
       /~~[^~]+~~/.test(s) ||
       /(^|\n)-\s+\[[ xX]\]\s/.test(s) ||
+      /(^|\n)\d+[.)]\s/.test(s) ||
+      /`[^`]+`/.test(s) ||
+      /(^|\n)```/.test(s) ||
       /(^|\n)\|.+\|/.test(s) ||
       /(^|\n)>\s/.test(s)
     );
@@ -11243,8 +11682,8 @@
 
   function inlineMarkdown(s) {
     return String(s || "")
-      .split(/(\*\*[^*]+\*\*|\*[^*]+\*|~~[^~]+~~|__[^_]+__)/g)
-      .map(function (part) {
+        .split(/(\*\*[^*]+\*\*|\*[^*]+\*|~~[^~]+~~|__[^_]+__|`[^`]+`)/g)
+        .map(function (part) {
         if (/^\*\*[^*]+\*\*$/.test(part)) {
           return "<strong>" + escapeHtml(part.slice(2, -2)) + "</strong>";
         }
@@ -11256,6 +11695,9 @@
         }
         if (/^__[^_]+__$/.test(part)) {
           return "<u>" + escapeHtml(part.slice(2, -2)) + "</u>";
+        }
+        if (/^`[^`]+`$/.test(part)) {
+          return "<code>" + escapeHtml(part.slice(1, -1)) + "</code>";
         }
         return escapeHtml(part);
       })
@@ -11285,11 +11727,18 @@
     var lines = String(source || "").split("\n");
     var html = [];
     var inList = false;
+    var inOl = false;
     var inTaskList = false;
     function closeList() {
       if (inList) {
         html.push("</ul>");
         inList = false;
+      }
+    }
+    function closeOl() {
+      if (inOl) {
+        html.push("</ol>");
+        inOl = false;
       }
     }
     function closeTaskList() {
@@ -11300,11 +11749,23 @@
     }
     function closeAllLists() {
       closeList();
+      closeOl();
       closeTaskList();
     }
     for (var lineIndex = 0; lineIndex < lines.length; lineIndex++) {
       var line = lines[lineIndex];
       var trimmed = line.trim();
+      if (/^```/.test(trimmed)) {
+        closeAllLists();
+        var codeLines = [];
+        lineIndex++;
+        while (lineIndex < lines.length && !/^```/.test(lines[lineIndex].trim())) {
+          codeLines.push(lines[lineIndex]);
+          lineIndex++;
+        }
+        html.push("<pre><code>" + escapeHtml(codeLines.join("\n")) + "</code></pre>");
+        continue;
+      }
       if (!trimmed) {
         closeAllLists();
         continue;
@@ -11355,6 +11816,7 @@
       var tm = trimmed.match(/^-\s+\[([ xX])\]\s+(.*)$/);
       if (tm) {
         closeList();
+        closeOl();
         if (!inTaskList) {
           html.push('<ul class="note-task-list">');
           inTaskList = true;
@@ -11378,11 +11840,23 @@
       var bm = trimmed.match(/^[-*•]\s+(.*)$/);
       if (bm) {
         closeTaskList();
+        closeOl();
         if (!inList) {
           html.push("<ul>");
           inList = true;
         }
         html.push("<li>" + inlineMarkdown(bm[1]) + "</li>");
+        continue;
+      }
+      var nm = trimmed.match(/^\d+[.)]\s+(.*)$/);
+      if (nm) {
+        closeTaskList();
+        closeList();
+        if (!inOl) {
+          html.push("<ol>");
+          inOl = true;
+        }
+        html.push("<li>" + inlineMarkdown(nm[1]) + "</li>");
         continue;
       }
       closeAllLists();

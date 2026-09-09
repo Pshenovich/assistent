@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260909-pwa-notes">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260909-discuss-ux">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -43,8 +43,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20260909-pwa-notes" />
-  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260909-pwa-notes" as="script" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20260909-discuss-ux" />
+  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260909-discuss-ux" as="script" />
   <!-- Same-origin, async: не блокирует парсер, если сеть/VPN тормозит. -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" async></script>
 </head>
@@ -1010,6 +1010,7 @@
   </div>
 
   <div id="note-editor-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="note-pane-resizer" id="note-editor-resizer" role="separator" aria-orientation="vertical" aria-label="Ширина заметки" tabindex="0"></div>
     <div class="modal modal--sheet note-editor-sheet" role="dialog" aria-modal="true" aria-labelledby="note-editor-modal-title">
       <div class="modal-form note-editor-modal-form">
         <div id="note-editor-web-back-bar" class="note-editor-web-back-bar hidden">
@@ -1067,6 +1068,7 @@
   </div>
 
   <div id="note-discussion-overlay" class="note-discussion-overlay hidden" aria-hidden="true">
+    <div class="note-discuss-resizer" id="note-discussion-resizer" role="separator" aria-orientation="vertical" aria-label="Ширина обсуждения" tabindex="0"></div>
     <div class="note-discussion-sheet" role="dialog" aria-modal="true" aria-labelledby="note-discussion-title">
       <div class="note-discussion-header">
         <button type="button" class="modal-header-btn modal-header-btn--close" id="note-discussion-close" aria-label="Закрыть" title="Закрыть">
@@ -1112,14 +1114,14 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20260909-pwa-notes"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20260909-discuss-ux"><\/script>'
         );
       }
     })();
   </script>
-  <script src="/webapp/note-html.js?v=20260909-pwa-notes" defer></script>
-  <script src="/webapp/note-comments.js?v=20260909-pwa-notes" defer></script>
-  <script src="/webapp/note-rich-editor.js?v=20260909-pwa-notes" defer></script>
-  <script src="/webapp/app.js?v=20260909-pwa-notes" defer></script>
+  <script src="/webapp/note-html.js?v=20260909-discuss-ux" defer></script>
+  <script src="/webapp/note-comments.js?v=20260909-discuss-ux" defer></script>
+  <script src="/webapp/note-rich-editor.js?v=20260909-discuss-ux" defer></script>
+  <script src="/webapp/app.js?v=20260909-discuss-ux" defer></script>
 </body>
 </html>

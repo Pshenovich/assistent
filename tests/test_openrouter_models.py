@@ -49,10 +49,14 @@ class OpenRouterModelsTests(unittest.TestCase):
     def test_gpt_picker_ignores_gemini_fallback_catalog(self) -> None:
         out = build_gpt_picker_models({"google/gemini-2.5-flash"})
         ids = [m["id"] for m in out["models"]]
-        self.assertEqual(out["default"], "openai/gpt-5.6-sol")
+        self.assertEqual(out["default"], "openai/gpt-4.1")
         self.assertIn("openai/gpt-5.6-sol", ids)
         self.assertIn("openai/gpt-4o", ids)
         self.assertNotIn("google/gemini-2.5-flash", ids)
+
+    def test_gpt_picker_defaults_to_gpt_41_from_catalog(self) -> None:
+        out = build_gpt_picker_models({"openai/gpt-5.4", "openai/gpt-4.1", "openai/gpt-4o"})
+        self.assertEqual(out["default"], "openai/gpt-4.1")
 
     def test_gpt_picker_keeps_only_listed_openai_from_full_catalog(self) -> None:
         out = build_gpt_picker_models(
