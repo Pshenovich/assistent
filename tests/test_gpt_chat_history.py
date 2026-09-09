@@ -63,6 +63,27 @@ def test_clip_and_prefix_budgets():
     assert "фрагмент" not in extra
 
 
+def test_answer_with_context_sends_pdf_as_openrouter_file(monkeypatch):
+    seen: dict = {}
+
+    def fake_complete(payload, **kwargs):
+        seen["payload"] = payload
+        return {"choices": [{"message": {"content": "каникулы 1–10 января"}}]}
+
+    monkeypatch.setattr(llm, "openrouter_chat_completion", fake_complete)
+    out = llm.answer_with_context_result(
+        "когда каникулы?",
+        files=[{"filename": "holidays.pdf", "mime": "application/pdf", "b64": "JVBERg=="}],
+    )
+    assert "каникулы" in out["answer"]
+    user = seen["payload"]["messages"][-1]["content"]
+    assert isinstance(user, list)
+    file_part = next(p for p in user if p.get("type") == "file")
+    assert file_part["file"]["filename"] == "holidays.pdf"
+    assert file_part["file"]["file_data"].startswith("data:application/pdf;base64,")
+    assert seen["payload"]["plugins"] == [{"id": "file-parser"}]
+
+
 def test_chat_merges_context_prefix_into_system(monkeypatch):
     seen: dict = {}
 

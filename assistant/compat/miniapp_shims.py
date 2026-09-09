@@ -55,6 +55,7 @@ def gpt_openrouter_answer_with_context(
     quote: str = "",
     knowledge_brief: str = "",
     images: list[dict[str, str]] | None = None,
+    files: list[dict[str, str]] | None = None,
     file_notes: str = "",
 ) -> dict:
     out = nlu_llm.answer_with_context_result(
@@ -67,6 +68,7 @@ def gpt_openrouter_answer_with_context(
         quote=quote,
         knowledge_brief=knowledge_brief,
         images=images,
+        files=files,
         file_notes=file_notes,
     )
     return {

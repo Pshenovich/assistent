@@ -1,6 +1,7 @@
 import unittest
 
 from assistant.integrations.openrouter_client import (
+    _payload_for_comet,
     build_gpt_picker_models,
     normalize_openrouter_models,
     sanitize_openrouter_model_id,
@@ -57,6 +58,33 @@ class OpenRouterModelsTests(unittest.TestCase):
     def test_gpt_picker_defaults_to_gpt_41_from_catalog(self) -> None:
         out = build_gpt_picker_models({"openai/gpt-5.4", "openai/gpt-4.1", "openai/gpt-4o"})
         self.assertEqual(out["default"], "openai/gpt-4.1")
+
+    def test_comet_payload_strips_pdf_file_parts(self) -> None:
+        out = _payload_for_comet(
+            {
+                "model": "openai/gpt-4.1",
+                "plugins": [{"id": "file-parser"}],
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "когда каникулы?"},
+                            {
+                                "type": "file",
+                                "file": {
+                                    "filename": "holidays.pdf",
+                                    "file_data": "data:application/pdf;base64,AAA",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+        self.assertNotIn("plugins", out)
+        self.assertIn("когда каникулы?", out["messages"][0]["content"])
+        self.assertIn("holidays.pdf", out["messages"][0]["content"])
+        self.assertNotIn("file_data", str(out["messages"]))
 
     def test_gpt_picker_keeps_only_listed_openai_from_full_catalog(self) -> None:
         out = build_gpt_picker_models(

@@ -57,11 +57,15 @@ def summary_model_name() -> str:
     return _model_summary()
 
 
-def _user_content(text: str, images: list[dict[str, str]] | None) -> Any:
-    if not images:
+def _user_content(
+    text: str,
+    images: list[dict[str, str]] | None,
+    files: list[dict[str, str]] | None = None,
+) -> Any:
+    if not images and not files:
         return text
     parts: list[dict[str, Any]] = [{"type": "text", "text": text or "Опиши вложение."}]
-    for img in images:
+    for img in images or []:
         mime = str((img or {}).get("mime") or "image/jpeg").split(";")[0].strip() or "image/jpeg"
         b64 = str((img or {}).get("b64") or "").strip()
         if not b64:
@@ -70,6 +74,22 @@ def _user_content(text: str, images: list[dict[str, str]] | None) -> Any:
             {
                 "type": "image_url",
                 "image_url": {"url": f"data:{mime};base64,{b64}"},
+            }
+        )
+    for item in files or []:
+        mime = str((item or {}).get("mime") or "application/pdf").split(";")[0].strip()
+        mime = mime or "application/pdf"
+        b64 = str((item or {}).get("b64") or "").strip()
+        name = str((item or {}).get("filename") or "document.pdf").strip() or "document.pdf"
+        if not b64:
+            continue
+        parts.append(
+            {
+                "type": "file",
+                "file": {
+                    "filename": name,
+                    "file_data": f"data:{mime};base64,{b64}",
+                },
             }
         )
     return parts if len(parts) > 1 else text
@@ -87,6 +107,7 @@ def _chat(
     history: list[dict[str, str]] | None = None,
     context_prefix: str | None = None,
     images: list[dict[str, str]] | None = None,
+    files: list[dict[str, str]] | None = None,
 ) -> str:
     return _chat_result(
         system,
@@ -99,6 +120,7 @@ def _chat(
         history=history,
         context_prefix=context_prefix,
         images=images,
+        files=files,
     )[0]
 
 
@@ -114,6 +136,7 @@ def _chat_result(
     history: list[dict[str, str]] | None = None,
     context_prefix: str | None = None,
     images: list[dict[str, str]] | None = None,
+    files: list[dict[str, str]] | None = None,
 ) -> tuple[str, list[dict[str, str]]]:
     from assistant.integrations.openrouter_client import extract_chat_message_media
 
@@ -128,7 +151,9 @@ def _chat_result(
         if role not in ("user", "assistant") or not content:
             continue
         messages.append({"role": role, "content": content[:24000]})
-    messages.append({"role": "user", "content": _user_content(user, images)})
+    messages.append({"role": "user", "content": _user_content(user, images, files)})
+    if files:
+        timeout = max(float(timeout), 180.0)
     payload: dict[str, Any] = {
         "model": model or _model(),
         "messages": messages,
@@ -136,6 +161,12 @@ def _chat_result(
     }
     if max_tokens is not None:
         payload["max_tokens"] = int(max_tokens)
+    if files:
+        plugin: dict[str, Any] = {"id": "file-parser"}
+        engine = os.getenv("OPENROUTER_PDF_ENGINE", "").strip()
+        if engine:
+            plugin["pdf"] = {"engine": engine}
+        payload["plugins"] = [plugin]
     data = openrouter_chat_completion(payload, operation=operation, timeout=timeout)
     text, out_images = extract_chat_message_media(data)
     if not text and not out_images:
@@ -372,6 +403,7 @@ def answer_with_context(
     quote: str = "",
     knowledge_brief: str = "",
     images: list[dict[str, str]] | None = None,
+    files: list[dict[str, str]] | None = None,
     file_notes: str = "",
 ) -> str:
     return answer_with_context_result(
@@ -384,6 +416,7 @@ def answer_with_context(
         quote=quote,
         knowledge_brief=knowledge_brief,
         images=images,
+        files=files,
         file_notes=file_notes,
     )["answer"]
 
@@ -399,6 +432,7 @@ def answer_with_context_result(
     quote: str = "",
     knowledge_brief: str = "",
     images: list[dict[str, str]] | None = None,
+    files: list[dict[str, str]] | None = None,
     file_notes: str = "",
 ) -> dict[str, Any]:
     from assistant.nlu.ask_context import assemble_ask_messages
@@ -414,9 +448,9 @@ def answer_with_context_result(
     notes = (file_notes or "").strip()
     if notes:
         user = (user or "").rstrip() + "\n\n" + notes
-    if images and not (question or "").strip() and not (user or "").strip():
+    if (images or files) and not (question or "").strip() and not (user or "").strip():
         user = "Опиши вложение и ответь по нему."
-    if images:
+    if images or files:
         text, out_images = _chat_result(
             ASK_SYSTEM,
             user,
@@ -425,6 +459,7 @@ def answer_with_context_result(
             history=history,
             context_prefix=extra or None,
             images=images,
+            files=files,
         )
     else:
         text = _chat(

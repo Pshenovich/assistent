@@ -356,6 +356,46 @@ def _log_usage(
     )
 
 
+def _payload_for_comet(payload: dict[str, Any]) -> dict[str, Any]:
+    """Comet не принимает OpenRouter plugins и type=file — выкидываем PDF-части."""
+    out = dict(payload)
+    out.pop("plugins", None)
+    messages: list[Any] = []
+    for msg in out.get("messages") or []:
+        if not isinstance(msg, dict):
+            messages.append(msg)
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            messages.append(msg)
+            continue
+        names: list[str] = []
+        parts: list[Any] = []
+        for part in content:
+            if isinstance(part, dict) and str(part.get("type") or "") == "file":
+                file_obj = part.get("file") if isinstance(part.get("file"), dict) else {}
+                names.append(str(file_obj.get("filename") or "file"))
+                continue
+            parts.append(part)
+        copied = dict(msg)
+        if names:
+            note = "Приложены файлы (фолбэк без PDF): " + ", ".join(names)
+            if parts and isinstance(parts[0], dict) and parts[0].get("type") == "text":
+                parts[0] = {
+                    **parts[0],
+                    "text": (str(parts[0].get("text") or "").rstrip() + "\n\n" + note).strip(),
+                }
+            else:
+                parts.insert(0, {"type": "text", "text": note})
+        if len(parts) == 1 and isinstance(parts[0], dict) and parts[0].get("type") == "text":
+            copied["content"] = str(parts[0].get("text") or "")
+        else:
+            copied["content"] = parts
+        messages.append(copied)
+    out["messages"] = messages
+    return out
+
+
 def openrouter_chat_completion(
     payload: dict[str, Any],
     *,
@@ -400,7 +440,7 @@ def openrouter_chat_completion(
         assert primary_err is not None
         raise primary_err
 
-    payload_c = dict(payload)
+    payload_c = _payload_for_comet(payload)
     payload_c["model"] = _comet_model_for_request(payload.get("model"))
     try:
         data_c = _post_json(

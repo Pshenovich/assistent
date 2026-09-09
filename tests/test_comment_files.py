@@ -64,6 +64,8 @@ class CommentFilesTests(unittest.TestCase):
         listed = comment_files.list_for_comment(int(comment["id"]))
         self.assertEqual([row["filename"] for row in listed], ["shot.png", "brief.txt"])
         self.assertEqual(comment_files.extract_text_preview(txt), "hello from file")
+        self.assertTrue(comment_files.is_pdf({"filename": "a.pdf", "mime": "application/pdf"}))
+        self.assertFalse(comment_files.is_pdf({"filename": "a.txt", "mime": "text/plain"}))
         share_comments.delete_comment(int(comment["id"]), requester_user_id=3)
         self.assertEqual(comment_files.list_for_comment(int(comment["id"])), [])
         self.assertFalse(comment_files.disk_path(int(img["id"])).exists())

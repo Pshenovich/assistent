@@ -342,16 +342,30 @@ def delete_for_comment(comment_id: int) -> None:
             pass
 
 
+def is_pdf(item: dict[str, Any]) -> bool:
+    mime = str(item.get("mime") or "").split(";")[0].strip().lower()
+    name = str(item.get("filename") or "").lower()
+    return mime == "application/pdf" or name.endswith(".pdf")
+
+
 def extract_text_preview(item: dict[str, Any], *, limit: int = 8000) -> str:
     if str(item.get("kind") or "") == "image":
         return ""
-    mime = str(item.get("mime") or "")
+    mime = str(item.get("mime") or "").split(";")[0].strip().lower()
     name = str(item.get("filename") or "")
     ext = Path(name).suffix.lower()
-    if mime not in TEXT_MIMES and ext not in {".txt", ".md", ".csv", ".json", ".xml"}:
-        return ""
     path = disk_path(int(item["id"]))
     if not path.is_file():
+        return ""
+    if ext == ".docx" or "wordprocessingml.document" in mime:
+        from assistant.board.docs import extract_docx
+
+        try:
+            text = extract_docx(path.read_bytes())
+        except Exception:
+            return ""
+        return text[:limit].strip()
+    if mime not in TEXT_MIMES and ext not in {".txt", ".md", ".csv", ".json", ".xml"}:
         return ""
     raw = path.read_bytes()[: limit * 2]
     try:

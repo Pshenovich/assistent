@@ -4291,10 +4291,11 @@ async def miniapp_gpt_chat(
         if ru:
             tg_uname = str(ru).strip() or None
 
-    def _load_prompt_media() -> tuple[list[dict[str, str]], str]:
+    def _load_prompt_media() -> tuple[list[dict[str, str]], list[dict[str, str]], str]:
         from assistant.stores import comment_files
 
         images: list[dict[str, str]] = []
+        files: list[dict[str, str]] = []
         notes: list[str] = []
         uid = str(int(principal.telegram_user_id))
         for fid in file_ids[:8]:
@@ -4303,6 +4304,7 @@ async def miniapp_gpt_chat(
                 continue
             if item["author_user_id"] != uid and item["owner_user_id"] != uid:
                 continue
+            label = str(item.get("filename") or "file")
             if str(item.get("kind") or "") == "image":
                 path = comment_files.disk_path(fid)
                 if not path.is_file():
@@ -4318,15 +4320,33 @@ async def miniapp_gpt_chat(
                         "b64": base64.b64encode(blob).decode("ascii"),
                     }
                 )
-                notes.append("Изображение: " + str(item.get("filename") or "photo"))
+                notes.append("Изображение: " + label)
+                continue
+            if comment_files.is_pdf(item):
+                path = comment_files.disk_path(fid)
+                if path.is_file():
+                    blob = path.read_bytes()
+                    if 0 < len(blob) <= comment_files.MAX_FILE_BYTES:
+                        import base64
+
+                        files.append(
+                            {
+                                "filename": label if label.lower().endswith(".pdf") else f"{label}.pdf",
+                                "mime": "application/pdf",
+                                "b64": base64.b64encode(blob).decode("ascii"),
+                            }
+                        )
+                        notes.append(
+                            f"PDF «{label}» приложен к запросу целиком. "
+                            "Отвечай по его содержимому, не проси прислать файл или скрины."
+                        )
+                        continue
+            preview = comment_files.extract_text_preview(item)
+            if preview:
+                notes.append(f"Файл «{label}»:\n{preview}")
             else:
-                preview = comment_files.extract_text_preview(item)
-                label = str(item.get("filename") or "file")
-                if preview:
-                    notes.append(f"Файл «{label}»:\n{preview}")
-                else:
-                    notes.append(f"Прикреплён файл «{label}» ({item.get('mime') or 'file'}).")
-        return images, "\n\n".join(notes).strip()
+                notes.append(f"Прикреплён файл «{label}» ({item.get('mime') or 'file'}).")
+        return images, files, "\n\n".join(notes).strip()
 
     def _save_generated(out: dict[str, Any]) -> list[dict[str, Any]]:
         from assistant.stores import comment_files
@@ -4394,7 +4414,7 @@ async def miniapp_gpt_chat(
         uid = int(principal.telegram_user_id)
         kb_brief = ""
         kb_version = ""
-        images, file_notes = _load_prompt_media()
+        images, files, file_notes = _load_prompt_media()
         prompt = q or "Опиши вложение и ответь по нему."
         if body.use_knowledge:
             query = " ".join(
@@ -4421,6 +4441,7 @@ async def miniapp_gpt_chat(
                 quote=(body.quote or "").strip(),
                 knowledge_brief=kb_brief,
                 images=images or None,
+                files=files or None,
                 file_notes=file_notes,
             )
             if out is None:
