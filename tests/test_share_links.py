@@ -284,6 +284,31 @@ class ShareCommentsTests(unittest.TestCase):
                 parent_id=999999,
             )
 
+    def test_gpt_comment_allows_long_body(self) -> None:
+        long_ans = "а" * (share_comments.MAX_BODY_LEN + 50)
+        row = share_comments.add_comment(
+            11,
+            "local",
+            7,
+            author_user_id=11,
+            author_name="GPT",
+            author_username="gpt",
+            body=long_ans,
+            prefix=share_comments.GPT_PREFIX,
+        )
+        self.assertEqual(len(row["body"]), len(long_ans))
+        with self.assertRaises(ValueError):
+            share_comments.add_comment(
+                11,
+                "local",
+                7,
+                author_user_id=11,
+                author_name="GPT",
+                author_username="gpt",
+                body="б" * (share_comments.MAX_GPT_BODY_LEN + 1),
+                prefix=share_comments.GPT_PREFIX,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

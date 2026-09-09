@@ -12,6 +12,7 @@ from assistant.stores import share_links as share_links_store
 _LOCK = notes_store._LOCK  # type: ignore[attr-defined]
 _VALID_KINDS = frozenset({"local", "journal"})
 MAX_BODY_LEN = 4000
+MAX_GPT_BODY_LEN = 24000
 MAX_QUOTE_LEN = 500
 MAX_CTX_LEN = 80
 
@@ -252,8 +253,12 @@ def add_comment(
     text = (body or "").strip()
     if not text:
         raise ValueError("Введите текст комментария")
-    if len(text) > MAX_BODY_LEN:
-        raise ValueError(f"Комментарий слишком длинный (максимум {MAX_BODY_LEN} символов)")
+    is_gpt = str(prefix or "").strip() == GPT_PREFIX or str(
+        author_username or ""
+    ).strip().lower() == GPT_AUTHOR_USERNAME
+    limit = MAX_GPT_BODY_LEN if is_gpt else MAX_BODY_LEN
+    if len(text) > limit:
+        raise ValueError(f"Комментарий слишком длинный (максимум {limit} символов)")
     q = _clip(quote, MAX_QUOTE_LEN).strip()
     pre = _clip(prefix, MAX_CTX_LEN)
     suf = _clip(suffix, MAX_CTX_LEN)

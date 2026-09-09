@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260909-discuss-ux";
+  var WEBAPP_BUILD = "20260909-gpt-status";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260909-discuss-ux";
+  const NOTE_EDITOR_ASSET_V = "20260909-gpt-status";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -8717,6 +8717,15 @@
         closeNoteDiscussion();
       });
     }
+    var newCtxBtn = document.getElementById("note-discussion-new-ctx");
+    if (newCtxBtn && !newCtxBtn._bound) {
+      newCtxBtn._bound = true;
+      newCtxBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        clearGptDiscussionContext();
+      });
+    }
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && isNoteDiscussionOpen()) {
         if (document.getElementById("note-link-overlay") &&
@@ -9571,15 +9580,25 @@
     });
     if (list) {
       list.innerHTML = "";
-      if (!rows.length && !statusOn && !running) {
+      if (!rows.length && !statusOn && !running && !(wrap && wrap._gptBusy)) {
         var empty = document.createElement("p");
         empty.className = "note-discussion-empty";
         empty.textContent = "Задайте вопрос или оставьте комментарий";
         list.appendChild(empty);
       } else {
-        rows.forEach(function (c) {
-          list.appendChild(renderDiscussionMessage(c));
+        var cut = gptContextCutId();
+        rows.forEach(function (c, idx) {
+          var msg = renderDiscussionMessage(c);
+          if (cut && Number(c.id) <= cut) msg.classList.add("is-ctx-stale");
+          list.appendChild(msg);
+          var next = rows[idx + 1];
+          if (cut && Number(c.id) <= cut && (!next || Number(next.id) > cut)) {
+            list.appendChild(renderGptContextDivider());
+          }
         });
+        if (wrap && wrap._gptBusy) {
+          list.appendChild(renderGptPendingStatus(wrap._gptPhase));
+        }
       }
     }
     if (form) {
@@ -9591,11 +9610,8 @@
     refreshNoteEditorTocExtras();
     if (isNoteDiscussionOpen()) {
       var pinId = wrap && wrap._discussionPinId;
-      if (pinId) scrollDiscussionToComment(pinId);
-      else {
-        var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
-        if (scroll) scroll.scrollTop = scroll.scrollHeight;
-      }
+      if (pinId && !(wrap && wrap._gptBusy)) scrollDiscussionToComment(pinId);
+      else scrollDiscussionToEnd();
     }
     void kind;
     void itemId;
@@ -9735,26 +9751,152 @@
     return { title: title, text: body };
   }
 
-  async function submitNoteGptQuestion(text) {
+  var GPT_COMMENT_BODY_MAX = 24000;
+  var GPT_HISTORY_MAX_TURNS = 16;
+  var GPT_HISTORY_MAX_CHARS = 18000;
+
+  function gptContextCutKey() {
     var wrap = document.getElementById("note-editor-more-wrap");
-    var body = String(text || "").trim();
-    if (!wrap || !wrap._shareKind || !wrap._shareId || wrap._gptBusy || !body) return;
-    var kind = wrap._shareKind;
-    var itemId = wrap._shareId;
-    var panel = document.getElementById("note-editor-comments");
+    if (!wrap || !wrap._shareKind || !wrap._shareId) return "";
+    return "leo_gpt_ctx_cut:" + wrap._shareKind + ":" + wrap._shareId;
+  }
+
+  function gptContextCutId() {
+    try {
+      var n = parseInt(localStorage.getItem(gptContextCutKey()) || "", 10);
+      if (isFinite(n) && n > 0) return n;
+    } catch (_) {}
+    return 0;
+  }
+
+  function setGptContextCutId(id) {
+    var key = gptContextCutKey();
+    if (!key) return;
+    try {
+      if (id > 0) localStorage.setItem(key, String(id));
+      else localStorage.removeItem(key);
+    } catch (_) {}
+  }
+
+  function clipGptCommentBody(text) {
+    var s = String(text || "");
+    if (s.length <= GPT_COMMENT_BODY_MAX) return s;
+    return s.slice(0, GPT_COMMENT_BODY_MAX - 1) + "…";
+  }
+
+  function gptPhaseLabel(phase) {
+    if (phase === "sending") return "Отправляю…";
+    if (phase === "saving") return "Сохраняю ответ…";
+    return "Думает…";
+  }
+
+  function renderGptPendingStatus(phase) {
+    var item = document.createElement("article");
+    item.id = "note-discuss-pending";
+    item.className = "note-discuss-msg is-assistant is-pending";
+    item.setAttribute("aria-live", "polite");
+    var role = document.createElement("p");
+    role.className = "note-discuss-role";
+    role.textContent = "GPT";
+    var bubble = document.createElement("div");
+    bubble.className = "note-discuss-bubble note-discuss-bubble--pending";
+    bubble.innerHTML =
+      '<span class="note-discuss-pending-dots" aria-hidden="true"><i></i><i></i><i></i></span>';
+    var label = document.createElement("span");
+    label.className = "note-discuss-pending-label";
+    label.textContent = gptPhaseLabel(phase);
+    bubble.appendChild(label);
+    item.appendChild(role);
+    item.appendChild(bubble);
+    return item;
+  }
+
+  function renderGptContextDivider() {
+    var el = document.createElement("div");
+    el.className = "note-discuss-ctx-cut";
+    el.innerHTML = "<span>Новый контекст</span>";
+    return el;
+  }
+
+  function scrollDiscussionToEnd() {
+    var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
+    if (scroll) scroll.scrollTop = scroll.scrollHeight;
+  }
+
+  function setGptDiscussPhase(phase) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) wrap._gptPhase = phase || "thinking";
+    var label = document.querySelector("#note-discuss-pending .note-discuss-pending-label");
+    if (label) {
+      label.textContent = gptPhaseLabel(wrap && wrap._gptPhase);
+      return;
+    }
+    var list = document.getElementById("note-discussion-messages");
+    if (!list || !wrap || !wrap._gptBusy) return;
+    var empty = list.querySelector(".note-discussion-empty");
+    if (empty) empty.remove();
+    list.appendChild(renderGptPendingStatus(wrap._gptPhase));
+    scrollDiscussionToEnd();
+  }
+
+  function appendOptimisticUserMessage(text, quote) {
+    var list = document.getElementById("note-discussion-messages");
+    if (!list) return;
+    var empty = list.querySelector(".note-discussion-empty");
+    if (empty) empty.remove();
+    var old = document.getElementById("note-discuss-optimistic-user");
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    var item = document.createElement("article");
+    item.id = "note-discuss-optimistic-user";
+    item.className = "note-discuss-msg is-user is-optimistic";
+    if (quote) {
+      var q = document.createElement("p");
+      q.className = "note-discuss-quote";
+      q.textContent = "«" + String(quote) + "»";
+      item.appendChild(q);
+    }
+    var role = document.createElement("p");
+    role.className = "note-discuss-role";
+    role.textContent = "Вы";
+    item.appendChild(role);
+    var bubble = document.createElement("div");
+    bubble.className = "note-discuss-bubble";
+    bubble.textContent = String(text || "");
+    item.appendChild(bubble);
+    var meta = document.createElement("p");
+    meta.className = "note-discuss-send-state";
+    meta.textContent = "Отправляю…";
+    item.appendChild(meta);
+    list.appendChild(item);
+    scrollDiscussionToEnd();
+  }
+
+  function markOptimisticUserSent() {
+    var meta = document.querySelector("#note-discuss-optimistic-user .note-discuss-send-state");
+    if (meta) meta.textContent = "Отправлено";
+  }
+
+  function gptHistoryFromComments(comments) {
     var api = window.NoteComments;
+    var cut = gptContextCutId();
+    var prior = discussionComments(comments || [])
+      .filter(function (c) {
+        return c && Number(c.id) > cut;
+      })
+      .slice()
+      .sort(function (a, b) {
+        var at = Date.parse(a && a.created_at) || 0;
+        var bt = Date.parse(b && b.created_at) || 0;
+        if (at !== bt) return at - bt;
+        return Number(a.id || 0) - Number(b.id || 0);
+      });
     var history = [];
-    var prior = discussionComments((panel && panel._allComments) || []).slice().sort(function (a, b) {
-      var at = Date.parse(a && a.created_at) || 0;
-      var bt = Date.parse(b && b.created_at) || 0;
-      if (at !== bt) return at - bt;
-      return Number(a.id || 0) - Number(b.id || 0);
-    });
     prior.forEach(function (c) {
       var content = String((c && c.body) || "").trim();
       if (!content) return;
       var quote = String((c && c.quote) || "").trim();
       if (quote) content = "Про текст: «" + quote + "»\n\n" + content;
+      if (content.length > 6000) content = content.slice(0, 5999) + "…";
       if (api && api.isGptComment && api.isGptComment(c)) {
         history.push({ role: "assistant", content: content });
         return;
@@ -9765,12 +9907,65 @@
       }
       history.push({ role: "user", content: content });
     });
+    if (history.length > GPT_HISTORY_MAX_TURNS) {
+      history = history.slice(-GPT_HISTORY_MAX_TURNS);
+    }
+    var total = 0;
+    var i;
+    for (i = history.length - 1; i >= 0; i--) {
+      total += String((history[i] && history[i].content) || "").length;
+      if (total > GPT_HISTORY_MAX_CHARS) {
+        history = history.slice(i + 1);
+        break;
+      }
+    }
+    return history;
+  }
+
+  async function clearGptDiscussionContext() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || wrap._gptBusy) return;
+    var panel = document.getElementById("note-editor-comments");
+    var rows = discussionComments((panel && panel._allComments) || []);
+    if (!rows.length) {
+      showNoteToast("Пока нет сообщений");
+      return;
+    }
+    var ok = await confirmDialog(
+      "Начать новый контекст для GPT? Старые сообщения останутся в ленте, но модель их больше не увидит."
+    );
+    if (!ok) return;
+    var maxId = 0;
+    rows.forEach(function (c) {
+      var n = Number(c && c.id) || 0;
+      if (n > maxId) maxId = n;
+    });
+    setGptContextCutId(maxId);
+    renderNotePaieThread(
+      (panel && panel._allComments) || [],
+      wrap._shareKind,
+      wrap._shareId
+    );
+    showNoteToast("Контекст очищен");
+  }
+
+  async function submitNoteGptQuestion(text) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var body = String(text || "").trim();
+    if (!wrap || !wrap._shareKind || !wrap._shareId || wrap._gptBusy || !body) return;
+    var kind = wrap._shareKind;
+    var itemId = wrap._shareId;
+    var panel = document.getElementById("note-editor-comments");
+    var history = gptHistoryFromComments((panel && panel._allComments) || []);
     wrap._gptBusy = true;
+    wrap._gptPhase = "sending";
     syncNotePaieReplyForm(true);
     var input = document.getElementById("note-paie-reply-input");
     if (input) input.value = "";
     var draft = wrap._commentDraft;
     var quote = (draft && draft.quote) || "";
+    appendOptimisticUserMessage(body, quote);
+    setGptDiscussPhase("sending");
     try {
       var saved = await apiFetch(
         "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
@@ -9785,7 +9980,10 @@
         }
       );
       var parentId = saved && saved.comment && saved.comment.id;
-      refreshNoteCommentsList();
+      markOptimisticUserSent();
+      setGptDiscussPhase("thinking");
+      await refreshNoteCommentsList();
+      setGptDiscussPhase("thinking");
       var noteCtx = activeNoteGptContext();
       var res = await apiFetch("/gpt/chat", {
         method: "POST",
@@ -9810,12 +10008,13 @@
             })
             .join("\n");
       }
+      setGptDiscussPhase("saving");
       await apiFetch(
         "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
         {
           method: "POST",
           body: JSON.stringify({
-            body: ans,
+            body: clipGptCommentBody(ans),
             quote: quote,
             prefix: "__gpt__",
             suffix: "",
@@ -9826,12 +10025,19 @@
       );
       shareHaptic();
       clearNoteComposerCommentTarget();
-      refreshNoteCommentsList();
+      wrap._gptBusy = false;
+      wrap._gptPhase = "";
+      await refreshNoteCommentsList();
     } catch (e) {
+      wrap._gptBusy = false;
+      wrap._gptPhase = "";
       alert(e.message || String(e));
-      refreshNoteCommentsList();
+      await refreshNoteCommentsList();
     } finally {
       wrap._gptBusy = false;
+      wrap._gptPhase = "";
+      var leftover = document.getElementById("note-discuss-pending");
+      if (leftover && leftover.parentNode) leftover.parentNode.removeChild(leftover);
       syncNotePaieReplyForm();
     }
   }
@@ -9906,6 +10112,8 @@
     var busy = paieRunning || gptBusy;
     var input = document.getElementById("note-paie-reply-input");
     var submit = document.getElementById("note-paie-reply-submit");
+    var newCtxBtn = document.getElementById("note-discussion-new-ctx");
+    if (newCtxBtn) newCtxBtn.disabled = busy;
     var hasChair = !!(
       api &&
       api.paieThreadRootId &&
@@ -9991,8 +10199,8 @@
   function refreshNoteCommentsList() {
     var wrap = document.getElementById("note-editor-more-wrap");
     var listEl = document.querySelector("#note-editor-comments .note-comments-list");
-    if (!wrap || !listEl) return;
-    loadNoteComments(wrap._shareKind, wrap._shareId, listEl);
+    if (!wrap || !listEl) return Promise.resolve();
+    return loadNoteComments(wrap._shareKind, wrap._shareId, listEl);
   }
 
   function pollNotePaei(path) {

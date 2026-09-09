@@ -1,17 +1,17 @@
 /* Mini App service worker: кэш оболочки для быстрого повторного открытия PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260909-discuss-ux";
+var CACHE_VERSION = "miniapp-v1-20260909-gpt-status";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
-  "./styles.css?v=20260909-discuss-ux",
-  "./app.js?v=20260909-discuss-ux",
-  "./note-html.js?v=20260909-discuss-ux",
-  "./note-comments.js?v=20260909-discuss-ux",
-  "./note-rich-editor.js?v=20260909-discuss-ux",
-  "./icons/arrow-up-right.svg?v=20260909-discuss-ux",
-  "./icons/chevron-up-muted.svg?v=20260909-discuss-ux",
-  "./icons/chevron-up-on-fill.svg?v=20260909-discuss-ux",
+  "./styles.css?v=20260909-gpt-status",
+  "./app.js?v=20260909-gpt-status",
+  "./note-html.js?v=20260909-gpt-status",
+  "./note-comments.js?v=20260909-gpt-status",
+  "./note-rich-editor.js?v=20260909-gpt-status",
+  "./icons/arrow-up-right.svg?v=20260909-gpt-status",
+  "./icons/chevron-up-muted.svg?v=20260909-gpt-status",
+  "./icons/chevron-up-on-fill.svg?v=20260909-gpt-status",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",
