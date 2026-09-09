@@ -149,52 +149,91 @@
       },
     ];
 
+    function addMinutes(h, m, extra) {
+      var total = h * 60 + m + extra;
+      return { h: Math.floor(total / 60) % 24, m: total % 60 };
+    }
+
+    function organizerAttendee() {
+      return {
+        email: "artem.danilin.1999@gmail.com",
+        name: "Артём Данилин",
+        organizer: true,
+        telegram_username: "artyawn",
+        telegram_user_id: 871463833,
+      };
+    }
+
     function makeEvents(dateYmd) {
+      var isToday = dateYmd === today;
+      var h = 10;
+      var m = 0;
+      if (isToday) {
+        var now = new Date();
+        now.setSeconds(0, 0);
+        if (now.getMinutes() < 30) now.setMinutes(30);
+        else {
+          now.setHours(now.getHours() + 1);
+          now.setMinutes(0);
+        }
+        h = Math.min(22, Math.max(8, now.getHours()));
+        m = now.getMinutes();
+      }
+      var t0 = { h: h, m: m };
+      var t1 = addMinutes(h, m, 45);
+      var t2 = addMinutes(h, m, 90);
+      var prefix = "dev-mock-ev-" + dateYmd + "-";
       return [
         {
-          id: "dev-mock-ev-1",
+          id: prefix + "rsvp",
           calendar_id: "primary",
-          summary: "Синк с командой",
+          summary: "Приглашение: дизайн-ревью",
           kind: "Google Meet",
-          start: { dateTime: isoLocal(dateYmd, 10, 0) },
-          end: { dateTime: isoLocal(dateYmd, 10, 30) },
+          start: { dateTime: isoLocal(dateYmd, t0.h, t0.m) },
+          end: { dateTime: isoLocal(dateYmd, addMinutes(t0.h, t0.m, 30).h, addMinutes(t0.h, t0.m, 30).m) },
           meet_url: "https://meet.google.com/abc-defg-hij",
-          html_link: "https://calendar.google.com/calendar/event?eid=dev-mock-1",
-          attendees: [
-            {
-              email: "artem.danilin.1999@gmail.com",
-              name: "",
-              organizer: true,
-            },
-          ],
+          html_link: "https://calendar.google.com/calendar/event?eid=" + prefix + "rsvp",
+          attendees: [organizerAttendee()],
+          is_organizer: false,
+          self_response_status: "needsAction",
+          needs_rsvp: true,
         },
         {
-          id: "dev-mock-ev-2",
+          id: prefix + "maybe",
+          calendar_id: "primary",
+          summary: "Приглашение: созвон с клиентом",
+          kind: "Zoom",
+          start: { dateTime: isoLocal(dateYmd, t1.h, t1.m) },
+          end: { dateTime: isoLocal(dateYmd, addMinutes(t1.h, t1.m, 30).h, addMinutes(t1.h, t1.m, 30).m) },
+          meet_url: "https://zoom.us/j/1234567890",
+          html_link: "https://calendar.google.com/calendar/event?eid=" + prefix + "maybe",
+          attendees: [organizerAttendee()],
+          is_organizer: false,
+          self_response_status: "tentative",
+          needs_rsvp: false,
+        },
+        {
+          id: prefix + "own",
+          calendar_id: "primary",
+          summary: "Демо mini app",
+          kind: "Google Meet",
+          start: { dateTime: isoLocal(dateYmd, t2.h, t2.m) },
+          end: { dateTime: isoLocal(dateYmd, addMinutes(t2.h, t2.m, 45).h, addMinutes(t2.h, t2.m, 45).m) },
+          meet_url: "https://meet.google.com/xyz-uvwx-rst",
+          html_link: "https://calendar.google.com/calendar/event?eid=" + prefix + "own",
+          is_organizer: true,
+          needs_rsvp: false,
+        },
+        {
+          id: prefix + "lunch",
           calendar_id: "primary",
           summary: "Обед с партнёром",
           kind: "Встреча",
           start: { dateTime: isoLocal(dateYmd, 12, 0) },
           end: { dateTime: isoLocal(dateYmd, 13, 0) },
           location: "Кафе на Тверской",
-        },
-        {
-          id: "dev-mock-ev-3",
-          calendar_id: "primary",
-          summary: "Демо mini app",
-          kind: "Google Meet",
-          start: { dateTime: isoLocal(dateYmd, 15, 0) },
-          end: { dateTime: isoLocal(dateYmd, 16, 0) },
-          meet_url: "https://meet.google.com/xyz-uvwx-rst",
-          html_link: "https://calendar.google.com/calendar/event?eid=dev-mock-3",
-        },
-        {
-          id: "dev-mock-ev-4",
-          calendar_id: "primary",
-          summary: "1:1 с менеджером",
-          kind: "Zoom",
-          start: { dateTime: isoLocal(dateYmd, 17, 30) },
-          end: { dateTime: isoLocal(dateYmd, 18, 0) },
-          meet_url: "https://zoom.us/j/1234567890",
+          is_organizer: true,
+          needs_rsvp: false,
         },
       ];
     }
@@ -484,6 +523,39 @@
       };
       reminders.unshift(reminder);
       return { item: reminder };
+    }
+
+    var rsvpMatch = basePath.match(/^\/calendar\/events\/([^/]+)\/rsvp$/);
+    if (rsvpMatch && isMockEventId(rsvpMatch[1]) && method === "POST") {
+      var rsvpId = decodeURIComponent(rsvpMatch[1]);
+      var rsvpBody = {};
+      try {
+        rsvpBody = opts && opts.body ? JSON.parse(opts.body) : {};
+      } catch (_) {}
+      var rsvpStatus = String(rsvpBody.status || "").trim().toLowerCase();
+      if (rsvpStatus === "yes" || rsvpStatus === "приду") rsvpStatus = "accepted";
+      if (rsvpStatus === "maybe" || rsvpStatus === "возможно") rsvpStatus = "tentative";
+      if (rsvpStatus === "no" || rsvpStatus === "не приду") rsvpStatus = "declined";
+      if (rsvpStatus !== "accepted" && rsvpStatus !== "tentative" && rsvpStatus !== "declined") {
+        throw new Error("Укажите ответ: accepted, tentative или declined");
+      }
+      var foundEv = null;
+      Object.keys(eventsByDate).forEach(function (d) {
+        eventsByDate[d] = eventsByDate[d].filter(function (ev) {
+          if (ev.id !== rsvpId) return true;
+          if (rsvpStatus === "declined") return false;
+          ev.self_response_status = rsvpStatus;
+          ev.needs_rsvp = false;
+          ev.is_organizer = false;
+          foundEv = ev;
+          return true;
+        });
+      });
+      if (rsvpStatus === "declined") {
+        return { ok: true, declined: true, self_response_status: rsvpStatus };
+      }
+      if (!foundEv) throw new Error("Встреча не найдена");
+      return { ok: true, event: foundEv };
     }
 
     var evMatch = basePath.match(/^\/calendar\/events\/([^/]+)$/);

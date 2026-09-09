@@ -2476,6 +2476,11 @@ class _MiniappCalendarExcludedBody(BaseModel):
     excluded_ids: list[str] = []
 
 
+class _MiniappCalendarRsvpBody(BaseModel):
+    status: str = ""
+    calendar_id: Optional[str] = None
+
+
 class _MiniappSettingsPatch(BaseModel):
     meeting_reminders_enabled: Optional[bool] = None
     zoom_auto_record_enabled: Optional[bool] = None
@@ -3207,6 +3212,9 @@ def _serialize_calendar_event(
     from assistant.lib.calendar_event_utils import (
         calendar_description_plain,
         calendar_entry_kind_label,
+        event_is_invitation,
+        event_needs_rsvp,
+        event_self_response_status,
     )
 
     cal_id = str(ev.get("_calendarId") or "primary").strip() or "primary"
@@ -3214,6 +3222,8 @@ def _serialize_calendar_event(
     en_raw = ev.get("end") or {}
     st = _gcal_json_time_fragment(st_raw if isinstance(st_raw, dict) else {})
     en = _gcal_json_time_fragment(en_raw if isinstance(en_raw, dict) else {})
+    invited = event_is_invitation(ev)
+    status = event_self_response_status(ev)
     return {
         "id": str(ev.get("id") or ""),
         "calendar_id": cal_id,
@@ -3226,6 +3236,9 @@ def _serialize_calendar_event(
         "description": calendar_description_plain(str(ev.get("description") or ""))[:8000],
         "location": str(ev.get("location") or "").strip(),
         "attendees": _serialize_event_attendees(ev, contacts_by_email=contacts_by_email),
+        "is_organizer": not invited,
+        "self_response_status": status,
+        "needs_rsvp": event_needs_rsvp(ev),
     }
 
 
@@ -3303,8 +3316,8 @@ def _local_dev_calendar_events(day_iso: str, timezone_name: str) -> list[dict[st
 
     specs = [
         (
-            "local-dev-ev-1",
-            "Синк с командой",
+            f"local-dev-ev-rsvp-{day_iso}",
+            "Приглашение: дизайн-ревью",
             "Google Meet",
             10,
             0,
@@ -3363,16 +3376,24 @@ def _local_dev_calendar_events(day_iso: str, timezone_name: str) -> list[dict[st
                 "description": "[Локальный тестовый слот]",
                 "location": loc,
                 "attendees": [],
+                "is_organizer": True,
+                "self_response_status": None,
+                "needs_rsvp": False,
             }
         )
     if out:
         out[0]["attendees"] = [
             {
                 "email": "artem.danilin.1999@gmail.com",
-                "name": "",
+                "name": "Артём Данилин",
                 "organizer": True,
+                "telegram_username": "artyawn",
+                "telegram_user_id": 871463833,
             }
         ]
+        out[0]["is_organizer"] = False
+        out[0]["self_response_status"] = "needsAction"
+        out[0]["needs_rsvp"] = True
     return out
 
 
@@ -3445,7 +3466,10 @@ def _calendar_today_payload(
             contacts_by_email = {}
         for e in events_raw:
             try:
-                ser.append(_serialize_calendar_event(e, contacts_by_email=contacts_by_email))
+                item = _serialize_calendar_event(e, contacts_by_email=contacts_by_email)
+                if item.get("self_response_status") == "declined":
+                    continue
+                ser.append(item)
             except Exception as ex:
                 print(f"[miniapp_calendar] skip_event id={e.get('id')!r} err={ex!r}")
 
@@ -4295,6 +4319,66 @@ async def miniapp_calendar_event_delete(
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
     return {"ok": True}
+
+
+@miniapp_router.post("/calendar/events/{event_id}/rsvp")
+async def miniapp_calendar_event_rsvp(
+    event_id: str,
+    body: _MiniappCalendarRsvpBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.services import meeting_invites as inv
+
+    status_map = {
+        "accepted": inv.RSVP_ACCEPTED,
+        "tentative": inv.RSVP_TENTATIVE,
+        "declined": inv.RSVP_DECLINED,
+        "yes": inv.RSVP_ACCEPTED,
+        "maybe": inv.RSVP_TENTATIVE,
+        "no": inv.RSVP_DECLINED,
+        "приду": inv.RSVP_ACCEPTED,
+        "возможно": inv.RSVP_TENTATIVE,
+        "не приду": inv.RSVP_DECLINED,
+    }
+    raw = str(body.status or "").strip().lower()
+    status = status_map.get(raw)
+    if not status:
+        raise HTTPException(status_code=400, detail="Укажите ответ: accepted, tentative или declined")
+    eid = str(event_id or "").strip()
+    if not eid:
+        raise HTTPException(status_code=400, detail="Нет события")
+    cal_id = str(body.calendar_id or "").strip() or "primary"
+
+    def _run() -> dict[str, Any]:
+        return inv.apply_invitee_rsvp(
+            int(principal.telegram_user_id),
+            event_id=eid,
+            calendar_id=cal_id,
+            response_status=status,
+        )
+
+    try:
+        patched = await run_in_threadpool(_run)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    if status == inv.RSVP_DECLINED:
+        return {"ok": True, "declined": True, "self_response_status": status}
+    try:
+        contacts_by_email = _miniapp_contacts_by_email(int(principal.telegram_user_id))
+    except Exception:
+        contacts_by_email = {}
+    if isinstance(patched, dict) and not patched.get("_calendarId"):
+        patched = dict(patched)
+        patched["_calendarId"] = cal_id
+    ser = _serialize_calendar_event(
+        patched if isinstance(patched, dict) else {},
+        contacts_by_email=contacts_by_email,
+    )
+    if cal_id:
+        ser["calendar_id"] = cal_id
+    return {"ok": True, "event": ser}
 
 
 @miniapp_router.post("/calendar/events/{event_id}/zoom-link")

@@ -42,6 +42,8 @@ def calendar_event_counts_as_busy(event: dict[str, Any]) -> bool:
     """Запись занимает время в рабочем окне (слоты и обзор дня)."""
     if calendar_event_is_cancelled(event):
         return False
+    if event_is_declined_by_self(event):
+        return False
     et = str(event.get("eventType") or "default").strip().lower()
     if et == "birthday":
         return False
@@ -388,3 +390,48 @@ def calendar_description_plain(raw: str | None) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     return text.strip()
+
+
+def event_self_attendee(event: dict[str, Any] | None) -> dict[str, Any] | None:
+    for row in (event or {}).get("attendees") or []:
+        if isinstance(row, dict) and row.get("self"):
+            return row
+    return None
+
+
+def event_self_response_status(event: dict[str, Any] | None) -> str | None:
+    row = event_self_attendee(event)
+    if not row:
+        return None
+    st = str(row.get("responseStatus") or "").strip()
+    if not st:
+        return None
+    low = st.lower()
+    if low == "needsaction":
+        return "needsAction"
+    return low
+
+
+def event_is_invitation(event: dict[str, Any] | None) -> bool:
+    """Встреча, на которую текущего пользователя пригласили (не он организатор)."""
+    src = event or {}
+    self_row = event_self_attendee(src)
+    if not self_row:
+        return False
+    if self_row.get("organizer"):
+        return False
+    org = src.get("organizer") if isinstance(src.get("organizer"), dict) else {}
+    if org.get("self"):
+        return False
+    return True
+
+
+def event_needs_rsvp(event: dict[str, Any] | None) -> bool:
+    if not event_is_invitation(event):
+        return False
+    status = event_self_response_status(event)
+    return status in (None, "", "needsAction")
+
+
+def event_is_declined_by_self(event: dict[str, Any] | None) -> bool:
+    return event_self_response_status(event) == "declined"

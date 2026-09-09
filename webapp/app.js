@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260909-composer-pad";
+  var WEBAPP_BUILD = "20260909-compact-card";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260909-composer-pad";
+  const NOTE_EDITOR_ASSET_V = "20260909-compact-card";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -340,7 +340,9 @@
     if (titleEl) titleEl.textContent = formatMeetingsDayTitle(calDate);
     var dayCol = ui.dayId ? document.getElementById(ui.dayId) : null;
     if (dayCol) dayCol.classList.toggle("meetings-day--today", calDate === todayIsoLocal());
-    var evs = (calData && calData.events) || [];
+    var evs = ((calData && calData.events) || []).filter(function (ev) {
+      return !meetingIsDeclined(ev);
+    });
     var showNow = !!(ui.showNow && calDate && calDate === todayIsoLocal());
     var nowMs = Date.now();
     var placedNow = false;
@@ -6678,6 +6680,74 @@
     });
   }
 
+  function meetingIsDeclined(ev) {
+    return String((ev && ev.self_response_status) || "").toLowerCase() === "declined";
+  }
+
+  function meetingNeedsRsvp(ev) {
+    if (!ev) return false;
+    if (ev.needs_rsvp === true) return true;
+    if (ev.needs_rsvp === false) return false;
+    if (ev.is_organizer === true) return false;
+    return String(ev.self_response_status || "").toLowerCase() === "needsaction";
+  }
+
+  function renderMeetingRsvpRow(ev) {
+    var row = document.createElement("div");
+    row.className = "meeting-rsvp";
+    var actions = [
+      { status: "declined", label: "Не приду", cls: "rsvp-no" },
+      { status: "tentative", label: "Возможно", cls: "rsvp-maybe" },
+      { status: "accepted", label: "Приду", cls: "rsvp-yes" },
+    ];
+    actions.forEach(function (act) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "meeting-rsvp-btn " + act.cls;
+      btn.textContent = act.label;
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        submitMeetingRsvp(ev, act.status, row);
+      });
+      row.appendChild(btn);
+    });
+    return row;
+  }
+
+  async function submitMeetingRsvp(ev, status, rowEl) {
+    if (!ev || !ev.id || ev._rsvpBusy) return;
+    ev._rsvpBusy = true;
+    if (rowEl) {
+      rowEl.querySelectorAll("button").forEach(function (b) {
+        b.disabled = true;
+      });
+    }
+    try {
+      var calId = ev.calendar_id || "primary";
+      var res = await apiFetch(
+        "/calendar/events/" + encodeURIComponent(ev.id) + "/rsvp",
+        {
+          method: "POST",
+          body: JSON.stringify({ status: status, calendar_id: calId }),
+        }
+      );
+      if (status === "declined" || (res && res.declined)) {
+        await loadActual();
+        return;
+      }
+      await loadActual();
+    } catch (err) {
+      ev._rsvpBusy = false;
+      if (rowEl) {
+        rowEl.querySelectorAll("button").forEach(function (b) {
+          b.disabled = false;
+        });
+      }
+      window.alert((err && err.message) || "Не удалось сохранить ответ");
+    }
+  }
+
   function renderMeetingCard(ev, idx, total) {
     const row = document.createElement("div");
     row.className = "meeting-row";
@@ -6727,9 +6797,6 @@
       kind.textContent = kindLabel;
       topLeft.appendChild(kind);
     }
-    top.appendChild(topLeft);
-    top.appendChild(edit);
-    card.appendChild(top);
 
     const title = document.createElement("div");
     title.className = "item-title";
@@ -6748,9 +6815,21 @@
     } else {
       title.textContent = summary;
     }
-    card.appendChild(title);
 
-    if (ev.meet_url) {
+    var compact =
+      !topLeft.children.length && !meetingNeedsRsvp(ev) && !ev.meet_url;
+    if (compact) {
+      card.classList.add("meeting-card--compact");
+      topLeft.appendChild(title);
+    }
+    top.appendChild(topLeft);
+    top.appendChild(edit);
+    card.appendChild(top);
+    if (!compact) card.appendChild(title);
+
+    if (meetingNeedsRsvp(ev)) {
+      card.appendChild(renderMeetingRsvpRow(ev));
+    } else if (ev.meet_url) {
       const join = document.createElement("button");
       join.type = "button";
       join.className = "btn join";
@@ -6798,8 +6877,12 @@
     const active = items.filter(function (x) {
       return !x.done;
     });
-    const evs = (calData && calData.events) || [];
-    const nextEvs = (calDataNext && calDataNext.events) || [];
+    const evs = ((calData && calData.events) || []).filter(function (ev) {
+      return !meetingIsDeclined(ev);
+    });
+    const nextEvs = ((calDataNext && calDataNext.events) || []).filter(function (ev) {
+      return !meetingIsDeclined(ev);
+    });
     const meetingsCount = isDesktopLayout() ? evs.length + nextEvs.length : evs.length;
 
     hero.innerHTML =
@@ -9334,12 +9417,13 @@
   }
 
   function freezeNoteEditorUnderDiscussion() {
+    resetNoteEditorOverlayPin();
     var sheet = document.querySelector("#note-editor-overlay .modal--sheet");
     var body = sheet && sheet.querySelector(".modal-body");
     if (sheet) {
       sheet.style.transform = "";
-      sheet.style.height = "100%";
-      sheet.style.maxHeight = "100%";
+      sheet.style.height = "";
+      sheet.style.maxHeight = "";
     }
     if (body) body.style.paddingBottom = "";
     document.documentElement.classList.remove("note-editor-kb-open");
@@ -9374,27 +9458,34 @@
       resetDiscussionOverlayViewport();
       return;
     }
+    freezeNoteEditorUnderDiscussion();
     var vv = window.visualViewport;
-    var visibleH = noteEditorVisibleHeightPx();
-    var offsetTop = vv && typeof vv.offsetTop === "number" ? vv.offsetTop : 0;
-    var offsetLeft = vv && typeof vv.offsetLeft === "number" ? vv.offsetLeft : 0;
-    var width = vv && typeof vv.width === "number" ? Math.round(vv.width) : 0;
-    ov.style.bottom = "auto";
+    var visH = noteEditorVisibleHeightPx();
+    var layoutH = Math.max(
+      window.innerHeight || 0,
+      document.documentElement.clientHeight || 0,
+      visH
+    );
+    var offsetTop = vv && typeof vv.offsetTop === "number" ? Math.round(vv.offsetTop) : 0;
+    var offsetLeft = vv && typeof vv.offsetLeft === "number" ? Math.round(vv.offsetLeft) : 0;
+    var visW =
+      vv && typeof vv.width === "number" && vv.width > 0
+        ? Math.round(vv.width)
+        : window.innerWidth;
+    ov.style.top = "0px";
+    ov.style.left = "0px";
     ov.style.right = "auto";
-    ov.style.top = Math.round(offsetTop) + "px";
-    ov.style.left = Math.round(offsetLeft) + "px";
-    ov.style.width = width > 0 ? width + "px" : "100%";
-    if (visibleH > 0) {
-      ov.style.height = visibleH + "px";
-      ov.style.maxHeight = visibleH + "px";
-    } else {
-      ov.style.height = "100%";
-      ov.style.maxHeight = "100%";
-    }
-    sheet.style.height = "100%";
-    sheet.style.maxHeight = "100%";
+    ov.style.bottom = "auto";
+    ov.style.width = Math.max(window.innerWidth || 0, visW + offsetLeft) + "px";
+    ov.style.height = Math.max(layoutH, visH + offsetTop) + "px";
+    ov.style.maxHeight = "";
     ov.style.transform = "";
-    sheet.style.transform = "";
+    var ovTop = Math.round(ov.getBoundingClientRect().top);
+    var sheetShift = ovTop < -8 ? -ovTop : 0;
+    var sheetH = visH > 0 ? visH : layoutH;
+    sheet.style.height = sheetH + "px";
+    sheet.style.maxHeight = sheetH + "px";
+    sheet.style.transform = sheetShift ? "translateY(" + sheetShift + "px)" : "";
     if (window.scrollY || window.scrollX) {
       try {
         window.scrollTo(0, 0);

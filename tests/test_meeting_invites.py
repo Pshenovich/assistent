@@ -48,6 +48,79 @@ class TestMeetingInvites(unittest.TestCase):
                 )
         self.assertEqual(out, [(106278723, "knazorlov@gmail.com")])
 
+    def test_collect_pending_incoming_invites(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        start = datetime.now(timezone.utc) + timedelta(hours=2)
+        end = start + timedelta(hours=1)
+        raw = {
+            "id": "ev-in",
+            "summary": "Синк",
+            "htmlLink": "https://calendar.google.com/event",
+            "organizer": {
+                "email": "org@example.com",
+                "displayName": "Org",
+                "self": False,
+            },
+            "attendees": [
+                {
+                    "email": "me@example.com",
+                    "self": True,
+                    "responseStatus": "needsAction",
+                }
+            ],
+        }
+        norm = {
+            "event_id": "ev-in",
+            "calendar_id": "primary",
+            "summary": "Синк",
+            "html_link": "https://calendar.google.com/event",
+            "start": start,
+            "end": end,
+            "raw": raw,
+        }
+        with patch(
+            "assistant.services.calendar_sources.list_events_in_window",
+            return_value=[norm],
+        ), patch("assistant.services.calendar._tz_for", return_value=timezone.utc):
+            out = inv.collect_pending_incoming_invites(1)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["event_id"], "ev-in")
+        self.assertEqual(out[0]["invitee_email"], "me@example.com")
+
+    def test_incoming_invite_html_uses_organizer_name(self) -> None:
+        text = inv.format_incoming_invite_html(
+            {
+                "summary": "Синк",
+                "html_link": "https://calendar.google.com/event",
+                "organizer": {"displayName": "Артём", "email": "a@x.com"},
+            },
+            user_id=1,
+        )
+        self.assertIn("Артём", text)
+        self.assertIn("Синк", text)
+        self.assertIn("Вы сможете принять участие?", text)
+
+    def test_apply_attendee_status_updates_self(self) -> None:
+        event = {
+            "attendees": [
+                {"email": "org@x.com", "organizer": True, "responseStatus": "accepted"},
+                {
+                    "email": "me@x.com",
+                    "self": True,
+                    "responseStatus": "needsAction",
+                },
+            ]
+        }
+        rows = inv._apply_attendee_status(
+            event,
+            invitee_email="me@x.com",
+            response_status=inv.RSVP_ACCEPTED,
+            match_self=True,
+        )
+        self.assertEqual(rows[1]["responseStatus"], "accepted")
+        self.assertEqual(rows[0]["responseStatus"], "accepted")
+
     def test_format_after_answer(self) -> None:
         base = "@artyawn приглашает вас\n\nВы сможете принять участие?"
         out = inv.format_invite_after_answer_html(base, inv.RSVP_ACCEPTED)

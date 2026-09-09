@@ -1,17 +1,17 @@
 /* Mini App service worker: кэш оболочки для быстрого повторного открытия PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260909-composer-pad";
+var CACHE_VERSION = "miniapp-v1-20260909-compact-card";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
-  "./styles.css?v=20260909-composer-pad",
-  "./app.js?v=20260909-composer-pad",
-  "./note-html.js?v=20260909-composer-pad",
-  "./note-comments.js?v=20260909-composer-pad",
-  "./note-rich-editor.js?v=20260909-composer-pad",
-  "./icons/arrow-up-right.svg?v=20260909-composer-pad",
-  "./icons/chevron-up-muted.svg?v=20260909-composer-pad",
-  "./icons/chevron-up-on-fill.svg?v=20260909-composer-pad",
+  "./styles.css?v=20260909-compact-card",
+  "./app.js?v=20260909-compact-card",
+  "./note-html.js?v=20260909-compact-card",
+  "./note-comments.js?v=20260909-compact-card",
+  "./note-rich-editor.js?v=20260909-compact-card",
+  "./icons/arrow-up-right.svg?v=20260909-compact-card",
+  "./icons/chevron-up-muted.svg?v=20260909-compact-card",
+  "./icons/chevron-up-on-fill.svg?v=20260909-compact-card",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",

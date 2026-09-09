@@ -923,6 +923,19 @@ html.boot-open-app #app.hidden {
   margin-bottom: var(--space-2);
 }
 
+.meeting-card--compact {
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-3);
+}
+
+.meeting-card--compact .meeting-card-top {
+  margin-bottom: 0;
+}
+
+.meeting-card--compact .item-title {
+  margin-bottom: 0;
+}
+
 .meeting-card-top-left {
   display: flex;
   flex: 1;
@@ -1045,6 +1058,47 @@ html.boot-open-app #app.hidden {
 
 .btn.join:hover {
   background: rgba(82, 158, 244, 0.18);
+}
+
+.meeting-rsvp {
+  display: flex;
+  gap: 6px;
+  margin-top: var(--space-2);
+}
+
+.meeting-rsvp-btn {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  min-height: 40px;
+  padding: 0 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.15;
+  cursor: pointer;
+}
+
+.meeting-rsvp-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.meeting-rsvp-btn.rsvp-no {
+  color: var(--danger);
+  background: var(--danger-muted);
+}
+
+.meeting-rsvp-btn.rsvp-maybe {
+  color: var(--text);
+  background: var(--vkui--color_background_secondary_alpha, var(--surface-muted));
+}
+
+.meeting-rsvp-btn.rsvp-yes {
+  color: var(--accent);
+  background: var(--accent-subtle);
 }
 
 .btn-sm {
@@ -4360,10 +4414,18 @@ html.note-editor-open #note-editor-overlay {
   html.note-discussion-open body {
     overflow: hidden;
     overscroll-behavior: none;
+    background: var(--bg, #0a0a0a);
+  }
+
+  html.note-discussion-open #note-editor-overlay,
+  html.note-discussion-open .main-scroll,
+  html.note-discussion-open .tabbar,
+  html.note-discussion-open .app-sidebar {
+    visibility: hidden !important;
+    pointer-events: none !important;
   }
 
   html.note-discussion-open #note-editor-overlay {
-    pointer-events: none;
     overflow: hidden !important;
   }
 
@@ -4375,6 +4437,15 @@ html.note-editor-open #note-editor-overlay {
     overflow: hidden !important;
     overscroll-behavior: none;
     touch-action: none;
+  }
+
+  .note-discussion-overlay {
+    background: var(--bg, #0a0a0a);
+  }
+
+  .note-discussion-sheet {
+    max-height: 100%;
+    background: var(--bg, #0a0a0a);
   }
 }
 
