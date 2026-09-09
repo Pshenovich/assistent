@@ -3072,20 +3072,60 @@ def _gcal_json_time_fragment(src: Any) -> dict[str, str]:
     return out
 
 
-def _serialize_event_attendees(ev: dict[str, Any]) -> list[dict[str, str]]:
-    out: list[dict[str, str]] = []
+def _attendee_payload(email: Any, name: Any, *, organizer: bool = False) -> dict[str, Any] | None:
+    em = str(email or "").strip().lower()
+    if not em or "@" not in em:
+        return None
+    item: dict[str, Any] = {"email": em, "name": str(name or "").strip()}
+    if organizer:
+        item["organizer"] = True
+    return item
+
+
+def _merge_serialized_attendee(out: list[dict[str, Any]], seen: set[str], item: dict[str, Any] | None) -> None:
+    if not item:
+        return
+    em = str(item.get("email") or "")
+    if em in seen:
+        for row in out:
+            if row.get("email") != em:
+                continue
+            if not row.get("name") and item.get("name"):
+                row["name"] = str(item.get("name") or "")
+            if item.get("organizer"):
+                row["organizer"] = True
+            break
+        return
+    seen.add(em)
+    out.append(item)
+
+
+def _serialize_event_attendees(ev: dict[str, Any]) -> list[dict[str, Any]]:
+    """Участники для карточки встречи: гости + организатор, без текущего пользователя (self)."""
+    out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for row in (ev or {}).get("attendees") or []:
+    src = ev or {}
+    org = src.get("organizer") if isinstance(src.get("organizer"), dict) else {}
+    if org and not org.get("self"):
+        _merge_serialized_attendee(
+            out,
+            seen,
+            _attendee_payload(org.get("email"), org.get("displayName"), organizer=True),
+        )
+    for row in src.get("attendees") or []:
         if not isinstance(row, dict):
             continue
-        if row.get("self") or row.get("organizer"):
+        if row.get("self"):
             continue
-        em = str(row.get("email") or "").strip().lower()
-        if not em or em in seen:
-            continue
-        seen.add(em)
-        name = str(row.get("displayName") or "").strip()
-        out.append({"email": em, "name": name})
+        _merge_serialized_attendee(
+            out,
+            seen,
+            _attendee_payload(
+                row.get("email"),
+                row.get("displayName") or row.get("name"),
+                organizer=bool(row.get("organizer")),
+            ),
+        )
     return out
 
 
@@ -3280,6 +3320,14 @@ def _local_dev_calendar_events(day_iso: str, timezone_name: str) -> list[dict[st
                 "attendees": [],
             }
         )
+    if out:
+        out[0]["attendees"] = [
+            {
+                "email": "artem.danilin.1999@gmail.com",
+                "name": "",
+                "organizer": True,
+            }
+        ]
     return out
 
 

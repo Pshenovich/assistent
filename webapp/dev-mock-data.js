@@ -160,6 +160,13 @@
           end: { dateTime: isoLocal(dateYmd, 10, 30) },
           meet_url: "https://meet.google.com/abc-defg-hij",
           html_link: "https://calendar.google.com/calendar/event?eid=dev-mock-1",
+          attendees: [
+            {
+              email: "artem.danilin.1999@gmail.com",
+              name: "",
+              organizer: true,
+            },
+          ],
         },
         {
           id: "dev-mock-ev-2",

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260909-cal-two-days";
+  var WEBAPP_BUILD = "20260909-meeting-people";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260909-cal-two-days";
+  const NOTE_EDITOR_ASSET_V = "20260909-meeting-people";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -5626,6 +5626,98 @@
     return String(email || "").trim().toLowerCase();
   }
 
+  var calendarContactsByEmail = {};
+
+  function setCalendarContacts(items) {
+    calendarContactsByEmail = {};
+    (items || []).forEach(function (c) {
+      var k = meetingEmailKey(c && c.email);
+      if (k) calendarContactsByEmail[k] = c;
+    });
+  }
+
+  function refreshCalendarContacts() {
+    return apiFetch("/contacts", { method: "GET" })
+      .then(function (data) {
+        setCalendarContacts((data && data.items) || []);
+        return calendarContactsByEmail;
+      })
+      .catch(function () {
+        return calendarContactsByEmail;
+      });
+  }
+
+  function contactByAttendeeEmail(email) {
+    return calendarContactsByEmail[meetingEmailKey(email)] || null;
+  }
+
+  function attendeeChipLabel(att) {
+    var c = contactByAttendeeEmail(att && att.email);
+    var name = String((c && c.name) || "").trim();
+    if (name) return name;
+    return meetingEmailKey(att && att.email) || "";
+  }
+
+  function attendeeInitialsFrom(att) {
+    var c = contactByAttendeeEmail(att && att.email);
+    var name = String((c && c.name) || "").trim();
+    if (name) {
+      var parts = name.replace(/^@/, "").split(/\s+/).filter(Boolean);
+      if (parts.length >= 2) {
+        return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+      }
+      if (parts[0] && parts[0].length >= 2) return parts[0].slice(0, 2).toUpperCase();
+      if (parts[0]) return (parts[0].charAt(0) + parts[0].charAt(0)).toUpperCase();
+    }
+    var local = String((att && att.email) || "").split("@")[0] || "";
+    var tokens = local.split(/[._+\-]+/).filter(function (t) {
+      return t && /[a-zA-Zа-яА-ЯёЁ]/.test(t);
+    });
+    if (tokens.length >= 2) {
+      return (tokens[0].charAt(0) + tokens[1].charAt(0)).toUpperCase();
+    }
+    if (tokens[0] && tokens[0].length >= 2) return tokens[0].slice(0, 2).toUpperCase();
+    var letters = local.replace(/[^a-zA-Zа-яА-ЯёЁ]/g, "");
+    if (letters.length >= 2) return letters.slice(0, 2).toUpperCase();
+    if (letters) return (letters.charAt(0) + letters.charAt(0)).toUpperCase();
+    return "?";
+  }
+
+  function meetingAttendeeAvatarNode(att) {
+    var el = document.createElement("span");
+    el.className = "note-member-avatar";
+    el.title = attendeeChipLabel(att);
+    var img = document.createElement("img");
+    img.alt = "";
+    el.appendChild(img);
+    var fallback = document.createElement("span");
+    fallback.className = "note-member-avatar-fallback";
+    fallback.textContent = attendeeInitialsFrom(att);
+    el.appendChild(fallback);
+    var c = contactByAttendeeEmail(att && att.email);
+    if (c && c.telegram_user_id) applyNoteMemberPhoto(img, c.telegram_user_id);
+    return el;
+  }
+
+  function appendMeetingAttendeeAvatars(card, ev) {
+    var list = ((ev && ev.attendees) || []).filter(function (a) {
+      return a && meetingEmailKey(a.email);
+    });
+    if (!list.length) return;
+    var wrap = document.createElement("div");
+    wrap.className = "meeting-card-avatars";
+    list.slice(0, 4).forEach(function (att) {
+      wrap.appendChild(meetingAttendeeAvatarNode(att));
+    });
+    if (list.length > 4) {
+      var more = document.createElement("span");
+      more.className = "note-member-avatar note-member-avatar-more";
+      more.textContent = "+" + (list.length - 4);
+      wrap.appendChild(more);
+    }
+    card.appendChild(wrap);
+  }
+
   function mergeBusyMs(intervals) {
     var items = (intervals || [])
       .map(function (it) {
@@ -5901,7 +5993,7 @@
         }
         var text = document.createElement("span");
         text.className = "meeting-attendee-chip-text";
-        text.textContent = it.name || it.email;
+        text.textContent = attendeeChipLabel(it);
         chip.appendChild(text);
         var del = document.createElement("button");
         del.type = "button";
@@ -5919,7 +6011,7 @@
       var sum = host.querySelector("#m-ev-attendees-summary");
       if (sum) {
         if (!items.length) sum.textContent = "Нет";
-        else if (items.length === 1) sum.textContent = items[0].name || items[0].email;
+        else if (items.length === 1) sum.textContent = attendeeChipLabel(items[0]);
         else sum.textContent = String(items.length);
       }
     }
@@ -5943,6 +6035,9 @@
           .trim()
           .replace(/^@/, ""),
       });
+      if (person && person.name && String(person.name).indexOf("@") < 0) {
+        calendarContactsByEmail[em] = person;
+      }
       paintChips();
       if (inputEl) inputEl.value = "";
       hideSuggest();
@@ -6058,7 +6153,7 @@
       if (!em || !MEETING_EMAIL_RE.test(em) || hasEmail(em)) return;
       items.push({
         email: em,
-        name: String((raw && raw.name) || "").trim(),
+        name: "",
         calendar: !!(raw && raw.calendar_connected),
         telegram_username: String((raw && raw.telegram_username) || "")
           .trim()
@@ -6070,10 +6165,11 @@
     apiFetch("/contacts", { method: "GET" })
       .then(function (data) {
         contacts = data.items || [];
+        setCalendarContacts(contacts);
         items.forEach(function (it) {
           contacts.forEach(function (c) {
             if (meetingEmailKey(c.email) === it.email) {
-              if (!it.name) it.name = c.name || "";
+              it.name = c.name || "";
               it.calendar = !!c.calendar_connected;
               if (!it.telegram_username) {
                 it.telegram_username = String(c.telegram_username || "").replace(/^@/, "");
@@ -6656,6 +6752,8 @@
       card.appendChild(join);
     }
 
+    appendMeetingAttendeeAvatars(card, ev);
+
     const swipe = wrapWithSwipeDelete(card, async function () {
       const calId = ev.calendar_id || "primary";
       const q = calId && calId !== "primary" ? "?calendar_id=" + encodeURIComponent(calId) : "";
@@ -6748,7 +6846,9 @@
       fetchCalendarDay(meetingsPageDate || leftIso),
     ];
     if (dual) fetches.push(fetchCalendarDay(addDaysIso(leftIso, 1)));
+    var contactP = refreshCalendarContacts();
     var results = await Promise.allSettled(fetches);
+    await contactP;
 
     if (results[0].status === "fulfilled") {
       remData = results[0].value;
@@ -8561,7 +8661,7 @@
       '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>' +
       "</svg></button>" +
       '<input type="file" id="note-paie-attach-input" class="hidden" multiple accept="image/*,.pdf,.txt,.md,.csv,.json,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip">' +
-      '<textarea id="note-paie-reply-input" class="note-paie-composer-input" rows="2" maxlength="4000" placeholder="' +
+      '<textarea id="note-paie-reply-input" class="note-paie-composer-input" rows="1" maxlength="4000" placeholder="' +
       noteAskPlaceholder("paie") +
       '"></textarea></div>' +
       '<div id="note-paie-attach-preview" class="note-paie-attach-preview hidden"></div>' +
@@ -8732,10 +8832,72 @@
     }
   }
 
+  function composerLineHeight(el) {
+    var lh = parseFloat(window.getComputedStyle(el).lineHeight);
+    if (isFinite(lh) && lh > 8) return lh;
+    var fs = parseFloat(window.getComputedStyle(el).fontSize) || 16;
+    return fs * 1.35;
+  }
+
+  function composerPlaceholderWraps(el) {
+    if (!el || (el.value || "").length) return false;
+    var ph = el.getAttribute("placeholder") || "";
+    if (!ph || el.clientWidth < 8) return false;
+    var cs = window.getComputedStyle(el);
+    var probe = document.createElement("div");
+    var padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+    probe.style.cssText =
+      "position:absolute;left:-9999px;top:0;visibility:hidden;pointer-events:none;" +
+      "white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;padding:0;border:0;" +
+      "box-sizing:border-box;font:" +
+      cs.font +
+      ";font-size:" +
+      cs.fontSize +
+      ";font-weight:" +
+      cs.fontWeight +
+      ";letter-spacing:" +
+      cs.letterSpacing +
+      ";line-height:" +
+      cs.lineHeight +
+      ";width:" +
+      Math.max(8, el.clientWidth - padX) +
+      "px;";
+    probe.textContent = ph;
+    document.body.appendChild(probe);
+    var wraps = probe.offsetHeight > composerLineHeight(el) * 1.35;
+    document.body.removeChild(probe);
+    return wraps;
+  }
+
   function autosizeNoteComposer(el) {
     if (!el) return;
+    var line = composerLineHeight(el);
+    var cs = window.getComputedStyle(el);
+    var padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    var minSingle = Math.round(line + Math.max(padY, 8));
+    var minMulti = Math.round(line * 2 + 6);
+    var maxH = 136;
+    el.classList.remove("is-multiline");
+    el.classList.remove("is-overflowing");
     el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 136) + "px";
+    var value = el.value || "";
+    var valueWraps = value.indexOf("\n") >= 0 || el.scrollHeight > minSingle + 1;
+    var placeholderWraps = composerPlaceholderWraps(el);
+    var multiline = valueWraps || placeholderWraps;
+    if (!multiline) {
+      el.style.height = Math.min(Math.max(el.scrollHeight, minSingle), maxH) + "px";
+      return;
+    }
+    el.classList.add("is-multiline");
+    el.style.height = "auto";
+    var h = el.scrollHeight;
+    if (!value && placeholderWraps) h = Math.max(h, minMulti);
+    h = Math.max(h, minMulti);
+    if (h > maxH) {
+      h = maxH;
+      el.classList.add("is-overflowing");
+    }
+    el.style.height = h + "px";
   }
 
   var DISCUSS_ATTACH_MAX = 8;
@@ -9091,10 +9253,21 @@
       window.setTimeout(syncNoteFormatToolbarForComposer, 80);
     });
     if (input) {
+      function sizeComposer() {
+        autosizeNoteComposer(input);
+      }
+      sizeComposer();
+      window.requestAnimationFrame(sizeComposer);
       input.addEventListener("input", function () {
         autosizeNoteComposer(input);
         syncNotePaieReplyForm();
       });
+      if (!input._composerRo && typeof ResizeObserver === "function") {
+        input._composerRo = new ResizeObserver(function () {
+          autosizeNoteComposer(input);
+        });
+        input._composerRo.observe(input);
+      }
       input.addEventListener("keydown", function (e) {
         if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
           e.preventDefault();
@@ -10252,6 +10425,7 @@
     var input = document.getElementById("note-paie-reply-input");
     if (input) {
       input.placeholder = noteAskPlaceholder(current);
+      autosizeNoteComposer(input);
     }
     syncNoteComposerCommentTarget();
     if (current === "gpt") loadGptModels();

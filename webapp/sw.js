@@ -1,17 +1,17 @@
 /* Mini App service worker: кэш оболочки для быстрого повторного открытия PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260909-cal-two-days";
+var CACHE_VERSION = "miniapp-v1-20260909-meeting-people";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
-  "./styles.css?v=20260909-cal-two-days",
-  "./app.js?v=20260909-cal-two-days",
-  "./note-html.js?v=20260909-cal-two-days",
-  "./note-comments.js?v=20260909-cal-two-days",
-  "./note-rich-editor.js?v=20260909-cal-two-days",
-  "./icons/arrow-up-right.svg?v=20260909-cal-two-days",
-  "./icons/chevron-up-muted.svg?v=20260909-cal-two-days",
-  "./icons/chevron-up-on-fill.svg?v=20260909-cal-two-days",
+  "./styles.css?v=20260909-meeting-people",
+  "./app.js?v=20260909-meeting-people",
+  "./note-html.js?v=20260909-meeting-people",
+  "./note-comments.js?v=20260909-meeting-people",
+  "./note-rich-editor.js?v=20260909-meeting-people",
+  "./icons/arrow-up-right.svg?v=20260909-meeting-people",
+  "./icons/chevron-up-muted.svg?v=20260909-meeting-people",
+  "./icons/chevron-up-on-fill.svg?v=20260909-meeting-people",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",
