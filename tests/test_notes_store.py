@@ -62,6 +62,38 @@ class NotesStoreTests(unittest.TestCase):
         self.assertFalse(updated["kb_enabled"])
         self.assertFalse(notes_store.note_kb_enabled(updated))
 
+    def test_knowledge_version_changes_on_edit(self) -> None:
+        kb = notes_store.create_note(
+            5, "Прайс", "10 рублей", role=notes_store.KNOWLEDGE_ROLE
+        )
+        v1 = notes_store.knowledge_version(5)
+        self.assertTrue(v1)
+        notes_store.update_note(5, kb["id"], body="20 рублей")
+        v2 = notes_store.knowledge_version(5)
+        self.assertNotEqual(v1, v2)
+        notes_store.update_note(5, kb["id"], kb_enabled=False)
+        v3 = notes_store.knowledge_version(5)
+        self.assertNotEqual(v2, v3)
+
+    def test_pin_and_duplicate(self) -> None:
+        a = notes_store.create_note(11, "Первая", "aaa")
+        b = notes_store.create_note(11, "Вторая", "bbb")
+        notes_store.set_note_pinned(11, a["id"], True)
+        listed = notes_store.list_notes(11)
+        self.assertTrue(listed[0]["pinned"])
+        self.assertEqual(listed[0]["id"], a["id"])
+        self.assertFalse(listed[1]["pinned"])
+        self.assertEqual(listed[1]["id"], b["id"])
+        notes_store.set_note_pinned(11, a["id"], False)
+        listed2 = notes_store.list_notes(11)
+        self.assertFalse(any(n.get("pinned") for n in listed2))
+        dup = notes_store.duplicate_note(11, a["id"])
+        assert dup is not None
+        self.assertEqual(dup["title"], "Первая (копия)")
+        self.assertEqual(dup["body"], "aaa")
+        self.assertNotEqual(dup["id"], a["id"])
+        self.assertTrue(any(n["id"] == dup["id"] for n in notes_store.list_notes(11)))
+
     def test_search(self) -> None:
         notes_store.create_note(7, "Филиалы в Куркино", "Адрес и режим работы")
         notes_store.create_note(7, "Другое", "Про встречи")

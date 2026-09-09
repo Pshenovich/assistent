@@ -10,6 +10,7 @@ from telegram.ext import Application
 
 from assistant.board import store
 from assistant.board.bot.followup_job import register_followup_jobs
+from assistant.lib.telegram_bot_api import attach_local_bot_api
 from assistant.board.bot.handlers import bind_service, register_handlers, setup_commands
 from assistant.board.bot.publisher import TelegramPublisher
 from assistant.board.meeting import MeetingService
@@ -77,14 +78,7 @@ def build_application() -> Application:
         print(f"[board] telegram_proxy=configured")
     else:
         print("[board] telegram_proxy=none")
-    api_base = os.getenv("TELEGRAM_BOT_API_BASE_URL", "").strip().rstrip("/")
-    if api_base:
-        builder = (
-            builder.base_url(f"{api_base}/bot")
-            .base_file_url(f"{api_base}/file/bot")
-            .local_mode(True)
-        )
-        print(f"[board] local Bot API: {api_base}")
+    builder = attach_local_bot_api(builder, log_prefix="board")
     builder = builder.concurrent_updates(8)
 
     async def _post_init(application: Application) -> None:

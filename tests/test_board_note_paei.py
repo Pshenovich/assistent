@@ -20,7 +20,7 @@ from assistant.board import store
 
 
 class _ScriptedProvider:
-    def generate_json(self, *, system: str, user: str, operation: str, temperature: float = 0.4):
+    def generate_json(self, *, system: str, user: str, operation: str, temperature: float = 0.4, **_kwargs):
         del system, user, temperature
         if operation == "board_note_paei":
             return {
@@ -102,7 +102,7 @@ class _CaptureProvider(_ScriptedProvider):
     def __init__(self) -> None:
         self.users: list[str] = []
 
-    def generate_json(self, *, system: str, user: str, operation: str, temperature: float = 0.4):
+    def generate_json(self, *, system: str, user: str, operation: str, temperature: float = 0.4, **_kwargs):
         self.users.append(str(user or ""))
         return super().generate_json(
             system=system, user=user, operation=operation, temperature=temperature

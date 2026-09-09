@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260908-remdisc";
+  var WEBAPP_BUILD = "20260909-pwa-notes";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260908-remdisc";
+  const NOTE_EDITOR_ASSET_V = "20260909-pwa-notes";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -867,6 +867,10 @@
         revision: item.revision || 1,
         updated_at: item.updated_at || "",
         members: Array.isArray(item.members) ? item.members : [],
+        pinned: !!item.pinned,
+        shared: !!item.shared,
+        share_url: item.share_url || null,
+        share_access: item.share_access || null,
       },
       extra
     );
@@ -989,7 +993,8 @@
         method: "POST",
         body: JSON.stringify({
           message: text,
-          context: gptChatState.context,
+          note_title: gptChatState.title || "",
+          note_text: gptChatState.context || "",
           history: gptChatState.history,
         }),
       });
@@ -4487,6 +4492,230 @@
     return ov.querySelector(".note-editor-modal-body");
   }
 
+  var noteEditorBgLock = null;
+  var noteCaretScrollTimer = null;
+  var noteEditorTouchGuardBound = false;
+  var noteEditorKbWasOpen = false;
+
+  function isNoteEditorScrollTarget(target) {
+    if (!target || !target.closest) return false;
+    return !!target.closest(
+      ".note-editor-modal-body, .note-editor-toolbar-wrap, .note-more-menu, .note-share-sheet-overlay, .note-link-popover, .tag-picker-menu, .note-discussion-overlay, .note-link-overlay, textarea, input"
+    );
+  }
+
+  var noteEditorTouchStartY = 0;
+
+  function onNoteEditorTouchStartGuard(e) {
+    if (e.touches && e.touches[0]) noteEditorTouchStartY = e.touches[0].clientY;
+  }
+
+  function onNoteEditorTouchMoveGuard(e) {
+    if (!isNoteEditorModalOpen()) return;
+    if (isNoteEditorScrollTarget(e.target)) {
+      var scrollEl = getNoteEditorScrollEl();
+      if (!scrollEl || !e.target || !scrollEl.contains(e.target)) return;
+      var y = e.touches && e.touches[0] ? e.touches[0].clientY : noteEditorTouchStartY;
+      var dy = y - noteEditorTouchStartY;
+      var atTop = scrollEl.scrollTop <= 0;
+      var atBottom =
+        scrollEl.scrollTop + scrollEl.clientHeight >= scrollEl.scrollHeight - 1;
+      if (scrollEl.scrollHeight <= scrollEl.clientHeight + 2) {
+        e.preventDefault();
+        return;
+      }
+      if ((atTop && dy > 0) || (atBottom && dy < 0)) {
+        e.preventDefault();
+      }
+      return;
+    }
+    e.preventDefault();
+  }
+
+  function resetNoteEditorOverlayPin() {
+    var ov = document.getElementById("note-editor-overlay");
+    if (ov) {
+      ov.style.top = "";
+      ov.style.left = "";
+      ov.style.right = "";
+      ov.style.bottom = "";
+      ov.style.width = "";
+      ov.style.height = "";
+    }
+    var sheet = ov && ov.querySelector(".note-editor-sheet");
+    if (sheet) {
+      sheet.style.height = "";
+      sheet.style.maxHeight = "";
+      sheet.style.transform = "";
+    }
+    var content = document.getElementById("note-editor-modal-body");
+    if (content) content.style.paddingBottom = "";
+  }
+
+  function lockNoteEditorBackground() {
+    if (noteEditorBgLock) return;
+    var main = document.querySelector(".main-scroll");
+    noteEditorBgLock = {
+      y: window.scrollY || window.pageYOffset || 0,
+      main: main ? main.scrollTop : 0,
+    };
+    document.documentElement.classList.add("note-editor-open");
+    document.body.style.position = "fixed";
+    document.body.style.width = "100%";
+    document.body.style.left = "0";
+    document.body.style.right = "0";
+    document.body.style.top = "-" + noteEditorBgLock.y + "px";
+    if (!noteEditorTouchGuardBound) {
+      noteEditorTouchGuardBound = true;
+      document.addEventListener("touchstart", onNoteEditorTouchStartGuard, {
+        passive: true,
+        capture: true,
+      });
+      document.addEventListener("touchmove", onNoteEditorTouchMoveGuard, {
+        passive: false,
+        capture: true,
+      });
+    }
+  }
+
+  function unlockNoteEditorBackground() {
+    document.documentElement.classList.remove("note-editor-open");
+    document.documentElement.classList.remove("note-editor-kb-open");
+    document.documentElement.style.removeProperty("--note-editor-kb-inset");
+    document.body.style.position = "";
+    document.body.style.width = "";
+    document.body.style.left = "";
+    document.body.style.right = "";
+    document.body.style.top = "";
+    resetNoteEditorOverlayPin();
+    noteEditorKbWasOpen = false;
+    if (noteEditorBgLock) {
+      var y = noteEditorBgLock.y;
+      var mainTop = noteEditorBgLock.main;
+      noteEditorBgLock = null;
+      var main = document.querySelector(".main-scroll");
+      if (main) main.scrollTop = mainTop;
+      window.scrollTo(0, y);
+    }
+  }
+
+  function pinNoteEditorOverlayToVisualViewport() {
+    var ov = document.getElementById("note-editor-overlay");
+    var sheet = ov && ov.querySelector(".note-editor-sheet");
+    if (!ov || ov.classList.contains("hidden") || !isMobileNoteLayout()) {
+      resetNoteEditorOverlayPin();
+      return 0;
+    }
+    var vv = window.visualViewport;
+    var visH = noteEditorVisibleHeightPx();
+    var layoutH = Math.max(
+      window.innerHeight || 0,
+      document.documentElement.clientHeight || 0,
+      visH
+    );
+    var offsetTop = vv && typeof vv.offsetTop === "number" ? Math.round(vv.offsetTop) : 0;
+    var offsetLeft = vv && typeof vv.offsetLeft === "number" ? Math.round(vv.offsetLeft) : 0;
+    var visW =
+      vv && typeof vv.width === "number" && vv.width > 0
+        ? Math.round(vv.width)
+        : window.innerWidth;
+    ov.style.top = "0px";
+    ov.style.left = "0px";
+    ov.style.right = "auto";
+    ov.style.bottom = "auto";
+    ov.style.width = Math.max(window.innerWidth || 0, visW + offsetLeft) + "px";
+    ov.style.height = Math.max(layoutH, visH + offsetTop) + "px";
+    var ovTop = Math.round(ov.getBoundingClientRect().top);
+    var sheetShift = ovTop < -8 ? -ovTop : 0;
+    var sheetH = visH > 0 ? visH : layoutH;
+    if (sheet) {
+      sheet.style.height = sheetH + "px";
+      sheet.style.maxHeight = sheetH + "px";
+      sheet.style.transform = sheetShift ? "translateY(" + sheetShift + "px)" : "";
+    }
+    var kbGuess = Math.max(0, Math.round(layoutH - sheetH - offsetTop));
+    if (kbGuess < 40) kbGuess = 0;
+    var kbOpen = kbGuess > 40;
+    document.documentElement.classList.toggle("note-editor-kb-open", kbOpen);
+    document.documentElement.style.setProperty("--note-editor-kb-inset", kbGuess + "px");
+    var content = document.getElementById("note-editor-modal-body");
+    if (content) {
+      var extra = kbOpen ? Math.round(Math.max(140, sheetH * 0.45)) : 0;
+      content.style.paddingBottom = extra ? extra + "px" : "";
+    }
+    if (kbOpen && !noteEditorKbWasOpen) {
+      window.setTimeout(function () {
+        scrollNoteCaretIntoView(true);
+      }, 280);
+    }
+    noteEditorKbWasOpen = kbOpen;
+    return kbGuess;
+  }
+
+  function scrollNoteCaretIntoView(immediate) {
+    if (!isNoteEditorModalOpen()) return;
+    var run = function () {
+      var scrollEl = getNoteEditorScrollEl();
+      if (!scrollEl) return;
+      var active = document.activeElement;
+      var caretRect = null;
+      if (active && active.id === "note-editor-title-input") {
+        caretRect = active.getBoundingClientRect();
+      } else {
+        var editor = getActiveNoteRichEditor();
+        if (editor && typeof editor.coordsAtPos === "function" && typeof editor.getCursor === "function") {
+          try {
+            caretRect = editor.coordsAtPos(editor.getCursor());
+          } catch (_) {
+            caretRect = null;
+          }
+        }
+        if (!caretRect && active && active.getBoundingClientRect && isNoteRichEditorField(active)) {
+          caretRect = active.getBoundingClientRect();
+        }
+        if (!caretRect) {
+          var sel = window.getSelection && window.getSelection();
+          if (sel && sel.rangeCount) {
+            var range = sel.getRangeAt(0);
+            if (range && scrollEl.contains(range.startContainer)) {
+              var rects = range.getClientRects();
+              caretRect = rects.length ? rects[rects.length - 1] : range.getBoundingClientRect();
+            }
+          }
+        }
+      }
+      if (!caretRect || (caretRect.width === 0 && caretRect.height === 0 && !caretRect.top)) return;
+      var bodyRect = scrollEl.getBoundingClientRect();
+      var toolbar = document.getElementById("note-editor-toolbar-wrap");
+      var toolbarH = 0;
+      if (toolbar && !toolbar.classList.contains("hidden")) {
+        var tb = toolbar.getBoundingClientRect();
+        if (tb.top < bodyRect.bottom && tb.bottom > bodyRect.top) {
+          toolbarH = Math.max(0, bodyRect.bottom - tb.top);
+        }
+      }
+      var margin = 20;
+      var bottomLimit = bodyRect.bottom - toolbarH - margin;
+      var topLimit = bodyRect.top + margin;
+      var bottom = caretRect.bottom != null ? caretRect.bottom : caretRect.top;
+      var top = caretRect.top;
+      if (bottom > bottomLimit) {
+        scrollEl.scrollTop += bottom - bottomLimit;
+      } else if (top < topLimit) {
+        scrollEl.scrollTop -= topLimit - top;
+      }
+    };
+    if (immediate) {
+      run();
+      return;
+    }
+    if (noteCaretScrollTimer) clearTimeout(noteCaretScrollTimer);
+    noteCaretScrollTimer = window.setTimeout(function () {
+      noteCaretScrollTimer = null;
+      window.requestAnimationFrame(run);
+    }, 60);
+  }
+
   function isMobileNoteLayout() {
     return !!(window.matchMedia && window.matchMedia("(max-width: 959px)").matches);
   }
@@ -4589,7 +4818,14 @@
   }
 
   function scrollModalFieldIntoView(field) {
-    if (!field || isNoteRichEditorField(field)) return;
+    if (!field) return;
+    if (isNoteRichEditorField(field) || (field.id === "note-editor-title-input")) {
+      scrollNoteCaretIntoView();
+      window.setTimeout(function () {
+        scrollNoteCaretIntoView(true);
+      }, 380);
+      return;
+    }
     var scrollEl = isNoteEditorModalOpen() ? getNoteEditorScrollEl() : getActiveModalBody();
     if (!scrollEl) return;
     if (modalSheetScrollTimer) clearTimeout(modalSheetScrollTimer);
@@ -4638,32 +4874,20 @@
 
     if (noteEditorOpen) {
       if (isMobileNoteLayout() && noteComposerMenuOpen()) return;
-      var visibleH = noteEditorVisibleHeightPx();
-      if (visibleH > 0) {
-        sheet.style.height = visibleH + "px";
-        sheet.style.maxHeight = visibleH + "px";
-      } else {
-        sheet.style.height = "100%";
-        sheet.style.maxHeight = "100%";
+      if (isMobileNoteLayout()) lockNoteEditorBackground();
+      pinNoteEditorOverlayToVisualViewport();
+      if (!isMobileNoteLayout()) {
+        var visibleH = noteEditorVisibleHeightPx();
+        if (visibleH > 0) {
+          sheet.style.height = visibleH + "px";
+          sheet.style.maxHeight = visibleH + "px";
+        } else {
+          sheet.style.height = "100%";
+          sheet.style.maxHeight = "100%";
+        }
+        sheet.style.transform = "";
       }
-      // Keep sheet aligned with visual viewport when iOS shifts offsetTop.
-      var offsetTop = vv && typeof vv.offsetTop === "number" ? vv.offsetTop : 0;
-      sheet.style.transform = offsetTop > 0 ? "translateY(" + Math.round(offsetTop) + "px)" : "";
       body.style.paddingBottom = "";
-
-      var stable =
-        tg && typeof tg.viewportStableHeight === "number" ? tg.viewportStableHeight : 0;
-      var tgH = tg && typeof tg.viewportHeight === "number" ? tg.viewportHeight : 0;
-      var kbGuess = 0;
-      if (stable > 0 && tgH > 0) kbGuess = Math.max(0, Math.round(stable - tgH));
-      else if (vv) {
-        kbGuess = Math.max(
-          0,
-          Math.round(window.innerHeight - vv.height - (vv.offsetTop || 0))
-        );
-      }
-      root.classList.toggle("note-editor-kb-open", kbGuess > 40);
-      root.style.setProperty("--note-editor-kb-inset", kbGuess + "px");
       return;
     }
 
@@ -4722,6 +4946,14 @@
       scrollModalFieldIntoView(field);
       syncNoteFormatToolbarForComposer();
     });
+    document.addEventListener("input", function (e) {
+      if (!modalSheetOpen || !isNoteEditorModalOpen()) return;
+      var t = e.target;
+      if (!t) return;
+      if (t.id === "note-editor-title-input" || isNoteRichEditorField(t)) {
+        scrollNoteCaretIntoView();
+      }
+    });
     document.addEventListener(
       "pointerdown",
       function (e) {
@@ -4774,6 +5006,7 @@
   function onModalSheetOpen() {
     modalSheetOpen = true;
     document.documentElement.classList.add("modal-sheet-open");
+    if (isNoteEditorModalOpen() && isMobileNoteLayout()) lockNoteEditorBackground();
     bindModalSheetMobileOnce();
     updateModalSheetForKeyboard();
     syncNoteFormatToolbarForComposer();
@@ -4782,6 +5015,7 @@
   function onModalSheetClose() {
     modalSheetOpen = false;
     document.documentElement.classList.remove("modal-sheet-open");
+    unlockNoteEditorBackground();
     document.querySelectorAll(".modal--sheet").forEach(resetModalSheetViewportStyles);
   }
 
@@ -6687,6 +6921,14 @@
       var more = document.getElementById("note-editor-more-wrap");
       if (more && e.target && more.contains(e.target)) return;
       closeNoteMoreMenu();
+      if (
+        e.target &&
+        e.target.closest &&
+        (e.target.closest(".note-card-actions") || e.target.closest(".note-card-menu"))
+      ) {
+        return;
+      }
+      closeNoteCardMenus();
     });
   }
 
@@ -7195,8 +7437,14 @@
           var editor = NoteRichEditor.mount(mountPoint, {
             body: body,
             placeholder: "Начните писать…",
-            onUpdate: onUpdate,
-            onSelection: options.onSelection || null,
+            onUpdate: function () {
+              if (typeof onUpdate === "function") onUpdate.apply(null, arguments);
+              scrollNoteCaretIntoView();
+            },
+            onSelection: function () {
+              if (typeof options.onSelection === "function") options.onSelection.apply(null, arguments);
+              scrollNoteCaretIntoView();
+            },
             toolbarParent: formatHost || null,
             tocParent: options.tocParent || null,
             onTocNavigate: options.onTocNavigate || null,
@@ -9060,36 +9308,8 @@
     if (titleEl) title = String(titleEl.value || "").trim();
     var root = noteEditorCommentRoot();
     var body = root ? String(root.innerText || root.textContent || "").trim() : "";
-    var text = (title ? title + "\n\n" : "") + body;
-    if (text.length > 12000) text = text.slice(0, 11999) + "…";
-    return text;
-  }
-
-  async function knowledgeTextForAsk() {
-    if (!noteUsesKnowledge()) return "";
-    try {
-      var data = await apiFetch("/notes/knowledge", { method: "GET" });
-      var notes = (data && data.notes) || [];
-      var parts = [];
-      notes.forEach(function (note) {
-        if (note && (note.kb_enabled === false || note.kb_enabled === 0 || note.kb_enabled === "0")) {
-          return;
-        }
-        var html = note && note.body;
-        if (!html) return;
-        var tmp = document.createElement("div");
-        tmp.innerHTML = html;
-        var text = String(tmp.innerText || tmp.textContent || "").trim();
-        if (!text) return;
-        var title = String((note && note.title) || "Документ").trim() || "Документ";
-        parts.push("## " + title + "\n" + text);
-      });
-      var text = parts.join("\n\n");
-      if (text.length > 12000) text = text.slice(0, 11999) + "…";
-      return text;
-    } catch (_) {
-      return "";
-    }
+    if (body.length > 8000) body = body.slice(0, 7999) + "…";
+    return { title: title, text: body };
   }
 
   async function submitNoteGptQuestion(text) {
@@ -9143,15 +9363,15 @@
       );
       var parentId = saved && saved.comment && saved.comment.id;
       refreshNoteCommentsList();
-      var kb = await knowledgeTextForAsk();
-      var ctx = "Заметка:\n" + activeNoteGptContext();
-      if (quote) ctx = "Выделенный текст:\n" + quote + "\n\n" + ctx;
-      if (kb) ctx = "База знаний:\n" + kb + "\n\n" + ctx;
+      var noteCtx = activeNoteGptContext();
       var res = await apiFetch("/gpt/chat", {
         method: "POST",
         body: JSON.stringify({
           message: body,
-          context: ctx,
+          note_title: noteCtx.title,
+          note_text: noteCtx.text,
+          quote: quote || undefined,
+          use_knowledge: !!noteUsesKnowledge(),
           history: history,
           model: selectedGptModelId() || undefined,
         }),
@@ -9619,6 +9839,32 @@
     wrap._shareUrl = (data && data.url) || "";
     wrap._shareAccess = data && data.access === "comment" ? "comment" : "view";
     syncNoteCommentsPanel();
+    patchLocalShareInCache(wrap._shareId, {
+      shared: wrap._shareShared,
+      share_url: wrap._shareUrl,
+      share_access: wrap._shareAccess,
+    });
+    if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+  }
+
+  var listShareCtx = null;
+
+  function getShareCtx() {
+    if (isNoteEditorModalOpen()) {
+      var more = document.getElementById("note-editor-more-wrap");
+      if (more && more._shareKind) return more;
+    }
+    if (listShareCtx && listShareCtx._shareKind) return listShareCtx;
+    return document.getElementById("note-editor-more-wrap");
+  }
+
+  function patchLocalShareInCache(noteId, fields) {
+    if (!notesDataCache || !notesDataCache.local_notes || !noteId) return;
+    var id = String(noteId);
+    notesDataCache.local_notes.forEach(function (n) {
+      if (String(n.id) !== id) return;
+      Object.assign(n, fields || {});
+    });
   }
 
   function selectedShareAccess() {
@@ -9629,10 +9875,11 @@
   function closeShareAccessSheet() {
     var ov = document.getElementById("note-share-sheet-overlay");
     if (ov) ov.classList.add("hidden");
+    listShareCtx = null;
   }
 
   function openShareAccessSheet() {
-    var wrap = document.getElementById("note-editor-more-wrap");
+    var wrap = getShareCtx();
     if (!wrap || !wrap._shareKind || !wrap._shareId) return;
     var ov = document.getElementById("note-share-sheet-overlay");
     if (!ov) {
@@ -9809,7 +10056,7 @@
 
   function paintShareMembersList() {
     var list = document.getElementById("note-share-members-list");
-    var wrap = document.getElementById("note-editor-more-wrap");
+    var wrap = getShareCtx();
     if (!list || !wrap) return;
     var members = wrap._noteMembers || [];
     list.innerHTML = "";
@@ -9849,7 +10096,7 @@
   }
 
   async function addShareMemberFromContact(contact) {
-    var wrap = document.getElementById("note-editor-more-wrap");
+    var wrap = getShareCtx();
     var suggest = document.getElementById("note-share-member-suggest");
     var input = document.getElementById("note-share-member-input");
     if (!wrap || wrap._shareKind !== "local" || !wrap._shareId) return;
@@ -9880,7 +10127,7 @@
   }
 
   async function removeShareMember(memberId) {
-    var wrap = document.getElementById("note-editor-more-wrap");
+    var wrap = getShareCtx();
     if (!wrap || !wrap._shareId || !memberId) return;
     try {
       await apiFetch(
@@ -9901,7 +10148,7 @@
   }
 
   async function createAndCopyShareLink(access) {
-    var wrap = document.getElementById("note-editor-more-wrap");
+    var wrap = getShareCtx();
     var kind = wrap && wrap._shareKind;
     var itemId = wrap && wrap._shareId;
     if (!kind || !itemId) return;
@@ -9921,7 +10168,7 @@
   }
 
   async function copyExistingShareLink() {
-    var wrap = document.getElementById("note-editor-more-wrap");
+    var wrap = getShareCtx();
     var url = wrap && wrap._shareUrl;
     var kind = wrap && wrap._shareKind;
     var itemId = wrap && wrap._shareId;
@@ -9943,7 +10190,7 @@
   }
 
   async function revokeShareLink() {
-    var wrap = document.getElementById("note-editor-more-wrap");
+    var wrap = getShareCtx();
     var kind = wrap && wrap._shareKind;
     var itemId = wrap && wrap._shareId;
     if (!kind || !itemId) return;
@@ -9956,8 +10203,15 @@
       wrap._shareShared = false;
       wrap._shareUrl = "";
       wrap._shareAccess = "view";
+      patchLocalShareInCache(itemId, {
+        shared: false,
+        share_url: null,
+        share_access: null,
+      });
+      if (notesDataCache) renderNotesPanesFromData(notesDataCache);
       closeNoteMoreMenu();
       closeShareAccessSheet();
+      closeNoteCardMenus();
       hideNoteCommentsPanel();
     } catch (e) {
       alert(e.message || String(e));
@@ -10371,6 +10625,7 @@
         ov.setAttribute("aria-hidden", "true");
       }
       onModalSheetClose();
+      listShareCtx = null;
       applyTelegramSafeAreaInsets();
       syncTelegramNativeBack();
       syncAppOverlay();
@@ -10519,6 +10774,227 @@
       .catch(function () {});
   }
 
+  function closeNoteCardMenus() {
+    document.querySelectorAll(".note-card-menu:not(.hidden)").forEach(function (el) {
+      el.classList.add("hidden");
+      el.style.position = "";
+      el.style.top = "";
+      el.style.left = "";
+      el.style.right = "";
+      el.style.zIndex = "";
+      if (el._homeParent && el.parentNode !== el._homeParent) {
+        el._homeParent.appendChild(el);
+      }
+    });
+    document.querySelectorAll(".note-card-menu-btn[aria-expanded='true']").forEach(function (btn) {
+      btn.setAttribute("aria-expanded", "false");
+    });
+  }
+
+  function positionNoteCardMenu(btn, menu) {
+    var r = btn.getBoundingClientRect();
+    var mw = menu.offsetWidth || 184;
+    var mh = menu.offsetHeight || 0;
+    var left = r.right - mw;
+    if (left < 8) left = 8;
+    if (left + mw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - mw - 8);
+    var top = r.bottom + 4;
+    if (mh && top + mh > window.innerHeight - 8) {
+      top = Math.max(8, r.top - mh - 4);
+    }
+    menu.style.position = "fixed";
+    menu.style.top = Math.round(top) + "px";
+    menu.style.left = Math.round(left) + "px";
+    menu.style.right = "auto";
+    menu.style.zIndex = "240";
+  }
+
+  function noteCardShareCtx(n) {
+    return {
+      _shareKind: "local",
+      _shareId: String(localNoteIdFrom(n) || n.id || ""),
+      _shareShared: !!n.shared,
+      _shareUrl: n.share_url || "",
+      _shareAccess: n.share_access === "comment" ? "comment" : "view",
+      _noteMembers: Array.isArray(n.members) ? n.members : [],
+    };
+  }
+
+  function openNoteCardMenu(btn, menu) {
+    var wasOpen = !menu.classList.contains("hidden");
+    closeNoteCardMenus();
+    if (wasOpen) return;
+    if (!menu._homeParent) menu._homeParent = menu.parentNode;
+    document.body.appendChild(menu);
+    menu.classList.remove("hidden");
+    btn.setAttribute("aria-expanded", "true");
+    positionNoteCardMenu(btn, menu);
+  }
+
+  function mountNoteCardActions(card, inner, n) {
+    var id = String(localNoteIdFrom(n) || "");
+    if (!id) return;
+    var isOwner = n.is_owner !== false;
+    var actions = document.createElement("div");
+    actions.className = "note-card-actions";
+    actions.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    actions.addEventListener("pointerdown", function (e) {
+      e.stopPropagation();
+    });
+
+    if (isOwner && n.shared && n.share_url) {
+      var shareWrap = document.createElement("div");
+      shareWrap.className = "note-card-menu-wrap";
+      var shareBtn = document.createElement("button");
+      shareBtn.type = "button";
+      shareBtn.className = "note-card-menu-btn note-card-share-btn";
+      shareBtn.setAttribute("aria-label", "Ссылка доступа");
+      shareBtn.setAttribute("aria-haspopup", "menu");
+      shareBtn.setAttribute("aria-expanded", "false");
+      shareBtn.innerHTML =
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' +
+        '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>' +
+        '<path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/>' +
+        "</svg>";
+      var shareMenu = document.createElement("div");
+      shareMenu.className = "note-card-menu hidden";
+      shareMenu.setAttribute("role", "menu");
+      function addShareItem(label, fn) {
+        var item = document.createElement("button");
+        item.type = "button";
+        item.className = "note-card-menu-item";
+        item.textContent = label;
+        item.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          closeNoteCardMenus();
+          listShareCtx = noteCardShareCtx(n);
+          fn();
+        });
+        shareMenu.appendChild(item);
+      }
+      addShareItem("Копировать ссылку", function () {
+        copyExistingShareLink();
+      });
+      addShareItem("Сменить доступ", function () {
+        openShareAccessSheet();
+      });
+      addShareItem("Участники", function () {
+        openShareAccessSheet();
+      });
+      addShareItem("Закрыть доступ", function () {
+        revokeShareLink();
+      });
+      shareBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openNoteCardMenu(shareBtn, shareMenu);
+      });
+      shareWrap.appendChild(shareBtn);
+      shareWrap.appendChild(shareMenu);
+      actions.appendChild(shareWrap);
+    }
+
+    var moreWrap = document.createElement("div");
+    moreWrap.className = "note-card-menu-wrap";
+    var moreBtn = document.createElement("button");
+    moreBtn.type = "button";
+    moreBtn.className = "note-card-menu-btn";
+    moreBtn.setAttribute("aria-label", "Ещё");
+    moreBtn.setAttribute("aria-haspopup", "menu");
+    moreBtn.setAttribute("aria-expanded", "false");
+    moreBtn.innerHTML =
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+      '<circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/>' +
+      "</svg>";
+    var moreMenu = document.createElement("div");
+    moreMenu.className = "note-card-menu hidden";
+    moreMenu.setAttribute("role", "menu");
+    function addMoreItem(label, fn, danger) {
+      var item = document.createElement("button");
+      item.type = "button";
+      item.className = "note-card-menu-item" + (danger ? " note-card-menu-item--danger" : "");
+      item.textContent = label;
+      item.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeNoteCardMenus();
+        fn();
+      });
+      moreMenu.appendChild(item);
+    }
+    addMoreItem(n.pinned ? "Открепить" : "Закрепить", function () {
+      toggleNotePin(id, !n.pinned);
+    });
+    addMoreItem("Копировать", function () {
+      duplicateLocalNote(id);
+    });
+    addMoreItem("Удалить", function () {
+      deleteLocalNoteFromCard(n, id);
+    }, true);
+    moreBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      openNoteCardMenu(moreBtn, moreMenu);
+    });
+    moreWrap.appendChild(moreBtn);
+    moreWrap.appendChild(moreMenu);
+    actions.appendChild(moreWrap);
+    inner.appendChild(actions);
+    if (n.pinned) card.classList.add("note-card--pinned");
+  }
+
+  async function toggleNotePin(noteId, pinned) {
+    try {
+      await apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/pin", {
+        method: "PUT",
+        body: JSON.stringify({ pinned: !!pinned }),
+      });
+      if (notesDataCache && notesDataCache.local_notes) {
+        notesDataCache.local_notes.forEach(function (row) {
+          if (String(row.id) === String(noteId)) row.pinned = !!pinned;
+        });
+        notesDataCache.local_notes.sort(function (a, b) {
+          return String(b.updated_at || "").localeCompare(String(a.updated_at || ""));
+        });
+        notesDataCache.local_notes.sort(function (a, b) {
+          return (a.pinned ? 0 : 1) - (b.pinned ? 0 : 1);
+        });
+        renderNotesPanesFromData(notesDataCache);
+      }
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
+  async function duplicateLocalNote(noteId) {
+    try {
+      var res = await apiFetch(
+        "/notes/local/" + encodeURIComponent(String(noteId)) + "/duplicate",
+        { method: "POST" }
+      );
+      if (res && res.item) prependLocalInCache(res.item);
+      if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+      showNoteToast("Заметка скопирована");
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
+  async function deleteLocalNoteFromCard(n, id) {
+    var msg = n && n.is_owner === false ? "Убрать заметку из списка?" : "Удалить заметку?";
+    if (!(await confirmDialog(msg))) return;
+    try {
+      await deleteLocalNoteById(id);
+      if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
   function renderNotesPanesFromData(data) {
     renderNotesTagFilterBar();
     const pn = document.getElementById("notes-pane-notes");
@@ -10532,6 +11008,12 @@
     const localAll = (data && data.local_notes) || [];
     const local = localAll.filter(function (n) {
       return noteItemMatchesFilter(n, "local");
+    });
+    local.sort(function (a, b) {
+      return String(b.updated_at || "").localeCompare(String(a.updated_at || ""));
+    });
+    local.sort(function (a, b) {
+      return (a.pinned ? 0 : 1) - (b.pinned ? 0 : 1);
     });
     var errParts = [];
     if (data.local_error) errParts.push(String(data.local_error));
@@ -10570,6 +11052,7 @@
             : "");
         appendTagChipsRow(inner, noteTagsOf(n), { prepend: true, head: true });
         appendNoteCardAvatars(inner, n.members);
+        mountNoteCardActions(card, inner, n);
         card.appendChild(inner);
         card.addEventListener("click", function () {
           openNoteDetail(n, { isLocal: isLocal });

@@ -104,6 +104,8 @@ class AgentEngine:
             user=ctx["text"],
             operation=f"board_agent_{agent.lower()}",
             temperature=0.55 if mode == "CHALLENGE" else 0.4,
+            max_tokens=board_llm.agent_max_tokens(),
+            cache_prefix=str(ctx.get("stable") or ""),
             provider=self.provider,
         )
         resp = parse_agent_response(raw, agent=agent)
@@ -114,6 +116,8 @@ class AgentEngine:
                 user=ctx["text"] + "\n\nRETRY: дай содержательную реакцию, не одно предложение.",
                 operation=f"board_agent_{agent.lower()}_retry",
                 temperature=0.5,
+                max_tokens=board_llm.agent_max_tokens(),
+                cache_prefix=str(ctx.get("stable") or ""),
                 provider=self.provider,
             )
             resp = parse_agent_response(raw, agent=agent)

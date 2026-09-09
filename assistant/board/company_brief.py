@@ -186,7 +186,18 @@ def _one_liner(text: str) -> str:
     return line[: ONE_LINER - 1] + "…"
 
 
-def _parse_key(url: str, updated_at: str, text: str) -> str:
+def _parse_key(
+    url: str,
+    updated_at: str,
+    text: str,
+    *,
+    version: str = "",
+    title: str = "",
+) -> str:
+    ver = (version or "").strip()
+    label = (title or "").strip() or (url or "").strip()
+    if ver:
+        return f"{ver}|{label}|{updated_at}|{len(text)}"
     return f"{url}|{updated_at}|{len(text)}"
 
 
@@ -197,8 +208,11 @@ def parse_document(
     url: str = "",
     updated_at: str = "",
     html: str = "",
+    version: str = "",
 ) -> list[dict[str, str]]:
-    key = _parse_key(url or title, updated_at, html or text)
+    key = _parse_key(
+        url or title, updated_at, html or text, version=version, title=title
+    )
     with _LOCK:
         hit = _PARSED.get(key)
         if hit and hit[0] == (html or text):
@@ -219,8 +233,9 @@ def pack_sections(pack: dict[str, Any] | None) -> list[dict[str, str]]:
     live = pack.get("_live_share") if isinstance(pack.get("_live_share"), dict) else {}
     docs = list(pack.get("_documents") or [])
     notes = (pack.get("raw_text") or "").strip()
+    kb_version = str(pack.get("_kb_version") or "")
     if notes:
-        out.extend(parse_document(notes, title="Заметки /company"))
+        out.extend(parse_document(notes, title="Заметки /company", version=kb_version))
         seen.add(notes)
     for doc in docs:
         body = (doc.get("text") or "").strip()
@@ -240,6 +255,7 @@ def pack_sections(pack: dict[str, Any] | None) -> list[dict[str, str]]:
                 url=str(pack.get("source_url") or ""),
                 updated_at=updated,
                 html=html,
+                version=kb_version if doc.get("kind") == "knowledge" else "",
             )
         )
     if out:
@@ -326,6 +342,7 @@ def format_company_context(
     *,
     query: str = "",
     index_only: bool = False,
+    budget: int | None = None,
 ) -> str:
     if not pack:
         return "(не задан — живой документ компании недоступен)"
@@ -339,7 +356,9 @@ def format_company_context(
             return f"(живой документ недоступен: {err})"
         return "(пусто)"
 
-    budget = ctx_char_budget()
+    budget = int(budget) if budget is not None else ctx_char_budget()
+    if budget < 400:
+        budget = 400
     is_kb = any(
         isinstance(d, dict) and d.get("kind") == "knowledge"
         for d in (pack.get("_documents") or [])

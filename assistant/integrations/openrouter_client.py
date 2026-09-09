@@ -10,7 +10,7 @@ from typing import Any
 
 import requests
 
-from assistant.lib.usage_store import insert_usage_event
+from assistant.lib.usage_store import extract_cached_tokens, insert_usage_event
 
 
 # Telegram user context for usage accounting.
@@ -261,6 +261,9 @@ def _log_usage(
                 pass
     if provider == "comet":
         usage = {**usage, "provider": "comet"}
+    cached = extract_cached_tokens(usage)
+    if cached is not None and usage.get("cached_tokens") is None:
+        usage = {**usage, "cached_tokens": cached}
     gid = data.get("id")
     uid = _current_tg_user_id.get()
     uname = _current_tg_user_username.get()

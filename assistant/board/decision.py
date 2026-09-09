@@ -71,6 +71,8 @@ class DecisionService:
                     user=ctx["text"],
                     operation="board_chair",
                     temperature=0.2,
+                    max_tokens=board_llm.chair_max_tokens(),
+                    cache_prefix=str(ctx.get("stable") or ""),
                     provider=self.provider,
                 )
                 last_err = None

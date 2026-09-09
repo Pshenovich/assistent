@@ -42,6 +42,20 @@ def extra_rounds() -> int:
         return 2
 
 
+def max_rounds_low() -> int:
+    try:
+        return max(1, int(os.getenv("BOARD_MAX_ROUNDS_LOW", "2") or "2"))
+    except ValueError:
+        return 2
+
+
+def rounds_for_severity(severity: str | None) -> int:
+    cap = max_rounds()
+    if str(severity or "").strip().upper() == "LOW":
+        return min(cap, max_rounds_low())
+    return cap
+
+
 def high_confidence_threshold() -> float:
     try:
         return min(0.95, max(0.5, float(os.getenv("BOARD_HIGH_CONFIDENCE", "0.75") or "0.75")))
@@ -147,6 +161,29 @@ def parse_orchestrator(raw: dict[str, Any], *, fallback_agent: PAEIAgent) -> Orc
     )
 
 
+def debate_should_stop(
+    decision: OrchestratorDecision,
+    meeting: dict[str, Any],
+    *,
+    challenge_done: bool,
+) -> bool:
+    """Ранняя остановка: SYNTHESIS, continue_debate=false или высокий consensus после challenge."""
+    if str(decision.mode) == "SYNTHESIS" or not decision.continue_debate:
+        return True
+    if str(decision.mode) == "CHALLENGE" and not challenge_done:
+        return False
+    rnd = int((meeting or {}).get("current_round") or 1)
+    spoken = int((meeting or {}).get("message_count") or 0)
+    if (
+        challenge_done
+        and rnd >= 2
+        and spoken >= 4
+        and decision.consensus_score >= high_confidence_threshold()
+    ):
+        return True
+    return False
+
+
 def needs_challenge(
     *,
     severity: str,
@@ -192,6 +229,8 @@ class DebateOrchestrator:
             user=user,
             operation="board_analyze",
             temperature=0.2,
+            max_tokens=board_llm.aux_max_tokens(),
+            model=board_llm.board_aux_model(),
             provider=self.provider,
         )
         return parse_analysis(raw, question)
@@ -217,11 +256,16 @@ class DebateOrchestrator:
                     f"Раунд: {meeting.get('current_round')} / {meeting.get('max_rounds')}\n"
                     f"Сообщений: {meeting.get('message_count')}\n"
                     f"Статус: {meeting.get('status')}\n"
+                    f"Порог уверенности: {high_confidence_threshold():.2f}\n"
+                    f"Если consensus_score >= порога и все четыре функции высказались — "
+                    f"continue_debate=false, mode=SYNTHESIS.\n"
                     f"Анализ: {meeting.get('analysis')}\n\n"
                     f"Транскрипт:\n{transcript}"
                 ),
                 operation="board_orchestrator",
                 temperature=0.2,
+                max_tokens=board_llm.aux_max_tokens(),
+                model=board_llm.board_aux_model(),
                 provider=self.provider,
             )
             decision = parse_orchestrator(raw, fallback_agent=fallback)
@@ -258,6 +302,8 @@ class DebateOrchestrator:
                 user="\n".join(positions) or "пустой раунд",
                 operation="board_round_summary",
                 temperature=0.1,
+                max_tokens=board_llm.aux_max_tokens(),
+                model=board_llm.board_aux_model(),
                 provider=self.provider,
             )
         except Exception:

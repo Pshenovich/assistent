@@ -186,6 +186,8 @@ echo "==> Синхронизация кода (без .env, .venv, пользо�
   --exclude 'webapp/node_modules/' \
   --exclude 'webapp/.npm-cache/' \
   --exclude 'webapp/dev-mock-data.js' \
+  --exclude 'tmp-restore/' \
+  --exclude 'news/' \
   "$ROOT/" "${SSH_USER}@${SSH_HOST}:${ASSISTANT_ROOT}/"
 
 echo "==> OAuth JSON (если есть локально)"
@@ -194,6 +196,24 @@ if [[ -f "$ROOT/OAuth Client ID AssitentAI.json" ]]; then
     "$ROOT/OAuth Client ID AssitentAI.json" \
     "${SSH_USER}@${SSH_HOST}:${ASSISTANT_ROOT}/"
 fi
+
+echo "==> USAGE_DASHBOARD_TOKEN на сервере"
+python3 - <<'PY'
+from pathlib import Path
+p = Path(".env")
+if not p.is_file():
+    raise SystemExit(0)
+text = p.read_text()
+if "USAGE_DASHBOARD_TOKEN=" in text and not any(
+    line.startswith("USAGE_DASHBOARD_TOKEN=") for line in text.splitlines()
+):
+    p.write_text(text.replace("USAGE_DASHBOARD_TOKEN=", "\nUSAGE_DASHBOARD_TOKEN=", 1))
+PY
+_DASH_SYNC_FILE="$(mktemp)"
+printf '%s' "$(_env_get USAGE_DASHBOARD_TOKEN)" > "$_DASH_SYNC_FILE"
+"${SCP[@]}" "$_DASH_SYNC_FILE" "${SSH_USER}@${SSH_HOST}:${ASSISTANT_ROOT}/.dash_token_sync"
+rm -f "$_DASH_SYNC_FILE"
+_ssh_retry "python3 /opt/assistant/scripts/sync_dashboard_token.py"
 
 echo "==> systemd + prod .env tweaks + pip"
 REMOTE_SETUP_SCRIPT=$(cat <<'REMOTE_SETUP'
@@ -221,16 +241,53 @@ if [[ -f .env ]]; then
   fi
   sed -i 's/^MINIAPP_DEV_MODE=1/MINIAPP_DEV_MODE=0/' .env 2>/dev/null || true
   sed -i 's/^TELEGRAM_PROXY_URL=socks5:\\/\\/127\\.0\\.0\\.1/#TELEGRAM_PROXY_URL=/' .env 2>/dev/null || true
-  # Локальный Bot API включаем только явно: если сервис не поднялся, бот должен
-  # продолжать работать через api.telegram.org.
-  if [[ "${ENABLE_LOCAL_TELEGRAM_BOT_API:-0}" == "1" ]]; then
+  # Локальный Bot API для файлов >20 МБ. Включаем, если есть api_id/hash или явный флаг.
+  has_tg_api_id=0
+  grep -qE '^TELEGRAM_API_ID=.+' .env && has_tg_api_id=1
+  grep -qE '^TELEGRAM_ASSISTANT_API_ID=.+' .env && has_tg_api_id=1
+  if [[ "${ENABLE_LOCAL_TELEGRAM_BOT_API:-}" == "1" || "$has_tg_api_id" -eq 1 ]]; then
     grep -q '^TELEGRAM_BOT_API_BASE_URL=' .env || echo 'TELEGRAM_BOT_API_BASE_URL=http://127.0.0.1:8081' >> .env
+  fi
+  if grep -qE '^TELEGRAM_BOT_MAX_DOWNLOAD_MB=(20|50)$' .env; then
+    sed -i 's/^TELEGRAM_BOT_MAX_DOWNLOAD_MB=.*/TELEGRAM_BOT_MAX_DOWNLOAD_MB=500/' .env
   fi
   grep -q '^TELEGRAM_BOT_MAX_DOWNLOAD_MB=' .env || echo 'TELEGRAM_BOT_MAX_DOWNLOAD_MB=500' >> .env
   grep -q '^TELEGRAM_LOCAL_BOT_API_MAX_DOWNLOAD_MB=' .env || echo 'TELEGRAM_LOCAL_BOT_API_MAX_DOWNLOAD_MB=500' >> .env
   grep -q '^BITRIX_MCP_URL=' .env || echo 'BITRIX_MCP_URL=https://mcp.bitrix24.tech/mcp/' >> .env
   grep -q '^OPENROUTER_MODEL_BOARD=' .env || echo 'OPENROUTER_MODEL_BOARD=google/gemini-2.5-flash' >> .env
   grep -q '^BOARD_COMPANY_SHARE_URL=' .env || echo 'BOARD_COMPANY_SHARE_URL=https://assistent.networ.ru/share/lYS_LYaj9MI3aIGHJib2Tyn1nNLAZ-eO' >> .env
+  grep -q '^USAGE_DASHBOARD_URL_PREFIX=' .env || echo 'USAGE_DASHBOARD_URL_PREFIX=/dashboard' >> .env
+  if grep -q '^USAGE_DASHBOARD_URL_PREFIX=' .env; then
+    sed -i 's|^USAGE_DASHBOARD_URL_PREFIX=.*|USAGE_DASHBOARD_URL_PREFIX=/dashboard|' .env
+  fi
+  grep -q '^USAGE_DASHBOARD_FORCE_AUTH=' .env || echo 'USAGE_DASHBOARD_FORCE_AUTH=1' >> .env
+  python3 - <<'PY'
+from pathlib import Path
+p = Path(".env")
+if not p.is_file():
+    raise SystemExit(0)
+text = p.read_text()
+# USAGE_DASHBOARD_TOKEN мог приклеиться к предыдущей строке без перевода.
+if "USAGE_DASHBOARD_TOKEN=" in text and not any(
+    line.startswith("USAGE_DASHBOARD_TOKEN=") for line in text.splitlines()
+):
+    text = text.replace("USAGE_DASHBOARD_TOKEN=", "\nUSAGE_DASHBOARD_TOKEN=", 1)
+    p.write_text(text)
+    print("fixed glued USAGE_DASHBOARD_TOKEN line")
+if not any(line.startswith("USAGE_DASHBOARD_TOKEN=") for line in p.read_text().splitlines()):
+    import secrets
+    p.write_text(p.read_text().rstrip() + "\nUSAGE_DASHBOARD_TOKEN=" + secrets.token_urlsafe(32) + "\n")
+    print("generated USAGE_DASHBOARD_TOKEN")
+PY
+  if grep -qE '^OPENROUTER_MODEL_BOARD_AUX=' .env; then
+    true
+  else
+    echo 'OPENROUTER_MODEL_BOARD_AUX=google/gemini-2.5-flash' >> .env
+  fi
+  grep -q '^BOARD_MAX_ROUNDS_LOW=' .env || echo 'BOARD_MAX_ROUNDS_LOW=2' >> .env
+  grep -q '^BOARD_AGENT_MAX_TOKENS=' .env || echo 'BOARD_AGENT_MAX_TOKENS=1200' >> .env
+  grep -q '^BOARD_CHAIR_MAX_TOKENS=' .env || echo 'BOARD_CHAIR_MAX_TOKENS=2500' >> .env
+  grep -q '^BOARD_AUX_MAX_TOKENS=' .env || echo 'BOARD_AUX_MAX_TOKENS=800' >> .env
 fi
 
 PYTHON_BIN=""
@@ -309,10 +366,51 @@ if [[ -f /etc/nginx/sites-available/assistant.obuchat.me ]]; then
   nginx -t && systemctl reload nginx
 fi
 
+# Дайджест генерирует assistant-news-sync; rsync репозитория его затирал.
+if [[ -d /opt/obuchat-news/public/news ]]; then
+  mkdir -p /opt/assistant/news
+  rsync -az --delete /opt/obuchat-news/public/news/ /opt/assistant/news/
+  echo "republished /news from /opt/obuchat-news/public/news"
+fi
+
 systemctl enable assistant-bot assistant-usage executive-board-bot
 systemctl restart assistant-bot assistant-usage executive-board-bot
 sleep 2
 systemctl is-active assistant-bot assistant-usage executive-board-bot
+
+python3 - <<'PY'
+from pathlib import Path
+from urllib.parse import quote
+import urllib.error
+import urllib.request
+
+tok = ""
+env = Path("/opt/assistant/.env")
+if env.is_file():
+    for line in env.read_text().splitlines():
+        if line.startswith("USAGE_DASHBOARD_TOKEN="):
+            tok = line.split("=", 1)[1].strip().strip("'\"")
+            break
+url = "https://assistent.networ.ru/dashboard/"
+try:
+    urllib.request.urlopen(urllib.request.Request(url), timeout=10)
+    print("dashboard_no_token:200")
+except urllib.error.HTTPError as e:
+    print(f"dashboard_no_token:{e.code}")
+except Exception as e:
+    print(f"dashboard_no_token:{type(e).__name__}")
+if tok:
+    req = urllib.request.Request(url + "?access_token=" + quote(tok, safe=""))
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            body = r.read().decode("utf-8", "replace")
+            print(f"dashboard_auth:{r.status}")
+            print("dashboard_users:" + ("yes" if "по пользователям" in body else "no"))
+    except urllib.error.HTTPError as e:
+        print(f"dashboard_auth:{e.code}")
+    except Exception as e:
+        print(f"dashboard_auth:{type(e).__name__}")
+PY
 
 if [[ -x scripts/setup_vexa_meeting_bot.sh ]]; then
   echo "==> Vexa meeting bot"
@@ -329,3 +427,4 @@ SERVICES_STOPPED=0
 trap - EXIT
 
 echo "Готово: https://assistent.networ.ru/webapp/"
+echo "Дашборд: https://assistent.networ.ru/dashboard/?access_token=<USAGE_DASHBOARD_TOKEN>"

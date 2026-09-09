@@ -61,6 +61,7 @@ def attach_knowledge_note(
                 "updated_at": note.get("updated_at"),
             }
         )
+    kb_docs.sort(key=lambda d: (str(d.get("updated_at") or ""), str(d.get("filename") or "")))
     if not kb_docs:
         return pack
     out = dict(pack or {})
@@ -81,6 +82,10 @@ def attach_knowledge_note(
         "updated_at": first.get("updated_at") if single else "",
     }
     out.pop("_live_share_error", None)
+    try:
+        out["_kb_version"] = notes_store.knowledge_version(user_id)
+    except Exception:
+        pass
     return out
 
 
@@ -119,7 +124,7 @@ def attach_live_share(pack: dict[str, Any] | None) -> dict[str, Any] | None:
 
 def _fmt_user(ctx: dict[str, Any] | None) -> str:
     if not ctx:
-        return "(не задан — используй /me)"
+        return ""
     raw = (ctx.get("raw_text") or "").strip()
     if raw:
         return raw[:2000]
@@ -128,7 +133,7 @@ def _fmt_user(ctx: dict[str, Any] | None) -> str:
         val = (ctx.get(key) or "").strip()
         if val:
             parts.append(f"{key}: {val}")
-    return "\n".join(parts)[:2000] if parts else "(пусто)"
+    return "\n".join(parts)[:2000] if parts else ""
 
 
 def _fmt_message(msg: dict[str, Any]) -> str:
@@ -137,6 +142,20 @@ def _fmt_message(msg: dict[str, Any]) -> str:
     body = (msg.get("content") or "").strip()
     mid = str(msg.get("id") or "")[:8]
     return f"[{agent} #{mid}] {title}\n{body}"
+
+
+def _clip_text(text: str, limit: int) -> str:
+    raw = (text or "").strip()
+    if len(raw) <= limit:
+        return raw
+    return raw[: limit - 1] + "…"
+
+
+def _block(title: str, body: str) -> str:
+    text = (body or "").strip()
+    if not text:
+        return ""
+    return f"{title}\n{text}"
 
 
 def build_agent_context(
@@ -152,20 +171,18 @@ def build_agent_context(
     rounds = store.list_rounds(meeting_id)
     user_ctx = store.get_user_context(str(meeting.get("user_id") or ""))
     own = [m for m in messages if m.get("agent") == agent]
-    others = [m for m in messages if m.get("agent") not in {agent, "CHAIR"}]
-    last = messages[-1] if messages else None
-
-    by_agent: dict[str, list[str]] = {"P": [], "A": [], "E": [], "I": [], "USER": []}
-    for m in messages:
-        a = str(m.get("agent") or "")
-        if a in by_agent:
-            by_agent[a].append((m.get("content") or "").strip())
 
     unresolved = []
+    round_summary = ""
     if rounds:
         last_round = rounds[-1]
         unresolved.append(str(last_round.get("open_questions") or ""))
         unresolved.append(str(last_round.get("disagreements") or ""))
+        bits = [
+            str(last_round.get("summary") or "").strip(),
+            str(last_round.get("consensus") or "").strip(),
+        ]
+        round_summary = "\n".join(b for b in bits if b)
 
     past_text = ""
     if past_decisions:
@@ -187,17 +204,7 @@ def build_agent_context(
         user_id=meeting.get("user_id"),
         include_knowledge=meeting_include_knowledge(meeting),
     )
-    live_text = _fmt_company(company, query=query).strip()
-    has_kb = any(
-        isinstance(d, dict) and d.get("kind") == "knowledge"
-        for d in ((company or {}).get("_documents") or [])
-    )
-    if has_kb:
-        company_text = live_text
-    elif stored_brief:
-        company_text = stored_brief
-    else:
-        company_text = live_text
+    company_text = stored_brief or _fmt_company(company, query=query).strip()
 
     default_task = (
         "Assume the current consensus may be wrong. Find the strongest reason not to implement it."
@@ -205,71 +212,49 @@ def build_agent_context(
         else "Respond to the strongest unresolved argument. Do not repeat your first position."
     )
     your_task = task or default_task
-    if extra:
-        your_task = f"{your_task}\n\nADDITIONAL INSTRUCTION:\n{extra}"
-    your_task += (
-        "\n\nПродукты, цены, команду и ограничения бери из COMPANY CONTEXT. "
-        "Не выдумывай продукты, которых нет в каталоге."
+
+    facts = "\n".join(f"- {x}" for x in (analysis.get("known_facts") or [])[:8] if str(x).strip())
+    assumptions = "\n".join(
+        f"- {x}" for x in (analysis.get("assumptions") or [])[:8] if str(x).strip()
     )
+    recent_lines = []
+    for m in messages[-6:]:
+        recent_lines.append(_clip_text(_fmt_message(m), 900))
+    prev = (own[-1].get("content") if own else "") or ""
+    unresolved_text = "\n".join(u for u in unresolved if u.strip())
 
-    text = f"""ORIGINAL QUESTION
-{meeting.get("original_question") or ""}
-
-COMPANY CONTEXT
-{company_text}
-
-USER CONTEXT
-{_fmt_user(user_ctx)}
-
-CURRENT OBJECTIVE
-{objective}
-
-DECISION TYPE / SEVERITY / REVERSIBILITY
-{analysis.get("decision_type", "general")} / {analysis.get("severity", "MEDIUM")} / {analysis.get("reversibility", "PARTIALLY_REVERSIBLE")}
-
-KNOWN FACTS
-{chr(10).join(f"- {x}" for x in (analysis.get("known_facts") or [])[:8]) or "-"}
-
-ASSUMPTIONS
-{chr(10).join(f"- {x}" for x in (analysis.get("assumptions") or [])[:8]) or "-"}
-
-RELEVANT PAST DECISIONS
-{past_text or "(нет)"}
-
-DISCUSSION SO FAR
-P:
-{chr(10).join(by_agent["P"]) or "(ещё не говорил)"}
-
-A:
-{chr(10).join(by_agent["A"]) or "(ещё не говорил)"}
-
-E:
-{chr(10).join(by_agent["E"]) or "(ещё не говорил)"}
-
-I:
-{chr(10).join(by_agent["I"]) or "(ещё не говорил)"}
-
-USER:
-{chr(10).join(by_agent["USER"]) or "(нет уточнений)"}
-
-YOUR PREVIOUS POSITION
-{(own[-1].get("content") if own else "(это первый ход)") or ""}
-
-OTHER AGENTS' ARGUMENTS
-{chr(10).join(_fmt_message(m) for m in others[-8:]) or "(пока только исходный вопрос)"}
-
-LAST MESSAGE
-{_fmt_message(last) if last else "(нет)"}
-
-UNRESOLVED
-{chr(10).join(u for u in unresolved if u.strip()) or "(ещё нет сводки раунда)"}
-
-MODE
-{mode}
-
-YOUR TASK
-{your_task}
-"""
+    stable_parts = [
+        _block("ORIGINAL QUESTION", str(meeting.get("original_question") or "")),
+        _block("COMPANY CONTEXT", company_text),
+        _block("USER CONTEXT", _fmt_user(user_ctx)),
+        _block("CURRENT OBJECTIVE", objective),
+        _block(
+            "DECISION TYPE / SEVERITY / REVERSIBILITY",
+            f"{analysis.get('decision_type', 'general')} / "
+            f"{analysis.get('severity', 'MEDIUM')} / "
+            f"{analysis.get('reversibility', 'PARTIALLY_REVERSIBLE')}",
+        ),
+        _block("KNOWN FACTS", facts),
+        _block("ASSUMPTIONS", assumptions),
+        _block("RELEVANT PAST DECISIONS", past_text),
+        _block("ADDITIONAL INSTRUCTION", extra),
+        _block(
+            "COMPANY RULES",
+            "Продукты, цены, команду и ограничения бери из COMPANY CONTEXT. "
+            "Не выдумывай продукты, которых нет в каталоге.",
+        ),
+    ]
+    volatile_parts = [
+        _block("ROUND SUMMARY", round_summary),
+        _block("RECENT MESSAGES", "\n\n".join(recent_lines)),
+        _block("YOUR PREVIOUS POSITION", prev),
+        _block("UNRESOLVED", unresolved_text),
+        _block("MODE", mode),
+        _block("YOUR TASK", your_task),
+    ]
+    stable = "\n\n".join(p for p in stable_parts if p)
+    volatile = "\n\n".join(p for p in volatile_parts if p)
+    text = "\n\n".join(p for p in (stable, volatile) if p)
     return {
         "company_context": company,
         "user_context": user_ctx,
@@ -278,6 +263,8 @@ YOUR TASK
         "recent_messages": messages[-12:],
         "unresolved_arguments": unresolved,
         "previous_position": own[-1].get("content") if own else "",
+        "stable": stable,
+        "volatile": volatile,
         "text": text.strip(),
         "mode": mode,
     }

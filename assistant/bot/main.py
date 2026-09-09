@@ -8,6 +8,7 @@ from telegram import MenuButtonWebApp, WebAppInfo
 from telegram.ext import Application
 
 from assistant.bot.handlers import register_handlers
+from assistant.lib.telegram_bot_api import attach_local_bot_api
 from assistant.lib.webapp_public import webapp_entry_url
 from assistant.bot.meeting_reminder_job import register_meeting_reminder_jobs
 from assistant.bot.meeting_bot_scheduler_job import register_meeting_bot_scheduler_jobs
@@ -24,15 +25,7 @@ def build_application() -> Application:
     builder = Application.builder().token(token)
     if proxy:
         builder = builder.proxy(proxy).get_updates_proxy(proxy)
-    api_base = os.getenv("TELEGRAM_BOT_API_BASE_URL", "").strip().rstrip("/")
-    if api_base:
-        # Локальный telegram-bot-api (оба URL обязательны для getFile/скачивания)
-        builder = (
-            builder.base_url(f"{api_base}/bot")
-            .base_file_url(f"{api_base}/file/bot")
-            .local_mode(True)
-        )
-        print(f"[bot] local Bot API: {api_base}")
+    builder = attach_local_bot_api(builder, log_prefix="bot")
     # Параллельная обработка апдейтов (напоминания не блокируют голос/текст).
     builder = builder.concurrent_updates(8)
 

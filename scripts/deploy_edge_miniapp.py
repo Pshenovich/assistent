@@ -171,6 +171,8 @@ ss -lntp | grep -E ':8080' || echo '8080 free'
     rsync_excludes = [
         "--exclude", ".venv/",
         "--exclude", ".git/",
+        "--exclude", ".env",
+        "--exclude", ".env.*",
         "--exclude", "webapp/node_modules/",
         "--exclude", "webapp/.npm-cache/",
         "--exclude", "data/telegram-bot-api/",

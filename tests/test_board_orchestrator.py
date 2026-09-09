@@ -24,7 +24,7 @@ class _ScriptedProvider:
     def __init__(self) -> None:
         self.ops: list[str] = []
 
-    def generate_json(self, *, system: str, user: str, operation: str, temperature: float = 0.4):
+    def generate_json(self, *, system: str, user: str, operation: str, temperature: float = 0.4, **_kwargs):
         del system, temperature
         self.ops.append(operation)
         if operation == "board_analyze":
@@ -150,6 +150,54 @@ class OrchestratorUnitTest(unittest.TestCase):
     def test_limits(self) -> None:
         self.assertTrue(limits_hit({"message_count": 16, "current_round": 1, "max_rounds": 4}))
 
+    def test_rounds_for_low_severity(self) -> None:
+        from assistant.board.orchestrator import rounds_for_severity
+
+        old = os.environ.get("BOARD_MAX_ROUNDS")
+        old_low = os.environ.get("BOARD_MAX_ROUNDS_LOW")
+        os.environ["BOARD_MAX_ROUNDS"] = "4"
+        os.environ["BOARD_MAX_ROUNDS_LOW"] = "2"
+        try:
+            self.assertEqual(rounds_for_severity("LOW"), 2)
+            self.assertEqual(rounds_for_severity("HIGH"), 4)
+        finally:
+            if old is None:
+                os.environ.pop("BOARD_MAX_ROUNDS", None)
+            else:
+                os.environ["BOARD_MAX_ROUNDS"] = old
+            if old_low is None:
+                os.environ.pop("BOARD_MAX_ROUNDS_LOW", None)
+            else:
+                os.environ["BOARD_MAX_ROUNDS_LOW"] = old_low
+
+    def test_debate_should_stop_on_high_confidence(self) -> None:
+        from assistant.board.models import OrchestratorDecision
+        from assistant.board.orchestrator import debate_should_stop
+
+        keep = OrchestratorDecision(
+            continue_debate=True,
+            next_agent="P",
+            reason="",
+            mode="DISCUSSION",
+            consensus_score=0.5,
+        )
+        self.assertFalse(
+            debate_should_stop(keep, {"current_round": 2, "message_count": 8}, challenge_done=True)
+        )
+        done = OrchestratorDecision(
+            continue_debate=True,
+            next_agent="P",
+            reason="",
+            mode="DISCUSSION",
+            consensus_score=0.9,
+        )
+        self.assertTrue(
+            debate_should_stop(done, {"current_round": 2, "message_count": 8}, challenge_done=True)
+        )
+        self.assertFalse(
+            debate_should_stop(done, {"current_round": 2, "message_count": 8}, challenge_done=False)
+        )
+
     def test_analysis_defaults(self) -> None:
         a = parse_analysis({}, "вопрос")
         self.assertEqual(a.severity, "MEDIUM")
@@ -241,7 +289,7 @@ class BoardScenarioTest(unittest.IsolatedAsyncioTestCase):
                 super().__init__()
                 self.chairs = 0
 
-            def generate_json(self, *, system: str, user: str, operation: str, temperature: float = 0.4):
+            def generate_json(self, *, system: str, user: str, operation: str, temperature: float = 0.4, **_kwargs):
                 data = super().generate_json(
                     system=system, user=user, operation=operation, temperature=temperature
                 )

@@ -136,6 +136,33 @@ def update_share_access(
     return get_active_share(uid, kind, iid)
 
 
+def list_active_by_item_ids(
+    item_kind: str, item_ids: list[str] | list[int]
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Активные шары по (owner_user_id, item_id)."""
+    kind = (item_kind or "").strip()
+    if kind not in _VALID_KINDS:
+        return {}
+    ids = [str(i).strip() for i in item_ids if str(i).strip()]
+    if not ids:
+        return {}
+    placeholders = ",".join("?" * len(ids))
+    with _LOCK:
+        cur = _conn().execute(
+            f"""
+            SELECT * FROM share_links
+            WHERE item_kind = ? AND item_id IN ({placeholders}) AND revoked_at IS NULL
+            """,
+            (kind, *ids),
+        )
+        rows = cur.fetchall()
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        d = _row_to_dict(row)
+        out[(d["user_id"], d["item_id"])] = d
+    return out
+
+
 def create_or_get_share(
     user_id: int | str,
     item_kind: str,

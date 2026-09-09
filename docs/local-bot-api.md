@@ -39,7 +39,11 @@ docker run -d --name telegram-bot-api --restart unless-stopped \
 
 ### 2. Переменные в `/opt/assistant/.env`
 
+В `/opt/assistant/.env` нужны `TELEGRAM_API_ID` и `TELEGRAM_API_HASH` с [my.telegram.org](https://my.telegram.org) (или `TELEGRAM_ASSISTANT_API_ID` / `TELEGRAM_ASSISTANT_API_HASH`). Без них локальный сервер не стартует, и бот остаётся на облачном лимите 20 МБ.
+
 ```env
+TELEGRAM_API_ID=YOUR_API_ID
+TELEGRAM_API_HASH=YOUR_API_HASH
 TELEGRAM_BOT_API_BASE_URL=http://127.0.0.1:8081
 TELEGRAM_BOT_MAX_DOWNLOAD_MB=500
 TELEGRAM_LOCAL_BOT_API_MAX_DOWNLOAD_MB=500

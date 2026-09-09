@@ -55,6 +55,7 @@ def _conn() -> sqlite3.Connection:
     _ensure_role_column(_CONN)
     _ensure_kb_enabled_column(_CONN)
     _ensure_revision_column(_CONN)
+    _ensure_pins_table(_CONN)
     _CONN.commit()
     return _CONN
 
@@ -89,6 +90,20 @@ def _ensure_revision_column(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE local_notes ADD COLUMN revision INTEGER NOT NULL DEFAULT 1"
         )
+
+
+def _ensure_pins_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS note_pins (
+            user_id TEXT NOT NULL,
+            item_kind TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            pinned_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, item_kind, item_id)
+        )
+        """
+    )
 
 
 def note_kb_enabled(note: dict[str, Any] | None) -> bool:
@@ -205,7 +220,13 @@ def list_notes(
     notes = _merge_shared_notes(uid, own, include_knowledge=include_knowledge)
     notes.sort(key=lambda n: str(n.get("updated_at") or ""), reverse=True)
     notes = notes[:lim]
-    return [_with_sharing(n, uid) for n in notes]
+    out = [_with_sharing(n, uid) for n in notes]
+    pins = pinned_id_set(uid, "local")
+    for n in out:
+        n["pinned"] = str(n.get("id") or "") in pins
+    out.sort(key=lambda n: str(n.get("updated_at") or ""), reverse=True)
+    out.sort(key=lambda n: 0 if n.get("pinned") else 1)
+    return out
 
 
 def get_note(user_id: int | str, note_id: int) -> Optional[dict[str, Any]]:
@@ -375,6 +396,34 @@ def is_knowledge_note(user_id: int | str, note_id: int) -> bool:
     return bool(row and row.get("is_knowledge"))
 
 
+def knowledge_version(user_id: int | str) -> str:
+    """Слепок включённой БЗ: sha1(count|max(updated_at)|sum(len)|sum(revision))."""
+    import hashlib
+
+    uid = str(int(user_id))
+    with _LOCK:
+        row = _conn().execute(
+            """
+            SELECT
+                COUNT(*) AS n,
+                COALESCE(MAX(updated_at), '') AS mx,
+                COALESCE(SUM(LENGTH(body)), 0) AS sz,
+                COALESCE(SUM(revision), 0) AS rev
+            FROM local_notes
+            WHERE user_id = ?
+              AND role = ?
+              AND COALESCE(kb_enabled, 1) != 0
+            """,
+            (uid, KNOWLEDGE_ROLE),
+        ).fetchone()
+    n = int(row["n"] or 0) if row else 0
+    mx = str(row["mx"] or "") if row else ""
+    sz = int(row["sz"] or 0) if row else 0
+    rev = int(row["rev"] or 0) if row else 0
+    raw = f"{n}|{mx}|{sz}|{rev}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
 def list_knowledge_notes(
     user_id: int | str, *, limit: int = 200
 ) -> list[dict[str, Any]]:
@@ -405,6 +454,78 @@ def ensure_knowledge_note(user_id: int | str) -> dict[str, Any]:
     return create_note(user_id, KNOWLEDGE_TITLE, "", role=KNOWLEDGE_ROLE)
 
 
+def pinned_id_set(user_id: int | str, item_kind: str = "local") -> set[str]:
+    uid = str(int(user_id))
+    kind = (item_kind or "local").strip() or "local"
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            SELECT item_id FROM note_pins
+            WHERE user_id = ? AND item_kind = ?
+            """,
+            (uid, kind),
+        )
+        return {str(r[0]) for r in cur.fetchall()}
+
+
+def set_note_pinned(
+    user_id: int | str, note_id: int, pinned: bool, *, item_kind: str = "local"
+) -> bool:
+    uid = str(int(user_id))
+    kind = (item_kind or "local").strip() or "local"
+    iid = str(int(note_id))
+    with _LOCK:
+        if pinned:
+            _conn().execute(
+                """
+                INSERT OR REPLACE INTO note_pins (user_id, item_kind, item_id, pinned_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (uid, kind, iid, _now_iso()),
+            )
+        else:
+            _conn().execute(
+                """
+                DELETE FROM note_pins
+                WHERE user_id = ? AND item_kind = ? AND item_id = ?
+                """,
+                (uid, kind, iid),
+            )
+        _conn().commit()
+    return True
+
+
+def duplicate_note(user_id: int | str, note_id: int) -> Optional[dict[str, Any]]:
+    uid = str(int(user_id))
+    src = get_accessible_note(uid, int(note_id), with_sharing=True)
+    if not src:
+        return None
+    title = str(src.get("title") or "").strip() or "(без названия)"
+    if not title.endswith(" (копия)"):
+        title = title + " (копия)"
+    body = str(src.get("body") or src.get("description") or "")
+    dup = create_note(uid, title, body)
+    if src.get("is_owner"):
+        try:
+            from assistant.stores import tags as tags_store
+
+            mapping = tags_store.tags_by_items(uid, [("local", str(src["id"]))])
+            tag_ids = [
+                int(t["id"])
+                for t in mapping.get(("local", str(src["id"])), [])
+                if t.get("id") is not None
+            ]
+            if tag_ids:
+                tags_store.set_item_tags(uid, "local", dup["id"], tag_ids)
+                dup["tags"] = tags_store.tags_by_items(
+                    uid, [("local", str(dup["id"]))]
+                ).get(("local", str(dup["id"])), [])
+        except Exception:
+            pass
+    dup["pinned"] = False
+    return _with_sharing(dup, uid)
+
+
 def delete_note(user_id: int | str, note_id: int) -> bool:
     uid = str(int(user_id))
     with _LOCK:
@@ -415,6 +536,15 @@ def delete_note(user_id: int | str, note_id: int) -> bool:
         _conn().commit()
         ok = cur.rowcount > 0
     if ok:
+        try:
+            with _LOCK:
+                _conn().execute(
+                    "DELETE FROM note_pins WHERE item_kind = 'local' AND item_id = ?",
+                    (str(int(note_id)),),
+                )
+                _conn().commit()
+        except Exception:
+            pass
         try:
             from assistant.stores import note_members
 

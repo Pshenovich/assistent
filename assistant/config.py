@@ -27,6 +27,8 @@ def _mb_to_bytes(env_key: str, default_mb: int) -> int:
 
 # Официальный лимит Bot API (облако api.telegram.org) — 20 МБ на скачивание.
 TELEGRAM_CLOUD_BOT_FILE_LIMIT_BYTES = 20 * 1024 * 1024
+# 20 МБ getFile + 50 МБ sendDocument — старые значения из .env, не для local Bot API.
+_TELEGRAM_CLOUD_ERA_DOWNLOAD_BYTES = 50 * 1024 * 1024
 
 TELEGRAM_BOT_MAX_DOWNLOAD_BYTES = _mb_to_bytes("TELEGRAM_BOT_MAX_DOWNLOAD_MB", 20)
 TELEGRAM_LOCAL_BOT_API_MAX_DOWNLOAD_BYTES = _mb_to_bytes(
@@ -35,22 +37,48 @@ TELEGRAM_LOCAL_BOT_API_MAX_DOWNLOAD_BYTES = _mb_to_bytes(
 URL_MAX_DOWNLOAD_BYTES = _mb_to_bytes("URL_MAX_DOWNLOAD_MB", 500)
 
 
+def telegram_bot_api_base_url() -> str:
+    return (os.getenv("TELEGRAM_BOT_API_BASE_URL", "") or "").strip().rstrip("/")
+
+
 def telegram_local_bot_api_enabled() -> bool:
-    """Локальный telegram-bot-api на VPS снимает лимит 20 МБ."""
-    return bool(os.getenv("TELEGRAM_BOT_API_BASE_URL", "").strip())
+    """В .env задан локальный telegram-bot-api (снимает лимит 20 МБ)."""
+    return bool(telegram_bot_api_base_url())
+
+
+def telegram_bot_api_reachable(api_base: str | None = None, timeout: float = 0.6) -> bool:
+    """TCP-проверка, что локальный Bot API слушает порт."""
+    import socket
+    from urllib.parse import urlparse
+
+    raw = (api_base if api_base is not None else telegram_bot_api_base_url()).strip()
+    if not raw:
+        return False
+    parsed = urlparse(raw if "://" in raw else f"http://{raw}")
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or (443 if (parsed.scheme or "").lower() == "https" else 80)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect((host, int(port)))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
 
 
 def effective_telegram_download_limit_bytes() -> int:
     """Фактический лимит скачивания медиа из Telegram для этого окружения."""
-    caps = [
-        _mb_to_bytes("TELEGRAM_BOT_MAX_DOWNLOAD_MB", 20),
-        _mb_to_bytes("URL_MAX_DOWNLOAD_MB", 500),
-    ]
+    url_cap = _mb_to_bytes("URL_MAX_DOWNLOAD_MB", 500)
+    bot_cap = _mb_to_bytes("TELEGRAM_BOT_MAX_DOWNLOAD_MB", 20)
     if telegram_local_bot_api_enabled():
-        caps.append(_mb_to_bytes("TELEGRAM_LOCAL_BOT_API_MAX_DOWNLOAD_MB", 500))
-    else:
-        caps.append(TELEGRAM_CLOUD_BOT_FILE_LIMIT_BYTES)
-    return min(caps)
+        local_cap = _mb_to_bytes("TELEGRAM_LOCAL_BOT_API_MAX_DOWNLOAD_MB", 500)
+        # 20/50 МБ в .env — наследие облачного API, не режем local mode.
+        if bot_cap <= _TELEGRAM_CLOUD_ERA_DOWNLOAD_BYTES:
+            bot_cap = local_cap
+        return min(bot_cap, local_cap, url_cap)
+    return min(bot_cap, url_cap, TELEGRAM_CLOUD_BOT_FILE_LIMIT_BYTES)
 ZOOM_MEETING_PROP_KEY = "leo_zoom_meeting_id"
 
 ZOOM_AUTO_ATTACH_ON_CALENDAR_CREATE = os.getenv(

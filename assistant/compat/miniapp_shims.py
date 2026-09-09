@@ -46,13 +46,24 @@ def delete_todoist_task(task_id: str, *, telegram_user_id: int) -> None:
 
 def gpt_openrouter_answer_with_context(
     question: str,
-    context: str,
+    context: str = "",
     *,
     history: list[dict[str, str]] | None = None,
     model: str | None = None,
+    note_title: str = "",
+    note_text: str = "",
+    quote: str = "",
+    knowledge_brief: str = "",
 ) -> dict:
     answer = nlu_llm.answer_with_context(
-        question, context, model=model, history=history
+        question,
+        context,
+        model=model,
+        history=history,
+        note_title=note_title,
+        note_text=note_text,
+        quote=quote,
+        knowledge_brief=knowledge_brief,
     )
     return {"answer": answer, "bullets": []}
 

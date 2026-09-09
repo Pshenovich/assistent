@@ -65,6 +65,66 @@ def _timeout() -> float:
         return 90.0
 
 
+def board_aux_model() -> str:
+    return os.getenv("OPENROUTER_MODEL_BOARD_AUX", "").strip() or board_model()
+
+
+def _env_int(name: str, default: int, *, lo: int = 1, hi: int = 8000) -> int:
+    try:
+        return max(lo, min(hi, int(os.getenv(name, str(default)) or default)))
+    except ValueError:
+        return default
+
+
+def agent_max_tokens() -> int:
+    return _env_int("BOARD_AGENT_MAX_TOKENS", 1200, lo=256, hi=8000)
+
+
+def chair_max_tokens() -> int:
+    return _env_int("BOARD_CHAIR_MAX_TOKENS", 2500, lo=512, hi=8000)
+
+
+def aux_max_tokens() -> int:
+    return _env_int("BOARD_AUX_MAX_TOKENS", 800, lo=128, hi=4000)
+
+
+def _is_anthropic(model: str) -> bool:
+    return (model or "").startswith("anthropic/")
+
+
+def _cached_text_block(text: str, *, cache: bool) -> dict[str, Any]:
+    block: dict[str, Any] = {"type": "text", "text": text}
+    if cache:
+        block["cache_control"] = {"type": "ephemeral"}
+    return block
+
+
+def _messages_payload(
+    *,
+    model: str,
+    system: str,
+    user: str,
+    cache_prefix: str = "",
+) -> list[dict[str, Any]]:
+    if not _is_anthropic(model):
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+    system_msg: dict[str, Any] = {
+        "role": "system",
+        "content": [_cached_text_block(system, cache=True)],
+    }
+    prefix = (cache_prefix or "").strip()
+    if prefix and user.startswith(prefix):
+        rest = user[len(prefix) :].lstrip("\n")
+        user_content: list[dict[str, Any]] = [_cached_text_block(prefix, cache=True)]
+        if rest:
+            user_content.append(_cached_text_block(rest, cache=False))
+        return [system_msg, {"role": "user", "content": user_content}]
+    return [system_msg, {"role": "user", "content": user}]
+
+
 class LLMProvider(Protocol):
     def generate_json(
         self,
@@ -73,6 +133,9 @@ class LLMProvider(Protocol):
         user: str,
         operation: str,
         temperature: float = 0.4,
+        max_tokens: int | None = None,
+        model: str | None = None,
+        cache_prefix: str = "",
     ) -> dict[str, Any]: ...
 
 
@@ -86,28 +149,36 @@ class OpenRouterProvider:
         user: str,
         operation: str,
         temperature: float = 0.4,
+        max_tokens: int | None = None,
+        model: str | None = None,
+        cache_prefix: str = "",
     ) -> dict[str, Any]:
         if not is_llm_configured():
             raise RuntimeError("Не заданы OPENROUTER_KEY или COMET_API_KEY")
-        models = [board_model(), *_fallback_models(board_model())]
+        primary = (model or "").strip() or board_model()
+        models = [primary, *_fallback_models(primary)]
         last_err: BaseException | None = None
         data: dict[str, Any] | None = None
-        for model in models:
+        for model_id in models:
             payload: dict[str, Any] = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
+                "model": model_id,
+                "messages": _messages_payload(
+                    model=model_id,
+                    system=system,
+                    user=user,
+                    cache_prefix=cache_prefix,
+                ),
                 "temperature": temperature,
                 "response_format": {"type": "json_object"},
             }
+            if max_tokens is not None:
+                payload["max_tokens"] = int(max_tokens)
             try:
                 data = openrouter_chat_completion(
                     payload, operation=operation, timeout=_timeout()
                 )
-                if model != models[0]:
-                    print(f"[board.llm] fallback_model={model} op={operation}")
+                if model_id != models[0]:
+                    print(f"[board.llm] fallback_model={model_id} op={operation}")
                 break
             except Exception as e:
                 last_err = e
@@ -116,7 +187,7 @@ class OpenRouterProvider:
                     404,
                     429,
                 }:
-                    print(f"[board.llm] model={model} fail={e!r} — пробую следующую")
+                    print(f"[board.llm] model={model_id} fail={e!r} — пробую следующую")
                     continue
                 payload.pop("response_format", None)
                 try:
@@ -161,6 +232,9 @@ def generate_json(
     user: str,
     operation: str,
     temperature: float = 0.4,
+    max_tokens: int | None = None,
+    model: str | None = None,
+    cache_prefix: str = "",
     provider: OpenRouterProvider | None = None,
 ) -> dict[str, Any]:
     impl = provider or get_provider()
@@ -169,4 +243,7 @@ def generate_json(
         user=user,
         operation=operation,
         temperature=temperature,
+        max_tokens=max_tokens,
+        model=model,
+        cache_prefix=cache_prefix,
     )

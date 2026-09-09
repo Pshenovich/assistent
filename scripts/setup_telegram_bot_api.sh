@@ -15,6 +15,20 @@ _ensure_env_var() {
   fi
 }
 
+_bump_download_mb_if_cloud_era() {
+  # 20/50 МБ в .env — лимиты облачного Bot API; для local mode поднимаем.
+  local key="TELEGRAM_BOT_MAX_DOWNLOAD_MB"
+  local line val
+  line="$(grep -E "^${key}=" "$ENV_FILE" 2>/dev/null | tail -1 || true)"
+  val="${line#*=}"
+  val="${val%$'\r'}"
+  val="${val#\"}"
+  val="${val%\"}"
+  if [[ -z "$line" ]] || [[ "$val" =~ ^[0-9]+$ && "$val" -le 50 ]]; then
+    _ensure_env_var "$key" "500"
+  fi
+}
+
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Нет $ENV_FILE" >&2
   exit 1
@@ -74,7 +88,7 @@ docker pull "${TELEGRAM_BOT_API_IMAGE:-aiogram/telegram-bot-api:latest}"
 
 _ensure_env_var "TELEGRAM_BOT_API_BASE_URL" "http://127.0.0.1:8081"
 _ensure_env_var "TELEGRAM_BOT_API_DATA_DIR" "/opt/assistant/data/telegram-bot-api"
-_ensure_env_var "TELEGRAM_BOT_MAX_DOWNLOAD_MB" "500"
+_bump_download_mb_if_cloud_era
 _ensure_env_var "TELEGRAM_LOCAL_BOT_API_MAX_DOWNLOAD_MB" "500"
 mkdir -p /opt/assistant/data/telegram-bot-api /opt/assistant/data/telegram-bot-api/api-tmp
 chmod 1777 /opt/assistant/data/telegram-bot-api/api-tmp

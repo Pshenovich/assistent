@@ -161,7 +161,7 @@ class CompanyBriefTest(unittest.TestCase):
         notes_store._CONN = None  # type: ignore[attr-defined]
         tmp.cleanup()
 
-    def test_knowledge_note_overrides_stored_brief(self) -> None:
+    def test_meeting_uses_stored_brief_snapshot(self) -> None:
         from assistant.board import store
         from assistant.board.context import build_agent_context
         from assistant.stores import notes as notes_store
@@ -188,10 +188,8 @@ class CompanyBriefTest(unittest.TestCase):
             {"title": "Сопровождение", "company_brief": "КОМПАНИЯ\nКаталог:\n• Боты — 10 ₽"},
         )
         ctx = build_agent_context(meeting_id=meeting["id"], agent="P")
-        self.assertIn("база знаний", ctx["text"].lower())
-        self.assertIn("Клиника", ctx["text"])
-        self.assertIn("15 000", ctx["text"])
-        self.assertNotIn("Боты — 10 ₽", ctx["text"])
+        self.assertIn("Боты — 10 ₽", ctx["text"])
+        self.assertNotIn("15 000", ctx["text"])
         notes_store._CONN = None  # type: ignore[attr-defined]
         store.reset_connection()
         tmp.cleanup()
@@ -259,8 +257,72 @@ class CompanyBriefTest(unittest.TestCase):
         names = {d["filename"] for d in pack["_documents"]}
         self.assertEqual(names, {"Продукты", "Процессы"})
         self.assertTrue(all(d.get("html") for d in pack["_documents"]))
+        self.assertTrue(pack.get("_kb_version"))
+        from assistant.board.company_brief import _parse_key
+
+        self.assertTrue(
+            _parse_key("doc", "t1", "abc", version=str(pack["_kb_version"])).startswith(
+                str(pack["_kb_version"])
+            )
+        )
+        a = _parse_key("", "t", "xxxx", version="v1", title="Продукты")
+        b = _parse_key("", "t", "xxxx", version="v1", title="Процессы")
+        self.assertNotEqual(a, b)
         text = format_company_context(pack, query="онбординг наставник")
         self.assertIn("база знаний", text.lower())
         self.assertIn("наставник", text.lower())
         notes_store._CONN = None  # type: ignore[attr-defined]
         tmp.cleanup()
+
+    def test_budget_param_caps_brief(self) -> None:
+        fat = CATALOG + (" подробности тарифа и роадмапа. " * 400)
+        pack = {
+            "source_url": DEFAULT_SHARE_URL,
+            "_live_share": {"title": "Все продукты", "updated_at": "2026-09-07"},
+            "_documents": [{"filename": "Все продукты", "kind": "live", "text": fat}],
+        }
+        brief = format_company_context(pack, query="юнит-экономика ботов", budget=1800)
+        self.assertLessEqual(len(brief), 1800)
+        a = format_company_context(pack, query="юнит-экономика ботов", budget=2500)
+        b = format_company_context(pack, query="юнит-экономика ботов", budget=2500)
+        self.assertEqual(a, b)
+
+    def test_stable_prefix_same_across_turns(self) -> None:
+        from assistant.board import store
+        from assistant.board.context import build_agent_context
+        import tempfile
+        from pathlib import Path
+
+        tmp = tempfile.TemporaryDirectory()
+        os.environ["BOARD_DB_PATH"] = str(Path(tmp.name) / "board.sqlite")
+        os.environ["BOARD_COMPANY_SHARE_URL"] = "off"
+        store.reset_connection()
+        store.init_db()
+        company = store.get_or_create_company_for_chat(21)
+        meeting = store.create_meeting(
+            user_id=21, chat_id=21, question="Нужен бот", company_id=company["id"]
+        )
+        store.set_analysis(
+            meeting["id"],
+            {
+                "title": "Бот",
+                "decision_required": "Решить про бота",
+                "known_facts": ["есть прайс"],
+                "company_brief": "КОМПАНИЯ\nКаталог:\n• Боты — 10 ₽",
+            },
+        )
+        first = build_agent_context(meeting_id=meeting["id"], agent="P")
+        store.add_message(
+            meeting_id=meeting["id"],
+            agent="P",
+            content="P говорит длинную позицию про экономику бота и риски внедрения.",
+            round=1,
+        )
+        second = build_agent_context(meeting_id=meeting["id"], agent="E")
+        self.assertEqual(first["stable"], second["stable"])
+        self.assertNotIn("DISCUSSION SO FAR", first["text"])
+        self.assertIn("RECENT MESSAGES", second["text"])
+        self.assertIn("Боты — 10 ₽", first["stable"])
+        store.reset_connection()
+        tmp.cleanup()
+

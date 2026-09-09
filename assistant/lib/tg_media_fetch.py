@@ -208,7 +208,10 @@ async def _get_tg_file_with_retry(bot: Bot, file_id: str) -> TgFile:
             last = e
             err = str(e).lower()
             if "too big" in err or "too large" in err or "file is too big" in err:
-                raise
+                raise MediaTooLargeError(
+                    file_size=None,
+                    limit_bytes=effective_telegram_download_limit_bytes(),
+                ) from e
             if _is_transient_file_error(e) and attempt + 1 < _GET_FILE_RETRIES:
                 await asyncio.sleep(_GET_FILE_RETRY_BASE_SEC * (2**attempt))
                 continue
@@ -266,17 +269,11 @@ async def download_telegram_file(
     raw_path = tg_file.file_path or ""
     default_name = _relative_media_path(raw_path, token).rsplit("/", 1)[-1] or "download.bin"
 
-    if telegram_local_bot_api_enabled() and token:
-        if not raw_path:
-            raise RuntimeError("Telegram не вернул путь к файлу (getFile). Попробуйте ещё раз.")
+    if telegram_local_bot_api_enabled() and token and raw_path:
         host_path = await _wait_host_path(raw_path, token)
         if host_path is not None:
             data = await asyncio.to_thread(_read_path_sync, host_path, limit=limit)
             return data, host_path.name
-        raise RuntimeError(
-            "Файл не найден на диске локального Bot API. "
-            "Подождите 2–3 секунды и отправьте голосовое снова."
-        )
 
     try:
         data = await _download_via_ptb_file(tg_file, limit=limit, bot_token=token)

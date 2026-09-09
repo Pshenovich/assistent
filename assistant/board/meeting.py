@@ -27,6 +27,8 @@ from assistant.board.orchestrator import (
     limits_hit,
     max_rounds,
     needs_challenge,
+    debate_should_stop,
+    rounds_for_severity,
 )
 from assistant.board.renderer import (
     decision_keyboard_rows,
@@ -198,7 +200,7 @@ class MeetingService:
                     decision_required=str(meeting.get("original_question") or ""),
                     title=str(meeting.get("original_question") or "")[:80],
                 )
-            cap = max_rounds()
+            cap = rounds_for_severity(analysis.severity)
             store.set_analysis(
                 meeting_id,
                 {
@@ -287,10 +289,12 @@ class MeetingService:
                             meeting_id, past, unavailable, rt, spoken=spoken
                         )
                         challenge_done = True
-                    if orch.mode == "SYNTHESIS" or not orch.continue_debate:
+                        continue
+                    meeting = store.get_meeting(meeting_id) or meeting
+                    if debate_should_stop(orch, meeting, challenge_done=challenge_done):
                         break
                     continue
-                if orch.mode == "SYNTHESIS" or not orch.continue_debate:
+                if debate_should_stop(orch, meeting, challenge_done=challenge_done):
                     break
                 nxt = orch.next_agent or "P"
                 if nxt in unavailable:

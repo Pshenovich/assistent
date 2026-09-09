@@ -2200,10 +2200,121 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   display: none;
 }
 
+html.note-editor-open,
+html.note-editor-open body {
+  overflow: hidden !important;
+  overscroll-behavior: none;
+}
+
+html.note-editor-open .main-scroll {
+  overflow: hidden !important;
+  touch-action: none;
+  pointer-events: none;
+}
+
+html.note-editor-open #note-editor-overlay {
+  background: var(--vkui--color_background, var(--bg));
+  touch-action: pan-y;
+  overflow: hidden;
+}
+
+#note-editor-overlay.note-editor-overlay--fullscreen {
+  overscroll-behavior: none;
+}
+
+.note-card-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 4;
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+}
+
 .note-card-inner {
   position: relative;
   padding-left: var(--space-1);
-  padding-right: 2.25rem;
+  padding-right: 4.25rem;
+}
+
+.note-card-menu-wrap {
+  position: relative;
+}
+
+.note-card-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.note-card-share-btn {
+  color: var(--accent);
+}
+
+.note-card-menu-btn:active,
+.note-card-menu-btn[aria-expanded="true"] {
+  background: var(--surface-muted);
+  color: var(--text);
+}
+
+.note-card-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 11.5rem;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.28));
+}
+
+.note-card-menu.hidden {
+  display: none !important;
+}
+
+.note-card-menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border: none;
+  border-radius: 8px;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  font-size: 0.875rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.note-card-menu-item:active,
+.note-card-menu-item:hover {
+  background: var(--surface-muted);
+}
+
+.note-card-menu-item--danger {
+  color: #f87171;
+}
+
+.note-card--pinned {
+  border-color: var(--accent-border, var(--border));
+}
+
+@media (max-width: 959px) {
+  #note-editor-overlay .note-rich-editor-body,
+  #note-editor-overlay .ProseMirror {
+    overflow: visible;
+  }
 }
 
 .note-card:has(.knowledge-card-toggle) {

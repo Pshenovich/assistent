@@ -87,6 +87,13 @@ def init_db() -> None:
             conn.execute(
                 "ALTER TABLE usage_events ADD COLUMN raw_usage_json TEXT"
             )
+        existing_cols = {
+            r[1] for r in conn.execute("PRAGMA table_info(usage_events)").fetchall()
+        }
+        if "cached_tokens" not in existing_cols:
+            conn.execute(
+                "ALTER TABLE usage_events ADD COLUMN cached_tokens INTEGER"
+            )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_usage_events_date ON usage_events(date_utc)"
         )
@@ -94,6 +101,35 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_usage_events_user ON usage_events(telegram_user_id)"
         )
         conn.commit()
+
+
+def extract_cached_tokens(usage: dict[str, Any] | None) -> int | None:
+    """Достаёт cached/cache-read токены из usage OpenRouter/OpenAI/Anthropic."""
+    if not isinstance(usage, dict):
+        return None
+    candidates: list[Any] = [
+        usage.get("cached_tokens"),
+        usage.get("cache_read_input_tokens"),
+        usage.get("prompt_cache_hit_tokens"),
+    ]
+    details = usage.get("prompt_tokens_details")
+    if isinstance(details, dict):
+        candidates.extend(
+            (
+                details.get("cached_tokens"),
+                details.get("cache_read_input_tokens"),
+            )
+        )
+    for val in candidates:
+        if val is None or val == "":
+            continue
+        try:
+            n = int(val)
+        except (TypeError, ValueError):
+            continue
+        if n >= 0:
+            return n
+    return None
 
 
 def insert_usage_event(
@@ -130,6 +166,7 @@ def insert_usage_event(
     # Если есть prompt и completion — считаем total корректно.
     if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
         total_tokens = prompt_tokens + completion_tokens
+    cached_tokens = extract_cached_tokens(usage)
     cost = usage.get("cost")
     try:
         cost_usd = float(cost) if cost is not None else None
@@ -146,9 +183,9 @@ def insert_usage_event(
                 """
                 INSERT INTO usage_events (
                     ts_utc, date_utc, operation, model, generation_id,
-                    prompt_tokens, completion_tokens, total_tokens, cost_usd,
+                    prompt_tokens, completion_tokens, total_tokens, cached_tokens, cost_usd,
                     telegram_user_id, telegram_username, raw_usage_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     when.isoformat(timespec="seconds"),
@@ -159,6 +196,7 @@ def insert_usage_event(
                     prompt_tokens,
                     completion_tokens,
                     total_tokens,
+                    cached_tokens,
                     cost_usd,
                     (telegram_user_id or "").strip() or None,
                     (telegram_username or "").strip() or None,
@@ -202,6 +240,7 @@ def daily_summary() -> list[dict[str, Any]]:
                 COUNT(*) AS n_calls,
                 COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
                 COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
                 COALESCE(
                     SUM(COALESCE(total_tokens, prompt_tokens + completion_tokens)),
                     0
@@ -296,6 +335,7 @@ def users_summary(
                 COUNT(*) AS n_calls,
                 COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
                 COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
                 COALESCE(
                     SUM(COALESCE(total_tokens, prompt_tokens + completion_tokens)),
                     0
@@ -332,6 +372,7 @@ def summary_by_operation(
                 COUNT(*) AS n_calls,
                 COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
                 COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
                 COALESCE(
                     SUM(COALESCE(total_tokens, prompt_tokens + completion_tokens)),
                     0
@@ -368,6 +409,7 @@ def user_summary_by_operation(
                 COUNT(*) AS n_calls,
                 COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
                 COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
                 COALESCE(
                     SUM(COALESCE(total_tokens, prompt_tokens + completion_tokens)),
                     0
@@ -397,6 +439,7 @@ def period_totals(
                 COUNT(*) AS n_calls,
                 COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
                 COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
                 COALESCE(
                     SUM(COALESCE(total_tokens, prompt_tokens + completion_tokens)),
                     0
@@ -416,6 +459,7 @@ def period_totals(
             "n_calls": 0,
             "prompt_tokens": 0,
             "completion_tokens": 0,
+            "cached_tokens": 0,
             "total_tokens": 0,
             "cost_usd": 0.0,
         }
@@ -439,6 +483,7 @@ def events_for_user_date(telegram_user_id: str, date_utc: str) -> list[dict[str,
                 generation_id,
                 prompt_tokens,
                 completion_tokens,
+                cached_tokens,
                 COALESCE(
                     total_tokens,
                     CASE
@@ -467,6 +512,7 @@ def events_for_user_date(telegram_user_id: str, date_utc: str) -> list[dict[str,
                     generation_id,
                     prompt_tokens,
                     completion_tokens,
+                    cached_tokens,
                     COALESCE(
                         total_tokens,
                         CASE
@@ -505,6 +551,7 @@ def user_daily_summary(
                     COUNT(*) AS n_calls,
                     COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
                     COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                    COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
                     COALESCE(
                         SUM(COALESCE(total_tokens, prompt_tokens + completion_tokens)),
                         0
@@ -526,6 +573,7 @@ def user_daily_summary(
                     COUNT(*) AS n_calls,
                     COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
                     COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                    COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
                     COALESCE(
                         SUM(COALESCE(total_tokens, prompt_tokens + completion_tokens)),
                         0
@@ -1156,6 +1204,7 @@ def user_lifetime_stats(telegram_user_id: str) -> dict[str, Any]:
             "n_calls": 0,
             "prompt_tokens": 0,
             "completion_tokens": 0,
+            "cached_tokens": 0,
             "total_tokens": 0,
         }
     with _connect() as conn:
@@ -1165,6 +1214,7 @@ def user_lifetime_stats(telegram_user_id: str) -> dict[str, Any]:
                 COUNT(*) AS n_calls,
                 COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
                 COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
                 COALESCE(
                     SUM(COALESCE(total_tokens, prompt_tokens + completion_tokens)),
                     0
@@ -1180,12 +1230,14 @@ def user_lifetime_stats(telegram_user_id: str) -> dict[str, Any]:
                 "n_calls": 0,
                 "prompt_tokens": 0,
                 "completion_tokens": 0,
+                "cached_tokens": 0,
                 "total_tokens": 0,
             }
         return {
             "n_calls": int(row["n_calls"] or 0),
             "prompt_tokens": int(row["prompt_tokens"] or 0),
             "completion_tokens": int(row["completion_tokens"] or 0),
+            "cached_tokens": int(row["cached_tokens"] or 0),
             "total_tokens": int(row["total_tokens"] or 0),
         }
 
@@ -1211,6 +1263,7 @@ def user_daily_usage_no_cost(
                 COUNT(*) AS n_calls,
                 COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
                 COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
                 COALESCE(
                     SUM(COALESCE(total_tokens, prompt_tokens + completion_tokens)),
                     0
@@ -1228,6 +1281,7 @@ def user_daily_usage_no_cost(
         r["n_calls"] = int(r.get("n_calls") or 0)
         r["prompt_tokens"] = int(r.get("prompt_tokens") or 0)
         r["completion_tokens"] = int(r.get("completion_tokens") or 0)
+        r["cached_tokens"] = int(r.get("cached_tokens") or 0)
         r["total_tokens"] = int(r.get("total_tokens") or 0)
     return rows
 
@@ -1240,7 +1294,7 @@ def events_for_date(date_utc: str) -> list[dict[str, Any]]:
             """
             SELECT
                 id, ts_utc, date_utc, operation, model, generation_id,
-                prompt_tokens, completion_tokens,
+                prompt_tokens, completion_tokens, cached_tokens,
                 COALESCE(
                     total_tokens,
                     CASE

@@ -7,6 +7,7 @@ import pytest
 from assistant.config import (
     TELEGRAM_CLOUD_BOT_FILE_LIMIT_BYTES,
     effective_telegram_download_limit_bytes,
+    telegram_bot_api_reachable,
 )
 from assistant.lib.tg_media_fetch import (
     MediaTooLargeError,
@@ -32,6 +33,15 @@ def test_local_api_raises_limit(monkeypatch):
     monkeypatch.setenv("URL_MAX_DOWNLOAD_MB", "500")
     limit = effective_telegram_download_limit_bytes()
     assert limit == 100 * 1024 * 1024
+
+
+def test_local_api_ignores_cloud_era_50mb_cap(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_API_BASE_URL", "http://127.0.0.1:8081")
+    monkeypatch.setenv("TELEGRAM_BOT_MAX_DOWNLOAD_MB", "50")
+    monkeypatch.setenv("TELEGRAM_LOCAL_BOT_API_MAX_DOWNLOAD_MB", "500")
+    monkeypatch.setenv("URL_MAX_DOWNLOAD_MB", "500")
+    limit = effective_telegram_download_limit_bytes()
+    assert limit == 500 * 1024 * 1024
 
 
 def test_check_size_raises(monkeypatch):
@@ -80,3 +90,7 @@ def test_host_path_candidates_include_remapped(monkeypatch, tmp_path):
     raw = f"/var/lib/telegram-bot-api/{token}/voice/file_0.oga"
     candidates = _host_path_candidates(raw, token)
     assert any(p.is_file() for p in candidates)
+
+
+def test_bot_api_reachable_closed_port():
+    assert telegram_bot_api_reachable("http://127.0.0.1:1") is False

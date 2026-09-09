@@ -10,7 +10,7 @@ Type=simple
 Restart=always
 RestartSec=5
 TimeoutStartSec=300
-ExecStart=/opt/assistant/deploy/run-telegram-bot-api.sh
+ExecStart=/bin/bash /opt/assistant/deploy/run-telegram-bot-api.sh
 
 [Install]
 WantedBy=multi-user.target

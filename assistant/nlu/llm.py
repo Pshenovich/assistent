@@ -67,8 +67,13 @@ def _chat(
     temperature: float = 0.1,
     max_tokens: int | None = None,
     history: list[dict[str, str]] | None = None,
+    context_prefix: str | None = None,
 ) -> str:
-    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+    system_text = system
+    extra = (context_prefix or "").strip()
+    if extra:
+        system_text = f"{system}\n\n{extra}"
+    messages: list[dict[str, str]] = [{"role": "system", "content": system_text}]
     for it in history or []:
         role = str((it or {}).get("role") or "").strip().lower()
         content = str((it or {}).get("content") or "").strip()
@@ -307,17 +312,32 @@ def format_note(text: str) -> dict[str, str] | None:
 
 def answer_with_context(
     question: str,
-    context: str,
+    context: str = "",
     model: str | None = None,
     history: list[dict[str, str]] | None = None,
+    *,
+    note_title: str = "",
+    note_text: str = "",
+    quote: str = "",
+    knowledge_brief: str = "",
 ) -> str:
-    user = f"Контекст:\n{context[:12000]}\n\nВопрос:\n{question}"
+    from assistant.nlu.ask_context import assemble_ask_messages
+
+    extra, user = assemble_ask_messages(
+        question=question,
+        context=context,
+        note_title=note_title,
+        note_text=note_text,
+        quote=quote,
+        knowledge_brief=knowledge_brief,
+    )
     return _chat(
         ASK_SYSTEM,
         user,
         operation="ask",
         model=model or _model_ask(),
         history=history,
+        context_prefix=extra or None,
     )
 
 

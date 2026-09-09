@@ -189,6 +189,29 @@ def _dash_url(path: str) -> str:
     return _USAGE_DASHBOARD_PREFIX + p
 
 
+def _fmt_int(n: Any) -> str:
+    try:
+        v = int(n or 0)
+    except (TypeError, ValueError):
+        v = 0
+    return f"{v:,}".replace(",", " ")
+
+
+def _dash_nav(request: Request, active: str) -> str:
+    qs = _access_qs(request)
+    items = (
+        ("users", "Пользователи", "/"),
+        ("days", "По дням", "/days"),
+        ("board", "PAIE", "/board"),
+    )
+    links: list[str] = []
+    for key, label, path in items:
+        href = html_lib.escape(_dash_url(path) + qs, quote=True)
+        cls = ' class="active"' if key == active else ""
+        links.append(f'<a href="{href}"{cls}>{html_lib.escape(label)}</a>')
+    return '<nav class="dash-nav">' + "".join(links) + "</nav>"
+
+
 def _dash_journal_meta_html() -> str:
     """Подвал: путь к SQLite и число строк — диагностика «бот пишет не туда»."""
     try:
@@ -1012,8 +1035,17 @@ def _is_loopback_addr(addr: str) -> bool:
         return False
 
 
+def _forwarded_client_ip(request: Request) -> str | None:
+    """IP исходного клиента за reverse-proxy (nginx X-Real-IP / X-Forwarded-For)."""
+    xff = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+    if xff:
+        return xff
+    real = (request.headers.get("X-Real-IP") or "").strip()
+    return real or None
+
+
 def _is_local_dashboard_request(request: Request) -> bool:
-    """Локальный доступ без токена: loopback у клиента ИЛИ Host 127.0.0.1/localhost (прокси/Simple Browser)."""
+    """Локальный доступ без токена: прямой loopback, не публичный nginx-прокси."""
     if os.getenv("USAGE_DASHBOARD_FORCE_AUTH", "").strip().lower() in (
         "1",
         "true",
@@ -1022,6 +1054,9 @@ def _is_local_dashboard_request(request: Request) -> bool:
         "on",
     ):
         return False
+    forwarded = _forwarded_client_ip(request)
+    if forwarded:
+        return _is_loopback_addr(forwarded)
     client = request.client
     if client is not None:
         ch = (client.host or "").strip()
@@ -1176,8 +1211,11 @@ async def api_reconcile(date: str, request: Request) -> JSONResponse:
     )
 
 
-def _html_page_start(title: str) -> str:
+def _html_page_start(
+    title: str, request: Request | None = None, active: str = ""
+) -> str:
     t = html_lib.escape(title)
+    nav = _dash_nav(request, active) if request is not None else ""
     return f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -1370,10 +1408,34 @@ code {{
   white-space: nowrap;
   vertical-align: bottom;
 }}
+.dash-nav {{
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}}
+.dash-nav a {{
+  padding: 0.4rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-decoration: none;
+}}
+.dash-nav a.active,
+.dash-nav a:hover {{
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  text-decoration: none;
+}}
 </style>
 </head>
 <body>
 <div class="app">
+{nav}
 """
 
 
@@ -1396,8 +1458,8 @@ def _html_page_end(footer_html: str = "") -> str:
 """
 
 
-@dash.get("/", response_class=HTMLResponse)
-async def index(request: Request) -> HTMLResponse:
+@dash.get("/days", response_class=HTMLResponse)
+async def days_page(request: Request) -> HTMLResponse:
     _require_token(request)
     rate = _usd_to_rub()
     rows = daily_summary()
@@ -1405,21 +1467,21 @@ async def index(request: Request) -> HTMLResponse:
     total_usd = sum(float(r.get("cost_usd") or 0) for r in rows)
     total_calls = sum(int(r.get("n_calls") or 0) for r in rows)
     total_tok = sum(int(r.get("total_tokens") or 0) for r in rows)
+    total_cached = sum(int(r.get("cached_tokens") or 0) for r in rows)
     total_rub = total_usd * rate
-    total_tok_fmt = f"{total_tok:,}".replace(",", " ")
 
     parts: list[str] = [
-        _html_page_start("OpenRouter — расход"),
+        _html_page_start("OpenRouter — по дням", request, "days"),
         '<header class="header">',
-        "<h1>Расход OpenRouter</h1>",
+        "<h1>Расход OpenRouter по дням</h1>",
         '<p class="subtitle">Агрегаты по календарным дням в UTC. Стоимость в рублях: '
         f"<strong>{html_lib.escape(str(rate))}</strong> ₽ за 1 USD (<code>USD_TO_RUB</code>).</p>",
         '<span class="pill">Локальный журнал бота</span>',
-        f'<p style="margin:0.75rem 0 0;"><a href="{_dash_url("/users")}{qs}" style="color:var(--accent);text-decoration:none;font-weight:600;">Пользователи</a></p>',
         "</header>",
         '<section class="metrics">',
         f'<div class="metric"><div class="label">Всего вызовов</div><div class="value">{total_calls}</div></div>',
-        f'<div class="metric"><div class="label">Токенов всего</div><div class="value">{total_tok_fmt}</div></div>',
+        f'<div class="metric"><div class="label">Токенов всего</div><div class="value">{_fmt_int(total_tok)}</div></div>',
+        f'<div class="metric"><div class="label">Кэш prompt</div><div class="value">{_fmt_int(total_cached)}</div></div>',
         f'<div class="metric"><div class="label">Сумма USD</div><div class="value">{total_usd:.4f}</div></div>',
         f'<div class="metric"><div class="label">Сумма ₽</div><div class="value">{total_rub:.2f} <small>≈</small></div></div>',
         "</section>",
@@ -1429,6 +1491,7 @@ async def index(request: Request) -> HTMLResponse:
         "<th>Дата (UTC)</th>",
         '<th class="num">Вызовов</th>',
         '<th class="num">Prompt</th>',
+        '<th class="num">Кэш</th>',
         '<th class="num">Completion</th>',
         '<th class="num">Всего</th>',
         '<th class="num">USD</th>',
@@ -1443,12 +1506,11 @@ async def index(request: Request) -> HTMLResponse:
             "<tr>"
             f'<td><a href="{_dash_url("/day/" + d)}{qs}">{d}</a></td>'
             f'<td class="num">{int(r.get("n_calls") or 0)}</td>'
-            f'<td class="num">{int(r.get("prompt_tokens") or 0):,}</td>'.replace(",", " ")
-            + f'<td class="num">{int(r.get("completion_tokens") or 0):,}</td>'.replace(
-                ",", " "
-            )
-            + f'<td class="num">{int(r.get("total_tokens") or 0):,}</td>'.replace(",", " ")
-            + f'<td class="num">{usd:.6f}</td>'
+            f'<td class="num">{_fmt_int(r.get("prompt_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(r.get("cached_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(r.get("completion_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(r.get("total_tokens"))}</td>'
+            f'<td class="num">{usd:.6f}</td>'
             f'<td class="num">{rub:.2f}</td>'
             "</tr>"
         )
@@ -1481,7 +1543,7 @@ async def day_users_page(date: str, request: Request) -> HTMLResponse:
     total_usd = float(totals.get("cost_usd") or 0)
     total_rub = total_usd * rate
     total_tok = int(totals.get("total_tokens") or 0)
-    total_tok_fmt = f"{total_tok:,}".replace(",", " ")
+    total_cached = int(totals.get("cached_tokens") or 0)
     total_calls = int(totals.get("n_calls") or 0)
 
     users = users_summary(day_d, day_d, operation=filter_op)
@@ -1517,8 +1579,8 @@ async def day_users_page(date: str, request: Request) -> HTMLResponse:
     ops_link = f"{_dash_url('/day/' + quote(day_d) + '/operations')}?{day_qs}"
 
     parts: list[str] = [
-        _html_page_start(f"Пользователи — {day_d}"),
-        f'<a class="back" href="{_dash_url("/")}{qs}">← Сводка по дням</a>',
+        _html_page_start(f"Пользователи — {day_d}", request, "days"),
+        f'<a class="back" href="{_dash_url("/days")}{qs}">← Сводка по дням</a>',
         '<header class="header">',
         f"<h1>{day_esc}</h1>",
         '<p class="subtitle">Расход по пользователям за один день (UTC). '
@@ -1528,7 +1590,8 @@ async def day_users_page(date: str, request: Request) -> HTMLResponse:
         "</header>",
         '<section class="metrics">',
         f'<div class="metric"><div class="label">Всего вызовов</div><div class="value">{total_calls}</div></div>',
-        f'<div class="metric"><div class="label">Токенов всего</div><div class="value">{total_tok_fmt}</div></div>',
+        f'<div class="metric"><div class="label">Токенов всего</div><div class="value">{_fmt_int(total_tok)}</div></div>',
+        f'<div class="metric"><div class="label">Кэш prompt</div><div class="value">{_fmt_int(total_cached)}</div></div>',
         f'<div class="metric"><div class="label">Сумма USD</div><div class="value">{total_usd:.4f}</div></div>',
         f'<div class="metric"><div class="label">Сумма ₽</div><div class="value">{total_rub:.2f} <small>≈</small></div></div>',
         "</section>",
@@ -1552,6 +1615,7 @@ async def day_users_page(date: str, request: Request) -> HTMLResponse:
         "<th>Пользователь</th>",
         '<th class="num">Вызовов</th>',
         '<th class="num">Токенов</th>',
+        '<th class="num">Кэш</th>',
         '<th class="num">USD</th>',
         '<th class="num">₽</th>',
         "</tr></thead><tbody>",
@@ -1576,8 +1640,6 @@ async def day_users_page(date: str, request: Request) -> HTMLResponse:
         label = _user_label(uid, uname)
         cost_usd = float(u.get("cost_usd") or 0)
         cost_rub = cost_usd * rate
-        tokens = int(u.get("total_tokens") or 0)
-        tokens_fmt = f"{tokens:,}".replace(",", " ")
         user_link = (
             f"{_dash_url('/user/' + quote(uid) + '/day/' + quote(day_d))}?{user_day_qs}"
         )
@@ -1585,7 +1647,8 @@ async def day_users_page(date: str, request: Request) -> HTMLResponse:
             "<tr>"
             f'<td><a href="{user_link}">{_html_escape(label)}</a></td>'
             f'<td class="num">{int(u.get("n_calls") or 0)}</td>'
-            f'<td class="num">{tokens_fmt}</td>'
+            f'<td class="num">{_fmt_int(u.get("total_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(u.get("cached_tokens"))}</td>'
             f'<td class="num">{cost_usd:.6f}</td>'
             f'<td class="num">{cost_rub:.2f}</td>'
             "</tr>"
@@ -1614,7 +1677,7 @@ async def day_operations_page(date: str, request: Request) -> HTMLResponse:
     day_rub = day_usd * rate
 
     parts: list[str] = [
-        _html_page_start(f"Операции — {day_d}"),
+        _html_page_start(f"Операции — {day_d}", request, "days"),
         f'<a class="back" href="{_dash_url("/day/" + quote(day_d))}{qs}">← Пользователи за день</a>',
         '<header class="header">',
         f"<h1>{day_esc}</h1>",
@@ -1629,6 +1692,7 @@ async def day_operations_page(date: str, request: Request) -> HTMLResponse:
         "<th>Модель</th>",
         "<th>Generation id</th>",
         '<th class="num">Prompt</th>',
+        '<th class="num">Кэш</th>',
         '<th class="num">Compl</th>',
         '<th class="num">Всего</th>',
         '<th class="num">USD</th>',
@@ -1648,9 +1712,10 @@ async def day_operations_page(date: str, request: Request) -> HTMLResponse:
             f"<td>{_dash_op_cell(op_raw)}</td>"
             f'<td><span class="op-badge" title="{md}">{md}</span></td>'
             f"<td><code>{gid}</code></td>"
-            f'<td class="num">{e.get("prompt_tokens")}</td>'
-            f'<td class="num">{e.get("completion_tokens")}</td>'
-            f'<td class="num">{e.get("total_tokens")}</td>'
+            f'<td class="num">{_fmt_int(e.get("prompt_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(e.get("cached_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(e.get("completion_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(e.get("total_tokens"))}</td>'
             f'<td class="num">{usd:.6f}</td>'
             f'<td class="num">{rub:.2f}</td>'
             "</tr>"
@@ -1729,6 +1794,7 @@ def _dash_ops_summary_table(rows: list[dict[str, Any]], rate: float) -> str:
         "<th>Операция</th>",
         '<th class="num">Вызовов</th>',
         '<th class="num">Токенов</th>',
+        '<th class="num">Кэш</th>',
         '<th class="num">USD</th>',
         '<th class="num">₽</th>',
         "</tr></thead><tbody>",
@@ -1737,13 +1803,12 @@ def _dash_ops_summary_table(rows: list[dict[str, Any]], rate: float) -> str:
         op = str(r.get("operation") or "").strip()
         usd = float(r.get("cost_usd") or 0)
         rub = usd * rate
-        tok = int(r.get("total_tokens") or 0)
-        tok_fmt = f"{tok:,}".replace(",", " ")
         lines.append(
             "<tr>"
             f"<td>{_dash_op_cell(op)}</td>"
             f'<td class="num">{int(r.get("n_calls") or 0)}</td>'
-            f'<td class="num">{tok_fmt}</td>'
+            f'<td class="num">{_fmt_int(r.get("total_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(r.get("cached_tokens"))}</td>'
             f'<td class="num">{usd:.6f}</td>'
             f'<td class="num">{rub:.2f}</td>'
             "</tr>"
@@ -1752,6 +1817,7 @@ def _dash_ops_summary_table(rows: list[dict[str, Any]], rate: float) -> str:
     return "".join(lines)
 
 
+@dash.get("/", response_class=HTMLResponse)
 @dash.get("/users", response_class=HTMLResponse)
 async def users_page(request: Request) -> HTMLResponse:
     _require_token(request)
@@ -1780,7 +1846,7 @@ async def users_page(request: Request) -> HTMLResponse:
     total_usd = float(totals.get("cost_usd") or 0)
     total_rub = total_usd * rate
     total_tok = int(totals.get("total_tokens") or 0)
-    total_tok_fmt = f"{total_tok:,}".replace(",", " ")
+    total_cached = int(totals.get("cached_tokens") or 0)
     total_calls = int(totals.get("n_calls") or 0)
 
     users = users_summary(from_d, to_d, operation=filter_op)
@@ -1812,19 +1878,20 @@ async def users_page(request: Request) -> HTMLResponse:
         )
 
     parts: list[str] = [
-        _html_page_start("Пользователи — расход OpenRouter"),
+        _html_page_start("Пользователи — расход OpenRouter", request, "users"),
         '<header class="header">',
         "<h1>Расход OpenRouter по пользователям</h1>",
         '<p class="subtitle">Период в UTC (по умолчанию последние '
         f"{_DASH_DEFAULT_USER_RANGE_DAYS + 1} дней). В таблице только те, кто дал хотя бы один вызов "
         "GPT/транскрипции (задачи в Битрикс без ИИ сюда не попадают). Расход в ₽ через "
-        "<code>USD_TO_RUB</code>.</p>",
+        "<code>USD_TO_RUB</code>. Колонка «Кэш» — prompt tokens, прочитанные из prompt cache.</p>",
         '<span class="pill">Сводка</span>',
         filter_note,
         "</header>",
         '<section class="metrics">',
         f'<div class="metric"><div class="label">Всего вызовов</div><div class="value">{total_calls}</div></div>',
-        f'<div class="metric"><div class="label">Токенов всего</div><div class="value">{total_tok_fmt}</div></div>',
+        f'<div class="metric"><div class="label">Токенов всего</div><div class="value">{_fmt_int(total_tok)}</div></div>',
+        f'<div class="metric"><div class="label">Кэш prompt</div><div class="value">{_fmt_int(total_cached)}</div></div>',
         f'<div class="metric"><div class="label">Сумма USD</div><div class="value">{total_usd:.4f}</div></div>',
         f'<div class="metric"><div class="label">Сумма ₽</div><div class="value">{total_rub:.2f} <small>≈</small></div></div>',
         "</section>",
@@ -1856,6 +1923,7 @@ async def users_page(request: Request) -> HTMLResponse:
         "<th>Пользователь</th>",
         '<th class="num">Всего вызовов</th>',
         '<th class="num">Токенов всего</th>',
+        '<th class="num">Кэш prompt</th>',
         '<th class="num">Сумма USD</th>',
         '<th class="num">Сумма ₽</th>',
         "</tr></thead><tbody>",
@@ -1874,14 +1942,13 @@ async def users_page(request: Request) -> HTMLResponse:
         label = _user_label(uid, uname)
         cost_usd = float(u.get("cost_usd") or 0)
         cost_rub = cost_usd * rate
-        tokens = int(u.get("total_tokens") or 0)
-        tokens_fmt = f"{tokens:,}".replace(",", " ")
         parts.append(
             "<tr>"
             f'<td><a href="{_dash_url("/user/" + quote(uid))}{range_link_q}">{_html_escape(label)}</a></td>'
             f'<td class="num">{int(u.get("n_calls") or 0)}</td>'
-            f'<td class="num">{tokens_fmt}</td>'
-            + f'<td class="num">{cost_usd:.6f}</td>'
+            f'<td class="num">{_fmt_int(u.get("total_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(u.get("cached_tokens"))}</td>'
+            f'<td class="num">{cost_usd:.6f}</td>'
             f'<td class="num">{cost_rub:.2f}</td>'
             "</tr>"
         )
@@ -1922,9 +1989,9 @@ async def user_page(telegram_user_id: str, request: Request) -> HTMLResponse:
 
     total_calls = sum(int(d.get("n_calls") or 0) for d in days)
     total_tok = sum(int(d.get("total_tokens") or 0) for d in days)
+    total_cached = sum(int(d.get("cached_tokens") or 0) for d in days)
     total_usd = sum(float(d.get("cost_usd") or 0) for d in days)
     total_rub = total_usd * rate
-    total_tok_fmt = f"{total_tok:,}".replace(",", " ")
 
     acc_hidden = (
         f'<input type="hidden" name="access_token" value="{_html_escape(access_token)}"/>'
@@ -1942,7 +2009,7 @@ async def user_page(telegram_user_id: str, request: Request) -> HTMLResponse:
     )
 
     parts: list[str] = [
-        _html_page_start(f"Пользователь {display_label} — расход OpenRouter"),
+        _html_page_start(f"Пользователь {display_label} — расход OpenRouter", request, "users"),
         f'<a class="back" href="{back_link}">← К пользователям</a>',
         '<header class="header">',
         f"<h1>Клиент { _html_escape(display_label) }</h1>",
@@ -1951,7 +2018,8 @@ async def user_page(telegram_user_id: str, request: Request) -> HTMLResponse:
         "</header>",
         '<section class="metrics">',
         f'<div class="metric"><div class="label">Всего вызовов</div><div class="value">{total_calls}</div></div>',
-        f'<div class="metric"><div class="label">Токенов всего</div><div class="value">{total_tok_fmt}</div></div>',
+        f'<div class="metric"><div class="label">Токенов всего</div><div class="value">{_fmt_int(total_tok)}</div></div>',
+        f'<div class="metric"><div class="label">Кэш prompt</div><div class="value">{_fmt_int(total_cached)}</div></div>',
         f'<div class="metric"><div class="label">Сумма USD</div><div class="value">{total_usd:.4f}</div></div>',
         f'<div class="metric"><div class="label">Сумма ₽</div><div class="value">{total_rub:.2f} <small>≈</small></div></div>',
         "</section>",
@@ -1980,6 +2048,7 @@ async def user_page(telegram_user_id: str, request: Request) -> HTMLResponse:
         "<th>Дата (UTC)</th>",
         '<th class="num">Вызовов</th>',
         '<th class="num">Prompt</th>',
+        '<th class="num">Кэш</th>',
         '<th class="num">Completion</th>',
         '<th class="num">Всего</th>',
         '<th class="num">USD</th>',
@@ -1998,14 +2067,8 @@ async def user_page(telegram_user_id: str, request: Request) -> HTMLResponse:
     for d in days:
         date_utc = str(d.get("date_utc") or "").strip()
         n_calls = int(d.get("n_calls") or 0)
-        pt = int(d.get("prompt_tokens") or 0)
-        ct = int(d.get("completion_tokens") or 0)
-        tt = int(d.get("total_tokens") or 0)
         usd = float(d.get("cost_usd") or 0)
         rub = usd * rate
-        pt_fmt = f"{pt:,}".replace(",", " ")
-        ct_fmt = f"{ct:,}".replace(",", " ")
-        tt_fmt = f"{tt:,}".replace(",", " ")
 
         day_link = (
             f"{_dash_url('/user/' + quote(uid) + '/day/' + quote(date_utc))}?{day_qs}"
@@ -2015,9 +2078,10 @@ async def user_page(telegram_user_id: str, request: Request) -> HTMLResponse:
             "<tr>"
             f'<td><a href="{day_link}">{_html_escape(date_utc)}</a></td>'
             f'<td class="num">{n_calls}</td>'
-            f'<td class="num">{pt_fmt}</td>'
-            f'<td class="num">{ct_fmt}</td>'
-            f'<td class="num">{tt_fmt}</td>'
+            f'<td class="num">{_fmt_int(d.get("prompt_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(d.get("cached_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(d.get("completion_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(d.get("total_tokens"))}</td>'
             f'<td class="num">{usd:.6f}</td>'
             f'<td class="num">{rub:.2f}</td>'
             "</tr>"
@@ -2060,7 +2124,7 @@ async def user_day_ops_page(
     if not (from_d <= day_d <= to_d):
         # В рамках архитектуры период фильтрует и операции.
         parts: list[str] = [
-            _html_page_start("Операции — вне периода"),
+            _html_page_start("Операции — вне периода", request, "users"),
             '<a class="back" href="' + _dash_url("/users") + '">← К пользователям</a>',
             '<section class="card">',
             '<div class="empty">Выбранный день выходит за границы периода.</div>',
@@ -2075,7 +2139,7 @@ async def user_day_ops_page(
     total_usd = sum(float(e.get("cost_usd") or 0) for e in events)
     total_rub = total_usd * rate
     total_tok = sum(int(e.get("total_tokens") or 0) for e in events)
-    total_tok_fmt = f"{total_tok:,}".replace(",", " ")
+    total_cached = sum(int(e.get("cached_tokens") or 0) for e in events)
 
     qs = _dash_range_qs(
         from_d, to_d, access_token=access_token, operation=filter_op
@@ -2094,7 +2158,7 @@ async def user_day_ops_page(
     )
 
     parts: list[str] = [
-        _html_page_start(f"Операции клиента {display_label} — {day_d}"),
+        _html_page_start(f"Операции клиента {display_label} — {day_d}", request, "users"),
         f'<a class="back" href="{back_link}">← Клиент / дни</a>',
         '<header class="header">',
         f"<h1>Операции</h1>",
@@ -2103,7 +2167,8 @@ async def user_day_ops_page(
         "</header>",
         '<section class="metrics">',
         f'<div class="metric"><div class="label">Всего вызовов</div><div class="value">{total_calls}</div></div>',
-        f'<div class="metric"><div class="label">Токенов всего</div><div class="value">{total_tok_fmt}</div></div>',
+        f'<div class="metric"><div class="label">Токенов всего</div><div class="value">{_fmt_int(total_tok)}</div></div>',
+        f'<div class="metric"><div class="label">Кэш prompt</div><div class="value">{_fmt_int(total_cached)}</div></div>',
         f'<div class="metric"><div class="label">Сумма USD</div><div class="value">{total_usd:.4f}</div></div>',
         f'<div class="metric"><div class="label">Сумма ₽</div><div class="value">{total_rub:.2f} <small>≈</small></div></div>',
         "</section>",
@@ -2132,6 +2197,7 @@ async def user_day_ops_page(
         "<th>Модель</th>",
         "<th>Generation id</th>",
         '<th class="num">Prompt</th>',
+        '<th class="num">Кэш</th>',
         '<th class="num">Completion</th>',
         '<th class="num">Всего</th>',
         '<th class="num">USD</th>',
@@ -2153,21 +2219,16 @@ async def user_day_ops_page(
         op_raw = str(e.get("operation") or "")
         md = html_lib.escape(str(e.get("model") or ""))
         gid = html_lib.escape(str(e.get("generation_id") or ""))
-        pt = int(e.get("prompt_tokens") or 0)
-        ct = int(e.get("completion_tokens") or 0)
-        tt = int(e.get("total_tokens") or 0)
-        pt_fmt = f"{pt:,}".replace(",", " ")
-        ct_fmt = f"{ct:,}".replace(",", " ")
-        tt_fmt = f"{tt:,}".replace(",", " ")
         parts.append(
             "<tr>"
             f"<td>{ts}</td>"
             f"<td>{_dash_op_cell(op_raw)}</td>"
             f'<td><span class="op-badge" title="{md}">{md}</span></td>'
             f"<td><code>{gid}</code></td>"
-            f'<td class="num">{pt_fmt}</td>'
-            f'<td class="num">{ct_fmt}</td>'
-            f'<td class="num">{tt_fmt}</td>'
+            f'<td class="num">{_fmt_int(e.get("prompt_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(e.get("cached_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(e.get("completion_tokens"))}</td>'
+            f'<td class="num">{_fmt_int(e.get("total_tokens"))}</td>'
             f'<td class="num">{usd:.6f}</td>'
             f'<td class="num">{rub:.2f}</td>'
             "</tr>"
@@ -2507,6 +2568,10 @@ class _MiniappGptChatTurn(BaseModel):
 class _MiniappGptChatBody(BaseModel):
     message: str = ""
     context: str = ""
+    note_title: str = ""
+    note_text: str = ""
+    quote: str = ""
+    use_knowledge: bool = False
     history: list[_MiniappGptChatTurn] = Field(default_factory=list)
     model: Optional[str] = None
 
@@ -4199,19 +4264,42 @@ async def miniapp_gpt_chat(
 
     def _run() -> dict[str, Any] | None:
         from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
+        from assistant.nlu.ask_context import pack_knowledge_brief
 
         uid = int(principal.telegram_user_id)
+        kb_brief = ""
+        kb_version = ""
+        if body.use_knowledge:
+            # Ретрив по заметке, не по текущему вопросу: префикс стабилен в треде.
+            query = " ".join(
+                p
+                for p in (
+                    (body.note_title or "").strip(),
+                    (body.note_text or "").strip()[:800],
+                )
+                if p
+            ) or q
+            kb_brief, kb_version = pack_knowledge_brief(uid, query)
         try:
             set_openrouter_usage_telegram_user(
                 telegram_user_id=uid,
                 telegram_username=tg_uname,
             )
-            return gpt_openrouter_answer_with_context(
+            out = gpt_openrouter_answer_with_context(
                 q,
                 (body.context or "").strip(),
                 history=hist or None,
                 model=model,
+                note_title=(body.note_title or "").strip(),
+                note_text=(body.note_text or "").strip(),
+                quote=(body.quote or "").strip(),
+                knowledge_brief=kb_brief,
             )
+            if out is None:
+                return None
+            if kb_version:
+                out = {**out, "kb_version": kb_version}
+            return out
         finally:
             set_openrouter_usage_telegram_user(telegram_user_id=None)
 
@@ -4226,6 +4314,7 @@ async def miniapp_gpt_chat(
     return {
         "answer": str(out.get("answer") or ""),
         "bullets": out.get("bullets") if isinstance(out.get("bullets"), list) else [],
+        "kb_version": str(out.get("kb_version") or ""),
     }
 
 
@@ -4379,6 +4468,31 @@ async def miniapp_notes_bundle(
             n.setdefault("tags", [])
         for row in transcriptions + summaries:
             row.setdefault("tags", [])
+
+    def _attach_shares() -> None:
+        from assistant.stores import share_links as share_links_store
+
+        ids = [str(n.get("id") or "") for n in local_notes if n.get("id") is not None]
+        shares = share_links_store.list_active_by_item_ids("local", ids)
+        for n in local_notes:
+            owner = str(n.get("owner_user_id") or n.get("user_id") or "")
+            iid = str(n.get("id") or "")
+            link = shares.get((owner, iid))
+            if link and link.get("token"):
+                n["shared"] = True
+                n["share_url"] = _public_share_url(str(link.get("token") or ""))
+                n["share_access"] = link.get("access") or "view"
+            else:
+                n["shared"] = False
+                n["share_url"] = None
+                n["share_access"] = None
+
+    try:
+        await run_in_threadpool(_attach_shares)
+    except Exception as e:
+        print(f"[miniapp_notes] share_meta_fail err={e!r}")
+        for n in local_notes:
+            n.setdefault("shared", False)
 
     return {
         "journal": out_journal,
@@ -4805,6 +4919,51 @@ async def miniapp_local_note_patch(
     if not item:
         raise HTTPException(status_code=404, detail="Заметка не найдена")
     return {"ok": True, "item": item}
+
+
+class _MiniappNotePinBody(BaseModel):
+    pinned: bool = True
+
+
+@miniapp_router.post("/notes/local/{note_id}/duplicate")
+async def miniapp_local_note_duplicate(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any] | None:
+        return notes_store.duplicate_note(uid, note_id)
+
+    item = await run_in_threadpool(_run)
+    if not item:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return {"ok": True, "id": item["id"], "item": item}
+
+
+@miniapp_router.put("/notes/local/{note_id}/pin")
+async def miniapp_local_note_pin(
+    note_id: int,
+    body: _MiniappNotePinBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> bool:
+        access = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
+        if access is None:
+            return False
+        notes_store.set_note_pinned(uid, note_id, bool(body.pinned))
+        return True
+
+    ok = await run_in_threadpool(_run)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return {"ok": True, "pinned": bool(body.pinned)}
 
 
 @miniapp_router.delete("/notes/local/{note_id}")
@@ -5908,7 +6067,7 @@ class _PublicHtmlStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope):
         response = await super().get_response(path, scope)
         if path.endswith(".html") or path in ("", "/", "."):
-            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
             response.headers["Pragma"] = "no-cache"
         elif path.endswith((".css", ".js", ".png", ".svg", ".ico", ".jpg", ".jpeg", ".webp")):
             response.headers["Cache-Control"] = "public, max-age=3600"
