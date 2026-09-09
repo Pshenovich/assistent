@@ -936,6 +936,11 @@ html.boot-open-app #app.hidden {
   margin-bottom: 0;
 }
 
+.meeting-card--compact .btn.join,
+.meeting-card--compact .meeting-rsvp {
+  margin-top: var(--space-2);
+}
+
 .meeting-card-top-left {
   display: flex;
   flex: 1;
@@ -9033,5 +9038,20 @@ html.modal-sheet-open body {
 
   .gate-card {
     max-width: 26rem;
+  }
+
+  #note-discussion-overlay .note-paie-composer-row {
+    padding-left: 4px;
+    padding-right: 4px;
+    padding-bottom: 4px;
+  }
+
+  #note-discussion-overlay #note-paie-reply-input,
+  #note-discussion-overlay .note-paie-composer-input,
+  #note-discussion-overlay #note-paie-reply-input.is-multiline,
+  #note-discussion-overlay .note-paie-composer-input.is-multiline {
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+    padding-bottom: 4px !important;
   }
 }
