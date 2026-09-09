@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Optional
 
 import requests
@@ -455,3 +456,69 @@ def get_user_profile_photo_bytes(
     except Exception as e:
         print(f"[telegram_notify] photo uid={user_id} err={e!r}")
     return None
+
+
+_TME_OG_IMAGE_RE = re.compile(
+    r'<meta[^>]+(?:property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']|'
+    r'content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\'])',
+    re.I,
+)
+_TME_LOGO_RE = re.compile(r"telegram\.org/img/", re.I)
+
+
+def _looks_like_image_bytes(blob: bytes | None) -> bool:
+    if not blob or len(blob) < 800:
+        return False
+    if blob[:3] == b"\xff\xd8\xff":
+        return True
+    if blob[:8] == b"\x89PNG\r\n\x1a\n":
+        return True
+    if blob[:6] in (b"GIF87a", b"GIF89a"):
+        return True
+    if blob[:4] == b"RIFF" and blob[8:12] == b"WEBP":
+        return True
+    return False
+
+
+def _http_get_bytes(url: str, *, timeout: int = 15) -> bytes | None:
+    try:
+        r = requests.get(
+            url,
+            timeout=timeout,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; LeoAssistant/1.0)"},
+            allow_redirects=True,
+        )
+    except Exception as e:
+        print(f"[telegram_notify] username_photo fetch err url={url!r} err={e!r}")
+        return None
+    if not r.ok:
+        return None
+    return r.content if _looks_like_image_bytes(r.content) else None
+
+
+def get_username_profile_photo_bytes(username: str) -> Optional[bytes]:
+    """Публичная аватарка t.me, если человек не писал боту (нет telegram_user_id)."""
+    from assistant.stores.contacts_store import normalize_telegram_username
+
+    uname = normalize_telegram_username(username)
+    if not uname or len(uname) < 4:
+        return None
+    blob = _http_get_bytes(f"https://t.me/i/userpic/320/{uname}.jpg")
+    if blob:
+        return blob
+    try:
+        page = requests.get(
+            f"https://t.me/{uname}",
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; LeoAssistant/1.0)"},
+        )
+    except Exception as e:
+        print(f"[telegram_notify] tme_page uid=@{uname} err={e!r}")
+        return None
+    if not page.ok or not page.text:
+        return None
+    m = _TME_OG_IMAGE_RE.search(page.text)
+    og = (m.group(1) or m.group(2) or "").strip() if m else ""
+    if not og or _TME_LOGO_RE.search(og):
+        return None
+    return _http_get_bytes(og)

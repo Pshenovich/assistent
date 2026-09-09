@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260909-meeting-card-2";
+  var WEBAPP_BUILD = "20260909-tg-avatars";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260909-meeting-card-2";
+  const NOTE_EDITOR_ASSET_V = "20260909-tg-avatars";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -5696,7 +5696,12 @@
     el.appendChild(fallback);
     var c = contactByAttendeeEmail(att && att.email);
     var tid = (c && c.telegram_user_id) || (att && att.telegram_user_id);
-    if (tid) applyNoteMemberPhoto(img, tid);
+    var uname = String(
+      (c && c.telegram_username) || (att && att.telegram_username) || ""
+    )
+      .replace(/^@/, "")
+      .trim();
+    applyTelegramAvatar(img, { userId: tid, username: uname });
     return el;
   }
 
@@ -8234,29 +8239,61 @@
     return name.replace(/^@/, "").slice(0, 2).toUpperCase();
   }
 
-  function applyNoteMemberPhoto(img, userId) {
-    var uid = String(userId || "");
-    if (!img || !uid) return;
-    if (noteCollabState.photoBlobs[uid]) {
+  function applyTelegramAvatar(img, opts) {
+    opts = opts || {};
+    var uid = String(opts.userId || "");
+    var uname = String(opts.username || "")
+      .replace(/^@/, "")
+      .trim()
+      .toLowerCase();
+    if (!img || (!uid && !uname)) return;
+    if (uid && noteCollabState.photoBlobs[uid]) {
       img.src = noteCollabState.photoBlobs[uid];
       img.classList.add("has-photo");
       return;
     }
-    fetch(API + "/users/" + encodeURIComponent(uid) + "/photo", {
-      credentials: "same-origin",
-      headers: authHeaders(),
-    })
-      .then(function (res) {
-        return res.ok ? res.blob() : null;
+    var unameKey = uname ? "u:" + uname : "";
+    if (unameKey && noteCollabState.photoBlobs[unameKey]) {
+      img.src = noteCollabState.photoBlobs[unameKey];
+      img.classList.add("has-photo");
+      return;
+    }
+    function setBlob(key, blob) {
+      if (!key || !blob || !blob.size) return false;
+      var url = URL.createObjectURL(blob);
+      noteCollabState.photoBlobs[key] = url;
+      img.src = url;
+      img.classList.add("has-photo");
+      return true;
+    }
+    function fetchPhoto(path, key) {
+      return fetch(API + path, {
+        credentials: "same-origin",
+        headers: authHeaders(),
       })
-      .then(function (blob) {
-        if (!blob || !blob.size) return;
-        var url = URL.createObjectURL(blob);
-        noteCollabState.photoBlobs[uid] = url;
-        img.src = url;
-        img.classList.add("has-photo");
-      })
-      .catch(function () {});
+        .then(function (res) {
+          return res.ok ? res.blob() : null;
+        })
+        .then(function (blob) {
+          return setBlob(key, blob);
+        })
+        .catch(function () {
+          return false;
+        });
+    }
+    if (uid) {
+      fetchPhoto("/users/" + encodeURIComponent(uid) + "/photo", uid).then(function (ok) {
+        if (!ok && uname) {
+          fetchPhoto("/contacts/telegram-photo/" + encodeURIComponent(uname), unameKey);
+        }
+      });
+      return;
+    }
+    fetchPhoto("/contacts/telegram-photo/" + encodeURIComponent(uname), unameKey);
+  }
+
+  function applyNoteMemberPhoto(img, userId) {
+    applyTelegramAvatar(img, { userId: userId });
   }
 
   function noteMemberAvatarNode(member, opts) {

@@ -3144,6 +3144,9 @@ def _serialize_event_attendees(
             tid = 0
         if tid > 0:
             item["telegram_user_id"] = tid
+        uname = str(contact.get("telegram_username") or "").strip().lstrip("@")
+        if uname:
+            item["telegram_username"] = uname
     return out
 
 
@@ -5450,6 +5453,40 @@ async def miniapp_user_photo(
     if not allowed:
         raise HTTPException(status_code=404, detail="Фото недоступно")
     blob = await run_in_threadpool(note_members.cached_profile_photo, int(user_id))
+    if not blob:
+        raise HTTPException(status_code=404, detail="Фото недоступно")
+    return Response(content=blob, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=600"})
+
+
+def _viewer_may_see_username_photo(viewer: int, username: str) -> bool:
+    from assistant.stores.contacts_store import normalize_telegram_username
+
+    uname = normalize_telegram_username(username)
+    if not uname:
+        return False
+    contacts = _miniapp_contacts_by_email(int(viewer))
+    for row in contacts.values():
+        if normalize_telegram_username(str((row or {}).get("telegram_username") or "")) == uname:
+            return True
+    return False
+
+
+@miniapp_router.get("/contacts/telegram-photo/{username}")
+async def miniapp_contact_telegram_photo(
+    username: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> Response:
+    from assistant.stores import note_members
+    from assistant.stores.contacts_store import normalize_telegram_username
+
+    uname = normalize_telegram_username(username)
+    if not uname or len(uname) < 4:
+        raise HTTPException(status_code=404, detail="Фото недоступно")
+    viewer = int(principal.telegram_user_id)
+    allowed = await run_in_threadpool(_viewer_may_see_username_photo, viewer, uname)
+    if not allowed:
+        raise HTTPException(status_code=404, detail="Фото недоступно")
+    blob = await run_in_threadpool(note_members.cached_username_photo, uname)
     if not blob:
         raise HTTPException(status_code=404, detail="Фото недоступно")
     return Response(content=blob, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=600"})

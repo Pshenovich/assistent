@@ -1,17 +1,17 @@
 /* Mini App service worker: кэш оболочки для быстрого повторного открытия PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260909-meeting-card-2";
+var CACHE_VERSION = "miniapp-v1-20260909-tg-avatars";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
-  "./styles.css?v=20260909-meeting-card-2",
-  "./app.js?v=20260909-meeting-card-2",
-  "./note-html.js?v=20260909-meeting-card-2",
-  "./note-comments.js?v=20260909-meeting-card-2",
-  "./note-rich-editor.js?v=20260909-meeting-card-2",
-  "./icons/arrow-up-right.svg?v=20260909-meeting-card-2",
-  "./icons/chevron-up-muted.svg?v=20260909-meeting-card-2",
-  "./icons/chevron-up-on-fill.svg?v=20260909-meeting-card-2",
+  "./styles.css?v=20260909-tg-avatars",
+  "./app.js?v=20260909-tg-avatars",
+  "./note-html.js?v=20260909-tg-avatars",
+  "./note-comments.js?v=20260909-tg-avatars",
+  "./note-rich-editor.js?v=20260909-tg-avatars",
+  "./icons/arrow-up-right.svg?v=20260909-tg-avatars",
+  "./icons/chevron-up-muted.svg?v=20260909-tg-avatars",
+  "./icons/chevron-up-on-fill.svg?v=20260909-tg-avatars",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",

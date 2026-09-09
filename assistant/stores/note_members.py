@@ -20,6 +20,7 @@ _LOCK = notes_store._LOCK  # type: ignore[attr-defined]
 _PRESENCE_LOCK = threading.Lock()
 _PRESENCE: dict[tuple[str, int], dict[str, dict[str, Any]]] = {}
 _PHOTO_CACHE: dict[int, tuple[float, bytes | None]] = {}
+_USERNAME_PHOTO_CACHE: dict[str, tuple[float, bytes | None]] = {}
 _PHOTO_TTL_SEC = 3600.0
 _PRESENCE_TTL_SEC = 12.0
 _MEMBER_COLORS = (
@@ -685,6 +686,21 @@ def cached_profile_photo(user_id: int) -> bytes | None:
 
     blob = get_user_profile_photo_bytes(uid)
     _PHOTO_CACHE[uid] = (now, blob)
+    return blob
+
+
+def cached_username_photo(username: str) -> bytes | None:
+    uname = normalize_telegram_username(username)
+    if not uname:
+        return None
+    now = time.time()
+    hit = _USERNAME_PHOTO_CACHE.get(uname)
+    if hit and now - hit[0] < _PHOTO_TTL_SEC:
+        return hit[1]
+    from assistant.lib.telegram_notify import get_username_profile_photo_bytes
+
+    blob = get_username_profile_photo_bytes(uname)
+    _USERNAME_PHOTO_CACHE[uname] = (now, blob)
     return blob
 
 

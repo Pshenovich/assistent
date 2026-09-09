@@ -88,8 +88,10 @@ def test_attaches_contact_telegram_user_id() -> None:
                 "email": "artem.danilin.1999@gmail.com",
                 "name": "Артём",
                 "telegram_user_id": 12345,
+                "telegram_username": "artyawn",
             }
         },
     )
     assert rows[0]["telegram_user_id"] == 12345
     assert rows[0]["name"] == "Артём"
+    assert rows[0]["telegram_username"] == "artyawn"
