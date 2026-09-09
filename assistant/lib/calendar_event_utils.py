@@ -322,3 +322,69 @@ def calendar_try_resolve_clarify(
                 return out
 
     return None
+
+
+_GCAL_HTML_RE = re.compile(r"</?[a-zA-Z][^>]*>")
+_GCAL_BLOCK_TAGS = {
+    "p",
+    "div",
+    "tr",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "blockquote",
+    "ul",
+    "ol",
+    "table",
+    "pre",
+}
+
+
+def calendar_description_plain(raw: str | None) -> str:
+    """Google Calendar часто кладёт HTML в description — для карточки нужен текст."""
+    from html.parser import HTMLParser
+
+    s = str(raw or "")
+    if not s.strip():
+        return ""
+    if not _GCAL_HTML_RE.search(s):
+        return re.sub(r"[ \t]+\n", "\n", s).strip()
+
+    class _Text(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=True)
+            self.parts: list[str] = []
+
+        def handle_starttag(self, tag: str, attrs: list) -> None:
+            t = (tag or "").lower()
+            if t == "br":
+                self.parts.append("\n")
+            elif t == "li":
+                self.parts.append("\n• ")
+            elif t in _GCAL_BLOCK_TAGS:
+                self.parts.append("\n")
+
+        def handle_endtag(self, tag: str) -> None:
+            t = (tag or "").lower()
+            if t in _GCAL_BLOCK_TAGS or t == "li":
+                self.parts.append("\n")
+
+        def handle_data(self, data: str) -> None:
+            self.parts.append(data or "")
+
+    parser = _Text()
+    try:
+        parser.feed(s)
+        parser.close()
+        text = "".join(parser.parts)
+    except Exception:
+        text = _GCAL_HTML_RE.sub(" ", s)
+    text = text.replace("\xa0", " ")
+    text = re.sub(r"•\s+", "• ", text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip()

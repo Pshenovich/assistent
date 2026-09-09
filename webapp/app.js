@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260909-meeting-people";
+  var WEBAPP_BUILD = "20260909-meeting-card-2";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260909-meeting-people";
+  const NOTE_EDITOR_ASSET_V = "20260909-meeting-card-2";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -5695,7 +5695,8 @@
     fallback.textContent = attendeeInitialsFrom(att);
     el.appendChild(fallback);
     var c = contactByAttendeeEmail(att && att.email);
-    if (c && c.telegram_user_id) applyNoteMemberPhoto(img, c.telegram_user_id);
+    var tid = (c && c.telegram_user_id) || (att && att.telegram_user_id);
+    if (tid) applyNoteMemberPhoto(img, tid);
     return el;
   }
 
@@ -6367,7 +6368,9 @@
     syncEventPillsFromHidden("start");
     syncEventPillsFromHidden("end");
     bindEventDateTimePills();
-    document.getElementById("m-ev-desc").value = ev.description || "";
+    document.getElementById("m-ev-desc").value = calendarDescriptionPlain(
+      ev.description || ""
+    );
     var attEditor = document.getElementById("m-ev-attendees-editor");
     var attToggle = document.getElementById("m-ev-attendees-toggle");
     if ((ev.attendees || []).length && attEditor && attToggle) {
@@ -6711,10 +6714,12 @@
     top.className = "meeting-card-top";
     const topLeft = document.createElement("div");
     topLeft.className = "meeting-card-top-left";
-    if (ev.kind) {
+    appendMeetingAttendeeAvatars(topLeft, ev);
+    var kindLabel = String(ev.kind || "").trim();
+    if (kindLabel && kindLabel !== "Встреча") {
       const kind = document.createElement("span");
       kind.className = "meeting-kind-badge";
-      kind.textContent = String(ev.kind);
+      kind.textContent = kindLabel;
       topLeft.appendChild(kind);
     }
     top.appendChild(topLeft);
@@ -6751,8 +6756,6 @@
       });
       card.appendChild(join);
     }
-
-    appendMeetingAttendeeAvatars(card, ev);
 
     const swipe = wrapWithSwipeDelete(card, async function () {
       const calId = ev.calendar_id || "primary";
@@ -12541,14 +12544,23 @@
 
   function htmlToPlainText(htmlStr) {
     var raw = String(htmlStr || "")
+      .replace(/<\/li>\s*<li[^>]*>/gi, "\n• ")
+      .replace(/<li[^>]*>/gi, "• ")
       .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<\/(p|div|li|h[1-6])>/gi, "\n");
+      .replace(/<\/(p|div|li|h[1-6]|blockquote|ul|ol)>/gi, "\n");
     var doc = new DOMParser().parseFromString("<div>" + raw + "</div>", "text/html");
     return (doc.body.textContent || "")
       .replace(/\u00a0/g, " ")
       .replace(/[ \t]+\n/g, "\n")
       .replace(/\n{3,}/g, "\n\n")
       .trim();
+  }
+
+  function calendarDescriptionPlain(raw) {
+    var s = String(raw || "");
+    if (!s) return "";
+    if (!/<\/?[a-zA-Z][^>]*>/.test(s)) return s;
+    return htmlToPlainText(s);
   }
 
   function journalHeadline(it, body, op, fallback) {

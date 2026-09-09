@@ -76,3 +76,20 @@ def test_dedupes_organizer_and_fills_name() -> None:
     assert rows[0]["name"] == "Org Name"
     assert rows[0]["organizer"] is True
     assert rows[1] == {"email": "other@example.com", "name": "Other"}
+
+
+def test_attaches_contact_telegram_user_id() -> None:
+    rows = _serialize_event_attendees(
+        {
+            "organizer": {"email": "artem.danilin.1999@gmail.com"},
+        },
+        contacts_by_email={
+            "artem.danilin.1999@gmail.com": {
+                "email": "artem.danilin.1999@gmail.com",
+                "name": "Артём",
+                "telegram_user_id": 12345,
+            }
+        },
+    )
+    assert rows[0]["telegram_user_id"] == 12345
+    assert rows[0]["name"] == "Артём"

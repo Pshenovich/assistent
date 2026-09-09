@@ -3100,7 +3100,11 @@ def _merge_serialized_attendee(out: list[dict[str, Any]], seen: set[str], item: 
     out.append(item)
 
 
-def _serialize_event_attendees(ev: dict[str, Any]) -> list[dict[str, Any]]:
+def _serialize_event_attendees(
+    ev: dict[str, Any],
+    *,
+    contacts_by_email: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     """Участники для карточки встречи: гости + организатор, без текущего пользователя (self)."""
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -3126,6 +3130,20 @@ def _serialize_event_attendees(ev: dict[str, Any]) -> list[dict[str, Any]]:
                 organizer=bool(row.get("organizer")),
             ),
         )
+    contacts_by_email = contacts_by_email or {}
+    for item in out:
+        em = str(item.get("email") or "")
+        contact = contacts_by_email.get(em) if em else None
+        if not isinstance(contact, dict):
+            continue
+        if not item.get("name") and contact.get("name"):
+            item["name"] = str(contact.get("name") or "").strip()
+        try:
+            tid = int(contact.get("telegram_user_id") or 0)
+        except (TypeError, ValueError):
+            tid = 0
+        if tid > 0:
+            item["telegram_user_id"] = tid
     return out
 
 
@@ -3161,8 +3179,32 @@ def _normalize_attendee_refs(raw: Any) -> list[dict[str, str]]:
     return out
 
 
-def _serialize_calendar_event(ev: dict[str, Any]) -> dict[str, Any]:
-    from assistant.lib.calendar_event_utils import calendar_entry_kind_label
+def _miniapp_contacts_by_email(telegram_user_id: int) -> dict[str, dict[str, Any]]:
+    from assistant.lib.calendar_attendees import enrich_contacts_calendar_flags
+    from assistant.stores import contacts_store
+
+    items = enrich_contacts_calendar_flags(
+        list(
+            contacts_store.load_contacts(telegram_user_id=int(telegram_user_id)) or []
+        )
+    )
+    out: dict[str, dict[str, Any]] = {}
+    for row in items:
+        em = str((row or {}).get("email") or "").strip().lower()
+        if em:
+            out[em] = row
+    return out
+
+
+def _serialize_calendar_event(
+    ev: dict[str, Any],
+    *,
+    contacts_by_email: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    from assistant.lib.calendar_event_utils import (
+        calendar_description_plain,
+        calendar_entry_kind_label,
+    )
 
     cal_id = str(ev.get("_calendarId") or "primary").strip() or "primary"
     st_raw = ev.get("start") or {}
@@ -3178,9 +3220,9 @@ def _serialize_calendar_event(ev: dict[str, Any]) -> dict[str, Any]:
         "end": en,
         "html_link": str(ev.get("htmlLink") or "").strip(),
         "meet_url": _event_meet_url(ev),
-        "description": str(ev.get("description") or "")[:8000],
+        "description": calendar_description_plain(str(ev.get("description") or ""))[:8000],
         "location": str(ev.get("location") or "").strip(),
-        "attendees": _serialize_event_attendees(ev),
+        "attendees": _serialize_event_attendees(ev, contacts_by_email=contacts_by_email),
     }
 
 
@@ -3393,9 +3435,14 @@ def _calendar_today_payload(
     try:
         events_raw = [e for e in (payload.get("events") or []) if isinstance(e, dict)]
         ser: list[dict[str, Any]] = []
+        try:
+            contacts_by_email = _miniapp_contacts_by_email(uid)
+        except Exception as ex:
+            print(f"[miniapp_calendar] contacts_index err={ex!r}")
+            contacts_by_email = {}
         for e in events_raw:
             try:
-                ser.append(_serialize_calendar_event(e))
+                ser.append(_serialize_calendar_event(e, contacts_by_email=contacts_by_email))
             except Exception as ex:
                 print(f"[miniapp_calendar] skip_event id={e.get('id')!r} err={ex!r}")
 
@@ -4192,7 +4239,11 @@ async def miniapp_calendar_event_update(
         raise HTTPException(status_code=502, detail=str(e)) from e
     if not isinstance(ev, dict):
         raise HTTPException(status_code=502, detail="Пустой ответ календаря")
-    ser = _serialize_calendar_event(ev)
+    try:
+        contacts_by_email = _miniapp_contacts_by_email(int(principal.telegram_user_id))
+    except Exception:
+        contacts_by_email = {}
+    ser = _serialize_calendar_event(ev, contacts_by_email=contacts_by_email)
     if body.calendar_id and str(body.calendar_id).strip():
         ser["calendar_id"] = str(body.calendar_id).strip()
     emails = [str(e).strip().lower() for e in (ev.get("attendee_emails") or []) if str(e).strip()]
@@ -5370,6 +5421,23 @@ async def miniapp_note_collab_leave(
     return {"ok": True}
 
 
+def _viewer_may_see_user_photo(viewer: int, user_id: int) -> bool:
+    if int(viewer) == int(user_id):
+        return True
+    from assistant.stores import note_members
+
+    if note_members.shares_any_note_with(viewer, user_id):
+        return True
+    contacts = _miniapp_contacts_by_email(int(viewer))
+    for row in contacts.values():
+        try:
+            if int((row or {}).get("telegram_user_id") or 0) == int(user_id):
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
 @miniapp_router.get("/users/{user_id}/photo")
 async def miniapp_user_photo(
     user_id: int,
@@ -5378,12 +5446,9 @@ async def miniapp_user_photo(
     from assistant.stores import note_members
 
     viewer = int(principal.telegram_user_id)
-    if int(user_id) != viewer:
-        allowed = await run_in_threadpool(
-            note_members.shares_any_note_with, viewer, int(user_id)
-        )
-        if not allowed:
-            raise HTTPException(status_code=404, detail="Фото недоступно")
+    allowed = await run_in_threadpool(_viewer_may_see_user_photo, viewer, int(user_id))
+    if not allowed:
+        raise HTTPException(status_code=404, detail="Фото недоступно")
     blob = await run_in_threadpool(note_members.cached_profile_photo, int(user_id))
     if not blob:
         raise HTTPException(status_code=404, detail="Фото недоступно")

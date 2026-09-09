@@ -587,6 +587,33 @@ def leo_calendar_user_id(
     return None
 
 
+def contact_telegram_user_id(contact: dict[str, Any] | None) -> int | None:
+    """telegram_user_id контакта: поле, @username в registry или email календаря Leo."""
+    from assistant.lib.calendar_user_lookup import lookup_user_id_by_calendar_email
+
+    if not isinstance(contact, dict):
+        return None
+    tid = attendee_calendar_user_id(contact)
+    if tid:
+        return int(tid)
+    uname = normalize_telegram_username(str(contact.get("telegram_username") or ""))
+    if uname:
+        try:
+            from assistant.stores import note_members
+
+            found = note_members._lookup_profile_by_username(uname)
+            if found:
+                return int(found)
+        except Exception:
+            pass
+    em = str(contact.get("email") or "").strip().lower()
+    if em:
+        found = lookup_user_id_by_calendar_email(em)
+        if found:
+            return int(found)
+    return None
+
+
 def enrich_contacts_calendar_flags(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for raw in items or []:
@@ -595,6 +622,9 @@ def enrich_contacts_calendar_flags(items: list[dict[str, Any]]) -> list[dict[str
         row = dict(raw)
         uid = leo_calendar_user_id(row, str(row.get("email") or ""))
         row["calendar_connected"] = bool(uid)
+        tid = contact_telegram_user_id(row)
+        if tid:
+            row["telegram_user_id"] = int(tid)
         out.append(row)
     return out
 
