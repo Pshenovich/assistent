@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260909-discuss-files";
+  var WEBAPP_BUILD = "20260909-create-note";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260909-discuss-files";
+  const NOTE_EDITOR_ASSET_V = "20260909-create-note";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -7604,6 +7604,12 @@
         });
         if (typeof onUpdate === "function") onUpdate();
       },
+      appendHtml: function (html) {
+        var raw = String(html || "").trim();
+        if (!raw) return;
+        ed.insertAdjacentHTML("beforeend", raw);
+        if (typeof onUpdate === "function") onUpdate();
+      },
       prepareForSave: function () {},
       focus: function () {
         ed.focus();
@@ -9430,10 +9436,47 @@
     }, 2400);
   }
 
+  function titleFromAnswerMarkdown(md) {
+    var lines = String(md || "").split("\n");
+    for (var i = 0; i < lines.length; i++) {
+      var t = lines[i].trim();
+      if (!t) continue;
+      if (parseMarkdownTableRow(t)) continue;
+      if (/^```/.test(t)) continue;
+      var hm = t.match(/^#{1,6}\s+(.*)$/);
+      if (hm) t = hm[1].trim();
+      t = t
+        .replace(/\*\*([^*]+)\*\*/g, "$1")
+        .replace(/\*([^*]+)\*/g, "$1")
+        .replace(/`([^`]+)`/g, "$1")
+        .replace(/^[-*•]\s+/, "")
+        .replace(/^\d+[.)]\s+/, "")
+        .trim();
+      if (!t) continue;
+      if (t.length > 80) t = t.slice(0, 79) + "…";
+      return t;
+    }
+    return "Заметка";
+  }
+
+  function htmlFromAnswerMarkdown(md) {
+    var raw = String(md || "").trim();
+    if (!raw) return "";
+    var html = simpleMarkdownToHtml(raw);
+    return html || "<p>" + escapeHtml(raw) + "</p>";
+  }
+
   function appendAnswerToCurrentNote(text) {
     var raw = String(text || "").trim();
     if (!raw) return;
     var inst = getActiveNoteRichEditor();
+    var html = htmlFromAnswerMarkdown(raw);
+    if (inst && typeof inst.appendHtml === "function") {
+      inst.appendHtml(html);
+      showNoteToast("Добавлено в заметку");
+      shareHaptic();
+      return;
+    }
     if (inst && typeof inst.appendText === "function") {
       inst.appendText(raw);
       showNoteToast("Добавлено в заметку");
@@ -9443,18 +9486,11 @@
     showNoteToast("Не удалось вставить в заметку");
   }
 
-  async function createTaskNoteFromAnswer(text) {
+  async function createNoteFromAnswer(text) {
     var raw = String(text || "").trim();
     if (!raw) return;
-    var title = raw.split(/\n/)[0].trim();
-    if (title.length > 80) title = title.slice(0, 79) + "…";
-    if (!title) title = "Задача";
-    var html = raw
-      .split("\n")
-      .map(function (line) {
-        return "<p>" + escapeHtml(line || " ") + "</p>";
-      })
-      .join("");
+    var title = titleFromAnswerMarkdown(raw);
+    var html = htmlFromAnswerMarkdown(raw);
     try {
       var createRes = await apiFetch("/notes/local", {
         method: "POST",
@@ -9669,7 +9705,7 @@
         var action = item.getAttribute("data-answer-action");
         closeNoteAnswerMenu();
         if (action === "into-note") appendAnswerToCurrentNote(text);
-        else if (action === "task") createTaskNoteFromAnswer(text);
+        else if (action === "create-note") createNoteFromAnswer(text);
         else if (action === "link") openNoteLinkPicker(text);
         else if (action === "copy") copyAnswerText(text);
         else if (action === "delete") {
@@ -9844,7 +9880,7 @@
       menu.className = "note-discuss-menu hidden";
       menu.innerHTML =
         discussMenuItem("into-note", "note", "В заметку") +
-        discussMenuItem("task", "task", "Создать задачу") +
+        discussMenuItem("create-note", "note", "Создать заметку") +
         discussMenuItem("link", "link", "Связать с заметкой") +
         discussMenuItem("copy", "copy", "Копировать") +
         discussMenuItem("delete", "trash", "Удалить", "note-discuss-menu-item--danger");
@@ -12322,7 +12358,7 @@
         }
         lineIndex--;
         if (tableRows.length) {
-          html.push("<table>");
+          html.push('<table class="note-editor-table"><tbody>');
           tableRows.forEach(function (cells, rowIdx) {
             html.push("<tr>");
             cells.forEach(function (cell) {
@@ -12331,7 +12367,7 @@
             });
             html.push("</tr>");
           });
-          html.push("</table>");
+          html.push("</tbody></table>");
         }
         continue;
       }

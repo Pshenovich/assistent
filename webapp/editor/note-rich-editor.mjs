@@ -450,6 +450,9 @@ function importBody(body) {
   const raw = normalizeCollapsedMarkdown(body);
   if (!raw) return "";
   const hasHtml = /<[a-z][\s\S]*>/i.test(raw);
+  if (hasHtml && /<table[\s>]/i.test(raw)) {
+    return prepareHtmlForEditor(raw);
+  }
   if (
     hasHtml &&
     (/\bnote-task-list\b/i.test(raw) ||
@@ -1443,6 +1446,11 @@ function mount(container, options) {
         return { type: "paragraph", content: [{ type: "text", text: line }] };
       });
       editor.chain().focus("end").insertContent(nodes).run();
+    },
+    appendHtml: function (html) {
+      var raw = String(html || "").trim();
+      if (!raw) return;
+      editor.chain().focus("end").insertContent(raw).run();
     },
     prepareForSave: function () {
       editor.view.dom.blur();

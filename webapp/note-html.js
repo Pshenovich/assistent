@@ -145,8 +145,57 @@
     return s;
   }
 
+  function parseMarkdownTableRow(line) {
+    var trimmed = String(line || "").trim();
+    if (!/^\|.+\|$/.test(trimmed)) return null;
+    if (/^\|[\s\-:|]+\|$/.test(trimmed)) return "sep";
+    return trimmed
+      .slice(1, -1)
+      .split("|")
+      .map(function (cell) {
+        return cell.trim();
+      });
+  }
+
+  function markdownTableToHtml(rows) {
+    if (!rows || !rows.length) return "";
+    var html = ['<table class="note-editor-table"><tbody>'];
+    rows.forEach(function (cells, rowIdx) {
+      html.push("<tr>");
+      cells.forEach(function (cell) {
+        var tag = rowIdx === 0 ? "th" : "td";
+        html.push("<" + tag + ">" + inlineMarkdown(cell) + "</" + tag + ">");
+      });
+      html.push("</tr>");
+    });
+    html.push("</tbody></table>");
+    return html.join("");
+  }
+
+  function liftMarkdownTables(md) {
+    var lines = String(md || "").split("\n");
+    var out = [];
+    for (var i = 0; i < lines.length; i++) {
+      var row = parseMarkdownTableRow(lines[i].trim());
+      if (!row) {
+        out.push(lines[i]);
+        continue;
+      }
+      var rows = [];
+      while (i < lines.length) {
+        var candidate = parseMarkdownTableRow(lines[i].trim());
+        if (!candidate) break;
+        if (candidate !== "sep") rows.push(candidate);
+        i += 1;
+      }
+      i -= 1;
+      if (rows.length) out.push(markdownTableToHtml(rows));
+    }
+    return out.join("\n");
+  }
+
   function markdownToHtml(md) {
-    var lines = String(normalizeCollapsedMarkdown(md) || "").split("\n");
+    var lines = String(liftMarkdownTables(normalizeCollapsedMarkdown(md)) || "").split("\n");
     var html = [];
     var inList = false;
     var inTaskList = false;
@@ -181,6 +230,13 @@
       var trimmed = line.trim();
       if (!trimmed) {
         closeAll();
+        return;
+      }
+      if (/^<table[\s>]/i.test(trimmed)) {
+        closeAll();
+        html.push(trimmed);
+        inTaskSection = false;
+        taskSectionCompleted = false;
         return;
       }
       var hm = trimmed.match(/^(#{1,6})\s+(.*)$/);
