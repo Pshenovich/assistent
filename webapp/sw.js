@@ -1,17 +1,17 @@
 /* Mini App service worker: кэш оболочки для быстрого повторного открытия PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260909-card-pad";
+var CACHE_VERSION = "miniapp-v1-20260910-toc-overlay";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
-  "./styles.css?v=20260909-card-pad",
-  "./app.js?v=20260909-card-pad",
-  "./note-html.js?v=20260909-card-pad",
-  "./note-comments.js?v=20260909-card-pad",
-  "./note-rich-editor.js?v=20260909-card-pad",
-  "./icons/arrow-up-right.svg?v=20260909-card-pad",
-  "./icons/chevron-up-muted.svg?v=20260909-card-pad",
-  "./icons/chevron-up-on-fill.svg?v=20260909-card-pad",
+  "./styles.css?v=20260910-toc-overlay",
+  "./app.js?v=20260910-toc-overlay",
+  "./note-html.js?v=20260910-toc-overlay",
+  "./note-comments.js?v=20260910-toc-overlay",
+  "./note-rich-editor.js?v=20260910-toc-overlay",
+  "./icons/arrow-up-right.svg?v=20260910-toc-overlay",
+  "./icons/chevron-up-muted.svg?v=20260910-toc-overlay",
+  "./icons/chevron-up-on-fill.svg?v=20260910-toc-overlay",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",

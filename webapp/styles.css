@@ -8018,17 +8018,30 @@ html.modal-sheet-open body {
   .note-editor-doc-layout {
     align-items: flex-start;
     gap: 12px;
+    overflow: visible;
   }
 
-  .note-editor-toc-close,
-  .note-editor-toc-backdrop {
+  .note-editor-toc-close {
     display: none !important;
+  }
+
+  .note-editor-toc-backdrop {
+    display: none;
+  }
+
+  .note-editor-page--toc-open .note-editor-toc-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 120;
+    background: transparent;
   }
 
   .note-editor-toc-toggle {
     position: sticky;
     top: calc(var(--note-editor-chrome-top, 54px) + 16px);
     flex: 0 0 auto;
+    z-index: 131;
     margin: 0;
     color: var(--vkui--color_text_secondary, var(--text-secondary));
     background: rgba(255, 255, 255, 0.06);
@@ -8041,30 +8054,28 @@ html.modal-sheet-open body {
   }
 
   .note-editor-toc-panel {
-    position: sticky;
-    top: calc(var(--note-editor-chrome-top, 54px) + 16px);
-    flex: 0 0 0;
-    width: 0;
-    max-width: 0;
-    max-height: calc(100dvh - var(--note-editor-chrome-top, 54px) - 44px);
-    margin-right: -12px;
-    border: 0;
-    border-radius: 16px;
+    position: absolute;
+    top: 0;
+    left: 56px;
+    z-index: 130;
+    flex: none;
+    width: 15rem;
+    max-width: 15rem;
+    max-height: min(28rem, calc(100dvh - var(--note-editor-chrome-top, 54px) - 44px));
+    margin: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md, 12px);
     opacity: 0;
+    visibility: hidden;
     pointer-events: none;
     overflow: hidden;
-    background: rgba(255, 255, 255, 0.04);
-    transition: flex-basis 0.18s ease, max-width 0.18s ease, opacity 0.18s ease,
-      margin-right 0.18s ease;
+    background: var(--surface, #19191a);
+    box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.2));
   }
 
   .note-editor-page--toc-open .note-editor-toc-panel {
-    flex-basis: 15rem;
-    width: 15rem;
-    max-width: 15rem;
-    margin-right: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
     opacity: 1;
+    visibility: visible;
     pointer-events: auto;
   }
 }
@@ -9040,9 +9051,21 @@ html.modal-sheet-open body {
     max-width: 26rem;
   }
 
+  #note-discussion-overlay .note-discussion-compose.note-paie-thread {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  #note-discussion-overlay .note-paie-reply-form {
+    margin-left: 4px;
+    margin-right: 4px;
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
   #note-discussion-overlay .note-paie-composer-row {
-    padding-left: 4px;
-    padding-right: 4px;
+    padding-left: 0;
+    padding-right: 0;
     padding-bottom: 4px;
   }
 
