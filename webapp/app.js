@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260910-toc-overlay";
+  var WEBAPP_BUILD = "20260910-rem-title";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260910-toc-overlay";
+  const NOTE_EDITOR_ASSET_V = "20260910-rem-title";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -230,6 +230,7 @@
   let selectedPaymentMethod = "";
   let miniappDev = false;
   var meetingsPageDate = null;
+  var timelineScrolledKey = "";
   var notesDataCache = null;
   var knowledgeDataCache = null;
   var notesSearchQuery = "";
@@ -272,6 +273,7 @@
 
   function shiftMeetingsPage(delta) {
     meetingsPageDate = addDaysIso(meetingsPageDate || todayIsoLocal(), delta);
+    timelineScrolledKey = "";
     loadActual();
   }
 
@@ -310,28 +312,152 @@
     return new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
   }
 
-  function renderMeetingNowMarker() {
+  var TIMELINE_START_MIN = 7 * 60;
+  var TIMELINE_END_MIN = 24 * 60;
+  var TIMELINE_HOUR_PX_MOBILE = 56;
+  var TIMELINE_HOUR_PX_DESKTOP = 64;
+  var TIMELINE_REMINDER_SPAN_MIN = 30;
+
+  function timelineHourPx() {
+    return isDesktopLayout() ? TIMELINE_HOUR_PX_DESKTOP : TIMELINE_HOUR_PX_MOBILE;
+  }
+
+  function localDateIsoFromMs(ms) {
+    var d = new Date(ms);
+    if (isNaN(d.getTime())) return "";
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+
+  function dayStartMs(dateIso) {
+    return new Date(dateIso + "T00:00:00").getTime();
+  }
+
+  function eventIsAllDay(ev) {
+    return !!(ev && ev.start && ev.start.date && !ev.start.dateTime);
+  }
+
+  function remindersForDate(reminders, dateIso) {
+    return (reminders || []).filter(function (r) {
+      if (!r || r.done) return false;
+      var t = Date.parse(r.when_iso || "");
+      if (!isFinite(t)) return false;
+      return localDateIsoFromMs(t) === dateIso;
+    });
+  }
+
+  function timelineSpanForRange(dateIso, startMs, endMs, opts) {
+    opts = opts || {};
+    var day0 = dayStartMs(dateIso);
+    if (!isFinite(day0) || startMs == null || !isFinite(startMs)) return null;
+    var minSpan = opts.minSpanMin || 15;
+    var end = endMs != null && isFinite(endMs) ? endMs : startMs + minSpan * 60000;
+    if (end <= startMs) end = startMs + minSpan * 60000;
+    var startMin = (startMs - day0) / 60000;
+    var endMin = (end - day0) / 60000;
+    if (endMin <= 0 || startMin >= TIMELINE_END_MIN) return null;
+    if (endMin <= TIMELINE_START_MIN) {
+      return { zone: "early", startMin: startMin, endMin: endMin };
+    }
+    var clipStart = Math.max(startMin, TIMELINE_START_MIN);
+    var clipEnd = Math.min(endMin, TIMELINE_END_MIN);
+    if (clipEnd <= clipStart) return null;
+    var visStart = clipStart - TIMELINE_START_MIN;
+    var visEnd = clipEnd - TIMELINE_START_MIN;
+    if (visEnd - visStart < 15) {
+      visEnd = Math.min(TIMELINE_END_MIN - TIMELINE_START_MIN, visStart + 15);
+    }
+    return { zone: "grid", startMin: visStart, endMin: visEnd };
+  }
+
+  function assignTimelineColumns(items) {
+    var sorted = items.slice().sort(function (a, b) {
+      return a.startMin - b.startMin || b.endMin - a.endMin;
+    });
+    var cluster = [];
+    var clusterEnd = -1;
+    function flush() {
+      if (!cluster.length) return;
+      var colEnds = [];
+      cluster.forEach(function (it) {
+        var col = 0;
+        while (col < colEnds.length && colEnds[col] > it.startMin + 0.01) col += 1;
+        it.col = col;
+        colEnds[col] = it.endMin;
+      });
+      var n = Math.max(1, colEnds.length);
+      cluster.forEach(function (it) {
+        it.cols = n;
+      });
+      cluster = [];
+      clusterEnd = -1;
+    }
+    sorted.forEach(function (it) {
+      if (cluster.length && it.startMin >= clusterEnd) flush();
+      cluster.push(it);
+      clusterEnd = Math.max(clusterEnd, it.endMin);
+    });
+    flush();
+  }
+
+  function formatTimelineHourLabel(hour) {
+    var h = hour === 24 ? 0 : hour;
+    return pad2(h) + ":00";
+  }
+
+  function renderDayTimelineNow(topPx) {
     var el = document.createElement("div");
-    el.className = "meeting-now";
+    el.className = "day-timeline-now";
+    el.style.top = topPx + "px";
     var clock = formatNowClock();
     el.setAttribute("aria-label", "Сейчас " + clock);
     var time = document.createElement("span");
-    time.className = "meeting-now-time";
+    time.className = "day-timeline-now-time";
     time.textContent = clock;
     var line = document.createElement("span");
-    line.className = "meeting-now-line";
+    line.className = "day-timeline-now-line";
     el.appendChild(time);
     el.appendChild(line);
     return el;
   }
 
-  function paintMeetingsList(ui, calData) {
+  function renderTimelineReminder(r) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "day-timeline-reminder";
+    var taskText = r.task || "Напоминание";
+    var clock = formatEventClock(r.when_iso);
+    btn.setAttribute("aria-label", clock ? taskText + ", " + clock : taskText);
+    var task = document.createElement("span");
+    task.className = "day-timeline-reminder-task";
+    task.textContent = taskText;
+    btn.appendChild(task);
+    btn.addEventListener("click", function () {
+      openReminderModal(r);
+    });
+    return btn;
+  }
+
+  function renderTimelineBandItem(opts) {
+    opts = opts || {};
+    var el = document.createElement("button");
+    el.type = "button";
+    el.className = "day-timeline-band-item" + (opts.mod ? " " + opts.mod : "");
+    el.textContent = opts.title || "";
+    if (opts.onClick) el.addEventListener("click", opts.onClick);
+    return el;
+  }
+
+  function paintMeetingsList(ui, calData, reminders, paintOpts) {
+    paintOpts = paintOpts || {};
     var listM = document.getElementById(ui.listId);
     var emptyM = document.getElementById(ui.emptyId);
     var errM = document.getElementById(ui.errId);
     var titleEl = ui.titleId ? document.getElementById(ui.titleId) : null;
     if (!listM) return;
+    var scroller = document.querySelector(".main-scroll");
+    var savedScroll = paintOpts.preserveScroll && scroller ? scroller.scrollTop : null;
     listM.innerHTML = "";
+    listM.classList.add("meetings-stack--timeline");
     if (errM) {
       errM.textContent = "";
       setHidden(errM, true);
@@ -343,31 +469,184 @@
     var evs = ((calData && calData.events) || []).filter(function (ev) {
       return !meetingIsDeclined(ev);
     });
-    var showNow = !!(ui.showNow && calDate && calDate === todayIsoLocal());
+    var dayReminders = calDate ? remindersForDate(reminders, calDate) : [];
+    var disconnected = calData && calData.connected === false;
+    setHidden(emptyM, true);
+    if (disconnected) {
+      var banner = document.createElement("p");
+      banner.className = "muted empty-hint day-timeline-connect";
+      banner.textContent = meetingsEmptyMessage(calData);
+      listM.appendChild(banner);
+    }
+
     var nowMs = Date.now();
-    var placedNow = false;
-    function maybeNow(beforeMs) {
-      if (!showNow || placedNow) return;
-      if (beforeMs == null || nowMs < beforeMs) {
-        listM.appendChild(renderMeetingNowMarker());
-        placedNow = true;
+    var hourPx = timelineHourPx();
+    var hours = (TIMELINE_END_MIN - TIMELINE_START_MIN) / 60;
+    var band = document.createElement("div");
+    band.className = "day-timeline-band";
+    var earlyItems = [];
+    var gridItems = [];
+
+    evs.forEach(function (ev) {
+      if (eventIsAllDay(ev)) {
+        band.appendChild(
+          renderTimelineBandItem({
+            title: meetingDisplayTitle(ev),
+            mod: meetingNeedsRsvp(ev) ? "day-timeline-band-item--pending" : "",
+            onClick: function () {
+              openEventModal(ev);
+            },
+          })
+        );
+        return;
+      }
+      var startMs = eventStartMs(ev);
+      var endMs = eventEndMs(ev);
+      var span = timelineSpanForRange(calDate, startMs, endMs);
+      if (!span) return;
+      if (span.zone === "early") {
+        var earlyTitle =
+          (formatEventTime(ev) || "") +
+          (ev.summary ? " · " + meetingDisplayTitle(ev) : "");
+        earlyItems.push(
+          renderTimelineBandItem({
+            title: earlyTitle || meetingDisplayTitle(ev),
+            mod: meetingNeedsRsvp(ev) ? "day-timeline-band-item--pending" : "",
+            onClick: function () {
+              openEventModal(ev);
+            },
+          })
+        );
+        return;
+      }
+      gridItems.push({
+        kind: "event",
+        ev: ev,
+        startMin: span.startMin,
+        endMin: span.endMin,
+        endMs: endMs,
+      });
+    });
+
+    dayReminders.forEach(function (r) {
+      var startMs = Date.parse(r.when_iso || "");
+      if (!isFinite(startMs)) return;
+      var span = timelineSpanForRange(calDate, startMs, startMs + TIMELINE_REMINDER_SPAN_MIN * 60000, {
+        minSpanMin: TIMELINE_REMINDER_SPAN_MIN,
+      });
+      if (!span) return;
+      if (span.zone === "early") {
+        earlyItems.push(
+          renderTimelineBandItem({
+            title: (formatEventClock(r.when_iso) || "") + " · " + (r.task || "Напоминание"),
+            mod: "day-timeline-band-item--reminder",
+            onClick: function () {
+              openReminderModal(r);
+            },
+          })
+        );
+        return;
+      }
+      gridItems.push({
+        kind: "reminder",
+        reminder: r,
+        startMin: span.startMin,
+        endMin: span.endMin,
+        endMs: startMs,
+      });
+    });
+
+    if (earlyItems.length) {
+      var earlyLabel = document.createElement("p");
+      earlyLabel.className = "day-timeline-band-label";
+      earlyLabel.textContent = "До 7:00";
+      band.appendChild(earlyLabel);
+      earlyItems.forEach(function (el) {
+        band.appendChild(el);
+      });
+    }
+    if (band.childNodes.length) listM.appendChild(band);
+
+    var timeline = document.createElement("div");
+    timeline.className = "day-timeline";
+    timeline.style.setProperty("--day-hour-h", hourPx + "px");
+    var gutter = document.createElement("div");
+    gutter.className = "day-timeline-gutter";
+    var canvas = document.createElement("div");
+    canvas.className = "day-timeline-canvas";
+    canvas.style.height = hours * hourPx + "px";
+
+    for (var h = 0; h <= hours; h += 1) {
+      var label = document.createElement("div");
+      label.className = "day-timeline-label";
+      label.style.top = h * hourPx + "px";
+      label.textContent = formatTimelineHourLabel(7 + h);
+      gutter.appendChild(label);
+
+      var line = document.createElement("div");
+      line.className = "day-timeline-hour-line";
+      line.style.top = h * hourPx + "px";
+      canvas.appendChild(line);
+      if (h < hours) {
+        var half = document.createElement("div");
+        half.className = "day-timeline-hour-line day-timeline-hour-line--half";
+        half.style.top = (h + 0.5) * hourPx + "px";
+        canvas.appendChild(half);
       }
     }
-    evs.forEach(function (ev, i) {
-      var startMs = eventStartMs(ev);
-      if (startMs != null) maybeNow(startMs);
-      var card = renderMeetingCard(ev, i, evs.length);
-      var endMs = eventEndMs(ev);
-      if (showNow && endMs != null && endMs < nowMs) card.classList.add("is-past");
-      listM.appendChild(card);
+
+    assignTimelineColumns(gridItems);
+    gridItems.forEach(function (it) {
+      var slot = document.createElement("div");
+      slot.className = "day-timeline-item";
+      if (it.kind === "reminder") slot.classList.add("day-timeline-item--reminder");
+      var cols = Math.max(1, it.cols || 1);
+      var col = it.col || 0;
+      var top = (it.startMin / 60) * hourPx;
+      var height = Math.max(22, ((it.endMin - it.startMin) / 60) * hourPx);
+      slot.style.top = top + "px";
+      slot.style.height = height + "px";
+      slot.style.left = (col / cols) * 100 + "%";
+      slot.style.width = 100 / cols + "%";
+      if (it.endMs != null && it.endMs < nowMs) slot.classList.add("is-past");
+      if (it.kind === "reminder") {
+        slot.appendChild(renderTimelineReminder(it.reminder));
+      } else {
+        slot.appendChild(renderMeetingCard(it.ev, { heightPx: height }));
+      }
+      canvas.appendChild(slot);
     });
-    if (showNow && !placedNow) listM.appendChild(renderMeetingNowMarker());
-    if (!evs.length) {
-      setHidden(emptyM, false);
-      if (emptyM) emptyM.textContent = meetingsEmptyMessage(calData);
-      return;
+
+    var showNow = !!(ui.showNow && calDate && calDate === todayIsoLocal());
+    if (showNow) {
+      var now = new Date();
+      var nowMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+      if (nowMin >= TIMELINE_START_MIN && nowMin <= TIMELINE_END_MIN) {
+        var nowTop = ((nowMin - TIMELINE_START_MIN) / 60) * hourPx;
+        canvas.appendChild(renderDayTimelineNow(nowTop));
+      }
     }
-    setHidden(emptyM, true);
+
+    timeline.appendChild(gutter);
+    timeline.appendChild(canvas);
+    listM.appendChild(timeline);
+
+    var scrollKey = ui.listId + ":" + calDate;
+    if (savedScroll != null && scroller) {
+      requestAnimationFrame(function () {
+        scroller.scrollTop = savedScroll;
+      });
+    } else if (showNow && scrollKey !== timelineScrolledKey) {
+      timelineScrolledKey = scrollKey;
+      requestAnimationFrame(function () {
+        var nowEl = listM.querySelector(".day-timeline-now");
+        if (nowEl && nowEl.scrollIntoView) {
+          nowEl.scrollIntoView({ block: "center", inline: "nearest" });
+        }
+      });
+    } else {
+      timelineScrolledKey = scrollKey;
+    }
   }
 
   async function loadMeetingsInto(ui, dateIso) {
@@ -387,12 +666,13 @@
     if (calData && calData.date && ui.trackDate) {
       meetingsPageDate = calData.date;
     }
-    paintMeetingsList(ui, calData);
+    paintMeetingsList(ui, calData, lastRemindersItems);
     return calData;
   }
 
   var lastMeetingsLeft = null;
   var lastMeetingsRight = null;
+  var lastRemindersItems = [];
   var meetingsNowTimer = null;
 
   var meetingsUiMain = {
@@ -493,22 +773,23 @@
     if (meetingsNowTimer) return;
     meetingsNowTimer = window.setInterval(function () {
       if (lastMeetingsLeft && lastMeetingsLeft.date === todayIsoLocal()) {
-        paintMeetingsList(meetingsUiMain, lastMeetingsLeft);
+        paintMeetingsList(meetingsUiMain, lastMeetingsLeft, lastRemindersItems, { preserveScroll: true });
       } else if (lastMeetingsRight && lastMeetingsRight.date === todayIsoLocal()) {
-        paintMeetingsList(meetingsUiNext, lastMeetingsRight);
+        paintMeetingsList(meetingsUiNext, lastMeetingsRight, lastRemindersItems, { preserveScroll: true });
       }
     }, 60000);
   }
 
-  function paintMeetingsBoard(leftData, rightData) {
+  function paintMeetingsBoard(leftData, rightData, reminders) {
     var dual = isDesktopLayout();
+    if (reminders !== undefined) lastRemindersItems = reminders || [];
     lastMeetingsLeft = leftData || { events: [] };
     lastMeetingsRight = dual ? rightData || { events: [], date: addDaysIso((leftData && leftData.date) || meetingsPageDate, 1) } : null;
     var leftIso = (leftData && leftData.date) || "";
     var rightIso = lastMeetingsRight && lastMeetingsRight.date;
     syncMeetingsHead(leftIso, rightIso);
-    paintMeetingsList(meetingsUiMain, lastMeetingsLeft);
-    if (dual) paintMeetingsList(meetingsUiNext, lastMeetingsRight);
+    paintMeetingsList(meetingsUiMain, lastMeetingsLeft, lastRemindersItems);
+    if (dual) paintMeetingsList(meetingsUiNext, lastMeetingsRight, lastRemindersItems);
     updateMeetingsBadge(lastMeetingsLeft, dual ? lastMeetingsRight : null);
     ensureMeetingsNowTimer();
   }
@@ -6365,7 +6646,7 @@
       "</div>" +
       '<div class="event-sheet-link-row"></div>' +
       "</div>";
-    document.getElementById("m-ev-sum").value = ev.summary || "";
+    document.getElementById("m-ev-sum").value = meetingDisplayTitle(ev, { blank: true });
     document.getElementById("m-ev-start").value = isoToDatetimeLocalValue(
       sRaw || defaultDatetimeLocalValue(60)
     );
@@ -6505,6 +6786,37 @@
     });
     if (linkRow) linkRow.appendChild(telemostBtn);
     else fields.appendChild(telemostBtn);
+    if (meetingNeedsRsvp(ev)) {
+      var rsvpHost = document.createElement("div");
+      rsvpHost.className = "event-sheet-group event-sheet-rsvp-group";
+      var rsvpLab = document.createElement("div");
+      rsvpLab.className = "event-sheet-row-label";
+      rsvpLab.textContent = "Вы пойдёте?";
+      rsvpHost.appendChild(rsvpLab);
+      rsvpHost.appendChild(renderMeetingRsvpRow(ev));
+      var titleEl = document.getElementById("m-ev-sum");
+      if (titleEl && titleEl.parentNode) {
+        titleEl.parentNode.insertBefore(rsvpHost, titleEl.nextSibling);
+      } else if (fields.firstChild) {
+        fields.firstChild.insertBefore(rsvpHost, fields.firstChild.children[1] || null);
+      }
+    }
+    if (ev.meet_url) {
+      var joinBtn = document.createElement("button");
+      joinBtn.type = "button";
+      joinBtn.className = "btn join event-sheet-join";
+      joinBtn.textContent = "Присоединиться";
+      joinBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openExternal(ev.meet_url);
+      });
+      if (linkRow && linkRow.parentNode) {
+        linkRow.parentNode.insertBefore(joinBtn, linkRow);
+      } else {
+        fields.appendChild(joinBtn);
+      }
+    }
     document.getElementById("modal-delete").classList.toggle("hidden", !ev.id);
     document.getElementById("modal-overlay").classList.remove("hidden");
     document.getElementById("modal-overlay").setAttribute("aria-hidden", "false");
@@ -6692,6 +7004,14 @@
     return String(ev.self_response_status || "").toLowerCase() === "needsaction";
   }
 
+  function meetingDisplayTitle(ev, opts) {
+    var s = String((ev && ev.summary) || "")
+      .replace(/^\s*приглашение:\s*/i, "")
+      .trim();
+    if (s) return s;
+    return opts && opts.blank ? "" : "(без названия)";
+  }
+
   function renderMeetingRsvpRow(ev) {
     var row = document.createElement("div");
     row.className = "meeting-rsvp";
@@ -6716,7 +7036,11 @@
   }
 
   async function submitMeetingRsvp(ev, status, rowEl) {
-    if (!ev || !ev.id || ev._rsvpBusy) return;
+    if (!ev || !ev.id) {
+      window.alert("Не удалось сохранить ответ");
+      return;
+    }
+    if (ev._rsvpBusy) return;
     ev._rsvpBusy = true;
     if (rowEl) {
       rowEl.querySelectorAll("button").forEach(function (b) {
@@ -6725,17 +7049,15 @@
     }
     try {
       var calId = ev.calendar_id || "primary";
-      var res = await apiFetch(
+      await apiFetch(
         "/calendar/events/" + encodeURIComponent(ev.id) + "/rsvp",
         {
           method: "POST",
           body: JSON.stringify({ status: status, calendar_id: calId }),
         }
       );
-      if (status === "declined" || (res && res.declined)) {
-        await loadActual();
-        return;
-      }
+      closeModal();
+      ev._rsvpBusy = false;
       await loadActual();
     } catch (err) {
       ev._rsvpBusy = false;
@@ -6748,40 +7070,23 @@
     }
   }
 
-  function renderMeetingCard(ev, idx, total) {
-    const row = document.createElement("div");
-    row.className = "meeting-row";
-
-    const startT = formatEventTime(ev);
-    const endT = formatEventEndTime(ev);
-    const col = document.createElement("div");
-    col.className = "meeting-time-col";
-    col.innerHTML =
-      "<div>" +
-      startT +
-      "</div>" +
-      (endT
-        ? '<div class="meeting-time-end">' + endT + "</div>"
-        : "") +
-      '<div class="meeting-dot"></div>' +
-      (idx < total - 1 ? '<div class="meeting-line"></div>' : "");
+  function renderMeetingCard(ev, opts) {
+    opts = opts || {};
+    var heightPx = Number(opts.heightPx) || 0;
+    var short = heightPx > 0 && heightPx < 52;
+    var tiny = heightPx > 0 && heightPx < 36;
 
     const wrap = document.createElement("div");
-    wrap.className = "meeting-card-wrap";
+    wrap.className = "meeting-card-wrap meeting-card-wrap--timeline";
     const card = document.createElement("div");
-    card.className = "meeting-card";
-
-    const edit = document.createElement("button");
-    edit.type = "button";
-    edit.className = "meeting-card-edit-btn";
-    edit.setAttribute("aria-label", "Изменить");
-    edit.title = "Изменить";
-    edit.innerHTML =
-      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' +
-      '<path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />' +
-      "</svg>";
-    edit.addEventListener("click", function (e) {
-      e.stopPropagation();
+    card.className = "meeting-card meeting-card--timeline meeting-card--compact";
+    if (short) card.classList.add("meeting-card--timeline-short");
+    if (tiny) card.classList.add("meeting-card--timeline-tiny");
+    if (meetingNeedsRsvp(ev)) {
+      card.classList.add("meeting-card--timeline-pending");
+      card.title = "Не подтверждена — откройте, чтобы ответить";
+    }
+    card.addEventListener("click", function () {
       openEventModal(ev);
     });
 
@@ -6789,69 +7094,46 @@
     top.className = "meeting-card-top";
     const topLeft = document.createElement("div");
     topLeft.className = "meeting-card-top-left";
-    appendMeetingAttendeeAvatars(topLeft, ev);
-    var kindLabel = String(ev.kind || "").trim();
-    if (kindLabel && kindLabel !== "Встреча") {
-      const kind = document.createElement("span");
-      kind.className = "meeting-kind-badge";
-      kind.textContent = kindLabel;
-      topLeft.appendChild(kind);
-    }
+    if (!short) appendMeetingAttendeeAvatars(topLeft, ev);
 
     const title = document.createElement("div");
     title.className = "item-title";
-    const summary = ev.summary || "(без названия)";
-    if (ev.html_link) {
-      const link = document.createElement("a");
-      link.className = "item-title-link";
-      link.href = ev.html_link;
-      link.textContent = summary;
-      link.addEventListener("click", function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        openExternal(ev.html_link);
-      });
-      title.appendChild(link);
-    } else {
-      title.textContent = summary;
-    }
-
-    var compact = !topLeft.children.length;
-    if (compact) {
-      card.classList.add("meeting-card--compact");
-      topLeft.appendChild(title);
-    }
+    title.textContent = meetingDisplayTitle(ev);
+    topLeft.appendChild(title);
     top.appendChild(topLeft);
-    top.appendChild(edit);
-    card.appendChild(top);
-    if (!compact) card.appendChild(title);
 
-    if (meetingNeedsRsvp(ev)) {
-      card.appendChild(renderMeetingRsvpRow(ev));
-    } else if (ev.meet_url) {
+    if (ev.meet_url) {
       const join = document.createElement("button");
       join.type = "button";
-      join.className = "btn join";
-      join.textContent = "Присоединиться";
+      join.className = "meeting-card-edit-btn meeting-card-join-btn";
+      join.setAttribute("aria-label", "Присоединиться");
+      join.title = "Присоединиться";
+      join.innerHTML =
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<rect x="2" y="6" width="14" height="12" rx="2"/>' +
+        '<path d="M16 10l6-3v10l-6-3z"/>' +
+        "</svg>";
       join.addEventListener("click", function (e) {
+        e.preventDefault();
         e.stopPropagation();
         openExternal(ev.meet_url);
       });
-      card.appendChild(join);
+      top.appendChild(join);
     }
 
-    const swipe = wrapWithSwipeDelete(card, async function () {
-      const calId = ev.calendar_id || "primary";
-      const q = calId && calId !== "primary" ? "?calendar_id=" + encodeURIComponent(calId) : "";
-      await apiFetch("/calendar/events/" + encodeURIComponent(ev.id) + q, {
-        method: "DELETE",
-      });
-      await loadActual();
-    });
-    wrap.appendChild(swipe);
-    row.appendChild(col);
-    row.appendChild(wrap);
-    return row;
+    card.appendChild(top);
+
+    if (!tiny) {
+      const meta = document.createElement("div");
+      meta.className = "day-timeline-event-meta";
+      const startT = formatEventTime(ev);
+      const endT = formatEventEndTime(ev);
+      meta.textContent = startT + (endT ? "–" + endT : "");
+      card.appendChild(meta);
+    }
+
+    wrap.appendChild(card);
+    return wrap;
   }
 
   function paintActual(remData, calData, calDataNext) {
@@ -6910,7 +7192,7 @@
       });
     }
 
-    paintMeetingsBoard(calData, calDataNext);
+    paintMeetingsBoard(calData, calDataNext, active);
   }
 
   async function loadActual() {

@@ -3251,6 +3251,34 @@ def _miniapp_dev_mode_on() -> bool:
     )
 
 
+_LOCAL_DEV_RSVP: dict[str, str] = {}
+
+
+def _is_local_dev_event_id(event_id: str) -> bool:
+    return str(event_id or "").startswith("local-dev-ev-")
+
+
+def _apply_local_dev_rsvp(uid: int, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for ev in events or []:
+        if not isinstance(ev, dict):
+            continue
+        key = f"{int(uid)}:{ev.get('id')}"
+        st = _LOCAL_DEV_RSVP.get(key)
+        if st == "declined":
+            continue
+        item = dict(ev)
+        if st in ("accepted", "tentative"):
+            item["self_response_status"] = st
+            item["needs_rsvp"] = False
+        out.append(item)
+    return out
+
+
+def _local_dev_events_for(uid: int, day_iso: str, timezone_name: str) -> list[dict[str, Any]]:
+    return _apply_local_dev_rsvp(uid, _local_dev_calendar_events(day_iso, timezone_name))
+
+
 def _prepare_miniapp_voice_audio(
     data: bytes,
     filename: str,
@@ -3317,7 +3345,7 @@ def _local_dev_calendar_events(day_iso: str, timezone_name: str) -> list[dict[st
     specs = [
         (
             f"local-dev-ev-rsvp-{day_iso}",
-            "Приглашение: дизайн-ревью",
+            "Дизайн-ревью",
             "Google Meet",
             10,
             0,
@@ -3422,7 +3450,7 @@ def _calendar_today_payload(
                 "connected": True,
                 "date": day_iso,
                 "timezone": str(tz),
-                "events": _local_dev_calendar_events(day_iso, str(tz)),
+                "events": _local_dev_events_for(uid, day_iso, str(tz)),
                 "dev_fixtures": True,
             }
         return {
@@ -3445,7 +3473,7 @@ def _calendar_today_payload(
                 "connected": True,
                 "date": day_iso,
                 "timezone": str(tz),
-                "events": _local_dev_calendar_events(day_iso, str(tz)),
+                "events": _local_dev_events_for(uid, day_iso, str(tz)),
                 "dev_fixtures": True,
                 "error_ignored": err,
             }
@@ -3481,7 +3509,7 @@ def _calendar_today_payload(
 
         ser_sorted = sorted(ser, key=_sort_key)
         if not ser_sorted and _miniapp_dev_mode_on():
-            ser_sorted = _local_dev_calendar_events(day_iso, str(tz))
+            ser_sorted = _local_dev_events_for(uid, day_iso, str(tz))
         return {
             "connected": True,
             "date": day_iso,
@@ -4348,6 +4376,22 @@ async def miniapp_calendar_event_rsvp(
     if not eid:
         raise HTTPException(status_code=400, detail="Нет события")
     cal_id = str(body.calendar_id or "").strip() or "primary"
+
+    if _is_local_dev_event_id(eid) and _miniapp_dev_mode_on():
+        key = f"{int(principal.telegram_user_id)}:{eid}"
+        _LOCAL_DEV_RSVP[key] = status
+        if status == inv.RSVP_DECLINED:
+            return {"ok": True, "declined": True, "self_response_status": status}
+        return {
+            "ok": True,
+            "self_response_status": status,
+            "event": {
+                "id": eid,
+                "calendar_id": cal_id,
+                "self_response_status": status,
+                "needs_rsvp": False,
+            },
+        }
 
     def _run() -> dict[str, Any]:
         return inv.apply_invitee_rsvp(

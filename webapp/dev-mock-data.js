@@ -109,6 +109,12 @@
     return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
   }
 
+  function addYmd(ymd, days) {
+    var d = new Date(ymd + "T12:00:00");
+    d.setDate(d.getDate() + Number(days || 0));
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+
   function isoLocal(dateYmd, hour, minute) {
     return dateYmd + "T" + pad2(hour) + ":" + pad2(minute) + ":00+03:00";
   }
@@ -145,6 +151,12 @@
         id: "dev-mock-rem-2",
         task: "Позвонить в сервисный центр",
         when_iso: isoLocal(today, 15, 30),
+        done: false,
+      },
+      {
+        id: "dev-mock-rem-3",
+        task: "Забрать документы",
+        when_iso: isoLocal(today, 9, 0),
         done: false,
       },
     ];
@@ -187,7 +199,7 @@
         {
           id: prefix + "rsvp",
           calendar_id: "primary",
-          summary: "Приглашение: дизайн-ревью",
+          summary: "Дизайн-ревью",
           kind: "Google Meet",
           start: { dateTime: isoLocal(dateYmd, t0.h, t0.m) },
           end: { dateTime: isoLocal(dateYmd, addMinutes(t0.h, t0.m, 30).h, addMinutes(t0.h, t0.m, 30).m) },
@@ -201,7 +213,7 @@
         {
           id: prefix + "maybe",
           calendar_id: "primary",
-          summary: "Приглашение: созвон с клиентом",
+          summary: "Созвон с клиентом",
           kind: "Zoom",
           start: { dateTime: isoLocal(dateYmd, t1.h, t1.m) },
           end: { dateTime: isoLocal(dateYmd, addMinutes(t1.h, t1.m, 30).h, addMinutes(t1.h, t1.m, 30).m) },
@@ -232,6 +244,27 @@
           start: { dateTime: isoLocal(dateYmd, 12, 0) },
           end: { dateTime: isoLocal(dateYmd, 13, 0) },
           location: "Кафе на Тверской",
+          is_organizer: true,
+          needs_rsvp: false,
+        },
+        {
+          id: prefix + "overlap",
+          calendar_id: "primary",
+          summary: "Созвон с дизайнером",
+          kind: "Google Meet",
+          start: { dateTime: isoLocal(dateYmd, 12, 30) },
+          end: { dateTime: isoLocal(dateYmd, 13, 30) },
+          meet_url: "https://meet.google.com/des-ign-call",
+          is_organizer: true,
+          needs_rsvp: false,
+        },
+        {
+          id: prefix + "allday",
+          calendar_id: "primary",
+          summary: "День рождения Маши",
+          kind: "Встреча",
+          start: { date: dateYmd },
+          end: { date: addYmd(dateYmd, 1) },
           is_organizer: true,
           needs_rsvp: false,
         },
@@ -336,12 +369,39 @@
     });
   }
 
+  var rsvpOverrides = {};
+
   function isMockReminderId(id) {
     return String(id || "").indexOf("dev-mock-rem-") === 0;
   }
 
   function isMockEventId(id) {
     return String(id || "").indexOf("dev-mock-ev-") === 0;
+  }
+
+  function isDevCalendarEventId(id) {
+    var s = String(id || "");
+    return s.indexOf("dev-mock-ev-") === 0 || s.indexOf("local-dev-ev-") === 0;
+  }
+
+  function eventSlotKey(ev) {
+    var title = String((ev && ev.summary) || "")
+      .replace(/^\s*приглашение:\s*/i, "")
+      .trim()
+      .toLowerCase();
+    var start = (ev && ev.start && (ev.start.dateTime || ev.start.date)) || "";
+    return title + "|" + start;
+  }
+
+  function applyRsvpOverride(ev) {
+    if (!ev) return ev;
+    var st = rsvpOverrides[ev.id];
+    if (!st) return ev;
+    if (st === "declined") return null;
+    var copy = Object.assign({}, ev);
+    copy.self_response_status = st;
+    copy.needs_rsvp = false;
+    return copy;
   }
 
   function isMockJournalId(id) {
@@ -381,13 +441,24 @@
     if (!eventsByDate[date]) {
       eventsByDate[date] = eventsByDate[todayYmd()] || [];
     }
-    var events = (data && data.events) ? data.events.slice() : [];
+    var events = ((data && data.events) ? data.events.slice() : [])
+      .map(applyRsvpOverride)
+      .filter(Boolean);
     var seen = {};
+    var slotSeen = {};
     events.forEach(function (ev) {
       seen[ev.id] = true;
+      slotSeen[eventSlotKey(ev)] = true;
     });
     eventsByDate[date].forEach(function (ev) {
-      if (!seen[ev.id]) events.push(ev);
+      if (seen[ev.id]) return;
+      var patched = applyRsvpOverride(ev);
+      if (!patched) return;
+      var slot = eventSlotKey(patched);
+      if (slotSeen[slot]) return;
+      events.push(patched);
+      seen[patched.id] = true;
+      slotSeen[slot] = true;
     });
     events.sort(function (a, b) {
       var as = (a.start && (a.start.dateTime || a.start.date)) || "";
@@ -526,7 +597,7 @@
     }
 
     var rsvpMatch = basePath.match(/^\/calendar\/events\/([^/]+)\/rsvp$/);
-    if (rsvpMatch && isMockEventId(rsvpMatch[1]) && method === "POST") {
+    if (rsvpMatch && isDevCalendarEventId(rsvpMatch[1]) && method === "POST") {
       var rsvpId = decodeURIComponent(rsvpMatch[1]);
       var rsvpBody = {};
       try {
@@ -540,6 +611,7 @@
         throw new Error("Укажите ответ: accepted, tentative или declined");
       }
       var foundEv = null;
+      rsvpOverrides[rsvpId] = rsvpStatus;
       Object.keys(eventsByDate).forEach(function (d) {
         eventsByDate[d] = eventsByDate[d].filter(function (ev) {
           if (ev.id !== rsvpId) return true;
@@ -554,7 +626,9 @@
       if (rsvpStatus === "declined") {
         return { ok: true, declined: true, self_response_status: rsvpStatus };
       }
-      if (!foundEv) throw new Error("Встреча не найдена");
+      if (!foundEv) {
+        return { ok: true, self_response_status: rsvpStatus };
+      }
       return { ok: true, event: foundEv };
     }
 
