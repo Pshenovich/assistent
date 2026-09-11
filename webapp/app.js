@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260910-rem-title";
+  var WEBAPP_BUILD = "20260911-discuss-scroll";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260910-rem-title";
+  const NOTE_EDITOR_ASSET_V = "20260911-discuss-scroll";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -9279,24 +9279,24 @@
     var cs = window.getComputedStyle(el);
     var padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
     var minSingle = Math.round(line + Math.max(padY, 8));
-    var minMulti = Math.round(line * 2 + 6);
+    var minMulti = Math.round(line * 2 + padY);
     var maxH = 136;
     el.classList.remove("is-multiline");
     el.classList.remove("is-overflowing");
     el.style.height = "auto";
     var value = el.value || "";
-    var valueWraps = value.indexOf("\n") >= 0 || el.scrollHeight > minSingle + 1;
+    var valueHasBreak = value.indexOf("\n") >= 0;
+    var valueWraps = valueHasBreak || (!!value && el.scrollHeight > minSingle + 1);
     var placeholderWraps = composerPlaceholderWraps(el);
-    var multiline = valueWraps || placeholderWraps;
-    if (!multiline) {
-      el.style.height = Math.min(Math.max(el.scrollHeight, minSingle), maxH) + "px";
+    if (!valueWraps) {
+      var singleH = Math.max(el.scrollHeight, minSingle);
+      if (!value && placeholderWraps) singleH = Math.max(singleH, minMulti);
+      el.style.height = Math.min(singleH, maxH) + "px";
       return;
     }
     el.classList.add("is-multiline");
     el.style.height = "auto";
-    var h = el.scrollHeight;
-    if (!value && placeholderWraps) h = Math.max(h, minMulti);
-    h = Math.max(h, minMulti);
+    var h = Math.max(el.scrollHeight, minMulti);
     if (h > maxH) {
       h = maxH;
       el.classList.add("is-overflowing");
@@ -9939,16 +9939,19 @@
     if (api && api.topicRoot) rootC = api.topicRoot(comments, comment.id) || comment;
     if (panel && rootC && rootC.id) panel._activeCommentId = rootC.id;
     var wrap = document.getElementById("note-editor-more-wrap");
-    if (wrap) wrap._discussionPinId = rootC && rootC.id;
     paintEditorCommentOverlay(comments, rootC && rootC.id);
+    if (opts.fromDiscussion) {
+      if (wrap) wrap._discussionPinId = null;
+      highlightDiscussionMessage(comment && comment.id);
+      scrollNoteToQuote(rootC || comment);
+      if (!isDesktopLayout()) closeNoteDiscussion(true);
+      return;
+    }
+    if (wrap) wrap._discussionPinId = rootC && rootC.id;
     openNoteDiscussion({
       focus: false,
       scrollToId: rootC && rootC.id,
     });
-    if (opts.fromDiscussion) {
-      scrollNoteToQuote(rootC || comment);
-      if (!isDesktopLayout()) closeNoteDiscussion(true);
-    }
   }
 
   function ruMessageCount(n) {
@@ -11075,6 +11078,7 @@
     var history = gptHistoryFromComments((panel && panel._allComments) || []);
     wrap._gptBusy = true;
     wrap._gptPhase = "sending";
+    wrap._discussionPinId = null;
     syncNotePaieReplyForm(true);
     var input = document.getElementById("note-paie-reply-input");
     if (input) input.value = "";
@@ -11181,6 +11185,7 @@
     var draft =
       wrap._commentDraft ||
       (api && api.selectionAnchor ? api.selectionAnchor(noteEditorCommentRoot()) : null);
+    wrap._discussionPinId = null;
     var input = document.getElementById("note-paie-reply-input");
     try {
       var fileIds = await uploadDiscussPendingFiles(wrap._shareKind, wrap._shareId);

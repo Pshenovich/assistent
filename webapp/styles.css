@@ -8387,10 +8387,17 @@ html.modal-sheet-open body {
 @media (min-width: 960px) {
   #note-paie-reply-input,
   #note-discussion-overlay .note-paie-composer-input,
-  #note-discussion-overlay .note-paie-reply-form .note-comments-input,
+  #note-discussion-overlay .note-paie-reply-form .note-comments-input {
+    padding-top: 10px;
+    padding-right: 4px;
+    padding-bottom: 10px;
+    padding-left: 4px;
+  }
+
   #note-paie-reply-input.is-multiline,
   #note-discussion-overlay .note-paie-composer-input.is-multiline,
   #note-discussion-overlay .note-paie-reply-form .note-comments-input.is-multiline {
+    padding-top: 4px;
     padding-right: 4px;
     padding-bottom: 4px;
     padding-left: 4px;
@@ -8854,9 +8861,16 @@ html.modal-sheet-open body {
   }
 
   #note-paie-reply-input,
-  #note-discussion-overlay .note-paie-composer-input,
+  #note-discussion-overlay .note-paie-composer-input {
+    padding-top: 10px;
+    padding-right: 4px;
+    padding-bottom: 10px;
+    padding-left: 4px;
+  }
+
   #note-paie-reply-input.is-multiline,
   #note-discussion-overlay .note-paie-composer-input.is-multiline {
+    padding-top: 4px;
     padding-right: 4px;
     padding-bottom: 4px;
     padding-left: 4px;
@@ -9459,11 +9473,18 @@ html.modal-sheet-open body {
   }
 
   #note-discussion-overlay #note-paie-reply-input,
-  #note-discussion-overlay .note-paie-composer-input,
+  #note-discussion-overlay .note-paie-composer-input {
+    padding-top: 10px !important;
+    padding-right: 4px !important;
+    padding-bottom: 10px !important;
+    padding-left: 4px !important;
+  }
+
   #note-discussion-overlay #note-paie-reply-input.is-multiline,
   #note-discussion-overlay .note-paie-composer-input.is-multiline {
-    padding-left: 4px !important;
+    padding-top: 4px !important;
     padding-right: 4px !important;
     padding-bottom: 4px !important;
+    padding-left: 4px !important;
   }
 }
