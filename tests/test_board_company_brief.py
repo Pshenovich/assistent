@@ -274,6 +274,63 @@ class CompanyBriefTest(unittest.TestCase):
         notes_store._CONN = None  # type: ignore[attr-defined]
         tmp.cleanup()
 
+    def test_attach_knowledge_note_filters_by_ids(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from assistant.board.context import (
+            attach_knowledge_note,
+            meeting_include_knowledge,
+            meeting_knowledge_note_ids,
+        )
+        from assistant.stores import notes as notes_store
+
+        tmp = tempfile.TemporaryDirectory()
+        os.environ["NOTES_DB_PATH"] = str(Path(tmp.name) / "notes.sqlite")
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        products = notes_store.create_note(
+            21,
+            "Продукты",
+            "<p>Боты 10 рублей</p>",
+            role=notes_store.KNOWLEDGE_ROLE,
+        )
+        processes = notes_store.create_note(
+            21,
+            "Процессы",
+            "<p>Онбординг ведёт наставник</p>",
+            role=notes_store.KNOWLEDGE_ROLE,
+        )
+        secret = notes_store.create_note(
+            21, "Секрет", "<p>Нельзя по умолчанию</p>", role=notes_store.KNOWLEDGE_ROLE
+        )
+        notes_store.update_note(21, secret["id"], kb_enabled=False)
+        picked = attach_knowledge_note(
+            None, 21, note_ids=[str(products["id"]), str(secret["id"])]
+        )
+        self.assertIsNotNone(picked)
+        names = {d["filename"] for d in picked["_documents"]}
+        self.assertEqual(names, {"Продукты", "Секрет"})
+        empty = attach_knowledge_note(None, 21, note_ids=[])
+        self.assertIsNone(empty)
+        only_off = attach_knowledge_note(None, 21, note_ids=[str(processes["id"])])
+        self.assertEqual({d["filename"] for d in only_off["_documents"]}, {"Процессы"})
+        self.assertEqual(
+            meeting_knowledge_note_ids(
+                {"extra_instruction": f"[knowledge_ids:{products['id']},{secret['id']}]"}
+            ),
+            [str(products["id"]), str(secret["id"])],
+        )
+        self.assertEqual(meeting_knowledge_note_ids({"extra_instruction": "[knowledge:off]"}), [])
+        self.assertIsNone(meeting_knowledge_note_ids({"extra_instruction": ""}))
+        self.assertFalse(meeting_include_knowledge({"extra_instruction": "[knowledge:off]"}))
+        self.assertTrue(
+            meeting_include_knowledge(
+                {"extra_instruction": f"[knowledge_ids:{products['id']}]"}
+            )
+        )
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        tmp.cleanup()
+
     def test_budget_param_caps_brief(self) -> None:
         fat = CATALOG + (" подробности тарифа и роадмапа. " * 400)
         pack = {

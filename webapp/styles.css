@@ -4272,6 +4272,11 @@ html.note-editor-open #note-editor-overlay {
   box-shadow: inset 3px 0 0 var(--note-composer-accent, var(--accent));
 }
 
+.note-paie-kb-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
 .note-paie-kb-toggle {
   display: inline-flex;
   align-items: center;
@@ -4303,6 +4308,7 @@ html.note-editor-open #note-editor-overlay {
   display: none;
 }
 
+.note-paie-reply-form.is-comment-mode .note-paie-kb-wrap,
 .note-paie-reply-form.is-comment-mode .note-paie-kb-toggle {
   display: none;
 }
@@ -4650,6 +4656,40 @@ html.note-editor-open #note-editor-overlay {
 .note-paie-menu--models {
   min-width: 220px;
   max-height: 280px;
+}
+
+.note-paie-menu--kb {
+  left: auto;
+  right: 0;
+  min-width: 240px;
+  max-width: min(320px, 85vw);
+  max-height: 280px;
+}
+
+.note-paie-kb-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.note-paie-kb-item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-paie-kb-item .svc-toggle {
+  width: 2.4rem;
+  height: 1.35rem;
+  padding: 0.1rem;
+}
+
+.note-paie-kb-item .svc-toggle-knob {
+  width: 1.1rem;
+  height: 1.1rem;
 }
 
 .note-paie-model-search {

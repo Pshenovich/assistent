@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260911-discuss-scroll";
+  var WEBAPP_BUILD = "20260918-kb-picker";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260911-discuss-scroll";
+  const NOTE_EDITOR_ASSET_V = "20260918-kb-picker";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -5046,6 +5046,7 @@
       }
     }
     syncKnowledgeCreateFab();
+    syncNoteKnowledgeToggle();
   }
 
   function openNewKnowledgeNote() {
@@ -9097,9 +9098,13 @@
       '<input type="search" class="note-paie-model-search" placeholder="Поиск модели" autocomplete="off">' +
       '<div class="note-paie-menu-list"></div>' +
       "</div></div>" +
-      '<button type="button" class="note-paie-kb-toggle is-on" aria-pressed="true" title="База знаний">' +
+      '<div class="note-paie-kb-wrap">' +
+      '<button type="button" class="note-paie-kb-toggle is-on" aria-haspopup="true" aria-expanded="false" aria-pressed="true" title="База знаний">' +
       noteKnowledgeIconHtml() +
       "</button>" +
+      '<div class="note-paie-menu note-paie-menu--kb hidden" role="menu">' +
+      '<div class="note-paie-menu-list"></div>' +
+      "</div></div>" +
       '<button type="submit" class="note-paie-send" id="note-paie-reply-submit" disabled aria-label="Отправить">' +
       '<img class="note-paie-send-icon" src="' +
       arrow +
@@ -9141,7 +9146,7 @@
       if (except && menu === except) return;
       menu.classList.add("hidden");
     });
-    form.querySelectorAll(".note-paie-mode-compact, .note-paie-model-btn").forEach(function (btn) {
+    form.querySelectorAll(".note-paie-mode-compact, .note-paie-model-btn, .note-paie-kb-toggle").forEach(function (btn) {
       btn.classList.remove("is-open");
       btn.setAttribute("aria-expanded", "false");
     });
@@ -9554,7 +9559,7 @@
 
   function bindNotePaieReplyForm(threadEl) {
     var form = document.getElementById("note-paie-reply-form");
-    if (!form || !form.querySelector("#note-paie-attach")) {
+    if (!form || !form.querySelector("#note-paie-attach") || !form.querySelector(".note-paie-kb-wrap")) {
       var html = notePaieReplyFormHtml();
       if (form) form.outerHTML = html;
       else if (threadEl) threadEl.insertAdjacentHTML("beforeend", html);
@@ -9647,6 +9652,12 @@
     }
     if (modelMenu) {
       modelMenu.addEventListener("click", function (e) {
+        e.stopPropagation();
+      });
+    }
+    var kbMenu = form.querySelector(".note-paie-menu--kb");
+    if (kbMenu) {
+      kbMenu.addEventListener("click", function (e) {
         e.stopPropagation();
       });
     }
@@ -10757,31 +10768,178 @@
     return "leo_note_kb:" + wrap._shareKind + ":" + wrap._shareId;
   }
 
+  function noteKnowledgeIdsStorageKey() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || !wrap._shareKind || !wrap._shareId) return "";
+    return "leo_note_kb_ids:" + wrap._shareKind + ":" + wrap._shareId;
+  }
+
+  function knowledgeNotesList() {
+    return (knowledgeDataCache && knowledgeDataCache.notes) || [];
+  }
+
+  function allKnowledgeNoteIds() {
+    return knowledgeNotesList()
+      .map(function (n) {
+        return n && n.id != null ? String(n.id) : "";
+      })
+      .filter(Boolean);
+  }
+
+  function readStoredKnowledgeNoteIds() {
+    var idsKey = noteKnowledgeIdsStorageKey();
+    if (idsKey) {
+      try {
+        var raw = localStorage.getItem(idsKey);
+        if (raw != null && raw !== "") {
+          var parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            return {
+              explicit: true,
+              ids: parsed
+                .map(function (id) {
+                  return String(id || "").trim();
+                })
+                .filter(Boolean),
+            };
+          }
+        }
+      } catch (_) {}
+    }
+    var oldKey = noteKnowledgeStorageKey();
+    if (oldKey) {
+      try {
+        var legacy = localStorage.getItem(oldKey);
+        if (legacy === "0") return { explicit: true, ids: [] };
+        if (legacy === "1") return { explicit: false, ids: [] };
+      } catch (_) {}
+    }
+    return { explicit: false, ids: [] };
+  }
+
+  function noteKnowledgeNoteIds() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap && Array.isArray(wrap._knowledgeNoteIds)) return wrap._knowledgeNoteIds.slice();
+    var stored = readStoredKnowledgeNoteIds();
+    if (stored.explicit) return stored.ids.slice();
+    return allKnowledgeNoteIds();
+  }
+
+  function setNoteKnowledgeNoteIds(ids) {
+    var next = (ids || [])
+      .map(function (id) {
+        return String(id || "").trim();
+      })
+      .filter(Boolean);
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) wrap._knowledgeNoteIds = next;
+    var idsKey = noteKnowledgeIdsStorageKey();
+    if (idsKey) {
+      try {
+        localStorage.setItem(idsKey, JSON.stringify(next));
+      } catch (_) {}
+    }
+    var oldKey = noteKnowledgeStorageKey();
+    if (oldKey) {
+      try {
+        localStorage.setItem(oldKey, next.length ? "1" : "0");
+      } catch (_) {}
+    }
+    syncNoteKnowledgeToggle();
+    renderNoteKnowledgeMenu();
+  }
+
+  function toggleNoteKnowledgeNoteId(id) {
+    id = String(id || "").trim();
+    if (!id) return;
+    var current = noteKnowledgeNoteIds();
+    var next =
+      current.indexOf(id) >= 0
+        ? current.filter(function (x) {
+            return x !== id;
+          })
+        : current.concat([id]);
+    setNoteKnowledgeNoteIds(next);
+  }
+
   function noteUsesKnowledge() {
     var wrap = document.getElementById("note-editor-more-wrap");
-    if (wrap && typeof wrap._useKnowledge === "boolean") return wrap._useKnowledge;
-    var key = noteKnowledgeStorageKey();
-    if (key) {
-      try {
-        var raw = localStorage.getItem(key);
-        if (raw === "0") return false;
-        if (raw === "1") return true;
-      } catch (_) {}
+    if (wrap && Array.isArray(wrap._knowledgeNoteIds)) return wrap._knowledgeNoteIds.length > 0;
+    var stored = readStoredKnowledgeNoteIds();
+    if (stored.explicit) return stored.ids.length > 0;
+    if (knowledgeDataCache && Array.isArray(knowledgeDataCache.notes)) {
+      return allKnowledgeNoteIds().length > 0;
     }
     return true;
   }
 
-  function setNoteUsesKnowledge(on) {
-    var next = !!on;
-    var wrap = document.getElementById("note-editor-more-wrap");
-    if (wrap) wrap._useKnowledge = next;
-    var key = noteKnowledgeStorageKey();
-    if (key) {
-      try {
-        localStorage.setItem(key, next ? "1" : "0");
-      } catch (_) {}
+  function discussionKnowledgeFields() {
+    var ids = noteKnowledgeNoteIds();
+    return { use_knowledge: ids.length > 0, knowledge_note_ids: ids };
+  }
+
+  function ensureDiscussionKnowledgeNotes() {
+    if (knowledgeDataCache && Array.isArray(knowledgeDataCache.notes)) {
+      return Promise.resolve(knowledgeDataCache.notes);
     }
-    syncNoteKnowledgeToggle();
+    return Promise.resolve(loadKnowledgeNotes())
+      .then(function () {
+        return (knowledgeDataCache && knowledgeDataCache.notes) || [];
+      })
+      .catch(function () {
+        return [];
+      });
+  }
+
+  function knowledgeNoteMenuTitle(n) {
+    return (
+      sanitizeNoteTitle((n && (n.title || n.content)) || "") ||
+      ((n && (n.title || n.content)) || "(без названия)")
+    );
+  }
+
+  function renderNoteKnowledgeMenu() {
+    var form = document.getElementById("note-paie-reply-form");
+    var list = form && form.querySelector(".note-paie-menu--kb .note-paie-menu-list");
+    if (!list) return;
+    list.innerHTML = "";
+    var notes = knowledgeNotesList();
+    if (!notes.length) {
+      var empty = document.createElement("p");
+      empty.className = "note-paie-menu-empty";
+      empty.textContent = knowledgeDataCache ? "Нет документов в базе знаний" : "Загрузка…";
+      list.appendChild(empty);
+      return;
+    }
+    var selected = {};
+    noteKnowledgeNoteIds().forEach(function (id) {
+      selected[id] = true;
+    });
+    notes.forEach(function (n) {
+      var id = n && n.id != null ? String(n.id) : "";
+      if (!id) return;
+      var on = !!selected[id];
+      var row = document.createElement("button");
+      row.type = "button";
+      row.className = "note-paie-menu-item note-paie-kb-item";
+      row.setAttribute("role", "menuitemcheckbox");
+      row.setAttribute("aria-checked", on ? "true" : "false");
+      var title = document.createElement("span");
+      title.className = "note-paie-kb-item-title";
+      title.textContent = knowledgeNoteMenuTitle(n);
+      var toggle = document.createElement("span");
+      toggle.className = "svc-toggle" + (on ? " svc-toggle--on" : "");
+      toggle.setAttribute("aria-hidden", "true");
+      toggle.innerHTML = '<span class="svc-toggle-knob"></span>';
+      row.appendChild(title);
+      row.appendChild(toggle);
+      row.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleNoteKnowledgeNoteId(id);
+      });
+      list.appendChild(row);
+    });
   }
 
   function syncNoteKnowledgeToggle() {
@@ -10789,15 +10947,20 @@
     var btn = form && form.querySelector(".note-paie-kb-toggle");
     if (!btn) return;
     var on = noteUsesKnowledge();
+    var menu = form.querySelector(".note-paie-menu--kb");
+    var open = !!(menu && !menu.classList.contains("hidden"));
     btn.classList.toggle("is-on", on);
+    btn.classList.toggle("is-open", open);
     btn.setAttribute("aria-pressed", on ? "true" : "false");
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
     btn.title = on
-      ? "База знаний включена. Нажмите, чтобы выключить"
-      : "База знаний выключена. Нажмите, чтобы включить";
+      ? "База знаний: выбраны документы для контекста"
+      : "База знаний: ничего не выбрано";
   }
 
   function bindNoteKnowledgeToggle(form) {
     var btn = form && form.querySelector(".note-paie-kb-toggle");
+    var menu = form && form.querySelector(".note-paie-menu--kb");
     if (!btn || btn._bound) {
       syncNoteKnowledgeToggle();
       return;
@@ -10806,7 +10969,20 @@
     btn.addEventListener("click", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      setNoteUsesKnowledge(!noteUsesKnowledge());
+      var open = menu && menu.classList.contains("hidden");
+      closeNoteComposerMenus(open ? menu : null);
+      if (menu && open) {
+        menu.classList.remove("hidden");
+        btn.classList.add("is-open");
+        btn.setAttribute("aria-expanded", "true");
+        renderNoteKnowledgeMenu();
+        ensureDiscussionKnowledgeNotes().then(function () {
+          renderNoteKnowledgeMenu();
+          syncNoteKnowledgeToggle();
+        });
+      }
+      syncNoteKnowledgeToggle();
+      syncNoteFormatToolbarForComposer();
     });
     syncNoteKnowledgeToggle();
   }
@@ -11108,6 +11284,8 @@
       await refreshNoteCommentsList();
       setGptDiscussPhase("thinking");
       var noteCtx = activeNoteGptContext();
+      await ensureDiscussionKnowledgeNotes();
+      var kb = discussionKnowledgeFields();
       var res = await apiFetch("/gpt/chat", {
         method: "POST",
         body: JSON.stringify({
@@ -11115,7 +11293,8 @@
           note_title: noteCtx.title,
           note_text: noteCtx.text,
           quote: quote || undefined,
-          use_knowledge: !!noteUsesKnowledge(),
+          use_knowledge: kb.use_knowledge,
+          knowledge_note_ids: kb.knowledge_note_ids,
           history: history,
           model: selectedGptModelId() || undefined,
           file_ids: fileIds,
@@ -11412,10 +11591,13 @@
     ensureNotePaieThread();
     openNoteDiscussion({ mode: "paie" });
     setNotePaeiStatus("Анализ заметки…", { label: "Анализ заметки…", pct: 10 });
-    apiFetch(path, {
-      method: "POST",
-      body: JSON.stringify({ use_knowledge: noteUsesKnowledge() }),
-    })
+    ensureDiscussionKnowledgeNotes()
+      .then(function () {
+        return apiFetch(path, {
+          method: "POST",
+          body: JSON.stringify(discussionKnowledgeFields()),
+        });
+      })
       .then(function (data) {
         var status = (data && data.status) || "running";
         if (status === "done") {
@@ -11482,16 +11664,23 @@
       submit.classList.remove("is-ready");
       submit.setAttribute("aria-label", "CHAIR отвечает…");
     }
-    apiFetch(path, {
-      method: "POST",
-      body: JSON.stringify({
-        reply: body,
-        parent_id: rootId,
-        reply_to_id: replyToId,
-        quote: (draft && draft.quote) || "",
-        use_knowledge: noteUsesKnowledge(),
-      }),
-    })
+    ensureDiscussionKnowledgeNotes()
+      .then(function () {
+        return apiFetch(path, {
+          method: "POST",
+          body: JSON.stringify(
+            Object.assign(
+              {
+                reply: body,
+                parent_id: rootId,
+                reply_to_id: replyToId,
+                quote: (draft && draft.quote) || "",
+              },
+              discussionKnowledgeFields()
+            )
+          ),
+        });
+      })
       .then(function (data) {
         if (input) input.value = "";
         clearNoteComposerCommentTarget();

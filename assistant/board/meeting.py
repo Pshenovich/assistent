@@ -8,7 +8,11 @@ from typing import Any
 
 from assistant.board import events, store
 from assistant.board.company_brief import format_company_context
-from assistant.board.context import load_company_pack, meeting_include_knowledge
+from assistant.board.context import (
+    load_company_pack,
+    meeting_include_knowledge,
+    meeting_knowledge_note_ids,
+)
 from assistant.board.decision import DecisionService
 from assistant.board.engine import is_shallow_response
 from assistant.board.memory import find_related_decisions
@@ -182,6 +186,7 @@ class MeetingService:
                 str(meeting["company_id"]) if meeting.get("company_id") else None,
                 user_id=meeting.get("user_id"),
                 include_knowledge=meeting_include_knowledge(meeting),
+                knowledge_note_ids=meeting_knowledge_note_ids(meeting),
             )
             company_brief = format_company_context(
                 company_pack, query=str(meeting.get("original_question") or "")

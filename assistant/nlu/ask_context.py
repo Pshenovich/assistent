@@ -24,6 +24,7 @@ def pack_knowledge_brief(
     query: str,
     *,
     budget: int = KB_BUDGET,
+    note_ids: list[str] | None = None,
 ) -> tuple[str, str]:
     """Бриф БЗ + knowledge_version. Без дополнительного LLM-вызова."""
     from assistant.board.company_brief import format_company_context
@@ -31,7 +32,7 @@ def pack_knowledge_brief(
     from assistant.stores import notes as notes_store
 
     version = notes_store.knowledge_version(user_id)
-    pack = attach_knowledge_note(None, user_id)
+    pack = attach_knowledge_note(None, user_id, note_ids=note_ids)
     if not pack:
         return "", version
     brief = format_company_context(pack, query=query or "", budget=budget).strip()

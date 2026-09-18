@@ -156,6 +156,19 @@ def _progress_view(raw: dict[str, Any] | None) -> dict[str, Any]:
     return p
 
 
+def _knowledge_instruction_prefix(
+    use_knowledge: bool, note_ids: list[str] | None
+) -> str:
+    if note_ids is not None:
+        cleaned = [str(x).strip() for x in note_ids if str(x).strip()]
+        if not cleaned:
+            return "[knowledge:off]\n"
+        return "[knowledge_ids:" + ",".join(cleaned) + "]\n"
+    if not use_knowledge:
+        return "[knowledge:off]\n"
+    return ""
+
+
 def begin_job(
     user_id: int | str,
     kind: str,
@@ -164,6 +177,7 @@ def begin_job(
     reply: str = "",
     parent_id: int | None = None,
     use_knowledge: bool = True,
+    knowledge_note_ids: list[str] | None = None,
     quote: str = "",
     reply_to_id: int | None = None,
 ) -> tuple[dict[str, Any], bool]:
@@ -188,7 +202,14 @@ def begin_job(
             "parent_id": parent_id,
             "quote": (quote or "").strip(),
             "reply_to_id": reply_to_id,
-            "use_knowledge": bool(use_knowledge),
+            "use_knowledge": bool(use_knowledge)
+            if knowledge_note_ids is None
+            else bool(knowledge_note_ids),
+            "knowledge_note_ids": (
+                [str(x).strip() for x in knowledge_note_ids if str(x).strip()]
+                if knowledge_note_ids is not None
+                else None
+            ),
             "progress": _progress_view(
                 {
                     "phase": "ANALYZING",
@@ -385,6 +406,7 @@ async def run_note_paei(
     reply: str = "",
     parent_id: int | None = None,
     use_knowledge: bool = True,
+    knowledge_note_ids: list[str] | None = None,
     quote: str = "",
     reply_to_id: int | None = None,
 ) -> dict[str, Any]:
@@ -392,6 +414,9 @@ async def run_note_paei(
     title, body = load_note_for_paei(user_id, kind, item_id)
     excerpt = _clip_prompt((body or "").strip() or "(пустая заметка)", NOTE_BODY_LIMIT)
     reply_text = (reply or "").strip()
+    if knowledge_note_ids is not None:
+        knowledge_note_ids = [str(x).strip() for x in knowledge_note_ids if str(x).strip()]
+        use_knowledge = bool(knowledge_note_ids)
     comments = share_comments.list_comments(user_id, kind, item_id)
     root_id = parent_id or share_comments.paie_thread_root_id(comments)
     if reply_text:
@@ -432,8 +457,7 @@ async def run_note_paei(
             extra += " Не подмешивай вкладку «База знаний»."
         heading = "PAIE · решение CHAIR"
         root_id = None
-    if not use_knowledge:
-        extra = "[knowledge:off]\n" + extra
+    extra = _knowledge_instruction_prefix(use_knowledge, knowledge_note_ids) + extra
     svc = MeetingService(
         publisher=NullPublisher(), provider=provider, on_progress=on_progress
     )
@@ -486,6 +510,7 @@ async def run_note_paei_job(
     reply: str = "",
     parent_id: int | None = None,
     use_knowledge: bool = True,
+    knowledge_note_ids: list[str] | None = None,
     quote: str = "",
     reply_to_id: int | None = None,
 ) -> None:
@@ -495,7 +520,15 @@ async def run_note_paei_job(
     thread_parent = parent_id if parent_id is not None else job.get("parent_id")
     quote_text = (quote or job.get("quote") or "").strip()
     target_id = reply_to_id if reply_to_id is not None else job.get("reply_to_id")
-    if "use_knowledge" in job:
+    if "knowledge_note_ids" in job and job.get("knowledge_note_ids") is not None:
+        raw_ids = job.get("knowledge_note_ids")
+        knowledge_note_ids = (
+            [str(x).strip() for x in raw_ids if str(x).strip()]
+            if isinstance(raw_ids, list)
+            else []
+        )
+        use_knowledge = bool(knowledge_note_ids)
+    elif "use_knowledge" in job:
         use_knowledge = bool(job.get("use_knowledge"))
     try:
         thread_parent = (
@@ -524,6 +557,7 @@ async def run_note_paei_job(
             reply=reply_text,
             parent_id=thread_parent,
             use_knowledge=use_knowledge,
+            knowledge_note_ids=knowledge_note_ids,
             quote=quote_text,
             reply_to_id=target_id,
         )

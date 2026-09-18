@@ -2,15 +2,29 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from assistant.board import store
 from assistant.board.company_brief import format_company_context
 from assistant.board.models import AGENT_META
 
+_KNOWLEDGE_IDS_RE = re.compile(r"\[knowledge_ids:([^\]]*)\]")
+
 
 def _fmt_company(ctx: dict[str, Any] | None, *, query: str = "") -> str:
     return format_company_context(ctx, query=query)
+
+
+def meeting_knowledge_note_ids(meeting: dict[str, Any] | None) -> list[str] | None:
+    extra = str((meeting or {}).get("extra_instruction") or "")
+    match = _KNOWLEDGE_IDS_RE.search(extra)
+    if match:
+        raw = match.group(1).strip()
+        return [part.strip() for part in raw.split(",") if part.strip()]
+    if "[knowledge:off]" in extra:
+        return []
+    return None
 
 
 def load_company_pack(
@@ -18,21 +32,26 @@ def load_company_pack(
     *,
     user_id: int | str | None = None,
     include_knowledge: bool = True,
+    knowledge_note_ids: list[str] | None = None,
 ) -> dict[str, Any] | None:
     pack = store.get_company_pack(str(company_id)) if company_id else None
     pack = attach_live_share(pack)
     if include_knowledge:
-        pack = attach_knowledge_note(pack, user_id)
+        pack = attach_knowledge_note(pack, user_id, note_ids=knowledge_note_ids)
     return pack
 
 
 def meeting_include_knowledge(meeting: dict[str, Any] | None) -> bool:
-    extra = str((meeting or {}).get("extra_instruction") or "")
-    return "[knowledge:off]" not in extra
+    ids = meeting_knowledge_note_ids(meeting)
+    if ids is not None:
+        return bool(ids)
+    return True
 
 
 def attach_knowledge_note(
-    pack: dict[str, Any] | None, user_id: int | str | None
+    pack: dict[str, Any] | None,
+    user_id: int | str | None,
+    note_ids: list[str] | None = None,
 ) -> dict[str, Any] | None:
     if user_id in (None, "", 0, "0"):
         return pack
@@ -43,9 +62,18 @@ def attach_knowledge_note(
         notes = notes_store.list_knowledge_notes(user_id)
     except Exception:
         return pack
+    want: set[str] | None = None
+    if note_ids is not None:
+        want = {str(x).strip() for x in note_ids if str(x).strip()}
+        if not want:
+            return pack
     kb_docs: list[dict[str, Any]] = []
     for note in notes:
-        if not notes_store.note_kb_enabled(note):
+        nid = str(note.get("id") or "")
+        if want is not None:
+            if nid not in want:
+                continue
+        elif not notes_store.note_kb_enabled(note):
             continue
         html = str(note.get("body") or "")
         text = share_body_to_text(html).strip()
@@ -194,7 +222,7 @@ def build_agent_context(
         past_text = "\n".join(lines)
 
     extra = (meeting.get("extra_instruction") or "").strip()
-    extra = extra.replace("[knowledge:off]", "").strip()
+    extra = _KNOWLEDGE_IDS_RE.sub("", extra).replace("[knowledge:off]", "").strip()
     analysis = meeting.get("analysis") if isinstance(meeting.get("analysis"), dict) else {}
     objective = str(analysis.get("decision_required") or meeting.get("title") or "")
     query = str(meeting.get("original_question") or "")
@@ -203,6 +231,7 @@ def build_agent_context(
         str(meeting["company_id"]) if meeting.get("company_id") else None,
         user_id=meeting.get("user_id"),
         include_knowledge=meeting_include_knowledge(meeting),
+        knowledge_note_ids=meeting_knowledge_note_ids(meeting),
     )
     company_text = stored_brief or _fmt_company(company, query=query).strip()
 

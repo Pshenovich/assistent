@@ -2564,6 +2564,7 @@ class _MiniappNotePaeiStart(BaseModel):
     reply_to_id: Optional[int] = None
     quote: str = ""
     use_knowledge: bool = True
+    knowledge_note_ids: Optional[list[str]] = None
 
 
 class _MiniappGptChatTurn(BaseModel):
@@ -2578,6 +2579,7 @@ class _MiniappGptChatBody(BaseModel):
     note_text: str = ""
     quote: str = ""
     use_knowledge: bool = False
+    knowledge_note_ids: Optional[list[str]] = None
     history: list[_MiniappGptChatTurn] = Field(default_factory=list)
     model: Optional[str] = None
     file_ids: list[int] = Field(default_factory=list)
@@ -4646,7 +4648,13 @@ async def miniapp_gpt_chat(
         kb_version = ""
         images, files, file_notes = _load_prompt_media()
         prompt = q or "Опиши вложение и ответь по нему."
-        if body.use_knowledge:
+        kb_ids = body.knowledge_note_ids
+        if kb_ids is not None:
+            kb_ids = [str(x).strip() for x in kb_ids if str(x).strip()]
+            use_kb = bool(kb_ids)
+        else:
+            use_kb = bool(body.use_knowledge)
+        if use_kb:
             query = " ".join(
                 p
                 for p in (
@@ -4655,7 +4663,9 @@ async def miniapp_gpt_chat(
                 )
                 if p
             ) or prompt
-            kb_brief, kb_version = pack_knowledge_brief(uid, query)
+            kb_brief, kb_version = pack_knowledge_brief(
+                uid, query, note_ids=kb_ids if body.knowledge_note_ids is not None else None
+            )
         try:
             set_openrouter_usage_telegram_user(
                 telegram_user_id=uid,
@@ -5862,7 +5872,12 @@ async def miniapp_note_paei_start(
     reply_text = (payload.reply or "").strip()
     parent_id = payload.parent_id
     quote_text = (payload.quote or "").strip()
-    use_knowledge = payload.use_knowledge is not False
+    kb_ids = payload.knowledge_note_ids
+    if kb_ids is not None:
+        kb_ids = [str(x).strip() for x in kb_ids if str(x).strip()]
+        use_knowledge = bool(kb_ids)
+    else:
+        use_knowledge = payload.use_knowledge is not False
     if reply_text:
         comments = await run_in_threadpool(
             share_comments_store.list_comments, owner, kind, item_id
@@ -5910,12 +5925,19 @@ async def miniapp_note_paei_start(
             reply=reply_text,
             parent_id=int(root_id),
             use_knowledge=use_knowledge,
+            knowledge_note_ids=kb_ids,
             quote=quote_text,
             reply_to_id=reply_to_id,
         )
         followup_parent = int(root_id)
     else:
-        job, started = begin_job(owner, kind, item_id, use_knowledge=use_knowledge)
+        job, started = begin_job(
+            owner,
+            kind,
+            item_id,
+            use_knowledge=use_knowledge,
+            knowledge_note_ids=kb_ids,
+        )
         followup_parent = None
     if started:
         asyncio.create_task(
@@ -5926,6 +5948,7 @@ async def miniapp_note_paei_start(
                 reply=reply_text,
                 parent_id=followup_parent,
                 use_knowledge=use_knowledge,
+                knowledge_note_ids=kb_ids,
             )
         )
     return {

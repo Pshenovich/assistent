@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 
 # Меняйте при каждом релизе webapp — Telegram кэширует HTML по URL.
-WEBAPP_BUILD_ID = "20260911-discuss-scroll"
+WEBAPP_BUILD_ID = "20260918-kb-picker"
 
 
 def public_base_url() -> str:
