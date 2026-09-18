@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260918-toc-sticky";
+  var WEBAPP_BUILD = "20260918-note-clamp3";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260918-toc-sticky";
+  const NOTE_EDITOR_ASSET_V = "20260918-note-clamp3";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -10550,6 +10550,10 @@
         '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
       clarify:
         '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/>',
+      "into-note":
+        '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 11v7M9 15l3 3 3-3"/>',
+      "create-note":
+        '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 11v6M9 14h6"/>',
     };
     return (
       '<span class="note-discuss-menu-icon"><svg ' +
@@ -10609,22 +10613,62 @@
   }
 
   function hideDiscussClarify() {
-    var el = document.getElementById("note-discuss-clarify");
+    var el = document.getElementById("note-discuss-selection");
     if (el && el.parentNode) el.parentNode.removeChild(el);
   }
 
-  function showDiscussClarify(rect, onClick) {
+  function discussSelectionBtn(action, icon, label) {
+    return (
+      '<button type="button" class="note-discuss-selection-btn" data-selection-action="' +
+      action +
+      '" aria-label="' +
+      label +
+      '" title="' +
+      label +
+      '">' +
+      discussMenuIcon(icon) +
+      "</button>"
+    );
+  }
+
+  function clearDiscussionSelection() {
+    var sel = window.getSelection && window.getSelection();
+    if (sel && sel.removeAllRanges) sel.removeAllRanges();
+    hideDiscussClarify();
+  }
+
+  function runDiscussSelectionAction(action, draft) {
+    if (!draft || !String(draft.quote || "").trim()) {
+      hideDiscussClarify();
+      return;
+    }
+    if (action === "clarify") {
+      applyDiscussClarify(draft);
+      return;
+    }
+    var quote = String(draft.quote || "").trim();
+    if (action === "copy") copyAnswerText(quote);
+    else if (action === "into-note") appendAnswerToCurrentNote(quote);
+    else if (action === "create-note") createNoteFromAnswer(quote);
+    clearDiscussionSelection();
+  }
+
+  function showDiscussSelectionToolbar(draft) {
+    var rect = draft && draft.rect;
     if (!rect) {
       hideDiscussClarify();
       return;
     }
-    var btn = document.getElementById("note-discuss-clarify");
-    if (!btn) {
-      btn = document.createElement("button");
-      btn.type = "button";
-      btn.id = "note-discuss-clarify";
-      btn.className = "note-discuss-clarify";
-      btn.innerHTML = discussMenuIcon("clarify") + "<span>Уточнить</span>";
+    var bar = document.getElementById("note-discuss-selection");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "note-discuss-selection";
+      bar.className = "note-discuss-selection";
+      bar.innerHTML =
+        discussSelectionBtn("clarify", "clarify", "Уточнить") +
+        discussSelectionBtn("copy", "copy", "Копировать") +
+        discussSelectionBtn("into-note", "into-note", "В заметку") +
+        discussSelectionBtn("create-note", "create-note", "Создать заметку");
       function stopSel(e) {
         e.preventDefault();
         e.stopPropagation();
@@ -10632,29 +10676,31 @@
       function activate(e) {
         e.preventDefault();
         e.stopPropagation();
-        if (btn._fired) return;
-        btn._fired = true;
-        var fn = btn._onClarify;
-        hideDiscussClarify();
-        if (typeof fn === "function") fn();
+        if (bar._fired) return;
+        var btn = e.target && e.target.closest && e.target.closest("[data-selection-action]");
+        if (!btn || !bar.contains(btn)) return;
+        bar._fired = true;
+        runDiscussSelectionAction(btn.getAttribute("data-selection-action"), bar._draft);
       }
-      btn.addEventListener("pointerdown", stopSel);
-      btn.addEventListener("mousedown", stopSel);
-      btn.addEventListener("touchstart", stopSel, { passive: false });
-      btn.addEventListener("pointerup", activate);
-      btn.addEventListener("click", activate);
-      document.body.appendChild(btn);
+      bar.addEventListener("pointerdown", stopSel);
+      bar.addEventListener("mousedown", stopSel);
+      bar.addEventListener("touchstart", stopSel, { passive: false });
+      bar.addEventListener("pointerup", activate);
+      bar.addEventListener("click", activate);
+      document.body.appendChild(bar);
     }
-    btn._onClarify = onClick;
-    btn._fired = false;
+    bar._draft = draft;
+    bar._fired = false;
     var vw = window.innerWidth;
-    var left = rect.left + rect.width / 2 - 52;
-    var top = rect.top - 40;
+    var width = bar.offsetWidth || 128;
+    var height = bar.offsetHeight || 32;
+    var left = rect.left + rect.width / 2 - width / 2;
+    var top = rect.top - height - 8;
     if (left < 8) left = 8;
-    if (left + 110 > vw - 8) left = vw - 118;
+    if (left + width > vw - 8) left = vw - width - 8;
     if (top < 8) top = rect.bottom + 8;
-    btn.style.top = Math.round(top) + "px";
-    btn.style.left = Math.round(left) + "px";
+    bar.style.top = Math.round(top) + "px";
+    bar.style.left = Math.round(left) + "px";
   }
 
   function applyDiscussClarify(draft) {
@@ -10674,9 +10720,7 @@
         input.focus();
       } catch (_) {}
     }
-    var sel = window.getSelection && window.getSelection();
-    if (sel && sel.removeAllRanges) sel.removeAllRanges();
-    hideDiscussClarify();
+    clearDiscussionSelection();
   }
 
   function discussionSelectionDraft() {
@@ -10702,7 +10746,7 @@
     if (document._discussClarifyBound) return;
     document._discussClarifyBound = true;
     function onSelect(e) {
-      if (e && e.target && e.target.closest && e.target.closest("#note-discuss-clarify")) {
+      if (e && e.target && e.target.closest && e.target.closest("#note-discuss-selection")) {
         return;
       }
       if (!isNoteDiscussionOpen()) {
@@ -10714,9 +10758,7 @@
         hideDiscussClarify();
         return;
       }
-      showDiscussClarify(draft.rect, function () {
-        applyDiscussClarify(draft);
-      });
+      showDiscussSelectionToolbar(draft);
     }
     document.addEventListener("mouseup", onSelect);
     document.addEventListener("pointerup", onSelect);
@@ -10780,7 +10822,7 @@
       item.appendChild(actions);
     }
     item.addEventListener("click", function (e) {
-      if (e.target && e.target.closest && e.target.closest(".note-discuss-more, .note-discuss-menu, #note-discuss-clarify")) {
+      if (e.target && e.target.closest && e.target.closest(".note-discuss-more, .note-discuss-menu, #note-discuss-selection")) {
         return;
       }
       var sel = window.getSelection && window.getSelection();

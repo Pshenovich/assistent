@@ -6,10 +6,9 @@ import Placeholder from "@tiptap/extension-placeholder";
 import Underline from "@tiptap/extension-underline";
 import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
-import Table from "@tiptap/extension-table";
-import TableRow from "@tiptap/extension-table-row";
 import TableCell from "@tiptap/extension-table-cell";
 import TableHeader from "@tiptap/extension-table-header";
+import { ManagedTable, ManagedTableRow } from "./table-manage.mjs";
 import { DOMSerializer, Slice } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
@@ -1438,11 +1437,12 @@ function mount(container, options) {
         allowBase64: true,
         HTMLAttributes: { class: "note-editor-image" },
       }),
-      Table.configure({
+      ManagedTable.configure({
         resizable: false,
+        cellMinWidth: 48,
         HTMLAttributes: { class: "note-editor-table" },
       }),
-      TableRow,
+      ManagedTableRow,
       TableHeader,
       TableCell,
       BotTaskList.configure({
@@ -1564,7 +1564,7 @@ function mount(container, options) {
         if (
           e.target.closest &&
           e.target.closest(
-            "input, textarea, button, a, label, .note-rich-toolbar-btn, .note-tg-btn, .note-tg-menu"
+            "input, textarea, button, a, label, .note-rich-toolbar-btn, .note-tg-btn, .note-tg-menu, .note-table-manage-toggle, .note-table-handle, .note-table-confirm-overlay"
           )
         ) {
           return;
