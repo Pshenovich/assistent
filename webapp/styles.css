@@ -2651,10 +2651,11 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   padding-left: 26px;
   max-width: 100%;
   overflow: visible;
+  pointer-events: none;
 }
 
 .note-table-manage-wrap.is-managing {
-  padding-left: 36px;
+  padding: 34px 12px 8px 36px;
 }
 
 .note-table-manage-scroll {
@@ -2662,10 +2663,7 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   max-width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-}
-
-.note-table-manage-wrap.is-managing .note-table-manage-scroll {
-  padding: 34px 12px 12px 10px;
+  pointer-events: auto;
 }
 
 .note-table-manage-wrap .note-editor-table {
@@ -2691,6 +2689,7 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
+  pointer-events: auto;
 }
 
 .note-table-manage-toggle {
@@ -2773,6 +2772,8 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
 .note-editor-table tr[data-row-height] > th,
 .note-editor-table tr[data-row-height] > td {
   height: inherit;
+  min-height: inherit;
+  box-sizing: border-box;
 }
 
 .note-rich-toolbar-btn {
@@ -5425,6 +5426,10 @@ html.note-editor-open #note-editor-overlay {
   user-select: text;
 }
 
+.note-discuss-msg.is-gpt .note-discuss-bubble {
+  -webkit-touch-callout: none;
+}
+
 .note-discuss-bubble.journal-summary-html,
 .note-discuss-bubble.note-body-html,
 .note-discuss-bubble--md {
@@ -5632,6 +5637,20 @@ html.note-editor-open #note-editor-overlay {
 
 .note-discuss-selection svg {
   display: block;
+  pointer-events: none;
+}
+
+.note-discuss-sel-marks {
+  position: fixed;
+  inset: 0;
+  z-index: 339;
+  pointer-events: none;
+}
+
+.note-discuss-sel-mark {
+  position: absolute;
+  border-radius: 2px;
+  background: rgba(82, 128, 232, 0.32);
   pointer-events: none;
 }
 

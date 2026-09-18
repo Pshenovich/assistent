@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260918-note-clamp3";
+  var WEBAPP_BUILD = "20260918-table-manage";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260918-note-clamp3";
+  const NOTE_EDITOR_ASSET_V = "20260918-table-manage";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -10612,9 +10612,74 @@
     });
   }
 
+  function copyClientRect(r) {
+    if (!r) return null;
+    return {
+      top: r.top,
+      left: r.left,
+      width: r.width,
+      height: r.height,
+      bottom: r.bottom,
+      right: r.right,
+    };
+  }
+
+  function snapshotDiscussSelectionRects() {
+    var sel = window.getSelection && window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount < 1) return [];
+    var range = sel.getRangeAt(0);
+    var out = [];
+    var rects = range.getClientRects ? range.getClientRects() : [];
+    for (var i = 0; i < rects.length; i++) {
+      var copied = copyClientRect(rects[i]);
+      if (copied && copied.width >= 1 && copied.height >= 1) out.push(copied);
+    }
+    return out;
+  }
+
+  function hideDiscussSelMarks() {
+    var el = document.getElementById("note-discuss-sel-marks");
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  function showDiscussSelMarks(rects) {
+    hideDiscussSelMarks();
+    if (!rects || !rects.length) return;
+    var wrap = document.createElement("div");
+    wrap.id = "note-discuss-sel-marks";
+    wrap.className = "note-discuss-sel-marks";
+    wrap.setAttribute("aria-hidden", "true");
+    for (var i = 0; i < rects.length; i++) {
+      var r = rects[i];
+      var mark = document.createElement("div");
+      mark.className = "note-discuss-sel-mark";
+      mark.style.top = Math.round(r.top) + "px";
+      mark.style.left = Math.round(r.left) + "px";
+      mark.style.width = Math.round(r.width) + "px";
+      mark.style.height = Math.round(r.height) + "px";
+      wrap.appendChild(mark);
+    }
+    if (!wrap.firstChild) return;
+    document.body.appendChild(wrap);
+  }
+
   function hideDiscussClarify() {
+    hideDiscussSelMarks();
     var el = document.getElementById("note-discuss-selection");
     if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  function isDiscussSelectionUiTarget(el) {
+    return !!(el && el.closest && el.closest("#note-discuss-selection, #note-discuss-sel-marks"));
+  }
+
+  function isDiscussGptBubbleTarget(el) {
+    return !!(el && el.closest && el.closest(".note-discuss-msg.is-gpt .note-discuss-bubble"));
+  }
+
+  function collapseNativeDiscussionSelection() {
+    var sel = window.getSelection && window.getSelection();
+    if (sel && sel.removeAllRanges) sel.removeAllRanges();
   }
 
   function discussSelectionBtn(action, icon, label) {
@@ -10734,36 +10799,51 @@
     if (sel.focusNode && !bubble.contains(sel.focusNode)) return null;
     var api = window.NoteComments;
     var draft = api && api.selectionAnchor ? api.selectionAnchor(bubble) : null;
-    if (draft && draft.quote) return draft;
+    if (draft && draft.quote) {
+      draft.rect = copyClientRect(draft.rect) || draft.rect;
+      return draft;
+    }
     var text = String(sel.toString() || "").replace(/\s+/g, " ").trim();
     if (!text) return null;
     var range = sel.getRangeAt(0);
-    var rect = range.getBoundingClientRect ? range.getBoundingClientRect() : null;
+    var rect = copyClientRect(range.getBoundingClientRect ? range.getBoundingClientRect() : null);
     return { quote: text, prefix: "", suffix: "", rect: rect };
   }
 
   function bindDiscussClarifyOnce() {
     if (document._discussClarifyBound) return;
     document._discussClarifyBound = true;
-    function onSelect(e) {
-      if (e && e.target && e.target.closest && e.target.closest("#note-discuss-selection")) {
-        return;
+    function onContextMenu(e) {
+      if (!isNoteDiscussionOpen()) return;
+      var t = e.target;
+      if (isDiscussSelectionUiTarget(t) || isDiscussGptBubbleTarget(t)) {
+        e.preventDefault();
       }
+    }
+    function onSelect(e) {
+      if (isDiscussSelectionUiTarget(e && e.target)) return;
       if (!isNoteDiscussionOpen()) {
         hideDiscussClarify();
         return;
       }
       var draft = discussionSelectionDraft();
-      if (!draft || !draft.rect) {
-        hideDiscussClarify();
-        return;
-      }
+      if (!draft || !draft.rect) return;
+      var rects = snapshotDiscussSelectionRects();
       showDiscussSelectionToolbar(draft);
+      showDiscussSelMarks(rects);
+      collapseNativeDiscussionSelection();
     }
+    function onDismiss(e) {
+      if (!document.getElementById("note-discuss-selection")) return;
+      if (isDiscussSelectionUiTarget(e && e.target)) return;
+      hideDiscussClarify();
+    }
+    document.addEventListener("contextmenu", onContextMenu, true);
     document.addEventListener("mouseup", onSelect);
     document.addEventListener("pointerup", onSelect);
     document.addEventListener("keyup", onSelect);
     document.addEventListener("scroll", hideDiscussClarify, true);
+    document.addEventListener("pointerdown", onDismiss, true);
   }
 
   function renderDiscussionMessage(c) {

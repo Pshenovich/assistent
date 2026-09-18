@@ -1,17 +1,17 @@
 /* Mini App service worker: кэш оболочки для быстрого повторного открытия PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260918-note-clamp3";
+var CACHE_VERSION = "miniapp-v1-20260918-table-manage";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
-  "./styles.css?v=20260918-note-clamp3",
-  "./app.js?v=20260918-note-clamp3",
-  "./note-html.js?v=20260918-note-clamp3",
-  "./note-comments.js?v=20260918-note-clamp3",
-  "./note-rich-editor.js?v=20260918-note-clamp3",
-  "./icons/arrow-up-right.svg?v=20260918-note-clamp3",
-  "./icons/chevron-up-muted.svg?v=20260918-note-clamp3",
-  "./icons/chevron-up-on-fill.svg?v=20260918-note-clamp3",
+  "./styles.css?v=20260918-table-manage",
+  "./app.js?v=20260918-table-manage",
+  "./note-html.js?v=20260918-table-manage",
+  "./note-comments.js?v=20260918-table-manage",
+  "./note-rich-editor.js?v=20260918-table-manage",
+  "./icons/arrow-up-right.svg?v=20260918-table-manage",
+  "./icons/chevron-up-muted.svg?v=20260918-table-manage",
+  "./icons/chevron-up-on-fill.svg?v=20260918-table-manage",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",

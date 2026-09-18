@@ -330,9 +330,9 @@ function TableManageView(props, cellMinWidth) {
   this.table.appendChild(this.colgroup);
   this.table.appendChild(this.contentDOM);
 
-  this.scroll.appendChild(this.overlay);
   this.scroll.appendChild(this.table);
   this.dom.appendChild(this.toggle);
+  this.dom.appendChild(this.overlay);
   this.dom.appendChild(this.scroll);
 
   updateColumns(this.node, this.colgroup, this.table, this.cellMinWidth);
@@ -368,6 +368,10 @@ TableManageView.prototype.bind = function () {
   this.onPointerUp = function (e) {
     self.handlePointerUp(e);
   };
+  this.onScroll = function () {
+    self.layoutHandles();
+  };
+  this.scroll.addEventListener("scroll", this.onScroll, { passive: true });
 
   if (typeof ResizeObserver !== "undefined") {
     this.ro = new ResizeObserver(function () {
@@ -382,6 +386,7 @@ TableManageView.prototype.bind = function () {
 TableManageView.prototype.unbind = function () {
   this.toggle.removeEventListener("pointerdown", this.onTogglePointer);
   this.overlay.removeEventListener("pointerdown", this.onOverlayPointerDown);
+  this.scroll.removeEventListener("scroll", this.onScroll);
   this.releaseDragListeners();
   if (this.ro) {
     this.ro.disconnect();
@@ -450,12 +455,10 @@ TableManageView.prototype.measureRowHeight = function (index) {
 };
 
 TableManageView.prototype.wrapPoint = function (rect, edge) {
-  var box = this.scroll.getBoundingClientRect();
-  var sl = this.scroll.scrollLeft || 0;
-  var st = this.scroll.scrollTop || 0;
+  var box = this.dom.getBoundingClientRect();
   return {
-    x: rect[edge || "left"] - box.left + sl,
-    y: rect.top - box.top + st,
+    x: rect[edge || "left"] - box.left,
+    y: rect.top - box.top,
     w: rect.width,
     h: rect.height,
   };
@@ -565,17 +568,21 @@ TableManageView.prototype.layoutHandles = function () {
     var cell = first.cells[c];
     if (!cell) continue;
     var p = this.wrapPoint(cell.getBoundingClientRect());
+    var visible = cell.getBoundingClientRect().right > this.scroll.getBoundingClientRect().left &&
+      cell.getBoundingClientRect().left < this.scroll.getBoundingClientRect().right;
     btn = this.overlay.querySelector('[data-role="move-col"][data-index="' + c + '"]');
     if (btn) {
       btn.style.left = p.x + p.w / 2 + "px";
       btn.style.top = p.y - 6 + "px";
       btn.style.transform = "translate(-50%, -100%)";
+      btn.style.visibility = visible ? "visible" : "hidden";
     }
     btn = this.overlay.querySelector('[data-role="resize-col"][data-index="' + c + '"]');
     if (btn) {
       btn.style.left = p.x + p.w + "px";
       btn.style.top = p.y - 6 + "px";
       btn.style.transform = "translate(-50%, -100%)";
+      btn.style.visibility = visible ? "visible" : "hidden";
     }
   }
 
@@ -585,16 +592,25 @@ TableManageView.prototype.layoutHandles = function () {
     if (!leftCell) continue;
     var rp = this.wrapPoint(rowEl.getBoundingClientRect());
     var lp = this.wrapPoint(leftCell.getBoundingClientRect());
+    var rowH = rp.h;
+    if (
+      this.drag &&
+      this.drag.kind === "resize-row" &&
+      this.drag.index === r &&
+      this.drag.currentHeight
+    ) {
+      rowH = this.drag.currentHeight;
+    }
     btn = this.overlay.querySelector('[data-role="move-row"][data-index="' + r + '"]');
     if (btn) {
       btn.style.left = lp.x - 6 + "px";
-      btn.style.top = rp.y + rp.h / 2 + "px";
+      btn.style.top = rp.y + rowH / 2 + "px";
       btn.style.transform = "translate(-100%, -50%)";
     }
     btn = this.overlay.querySelector('[data-role="resize-row"][data-index="' + r + '"]');
     if (btn) {
       btn.style.left = lp.x - 6 + "px";
-      btn.style.top = rp.y + rp.h + "px";
+      btn.style.top = rp.y + rowH + "px";
       btn.style.transform = "translate(-100%, -50%)";
     }
   }
@@ -637,9 +653,9 @@ TableManageView.prototype.layoutHandles = function () {
         '[data-role="move-row"][data-index="' + idx + '"]'
       );
       if (anchor) {
-        fly.style.left = parseFloat(anchor.style.left) - HANDLE - 4 + "px";
-        fly.style.top = anchor.style.top;
-        fly.style.transform = "translate(-100%, -50%)";
+        fly.style.left = anchor.style.left;
+        fly.style.top = parseFloat(anchor.style.top) + HANDLE + 4 + "px";
+        fly.style.transform = anchor.style.transform;
       }
     }
   }
@@ -731,17 +747,33 @@ TableManageView.prototype.dragResizeCol = function (e) {
   this.layoutHandles();
 };
 
+TableManageView.prototype.applyPreviewRowHeight = function (index, h) {
+  if (!this.previewStyle) {
+    this.previewStyle = document.createElement("style");
+    this.dom.appendChild(this.previewStyle);
+  }
+  var n = index + 1;
+  this.previewStyle.textContent =
+    ".note-table-manage-wrap.is-managing .note-editor-table tr:nth-child(" +
+    n +
+    ") > th,.note-table-manage-wrap.is-managing .note-editor-table tr:nth-child(" +
+    n +
+    ") > td{height:" +
+    h +
+    "px !important;min-height:" +
+    h +
+    "px !important;box-sizing:border-box;}";
+};
+
+TableManageView.prototype.clearPreviewRowHeight = function () {
+  if (this.previewStyle) this.previewStyle.textContent = "";
+};
+
 TableManageView.prototype.dragResizeRow = function (e) {
   var dy = e.clientY - this.drag.startY;
   var h = Math.max(MIN_ROW, this.drag.startHeight + dy);
   this.drag.currentHeight = h;
-  var row = this.table.rows[this.drag.index];
-  if (row) {
-    row.style.height = h + "px";
-    for (var i = 0; i < row.cells.length; i += 1) {
-      row.cells[i].style.height = h + "px";
-    }
-  }
+  this.applyPreviewRowHeight(this.drag.index, h);
   this.layoutHandles();
 };
 
@@ -855,10 +887,12 @@ TableManageView.prototype.handlePointerUp = function (e) {
     } else if (drag.kind === "resize-row" && drag.currentHeight && pos != null) {
       setRowHeight(this.editor, pos, drag.index, drag.currentHeight);
     }
+    this.clearPreviewRowHeight();
     this.flyout = null;
     this.renderOverlay();
     return;
   }
+  this.clearPreviewRowHeight();
 
   if (drag.kind === "resize-col") this.flyout = { kind: "add-col", index: drag.index };
   else if (drag.kind === "resize-row") this.flyout = { kind: "add-row", index: drag.index };
@@ -872,12 +906,25 @@ TableManageView.prototype.onFlyoutAction = function (role, index) {
   var self = this;
   if (pos == null) return;
   if (role === "add-col") {
+    var widths = this.measureColWidths();
+    var neighborW = widths[index] || this.cellMinWidth;
     runTableCommand(this.editor, pos, 0, index, addColumnAfter);
+    var afterPos = this.tablePos();
+    if (afterPos != null) {
+      widths.splice(index + 1, 0, neighborW);
+      setAllColWidths(this.editor, afterPos, widths);
+    }
     this.flyout = null;
     return;
   }
   if (role === "add-row") {
+    var rowNode = this.node.child(index);
+    var neighborH =
+      (rowNode && rowNode.attrs && rowNode.attrs.height) ||
+      this.measureRowHeight(index);
     runTableCommand(this.editor, pos, index, 0, addRowAfter);
+    var rowPos = this.tablePos();
+    if (rowPos != null) setRowHeight(this.editor, rowPos, index + 1, neighborH);
     this.flyout = null;
     return;
   }
@@ -930,11 +977,16 @@ TableManageView.prototype.update = function (node) {
 
 TableManageView.prototype.ignoreMutation = function (mutation) {
   if (!mutation || !mutation.target) return false;
+  if (mutation.target === this.dom || mutation.target === this.scroll) return true;
+  if (this.previewStyle && (mutation.target === this.previewStyle || this.previewStyle.contains(mutation.target))) {
+    return true;
+  }
   if (this.overlay.contains(mutation.target) || this.toggle.contains(mutation.target)) {
     return true;
   }
   if (mutation.type === "attributes") {
     if (mutation.target === this.table || mutation.target === this.dom || mutation.target === this.scroll) return true;
+    if (this.previewStyle && (mutation.target === this.previewStyle || this.previewStyle.contains(mutation.target))) return true;
     if (this.colgroup.contains(mutation.target)) return true;
     if (mutation.target.nodeName === "TR" || mutation.target.nodeName === "COL") return true;
     if (
