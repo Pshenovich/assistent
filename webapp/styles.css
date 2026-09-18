@@ -1675,7 +1675,11 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
 }
 
 .notes-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   margin: 0 0 var(--space-4);
+  min-width: 0;
 }
 
 .subtab-bar {
@@ -1792,22 +1796,130 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
   position: relative;
   display: flex;
   align-items: center;
+  flex: 0 0 auto;
+  min-width: 2.5rem;
+}
+
+.notes-search-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  color: var(--text-secondary);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.notes-search-toggle:hover,
+.notes-search-wrap--open .notes-search-toggle,
+.notes-search-toggle[aria-expanded="true"] {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-subtle);
 }
 
 .notes-search-input {
-  flex: 1;
+  width: 0;
   min-width: 0;
-  padding: 0.625rem 2.75rem 0.625rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md, 12px);
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
   font-family: inherit;
   font-size: 16px;
   color: var(--text);
   background: var(--surface);
 }
 
+.notes-search-wrap--open {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.notes-search-wrap--open .notes-search-input {
+  flex: 1;
+  width: auto;
+  min-width: 6rem;
+  margin-left: 0.25rem;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+#knowledge-root .notes-search-wrap {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
 #knowledge-search-input {
-  padding-right: 0.75rem;
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.notes-project-chips {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: var(--space-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.notes-project-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.notes-search-wrap--open + .notes-project-chips {
+  flex: 0 1 42%;
+}
+
+.notes-project-chip {
+  flex-shrink: 0;
+}
+
+.tag-chip.notes-project-chip {
+  box-sizing: border-box;
+  height: 2.5rem;
+  padding: 0 0.875rem;
+  border-radius: var(--radius-md, 12px);
+  font-size: 0.8125rem;
+  line-height: 1;
+}
+
+.notes-project-manage {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md, 12px);
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.notes-project-manage:hover {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-subtle);
 }
 
 .notes-search-tag-btn {
@@ -1950,10 +2062,62 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
   background: var(--accent);
 }
 
-.tag-chip--card {
+.tag-chip--hashtag {
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.tag-chip--hashtag::before {
+  content: "#";
+  font-weight: 700;
+  opacity: 0.75;
+}
+
+.tag-chip--project {
   cursor: default;
-  font-size: 0.6875rem;
-  padding: 0.125rem 0.4375rem;
+}
+
+.tag-chip--card.tag-chip--hashtag {
+  cursor: pointer;
+}
+
+.note-hashtag-suggest {
+  position: absolute;
+  z-index: 80;
+  min-width: 10rem;
+  max-width: 16rem;
+  max-height: 12rem;
+  overflow: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.2));
+}
+
+.note-hashtag-suggest-item {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 0.875rem;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+}
+
+.note-hashtag-suggest-item.is-active,
+.note-hashtag-suggest-item:hover {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.ProseMirror .note-hashtag {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .tag-chip--picker {

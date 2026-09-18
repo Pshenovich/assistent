@@ -12,6 +12,7 @@ import TableCell from "@tiptap/extension-table-cell";
 import TableHeader from "@tiptap/extension-table-header";
 import { DOMSerializer, Slice } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { CellSelection, cellAround, isInTable } from "@tiptap/pm/tables";
 
 function isIOSDevice() {
@@ -1232,6 +1233,173 @@ function mountToolbar(toolbarEl, editor) {
   };
 }
 
+var HASHTAG_QUERY_RE = /(?:^|\s)(#([A-Za-zА-Яа-яЁё0-9_]{0,40}))$/;
+var HASHTAG_INLINE_RE = /#([A-Za-zА-Яа-яЁё0-9_]{1,40})/g;
+
+function createHashtagExtensions(ctx) {
+  var HashtagHighlight = Extension.create({
+    name: "hashtagHighlight",
+    addProseMirrorPlugins: function () {
+      return [
+        new Plugin({
+          key: new PluginKey("hashtagHighlight"),
+          props: {
+            decorations: function (state) {
+              var decos = [];
+              state.doc.descendants(function (node, pos) {
+                if (!node.isText) return;
+                var text = node.text || "";
+                HASHTAG_INLINE_RE.lastIndex = 0;
+                var match;
+                while ((match = HASHTAG_INLINE_RE.exec(text))) {
+                  decos.push(
+                    Decoration.inline(pos + match.index, pos + match.index + match[0].length, {
+                      class: "note-hashtag",
+                    })
+                  );
+                }
+              });
+              return DecorationSet.create(state.doc, decos);
+            },
+          },
+        }),
+      ];
+    },
+  });
+
+  var HashtagSuggest = Extension.create({
+    name: "hashtagSuggest",
+    addProseMirrorPlugins: function () {
+      return [
+        new Plugin({
+          key: new PluginKey("hashtagSuggest"),
+          view: function () {
+            var el = document.createElement("div");
+            el.className = "note-hashtag-suggest hidden";
+            document.body.appendChild(el);
+            ctx.suggestEl = el;
+
+            function hide() {
+              el.classList.add("hidden");
+              el.innerHTML = "";
+              ctx.suggestItems = [];
+              ctx.suggestIndex = 0;
+              ctx.suggestFrom = null;
+            }
+
+            function pick(name) {
+              var view = ctx.editor && ctx.editor.view;
+              if (!view || ctx.suggestFrom == null) {
+                hide();
+                return;
+              }
+              var to = view.state.selection.from;
+              var tr = view.state.tr.insertText("#" + name + " ", ctx.suggestFrom, to);
+              view.dispatch(tr);
+              view.focus();
+              hide();
+            }
+            ctx.pickHashtag = pick;
+            ctx.hideHashtagSuggest = hide;
+
+            function render() {
+              el.innerHTML = "";
+              (ctx.suggestItems || []).forEach(function (name, i) {
+                var btn = document.createElement("button");
+                btn.type = "button";
+                btn.className =
+                  "note-hashtag-suggest-item" + (i === ctx.suggestIndex ? " is-active" : "");
+                btn.textContent = "#" + name;
+                btn.addEventListener("mousedown", function (e) {
+                  e.preventDefault();
+                  pick(name);
+                });
+                el.appendChild(btn);
+              });
+            }
+            ctx.renderHashtagSuggest = render;
+
+            return {
+              update: function (view) {
+                if (!view.state.selection.empty) {
+                  hide();
+                  return;
+                }
+                var $from = view.state.selection.$from;
+                var text = $from.parent.textBetween(0, $from.parentOffset, null, "\ufffc");
+                var match = text.match(HASHTAG_QUERY_RE);
+                if (!match) {
+                  hide();
+                  return;
+                }
+                var q = String(match[2] || "").toLowerCase();
+                ctx.suggestFrom = $from.pos - match[1].length;
+                var all = (ctx.hashtags || []).filter(Boolean);
+                var items = all.filter(function (name) {
+                  var low = String(name).toLowerCase();
+                  return low.indexOf(q) === 0 && low !== q;
+                }).slice(0, 8);
+                if (q && !all.some(function (name) {
+                  return String(name).toLowerCase() === q;
+                })) {
+                  items.push(match[2]);
+                }
+                if (!items.length) {
+                  hide();
+                  return;
+                }
+                ctx.suggestItems = items;
+                ctx.suggestIndex = 0;
+                render();
+                var coords = view.coordsAtPos($from.pos);
+                el.style.position = "fixed";
+                el.style.left = Math.max(8, coords.left) + "px";
+                el.style.top = coords.bottom + 6 + "px";
+                el.classList.remove("hidden");
+              },
+              destroy: function () {
+                if (el.parentNode) el.parentNode.removeChild(el);
+              },
+            };
+          },
+          props: {
+            handleKeyDown: function (view, event) {
+              var items = ctx.suggestItems || [];
+              if (!items.length || (ctx.suggestEl && ctx.suggestEl.classList.contains("hidden"))) {
+                return false;
+              }
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                ctx.suggestIndex = (ctx.suggestIndex + 1) % items.length;
+                if (ctx.renderHashtagSuggest) ctx.renderHashtagSuggest();
+                return true;
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                ctx.suggestIndex = (ctx.suggestIndex - 1 + items.length) % items.length;
+                if (ctx.renderHashtagSuggest) ctx.renderHashtagSuggest();
+                return true;
+              }
+              if (event.key === "Enter" || event.key === "Tab") {
+                event.preventDefault();
+                if (ctx.pickHashtag) ctx.pickHashtag(items[ctx.suggestIndex]);
+                return true;
+              }
+              if (event.key === "Escape") {
+                if (ctx.hideHashtagSuggest) ctx.hideHashtagSuggest();
+                return true;
+              }
+              return false;
+            },
+          },
+        }),
+      ];
+    },
+  });
+
+  return [HashtagHighlight, HashtagSuggest];
+}
+
 function mount(container, options) {
   options = options || {};
   const shell = document.createElement("div");
@@ -1252,6 +1420,10 @@ function mount(container, options) {
   container.appendChild(shell);
 
   var tablePasteClickPos = { pos: null };
+  var hashtagCtx = {
+    hashtags: Array.isArray(options.hashtags) ? options.hashtags.slice() : [],
+    editor: null,
+  };
 
   const editor = new Editor({
     element: content,
@@ -1281,7 +1453,7 @@ function mount(container, options) {
         placeholder: options.placeholder || "Начните писать…",
       }),
       IosSelectionGuard,
-    ],
+    ].concat(createHashtagExtensions(hashtagCtx)),
     content: importBody(options.body || ""),
     autofocus: options.autofocus === true,
     editorProps: {
@@ -1332,6 +1504,7 @@ function mount(container, options) {
       }
     },
   });
+  hashtagCtx.editor = editor;
 
   editor.view.dom.addEventListener(
     "paste",
@@ -1459,9 +1632,13 @@ function mount(container, options) {
       editor.commands.focus("end");
     },
     bindTapFocus: bindTapFocus,
+    setHashtags: function (names) {
+      hashtagCtx.hashtags = Array.isArray(names) ? names.slice() : [];
+    },
     destroy: function () {
       closeLinkPopover();
       closeTgMenus(toolbar);
+      if (typeof hashtagCtx.hideHashtagSuggest === "function") hashtagCtx.hideHashtagSuggest();
       if (typeof cleanupToolbar === "function") cleanupToolbar();
       if (typeof cleanupToc === "function") cleanupToc();
       editor.destroy();

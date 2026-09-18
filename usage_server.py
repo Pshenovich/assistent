@@ -4792,6 +4792,65 @@ async def miniapp_voice_transcribe(
         raise HTTPException(status_code=502, detail=f"Транскрибация: {e}") from e
 
 
+def _project_from_tags(tags: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return tags[0] if tags else None
+
+
+def _apply_project_fields(item: dict[str, Any], tags: list[dict[str, Any]]) -> None:
+    project_tags = tags[:1]
+    item["tags"] = project_tags
+    item["project"] = _project_from_tags(project_tags)
+
+
+def _sync_local_note_hashtags(uid: int | str, item: dict[str, Any]) -> dict[str, Any]:
+    from assistant.stores import hashtags as hashtags_store
+    from assistant.stores import tags as tags_store
+
+    nid = item.get("id")
+    if nid is None:
+        return item
+    title = str(item.get("title") or item.get("content") or "")
+    body = str(item.get("body") or item.get("description") or "")
+    item["hashtags"] = hashtags_store.sync_item_hashtags(uid, "local", nid, title, body)
+    tags = tags_store.get_item_tags(uid, "local", nid)
+    _apply_project_fields(item, tags)
+    return item
+
+
+def _sync_journal_hashtags(
+    uid: int | str, event_id: int | str, item: dict[str, Any]
+) -> dict[str, Any]:
+    from assistant.stores import hashtags as hashtags_store
+    from assistant.stores import tags as tags_store
+
+    title = str(item.get("main_topic") or item.get("title") or "")
+    body = str(item.get("body") or item.get("preview") or "")
+    item["hashtags"] = hashtags_store.sync_item_hashtags(
+        uid, "journal", event_id, title, body
+    )
+    tags = tags_store.get_item_tags(uid, "journal", event_id)
+    _apply_project_fields(item, tags)
+    return item
+
+
+def _enrich_item_labels(
+    uid: int | str, item_kind: str, item: dict[str, Any]
+) -> dict[str, Any]:
+    from assistant.stores import hashtags as hashtags_store
+    from assistant.stores import tags as tags_store
+
+    iid = item.get("id")
+    if iid is None:
+        item.setdefault("tags", [])
+        item.setdefault("project", None)
+        item.setdefault("hashtags", [])
+        return item
+    tags = tags_store.get_item_tags(uid, item_kind, iid)
+    _apply_project_fields(item, tags)
+    item["hashtags"] = hashtags_store.get_item_hashtags(uid, item_kind, iid)
+    return item
+
+
 @miniapp_router.get("/notes")
 async def miniapp_notes_bundle(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
@@ -4836,9 +4895,14 @@ async def miniapp_notes_bundle(
 
     _enrich_transcription_summary_links(str(uid), transcriptions, summaries)
 
-    def _attach_tags() -> list[dict[str, Any]]:
+    def _attach_tags() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        from assistant.stores import hashtags as hashtags_store
+        from assistant.stores import notes as notes_store
         from assistant.stores import tags as tags_store
 
+        hashtags_store.migrate_extra_tags_to_hashtags(uid)
+        fresh_notes = notes_store.list_notes(uid, limit=lim)
+        local_notes[:] = fresh_notes
         tag_items: list[tuple[str, str]] = []
         for n in local_notes:
             tag_items.append(("local", str(n.get("id"))))
@@ -4846,22 +4910,38 @@ async def miniapp_notes_bundle(
             tag_items.append(("journal", str(row.get("id"))))
         mapping = tags_store.tags_by_items(uid, tag_items)
         for n in local_notes:
-            n["tags"] = mapping.get(("local", str(n.get("id"))), [])
-        for row in transcriptions:
-            row["tags"] = mapping.get(("journal", str(row.get("id"))), [])
-        for row in summaries:
-            row["tags"] = mapping.get(("journal", str(row.get("id"))), [])
-        return tags_store.list_tags(uid)
+            hashtags_store.sync_item_hashtags(
+                uid,
+                "local",
+                n.get("id"),
+                str(n.get("title") or ""),
+                str(n.get("body") or n.get("description") or ""),
+            )
+        hash_mapping = hashtags_store.hashtags_by_items(uid, tag_items)
+        for n in local_notes:
+            key = ("local", str(n.get("id")))
+            _apply_project_fields(n, mapping.get(key, []))
+            n["hashtags"] = hash_mapping.get(key, [])
+        for row in transcriptions + summaries:
+            key = ("journal", str(row.get("id")))
+            _apply_project_fields(row, mapping.get(key, []))
+            row["hashtags"] = hash_mapping.get(key, [])
+        return tags_store.list_tags(uid), hashtags_store.list_hashtags(uid)
 
+    all_hashtags: list[dict[str, Any]] = []
     try:
-        all_tags = await run_in_threadpool(_attach_tags)
+        all_tags, all_hashtags = await run_in_threadpool(_attach_tags)
     except Exception as e:
-        tags_err = "Не удалось загрузить теги."
+        tags_err = "Не удалось загрузить проекты."
         print(f"[miniapp_notes] tags_fail err={e!r}")
         for n in local_notes:
             n.setdefault("tags", [])
+            n.setdefault("project", None)
+            n.setdefault("hashtags", [])
         for row in transcriptions + summaries:
             row.setdefault("tags", [])
+            row.setdefault("project", None)
+            row.setdefault("hashtags", [])
 
     def _attach_shares() -> None:
         from assistant.stores import share_links as share_links_store
@@ -4897,6 +4977,7 @@ async def miniapp_notes_bundle(
         "local_error": local_err,
         "tags": all_tags,
         "tags_error": tags_err,
+        "hashtags": all_hashtags,
         "todoist_notes": [],
         "todoist_error": None,
     }
@@ -4950,7 +5031,7 @@ async def miniapp_tag_patch(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     if not item:
-        raise HTTPException(status_code=404, detail="Тег не найден")
+        raise HTTPException(status_code=404, detail="Проект не найден")
     return {"ok": True, "tag": item}
 
 
@@ -4968,7 +5049,7 @@ async def miniapp_tag_delete(
 
     ok = await run_in_threadpool(_run)
     if not ok:
-        raise HTTPException(status_code=404, detail="Тег не найден")
+        raise HTTPException(status_code=404, detail="Проект не найден")
     return {"ok": True}
 
 
@@ -5015,7 +5096,7 @@ async def miniapp_item_tags_set(
         tags = await run_in_threadpool(_run)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return {"ok": True, "tags": tags}
+    return {"ok": True, "tags": tags, "project": tags[0] if tags else None}
 
 
 @miniapp_router.get("/notes/journal/{event_id}")
@@ -5070,6 +5151,12 @@ async def miniapp_journal_item(
     item["tags"] = await run_in_threadpool(
         partial(tags_store.get_item_tags, uid, "journal", str(event_id))
     )
+    _apply_project_fields(item, item["tags"])
+    from assistant.stores import hashtags as hashtags_store
+
+    item["hashtags"] = await run_in_threadpool(
+        partial(hashtags_store.get_item_hashtags, uid, "journal", str(event_id))
+    )
     return {"item": item}
 
 
@@ -5092,6 +5179,9 @@ async def miniapp_journal_delete(
     from assistant.stores import share_comments as share_comments_store
 
     await run_in_threadpool(share_comments_store.delete_all_for_item, uid, "journal", event_id)
+    from assistant.stores import hashtags as hashtags_store
+
+    await run_in_threadpool(hashtags_store.delete_item_links, uid, "journal", event_id)
     return {"ok": True}
 
 
@@ -5129,10 +5219,7 @@ async def miniapp_journal_patch(
         item = _journal_row_api(dict(row))
         item["body"] = journal_text_from_raw(raw_s)[:120000]
         item.update(journal_source_links_from_raw(raw_s))
-        from assistant.stores import tags as tags_store
-
-        item["tags"] = tags_store.get_item_tags(uid, "journal", str(event_id))
-        return item
+        return _sync_journal_hashtags(uid, event_id, item)
 
     item = await run_in_threadpool(_run)
     if not item:
@@ -5191,11 +5278,24 @@ async def miniapp_knowledge_notes(
     uid = int(principal.telegram_user_id)
 
     def _load() -> list[dict[str, Any]]:
+        from assistant.stores import hashtags as hashtags_store
+
         notes = notes_store.list_knowledge_notes(uid)
+        for n in notes:
+            hashtags_store.sync_item_hashtags(
+                uid,
+                "local",
+                n.get("id"),
+                str(n.get("title") or ""),
+                str(n.get("body") or n.get("description") or ""),
+            )
         tag_items = [("local", str(n.get("id"))) for n in notes]
         mapping = tags_store.tags_by_items(uid, tag_items)
+        hash_mapping = hashtags_store.hashtags_by_items(uid, tag_items)
         for n in notes:
-            n["tags"] = mapping.get(("local", str(n.get("id"))), [])
+            key = ("local", str(n.get("id")))
+            _apply_project_fields(n, mapping.get(key, []))
+            n["hashtags"] = hash_mapping.get(key, [])
         return notes
 
     try:
@@ -5204,6 +5304,8 @@ async def miniapp_knowledge_notes(
         notes = await run_in_threadpool(notes_store.list_knowledge_notes, uid)
         for n in notes:
             n.setdefault("tags", [])
+            n.setdefault("project", None)
+            n.setdefault("hashtags", [])
     return {"notes": notes}
 
 
@@ -5221,9 +5323,10 @@ async def miniapp_knowledge_note_create(
     uid = int(principal.telegram_user_id)
 
     def _local() -> dict[str, Any]:
-        return notes_store.create_note(
+        created = notes_store.create_note(
             uid, title, desc, role=notes_store.KNOWLEDGE_ROLE
         )
+        return _sync_local_note_hashtags(uid, created)
 
     item = await run_in_threadpool(_local)
     return {"ok": True, "id": item["id"], "item": item}
@@ -5243,7 +5346,8 @@ async def miniapp_local_note_create(
     uid = int(principal.telegram_user_id)
 
     def _local() -> dict[str, Any]:
-        return notes_store.create_note(uid, title, desc)
+        created = notes_store.create_note(uid, title, desc)
+        return _sync_local_note_hashtags(uid, created)
 
     item = await run_in_threadpool(_local)
     return {"ok": True, "id": item["id"], "item": item}
@@ -5289,6 +5393,10 @@ async def miniapp_local_note_patch(
             ) from e
         if item is None:
             return None
+        if body.description is not None or body.title is not None:
+            item = _sync_local_note_hashtags(owner, item)
+        else:
+            item = _enrich_item_labels(owner, "local", item)
         if body.sync_todoist and item.get("todoist_id"):
             from assistant.compat.miniapp_shims import set_todoist_task_content
 
@@ -5329,7 +5437,10 @@ async def miniapp_local_note_duplicate(
     uid = int(principal.telegram_user_id)
 
     def _run() -> dict[str, Any] | None:
-        return notes_store.duplicate_note(uid, note_id)
+        dup = notes_store.duplicate_note(uid, note_id)
+        if not dup:
+            return None
+        return _sync_local_note_hashtags(uid, dup)
 
     item = await run_in_threadpool(_run)
     if not item:
@@ -5404,6 +5515,7 @@ async def miniapp_local_note_get(
     item = await run_in_threadpool(notes_store.get_accessible_note, uid, note_id)
     if not item:
         raise HTTPException(status_code=404, detail="Заметка не найдена")
+    item = await run_in_threadpool(_enrich_item_labels, uid, "local", item)
     return {"ok": True, "item": item}
 
 

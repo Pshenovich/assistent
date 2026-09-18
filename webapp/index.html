@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260918-kb-picker">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260918-project-chip-h">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -46,8 +46,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20260918-kb-picker" />
-  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260918-kb-picker" as="script" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20260918-project-chip-h" />
+  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260918-project-chip-h" as="script" />
   <!-- Same-origin, async: не блокирует парсер, если сеть/VPN тормозит. -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" async></script>
 </head>
@@ -143,32 +143,31 @@
             </div>
           </div>
           <div class="notes-filter-bar">
-            <div class="notes-search-wrap">
+            <div class="notes-search-wrap" id="notes-search-wrap">
+              <button
+                type="button"
+                id="notes-search-toggle"
+                class="notes-search-toggle"
+                aria-label="Поиск"
+                aria-expanded="false"
+                aria-controls="notes-search-input"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <circle cx="11" cy="11" r="7"/>
+                  <path d="M20 20l-3.5-3.5" stroke-linecap="round"/>
+                </svg>
+              </button>
               <input
                 type="search"
                 id="notes-search-input"
                 class="notes-search-input"
-                placeholder="Поиск…"
+                placeholder="Поиск или #тег"
                 autocomplete="off"
                 enterkeyhint="search"
                 aria-label="Поиск записей"
               />
-              <button
-                type="button"
-                id="notes-tag-filter-btn"
-                class="notes-search-tag-btn"
-                aria-label="Фильтр по тегам"
-                aria-haspopup="listbox"
-                aria-expanded="false"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-                  <circle cx="7" cy="7" r="1.5" fill="currentColor" stroke="none"/>
-                </svg>
-                <span id="notes-tag-filter-badge" class="notes-search-tag-badge hidden" aria-hidden="true"></span>
-              </button>
-              <div id="notes-tag-filter-menu" class="notes-tag-filter-menu hidden" role="listbox" aria-label="Теги"></div>
             </div>
+            <div class="notes-project-chips" id="notes-project-chips" role="listbox" aria-label="Проекты"></div>
           </div>
           <div id="notes-pane-notes" class="notes-pane notes-pane--stack"></div>
           <div id="notes-pane-transcriptions" class="notes-pane notes-pane--stack hidden"></div>
@@ -999,7 +998,7 @@
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
           </button>
-          <h2 id="tags-manage-title" class="modal-title">Теги</h2>
+          <h2 id="tags-manage-title" class="modal-title">Проекты</h2>
           <span class="modal-header-btn modal-header-btn--placeholder" aria-hidden="true"></span>
         </div>
         <div class="modal-body tags-manage-body">
@@ -1009,9 +1008,9 @@
               type="text"
               id="tags-manage-new-input"
               class="field-input tags-manage-new-input"
-              placeholder="Новый тег"
+              placeholder="Новый проект"
               maxlength="40"
-              aria-label="Название нового тега"
+              aria-label="Название нового проекта"
             />
             <button type="button" id="tags-manage-create-btn" class="btn primary tags-manage-create-btn">Создать</button>
           </div>
@@ -1141,14 +1140,14 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20260918-kb-picker"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20260918-project-chip-h"><\/script>'
         );
       }
     })();
   </script>
-  <script src="/webapp/note-html.js?v=20260918-kb-picker" defer></script>
-  <script src="/webapp/note-comments.js?v=20260918-kb-picker" defer></script>
-  <script src="/webapp/note-rich-editor.js?v=20260918-kb-picker" defer></script>
-  <script src="/webapp/app.js?v=20260918-kb-picker" defer></script>
+  <script src="/webapp/note-html.js?v=20260918-project-chip-h" defer></script>
+  <script src="/webapp/note-comments.js?v=20260918-project-chip-h" defer></script>
+  <script src="/webapp/note-rich-editor.js?v=20260918-project-chip-h" defer></script>
+  <script src="/webapp/app.js?v=20260918-project-chip-h" defer></script>
 </body>
 </html>

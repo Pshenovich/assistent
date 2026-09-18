@@ -516,10 +516,11 @@ def duplicate_note(user_id: int | str, note_id: int) -> Optional[dict[str, Any]]
                 if t.get("id") is not None
             ]
             if tag_ids:
-                tags_store.set_item_tags(uid, "local", dup["id"], tag_ids)
+                tags_store.set_item_tags(uid, "local", dup["id"], tag_ids[:1])
                 dup["tags"] = tags_store.tags_by_items(
                     uid, [("local", str(dup["id"]))]
                 ).get(("local", str(dup["id"])), [])
+                dup["project"] = dup["tags"][0] if dup["tags"] else None
         except Exception:
             pass
     dup["pinned"] = False
@@ -551,6 +552,12 @@ def delete_note(user_id: int | str, note_id: int) -> bool:
             note_members.delete_all_for_note(uid, int(note_id))
         except Exception:
             pass
+    try:
+        from assistant.stores import hashtags as hashtags_store
+
+        hashtags_store.delete_item_links(uid, "local", note_id)
+    except Exception:
+        pass
     return ok
 
 

@@ -1,4 +1,4 @@
-"""Пользовательские теги для записей «Сохранённого» (local notes + journal)."""
+"""Проекты записей «Сохранённого» (один проект на запись; local notes + journal)."""
 
 from __future__ import annotations
 
@@ -60,7 +60,9 @@ def _normalize_name(name: str) -> str:
 def _validate_name(name: str) -> str:
     n = _normalize_name(name)
     if len(n) < _MIN_NAME_LEN or len(n) > _MAX_NAME_LEN:
-        raise ValueError(f"Имя тега должно быть от {_MIN_NAME_LEN} до {_MAX_NAME_LEN} символов")
+        raise ValueError(
+            f"Имя проекта должно быть от {_MIN_NAME_LEN} до {_MAX_NAME_LEN} символов"
+        )
     return n
 
 
@@ -104,7 +106,7 @@ def create_tag(user_id: int | str, name: str) -> dict[str, Any]:
         cur = _conn().cursor()
         existing = _find_tag_by_name_ci(cur, uid, n)
         if existing:
-            raise ValueError("Тег с таким именем уже существует")
+            raise ValueError("Проект с таким именем уже существует")
         cur.execute(
             """
             INSERT INTO tags (user_id, name, created_at, updated_at)
@@ -131,7 +133,7 @@ def update_tag(user_id: int | str, tag_id: int, *, name: str) -> Optional[dict[s
             return None
         existing = _find_tag_by_name_ci(cur, uid, n)
         if existing and int(existing["id"]) != int(tag_id):
-            raise ValueError("Тег с таким именем уже существует")
+            raise ValueError("Проект с таким именем уже существует")
         cur.execute(
             "UPDATE tags SET name = ?, updated_at = ? WHERE user_id = ? AND id = ?",
             (n, ts, uid, int(tag_id)),
@@ -179,6 +181,8 @@ def set_item_tags(
             continue
         seen.add(tid)
         unique_ids.append(tid)
+    if len(unique_ids) > 1:
+        unique_ids = unique_ids[:1]
     ts = _now_iso()
     with _LOCK:
         cur = _conn().cursor()
@@ -194,7 +198,7 @@ def set_item_tags(
             found = {int(r["id"]) for r in cur.fetchall()}
             missing = [tid for tid in unique_ids if tid not in found]
             if missing:
-                raise ValueError("Один или несколько тегов не найдены")
+                raise ValueError("Проект не найден")
         cur.execute(
             """
             DELETE FROM tag_links
@@ -301,3 +305,49 @@ def filter_items_by_tags(
     required = len(tids) if mode == "and" else 1
     matched = {str(r["item_id"]) for r in rows if int(r["cnt"]) >= required}
     return [iid for iid in ids if iid in matched]
+
+
+def take_extra_tag_links(user_id: int | str) -> list[dict[str, Any]]:
+    """Оставляет один (самый старый) проект на запись, возвращает снятые теги."""
+    uid = str(int(user_id))
+    extras: list[dict[str, Any]] = []
+    with _LOCK:
+        cur = _conn().cursor()
+        cur.execute(
+            """
+            SELECT l.item_kind, l.item_id, l.tag_id, l.created_at, t.name
+            FROM tag_links l
+            JOIN tags t ON t.id = l.tag_id AND t.user_id = l.user_id
+            WHERE l.user_id = ?
+            ORDER BY l.item_kind, l.item_id, l.created_at ASC, l.id ASC
+            """,
+            (uid,),
+        )
+        grouped: dict[tuple[str, str], list[sqlite3.Row]] = {}
+        for row in cur.fetchall():
+            key = (str(row["item_kind"]), str(row["item_id"]))
+            grouped.setdefault(key, []).append(row)
+        drop_ids: list[int] = []
+        for (kind, iid), rows in grouped.items():
+            if len(rows) < 2:
+                continue
+            for extra in rows[1:]:
+                extras.append(
+                    {
+                        "item_kind": kind,
+                        "item_id": iid,
+                        "tag_id": int(extra["tag_id"]),
+                        "name": str(extra["name"] or ""),
+                    }
+                )
+                drop_ids.append(int(extra["tag_id"]))
+                cur.execute(
+                    """
+                    DELETE FROM tag_links
+                    WHERE user_id = ? AND tag_id = ? AND item_kind = ? AND item_id = ?
+                    """,
+                    (uid, int(extra["tag_id"]), kind, iid),
+                )
+        if drop_ids:
+            _conn().commit()
+    return extras

@@ -504,6 +504,7 @@
     out.summaries = sums;
     out.journal = journal;
     out.tags = mergeTagsList(out.tags);
+    out.hashtags = Array.isArray(out.hashtags) ? out.hashtags : [];
     return out;
   }
 
@@ -761,14 +762,14 @@
           patchBody = opts && opts.body ? JSON.parse(opts.body) : {};
         } catch (_) {}
         var newName = String(patchBody.name || "").trim();
-        if (!newName) throw new Error("Укажите название тега");
+        if (!newName) throw new Error("Укажите название проекта");
         var updatedTag = null;
         tags = tags.map(function (t) {
           if (Number(t.id) !== tagId) return t;
           updatedTag = Object.assign({}, t, { name: newName, updated_at: nowIso() });
           return updatedTag;
         });
-        if (!updatedTag) throw new Error("Тег не найден");
+        if (!updatedTag) throw new Error("Проект не найден");
         renameTagEverywhere(tagId, newName);
         return { ok: true, tag: tagSnapshot(updatedTag) };
       }
@@ -787,11 +788,11 @@
         createBody = opts && opts.body ? JSON.parse(opts.body) : {};
       } catch (_) {}
       var createName = String(createBody.name || "").trim();
-      if (!createName) throw new Error("Укажите название тега");
+      if (!createName) throw new Error("Укажите название проекта");
       var duplicate = tags.find(function (t) {
         return String(t.name || "").toLowerCase() === createName.toLowerCase();
       });
-      if (duplicate) throw new Error("Тег с таким именем уже существует");
+      if (duplicate) throw new Error("Проект с таким именем уже существует");
       var created = {
         id: nextMockTagId--,
         name: createName,

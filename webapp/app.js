@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260918-kb-picker";
+  var WEBAPP_BUILD = "20260918-project-chip-h";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260918-kb-picker";
+  const NOTE_EDITOR_ASSET_V = "20260918-project-chip-h";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -235,7 +235,7 @@
   var knowledgeDataCache = null;
   var notesSearchQuery = "";
   var knowledgeSearchQuery = "";
-  var notesActiveTagIds = [];
+  var notesActiveProjectId = 0;
   var tagPickerSaveTimer = null;
   var tagPickerActiveClose = null;
   var tagPickerDocClickBound = false;
@@ -979,6 +979,8 @@
           preview: item.preview != null ? item.preview : x.preview,
           main_topic: item.main_topic != null ? item.main_topic : x.main_topic,
           tags: Array.isArray(item.tags) ? item.tags : x.tags,
+          project: item.project !== undefined ? item.project : x.project,
+          hashtags: Array.isArray(item.hashtags) ? item.hashtags : x.hashtags,
         });
       });
     }
@@ -1298,6 +1300,8 @@
         body: item.body || item.description || "",
         todoist_id: item.todoist_id || null,
         tags: Array.isArray(item.tags) ? item.tags : [],
+        project: item.project || (Array.isArray(item.tags) && item.tags[0]) || null,
+        hashtags: Array.isArray(item.hashtags) ? item.hashtags : [],
         source: "local",
         kb_enabled: item.kb_enabled !== false && item.kb_enabled !== 0 && item.kb_enabled !== "0",
         owner_user_id: item.owner_user_id || item.user_id || "",
@@ -4901,20 +4905,29 @@
   }
 
   function knowledgeItemMatchesFilter(item) {
-    var q = String(knowledgeSearchQuery || "")
-      .trim()
-      .toLowerCase();
+    var parsed = parseNotesSearchQuery(knowledgeSearchQuery);
+    if (parsed.hashtags.length) {
+      var itemHash = noteHashtagsOf(item).map(function (h) {
+        return String(h.name || "").toLowerCase();
+      });
+      for (var i = 0; i < parsed.hashtags.length; i++) {
+        if (itemHash.indexOf(parsed.hashtags[i]) < 0) return false;
+      }
+    }
+    var q = parsed.text;
     if (!q) return true;
     var title =
       sanitizeNoteTitle(item.title || item.content || "") ||
       String(item.title || item.content || "");
     var preview = notePlainExcerpt(item.description || item.body || "", 500);
-    var tagNames = noteTagsOf(item)
+    var project = noteProjectOf(item);
+    var projectName = project ? String(project.name || "") : "";
+    var hashNames = noteHashtagsOf(item)
       .map(function (t) {
-        return String(t.name || "");
+        return "#" + String(t.name || "");
       })
       .join(" ");
-    var hay = (title + " " + preview + " " + tagNames).toLowerCase();
+    var hay = (title + " " + preview + " " + projectName + " " + hashNames).toLowerCase();
     return hay.indexOf(q) >= 0;
   }
 
@@ -4956,7 +4969,7 @@
             (descRaw.length >= 280 ? "…" : "") +
             "</p>"
           : "");
-      appendTagChipsRow(inner, noteTagsOf(n));
+      appendItemLabelChips(inner, n);
       var toggle = document.createElement("button");
       toggle.type = "button";
       toggle.className =
@@ -5305,18 +5318,44 @@
     return h > 0 ? h : 64;
   }
 
+  function noteEditorLineRoomPx() {
+    var el =
+      document.querySelector("#note-editor-overlay .ProseMirror") ||
+      document.querySelector("#note-editor-overlay .note-rich-editor-body") ||
+      getNoteEditorScrollEl();
+    var lh = 28;
+    if (el) {
+      var parsed = parseFloat(window.getComputedStyle(el).lineHeight);
+      if (parsed > 8 && isFinite(parsed)) lh = parsed;
+    }
+    return Math.round(lh * 3);
+  }
+
   function syncNoteEditorEndPad() {
     var scrollEl = getNoteEditorScrollEl();
     var content = document.getElementById("note-editor-modal-body");
     if (content) content.style.paddingBottom = "";
-    if (!scrollEl) return;
+    if (!scrollEl) return false;
     if (!isNoteEditorModalOpen() || !isMobileNoteLayout()) {
-      scrollEl.style.paddingBottom = "";
-      return;
+      if (scrollEl.style.paddingBottom) scrollEl.style.paddingBottom = "";
+      return false;
     }
     var toolbarH = noteEditorToolbarHeightPx();
-    var extraLines = 112;
-    scrollEl.style.paddingBottom = Math.round(toolbarH + extraLines) + "px";
+    var lineRoom = noteEditorLineRoomPx();
+    var prevPad = scrollEl.style.paddingBottom;
+    scrollEl.style.paddingBottom = "0px";
+    var contentH = scrollEl.scrollHeight;
+    var viewH = scrollEl.clientHeight;
+    var pad = toolbarH + lineRoom + Math.max(0, viewH - contentH);
+    var nextPad = Math.round(pad) + "px";
+    scrollEl.style.paddingBottom = nextPad;
+    var changed = prevPad !== nextPad;
+    if (changed && document.documentElement.classList.contains("note-editor-kb-open")) {
+      window.setTimeout(function () {
+        scrollNoteCaretIntoView(true);
+      }, 40);
+    }
+    return changed;
   }
 
   function pinNoteEditorOverlayToVisualViewport() {
@@ -5358,11 +5397,11 @@
     var kbOpen = kbGuess > 40;
     document.documentElement.classList.toggle("note-editor-kb-open", kbOpen);
     document.documentElement.style.setProperty("--note-editor-kb-inset", kbGuess + "px");
-    syncNoteEditorEndPad();
-    if (kbOpen && !noteEditorKbWasOpen) {
+    var padChanged = syncNoteEditorEndPad();
+    if (kbOpen && (!noteEditorKbWasOpen || padChanged)) {
       window.setTimeout(function () {
         scrollNoteCaretIntoView(true);
-      }, 280);
+      }, noteEditorKbWasOpen ? 40 : 280);
     }
     noteEditorKbWasOpen = kbOpen;
     return kbGuess;
@@ -7669,27 +7708,81 @@
     }
   }
 
+  var HASHTAG_TOKEN_RE = /#([A-Za-zА-Яа-яЁё0-9_]{1,40})/g;
+
   function getUserTagsFromCache() {
     return (notesDataCache && notesDataCache.tags) || [];
   }
 
+  function getUserHashtagsFromCache() {
+    var fromBundle = (notesDataCache && notesDataCache.hashtags) || [];
+    if (fromBundle.length) return fromBundle;
+    var seen = {};
+    var out = [];
+    function collect(list) {
+      (list || []).forEach(function (item) {
+        noteHashtagsOf(item).forEach(function (h) {
+          var key = String(h.name || "").toLowerCase();
+          if (!key || seen[key]) return;
+          seen[key] = true;
+          out.push(h);
+        });
+      });
+    }
+    if (notesDataCache) {
+      collect(notesDataCache.local_notes);
+      collect(notesDataCache.transcriptions);
+      collect(notesDataCache.summaries);
+    }
+    return out;
+  }
+
   function noteTagsOf(item) {
-    return Array.isArray(item && item.tags) ? item.tags : [];
+    var project = noteProjectOf(item);
+    if (project) return [project];
+    return Array.isArray(item && item.tags) ? item.tags.slice(0, 1) : [];
+  }
+
+  function noteProjectOf(item) {
+    if (item && item.project && item.project.id) return item.project;
+    var tags = Array.isArray(item && item.tags) ? item.tags : [];
+    return tags[0] || null;
+  }
+
+  function noteHashtagsOf(item) {
+    return Array.isArray(item && item.hashtags) ? item.hashtags : [];
+  }
+
+  function parseNotesSearchQuery(raw) {
+    var src = String(raw || "").trim();
+    var hashtags = [];
+    var seen = {};
+    var text = src.replace(HASHTAG_TOKEN_RE, function (_, name) {
+      var key = String(name || "").toLowerCase();
+      if (key && !seen[key]) {
+        seen[key] = true;
+        hashtags.push(key);
+      }
+      return " ";
+    });
+    return { text: text.replace(/\s+/g, " ").trim().toLowerCase(), hashtags: hashtags };
   }
 
   function noteItemMatchesFilter(item, kind) {
-    var active = notesActiveTagIds.slice();
-    if (active.length) {
-      var itemTagIds = noteTagsOf(item).map(function (t) {
-        return Number(t.id);
+    var project = noteProjectOf(item);
+    if (notesActiveProjectId) {
+      if (!project || Number(project.id) !== Number(notesActiveProjectId)) return false;
+    }
+    var parsed = parseNotesSearchQuery(notesSearchQuery);
+    if (parsed.hashtags.length) {
+      var itemHash = noteHashtagsOf(item).map(function (h) {
+        return String(h.name || "").toLowerCase();
       });
-      for (var i = 0; i < active.length; i++) {
-        if (itemTagIds.indexOf(active[i]) < 0) return false;
+      for (var hi = 0; hi < parsed.hashtags.length; hi++) {
+        if (itemHash.indexOf(parsed.hashtags[hi]) < 0) return false;
       }
     }
-    var q = String(notesSearchQuery || "")
-      .trim()
-      .toLowerCase();
+    var q = parsed.text;
     if (!q) return true;
     var title = "";
     var preview = "";
@@ -7700,131 +7793,143 @@
       title = journalCardTitle(item);
       preview = String(item.preview || "").trim();
     }
-    var tagNames = noteTagsOf(item)
+    var projectName = project ? String(project.name || "") : "";
+    var hashNames = noteHashtagsOf(item)
       .map(function (t) {
-        return String(t.name || "");
+        return "#" + String(t.name || "");
       })
       .join(" ");
-    var hay = (title + " " + preview + " " + tagNames).toLowerCase();
+    var hay = (title + " " + preview + " " + projectName + " " + hashNames).toLowerCase();
     return hay.indexOf(q) >= 0;
   }
 
-  function renderNotesTagFilterBar() {
-    var menu = document.getElementById("notes-tag-filter-menu");
-    var badge = document.getElementById("notes-tag-filter-badge");
-    var btn = document.getElementById("notes-tag-filter-btn");
-    if (!menu) return;
-    menu.innerHTML = "";
-    var tags = getUserTagsFromCache();
-    if (!tags.length) {
-      var empty = document.createElement("p");
-      empty.className = "muted small";
-      empty.style.padding = "0.5rem 0.625rem";
-      empty.textContent = "Тегов пока нет";
-      menu.appendChild(empty);
-    } else {
-      tags.forEach(function (tag) {
-        var tid = Number(tag.id);
-        var active = notesActiveTagIds.indexOf(tid) >= 0;
-        var item = document.createElement("button");
-        item.type = "button";
-        item.className = "notes-tag-filter-menu-item" + (active ? " notes-tag-filter-menu-item--active" : "");
-        item.setAttribute("role", "option");
-        item.setAttribute("aria-selected", active ? "true" : "false");
-        item.innerHTML =
-          "<span>" + escapeHtml(String(tag.name || "")) + "</span>" +
-          (active ? '<span class="notes-tag-filter-menu-item-check" aria-hidden="true">✓</span>' : "");
-        item.addEventListener("click", function (e) {
-          e.stopPropagation();
-          var idx = notesActiveTagIds.indexOf(tid);
-          if (idx >= 0) notesActiveTagIds.splice(idx, 1);
-          else notesActiveTagIds.push(tid);
-          renderNotesTagFilterBar();
-          if (notesDataCache) renderNotesPanesFromData(notesDataCache);
-        });
-        menu.appendChild(item);
+  function setNotesSearchExpanded(open) {
+    var wrap = document.getElementById("notes-search-wrap");
+    var toggle = document.getElementById("notes-search-toggle");
+    var input = document.getElementById("notes-search-input");
+    if (!wrap) return;
+    var shouldOpen = !!open || !!(input && String(input.value || "").trim());
+    wrap.classList.toggle("notes-search-wrap--open", shouldOpen);
+    if (toggle) toggle.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
+    if (shouldOpen && input && open) {
+      window.requestAnimationFrame(function () {
+        try {
+          input.focus();
+        } catch (_) {}
       });
     }
-    var foot = document.createElement("div");
-    foot.className = "notes-tag-filter-menu-foot";
+  }
+
+  function applyNotesHashtagSearch(name) {
+    var token = "#" + String(name || "").replace(/^#/, "");
+    notesSearchQuery = token;
+    var input = document.getElementById("notes-search-input");
+    if (input) input.value = token;
+    setNotesSearchExpanded(true);
+    if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+  }
+
+  function renderNotesTagFilterBar() {
+    var row = document.getElementById("notes-project-chips");
+    if (!row) return;
+    row.innerHTML = "";
+    var tags = getUserTagsFromCache();
+    tags.forEach(function (tag) {
+      var tid = Number(tag.id);
+      var active = Number(notesActiveProjectId) === tid;
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className =
+        "tag-chip tag-chip--filter notes-project-chip" + (active ? " tag-chip--active" : "");
+      chip.setAttribute("role", "option");
+      chip.setAttribute("aria-selected", active ? "true" : "false");
+      chip.textContent = String(tag.name || "");
+      chip.addEventListener("click", function (e) {
+        e.stopPropagation();
+        notesActiveProjectId = active ? 0 : tid;
+        renderNotesTagFilterBar();
+        if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+      });
+      row.appendChild(chip);
+    });
     var manage = document.createElement("button");
     manage.type = "button";
-    manage.className = "notes-tag-filter-menu-manage";
-    manage.textContent = "Управление тегами…";
+    manage.className = "notes-project-manage";
+    manage.setAttribute("aria-label", "Управление проектами");
+    manage.title = "Проекты";
+    manage.innerHTML =
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>';
     manage.addEventListener("click", function (e) {
       e.stopPropagation();
-      closeNotesTagFilterMenu();
       openTagsManageSheet();
     });
-    foot.appendChild(manage);
-    menu.appendChild(foot);
-    if (badge) {
-      if (notesActiveTagIds.length) {
-        badge.textContent = String(notesActiveTagIds.length);
-        badge.classList.remove("hidden");
-      } else {
-        badge.textContent = "";
-        badge.classList.add("hidden");
-      }
-    }
-    if (btn) {
-      btn.setAttribute("aria-expanded", notesTagFilterMenuOpen ? "true" : "false");
-    }
+    row.appendChild(manage);
   }
 
-  var notesTagFilterMenuOpen = false;
-
-  function closeNotesTagFilterMenu() {
-    notesTagFilterMenuOpen = false;
-    var menu = document.getElementById("notes-tag-filter-menu");
-    var btn = document.getElementById("notes-tag-filter-btn");
-    if (menu) menu.classList.add("hidden");
-    if (btn) btn.setAttribute("aria-expanded", "false");
-  }
-
-  function toggleNotesTagFilterMenu() {
-    notesTagFilterMenuOpen = !notesTagFilterMenuOpen;
-    var menu = document.getElementById("notes-tag-filter-menu");
-    var btn = document.getElementById("notes-tag-filter-btn");
-    if (!menu) return;
-    if (notesTagFilterMenuOpen) {
-      renderNotesTagFilterBar();
-      menu.classList.remove("hidden");
-      if (btn) btn.setAttribute("aria-expanded", "true");
-    } else {
-      closeNotesTagFilterMenu();
-    }
-  }
+  function closeNotesTagFilterMenu() {}
 
   function appendTagChipsRow(parent, tags, opts) {
     opts = opts || {};
-    if (!tags || !tags.length) return;
+    var project = opts.project || null;
+    var hashtags = opts.hashtags || [];
+    if (!project && (!tags || !tags.length) && !hashtags.length) return;
     var row = document.createElement("div");
     row.className = parent.classList && parent.classList.contains("journal-card-main")
       ? "journal-card-tags"
       : "note-card-tags";
     if (opts.head) row.classList.add("note-card-tags--head");
-    tags.forEach(function (tag) {
-      var chip = document.createElement("span");
-      chip.className = "tag-chip tag-chip--card";
+    if (project) {
+      var pchip = document.createElement("span");
+      pchip.className = "tag-chip tag-chip--card tag-chip--project";
+      pchip.textContent = String(project.name || "");
+      row.appendChild(pchip);
+    } else if (tags && tags.length) {
+      tags.forEach(function (tag) {
+        var chip = document.createElement("span");
+        chip.className = "tag-chip tag-chip--card tag-chip--project";
+        chip.textContent = String(tag.name || "");
+        row.appendChild(chip);
+      });
+    }
+    hashtags.forEach(function (tag) {
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "tag-chip tag-chip--card tag-chip--hashtag";
       chip.textContent = String(tag.name || "");
+      chip.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        applyNotesHashtagSearch(tag.name);
+      });
       row.appendChild(chip);
     });
+    if (!row.childNodes.length) return;
     if (opts.prepend) parent.insertBefore(row, parent.firstChild);
     else parent.appendChild(row);
   }
 
+  function appendItemLabelChips(parent, item, opts) {
+    appendTagChipsRow(parent, noteTagsOf(item), Object.assign({
+      project: noteProjectOf(item),
+      hashtags: noteHashtagsOf(item),
+    }, opts || {}));
+  }
+
   function updateItemTagsInCache(itemKind, itemId, tags) {
-    if (!notesDataCache) return;
     var idStr = String(itemId);
     function patch(list) {
       if (!list) return;
       list.forEach(function (row) {
-        if (String(row.id) === idStr) row.tags = tags.slice();
+        if (String(row.id) === idStr) {
+          row.tags = tags.slice();
+          row.project = tags[0] || null;
+        }
       });
     }
-    if (itemKind === "local") patch(notesDataCache.local_notes);
-    else {
+    if (itemKind === "local") {
+      if (notesDataCache) patch(notesDataCache.local_notes);
+      if (knowledgeDataCache) patch(knowledgeDataCache.notes);
+    } else if (notesDataCache) {
       patch(notesDataCache.transcriptions);
       patch(notesDataCache.summaries);
       patch(notesDataCache.journal);
@@ -7840,6 +7945,7 @@
       }
     );
     var tags = (res && res.tags) || [];
+    if (res && res.project) tags = [res.project];
     updateItemTagsInCache(itemKind, itemId, tags);
     renderNotesTagFilterBar();
     if (notesDataCache) renderNotesPanesFromData(notesDataCache);
@@ -7880,7 +7986,7 @@
     container.classList.add("tag-picker", "tag-picker--dropdown");
     bindTagPickerDocClickOnce();
 
-    var stateTags = (currentTags || []).slice();
+    var stateTags = (currentTags || []).slice(0, 1);
     var menuOpen = false;
     var menuEl = null;
     var addBtnEl = null;
@@ -7950,7 +8056,7 @@
       if (!count) {
         inner.insertAdjacentHTML("afterbegin", TAG_PICKER_ICON_SVG);
         var emptyLabel = document.createElement("span");
-        emptyLabel.textContent = "Теги";
+        emptyLabel.textContent = "Проект";
         inner.appendChild(emptyLabel);
       } else {
         addBtnEl.classList.add("tag-picker-trigger--selected");
@@ -8005,7 +8111,7 @@
       if (!allTags.length) {
         var empty = document.createElement("p");
         empty.className = "tag-picker-menu-empty";
-        empty.textContent = "Тегов пока нет";
+        empty.textContent = "Проектов пока нет";
         menuEl.appendChild(empty);
       } else {
         allTags.forEach(function (t) {
@@ -8028,11 +8134,9 @@
           btn.addEventListener("click", function (e) {
             e.stopPropagation();
             if (selected[tid]) {
-              stateTags = stateTags.filter(function (x) {
-                return Number(x.id) !== tid;
-              });
+              stateTags = [];
             } else {
-              stateTags.push({ id: t.id, name: t.name });
+              stateTags = [{ id: t.id, name: t.name }];
             }
             updateTrigger();
             fillMenu();
@@ -8048,7 +8152,7 @@
       createBtn.addEventListener("click", async function (e) {
         e.stopPropagation();
         closeMenu();
-        var name = prompt("Название тега");
+        var name = prompt("Название проекта");
         if (!name || !String(name).trim()) return;
         try {
           var res = await apiFetch("/tags", {
@@ -8063,7 +8167,7 @@
           notesDataCache.tags.sort(function (a, b) {
             return String(a.name || "").localeCompare(String(b.name || ""), "ru");
           });
-          stateTags.push({ id: created.id, name: created.name });
+          stateTags = [{ id: created.id, name: created.name }];
           renderNotesTagFilterBar();
           scheduleSave();
           updateTrigger();
@@ -8092,7 +8196,7 @@
     addBtnEl = document.createElement("button");
     addBtnEl.type = "button";
     addBtnEl.className = "tag-picker-add-btn tag-picker-trigger";
-    addBtnEl.setAttribute("aria-label", "Теги");
+    addBtnEl.setAttribute("aria-label", "Проект");
     addBtnEl.setAttribute("aria-haspopup", "listbox");
     addBtnEl.setAttribute("aria-expanded", "false");
     menuEl = document.createElement("div");
@@ -8141,7 +8245,7 @@
     list.innerHTML = "";
     var tags = getUserTagsFromCache().slice();
     if (!tags.length) {
-      list.innerHTML = '<p class="muted small">Тегов пока нет. Создайте первый ниже.</p>';
+      list.innerHTML = '<p class="muted small">Проектов пока нет. Создайте первый ниже.</p>';
       return;
     }
     tags.forEach(function (tag) {
@@ -8182,12 +8286,10 @@
         }
       });
       del.addEventListener("click", async function () {
-        if (!(await confirmDialog('Удалить тег «' + String(tag.name || "") + "»?"))) return;
+        if (!(await confirmDialog('Удалить проект «' + String(tag.name || "") + "»?"))) return;
         try {
           await apiFetch("/tags/" + encodeURIComponent(String(tag.id)), { method: "DELETE" });
-          notesActiveTagIds = notesActiveTagIds.filter(function (id) {
-            return id !== Number(tag.id);
-          });
+          if (Number(notesActiveProjectId) === Number(tag.id)) notesActiveProjectId = 0;
           await loadNotes();
           renderTagsManageList();
         } catch (e) {
@@ -8389,6 +8491,9 @@
             onTocNavigate: options.onTocNavigate || null,
             scrollParent: options.scrollParent || null,
             extraTocItems: options.extraTocItems || null,
+            hashtags: getUserHashtagsFromCache().map(function (h) {
+              return String(h.name || "");
+            }),
           });
           if (editor && typeof editor.bindTapFocus === "function" && !isIOSDevice()) {
             editor.bindTapFocus(container);
@@ -12996,8 +13101,8 @@
       pn.querySelector(".error").textContent = errParts.join(" · ");
     } else if (!local.length) {
       pn.innerHTML =
-        localAll.length && (notesSearchQuery.trim() || notesActiveTagIds.length)
-          ? '<p class="muted empty-hint">Ничего не найдено. Измените поиск или фильтр по тегам.</p>'
+        localAll.length && (notesSearchQuery.trim() || notesActiveProjectId)
+          ? '<p class="muted empty-hint">Ничего не найдено. Измените поиск, проект или #хэштег.</p>'
           : '<p class="muted empty-hint">Заметок пока нет. Нажмите «+» справа от переключателя или создайте заметку в чате с ботом.</p>';
     } else {
       function appendNoteCard(n, opts) {
@@ -13025,7 +13130,7 @@
               "</p>"
             : "");
         appendNoteCardAvatars(inner, n.members);
-        appendTagChipsRow(inner, noteTagsOf(n));
+        appendItemLabelChips(inner, n);
         mountNoteCardActions(card, inner, n);
         card.appendChild(inner);
         card.addEventListener("click", function () {
@@ -13060,7 +13165,7 @@
       }
       if (!list.length) {
         pane.innerHTML =
-          '<p class="muted empty-hint">Ничего не найдено. Измените поиск или фильтр по тегам.</p>';
+          '<p class="muted empty-hint">Ничего не найдено. Измените поиск, проект или #хэштег.</p>';
         return;
       }
       list.forEach(function (row) {
@@ -13085,7 +13190,7 @@
         if (isJournalPdfOp(row.operation)) {
           inner.appendChild(createJournalPdfButton(jid));
         }
-        appendTagChipsRow(inner, noteTagsOf(row));
+        appendItemLabelChips(inner, row);
         card.appendChild(inner);
         card.addEventListener("click", function () {
           openJournalEditorDetail(row);
@@ -13698,6 +13803,7 @@
       try {
         mountTagPicker(tagsWrap, "local", noteId, noteTagsOf(n), function (tags) {
           n.tags = tags;
+          n.project = tags[0] || null;
         });
         setHidden(tagsWrap, false);
       } catch (err) {
@@ -13767,6 +13873,9 @@
         noteId = String(created.id || "");
         noteIsCreate = false;
         n.id = noteId;
+        n.tags = created.tags || n.tags;
+        n.project = created.project || n.project;
+        n.hashtags = created.hashtags || n.hashtags;
         if (isKnowledge) {
           prependKnowledgeInCache(created);
         } else {
@@ -13777,6 +13886,7 @@
           try {
             mountTagPicker(tagsWrap, "local", noteId, noteTagsOf(n), function (tags) {
               n.tags = tags;
+              n.project = tags[0] || null;
             });
             setHidden(tagsWrap, false);
           } catch (err) {
@@ -13808,6 +13918,8 @@
             body: fields.description,
             todoist_id: n.todoist_id,
             tags: noteTagsOf(n),
+            project: noteProjectOf(n),
+            hashtags: noteHashtagsOf(n),
             members: moreWrap && moreWrap._noteMembers,
             revision: moreWrap && moreWrap._noteRevision,
             updated_at: moreWrap && moreWrap._noteUpdatedAt,
@@ -13989,7 +14101,9 @@
       try {
         mountTagPicker(tagsWrap, "journal", journalId, noteTagsOf(it), function (tags) {
           it.tags = tags;
+          it.project = tags[0] || null;
           row.tags = tags;
+          row.project = tags[0] || null;
         });
         setHidden(tagsWrap, false);
       } catch (err) {
@@ -14028,7 +14142,12 @@
         main_topic: title,
         preview: notePlainExcerpt(fields.description, 400),
         tags: noteTagsOf(it),
+        project: noteProjectOf(it),
+        hashtags: noteHashtagsOf(it),
       };
+      it.tags = updated.tags || it.tags;
+      it.project = updated.project || it.project;
+      it.hashtags = updated.hashtags || it.hashtags;
       updateJournalInCache(journalId, op, updated);
       if (notesDataCache) renderNotesPanesFromData(notesDataCache);
       var detailBodyDraft = getNoteEditorBodyEl();
@@ -14657,7 +14776,31 @@
     if (notesSearchInput) {
       notesSearchInput.addEventListener("input", function () {
         notesSearchQuery = notesSearchInput.value || "";
+        setNotesSearchExpanded(true);
         if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+      });
+      notesSearchInput.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") {
+          if (!String(notesSearchInput.value || "").trim()) {
+            notesSearchInput.blur();
+            setNotesSearchExpanded(false);
+          }
+        }
+      });
+      notesSearchInput.addEventListener("blur", function () {
+        window.setTimeout(function () {
+          if (!String(notesSearchInput.value || "").trim()) setNotesSearchExpanded(false);
+        }, 120);
+      });
+    }
+
+    var notesSearchToggle = document.getElementById("notes-search-toggle");
+    if (notesSearchToggle) {
+      notesSearchToggle.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var wrap = document.getElementById("notes-search-wrap");
+        var open = !(wrap && wrap.classList.contains("notes-search-wrap--open"));
+        setNotesSearchExpanded(open);
       });
     }
 
@@ -14668,21 +14811,6 @@
         if (knowledgeDataCache) renderKnowledgePaneFromData(knowledgeDataCache);
       });
     }
-
-    var notesTagFilterBtn = document.getElementById("notes-tag-filter-btn");
-    if (notesTagFilterBtn) {
-      notesTagFilterBtn.addEventListener("click", function (e) {
-        e.stopPropagation();
-        toggleNotesTagFilterMenu();
-      });
-    }
-    document.addEventListener("click", function (e) {
-      if (!notesTagFilterMenuOpen) return;
-      var menu = document.getElementById("notes-tag-filter-menu");
-      var btn = document.getElementById("notes-tag-filter-btn");
-      if (menu && (menu.contains(e.target) || (btn && btn.contains(e.target)))) return;
-      closeNotesTagFilterMenu();
-    });
 
     var tagsManageClose = document.getElementById("tags-manage-close");
     if (tagsManageClose) tagsManageClose.addEventListener("click", closeTagsManageSheet);
