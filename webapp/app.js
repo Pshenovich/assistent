@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260918-project-chip-h";
+  var WEBAPP_BUILD = "20260918-toc-sticky";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260918-project-chip-h";
+  const NOTE_EDITOR_ASSET_V = "20260918-toc-sticky";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -8424,17 +8424,21 @@
         '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1" fill="currentColor" stroke="none"/>' +
         "</svg>" +
         "</button>";
-    return (
-      '<div class="note-editor-doc-layout">' +
-      tocToggle +
-      '<div class="note-editor-toc-backdrop" data-note-toc-close aria-hidden="true"></div>' +
+    var tocPanel =
       '<aside class="note-editor-toc-panel" id="note-editor-toc-panel" aria-label="Оглавление">' +
       '<div class="note-editor-toc-head">' +
       "<span>Оглавление</span>" +
       '<button type="button" class="note-editor-toc-close" data-note-toc-close aria-label="Закрыть">x</button>' +
       "</div>" +
       '<div class="note-editor-toc-list"></div>' +
-      "</aside>" +
+      "</aside>";
+    var tocChrome = isMobileNoteLayout()
+      ? tocPanel
+      : '<div class="note-editor-toc-anchor">' + tocToggle + tocPanel + "</div>";
+    return (
+      '<div class="note-editor-doc-layout">' +
+      tocChrome +
+      '<div class="note-editor-toc-backdrop" data-note-toc-close aria-hidden="true"></div>' +
       '<div class="note-editor-main-column">' +
       '<div class="note-editor-pad note-editor-pad--title-in-body">' +
       '<textarea id="note-editor-title-input" class="note-editor-title vkui--font_title1--regular" ' +

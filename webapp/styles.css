@@ -8633,11 +8633,18 @@ html.modal-sheet-open body {
     background: transparent;
   }
 
-  .note-editor-toc-toggle {
+  .note-editor-toc-anchor {
     position: sticky;
     top: calc(var(--note-editor-chrome-top, 54px) + 16px);
-    flex: 0 0 auto;
     z-index: 131;
+    flex: 0 0 44px;
+    align-self: flex-start;
+    width: 44px;
+  }
+
+  .note-editor-toc-toggle {
+    position: relative;
+    z-index: 1;
     margin: 0;
     color: var(--vkui--color_text_secondary, var(--text-secondary));
     background: rgba(255, 255, 255, 0.06);

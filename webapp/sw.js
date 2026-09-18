@@ -1,17 +1,17 @@
 /* Mini App service worker: кэш оболочки для быстрого повторного открытия PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260918-project-chip-h";
+var CACHE_VERSION = "miniapp-v1-20260918-toc-sticky";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
-  "./styles.css?v=20260918-project-chip-h",
-  "./app.js?v=20260918-project-chip-h",
-  "./note-html.js?v=20260918-project-chip-h",
-  "./note-comments.js?v=20260918-project-chip-h",
-  "./note-rich-editor.js?v=20260918-project-chip-h",
-  "./icons/arrow-up-right.svg?v=20260918-project-chip-h",
-  "./icons/chevron-up-muted.svg?v=20260918-project-chip-h",
-  "./icons/chevron-up-on-fill.svg?v=20260918-project-chip-h",
+  "./styles.css?v=20260918-toc-sticky",
+  "./app.js?v=20260918-toc-sticky",
+  "./note-html.js?v=20260918-toc-sticky",
+  "./note-comments.js?v=20260918-toc-sticky",
+  "./note-rich-editor.js?v=20260918-toc-sticky",
+  "./icons/arrow-up-right.svg?v=20260918-toc-sticky",
+  "./icons/chevron-up-muted.svg?v=20260918-toc-sticky",
+  "./icons/chevron-up-on-fill.svg?v=20260918-toc-sticky",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",
