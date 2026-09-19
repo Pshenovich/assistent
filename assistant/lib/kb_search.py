@@ -218,3 +218,182 @@ def score_query_against_haystack(query: str, hay: str) -> float:
     hay_l = (hay or "").lower()
     hay_words = re.findall(r"\w+", hay_l, flags=re.UNICODE)
     return float(sum(1 for w in words if word_matches_haystack(w, hay_l, hay_words=hay_words)))
+
+
+_NOTE_SEARCH_INTRO_RE = re.compile(
+    r"^(?:найди|найти|ищи|покажи|поиск|открой|дай)\s+"
+    r"(?:мне\s+)?(?:в\s+)?заметк\w*\s*"
+    r"(?:(?:про|о|об|по)\s+)?(.+)$",
+    re.IGNORECASE | re.UNICODE,
+)
+
+_NOTE_STOPWORDS = frozenset(
+    {
+        "найди",
+        "найти",
+        "ищи",
+        "покажи",
+        "поиск",
+        "открой",
+        "дай",
+        "заметка",
+        "заметку",
+        "заметки",
+        "заметке",
+        "заметках",
+        "заметкой",
+        "про",
+        "об",
+        "по",
+        "о",
+        "в",
+        "во",
+        "на",
+        "и",
+        "или",
+        "а",
+        "но",
+        "же",
+        "ли",
+        "мне",
+        "меня",
+        "мой",
+        "моя",
+        "мое",
+        "моё",
+        "мои",
+        "есть",
+        "это",
+        "эта",
+        "этот",
+        "эти",
+        "что",
+        "чтобы",
+        "как",
+        "где",
+        "когда",
+        "какой",
+        "какая",
+        "какие",
+        "какое",
+        "который",
+        "которая",
+        "которые",
+        "нужно",
+        "надо",
+        "хочу",
+        "пожалуйста",
+        "можно",
+        "сейчас",
+        "там",
+        "тут",
+        "здесь",
+        "всё",
+        "все",
+        "еще",
+        "ещё",
+        "уже",
+        "был",
+        "была",
+        "было",
+        "были",
+        "быть",
+        "мы",
+        "вы",
+        "они",
+        "он",
+        "она",
+        "оно",
+        "их",
+        "нам",
+        "нас",
+        "для",
+        "из",
+        "от",
+        "до",
+        "при",
+        "со",
+        "к",
+        "ко",
+        "у",
+        "с",
+    }
+)
+
+
+def extract_note_search_query(text: str) -> str:
+    """Убирает вводные «найди в заметках …» и лишний шум из запроса."""
+    s = " ".join((text or "").strip().split())
+    if not s:
+        return ""
+    m = _NOTE_SEARCH_INTRO_RE.match(s)
+    if m:
+        body = (m.group(1) or "").strip()
+        if body:
+            s = body
+    cleaned = re.sub(
+        r"^(?:найди|найти|ищи|покажи|поиск|открой|дай)\s+(?:мне\s+)?",
+        "",
+        s,
+        flags=re.IGNORECASE | re.UNICODE,
+    ).strip()
+    cleaned = re.sub(
+        r"^(?:в\s+)?заметк\w*\s+(?:(?:про|о|об|по)\s+)?",
+        "",
+        cleaned,
+        flags=re.IGNORECASE | re.UNICODE,
+    ).strip()
+    cleaned = re.sub(r"^(?:про|о|об|по)\s+", "", cleaned, flags=re.IGNORECASE)
+    return cleaned or s
+
+
+def note_query_content_words(query: str) -> list[str]:
+    """Содержательные токены запроса без стоп-слов."""
+    words = tokenize_query(query)
+    content = [w for w in words if w not in _NOTE_STOPWORDS]
+    return content or words
+
+
+def score_note_against_query(query: str, title: str, body: str) -> float:
+    """Релевантность заметки: морфология + буст заголовка + порог покрытия."""
+    words = note_query_content_words(query)
+    if not words:
+        return 0.0
+
+    title_l = (title or "").lower()
+    body_l = (body or "").lower()
+    title_words = re.findall(r"\w+", title_l, flags=re.UNICODE)
+    body_words = re.findall(r"\w+", body_l, flags=re.UNICODE)
+
+    title_hits = 0
+    body_hits = 0
+    matched = 0
+    for w in words:
+        in_title = word_matches_haystack(w, title_l, hay_words=title_words)
+        in_body = word_matches_haystack(w, body_l, hay_words=body_words)
+        if in_title:
+            title_hits += 1
+            matched += 1
+        elif in_body:
+            body_hits += 1
+            matched += 1
+
+    n = len(words)
+    if n <= 3:
+        min_matched = n
+    else:
+        min_matched = max(2, (n * 2 + 2) // 3)  # ceil(2n/3)
+    if matched < min_matched:
+        return 0.0
+
+    score = float(title_hits * 4 + body_hits + matched)
+
+    q_joined = " ".join(words)
+    if q_joined and q_joined in title_l:
+        score += 6.0
+    if title_hits == n and n >= 1:
+        score += 5.0
+    # Полное покрытие заголовка заметки коротким запросом
+    if title_words and title_hits >= min(len(title_words), n) and title_hits >= 1:
+        score += 3.0
+    return score

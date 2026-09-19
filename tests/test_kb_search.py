@@ -9,8 +9,11 @@ from pathlib import Path
 
 from assistant.lib.kb_search import (
     extract_kb_search_query,
+    extract_note_search_query,
     normalize_kb_name_filter,
+    note_query_content_words,
     resolve_kb_name_and_search_query,
+    score_note_against_query,
     score_query_against_haystack,
     word_matches_haystack,
 )
@@ -47,6 +50,34 @@ class KbSearchTests(unittest.TestCase):
             hay,
         )
         self.assertGreaterEqual(score, 2.0)
+
+    def test_extract_note_search_query(self) -> None:
+        q = extract_note_search_query("найди в заметках про филиалы в Куркино")
+        self.assertIn("филиал", q.lower())
+        self.assertIn("куркино", q.lower())
+        self.assertNotIn("найди", q.lower())
+
+    def test_note_content_words_drop_stopwords(self) -> None:
+        words = note_query_content_words("найди заметку про филиалы куркино")
+        self.assertIn("филиалы", words)
+        self.assertIn("куркино", words)
+        self.assertNotIn("найди", words)
+        self.assertNotIn("заметку", words)
+        self.assertNotIn("про", words)
+
+    def test_score_note_title_beats_body_noise(self) -> None:
+        good = score_note_against_query(
+            "филиалы куркино",
+            "Филиалы в Куркино",
+            "Адрес",
+        )
+        noisy = score_note_against_query(
+            "филиалы куркино",
+            "План встреч",
+            "Встречи на этой неделе",
+        )
+        self.assertGreater(good, 0)
+        self.assertEqual(noisy, 0)
 
 
 class KbStoreSearchTests(unittest.TestCase):

@@ -164,32 +164,41 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 def search_notes(
     user_id: int | str, query: str, *, limit: int = 5
 ) -> list[dict[str, Any]]:
-    """Поиск по заголовку и тексту (все слова запроса должны встретиться)."""
+    """Поиск по заголовку и тексту с морфологией, бустом title и порогом покрытия."""
+    from assistant.lib.kb_search import extract_note_search_query, score_note_against_query
+    from assistant.lib.telegram_html import html_to_plain
+
     uid = str(int(user_id))
-    q = (query or "").strip()
+    q = extract_note_search_query(query) or (query or "").strip()
     if not q:
         return []
-    words = [w for w in re.findall(r"\w+", q.lower(), flags=re.UNICODE) if len(w) >= 2]
-    if not words:
-        words = [q.lower()]
     lim = max(1, min(int(limit), 20))
-    scored: list[tuple[int, int, dict[str, Any]]] = []
+    scored: list[tuple[float, int, dict[str, Any]]] = []
     for note in list_notes(uid, limit=500):
-        hay = f"{note.get('title') or ''} {note.get('body') or ''}".lower()
-        score = sum(1 for w in words if w in hay)
-        if score > 0:
+        title = str(note.get("title") or "")
+        body_raw = str(note.get("body") or note.get("description") or "")
+        if "<" in body_raw and ">" in body_raw:
             try:
-                updated_key = int(
-                    str(note.get("updated_at") or note.get("created_at") or "")
-                    .replace("-", "")
-                    .replace(":", "")
-                    .replace("T", "")
-                    .replace("+", "")[:14]
-                    or "0"
-                )
-            except ValueError:
-                updated_key = 0
-            scored.append((score, updated_key, note))
+                body = html_to_plain(body_raw)
+            except Exception:
+                body = body_raw
+        else:
+            body = body_raw
+        score = score_note_against_query(q, title, body)
+        if score <= 0:
+            continue
+        try:
+            updated_key = int(
+                str(note.get("updated_at") or note.get("created_at") or "")
+                .replace("-", "")
+                .replace(":", "")
+                .replace("T", "")
+                .replace("+", "")[:14]
+                or "0"
+            )
+        except ValueError:
+            updated_key = 0
+        scored.append((score, updated_key, note))
     scored.sort(key=lambda x: (-x[0], -x[1]))
     return [n for _, _, n in scored[:lim]]
 

@@ -233,10 +233,12 @@ def _fetch_latest_meeting_fragments(user_id: str) -> list[JournalFragment]:
 
 
 def _normalize_parsed(parsed: dict[str, Any] | None, *, fallback_query: str) -> dict[str, Any]:
+    from assistant.lib.kb_search import extract_note_search_query
+
     p = dict(parsed or {})
     search_query = str(p.get("search_query") or p.get("query") or "").strip()
     if not search_query:
-        search_query = fallback_query.strip()
+        search_query = extract_note_search_query(fallback_query) or fallback_query.strip()
     focus = str(p.get("focus") or "general").strip().lower()
     if focus not in _FOCUS_TO_FIELD:
         focus = "general"

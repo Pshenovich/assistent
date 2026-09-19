@@ -96,10 +96,30 @@ class NotesStoreTests(unittest.TestCase):
 
     def test_search(self) -> None:
         notes_store.create_note(7, "Филиалы в Куркино", "Адрес и режим работы")
-        notes_store.create_note(7, "Другое", "Про встречи")
+        notes_store.create_note(7, "Другое", "Про встречи на этой неделе")
         hits = notes_store.search_notes(7, "филиалы куркино")
         self.assertEqual(len(hits), 1)
         self.assertIn("Куркино", hits[0]["title"])
+
+    def test_search_prefers_title_over_incidental_body_word(self) -> None:
+        notes_store.create_note(8, "План на неделю", "Обсудили встречи и задачи")
+        notes_store.create_note(8, "Филиалы в Куркино", "Адрес, телефон, режим")
+        hits = notes_store.search_notes(8, "найди заметку про филиалы в Куркино")
+        self.assertTrue(hits)
+        self.assertIn("Куркино", hits[0]["title"])
+
+    def test_search_russian_word_forms(self) -> None:
+        notes_store.create_note(9, "Филиалы в Куркино", "Список адресов")
+        notes_store.create_note(9, "Встречи", "Созвон с командой")
+        hits = notes_store.search_notes(9, "филиал куркинского")
+        self.assertTrue(hits)
+        self.assertIn("Куркино", hits[0]["title"])
+
+    def test_search_ignores_unrelated_common_word(self) -> None:
+        notes_store.create_note(10, "Рецепт борща", "Ингредиенты и шаги")
+        notes_store.create_note(10, "План встреч", "Созвон в пятницу")
+        hits = notes_store.search_notes(10, "найди заметку про филиалы куркино")
+        self.assertEqual(hits, [])
 
 
 if __name__ == "__main__":

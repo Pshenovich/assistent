@@ -36,7 +36,10 @@ async def handle_search(
     user = update.effective_user
     if not msg or not user:
         return
-    q = (query or "").strip()
+    from assistant.lib.kb_search import extract_note_search_query
+
+    raw = (query or "").strip()
+    q = extract_note_search_query(raw) or raw
     if not q:
         await msg.reply_text("Напишите, что искать, например: «найди заметку про филиалы в Куркино».")
         return
