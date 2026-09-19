@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260919-project-picker";
+  var WEBAPP_BUILD = "20260919-search-hashtag";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260919-project-picker";
+  const NOTE_EDITOR_ASSET_V = "20260919-search-hashtag";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -7811,6 +7811,7 @@
     var shouldOpen = !!open || !!(input && String(input.value || "").trim());
     wrap.classList.toggle("notes-search-wrap--open", shouldOpen);
     if (toggle) toggle.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
+    if (!shouldOpen) closeNotesTagFilterMenu();
     if (shouldOpen && input && open) {
       window.requestAnimationFrame(function () {
         try {
@@ -7827,6 +7828,122 @@
     if (input) input.value = token;
     setNotesSearchExpanded(true);
     if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+  }
+
+  function clearNotesHashtagSearch() {
+    notesSearchQuery = "";
+    var input = document.getElementById("notes-search-input");
+    if (input) input.value = "";
+    setNotesSearchExpanded(true);
+    if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+  }
+
+  function notesTagFilterMenuIsOpen() {
+    var menu = document.getElementById("notes-tag-filter-menu");
+    return !!(menu && !menu.classList.contains("hidden"));
+  }
+
+  function closeNotesTagFilterMenu() {
+    var menu = document.getElementById("notes-tag-filter-menu");
+    var btn = document.getElementById("notes-search-tag-btn");
+    if (menu) menu.classList.add("hidden");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+
+  function fillNotesTagFilterMenu() {
+    var menu = document.getElementById("notes-tag-filter-menu");
+    if (!menu) return;
+    menu.innerHTML = "";
+    var tags = getUserHashtagsFromCache()
+      .slice()
+      .sort(function (a, b) {
+        return String(a.name || "").localeCompare(String(b.name || ""), "ru", { sensitivity: "base" });
+      });
+    var active = {};
+    parseNotesSearchQuery(notesSearchQuery).hashtags.forEach(function (h) {
+      active[h] = true;
+    });
+    if (!tags.length) {
+      var empty = document.createElement("p");
+      empty.className = "notes-tag-filter-menu-empty";
+      empty.textContent = "Хэштегов пока нет";
+      menu.appendChild(empty);
+      return;
+    }
+    tags.forEach(function (tag) {
+      var name = String(tag.name || "").trim();
+      if (!name) return;
+      var key = name.toLowerCase();
+      var isActive = !!active[key];
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "notes-tag-filter-menu-item" + (isActive ? " notes-tag-filter-menu-item--active" : "");
+      btn.setAttribute("role", "option");
+      btn.setAttribute("aria-selected", isActive ? "true" : "false");
+      var label = document.createElement("span");
+      label.className = "notes-tag-filter-menu-item-label";
+      label.textContent = "#" + name;
+      btn.appendChild(label);
+      if (isActive) {
+        var check = document.createElement("span");
+        check.className = "notes-tag-filter-menu-item-check";
+        check.textContent = "✓";
+        check.setAttribute("aria-hidden", "true");
+        btn.appendChild(check);
+      }
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (isActive) {
+          clearNotesHashtagSearch();
+        } else {
+          applyNotesHashtagSearch(name);
+        }
+        closeNotesTagFilterMenu();
+      });
+      menu.appendChild(btn);
+    });
+  }
+
+  function openNotesTagFilterMenu() {
+    var wrap = document.getElementById("notes-search-wrap");
+    var menu = document.getElementById("notes-tag-filter-menu");
+    var btn = document.getElementById("notes-search-tag-btn");
+    if (!menu || !btn) return;
+    setNotesSearchExpanded(true);
+    fillNotesTagFilterMenu();
+    menu.classList.remove("hidden");
+    btn.setAttribute("aria-expanded", "true");
+    if (wrap) wrap.classList.add("notes-search-wrap--open");
+  }
+
+  function toggleNotesTagFilterMenu(e) {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (notesTagFilterMenuIsOpen()) {
+      closeNotesTagFilterMenu();
+      return;
+    }
+    openNotesTagFilterMenu();
+  }
+
+  var notesTagFilterDocBound = false;
+  function bindNotesTagFilterDocClickOnce() {
+    if (notesTagFilterDocBound) return;
+    notesTagFilterDocBound = true;
+    document.addEventListener(
+      "mousedown",
+      function (e) {
+        if (!notesTagFilterMenuIsOpen()) return;
+        var field = document.getElementById("notes-search-field");
+        if (field && field.contains(e.target)) return;
+        closeNotesTagFilterMenu();
+      },
+      true
+    );
   }
 
   function renderNotesTagFilterBar() {
@@ -7865,8 +7982,6 @@
     });
     row.appendChild(manage);
   }
-
-  function closeNotesTagFilterMenu() {}
 
   function appendTagChipsRow(parent, tags, opts) {
     opts = opts || {};
@@ -14903,10 +15018,16 @@
       notesSearchInput.addEventListener("input", function () {
         notesSearchQuery = notesSearchInput.value || "";
         setNotesSearchExpanded(true);
+        if (notesTagFilterMenuIsOpen()) fillNotesTagFilterMenu();
         if (notesDataCache) renderNotesPanesFromData(notesDataCache);
       });
       notesSearchInput.addEventListener("keydown", function (e) {
         if (e.key === "Escape") {
+          if (notesTagFilterMenuIsOpen()) {
+            e.preventDefault();
+            closeNotesTagFilterMenu();
+            return;
+          }
           if (!String(notesSearchInput.value || "").trim()) {
             notesSearchInput.blur();
             setNotesSearchExpanded(false);
@@ -14915,6 +15036,10 @@
       });
       notesSearchInput.addEventListener("blur", function () {
         window.setTimeout(function () {
+          if (notesTagFilterMenuIsOpen()) return;
+          var field = document.getElementById("notes-search-field");
+          var active = document.activeElement;
+          if (field && active && field.contains(active)) return;
           if (!String(notesSearchInput.value || "").trim()) setNotesSearchExpanded(false);
         }, 120);
       });
@@ -14926,8 +15051,19 @@
         e.stopPropagation();
         var wrap = document.getElementById("notes-search-wrap");
         var open = !(wrap && wrap.classList.contains("notes-search-wrap--open"));
+        if (!open) closeNotesTagFilterMenu();
         setNotesSearchExpanded(open);
       });
+    }
+
+    var notesSearchTagBtn = document.getElementById("notes-search-tag-btn");
+    if (notesSearchTagBtn) {
+      bindNotesTagFilterDocClickOnce();
+      notesSearchTagBtn.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+      notesSearchTagBtn.addEventListener("click", toggleNotesTagFilterMenu);
     }
 
     var knowledgeSearchInput = document.getElementById("knowledge-search-input");

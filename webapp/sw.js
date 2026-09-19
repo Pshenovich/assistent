@@ -1,17 +1,17 @@
 /* Mini App service worker: кэш оболочки для быстрого повторного открытия PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260919-project-picker";
+var CACHE_VERSION = "miniapp-v1-20260919-search-hashtag";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
-  "./styles.css?v=20260919-project-picker",
-  "./app.js?v=20260919-project-picker",
-  "./note-html.js?v=20260919-project-picker",
-  "./note-comments.js?v=20260919-project-picker",
-  "./note-rich-editor.js?v=20260919-project-picker",
-  "./icons/arrow-up-right.svg?v=20260919-project-picker",
-  "./icons/chevron-up-muted.svg?v=20260919-project-picker",
-  "./icons/chevron-up-on-fill.svg?v=20260919-project-picker",
+  "./styles.css?v=20260919-search-hashtag",
+  "./app.js?v=20260919-search-hashtag",
+  "./note-html.js?v=20260919-search-hashtag",
+  "./note-comments.js?v=20260919-search-hashtag",
+  "./note-rich-editor.js?v=20260919-search-hashtag",
+  "./icons/arrow-up-right.svg?v=20260919-search-hashtag",
+  "./icons/chevron-up-muted.svg?v=20260919-search-hashtag",
+  "./icons/chevron-up-on-fill.svg?v=20260919-search-hashtag",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",

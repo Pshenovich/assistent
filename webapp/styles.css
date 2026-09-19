@@ -1836,21 +1836,52 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
   background: var(--surface);
 }
 
+.notes-search-input::-webkit-search-decoration,
+.notes-search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.notes-search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .notes-search-wrap--open {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.notes-search-wrap--open .notes-search-field {
+  width: auto;
+  margin-left: 0.25rem;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .notes-search-wrap--open .notes-search-input {
   flex: 1;
   width: auto;
   min-width: 6rem;
-  margin-left: 0.25rem;
-  padding: 0.625rem 0.75rem;
+  padding: 0.625rem 2.5rem 0.625rem 0.75rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 12px);
   opacity: 1;
   pointer-events: auto;
+}
+
+.notes-search-tag-btn {
+  display: none;
+}
+
+.notes-search-wrap--open .notes-search-tag-btn {
+  display: flex;
 }
 
 #knowledge-root .notes-search-wrap {
@@ -1927,7 +1958,6 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
   right: 0.375rem;
   top: 50%;
   transform: translateY(-50%);
-  display: flex;
   align-items: center;
   justify-content: center;
   width: 2rem;
@@ -1938,6 +1968,7 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
   color: var(--text-secondary);
   background: transparent;
   cursor: pointer;
+  z-index: 1;
 }
 
 .notes-search-tag-btn:hover,
@@ -1981,10 +2012,20 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
   display: none !important;
 }
 
+.notes-tag-filter-menu-empty {
+  margin: 0;
+  padding: 0.5rem 0.625rem;
+  font-family: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
 .notes-tag-filter-menu-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.5rem;
   width: 100%;
   padding: 0.5rem 0.625rem;
   border: none;
@@ -1995,6 +2036,14 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
   color: var(--text);
   background: transparent;
   cursor: pointer;
+}
+
+.notes-tag-filter-menu-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .notes-tag-filter-menu-item:hover {
