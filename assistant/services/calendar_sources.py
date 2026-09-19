@@ -132,21 +132,48 @@ def assert_calendar_writable(user_id: int, calendar_id: str) -> None:
 def _event_start_end_raw(
     ev: dict[str, Any], user_id: int
 ) -> tuple[datetime | None, datetime | None]:
+    """Локальные начало/конец; timed (dateTime) и all-day (date, end exclusive)."""
+    from datetime import date, time, timedelta
+
     from assistant.services.calendar import _tz_for
 
     tz = _tz_for(user_id)
     st = ev.get("start") or {}
     en = ev.get("end") or {}
+    if not isinstance(st, dict) or not isinstance(en, dict):
+        return None, None
+
     ds = st.get("dateTime")
     de = en.get("dateTime")
-    if not ds or not de:
+    if ds and de:
+        try:
+            start = datetime.fromisoformat(str(ds).replace("Z", "+00:00")).astimezone(tz)
+            end = datetime.fromisoformat(str(de).replace("Z", "+00:00")).astimezone(tz)
+            return start, end
+        except ValueError:
+            return None, None
+
+    # All-day / multi-day (Booking.com hotels, Google all-day blocks): start.date + exclusive end.date
+    day_s = st.get("date")
+    if not day_s:
         return None, None
     try:
-        start = datetime.fromisoformat(str(ds).replace("Z", "+00:00")).astimezone(tz)
-        end = datetime.fromisoformat(str(de).replace("Z", "+00:00")).astimezone(tz)
-        return start, end
+        d_start = date.fromisoformat(str(day_s)[:10])
     except ValueError:
         return None, None
+    day_e = en.get("date")
+    if day_e:
+        try:
+            d_end = date.fromisoformat(str(day_e)[:10])
+        except ValueError:
+            d_end = d_start + timedelta(days=1)
+    else:
+        d_end = d_start + timedelta(days=1)
+    if d_end <= d_start:
+        d_end = d_start + timedelta(days=1)
+    start = datetime.combine(d_start, time.min, tzinfo=tz)
+    end = datetime.combine(d_end, time.min, tzinfo=tz)
+    return start, end
 
 
 def _normalize_event(
@@ -214,25 +241,33 @@ def list_events_in_window(
     collected: list[dict[str, Any]] = []
     for cal_id in ids:
         try:
-            kwargs: dict[str, Any] = {
-                "calendarId": cal_id,
-                "timeMin": time_min.isoformat(),
-                "timeMax": time_max.isoformat(),
-                "singleEvents": True,
-                "orderBy": "startTime",
-            }
-            if q:
-                kwargs["q"] = q
-            res = svc.events().list(**kwargs).execute()
+            page_token: str | None = None
+            while True:
+                kwargs: dict[str, Any] = {
+                    "calendarId": cal_id,
+                    "timeMin": time_min.isoformat(),
+                    "timeMax": time_max.isoformat(),
+                    "singleEvents": True,
+                    "orderBy": "startTime",
+                    "maxResults": 250,
+                }
+                if q:
+                    kwargs["q"] = q
+                if page_token:
+                    kwargs["pageToken"] = page_token
+                res = svc.events().list(**kwargs).execute()
+                for ev in res.get("items") or []:
+                    if not isinstance(ev, dict):
+                        continue
+                    norm = _normalize_event(ev, calendar_id=cal_id, user_id=user_id)
+                    if norm:
+                        collected.append(norm)
+                page_token = str(res.get("nextPageToken") or "").strip() or None
+                if not page_token:
+                    break
         except Exception as e:
             print(f"[calendar_sources] list_failed uid={user_id} cal={cal_id} err={e!r}")
             continue
-        for ev in res.get("items") or []:
-            if not isinstance(ev, dict):
-                continue
-            norm = _normalize_event(ev, calendar_id=cal_id, user_id=user_id)
-            if norm:
-                collected.append(norm)
     return dedupe_events(collected)
 
 

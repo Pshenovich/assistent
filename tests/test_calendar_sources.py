@@ -91,3 +91,65 @@ def test_list_events_in_window_merges_calendars():
     assert len(items) == 1
     assert items[0]["summary"] == "Bitrix call"
     assert items[0]["calendar_id"] == "bitrix@group.calendar.google.com"
+
+
+def test_normalize_keeps_allday_booking_hotel():
+    """Booking.com hotel stays are multi-day all-day (date / exclusive end.date)."""
+    with patch("assistant.services.calendar._tz_for", return_value=ZoneInfo("Europe/Moscow")):
+        norm = cs._normalize_event(
+            {
+                "id": "hotel-1",
+                "summary": "Hotel Booking.com — City Center",
+                "iCalUID": "booking-hotel-1",
+                "status": "confirmed",
+                "start": {"date": "2026-06-04"},
+                "end": {"date": "2026-06-07"},
+                "htmlLink": "https://calendar.google.com/hotel",
+            },
+            calendar_id="primary",
+            user_id=1,
+        )
+    assert norm is not None
+    assert norm["summary"].startswith("Hotel")
+    assert norm["start"].date().isoformat() == "2026-06-04"
+    assert norm["end"].date().isoformat() == "2026-06-07"
+    assert norm["raw"]["start"]["date"] == "2026-06-04"
+
+
+def test_list_events_in_window_includes_allday_on_middle_day():
+    tz = ZoneInfo("Europe/Moscow")
+    # Middle night of a 4–7 June stay
+    day_start = datetime(2026, 6, 5, 0, 0, tzinfo=tz)
+    day_end = day_start + timedelta(days=1)
+    hotel = {
+        "id": "hotel-1",
+        "summary": "Отель Booking",
+        "iCalUID": "booking-1",
+        "start": {"date": "2026-06-04"},
+        "end": {"date": "2026-06-07"},
+    }
+    timed = {
+        "id": "meet-1",
+        "summary": "Созвон",
+        "iCalUID": "meet-1",
+        "start": {"dateTime": "2026-06-05T11:00:00+03:00"},
+        "end": {"dateTime": "2026-06-05T12:00:00+03:00"},
+    }
+
+    svc = MagicMock()
+
+    def _list(**kwargs):
+        res = MagicMock()
+        res.execute.return_value = {"items": [hotel, timed]}
+        return res
+
+    svc.events().list.side_effect = _list
+
+    with patch.object(cs, "_service", return_value=svc):
+        with patch.object(cs, "get_active_calendar_ids", return_value=["primary"]):
+            with patch("assistant.services.calendar._tz_for", return_value=tz):
+                items = cs.list_events_in_window(1, day_start, day_end)
+
+    summaries = {i["summary"] for i in items}
+    assert "Отель Booking" in summaries
+    assert "Созвон" in summaries

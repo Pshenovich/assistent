@@ -82,10 +82,22 @@ def calendar_event_busy_window_local(
     day_s = st.get("date")
     if day_s:
         try:
-            d = date.fromisoformat(str(day_s)[:10])
+            d_start = date.fromisoformat(str(day_s)[:10])
         except ValueError:
             return None
-        if d != work_start.date():
+        work_day = work_start.date()
+        day_e = en.get("date")
+        if day_e:
+            try:
+                d_end = date.fromisoformat(str(day_e)[:10])
+            except ValueError:
+                d_end = d_start + timedelta(days=1)
+        else:
+            d_end = d_start + timedelta(days=1)
+        if d_end <= d_start:
+            d_end = d_start + timedelta(days=1)
+        # Google exclusive end: stay covers [start, end)
+        if not (d_start <= work_day < d_end):
             return None
         return (work_start, work_end)
 

@@ -180,7 +180,6 @@ class TestCalendarHeuristics(unittest.TestCase):
         from zoneinfo import ZoneInfo
 
         tz = ZoneInfo("Europe/Moscow")
-        d = datetime(2026, 5, 22, 9, 0, tzinfo=tz)
         work_start = datetime(2026, 5, 22, 9, 0, tzinfo=tz)
         work_end = datetime(2026, 5, 22, 20, 0, tzinfo=tz)
         ev = {
@@ -192,6 +191,37 @@ class TestCalendarHeuristics(unittest.TestCase):
         )
         self.assertEqual(len(busy), 1)
         self.assertEqual(busy[0][0].hour, 10)
+
+    def test_busy_from_multiday_allday_on_middle_night(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from assistant.lib.calendar_event_utils import calendar_event_busy_window_local
+
+        tz = ZoneInfo("Europe/Moscow")
+        # Hotel 4–7 June (exclusive end); middle day 5 June must be busy
+        hotel = {
+            "start": {"date": "2026-06-04"},
+            "end": {"date": "2026-06-07"},
+            "summary": "Hotel Booking",
+        }
+        work_start = datetime(2026, 6, 5, 9, 0, tzinfo=tz)
+        work_end = datetime(2026, 6, 5, 20, 0, tzinfo=tz)
+        win = calendar_event_busy_window_local(
+            hotel, tz=tz, work_start=work_start, work_end=work_end
+        )
+        self.assertIsNotNone(win)
+        self.assertEqual(win[0], work_start)
+        self.assertEqual(win[1], work_end)
+
+        # Checkout day (exclusive end) is free
+        checkout_start = datetime(2026, 6, 7, 9, 0, tzinfo=tz)
+        checkout_end = datetime(2026, 6, 7, 20, 0, tzinfo=tz)
+        self.assertIsNone(
+            calendar_event_busy_window_local(
+                hotel, tz=tz, work_start=checkout_start, work_end=checkout_end
+            )
+        )
 
     def test_entry_kind_out_of_office(self):
         self.assertEqual(
