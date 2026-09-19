@@ -29,6 +29,17 @@ _KB_NAME_STOPWORDS = frozenset(
 )
 
 _RU_ENDINGS = (
+    "скими",
+    "скому",
+    "ского",
+    "ской",
+    "ское",
+    "ская",
+    "ские",
+    "ский",
+    "ских",
+    "ским",
+    "скую",
     "иями",
     "ями",
     "ами",
@@ -179,8 +190,9 @@ def normalize_ru_word(word: str) -> str:
     for _ in range(4):
         changed = False
         for suf in _RU_ENDINGS:
-            if w.endswith(suf) and len(w) - len(suf) >= 4:
-                w = w[:-len(suf)]
+            # Keep stems of length >= 3 so дети/детей/детские → «дет»
+            if w.endswith(suf) and len(w) - len(suf) >= 3:
+                w = w[: -len(suf)]
                 changed = True
                 break
         if not changed:

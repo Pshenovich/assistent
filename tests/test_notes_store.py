@@ -121,6 +121,13 @@ class NotesStoreTests(unittest.TestCase):
         hits = notes_store.search_notes(10, "найди заметку про филиалы куркино")
         self.assertEqual(hits, [])
 
+    def test_search_kids_vacation_paraphrase(self) -> None:
+        notes_store.create_note(12, "Детские каникулы", "Вот каникулы из файла в табличке")
+        notes_store.create_note(12, "План встреч", "Созвон")
+        hits = notes_store.search_notes(12, "Найди заметку про каникулы у детей")
+        self.assertTrue(hits)
+        self.assertEqual(hits[0]["title"], "Детские каникулы")
+
 
 if __name__ == "__main__":
     unittest.main()

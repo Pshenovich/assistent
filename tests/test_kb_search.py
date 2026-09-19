@@ -11,6 +11,7 @@ from assistant.lib.kb_search import (
     extract_kb_search_query,
     extract_note_search_query,
     normalize_kb_name_filter,
+    normalize_ru_word,
     note_query_content_words,
     resolve_kb_name_and_search_query,
     score_note_against_query,
@@ -78,6 +79,18 @@ class KbSearchTests(unittest.TestCase):
         )
         self.assertGreater(good, 0)
         self.assertEqual(noisy, 0)
+
+    def test_kids_vacation_word_forms(self) -> None:
+        """«детей» должен находить заметку «Детские каникулы»."""
+        self.assertEqual(normalize_ru_word("детей"), normalize_ru_word("детские"))
+        self.assertEqual(normalize_ru_word("дети"), "дет")
+        score = score_note_against_query(
+            "каникулы у детей",
+            "Детские каникулы",
+            "Вот каникулы из файла",
+        )
+        self.assertGreater(score, 0)
+        self.assertTrue(word_matches_haystack("детей", "детские каникулы"))
 
 
 class KbStoreSearchTests(unittest.TestCase):
