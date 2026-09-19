@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260918-table-manage";
+  var WEBAPP_BUILD = "20260919-project-picker";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260918-table-manage";
+  const NOTE_EDITOR_ASSET_V = "20260919-project-picker";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
