@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260919-search-hashtag";
+  var WEBAPP_BUILD = "20260919-edge-swipe-pwa";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260919-search-hashtag";
+  const NOTE_EDITOR_ASSET_V = "20260919-edge-swipe-pwa";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -7480,14 +7480,81 @@
     var tg = window.Telegram && window.Telegram.WebApp;
     if (!tg || !tg.BackButton || typeof tg.BackButton.onClick !== "function") return;
     tg.BackButton.onClick(function () {
-      performAppBack();
+      requestAppBack();
     });
   }
 
-  var EDGE_SWIPE_ZONE_PX = 24;
-  var EDGE_SWIPE_LOCK_PX = 8;
-  var EDGE_SWIPE_THRESHOLD_PX = 80;
-  var EDGE_SWIPE_VELOCITY_PX_MS = 0.45;
+  /* PWA/iOS: system edge-swipe uses History API. Keep a matching entry while nested. */
+  var appBackHistoryArmed = false;
+  var appBackPopQuiet = false;
+
+  function shouldUseHistoryAppBack() {
+    // Telegram Mini App has its own BackButton; avoid fighting the client shell.
+    return !useTelegramNativeBack();
+  }
+
+  function ensureAppBackHistory() {
+    if (!shouldUseHistoryAppBack()) return;
+    if (!canPerformAppBack()) {
+      if (appBackHistoryArmed && history.state && history.state.leoAppBack) {
+        appBackPopQuiet = true;
+        appBackHistoryArmed = false;
+        try {
+          history.back();
+        } catch (_) {
+          appBackPopQuiet = false;
+        }
+      } else {
+        appBackHistoryArmed = false;
+      }
+      return;
+    }
+    if (appBackHistoryArmed && history.state && history.state.leoAppBack) return;
+    try {
+      history.pushState({ leoAppBack: true }, "");
+      appBackHistoryArmed = true;
+    } catch (_) {}
+  }
+
+  function requestAppBack() {
+    if (!canPerformAppBack()) return false;
+    if (
+      shouldUseHistoryAppBack() &&
+      appBackHistoryArmed &&
+      history.state &&
+      history.state.leoAppBack
+    ) {
+      try {
+        history.back();
+        return true;
+      } catch (_) {}
+    }
+    return !!performAppBack();
+  }
+
+  function bindAppBackPopstateOnce() {
+    if (window._leoAppBackPopBound) return;
+    window._leoAppBackPopBound = true;
+    window.addEventListener("popstate", function () {
+      if (appBackPopQuiet) {
+        appBackPopQuiet = false;
+        return;
+      }
+      appBackHistoryArmed = !!(history.state && history.state.leoAppBack);
+      if (!canPerformAppBack()) return;
+      performAppBack();
+      // Re-arm if another nested level remains (detail under editor, etc.).
+      setTimeout(function () {
+        ensureAppBackHistory();
+        syncEdgeSwipeHit();
+      }, 0);
+    });
+  }
+
+  var EDGE_SWIPE_ZONE_PX = 40;
+  var EDGE_SWIPE_LOCK_PX = 10;
+  var EDGE_SWIPE_THRESHOLD_PX = 56;
+  var EDGE_SWIPE_VELOCITY_PX_MS = 0.35;
 
   function getEdgeSwipeLeftInset() {
     try {
@@ -7506,44 +7573,75 @@
     return !!(stage && stage.classList.contains("panels-stage--animating"));
   }
 
+  function getEdgeSwipeHitEl() {
+    return document.getElementById("edge-swipe-back-hit");
+  }
+
+  function syncEdgeSwipeHit() {
+    var hit = getEdgeSwipeHitEl();
+    if (!hit) return;
+    var on = canPerformAppBack() && !isPanelsStageAnimating();
+    hit.classList.toggle("is-active", on);
+    hit.setAttribute("aria-hidden", on ? "false" : "true");
+    var w = EDGE_SWIPE_ZONE_PX + getEdgeSwipeLeftInset();
+    hit.style.width = w + "px";
+  }
+
   function bindEdgeSwipeBackOnce() {
     if (edgeSwipeBackBound) return;
     edgeSwipeBackBound = true;
+    bindAppBackPopstateOnce();
+
+    var hit = getEdgeSwipeHitEl();
+    if (!hit) {
+      hit = document.createElement("div");
+      hit.id = "edge-swipe-back-hit";
+      hit.className = "edge-swipe-back-hit";
+      hit.setAttribute("aria-hidden", "true");
+      document.body.appendChild(hit);
+    }
 
     var tracking = false;
     var startX = 0;
     var startY = 0;
     var startT = 0;
     var locked = null;
-    var pointerId = null;
     var lastX = 0;
 
     function reset() {
       tracking = false;
       locked = null;
-      pointerId = null;
     }
 
-    function onDown(e) {
-      if (pointerId != null) return;
+    function pointX(e) {
+      if (e.touches && e.touches[0]) return e.touches[0].clientX;
+      if (e.changedTouches && e.changedTouches[0]) return e.changedTouches[0].clientX;
+      return e.clientX;
+    }
+
+    function pointY(e) {
+      if (e.touches && e.touches[0]) return e.touches[0].clientY;
+      if (e.changedTouches && e.changedTouches[0]) return e.changedTouches[0].clientY;
+      return e.clientY;
+    }
+
+    function onStart(e) {
+      if (tracking) return;
       if (e.pointerType === "mouse" && e.button != null && e.button !== 0) return;
       if (!canPerformAppBack() || isPanelsStageAnimating()) return;
-      var edge = EDGE_SWIPE_ZONE_PX + getEdgeSwipeLeftInset();
-      if (e.clientX > edge) return;
       tracking = true;
       locked = null;
-      pointerId = e.pointerId;
-      startX = e.clientX;
-      startY = e.clientY;
-      lastX = e.clientX;
+      startX = pointX(e);
+      startY = pointY(e);
+      lastX = startX;
       startT = Date.now();
     }
 
     function onMove(e) {
-      if (!tracking || e.pointerId !== pointerId) return;
-      lastX = e.clientX;
-      var dx = e.clientX - startX;
-      var dy = e.clientY - startY;
+      if (!tracking) return;
+      lastX = pointX(e);
+      var dx = lastX - startX;
+      var dy = pointY(e) - startY;
       if (!locked) {
         if (Math.abs(dx) > EDGE_SWIPE_LOCK_PX || Math.abs(dy) > EDGE_SWIPE_LOCK_PX) {
           locked = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
@@ -7562,9 +7660,10 @@
       if (e.cancelable) e.preventDefault();
     }
 
-    function onUp(e) {
-      if (!tracking || (pointerId != null && e.pointerId !== pointerId)) return;
-      var dx = (e.clientX != null ? e.clientX : lastX) - startX;
+    function onEnd(e) {
+      if (!tracking) return;
+      var x = e.type.indexOf("touch") === 0 ? pointX(e) : e.clientX != null ? e.clientX : lastX;
+      var dx = x - startX;
       var dt = Math.max(1, Date.now() - startT);
       var velocity = dx / dt;
       var shouldBack =
@@ -7573,13 +7672,20 @@
         (dx >= EDGE_SWIPE_THRESHOLD_PX || velocity >= EDGE_SWIPE_VELOCITY_PX_MS);
       var ok = shouldBack && canPerformAppBack() && !isPanelsStageAnimating();
       reset();
-      if (ok) performAppBack();
+      if (ok) requestAppBack();
     }
 
-    document.addEventListener("pointerdown", onDown, { passive: true, capture: true });
-    document.addEventListener("pointermove", onMove, { passive: false, capture: true });
-    document.addEventListener("pointerup", onUp, { passive: true, capture: true });
-    document.addEventListener("pointercancel", onUp, { passive: true, capture: true });
+    hit.addEventListener("touchstart", onStart, { passive: true });
+    hit.addEventListener("touchmove", onMove, { passive: false });
+    hit.addEventListener("touchend", onEnd, { passive: true });
+    hit.addEventListener("touchcancel", onEnd, { passive: true });
+    hit.addEventListener("pointerdown", onStart);
+    hit.addEventListener("pointermove", onMove);
+    hit.addEventListener("pointerup", onEnd);
+    hit.addEventListener("pointercancel", onEnd);
+
+    syncEdgeSwipeHit();
+    ensureAppBackHistory();
   }
 
   function applyTelegramSafeAreaInsets() {
@@ -7736,12 +7842,18 @@
     if (webEditorBackBar) setHidden(webEditorBackBar, !noteEditorOpen);
     document.documentElement.classList.toggle("note-editor-web-back-visible", !!noteEditorOpen);
 
+    function finishAppBackChrome() {
+      syncEdgeSwipeHit();
+      ensureAppBackHistory();
+    }
+
     if (!native) {
       if (tg && tg.BackButton && typeof tg.BackButton.hide === "function") {
         try {
           tg.BackButton.hide();
         } catch (_) {}
       }
+      finishAppBackChrome();
       return;
     }
 
@@ -7750,6 +7862,7 @@
       try {
         tg.BackButton.show();
       } catch (_) {}
+      finishAppBackChrome();
       return;
     }
 
@@ -7759,6 +7872,7 @@
       try {
         tg.BackButton.show();
       } catch (_) {}
+      finishAppBackChrome();
       return;
     }
     if (payOpen) {
@@ -7766,6 +7880,7 @@
       try {
         tg.BackButton.show();
       } catch (_) {}
+      finishAppBackChrome();
       return;
     }
     if (expOpen) {
@@ -7773,6 +7888,7 @@
       try {
         tg.BackButton.show();
       } catch (_) {}
+      finishAppBackChrome();
       return;
     }
     if (bookingOpen) {
@@ -7780,6 +7896,7 @@
       try {
         tg.BackButton.show();
       } catch (_) {}
+      finishAppBackChrome();
       return;
     }
     if (contactsOpen) {
@@ -7787,6 +7904,7 @@
       try {
         tg.BackButton.show();
       } catch (_) {}
+      finishAppBackChrome();
       return;
     }
     if (calendarsOpen) {
@@ -7794,6 +7912,7 @@
       try {
         tg.BackButton.show();
       } catch (_) {}
+      finishAppBackChrome();
       return;
     }
     if (zoomOpen) {
@@ -7801,6 +7920,7 @@
       try {
         tg.BackButton.show();
       } catch (_) {}
+      finishAppBackChrome();
       return;
     }
     if (telemostOpen) {
@@ -7808,6 +7928,7 @@
       try {
         tg.BackButton.show();
       } catch (_) {}
+      finishAppBackChrome();
       return;
     }
     if (yandexDiskOpen) {
@@ -7815,6 +7936,7 @@
       try {
         tg.BackButton.show();
       } catch (_) {}
+      finishAppBackChrome();
       return;
     }
     if (bitrixOpen) {
@@ -7822,6 +7944,7 @@
       try {
         tg.BackButton.show();
       } catch (_) {}
+      finishAppBackChrome();
       return;
     }
     if (kbaseOpen) {
@@ -7829,6 +7952,7 @@
       try {
         tg.BackButton.show();
       } catch (_) {}
+      finishAppBackChrome();
       return;
     }
     if (tg && tg.BackButton && typeof tg.BackButton.hide === "function") {
@@ -7836,6 +7960,7 @@
         tg.BackButton.hide();
       } catch (_) {}
     }
+    finishAppBackChrome();
   }
 
   var HASHTAG_TOKEN_RE = /#([A-Za-zА-Яа-яЁё0-9_]{1,40})/g;
