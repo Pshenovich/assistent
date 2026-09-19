@@ -250,6 +250,7 @@
   var voiceMediaStream = null;
   var voiceChunks = [];
   var notesTelegramBackHandlerBound = false;
+  var edgeSwipeBackBound = false;
 
   function pad2(n) {
     return String(n).padStart(2, "0");
@@ -7374,82 +7375,211 @@
     }
   }
 
+  function canPerformAppBack() {
+    if (isNoteDiscussionOpen()) return true;
+    if (isNoteEditorModalOpen()) return true;
+    var detail = document.getElementById("notes-detail");
+    if (detail && !detail.classList.contains("hidden")) return true;
+    var profileIds = [
+      "profile-payment",
+      "profile-expenses",
+      "profile-booking",
+      "profile-contacts",
+      "profile-calendars",
+      "profile-zoom",
+      "profile-telemost",
+      "profile-yandex-disk",
+      "profile-bitrix",
+      "profile-knowledge-base",
+    ];
+    for (var i = 0; i < profileIds.length; i++) {
+      var el = document.getElementById(profileIds[i]);
+      if (el && !el.classList.contains("hidden")) return true;
+    }
+    return false;
+  }
+
+  /** Same stack as Telegram BackButton / in-app «← Назад». Never switches main tabs. */
+  function performAppBack() {
+    if (isNoteDiscussionOpen()) {
+      closeNoteDiscussion();
+      return true;
+    }
+    if (isNoteEditorModalOpen()) {
+      handleNoteEditorModalClose();
+      return true;
+    }
+    var detail = document.getElementById("notes-detail");
+    if (detail && !detail.classList.contains("hidden")) {
+      handleNotesDetailBack();
+      return true;
+    }
+    var pay = document.getElementById("profile-payment");
+    var exp = document.getElementById("profile-expenses");
+    var booking = document.getElementById("profile-booking");
+    var contacts = document.getElementById("profile-contacts");
+    var calendars = document.getElementById("profile-calendars");
+    var zoom = document.getElementById("profile-zoom");
+    var telemost = document.getElementById("profile-telemost");
+    var yandexDisk = document.getElementById("profile-yandex-disk");
+    var bitrix = document.getElementById("profile-bitrix");
+    var knowledgeBase = document.getElementById("profile-knowledge-base");
+    if (pay && !pay.classList.contains("hidden")) {
+      profileScreen("main");
+      return true;
+    }
+    if (zoom && !zoom.classList.contains("hidden")) {
+      stopZoomStatusPoll();
+      profileScreen("main");
+      loadIntegrations();
+      return true;
+    }
+    if (telemost && !telemost.classList.contains("hidden")) {
+      profileScreen("main");
+      loadIntegrations();
+      return true;
+    }
+    if (yandexDisk && !yandexDisk.classList.contains("hidden")) {
+      profileScreen("main");
+      loadIntegrations();
+      return true;
+    }
+    if (bitrix && !bitrix.classList.contains("hidden")) {
+      profileScreen("main");
+      loadIntegrations();
+      return true;
+    }
+    if (knowledgeBase && !knowledgeBase.classList.contains("hidden")) {
+      profileScreen("main");
+      refreshKnowledgeBaseHint();
+      return true;
+    }
+    if (contacts && !contacts.classList.contains("hidden")) {
+      profileScreen("main");
+      return true;
+    }
+    if (calendars && !calendars.classList.contains("hidden")) {
+      profileScreen("main");
+      return true;
+    }
+    if (booking && !booking.classList.contains("hidden")) {
+      profileScreen("main");
+      loadIntegrations();
+      return true;
+    }
+    if (exp && !exp.classList.contains("hidden")) {
+      profileScreen("main");
+      return true;
+    }
+    return false;
+  }
+
   function bindTelegramMiniappBackOnce() {
     if (notesTelegramBackHandlerBound) return;
     notesTelegramBackHandlerBound = true;
     var tg = window.Telegram && window.Telegram.WebApp;
     if (!tg || !tg.BackButton || typeof tg.BackButton.onClick !== "function") return;
     tg.BackButton.onClick(function () {
-      if (isNoteDiscussionOpen()) {
-        closeNoteDiscussion();
-        return;
-      }
-      if (isNoteEditorModalOpen()) {
-        handleNoteEditorModalClose();
-        return;
-      }
-      var detail = document.getElementById("notes-detail");
-      if (detail && !detail.classList.contains("hidden")) {
-        handleNotesDetailBack();
-        return;
-      }
-      var pay = document.getElementById("profile-payment");
-      var exp = document.getElementById("profile-expenses");
-      var booking = document.getElementById("profile-booking");
-      var contacts = document.getElementById("profile-contacts");
-      var calendars = document.getElementById("profile-calendars");
-      var zoom = document.getElementById("profile-zoom");
-      var telemost = document.getElementById("profile-telemost");
-      var yandexDisk = document.getElementById("profile-yandex-disk");
-      var bitrix = document.getElementById("profile-bitrix");
-      var knowledgeBase = document.getElementById("profile-knowledge-base");
-      if (pay && !pay.classList.contains("hidden")) {
-        profileScreen("main");
-        return;
-      }
-      if (zoom && !zoom.classList.contains("hidden")) {
-        stopZoomStatusPoll();
-        profileScreen("main");
-        loadIntegrations();
-        return;
-      }
-      if (telemost && !telemost.classList.contains("hidden")) {
-        profileScreen("main");
-        loadIntegrations();
-        return;
-      }
-      if (yandexDisk && !yandexDisk.classList.contains("hidden")) {
-        profileScreen("main");
-        loadIntegrations();
-        return;
-      }
-      if (bitrix && !bitrix.classList.contains("hidden")) {
-        profileScreen("main");
-        loadIntegrations();
-        return;
-      }
-      if (knowledgeBase && !knowledgeBase.classList.contains("hidden")) {
-        profileScreen("main");
-        refreshKnowledgeBaseHint();
-        return;
-      }
-      if (contacts && !contacts.classList.contains("hidden")) {
-        profileScreen("main");
-        return;
-      }
-      if (calendars && !calendars.classList.contains("hidden")) {
-        profileScreen("main");
-        return;
-      }
-      if (booking && !booking.classList.contains("hidden")) {
-        profileScreen("main");
-        loadIntegrations();
-        return;
-      }
-      if (exp && !exp.classList.contains("hidden")) {
-        profileScreen("main");
-      }
+      performAppBack();
     });
+  }
+
+  var EDGE_SWIPE_ZONE_PX = 24;
+  var EDGE_SWIPE_LOCK_PX = 8;
+  var EDGE_SWIPE_THRESHOLD_PX = 80;
+  var EDGE_SWIPE_VELOCITY_PX_MS = 0.45;
+
+  function getEdgeSwipeLeftInset() {
+    try {
+      var raw = getComputedStyle(document.documentElement)
+        .getPropertyValue("--tg-safe-left")
+        .trim();
+      var n = parseFloat(raw);
+      return isFinite(n) && n > 0 ? n : 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  function isPanelsStageAnimating() {
+    var stage = document.querySelector("main.main-scroll.panels-stage");
+    return !!(stage && stage.classList.contains("panels-stage--animating"));
+  }
+
+  function bindEdgeSwipeBackOnce() {
+    if (edgeSwipeBackBound) return;
+    edgeSwipeBackBound = true;
+
+    var tracking = false;
+    var startX = 0;
+    var startY = 0;
+    var startT = 0;
+    var locked = null;
+    var pointerId = null;
+    var lastX = 0;
+
+    function reset() {
+      tracking = false;
+      locked = null;
+      pointerId = null;
+    }
+
+    function onDown(e) {
+      if (pointerId != null) return;
+      if (e.pointerType === "mouse" && e.button != null && e.button !== 0) return;
+      if (!canPerformAppBack() || isPanelsStageAnimating()) return;
+      var edge = EDGE_SWIPE_ZONE_PX + getEdgeSwipeLeftInset();
+      if (e.clientX > edge) return;
+      tracking = true;
+      locked = null;
+      pointerId = e.pointerId;
+      startX = e.clientX;
+      startY = e.clientY;
+      lastX = e.clientX;
+      startT = Date.now();
+    }
+
+    function onMove(e) {
+      if (!tracking || e.pointerId !== pointerId) return;
+      lastX = e.clientX;
+      var dx = e.clientX - startX;
+      var dy = e.clientY - startY;
+      if (!locked) {
+        if (Math.abs(dx) > EDGE_SWIPE_LOCK_PX || Math.abs(dy) > EDGE_SWIPE_LOCK_PX) {
+          locked = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+          if (locked === "y" || dx < 0) {
+            reset();
+            return;
+          }
+        } else {
+          return;
+        }
+      }
+      if (locked !== "x") {
+        reset();
+        return;
+      }
+      if (e.cancelable) e.preventDefault();
+    }
+
+    function onUp(e) {
+      if (!tracking || (pointerId != null && e.pointerId !== pointerId)) return;
+      var dx = (e.clientX != null ? e.clientX : lastX) - startX;
+      var dt = Math.max(1, Date.now() - startT);
+      var velocity = dx / dt;
+      var shouldBack =
+        locked === "x" &&
+        dx > 0 &&
+        (dx >= EDGE_SWIPE_THRESHOLD_PX || velocity >= EDGE_SWIPE_VELOCITY_PX_MS);
+      var ok = shouldBack && canPerformAppBack() && !isPanelsStageAnimating();
+      reset();
+      if (ok) performAppBack();
+    }
+
+    document.addEventListener("pointerdown", onDown, { passive: true, capture: true });
+    document.addEventListener("pointermove", onMove, { passive: false, capture: true });
+    document.addEventListener("pointerup", onUp, { passive: true, capture: true });
+    document.addEventListener("pointercancel", onUp, { passive: true, capture: true });
   }
 
   function applyTelegramSafeAreaInsets() {
@@ -14869,6 +14999,7 @@
     listenersBound = true;
 
     bindTelegramMiniappBackOnce();
+    bindEdgeSwipeBackOnce();
 
     const root = document.documentElement;
     root.classList.remove("tg-light");
