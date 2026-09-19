@@ -2229,7 +2229,7 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
   align-items: center;
   gap: 0.5rem;
   width: 100%;
-  padding: 0.5rem 0.625rem;
+  padding: 0.5rem 0;
   border: none;
   border-radius: var(--radius-sm);
   font-family: inherit;
@@ -2250,6 +2250,7 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
 
 .tag-picker-menu-check {
   flex-shrink: 0;
+  margin-left: auto;
   width: 1rem;
   font-size: 0.875rem;
   font-weight: 700;
@@ -2307,7 +2308,7 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
 
 .tag-picker-menu-empty {
   margin: 0;
-  padding: 0.5rem 0.625rem;
+  padding: 0.5rem 0;
   font-family: inherit;
   font-size: 0.8125rem;
   line-height: 1.45;

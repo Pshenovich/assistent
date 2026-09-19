@@ -8122,15 +8122,15 @@
             "tag-picker-menu-item" + (selected[tid] ? " tag-picker-menu-item--selected" : "");
           btn.setAttribute("role", "option");
           btn.setAttribute("aria-selected", selected[tid] ? "true" : "false");
+          var name = document.createElement("span");
+          name.className = "tag-picker-menu-label";
+          name.textContent = String(t.name || "");
           var check = document.createElement("span");
           check.className = "tag-picker-menu-check";
           check.textContent = selected[tid] ? "✓" : "";
           check.setAttribute("aria-hidden", "true");
-          var name = document.createElement("span");
-          name.className = "tag-picker-menu-label";
-          name.textContent = String(t.name || "");
-          btn.appendChild(check);
           btn.appendChild(name);
+          btn.appendChild(check);
           btn.addEventListener("click", function (e) {
             e.stopPropagation();
             if (selected[tid]) {
