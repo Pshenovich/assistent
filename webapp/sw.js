@@ -1,17 +1,17 @@
 /* Mini App service worker: кэш оболочки для быстрого повторного открытия PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260919-edge-swipe-pwa";
+var CACHE_VERSION = "miniapp-v1-20260920-fix-back-btn";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
-  "./styles.css?v=20260919-edge-swipe-pwa",
-  "./app.js?v=20260919-edge-swipe-pwa",
-  "./note-html.js?v=20260919-edge-swipe-pwa",
-  "./note-comments.js?v=20260919-edge-swipe-pwa",
-  "./note-rich-editor.js?v=20260919-edge-swipe-pwa",
-  "./icons/arrow-up-right.svg?v=20260919-edge-swipe-pwa",
-  "./icons/chevron-up-muted.svg?v=20260919-edge-swipe-pwa",
-  "./icons/chevron-up-on-fill.svg?v=20260919-edge-swipe-pwa",
+  "./styles.css?v=20260920-fix-back-btn",
+  "./app.js?v=20260920-fix-back-btn",
+  "./note-html.js?v=20260920-fix-back-btn",
+  "./note-comments.js?v=20260920-fix-back-btn",
+  "./note-rich-editor.js?v=20260920-fix-back-btn",
+  "./icons/arrow-up-right.svg?v=20260920-fix-back-btn",
+  "./icons/chevron-up-muted.svg?v=20260920-fix-back-btn",
+  "./icons/chevron-up-on-fill.svg?v=20260920-fix-back-btn",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",

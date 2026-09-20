@@ -9936,21 +9936,3 @@ html.modal-sheet-open body {
     padding-left: 4px !important;
   }
 }
-
-/* Left-edge hit target for swipe-back (PWA / browser). Inactive until nested screen. */
-.edge-swipe-back-hit {
-  position: fixed;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 40px;
-  z-index: 200000;
-  touch-action: none;
-  pointer-events: none;
-  background: transparent;
-  -webkit-user-select: none;
-  user-select: none;
-}
-.edge-swipe-back-hit.is-active {
-  pointer-events: auto;
-}

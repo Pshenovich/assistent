@@ -7479,79 +7479,62 @@
     notesTelegramBackHandlerBound = true;
     var tg = window.Telegram && window.Telegram.WebApp;
     if (!tg || !tg.BackButton || typeof tg.BackButton.onClick !== "function") return;
+    // Always performAppBack directly — never route through History (that breaks TG BackButton).
     tg.BackButton.onClick(function () {
-      requestAppBack();
+      performAppBack();
     });
   }
 
-  /* PWA/iOS: system edge-swipe uses History API. Keep a matching entry while nested. */
+  /*
+   * PWA/iOS system edge-swipe uses History. We keep at most one leoAppBack entry while a
+   * nested screen is open. Buttons/Telegram/custom swipe call performAppBack() and then
+   * sync clears/re-arms via replaceState (no history.back races, no quiet-popstate bugs).
+   */
   var appBackHistoryArmed = false;
-  var appBackPopQuiet = false;
 
   function shouldUseHistoryAppBack() {
-    // Telegram Mini App has its own BackButton; avoid fighting the client shell.
     return !useTelegramNativeBack();
   }
 
   function ensureAppBackHistory() {
-    if (!shouldUseHistoryAppBack()) return;
-    if (!canPerformAppBack()) {
-      if (appBackHistoryArmed && history.state && history.state.leoAppBack) {
-        appBackPopQuiet = true;
-        appBackHistoryArmed = false;
-        try {
-          history.back();
-        } catch (_) {
-          appBackPopQuiet = false;
-        }
-      } else {
-        appBackHistoryArmed = false;
-      }
+    if (!shouldUseHistoryAppBack()) {
+      appBackHistoryArmed = false;
       return;
     }
-    if (appBackHistoryArmed && history.state && history.state.leoAppBack) return;
+    if (!canPerformAppBack()) {
+      if (history.state && history.state.leoAppBack) {
+        try {
+          history.replaceState(null, "");
+        } catch (_) {}
+      }
+      appBackHistoryArmed = false;
+      return;
+    }
+    if (history.state && history.state.leoAppBack) {
+      appBackHistoryArmed = true;
+      return;
+    }
     try {
       history.pushState({ leoAppBack: true }, "");
       appBackHistoryArmed = true;
     } catch (_) {}
   }
 
-  function requestAppBack() {
-    if (!canPerformAppBack()) return false;
-    if (
-      shouldUseHistoryAppBack() &&
-      appBackHistoryArmed &&
-      history.state &&
-      history.state.leoAppBack
-    ) {
-      try {
-        history.back();
-        return true;
-      } catch (_) {}
-    }
-    return !!performAppBack();
-  }
-
   function bindAppBackPopstateOnce() {
     if (window._leoAppBackPopBound) return;
     window._leoAppBackPopBound = true;
     window.addEventListener("popstate", function () {
-      if (appBackPopQuiet) {
-        appBackPopQuiet = false;
-        return;
-      }
+      if (!shouldUseHistoryAppBack()) return;
       appBackHistoryArmed = !!(history.state && history.state.leoAppBack);
       if (!canPerformAppBack()) return;
       performAppBack();
-      // Re-arm if another nested level remains (detail under editor, etc.).
       setTimeout(function () {
         ensureAppBackHistory();
-        syncEdgeSwipeHit();
       }, 0);
     });
   }
 
-  var EDGE_SWIPE_ZONE_PX = 40;
+  var EDGE_SWIPE_ZONE_PX = 28;
   var EDGE_SWIPE_LOCK_PX = 10;
   var EDGE_SWIPE_THRESHOLD_PX = 56;
   var EDGE_SWIPE_VELOCITY_PX_MS = 0.35;
@@ -7573,33 +7556,10 @@
     return !!(stage && stage.classList.contains("panels-stage--animating"));
   }
 
-  function getEdgeSwipeHitEl() {
-    return document.getElementById("edge-swipe-back-hit");
-  }
-
-  function syncEdgeSwipeHit() {
-    var hit = getEdgeSwipeHitEl();
-    if (!hit) return;
-    var on = canPerformAppBack() && !isPanelsStageAnimating();
-    hit.classList.toggle("is-active", on);
-    hit.setAttribute("aria-hidden", on ? "false" : "true");
-    var w = EDGE_SWIPE_ZONE_PX + getEdgeSwipeLeftInset();
-    hit.style.width = w + "px";
-  }
-
   function bindEdgeSwipeBackOnce() {
     if (edgeSwipeBackBound) return;
     edgeSwipeBackBound = true;
     bindAppBackPopstateOnce();
-
-    var hit = getEdgeSwipeHitEl();
-    if (!hit) {
-      hit = document.createElement("div");
-      hit.id = "edge-swipe-back-hit";
-      hit.className = "edge-swipe-back-hit";
-      hit.setAttribute("aria-hidden", "true");
-      document.body.appendChild(hit);
-    }
 
     var tracking = false;
     var startX = 0;
@@ -7607,10 +7567,12 @@
     var startT = 0;
     var locked = null;
     var lastX = 0;
+    var pointerId = null;
 
     function reset() {
       tracking = false;
       locked = null;
+      pointerId = null;
     }
 
     function pointX(e) {
@@ -7625,20 +7587,28 @@
       return e.clientY;
     }
 
+    function edgeLimit() {
+      return EDGE_SWIPE_ZONE_PX + getEdgeSwipeLeftInset();
+    }
+
     function onStart(e) {
       if (tracking) return;
       if (e.pointerType === "mouse" && e.button != null && e.button !== 0) return;
       if (!canPerformAppBack() || isPanelsStageAnimating()) return;
+      var x = pointX(e);
+      if (x > edgeLimit()) return;
       tracking = true;
       locked = null;
-      startX = pointX(e);
+      pointerId = e.pointerId != null ? e.pointerId : null;
+      startX = x;
       startY = pointY(e);
-      lastX = startX;
+      lastX = x;
       startT = Date.now();
     }
 
     function onMove(e) {
       if (!tracking) return;
+      if (pointerId != null && e.pointerId != null && e.pointerId !== pointerId) return;
       lastX = pointX(e);
       var dx = lastX - startX;
       var dy = pointY(e) - startY;
@@ -7662,7 +7632,13 @@
 
     function onEnd(e) {
       if (!tracking) return;
-      var x = e.type.indexOf("touch") === 0 ? pointX(e) : e.clientX != null ? e.clientX : lastX;
+      if (pointerId != null && e.pointerId != null && e.pointerId !== pointerId) return;
+      var x =
+        e.type.indexOf("touch") === 0
+          ? pointX(e)
+          : e.clientX != null
+            ? e.clientX
+            : lastX;
       var dx = x - startX;
       var dt = Math.max(1, Date.now() - startT);
       var velocity = dx / dt;
@@ -7672,19 +7648,19 @@
         (dx >= EDGE_SWIPE_THRESHOLD_PX || velocity >= EDGE_SWIPE_VELOCITY_PX_MS);
       var ok = shouldBack && canPerformAppBack() && !isPanelsStageAnimating();
       reset();
-      if (ok) requestAppBack();
+      if (ok) performAppBack();
     }
 
-    hit.addEventListener("touchstart", onStart, { passive: true });
-    hit.addEventListener("touchmove", onMove, { passive: false });
-    hit.addEventListener("touchend", onEnd, { passive: true });
-    hit.addEventListener("touchcancel", onEnd, { passive: true });
-    hit.addEventListener("pointerdown", onStart);
-    hit.addEventListener("pointermove", onMove);
-    hit.addEventListener("pointerup", onEnd);
-    hit.addEventListener("pointercancel", onEnd);
+    // Document listeners — no overlay, so in-app «← Назад» stays clickable.
+    document.addEventListener("touchstart", onStart, { passive: true, capture: true });
+    document.addEventListener("touchmove", onMove, { passive: false, capture: true });
+    document.addEventListener("touchend", onEnd, { passive: true, capture: true });
+    document.addEventListener("touchcancel", onEnd, { passive: true, capture: true });
+    document.addEventListener("pointerdown", onStart, { capture: true });
+    document.addEventListener("pointermove", onMove, { capture: true });
+    document.addEventListener("pointerup", onEnd, { capture: true });
+    document.addEventListener("pointercancel", onEnd, { capture: true });
 
-    syncEdgeSwipeHit();
     ensureAppBackHistory();
   }
 
@@ -7843,7 +7819,6 @@
     document.documentElement.classList.toggle("note-editor-web-back-visible", !!noteEditorOpen);
 
     function finishAppBackChrome() {
-      syncEdgeSwipeHit();
       ensureAppBackHistory();
     }
 
