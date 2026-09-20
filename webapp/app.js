@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260920-offline-back-dialog";
+  var WEBAPP_BUILD = "20260920-tabbar-kb-inset";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260920-offline-back-dialog";
+  const NOTE_EDITOR_ASSET_V = "20260920-tabbar-kb-inset";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -5729,6 +5729,10 @@
   }
 
   function unlockNoteEditorBackground() {
+    try {
+      var ae = document.activeElement;
+      if (ae && typeof ae.blur === "function" && ae !== document.body) ae.blur();
+    } catch (_) {}
     document.documentElement.classList.remove("note-editor-open");
     document.documentElement.classList.remove("note-editor-kb-open");
     document.documentElement.style.removeProperty("--note-editor-kb-inset");
@@ -5747,6 +5751,8 @@
       if (main) main.scrollTop = mainTop;
       window.scrollTo(0, y);
     }
+    // Keyboard visualViewport delta must not stick on --vv-bottom-overlay / tabbar.
+    scheduleViewportInsetRefresh();
   }
 
   function noteEditorToolbarHeightPx() {
@@ -6218,6 +6224,7 @@
     document.documentElement.classList.remove("modal-sheet-open");
     unlockNoteEditorBackground();
     document.querySelectorAll(".modal--sheet").forEach(resetModalSheetViewportStyles);
+    scheduleViewportInsetRefresh();
   }
 
   function closeModal() {
@@ -8294,10 +8301,76 @@
     ensureAppBackHistory();
   }
 
+  /**
+   * VisualViewport delta is used as a fallback for Android system nav overlays.
+   * Soft keyboards produce the same delta (often 250–400px). Feeding that into
+   * --vv-bottom-overlay lifts the tab bar; after note close iOS/PWA may never
+   * fire another resize, leaving the bar stuck mid-screen.
+   */
+  function sanitizeBottomOverlayPx(raw) {
+    var n = Math.max(0, Math.round(Number(raw) || 0));
+    if (!n) return 0;
+    var layoutH = Math.max(
+      window.innerHeight || 0,
+      (document.documentElement && document.documentElement.clientHeight) || 0,
+      1
+    );
+    // System chrome is small; anything keyboard-sized must not move the tab bar.
+    var maxSystem = Math.min(120, Math.round(layoutH * 0.14));
+    if (n > maxSystem) return 0;
+    return n;
+  }
+
+  var viewportInsetRefreshTimers = [];
+
+  function scheduleViewportInsetRefresh() {
+    try {
+      document.documentElement.style.setProperty("--vv-bottom-overlay", "0px");
+      document.documentElement.style.setProperty("--tg-viewport-bottom-overlay", "0px");
+      document.documentElement.style.removeProperty("--note-editor-kb-inset");
+    } catch (_) {}
+    viewportInsetRefreshTimers.forEach(function (id) {
+      clearTimeout(id);
+    });
+    viewportInsetRefreshTimers = [];
+    [0, 80, 200, 400, 700].forEach(function (ms) {
+      viewportInsetRefreshTimers.push(
+        setTimeout(function () {
+          applyTelegramSafeAreaInsets();
+        }, ms)
+      );
+    });
+  }
+
   function applyTelegramSafeAreaInsets() {
     var tg = window.Telegram && window.Telegram.WebApp;
     var root = document.documentElement;
-    if (!tg) return;
+    // Still refresh visualViewport overlay in plain PWA (telegram-web-app stub may be absent).
+    function applyVisualViewportOverlayOnly() {
+      try {
+        var vv = window.visualViewport;
+        var vvOverlay = 0;
+        if (vv && typeof vv.height === "number") {
+          vvOverlay = Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0));
+        }
+        // While the note/sheet keyboard is open, never publish that delta to tabbar vars.
+        if (
+          root.classList.contains("note-editor-kb-open") ||
+          root.classList.contains("note-editor-open") ||
+          root.classList.contains("modal-sheet-open")
+        ) {
+          vvOverlay = 0;
+        }
+        root.style.setProperty(
+          "--vv-bottom-overlay",
+          sanitizeBottomOverlayPx(vvOverlay) + "px"
+        );
+      } catch (_) {}
+    }
+    if (!tg) {
+      applyVisualViewportOverlayOnly();
+      return;
+    }
     try {
       var sa = tg.safeAreaInset || {};
       var csa = tg.contentSafeAreaInset || {};
@@ -8332,6 +8405,8 @@
       var vsh = typeof tg.viewportStableHeight === "number" ? tg.viewportStableHeight : 0;
       var overlay = 0;
       if (vh > 0 && vsh > 0) overlay = Math.max(0, vh - vsh);
+      // Keyboard also shrinks viewportHeight — only keep system-sized overlays.
+      overlay = sanitizeBottomOverlayPx(overlay);
       root.style.setProperty("--tg-viewport-bottom-overlay", overlay + "px");
 
       // Final fallback: VisualViewport delta (works in many Android WebViews)
@@ -8340,6 +8415,14 @@
       if (vv && typeof vv.height === "number") {
         vvOverlay = Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0));
       }
+      if (
+        root.classList.contains("note-editor-kb-open") ||
+        root.classList.contains("note-editor-open") ||
+        root.classList.contains("modal-sheet-open")
+      ) {
+        vvOverlay = 0;
+      }
+      vvOverlay = sanitizeBottomOverlayPx(vvOverlay);
       root.style.setProperty("--vv-bottom-overlay", Math.round(vvOverlay) + "px");
 
       // Android (3-button navigation) often reports all insets as 0 while system UI

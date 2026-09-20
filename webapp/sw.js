@@ -1,19 +1,19 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260920-offline-back-dialog";
+var CACHE_VERSION = "miniapp-v1-20260920-tabbar-kb-inset";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20260920-offline-back-dialog",
-  "./app.js?v=20260920-offline-back-dialog",
-  "./note-html.js?v=20260920-offline-back-dialog",
-  "./note-comments.js?v=20260920-offline-back-dialog",
-  "./note-rich-editor.js?v=20260920-offline-back-dialog",
-  "./icons/arrow-up-right.svg?v=20260920-offline-back-dialog",
-  "./icons/chevron-up-muted.svg?v=20260920-offline-back-dialog",
-  "./icons/chevron-up-on-fill.svg?v=20260920-offline-back-dialog",
+  "./styles.css?v=20260920-tabbar-kb-inset",
+  "./app.js?v=20260920-tabbar-kb-inset",
+  "./note-html.js?v=20260920-tabbar-kb-inset",
+  "./note-comments.js?v=20260920-tabbar-kb-inset",
+  "./note-rich-editor.js?v=20260920-tabbar-kb-inset",
+  "./icons/arrow-up-right.svg?v=20260920-tabbar-kb-inset",
+  "./icons/chevron-up-muted.svg?v=20260920-tabbar-kb-inset",
+  "./icons/chevron-up-on-fill.svg?v=20260920-tabbar-kb-inset",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",
