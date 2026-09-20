@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260920-pwa-offline";
+  var WEBAPP_BUILD = "20260920-tabbar-kb-inset";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260920-pwa-offline";
+  const NOTE_EDITOR_ASSET_V = "20260920-tabbar-kb-inset";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -2381,45 +2381,58 @@
     el.classList.remove("hidden");
   }
 
+  var noteEditorCloseInFlight = null;
+
   async function handleNoteEditorModalClose(opts) {
     opts = opts || {};
-    if (!opts.skipPrompt && isNoteEditorDirty()) {
-      var choice = await showNoteUnsavedDialog();
-      if (choice === "cancel") return false;
-      if (choice === "discard") {
-        var discardBody = getNoteEditorBodyEl();
-        if (discardBody) discardBody._noteEditorFlush = null;
+    if (noteEditorCloseInFlight) return noteEditorCloseInFlight;
+    noteEditorCloseInFlight = (async function () {
+      try {
+        // Offline drafts already soft-save via flush; skip the confirm sheet which
+        // used to render under the fullscreen editor and look like a dead Back.
+        var skipPrompt = !!(opts.skipPrompt || isAppOffline());
+        if (!skipPrompt && isNoteEditorDirty()) {
+          var choice = await showNoteUnsavedDialog();
+          if (choice === "cancel") return false;
+          if (choice === "discard") {
+            var discardBody = getNoteEditorBodyEl();
+            if (discardBody) discardBody._noteEditorFlush = null;
+            closeNoteEditorModal();
+            return true;
+          }
+        }
+        var body = getNoteEditorBodyEl();
+        if (body && typeof body._noteEditorFlush === "function") {
+          var flushFn = body._noteEditorFlush;
+          // Prevent closeNoteEditorModal from running a second hanging flush.
+          body._noteEditorFlush = null;
+          try {
+            await Promise.race([
+              flushFn(),
+              sleepMs(5000).then(function () {
+                var err = new Error("Сохранение заняло слишком много времени");
+                err.status = 0;
+                throw err;
+              }),
+            ]);
+          } catch (e) {
+            markNetworkFailure();
+            if (!isTransientApiError(e) && !(e && e.status === 0)) {
+              body._noteEditorFlush = flushFn;
+              alert(e.message || "Не удалось сохранить заметку");
+              return false;
+            }
+            // Soft-fail: keep local/offline draft and let the user leave.
+            showOfflineSavedToast();
+          }
+        }
         closeNoteEditorModal();
         return true;
+      } finally {
+        noteEditorCloseInFlight = null;
       }
-    }
-    var body = getNoteEditorBodyEl();
-    if (body && typeof body._noteEditorFlush === "function") {
-      var flushFn = body._noteEditorFlush;
-      // Prevent closeNoteEditorModal from running a second hanging flush.
-      body._noteEditorFlush = null;
-      try {
-        await Promise.race([
-          flushFn(),
-          sleepMs(5000).then(function () {
-            var err = new Error("Сохранение заняло слишком много времени");
-            err.status = 0;
-            throw err;
-          }),
-        ]);
-      } catch (e) {
-        markNetworkFailure();
-        if (!isTransientApiError(e) && !(e && e.status === 0)) {
-          body._noteEditorFlush = flushFn;
-          alert(e.message || "Не удалось сохранить заметку");
-          return false;
-        }
-        // Soft-fail: keep local/offline draft and let the user leave.
-        showOfflineSavedToast();
-      }
-    }
-    closeNoteEditorModal();
-    return true;
+    })();
+    return noteEditorCloseInFlight;
   }
 
   async function handleNotesDetailBack() {
@@ -5716,6 +5729,10 @@
   }
 
   function unlockNoteEditorBackground() {
+    try {
+      var ae = document.activeElement;
+      if (ae && typeof ae.blur === "function" && ae !== document.body) ae.blur();
+    } catch (_) {}
     document.documentElement.classList.remove("note-editor-open");
     document.documentElement.classList.remove("note-editor-kb-open");
     document.documentElement.style.removeProperty("--note-editor-kb-inset");
@@ -5734,6 +5751,8 @@
       if (main) main.scrollTop = mainTop;
       window.scrollTo(0, y);
     }
+    // Keyboard visualViewport delta must not stick on --vv-bottom-overlay / tabbar.
+    scheduleViewportInsetRefresh();
   }
 
   function noteEditorToolbarHeightPx() {
@@ -6205,6 +6224,7 @@
     document.documentElement.classList.remove("modal-sheet-open");
     unlockNoteEditorBackground();
     document.querySelectorAll(".modal--sheet").forEach(resetModalSheetViewportStyles);
+    scheduleViewportInsetRefresh();
   }
 
   function closeModal() {
@@ -7974,7 +7994,7 @@
       return true;
     }
     if (isNoteEditorModalOpen()) {
-      handleNoteEditorModalClose();
+      handleNoteEditorModalClose().catch(function () {});
       return true;
     }
     var detail = document.getElementById("notes-detail");
@@ -8281,10 +8301,76 @@
     ensureAppBackHistory();
   }
 
+  /**
+   * VisualViewport delta is used as a fallback for Android system nav overlays.
+   * Soft keyboards produce the same delta (often 250–400px). Feeding that into
+   * --vv-bottom-overlay lifts the tab bar; after note close iOS/PWA may never
+   * fire another resize, leaving the bar stuck mid-screen.
+   */
+  function sanitizeBottomOverlayPx(raw) {
+    var n = Math.max(0, Math.round(Number(raw) || 0));
+    if (!n) return 0;
+    var layoutH = Math.max(
+      window.innerHeight || 0,
+      (document.documentElement && document.documentElement.clientHeight) || 0,
+      1
+    );
+    // System chrome is small; anything keyboard-sized must not move the tab bar.
+    var maxSystem = Math.min(120, Math.round(layoutH * 0.14));
+    if (n > maxSystem) return 0;
+    return n;
+  }
+
+  var viewportInsetRefreshTimers = [];
+
+  function scheduleViewportInsetRefresh() {
+    try {
+      document.documentElement.style.setProperty("--vv-bottom-overlay", "0px");
+      document.documentElement.style.setProperty("--tg-viewport-bottom-overlay", "0px");
+      document.documentElement.style.removeProperty("--note-editor-kb-inset");
+    } catch (_) {}
+    viewportInsetRefreshTimers.forEach(function (id) {
+      clearTimeout(id);
+    });
+    viewportInsetRefreshTimers = [];
+    [0, 80, 200, 400, 700].forEach(function (ms) {
+      viewportInsetRefreshTimers.push(
+        setTimeout(function () {
+          applyTelegramSafeAreaInsets();
+        }, ms)
+      );
+    });
+  }
+
   function applyTelegramSafeAreaInsets() {
     var tg = window.Telegram && window.Telegram.WebApp;
     var root = document.documentElement;
-    if (!tg) return;
+    // Still refresh visualViewport overlay in plain PWA (telegram-web-app stub may be absent).
+    function applyVisualViewportOverlayOnly() {
+      try {
+        var vv = window.visualViewport;
+        var vvOverlay = 0;
+        if (vv && typeof vv.height === "number") {
+          vvOverlay = Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0));
+        }
+        // While the note/sheet keyboard is open, never publish that delta to tabbar vars.
+        if (
+          root.classList.contains("note-editor-kb-open") ||
+          root.classList.contains("note-editor-open") ||
+          root.classList.contains("modal-sheet-open")
+        ) {
+          vvOverlay = 0;
+        }
+        root.style.setProperty(
+          "--vv-bottom-overlay",
+          sanitizeBottomOverlayPx(vvOverlay) + "px"
+        );
+      } catch (_) {}
+    }
+    if (!tg) {
+      applyVisualViewportOverlayOnly();
+      return;
+    }
     try {
       var sa = tg.safeAreaInset || {};
       var csa = tg.contentSafeAreaInset || {};
@@ -8319,6 +8405,8 @@
       var vsh = typeof tg.viewportStableHeight === "number" ? tg.viewportStableHeight : 0;
       var overlay = 0;
       if (vh > 0 && vsh > 0) overlay = Math.max(0, vh - vsh);
+      // Keyboard also shrinks viewportHeight — only keep system-sized overlays.
+      overlay = sanitizeBottomOverlayPx(overlay);
       root.style.setProperty("--tg-viewport-bottom-overlay", overlay + "px");
 
       // Final fallback: VisualViewport delta (works in many Android WebViews)
@@ -8327,6 +8415,14 @@
       if (vv && typeof vv.height === "number") {
         vvOverlay = Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0));
       }
+      if (
+        root.classList.contains("note-editor-kb-open") ||
+        root.classList.contains("note-editor-open") ||
+        root.classList.contains("modal-sheet-open")
+      ) {
+        vvOverlay = 0;
+      }
+      vvOverlay = sanitizeBottomOverlayPx(vvOverlay);
       root.style.setProperty("--vv-bottom-overlay", Math.round(vvOverlay) + "px");
 
       // Android (3-button navigation) often reports all insets as 0 while system UI
@@ -11961,7 +12057,7 @@
       item.appendChild(actions);
     }
     item.addEventListener("click", function (e) {
-      if (e.target && e.target.closest && e.target.closest(".note-discuss-more, .note-discuss-menu, #note-discuss-selection")) {
+      if (e.target && e.target.closest && e.target.closest(".note-discuss-more, .note-discuss-menu, .note-discuss-send-retry, #note-discuss-selection")) {
         return;
       }
       var sel = window.getSelection && window.getSelection();
@@ -12020,6 +12116,7 @@
       if (pinId && !(wrap && wrap._gptBusy)) scrollDiscussionToComment(pinId);
       else scrollDiscussionToEnd();
     }
+    restoreGptRetryUiAfterRender();
     void kind;
     void itemId;
   }
@@ -12448,8 +12545,148 @@
   }
 
   function markOptimisticUserSent() {
+    var item = document.getElementById("note-discuss-optimistic-user");
+    if (item) item.classList.remove("is-failed");
     var meta = document.querySelector("#note-discuss-optimistic-user .note-discuss-send-state");
-    if (meta) meta.textContent = "Отправлено";
+    if (meta) {
+      meta.textContent = "Отправлено";
+      meta.classList.remove("is-error");
+    }
+    var btn = document.querySelector("#note-discuss-optimistic-user .note-discuss-send-retry");
+    if (btn && btn.parentNode) btn.parentNode.removeChild(btn);
+  }
+
+  function markOptimisticUserSending() {
+    var item = document.getElementById("note-discuss-optimistic-user");
+    if (!item) return;
+    item.classList.remove("is-failed");
+    var meta = item.querySelector(".note-discuss-send-state");
+    if (meta) {
+      meta.textContent = "Отправляю…";
+      meta.classList.remove("is-error");
+    }
+    var btn = item.querySelector(".note-discuss-send-retry");
+    if (btn && btn.parentNode) btn.parentNode.removeChild(btn);
+  }
+
+  function discussSendRetryIconSvg() {
+    return (
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M21 12a9 9 0 1 1-2.6-6.3"/>' +
+      '<path d="M21 3v6h-6"/>' +
+      "</svg>"
+    );
+  }
+
+  function mountDiscussSendRetryBtn(host, onRetry) {
+    if (!host) return;
+    var existing = host.querySelector(".note-discuss-send-retry");
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+    host.classList.add("has-send-retry");
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "note-discuss-send-retry";
+    btn.setAttribute("aria-label", "Повторить отправку");
+    btn.title = "Повторить отправку";
+    btn.innerHTML = discussSendRetryIconSvg();
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof onRetry === "function") onRetry();
+    });
+    host.appendChild(btn);
+  }
+
+  function clearDiscussSendRetryUi() {
+    document.querySelectorAll(".note-discuss-msg.is-failed").forEach(function (el) {
+      el.classList.remove("is-failed");
+    });
+    document.querySelectorAll(".note-discuss-bubble.has-send-retry").forEach(function (el) {
+      el.classList.remove("has-send-retry");
+    });
+    document.querySelectorAll(".note-discuss-send-retry").forEach(function (btn) {
+      if (btn.parentNode) btn.parentNode.removeChild(btn);
+    });
+    document.querySelectorAll(".note-discuss-send-state.is-error").forEach(function (el) {
+      el.classList.remove("is-error");
+    });
+  }
+
+  function markOptimisticUserFailed(message) {
+    var item = document.getElementById("note-discuss-optimistic-user");
+    if (!item) return;
+    item.classList.add("is-failed");
+    var meta = item.querySelector(".note-discuss-send-state");
+    if (meta) {
+      meta.textContent = message || "Не отправлено";
+      meta.classList.add("is-error");
+    }
+    var bubble = item.querySelector(".note-discuss-bubble");
+    if (!bubble) {
+      bubble = document.createElement("div");
+      bubble.className = "note-discuss-bubble";
+      item.insertBefore(bubble, meta || null);
+    }
+    mountDiscussSendRetryBtn(bubble, function () {
+      retryFailedGptDiscussSend();
+    });
+    scrollDiscussionToEnd();
+  }
+
+  function attachDiscussSendRetryToComment(commentId, payload) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) wrap._gptRetry = payload || wrap._gptRetry;
+    var id = String(commentId || "");
+    if (!id) return;
+    var item = document.querySelector(
+      '#note-discussion-messages .note-discuss-msg[data-comment-id="' + id + '"]'
+    );
+    if (!item) return;
+    item.classList.add("is-failed");
+    var bubble = item.querySelector(".note-discuss-bubble");
+    if (!bubble) return;
+    var meta = item.querySelector(".note-discuss-send-state");
+    if (!meta) {
+      meta = document.createElement("p");
+      meta.className = "note-discuss-send-state is-error";
+      item.appendChild(meta);
+    }
+    meta.textContent = (payload && payload.error) || "Не отправлено";
+    meta.classList.add("is-error");
+    mountDiscussSendRetryBtn(bubble, function () {
+      retryFailedGptDiscussSend();
+    });
+  }
+
+  function restoreGptRetryUiAfterRender() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || !wrap._gptRetry || wrap._gptBusy) return;
+    var payload = wrap._gptRetry;
+    if (payload.parentId) {
+      attachDiscussSendRetryToComment(payload.parentId, payload);
+      return;
+    }
+    appendOptimisticUserMessage(payload.body, payload.quote);
+    markOptimisticUserFailed(payload.error || "Не отправлено");
+  }
+
+  function storeGptRetryPayload(payload) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap) return;
+    wrap._gptRetry = payload;
+  }
+
+  function clearGptRetryPayload() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) wrap._gptRetry = null;
+    clearDiscussSendRetryUi();
+  }
+
+  async function retryFailedGptDiscussSend() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || !wrap._gptRetry || wrap._gptBusy) return;
+    var payload = wrap._gptRetry;
+    await submitNoteGptQuestion(payload.body, { retry: payload });
   }
 
   function gptHistoryFromComments(comments) {
@@ -12533,43 +12770,82 @@
     showNoteToast("Контекст очищен");
   }
 
-  async function submitNoteGptQuestion(text) {
+  async function submitNoteGptQuestion(text, opts) {
+    opts = opts || {};
     var wrap = document.getElementById("note-editor-more-wrap");
-    var body = String(text || "").trim();
+    var retry = opts.retry || null;
+    var body = String((retry && retry.body != null ? retry.body : text) || "").trim();
     var pending = discussPendingFiles();
-    if (!wrap || !wrap._shareKind || !wrap._shareId || wrap._gptBusy || (!body && !pending.length)) return;
+    if (
+      !wrap ||
+      !wrap._shareKind ||
+      !wrap._shareId ||
+      wrap._gptBusy ||
+      (!body && !pending.length && !(retry && retry.fileIds && retry.fileIds.length))
+    ) {
+      return;
+    }
     var kind = wrap._shareKind;
     var itemId = wrap._shareId;
     var panel = document.getElementById("note-editor-comments");
-    var history = gptHistoryFromComments((panel && panel._allComments) || []);
+    var draft = wrap._commentDraft;
+    var quote =
+      retry && retry.quote != null
+        ? String(retry.quote || "")
+        : (draft && draft.quote) || "";
+    var fileIds =
+      retry && Array.isArray(retry.fileIds) && retry.fileIds.length
+        ? retry.fileIds.slice()
+        : null;
+    var parentId = retry && retry.parentId ? retry.parentId : null;
+    var historyComments = ((panel && panel._allComments) || []).slice();
+    if (parentId) {
+      // User turn already persisted — keep it out of history so message: body is not duplicated.
+      historyComments = historyComments.filter(function (c) {
+        return Number(c && c.id) !== Number(parentId);
+      });
+    }
+    var history = gptHistoryFromComments(historyComments);
+    var errMsg = "";
+
     wrap._gptBusy = true;
     wrap._gptPhase = "sending";
     wrap._discussionPinId = null;
+    wrap._gptRetry = null;
+    clearDiscussSendRetryUi();
     syncNotePaieReplyForm(true);
     var input = document.getElementById("note-paie-reply-input");
-    if (input) input.value = "";
-    var draft = wrap._commentDraft;
-    var quote = (draft && draft.quote) || "";
-    appendOptimisticUserMessage(body, quote);
+    if (!retry) {
+      if (input) input.value = "";
+      appendOptimisticUserMessage(body, quote);
+    } else if (parentId) {
+      // Message already on server — show pending assistant status after refresh.
+    } else {
+      markOptimisticUserSending();
+    }
     setGptDiscussPhase("sending");
     try {
-      var fileIds = await uploadDiscussPendingFiles(kind, itemId);
-      clearDiscussPendingFiles();
-      var saved = await apiFetch(
-        "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            body: body,
-            quote: quote,
-            prefix: "__gpt__",
-            suffix: "",
-            file_ids: fileIds,
-          }),
-        }
-      );
-      var parentId = saved && saved.comment && saved.comment.id;
-      markOptimisticUserSent();
+      if (!fileIds) {
+        fileIds = await uploadDiscussPendingFiles(kind, itemId);
+        clearDiscussPendingFiles();
+      }
+      if (!parentId) {
+        var saved = await apiFetch(
+          "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              body: body,
+              quote: quote,
+              prefix: "__gpt__",
+              suffix: "",
+              file_ids: fileIds,
+            }),
+          }
+        );
+        parentId = saved && saved.comment && saved.comment.id;
+        markOptimisticUserSent();
+      }
       setGptDiscussPhase("thinking");
       await refreshNoteCommentsList();
       setGptDiscussPhase("thinking");
@@ -12629,12 +12905,36 @@
       clearNoteComposerCommentTarget();
       wrap._gptBusy = false;
       wrap._gptPhase = "";
+      clearGptRetryPayload();
       await refreshNoteCommentsList();
     } catch (e) {
+      errMsg = (e && e.message) || String(e) || "Не удалось отправить";
       wrap._gptBusy = false;
       wrap._gptPhase = "";
-      alert(e.message || String(e));
-      await refreshNoteCommentsList();
+      var leftoverPending = document.getElementById("note-discuss-pending");
+      if (leftoverPending && leftoverPending.parentNode) {
+        leftoverPending.parentNode.removeChild(leftoverPending);
+      }
+      var payload = {
+        body: body,
+        quote: quote,
+        fileIds: fileIds && fileIds.length ? fileIds.slice() : null,
+        parentId: parentId || null,
+        error: errMsg,
+      };
+      storeGptRetryPayload(payload);
+      try {
+        showNoteToast(errMsg);
+      } catch (_) {
+        alert(errMsg);
+      }
+      if (parentId) {
+        await refreshNoteCommentsList();
+        attachDiscussSendRetryToComment(parentId, payload);
+      } else {
+        // Keep the typed bubble so the user can retry without retyping.
+        markOptimisticUserFailed(errMsg);
+      }
     } finally {
       wrap._gptBusy = false;
       wrap._gptPhase = "";
@@ -15123,34 +15423,35 @@
             body: createBody,
           });
           showOfflineSavedToast();
-          return;
-        }
-        try {
-          var createRes = await apiFetch(createPath, {
-            method: "POST",
-            body: JSON.stringify(createBody),
-          });
-          var created =
-            (createRes && createRes.item) ||
-            { id: createRes.id, title: fields.title, description: fields.description };
-          applyCreatedLocal(created);
-        } catch (createErr) {
-          if (!isTransientApiError(createErr)) throw createErr;
-          var tmpNoteId2 = newTempId("tmp_note_");
-          applyCreatedLocal({
-            id: tmpNoteId2,
-            title: fields.title,
-            description: fields.description,
-            body: fields.description,
-          });
-          enqueueOfflineOp({
-            type: "note_create",
-            clientId: tmpNoteId2,
-            path: createPath,
-            method: "POST",
-            body: createBody,
-          });
-          showOfflineSavedToast();
+          // Fall through so baseline updates — otherwise Back thinks the note is always dirty.
+        } else {
+          try {
+            var createRes = await apiFetch(createPath, {
+              method: "POST",
+              body: JSON.stringify(createBody),
+            });
+            var created =
+              (createRes && createRes.item) ||
+              { id: createRes.id, title: fields.title, description: fields.description };
+            applyCreatedLocal(created);
+          } catch (createErr) {
+            if (!isTransientApiError(createErr)) throw createErr;
+            var tmpNoteId2 = newTempId("tmp_note_");
+            applyCreatedLocal({
+              id: tmpNoteId2,
+              title: fields.title,
+              description: fields.description,
+              body: fields.description,
+            });
+            enqueueOfflineOp({
+              type: "note_create",
+              clientId: tmpNoteId2,
+              path: createPath,
+              method: "POST",
+              body: createBody,
+            });
+            showOfflineSavedToast();
+          }
         }
       } else {
         var moreWrap = document.getElementById("note-editor-more-wrap");
@@ -15200,61 +15501,62 @@
             body: { title: fields.title, description: fields.description },
           });
           showOfflineSavedToast();
-          return;
-        }
-        try {
-          var patchRes = await apiFetch("/notes/local/" + encodeURIComponent(noteId), {
-            method: "PATCH",
-            body: JSON.stringify(patchBody),
-          });
-          var patchedItem = (patchRes && patchRes.item) || {
-            id: noteId,
-            title: fields.title,
-            description: fields.description,
-            body: fields.description,
-            todoist_id: n.todoist_id,
-            tags: noteTagsOf(n),
-            project: noteProjectOf(n),
-            hashtags: noteHashtagsOf(n),
-            members: moreWrap && moreWrap._noteMembers,
-            revision: moreWrap && moreWrap._noteRevision,
-            updated_at: moreWrap && moreWrap._noteUpdatedAt,
-            is_owner: moreWrap ? moreWrap._isNoteOwner : n.is_owner,
-            owner_user_id: n.owner_user_id,
-          };
-          if (patchRes && patchRes.item) {
-            n = Object.assign(n, patchRes.item);
-            if (moreWrap) {
-              moreWrap._noteRevision = patchRes.item.revision || moreWrap._noteRevision;
-              moreWrap._noteUpdatedAt = patchRes.item.updated_at || moreWrap._noteUpdatedAt;
-              moreWrap._noteMembers = patchRes.item.members || moreWrap._noteMembers;
+          // Fall through so baseline updates — otherwise Back thinks the note is always dirty.
+        } else {
+          try {
+            var patchRes = await apiFetch("/notes/local/" + encodeURIComponent(noteId), {
+              method: "PATCH",
+              body: JSON.stringify(patchBody),
+            });
+            var patchedItem = (patchRes && patchRes.item) || {
+              id: noteId,
+              title: fields.title,
+              description: fields.description,
+              body: fields.description,
+              todoist_id: n.todoist_id,
+              tags: noteTagsOf(n),
+              project: noteProjectOf(n),
+              hashtags: noteHashtagsOf(n),
+              members: moreWrap && moreWrap._noteMembers,
+              revision: moreWrap && moreWrap._noteRevision,
+              updated_at: moreWrap && moreWrap._noteUpdatedAt,
+              is_owner: moreWrap ? moreWrap._isNoteOwner : n.is_owner,
+              owner_user_id: n.owner_user_id,
+            };
+            if (patchRes && patchRes.item) {
+              n = Object.assign(n, patchRes.item);
+              if (moreWrap) {
+                moreWrap._noteRevision = patchRes.item.revision || moreWrap._noteRevision;
+                moreWrap._noteUpdatedAt = patchRes.item.updated_at || moreWrap._noteUpdatedAt;
+                moreWrap._noteMembers = patchRes.item.members || moreWrap._noteMembers;
+              }
             }
+            applyPatchedLocal(patchedItem);
+          } catch (patchErr) {
+            if (patchErr && patchErr.status === 409 && patchErr.conflictItem) {
+              applyRemoteSharedNote(patchErr.conflictItem, true);
+              return;
+            }
+            if (!isTransientApiError(patchErr)) throw patchErr;
+            applyPatchedLocal({
+              id: noteId,
+              title: fields.title,
+              description: fields.description,
+              body: fields.description,
+              todoist_id: n.todoist_id,
+              tags: noteTagsOf(n),
+              project: noteProjectOf(n),
+              hashtags: noteHashtagsOf(n),
+            });
+            enqueueOfflineOp({
+              type: "note_patch",
+              clientId: noteId,
+              path: "/notes/local/" + encodeURIComponent(noteId),
+              method: "PATCH",
+              body: { title: fields.title, description: fields.description },
+            });
+            showOfflineSavedToast();
           }
-          applyPatchedLocal(patchedItem);
-        } catch (patchErr) {
-          if (patchErr && patchErr.status === 409 && patchErr.conflictItem) {
-            applyRemoteSharedNote(patchErr.conflictItem, true);
-            return;
-          }
-          if (!isTransientApiError(patchErr)) throw patchErr;
-          applyPatchedLocal({
-            id: noteId,
-            title: fields.title,
-            description: fields.description,
-            body: fields.description,
-            todoist_id: n.todoist_id,
-            tags: noteTagsOf(n),
-            project: noteProjectOf(n),
-            hashtags: noteHashtagsOf(n),
-          });
-          enqueueOfflineOp({
-            type: "note_patch",
-            clientId: noteId,
-            path: "/notes/local/" + encodeURIComponent(noteId),
-            method: "PATCH",
-            body: { title: fields.title, description: fields.description },
-          });
-          showOfflineSavedToast();
         }
       }
       var detailBodyDraft = getNoteEditorBodyEl();
@@ -16024,8 +16326,12 @@
 
     var noteEditorWebBack = document.getElementById("note-editor-web-back");
     if (noteEditorWebBack) {
-      noteEditorWebBack.addEventListener("click", function () {
-        handleNoteEditorModalClose();
+      noteEditorWebBack.addEventListener("click", function (e) {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        handleNoteEditorModalClose().catch(function () {});
       });
     }
 
