@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260920-fix-back-btn";
+  var WEBAPP_BUILD = "20260920-tg-back-bind";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260920-fix-back-btn";
+  const NOTE_EDITOR_ASSET_V = "20260920-tg-back-bind";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -7475,14 +7475,53 @@
   }
 
   function bindTelegramMiniappBackOnce() {
-    if (notesTelegramBackHandlerBound) return;
-    notesTelegramBackHandlerBound = true;
+    return ensureTelegramMiniappBackBound();
+  }
+
+  /** Stable handler so offClick/onClick re-bind does not stack duplicates. */
+  var telegramAppBackHandler = null;
+  var telegramBackBindRetries = 0;
+
+  function getTelegramAppBackHandler() {
+    if (!telegramAppBackHandler) {
+      telegramAppBackHandler = function () {
+        performAppBack();
+      };
+    }
+    return telegramAppBackHandler;
+  }
+
+  /**
+   * Bind Telegram BackButton → performAppBack.
+   * Must NOT set the bound flag before Telegram.WebApp exists (async script race).
+   */
+  function ensureTelegramMiniappBackBound() {
     var tg = window.Telegram && window.Telegram.WebApp;
-    if (!tg || !tg.BackButton || typeof tg.BackButton.onClick !== "function") return;
-    // Always performAppBack directly — never route through History (that breaks TG BackButton).
-    tg.BackButton.onClick(function () {
-      performAppBack();
-    });
+    if (!tg || !tg.BackButton || typeof tg.BackButton.onClick !== "function") {
+      return false;
+    }
+    var handler = getTelegramAppBackHandler();
+    try {
+      if (typeof tg.BackButton.offClick === "function") {
+        tg.BackButton.offClick(handler);
+      }
+    } catch (_) {}
+    try {
+      tg.BackButton.onClick(handler);
+      notesTelegramBackHandlerBound = true;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function scheduleTelegramMiniappBackBindRetries() {
+    if (notesTelegramBackHandlerBound) return;
+    if (!looksLikeTelegramWebView() && !isInsideTelegramClient()) return;
+    if (telegramBackBindRetries >= 40) return;
+    telegramBackBindRetries += 1;
+    if (ensureTelegramMiniappBackBound()) return;
+    setTimeout(scheduleTelegramMiniappBackBindRetries, 100);
   }
 
   /*
@@ -7819,6 +7858,10 @@
     document.documentElement.classList.toggle("note-editor-web-back-visible", !!noteEditorOpen);
 
     function finishAppBackChrome() {
+      // Re-bind whenever chrome syncs — recovers from async telegram-web-app.js race.
+      if (useTelegramNativeBack() || looksLikeTelegramWebView()) {
+        ensureTelegramMiniappBackBound();
+      }
       ensureAppBackHistory();
     }
 
@@ -15099,6 +15142,7 @@
     listenersBound = true;
 
     bindTelegramMiniappBackOnce();
+    scheduleTelegramMiniappBackBindRetries();
     bindEdgeSwipeBackOnce();
 
     const root = document.documentElement;

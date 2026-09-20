@@ -1,17 +1,17 @@
 /* Mini App service worker: кэш оболочки для быстрого повторного открытия PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260920-fix-back-btn";
+var CACHE_VERSION = "miniapp-v1-20260920-tg-back-bind";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
-  "./styles.css?v=20260920-fix-back-btn",
-  "./app.js?v=20260920-fix-back-btn",
-  "./note-html.js?v=20260920-fix-back-btn",
-  "./note-comments.js?v=20260920-fix-back-btn",
-  "./note-rich-editor.js?v=20260920-fix-back-btn",
-  "./icons/arrow-up-right.svg?v=20260920-fix-back-btn",
-  "./icons/chevron-up-muted.svg?v=20260920-fix-back-btn",
-  "./icons/chevron-up-on-fill.svg?v=20260920-fix-back-btn",
+  "./styles.css?v=20260920-tg-back-bind",
+  "./app.js?v=20260920-tg-back-bind",
+  "./note-html.js?v=20260920-tg-back-bind",
+  "./note-comments.js?v=20260920-tg-back-bind",
+  "./note-rich-editor.js?v=20260920-tg-back-bind",
+  "./icons/arrow-up-right.svg?v=20260920-tg-back-bind",
+  "./icons/chevron-up-muted.svg?v=20260920-tg-back-bind",
+  "./icons/chevron-up-on-fill.svg?v=20260920-tg-back-bind",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",
