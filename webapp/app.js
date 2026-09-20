@@ -12057,7 +12057,7 @@
       item.appendChild(actions);
     }
     item.addEventListener("click", function (e) {
-      if (e.target && e.target.closest && e.target.closest(".note-discuss-more, .note-discuss-menu, #note-discuss-selection")) {
+      if (e.target && e.target.closest && e.target.closest(".note-discuss-more, .note-discuss-menu, .note-discuss-send-retry, #note-discuss-selection")) {
         return;
       }
       var sel = window.getSelection && window.getSelection();
@@ -12116,6 +12116,7 @@
       if (pinId && !(wrap && wrap._gptBusy)) scrollDiscussionToComment(pinId);
       else scrollDiscussionToEnd();
     }
+    restoreGptRetryUiAfterRender();
     void kind;
     void itemId;
   }
@@ -12544,8 +12545,148 @@
   }
 
   function markOptimisticUserSent() {
+    var item = document.getElementById("note-discuss-optimistic-user");
+    if (item) item.classList.remove("is-failed");
     var meta = document.querySelector("#note-discuss-optimistic-user .note-discuss-send-state");
-    if (meta) meta.textContent = "Отправлено";
+    if (meta) {
+      meta.textContent = "Отправлено";
+      meta.classList.remove("is-error");
+    }
+    var btn = document.querySelector("#note-discuss-optimistic-user .note-discuss-send-retry");
+    if (btn && btn.parentNode) btn.parentNode.removeChild(btn);
+  }
+
+  function markOptimisticUserSending() {
+    var item = document.getElementById("note-discuss-optimistic-user");
+    if (!item) return;
+    item.classList.remove("is-failed");
+    var meta = item.querySelector(".note-discuss-send-state");
+    if (meta) {
+      meta.textContent = "Отправляю…";
+      meta.classList.remove("is-error");
+    }
+    var btn = item.querySelector(".note-discuss-send-retry");
+    if (btn && btn.parentNode) btn.parentNode.removeChild(btn);
+  }
+
+  function discussSendRetryIconSvg() {
+    return (
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M21 12a9 9 0 1 1-2.6-6.3"/>' +
+      '<path d="M21 3v6h-6"/>' +
+      "</svg>"
+    );
+  }
+
+  function mountDiscussSendRetryBtn(host, onRetry) {
+    if (!host) return;
+    var existing = host.querySelector(".note-discuss-send-retry");
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+    host.classList.add("has-send-retry");
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "note-discuss-send-retry";
+    btn.setAttribute("aria-label", "Повторить отправку");
+    btn.title = "Повторить отправку";
+    btn.innerHTML = discussSendRetryIconSvg();
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof onRetry === "function") onRetry();
+    });
+    host.appendChild(btn);
+  }
+
+  function clearDiscussSendRetryUi() {
+    document.querySelectorAll(".note-discuss-msg.is-failed").forEach(function (el) {
+      el.classList.remove("is-failed");
+    });
+    document.querySelectorAll(".note-discuss-bubble.has-send-retry").forEach(function (el) {
+      el.classList.remove("has-send-retry");
+    });
+    document.querySelectorAll(".note-discuss-send-retry").forEach(function (btn) {
+      if (btn.parentNode) btn.parentNode.removeChild(btn);
+    });
+    document.querySelectorAll(".note-discuss-send-state.is-error").forEach(function (el) {
+      el.classList.remove("is-error");
+    });
+  }
+
+  function markOptimisticUserFailed(message) {
+    var item = document.getElementById("note-discuss-optimistic-user");
+    if (!item) return;
+    item.classList.add("is-failed");
+    var meta = item.querySelector(".note-discuss-send-state");
+    if (meta) {
+      meta.textContent = message || "Не отправлено";
+      meta.classList.add("is-error");
+    }
+    var bubble = item.querySelector(".note-discuss-bubble");
+    if (!bubble) {
+      bubble = document.createElement("div");
+      bubble.className = "note-discuss-bubble";
+      item.insertBefore(bubble, meta || null);
+    }
+    mountDiscussSendRetryBtn(bubble, function () {
+      retryFailedGptDiscussSend();
+    });
+    scrollDiscussionToEnd();
+  }
+
+  function attachDiscussSendRetryToComment(commentId, payload) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) wrap._gptRetry = payload || wrap._gptRetry;
+    var id = String(commentId || "");
+    if (!id) return;
+    var item = document.querySelector(
+      '#note-discussion-messages .note-discuss-msg[data-comment-id="' + id + '"]'
+    );
+    if (!item) return;
+    item.classList.add("is-failed");
+    var bubble = item.querySelector(".note-discuss-bubble");
+    if (!bubble) return;
+    var meta = item.querySelector(".note-discuss-send-state");
+    if (!meta) {
+      meta = document.createElement("p");
+      meta.className = "note-discuss-send-state is-error";
+      item.appendChild(meta);
+    }
+    meta.textContent = (payload && payload.error) || "Не отправлено";
+    meta.classList.add("is-error");
+    mountDiscussSendRetryBtn(bubble, function () {
+      retryFailedGptDiscussSend();
+    });
+  }
+
+  function restoreGptRetryUiAfterRender() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || !wrap._gptRetry || wrap._gptBusy) return;
+    var payload = wrap._gptRetry;
+    if (payload.parentId) {
+      attachDiscussSendRetryToComment(payload.parentId, payload);
+      return;
+    }
+    appendOptimisticUserMessage(payload.body, payload.quote);
+    markOptimisticUserFailed(payload.error || "Не отправлено");
+  }
+
+  function storeGptRetryPayload(payload) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap) return;
+    wrap._gptRetry = payload;
+  }
+
+  function clearGptRetryPayload() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) wrap._gptRetry = null;
+    clearDiscussSendRetryUi();
+  }
+
+  async function retryFailedGptDiscussSend() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || !wrap._gptRetry || wrap._gptBusy) return;
+    var payload = wrap._gptRetry;
+    await submitNoteGptQuestion(payload.body, { retry: payload });
   }
 
   function gptHistoryFromComments(comments) {
@@ -12629,43 +12770,82 @@
     showNoteToast("Контекст очищен");
   }
 
-  async function submitNoteGptQuestion(text) {
+  async function submitNoteGptQuestion(text, opts) {
+    opts = opts || {};
     var wrap = document.getElementById("note-editor-more-wrap");
-    var body = String(text || "").trim();
+    var retry = opts.retry || null;
+    var body = String((retry && retry.body != null ? retry.body : text) || "").trim();
     var pending = discussPendingFiles();
-    if (!wrap || !wrap._shareKind || !wrap._shareId || wrap._gptBusy || (!body && !pending.length)) return;
+    if (
+      !wrap ||
+      !wrap._shareKind ||
+      !wrap._shareId ||
+      wrap._gptBusy ||
+      (!body && !pending.length && !(retry && retry.fileIds && retry.fileIds.length))
+    ) {
+      return;
+    }
     var kind = wrap._shareKind;
     var itemId = wrap._shareId;
     var panel = document.getElementById("note-editor-comments");
-    var history = gptHistoryFromComments((panel && panel._allComments) || []);
+    var draft = wrap._commentDraft;
+    var quote =
+      retry && retry.quote != null
+        ? String(retry.quote || "")
+        : (draft && draft.quote) || "";
+    var fileIds =
+      retry && Array.isArray(retry.fileIds) && retry.fileIds.length
+        ? retry.fileIds.slice()
+        : null;
+    var parentId = retry && retry.parentId ? retry.parentId : null;
+    var historyComments = ((panel && panel._allComments) || []).slice();
+    if (parentId) {
+      // User turn already persisted — keep it out of history so message: body is not duplicated.
+      historyComments = historyComments.filter(function (c) {
+        return Number(c && c.id) !== Number(parentId);
+      });
+    }
+    var history = gptHistoryFromComments(historyComments);
+    var errMsg = "";
+
     wrap._gptBusy = true;
     wrap._gptPhase = "sending";
     wrap._discussionPinId = null;
+    wrap._gptRetry = null;
+    clearDiscussSendRetryUi();
     syncNotePaieReplyForm(true);
     var input = document.getElementById("note-paie-reply-input");
-    if (input) input.value = "";
-    var draft = wrap._commentDraft;
-    var quote = (draft && draft.quote) || "";
-    appendOptimisticUserMessage(body, quote);
+    if (!retry) {
+      if (input) input.value = "";
+      appendOptimisticUserMessage(body, quote);
+    } else if (parentId) {
+      // Message already on server — show pending assistant status after refresh.
+    } else {
+      markOptimisticUserSending();
+    }
     setGptDiscussPhase("sending");
     try {
-      var fileIds = await uploadDiscussPendingFiles(kind, itemId);
-      clearDiscussPendingFiles();
-      var saved = await apiFetch(
-        "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            body: body,
-            quote: quote,
-            prefix: "__gpt__",
-            suffix: "",
-            file_ids: fileIds,
-          }),
-        }
-      );
-      var parentId = saved && saved.comment && saved.comment.id;
-      markOptimisticUserSent();
+      if (!fileIds) {
+        fileIds = await uploadDiscussPendingFiles(kind, itemId);
+        clearDiscussPendingFiles();
+      }
+      if (!parentId) {
+        var saved = await apiFetch(
+          "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              body: body,
+              quote: quote,
+              prefix: "__gpt__",
+              suffix: "",
+              file_ids: fileIds,
+            }),
+          }
+        );
+        parentId = saved && saved.comment && saved.comment.id;
+        markOptimisticUserSent();
+      }
       setGptDiscussPhase("thinking");
       await refreshNoteCommentsList();
       setGptDiscussPhase("thinking");
@@ -12725,12 +12905,36 @@
       clearNoteComposerCommentTarget();
       wrap._gptBusy = false;
       wrap._gptPhase = "";
+      clearGptRetryPayload();
       await refreshNoteCommentsList();
     } catch (e) {
+      errMsg = (e && e.message) || String(e) || "Не удалось отправить";
       wrap._gptBusy = false;
       wrap._gptPhase = "";
-      alert(e.message || String(e));
-      await refreshNoteCommentsList();
+      var leftoverPending = document.getElementById("note-discuss-pending");
+      if (leftoverPending && leftoverPending.parentNode) {
+        leftoverPending.parentNode.removeChild(leftoverPending);
+      }
+      var payload = {
+        body: body,
+        quote: quote,
+        fileIds: fileIds && fileIds.length ? fileIds.slice() : null,
+        parentId: parentId || null,
+        error: errMsg,
+      };
+      storeGptRetryPayload(payload);
+      try {
+        showNoteToast(errMsg);
+      } catch (_) {
+        alert(errMsg);
+      }
+      if (parentId) {
+        await refreshNoteCommentsList();
+        attachDiscussSendRetryToComment(parentId, payload);
+      } else {
+        // Keep the typed bubble so the user can retry without retyping.
+        markOptimisticUserFailed(errMsg);
+      }
     } finally {
       wrap._gptBusy = false;
       wrap._gptPhase = "";
