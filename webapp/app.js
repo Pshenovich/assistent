@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260920-tg-back-bind";
+  var WEBAPP_BUILD = "20260920-into-note-html";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260920-tg-back-bind";
+  const NOTE_EDITOR_ASSET_V = "20260920-into-note-html";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -10737,6 +10737,46 @@
     return "Заметка";
   }
 
+  function titleFromAnswerHtml(html) {
+    var tmp = document.createElement("div");
+    tmp.innerHTML = String(html || "");
+    var text = String(tmp.textContent || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!text) return "Заметка";
+    if (text.length > 80) text = text.slice(0, 79) + "…";
+    return text;
+  }
+
+  /**
+   * HTML of the current selection inside a rendered GPT bubble.
+   * Preserves block structure (lists, headings, paragraphs) that plain quote collapse loses.
+   */
+  function htmlFromDiscussionSelectionRange(range) {
+    if (!range || range.collapsed) return "";
+    var div = document.createElement("div");
+    try {
+      div.appendChild(range.cloneContents());
+    } catch (_) {
+      return "";
+    }
+    // Drop discussion-only wrappers; keep table/scroll content.
+    div.querySelectorAll(".note-table-scroll").forEach(function (wrap) {
+      var parent = wrap.parentNode;
+      if (!parent) return;
+      while (wrap.firstChild) parent.insertBefore(wrap.firstChild, wrap);
+      parent.removeChild(wrap);
+    });
+    var raw = String(div.innerHTML || "").trim();
+    if (!raw) return "";
+    var clean = sanitizeSummaryHtml(raw);
+    if (!clean || !String(clean).trim()) return "";
+    if (!/<(p|h[1-6]|ul|ol|li|blockquote|table|pre|div)\b/i.test(clean)) {
+      clean = "<p>" + clean + "</p>";
+    }
+    return clean;
+  }
+
   function htmlFromAnswerMarkdown(md) {
     var raw = String(md || "").trim();
     if (!raw) return "";
@@ -10744,17 +10784,25 @@
     return html || "<p>" + escapeHtml(raw) + "</p>";
   }
 
+  function appendAnswerHtmlToCurrentNote(html) {
+    var clean = String(html || "").trim();
+    if (!clean) return false;
+    var inst = getActiveNoteRichEditor();
+    if (inst && typeof inst.appendHtml === "function") {
+      inst.appendHtml(clean);
+      showNoteToast("Добавлено в заметку");
+      shareHaptic();
+      return true;
+    }
+    return false;
+  }
+
   function appendAnswerToCurrentNote(text) {
     var raw = String(text || "").trim();
     if (!raw) return;
-    var inst = getActiveNoteRichEditor();
     var html = htmlFromAnswerMarkdown(raw);
-    if (inst && typeof inst.appendHtml === "function") {
-      inst.appendHtml(html);
-      showNoteToast("Добавлено в заметку");
-      shareHaptic();
-      return;
-    }
+    if (appendAnswerHtmlToCurrentNote(html)) return;
+    var inst = getActiveNoteRichEditor();
     if (inst && typeof inst.appendText === "function") {
       inst.appendText(raw);
       showNoteToast("Добавлено в заметку");
@@ -10762,6 +10810,29 @@
       return;
     }
     showNoteToast("Не удалось вставить в заметку");
+  }
+
+  async function createNoteFromAnswerHtml(html) {
+    var clean = String(html || "").trim();
+    if (!clean) return;
+    var title = titleFromAnswerHtml(clean);
+    try {
+      var createRes = await apiFetch("/notes/local", {
+        method: "POST",
+        body: JSON.stringify({
+          title: title,
+          description: clean,
+          sync_todoist: false,
+        }),
+      });
+      var created = (createRes && createRes.item) || { id: createRes && createRes.id, title: title };
+      prependLocalInCache(created);
+      if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+      showNoteToast("Заметка создана");
+      shareHaptic();
+    } catch (e) {
+      alert(e.message || String(e));
+    }
   }
 
   async function createNoteFromAnswer(text) {
@@ -11100,9 +11171,18 @@
       return;
     }
     var quote = String(draft.quote || "").trim();
+    var html = String(draft.html || "").trim();
     if (action === "copy") copyAnswerText(quote);
-    else if (action === "into-note") appendAnswerToCurrentNote(quote);
-    else if (action === "create-note") createNoteFromAnswer(quote);
+    else if (action === "into-note") {
+      if (html) {
+        if (!appendAnswerHtmlToCurrentNote(html)) appendAnswerToCurrentNote(quote);
+      } else {
+        appendAnswerToCurrentNote(quote);
+      }
+    } else if (action === "create-note") {
+      if (html) createNoteFromAnswerHtml(html);
+      else createNoteFromAnswer(quote);
+    }
     clearDiscussionSelection();
   }
 
@@ -11185,17 +11265,19 @@
       el && el.closest ? el.closest(".note-discuss-msg.is-gpt .note-discuss-bubble") : null;
     if (!bubble) return null;
     if (sel.focusNode && !bubble.contains(sel.focusNode)) return null;
+    var range = sel.getRangeAt(0);
+    var html = htmlFromDiscussionSelectionRange(range);
     var api = window.NoteComments;
     var draft = api && api.selectionAnchor ? api.selectionAnchor(bubble) : null;
     if (draft && draft.quote) {
       draft.rect = copyClientRect(draft.rect) || draft.rect;
+      draft.html = html;
       return draft;
     }
     var text = String(sel.toString() || "").replace(/\s+/g, " ").trim();
     if (!text) return null;
-    var range = sel.getRangeAt(0);
     var rect = copyClientRect(range.getBoundingClientRect ? range.getBoundingClientRect() : null);
-    return { quote: text, prefix: "", suffix: "", rect: rect };
+    return { quote: text, prefix: "", suffix: "", rect: rect, html: html };
   }
 
   function bindDiscussClarifyOnce() {
@@ -14117,6 +14199,7 @@
       s: true,
       del: true,
       strike: true,
+      u: true,
       ul: true,
       ol: true,
       li: true,
@@ -14139,6 +14222,8 @@
       label: true,
       input: true,
       span: true,
+      code: true,
+      pre: true,
     };
     function allowedClass(tag, cls) {
       if (tag === "ul" && cls === "note-task-list") return true;
