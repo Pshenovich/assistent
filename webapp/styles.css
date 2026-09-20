@@ -7878,6 +7878,12 @@ textarea.event-sheet-title--area {
   backdrop-filter: blur(4px);
 }
 
+/* Must sit above #note-editor-overlay (same base z-index, later in DOM). */
+#note-unsaved-overlay {
+  z-index: 260;
+  align-items: center;
+}
+
 .modal-overlay.hidden {
   display: none;
 }
