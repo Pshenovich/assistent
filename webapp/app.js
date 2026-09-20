@@ -197,12 +197,26 @@
     lastNetworkFailAt = Date.now();
   }
 
+  function markNetworkOk() {
+    lastNetworkFailAt = 0;
+  }
+
+  /** Hard offline: browser reports no connectivity. */
   function isAppOffline() {
     try {
       if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
     } catch (_) {}
-    // Mobile airplane mode often keeps onLine=true while fetch hangs.
-    if (lastNetworkFailAt && Date.now() - lastNetworkFailAt < 60000) return true;
+    return false;
+  }
+
+  /**
+   * Soft hint for note/reminder local writes after a recent transport failure.
+   * Must NOT gate apiFetch — a slow GPT call used to trip an 8s abort, then every
+   * request for 60s threw «Нет сети» while the device was actually online.
+   */
+  function preferOfflineWrite() {
+    if (isAppOffline()) return true;
+    if (lastNetworkFailAt && Date.now() - lastNetworkFailAt < 12000) return true;
     return false;
   }
 
@@ -501,6 +515,7 @@
     if (window._leoOfflineQueueBound) return;
     window._leoOfflineQueueBound = true;
     window.addEventListener("online", function () {
+      markNetworkOk();
       flushOfflineQueue();
     });
     document.addEventListener("visibilitychange", function () {
@@ -2390,7 +2405,7 @@
       try {
         // Offline drafts already soft-save via flush; skip the confirm sheet which
         // used to render under the fullscreen editor and look like a dead Back.
-        var skipPrompt = !!(opts.skipPrompt || isAppOffline());
+        var skipPrompt = !!(opts.skipPrompt || preferOfflineWrite());
         if (!skipPrompt && isNoteEditorDirty()) {
           var choice = await showNoteUnsavedDialog();
           if (choice === "cancel") return false;
@@ -2448,7 +2463,7 @@
     if (!id) {
       throw new Error("Некорректный идентификатор заметки");
     }
-    if (isAppOffline() || String(id).indexOf("tmp_") === 0) {
+    if (preferOfflineWrite() || String(id).indexOf("tmp_") === 0) {
       removeLocalFromCache(id);
       removeKnowledgeFromCache(id);
       enqueueOfflineOp({
@@ -2493,8 +2508,17 @@
     var timedOut = false;
     var abortTimer = null;
     var controller = null;
+    var method = String(init.method || "GET").toUpperCase();
+    var timeoutMs = init.timeoutMs;
+    if (timeoutMs == null) timeoutMs = defaultApiTimeoutMs(path, method);
+    // Strip non-fetch options so they are not passed to fetch().
+    delete init.timeoutMs;
     try {
-      if (typeof AbortController !== "undefined" && !init.signal) {
+      if (
+        timeoutMs > 0 &&
+        typeof AbortController !== "undefined" &&
+        !init.signal
+      ) {
         controller = new AbortController();
         init.signal = controller.signal;
         abortTimer = setTimeout(function () {
@@ -2502,7 +2526,7 @@
           try {
             controller.abort();
           } catch (_) {}
-        }, 8000);
+        }, timeoutMs);
       }
       const res = await fetch(API + path, init);
       if (abortTimer) clearTimeout(abortTimer);
@@ -2551,17 +2575,23 @@
         if (res.status === 409 && body && body.detail && typeof body.detail === "object") {
           err.conflictItem = body.detail.item || null;
         }
-        if (res.status >= 500) markNetworkFailure();
+        // 5xx is a server problem, not proof the device is offline — don't latch soft-offline.
         throw err;
       }
+      markNetworkOk();
       return body;
     } catch (e) {
       if (abortTimer) clearTimeout(abortTimer);
-      if (timedOut || (e && e.name === "AbortError")) {
+      if (timedOut) {
         markNetworkFailure();
-        var tErr = new Error(timedOut ? "Нет ответа сети" : "Запрос отменён");
+        var tErr = new Error("Нет ответа сети");
         tErr.status = 0;
         throw tErr;
+      }
+      if (e && e.name === "AbortError") {
+        var aErr = new Error("Запрос отменён");
+        aErr.status = 0;
+        throw aErr;
       }
       if (e && e.status != null) throw e;
       markNetworkFailure();
@@ -2571,9 +2601,25 @@
     }
   }
 
+  function defaultApiTimeoutMs(path, method) {
+    var p = String(path || "");
+    // GPT / voice are intentionally slow — never use the short hang-guard timeout.
+    if (
+      p.indexOf("/gpt/") === 0 ||
+      p.indexOf("/voice/") === 0 ||
+      p.indexOf("/transcribe") >= 0
+    ) {
+      return 180000;
+    }
+    if (method === "GET" || method === "HEAD") return 20000;
+    return 30000;
+  }
+
   async function apiFetchReal(path, opts) {
     const o = opts || {};
     const method = String(o.method || "GET").toUpperCase();
+    // Only hard offline (navigator.onLine === false) fails fast.
+    // Soft failure latch must not block the whole API.
     if (isAppOffline()) {
       var offlineErr = new Error("Нет сети");
       offlineErr.status = 0;
@@ -2581,8 +2627,8 @@
     }
     const maxTries =
       method === "GET" || method === "HEAD"
-        ? isAppOffline() || lastNetworkFailAt
-          ? 1
+        ? lastNetworkFailAt
+          ? 2
           : 12
         : 1;
     var lastErr = null;
@@ -7328,7 +7374,7 @@
           : [],
       };
       try {
-        if (isAppOffline() || (id && String(id).indexOf("tmp_") === 0)) {
+        if (preferOfflineWrite() || (id && String(id).indexOf("tmp_") === 0)) {
           var clientId = id || newTempId("tmp_rem_");
           if (id) {
             applyReminderLocal(function (items) {
@@ -7435,7 +7481,7 @@
       const id = document.getElementById("modal-reminder-id").value;
       if (!confirm("Удалить напоминание?")) return;
       try {
-        if (isAppOffline() || String(id).indexOf("tmp_") === 0) {
+        if (preferOfflineWrite() || String(id).indexOf("tmp_") === 0) {
           applyReminderLocal(function (items) {
             return items.filter(function (r) {
               return String(r.id) !== String(id);
@@ -7495,7 +7541,7 @@
   async function deleteReminderById(id, opts) {
     opts = opts || {};
     if (!id) return;
-    if (isAppOffline() || String(id).indexOf("tmp_") === 0) {
+    if (preferOfflineWrite() || String(id).indexOf("tmp_") === 0) {
       applyReminderLocal(function (items) {
         return items.filter(function (r) {
           return String(r.id) !== String(id);
@@ -11492,7 +11538,7 @@
     var title = titleFromAnswerHtml(clean);
     var body = { title: title, description: clean, sync_todoist: false };
     try {
-      if (isAppOffline()) {
+      if (preferOfflineWrite()) {
         var tmpId = newTempId("tmp_note_");
         prependLocalInCache({ id: tmpId, title: title, description: clean, body: clean });
         if (notesDataCache) renderNotesPanesFromData(notesDataCache);
@@ -14528,7 +14574,7 @@
       }
     }
     try {
-      if (isAppOffline() || String(noteId).indexOf("tmp_") === 0) {
+      if (preferOfflineWrite() || String(noteId).indexOf("tmp_") === 0) {
         applyLocalPin();
         enqueueOfflineOp({
           type: "note_pin",
@@ -15407,7 +15453,7 @@
           }
           if (noteId && !isKnowledge) ensureNoteShareMounted(noteId);
         }
-        if (isAppOffline()) {
+        if (preferOfflineWrite()) {
           var tmpNoteId = newTempId("tmp_note_");
           applyCreatedLocal({
             id: tmpNoteId,
@@ -15475,7 +15521,7 @@
           }
         }
         var offlinePatch =
-          isAppOffline() || String(noteId).indexOf("tmp_") === 0;
+          preferOfflineWrite() || String(noteId).indexOf("tmp_") === 0;
         if (offlinePatch) {
           var localPatch = {
             id: noteId,
