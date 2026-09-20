@@ -1,17 +1,19 @@
-/* Mini App service worker: кэш оболочки для быстрого повторного открытия PWA. */
+/* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260920-into-note-html";
+var CACHE_VERSION = "miniapp-v1-20260920-pwa-offline";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
-  "./styles.css?v=20260920-into-note-html",
-  "./app.js?v=20260920-into-note-html",
-  "./note-html.js?v=20260920-into-note-html",
-  "./note-comments.js?v=20260920-into-note-html",
-  "./note-rich-editor.js?v=20260920-into-note-html",
-  "./icons/arrow-up-right.svg?v=20260920-into-note-html",
-  "./icons/chevron-up-muted.svg?v=20260920-into-note-html",
-  "./icons/chevron-up-on-fill.svg?v=20260920-into-note-html",
+  "./",
+  "./index.html",
+  "./styles.css?v=20260920-pwa-offline",
+  "./app.js?v=20260920-pwa-offline",
+  "./note-html.js?v=20260920-pwa-offline",
+  "./note-comments.js?v=20260920-pwa-offline",
+  "./note-rich-editor.js?v=20260920-pwa-offline",
+  "./icons/arrow-up-right.svg?v=20260920-pwa-offline",
+  "./icons/chevron-up-muted.svg?v=20260920-pwa-offline",
+  "./icons/chevron-up-on-fill.svg?v=20260920-pwa-offline",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",
@@ -45,6 +47,20 @@ function isHtmlPath(path) {
   return !path || path === "/webapp" || path === "/webapp/" || path.indexOf(".html") !== -1;
 }
 
+function isShellAsset(path) {
+  return (
+    path.indexOf("/webapp/") === 0 &&
+    (path.endsWith(".css") ||
+      path.endsWith(".js") ||
+      path.endsWith(".png") ||
+      path.endsWith(".webmanifest") ||
+      path.endsWith(".svg") ||
+      path.endsWith(".ico") ||
+      path.endsWith(".woff") ||
+      path.endsWith(".woff2"))
+  );
+}
+
 function fetchWithTimeout(request, ms) {
   return new Promise(function (resolve, reject) {
     var settled = false;
@@ -75,6 +91,15 @@ function cachePut(cacheName, request, response) {
   var copy = response.clone();
   return caches.open(cacheName).then(function (cache) {
     return cache.put(request, copy);
+  });
+}
+
+function matchShellHtml() {
+  return caches.open(SHELL_CACHE).then(function (cache) {
+    return cache.match("./index.html").then(function (hit) {
+      if (hit) return hit;
+      return cache.match("./");
+    });
   });
 }
 
@@ -123,43 +148,57 @@ self.addEventListener("fetch", function (event) {
   if (isApiRequest(url)) return;
   if (!sameOrigin(url)) return;
 
-  // HTML всегда идёт мимо SW: иначе VPN/зависшая сеть держит белый экран.
-  if (isNavigationRequest(request)) return;
-
   var path = "";
   try {
     path = new URL(url).pathname;
   } catch (_) {}
 
-  if (isHtmlPath(path) || path.indexOf("/webapp/sw.js") !== -1) return;
+  if (path.indexOf("/webapp/sw.js") !== -1) return;
 
-  if (
-    path.indexOf("/webapp/") === 0 &&
-    (path.endsWith(".css") ||
-      path.endsWith(".js") ||
-      path.endsWith(".png") ||
-      path.endsWith(".webmanifest") ||
-      path.endsWith(".svg") ||
-      path.endsWith(".ico"))
-  ) {
+  // Navigation: network-first with short timeout, then cached shell (offline open).
+  if (isNavigationRequest(request) || isHtmlPath(path)) {
     event.respondWith(
-      fetchWithTimeout(request, 6000)
+      fetchWithTimeout(request, 2500)
         .then(function (response) {
           if (response && response.ok) {
-            cachePut(SHELL_CACHE, request, response);
+            cachePut(SHELL_CACHE, "./index.html", response.clone());
+            cachePut(SHELL_CACHE, "./", response.clone());
             return response;
           }
-          return caches.match(request).then(function (cached) {
-            if (cached) return cached;
-            return Response.error();
+          return matchShellHtml().then(function (cached) {
+            return cached || response;
           });
         })
         .catch(function () {
-          return caches.match(request).then(function (cached) {
-            if (cached) return cached;
-            return fetch(request);
+          return matchShellHtml().then(function (cached) {
+            return cached || Response.error();
           });
         })
     );
+    return;
   }
+
+  if (!isShellAsset(path)) return;
+
+  // Versioned assets: cache-first for instant warm start, refresh in background.
+  event.respondWith(
+    caches.match(request).then(function (cached) {
+      var network = fetchWithTimeout(request, 5000)
+        .then(function (response) {
+          if (response && response.ok) cachePut(SHELL_CACHE, request, response);
+          return response;
+        })
+        .catch(function () {
+          return null;
+        });
+      if (cached) {
+        network.catch(function () {});
+        return cached;
+      }
+      return network.then(function (response) {
+        if (response) return response;
+        return Response.error();
+      });
+    })
+  );
 });

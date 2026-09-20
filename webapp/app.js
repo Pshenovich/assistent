@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260920-into-note-html";
+  var WEBAPP_BUILD = "20260920-pwa-offline";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260920-into-note-html";
+  const NOTE_EDITOR_ASSET_V = "20260920-pwa-offline";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -163,6 +163,313 @@
         JSON.stringify({ ts: Date.now(), data: data })
       );
     } catch (_) {}
+  }
+
+  function persistNotesCacheToDisk() {
+    if (notesDataCache) writeMiniappCache("notes", notesDataCache);
+  }
+
+  function isAppOffline() {
+    try {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
+    } catch (_) {}
+    return false;
+  }
+
+  function offlineQueueStorageKey() {
+    return "leo_offline_q_v1_" + getMiniappCacheUserKey();
+  }
+
+  function readOfflineQueue() {
+    try {
+      var raw = localStorage.getItem(offlineQueueStorageKey());
+      var arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function writeOfflineQueue(arr) {
+    try {
+      localStorage.setItem(offlineQueueStorageKey(), JSON.stringify(arr || []));
+    } catch (_) {}
+    syncOfflineQueueBadge();
+  }
+
+  function enqueueOfflineOp(op) {
+    var q = readOfflineQueue();
+    op = op || {};
+    op.id = op.id || "oq_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+    op.createdAt = op.createdAt || Date.now();
+    // Coalesce note patches for the same note into the latest body.
+    if (op.type === "note_patch" && op.clientId) {
+      for (var i = q.length - 1; i >= 0; i--) {
+        if (q[i].type === "note_create" && String(q[i].clientId) === String(op.clientId)) {
+          q[i].body = Object.assign({}, q[i].body || {}, op.body || {});
+          writeOfflineQueue(q);
+          return q[i];
+        }
+        if (q[i].type === "note_patch" && String(q[i].clientId) === String(op.clientId)) {
+          q[i].body = Object.assign({}, q[i].body || {}, op.body || {});
+          writeOfflineQueue(q);
+          return q[i];
+        }
+      }
+    }
+    if (op.type === "note_create" && op.clientId) {
+      for (var j = q.length - 1; j >= 0; j--) {
+        if (q[j].type === "note_create" && String(q[j].clientId) === String(op.clientId)) {
+          q[j].body = Object.assign({}, q[j].body || {}, op.body || {});
+          writeOfflineQueue(q);
+          return q[j];
+        }
+      }
+    }
+    if (op.type === "reminder_patch" && op.clientId) {
+      for (var k = q.length - 1; k >= 0; k--) {
+        if (
+          (q[k].type === "reminder_create" || q[k].type === "reminder_patch") &&
+          String(q[k].clientId) === String(op.clientId)
+        ) {
+          q[k].body = Object.assign({}, q[k].body || {}, op.body || {});
+          if (q[k].type === "reminder_create") {
+            writeOfflineQueue(q);
+            return q[k];
+          }
+          writeOfflineQueue(q);
+          return q[k];
+        }
+      }
+    }
+    if (op.type === "reminder_delete" && op.clientId) {
+      var filtered = [];
+      var droppedCreate = false;
+      for (var d = 0; d < q.length; d++) {
+        if (
+          String(q[d].clientId) === String(op.clientId) &&
+          (q[d].type === "reminder_create" || q[d].type === "reminder_patch")
+        ) {
+          if (q[d].type === "reminder_create") droppedCreate = true;
+          continue;
+        }
+        filtered.push(q[d]);
+      }
+      q = filtered;
+      if (droppedCreate && String(op.clientId).indexOf("tmp_") === 0) {
+        writeOfflineQueue(q);
+        return null;
+      }
+    }
+    if (op.type === "note_delete" && op.clientId) {
+      var nq = [];
+      var droppedNoteCreate = false;
+      for (var n = 0; n < q.length; n++) {
+        if (
+          String(q[n].clientId) === String(op.clientId) &&
+          (q[n].type === "note_create" || q[n].type === "note_patch")
+        ) {
+          if (q[n].type === "note_create") droppedNoteCreate = true;
+          continue;
+        }
+        nq.push(q[n]);
+      }
+      q = nq;
+      if (droppedNoteCreate && String(op.clientId).indexOf("tmp_") === 0) {
+        writeOfflineQueue(q);
+        return null;
+      }
+    }
+    q.push(op);
+    writeOfflineQueue(q);
+    return op;
+  }
+
+  function newTempId(prefix) {
+    return (
+      (prefix || "tmp_") +
+      Date.now().toString(36) +
+      "_" +
+      Math.random().toString(36).slice(2, 8)
+    );
+  }
+
+  function showOfflineSavedToast(msg) {
+    try {
+      showNoteToast(msg || "Сохранено офлайн");
+    } catch (_) {}
+  }
+
+  function syncOfflineQueueBadge() {
+    var q = readOfflineQueue();
+    var n = q.length;
+    document.documentElement.classList.toggle("has-offline-queue", n > 0);
+    var el = document.getElementById("offline-sync-banner");
+    if (!el) {
+      if (!n) return;
+      el = document.createElement("div");
+      el.id = "offline-sync-banner";
+      el.className = "offline-sync-banner";
+      el.setAttribute("role", "status");
+      document.body.appendChild(el);
+    }
+    if (!n) {
+      el.classList.add("hidden");
+      el.textContent = "";
+      return;
+    }
+    el.classList.remove("hidden");
+    el.textContent =
+      n === 1
+        ? "1 изменение ждёт сеть"
+        : n + " изменений ждут сеть";
+  }
+
+  function remapOfflineNoteId(tmpId, realId) {
+    if (!tmpId || !realId || String(tmpId) === String(realId)) return;
+    if (notesDataCache && notesDataCache.local_notes) {
+      notesDataCache.local_notes.forEach(function (n) {
+        if (String(n.id) === String(tmpId)) n.id = realId;
+      });
+      persistNotesCacheToDisk();
+    }
+    var q = readOfflineQueue();
+    q.forEach(function (op) {
+      if (String(op.clientId) === String(tmpId)) {
+        op.clientId = String(realId);
+        if (op.path && op.path.indexOf("/notes/local/") === 0) {
+          op.path = "/notes/local/" + encodeURIComponent(String(realId));
+          if (op.type === "note_pin") {
+            op.path = "/notes/local/" + encodeURIComponent(String(realId)) + "/pin";
+          }
+        }
+      }
+    });
+    writeOfflineQueue(q);
+  }
+
+  function remapOfflineReminderId(tmpId, realId) {
+    if (!tmpId || !realId || String(tmpId) === String(realId)) return;
+    lastRemindersItems = (lastRemindersItems || []).map(function (r) {
+      if (String(r.id) === String(tmpId)) {
+        return Object.assign({}, r, { id: realId });
+      }
+      return r;
+    });
+    persistActualRemindersToDisk();
+    var q = readOfflineQueue();
+    q.forEach(function (op) {
+      if (String(op.clientId) === String(tmpId)) {
+        op.clientId = String(realId);
+        if (op.path && op.path.indexOf("/reminders/") === 0) {
+          op.path = "/reminders/" + encodeURIComponent(String(realId));
+        }
+      }
+    });
+    writeOfflineQueue(q);
+  }
+
+  function persistActualRemindersToDisk() {
+    try {
+      var dual = isDesktopLayout();
+      var leftIso = meetingsPageDate || todayIsoLocal();
+      var cacheKind = "actual_" + leftIso + (dual ? "_2" : "");
+      var cached = readMiniappCache(cacheKind) || {};
+      cached.remData = { items: lastRemindersItems || [] };
+      if (lastMeetingsLeft) cached.calData = lastMeetingsLeft;
+      if (lastMeetingsRight) cached.calDataNext = lastMeetingsRight;
+      writeMiniappCache(cacheKind, cached);
+    } catch (_) {}
+  }
+
+  function applyReminderLocal(itemsMutator) {
+    lastRemindersItems = itemsMutator(lastRemindersItems.slice());
+    persistActualRemindersToDisk();
+    paintActual(
+      { items: lastRemindersItems },
+      lastMeetingsLeft || { events: [], connected: false },
+      lastMeetingsRight
+    );
+  }
+
+  var offlineFlushInFlight = false;
+
+  async function flushOfflineQueue() {
+    if (offlineFlushInFlight) return;
+    if (isAppOffline()) {
+      syncOfflineQueueBadge();
+      return;
+    }
+    var q = readOfflineQueue();
+    if (!q.length) {
+      syncOfflineQueueBadge();
+      return;
+    }
+    offlineFlushInFlight = true;
+    try {
+      while (q.length) {
+        var op = q[0];
+        try {
+          var bodyStr =
+            op.body != null
+              ? typeof op.body === "string"
+                ? op.body
+                : JSON.stringify(op.body)
+              : undefined;
+          var res = await apiFetchReal(op.path, {
+            method: op.method || "POST",
+            body: bodyStr,
+          });
+          if (op.type === "note_create") {
+            var createdId =
+              (res && res.item && res.item.id) || (res && res.id) || null;
+            if (createdId) remapOfflineNoteId(op.clientId, createdId);
+          }
+          if (op.type === "reminder_create") {
+            var rid =
+              (res && res.item && res.item.id) ||
+              (res && res.id) ||
+              (res && res.reminder && res.reminder.id) ||
+              null;
+            if (rid) remapOfflineReminderId(op.clientId, rid);
+          }
+          q.shift();
+          writeOfflineQueue(q);
+        } catch (e) {
+          if (isTransientApiError(e)) break;
+          // Permanent failure: drop op so the queue does not stick forever.
+          q.shift();
+          writeOfflineQueue(q);
+          console.warn("offline op dropped", op, e);
+        }
+      }
+      if (!readOfflineQueue().length) {
+        try {
+          await loadNotes();
+        } catch (_) {}
+        try {
+          await loadActual();
+        } catch (_) {}
+      }
+    } finally {
+      offlineFlushInFlight = false;
+      syncOfflineQueueBadge();
+    }
+  }
+
+  function bindOfflineQueueListenersOnce() {
+    if (window._leoOfflineQueueBound) return;
+    window._leoOfflineQueueBound = true;
+    window.addEventListener("online", function () {
+      flushOfflineQueue();
+    });
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") flushOfflineQueue();
+    });
+    syncOfflineQueueBadge();
+    setTimeout(function () {
+      flushOfflineQueue();
+    }, 1200);
   }
 
   function loadNoteEditorScripts() {
@@ -1358,6 +1665,7 @@
       return String(x.id) !== String(lid);
     });
     notesDataCache.local_notes.unshift(noteCacheEntry(item));
+    persistNotesCacheToDisk();
   }
 
   function removeLocalFromCache(id) {
@@ -1365,6 +1673,7 @@
     notesDataCache.local_notes = notesDataCache.local_notes.filter(function (x) {
       return String(x.id) !== String(id);
     });
+    persistNotesCacheToDisk();
   }
 
   function isJournalPdfOp(op) {
@@ -2070,11 +2379,36 @@
     if (!id) {
       throw new Error("Некорректный идентификатор заметки");
     }
-    await apiFetch("/notes/local/" + encodeURIComponent(String(id)), {
-      method: "DELETE",
-    });
-    removeLocalFromCache(id);
-    removeKnowledgeFromCache(id);
+    if (isAppOffline() || String(id).indexOf("tmp_") === 0) {
+      removeLocalFromCache(id);
+      removeKnowledgeFromCache(id);
+      enqueueOfflineOp({
+        type: "note_delete",
+        clientId: id,
+        path: "/notes/local/" + encodeURIComponent(String(id)),
+        method: "DELETE",
+      });
+      showOfflineSavedToast("Удалено офлайн");
+      return;
+    }
+    try {
+      await apiFetch("/notes/local/" + encodeURIComponent(String(id)), {
+        method: "DELETE",
+      });
+      removeLocalFromCache(id);
+      removeKnowledgeFromCache(id);
+    } catch (e) {
+      if (!isTransientApiError(e)) throw e;
+      removeLocalFromCache(id);
+      removeKnowledgeFromCache(id);
+      enqueueOfflineOp({
+        type: "note_delete",
+        clientId: id,
+        path: "/notes/local/" + encodeURIComponent(String(id)),
+        method: "DELETE",
+      });
+      showOfflineSavedToast("Удалено офлайн");
+    }
   }
 
   async function apiFetchOnce(path, o) {
@@ -2141,6 +2475,11 @@
   async function apiFetchReal(path, opts) {
     const o = opts || {};
     const method = String(o.method || "GET").toUpperCase();
+    if (isAppOffline()) {
+      var offlineErr = new Error("Нет сети");
+      offlineErr.status = 0;
+      throw offlineErr;
+    }
     const maxTries = method === "GET" || method === "HEAD" ? 12 : 1;
     var lastErr = null;
     for (var i = 0; i < maxTries; i++) {
@@ -6878,6 +7217,39 @@
           : [],
       };
       try {
+        if (isAppOffline() || (id && String(id).indexOf("tmp_") === 0)) {
+          var clientId = id || newTempId("tmp_rem_");
+          if (id) {
+            applyReminderLocal(function (items) {
+              return items.map(function (r) {
+                if (String(r.id) !== String(clientId)) return r;
+                return Object.assign({}, r, body, { id: clientId });
+              });
+            });
+            enqueueOfflineOp({
+              type: "reminder_patch",
+              clientId: clientId,
+              path: "/reminders/" + encodeURIComponent(clientId),
+              method: "PATCH",
+              body: body,
+            });
+          } else {
+            var created = Object.assign({ id: clientId, done: false }, body);
+            applyReminderLocal(function (items) {
+              return [created].concat(items);
+            });
+            enqueueOfflineOp({
+              type: "reminder_create",
+              clientId: clientId,
+              path: "/reminders",
+              method: "POST",
+              body: body,
+            });
+          }
+          closeModal();
+          showOfflineSavedToast();
+          return;
+        }
         await apiFetch(id ? "/reminders/" + encodeURIComponent(id) : "/reminders", {
           method: id ? "PATCH" : "POST",
           body: JSON.stringify(body),
@@ -6885,6 +7257,39 @@
         closeModal();
         await loadActual();
       } catch (e) {
+        if (isTransientApiError(e)) {
+          var cid = id || newTempId("tmp_rem_");
+          if (id) {
+            applyReminderLocal(function (items) {
+              return items.map(function (r) {
+                if (String(r.id) !== String(cid)) return r;
+                return Object.assign({}, r, body, { id: cid });
+              });
+            });
+            enqueueOfflineOp({
+              type: "reminder_patch",
+              clientId: cid,
+              path: "/reminders/" + encodeURIComponent(cid),
+              method: "PATCH",
+              body: body,
+            });
+          } else {
+            var createdOff = Object.assign({ id: cid, done: false }, body);
+            applyReminderLocal(function (items) {
+              return [createdOff].concat(items);
+            });
+            enqueueOfflineOp({
+              type: "reminder_create",
+              clientId: cid,
+              path: "/reminders",
+              method: "POST",
+              body: body,
+            });
+          }
+          closeModal();
+          showOfflineSavedToast();
+          return;
+        }
         alert(e.message || String(e));
       }
       return;
@@ -6919,10 +7324,42 @@
       const id = document.getElementById("modal-reminder-id").value;
       if (!confirm("Удалить напоминание?")) return;
       try {
+        if (isAppOffline() || String(id).indexOf("tmp_") === 0) {
+          applyReminderLocal(function (items) {
+            return items.filter(function (r) {
+              return String(r.id) !== String(id);
+            });
+          });
+          enqueueOfflineOp({
+            type: "reminder_delete",
+            clientId: id,
+            path: "/reminders/" + encodeURIComponent(id),
+            method: "DELETE",
+          });
+          closeModal();
+          showOfflineSavedToast("Удалено офлайн");
+          return;
+        }
         await apiFetch("/reminders/" + encodeURIComponent(id), { method: "DELETE" });
         closeModal();
         await loadActual();
       } catch (e) {
+        if (isTransientApiError(e)) {
+          applyReminderLocal(function (items) {
+            return items.filter(function (r) {
+              return String(r.id) !== String(id);
+            });
+          });
+          enqueueOfflineOp({
+            type: "reminder_delete",
+            clientId: id,
+            path: "/reminders/" + encodeURIComponent(id),
+            method: "DELETE",
+          });
+          closeModal();
+          showOfflineSavedToast("Удалено офлайн");
+          return;
+        }
         alert(e.message || String(e));
       }
       return;
@@ -6941,6 +7378,48 @@
       } catch (e) {
         alert(e.message || String(e));
       }
+    }
+  }
+
+  async function deleteReminderById(id, opts) {
+    opts = opts || {};
+    if (!id) return;
+    if (isAppOffline() || String(id).indexOf("tmp_") === 0) {
+      applyReminderLocal(function (items) {
+        return items.filter(function (r) {
+          return String(r.id) !== String(id);
+        });
+      });
+      enqueueOfflineOp({
+        type: "reminder_delete",
+        clientId: id,
+        path: "/reminders/" + encodeURIComponent(id),
+        method: "DELETE",
+      });
+      if (!opts.silent) showOfflineSavedToast(opts.toast || "Удалено офлайн");
+      return { queued: true };
+    }
+    try {
+      await apiFetch("/reminders/" + encodeURIComponent(id), { method: "DELETE" });
+      await loadActual();
+      return { queued: false };
+    } catch (e) {
+      if (isTransientApiError(e)) {
+        applyReminderLocal(function (items) {
+          return items.filter(function (r) {
+            return String(r.id) !== String(id);
+          });
+        });
+        enqueueOfflineOp({
+          type: "reminder_delete",
+          clientId: id,
+          path: "/reminders/" + encodeURIComponent(id),
+          method: "DELETE",
+        });
+        if (!opts.silent) showOfflineSavedToast(opts.toast || "Удалено офлайн");
+        return { queued: true };
+      }
+      throw e;
     }
   }
 
@@ -6974,8 +7453,7 @@
     check.addEventListener("click", async function (e) {
       e.stopPropagation();
       try {
-        await apiFetch("/reminders/" + encodeURIComponent(r.id), { method: "DELETE" });
-        await loadActual();
+        await deleteReminderById(r.id, { toast: "Готово" });
         const tg = window.Telegram && window.Telegram.WebApp;
         if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
       } catch (err) {
@@ -7028,8 +7506,7 @@
     wrap.appendChild(row);
 
     return wrapWithSwipeDelete(wrap, async function () {
-      await apiFetch("/reminders/" + encodeURIComponent(r.id), { method: "DELETE" });
-      await loadActual();
+      await deleteReminderById(r.id, { toast: "Удалено офлайн" });
     });
   }
 
@@ -10816,14 +11293,26 @@
     var clean = String(html || "").trim();
     if (!clean) return;
     var title = titleFromAnswerHtml(clean);
+    var body = { title: title, description: clean, sync_todoist: false };
     try {
+      if (isAppOffline()) {
+        var tmpId = newTempId("tmp_note_");
+        prependLocalInCache({ id: tmpId, title: title, description: clean, body: clean });
+        if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+        enqueueOfflineOp({
+          type: "note_create",
+          clientId: tmpId,
+          path: "/notes/local",
+          method: "POST",
+          body: body,
+        });
+        showOfflineSavedToast("Заметка создана офлайн");
+        shareHaptic();
+        return;
+      }
       var createRes = await apiFetch("/notes/local", {
         method: "POST",
-        body: JSON.stringify({
-          title: title,
-          description: clean,
-          sync_todoist: false,
-        }),
+        body: JSON.stringify(body),
       });
       var created = (createRes && createRes.item) || { id: createRes && createRes.id, title: title };
       prependLocalInCache(created);
@@ -10831,6 +11320,21 @@
       showNoteToast("Заметка создана");
       shareHaptic();
     } catch (e) {
+      if (isTransientApiError(e)) {
+        var tmpId2 = newTempId("tmp_note_");
+        prependLocalInCache({ id: tmpId2, title: title, description: clean, body: clean });
+        if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+        enqueueOfflineOp({
+          type: "note_create",
+          clientId: tmpId2,
+          path: "/notes/local",
+          method: "POST",
+          body: body,
+        });
+        showOfflineSavedToast("Заметка создана офлайн");
+        shareHaptic();
+        return;
+      }
       alert(e.message || String(e));
     }
   }
@@ -10840,23 +11344,7 @@
     if (!raw) return;
     var title = titleFromAnswerMarkdown(raw);
     var html = htmlFromAnswerMarkdown(raw);
-    try {
-      var createRes = await apiFetch("/notes/local", {
-        method: "POST",
-        body: JSON.stringify({
-          title: title,
-          description: html,
-          sync_todoist: false,
-        }),
-      });
-      var created = (createRes && createRes.item) || { id: createRes && createRes.id, title: title };
-      prependLocalInCache(created);
-      if (notesDataCache) renderNotesPanesFromData(notesDataCache);
-      showNoteToast("Заметка создана");
-      shareHaptic();
-    } catch (e) {
-      alert(e.message || String(e));
-    }
+    await createNoteFromAnswerHtml(html || ("<p>" + escapeHtml(raw) + "</p>"));
   }
 
   function closeNoteLinkPicker() {
@@ -13623,11 +14111,7 @@
   }
 
   async function toggleNotePin(noteId, pinned) {
-    try {
-      await apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/pin", {
-        method: "PUT",
-        body: JSON.stringify({ pinned: !!pinned }),
-      });
+    function applyLocalPin() {
       if (notesDataCache && notesDataCache.local_notes) {
         notesDataCache.local_notes.forEach(function (row) {
           if (String(row.id) === String(noteId)) row.pinned = !!pinned;
@@ -13638,9 +14122,41 @@
         notesDataCache.local_notes.sort(function (a, b) {
           return (a.pinned ? 0 : 1) - (b.pinned ? 0 : 1);
         });
+        persistNotesCacheToDisk();
         renderNotesPanesFromData(notesDataCache);
       }
+    }
+    try {
+      if (isAppOffline() || String(noteId).indexOf("tmp_") === 0) {
+        applyLocalPin();
+        enqueueOfflineOp({
+          type: "note_pin",
+          clientId: noteId,
+          path: "/notes/local/" + encodeURIComponent(String(noteId)) + "/pin",
+          method: "PUT",
+          body: { pinned: !!pinned },
+        });
+        showOfflineSavedToast();
+        return;
+      }
+      await apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/pin", {
+        method: "PUT",
+        body: JSON.stringify({ pinned: !!pinned }),
+      });
+      applyLocalPin();
     } catch (e) {
+      if (isTransientApiError(e)) {
+        applyLocalPin();
+        enqueueOfflineOp({
+          type: "note_pin",
+          clientId: noteId,
+          path: "/notes/local/" + encodeURIComponent(String(noteId)) + "/pin",
+          method: "PUT",
+          body: { pinned: !!pinned },
+        });
+        showOfflineSavedToast();
+        return;
+      }
       alert(e.message || String(e));
     }
   }
@@ -14454,45 +14970,87 @@
         return;
       }
       if (noteIsCreate || !noteId) {
-        var createRes = await apiFetch(isKnowledge ? "/notes/knowledge" : "/notes/local", {
-          method: "POST",
-          body: JSON.stringify({
+        var createBody = {
+          title: fields.title,
+          description: fields.description,
+          sync_todoist: false,
+        };
+        var createPath = isKnowledge ? "/notes/knowledge" : "/notes/local";
+        function applyCreatedLocal(createdLocal) {
+          if (isKnowledge) {
+            createdLocal.role = createdLocal.role || "knowledge";
+            createdLocal.is_knowledge = true;
+          }
+          noteId = String(createdLocal.id || "");
+          noteIsCreate = false;
+          n.id = noteId;
+          n.tags = createdLocal.tags || n.tags;
+          n.project = createdLocal.project || n.project;
+          n.hashtags = createdLocal.hashtags || n.hashtags;
+          if (isKnowledge) {
+            prependKnowledgeInCache(createdLocal);
+          } else {
+            prependLocalInCache(createdLocal);
+            if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+          }
+          if (noteId && tagsWrap && tagsWrap.classList.contains("hidden")) {
+            try {
+              mountTagPicker(tagsWrap, "local", noteId, noteTagsOf(n), function (tags) {
+                n.tags = tags;
+                n.project = tags[0] || null;
+              });
+              setHidden(tagsWrap, false);
+            } catch (err) {
+              console.error("mountTagPicker", err);
+            }
+          }
+          if (noteId && !isKnowledge) ensureNoteShareMounted(noteId);
+        }
+        if (isAppOffline()) {
+          var tmpNoteId = newTempId("tmp_note_");
+          applyCreatedLocal({
+            id: tmpNoteId,
             title: fields.title,
             description: fields.description,
-            sync_todoist: false,
-          }),
-        });
-        var created =
-          (createRes && createRes.item) ||
-          { id: createRes.id, title: fields.title, description: fields.description };
-        if (isKnowledge) {
-          created.role = created.role || "knowledge";
-          created.is_knowledge = true;
+            body: fields.description,
+          });
+          enqueueOfflineOp({
+            type: "note_create",
+            clientId: tmpNoteId,
+            path: createPath,
+            method: "POST",
+            body: createBody,
+          });
+          showOfflineSavedToast();
+          return;
         }
-        noteId = String(created.id || "");
-        noteIsCreate = false;
-        n.id = noteId;
-        n.tags = created.tags || n.tags;
-        n.project = created.project || n.project;
-        n.hashtags = created.hashtags || n.hashtags;
-        if (isKnowledge) {
-          prependKnowledgeInCache(created);
-        } else {
-          prependLocalInCache(created);
-          if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+        try {
+          var createRes = await apiFetch(createPath, {
+            method: "POST",
+            body: JSON.stringify(createBody),
+          });
+          var created =
+            (createRes && createRes.item) ||
+            { id: createRes.id, title: fields.title, description: fields.description };
+          applyCreatedLocal(created);
+        } catch (createErr) {
+          if (!isTransientApiError(createErr)) throw createErr;
+          var tmpNoteId2 = newTempId("tmp_note_");
+          applyCreatedLocal({
+            id: tmpNoteId2,
+            title: fields.title,
+            description: fields.description,
+            body: fields.description,
+          });
+          enqueueOfflineOp({
+            type: "note_create",
+            clientId: tmpNoteId2,
+            path: createPath,
+            method: "POST",
+            body: createBody,
+          });
+          showOfflineSavedToast();
         }
-        if (noteId && tagsWrap && tagsWrap.classList.contains("hidden")) {
-          try {
-            mountTagPicker(tagsWrap, "local", noteId, noteTagsOf(n), function (tags) {
-              n.tags = tags;
-              n.project = tags[0] || null;
-            });
-            setHidden(tagsWrap, false);
-          } catch (err) {
-            console.error("mountTagPicker", err);
-          }
-        }
-        if (noteId && !isKnowledge) ensureNoteShareMounted(noteId);
       } else {
         var moreWrap = document.getElementById("note-editor-more-wrap");
         var patchBody = {
@@ -14504,6 +15062,44 @@
         }
         if (moreWrap && moreWrap._noteUpdatedAt) {
           patchBody.expected_updated_at = moreWrap._noteUpdatedAt;
+        }
+        function applyPatchedLocal(patchedItem) {
+          if (isKnowledge) {
+            patchedItem.role = "knowledge";
+            patchedItem.is_knowledge = true;
+            prependKnowledgeInCache(patchedItem);
+          } else {
+            prependLocalInCache(patchedItem);
+          }
+        }
+        var offlinePatch =
+          isAppOffline() || String(noteId).indexOf("tmp_") === 0;
+        if (offlinePatch) {
+          var localPatch = {
+            id: noteId,
+            title: fields.title,
+            description: fields.description,
+            body: fields.description,
+            todoist_id: n.todoist_id,
+            tags: noteTagsOf(n),
+            project: noteProjectOf(n),
+            hashtags: noteHashtagsOf(n),
+            members: moreWrap && moreWrap._noteMembers,
+            revision: moreWrap && moreWrap._noteRevision,
+            updated_at: moreWrap && moreWrap._noteUpdatedAt,
+            is_owner: moreWrap ? moreWrap._isNoteOwner : n.is_owner,
+            owner_user_id: n.owner_user_id,
+          };
+          applyPatchedLocal(localPatch);
+          enqueueOfflineOp({
+            type: "note_patch",
+            clientId: noteId,
+            path: "/notes/local/" + encodeURIComponent(noteId),
+            method: "PATCH",
+            body: { title: fields.title, description: fields.description },
+          });
+          showOfflineSavedToast();
+          return;
         }
         try {
           var patchRes = await apiFetch("/notes/local/" + encodeURIComponent(noteId), {
@@ -14533,19 +15129,31 @@
               moreWrap._noteMembers = patchRes.item.members || moreWrap._noteMembers;
             }
           }
-          if (isKnowledge) {
-            patchedItem.role = "knowledge";
-            patchedItem.is_knowledge = true;
-            prependKnowledgeInCache(patchedItem);
-          } else {
-            prependLocalInCache(patchedItem);
-          }
-        } catch (e) {
-          if (e && e.status === 409 && e.conflictItem) {
-            applyRemoteSharedNote(e.conflictItem, true);
+          applyPatchedLocal(patchedItem);
+        } catch (patchErr) {
+          if (patchErr && patchErr.status === 409 && patchErr.conflictItem) {
+            applyRemoteSharedNote(patchErr.conflictItem, true);
             return;
           }
-          throw e;
+          if (!isTransientApiError(patchErr)) throw patchErr;
+          applyPatchedLocal({
+            id: noteId,
+            title: fields.title,
+            description: fields.description,
+            body: fields.description,
+            todoist_id: n.todoist_id,
+            tags: noteTagsOf(n),
+            project: noteProjectOf(n),
+            hashtags: noteHashtagsOf(n),
+          });
+          enqueueOfflineOp({
+            type: "note_patch",
+            clientId: noteId,
+            path: "/notes/local/" + encodeURIComponent(noteId),
+            method: "PATCH",
+            body: { title: fields.title, description: fields.description },
+          });
+          showOfflineSavedToast();
         }
       }
       var detailBodyDraft = getNoteEditorBodyEl();
@@ -15229,6 +15837,7 @@
     bindTelegramMiniappBackOnce();
     scheduleTelegramMiniappBackBindRetries();
     bindEdgeSwipeBackOnce();
+    bindOfflineQueueListenersOnce();
 
     const root = document.documentElement;
     root.classList.remove("tg-light");
