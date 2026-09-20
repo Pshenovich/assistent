@@ -162,18 +162,52 @@
         miniappCacheStorageKey(kind),
         JSON.stringify({ ts: Date.now(), data: data })
       );
-    } catch (_) {}
+      return true;
+    } catch (e) {
+      try {
+        // Drop old day caches to free quota, then retry once.
+        var prefix =
+          "leo_miniapp_c" + MINIAPP_CACHE_SCHEMA + "_" + getMiniappCacheUserKey() + "_actual_";
+        var keys = [];
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (k && k.indexOf(prefix) === 0) keys.push(k);
+        }
+        keys.sort();
+        keys.slice(0, Math.max(0, keys.length - 3)).forEach(function (k) {
+          try {
+            localStorage.removeItem(k);
+          } catch (_) {}
+        });
+        localStorage.setItem(
+          miniappCacheStorageKey(kind),
+          JSON.stringify({ ts: Date.now(), data: data })
+        );
+        return true;
+      } catch (e2) {
+        console.warn("writeMiniappCache failed", e2);
+        return false;
+      }
+    }
   }
 
-  function persistNotesCacheToDisk() {
-    if (notesDataCache) writeMiniappCache("notes", notesDataCache);
+  var lastNetworkFailAt = 0;
+
+  function markNetworkFailure() {
+    lastNetworkFailAt = Date.now();
   }
 
   function isAppOffline() {
     try {
       if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
     } catch (_) {}
+    // Mobile airplane mode often keeps onLine=true while fetch hangs.
+    if (lastNetworkFailAt && Date.now() - lastNetworkFailAt < 60000) return true;
     return false;
+  }
+
+  function persistNotesCacheToDisk() {
+    if (notesDataCache) writeMiniappCache("notes", notesDataCache);
   }
 
   function offlineQueueStorageKey() {
@@ -193,7 +227,13 @@
   function writeOfflineQueue(arr) {
     try {
       localStorage.setItem(offlineQueueStorageKey(), JSON.stringify(arr || []));
-    } catch (_) {}
+    } catch (e) {
+      console.warn("writeOfflineQueue failed", e);
+      try {
+        showNoteToast("Мало места для офлайн-сохранения");
+      } catch (_) {}
+      throw e;
+    }
     syncOfflineQueueBadge();
   }
 
@@ -2355,11 +2395,27 @@
     }
     var body = getNoteEditorBodyEl();
     if (body && typeof body._noteEditorFlush === "function") {
+      var flushFn = body._noteEditorFlush;
+      // Prevent closeNoteEditorModal from running a second hanging flush.
+      body._noteEditorFlush = null;
       try {
-        await body._noteEditorFlush();
+        await Promise.race([
+          flushFn(),
+          sleepMs(5000).then(function () {
+            var err = new Error("Сохранение заняло слишком много времени");
+            err.status = 0;
+            throw err;
+          }),
+        ]);
       } catch (e) {
-        alert(e.message || "Не удалось сохранить заметку");
-        return false;
+        markNetworkFailure();
+        if (!isTransientApiError(e) && !(e && e.status === 0)) {
+          body._noteEditorFlush = flushFn;
+          alert(e.message || "Не удалось сохранить заметку");
+          return false;
+        }
+        // Soft-fail: keep local/offline draft and let the user leave.
+        showOfflineSavedToast();
       }
     }
     closeNoteEditorModal();
@@ -2421,55 +2477,85 @@
       headers["Content-Type"] = "application/json";
     }
     const init = Object.assign({ credentials: "same-origin" }, o, { headers });
-    const res = await fetch(API + path, init);
-    const text = await res.text();
-    let body = null;
+    var timedOut = false;
+    var abortTimer = null;
+    var controller = null;
     try {
-      body = text ? JSON.parse(text) : null;
-    } catch (_) {
-      body = {
-        detail: looksLikeHtmlError(text)
-          ? httpStatusFallback(res.status, res.statusText)
-          : text || res.statusText,
-      };
-    }
-    if (!res.ok) {
-      if (res.status === 403 && hasTelegramWebAppAuth() && !miniappDev) {
-        showAccessBlocked(apiErrorMessage(body, res.statusText || "Доступ ограничен."));
+      if (typeof AbortController !== "undefined" && !init.signal) {
+        controller = new AbortController();
+        init.signal = controller.signal;
+        abortTimer = setTimeout(function () {
+          timedOut = true;
+          try {
+            controller.abort();
+          } catch (_) {}
+        }, 8000);
       }
-      if (res.status === 401 && hasTelegramWebAppAuth() && !miniappDev) {
-        showTelegramAuthError(
-          apiErrorMessage(body, "Ошибка авторизации Telegram. Напишите боту /start и откройте «Ассистент» снова.")
-        );
+      const res = await fetch(API + path, init);
+      if (abortTimer) clearTimeout(abortTimer);
+      const text = await res.text();
+      let body = null;
+      try {
+        body = text ? JSON.parse(text) : null;
+      } catch (_) {
+        body = {
+          detail: looksLikeHtmlError(text)
+            ? httpStatusFallback(res.status, res.statusText)
+            : text || res.statusText,
+        };
       }
-      if (res.status === 401 && !hasTelegramWebAppAuth() && !miniappDev) {
-        setStoredSession("");
-        gateLoginBootstrapped = false;
-        fetch(API + "/auth/logout", {
-          method: "POST",
-          credentials: "same-origin",
-        }).catch(function () {});
-        if (isInsideTelegramClient()) {
-          showTelegramAuthError(
-            apiErrorMessage(body, "Telegram не передал данные для входа. Закройте окно и откройте мини-приложение снова.")
-          );
-        } else {
-          showGate();
-          bootstrapGateLogin();
+      if (!res.ok) {
+        if (res.status === 403 && hasTelegramWebAppAuth() && !miniappDev) {
+          showAccessBlocked(apiErrorMessage(body, res.statusText || "Доступ ограничен."));
         }
+        if (res.status === 401 && hasTelegramWebAppAuth() && !miniappDev) {
+          showTelegramAuthError(
+            apiErrorMessage(body, "Ошибка авторизации Telegram. Напишите боту /start и откройте «Ассистент» снова.")
+          );
+        }
+        if (res.status === 401 && !hasTelegramWebAppAuth() && !miniappDev) {
+          setStoredSession("");
+          gateLoginBootstrapped = false;
+          fetch(API + "/auth/logout", {
+            method: "POST",
+            credentials: "same-origin",
+          }).catch(function () {});
+          if (isInsideTelegramClient()) {
+            showTelegramAuthError(
+              apiErrorMessage(body, "Telegram не передал данные для входа. Закройте окно и откройте мини-приложение снова.")
+            );
+          } else {
+            showGate();
+            bootstrapGateLogin();
+          }
+        }
+        const msg = apiErrorMessage(
+          body,
+          httpStatusFallback(res.status, res.statusText || "Ошибка")
+        );
+        const err = new Error(msg);
+        err.status = res.status;
+        if (res.status === 409 && body && body.detail && typeof body.detail === "object") {
+          err.conflictItem = body.detail.item || null;
+        }
+        if (res.status >= 500) markNetworkFailure();
+        throw err;
       }
-      const msg = apiErrorMessage(
-        body,
-        httpStatusFallback(res.status, res.statusText || "Ошибка")
-      );
-      const err = new Error(msg);
-      err.status = res.status;
-      if (res.status === 409 && body && body.detail && typeof body.detail === "object") {
-        err.conflictItem = body.detail.item || null;
+      return body;
+    } catch (e) {
+      if (abortTimer) clearTimeout(abortTimer);
+      if (timedOut || (e && e.name === "AbortError")) {
+        markNetworkFailure();
+        var tErr = new Error(timedOut ? "Нет ответа сети" : "Запрос отменён");
+        tErr.status = 0;
+        throw tErr;
       }
-      throw err;
+      if (e && e.status != null) throw e;
+      markNetworkFailure();
+      var nErr = new Error((e && e.message) || "Нет сети");
+      nErr.status = 0;
+      throw nErr;
     }
-    return body;
   }
 
   async function apiFetchReal(path, opts) {
@@ -2480,7 +2566,12 @@
       offlineErr.status = 0;
       throw offlineErr;
     }
-    const maxTries = method === "GET" || method === "HEAD" ? 12 : 1;
+    const maxTries =
+      method === "GET" || method === "HEAD"
+        ? isAppOffline() || lastNetworkFailAt
+          ? 1
+          : 12
+        : 1;
     var lastErr = null;
     for (var i = 0; i < maxTries; i++) {
       try {
@@ -8111,6 +8202,16 @@
       if (tracking) return;
       if (e.pointerType === "mouse" && e.button != null && e.button !== 0) return;
       if (!canPerformAppBack() || isPanelsStageAnimating()) return;
+      var target = e.target;
+      if (
+        target &&
+        target.closest &&
+        target.closest(
+          "button, a, input, textarea, select, [role='button'], #note-editor-web-back, #notes-detail-back"
+        )
+      ) {
+        return;
+      }
       var x = pointX(e);
       if (x > edgeLimit()) return;
       tracking = true;
@@ -15228,7 +15329,7 @@
           clearTimeout(saveTimer);
           saveTimer = null;
         }
-        await persistNoteDraft();
+        await persistNoteDraft({ defaultTitle: "Без названия", keepEmpty: true });
       };
       modalBody._noteEditor = {
         ready: false,
