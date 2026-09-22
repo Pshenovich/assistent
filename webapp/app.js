@@ -11007,6 +11007,7 @@
     if (!ov || ov._bound) return ov;
     ov._bound = true;
     bindDiscussClarifyOnce();
+    bindDiscussionScrollEndOnce();
     var closeBtn = document.getElementById("note-discussion-close");
     if (closeBtn) {
       closeBtn.addEventListener("click", function (e) {
@@ -11113,6 +11114,7 @@
     closeNoteComposerMenus();
     hideDiscussClarify();
     resetDiscussionOverlayViewport();
+    syncDiscussionScrollEndBtn();
     syncNoteDiscussionOpenClass();
     syncAppOverlay();
     syncTelegramNativeBack();
@@ -11141,6 +11143,7 @@
     var sr = scroll.getBoundingClientRect();
     scroll.scrollTop += er.top - sr.top - 16;
     highlightDiscussionMessage(id);
+    syncDiscussionScrollEndBtn();
   }
 
   function scrollNoteToQuote(comment) {
@@ -11278,6 +11281,38 @@
     return null;
   }
 
+  function scrollDiscussRangeToViewportCenter(range) {
+    var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
+    if (!scroll || !range) return false;
+    var rects = range.getClientRects ? range.getClientRects() : null;
+    var top = Infinity;
+    var bottom = -Infinity;
+    var i;
+    if (rects && rects.length) {
+      for (i = 0; i < rects.length; i++) {
+        var r = rects[i];
+        if (!r || r.width < 1 || r.height < 1) continue;
+        if (r.top < top) top = r.top;
+        if (r.bottom > bottom) bottom = r.bottom;
+      }
+    }
+    if (!(top < Infinity) || !(bottom > -Infinity)) {
+      try {
+        var box = range.getBoundingClientRect();
+        if (!box || !(box.height > 0 || box.width > 0)) return false;
+        top = box.top;
+        bottom = box.bottom;
+      } catch (_) {
+        return false;
+      }
+    }
+    var quoteMid = (top + bottom) / 2;
+    var sr = scroll.getBoundingClientRect();
+    var viewportMid = sr.top + sr.height / 2;
+    scroll.scrollTop += quoteMid - viewportMid;
+    return true;
+  }
+
   /**
    * Jump to the quoted passage. Clarify quotes come from a GPT bubble in the
    * discussion — not from the note — so closing the panel and searching the note
@@ -11285,6 +11320,19 @@
    */
   function revealDiscussQuoteReply(comment) {
     if (!comment || !String(comment.quote || "").trim()) return false;
+    // Clarify quotes live in chat history — search discussion first so a similar
+    // phrase in the note body does not steal the jump.
+    var hit = findDiscussQuotedPassage(comment);
+    if (hit) {
+      highlightDiscussionMessage(hit.msg.getAttribute("data-comment-id"));
+      scrollDiscussRangeToViewportCenter(hit.range);
+      window.setTimeout(function () {
+        scrollDiscussRangeToViewportCenter(hit.range);
+        flashClientRectsInHost(hit.bubble, hit.range);
+        syncDiscussionScrollEndBtn();
+      }, 50);
+      return true;
+    }
     var noteRange = scrollNoteToQuote(comment);
     if (noteRange) {
       var panel = document.getElementById("note-editor-comments");
@@ -11295,22 +11343,7 @@
       if (!isDesktopLayout()) closeNoteDiscussion(true);
       return true;
     }
-    var hit = findDiscussQuotedPassage(comment);
-    if (!hit) return false;
-    var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
-    if (scroll && hit.msg) {
-      var er = hit.msg.getBoundingClientRect();
-      var sr = scroll.getBoundingClientRect();
-      scroll.scrollTop += er.top - sr.top - Math.max(24, sr.height * 0.2);
-    } else if (hit.msg && hit.msg.scrollIntoView) {
-      hit.msg.scrollIntoView({ block: "center", behavior: "smooth" });
-    }
-    highlightDiscussionMessage(hit.msg.getAttribute("data-comment-id"));
-    // Flash after scroll settles so rects match the visible layout.
-    window.setTimeout(function () {
-      flashClientRectsInHost(hit.bubble, hit.range);
-    }, 80);
-    return true;
+    return false;
   }
 
   function revealNoteDiscussionTopic(comment, opts) {
@@ -11438,9 +11471,10 @@
     if (pinId) {
       scrollDiscussionToComment(pinId);
     } else if (!opts.fromDesktopSync) {
-      var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
-      if (scroll) scroll.scrollTop = scroll.scrollHeight;
+      scrollDiscussionToEnd();
     }
+    bindDiscussionScrollEndOnce();
+    syncDiscussionScrollEndBtn();
     syncNoteDiscussionOpenClass();
     syncAppOverlay();
     syncTelegramNativeBack();
@@ -12706,9 +12740,67 @@
     return el;
   }
 
-  function scrollDiscussionToEnd() {
+  function scrollDiscussionToEnd(opts) {
+    opts = opts || {};
     var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
-    if (scroll) scroll.scrollTop = scroll.scrollHeight;
+    if (!scroll) return;
+    if (opts.smooth && typeof scroll.scrollTo === "function") {
+      try {
+        scroll.scrollTo({ top: scroll.scrollHeight, behavior: "smooth" });
+      } catch (_) {
+        scroll.scrollTop = scroll.scrollHeight;
+      }
+    } else {
+      scroll.scrollTop = scroll.scrollHeight;
+    }
+    syncDiscussionScrollEndBtn();
+  }
+
+  var DISCUSS_SCROLL_END_GAP_PX = 96;
+
+  function discussionScrollDistanceFromEnd(scroll) {
+    if (!scroll) return 0;
+    return Math.max(0, scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight);
+  }
+
+  function syncDiscussionScrollEndBtn() {
+    var btn = document.getElementById("note-discussion-scroll-end");
+    var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
+    if (!btn) return;
+    if (!isNoteDiscussionOpen() || !scroll) {
+      btn.classList.add("hidden");
+      btn.setAttribute("aria-hidden", "true");
+      return;
+    }
+    var show =
+      scroll.scrollHeight > scroll.clientHeight + 8 &&
+      discussionScrollDistanceFromEnd(scroll) > DISCUSS_SCROLL_END_GAP_PX;
+    btn.classList.toggle("hidden", !show);
+    btn.setAttribute("aria-hidden", show ? "false" : "true");
+  }
+
+  function bindDiscussionScrollEndOnce() {
+    var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
+    var btn = document.getElementById("note-discussion-scroll-end");
+    if (scroll && !scroll._scrollEndBound) {
+      scroll._scrollEndBound = true;
+      scroll.addEventListener(
+        "scroll",
+        function () {
+          syncDiscussionScrollEndBtn();
+        },
+        { passive: true }
+      );
+    }
+    if (btn && !btn._bound) {
+      btn._bound = true;
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        scrollDiscussionToEnd({ smooth: true });
+      });
+    }
+    syncDiscussionScrollEndBtn();
   }
 
   function setGptDiscussPhase(phase) {

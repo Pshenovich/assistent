@@ -5286,6 +5286,15 @@ html.note-editor-open #note-editor-overlay {
   height: 36px;
 }
 
+.note-discussion-scroll-wrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
 .note-discussion-scroll {
   display: flex;
   flex: 1;
@@ -5298,6 +5307,41 @@ html.note-editor-open #note-editor-overlay {
   overscroll-behavior: contain;
   touch-action: pan-y;
   padding: 16px 16px 8px;
+}
+
+.note-discussion-scroll-end {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 50%;
+  color: var(--text, #fff);
+  background: var(--surface, #19191a);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.note-discussion-scroll-end.hidden {
+  display: none !important;
+}
+
+.note-discussion-scroll-end:active {
+  transform: scale(0.96);
+}
+
+.note-discussion-scroll-end svg {
+  display: block;
 }
 
 .note-discussion-scroll .note-paei-status {

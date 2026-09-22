@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260922-discuss-quote-center">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260922-discuss-scroll-end">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -46,8 +46,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20260922-discuss-quote-center" />
-  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260922-discuss-quote-center" as="script" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20260922-discuss-scroll-end" />
+  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260922-discuss-scroll-end" as="script" />
   <!-- Same-origin, async: не блокирует парсер, если сеть/VPN тормозит. -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" async></script>
 </head>
@@ -1126,9 +1126,24 @@
           </svg>
         </button>
       </div>
-      <div class="note-discussion-scroll">
-        <div id="note-editor-paei-status" class="note-paei-status hidden"></div>
-        <div id="note-discussion-messages" class="note-discussion-messages"></div>
+      <div class="note-discussion-scroll-wrap">
+        <div class="note-discussion-scroll" id="note-discussion-scroll">
+          <div id="note-editor-paei-status" class="note-paei-status hidden"></div>
+          <div id="note-discussion-messages" class="note-discussion-messages"></div>
+        </div>
+        <button
+          type="button"
+          id="note-discussion-scroll-end"
+          class="note-discussion-scroll-end hidden"
+          aria-label="В конец диалога"
+          title="В конец"
+          aria-hidden="true"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 5v14" />
+            <path d="m19 12-7 7-7-7" />
+          </svg>
+        </button>
       </div>
       <div id="note-paie-thread" class="note-discussion-compose"></div>
     </div>
@@ -1161,14 +1176,14 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20260922-discuss-quote-center"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20260922-discuss-scroll-end"><\/script>'
         );
       }
     })();
   </script>
-  <script src="/webapp/note-html.js?v=20260922-discuss-quote-center" defer></script>
-  <script src="/webapp/note-comments.js?v=20260922-discuss-quote-center" defer></script>
-  <script src="/webapp/note-rich-editor.js?v=20260922-discuss-quote-center" defer></script>
-  <script src="/webapp/app.js?v=20260922-discuss-quote-center" defer></script>
+  <script src="/webapp/note-html.js?v=20260922-discuss-scroll-end" defer></script>
+  <script src="/webapp/note-comments.js?v=20260922-discuss-scroll-end" defer></script>
+  <script src="/webapp/note-rich-editor.js?v=20260922-discuss-scroll-end" defer></script>
+  <script src="/webapp/app.js?v=20260922-discuss-scroll-end" defer></script>
 </body>
 </html>
