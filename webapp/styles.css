@@ -5286,6 +5286,15 @@ html.note-editor-open #note-editor-overlay {
   height: 36px;
 }
 
+.note-discussion-scroll-wrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
 .note-discussion-scroll {
   display: flex;
   flex: 1;
@@ -5298,6 +5307,41 @@ html.note-editor-open #note-editor-overlay {
   overscroll-behavior: contain;
   touch-action: pan-y;
   padding: 16px 16px 8px;
+}
+
+.note-discussion-scroll-end {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 50%;
+  color: var(--text, #fff);
+  background: var(--surface, #19191a);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.note-discussion-scroll-end.hidden {
+  display: none !important;
+}
+
+.note-discussion-scroll-end:active {
+  transform: scale(0.96);
+}
+
+.note-discussion-scroll-end svg {
+  display: block;
 }
 
 .note-discussion-scroll .note-paei-status {
@@ -5379,6 +5423,46 @@ html.note-editor-open #note-editor-overlay {
   line-height: 1.2;
 }
 
+.note-discuss-send-state.is-error {
+  color: var(--danger, #e86363);
+}
+
+.note-discuss-msg.is-failed .note-discuss-bubble {
+  position: relative;
+  padding-right: 2.5rem;
+  padding-bottom: 2rem;
+}
+
+.note-discuss-send-retry {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  color: var(--on-accent, #fff);
+  background: rgba(0, 0, 0, 0.28);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.note-discuss-send-retry:active {
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.note-discuss-send-retry svg {
+  display: block;
+}
+
 .note-discuss-bubble--pending {
   display: flex;
   align-items: center;
@@ -5457,6 +5541,52 @@ html.note-editor-open #note-editor-overlay {
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.note-discuss-quote:active,
+.note-discuss-quote:focus-visible {
+  color: var(--accent, #5280e8);
+  outline: none;
+}
+
+.note-discuss-bubble.is-quote-flash-host {
+  position: relative;
+}
+
+.note-discuss-quote-flash-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.note-discuss-quote-flash {
+  position: absolute;
+  border-radius: 4px;
+  background: rgba(82, 158, 244, 0.42);
+  box-shadow: 0 0 0 1px rgba(82, 158, 244, 0.35);
+  animation: note-discuss-quote-flash 1.45s ease;
+}
+
+@keyframes note-discuss-quote-flash {
+  0% {
+    background: rgba(82, 158, 244, 0.12);
+  }
+  18%,
+  42% {
+    background: rgba(82, 158, 244, 0.55);
+  }
+  100% {
+    background: rgba(82, 158, 244, 0);
+  }
+}
+
+.note-comment-overlay-hl.is-flash,
+.note-comment-overlay-bar.is-flash {
+  animation: note-discuss-quote-flash 1.45s ease;
 }
 
 .note-discuss-bubble {
@@ -7876,6 +8006,12 @@ textarea.event-sheet-title--area {
   padding: 0;
   background: rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(4px);
+}
+
+/* Must sit above #note-editor-overlay (same base z-index, later in DOM). */
+#note-unsaved-overlay {
+  z-index: 260;
+  align-items: center;
 }
 
 .modal-overlay.hidden {
