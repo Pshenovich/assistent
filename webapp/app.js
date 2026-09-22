@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260920-false-offline";
+  var WEBAPP_BUILD = "20260922-discuss-quote-jump";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260920-false-offline";
+  const NOTE_EDITOR_ASSET_V = "20260922-discuss-quote-jump";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -11144,17 +11144,173 @@
   }
 
   function scrollNoteToQuote(comment) {
-    if (!comment || !String(comment.quote || "").trim()) return;
+    if (!comment || !String(comment.quote || "").trim()) return null;
     var api = window.NoteComments;
     var root = noteEditorCommentRoot();
-    if (!api || !api.rangeForAnchor || !root) return;
-    var range = api.rangeForAnchor(root, comment.quote, comment.prefix, comment.suffix);
-    if (!range) return;
+    if (!api || !api.rangeForAnchor || !root) return null;
+    var range =
+      api.rangeForAnchor(root, comment.quote, comment.prefix, comment.suffix) ||
+      api.rangeForAnchor(root, comment.quote, "", "");
+    if (!range) return null;
     var node = range.startContainer;
     var el = node && (node.nodeType === 1 ? node : node.parentElement);
     if (el && el.scrollIntoView) {
       el.scrollIntoView({ block: "center", behavior: "smooth" });
     }
+    return range;
+  }
+
+  var discussQuoteFlashTimer = null;
+
+  function clearDiscussQuoteFlash() {
+    if (discussQuoteFlashTimer) {
+      clearTimeout(discussQuoteFlashTimer);
+      discussQuoteFlashTimer = null;
+    }
+    document.querySelectorAll(".note-discuss-quote-flash-layer").forEach(function (el) {
+      if (el.parentNode) el.parentNode.removeChild(el);
+    });
+    document.querySelectorAll(".note-discuss-bubble.is-quote-flash-host").forEach(function (el) {
+      el.classList.remove("is-quote-flash-host");
+    });
+    document.querySelectorAll(".note-comment-overlay-hl.is-flash, .note-comment-overlay-bar.is-flash").forEach(
+      function (el) {
+        el.classList.remove("is-flash");
+      }
+    );
+  }
+
+  function flashClientRectsInHost(host, range) {
+    if (!host || !range) return false;
+    var rects = range.getClientRects ? range.getClientRects() : [];
+    if (!rects || !rects.length) return false;
+    clearDiscussQuoteFlash();
+    var hostRect = host.getBoundingClientRect();
+    var cs = window.getComputedStyle(host);
+    if (cs.position === "static") host.classList.add("is-quote-flash-host");
+    var layer = document.createElement("div");
+    layer.className = "note-discuss-quote-flash-layer";
+    var painted = false;
+    for (var i = 0; i < rects.length; i++) {
+      var r = rects[i];
+      if (!r || r.width < 1 || r.height < 1) continue;
+      var span = document.createElement("span");
+      span.className = "note-discuss-quote-flash";
+      span.style.left = r.left - hostRect.left + host.scrollLeft + "px";
+      span.style.top = r.top - hostRect.top + host.scrollTop + "px";
+      span.style.width = r.width + "px";
+      span.style.height = r.height + "px";
+      layer.appendChild(span);
+      painted = true;
+    }
+    if (!painted) return false;
+    host.appendChild(layer);
+    discussQuoteFlashTimer = setTimeout(function () {
+      clearDiscussQuoteFlash();
+    }, 1600);
+    return true;
+  }
+
+  function flashNoteQuoteOverlays(commentId) {
+    clearDiscussQuoteFlash();
+    var sel =
+      '.note-comment-overlay-hl[data-comment-id="' +
+      String(commentId || "") +
+      '"], .note-comment-overlay-bar[data-comment-id="' +
+      String(commentId || "") +
+      '"]';
+    var nodes = document.querySelectorAll(sel);
+    if (!nodes.length) {
+      nodes = document.querySelectorAll(
+        ".note-comment-overlay-hl.is-active, .note-comment-overlay-bar.is-active"
+      );
+    }
+    nodes.forEach(function (el) {
+      el.classList.add("is-flash");
+    });
+    if (nodes.length) {
+      discussQuoteFlashTimer = setTimeout(function () {
+        clearDiscussQuoteFlash();
+      }, 1600);
+    }
+  }
+
+  function findDiscussQuotedPassage(comment) {
+    var quote = String((comment && comment.quote) || "").trim();
+    if (!quote) return null;
+    var list = document.getElementById("note-discussion-messages");
+    if (!list) return null;
+    var api = window.NoteComments;
+    if (!api || !api.rangeForAnchor) return null;
+    var msgs = Array.prototype.slice.call(list.querySelectorAll(".note-discuss-msg"));
+    var fromId = String((comment && comment.id) || "");
+    var fromIdx = -1;
+    var i;
+    for (i = 0; i < msgs.length; i++) {
+      if (String(msgs[i].getAttribute("data-comment-id")) === fromId) {
+        fromIdx = i;
+        break;
+      }
+    }
+    var order = [];
+    if (fromIdx > 0) {
+      for (i = fromIdx - 1; i >= 0; i--) order.push(msgs[i]);
+      for (i = fromIdx + 1; i < msgs.length; i++) order.push(msgs[i]);
+    } else {
+      for (i = msgs.length - 1; i >= 0; i--) {
+        if (String(msgs[i].getAttribute("data-comment-id")) !== fromId) order.push(msgs[i]);
+      }
+    }
+    var prefix = (comment && comment.prefix) || "";
+    var suffix = (comment && comment.suffix) || "";
+    // GPT/PAIE mode markers are stored in prefix and are not text anchors.
+    if (prefix === "__gpt__" || prefix === "__paie__") prefix = "";
+    for (i = 0; i < order.length; i++) {
+      var msg = order[i];
+      var bubble = msg.querySelector(".note-discuss-bubble");
+      if (!bubble) continue;
+      var range =
+        api.rangeForAnchor(bubble, quote, prefix, suffix) ||
+        api.rangeForAnchor(bubble, quote, "", "");
+      if (!range) continue;
+      return { msg: msg, bubble: bubble, range: range };
+    }
+    return null;
+  }
+
+  /**
+   * Jump to the quoted passage. Clarify quotes come from a GPT bubble in the
+   * discussion — not from the note — so closing the panel and searching the note
+   * left users with a dead jump. Prefer discussion flash; fall back to note.
+   */
+  function revealDiscussQuoteReply(comment) {
+    if (!comment || !String(comment.quote || "").trim()) return false;
+    var noteRange = scrollNoteToQuote(comment);
+    if (noteRange) {
+      var panel = document.getElementById("note-editor-comments");
+      var comments = (panel && panel._allComments) || [];
+      if (panel && comment.id) panel._activeCommentId = comment.id;
+      paintEditorCommentOverlay(comments, comment.id);
+      flashNoteQuoteOverlays(comment.id);
+      if (!isDesktopLayout()) closeNoteDiscussion(true);
+      return true;
+    }
+    var hit = findDiscussQuotedPassage(comment);
+    if (!hit) return false;
+    var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
+    if (scroll && hit.msg) {
+      var er = hit.msg.getBoundingClientRect();
+      var sr = scroll.getBoundingClientRect();
+      scroll.scrollTop += er.top - sr.top - Math.max(24, sr.height * 0.2);
+    } else if (hit.msg && hit.msg.scrollIntoView) {
+      hit.msg.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+    highlightDiscussionMessage(hit.msg.getAttribute("data-comment-id"));
+    // Flash after scroll settles so rects match the visible layout.
+    window.setTimeout(function () {
+      flashClientRectsInHost(hit.bubble, hit.range);
+    }, 80);
+    return true;
   }
 
   function revealNoteDiscussionTopic(comment, opts) {
@@ -11171,8 +11327,16 @@
     if (opts.fromDiscussion) {
       if (wrap) wrap._discussionPinId = null;
       highlightDiscussionMessage(comment && comment.id);
-      scrollNoteToQuote(rootC || comment);
-      if (!isDesktopLayout()) closeNoteDiscussion(true);
+      if (opts.quoteClick) {
+        revealDiscussQuoteReply(comment);
+        return;
+      }
+      // Body click: only leave discussion when the quote actually lives in the note.
+      var noteRange = scrollNoteToQuote(comment);
+      if (noteRange) {
+        flashNoteQuoteOverlays(comment.id);
+        if (!isDesktopLayout()) closeNoteDiscussion(true);
+      }
       return;
     }
     if (wrap) wrap._discussionPinId = rootC && rootC.id;
@@ -12060,7 +12224,15 @@
     if (c.quote) {
       var q = document.createElement("p");
       q.className = "note-discuss-quote";
+      q.setAttribute("role", "button");
+      q.setAttribute("tabindex", "0");
+      q.title = "Перейти к цитате";
       q.textContent = "«" + String(c.quote) + "»";
+      q.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        revealNoteDiscussionTopic(c, { fromDiscussion: true, quoteClick: true });
+      });
       item.appendChild(q);
     }
     var role = document.createElement("p");
@@ -12103,7 +12275,7 @@
       item.appendChild(actions);
     }
     item.addEventListener("click", function (e) {
-      if (e.target && e.target.closest && e.target.closest(".note-discuss-more, .note-discuss-menu, .note-discuss-send-retry, #note-discuss-selection")) {
+      if (e.target && e.target.closest && e.target.closest(".note-discuss-more, .note-discuss-menu, .note-discuss-send-retry, .note-discuss-quote, #note-discuss-selection")) {
         return;
       }
       var sel = window.getSelection && window.getSelection();

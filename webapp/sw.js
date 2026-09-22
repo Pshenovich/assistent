@@ -1,19 +1,19 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260920-false-offline";
+var CACHE_VERSION = "miniapp-v1-20260922-discuss-quote-jump";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20260920-false-offline",
-  "./app.js?v=20260920-false-offline",
-  "./note-html.js?v=20260920-false-offline",
-  "./note-comments.js?v=20260920-false-offline",
-  "./note-rich-editor.js?v=20260920-false-offline",
-  "./icons/arrow-up-right.svg?v=20260920-false-offline",
-  "./icons/chevron-up-muted.svg?v=20260920-false-offline",
-  "./icons/chevron-up-on-fill.svg?v=20260920-false-offline",
+  "./styles.css?v=20260922-discuss-quote-jump",
+  "./app.js?v=20260922-discuss-quote-jump",
+  "./note-html.js?v=20260922-discuss-quote-jump",
+  "./note-comments.js?v=20260922-discuss-quote-jump",
+  "./note-rich-editor.js?v=20260922-discuss-quote-jump",
+  "./icons/arrow-up-right.svg?v=20260922-discuss-quote-jump",
+  "./icons/chevron-up-muted.svg?v=20260922-discuss-quote-jump",
+  "./icons/chevron-up-on-fill.svg?v=20260922-discuss-quote-jump",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",

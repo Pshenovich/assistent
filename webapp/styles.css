@@ -5497,6 +5497,52 @@ html.note-editor-open #note-editor-overlay {
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.note-discuss-quote:active,
+.note-discuss-quote:focus-visible {
+  color: var(--accent, #5280e8);
+  outline: none;
+}
+
+.note-discuss-bubble.is-quote-flash-host {
+  position: relative;
+}
+
+.note-discuss-quote-flash-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.note-discuss-quote-flash {
+  position: absolute;
+  border-radius: 4px;
+  background: rgba(82, 158, 244, 0.42);
+  box-shadow: 0 0 0 1px rgba(82, 158, 244, 0.35);
+  animation: note-discuss-quote-flash 1.45s ease;
+}
+
+@keyframes note-discuss-quote-flash {
+  0% {
+    background: rgba(82, 158, 244, 0.12);
+  }
+  18%,
+  42% {
+    background: rgba(82, 158, 244, 0.55);
+  }
+  100% {
+    background: rgba(82, 158, 244, 0);
+  }
+}
+
+.note-comment-overlay-hl.is-flash,
+.note-comment-overlay-bar.is-flash {
+  animation: note-discuss-quote-flash 1.45s ease;
 }
 
 .note-discuss-bubble {
