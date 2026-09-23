@@ -61,14 +61,21 @@
     }
     .share-toc-link {
       --toc-indent: 0px;
-      display: block;
+      appearance: none;
+      -webkit-appearance: none;
+      display: flex;
+      align-items: flex-start;
       min-height: 36px;
+      height: auto;
       padding: 0.5rem 0.625rem 0.5rem calc(0.625rem + var(--toc-indent));
       border-radius: 10px;
       color: var(--muted);
       font-size: 0.875rem;
-      line-height: 1.35;
-      overflow-wrap: break-word;
+      line-height: 1.4;
+      white-space: normal;
+      overflow: visible;
+      overflow-wrap: anywhere;
+      word-break: break-word;
       text-decoration: none;
     }
     .share-toc-link:active,

@@ -1,19 +1,19 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260923-gpt-chat-timeout";
+var CACHE_VERSION = "miniapp-v1-20260923-toc-wrap";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20260923-gpt-chat-timeout",
-  "./app.js?v=20260923-gpt-chat-timeout",
-  "./note-html.js?v=20260923-gpt-chat-timeout",
-  "./note-comments.js?v=20260923-gpt-chat-timeout",
-  "./note-rich-editor.js?v=20260923-gpt-chat-timeout",
-  "./icons/arrow-up-right.svg?v=20260923-gpt-chat-timeout",
-  "./icons/chevron-up-muted.svg?v=20260923-gpt-chat-timeout",
-  "./icons/chevron-up-on-fill.svg?v=20260923-gpt-chat-timeout",
+  "./styles.css?v=20260923-toc-wrap",
+  "./app.js?v=20260923-toc-wrap",
+  "./note-html.js?v=20260923-toc-wrap",
+  "./note-comments.js?v=20260923-toc-wrap",
+  "./note-rich-editor.js?v=20260923-toc-wrap",
+  "./icons/arrow-up-right.svg?v=20260923-toc-wrap",
+  "./icons/chevron-up-muted.svg?v=20260923-toc-wrap",
+  "./icons/chevron-up-on-fill.svg?v=20260923-toc-wrap",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",
