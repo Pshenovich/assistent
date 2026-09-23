@@ -4943,6 +4943,49 @@ html.note-editor-open #note-editor-overlay {
   display: inline-flex;
 }
 
+.note-paie-reply-form.is-gpt-mode #note-paie-reply-input {
+  display: none;
+}
+
+.note-paie-reply-form:not(.is-gpt-mode) #note-paie-reply-editor {
+  display: none;
+}
+
+.note-paie-composer-editor {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.note-paie-composer-editor.is-empty::before {
+  content: attr(data-placeholder);
+  color: var(--note-composer-muted);
+  pointer-events: none;
+  white-space: pre-wrap;
+}
+
+.note-paie-composer-editor.is-disabled {
+  opacity: 0.6;
+}
+
+.note-gpt-quote-chip {
+  display: inline;
+  padding: 1px 7px;
+  margin: 0 1px;
+  border-radius: 8px;
+  background: var(--accent-subtle, rgba(82, 158, 244, 0.16));
+  color: var(--accent, #3c8aff);
+  font-size: inherit;
+  line-height: inherit;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+  vertical-align: baseline;
+}
+
 .note-paie-mode-compact-label,
 .note-paie-model-label {
   overflow: hidden;

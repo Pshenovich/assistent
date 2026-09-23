@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 NOTE_BUDGET = 8000
-QUOTE_BUDGET = 500
+QUOTE_BUDGET = 2000
 KB_BUDGET = 3500
 _EMPTY_BRIEFS = {
     "",
@@ -61,6 +61,20 @@ def build_context_prefix(
     return "\n\n".join(parts)
 
 
+def _quote_fragments(quote: str = "", quotes: list[str] | None = None) -> list[str]:
+    items: list[str] = []
+    for raw in quotes or []:
+        piece = clip_text(str(raw or "").strip(), QUOTE_BUDGET)
+        if piece:
+            items.append(piece)
+        if len(items) >= 5:
+            break
+    if items:
+        return items
+    single = clip_text(quote or "", QUOTE_BUDGET)
+    return [single] if single else []
+
+
 def assemble_ask_messages(
     *,
     question: str,
@@ -68,6 +82,7 @@ def assemble_ask_messages(
     note_title: str = "",
     note_text: str = "",
     quote: str = "",
+    quotes: list[str] | None = None,
     knowledge_brief: str = "",
 ) -> tuple[str, str]:
     """Стабильный system-префикс (БЗ+заметка) и user (цитата + вопрос)."""
@@ -77,12 +92,15 @@ def assemble_ask_messages(
         knowledge_brief=knowledge_brief,
     )
     q = (question or "").strip()
-    quoted = clip_text(quote or "", QUOTE_BUDGET)
+    items = _quote_fragments(quote, quotes)
     user_parts: list[str] = []
-    if quoted:
-        user_parts.append(f"ВЫДЕЛЕННЫЙ ТЕКСТ:\n{quoted}")
+    if len(items) == 1:
+        user_parts.append(f"ВЫДЕЛЕННЫЙ ТЕКСТ:\n{items[0]}")
+    elif items:
+        block = clip_text("\n".join(f"«{it}»" for it in items), QUOTE_BUDGET)
+        user_parts.append(f"ВЫДЕЛЕННЫЕ ФРАГМЕНТЫ:\n{block}")
     if q:
-        user_parts.append(q if not quoted else f"Вопрос:\n{q}")
+        user_parts.append(f"Вопрос:\n{q}" if items else q)
     user = "\n\n".join(user_parts)
     if prefix:
         return prefix, user

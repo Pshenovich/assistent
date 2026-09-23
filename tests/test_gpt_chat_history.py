@@ -63,6 +63,20 @@ def test_clip_and_prefix_budgets():
     assert "фрагмент" not in extra
 
 
+def test_assemble_ask_messages_multiple_quotes():
+    extra, user = assemble_ask_messages(
+        question="сравни",
+        note_text="тело",
+        quotes=["первый фрагмент", "второй фрагмент"],
+    )
+    assert extra.startswith("ЗАМЕТКА:")
+    assert "ВЫДЕЛЕННЫЕ ФРАГМЕНТЫ:" in user
+    assert "«первый фрагмент»" in user
+    assert "«второй фрагмент»" in user
+    assert "Вопрос:\nсравни" in user
+    assert "первый фрагмент" not in extra
+
+
 def test_answer_with_context_sends_pdf_as_openrouter_file(monkeypatch):
     seen: dict = {}
 

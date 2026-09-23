@@ -13,7 +13,7 @@ _LOCK = notes_store._LOCK  # type: ignore[attr-defined]
 _VALID_KINDS = frozenset({"local", "journal"})
 MAX_BODY_LEN = 4000
 MAX_GPT_BODY_LEN = 24000
-MAX_QUOTE_LEN = 500
+MAX_QUOTE_LEN = 2000
 MAX_CTX_LEN = 80
 
 

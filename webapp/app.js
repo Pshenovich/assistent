@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260920-pwa-offline";
+  var WEBAPP_BUILD = "20260923-gpt-chips-caret";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260920-pwa-offline";
+  const NOTE_EDITOR_ASSET_V = "20260923-gpt-chips-caret";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -10102,7 +10102,9 @@
     var wrap = document.getElementById("note-editor-more-wrap");
     var quoted = !!(wrap && wrap._commentDraft && String(wrap._commentDraft.quote || "").trim());
     if (mode === "gpt") {
-      return quoted ? "Спросите GPT про выделенный текст" : "Свободный запрос к GPT по заметке";
+      return gptComposerChipCount(noteGptEditor())
+        ? "Спросите GPT про выделенный текст"
+        : "Свободный запрос к GPT по заметке";
     }
     if (mode === "comment") {
       return quoted ? "Комментарий к выделенному тексту" : "Напишите комментарий";
@@ -10110,6 +10112,258 @@
     return quoted
       ? "Уточнение по выделенному тексту"
       : "Уточнение или новая информация — CHAIR ответит";
+  }
+
+  var GPT_CHIP_MAX = 5;
+  var GPT_CHIP_PREVIEW = 36;
+  var GPT_QUOTE_MAX = 2000;
+
+  function noteGptEditor() {
+    return document.getElementById("note-paie-reply-editor");
+  }
+
+  function clipChipPreview(text) {
+    var raw = String(text || "").replace(/\s+/g, " ").trim();
+    if (raw.length <= GPT_CHIP_PREVIEW) return raw;
+    return raw.slice(0, GPT_CHIP_PREVIEW - 1) + "…";
+  }
+
+  function clipGptQuote(text) {
+    var raw = String(text || "").replace(/\s+/g, " ").trim();
+    if (raw.length > GPT_QUOTE_MAX) return raw.slice(0, GPT_QUOTE_MAX - 1) + "…";
+    return raw;
+  }
+
+  function gptComposerChipCount(ed) {
+    return ed ? ed.querySelectorAll(".note-gpt-quote-chip").length : 0;
+  }
+
+  function gptComposerIsEmpty(ed) {
+    if (!ed) return true;
+    if (ed.querySelector(".note-gpt-quote-chip")) return false;
+    return !String(ed.innerText || "").replace(/\u00a0/g, " ").trim();
+  }
+
+  function syncGptEditorEmpty(ed) {
+    ed = ed || noteGptEditor();
+    if (!ed) return;
+    ed.classList.toggle("is-empty", gptComposerIsEmpty(ed));
+  }
+
+  function clearGptComposer() {
+    var ed = noteGptEditor();
+    if (!ed) return;
+    ed.innerHTML = "";
+    ed._savedRange = null;
+    syncGptEditorEmpty(ed);
+    autosizeNoteComposer(ed);
+  }
+
+  function composerEditorValue(el) {
+    if (!el) return "";
+    if (typeof el.value === "string" && !el.isContentEditable) return el.value || "";
+    return String(el.innerText || "").replace(/\u00a0/g, " ");
+  }
+
+  function serializeGptComposer(ed) {
+    ed = ed || noteGptEditor();
+    if (!ed) return { text: "", quotes: [] };
+    var quotes = [];
+    var parts = [];
+    function walk(node) {
+      if (node.nodeType === 3) {
+        parts.push(node.nodeValue);
+        return;
+      }
+      if (node.nodeType !== 1) return;
+      if (node.classList && node.classList.contains("note-gpt-quote-chip")) {
+        var q = String(node.getAttribute("data-quote") || "").trim();
+        if (q) {
+          quotes.push(q);
+          parts.push("«" + q + "»");
+        }
+        return;
+      }
+      if (node.nodeName === "BR") {
+        parts.push("\n");
+        return;
+      }
+      var block = node.nodeName === "DIV" || node.nodeName === "P";
+      if (block && parts.length && parts[parts.length - 1] !== "\n") parts.push("\n");
+      var kids = node.childNodes;
+      for (var i = 0; i < kids.length; i++) walk(kids[i]);
+    }
+    var rootKids = ed.childNodes;
+    for (var r = 0; r < rootKids.length; r++) walk(rootKids[r]);
+    var text = parts
+      .join("")
+      .replace(/\u00a0/g, " ")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    return { text: text, quotes: quotes };
+  }
+
+  function cloneGptEditorRange(range, ed) {
+    if (!range || !ed) return null;
+    try {
+      var root = range.commonAncestorContainer;
+      if (root !== ed && !ed.contains(root)) return null;
+      return range.cloneRange();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function rememberGptEditorRange() {
+    var ed = noteGptEditor();
+    if (!ed || ed._ignoreRange) return;
+    if (document.activeElement !== ed) return;
+    var sel = window.getSelection && window.getSelection();
+    if (!sel || !sel.rangeCount) return;
+    var saved = cloneGptEditorRange(sel.getRangeAt(0), ed);
+    if (saved) ed._savedRange = saved;
+  }
+
+  function restoreGptEditorRange(ed, preferred) {
+    var sel = window.getSelection && window.getSelection();
+    if (!ed || !sel) return;
+    sel.removeAllRanges();
+    var range = cloneGptEditorRange(preferred || ed._savedRange, ed);
+    if (range) {
+      try {
+        sel.addRange(range);
+        return;
+      } catch (_) {}
+    }
+    range = document.createRange();
+    range.selectNodeContents(ed);
+    range.collapse(false);
+    sel.addRange(range);
+  }
+
+  function insertGptQuoteChip(quote) {
+    var ed = noteGptEditor();
+    var q = clipGptQuote(quote);
+    if (!ed || !q) return false;
+    if (gptComposerChipCount(ed) >= GPT_CHIP_MAX) {
+      showNoteToast("Можно добавить не больше 5 отрывков");
+      return false;
+    }
+    var saved = cloneGptEditorRange(ed._savedRange, ed);
+    var chip = document.createElement("span");
+    chip.className = "note-gpt-quote-chip";
+    chip.setAttribute("data-quote", q);
+    chip.setAttribute("contenteditable", "false");
+    chip.textContent = clipChipPreview(q);
+    ed._ignoreRange = true;
+    try {
+      try {
+        ed.focus();
+      } catch (_) {}
+      if (saved) ed._savedRange = saved;
+      restoreGptEditorRange(ed, saved);
+      var sel = window.getSelection();
+      var range = sel && sel.rangeCount ? cloneGptEditorRange(sel.getRangeAt(0), ed) : null;
+      if (!range) {
+        range = document.createRange();
+        range.selectNodeContents(ed);
+        range.collapse(false);
+      }
+      range.deleteContents();
+      var spaceAfter = document.createTextNode("\u00a0");
+      range.insertNode(spaceAfter);
+      range.insertNode(chip);
+      var caret = document.createRange();
+      caret.setStartAfter(spaceAfter);
+      caret.collapse(true);
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(caret);
+      }
+      ed._savedRange = caret.cloneRange();
+    } finally {
+      ed._ignoreRange = false;
+    }
+    syncGptEditorEmpty(ed);
+    autosizeNoteComposer(ed);
+    ed.setAttribute("data-placeholder", noteAskPlaceholder("gpt"));
+    syncNotePaieReplyForm();
+    return true;
+  }
+
+  function adjacentGptChip(ed, dir) {
+    var sel = window.getSelection();
+    if (!ed || !sel || !sel.isCollapsed || !sel.rangeCount) return null;
+    var range = sel.getRangeAt(0);
+    var node = range.startContainer;
+    var offset = range.startOffset;
+    function isChip(n) {
+      return !!(n && n.nodeType === 1 && n.classList && n.classList.contains("note-gpt-quote-chip"));
+    }
+    function isBlankText(n) {
+      return !!(n && n.nodeType === 3 && !String(n.nodeValue || "").replace(/[\s\u00a0]/g, ""));
+    }
+    function walk(start) {
+      var n = start;
+      while (n) {
+        if (isChip(n)) return n;
+        if (n.nodeType === 3 && !isBlankText(n)) return null;
+        n = dir < 0 ? n.previousSibling : n.nextSibling;
+      }
+      return null;
+    }
+    if (node === ed) {
+      return dir < 0 ? walk(ed.childNodes[offset - 1]) : walk(ed.childNodes[offset]);
+    }
+    if (node.nodeType === 3) {
+      var raw = node.nodeValue || "";
+      if (
+        dir < 0 &&
+        (offset === 0 || !String(raw.slice(0, offset) || "").replace(/[\s\u00a0]/g, ""))
+      ) {
+        return walk(node.previousSibling);
+      }
+      if (
+        dir > 0 &&
+        (offset === raw.length || !String(raw.slice(offset) || "").replace(/[\s\u00a0]/g, ""))
+      ) {
+        return walk(node.nextSibling);
+      }
+      return null;
+    }
+    if (isChip(node)) return node;
+    if (node.nodeType === 1 && node !== ed && offset === 0 && dir < 0) {
+      return walk(node.previousSibling);
+    }
+    return null;
+  }
+
+  function selectedGptChip(ed) {
+    var sel = window.getSelection();
+    if (!ed || !sel || !sel.rangeCount) return null;
+    var node = sel.anchorNode;
+    var el = node && (node.nodeType === 1 ? node : node.parentElement);
+    var chip = el && el.closest ? el.closest(".note-gpt-quote-chip") : null;
+    return chip && ed.contains(chip) ? chip : null;
+  }
+
+  function removeGptChip(ed, chip) {
+    if (!ed || !chip || !chip.parentNode) return;
+    var next = document.createRange();
+    next.setStartBefore(chip);
+    next.collapse(true);
+    chip.parentNode.removeChild(chip);
+    var sel = window.getSelection();
+    if (sel) {
+      sel.removeAllRanges();
+      sel.addRange(next);
+    }
+    ed._savedRange = next.cloneRange();
+    syncGptEditorEmpty(ed);
+    autosizeNoteComposer(ed);
+    if (ed) ed.setAttribute("data-placeholder", noteAskPlaceholder("gpt"));
+    syncNotePaieReplyForm();
   }
 
   function noteKnowledgeIconHtml() {
@@ -10143,7 +10397,10 @@
       '<input type="file" id="note-paie-attach-input" class="hidden" multiple accept="image/*,.pdf,.txt,.md,.csv,.json,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip">' +
       '<textarea id="note-paie-reply-input" class="note-paie-composer-input" rows="1" maxlength="4000" placeholder="' +
       noteAskPlaceholder("paie") +
-      '"></textarea></div>' +
+      '"></textarea>' +
+      '<div id="note-paie-reply-editor" class="note-paie-composer-input note-paie-composer-editor is-empty" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="' +
+      noteAskPlaceholder("gpt") +
+      '"></div></div>' +
       '<div id="note-paie-attach-preview" class="note-paie-attach-preview hidden"></div>' +
       '<div class="note-paie-composer-bar">' +
       '<div class="note-paie-composer-left">' +
@@ -10324,8 +10581,10 @@
   }
 
   function composerPlaceholderWraps(el) {
-    if (!el || (el.value || "").length) return false;
-    var ph = el.getAttribute("placeholder") || "";
+    var value = composerEditorValue(el);
+    if (!el || String(value || "").replace(/\s+/g, " ").trim()) return false;
+    if (el.querySelector && el.querySelector(".note-gpt-quote-chip")) return false;
+    var ph = el.getAttribute("placeholder") || el.getAttribute("data-placeholder") || "";
     if (!ph || el.clientWidth < 8) return false;
     var cs = window.getComputedStyle(el);
     var probe = document.createElement("div");
@@ -10364,7 +10623,10 @@
     el.classList.remove("is-multiline");
     el.classList.remove("is-overflowing");
     el.style.height = "auto";
-    var value = el.value || "";
+    var value = composerEditorValue(el);
+    if (el.querySelector && el.querySelector(".note-gpt-quote-chip")) {
+      value = value || " ";
+    }
     var valueHasBreak = value.indexOf("\n") >= 0;
     var valueWraps = valueHasBreak || (!!value && el.scrollHeight > minSingle + 1);
     var placeholderWraps = composerPlaceholderWraps(el);
@@ -10634,7 +10896,12 @@
 
   function bindNotePaieReplyForm(threadEl) {
     var form = document.getElementById("note-paie-reply-form");
-    if (!form || !form.querySelector("#note-paie-attach") || !form.querySelector(".note-paie-kb-wrap")) {
+    if (
+      !form ||
+      !form.querySelector("#note-paie-attach") ||
+      !form.querySelector(".note-paie-kb-wrap") ||
+      !form.querySelector("#note-paie-reply-editor")
+    ) {
       var html = notePaieReplyFormHtml();
       if (form) form.outerHTML = html;
       else if (threadEl) threadEl.insertAdjacentHTML("beforeend", html);
@@ -10646,6 +10913,7 @@
     if (form._bound) return;
     form._bound = true;
     var input = document.getElementById("note-paie-reply-input");
+    var editor = noteGptEditor();
     var compact = form.querySelector(".note-paie-mode-compact");
     var modeMenu = form.querySelector(".note-paie-mode-menu");
     var modelBtn = form.querySelector(".note-paie-model-btn");
@@ -10654,8 +10922,10 @@
     form.addEventListener("submit", function (e) {
       e.preventDefault();
       closeNoteComposerMenus();
-      if (noteAskMode() === "gpt") submitNoteGptQuestion(input && input.value);
-      else if (noteAskMode() === "comment") submitNoteFooterComment(input && input.value);
+      if (noteAskMode() === "gpt") {
+        var packed = serializeGptComposer(editor);
+        submitNoteGptQuestion(packed.text);
+      } else if (noteAskMode() === "comment") submitNoteFooterComment(input && input.value);
       else submitNotePaieReply(input && input.value);
     });
     var replyClear = form.querySelector(".note-paie-reply-target-clear");
@@ -10765,6 +11035,66 @@
           else form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
         }
       });
+    }
+    if (editor) {
+      function sizeGptEditor() {
+        autosizeNoteComposer(editor);
+      }
+      syncGptEditorEmpty(editor);
+      sizeGptEditor();
+      window.requestAnimationFrame(sizeGptEditor);
+      editor.addEventListener("input", function () {
+        syncGptEditorEmpty(editor);
+        editor.setAttribute("data-placeholder", noteAskPlaceholder("gpt"));
+        autosizeNoteComposer(editor);
+        rememberGptEditorRange();
+        syncNotePaieReplyForm();
+      });
+      editor.addEventListener("keyup", rememberGptEditorRange);
+      editor.addEventListener("pointerup", function () {
+        window.setTimeout(rememberGptEditorRange, 0);
+      });
+      editor.addEventListener("paste", function (e) {
+        e.preventDefault();
+        var clip = e.clipboardData || window.clipboardData;
+        var text = clip ? clip.getData("text/plain") : "";
+        if (document.queryCommandSupported && document.queryCommandSupported("insertText")) {
+          document.execCommand("insertText", false, text);
+        } else if (text) {
+          var sel = window.getSelection();
+          if (sel && sel.rangeCount) {
+            var r = sel.getRangeAt(0);
+            r.deleteContents();
+            r.insertNode(document.createTextNode(text));
+            r.collapse(false);
+          }
+        }
+        syncGptEditorEmpty(editor);
+        autosizeNoteComposer(editor);
+        rememberGptEditorRange();
+        syncNotePaieReplyForm();
+      });
+      editor.addEventListener("keydown", function (e) {
+        if (e.key === "Backspace" || e.key === "Delete") {
+          var chip = selectedGptChip(editor) || adjacentGptChip(editor, e.key === "Backspace" ? -1 : 1);
+          if (chip) {
+            e.preventDefault();
+            removeGptChip(editor, chip);
+            return;
+          }
+        }
+        if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+          e.preventDefault();
+          if (typeof form.requestSubmit === "function") form.requestSubmit();
+          else form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+        }
+      });
+      if (!editor._composerRo && typeof ResizeObserver === "function") {
+        editor._composerRo = new ResizeObserver(function () {
+          autosizeNoteComposer(editor);
+        });
+        editor._composerRo.observe(editor);
+      }
     }
     if (!document._noteComposerMenuBound) {
       document._noteComposerMenuBound = true;
@@ -11120,12 +11450,14 @@
       wrap._shareId
     );
     var input = document.getElementById("note-paie-reply-input");
+    var editor = noteGptEditor();
+    var focusEl = noteAskMode() === "gpt" ? editor : input;
     var shouldFocus =
       opts.focus === true ||
       (!!opts.draft && !isDesktopLayout() && opts.focus !== false);
-    if (input && shouldFocus) {
+    if (focusEl && shouldFocus) {
       try {
-        input.focus();
+        focusEl.focus();
       } catch (_) {}
     }
     var pinId = wrap._discussionPinId || opts.scrollToId;
@@ -11232,9 +11564,9 @@
     var chairId = wrap && wrap._commentChairId;
     var whoEl = targetEl && targetEl.querySelector(".note-paie-reply-target-who");
     var quote = draft && String(draft.quote || "").trim();
-    var active = !!quote;
+    var active = !!quote && noteAskMode() !== "gpt";
     if (whoEl) {
-      whoEl.textContent = chairId ? "CHAIR" : noteAskMode() === "gpt" ? "GPT" : "Фрагмент";
+      whoEl.textContent = chairId ? "CHAIR" : "Фрагмент";
     }
     if (form) form.classList.toggle("is-replying", active);
     if (targetEl) targetEl.classList.toggle("hidden", !active);
@@ -11828,18 +12160,15 @@
   function applyDiscussClarify(draft) {
     var wrap = document.getElementById("note-editor-more-wrap");
     if (!wrap || !draft || !String(draft.quote || "").trim()) return;
-    wrap._commentDraft = {
-      quote: String(draft.quote || "").trim(),
-      prefix: draft.prefix || "",
-      suffix: draft.suffix || "",
-    };
+    wrap._commentDraft = null;
     wrap._commentChairId = null;
     setNoteAskMode("gpt");
     syncNoteComposerCommentTarget();
-    var input = document.getElementById("note-paie-reply-input");
-    if (input) {
+    insertGptQuoteChip(draft.quote);
+    var ed = noteGptEditor();
+    if (ed) {
       try {
-        input.focus();
+        ed.focus();
       } catch (_) {}
     }
     clearDiscussionSelection();
@@ -11915,10 +12244,12 @@
       (assistant ? "is-assistant" : "is-user") +
       (isGpt ? " is-gpt" : "");
     item.setAttribute("data-comment-id", String(c.id));
-    if (c.quote) {
+    var quoteText = String((c && c.quote) || "").trim();
+    var bodyHasQuote = String((c && c.body) || "").indexOf("«") >= 0;
+    if (quoteText && !bodyHasQuote) {
       var q = document.createElement("p");
       q.className = "note-discuss-quote";
-      q.textContent = "«" + String(c.quote) + "»";
+      q.textContent = "«" + quoteText + "»";
       item.appendChild(q);
     }
     var role = document.createElement("p");
@@ -12308,6 +12639,12 @@
       input.placeholder = noteAskPlaceholder(current);
       autosizeNoteComposer(input);
     }
+    var editor = noteGptEditor();
+    if (editor) {
+      editor.setAttribute("data-placeholder", noteAskPlaceholder(current));
+      syncGptEditorEmpty(editor);
+      autosizeNoteComposer(editor);
+    }
     syncNoteComposerCommentTarget();
     if (current === "gpt") loadGptModels();
     else closeNoteComposerMenus();
@@ -12479,7 +12816,7 @@
       }
       if (!content) return;
       var quote = String((c && c.quote) || "").trim();
-      if (quote) content = "Про текст: «" + quote + "»\n\n" + content;
+      if (quote && content.indexOf("«") === -1) content = "Про текст: «" + quote + "»\n\n" + content;
       if (content.length > 6000) content = content.slice(0, 5999) + "…";
       if (api && api.isGptComment && api.isGptComment(c)) {
         history.push({ role: "assistant", content: content });
@@ -12535,7 +12872,10 @@
 
   async function submitNoteGptQuestion(text) {
     var wrap = document.getElementById("note-editor-more-wrap");
-    var body = String(text || "").trim();
+    var packed = serializeGptComposer();
+    var quotes = packed.quotes || [];
+    var body = packed.text || String(text || "").trim();
+    var quote = quotes.join("\n");
     var pending = discussPendingFiles();
     if (!wrap || !wrap._shareKind || !wrap._shareId || wrap._gptBusy || (!body && !pending.length)) return;
     var kind = wrap._shareKind;
@@ -12548,9 +12888,9 @@
     syncNotePaieReplyForm(true);
     var input = document.getElementById("note-paie-reply-input");
     if (input) input.value = "";
-    var draft = wrap._commentDraft;
-    var quote = (draft && draft.quote) || "";
-    appendOptimisticUserMessage(body, quote);
+    clearGptComposer();
+    wrap._commentDraft = null;
+    appendOptimisticUserMessage(body, "");
     setGptDiscussPhase("sending");
     try {
       var fileIds = await uploadDiscussPendingFiles(kind, itemId);
@@ -12583,6 +12923,7 @@
           note_title: noteCtx.title,
           note_text: noteCtx.text,
           quote: quote || undefined,
+          quotes: quotes.length ? quotes : undefined,
           use_knowledge: kb.use_knowledge,
           knowledge_note_ids: kb.knowledge_note_ids,
           history: history,
@@ -12727,6 +13068,12 @@
       api.paieThreadRootId((panel && panel._allComments) || [])
     );
     if (input) input.disabled = busy;
+    var editor = noteGptEditor();
+    if (editor) {
+      editor.setAttribute("contenteditable", busy ? "false" : "true");
+      editor.classList.toggle("is-disabled", busy);
+      editor.setAttribute("aria-disabled", busy ? "true" : "false");
+    }
     var attachBtn = document.getElementById("note-paie-attach");
     if (attachBtn) attachBtn.disabled = busy;
     var modeEl = document.getElementById("note-paie-thread");
@@ -12740,7 +13087,10 @@
         });
     }
     if (submit) {
-      var hasText = !!(input && String(input.value || "").trim());
+      var hasText =
+        noteAskMode() === "gpt"
+          ? !gptComposerIsEmpty(editor)
+          : !!(input && String(input.value || "").trim());
       var hasFiles = discussPendingFiles().length > 0;
       var canLaunchPaie = noteAskMode() === "paie" && !hasChair;
       var ready = !busy && (hasText || hasFiles || canLaunchPaie);

@@ -2578,6 +2578,7 @@ class _MiniappGptChatBody(BaseModel):
     note_title: str = ""
     note_text: str = ""
     quote: str = ""
+    quotes: list[str] = Field(default_factory=list)
     use_knowledge: bool = False
     knowledge_note_ids: Optional[list[str]] = None
     history: list[_MiniappGptChatTurn] = Field(default_factory=list)
@@ -4679,6 +4680,7 @@ async def miniapp_gpt_chat(
                 note_title=(body.note_title or "").strip(),
                 note_text=(body.note_text or "").strip(),
                 quote=(body.quote or "").strip(),
+                quotes=[str(x).strip() for x in (body.quotes or []) if str(x).strip()],
                 knowledge_brief=kb_brief,
                 images=images or None,
                 files=files or None,
