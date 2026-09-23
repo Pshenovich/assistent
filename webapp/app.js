@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260923-gpt-chips-caret";
+  var WEBAPP_BUILD = "20260923-gpt-chat-timeout";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260923-gpt-chips-caret";
+  const NOTE_EDITOR_ASSET_V = "20260923-gpt-chat-timeout";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -2467,6 +2467,14 @@
     }
   }
 
+  function apiRequestTimeoutMs(path, o) {
+    if (o && Number(o.timeout) > 0) return Number(o.timeout);
+    var p = String(path || "");
+    if (p.indexOf("/gpt/chat") >= 0) return 180000;
+    if (/\/paei(\/|\?|$)/.test(p) || p.slice(-5) === "/paei") return 180000;
+    return 8000;
+  }
+
   async function apiFetchOnce(path, o) {
     const headers = Object.assign({}, authHeaders(), o.headers || {});
     if (
@@ -2477,6 +2485,8 @@
       headers["Content-Type"] = "application/json";
     }
     const init = Object.assign({ credentials: "same-origin" }, o, { headers });
+    delete init.timeout;
+    var timeoutMs = apiRequestTimeoutMs(path, o);
     var timedOut = false;
     var abortTimer = null;
     var controller = null;
@@ -2489,7 +2499,7 @@
           try {
             controller.abort();
           } catch (_) {}
-        }, 8000);
+        }, timeoutMs);
       }
       const res = await fetch(API + path, init);
       if (abortTimer) clearTimeout(abortTimer);
@@ -2545,7 +2555,7 @@
     } catch (e) {
       if (abortTimer) clearTimeout(abortTimer);
       if (timedOut || (e && e.name === "AbortError")) {
-        markNetworkFailure();
+        if (timeoutMs <= 15000) markNetworkFailure();
         var tErr = new Error(timedOut ? "Нет ответа сети" : "Запрос отменён");
         tErr.status = 0;
         throw tErr;
@@ -12886,9 +12896,6 @@
     wrap._gptPhase = "sending";
     wrap._discussionPinId = null;
     syncNotePaieReplyForm(true);
-    var input = document.getElementById("note-paie-reply-input");
-    if (input) input.value = "";
-    clearGptComposer();
     wrap._commentDraft = null;
     appendOptimisticUserMessage(body, "");
     setGptDiscussPhase("sending");
@@ -12908,6 +12915,9 @@
           }),
         }
       );
+      var input = document.getElementById("note-paie-reply-input");
+      if (input) input.value = "";
+      clearGptComposer();
       var parentId = saved && saved.comment && saved.comment.id;
       markOptimisticUserSent();
       setGptDiscussPhase("thinking");
