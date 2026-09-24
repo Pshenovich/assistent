@@ -2566,7 +2566,7 @@
     if (!id) {
       throw new Error("Некорректный идентификатор заметки");
     }
-    if (isAppOffline() || String(id).indexOf("tmp_") === 0) {
+    if (preferOfflineWrite() || String(id).indexOf("tmp_") === 0) {
       removeLocalFromCache(id);
       removeKnowledgeFromCache(id);
       enqueueOfflineOp({
@@ -7475,7 +7475,7 @@
           : [],
       };
       try {
-        if (isAppOffline() || (id && String(id).indexOf("tmp_") === 0)) {
+        if (preferOfflineWrite() || (id && String(id).indexOf("tmp_") === 0)) {
           var clientId = id || newTempId("tmp_rem_");
           if (id) {
             applyReminderLocal(function (items) {
@@ -7582,7 +7582,7 @@
       const id = document.getElementById("modal-reminder-id").value;
       if (!confirm("Удалить напоминание?")) return;
       try {
-        if (isAppOffline() || String(id).indexOf("tmp_") === 0) {
+        if (preferOfflineWrite() || String(id).indexOf("tmp_") === 0) {
           applyReminderLocal(function (items) {
             return items.filter(function (r) {
               return String(r.id) !== String(id);
@@ -7642,7 +7642,7 @@
   async function deleteReminderById(id, opts) {
     opts = opts || {};
     if (!id) return;
-    if (isAppOffline() || String(id).indexOf("tmp_") === 0) {
+    if (preferOfflineWrite() || String(id).indexOf("tmp_") === 0) {
       applyReminderLocal(function (items) {
         return items.filter(function (r) {
           return String(r.id) !== String(id);
@@ -11685,7 +11685,7 @@
       description: html,
       expected_revision: sheet.revision,
     };
-    if (isAppOffline() || String(noteId).indexOf("tmp_") === 0) {
+    if (preferOfflineWrite() || String(noteId).indexOf("tmp_") === 0) {
       sheet.body = html;
       sheet.description = html;
       enqueueOfflineOp({
@@ -11956,7 +11956,7 @@
       return;
     }
     var title = opts.title || "";
-    if (isAppOffline() || String(noteId).indexOf("tmp_") === 0) {
+    if (preferOfflineWrite() || String(noteId).indexOf("tmp_") === 0) {
       var tmpId = newTempId("tmp_sheet_");
       var local = {
         id: tmpId,
@@ -12607,7 +12607,7 @@
     var title = titleFromAnswerHtml(clean);
     var body = { title: title, description: clean, sync_todoist: false };
     try {
-      if (isAppOffline()) {
+      if (preferOfflineWrite()) {
         var tmpId = newTempId("tmp_note_");
         prependLocalInCache({ id: tmpId, title: title, description: clean, body: clean });
         if (notesDataCache) renderNotesPanesFromData(notesDataCache);
@@ -15804,7 +15804,7 @@
       }
     }
     try {
-      if (isAppOffline() || String(noteId).indexOf("tmp_") === 0) {
+      if (preferOfflineWrite() || String(noteId).indexOf("tmp_") === 0) {
         applyLocalPin();
         enqueueOfflineOp({
           type: "note_pin",
@@ -16689,7 +16689,7 @@
             hydrateNoteSheets(Object.assign({}, n, createdLocal), noteSheetState.primaryBody || fields.description);
           }
         }
-        if (isAppOffline()) {
+        if (preferOfflineWrite()) {
           var tmpNoteId = newTempId("tmp_note_");
           applyCreatedLocal({
             id: tmpNoteId,
@@ -16756,7 +16756,7 @@
           }
         }
         var offlinePatch =
-          isAppOffline() || String(noteId).indexOf("tmp_") === 0;
+          preferOfflineWrite() || String(noteId).indexOf("tmp_") === 0;
         if (offlinePatch) {
           var localPatch = {
             id: noteId,
