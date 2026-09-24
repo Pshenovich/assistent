@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -25,6 +26,33 @@ JOB_STALE_SEC = 12 * 60
 _jobs_lock = threading.Lock()
 _jobs: dict[str, dict[str, Any]] = {}
 _RESTART_ERROR = "PAIE прервался из-за перезапуска сервера. Запустите ещё раз."
+_REANALYZE_PAIR_RE = re.compile(
+    r"(анализ|разбер|разбор).{0,48}(заметк|план|paie|paei|методик)"
+    r"|(заметк|план|paie|paei|методик).{0,48}(анализ|разбер|разбор)",
+    re.I,
+)
+_REANALYZE_FRESH_RE = re.compile(
+    r"\b(заново|с\s+нул[яю]|перечитай|прочитай\s+заметк)\b",
+    re.I,
+)
+_NOTE_FOCUS = (
+    "[no_past_decisions]\n"
+    "Главный документ — текст этой заметки (план, функции, приоритеты). "
+    "COMPANY CONTEXT и прошлые решения CHAIR — только фон, не тема. "
+    "Не предлагай «провести сессию/совещание/воркшоп», если в заметке уже есть конкретные предложения: "
+    "реши, что внедрять, в каком порядке, что отложить и почему. "
+    "Разложи по P/A/E/I именно предложения из заметки."
+)
+
+
+def is_note_reanalyze_request(text: str) -> bool:
+    """Автор просит заново разобрать заметку, а не поправить прошлое решение CHAIR."""
+    s = (text or "").strip()
+    if not s:
+        return False
+    if _REANALYZE_FRESH_RE.search(s):
+        return True
+    return bool(_REANALYZE_PAIR_RE.search(s))
 
 
 def jobs_file() -> Path:
@@ -419,7 +447,8 @@ async def run_note_paei(
         use_knowledge = bool(knowledge_note_ids)
     comments = share_comments.list_comments(user_id, kind, item_id)
     root_id = parent_id or share_comments.paie_thread_root_id(comments)
-    if reply_text:
+    reanalyze = not reply_text or is_note_reanalyze_request(reply_text)
+    if reply_text and not reanalyze:
         history = _thread_prompt(comments)
         question = (
             f"Автор заметки «{title}» уточняет предыдущее решение CHAIR.\n\n"
@@ -432,27 +461,31 @@ async def run_note_paei(
         )
         question += f"Новое уточнение автора:\n{reply_text}\n\n"
         question += (
-            "Ответь на уточнение как CHAIR. Не пересказывай весь документ, "
-            "если достаточно поправки к решению."
+            "Ответь на уточнение как CHAIR. Если автор меняет тему или просит разобрать "
+            "саму заметку — не повторяй прошлое решение."
         )
         extra = (
             "Источник: заметка миниаппа Leo. Это follow-up к комментарию CHAIR. "
-            "Опирайся на текст заметки, прошлый ответ и уточнение автора."
+            "Опирайся на текст заметки сильнее, чем на прошлый ответ."
         )
         if use_knowledge:
-            extra += " Используй COMPANY CONTEXT (вкладка «База знаний»)."
+            extra += " COMPANY CONTEXT — только факты, не подменяй им тему заметки."
         else:
             extra += " Не подмешивай вкладку «База знаний»."
+        extra += " " + _NOTE_FOCUS.replace("[no_past_decisions]\n", "")
         heading = "PAIE · ответ CHAIR"
     else:
         question = (
             f"Разбери заметку «{title}» как управленческий совет PAEI (P • A • E • I). "
-            "Сформулируй исполнимое решение CHAIR.\n\n"
-            f"{excerpt}"
+            "Предмет разбора — предложения и план в тексте заметки, не прошлые решения CHAIR "
+            "и не оргструктура из базы знаний.\n"
         )
-        extra = "Источник: заметка миниаппа Leo. Опирайся на текст заметки."
+        if reply_text:
+            question += f"Запрос автора: {reply_text}\n\n"
+        question += excerpt
+        extra = "Источник: заметка миниаппа Leo. " + _NOTE_FOCUS
         if use_knowledge:
-            extra += " COMPANY CONTEXT — вкладка «База знаний», иначе живой каталог компании."
+            extra += " COMPANY CONTEXT — вкладка «База знаний», только как фон."
         else:
             extra += " Не подмешивай вкладку «База знаний»."
         heading = "PAIE · решение CHAIR"

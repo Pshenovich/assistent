@@ -11,6 +11,7 @@ from assistant.board.note_paei import (
     begin_job,
     format_chair_comment,
     get_job,
+    is_note_reanalyze_request,
     load_note_for_paei,
     run_note_paei,
 )
@@ -313,3 +314,39 @@ class NotePaeiTest(unittest.IsolatedAsyncioTestCase):
         blob = "\n".join(cap.users)
         self.assertIn("отвечает именно на это сообщение", blob)
         self.assertIn("Имею в виду KPI из второго ответа", blob)
+
+    def test_reanalyze_request_detects_note_analysis(self) -> None:
+        self.assertTrue(
+            is_note_reanalyze_request(
+                "сделай анализ заметки по методике PAIE"
+            )
+        )
+        self.assertTrue(is_note_reanalyze_request("разбери заметку заново"))
+        self.assertFalse(is_note_reanalyze_request("увеличь срок пилота до месяца"))
+
+    async def test_reanalyze_reply_starts_fresh_chair_decision(self) -> None:
+        note = notes_store.create_note(
+            8, "Роадмап", "Новые функции: экспорт, уведомления, роли."
+        )
+        first = await run_note_paei(
+            user_id=8,
+            kind="local",
+            item_id=note["id"],
+            provider=_ScriptedProvider(),
+        )
+        cap = _CaptureProvider()
+        second = await run_note_paei(
+            user_id=8,
+            kind="local",
+            item_id=note["id"],
+            provider=cap,
+            reply="Сделай анализ заметки по методике PAIE",
+            parent_id=first["comment"]["id"],
+        )
+        self.assertIsNone(second["comment"]["parent_id"])
+        self.assertIn("решение CHAIR", second["comment"]["body"])
+        self.assertNotIn("ответ CHAIR", second["comment"]["body"])
+        blob = "\n".join(cap.users)
+        self.assertIn("Предмет разбора", blob)
+        self.assertIn("Новые функции", blob)
+        self.assertNotIn("уточняет предыдущее решение", blob)

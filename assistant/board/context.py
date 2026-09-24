@@ -222,7 +222,12 @@ def build_agent_context(
         past_text = "\n".join(lines)
 
     extra = (meeting.get("extra_instruction") or "").strip()
-    extra = _KNOWLEDGE_IDS_RE.sub("", extra).replace("[knowledge:off]", "").strip()
+    extra = (
+        _KNOWLEDGE_IDS_RE.sub("", extra)
+        .replace("[knowledge:off]", "")
+        .replace("[no_past_decisions]", "")
+        .strip()
+    )
     analysis = meeting.get("analysis") if isinstance(meeting.get("analysis"), dict) else {}
     objective = str(analysis.get("decision_required") or meeting.get("title") or "")
     query = str(meeting.get("original_question") or "")

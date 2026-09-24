@@ -225,9 +225,14 @@ class MeetingService:
             store.update_meeting(meeting_id, max_rounds=cap, title=analysis.title, status="DISCUSSION")
             self._emit_progress(meeting_id, phase="DISCUSSION")
 
-            past = find_related_decisions(
-                str(meeting.get("chat_id")), str(meeting.get("original_question") or "")
-            )
+            extra = str(meeting.get("extra_instruction") or "")
+            if "[no_past_decisions]" in extra:
+                past = []
+            else:
+                past = find_related_decisions(
+                    str(meeting.get("chat_id")),
+                    str(meeting.get("original_question") or ""),
+                )
 
             for agent in ROUND1_ORDER:
                 if rt.stop.is_set() or limits_hit(store.get_meeting(meeting_id) or {}):
