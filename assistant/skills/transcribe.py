@@ -21,7 +21,11 @@ from assistant.lib.tg_media_fetch import MediaTooLargeError, download_telegram_f
 from assistant.lib.telegram_html import format_transcription_html
 from assistant.lib.telegram_message import reply_formatted
 from assistant.lib.urls import extract_urls
-from assistant.lib.usage_store import insert_usage_event, search_transcriptions
+from assistant.lib.usage_store import (
+    insert_usage_event,
+    search_transcriptions,
+    title_from_media_filename,
+)
 from assistant.nlu.regex import parse_transcribe_intent
 
 _DONE_FLAG = "_transcribe_done"
@@ -158,6 +162,16 @@ async def _reply_long_text(
     )
 
 
+def _document_is_video(doc) -> bool:
+    if not doc:
+        return False
+    mime = str(getattr(doc, "mime_type", "") or "").lower()
+    if mime.startswith("video/"):
+        return True
+    name = str(getattr(doc, "file_name", "") or "").lower()
+    return name.endswith((".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"))
+
+
 def _save_transcription_journal(
     *,
     user_id: int,
@@ -166,14 +180,18 @@ def _save_transcription_journal(
     filename: str | None = None,
     url: str | None = None,
 ) -> int:
+    text = (result.formatted_text or result.plain_text or "").strip()
     usage: dict = {
-        "text": result.formatted_text,
+        "text": text,
         "source": "telegram",
     }
     if filename:
         usage["filename"] = filename
     if url:
         usage["url"] = url
+    topic = title_from_media_filename(filename)
+    if topic:
+        usage["meta"] = {"main_topic": topic}
     return insert_usage_event(
         operation="obuchat_transcribe",
         model=None,
@@ -225,7 +243,8 @@ async def run_explicit_transcribe(
         status = await set_status(
             status, "Жду ответ от сервиса…", anchor=msg, context=context
         )
-        if not (result.formatted_text or result.plain_text).strip():
+        body = (result.formatted_text or result.plain_text or "").strip()
+        if not body:
             await set_status(status, "(пустая транскрипция)", anchor=msg, context=context)
             return
 
@@ -245,7 +264,7 @@ async def run_explicit_transcribe(
         keyboard = pdf_download_keyboard(event_id) if event_id else None
         await _reply_long_text(
             msg,
-            result.formatted_text,
+            body,
             reply_markup=keyboard,
         )
     except MediaTooLargeError as e:
@@ -379,7 +398,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if not is_group_with_transcribe_intent(msg):
             return
 
-    media = msg.document or msg.audio or msg.video or msg.voice
+    media = msg.document or msg.audio or msg.video or msg.video_note or msg.voice
     if not media:
         return
 
@@ -397,6 +416,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if is_forwarded(msg):
+        return
+
+    if msg.video or msg.video_note or _document_is_video(msg.document):
+        mark_transcribe_handled(context)
+        await run_explicit_transcribe(update, context, source_message=msg)
         return
 
     try:

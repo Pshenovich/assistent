@@ -611,6 +611,25 @@ def _unescape_json_string_fragment(fragment: str) -> str:
         )
 
 
+_GENERIC_MEDIA_STEMS = frozenset(
+    {"video", "audio", "voice", "media", "video_note", "file", "document"}
+)
+
+
+def title_from_media_filename(filename: str | None) -> str:
+    """Человеческий заголовок из имени файла: «Финансовый доктор.mp4» → «Финансовый доктор»."""
+    raw = (filename or "").strip()
+    if not raw:
+        return ""
+    base = raw.replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if not base:
+        return ""
+    stem = base.rsplit(".", 1)[0].strip() if "." in base else base
+    if not stem or stem.lower() in _GENERIC_MEDIA_STEMS:
+        return ""
+    return stem[:120]
+
+
 def journal_json_from_raw(raw: str | None) -> dict[str, Any]:
     """Распарсенный raw_usage_json или пустой dict."""
     if not isinstance(raw, str) or not raw.strip():

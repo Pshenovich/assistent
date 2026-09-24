@@ -70,6 +70,14 @@ class MiniappJournalItemTests(unittest.TestCase):
         found = usage_store.find_summary_event_for_transcript("11", transcript_id)
         self.assertEqual(found, summary_id)
 
+    def test_title_from_media_filename(self) -> None:
+        self.assertEqual(
+            usage_store.title_from_media_filename("Финансовый доктор.mp4"),
+            "Финансовый доктор",
+        )
+        self.assertEqual(usage_store.title_from_media_filename("video.mp4"), "")
+        self.assertEqual(usage_store.title_from_media_filename("voice.ogg"), "")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2691,11 +2691,18 @@ def _enrich_transcription_summary_links(
 
 
 def _journal_row_api(row: dict[str, Any]) -> dict[str, Any]:
-    from assistant.lib.usage_store import journal_meta_from_raw, journal_source_links_from_raw
+    from assistant.lib.usage_store import (
+        journal_json_from_raw,
+        journal_meta_from_raw,
+        journal_source_links_from_raw,
+        title_from_media_filename,
+    )
 
     raw = row.get("raw_usage_json")
     preview = ""
     meta: dict[str, Any] = {}
+    raw_s = raw if isinstance(raw, str) else None
+    payload = journal_json_from_raw(raw_s)
     if isinstance(raw, str) and raw.strip():
         preview = _journal_preview_from_raw(raw)
         meta = journal_meta_from_raw(raw)
@@ -2707,6 +2714,9 @@ def _journal_row_api(row: dict[str, Any]) -> dict[str, Any]:
         "model": row.get("model"),
         "preview": preview,
     }
+    filename = str(payload.get("filename") or "").strip()
+    if filename:
+        out["filename"] = filename
     if meta:
         ct = str(meta.get("content_type") or "").strip()
         if ct:
@@ -2723,6 +2733,10 @@ def _journal_row_api(row: dict[str, Any]) -> dict[str, Any]:
                 out["transcript_event_id"] = int(transcript_event_id)
             except (TypeError, ValueError):
                 pass
+    if not out.get("main_topic") and not out.get("meeting_topic"):
+        derived = title_from_media_filename(filename)
+        if derived:
+            out["main_topic"] = derived
     links = journal_source_links_from_raw(raw if isinstance(raw, str) else None)
     out.update(links)
     return out

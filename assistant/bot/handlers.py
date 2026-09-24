@@ -400,7 +400,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(MessageHandler(filters.VOICE, transcribe_skill.handle_voice))
     app.add_handler(
         MessageHandler(
-            filters.Document.ALL | filters.AUDIO | filters.VIDEO,
+            filters.Document.ALL | filters.AUDIO | filters.VIDEO | filters.VIDEO_NOTE,
             transcribe_skill.handle_document,
         )
     )
