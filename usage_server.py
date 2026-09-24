@@ -73,6 +73,12 @@ def _recover_note_paei_jobs() -> None:
         recover_jobs_after_restart()
     except Exception as exc:
         print(f"[board.paei] recover_fail err={exc!r}")
+    try:
+        from assistant.board.note_research import recover_jobs_after_restart as recover_research
+
+        recover_research()
+    except Exception as exc:
+        print(f"[board.research] recover_fail err={exc!r}")
 
 
 def _default_security_csp(*, allow_any_frame_ancestor: bool = False) -> str:
@@ -2567,6 +2573,10 @@ class _MiniappNotePaeiStart(BaseModel):
     knowledge_note_ids: Optional[list[str]] = None
 
 
+class _MiniappNoteResearchStart(_MiniappNotePaeiStart):
+    pass
+
+
 class _MiniappGptChatTurn(BaseModel):
     role: str
     content: str
@@ -2828,6 +2838,7 @@ def _comment_api(row: dict[str, Any], *, viewer_uid: str | None = None) -> dict[
         "parent_id": parent_id,
         "is_paie": share_comments_store.is_paie_comment(row),
         "is_gpt": share_comments_store.is_gpt_comment(row),
+        "is_research": share_comments_store.is_research_comment(row),
         "can_delete": can_delete,
         "attachments": attachments,
     }
@@ -6109,6 +6120,127 @@ async def miniapp_note_paei_status(
         "comment_id": job.get("comment_id"),
         "error": job.get("error"),
         "meeting_id": job.get("meeting_id"),
+        "progress": job.get("progress") if isinstance(job.get("progress"), dict) else None,
+    }
+
+
+@miniapp_router.post("/notes/{kind}/{item_id}/research")
+async def miniapp_note_research_start(
+    kind: str,
+    item_id: str,
+    body: Optional[_MiniappNoteResearchStart] = Body(default=None),
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    import asyncio
+
+    from assistant.board.note_research import begin_job, get_job, run_note_research_job
+    from assistant.stores import share_comments as share_comments_store
+
+    uid = str(int(principal.telegram_user_id))
+    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    if not owner:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    payload = body or _MiniappNoteResearchStart()
+    reply_text = (payload.reply or "").strip()
+    parent_id = payload.parent_id
+    quote_text = (payload.quote or "").strip()
+    kb_ids = payload.knowledge_note_ids
+    if kb_ids is not None:
+        kb_ids = [str(x).strip() for x in kb_ids if str(x).strip()]
+        use_knowledge = bool(kb_ids)
+    else:
+        use_knowledge = payload.use_knowledge is not False
+    running = get_job(owner, kind, item_id)
+    if running and str(running.get("status") or "") == "running":
+        raise HTTPException(status_code=409, detail="Дождитесь ответа Research")
+    thread_parent = parent_id
+    if reply_text:
+        comments = await run_in_threadpool(
+            share_comments_store.list_comments, owner, kind, item_id
+        )
+        reply_to_id = None
+        raw_reply_to = payload.reply_to_id
+        if raw_reply_to not in (None, "", 0, "0"):
+            try:
+                tid = int(raw_reply_to)
+            except (TypeError, ValueError):
+                tid = 0
+            if tid > 0 and any(int(c.get("id") or 0) == tid for c in comments):
+                reply_to_id = tid
+        user_parent = reply_to_id or parent_id
+        author_id, author_name, author_username = _comment_author_from_principal(
+            principal
+        )
+        try:
+            saved = await run_in_threadpool(
+                share_comments_store.add_comment,
+                owner,
+                kind,
+                item_id,
+                author_user_id=author_id,
+                author_name=author_name,
+                author_username=author_username,
+                body=reply_text,
+                quote=quote_text,
+                prefix=share_comments_store.RESEARCH_PREFIX,
+                parent_id=user_parent,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if thread_parent in (None, "", 0, "0"):
+            thread_parent = saved.get("id")
+    job, started = begin_job(
+        owner,
+        kind,
+        item_id,
+        reply=reply_text,
+        parent_id=thread_parent,
+        use_knowledge=use_knowledge,
+        knowledge_note_ids=kb_ids,
+        quote=quote_text,
+    )
+    if started:
+        asyncio.create_task(
+            run_note_research_job(
+                int(owner),
+                kind,
+                item_id,
+                reply=reply_text,
+                parent_id=thread_parent,
+                use_knowledge=use_knowledge,
+                knowledge_note_ids=kb_ids,
+                quote=quote_text,
+            )
+        )
+    return {
+        "ok": True,
+        "status": str(job.get("status") or "running"),
+        "comment_id": job.get("comment_id"),
+        "error": job.get("error"),
+        "progress": job.get("progress") if isinstance(job.get("progress"), dict) else None,
+    }
+
+
+@miniapp_router.get("/notes/{kind}/{item_id}/research")
+async def miniapp_note_research_status(
+    kind: str,
+    item_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.board.note_research import get_job
+
+    uid = str(int(principal.telegram_user_id))
+    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    if not owner:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    job = get_job(owner, kind, item_id)
+    if not job:
+        return {"ok": True, "status": "idle"}
+    return {
+        "ok": True,
+        "status": str(job.get("status") or "idle"),
+        "comment_id": job.get("comment_id"),
+        "error": job.get("error"),
         "progress": job.get("progress") if isinstance(job.get("progress"), dict) else None,
     }
 

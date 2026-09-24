@@ -273,6 +273,35 @@ class ShareCommentsTests(unittest.TestCase):
         listed = share_comments.list_comments(8, "local", 3)
         thread = share_comments.paie_thread(listed)
         self.assertNotIn(gpt_quoted["id"], [c["id"] for c in thread])
+        research_q = share_comments.add_comment(
+            8,
+            "local",
+            3,
+            author_user_id=8,
+            author_name="Анна",
+            body="Что пишут про конкурента?",
+            prefix=share_comments.RESEARCH_PREFIX,
+        )
+        research_a = share_comments.add_comment(
+            8,
+            "local",
+            3,
+            author_user_id=0,
+            author_name="Research",
+            author_username="research",
+            body="Справка по конкуренту",
+            prefix=share_comments.RESEARCH_PREFIX,
+            parent_id=research_q["id"],
+        )
+        listed = share_comments.list_comments(8, "local", 3)
+        thread = share_comments.paie_thread(listed)
+        self.assertTrue(share_comments.is_research_comment(research_a))
+        self.assertFalse(share_comments.is_research_comment(research_q))
+        self.assertTrue(share_comments.is_research_turn(research_q))
+        self.assertFalse(share_comments.is_gpt_comment(research_a))
+        self.assertFalse(share_comments.is_paie_comment(research_a))
+        self.assertNotIn(research_q["id"], [c["id"] for c in thread])
+        self.assertNotIn(research_a["id"], [c["id"] for c in thread])
         with self.assertRaises(ValueError):
             share_comments.add_comment(
                 8,

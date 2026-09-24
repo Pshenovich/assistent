@@ -239,7 +239,7 @@
     if (!root) return map;
     var planned = [];
     (comments || []).forEach(function (c) {
-      if (!c || !c.id || !c.quote || isPaieComment(c) || isGptTurn(c)) return;
+      if (!c || !c.id || !c.quote || isPaieComment(c) || isGptTurn(c) || isResearchTurn(c)) return;
       var range = rangeForAnchor(root, c.quote, c.prefix, c.suffix);
       if (range) planned.push({ c: c, range: range });
     });
@@ -390,7 +390,7 @@
     if (!listEl) return;
     var tops = {};
     (comments || []).forEach(function (c) {
-      if (!c || !c.id || !c.quote || isPaieComment(c) || isGptTurn(c)) return;
+      if (!c || !c.id || !c.quote || isPaieComment(c) || isGptTurn(c) || isResearchTurn(c)) return;
       var range = rangeForAnchor(root, c.quote, c.prefix, c.suffix);
       if (!range) return;
       var rect = range.getBoundingClientRect();
@@ -469,6 +469,20 @@
     return String(c.prefix || "").trim() === "__gpt__";
   }
 
+  function isResearchComment(c) {
+    if (!c) return false;
+    if (c.is_research) return true;
+    var uname = String(c.author_username || "").trim().toLowerCase();
+    var name = String(c.author_name || "").trim();
+    return uname === "research" || name === "Research";
+  }
+
+  function isResearchTurn(c) {
+    if (!c) return false;
+    if (isResearchComment(c)) return true;
+    return String(c.prefix || "").trim() === "__research__";
+  }
+
   function parentIdOf(c) {
     var raw = c && c.parent_id;
     if (raw == null || raw === "" || raw === 0 || raw === "0") return 0;
@@ -489,7 +503,7 @@
       rows.forEach(function (c) {
         if (!c || !c.id) return;
         var id = String(c.id);
-        if (ids[id] || isGptTurn(c)) return;
+        if (ids[id] || isGptTurn(c) || isResearchTurn(c)) return;
         var pid = parentIdOf(c);
         if (pid && ids[String(pid)]) {
           ids[id] = true;
@@ -498,7 +512,7 @@
       });
     }
     return rows.filter(function (c) {
-      return c && c.id && ids[String(c.id)] && !isGptTurn(c);
+      return c && c.id && ids[String(c.id)] && !isGptTurn(c) && !isResearchTurn(c);
     });
   }
 
@@ -516,12 +530,21 @@
     });
   }
 
+  function researchThread(comments) {
+    return (comments || []).filter(function (c) {
+      return c && c.id && isResearchTurn(c);
+    });
+  }
+
   function selectionComments(comments) {
     var skip = {};
     paieThread(comments).forEach(function (c) {
       if (c && c.id) skip[String(c.id)] = true;
     });
     gptThread(comments).forEach(function (c) {
+      if (c && c.id) skip[String(c.id)] = true;
+    });
+    researchThread(comments).forEach(function (c) {
       if (c && c.id) skip[String(c.id)] = true;
     });
     return (comments || []).filter(function (c) {
@@ -535,6 +558,9 @@
       if (c && c.id) skip[String(c.id)] = true;
     });
     gptThread(comments).forEach(function (c) {
+      if (c && c.id) skip[String(c.id)] = true;
+    });
+    researchThread(comments).forEach(function (c) {
       if (c && c.id) skip[String(c.id)] = true;
     });
     return (comments || []).filter(function (c) {
@@ -750,11 +776,14 @@
     isPaieComment: isPaieComment,
     isGptComment: isGptComment,
     isGptTurn: isGptTurn,
+    isResearchComment: isResearchComment,
+    isResearchTurn: isResearchTurn,
     parentIdOf: parentIdOf,
     paieThread: paieThread,
     paieThreadGroups: paieThreadGroups,
     paieThreadRootId: paieThreadRootId,
     gptThread: gptThread,
+    researchThread: researchThread,
     generalComments: generalComments,
     selectionComments: selectionComments,
     quotedComments: quotedComments,

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260924-paie-sel-toolbar";
+  var WEBAPP_BUILD = "20260924-research";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260924-paie-sel-toolbar";
+  const NOTE_EDITOR_ASSET_V = "20260924-research";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -2472,6 +2472,7 @@
     var p = String(path || "");
     if (p.indexOf("/gpt/chat") >= 0) return 180000;
     if (/\/paei(\/|\?|$)/.test(p) || p.slice(-5) === "/paei") return 180000;
+    if (/\/research(\/|\?|$)/.test(p) || p.slice(-9) === "/research") return 180000;
     return 8000;
   }
 
@@ -10104,8 +10105,13 @@
 
   function noteAskModeLabel(mode) {
     if (mode === "gpt") return "GPT";
+    if (mode === "research") return "Research";
     if (mode === "comment") return "Текст";
     return "PAIE";
+  }
+
+  function noteAskUsesChips(mode) {
+    return mode === "gpt" || mode === "research";
   }
 
   function noteAskPlaceholder(mode) {
@@ -10115,6 +10121,11 @@
       return gptComposerChipCount(noteGptEditor())
         ? "Спросите GPT про выделенный текст"
         : "Свободный запрос к GPT по заметке";
+    }
+    if (mode === "research") {
+      return gptComposerChipCount(noteGptEditor())
+        ? "Спросите Research про выделенный текст"
+        : "Исследуйте тему заметки в вебе";
     }
     if (mode === "comment") {
       return quoted ? "Комментарий к выделенному тексту" : "Напишите комментарий";
@@ -10417,6 +10428,7 @@
       '<div class="note-paie-mode-switch" role="tablist" aria-label="Режим">' +
       '<button type="button" class="note-paie-mode" data-mode="paie">PAIE</button>' +
       '<button type="button" class="note-paie-mode is-active" data-mode="gpt">GPT</button>' +
+      '<button type="button" class="note-paie-mode" data-mode="research">Research</button>' +
       '<button type="button" class="note-paie-mode" data-mode="comment">Текст</button>' +
       "</div>" +
       '<button type="button" class="note-paie-mode-compact" aria-haspopup="listbox" aria-expanded="false">' +
@@ -10428,6 +10440,7 @@
       '<div class="note-paie-menu note-paie-mode-menu hidden" role="listbox">' +
       '<button type="button" class="note-paie-menu-item" data-mode="paie">PAIE</button>' +
       '<button type="button" class="note-paie-menu-item is-active" data-mode="gpt">GPT</button>' +
+      '<button type="button" class="note-paie-menu-item" data-mode="research">Research</button>' +
       '<button type="button" class="note-paie-menu-item" data-mode="comment">Текст</button>' +
       "</div>" +
       '<button type="button" class="note-paie-model-btn" aria-haspopup="listbox" aria-expanded="false">' +
@@ -10910,7 +10923,8 @@
       !form ||
       !form.querySelector("#note-paie-attach") ||
       !form.querySelector(".note-paie-kb-wrap") ||
-      !form.querySelector("#note-paie-reply-editor")
+      !form.querySelector("#note-paie-reply-editor") ||
+      !form.querySelector('[data-mode="research"]')
     ) {
       var html = notePaieReplyFormHtml();
       if (form) form.outerHTML = html;
@@ -10935,6 +10949,9 @@
       if (noteAskMode() === "gpt") {
         var packed = serializeGptComposer(editor);
         submitNoteGptQuestion(packed.text);
+      } else if (noteAskMode() === "research") {
+        var researchPacked = serializeGptComposer(editor);
+        submitNoteResearch(researchPacked.text);
       } else if (noteAskMode() === "comment") submitNoteFooterComment(input && input.value);
       else submitNotePaieReply(input && input.value);
     });
@@ -11461,7 +11478,7 @@
     );
     var input = document.getElementById("note-paie-reply-input");
     var editor = noteGptEditor();
-    var focusEl = noteAskMode() === "gpt" ? editor : input;
+    var focusEl = noteAskUsesChips(noteAskMode()) ? editor : input;
     var shouldFocus =
       opts.focus === true ||
       (!!opts.draft && !isDesktopLayout() && opts.focus !== false);
@@ -11574,7 +11591,7 @@
     var chairId = wrap && wrap._commentChairId;
     var whoEl = targetEl && targetEl.querySelector(".note-paie-reply-target-who");
     var quote = draft && String(draft.quote || "").trim();
-    var active = !!quote && noteAskMode() !== "gpt";
+    var active = !!quote && !noteAskUsesChips(noteAskMode());
     if (whoEl) {
       whoEl.textContent = chairId ? "CHAIR" : "Фрагмент";
     }
@@ -11611,6 +11628,7 @@
     if (!c) return false;
     if (api && api.isPaieComment && api.isPaieComment(c)) return true;
     if (api && api.isGptComment && api.isGptComment(c)) return true;
+    if (api && api.isResearchComment && api.isResearchComment(c)) return true;
     return false;
   }
 
@@ -12199,7 +12217,7 @@
     }
     wrap._commentDraft = null;
     wrap._commentChairId = null;
-    setNoteAskMode("gpt");
+    setNoteAskMode(draft.source === "research" ? "research" : "gpt");
     syncNoteComposerCommentTarget();
     insertGptQuoteChip(draft.quote);
     var ed = noteGptEditor();
@@ -12225,7 +12243,9 @@
     var html = htmlFromDiscussionSelectionRange(range);
     var api = window.NoteComments;
     var draft = api && api.selectionAnchor ? api.selectionAnchor(bubble) : null;
-    var source = msg.classList.contains("is-gpt") ? "gpt" : "paie";
+    var source = "paie";
+    if (msg.classList.contains("is-research")) source = "research";
+    else if (msg.classList.contains("is-gpt")) source = "gpt";
     var commentId = parseInt(msg.getAttribute("data-comment-id") || "", 10) || 0;
     if (draft && draft.quote) {
       draft.rect = copyClientRect(draft.rect) || draft.rect;
@@ -12289,10 +12309,12 @@
     var assistant = isAssistantComment(c);
     var api = window.NoteComments;
     var isGpt = !!(api && api.isGptComment && api.isGptComment(c));
+    var isResearch = !!(api && api.isResearchComment && api.isResearchComment(c));
     item.className =
       "note-discuss-msg " +
       (assistant ? "is-assistant" : "is-user") +
-      (isGpt ? " is-gpt" : "");
+      (isGpt ? " is-gpt" : "") +
+      (isResearch ? " is-research" : "");
     item.setAttribute("data-comment-id", String(c.id));
     var quoteText = String((c && c.quote) || "").trim();
     var bodyHasQuote = String((c && c.body) || "").indexOf("«") >= 0;
@@ -12368,7 +12390,13 @@
     });
     if (list) {
       list.innerHTML = "";
-      if (!rows.length && !statusOn && !running && !(wrap && wrap._gptBusy)) {
+      if (
+        !rows.length &&
+        !statusOn &&
+        !running &&
+        !(wrap && wrap._gptBusy) &&
+        !(wrap && wrap._researchRunning)
+      ) {
         var empty = document.createElement("p");
         empty.className = "note-discussion-empty";
         empty.textContent = "Задайте вопрос или оставьте комментарий";
@@ -12661,14 +12689,15 @@
   function noteAskMode() {
     var wrap = document.getElementById("note-editor-more-wrap");
     var mode = wrap && wrap._askMode;
-    if (mode === "paie" || mode === "comment") return mode;
+    if (mode === "paie" || mode === "comment" || mode === "research") return mode;
     return "gpt";
   }
 
   function setNoteAskMode(mode) {
     var wrap = document.getElementById("note-editor-more-wrap");
     if (wrap) {
-      wrap._askMode = mode === "paie" || mode === "comment" ? mode : "gpt";
+      wrap._askMode =
+        mode === "paie" || mode === "comment" || mode === "research" ? mode : "gpt";
     }
     var current = noteAskMode();
     var form = document.getElementById("note-paie-reply-form");
@@ -12680,6 +12709,7 @@
     }
     if (form) {
       form.classList.toggle("is-gpt-mode", current === "gpt");
+      form.classList.toggle("is-research-mode", current === "research");
       form.classList.toggle("is-comment-mode", current === "comment");
       var compactLabel = form.querySelector(".note-paie-mode-compact-label");
       if (compactLabel) compactLabel.textContent = noteAskModeLabel(current);
@@ -12870,6 +12900,9 @@
       if (content.length > 6000) content = content.slice(0, 5999) + "…";
       if (api && api.isGptComment && api.isGptComment(c)) {
         history.push({ role: "assistant", content: content });
+        return;
+      }
+      if (api && api.isResearchTurn && api.isResearchTurn(c)) {
         return;
       }
       if (api && api.isPaieComment && api.isPaieComment(c)) {
@@ -13107,7 +13140,8 @@
     var api = window.NoteComments;
     var paieRunning = running != null ? !!running : !!(wrap && wrap._paeiRunning);
     var gptBusy = !!(wrap && wrap._gptBusy);
-    var busy = paieRunning || gptBusy;
+    var researchRunning = !!(wrap && wrap._researchRunning);
+    var busy = paieRunning || gptBusy || researchRunning;
     var input = document.getElementById("note-paie-reply-input");
     var submit = document.getElementById("note-paie-reply-submit");
     var newCtxBtn = document.getElementById("note-discussion-new-ctx");
@@ -13137,19 +13171,21 @@
         });
     }
     if (submit) {
-      var hasText =
-        noteAskMode() === "gpt"
-          ? !gptComposerIsEmpty(editor)
-          : !!(input && String(input.value || "").trim());
+      var hasText = noteAskUsesChips(noteAskMode())
+        ? !gptComposerIsEmpty(editor)
+        : !!(input && String(input.value || "").trim());
       var hasFiles = discussPendingFiles().length > 0;
       var canLaunchPaie = noteAskMode() === "paie" && !hasChair;
-      var ready = !busy && (hasText || hasFiles || canLaunchPaie);
+      var canLaunchResearch = noteAskMode() === "research";
+      var ready = !busy && (hasText || hasFiles || canLaunchPaie || canLaunchResearch);
       submit.disabled = !ready;
       submit.classList.toggle("is-ready", ready);
       var label = "Отправить";
       if (gptBusy) label = "GPT отвечает…";
       else if (paieRunning) label = "CHAIR отвечает…";
+      else if (researchRunning) label = "Research ищет…";
       else if (noteAskMode() === "gpt") label = "Спросить GPT";
+      else if (noteAskMode() === "research") label = hasText ? "Спросить Research" : "Запустить Research";
       else if (noteAskMode() === "comment") label = "Отправить";
       else label = hasChair ? "Спросить CHAIR" : "Запустить PAIE";
       submit.setAttribute("aria-label", label);
@@ -13428,6 +13464,174 @@
         if (data && data.status === "error") {
           ensureNotePaieThread();
           setNotePaeiStatus((data && data.error) || "Не удалось завершить PAIE");
+        }
+      })
+      .catch(function () {});
+  }
+
+  function noteResearchPath() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || !wrap._shareKind || !wrap._shareId) return "";
+    return (
+      "/notes/" +
+      encodeURIComponent(wrap._shareKind) +
+      "/" +
+      encodeURIComponent(wrap._shareId) +
+      "/research"
+    );
+  }
+
+  function pollNoteResearch(path) {
+    var tries = 0;
+    function tick() {
+      var live = document.getElementById("note-editor-more-wrap");
+      if (!live || noteResearchPath() !== path) return;
+      apiFetch(path, { method: "GET" })
+        .then(function (data) {
+          var status = (data && data.status) || "idle";
+          if (status === "running") {
+            tries += 1;
+            setNotePaeiStatus(
+              (data.progress && data.progress.label) || "Ищу в вебе…",
+              data.progress
+            );
+            if (tries > 180) {
+              live._researchRunning = false;
+              setNotePaeiStatus("Research всё ещё работает. Обновите заметку чуть позже.");
+              return;
+            }
+            setTimeout(tick, 2500);
+            return;
+          }
+          live._researchRunning = false;
+          if (status === "error") {
+            setNotePaeiStatus((data && data.error) || "Не удалось завершить Research");
+            return;
+          }
+          if (status === "done") {
+            setNotePaeiStatus("");
+            shareHaptic();
+            refreshNoteCommentsList();
+            return;
+          }
+          setNotePaeiStatus("Research прервался. Запустите ещё раз.");
+        })
+        .catch(function (e) {
+          tries += 1;
+          var code = e && e.status;
+          var transient = code === 502 || code === 503 || code === 504 || !code;
+          if (transient && tries <= 24) {
+            setNotePaeiStatus("Сервер временно недоступен, пробую снова…", {
+              label: "Сервер временно недоступен, пробую снова…",
+              pct: 16,
+            });
+            setTimeout(tick, 3000);
+            return;
+          }
+          if (tries > 8) {
+            var w = document.getElementById("note-editor-more-wrap");
+            if (w) w._researchRunning = false;
+            setNotePaeiStatus(e.message || "Не удалось проверить статус Research");
+            return;
+          }
+          setTimeout(tick, 2500);
+        });
+    }
+    setTimeout(tick, 2500);
+  }
+
+  function submitNoteResearch(text) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var path = noteResearchPath();
+    var packed = serializeGptComposer();
+    var quotes = packed.quotes || [];
+    var body = packed.text || String(text || "").trim();
+    var quote = quotes.join("\n");
+    if (!wrap || !path || wrap._researchRunning) return;
+    wrap._researchRunning = true;
+    wrap._discussionPinId = null;
+    ensureNotePaieThread();
+    openNoteDiscussion({ mode: "research" });
+    setNotePaeiStatus(body ? "Ищу в вебе…" : "Исследую заметку…", {
+      label: body ? "Ищу в вебе…" : "Исследую заметку…",
+      pct: 12,
+    });
+    appendOptimisticUserMessage(body, quote);
+    var editor = noteGptEditor();
+    var submit = document.getElementById("note-paie-reply-submit");
+    if (submit) {
+      submit.disabled = true;
+      submit.classList.remove("is-ready");
+      submit.setAttribute("aria-label", "Research ищет…");
+    }
+    ensureDiscussionKnowledgeNotes()
+      .then(function () {
+        return apiFetch(path, {
+          method: "POST",
+          body: JSON.stringify(
+            Object.assign(
+              {
+                reply: body,
+                quote: quote,
+              },
+              discussionKnowledgeFields()
+            )
+          ),
+        });
+      })
+      .then(function (data) {
+        clearGptComposer();
+        if (editor) syncGptEditorEmpty(editor);
+        markOptimisticUserSent();
+        refreshNoteCommentsList();
+        var status = (data && data.status) || "running";
+        if (status === "done") {
+          wrap._researchRunning = false;
+          setNotePaeiStatus("");
+          shareHaptic();
+          refreshNoteCommentsList();
+          return;
+        }
+        if (status === "error") {
+          wrap._researchRunning = false;
+          setNotePaeiStatus((data && data.error) || "Не удалось запустить Research");
+          return;
+        }
+        if (data && data.progress) {
+          setNotePaeiStatus(data.progress.label, data.progress);
+        }
+        pollNoteResearch(path);
+      })
+      .catch(function (e) {
+        wrap._researchRunning = false;
+        setNotePaeiStatus(e.message || "Не удалось запустить Research");
+      })
+      .finally(function () {
+        syncNotePaieReplyForm();
+      });
+  }
+
+  function resumeNoteResearchIfRunning(kind, itemId) {
+    apiFetch(
+      "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/research",
+      { method: "GET" }
+    )
+      .then(function (data) {
+        var wrap = document.getElementById("note-editor-more-wrap");
+        if (!wrap || wrap._shareId !== String(itemId)) return;
+        if (data && data.status === "running") {
+          wrap._researchRunning = true;
+          ensureNotePaieThread();
+          setNotePaeiStatus(
+            (data.progress && data.progress.label) || "Ищу в вебе…",
+            data.progress
+          );
+          pollNoteResearch(noteResearchPath());
+          return;
+        }
+        if (data && data.status === "error") {
+          ensureNotePaieThread();
+          setNotePaeiStatus((data && data.error) || "Не удалось завершить Research");
         }
       })
       .catch(function () {});
@@ -13966,6 +14170,7 @@
     var api = window.NoteComments;
     if (api && api.isPaieComment && api.isPaieComment(c)) return "CHAIR";
     if (api && api.isGptComment && api.isGptComment(c)) return "GPT";
+    if (api && api.isResearchComment && api.isResearchComment(c)) return "Research";
     var name = String((c && c.author_name) || "Пользователь").trim();
     var uname = String((c && c.author_username) || "").trim();
     if (uname && name.toLowerCase() !== "@" + uname.toLowerCase()) {
@@ -14224,6 +14429,7 @@
     tagsWrap.appendChild(wrap);
     syncNoteCommentsPanel();
     resumeNotePaeiIfRunning(kind, itemId);
+    resumeNoteResearchIfRunning(kind, itemId);
     apiFetch("/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/share", {
       method: "GET",
     })

@@ -58,6 +58,9 @@ def is_paie_comment(row: dict[str, Any] | None) -> bool:
 GPT_PREFIX = "__gpt__"
 GPT_AUTHOR_NAME = "GPT"
 GPT_AUTHOR_USERNAME = "gpt"
+RESEARCH_PREFIX = "__research__"
+RESEARCH_AUTHOR_NAME = "Research"
+RESEARCH_AUTHOR_USERNAME = "research"
 
 
 def is_gpt_comment(row: dict[str, Any] | None) -> bool:
@@ -74,6 +77,22 @@ def is_gpt_turn(row: dict[str, Any] | None) -> bool:
     if is_gpt_comment(row):
         return True
     return str(row.get("prefix") or "").strip() == GPT_PREFIX
+
+
+def is_research_comment(row: dict[str, Any] | None) -> bool:
+    if not row:
+        return False
+    uname = str(row.get("author_username") or "").strip().lower()
+    name = str(row.get("author_name") or "").strip()
+    return uname == RESEARCH_AUTHOR_USERNAME or name == RESEARCH_AUTHOR_NAME
+
+
+def is_research_turn(row: dict[str, Any] | None) -> bool:
+    if not row:
+        return False
+    if is_research_comment(row):
+        return True
+    return str(row.get("prefix") or "").strip() == RESEARCH_PREFIX
 
 
 def parent_id_of(row: dict[str, Any] | None) -> int | None:
@@ -105,13 +124,17 @@ def paie_thread(comments: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
             cid = int(row["id"])
             if cid in ids:
                 continue
-            if is_gpt_turn(row):
+            if is_gpt_turn(row) or is_research_turn(row):
                 continue
             pid = parent_id_of(row)
             if pid and pid in ids:
                 ids.add(cid)
                 changed = True
-    return [row for row in rows if int(row["id"]) in ids and not is_gpt_turn(row)]
+    return [
+        row
+        for row in rows
+        if int(row["id"]) in ids and not is_gpt_turn(row) and not is_research_turn(row)
+    ]
 
 
 def paie_thread_root_id(comments: list[dict[str, Any]] | None) -> int | None:
@@ -253,10 +276,15 @@ def add_comment(
     text = (body or "").strip()
     if not text:
         raise ValueError("Введите текст комментария")
-    is_gpt = str(prefix or "").strip() == GPT_PREFIX or str(
-        author_username or ""
-    ).strip().lower() == GPT_AUTHOR_USERNAME
-    limit = MAX_GPT_BODY_LEN if is_gpt else MAX_BODY_LEN
+    uname = str(author_username or "").strip().lower()
+    pre = str(prefix or "").strip()
+    is_long = (
+        pre == GPT_PREFIX
+        or pre == RESEARCH_PREFIX
+        or uname == GPT_AUTHOR_USERNAME
+        or uname == RESEARCH_AUTHOR_USERNAME
+    )
+    limit = MAX_GPT_BODY_LEN if is_long else MAX_BODY_LEN
     if len(text) > limit:
         raise ValueError(f"Комментарий слишком длинный (максимум {limit} символов)")
     q = _clip(quote, MAX_QUOTE_LEN).strip()

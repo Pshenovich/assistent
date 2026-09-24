@@ -108,6 +108,7 @@ def _chat(
     context_prefix: str | None = None,
     images: list[dict[str, str]] | None = None,
     files: list[dict[str, str]] | None = None,
+    web: bool = False,
 ) -> str:
     return _chat_result(
         system,
@@ -121,6 +122,7 @@ def _chat(
         context_prefix=context_prefix,
         images=images,
         files=files,
+        web=web,
     )[0]
 
 
@@ -137,6 +139,7 @@ def _chat_result(
     context_prefix: str | None = None,
     images: list[dict[str, str]] | None = None,
     files: list[dict[str, str]] | None = None,
+    web: bool = False,
 ) -> tuple[str, list[dict[str, str]]]:
     from assistant.integrations.openrouter_client import extract_chat_message_media
 
@@ -152,7 +155,7 @@ def _chat_result(
             continue
         messages.append({"role": role, "content": content[:24000]})
     messages.append({"role": "user", "content": _user_content(user, images, files)})
-    if files:
+    if files or web:
         timeout = max(float(timeout), 180.0)
     payload: dict[str, Any] = {
         "model": model or _model(),
@@ -161,17 +164,33 @@ def _chat_result(
     }
     if max_tokens is not None:
         payload["max_tokens"] = int(max_tokens)
+    plugins: list[dict[str, Any]] = []
     if files:
         plugin: dict[str, Any] = {"id": "file-parser"}
         engine = os.getenv("OPENROUTER_PDF_ENGINE", "").strip()
         if engine:
             plugin["pdf"] = {"engine": engine}
-        payload["plugins"] = [plugin]
+        plugins.append(plugin)
+    if web:
+        plugins.append({"id": "web"})
+    if plugins:
+        payload["plugins"] = plugins
     data = openrouter_chat_completion(payload, operation=operation, timeout=timeout)
     text, out_images = extract_chat_message_media(data)
     if not text and not out_images:
         text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
     return text, out_images
+
+
+def research_with_web(system: str, user: str, *, timeout: float = 180) -> str:
+    return _chat(
+        system,
+        user,
+        operation="note_research",
+        timeout=timeout,
+        temperature=0.2,
+        web=True,
+    )
 
 
 def parse_calendar(

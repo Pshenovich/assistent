@@ -4943,11 +4943,12 @@ html.note-editor-open #note-editor-overlay {
   display: inline-flex;
 }
 
-.note-paie-reply-form.is-gpt-mode #note-paie-reply-input {
+.note-paie-reply-form.is-gpt-mode #note-paie-reply-input,
+.note-paie-reply-form.is-research-mode #note-paie-reply-input {
   display: none;
 }
 
-.note-paie-reply-form:not(.is-gpt-mode) #note-paie-reply-editor {
+.note-paie-reply-form:not(.is-gpt-mode):not(.is-research-mode) #note-paie-reply-editor {
   display: none;
 }
 
@@ -5153,7 +5154,7 @@ html.note-editor-open #note-editor-overlay {
 
 .note-discussion-overlay .note-paie-mode-compact-label,
 .note-discussion-overlay .note-paie-model-label {
-  max-width: 4.75rem;
+  max-width: 6.5rem;
 }
 
 .note-discussion-overlay .note-paie-composer-input,
