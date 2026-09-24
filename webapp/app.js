@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260923-toc-wrap";
+  var WEBAPP_BUILD = "20260924-paie-sel-toolbar";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260923-toc-wrap";
+  const NOTE_EDITOR_ASSET_V = "20260924-paie-sel-toolbar";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -12063,8 +12063,17 @@
     return !!(el && el.closest && el.closest("#note-discuss-selection, #note-discuss-sel-marks"));
   }
 
-  function isDiscussGptBubbleTarget(el) {
-    return !!(el && el.closest && el.closest(".note-discuss-msg.is-gpt .note-discuss-bubble"));
+  function discussSelectableBubble(el) {
+    if (!el || !el.closest) return null;
+    var msg = el.closest(".note-discuss-msg.is-assistant");
+    if (!msg || msg.classList.contains("is-pending")) return null;
+    var bubble = el.closest(".note-discuss-bubble");
+    if (!bubble || !msg.contains(bubble)) return null;
+    return { msg: msg, bubble: bubble };
+  }
+
+  function isDiscussAssistantBubbleTarget(el) {
+    return !!discussSelectableBubble(el);
   }
 
   function collapseNativeDiscussionSelection() {
@@ -12170,6 +12179,24 @@
   function applyDiscussClarify(draft) {
     var wrap = document.getElementById("note-editor-more-wrap");
     if (!wrap || !draft || !String(draft.quote || "").trim()) return;
+    if (draft.source === "paie") {
+      wrap._commentDraft = {
+        quote: String(draft.quote || "").trim(),
+        prefix: draft.prefix || "",
+        suffix: draft.suffix || "",
+      };
+      wrap._commentChairId = draft.commentId || null;
+      setNoteAskMode("paie");
+      syncNoteComposerCommentTarget();
+      var input = document.getElementById("note-paie-reply-input");
+      if (input) {
+        try {
+          input.focus();
+        } catch (_) {}
+      }
+      clearDiscussionSelection();
+      return;
+    }
     wrap._commentDraft = null;
     wrap._commentChairId = null;
     setNoteAskMode("gpt");
@@ -12189,23 +12216,36 @@
     if (!sel || sel.isCollapsed || sel.rangeCount < 1) return null;
     var node = sel.anchorNode;
     var el = node && (node.nodeType === 1 ? node : node.parentElement);
-    var bubble =
-      el && el.closest ? el.closest(".note-discuss-msg.is-gpt .note-discuss-bubble") : null;
-    if (!bubble) return null;
+    var found = discussSelectableBubble(el);
+    if (!found) return null;
+    var bubble = found.bubble;
+    var msg = found.msg;
     if (sel.focusNode && !bubble.contains(sel.focusNode)) return null;
     var range = sel.getRangeAt(0);
     var html = htmlFromDiscussionSelectionRange(range);
     var api = window.NoteComments;
     var draft = api && api.selectionAnchor ? api.selectionAnchor(bubble) : null;
+    var source = msg.classList.contains("is-gpt") ? "gpt" : "paie";
+    var commentId = parseInt(msg.getAttribute("data-comment-id") || "", 10) || 0;
     if (draft && draft.quote) {
       draft.rect = copyClientRect(draft.rect) || draft.rect;
       draft.html = html;
+      draft.source = source;
+      draft.commentId = commentId;
       return draft;
     }
     var text = String(sel.toString() || "").replace(/\s+/g, " ").trim();
     if (!text) return null;
     var rect = copyClientRect(range.getBoundingClientRect ? range.getBoundingClientRect() : null);
-    return { quote: text, prefix: "", suffix: "", rect: rect, html: html };
+    return {
+      quote: text,
+      prefix: "",
+      suffix: "",
+      rect: rect,
+      html: html,
+      source: source,
+      commentId: commentId,
+    };
   }
 
   function bindDiscussClarifyOnce() {
@@ -12214,7 +12254,7 @@
     function onContextMenu(e) {
       if (!isNoteDiscussionOpen()) return;
       var t = e.target;
-      if (isDiscussSelectionUiTarget(t) || isDiscussGptBubbleTarget(t)) {
+      if (isDiscussSelectionUiTarget(t) || isDiscussAssistantBubbleTarget(t)) {
         e.preventDefault();
       }
     }

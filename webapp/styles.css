@@ -5349,8 +5349,12 @@ html.note-editor-open #note-editor-overlay {
   padding: 16px 16px 8px;
 }
 
-.note-discussion-scroll .note-paei-status {
-  margin-bottom: 12px;
+#note-discussion-overlay .note-paei-status {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 10px 16px 8px;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
 }
 
 .note-discussion-messages {
@@ -5525,7 +5529,7 @@ html.note-editor-open #note-editor-overlay {
   user-select: text;
 }
 
-.note-discuss-msg.is-gpt .note-discuss-bubble {
+.note-discuss-msg.is-assistant .note-discuss-bubble {
   -webkit-touch-callout: none;
 }
 
@@ -9959,6 +9963,11 @@ html.modal-sheet-open body {
   #note-discussion-overlay .note-discussion-compose.note-paie-thread {
     padding-left: 0;
     padding-right: 0;
+  }
+
+  #note-discussion-overlay .note-paei-status {
+    padding-left: 20px;
+    padding-right: 20px;
   }
 
   #note-discussion-overlay .note-paie-reply-form {
