@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260924-research";
+  var WEBAPP_BUILD = "20260924-sel-scroll";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260924-research";
+  const NOTE_EDITOR_ASSET_V = "20260924-sel-scroll";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -5849,9 +5849,27 @@
     return kbGuess;
   }
 
+  function noteEditorHasRangeSelection() {
+    var editor = getActiveNoteRichEditor();
+    if (editor && typeof editor.hasRangeSelection === "function") {
+      try {
+        if (editor.hasRangeSelection()) return true;
+      } catch (_) {}
+    }
+    var sel = window.getSelection && window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return false;
+    var scrollEl = getNoteEditorScrollEl();
+    if (!scrollEl) return false;
+    var range = sel.getRangeAt(0);
+    var root = range && range.commonAncestorContainer;
+    return !!(root && scrollEl.contains(root.nodeType === 1 ? root : root.parentNode));
+  }
+
   function scrollNoteCaretIntoView(immediate) {
     if (!isNoteEditorModalOpen()) return;
+    if (noteEditorHasRangeSelection()) return;
     var run = function () {
+      if (noteEditorHasRangeSelection()) return;
       var scrollEl = getNoteEditorScrollEl();
       if (!scrollEl) return;
       var active = document.activeElement;
@@ -9324,6 +9342,10 @@
       getCursor: function () {
         return 0;
       },
+      hasRangeSelection: function () {
+        var sel = window.getSelection && window.getSelection();
+        return !!(sel && !sel.isCollapsed && ed.contains(sel.anchorNode));
+      },
       coordsAtPos: function () {
         return null;
       },
@@ -9465,7 +9487,7 @@
             },
             onSelection: function () {
               if (typeof options.onSelection === "function") options.onSelection.apply(null, arguments);
-              scrollNoteCaretIntoView();
+              if (!noteEditorHasRangeSelection()) scrollNoteCaretIntoView();
             },
             toolbarParent: formatHost || null,
             tocParent: options.tocParent || null,

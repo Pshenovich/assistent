@@ -1597,7 +1597,12 @@ function mount(container, options) {
       }
     },
     getCursor: function () {
-      return editor.state.selection.from;
+      var sel = editor.state.selection;
+      return sel.head != null ? sel.head : sel.from;
+    },
+    hasRangeSelection: function () {
+      var sel = editor.state.selection;
+      return !!(sel && !sel.empty);
     },
     coordsAtPos: function (pos) {
       try {
