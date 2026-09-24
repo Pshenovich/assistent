@@ -5064,7 +5064,20 @@ html.note-editor-open #note-editor-overlay {
   right: 0;
   min-width: 240px;
   max-width: min(320px, 85vw);
-  max-height: 280px;
+  max-height: 360px;
+}
+
+.note-paie-menu-section {
+  margin: 8px 8px 4px;
+  color: var(--text-secondary, #909499);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.note-paie-menu-section:first-child {
+  margin-top: 2px;
 }
 
 .note-paie-kb-item {
@@ -5311,6 +5324,107 @@ html.note-editor-open #note-editor-overlay {
   text-align: center;
 }
 
+.note-pane-switch-wrap {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+
+.note-pane-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 10px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.note-pane-switch:hover,
+.note-pane-switch.is-open {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.note-pane-switch:disabled,
+.note-pane-switch.note-pane-switch--plain {
+  cursor: default;
+  background: transparent;
+}
+
+.note-pane-switch:disabled .note-pane-switch-chevron,
+.note-pane-switch.note-pane-switch--plain .note-pane-switch-chevron {
+  display: none;
+}
+
+.note-pane-switch-chevron {
+  display: block;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  opacity: 0.85;
+}
+
+#note-discussion-title-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-pane-switch-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  max-width: min(320px, 85vw);
+  max-height: 280px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface, #19191a);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  transform: translateX(-50%);
+}
+
+.note-pane-switch-menu.hidden {
+  display: none;
+}
+
+.note-pane-switch-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 10px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.note-pane-switch-item.is-active,
+.note-pane-switch-item:hover {
+  background: rgba(158, 173, 219, 0.22);
+}
+
+.note-pane-switch-sep {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border);
+}
+
 #note-discussion-new-ctx {
   grid-column: 3;
   justify-self: end;
@@ -5365,6 +5479,74 @@ html.note-editor-open #note-editor-overlay {
   min-width: 0;
   max-width: 100%;
   padding-bottom: 8px;
+}
+
+.note-discussion-sheet-pane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.note-discussion-sheet-pane.hidden {
+  display: none;
+}
+
+html.note-discussion-sheet-open .note-discussion-scroll {
+  padding: 0;
+  overflow: hidden;
+}
+
+html.note-discussion-sheet-open #note-discussion-messages {
+  display: none;
+}
+
+html.note-discussion-sheet-open #note-discussion-new-ctx {
+  visibility: hidden;
+}
+
+html.note-discussion-sheet-open #note-paie-thread,
+html.note-discussion-sheet-open #note-editor-paei-status {
+  display: none !important;
+}
+
+.note-discussion-sheet-toolbar {
+  display: none;
+  flex-shrink: 0;
+  z-index: 30;
+  min-height: 0;
+  margin: 0;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(25, 25, 26, 0.96);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-sizing: border-box;
+}
+
+html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
+  display: block;
+}
+
+.note-discussion-sheet-toolbar .note-rich-editor-toolbar {
+  position: static;
+  margin-bottom: 0;
+}
+
+.note-discussion-sheet-host {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 16px 12px;
+}
+
+.note-discussion-sheet-host .note-rich-editor,
+.note-discussion-sheet-host .note-rich-editor-surface,
+.note-discussion-sheet-host .note-rich-editor-body {
+  min-height: 100%;
 }
 
 .note-discussion-empty {
@@ -5965,6 +6147,65 @@ html.note-editor-open #note-editor-overlay {
 .note-editor-pad--title-in-body {
   padding-top: var(--note-editor-pad-y);
   padding-bottom: var(--space-2);
+}
+
+.note-editor-sheets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.note-editor-sheets.hidden {
+  display: none;
+}
+
+.note-sheet-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 160px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary, #909499);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.note-sheet-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-sheet-chip.is-active {
+  color: var(--text);
+  border-color: transparent;
+  background: rgba(158, 173, 219, 0.22);
+}
+
+.note-sheet-chip--add {
+  color: var(--text-secondary, #909499);
+  border-style: dashed;
+}
+
+.note-sheet-chip-input {
+  width: 110px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+}
+
+.note-sheet-chip-input:focus {
+  outline: none;
 }
 
 .note-editor-pad--tags.tag-picker {

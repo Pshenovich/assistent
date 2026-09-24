@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260924-sel-scroll">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260924-sheets3">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -46,8 +46,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20260924-sel-scroll" />
-  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260924-sel-scroll" as="script" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20260924-sheets3" />
+  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260924-sheets3" as="script" />
   <!-- Same-origin, async: не блокирует парсер, если сеть/VPN тормозит. -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" async></script>
 </head>
@@ -1118,7 +1118,15 @@
             <path d="M18 6 6 18M6 6l12 12" />
           </svg>
         </button>
-        <h2 id="note-discussion-title" class="note-discussion-title">Обсуждение</h2>
+        <div class="note-pane-switch-wrap">
+          <button type="button" id="note-discussion-title" class="note-discussion-title note-pane-switch" aria-haspopup="true" aria-expanded="false" aria-controls="note-pane-switch-menu">
+            <span id="note-discussion-title-label">Обсуждение</span>
+            <svg class="note-pane-switch-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
+          <div id="note-pane-switch-menu" class="note-pane-switch-menu hidden" role="menu"></div>
+        </div>
         <button type="button" class="modal-header-btn" id="note-discussion-new-ctx" aria-label="Новый контекст GPT" title="Новый контекст GPT">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
@@ -1128,8 +1136,12 @@
       </div>
       <div class="note-discussion-scroll">
         <div id="note-discussion-messages" class="note-discussion-messages"></div>
+        <div id="note-discussion-sheet-pane" class="note-discussion-sheet-pane hidden">
+          <div id="note-discussion-sheet-host" class="note-discussion-sheet-host"></div>
+        </div>
       </div>
       <div id="note-editor-paei-status" class="note-paei-status hidden"></div>
+      <div id="note-discussion-sheet-toolbar" class="note-discussion-sheet-toolbar"></div>
       <div id="note-paie-thread" class="note-discussion-compose"></div>
     </div>
   </div>
@@ -1161,14 +1173,14 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20260924-sel-scroll"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20260924-sheets3"><\/script>'
         );
       }
     })();
   </script>
-  <script src="/webapp/note-html.js?v=20260924-sel-scroll" defer></script>
-  <script src="/webapp/note-comments.js?v=20260924-sel-scroll" defer></script>
-  <script src="/webapp/note-rich-editor.js?v=20260924-sel-scroll" defer></script>
-  <script src="/webapp/app.js?v=20260924-sel-scroll" defer></script>
+  <script src="/webapp/note-html.js?v=20260924-sheets3" defer></script>
+  <script src="/webapp/note-comments.js?v=20260924-sheets3" defer></script>
+  <script src="/webapp/note-rich-editor.js?v=20260924-sheets3" defer></script>
+  <script src="/webapp/app.js?v=20260924-sheets3" defer></script>
 </body>
 </html>

@@ -514,6 +514,13 @@ def duplicate_note(user_id: int | str, note_id: int) -> Optional[dict[str, Any]]
         title = title + " (копия)"
     body = str(src.get("body") or src.get("description") or "")
     dup = create_note(uid, title, body)
+    try:
+        from assistant.stores import note_sheets as note_sheets_store
+
+        if note_sheets_store.note_allows_sheets(src):
+            note_sheets_store.copy_sheets(int(src["id"]), int(dup["id"]))
+    except Exception:
+        pass
     if src.get("is_owner"):
         try:
             from assistant.stores import tags as tags_store
@@ -546,6 +553,12 @@ def delete_note(user_id: int | str, note_id: int) -> bool:
         _conn().commit()
         ok = cur.rowcount > 0
     if ok:
+        try:
+            from assistant.stores import note_sheets as note_sheets_store
+
+            note_sheets_store.delete_all_for_note(int(note_id))
+        except Exception:
+            pass
         try:
             with _LOCK:
                 _conn().execute(

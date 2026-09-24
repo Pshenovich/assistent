@@ -20,7 +20,7 @@ from assistant.stores.share_comments import (
     RESEARCH_PREFIX,
 )
 
-from assistant.board.note_paei import load_note_for_paei
+from assistant.board.note_paei import load_note_excerpt_for_agents
 
 RESEARCH_AUTHOR_ID = 0
 NOTE_BODY_LIMIT = 8_000
@@ -128,6 +128,7 @@ def begin_job(
     use_knowledge: bool = True,
     knowledge_note_ids: list[str] | None = None,
     quote: str = "",
+    sheet_ids: list[str] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     key = job_key(user_id, kind, item_id)
     now = time.time()
@@ -154,6 +155,11 @@ def begin_job(
             "knowledge_note_ids": (
                 [str(x).strip() for x in knowledge_note_ids if str(x).strip()]
                 if knowledge_note_ids is not None
+                else None
+            ),
+            "sheet_ids": (
+                [str(x).strip() for x in sheet_ids if str(x).strip()]
+                if sheet_ids is not None
                 else None
             ),
             "progress": _progress_view({"phase": "SEARCH", "pct": 14}),
@@ -384,10 +390,14 @@ def run_note_research(
     use_knowledge: bool = True,
     knowledge_note_ids: list[str] | None = None,
     quote: str = "",
+    sheet_ids: list[str] | None = None,
     on_progress: Any | None = None,
 ) -> dict[str, Any]:
-    title, body = load_note_for_paei(user_id, kind, item_id)
-    excerpt = _clip((body or "").strip() or "(пустая заметка)", NOTE_BODY_LIMIT)
+    if sheet_ids is not None:
+        sheet_ids = [str(x).strip() for x in sheet_ids if str(x).strip()]
+    title, excerpt = load_note_excerpt_for_agents(
+        user_id, kind, item_id, sheet_ids=sheet_ids, budget=NOTE_BODY_LIMIT
+    )
     reply_text = (reply or "").strip()
     if knowledge_note_ids is not None:
         knowledge_note_ids = [str(x).strip() for x in knowledge_note_ids if str(x).strip()]
@@ -450,12 +460,20 @@ async def run_note_research_job(
     use_knowledge: bool = True,
     knowledge_note_ids: list[str] | None = None,
     quote: str = "",
+    sheet_ids: list[str] | None = None,
 ) -> None:
     key = job_key(user_id, kind, item_id)
     job = get_job(user_id, kind, item_id) or {}
     reply_text = (reply or job.get("reply") or "").strip()
     thread_parent = parent_id if parent_id is not None else job.get("parent_id")
     quote_text = (quote or job.get("quote") or "").strip()
+    if "sheet_ids" in job and job.get("sheet_ids") is not None:
+        raw_sheets = job.get("sheet_ids")
+        sheet_ids = (
+            [str(x).strip() for x in raw_sheets if str(x).strip()]
+            if isinstance(raw_sheets, list)
+            else []
+        )
     if "knowledge_note_ids" in job and job.get("knowledge_note_ids") is not None:
         raw_ids = job.get("knowledge_note_ids")
         knowledge_note_ids = (
@@ -480,6 +498,7 @@ async def run_note_research_job(
             use_knowledge=use_knowledge,
             knowledge_note_ids=knowledge_note_ids,
             quote=quote_text,
+            sheet_ids=sheet_ids,
             on_progress=on_progress,
         )
         comment = result.get("comment") or {}

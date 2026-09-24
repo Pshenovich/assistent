@@ -208,6 +208,7 @@ def begin_job(
     knowledge_note_ids: list[str] | None = None,
     quote: str = "",
     reply_to_id: int | None = None,
+    sheet_ids: list[str] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     key = job_key(user_id, kind, item_id)
     now = time.time()
@@ -236,6 +237,11 @@ def begin_job(
             "knowledge_note_ids": (
                 [str(x).strip() for x in knowledge_note_ids if str(x).strip()]
                 if knowledge_note_ids is not None
+                else None
+            ),
+            "sheet_ids": (
+                [str(x).strip() for x in sheet_ids if str(x).strip()]
+                if sheet_ids is not None
                 else None
             ),
             "progress": _progress_view(
@@ -334,6 +340,44 @@ def format_chair_comment(payload: dict[str, Any], *, heading: str | None = None)
     if len(text) > COMMENT_LIMIT:
         text = text[: COMMENT_LIMIT - 1] + "…"
     return text
+
+
+def load_note_excerpt_for_agents(
+    user_id: int | str,
+    kind: str,
+    item_id: str | int,
+    *,
+    sheet_ids: list[str] | None = None,
+    focus_id: str = "main",
+    budget: int = NOTE_BODY_LIMIT,
+) -> tuple[str, str]:
+    title, body = load_note_for_paei(user_id, kind, item_id)
+    if sheet_ids is None or (kind or "").strip() != "local":
+        return title, _clip_prompt((body or "").strip() or "(пустая заметка)", budget)
+    from assistant.board.share_source import share_body_to_text
+    from assistant.nlu.ask_context import pack_note_sheets
+    from assistant.stores import note_sheets as note_sheets_store
+    from assistant.stores import notes as notes_store
+
+    note = notes_store.get_accessible_note(user_id, int(item_id), with_sharing=False)
+    if not note:
+        return title, _clip_prompt((body or "").strip() or "(пустая заметка)", budget)
+    rows = []
+    for sheet in note_sheets_store.list_sheets(note):
+        rows.append(
+            {
+                "id": str(sheet.get("id")),
+                "title": str(sheet.get("title") or ""),
+                "body": share_body_to_text(str(sheet.get("body") or "")),
+            }
+        )
+    packed = pack_note_sheets(
+        rows,
+        selected_ids=sheet_ids,
+        focus_id=focus_id,
+        budget=budget,
+    )
+    return title, packed or "(пустая заметка)"
 
 
 def load_note_for_paei(user_id: int | str, kind: str, item_id: str | int) -> tuple[str, str]:
@@ -437,10 +481,14 @@ async def run_note_paei(
     knowledge_note_ids: list[str] | None = None,
     quote: str = "",
     reply_to_id: int | None = None,
+    sheet_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     store.init_db()
-    title, body = load_note_for_paei(user_id, kind, item_id)
-    excerpt = _clip_prompt((body or "").strip() or "(пустая заметка)", NOTE_BODY_LIMIT)
+    if sheet_ids is not None:
+        sheet_ids = [str(x).strip() for x in sheet_ids if str(x).strip()]
+    title, excerpt = load_note_excerpt_for_agents(
+        user_id, kind, item_id, sheet_ids=sheet_ids, budget=NOTE_BODY_LIMIT
+    )
     reply_text = (reply or "").strip()
     if knowledge_note_ids is not None:
         knowledge_note_ids = [str(x).strip() for x in knowledge_note_ids if str(x).strip()]
@@ -484,6 +532,8 @@ async def run_note_paei(
             question += f"Запрос автора: {reply_text}\n\n"
         question += excerpt
         extra = "Источник: заметка миниаппа Leo. " + _NOTE_FOCUS
+        if sheet_ids and "main" in sheet_ids and any(sid != "main" for sid in sheet_ids):
+            extra += " Листы кроме Основной — фон, не тема совета."
         if use_knowledge:
             extra += " COMPANY CONTEXT — вкладка «База знаний», только как фон."
         else:
@@ -546,6 +596,7 @@ async def run_note_paei_job(
     knowledge_note_ids: list[str] | None = None,
     quote: str = "",
     reply_to_id: int | None = None,
+    sheet_ids: list[str] | None = None,
 ) -> None:
     key = job_key(user_id, kind, item_id)
     job = get_job(user_id, kind, item_id) or {}
@@ -553,6 +604,13 @@ async def run_note_paei_job(
     thread_parent = parent_id if parent_id is not None else job.get("parent_id")
     quote_text = (quote or job.get("quote") or "").strip()
     target_id = reply_to_id if reply_to_id is not None else job.get("reply_to_id")
+    if "sheet_ids" in job and job.get("sheet_ids") is not None:
+        raw_sheets = job.get("sheet_ids")
+        sheet_ids = (
+            [str(x).strip() for x in raw_sheets if str(x).strip()]
+            if isinstance(raw_sheets, list)
+            else []
+        )
     if "knowledge_note_ids" in job and job.get("knowledge_note_ids") is not None:
         raw_ids = job.get("knowledge_note_ids")
         knowledge_note_ids = (
@@ -593,6 +651,7 @@ async def run_note_paei_job(
             knowledge_note_ids=knowledge_note_ids,
             quote=quote_text,
             reply_to_id=target_id,
+            sheet_ids=sheet_ids,
         )
         comment = result.get("comment") or {}
         _update_job(

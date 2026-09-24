@@ -2523,6 +2523,16 @@ class _MiniappLocalNotePatch(BaseModel):
     expected_revision: Optional[int] = None
 
 
+class _MiniappNoteSheetCreate(BaseModel):
+    title: str = ""
+
+
+class _MiniappNoteSheetPatch(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    expected_revision: Optional[int] = None
+
+
 class _MiniappJournalPatch(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
@@ -2571,6 +2581,7 @@ class _MiniappNotePaeiStart(BaseModel):
     quote: str = ""
     use_knowledge: bool = True
     knowledge_note_ids: Optional[list[str]] = None
+    sheet_ids: Optional[list[str]] = None
 
 
 class _MiniappNoteResearchStart(_MiniappNotePaeiStart):
@@ -2591,6 +2602,7 @@ class _MiniappGptChatBody(BaseModel):
     quotes: list[str] = Field(default_factory=list)
     use_knowledge: bool = False
     knowledge_note_ids: Optional[list[str]] = None
+    sheet_ids: Optional[list[str]] = None
     history: list[_MiniappGptChatTurn] = Field(default_factory=list)
     model: Optional[str] = None
     file_ids: list[int] = Field(default_factory=list)
@@ -5546,6 +5558,129 @@ async def miniapp_local_note_get(
     return {"ok": True, "item": item}
 
 
+@miniapp_router.get("/notes/local/{note_id}/sheets")
+async def miniapp_note_sheets_list(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import note_sheets as note_sheets_store
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> list[dict[str, Any]] | None:
+        note = notes_store.get_accessible_note(uid, note_id)
+        if not note:
+            return None
+        return note_sheets_store.list_sheets(note)
+
+    sheets = await run_in_threadpool(_run)
+    if sheets is None:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return {"ok": True, "sheets": sheets}
+
+
+@miniapp_router.post("/notes/local/{note_id}/sheets")
+async def miniapp_note_sheet_create(
+    note_id: int,
+    body: _MiniappNoteSheetCreate,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import note_sheets as note_sheets_store
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any] | None:
+        note = notes_store.get_accessible_note(uid, note_id)
+        if not note:
+            return None
+        return note_sheets_store.create_sheet(note, body.title)
+
+    try:
+        item = await run_in_threadpool(_run)
+    except note_sheets_store.SheetError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if item is None:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return {"ok": True, "item": item}
+
+
+@miniapp_router.patch("/notes/local/{note_id}/sheets/{sheet_id}")
+async def miniapp_note_sheet_patch(
+    note_id: int,
+    sheet_id: str,
+    body: _MiniappNoteSheetPatch,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import note_sheets as note_sheets_store
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    if note_sheets_store.is_primary_id(sheet_id):
+        raise HTTPException(status_code=400, detail="Основную правьте через заметку")
+    if body.title is None and body.description is None:
+        raise HTTPException(status_code=400, detail="Укажите title и/или description")
+    try:
+        extra_id = int(sheet_id)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail="Некорректный лист") from e
+
+    def _run() -> dict[str, Any] | None:
+        if notes_store.get_accessible_note(uid, note_id, with_sharing=False) is None:
+            return None
+        return note_sheets_store.update_sheet(
+            note_id,
+            extra_id,
+            title=body.title,
+            body=body.description,
+            expected_revision=body.expected_revision,
+        )
+
+    try:
+        item = await run_in_threadpool(_run)
+    except note_sheets_store.SheetConflictError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Лист изменён другим участником", "item": e.sheet},
+        ) from e
+    except note_sheets_store.SheetError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if item is None:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return {"ok": True, "item": item}
+
+
+@miniapp_router.delete("/notes/local/{note_id}/sheets/{sheet_id}")
+async def miniapp_note_sheet_delete(
+    note_id: int,
+    sheet_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import note_sheets as note_sheets_store
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    if note_sheets_store.is_primary_id(sheet_id):
+        raise HTTPException(status_code=400, detail="Основную нельзя удалить")
+    try:
+        extra_id = int(sheet_id)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail="Некорректный лист") from e
+
+    def _run() -> bool | None:
+        if notes_store.get_accessible_note(uid, note_id, with_sharing=False) is None:
+            return None
+        return note_sheets_store.delete_sheet(note_id, extra_id)
+
+    ok = await run_in_threadpool(_run)
+    if ok is None:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    if not ok:
+        raise HTTPException(status_code=404, detail="Лист не найден")
+    return {"ok": True}
+
+
 @miniapp_router.get("/notes/local/{note_id}/members")
 async def miniapp_note_members_list(
     note_id: int,
@@ -6017,6 +6152,9 @@ async def miniapp_note_paei_start(
         use_knowledge = bool(kb_ids)
     else:
         use_knowledge = payload.use_knowledge is not False
+    sheet_ids = payload.sheet_ids
+    if sheet_ids is not None:
+        sheet_ids = [str(x).strip() for x in sheet_ids if str(x).strip()]
     if reply_text:
         comments = await run_in_threadpool(
             share_comments_store.list_comments, owner, kind, item_id
@@ -6067,6 +6205,7 @@ async def miniapp_note_paei_start(
             knowledge_note_ids=kb_ids,
             quote=quote_text,
             reply_to_id=reply_to_id,
+            sheet_ids=sheet_ids,
         )
         followup_parent = int(root_id)
     else:
@@ -6076,6 +6215,7 @@ async def miniapp_note_paei_start(
             item_id,
             use_knowledge=use_knowledge,
             knowledge_note_ids=kb_ids,
+            sheet_ids=sheet_ids,
         )
         followup_parent = None
     if started:
@@ -6088,6 +6228,7 @@ async def miniapp_note_paei_start(
                 parent_id=followup_parent,
                 use_knowledge=use_knowledge,
                 knowledge_note_ids=kb_ids,
+                sheet_ids=sheet_ids,
             )
         )
     return {
@@ -6150,6 +6291,9 @@ async def miniapp_note_research_start(
         use_knowledge = bool(kb_ids)
     else:
         use_knowledge = payload.use_knowledge is not False
+    sheet_ids = payload.sheet_ids
+    if sheet_ids is not None:
+        sheet_ids = [str(x).strip() for x in sheet_ids if str(x).strip()]
     running = get_job(owner, kind, item_id)
     if running and str(running.get("status") or "") == "running":
         raise HTTPException(status_code=409, detail="Дождитесь ответа Research")
@@ -6198,6 +6342,7 @@ async def miniapp_note_research_start(
         use_knowledge=use_knowledge,
         knowledge_note_ids=kb_ids,
         quote=quote_text,
+        sheet_ids=sheet_ids,
     )
     if started:
         asyncio.create_task(
@@ -6210,6 +6355,7 @@ async def miniapp_note_research_start(
                 use_knowledge=use_knowledge,
                 knowledge_note_ids=kb_ids,
                 quote=quote_text,
+                sheet_ids=sheet_ids,
             )
         )
     return {
