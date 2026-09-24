@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260924-sheets3";
+  var WEBAPP_BUILD = "20260924-offline-queue-flush";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260924-sheets3";
+  const NOTE_EDITOR_ASSET_V = "20260924-offline-queue-flush";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -197,12 +197,26 @@
     lastNetworkFailAt = Date.now();
   }
 
+  function markNetworkOk() {
+    lastNetworkFailAt = 0;
+  }
+
+  /** Hard offline only — browser reports no connectivity. */
   function isAppOffline() {
     try {
       if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
     } catch (_) {}
-    // Mobile airplane mode often keeps onLine=true while fetch hangs.
-    if (lastNetworkFailAt && Date.now() - lastNetworkFailAt < 60000) return true;
+    return false;
+  }
+
+  /**
+   * Soft hint for note/reminder local writes after a recent transport failure.
+   * Must NOT gate apiFetch or flushOfflineQueue — that left the sync banner
+   * stuck on «ждут сеть» while the device was actually online.
+   */
+  function preferOfflineWrite() {
+    if (isAppOffline()) return true;
+    if (lastNetworkFailAt && Date.now() - lastNetworkFailAt < 12000) return true;
     return false;
   }
 
@@ -392,7 +406,20 @@
       el = document.createElement("div");
       el.id = "offline-sync-banner";
       el.className = "offline-sync-banner";
-      el.setAttribute("role", "status");
+      el.setAttribute("role", "button");
+      el.setAttribute("tabindex", "0");
+      el.title = "Нажмите, чтобы синхронизировать";
+      el.addEventListener("click", function () {
+        markNetworkOk();
+        el.textContent = "Синхронизация…";
+        flushOfflineQueue({ force: true });
+      });
+      el.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          el.click();
+        }
+      });
       document.body.appendChild(el);
     }
     if (!n) {
@@ -401,10 +428,113 @@
       return;
     }
     el.classList.remove("hidden");
+    if (offlineFlushInFlight) {
+      el.textContent = "Синхронизация…";
+      return;
+    }
     el.textContent =
       n === 1
-        ? "1 изменение ждёт сеть"
-        : n + " изменений ждут сеть";
+        ? "1 изменение ждёт сеть · нажмите"
+        : n + " изменений ждут сеть · нажмите";
+  }
+
+  var offlineFlushInFlight = false;
+
+  async function flushOfflineQueue(opts) {
+    opts = opts || {};
+    if (offlineFlushInFlight) return;
+    // Only hard offline blocks flush. Soft failure latch must not freeze the queue.
+    if (!opts.force && isAppOffline()) {
+      syncOfflineQueueBadge();
+      return;
+    }
+    var q = readOfflineQueue();
+    if (!q.length) {
+      syncOfflineQueueBadge();
+      return;
+    }
+    offlineFlushInFlight = true;
+    syncOfflineQueueBadge();
+    try {
+      while (q.length) {
+        if (!opts.force && isAppOffline()) break;
+        var op = q[0];
+        try {
+          var bodyStr =
+            op.body != null
+              ? typeof op.body === "string"
+                ? op.body
+                : JSON.stringify(op.body)
+              : undefined;
+          var res = await apiFetchReal(op.path, {
+            method: op.method || "POST",
+            body: bodyStr,
+          });
+          var completed = q.shift();
+          writeOfflineQueue(q);
+          if (completed.type === "note_create") {
+            var createdId =
+              (res && res.item && res.item.id) || (res && res.id) || null;
+            if (createdId) {
+              remapOfflineNoteId(completed.clientId, createdId);
+              q = readOfflineQueue();
+            }
+          } else if (completed.type === "sheet_create") {
+            var createdSheetId =
+              (res && res.item && res.item.id) || (res && res.id) || null;
+            if (createdSheetId) {
+              remapOfflineSheetId(completed.clientId, createdSheetId, completed.noteId);
+              q = readOfflineQueue();
+            }
+          } else if (completed.type === "reminder_create") {
+            var rid =
+              (res && res.item && res.item.id) ||
+              (res && res.id) ||
+              (res && res.reminder && res.reminder.id) ||
+              null;
+            if (rid) {
+              remapOfflineReminderId(completed.clientId, rid);
+              q = readOfflineQueue();
+            }
+          }
+        } catch (e) {
+          if (isTransientApiError(e)) break;
+          // Permanent failure: drop op so the queue does not stick forever.
+          q.shift();
+          writeOfflineQueue(q);
+          console.warn("offline op dropped", op, e);
+        }
+      }
+      if (!readOfflineQueue().length) {
+        try {
+          await loadNotes();
+        } catch (_) {}
+        try {
+          await loadActual();
+        } catch (_) {}
+      }
+    } finally {
+      offlineFlushInFlight = false;
+      syncOfflineQueueBadge();
+    }
+  }
+
+  function bindOfflineQueueListenersOnce() {
+    if (window._leoOfflineQueueBound) return;
+    window._leoOfflineQueueBound = true;
+    window.addEventListener("online", function () {
+      markNetworkOk();
+      flushOfflineQueue({ force: true });
+    });
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") {
+        flushOfflineQueue({ force: true });
+      }
+    });
+    syncOfflineQueueBadge();
+    setTimeout(function () {
+      flushOfflineQueue({ force: true });
+    }, 1200);
   }
 
   function remapOfflineNoteId(tmpId, realId) {
@@ -511,91 +641,6 @@
       lastMeetingsLeft || { events: [], connected: false },
       lastMeetingsRight
     );
-  }
-
-  var offlineFlushInFlight = false;
-
-  async function flushOfflineQueue() {
-    if (offlineFlushInFlight) return;
-    if (isAppOffline()) {
-      syncOfflineQueueBadge();
-      return;
-    }
-    var q = readOfflineQueue();
-    if (!q.length) {
-      syncOfflineQueueBadge();
-      return;
-    }
-    offlineFlushInFlight = true;
-    try {
-      while (q.length) {
-        var op = q[0];
-        try {
-          var bodyStr =
-            op.body != null
-              ? typeof op.body === "string"
-                ? op.body
-                : JSON.stringify(op.body)
-              : undefined;
-          var res = await apiFetchReal(op.path, {
-            method: op.method || "POST",
-            body: bodyStr,
-          });
-          if (op.type === "note_create") {
-            var createdId =
-              (res && res.item && res.item.id) || (res && res.id) || null;
-            if (createdId) remapOfflineNoteId(op.clientId, createdId);
-          }
-          if (op.type === "sheet_create") {
-            var createdSheetId =
-              (res && res.item && res.item.id) || (res && res.id) || null;
-            if (createdSheetId) remapOfflineSheetId(op.clientId, createdSheetId, op.noteId);
-          }
-          if (op.type === "reminder_create") {
-            var rid =
-              (res && res.item && res.item.id) ||
-              (res && res.id) ||
-              (res && res.reminder && res.reminder.id) ||
-              null;
-            if (rid) remapOfflineReminderId(op.clientId, rid);
-          }
-          q.shift();
-          writeOfflineQueue(q);
-        } catch (e) {
-          if (isTransientApiError(e)) break;
-          // Permanent failure: drop op so the queue does not stick forever.
-          q.shift();
-          writeOfflineQueue(q);
-          console.warn("offline op dropped", op, e);
-        }
-      }
-      if (!readOfflineQueue().length) {
-        try {
-          await loadNotes();
-        } catch (_) {}
-        try {
-          await loadActual();
-        } catch (_) {}
-      }
-    } finally {
-      offlineFlushInFlight = false;
-      syncOfflineQueueBadge();
-    }
-  }
-
-  function bindOfflineQueueListenersOnce() {
-    if (window._leoOfflineQueueBound) return;
-    window._leoOfflineQueueBound = true;
-    window.addEventListener("online", function () {
-      flushOfflineQueue();
-    });
-    document.addEventListener("visibilitychange", function () {
-      if (document.visibilityState === "visible") flushOfflineQueue();
-    });
-    syncOfflineQueueBadge();
-    setTimeout(function () {
-      flushOfflineQueue();
-    }, 1200);
   }
 
   function loadNoteEditorScripts() {
@@ -2521,7 +2566,7 @@
     if (!id) {
       throw new Error("Некорректный идентификатор заметки");
     }
-    if (isAppOffline() || String(id).indexOf("tmp_") === 0) {
+    if (preferOfflineWrite() || String(id).indexOf("tmp_") === 0) {
       removeLocalFromCache(id);
       removeKnowledgeFromCache(id);
       enqueueOfflineOp({
@@ -2559,7 +2604,9 @@
     if (p.indexOf("/gpt/chat") >= 0) return 180000;
     if (/\/paei(\/|\?|$)/.test(p) || p.slice(-5) === "/paei") return 180000;
     if (/\/research(\/|\?|$)/.test(p) || p.slice(-9) === "/research") return 180000;
-    return 8000;
+    var method = String((o && o.method) || "GET").toUpperCase();
+    if (method === "GET" || method === "HEAD") return 20000;
+    return 30000;
   }
 
   async function apiFetchOnce(path, o) {
@@ -2635,17 +2682,23 @@
         if (res.status === 409 && body && body.detail && typeof body.detail === "object") {
           err.conflictItem = body.detail.item || null;
         }
-        if (res.status >= 500) markNetworkFailure();
+        // 5xx is a server problem, not proof the device is offline.
         throw err;
       }
+      markNetworkOk();
       return body;
     } catch (e) {
       if (abortTimer) clearTimeout(abortTimer);
-      if (timedOut || (e && e.name === "AbortError")) {
-        if (timeoutMs <= 15000) markNetworkFailure();
-        var tErr = new Error(timedOut ? "Нет ответа сети" : "Запрос отменён");
+      if (timedOut) {
+        markNetworkFailure();
+        var tErr = new Error("Нет ответа сети");
         tErr.status = 0;
         throw tErr;
+      }
+      if (e && e.name === "AbortError") {
+        var aErr = new Error("Запрос отменён");
+        aErr.status = 0;
+        throw aErr;
       }
       if (e && e.status != null) throw e;
       markNetworkFailure();
@@ -2658,17 +2711,14 @@
   async function apiFetchReal(path, opts) {
     const o = opts || {};
     const method = String(o.method || "GET").toUpperCase();
+    // Only hard offline fails fast.
     if (isAppOffline()) {
       var offlineErr = new Error("Нет сети");
       offlineErr.status = 0;
       throw offlineErr;
     }
     const maxTries =
-      method === "GET" || method === "HEAD"
-        ? isAppOffline() || lastNetworkFailAt
-          ? 1
-          : 12
-        : 1;
+      method === "GET" || method === "HEAD" ? (lastNetworkFailAt ? 2 : 12) : 1;
     var lastErr = null;
     for (var i = 0; i < maxTries; i++) {
       try {
@@ -7425,7 +7475,7 @@
           : [],
       };
       try {
-        if (isAppOffline() || (id && String(id).indexOf("tmp_") === 0)) {
+        if (preferOfflineWrite() || (id && String(id).indexOf("tmp_") === 0)) {
           var clientId = id || newTempId("tmp_rem_");
           if (id) {
             applyReminderLocal(function (items) {
@@ -7532,7 +7582,7 @@
       const id = document.getElementById("modal-reminder-id").value;
       if (!confirm("Удалить напоминание?")) return;
       try {
-        if (isAppOffline() || String(id).indexOf("tmp_") === 0) {
+        if (preferOfflineWrite() || String(id).indexOf("tmp_") === 0) {
           applyReminderLocal(function (items) {
             return items.filter(function (r) {
               return String(r.id) !== String(id);
@@ -7592,7 +7642,7 @@
   async function deleteReminderById(id, opts) {
     opts = opts || {};
     if (!id) return;
-    if (isAppOffline() || String(id).indexOf("tmp_") === 0) {
+    if (preferOfflineWrite() || String(id).indexOf("tmp_") === 0) {
       applyReminderLocal(function (items) {
         return items.filter(function (r) {
           return String(r.id) !== String(id);
@@ -11635,7 +11685,7 @@
       description: html,
       expected_revision: sheet.revision,
     };
-    if (isAppOffline() || String(noteId).indexOf("tmp_") === 0) {
+    if (preferOfflineWrite() || String(noteId).indexOf("tmp_") === 0) {
       sheet.body = html;
       sheet.description = html;
       enqueueOfflineOp({
@@ -11906,7 +11956,7 @@
       return;
     }
     var title = opts.title || "";
-    if (isAppOffline() || String(noteId).indexOf("tmp_") === 0) {
+    if (preferOfflineWrite() || String(noteId).indexOf("tmp_") === 0) {
       var tmpId = newTempId("tmp_sheet_");
       var local = {
         id: tmpId,
@@ -12557,7 +12607,7 @@
     var title = titleFromAnswerHtml(clean);
     var body = { title: title, description: clean, sync_todoist: false };
     try {
-      if (isAppOffline()) {
+      if (preferOfflineWrite()) {
         var tmpId = newTempId("tmp_note_");
         prependLocalInCache({ id: tmpId, title: title, description: clean, body: clean });
         if (notesDataCache) renderNotesPanesFromData(notesDataCache);
@@ -15754,7 +15804,7 @@
       }
     }
     try {
-      if (isAppOffline() || String(noteId).indexOf("tmp_") === 0) {
+      if (preferOfflineWrite() || String(noteId).indexOf("tmp_") === 0) {
         applyLocalPin();
         enqueueOfflineOp({
           type: "note_pin",
@@ -16639,7 +16689,7 @@
             hydrateNoteSheets(Object.assign({}, n, createdLocal), noteSheetState.primaryBody || fields.description);
           }
         }
-        if (isAppOffline()) {
+        if (preferOfflineWrite()) {
           var tmpNoteId = newTempId("tmp_note_");
           applyCreatedLocal({
             id: tmpNoteId,
@@ -16706,7 +16756,7 @@
           }
         }
         var offlinePatch =
-          isAppOffline() || String(noteId).indexOf("tmp_") === 0;
+          preferOfflineWrite() || String(noteId).indexOf("tmp_") === 0;
         if (offlinePatch) {
           var localPatch = {
             id: noteId,
