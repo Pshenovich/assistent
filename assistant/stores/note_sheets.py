@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -118,6 +119,30 @@ def list_extra_sheets(note_id: int) -> list[dict[str, Any]]:
 def list_sheets(note: dict[str, Any]) -> list[dict[str, Any]]:
     extras = list_extra_sheets(int(note["id"])) if note_allows_sheets(note) else []
     return [primary_sheet(note), *extras]
+
+
+def compose_share_body(
+    note: dict[str, Any], sheet_ids: list[str] | None
+) -> tuple[str, list[dict[str, Any]]]:
+    rows = list_sheets(note)
+    wanted = [str(x).strip() for x in (sheet_ids or []) if str(x).strip()]
+    if wanted:
+        selected = [row for row in rows if str(row.get("id")) in set(wanted)]
+    else:
+        selected = [primary_sheet(note)]
+    if not selected:
+        selected = [primary_sheet(note)]
+    parts: list[str] = []
+    extras_only = len(selected) > 1 or not selected[0].get("is_primary")
+    for row in selected:
+        body = str(row.get("body") or "").strip()
+        title = str(row.get("title") or "").strip() or PRIMARY_SHEET_TITLE
+        if extras_only and not row.get("is_primary"):
+            heading = f"<h2>{html.escape(title)}</h2>"
+            parts.append(f"{heading}\n{body}" if body else heading)
+        elif body:
+            parts.append(body)
+    return "\n".join(parts).strip(), selected
 
 
 def get_extra_sheet(note_id: int, sheet_id: int) -> Optional[dict[str, Any]]:

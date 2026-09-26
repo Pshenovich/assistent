@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 import sqlite3
 from datetime import datetime, timezone
@@ -25,12 +26,43 @@ def normalize_access(raw: Any) -> str:
     return _DEFAULT_ACCESS
 
 
+def normalize_sheet_ids(raw: Any) -> list[str]:
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        try:
+            raw = json.loads(text)
+        except Exception:
+            raw = [p.strip() for p in text.split(",") if p.strip()]
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        sid = str(item or "").strip()
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        out.append(sid)
+    return out
+
+
 def _ensure_access_column(conn: sqlite3.Connection) -> None:
     cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(share_links)")}
     if "access" not in cols:
         conn.execute(
             "ALTER TABLE share_links ADD COLUMN access TEXT NOT NULL DEFAULT 'view'"
         )
+        conn.commit()
+
+
+def _ensure_sheet_ids_column(conn: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(share_links)")}
+    if "sheet_ids" not in cols:
+        conn.execute("ALTER TABLE share_links ADD COLUMN sheet_ids TEXT")
         conn.commit()
 
 
@@ -54,6 +86,7 @@ def _conn() -> sqlite3.Connection:
         "ON share_links(user_id, item_kind, item_id)"
     )
     _ensure_access_column(conn)
+    _ensure_sheet_ids_column(conn)
     conn.commit()
     return conn
 
@@ -77,6 +110,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "created_at": row["created_at"],
         "revoked_at": row["revoked_at"],
         "access": access,
+        "sheet_ids": normalize_sheet_ids(row["sheet_ids"] if "sheet_ids" in keys else None),
     }
 
 
@@ -106,6 +140,35 @@ def get_active_share(
         )
         row = cur.fetchone()
     return _row_to_dict(row) if row else None
+
+
+def update_share_sheet_ids(
+    user_id: int | str,
+    item_kind: str,
+    item_id: str | int,
+    sheet_ids: list[str] | None,
+) -> Optional[dict[str, Any]]:
+    kind = (item_kind or "").strip()
+    if kind not in _VALID_KINDS:
+        return None
+    uid = _uid(user_id)
+    iid = str(item_id).strip()
+    if not iid:
+        return None
+    payload = json.dumps(normalize_sheet_ids(sheet_ids), ensure_ascii=False)
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            UPDATE share_links
+            SET sheet_ids = ?
+            WHERE user_id = ? AND item_kind = ? AND item_id = ? AND revoked_at IS NULL
+            """,
+            (payload, uid, kind, iid),
+        )
+        _conn().commit()
+        if cur.rowcount <= 0:
+            return None
+    return get_active_share(uid, kind, iid)
 
 
 def update_share_access(
@@ -168,6 +231,7 @@ def create_or_get_share(
     item_kind: str,
     item_id: str | int,
     access: str | None = None,
+    sheet_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     kind = (item_kind or "").strip()
     if kind not in _VALID_KINDS:
@@ -178,25 +242,27 @@ def create_or_get_share(
         raise ValueError("Не указан идентификатор записи")
     existing = get_active_share(uid, kind, iid)
     if existing:
-        if access is None:
-            return existing
-        acc = normalize_access(access)
-        if acc == existing.get("access"):
-            return existing
-        updated = update_share_access(uid, kind, iid, acc)
-        return updated or existing
+        out = existing
+        if access is not None:
+            acc = normalize_access(access)
+            if acc != existing.get("access"):
+                out = update_share_access(uid, kind, iid, acc) or existing
+        if sheet_ids is not None:
+            out = update_share_sheet_ids(uid, kind, iid, sheet_ids) or out
+        return out
     acc = normalize_access(access)
+    ids = normalize_sheet_ids(sheet_ids)
     token = _new_token()
     ts = _now_iso()
     with _LOCK:
         _conn().execute(
             """
             INSERT INTO share_links (
-                token, user_id, item_kind, item_id, created_at, revoked_at, access
+                token, user_id, item_kind, item_id, created_at, revoked_at, access, sheet_ids
             )
-            VALUES (?, ?, ?, ?, ?, NULL, ?)
+            VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
             """,
-            (token, uid, kind, iid, ts, acc),
+            (token, uid, kind, iid, ts, acc, json.dumps(ids, ensure_ascii=False)),
         )
         _conn().commit()
     return {
@@ -207,6 +273,7 @@ def create_or_get_share(
         "created_at": ts,
         "revoked_at": None,
         "access": acc,
+        "sheet_ids": ids,
     }
 
 

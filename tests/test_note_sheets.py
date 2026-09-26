@@ -117,6 +117,25 @@ class NoteSheetsStoreTests(unittest.TestCase):
         )
         self.assertEqual(none, "(пустая заметка)")
 
+    def test_compose_share_body_selects_sheets(self) -> None:
+        note = notes_store.create_note(9, "Сделка", "<p>основная</p>")
+        extra = sheets.create_sheet(note, "Финальный")
+        sheets.update_sheet(note["id"], extra["id"], body="<p>чистовик</p>")
+        note = notes_store.get_note(9, note["id"])
+        assert note is not None
+        empty, selected = sheets.compose_share_body(note, [])
+        self.assertIn("основная", empty)
+        self.assertNotIn("чистовик", empty)
+        self.assertEqual([str(r["id"]) for r in selected], ["main"])
+        only_extra, rows = sheets.compose_share_body(note, [str(extra["id"])])
+        self.assertNotIn("основная", only_extra)
+        self.assertIn("Финальный", only_extra)
+        self.assertIn("чистовик", only_extra)
+        self.assertEqual([str(r["id"]) for r in rows], [str(extra["id"])])
+        both, _ = sheets.compose_share_body(note, ["main", str(extra["id"])])
+        self.assertIn("основная", both)
+        self.assertIn("чистовик", both)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260924-sheets3";
+  var WEBAPP_BUILD = "20260926-share-sheets";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260924-sheets3";
+  const NOTE_EDITOR_ASSET_V = "20260926-share-sheets";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -2324,6 +2324,7 @@
         .join(". ") || fallback || "Ошибка";
     }
     if (d && typeof d === "object") {
+      if (typeof d.message === "string" && d.message.trim()) return d.message.trim();
       try {
         return JSON.stringify(d);
       } catch (_) {
@@ -2633,6 +2634,7 @@
         const err = new Error(msg);
         err.status = res.status;
         if (res.status === 409 && body && body.detail && typeof body.detail === "object") {
+          err.detail = body.detail;
           err.conflictItem = body.detail.item || null;
         }
         if (res.status >= 500) markNetworkFailure();
@@ -9629,6 +9631,7 @@
     rightEditor: null,
     primaryBody: "",
     sheetTimers: {},
+    sheetPersists: {},
     leftScroll: {},
     skipCaretScroll: false,
     enabled: false,
@@ -9801,6 +9804,7 @@
       wrap._shareShared = false;
       wrap._shareUrl = "";
       wrap._shareAccess = "view";
+      wrap._shareSheetIds = [];
       wrap._paeiRunning = false;
       wrap._commentChairId = null;
       wrap._commentDraft = null;
@@ -11391,6 +11395,7 @@
     noteSheetState.rightEditor = null;
     noteSheetState.primaryBody = primaryBody || "";
     noteSheetState.sheetTimers = {};
+    noteSheetState.sheetPersists = {};
     noteSheetState.leftScroll = {};
     noteSheetState.skipCaretScroll = false;
     noteSheetState.enabled = false;
@@ -11622,6 +11627,22 @@
 
   async function persistExtraSheet(sheetId) {
     var id = String(sheetId || "");
+    if (!id || isPrimarySheetId(id)) return;
+    var prev = noteSheetState.sheetPersists[id];
+    var run = function () {
+      return persistExtraSheetNow(id);
+    };
+    var next = prev ? prev.then(run, run) : run();
+    noteSheetState.sheetPersists[id] = next;
+    try {
+      return await next;
+    } finally {
+      if (noteSheetState.sheetPersists[id] === next) delete noteSheetState.sheetPersists[id];
+    }
+  }
+
+  async function persistExtraSheetNow(sheetId, retried) {
+    var id = String(sheetId || "");
     var noteId = noteSheetsNoteId();
     var sheet = findNoteSheet(id);
     if (!id || !noteId || !sheet || isPrimarySheetId(id)) return;
@@ -11661,19 +11682,21 @@
           encodeURIComponent(id),
         { method: "PATCH", body: JSON.stringify(body) }
       );
-      if (res && res.item) upsertNoteSheet(res.item);
+      if (res && res.item) {
+        var saved = res.item;
+        saved.body = html;
+        saved.description = html;
+        saved.title = title;
+        upsertNoteSheet(saved);
+      }
     } catch (e) {
-      var detail = e && e.detail;
-      if (e && e.status === 409 && detail && detail.item) {
-        upsertNoteSheet(detail.item);
-        if (String(noteSheetState.leftId) === id) {
-          var left = getLeftNoteRichEditor();
-          if (left && left.setHtml) left.setHtml(detail.item.body || "", { preserveCursor: true });
-        }
-        if (String(noteSheetState.rightId) === id && noteSheetState.rightEditor && noteSheetState.rightEditor.setHtml) {
-          noteSheetState.rightEditor.setHtml(detail.item.body || "", { preserveCursor: true });
-        }
-        return;
+      var remote = e && e.conflictItem;
+      if (e && e.status === 409 && remote) {
+        if (sheet) sheet.revision = remote.revision || sheet.revision;
+        if (!retried) return persistExtraSheetNow(id, true);
+        var err = new Error("Лист изменён в другой вкладке. Сохраните ещё раз.");
+        err.status = 409;
+        throw err;
       }
       throw e;
     }
@@ -14611,11 +14634,15 @@
     wrap._shareShared = !!(data && data.shared);
     wrap._shareUrl = (data && data.url) || "";
     wrap._shareAccess = data && data.access === "comment" ? "comment" : "view";
+    wrap._shareSheetIds = Array.isArray(data && data.sheet_ids)
+      ? data.sheet_ids.map(function (id) { return String(id); })
+      : [];
     syncNoteCommentsPanel();
     patchLocalShareInCache(wrap._shareId, {
       shared: wrap._shareShared,
       share_url: wrap._shareUrl,
       share_access: wrap._shareAccess,
+      share_sheet_ids: wrap._shareSheetIds,
     });
     if (notesDataCache) renderNotesPanesFromData(notesDataCache);
   }
@@ -14671,6 +14698,10 @@
         "</div>" +
         '<p id="note-share-members-hint" class="note-share-members-hint muted small">Добавьте человека из контактов — заметка появится у него в списке с правом редактировать.</p>' +
         "</div>" +
+        '<div id="note-share-sheets-block" class="note-share-sheets-block hidden">' +
+        '<p class="note-share-section-label">Листы</p>' +
+        '<div id="note-share-sheets-list" class="note-share-sheets-list"></div>' +
+        "</div>" +
         '<p class="note-share-section-label">Ссылка</p>' +
         '<label class="note-share-option">' +
         '<input type="radio" name="note-share-access" value="view" />' +
@@ -14711,8 +14742,155 @@
       membersBlock.classList.toggle("hidden", wrap._shareKind !== "local");
     }
     paintShareMembersList();
+    paintShareSheetPicker();
     ov.classList.remove("hidden");
-    if (wrap._shareKind === "local") loadShareMemberContacts();
+    if (wrap._shareKind === "local") {
+      loadShareMemberContacts();
+      refreshShareSheetsState();
+    }
+  }
+
+  function defaultShareSheetIds() {
+    var ids = [];
+    if (noteSheetsEnabled()) {
+      var left = String(noteSheetState.leftId || NOTE_SHEET_MAIN);
+      if (left) ids.push(left);
+      if (noteSheetState.rightMode === "sheet" && noteSheetState.rightId) {
+        var right = String(noteSheetState.rightId);
+        if (right && ids.indexOf(right) < 0) ids.push(right);
+      }
+    }
+    if (!ids.length) ids.push(NOTE_SHEET_MAIN);
+    return ids;
+  }
+
+  function shareSheetOptions() {
+    var wrap = getShareCtx();
+    if (noteSheetsEnabled() && noteSheetsNoteId() && wrap && String(noteSheetsNoteId()) === String(wrap._shareId) && noteSheetState.sheets.length) {
+      return noteSheetState.sheets.slice();
+    }
+    return (wrap && Array.isArray(wrap._shareSheets) ? wrap._shareSheets : []).slice();
+  }
+
+  function selectedShareSheetIds() {
+    var boxes = document.querySelectorAll('#note-share-sheets-list input[name="note-share-sheet"]:checked');
+    var ids = [];
+    boxes.forEach(function (box) {
+      var val = String(box.value || "").trim();
+      if (val && ids.indexOf(val) < 0) ids.push(val);
+    });
+    if (ids.length) return ids;
+    var wrap = getShareCtx();
+    if (wrap && wrap._shareShared && Array.isArray(wrap._shareSheetIds) && wrap._shareSheetIds.length) {
+      return wrap._shareSheetIds.slice();
+    }
+    return defaultShareSheetIds();
+  }
+
+  function paintShareSheetPicker() {
+    var ov = document.getElementById("note-share-sheet-overlay");
+    var block = document.getElementById("note-share-sheets-block");
+    var list = document.getElementById("note-share-sheets-list");
+    var wrap = getShareCtx();
+    if (!block || !list || !wrap) return;
+    if (!block.parentNode && ov) {
+      var labels = ov.querySelectorAll(".note-share-section-label");
+      var link = null;
+      labels.forEach(function (el) {
+        if (el.textContent === "Ссылка") link = el;
+      });
+      if (link && link.parentNode) link.parentNode.insertBefore(block, link);
+    }
+    var sheets = shareSheetOptions();
+    var show = wrap._shareKind === "local" && sheets.length > 1;
+    block.classList.toggle("hidden", !show);
+    list.innerHTML = "";
+    if (!show) return;
+    var selected = wrap._shareShared && Array.isArray(wrap._shareSheetIds) && wrap._shareSheetIds.length
+      ? wrap._shareSheetIds.slice()
+      : defaultShareSheetIds();
+    var known = {};
+    selected.forEach(function (id) {
+      known[String(id)] = true;
+    });
+    var hasChecked = sheets.some(function (s) {
+      return known[String(s.id)];
+    });
+    sheets.forEach(function (s) {
+      var id = String(s.id);
+      var label = document.createElement("label");
+      label.className = "note-share-option";
+      var input = document.createElement("input");
+      input.type = "checkbox";
+      input.name = "note-share-sheet";
+      input.value = id;
+      input.checked = hasChecked ? !!known[id] : isPrimarySheetId(id);
+      var span = document.createElement("span");
+      var strong = document.createElement("strong");
+      strong.textContent = s.title || (isPrimarySheetId(id) ? "Основная" : "Лист");
+      span.appendChild(strong);
+      label.appendChild(input);
+      label.appendChild(span);
+      list.appendChild(label);
+    });
+  }
+
+  function refreshShareSheetsState() {
+    var wrap = getShareCtx();
+    if (!wrap || wrap._shareKind !== "local" || !wrap._shareId) {
+      paintShareSheetPicker();
+      return;
+    }
+    var kind = wrap._shareKind;
+    var itemId = wrap._shareId;
+    apiFetch("/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/share", {
+      method: "GET",
+    })
+      .then(function (data) {
+        if (wrap._shareId !== String(itemId)) return;
+        applyShareState(wrap, data);
+        var ov = document.getElementById("note-share-sheet-overlay");
+        if (ov) {
+          var access = wrap._shareShared && wrap._shareAccess === "comment" ? "comment" : "view";
+          ov.querySelectorAll('input[name="note-share-access"]').forEach(function (radio) {
+            radio.checked = radio.value === access;
+          });
+          var copy = document.getElementById("note-share-sheet-copy");
+          if (copy) copy.textContent = wrap._shareShared ? "Сохранить и скопировать" : "Скопировать ссылку";
+        }
+        paintShareSheetPicker();
+      })
+      .catch(function () {});
+    if (
+      noteSheetsEnabled() &&
+      noteSheetsNoteId() &&
+      String(noteSheetsNoteId()) === String(wrap._shareId) &&
+      noteSheetState.sheets.length > 1
+    ) {
+      paintShareSheetPicker();
+      return;
+    }
+    apiFetch("/notes/local/" + encodeURIComponent(wrap._shareId) + "/sheets", { method: "GET" })
+      .then(function (data) {
+        if (!wrap._shareId) return;
+        wrap._shareSheets = (data && data.sheets) || [];
+        paintShareSheetPicker();
+      })
+      .catch(function () {
+        wrap._shareSheets = [];
+        paintShareSheetPicker();
+      });
+  }
+
+  async function flushOpenNoteForShare() {
+    var jobs = [];
+    var body = typeof getNoteEditorBodyEl === "function" ? getNoteEditorBodyEl() : null;
+    if (body && typeof body._noteEditorFlush === "function") {
+      jobs.push(body._noteEditorFlush().catch(function () {}));
+    }
+    jobs.push(flushSheetEditor("left").catch(function () {}));
+    jobs.push(flushSheetEditor("right").catch(function () {}));
+    await Promise.all(jobs);
   }
 
   var shareMemberContacts = [];
@@ -14926,9 +15104,12 @@
     var itemId = wrap && wrap._shareId;
     if (!kind || !itemId) return;
     try {
+      await flushOpenNoteForShare();
+      var payload = { access: access || "view" };
+      if (kind === "local") payload.sheet_ids = selectedShareSheetIds();
       var data = await apiFetch(
         "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/share",
-        { method: "POST", body: JSON.stringify({ access: access || "view" }) }
+        { method: "POST", body: JSON.stringify(payload) }
       );
       applyShareState(wrap, data);
       await copyShareUrl(wrap._shareUrl);
@@ -14976,10 +15157,12 @@
       wrap._shareShared = false;
       wrap._shareUrl = "";
       wrap._shareAccess = "view";
+      wrap._shareSheetIds = [];
       patchLocalShareInCache(itemId, {
         shared: false,
         share_url: null,
         share_access: null,
+        share_sheet_ids: [],
       });
       if (notesDataCache) renderNotesPanesFromData(notesDataCache);
       closeNoteMoreMenu();
@@ -15315,6 +15498,7 @@
     wrap._shareShared = false;
     wrap._shareUrl = "";
     wrap._shareAccess = "view";
+    wrap._shareSheetIds = [];
     wrap._paeiRunning = false;
     wrap._askMode = "gpt";
     wrap._noteMembers = [];
@@ -15594,6 +15778,9 @@
       _shareShared: !!n.shared,
       _shareUrl: n.share_url || "",
       _shareAccess: n.share_access === "comment" ? "comment" : "view",
+      _shareSheetIds: Array.isArray(n.share_sheet_ids)
+        ? n.share_sheet_ids.map(function (id) { return String(id); })
+        : [],
       _noteMembers: Array.isArray(n.members) ? n.members : [],
     };
   }

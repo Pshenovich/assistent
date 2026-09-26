@@ -2552,6 +2552,7 @@ class _MiniappItemTagsBody(BaseModel):
 
 class _MiniappShareCreate(BaseModel):
     access: Optional[str] = None
+    sheet_ids: Optional[list[str]] = None
 
 
 class _MiniappNoteMemberAdd(BaseModel):
@@ -2789,6 +2790,7 @@ def _share_response(link: dict[str, Any]) -> dict[str, Any]:
         "url": _public_share_url(token),
         "created_at": link.get("created_at"),
         "access": share_links_store.normalize_access(link.get("access")),
+        "sheet_ids": share_links_store.normalize_sheet_ids(link.get("sheet_ids")),
     }
 
 
@@ -2937,15 +2939,21 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
         if not note:
             return None
         title = str(note.get("title") or "").strip() or "Без названия"
+        from assistant.stores import note_sheets as note_sheets_store
+
+        body, _sheets = note_sheets_store.compose_share_body(
+            note, share_links_store.normalize_sheet_ids(link.get("sheet_ids"))
+        )
         return {
             "kind": "local",
             "operation": None,
             "label": _SHARE_KIND_LABELS["local"],
             "title": title[:500],
-            "body": str(note.get("body") or "")[:120000],
+            "body": body[:120000],
             "updated_at": note.get("updated_at"),
             "access": share_links_store.normalize_access(link.get("access")),
             "item_id": item_id,
+            "sheet_ids": share_links_store.normalize_sheet_ids(link.get("sheet_ids")),
         }
     if kind == "journal":
         try:
@@ -5915,10 +5923,10 @@ async def miniapp_share_get(
     uid = str(int(principal.telegram_user_id))
     owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
     if not owner:
-        return {"shared": False, "url": None, "token": None, "access": None}
+        return {"shared": False, "url": None, "token": None, "access": None, "sheet_ids": []}
     link = await run_in_threadpool(share_links_store.get_active_share, owner, kind, item_id)
     if not link:
-        return {"shared": False, "url": None, "token": None, "access": None}
+        return {"shared": False, "url": None, "token": None, "access": None, "sheet_ids": []}
     return _share_response(link)
 
 
@@ -5936,9 +5944,15 @@ async def miniapp_share_create(
     if not owner:
         raise HTTPException(status_code=404, detail="Запись не найдена")
     access = (body.access if body else None)
+    sheet_ids = body.sheet_ids if body else None
     try:
         link = await run_in_threadpool(
-            share_links_store.create_or_get_share, owner, kind, item_id, access
+            share_links_store.create_or_get_share,
+            owner,
+            kind,
+            item_id,
+            access,
+            sheet_ids,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

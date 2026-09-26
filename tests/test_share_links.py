@@ -79,6 +79,18 @@ class ShareLinksTests(unittest.TestCase):
         self.assertTrue(share_comments.comments_visible_for_link(view))
         self.assertTrue(share_comments.comments_visible_for_link(comment))
 
+    def test_create_or_get_stores_sheet_ids(self) -> None:
+        first = share_links.create_or_get_share(3, "local", 11, sheet_ids=["main", "4"])
+        self.assertEqual(first["sheet_ids"], ["main", "4"])
+        again = share_links.create_or_get_share(3, "local", 11, sheet_ids=["4"])
+        self.assertEqual(again["token"], first["token"])
+        self.assertEqual(again["sheet_ids"], ["4"])
+        resolved = share_links.resolve_share(first["token"])
+        assert resolved is not None
+        self.assertEqual(resolved["sheet_ids"], ["4"])
+        legacy = share_links.create_or_get_share(3, "local", 12)
+        self.assertEqual(legacy["sheet_ids"], [])
+
 
 class ShareCommentsTests(unittest.TestCase):
     def setUp(self) -> None:
