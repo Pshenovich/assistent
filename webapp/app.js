@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260926-share-sheets";
+  var WEBAPP_BUILD = "20260926-note-close";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260926-share-sheets";
+  const NOTE_EDITOR_ASSET_V = "20260926-note-close";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -1794,6 +1794,47 @@
     persistNotesCacheToDisk();
   }
 
+  function paintLocalNoteCard(item) {
+    var id = String(localNoteIdFrom(item) || "");
+    if (!id) return false;
+    var card = document.querySelector(
+      '#notes-pane-notes .note-card[data-note-id="' + id.replace(/"/g, "") + '"]'
+    );
+    if (!card) return false;
+    var inner = card.querySelector(".note-card-inner");
+    if (!inner) return false;
+    var titleRaw =
+      sanitizeNoteTitle(item.title || item.content || "") ||
+      (item.title || item.content || "(без названия)");
+    var descRaw = notePlainExcerpt(item.description || item.body || "", 280);
+    var title =
+      inner.querySelector(".note-card-title-row > .note-card-excerpt") ||
+      inner.querySelector(".note-card-excerpt:not(.note-card-excerpt--secondary)");
+    if (title) title.textContent = titleRaw;
+    var sec = inner.querySelector(".note-card-excerpt--secondary");
+    if (descRaw) {
+      if (!sec) {
+        sec = document.createElement("p");
+        sec.className = "note-card-excerpt note-card-excerpt--secondary muted";
+        var row = title && title.closest(".note-card-title-row");
+        if (row && row.parentNode) row.parentNode.insertBefore(sec, row.nextSibling);
+        else if (title && title.parentNode) title.parentNode.insertBefore(sec, title.nextSibling);
+        else inner.appendChild(sec);
+      }
+      sec.innerHTML = linkifyEscaped(escapeHtml(descRaw)) + (descRaw.length >= 280 ? "…" : "");
+    } else if (sec && sec.parentNode) {
+      sec.parentNode.removeChild(sec);
+    }
+    return true;
+  }
+
+  function syncLocalNoteInList(item) {
+    prependLocalInCache(item);
+    if (!paintLocalNoteCard(item) && notesDataCache) {
+      renderNotesPanesFromData(notesDataCache);
+    }
+  }
+
   function removeLocalFromCache(id) {
     if (!notesDataCache || !notesDataCache.local_notes) return;
     notesDataCache.local_notes = notesDataCache.local_notes.filter(function (x) {
@@ -2470,6 +2511,7 @@
 
   async function handleNoteEditorModalClose(opts) {
     opts = opts || {};
+    if (!isNoteEditorModalOpen()) return true;
     if (!opts.skipPrompt && isNoteEditorDirty()) {
       var choice = await showNoteUnsavedDialog();
       if (choice === "cancel") return false;
@@ -2478,31 +2520,6 @@
         if (discardBody) discardBody._noteEditorFlush = null;
         closeNoteEditorModal();
         return true;
-      }
-    }
-    var body = getNoteEditorBodyEl();
-    if (body && typeof body._noteEditorFlush === "function") {
-      var flushFn = body._noteEditorFlush;
-      // Prevent closeNoteEditorModal from running a second hanging flush.
-      body._noteEditorFlush = null;
-      try {
-        await Promise.race([
-          flushFn(),
-          sleepMs(5000).then(function () {
-            var err = new Error("Сохранение заняло слишком много времени");
-            err.status = 0;
-            throw err;
-          }),
-        ]);
-      } catch (e) {
-        markNetworkFailure();
-        if (!isTransientApiError(e) && !(e && e.status === 0)) {
-          body._noteEditorFlush = flushFn;
-          alert(e.message || "Не удалось сохранить заметку");
-          return false;
-        }
-        // Soft-fail: keep local/offline draft and let the user leave.
-        showOfflineSavedToast();
       }
     }
     closeNoteEditorModal();
@@ -8088,7 +8105,7 @@
 
   /** Same stack as Telegram BackButton / in-app «← Назад». Never switches main tabs. */
   function performAppBack() {
-    if (isNoteDiscussionOpen()) {
+    if (isNoteDiscussionOpen() && !isDesktopLayout()) {
       closeNoteDiscussion();
       return true;
     }
@@ -11593,9 +11610,15 @@
     if (noteSheetState.focus === "right") noteSheetState.focus = "left";
   }
 
+  function previewOpenNoteFromSheets() {
+    var body = getNoteEditorBodyEl();
+    if (body && typeof body._notePreviewList === "function") body._notePreviewList();
+  }
+
   function scheduleExtraSheetPersist(sheetId) {
     var id = String(sheetId || "");
     if (!id || isPrimarySheetId(id)) return;
+    previewOpenNoteFromSheets();
     if (noteSheetState.sheetTimers[id]) clearTimeout(noteSheetState.sheetTimers[id]);
     noteSheetState.sheetTimers[id] = setTimeout(function () {
       persistExtraSheet(id).catch(function (e) {
@@ -11688,6 +11711,7 @@
         saved.description = html;
         saved.title = title;
         upsertNoteSheet(saved);
+        previewOpenNoteFromSheets();
       }
     } catch (e) {
       var remote = e && e.conflictItem;
@@ -15560,14 +15584,30 @@
     syncNotesCreateFab();
   }
 
+  var noteEditorCloseSeq = 0;
+
   function closeNoteEditorModal() {
-    var flushP = Promise.resolve();
+    var ov = document.getElementById("note-editor-overlay");
     var body = getNoteEditorBodyEl();
-    if (body && typeof body._noteEditorFlush === "function") {
-      flushP = body._noteEditorFlush().catch(function () {});
-      body._noteEditorFlush = null;
+    var flushFn =
+      body && typeof body._noteEditorFlush === "function" ? body._noteEditorFlush : null;
+    if (ov && ov.classList.contains("hidden") && !flushFn) return;
+    var closeSeq = ++noteEditorCloseSeq;
+    if (body) body._noteEditorFlush = null;
+    if (ov) {
+      ov.classList.remove("note-editor-overlay--fullscreen");
+      ov.classList.add("hidden");
+      ov.setAttribute("aria-hidden", "true");
     }
-    flushP.finally(function () {
+    onModalSheetClose();
+    listShareCtx = null;
+    applyTelegramSafeAreaInsets();
+    syncTelegramNativeBack();
+    syncAppOverlay();
+    syncNotesCreateFab();
+    if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+
+    function teardown() {
       closeNoteDiscussion(true);
       closeShareAccessSheet();
       stopNoteCollab();
@@ -15580,19 +15620,22 @@
         body._noteEditor = null;
         body.innerHTML = "";
       }
-      var ov = document.getElementById("note-editor-overlay");
-      if (ov) {
-        ov.classList.remove("note-editor-overlay--fullscreen");
-        ov.classList.add("hidden");
-        ov.setAttribute("aria-hidden", "true");
-      }
-      onModalSheetClose();
-      listShareCtx = null;
-      applyTelegramSafeAreaInsets();
-      syncTelegramNativeBack();
-      syncAppOverlay();
-      syncNotesCreateFab();
-    });
+    }
+
+    if (!flushFn) {
+      teardown();
+      return;
+    }
+    Promise.race([
+      Promise.resolve().then(flushFn),
+      sleepMs(4000),
+    ])
+      .catch(function () {})
+      .then(function () {
+        if (closeSeq !== noteEditorCloseSeq || isNoteEditorModalOpen()) return;
+        teardown();
+        if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+      });
   }
 
   function closeNotesDetail() {
@@ -16038,6 +16081,7 @@
         const id = noteId != null ? String(noteId) : "";
         const card = document.createElement("div");
         card.className = "note-card";
+        if (id) card.setAttribute("data-note-id", id);
         const inner = document.createElement("div");
         inner.className = "note-card-inner";
         const titleRaw =
@@ -16774,7 +16818,7 @@
     async function persistNoteDraft(opts) {
       opts = opts || {};
       if (noteCollabState.applying && !opts.force) return;
-      var fields = readFields();
+      var fields = opts.snapshot || readFields();
       var title = String(fields.title || "").trim();
       if (!title) {
         if (!opts.defaultTitle) return;
@@ -16783,7 +16827,13 @@
         if (titleInput) titleInput.value = title;
         fields.title = title;
       }
-      if (!noteIsCreate && noteId && isTrivialNoteHtml(fields.description) && !opts.keepEmpty) {
+      if (
+        !noteIsCreate &&
+        noteId &&
+        isTrivialNoteHtml(fields.description) &&
+        !opts.keepEmpty &&
+        !title
+      ) {
         return;
       }
       if (noteIsCreate || !noteId) {
@@ -16889,7 +16939,7 @@
             patchedItem.is_knowledge = true;
             prependKnowledgeInCache(patchedItem);
           } else {
-            prependLocalInCache(patchedItem);
+            syncLocalNoteInList(patchedItem);
           }
         }
         var offlinePatch =
@@ -16984,6 +17034,7 @@
         );
       }
       setNoteEditorSaveHint("");
+      if (!opts.snapshot) previewOpenNoteInList();
     }
 
     async function openNoteGptComposer() {
@@ -16999,9 +17050,51 @@
       openNoteDiscussion({ mode: "gpt", focus: true });
     }
 
+    function previewOpenNoteInList() {
+      if (isKnowledge || !noteId) return;
+      var fields = readFields();
+      var excerpt = fields.description;
+      if (isTrivialNoteHtml(excerpt)) {
+        extraNoteSheets().some(function (s) {
+          var html = s.body || s.description || "";
+          if (String(noteSheetState.leftId) === String(s.id)) {
+            html = readSheetEditorHtml("left") || html;
+          } else if (String(noteSheetState.rightId) === String(s.id)) {
+            html = readSheetEditorHtml("right") || html;
+          }
+          if (!isTrivialNoteHtml(html)) {
+            excerpt = html;
+            return true;
+          }
+          return false;
+        });
+      }
+      var moreWrap = document.getElementById("note-editor-more-wrap");
+      syncLocalNoteInList({
+        id: noteId,
+        title: fields.title || n.title,
+        description: excerpt,
+        body: excerpt,
+        todoist_id: n.todoist_id,
+        tags: noteTagsOf(n),
+        project: noteProjectOf(n),
+        hashtags: noteHashtagsOf(n),
+        members: (moreWrap && moreWrap._noteMembers) || n.members,
+        revision: (moreWrap && moreWrap._noteRevision) || n.revision,
+        updated_at: new Date().toISOString(),
+        is_owner: moreWrap ? moreWrap._isNoteOwner : n.is_owner,
+        owner_user_id: n.owner_user_id,
+        pinned: n.pinned,
+        shared: n.shared,
+        share_url: n.share_url,
+        share_access: n.share_access,
+      });
+    }
+
     function schedulePatch() {
       if (noteCollabState.applying) return;
       noteCollabState.lastTypedAt = Date.now();
+      previewOpenNoteInList();
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(function () {
         persistNoteDraft()
@@ -17020,7 +17113,7 @@
         saveTimer = null;
       }
       try {
-        await persistNoteDraft();
+        await persistNoteDraft({ defaultTitle: "Без названия", keepEmpty: true });
       } catch (e) {
         alert(e.message || String(e));
         return false;
@@ -17043,14 +17136,26 @@
       modalBody.innerHTML = "";
       modalBody.appendChild(wrap);
       syncNoteCommentsPanel();
+      modalBody._notePreviewList = previewOpenNoteInList;
       modalBody._noteEditorFlush = async function () {
         if (saveTimer) {
           clearTimeout(saveTimer);
           saveTimer = null;
         }
+        var snapshot = {
+          title: getNoteEditorTitle().trim(),
+          description: isPrimarySheetId(noteSheetState.leftId)
+            ? readActiveNoteEditorHtml(getLeftNoteRichEditor())
+            : noteSheetState.primaryBody,
+        };
+        if (snapshot.description) noteSheetState.primaryBody = snapshot.description;
         await flushSheetEditor("left");
         await flushSheetEditor("right");
-        await persistNoteDraft({ defaultTitle: "Без названия", keepEmpty: true });
+        await persistNoteDraft({
+          defaultTitle: "Без названия",
+          keepEmpty: true,
+          snapshot: snapshot,
+        });
       };
       modalBody._noteEditorSchedule = schedulePatch;
       modalBody._noteEditor = {
