@@ -423,7 +423,16 @@ def run_note_research(
     )
     if callable(on_progress):
         on_progress({"phase": "READ", "pct": 48})
-    raw = nlu_llm.research_with_web(research_system_prompt(), user_prompt)
+    from assistant.stores import user_agents
+
+    cfg = user_agents.runtime_config(int(user_id), "research")
+    system = str(cfg.get("system") or "").strip() or research_system_prompt()
+    raw = nlu_llm.research_with_web(
+        system,
+        user_prompt,
+        model=str(cfg.get("model") or "").strip() or None,
+        temperature=cfg.get("temperature"),
+    )
     if callable(on_progress):
         on_progress({"phase": "WRITE", "pct": 82})
     payload = parse_research_payload(raw)

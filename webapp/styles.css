@@ -358,7 +358,8 @@ html.boot-open-app #app.hidden {
   #profile-telemost:not(.hidden).motion-enter,
   #profile-yandex-disk:not(.hidden).motion-enter,
   #profile-bitrix:not(.hidden).motion-enter,
-  #profile-knowledge-base:not(.hidden).motion-enter {
+  #profile-knowledge-base:not(.hidden).motion-enter,
+  #profile-agents:not(.hidden).motion-enter {
     animation: leo-screen-enter 0.3s cubic-bezier(0.32, 0.72, 0, 1) both;
   }
 }
@@ -3490,7 +3491,8 @@ html.note-editor-open #note-editor-overlay {
 #profile-telemost.profile-subscreen--native-back .detail-toolbar,
 #profile-yandex-disk.profile-subscreen--native-back .detail-toolbar,
 #profile-bitrix.profile-subscreen--native-back .detail-toolbar,
-#profile-knowledge-base.profile-subscreen--native-back .detail-toolbar {
+#profile-knowledge-base.profile-subscreen--native-back .detail-toolbar,
+#profile-agents.profile-subscreen--native-back .detail-toolbar {
   grid-template-columns: 1fr auto;
 }
 
@@ -3504,7 +3506,8 @@ html.note-editor-open #note-editor-overlay {
 #profile-telemost.profile-subscreen--native-back #profile-telemost-back,
 #profile-yandex-disk.profile-subscreen--native-back #profile-yandex-disk-back,
 #profile-bitrix.profile-subscreen--native-back #profile-bitrix-back,
-#profile-knowledge-base.profile-subscreen--native-back #profile-knowledge-base-back {
+#profile-knowledge-base.profile-subscreen--native-back #profile-knowledge-base-back,
+#profile-agents.profile-subscreen--native-back #profile-agents-back {
   display: none !important;
 }
 
@@ -3518,7 +3521,8 @@ html.note-editor-open #note-editor-overlay {
 #profile-telemost.profile-subscreen--native-back .detail-title,
 #profile-yandex-disk.profile-subscreen--native-back .detail-title,
 #profile-bitrix.profile-subscreen--native-back .detail-title,
-#profile-knowledge-base.profile-subscreen--native-back .detail-title {
+#profile-knowledge-base.profile-subscreen--native-back .detail-title,
+#profile-agents.profile-subscreen--native-back .detail-title {
   grid-column: 1;
   justify-self: start;
   text-align: left;
@@ -6522,6 +6526,14 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   padding: 0;
 }
 
+.journal-summary-html li > ul,
+.journal-summary-html li > ol,
+.note-discuss-bubble--md li > ul,
+.note-discuss-bubble--md li > ol {
+  margin-top: 0.2rem;
+  margin-bottom: 0.2rem;
+}
+
 .journal-summary-html h1,
 .journal-summary-html h2,
 .journal-summary-html h3,
@@ -7087,6 +7099,61 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   margin-top: var(--space-2);
 }
 
+.agents-list {
+  margin-bottom: var(--space-4);
+}
+
+.agent-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--surface);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-card-title {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.agent-card-meta {
+  margin: var(--space-1) 0 0;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.agents-textarea {
+  min-height: 6.5rem;
+  resize: vertical;
+}
+
+.agents-textarea--rules {
+  min-height: 4.5rem;
+}
+
+#modal-fields .event-sheet .field {
+  margin-bottom: 0;
+}
+
+#modal-fields #agents-reset {
+  width: 100%;
+  margin-top: var(--space-1);
+}
+
+.field--check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .contact-card {
   padding: var(--space-4);
   border: 1px solid var(--border);
@@ -7193,7 +7260,8 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 #profile-telemost:not(.hidden),
 #profile-yandex-disk:not(.hidden),
 #profile-bitrix:not(.hidden),
-#profile-knowledge-base:not(.hidden) {
+#profile-knowledge-base:not(.hidden),
+#profile-agents:not(.hidden) {
   position: fixed;
   inset: 0;
   z-index: 40;
@@ -7223,7 +7291,8 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 #profile-telemost:not(.hidden) .detail-toolbar,
 #profile-yandex-disk:not(.hidden) .detail-toolbar,
 #profile-bitrix:not(.hidden) .detail-toolbar,
-#profile-knowledge-base:not(.hidden) .detail-toolbar {
+#profile-knowledge-base:not(.hidden) .detail-toolbar,
+#profile-agents:not(.hidden) .detail-toolbar {
   padding-right: var(--page-x);
   padding-left: var(--page-x);
 }
@@ -10021,7 +10090,8 @@ html.modal-sheet-open body {
   #profile-telemost:not(.hidden),
   #profile-yandex-disk:not(.hidden),
   #profile-bitrix:not(.hidden),
-  #profile-knowledge-base:not(.hidden) {
+  #profile-knowledge-base:not(.hidden),
+  #profile-agents:not(.hidden) {
     left: var(--sidebar-w);
     right: 0;
     max-width: none;

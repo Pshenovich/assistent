@@ -45,6 +45,19 @@ _NOTE_FOCUS = (
 )
 
 
+class _ForcedModelProvider:
+    def __init__(self, model: str, inner: Any | None = None) -> None:
+        self.model = (model or "").strip()
+        self.inner = inner
+
+    def generate_json(self, **kwargs: Any) -> dict[str, Any]:
+        from assistant.board import llm as board_llm
+
+        if self.model:
+            kwargs["model"] = self.model
+        return board_llm.generate_json(**kwargs, provider=self.inner)
+
+
 def is_note_reanalyze_request(text: str) -> bool:
     """Автор просит заново разобрать заметку, а не поправить прошлое решение CHAIR."""
     s = (text or "").strip()
@@ -541,6 +554,23 @@ async def run_note_paei(
         heading = "PAIE · решение CHAIR"
         root_id = None
     extra = _knowledge_instruction_prefix(use_knowledge, knowledge_note_ids) + extra
+    from assistant.stores import user_agents
+
+    cfg = user_agents.runtime_config(int(user_id), "paie")
+    rules = str(cfg.get("rules") or "").strip()
+    if rules:
+        extra += "\nПравила пользователя:\n" + rules
+    chair_prompt = str(cfg.get("prompt") or "").strip()
+    if chair_prompt and chair_prompt != str(cfg.get("prompt_default") or "").strip():
+        extra += "\n[chair_prompt]\n" + chair_prompt + "\n[/chair_prompt]"
+    board_model = str(cfg.get("model") or "").strip()
+    if board_model and board_model != str(cfg.get("model_default") or "").strip():
+        provider = _ForcedModelProvider(board_model, provider)
+    rounds = cfg.get("max_rounds")
+    try:
+        rounds = int(rounds) if rounds is not None else None
+    except (TypeError, ValueError):
+        rounds = None
     svc = MeetingService(
         publisher=NullPublisher(), provider=provider, on_progress=on_progress
     )
@@ -551,6 +581,7 @@ async def run_note_paei(
         question=question,
         title=title[:80],
         extra_instruction=extra,
+        rounds=rounds,
     )
     if callable(on_progress):
         on_progress(

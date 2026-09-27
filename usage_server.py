@@ -2609,6 +2609,26 @@ class _MiniappGptChatBody(BaseModel):
     file_ids: list[int] = Field(default_factory=list)
     item_kind: Optional[str] = None
     item_id: Optional[str] = None
+    agent_id: Optional[str] = None
+
+
+class _MiniappAgentCreate(BaseModel):
+    title: str
+    prompt: str = ""
+    rules: str = ""
+    model: Optional[str] = None
+    web_search: bool = False
+    temperature: Optional[float] = None
+
+
+class _MiniappAgentPatch(BaseModel):
+    title: Optional[str] = None
+    prompt: Optional[str] = None
+    rules: Optional[str] = None
+    model: Optional[str] = None
+    web_search: Optional[bool] = None
+    temperature: Optional[float] = None
+    max_rounds: Optional[int] = None
 
 
 class _MiniappBookingAssistantConfigBody(BaseModel):
@@ -2853,6 +2873,8 @@ def _comment_api(row: dict[str, Any], *, viewer_uid: str | None = None) -> dict[
         "is_paie": share_comments_store.is_paie_comment(row),
         "is_gpt": share_comments_store.is_gpt_comment(row),
         "is_research": share_comments_store.is_research_comment(row),
+        "is_agent": share_comments_store.is_agent_turn(row),
+        "agent_id": share_comments_store.agent_id_of(row),
         "can_delete": can_delete,
         "attachments": attachments,
     }
@@ -4132,6 +4154,115 @@ async def miniapp_settings_patch(
     return await run_in_threadpool(_run)
 
 
+@miniapp_router.get("/agents")
+async def miniapp_agents_list(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import user_agents
+
+    uid = int(principal.telegram_user_id)
+    rows = await run_in_threadpool(user_agents.list_agents, uid)
+    return {"agents": rows}
+
+
+@miniapp_router.post("/agents")
+async def miniapp_agents_create(
+    body: _MiniappAgentCreate,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import user_agents
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        return user_agents.create_agent(
+            uid,
+            title=body.title,
+            prompt=body.prompt,
+            rules=body.rules,
+            model=body.model,
+            web_search=bool(body.web_search),
+            temperature=body.temperature,
+        )
+
+    try:
+        item = await run_in_threadpool(_run)
+    except user_agents.AgentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "agent": item}
+
+
+@miniapp_router.patch("/agents/{agent_id}")
+async def miniapp_agents_patch(
+    agent_id: str,
+    body: _MiniappAgentPatch,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import user_agents
+
+    uid = int(principal.telegram_user_id)
+    fields = body.model_dump(exclude_unset=True)
+
+    def _run() -> dict[str, Any]:
+        return user_agents.patch_agent(uid, agent_id, fields)
+
+    try:
+        item = await run_in_threadpool(_run)
+    except user_agents.AgentNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except user_agents.AgentForbidden as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except user_agents.AgentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "agent": item}
+
+
+@miniapp_router.delete("/agents/{agent_id}")
+async def miniapp_agents_delete(
+    agent_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import user_agents
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> None:
+        user_agents.delete_agent(uid, agent_id)
+
+    try:
+        await run_in_threadpool(_run)
+    except user_agents.AgentNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except user_agents.AgentForbidden as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except user_agents.AgentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@miniapp_router.post("/agents/{agent_id}/reset")
+async def miniapp_agents_reset(
+    agent_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import user_agents
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        return user_agents.reset_agent(uid, agent_id)
+
+    try:
+        item = await run_in_threadpool(_run)
+    except user_agents.AgentNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except user_agents.AgentForbidden as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except user_agents.AgentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "agent": item}
+
+
 @miniapp_router.get("/calendar/sources")
 async def miniapp_calendar_sources(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
@@ -4562,6 +4693,7 @@ async def miniapp_gpt_chat(
             continue
         hist.append({"role": r, "content": c[:24000]})
     model = sanitize_openrouter_model_id(body.model)
+    agent_id = str(body.agent_id or "").strip() or "gpt"
 
     tg_uname: str | None = None
     if isinstance(principal.user, dict):
@@ -4685,11 +4817,26 @@ async def miniapp_gpt_chat(
             saved.append(_comment_file_api(row))
         return saved
 
+    from assistant.stores import user_agents
+
+    uid = int(principal.telegram_user_id)
+    try:
+        agent = user_agents.runtime_config(uid, agent_id)
+    except user_agents.AgentNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if agent["kind"] not in ("gpt", user_agents.CUSTOM_KIND):
+        raise HTTPException(status_code=400, detail="Этот агент запускается из своего режима")
+    run_model = model or sanitize_openrouter_model_id(str(agent.get("model") or ""))
+    if agent["kind"] == "gpt" and model and model != str(agent.get("model") or ""):
+        try:
+            user_agents.patch_agent(uid, "gpt", {"model": model})
+        except user_agents.AgentError:
+            pass
+
     def _run() -> dict[str, Any] | None:
         from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
         from assistant.nlu.ask_context import pack_knowledge_brief
 
-        uid = int(principal.telegram_user_id)
         kb_brief = ""
         kb_version = ""
         images, files, file_notes = _load_prompt_media()
@@ -4721,7 +4868,7 @@ async def miniapp_gpt_chat(
                 prompt,
                 (body.context or "").strip(),
                 history=hist or None,
-                model=model,
+                model=run_model,
                 note_title=(body.note_title or "").strip(),
                 note_text=(body.note_text or "").strip(),
                 quote=(body.quote or "").strip(),
@@ -4730,6 +4877,9 @@ async def miniapp_gpt_chat(
                 images=images or None,
                 files=files or None,
                 file_notes=file_notes,
+                system=str(agent.get("system") or ""),
+                temperature=agent.get("temperature"),
+                web=bool(agent.get("web_search")),
             )
             if out is None:
                 return None
@@ -6006,10 +6156,21 @@ async def miniapp_share_comments_create(
         raise HTTPException(status_code=404, detail="Запись не найдена")
     author_id, author_name, author_username = _comment_author_from_principal(principal)
     prefix = body.prefix
-    if str(body.as_role or "").strip().lower() == "gpt":
+    role = str(body.as_role or "").strip().lower()
+    if role == "gpt":
         author_name = share_comments_store.GPT_AUTHOR_NAME
         author_username = share_comments_store.GPT_AUTHOR_USERNAME
         prefix = share_comments_store.GPT_PREFIX
+    elif role.startswith("agent:"):
+        from assistant.stores import user_agents
+
+        aid = role.split(":", 1)[1].strip()
+        agent = user_agents.get_agent(int(principal.telegram_user_id), aid)
+        if not agent or not agent.get("can_delete"):
+            raise HTTPException(status_code=404, detail="Агент не найден")
+        author_name = str(agent.get("title") or "Агент")
+        author_username = user_agents.AGENT_AUTHOR_USERNAME
+        prefix = user_agents.comment_prefix(agent["id"])
     text = (body.body or "").strip()
     file_ids = [int(x) for x in (body.file_ids or []) if int(x) > 0]
     if not text:

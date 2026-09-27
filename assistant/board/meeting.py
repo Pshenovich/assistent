@@ -128,6 +128,7 @@ class MeetingService:
         thread_id: int | None = None,
         extra_instruction: str = "",
         title: str = "",
+        rounds: int | None = None,
     ) -> dict[str, Any]:
         company = store.get_or_create_company_for_chat(chat_id)
         meeting = store.create_meeting(
@@ -137,7 +138,7 @@ class MeetingService:
             company_id=company.get("id"),
             thread_id=thread_id,
             title=title,
-            max_rounds=max_rounds(),
+            max_rounds=int(rounds) if rounds else max_rounds(),
             extra_instruction=extra_instruction,
         )
         events.emit(events.MEETING_CREATED, meeting_id=meeting["id"], chat_id=str(chat_id))

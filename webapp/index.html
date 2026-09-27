@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260926-note-close">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20260927-md-lists">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -46,8 +46,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20260926-note-close" />
-  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260926-note-close" as="script" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20260927-md-lists" />
+  <link rel="preload" href="/webapp/note-rich-editor.js?v=20260927-md-lists" as="script" />
   <!-- Same-origin, async: не блокирует парсер, если сеть/VPN тормозит. -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" async></script>
 </head>
@@ -322,6 +322,25 @@
               <div>
                 <p class="expenses-label">База знаний</p>
                 <p class="expenses-total contacts-card-sub" id="profile-knowledge-base-hint">Документы компании для PAIE</p>
+              </div>
+            </div>
+            <span class="chevron">›</span>
+          </button>
+          <button type="button" class="expenses-card" id="profile-agents-open">
+            <div class="expenses-card-inner">
+              <div class="expenses-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 8V4H8" />
+                  <rect width="16" height="12" x="4" y="8" rx="2" />
+                  <path d="M2 14h2" />
+                  <path d="M20 14h2" />
+                  <path d="M15 13v2" />
+                  <path d="M9 13v2" />
+                </svg>
+              </div>
+              <div>
+                <p class="expenses-label">Агенты</p>
+                <p class="expenses-total contacts-card-sub" id="profile-agents-hint">PAIE, Research, GPT и свои</p>
               </div>
             </div>
             <span class="chevron">›</span>
@@ -605,6 +624,22 @@
             <div id="contacts-list" class="stack contacts-list"></div>
             <p id="contacts-empty" class="empty-state hidden">Пока нет контактов — добавьте выше.</p>
             <p id="contacts-err" class="error hidden"></p>
+          </div>
+        </div>
+
+        <div id="profile-agents" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-agents-back">← Назад</button>
+            <span class="detail-title">Агенты</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body subscreen-body--agents">
+            <p class="muted small contacts-hint">
+              Настройте встроенных агентов или добавьте своего — он появится в обсуждении заметки.
+            </p>
+            <div id="profile-agents-list" class="stack agents-list"></div>
+            <button type="button" class="btn" id="agents-new">+ Новый агент</button>
+            <p id="agents-err" class="error hidden"></p>
           </div>
         </div>
 
@@ -1173,14 +1208,14 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20260926-note-close"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20260927-md-lists"><\/script>'
         );
       }
     })();
   </script>
-  <script src="/webapp/note-html.js?v=20260926-note-close" defer></script>
-  <script src="/webapp/note-comments.js?v=20260926-note-close" defer></script>
-  <script src="/webapp/note-rich-editor.js?v=20260926-note-close" defer></script>
-  <script src="/webapp/app.js?v=20260926-note-close" defer></script>
+  <script src="/webapp/note-html.js?v=20260927-md-lists" defer></script>
+  <script src="/webapp/note-comments.js?v=20260927-md-lists" defer></script>
+  <script src="/webapp/note-rich-editor.js?v=20260927-md-lists" defer></script>
+  <script src="/webapp/app.js?v=20260927-md-lists" defer></script>
 </body>
 </html>

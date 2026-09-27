@@ -10,6 +10,7 @@ from assistant.board.company_brief import format_company_context
 from assistant.board.models import AGENT_META
 
 _KNOWLEDGE_IDS_RE = re.compile(r"\[knowledge_ids:([^\]]*)\]")
+_CHAIR_PROMPT_RE = re.compile(r"\[chair_prompt\](.*?)\[/chair_prompt\]", re.S)
 
 
 def _fmt_company(ctx: dict[str, Any] | None, *, query: str = "") -> str:
@@ -221,13 +222,7 @@ def build_agent_context(
             )
         past_text = "\n".join(lines)
 
-    extra = (meeting.get("extra_instruction") or "").strip()
-    extra = (
-        _KNOWLEDGE_IDS_RE.sub("", extra)
-        .replace("[knowledge:off]", "")
-        .replace("[no_past_decisions]", "")
-        .strip()
-    )
+    extra = strip_agent_markers((meeting.get("extra_instruction") or "").strip())
     analysis = meeting.get("analysis") if isinstance(meeting.get("analysis"), dict) else {}
     objective = str(analysis.get("decision_required") or meeting.get("title") or "")
     query = str(meeting.get("original_question") or "")
@@ -309,3 +304,20 @@ def load_prompt(name: str) -> str:
 
     path = Path(__file__).resolve().parent / "prompts" / f"{name}.md"
     return path.read_text(encoding="utf-8").strip()
+
+
+def chair_system_for_meeting(meeting: dict[str, Any] | None) -> str:
+    extra = str((meeting or {}).get("extra_instruction") or "")
+    match = _CHAIR_PROMPT_RE.search(extra)
+    override = (match.group(1) if match else "").strip()
+    return override or load_prompt("CHAIR")
+
+
+def strip_agent_markers(extra: str) -> str:
+    text = _KNOWLEDGE_IDS_RE.sub("", extra or "")
+    text = _CHAIR_PROMPT_RE.sub("", text)
+    return (
+        text.replace("[knowledge:off]", "")
+        .replace("[no_past_decisions]", "")
+        .strip()
+    )

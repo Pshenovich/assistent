@@ -61,6 +61,8 @@ GPT_AUTHOR_USERNAME = "gpt"
 RESEARCH_PREFIX = "__research__"
 RESEARCH_AUTHOR_NAME = "Research"
 RESEARCH_AUTHOR_USERNAME = "research"
+AGENT_PREFIX = "__agent__:"
+AGENT_AUTHOR_USERNAME = "agent"
 
 
 def is_gpt_comment(row: dict[str, Any] | None) -> bool:
@@ -95,6 +97,24 @@ def is_research_turn(row: dict[str, Any] | None) -> bool:
     return str(row.get("prefix") or "").strip() == RESEARCH_PREFIX
 
 
+def agent_id_of(row: dict[str, Any] | None) -> str:
+    if not row:
+        return ""
+    raw = str(row.get("prefix") or "").strip()
+    if raw.startswith(AGENT_PREFIX):
+        return raw[len(AGENT_PREFIX) :].strip()
+    return ""
+
+
+def is_agent_turn(row: dict[str, Any] | None) -> bool:
+    if not row:
+        return False
+    if agent_id_of(row):
+        return True
+    uname = str(row.get("author_username") or "").strip().lower()
+    return uname == AGENT_AUTHOR_USERNAME
+
+
 def parent_id_of(row: dict[str, Any] | None) -> int | None:
     if not row:
         return None
@@ -124,7 +144,7 @@ def paie_thread(comments: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
             cid = int(row["id"])
             if cid in ids:
                 continue
-            if is_gpt_turn(row) or is_research_turn(row):
+            if is_gpt_turn(row) or is_research_turn(row) or is_agent_turn(row):
                 continue
             pid = parent_id_of(row)
             if pid and pid in ids:
@@ -133,7 +153,10 @@ def paie_thread(comments: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     return [
         row
         for row in rows
-        if int(row["id"]) in ids and not is_gpt_turn(row) and not is_research_turn(row)
+        if int(row["id"]) in ids
+        and not is_gpt_turn(row)
+        and not is_research_turn(row)
+        and not is_agent_turn(row)
     ]
 
 
@@ -281,8 +304,10 @@ def add_comment(
     is_long = (
         pre == GPT_PREFIX
         or pre == RESEARCH_PREFIX
+        or pre.startswith(AGENT_PREFIX)
         or uname == GPT_AUTHOR_USERNAME
         or uname == RESEARCH_AUTHOR_USERNAME
+        or uname == AGENT_AUTHOR_USERNAME
     )
     limit = MAX_GPT_BODY_LEN if is_long else MAX_BODY_LEN
     if len(text) > limit:

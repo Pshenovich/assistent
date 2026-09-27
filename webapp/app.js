@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260926-note-close";
+  var WEBAPP_BUILD = "20260927-md-lists";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260926-note-close";
+  const NOTE_EDITOR_ASSET_V = "20260927-md-lists";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -3600,6 +3600,7 @@
     const yandexDisk = document.getElementById("profile-yandex-disk");
     const bitrix = document.getElementById("profile-bitrix");
     const knowledgeBase = document.getElementById("profile-knowledge-base");
+    const agents = document.getElementById("profile-agents");
     setHidden(main, name !== "main");
     setHidden(pay, name !== "payment");
     setHidden(exp, name !== "expenses");
@@ -3611,6 +3612,7 @@
     if (yandexDisk) setHidden(yandexDisk, name !== "yandex-disk");
     if (bitrix) setHidden(bitrix, name !== "bitrix");
     if (knowledgeBase) setHidden(knowledgeBase, name !== "knowledge-base");
+    if (agents) setHidden(agents, name !== "agents");
     if (name !== "booking") stopBookingWaQrPoll();
     if (
       name !== "zoom" &&
@@ -7542,6 +7544,10 @@
       } catch (e) {
         alert(e.message || String(e));
       }
+      return;
+    }
+    if (kind === "agent") {
+      await saveAgentForm();
     }
   }
 
@@ -7605,6 +7611,10 @@
       } catch (e) {
         alert(e.message || String(e));
       }
+      return;
+    }
+    if (kind === "agent") {
+      await deleteAgentForm();
     }
   }
 
@@ -8079,7 +8089,13 @@
     }
   }
 
+  function isAppSheetModalOpen() {
+    var ov = document.getElementById("modal-overlay");
+    return !!(ov && !ov.classList.contains("hidden"));
+  }
+
   function canPerformAppBack() {
+    if (isAppSheetModalOpen()) return true;
     if (isNoteDiscussionOpen()) return true;
     if (isNoteEditorModalOpen()) return true;
     var detail = document.getElementById("notes-detail");
@@ -8095,6 +8111,7 @@
       "profile-yandex-disk",
       "profile-bitrix",
       "profile-knowledge-base",
+      "profile-agents",
     ];
     for (var i = 0; i < profileIds.length; i++) {
       var el = document.getElementById(profileIds[i]);
@@ -8105,6 +8122,10 @@
 
   /** Same stack as Telegram BackButton / in-app «← Назад». Never switches main tabs. */
   function performAppBack() {
+    if (isAppSheetModalOpen()) {
+      closeModal();
+      return true;
+    }
     if (isNoteDiscussionOpen() && !isDesktopLayout()) {
       closeNoteDiscussion();
       return true;
@@ -8128,6 +8149,7 @@
     var yandexDisk = document.getElementById("profile-yandex-disk");
     var bitrix = document.getElementById("profile-bitrix");
     var knowledgeBase = document.getElementById("profile-knowledge-base");
+    var agents = document.getElementById("profile-agents");
     if (pay && !pay.classList.contains("hidden")) {
       profileScreen("main");
       return true;
@@ -8156,6 +8178,10 @@
     if (knowledgeBase && !knowledgeBase.classList.contains("hidden")) {
       profileScreen("main");
       refreshKnowledgeBaseHint();
+      return true;
+    }
+    if (agents && !agents.classList.contains("hidden")) {
+      profileScreen("main");
       return true;
     }
     if (contacts && !contacts.classList.contains("hidden")) {
@@ -8500,6 +8526,7 @@
     var yandexDisk = document.getElementById("profile-yandex-disk");
     var bitrix = document.getElementById("profile-bitrix");
     var knowledgeBase = document.getElementById("profile-knowledge-base");
+    var agents = document.getElementById("profile-agents");
     var panelNotes = document.getElementById("panel-notes");
     var panelKnowledge = document.getElementById("panel-knowledge");
     var panelProfile = document.getElementById("panel-profile");
@@ -8528,6 +8555,8 @@
       bitrix && !bitrix.classList.contains("hidden") && profilePanelVisible;
     var kbaseOpen =
       knowledgeBase && !knowledgeBase.classList.contains("hidden") && profilePanelVisible;
+    var agentsOpen =
+      agents && !agents.classList.contains("hidden") && profilePanelVisible;
 
     if (detail) detail.classList.remove("notes-detail--native-back");
     if (pay) pay.classList.remove("profile-subscreen--native-back");
@@ -8540,6 +8569,7 @@
     if (yandexDisk) yandexDisk.classList.remove("profile-subscreen--native-back");
     if (bitrix) bitrix.classList.remove("profile-subscreen--native-back");
     if (knowledgeBase) knowledgeBase.classList.remove("profile-subscreen--native-back");
+    if (agents) agents.classList.remove("profile-subscreen--native-back");
 
     var nb = document.getElementById("notes-detail-back");
     if (nb) setHidden(nb, false);
@@ -8563,6 +8593,8 @@
     if (bdb) setHidden(bdb, false);
     var kbb = document.getElementById("profile-knowledge-base-back");
     if (kbb) setHidden(kbb, false);
+    var agb = document.getElementById("profile-agents-back");
+    if (agb) setHidden(agb, false);
 
     var webEditorBack = document.getElementById("note-editor-web-back");
     var webEditorBackBar = document.getElementById("note-editor-web-back-bar");
@@ -8681,6 +8713,14 @@
     }
     if (kbaseOpen) {
       knowledgeBase.classList.add("profile-subscreen--native-back");
+      try {
+        tg.BackButton.show();
+      } catch (_) {}
+      finishAppBackChrome();
+      return;
+    }
+    if (agentsOpen) {
+      agents.classList.add("profile-subscreen--native-back");
       try {
         tg.BackButton.show();
       } catch (_) {}
@@ -10278,6 +10318,8 @@
   var GPT_MODEL_LS = "leo_gpt_model";
   var GPT_MODEL_DEFAULT = "openai/gpt-4.1";
   var gptModelsState = { loaded: false, loading: false, models: [], defaultId: GPT_MODEL_DEFAULT };
+  var userAgentsState = { loaded: false, loading: false, agents: [] };
+  var composerAgentModel = "";
 
   function noteComposerAsset(name) {
     return "/webapp/icons/" + name + ".svg?v=" + WEBAPP_BUILD;
@@ -10287,20 +10329,23 @@
     if (mode === "gpt") return "GPT";
     if (mode === "research") return "Research";
     if (mode === "comment") return "Текст";
-    return "PAIE";
+    if (mode === "paie") return "PAIE";
+    var agent = findUserAgent(mode);
+    return (agent && agent.title) || "Агент";
   }
 
   function noteAskUsesChips(mode) {
-    return mode === "gpt" || mode === "research";
+    return mode === "gpt" || mode === "research" || isCustomAskMode(mode);
   }
 
   function noteAskPlaceholder(mode) {
     var wrap = document.getElementById("note-editor-more-wrap");
     var quoted = !!(wrap && wrap._commentDraft && String(wrap._commentDraft.quote || "").trim());
-    if (mode === "gpt") {
+    if (isChatAskMode(mode)) {
+      var name = noteAskModeLabel(mode);
       return gptComposerChipCount(noteGptEditor())
-        ? "Спросите GPT про выделенный текст"
-        : "Свободный запрос к GPT по заметке";
+        ? "Спросите " + name + " про выделенный текст"
+        : "Свободный запрос к " + name + " по заметке";
     }
     if (mode === "research") {
       return gptComposerChipCount(noteGptEditor())
@@ -10649,6 +10694,7 @@
   }
 
   function selectedGptModelId() {
+    if (composerAgentModel) return composerAgentModel;
     try {
       var stored = String(localStorage.getItem(GPT_MODEL_LS) || "").trim();
       if (stored) return stored;
@@ -10658,6 +10704,12 @@
 
   function setSelectedGptModelId(id) {
     var next = String(id || "").trim();
+    if (isCustomAskMode(noteAskMode())) {
+      composerAgentModel = next;
+      syncGptModelButton();
+      return;
+    }
+    composerAgentModel = "";
     try {
       if (next) localStorage.setItem(GPT_MODEL_LS, next);
     } catch (_) {}
@@ -10774,6 +10826,332 @@
       syncGptModelButton();
       renderGptModelMenu();
     }
+  }
+
+  function findUserAgent(id) {
+    var want = String(id || "");
+    var rows = userAgentsState.agents || [];
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i].id) === want) return rows[i];
+    }
+    return null;
+  }
+
+  function isCustomAskMode(mode) {
+    var agent = findUserAgent(mode);
+    return !!(agent && agent.kind === "custom");
+  }
+
+  function isChatAskMode(mode) {
+    return mode === "gpt" || isCustomAskMode(mode);
+  }
+
+  async function loadUserAgents() {
+    if (userAgentsState.loading) return userAgentsState.agents;
+    userAgentsState.loading = true;
+    try {
+      var res = await apiFetch("/agents");
+      userAgentsState.agents = (res && res.agents) || [];
+      userAgentsState.loaded = true;
+    } catch (_) {
+      if (!userAgentsState.loaded) {
+        userAgentsState.agents = [
+          { id: "paie", kind: "paie", title: "PAIE", builtin: true },
+          { id: "research", kind: "research", title: "Research", builtin: true },
+          { id: "gpt", kind: "gpt", title: "GPT", builtin: true },
+        ];
+      }
+    } finally {
+      userAgentsState.loading = false;
+    }
+    renderNoteAskModes();
+    return userAgentsState.agents;
+  }
+
+  function renderNoteAskModes() {
+    var form = document.getElementById("note-paie-reply-form");
+    if (!form) return;
+    var switchEl = form.querySelector(".note-paie-mode-switch");
+    var menu = form.querySelector(".note-paie-mode-menu");
+    if (!switchEl || !menu) return;
+    var current = noteAskMode();
+    var items = (userAgentsState.agents || []).slice();
+    items.push({ id: "comment", title: "Текст", kind: "comment" });
+    function makeBtn(agent, cls) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = cls + (String(agent.id) === current ? " is-active" : "");
+      btn.setAttribute("data-mode", agent.id);
+      btn.setAttribute("role", cls.indexOf("menu-item") >= 0 ? "option" : "tab");
+      btn.textContent = agent.title || agent.id;
+      btn.addEventListener("click", function () {
+        setNoteAskMode(agent.id);
+        closeNoteComposerMenus();
+      });
+      return btn;
+    }
+    switchEl.innerHTML = "";
+    menu.innerHTML = "";
+    items.forEach(function (agent) {
+      switchEl.appendChild(makeBtn(agent, "note-paie-mode"));
+      menu.appendChild(makeBtn(agent, "note-paie-menu-item"));
+    });
+    var compactLabel = form.querySelector(".note-paie-mode-compact-label");
+    if (compactLabel) compactLabel.textContent = noteAskModeLabel(current);
+  }
+
+  function profileAgentsMsg(ok, err) {
+    var msg = document.getElementById("agents-form-msg");
+    var error = document.getElementById("agents-form-err");
+    if (msg) {
+      msg.textContent = ok || "";
+      msg.classList.toggle("hidden", !ok);
+    }
+    if (error) {
+      error.textContent = err || "";
+      error.classList.toggle("hidden", !err);
+    }
+  }
+
+  function fillAgentModelSelect(selected) {
+    var sel = document.getElementById("agents-f-model");
+    if (!sel) return;
+    var models = (gptModelsState.models || []).slice();
+    if (!models.length) {
+      models = [
+        { id: "openai/gpt-4.1", name: "GPT-4.1" },
+        { id: "openai/gpt-4o", name: "GPT-4o" },
+        { id: "openai/gpt-4o-mini", name: "GPT-4o mini" },
+      ];
+    }
+    if (selected && !models.some(function (m) { return m.id === selected; })) {
+      models.unshift({ id: selected, name: selected.split("/").pop() });
+    }
+    sel.innerHTML = "";
+    models.forEach(function (m) {
+      var opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = m.name || m.id;
+      if (m.id === selected) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+
+  function renderProfileAgentsList() {
+    var host = document.getElementById("profile-agents-list");
+    if (!host) return;
+    host.innerHTML = "";
+    (userAgentsState.agents || []).forEach(function (agent) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "agent-card";
+      var title = document.createElement("p");
+      title.className = "agent-card-title";
+      title.textContent = agent.title || agent.id;
+      var meta = document.createElement("p");
+      meta.className = "agent-card-meta";
+      meta.textContent = agent.builtin
+        ? (agent.model || "модель по умолчанию")
+        : "свой агент · " + (agent.model || "");
+      var left = document.createElement("div");
+      left.appendChild(title);
+      left.appendChild(meta);
+      btn.appendChild(left);
+      btn.addEventListener("click", function () {
+        openAgentForm(agent);
+      });
+      host.appendChild(btn);
+    });
+  }
+
+  function syncAgentFormFields(kind) {
+    var titleField = document.getElementById("agents-title-field");
+    var webField = document.getElementById("agents-web-field");
+    var tempField = document.getElementById("agents-temp-field");
+    var roundsField = document.getElementById("agents-rounds-field");
+    if (titleField) titleField.classList.toggle("hidden", kind !== "custom" && kind !== "new");
+    if (webField) webField.classList.toggle("hidden", kind !== "gpt" && kind !== "custom" && kind !== "new");
+    if (tempField) tempField.classList.toggle("hidden", kind === "paie");
+    if (roundsField) roundsField.classList.toggle("hidden", kind !== "paie");
+  }
+
+  function openAgentForm(agent) {
+    var fields = document.getElementById("modal-fields");
+    var overlay = document.getElementById("modal-overlay");
+    if (!fields || !overlay) return;
+    var isNew = !agent;
+    var kind = isNew ? "new" : agent.kind;
+    document.getElementById("modal-title").textContent = isNew
+      ? "Новый агент"
+      : agent.title || "Агент";
+    document.getElementById("modal-kind").value = "agent";
+    document.getElementById("modal-reminder-id").value = "";
+    document.getElementById("modal-event-id").value = "";
+    document.getElementById("modal-calendar-id").value = "";
+    fields.innerHTML =
+      '<div class="event-sheet">' +
+      '<input type="hidden" id="agents-edit-id" value="" />' +
+      '<div id="agents-title-field">' +
+      '<input id="agents-f-title" type="text" class="event-sheet-title" maxlength="60" placeholder="Название" autocomplete="off" />' +
+      "</div>" +
+      '<label class="field">' +
+      '<span class="field-label">Промпт</span>' +
+      '<textarea id="agents-f-prompt" class="field-textarea agents-textarea" rows="8" maxlength="12000"></textarea>' +
+      "</label>" +
+      '<label class="field">' +
+      '<span class="field-label">Правила</span>' +
+      '<textarea id="agents-f-rules" class="field-textarea agents-textarea agents-textarea--rules" rows="4" maxlength="4000" placeholder="Дополнительные ограничения и тон"></textarea>' +
+      "</label>" +
+      '<label class="field">' +
+      '<span class="field-label">Модель</span>' +
+      '<select id="agents-f-model" class="field-input"></select>' +
+      "</label>" +
+      '<label class="field" id="agents-temp-field">' +
+      '<span class="field-label">Температура</span>' +
+      '<input type="number" id="agents-f-temp" class="field-input" min="0" max="2" step="0.1" />' +
+      "</label>" +
+      '<label class="field field--check hidden" id="agents-web-field">' +
+      '<input type="checkbox" id="agents-f-web" />' +
+      "<span>Поиск в вебе</span>" +
+      "</label>" +
+      '<label class="field hidden" id="agents-rounds-field">' +
+      '<span class="field-label">Макс. раундов PAIE</span>' +
+      '<input type="number" id="agents-f-rounds" class="field-input" min="1" max="8" step="1" />' +
+      "</label>" +
+      '<button type="button" class="btn ghost hidden" id="agents-reset">Сбросить к заводским</button>' +
+      '<p id="agents-form-msg" class="billing-msg muted small hidden"></p>' +
+      '<p id="agents-form-err" class="error hidden"></p>' +
+      "</div>";
+    var idEl = document.getElementById("agents-edit-id");
+    var titleEl = document.getElementById("agents-f-title");
+    var promptEl = document.getElementById("agents-f-prompt");
+    var rulesEl = document.getElementById("agents-f-rules");
+    var tempEl = document.getElementById("agents-f-temp");
+    var webEl = document.getElementById("agents-f-web");
+    var roundsEl = document.getElementById("agents-f-rounds");
+    var resetBtn = document.getElementById("agents-reset");
+    if (idEl) idEl.value = isNew ? "" : String(agent.id);
+    if (titleEl) {
+      titleEl.value = isNew ? "" : agent.title || "";
+      titleEl.disabled = !isNew && !agent.can_rename;
+    }
+    if (promptEl) promptEl.value = isNew ? "" : agent.prompt || "";
+    if (rulesEl) rulesEl.value = isNew ? "" : agent.rules || "";
+    if (tempEl) {
+      tempEl.value =
+        agent && agent.temperature != null
+          ? String(agent.temperature)
+          : kind === "research"
+            ? "0.2"
+            : "0.1";
+    }
+    if (webEl) webEl.checked = !!(agent && agent.web_search);
+    if (roundsEl) {
+      roundsEl.value = agent && agent.max_rounds != null ? String(agent.max_rounds) : "4";
+    }
+    fillAgentModelSelect(agent && agent.model ? agent.model : GPT_MODEL_DEFAULT);
+    if (resetBtn) {
+      resetBtn.classList.toggle("hidden", isNew || !agent.builtin);
+      resetBtn.addEventListener("click", function () {
+        resetAgentForm();
+      });
+    }
+    document.getElementById("modal-delete").classList.toggle("hidden", isNew || !agent.can_delete);
+    syncAgentFormFields(kind);
+    profileAgentsMsg("", "");
+    overlay.classList.remove("hidden");
+    overlay.setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
+  }
+
+  function closeAgentForm() {
+    var kindEl = document.getElementById("modal-kind");
+    if (kindEl && kindEl.value === "agent") closeModal();
+    profileAgentsMsg("", "");
+  }
+
+  async function saveAgentForm() {
+    var idEl = document.getElementById("agents-edit-id");
+    var titleEl = document.getElementById("agents-f-title");
+    var promptEl = document.getElementById("agents-f-prompt");
+    var rulesEl = document.getElementById("agents-f-rules");
+    var modelEl = document.getElementById("agents-f-model");
+    var tempEl = document.getElementById("agents-f-temp");
+    var webEl = document.getElementById("agents-f-web");
+    var roundsEl = document.getElementById("agents-f-rounds");
+    var id = idEl && idEl.value;
+    var body = {
+      prompt: promptEl ? promptEl.value : "",
+      rules: rulesEl ? rulesEl.value : "",
+      model: modelEl ? modelEl.value : "",
+      temperature: tempEl && tempEl.value !== "" ? Number(tempEl.value) : null,
+      web_search: !!(webEl && webEl.checked),
+    };
+    if (roundsEl && !roundsEl.closest(".hidden")) {
+      body.max_rounds = Number(roundsEl.value || 4);
+    }
+    try {
+      profileAgentsMsg("", "");
+      if (!id) {
+        body.title = titleEl ? titleEl.value : "";
+        await apiFetch("/agents", { method: "POST", body: JSON.stringify(body) });
+      } else {
+        var current = findUserAgent(id);
+        if (current && current.can_rename) body.title = titleEl ? titleEl.value : current.title;
+        await apiFetch("/agents/" + encodeURIComponent(id), {
+          method: "PATCH",
+          body: JSON.stringify(body),
+        });
+      }
+      await loadUserAgents();
+      renderProfileAgentsList();
+      closeAgentForm();
+      profileAgentsMsg("Сохранено", "");
+    } catch (e) {
+      profileAgentsMsg("", (e && e.message) || String(e));
+    }
+  }
+
+  async function resetAgentForm() {
+    var idEl = document.getElementById("agents-edit-id");
+    var id = idEl && idEl.value;
+    if (!id) return;
+    try {
+      await apiFetch("/agents/" + encodeURIComponent(id) + "/reset", { method: "POST" });
+      await loadUserAgents();
+      renderProfileAgentsList();
+      var next = findUserAgent(id);
+      if (next) openAgentForm(next);
+      else closeAgentForm();
+      profileAgentsMsg("Сброшено к заводским", "");
+    } catch (e) {
+      profileAgentsMsg("", (e && e.message) || String(e));
+    }
+  }
+
+  async function deleteAgentForm() {
+    var idEl = document.getElementById("agents-edit-id");
+    var id = idEl && idEl.value;
+    if (!id) return;
+    var ok = await confirmDialog("Удалить этого агента?");
+    if (!ok) return;
+    try {
+      await apiFetch("/agents/" + encodeURIComponent(id), { method: "DELETE" });
+      await loadUserAgents();
+      renderProfileAgentsList();
+      closeAgentForm();
+    } catch (e) {
+      profileAgentsMsg("", (e && e.message) || String(e));
+    }
+  }
+
+  async function openProfileAgents() {
+    profileScreen("agents");
+    closeAgentForm();
+    await loadGptModels();
+    await loadUserAgents();
+    renderProfileAgentsList();
   }
 
   function composerLineHeight(el) {
@@ -11126,7 +11504,7 @@
     form.addEventListener("submit", function (e) {
       e.preventDefault();
       closeNoteComposerMenus();
-      if (noteAskMode() === "gpt") {
+      if (isChatAskMode(noteAskMode())) {
         var packed = serializeGptComposer(editor);
         submitNoteGptQuestion(packed.text);
       } else if (noteAskMode() === "research") {
@@ -11157,6 +11535,7 @@
         closeNoteComposerMenus();
       });
     });
+    loadUserAgents();
     if (compact) {
       compact.addEventListener("click", function (e) {
         e.stopPropagation();
@@ -13583,15 +13962,27 @@
   function noteAskMode() {
     var wrap = document.getElementById("note-editor-more-wrap");
     var mode = wrap && wrap._askMode;
-    if (mode === "paie" || mode === "comment" || mode === "research") return mode;
+    if (mode === "paie" || mode === "comment" || mode === "research" || mode === "gpt") {
+      return mode;
+    }
+    if (isCustomAskMode(mode)) return mode;
     return "gpt";
   }
 
   function setNoteAskMode(mode) {
     var wrap = document.getElementById("note-editor-more-wrap");
-    if (wrap) {
-      wrap._askMode =
-        mode === "paie" || mode === "comment" || mode === "research" ? mode : "gpt";
+    var next =
+      mode === "paie" || mode === "comment" || mode === "research" || mode === "gpt"
+        ? mode
+        : isCustomAskMode(mode)
+          ? mode
+          : "gpt";
+    if (wrap) wrap._askMode = next;
+    if (isCustomAskMode(next)) {
+      var custom = findUserAgent(next);
+      composerAgentModel = (custom && custom.model) || "";
+    } else {
+      composerAgentModel = "";
     }
     var current = noteAskMode();
     var form = document.getElementById("note-paie-reply-form");
@@ -13602,7 +13993,7 @@
       });
     }
     if (form) {
-      form.classList.toggle("is-gpt-mode", current === "gpt");
+      form.classList.toggle("is-gpt-mode", isChatAskMode(current));
       form.classList.toggle("is-research-mode", current === "research");
       form.classList.toggle("is-comment-mode", current === "comment");
       var compactLabel = form.querySelector(".note-paie-mode-compact-label");
@@ -13620,7 +14011,7 @@
       autosizeNoteComposer(editor);
     }
     syncNoteComposerCommentTarget();
-    if (current === "gpt") loadGptModels();
+    if (isChatAskMode(current)) loadGptModels();
     else closeNoteComposerMenus();
     syncNotePaieReplyForm();
   }
@@ -13833,12 +14224,18 @@
     if (meta) meta.textContent = "Отправлено";
   }
 
-  function gptHistoryFromComments(comments) {
+  function gptHistoryFromComments(comments, agentId) {
     var api = window.NoteComments;
     var cut = gptContextCutId();
+    var customId = agentId && agentId !== "gpt" ? String(agentId) : "";
     var prior = discussionComments(comments || [])
       .filter(function (c) {
-        return c && Number(c.id) > cut;
+        if (!c || Number(c.id) <= cut) return false;
+        if (customId) {
+          return api && api.agentIdOf ? api.agentIdOf(c) === customId : String(c.prefix || "") === "__agent__:" + customId;
+        }
+        if (api && api.isAgentTurn && api.isAgentTurn(c)) return false;
+        return true;
       })
       .slice()
       .sort(function (a, b) {
@@ -13862,6 +14259,14 @@
       var quote = String((c && c.quote) || "").trim();
       if (quote && content.indexOf("«") === -1) content = "Про текст: «" + quote + "»\n\n" + content;
       if (content.length > 6000) content = content.slice(0, 5999) + "…";
+      if (customId) {
+        var agentUname = String((c && c.author_username) || "").trim().toLowerCase();
+        history.push({
+          role: agentUname === "agent" ? "assistant" : "user",
+          content: content,
+        });
+        return;
+      }
       if (api && api.isGptComment && api.isGptComment(c)) {
         history.push({ role: "assistant", content: content });
         return;
@@ -13928,7 +14333,9 @@
     var kind = wrap._shareKind;
     var itemId = wrap._shareId;
     var panel = document.getElementById("note-editor-comments");
-    var history = gptHistoryFromComments((panel && panel._allComments) || []);
+    var agentId = isCustomAskMode(noteAskMode()) ? noteAskMode() : "gpt";
+    var agentPrefix = agentId === "gpt" ? "__gpt__" : "__agent__:" + agentId;
+    var history = gptHistoryFromComments((panel && panel._allComments) || [], agentId);
     wrap._gptBusy = true;
     wrap._gptPhase = "sending";
     wrap._discussionPinId = null;
@@ -13946,7 +14353,7 @@
           body: JSON.stringify({
             body: body,
             quote: quote,
-            prefix: "__gpt__",
+            prefix: agentPrefix,
             suffix: "",
             file_ids: fileIds,
           }),
@@ -13976,6 +14383,7 @@
           sheet_ids: noteCtx.sheet_ids,
           history: history,
           model: selectedGptModelId() || undefined,
+          agent_id: agentId,
           file_ids: fileIds,
           item_kind: kind,
           item_id: itemId,
@@ -14006,10 +14414,10 @@
           body: JSON.stringify({
             body: clipGptCommentBody(ans),
             quote: quote,
-            prefix: "__gpt__",
+            prefix: agentPrefix,
             suffix: "",
             parent_id: parentId || null,
-            as_role: "gpt",
+            as_role: agentId === "gpt" ? "gpt" : "agent:" + agentId,
             file_ids: gptFileIds,
           }),
         }
@@ -14149,7 +14557,7 @@
       if (gptBusy) label = "GPT отвечает…";
       else if (paieRunning) label = "CHAIR отвечает…";
       else if (researchRunning) label = "Research ищет…";
-      else if (noteAskMode() === "gpt") label = "Спросить GPT";
+      else if (isChatAskMode(noteAskMode())) label = "Спросить " + noteAskModeLabel(noteAskMode());
       else if (noteAskMode() === "research") label = hasText ? "Спросить Research" : "Запустить Research";
       else if (noteAskMode() === "comment") label = "Отправить";
       else label = hasChair ? "Спросить CHAIR" : "Запустить PAIE";
@@ -16338,6 +16746,34 @@
       });
   }
 
+  function markdownListIndent(line) {
+    var m = String(line || "").match(/^(\s*)/);
+    return m ? m[1].replace(/\t/g, "    ").length : 0;
+  }
+
+  function parseMarkdownListItem(line) {
+    var raw = String(line || "");
+    var task = raw.match(/^(\s*)-\s+\[([ xX])\]\s+(.*)$/);
+    if (task) {
+      return {
+        indent: task[1].replace(/\t/g, "    ").length,
+        ordered: false,
+        task: String(task[2]).toLowerCase() === "x",
+        start: 0,
+        text: task[3],
+      };
+    }
+    var item = raw.match(/^(\s*)(?:([-*•])|(\d+)[.)])\s+(.*)$/);
+    if (!item) return null;
+    return {
+      indent: item[1].replace(/\t/g, "    ").length,
+      ordered: !item[2],
+      task: null,
+      start: item[3] ? parseInt(item[3], 10) : 0,
+      text: item[4],
+    };
+  }
+
   function simpleMarkdownToHtml(md) {
     var source = md;
     if (
@@ -16348,32 +16784,98 @@
     }
     var lines = String(source || "").split("\n");
     var html = [];
-    var inList = false;
-    var inOl = false;
-    var inTaskList = false;
-    function closeList() {
-      if (inList) {
-        html.push("</ul>");
-        inList = false;
+    var stack = [];
+
+    function openListTag(item) {
+      if (item.task != null) return '<ul class="note-task-list">';
+      if (item.ordered) {
+        return item.start > 1 ? '<ol start="' + item.start + '">' : "<ol>";
       }
+      return "<ul>";
     }
-    function closeOl() {
-      if (inOl) {
-        html.push("</ol>");
-        inOl = false;
-      }
+
+    function closeListLevel() {
+      var level = stack.pop();
+      if (!level) return;
+      if (level.openLi) html.push("</li>");
+      html.push(level.task ? "</ul>" : level.ordered ? "</ol>" : "</ul>");
     }
-    function closeTaskList() {
-      if (inTaskList) {
-        html.push("</ul>");
-        inTaskList = false;
-      }
-    }
+
     function closeAllLists() {
-      closeList();
-      closeOl();
-      closeTaskList();
+      while (stack.length) closeListLevel();
     }
+
+    function shouldNestListItem(item, top) {
+      if (!top || !top.openLi) return false;
+      if (item.indent > top.indent) return true;
+      // Модели часто пишут подпункты без отступа: 1. пункт / - подпункт / 2. пункт
+      return item.indent === top.indent && top.ordered && !item.ordered;
+    }
+
+    function sameListKind(item, top) {
+      return item.ordered === top.ordered && (item.task != null) === top.task;
+    }
+
+    function pushListItem(item, lineIndex) {
+      while (stack.length && stack[stack.length - 1].indent > item.indent) {
+        closeListLevel();
+      }
+      var top = stack.length ? stack[stack.length - 1] : null;
+      if (shouldNestListItem(item, top)) {
+        html.push(openListTag(item));
+        stack.push({
+          indent: item.indent,
+          ordered: item.ordered,
+          task: item.task != null,
+          openLi: false,
+        });
+        top = stack[stack.length - 1];
+      } else if (top && sameListKind(item, top) && item.indent === top.indent) {
+        if (top.openLi) {
+          html.push("</li>");
+          top.openLi = false;
+        }
+      } else if (top) {
+        closeListLevel();
+        pushListItem(item, lineIndex);
+        return;
+      } else {
+        html.push(openListTag(item));
+        stack.push({
+          indent: item.indent,
+          ordered: item.ordered,
+          task: item.task != null,
+          openLi: false,
+        });
+        top = stack[stack.length - 1];
+      }
+      if (item.task != null) {
+        html.push(
+          '<li class="note-task' +
+            (item.task ? " note-task--checked" : "") +
+            '" data-line="' +
+            String(lineIndex) +
+            '"><input type="checkbox"' +
+            (item.task ? " checked" : "") +
+            ' data-line="' +
+            String(lineIndex) +
+            '" aria-label="Задача"><span class="note-task-text">' +
+            inlineMarkdown(item.text) +
+            "</span>"
+        );
+      } else {
+        html.push("<li>" + inlineMarkdown(item.text));
+      }
+      top.openLi = true;
+    }
+
+    function nextNonEmptyLine(from) {
+      for (var i = from; i < lines.length; i++) {
+        if (String(lines[i] || "").trim()) return lines[i];
+      }
+      return "";
+    }
+
     for (var lineIndex = 0; lineIndex < lines.length; lineIndex++) {
       var line = lines[lineIndex];
       var trimmed = line.trim();
@@ -16389,6 +16891,9 @@
         continue;
       }
       if (!trimmed) {
+        if (stack.length && parseMarkdownListItem(nextNonEmptyLine(lineIndex + 1))) {
+          continue;
+        }
         closeAllLists();
         continue;
       }
@@ -16435,50 +16940,13 @@
         html.push("<" + tag + ">" + inlineMarkdown(hm[2]) + "</" + tag + ">");
         continue;
       }
-      var tm = trimmed.match(/^-\s+\[([ xX])\]\s+(.*)$/);
-      if (tm) {
-        closeList();
-        closeOl();
-        if (!inTaskList) {
-          html.push('<ul class="note-task-list">');
-          inTaskList = true;
-        }
-        var checked = String(tm[1]).toLowerCase() === "x";
-        html.push(
-          '<li class="note-task' +
-            (checked ? " note-task--checked" : "") +
-            '" data-line="' +
-            String(lineIndex) +
-            '"><input type="checkbox"' +
-            (checked ? " checked" : "") +
-            ' data-line="' +
-            String(lineIndex) +
-            '" aria-label="Задача"><span class="note-task-text">' +
-            inlineMarkdown(tm[2]) +
-            "</span></li>"
-        );
+      var listItem = parseMarkdownListItem(line);
+      if (listItem) {
+        pushListItem(listItem, lineIndex);
         continue;
       }
-      var bm = trimmed.match(/^[-*•]\s+(.*)$/);
-      if (bm) {
-        closeTaskList();
-        closeOl();
-        if (!inList) {
-          html.push("<ul>");
-          inList = true;
-        }
-        html.push("<li>" + inlineMarkdown(bm[1]) + "</li>");
-        continue;
-      }
-      var nm = trimmed.match(/^\d+[.)]\s+(.*)$/);
-      if (nm) {
-        closeTaskList();
-        closeList();
-        if (!inOl) {
-          html.push("<ol>");
-          inOl = true;
-        }
-        html.push("<li>" + inlineMarkdown(nm[1]) + "</li>");
+      if (stack.length && markdownListIndent(line) > 0) {
+        html.push("<br>" + inlineMarkdown(trimmed));
         continue;
       }
       closeAllLists();
@@ -18114,6 +18582,24 @@
     if (kbOpenBtn) {
       kbOpenBtn.addEventListener("click", function () {
         setTab("knowledge");
+      });
+    }
+    var agentsOpenBtn = document.getElementById("profile-agents-open");
+    if (agentsOpenBtn) {
+      agentsOpenBtn.addEventListener("click", function () {
+        openProfileAgents();
+      });
+    }
+    var agentsBack = document.getElementById("profile-agents-back");
+    if (agentsBack) {
+      agentsBack.addEventListener("click", function () {
+        profileScreen("main");
+      });
+    }
+    var agentsNew = document.getElementById("agents-new");
+    if (agentsNew) {
+      agentsNew.addEventListener("click", function () {
+        openAgentForm(null);
       });
     }
     var kbBack = document.getElementById("profile-knowledge-base-back");

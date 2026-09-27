@@ -182,13 +182,21 @@ def _chat_result(
     return text, out_images
 
 
-def research_with_web(system: str, user: str, *, timeout: float = 180) -> str:
+def research_with_web(
+    system: str,
+    user: str,
+    *,
+    timeout: float = 180,
+    model: str | None = None,
+    temperature: float | None = None,
+) -> str:
     return _chat(
         system,
         user,
         operation="note_research",
+        model=model,
         timeout=timeout,
-        temperature=0.2,
+        temperature=0.2 if temperature is None else float(temperature),
         web=True,
     )
 
@@ -456,6 +464,9 @@ def answer_with_context_result(
     images: list[dict[str, str]] | None = None,
     files: list[dict[str, str]] | None = None,
     file_notes: str = "",
+    system: str | None = None,
+    temperature: float | None = None,
+    web: bool = False,
 ) -> dict[str, Any]:
     from assistant.nlu.ask_context import assemble_ask_messages
 
@@ -473,23 +484,29 @@ def answer_with_context_result(
         user = (user or "").rstrip() + "\n\n" + notes
     if (images or files) and not (question or "").strip() and not (user or "").strip():
         user = "Опиши вложение и ответь по нему."
-    if images or files:
+    sys = (system or "").strip() or ASK_SYSTEM
+    temp = 0.1 if temperature is None else float(temperature)
+    run_model = model or _model_ask()
+    if images or files or web:
         text, out_images = _chat_result(
-            ASK_SYSTEM,
+            sys,
             user,
             operation="ask",
-            model=model or _model_ask(),
+            model=run_model,
+            temperature=temp,
             history=history,
             context_prefix=extra or None,
             images=images,
             files=files,
+            web=web,
         )
     else:
         text = _chat(
-            ASK_SYSTEM,
+            sys,
             user,
             operation="ask",
-            model=model or _model_ask(),
+            model=run_model,
+            temperature=temp,
             history=history,
             context_prefix=extra or None,
         )

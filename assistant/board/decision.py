@@ -6,7 +6,7 @@ from typing import Any
 
 from assistant.board import events, store
 from assistant.board import llm as board_llm
-from assistant.board.context import build_agent_context, load_prompt
+from assistant.board.context import build_agent_context, chair_system_for_meeting, load_prompt
 from assistant.board.followup import schedule_followups
 from assistant.board.models import ChairDecision
 from assistant.board.numbers import safe_float
@@ -66,8 +66,9 @@ class DecisionService:
         raw: dict[str, Any] = {}
         for attempt in range(2):
             try:
+                meeting = store.get_meeting(meeting_id) or {}
                 raw = board_llm.generate_json(
-                    system=load_prompt("CHAIR"),
+                    system=chair_system_for_meeting(meeting),
                     user=ctx["text"],
                     operation="board_chair",
                     temperature=0.2,

@@ -58,6 +58,9 @@ def gpt_openrouter_answer_with_context(
     images: list[dict[str, str]] | None = None,
     files: list[dict[str, str]] | None = None,
     file_notes: str = "",
+    system: str | None = None,
+    temperature: float | None = None,
+    web: bool = False,
 ) -> dict:
     out = nlu_llm.answer_with_context_result(
         question,
@@ -72,6 +75,9 @@ def gpt_openrouter_answer_with_context(
         images=images,
         files=files,
         file_notes=file_notes,
+        system=system,
+        temperature=temperature,
+        web=web,
     )
     return {
         "answer": str(out.get("answer") or ""),

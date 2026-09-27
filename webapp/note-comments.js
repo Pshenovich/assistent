@@ -483,6 +483,20 @@
     return String(c.prefix || "").trim() === "__research__";
   }
 
+  function agentIdOf(c) {
+    if (!c) return "";
+    if (c.agent_id) return String(c.agent_id);
+    var raw = String(c.prefix || "").trim();
+    if (raw.indexOf("__agent__:") === 0) return raw.slice(10);
+    return "";
+  }
+
+  function isAgentTurn(c) {
+    if (!c) return false;
+    if (c.is_agent || agentIdOf(c)) return true;
+    return String(c.author_username || "").trim().toLowerCase() === "agent";
+  }
+
   function parentIdOf(c) {
     var raw = c && c.parent_id;
     if (raw == null || raw === "" || raw === 0 || raw === "0") return 0;
@@ -503,7 +517,7 @@
       rows.forEach(function (c) {
         if (!c || !c.id) return;
         var id = String(c.id);
-        if (ids[id] || isGptTurn(c) || isResearchTurn(c)) return;
+        if (ids[id] || isGptTurn(c) || isResearchTurn(c) || isAgentTurn(c)) return;
         var pid = parentIdOf(c);
         if (pid && ids[String(pid)]) {
           ids[id] = true;
@@ -512,7 +526,7 @@
       });
     }
     return rows.filter(function (c) {
-      return c && c.id && ids[String(c.id)] && !isGptTurn(c) && !isResearchTurn(c);
+      return c && c.id && ids[String(c.id)] && !isGptTurn(c) && !isResearchTurn(c) && !isAgentTurn(c);
     });
   }
 
@@ -547,6 +561,9 @@
     researchThread(comments).forEach(function (c) {
       if (c && c.id) skip[String(c.id)] = true;
     });
+    (comments || []).forEach(function (c) {
+      if (c && c.id && isAgentTurn(c)) skip[String(c.id)] = true;
+    });
     return (comments || []).filter(function (c) {
       return c && c.id && !skip[String(c.id)] && String(c.quote || "").trim();
     });
@@ -562,6 +579,9 @@
     });
     researchThread(comments).forEach(function (c) {
       if (c && c.id) skip[String(c.id)] = true;
+    });
+    (comments || []).forEach(function (c) {
+      if (c && c.id && isAgentTurn(c)) skip[String(c.id)] = true;
     });
     return (comments || []).filter(function (c) {
       return c && c.id && !skip[String(c.id)] && !String(c.quote || "").trim();
@@ -778,6 +798,8 @@
     isGptTurn: isGptTurn,
     isResearchComment: isResearchComment,
     isResearchTurn: isResearchTurn,
+    isAgentTurn: isAgentTurn,
+    agentIdOf: agentIdOf,
     parentIdOf: parentIdOf,
     paieThread: paieThread,
     paieThreadGroups: paieThreadGroups,
