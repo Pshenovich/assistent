@@ -5594,6 +5594,11 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   align-items: flex-start;
 }
 
+.note-discuss-msg.is-peer {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
 .note-discuss-msg.is-pending,
 .note-discuss-msg.is-optimistic {
   cursor: default;
@@ -5746,7 +5751,8 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   border-bottom-right-radius: 6px;
 }
 
-.note-discuss-msg.is-assistant .note-discuss-bubble {
+.note-discuss-msg.is-assistant .note-discuss-bubble,
+.note-discuss-msg.is-peer .note-discuss-bubble {
   color: var(--text);
   background: var(--surface, #19191a);
   border: 1px solid var(--border);
