@@ -74,13 +74,38 @@ _IMAGE_BLOCK_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 _IMAGE_INTENT_RE = re.compile(
-    r"(нарисуй|нарисовать|нарисуйте|"
-    r"сгенер\w{0,8}\s+(?:мне\s+)?(?:картинк|изображен|фото|иллюстрац|мем|логотип)|"
-    r"(?:сделай|создай|придумай|пришли|скинь)\s+(?:мне\s+)?"
-    r"(?:картинк|изображен|фото|иллюстрац|мем|логотип|баннер)|"
-    r"\b(?:draw|generate|create|make)\b.{0,48}\b(?:an?\s+)?"
-    r"(?:image|picture|photo|logo|illustration)\b)",
+    r"(нарисуй|нарисовать|нарисуйте|апскейл|upscale|"
+    r"увелич\w*|масштаб|dpi|"
+    r"сгенер\w{0,8}\s+(?:мне\s+)?(?:картинк|изображен|фото|иллюстрац|мем|логотип|png)|"
+    r"(?:сделай|создай|придумай|пришли|скинь|вышли|отправь|сохрани)\s+(?:мне\s+)?"
+    r"(?:картинк|изображен|фото|иллюстрац|мем|логотип|баннер|png|jpe?g|файл)|"
+    r"[×xх]\s*[2348]\b|"
+    r"\b(?:draw|generate|create|make|send|export|upscale)\b.{0,48}\b(?:an?\s+)?"
+    r"(?:image|picture|photo|logo|illustration|png|jpe?g)\b)",
     re.IGNORECASE | re.DOTALL,
+)
+_DESCRIBE_PHOTO_RE = re.compile(
+    r"^\s*(что (на|в)|опиши|распознай|прочитай).{0,40}(фото|картинк|изображен)",
+    re.IGNORECASE,
+)
+_REFUSAL_RE = re.compile(
+    r"base64|разобью на части|вложен\w*.{0,24}не проход|"
+    r"не могу (присл|отправ|влож|сгенер)|подтвердите|"
+    r"скрипт под вашу ОС|сохраните как",
+    re.IGNORECASE,
+)
+_CONFIRM_RE = re.compile(r"^\s*(да|yes|ок|ok|подтверждаю|начинай|ага)\s*[.!]?\s*$", re.IGNORECASE)
+_EMBEDDED_PNG_RE = re.compile(
+    r"(?:data:image/png;base64,)?(iVBORw0KGgo[A-Za-z0-9+/=\s]{80,})",
+    re.IGNORECASE,
+)
+_EMBEDDED_JPEG_RE = re.compile(
+    r"(?:data:image/jpeg;base64,)?(/9j/[A-Za-z0-9+/=\s]{80,})",
+    re.IGNORECASE,
+)
+_IMAGE_NAME_RE = re.compile(
+    r"(?:^|[\s(«\"'])([A-Za-z0-9._-]+\.(?:png|jpe?g|webp|gif))\b",
+    re.IGNORECASE,
 )
 
 
@@ -428,4 +453,107 @@ def parse_generated_image_prompts(answer: str) -> tuple[str, list[str]]:
 
 
 def wants_generated_image(text: str) -> bool:
-    return bool(_IMAGE_INTENT_RE.search(text or ""))
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if _DESCRIBE_PHOTO_RE.search(raw) and not _IMAGE_INTENT_RE.search(raw):
+        return False
+    return bool(_IMAGE_INTENT_RE.search(raw))
+
+
+def wants_image_delivery(
+    text: str,
+    *,
+    has_source: bool = False,
+    answer: str = "",
+) -> bool:
+    if looks_like_attachment_refusal(answer) or looks_like_attachment_refusal(text):
+        return True
+    if wants_generated_image(text):
+        return True
+    raw = (text or "").strip()
+    if has_source and re.search(
+        r"png|jpe?g|webp|файл|вложен|dpi|апскейл|upscale|увелич|масштаб|[×xх]\s*\d",
+        raw,
+        re.I,
+    ):
+        if _DESCRIBE_PHOTO_RE.search(raw) and not _IMAGE_INTENT_RE.search(raw):
+            return False
+        return True
+    return False
+
+
+def looks_like_attachment_refusal(text: str) -> bool:
+    return bool(_REFUSAL_RE.search(text or ""))
+
+
+def is_bare_confirm(text: str) -> bool:
+    return bool(_CONFIRM_RE.match(text or ""))
+
+
+def suggested_image_filename(text: str) -> str | None:
+    match = _IMAGE_NAME_RE.search(text or "")
+    if not match:
+        return None
+    return safe_filename(match.group(1))
+
+
+def extract_embedded_images(answer: str) -> tuple[str, list[dict[str, str]]]:
+    """Достаёт PNG/JPEG из data URL или сырого base64 в тексте ответа."""
+    import base64
+
+    images: list[dict[str, str]] = []
+
+    def _take(blob: str, mime: str) -> str:
+        compact = re.sub(r"\s+", "", blob or "")
+        if len(compact) < 80:
+            return ""
+        try:
+            data = base64.b64decode(compact, validate=False)
+        except Exception:
+            return blob
+        if not data:
+            return blob
+        images.append(
+            {"mime": mime, "b64": base64.b64encode(data).decode("ascii")}
+        )
+        return ""
+
+    def _png(match: re.Match[str]) -> str:
+        return _take(match.group(1), "image/png")
+
+    def _jpg(match: re.Match[str]) -> str:
+        return _take(match.group(1), "image/jpeg")
+
+    cleaned = _EMBEDDED_PNG_RE.sub(_png, answer or "")
+    cleaned = _EMBEDDED_JPEG_RE.sub(_jpg, cleaned)
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip(), images
+
+
+def decode_generated_file_bytes(filename: str, body: str) -> tuple[bytes, str] | None:
+    """Если :::file с картинкой содержит base64 — вернуть байты. Иначе None."""
+    import base64
+
+    ext = Path(filename or "").suffix.lower()
+    mime_by_ext = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }
+    if ext not in mime_by_ext:
+        return None
+    raw = (body or "").strip()
+    if raw.lower().startswith("data:image") and "," in raw:
+        raw = raw.split(",", 1)[1]
+    compact = re.sub(r"\s+", "", raw)
+    if len(compact) < 80:
+        return None
+    try:
+        data = base64.b64decode(compact, validate=False)
+    except Exception:
+        return None
+    if not data:
+        return None
+    return data, mime_by_ext[ext]

@@ -492,6 +492,7 @@ def openrouter_generate_images(
     model: str | None = None,
     n: int = 1,
     timeout: float = 120,
+    source_images: list[dict[str, str]] | None = None,
 ) -> list[dict[str, str]]:
     """Картинки через Image API OpenRouter; при сбое — chat/completions с modalities."""
     text = (prompt or "").strip()
@@ -508,11 +509,27 @@ def openrouter_generate_images(
     title_hdr = os.getenv("OPENROUTER_X_TITLE", "").strip()
     if title_hdr:
         extra["X-Title"] = title_hdr
+    refs: list[dict[str, Any]] = []
+    for img in (source_images or [])[:2]:
+        if not isinstance(img, dict):
+            continue
+        b64 = str(img.get("b64") or "").strip()
+        mime = str(img.get("mime") or "image/png").split(";")[0].strip() or "image/png"
+        if not b64:
+            continue
+        refs.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"},
+            }
+        )
     payload: dict[str, Any] = {
         "model": image_model,
         "prompt": text[:4000],
         "n": max(1, min(int(n), 4)),
     }
+    if refs:
+        payload["input_references"] = refs
     try:
         data = _post_json(
             _openrouter_images_url(),
@@ -529,9 +546,12 @@ def openrouter_generate_images(
             return images
     except BaseException as e:
         print(f"[openrouter_client] images_api_failed model={image_model!r} err={e!r} -> chat")
+    chat_content: Any = text[:4000]
+    if refs:
+        chat_content = [{"type": "text", "text": text[:4000]}, *refs]
     chat_payload: dict[str, Any] = {
         "model": image_model,
-        "messages": [{"role": "user", "content": text[:4000]}],
+        "messages": [{"role": "user", "content": chat_content}],
         "modalities": ["image", "text"],
     }
     data_c = openrouter_chat_completion(

@@ -4775,16 +4775,29 @@ async def miniapp_gpt_chat(
         if blocks:
             out["answer"] = cleaned
         for name, text in blocks:
+            decoded = comment_files.decode_generated_file_bytes(name, text)
             try:
-                row = comment_files.save_bytes(
-                    owner_user_id=owner,
-                    item_kind=kind,
-                    item_id=iid,
-                    author_user_id=uid,
-                    filename=name,
-                    mime="application/octet-stream",
-                    data=text.encode("utf-8"),
-                )
+                if decoded:
+                    blob, mime = decoded
+                    row = comment_files.save_bytes(
+                        owner_user_id=owner,
+                        item_kind=kind,
+                        item_id=iid,
+                        author_user_id=uid,
+                        filename=name,
+                        mime=mime,
+                        data=blob,
+                    )
+                else:
+                    row = comment_files.save_bytes(
+                        owner_user_id=owner,
+                        item_kind=kind,
+                        item_id=iid,
+                        author_user_id=uid,
+                        filename=name,
+                        mime="application/octet-stream",
+                        data=text.encode("utf-8"),
+                    )
             except ValueError:
                 try:
                     stem = str(name or "file").rsplit(".", 1)[0] or "file"
@@ -4822,13 +4835,14 @@ async def miniapp_gpt_chat(
                 ext = "webp"
             elif "gif" in mime:
                 ext = "gif"
+            filename = str(img.get("filename") or "").strip() or f"gpt-image-{i + 1}.{ext}"
             try:
                 row = comment_files.save_bytes(
                     owner_user_id=owner,
                     item_kind=kind,
                     item_id=iid,
                     author_user_id=uid,
-                    filename=f"gpt-image-{i + 1}.{ext}",
+                    filename=filename,
                     mime=mime,
                     data=blob,
                 )

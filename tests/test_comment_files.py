@@ -99,4 +99,29 @@ class CommentFilesTests(unittest.TestCase):
         self.assertEqual(prompts2, ["кот в шляпе"])
         self.assertTrue(comment_files.wants_generated_image("нарисуй кота"))
         self.assertTrue(comment_files.wants_generated_image("пришли фото офиса"))
+        self.assertTrue(comment_files.wants_generated_image("апскейл ×3 и DPI ×3"))
+        self.assertTrue(comment_files.wants_generated_image("увеличь это фото в 3 раза"))
         self.assertFalse(comment_files.wants_generated_image("что на фото в заметке?"))
+        self.assertTrue(
+            comment_files.looks_like_attachment_refusal(
+                "Похоже, вложения всё ещё не проходят. Могу выслать PNG в виде base64"
+            )
+        )
+        self.assertTrue(comment_files.is_bare_confirm("да"))
+        self.assertEqual(
+            comment_files.suggested_image_filename("сохрани как IMG_5158_3x.png"),
+            "IMG_5158_3x.png",
+        )
+        png_b64 = (
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmM"
+            "IQAAAABJRU5ErkJggg=="
+        )
+        cleaned_b64, embedded = comment_files.extract_embedded_images(
+            "вот\n" + png_b64 + "\nхвост"
+        )
+        self.assertEqual(len(embedded), 1)
+        self.assertEqual(embedded[0]["mime"], "image/png")
+        self.assertNotIn("iVBORw0KGgo", cleaned_b64)
+        decoded = comment_files.decode_generated_file_bytes("shot.png", png_b64)
+        self.assertIsNotNone(decoded)
+        self.assertEqual(decoded[1], "image/png")

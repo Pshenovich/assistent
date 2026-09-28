@@ -152,6 +152,44 @@ def test_answer_with_context_image_intent_fallback(monkeypatch):
     assert out["images"]
 
 
+def test_answer_with_context_replaces_base64_offer(monkeypatch):
+    seen: dict = {}
+
+    def fake_result(system, user, **kwargs):
+        return (
+            "Похоже, вложения всё ещё не проходят. Могу выслать PNG в виде base64 "
+            "(разобью на части, вы сохраните как IMG_5158_3x.png). Подтвердите «да».",
+            [],
+        )
+
+    def fake_images(prompt, **kwargs):
+        seen["prompt"] = prompt
+        seen["source"] = kwargs.get("source_images")
+        return [{"mime": "image/png", "b64": "Y2F0"}]
+
+    monkeypatch.setattr(llm, "_chat_result", fake_result)
+    monkeypatch.setattr(
+        "assistant.integrations.openrouter_client.openrouter_generate_images",
+        fake_images,
+    )
+    out = llm.answer_with_context_result(
+        "апскейл ×3",
+        images=[{"mime": "image/png", "b64": "c3Jj"}],
+    )
+    assert seen["prompt"]
+    assert seen["source"]
+    assert out["images"][0]["b64"] == "Y2F0"
+    assert out["images"][0]["filename"] == "IMG_5158_3x.png"
+    assert "base64" not in out["answer"].lower()
+    assert "вложении" in out["answer"]
+
+
+def test_chat_merges_context_prefix_into_system(monkeypatch):
+    assert seen
+    assert "кота" in seen[0]
+    assert out["images"]
+
+
 def test_chat_merges_context_prefix_into_system(monkeypatch):
     seen: dict = {}
 

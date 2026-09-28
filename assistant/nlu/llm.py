@@ -108,26 +108,62 @@ def _materialize_generated_media(
     images: list[dict[str, str]] | None,
     *,
     question: str = "",
+    history: list[dict[str, str]] | None = None,
+    source_images: list[dict[str, str]] | None = None,
 ) -> tuple[str, list[dict[str, str]]]:
     from assistant.integrations.openrouter_client import openrouter_generate_images
-    from assistant.stores.comment_files import parse_generated_image_prompts, wants_generated_image
+    from assistant.stores.comment_files import (
+        extract_embedded_images,
+        is_bare_confirm,
+        looks_like_attachment_refusal,
+        parse_generated_image_prompts,
+        suggested_image_filename,
+        wants_image_delivery,
+    )
 
-    out_images = list(images or [])
     cleaned, prompts = parse_generated_image_prompts(text or "")
-    if wants_generated_image(question) and not prompts and not out_images:
-        fallback = (question or "").strip()
+    cleaned, embedded = extract_embedded_images(cleaned)
+    out_images = list(images or []) + embedded
+    prompt_src = (question or "").strip()
+    if is_bare_confirm(prompt_src):
+        for it in reversed(history or []):
+            content = str((it or {}).get("content") or "").strip()
+            role = str((it or {}).get("role") or "").strip().lower()
+            if role == "user" and content and not is_bare_confirm(content):
+                prompt_src = content
+                break
+    need = wants_image_delivery(
+        prompt_src or question,
+        has_source=bool(source_images),
+        answer=text,
+    )
+    if need and not prompts and not out_images:
+        fallback = prompt_src or (question or "").strip()
         if fallback:
             prompts.append(fallback[:2000])
     for prompt in prompts[:2]:
         try:
-            generated = openrouter_generate_images(prompt)
+            generated = openrouter_generate_images(
+                prompt,
+                source_images=source_images,
+            )
         except Exception as e:
             print(f"[llm] image_generate_failed prompt={prompt[:80]!r} err={e!r}")
             generated = []
         out_images.extend(generated)
         if len(out_images) >= 4:
             break
-    return cleaned, out_images[:4]
+    out_images = out_images[:4]
+    fname = (
+        suggested_image_filename(prompt_src or question or "")
+        or suggested_image_filename(text or "")
+        or suggested_image_filename(cleaned)
+    )
+    if fname and out_images and isinstance(out_images[0], dict) and not out_images[0].get("filename"):
+        out_images[0] = {**out_images[0], "filename": fname}
+    if out_images and looks_like_attachment_refusal(cleaned):
+        cleaned = "Готово — файл во вложении."
+    return cleaned, out_images
 
 
 def _chat(
@@ -543,6 +579,8 @@ def answer_with_context_result(
         text,
         out_images,
         question=question or user,
+        history=history,
+        source_images=images,
     )
     return {"answer": text, "images": out_images}
 
