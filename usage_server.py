@@ -4775,15 +4775,32 @@ async def miniapp_gpt_chat(
         if blocks:
             out["answer"] = cleaned
         for name, text in blocks:
-            row = comment_files.save_bytes(
-                owner_user_id=owner,
-                item_kind=kind,
-                item_id=iid,
-                author_user_id=uid,
-                filename=name,
-                mime="text/plain",
-                data=text.encode("utf-8"),
-            )
+            try:
+                row = comment_files.save_bytes(
+                    owner_user_id=owner,
+                    item_kind=kind,
+                    item_id=iid,
+                    author_user_id=uid,
+                    filename=name,
+                    mime="application/octet-stream",
+                    data=text.encode("utf-8"),
+                )
+            except ValueError:
+                try:
+                    stem = str(name or "file").rsplit(".", 1)[0] or "file"
+                    row = comment_files.save_bytes(
+                        owner_user_id=owner,
+                        item_kind=kind,
+                        item_id=iid,
+                        author_user_id=uid,
+                        filename=f"{stem}.txt",
+                        mime="text/plain",
+                        data=text.encode("utf-8"),
+                    )
+                except Exception:
+                    continue
+            except Exception:
+                continue
             saved.append(_comment_file_api(row))
         import base64
 
@@ -4805,15 +4822,18 @@ async def miniapp_gpt_chat(
                 ext = "webp"
             elif "gif" in mime:
                 ext = "gif"
-            row = comment_files.save_bytes(
-                owner_user_id=owner,
-                item_kind=kind,
-                item_id=iid,
-                author_user_id=uid,
-                filename=f"gpt-image-{i + 1}.{ext}",
-                mime=mime,
-                data=blob,
-            )
+            try:
+                row = comment_files.save_bytes(
+                    owner_user_id=owner,
+                    item_kind=kind,
+                    item_id=iid,
+                    author_user_id=uid,
+                    filename=f"gpt-image-{i + 1}.{ext}",
+                    mime=mime,
+                    data=blob,
+                )
+            except Exception:
+                continue
             saved.append(_comment_file_api(row))
         return saved
 

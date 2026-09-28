@@ -5,13 +5,13 @@ from assistant.nlu.ask_context import assemble_ask_messages, build_context_prefi
 def test_answer_with_context_forwards_history(monkeypatch):
     seen: dict = {}
 
-    def fake_chat(system, user, **kwargs):
+    def fake_result(system, user, **kwargs):
         seen["history"] = kwargs.get("history")
         seen["user"] = user
         seen["system"] = system
-        return "ok"
+        return "ok", []
 
-    monkeypatch.setattr(llm, "_chat", fake_chat)
+    monkeypatch.setattr(llm, "_chat_result", fake_result)
     out = llm.answer_with_context(
         "второй вопрос",
         "заметка",
@@ -20,18 +20,19 @@ def test_answer_with_context_forwards_history(monkeypatch):
     assert out == "ok"
     assert seen["history"][0]["content"] == "первый вопрос"
     assert "второй вопрос" in seen["user"]
+    assert ":::file" in seen["system"]
 
 
 def test_answer_with_context_puts_note_in_system(monkeypatch):
     seen: dict = {}
 
-    def fake_chat(system, user, **kwargs):
+    def fake_result(system, user, **kwargs):
         seen["system"] = system
         seen["user"] = user
         seen["context_prefix"] = kwargs.get("context_prefix")
-        return "ok"
+        return "ok", []
 
-    monkeypatch.setattr(llm, "_chat", fake_chat)
+    monkeypatch.setattr(llm, "_chat_result", fake_result)
     out = llm.answer_with_context(
         "что решили?",
         "",
@@ -96,6 +97,59 @@ def test_answer_with_context_sends_pdf_as_openrouter_file(monkeypatch):
     assert file_part["file"]["filename"] == "holidays.pdf"
     assert file_part["file"]["file_data"].startswith("data:application/pdf;base64,")
     assert seen["payload"]["plugins"] == [{"id": "file-parser"}]
+
+
+def test_answer_with_context_keeps_model_images(monkeypatch):
+    def fake_result(system, user, **kwargs):
+        return "вот фото", [{"mime": "image/png", "b64": "aaa"}]
+
+    monkeypatch.setattr(llm, "_chat_result", fake_result)
+    out = llm.answer_with_context_result("опиши картинку")
+    assert out["answer"] == "вот фото"
+    assert out["images"] == [{"mime": "image/png", "b64": "aaa"}]
+
+
+def test_answer_with_context_generates_image_from_block(monkeypatch):
+    seen: dict = {}
+
+    def fake_result(system, user, **kwargs):
+        return 'Логотип готов\n\n:::image prompt="red cat logo"\n:::\n', []
+
+    def fake_images(prompt, **kwargs):
+        seen["prompt"] = prompt
+        return [{"mime": "image/png", "b64": "YmFiYQ=="}]
+
+    monkeypatch.setattr(llm, "_chat_result", fake_result)
+    monkeypatch.setattr(
+        "assistant.integrations.openrouter_client.openrouter_generate_images",
+        fake_images,
+    )
+    out = llm.answer_with_context_result("сделай логотип")
+    assert "Логотип готов" in out["answer"]
+    assert ":::image" not in out["answer"]
+    assert seen["prompt"] == "red cat logo"
+    assert out["images"][0]["b64"] == "YmFiYQ=="
+
+
+def test_answer_with_context_image_intent_fallback(monkeypatch):
+    seen: list[str] = []
+
+    def fake_result(system, user, **kwargs):
+        return "Сейчас нарисую.", []
+
+    def fake_images(prompt, **kwargs):
+        seen.append(prompt)
+        return [{"mime": "image/png", "b64": "Y2F0"}]
+
+    monkeypatch.setattr(llm, "_chat_result", fake_result)
+    monkeypatch.setattr(
+        "assistant.integrations.openrouter_client.openrouter_generate_images",
+        fake_images,
+    )
+    out = llm.answer_with_context_result("нарисуй кота в очках")
+    assert seen
+    assert "кота" in seen[0]
+    assert out["images"]
 
 
 def test_chat_merges_context_prefix_into_system(monkeypatch):

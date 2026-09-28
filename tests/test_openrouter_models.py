@@ -3,6 +3,8 @@ import unittest
 from assistant.integrations.openrouter_client import (
     _payload_for_comet,
     build_gpt_picker_models,
+    extract_chat_message_media,
+    model_emits_images,
     normalize_openrouter_models,
     sanitize_openrouter_model_id,
 )
@@ -85,6 +87,35 @@ class OpenRouterModelsTests(unittest.TestCase):
         self.assertIn("когда каникулы?", out["messages"][0]["content"])
         self.assertIn("holidays.pdf", out["messages"][0]["content"])
         self.assertNotIn("file_data", str(out["messages"]))
+        self.assertNotIn("modalities", out)
+
+    def test_extract_chat_images_from_message_field(self) -> None:
+        data = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "вот",
+                        "images": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": "data:image/png;base64,QUJD"
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+        text, images = extract_chat_message_media(data)
+        self.assertEqual(text, "вот")
+        self.assertEqual(images[0]["mime"], "image/png")
+        self.assertTrue(images[0]["b64"])
+
+    def test_model_emits_images(self) -> None:
+        self.assertTrue(model_emits_images("google/gemini-2.5-flash-image"))
+        self.assertTrue(model_emits_images("openai/gpt-image-1"))
+        self.assertFalse(model_emits_images("openai/gpt-4.1"))
 
     def test_gpt_picker_keeps_only_listed_openai_from_full_catalog(self) -> None:
         out = build_gpt_picker_models(

@@ -17,6 +17,7 @@ from assistant.lib.llm_json import strip_json_from_markdown
 from assistant.lib.summary_enrich import inject_tasks_into_summary, merge_tasks
 from assistant.nlu.prompts import (
     ACTION_ITEMS_SYSTEM,
+    ASK_ATTACHMENTS,
     ASK_SYSTEM,
     CALENDAR_PARSE_SYSTEM,
     JOURNAL_QA_ANSWER_SYSTEM,
@@ -95,6 +96,40 @@ def _user_content(
     return parts if len(parts) > 1 else text
 
 
+def _system_with_attachments(system: str) -> str:
+    base = (system or "").strip() or ASK_SYSTEM
+    if ":::file" in base and ":::image" in base:
+        return base
+    return f"{base}\n\n{ASK_ATTACHMENTS}"
+
+
+def _materialize_generated_media(
+    text: str,
+    images: list[dict[str, str]] | None,
+    *,
+    question: str = "",
+) -> tuple[str, list[dict[str, str]]]:
+    from assistant.integrations.openrouter_client import openrouter_generate_images
+    from assistant.stores.comment_files import parse_generated_image_prompts, wants_generated_image
+
+    out_images = list(images or [])
+    cleaned, prompts = parse_generated_image_prompts(text or "")
+    if wants_generated_image(question) and not prompts and not out_images:
+        fallback = (question or "").strip()
+        if fallback:
+            prompts.append(fallback[:2000])
+    for prompt in prompts[:2]:
+        try:
+            generated = openrouter_generate_images(prompt)
+        except Exception as e:
+            print(f"[llm] image_generate_failed prompt={prompt[:80]!r} err={e!r}")
+            generated = []
+        out_images.extend(generated)
+        if len(out_images) >= 4:
+            break
+    return cleaned, out_images[:4]
+
+
 def _chat(
     system: str,
     user: str,
@@ -155,15 +190,20 @@ def _chat_result(
             continue
         messages.append({"role": role, "content": content[:24000]})
     messages.append({"role": "user", "content": _user_content(user, images, files)})
-    if files or web:
+    from assistant.integrations.openrouter_client import model_emits_images
+
+    run_model = model or _model()
+    if files or web or model_emits_images(run_model):
         timeout = max(float(timeout), 180.0)
     payload: dict[str, Any] = {
-        "model": model or _model(),
+        "model": run_model,
         "messages": messages,
         "temperature": temperature,
     }
     if max_tokens is not None:
         payload["max_tokens"] = int(max_tokens)
+    if model_emits_images(run_model):
+        payload["modalities"] = ["image", "text"]
     plugins: list[dict[str, Any]] = []
     if files:
         plugin: dict[str, Any] = {"id": "file-parser"}
@@ -484,33 +524,26 @@ def answer_with_context_result(
         user = (user or "").rstrip() + "\n\n" + notes
     if (images or files) and not (question or "").strip() and not (user or "").strip():
         user = "Опиши вложение и ответь по нему."
-    sys = (system or "").strip() or ASK_SYSTEM
+    sys = _system_with_attachments((system or "").strip() or ASK_SYSTEM)
     temp = 0.1 if temperature is None else float(temperature)
     run_model = model or _model_ask()
-    if images or files or web:
-        text, out_images = _chat_result(
-            sys,
-            user,
-            operation="ask",
-            model=run_model,
-            temperature=temp,
-            history=history,
-            context_prefix=extra or None,
-            images=images,
-            files=files,
-            web=web,
-        )
-    else:
-        text = _chat(
-            sys,
-            user,
-            operation="ask",
-            model=run_model,
-            temperature=temp,
-            history=history,
-            context_prefix=extra or None,
-        )
-        out_images = []
+    text, out_images = _chat_result(
+        sys,
+        user,
+        operation="ask",
+        model=run_model,
+        temperature=temp,
+        history=history,
+        context_prefix=extra or None,
+        images=images,
+        files=files,
+        web=web,
+    )
+    text, out_images = _materialize_generated_media(
+        text,
+        out_images,
+        question=question or user,
+    )
     return {"answer": text, "images": out_images}
 
 

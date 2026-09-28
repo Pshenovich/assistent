@@ -244,6 +244,29 @@ def _raise_if_bad_chat_completion(provider: str, data: dict[str, Any]) -> None:
         raise RuntimeError(f"{provider}: пустой текст ответа (content)")
 
 
+_MD_DATA_IMG_RE = re.compile(
+    r"!\[[^\]]*\]\((data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+)\)",
+    re.IGNORECASE,
+)
+_MAX_FETCH_IMAGE_BYTES = 5 * 1024 * 1024
+
+
+def default_image_model() -> str:
+    return os.getenv("OPENROUTER_MODEL_IMAGE", "").strip() or "google/gemini-2.5-flash-image"
+
+
+def model_emits_images(model: str | None) -> bool:
+    m = (model or "").lower()
+    return any(tok in m for tok in ("image", "flux", "dall-e", "dalle", "gpt-image"))
+
+
+def _openrouter_images_url() -> str:
+    chat = _openrouter_chat_url().rstrip("/")
+    if chat.endswith("/chat/completions"):
+        return chat[: -len("/chat/completions")] + "/images"
+    return "https://openrouter.ai/api/v1/images"
+
+
 def _data_url_to_image(url: str) -> dict[str, str] | None:
     raw = (url or "").strip()
     if not raw.startswith("data:"):
@@ -264,6 +287,31 @@ def _data_url_to_image(url: str) -> dict[str, str] | None:
     return {"mime": mime, "b64": base64.b64encode(blob).decode("ascii")}
 
 
+def _http_url_to_image(url: str) -> dict[str, str] | None:
+    raw = (url or "").strip()
+    if not raw.startswith("https://"):
+        return None
+    try:
+        r = requests.get(raw, timeout=20)
+        r.raise_for_status()
+        blob = r.content
+        if not blob or len(blob) > _MAX_FETCH_IMAGE_BYTES:
+            return None
+        mime = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
+        if not mime.startswith("image/"):
+            mime = "image/png"
+        return {"mime": mime, "b64": base64.b64encode(blob).decode("ascii")}
+    except Exception:
+        return None
+
+
+def _url_to_image(url: str) -> dict[str, str] | None:
+    parsed = _data_url_to_image(url)
+    if parsed:
+        return parsed
+    return _http_url_to_image(url)
+
+
 def extract_chat_message_media(data: dict[str, Any]) -> tuple[str, list[dict[str, str]]]:
     """Текст и картинки (base64) из chat/completions message."""
     choices = data.get("choices") if isinstance(data, dict) else None
@@ -276,7 +324,7 @@ def extract_chat_message_media(data: dict[str, Any]) -> tuple[str, list[dict[str
     images: list[dict[str, str]] = []
 
     def _take_url(url: str) -> None:
-        parsed = _data_url_to_image(url)
+        parsed = _url_to_image(url)
         if parsed:
             images.append(parsed)
 
@@ -309,12 +357,25 @@ def extract_chat_message_media(data: dict[str, Any]) -> tuple[str, list[dict[str
             if isinstance(part, str):
                 _take_url(part)
             elif isinstance(part, dict):
+                b64 = str(part.get("b64_json") or part.get("b64") or "").strip()
+                if b64:
+                    mime = str(part.get("media_type") or part.get("mime") or "image/png")
+                    images.append({"mime": mime, "b64": b64})
+                    continue
                 img = part.get("image_url") or part.get("image") or part
                 if isinstance(img, str):
                     _take_url(img)
                 elif isinstance(img, dict):
                     _take_url(str(img.get("url") or img.get("data") or ""))
     text = "\n".join(t.strip() for t in texts if str(t).strip()).strip()
+    if text:
+        def _md_repl(match: re.Match[str]) -> str:
+            parsed = _data_url_to_image(match.group(1))
+            if parsed:
+                images.append(parsed)
+            return ""
+
+        text = _MD_DATA_IMG_RE.sub(_md_repl, text).strip()
     return text, images
 
 
@@ -360,6 +421,7 @@ def _payload_for_comet(payload: dict[str, Any]) -> dict[str, Any]:
     """Comet не принимает OpenRouter plugins и type=file — выкидываем PDF-части."""
     out = dict(payload)
     out.pop("plugins", None)
+    out.pop("modalities", None)
     messages: list[Any] = []
     for msg in out.get("messages") or []:
         if not isinstance(msg, dict):
@@ -394,6 +456,91 @@ def _payload_for_comet(payload: dict[str, Any]) -> dict[str, Any]:
         messages.append(copied)
     out["messages"] = messages
     return out
+
+
+def _images_from_api_data(data: dict[str, Any]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        rows = []
+    for item in rows:
+        if isinstance(item, str):
+            parsed = _url_to_image(item)
+            if parsed:
+                out.append(parsed)
+            continue
+        if not isinstance(item, dict):
+            continue
+        b64 = str(item.get("b64_json") or item.get("b64") or "").strip()
+        mime = str(item.get("media_type") or item.get("mime") or "image/png").split(";")[0]
+        if b64:
+            out.append({"mime": mime or "image/png", "b64": b64})
+            continue
+        url = str(item.get("url") or "")
+        parsed = _url_to_image(url)
+        if parsed:
+            out.append(parsed)
+    if out:
+        return out
+    _, chat_images = extract_chat_message_media(data)
+    return chat_images
+
+
+def openrouter_generate_images(
+    prompt: str,
+    *,
+    model: str | None = None,
+    n: int = 1,
+    timeout: float = 120,
+) -> list[dict[str, str]]:
+    """Картинки через Image API OpenRouter; при сбое — chat/completions с modalities."""
+    text = (prompt or "").strip()
+    if not text:
+        return []
+    or_key = os.getenv("OPENROUTER_KEY", "").strip()
+    if not or_key:
+        raise RuntimeError("Не задан OPENROUTER_KEY в .env")
+    image_model = sanitize_openrouter_model_id(model) or default_image_model()
+    extra: dict[str, str] = {}
+    ref = os.getenv("OPENROUTER_HTTP_REFERER", "").strip()
+    if ref:
+        extra["HTTP-Referer"] = ref
+    title_hdr = os.getenv("OPENROUTER_X_TITLE", "").strip()
+    if title_hdr:
+        extra["X-Title"] = title_hdr
+    payload: dict[str, Any] = {
+        "model": image_model,
+        "prompt": text[:4000],
+        "n": max(1, min(int(n), 4)),
+    }
+    try:
+        data = _post_json(
+            _openrouter_images_url(),
+            or_key,
+            payload,
+            extra_headers=extra,
+            timeout=timeout,
+        )
+        if data.get("error") is not None:
+            raise RuntimeError(_format_api_error_body(data))
+        images = _images_from_api_data(data)
+        if images:
+            _log_usage(data, payload, operation="ask_image", provider="openrouter")
+            return images
+    except BaseException as e:
+        print(f"[openrouter_client] images_api_failed model={image_model!r} err={e!r} -> chat")
+    chat_payload: dict[str, Any] = {
+        "model": image_model,
+        "messages": [{"role": "user", "content": text[:4000]}],
+        "modalities": ["image", "text"],
+    }
+    data_c = openrouter_chat_completion(
+        chat_payload,
+        operation="ask_image",
+        timeout=timeout,
+    )
+    _, images = extract_chat_message_media(data_c)
+    return images
 
 
 def openrouter_chat_completion(

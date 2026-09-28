@@ -77,3 +77,26 @@ class CommentFilesTests(unittest.TestCase):
         self.assertIn("Сначала текст", cleaned)
         self.assertIn("хвост", cleaned)
         self.assertNotIn(":::file", cleaned)
+
+    def test_parse_file_block_single_quotes_and_fence(self) -> None:
+        raw = "текст\n\n:::file name='a.csv'\ncol,val\n1,2\n:::\n"
+        cleaned, files = comment_files.parse_generated_file_blocks(raw)
+        self.assertEqual(files, [("a.csv", "col,val\n1,2")])
+        self.assertEqual(cleaned, "текст")
+        fenced = "до\n```file:notes.md\n# hi\n```\nпосле"
+        cleaned2, files2 = comment_files.parse_generated_file_blocks(fenced)
+        self.assertEqual(files2, [("notes.md", "# hi")])
+        self.assertIn("до", cleaned2)
+        self.assertIn("после", cleaned2)
+
+    def test_parse_image_prompts_and_intent(self) -> None:
+        raw = 'Вот картинка\n\n:::image prompt="red balloon"\n:::\n'
+        cleaned, prompts = comment_files.parse_generated_image_prompts(raw)
+        self.assertEqual(prompts, ["red balloon"])
+        self.assertEqual(cleaned, "Вот картинка")
+        body = ":::image\nкот в шляпе\n:::"
+        _, prompts2 = comment_files.parse_generated_image_prompts(body)
+        self.assertEqual(prompts2, ["кот в шляпе"])
+        self.assertTrue(comment_files.wants_generated_image("нарисуй кота"))
+        self.assertTrue(comment_files.wants_generated_image("пришли фото офиса"))
+        self.assertFalse(comment_files.wants_generated_image("что на фото в заметке?"))

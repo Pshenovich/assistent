@@ -62,8 +62,25 @@ ALLOWED_EXT = frozenset(
 )
 
 _FILE_BLOCK_RE = re.compile(
-    r":::file\s+name=\"([^\"]+)\"\s*\n(.*?)(?:\n):::",
+    r":::file\s+name\s*=\s*[\"']([^\"']+)[\"']\s*\n(.*?)(?:\n):::",
     re.DOTALL | re.IGNORECASE,
+)
+_FENCE_FILE_RE = re.compile(
+    r"```file:([^\n`]+)\n(.*?)```",
+    re.DOTALL | re.IGNORECASE,
+)
+_IMAGE_BLOCK_RE = re.compile(
+    r":::image(?:\s+prompt\s*=\s*[\"']([^\"']+)[\"'])?\s*\n?(.*?)(?:\n)?:::",
+    re.DOTALL | re.IGNORECASE,
+)
+_IMAGE_INTENT_RE = re.compile(
+    r"(нарисуй|нарисовать|нарисуйте|"
+    r"сгенер\w{0,8}\s+(?:мне\s+)?(?:картинк|изображен|фото|иллюстрац|мем|логотип)|"
+    r"(?:сделай|создай|придумай|пришли|скинь)\s+(?:мне\s+)?"
+    r"(?:картинк|изображен|фото|иллюстрац|мем|логотип|баннер)|"
+    r"\b(?:draw|generate|create|make)\b.{0,48}\b(?:an?\s+)?"
+    r"(?:image|picture|photo|logo|illustration)\b)",
+    re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -376,15 +393,39 @@ def extract_text_preview(item: dict[str, Any], *, limit: int = 8000) -> str:
 
 
 def parse_generated_file_blocks(answer: str) -> tuple[str, list[tuple[str, str]]]:
-    """Вырезает :::file name="…"::: блоки. Возвращает (текст, [(имя, содержимое)])."""
+    """Вырезает :::file name="…"::: и ```file:имя блоки. Возвращает (текст, [(имя, содержимое)])."""
     files: list[tuple[str, str]] = []
 
-    def _repl(match: re.Match[str]) -> str:
-        name = safe_filename(match.group(1))
-        body = (match.group(2) or "").strip("\n")
-        if name and body:
-            files.append((name, body))
+    def _take(name: str, body: str) -> str:
+        fname = safe_filename(name)
+        content = (body or "").strip("\n")
+        if fname and content:
+            files.append((fname, content))
         return ""
 
-    cleaned = _FILE_BLOCK_RE.sub(_repl, answer or "")
+    def _repl_colon(match: re.Match[str]) -> str:
+        return _take(match.group(1), match.group(2))
+
+    cleaned = _FILE_BLOCK_RE.sub(_repl_colon, answer or "")
+    cleaned = _FENCE_FILE_RE.sub(_repl_colon, cleaned)
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip(), files
+
+
+def parse_generated_image_prompts(answer: str) -> tuple[str, list[str]]:
+    """Вырезает :::image prompt="…"::: блоки. Возвращает (текст, [промпты])."""
+    prompts: list[str] = []
+
+    def _repl(match: re.Match[str]) -> str:
+        attr = (match.group(1) or "").strip()
+        body = (match.group(2) or "").strip()
+        prompt = attr or body
+        if prompt:
+            prompts.append(prompt[:2000])
+        return ""
+
+    cleaned = _IMAGE_BLOCK_RE.sub(_repl, answer or "")
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip(), prompts
+
+
+def wants_generated_image(text: str) -> bool:
+    return bool(_IMAGE_INTENT_RE.search(text or ""))
