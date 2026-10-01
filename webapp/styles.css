@@ -3204,22 +3204,6 @@ html.note-editor-open #note-editor-overlay {
   }
 }
 
-.note-card:has(.knowledge-card-toggle) {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.note-card:has(.knowledge-card-toggle) .note-card-inner {
-  flex: 1;
-  min-width: 0;
-  padding-right: 0;
-}
-
-.knowledge-card-toggle {
-  margin-left: auto;
-}
-
 .note-card-action-btn {
   position: absolute;
   top: 0;

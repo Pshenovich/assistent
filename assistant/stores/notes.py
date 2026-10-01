@@ -448,7 +448,12 @@ def list_knowledge_notes(
             """,
             (uid, KNOWLEDGE_ROLE, lim),
         )
-        return [_row_to_dict(r) for r in cur.fetchall()]
+        notes = [_row_to_dict(r) for r in cur.fetchall()]
+    pins = pinned_id_set(uid, "local")
+    for n in notes:
+        n["pinned"] = str(n.get("id") or "") in pins
+    notes.sort(key=lambda n: 0 if n.get("pinned") else 1)
+    return notes
 
 
 def get_knowledge_note(user_id: int | str) -> Optional[dict[str, Any]]:
@@ -513,7 +518,10 @@ def duplicate_note(user_id: int | str, note_id: int) -> Optional[dict[str, Any]]
     if not title.endswith(" (копия)"):
         title = title + " (копия)"
     body = str(src.get("body") or src.get("description") or "")
-    dup = create_note(uid, title, body)
+    src_role = str(src.get("role") or "").strip()
+    if not src_role and src.get("is_knowledge"):
+        src_role = KNOWLEDGE_ROLE
+    dup = create_note(uid, title, body, role=src_role)
     try:
         from assistant.stores import note_sheets as note_sheets_store
 

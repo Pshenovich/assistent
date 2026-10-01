@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261001-kb-menus";
+  var WEBAPP_BUILD = "20261001-kb-menu-dots";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261001-kb-menus";
+  const NOTE_EDITOR_ASSET_V = "20261001-kb-menu-dots";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -3232,6 +3232,7 @@
       if (isNoteEditorModalOpen()) handleNoteEditorModalClose({ skipPrompt: true });
       loadNoteEditorScripts().catch(function () {});
       loadKnowledgeNotes();
+      ensureUserTagsLoaded();
     }
     if (name !== "notes" && name !== "knowledge") {
       closeNotesDetail();
@@ -5501,6 +5502,7 @@
       var id = noteId != null ? String(noteId) : "";
       var card = document.createElement("div");
       card.className = "note-card";
+      if (id) card.setAttribute("data-note-id", id);
       var inner = document.createElement("div");
       inner.className = "note-card-inner";
       var titleRaw =
@@ -5519,52 +5521,8 @@
             "</p>"
           : "");
       appendItemLabelChips(inner, n);
-      var toggle = document.createElement("button");
-      toggle.type = "button";
-      toggle.className =
-        "svc-toggle knowledge-card-toggle" +
-        (n.kb_enabled === false || n.kb_enabled === 0 || n.kb_enabled === "0" ? "" : " svc-toggle--on");
-      toggle.setAttribute("role", "switch");
-      toggle.setAttribute(
-        "aria-checked",
-        n.kb_enabled === false || n.kb_enabled === 0 || n.kb_enabled === "0" ? "false" : "true"
-      );
-      toggle.innerHTML = '<span class="svc-toggle-knob" aria-hidden="true"></span>';
-      function stopToggle(e) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-      toggle.addEventListener("pointerdown", stopToggle);
-      toggle.addEventListener("click", function (e) {
-        stopToggle(e);
-        if (!id) return;
-        var next = !(
-          n.kb_enabled === false ||
-          n.kb_enabled === 0 ||
-          n.kb_enabled === "0"
-        )
-          ? false
-          : true;
-        n.kb_enabled = next;
-        toggle.classList.toggle("svc-toggle--on", next);
-        toggle.setAttribute("aria-checked", next ? "true" : "false");
-        if (knowledgeDataCache && knowledgeDataCache.notes) {
-          knowledgeDataCache.notes.forEach(function (row) {
-            if (String(row.id) === String(id)) row.kb_enabled = next;
-          });
-          writeMiniappCache("knowledge", knowledgeDataCache);
-        }
-        apiFetch("/notes/local/" + encodeURIComponent(id), {
-          method: "PATCH",
-          body: JSON.stringify({ kb_enabled: next }),
-        }).catch(function () {
-          n.kb_enabled = !next;
-          toggle.classList.toggle("svc-toggle--on", !next);
-          toggle.setAttribute("aria-checked", !next ? "true" : "false");
-        });
-      });
+      mountNoteCardActions(card, inner, n);
       card.appendChild(inner);
-      card.appendChild(toggle);
       card.addEventListener("click", function () {
         openKnowledgeNoteDetail(n);
       });
@@ -8741,6 +8699,43 @@
     return (notesDataCache && notesDataCache.tags) || [];
   }
 
+  var userTagsLoadPromise = null;
+
+  function ensureUserTagsLoaded(force) {
+    if (
+      !force &&
+      notesDataCache &&
+      notesDataCache._tagsLoaded &&
+      Array.isArray(notesDataCache.tags)
+    ) {
+      return Promise.resolve(notesDataCache.tags.slice());
+    }
+    if (
+      !force &&
+      notesDataCache &&
+      Array.isArray(notesDataCache.tags) &&
+      notesDataCache.tags.length
+    ) {
+      notesDataCache._tagsLoaded = true;
+      return Promise.resolve(notesDataCache.tags.slice());
+    }
+    if (userTagsLoadPromise) return userTagsLoadPromise;
+    userTagsLoadPromise = apiFetch("/tags", { method: "GET" })
+      .then(function (data) {
+        if (!notesDataCache) notesDataCache = {};
+        notesDataCache.tags = (data && data.tags) || [];
+        notesDataCache._tagsLoaded = true;
+        return notesDataCache.tags.slice();
+      })
+      .catch(function () {
+        return getUserTagsFromCache().slice();
+      })
+      .finally(function () {
+        userTagsLoadPromise = null;
+      });
+    return userTagsLoadPromise;
+  }
+
   function getUserHashtagsFromCache() {
     var fromBundle = (notesDataCache && notesDataCache.hashtags) || [];
     if (fromBundle.length) return fromBundle;
@@ -9331,6 +9326,11 @@
         positionFixedMenu();
         bindMenuPositionListeners();
       }
+      ensureUserTagsLoaded().then(function () {
+        if (!menuOpen) return;
+        fillMenu();
+        if (useFixedMenu) positionFixedMenu();
+      });
     }
 
     var addWrap = document.createElement("div");
@@ -16611,6 +16611,9 @@
       return;
     }
     notesDataCache = data;
+    if (notesDataCache && Array.isArray(notesDataCache.tags)) {
+      notesDataCache._tagsLoaded = true;
+    }
     writeMiniappCache("notes", data);
     if (data.journal_error && err) {
       err.textContent = data.journal_error;
@@ -16861,6 +16864,19 @@
         persistNotesCacheToDisk();
         renderNotesPanesFromData(notesDataCache);
       }
+      if (knowledgeDataCache && knowledgeDataCache.notes) {
+        knowledgeDataCache.notes.forEach(function (row) {
+          if (String(row.id) === String(noteId)) row.pinned = !!pinned;
+        });
+        knowledgeDataCache.notes.sort(function (a, b) {
+          return String(b.updated_at || "").localeCompare(String(a.updated_at || ""));
+        });
+        knowledgeDataCache.notes.sort(function (a, b) {
+          return (a.pinned ? 0 : 1) - (b.pinned ? 0 : 1);
+        });
+        writeMiniappCache("knowledge", knowledgeDataCache);
+        renderKnowledgePaneFromData(knowledgeDataCache);
+      }
     }
     try {
       if (isAppOffline() || String(noteId).indexOf("tmp_") === 0) {
@@ -16903,20 +16919,34 @@
         "/notes/local/" + encodeURIComponent(String(noteId)) + "/duplicate",
         { method: "POST" }
       );
-      if (res && res.item) prependLocalInCache(res.item);
-      if (notesDataCache) renderNotesPanesFromData(notesDataCache);
-      showNoteToast("Заметка скопирована");
+      var item = res && res.item;
+      if (item) {
+        if (isKnowledgeNoteItem(item)) {
+          prependKnowledgeInCache(item);
+        } else {
+          prependLocalInCache(item);
+          if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+        }
+      }
+      showNoteToast(isKnowledgeNoteItem(item) ? "Документ скопирован" : "Заметка скопирована");
     } catch (e) {
       alert(e.message || String(e));
     }
   }
 
   async function deleteLocalNoteFromCard(n, id) {
-    var msg = n && n.is_owner === false ? "Убрать заметку из списка?" : "Удалить заметку?";
+    var isKb = isKnowledgeNoteItem(n);
+    var msg =
+      n && n.is_owner === false
+        ? "Убрать заметку из списка?"
+        : isKb
+          ? "Удалить документ?"
+          : "Удалить заметку?";
     if (!(await confirmDialog(msg))) return;
     try {
       await deleteLocalNoteById(id);
       if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+      if (knowledgeDataCache) renderKnowledgePaneFromData(knowledgeDataCache);
     } catch (e) {
       alert(e.message || String(e));
     }
@@ -17716,8 +17746,13 @@
         mountTagPicker(tagsWrap, "local", noteId, noteTagsOf(n), function (tags) {
           n.tags = tags;
           n.project = tags[0] || null;
+          if (isKnowledge) {
+            updateItemTagsInCache("local", noteId, tags);
+            if (knowledgeDataCache) renderKnowledgePaneFromData(knowledgeDataCache);
+          }
         });
         setHidden(tagsWrap, false);
+        ensureUserTagsLoaded();
       } catch (err) {
         console.error("mountTagPicker", err);
         setHidden(tagsWrap, true);
@@ -17804,8 +17839,13 @@
               mountTagPicker(tagsWrap, "local", noteId, noteTagsOf(n), function (tags) {
                 n.tags = tags;
                 n.project = tags[0] || null;
+                if (isKnowledge) {
+                  updateItemTagsInCache("local", noteId, tags);
+                  if (knowledgeDataCache) renderKnowledgePaneFromData(knowledgeDataCache);
+                }
               });
               setHidden(tagsWrap, false);
+              ensureUserTagsLoaded();
             } catch (err) {
               console.error("mountTagPicker", err);
             }
