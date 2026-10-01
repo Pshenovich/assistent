@@ -4735,9 +4735,9 @@ html.note-editor-open #note-editor-overlay {
   gap: 4px;
   width: 100%;
   margin: 0 0 -16px;
-  padding: 6px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.05);
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .note-paie-plus-menu.hidden {
@@ -4799,7 +4799,20 @@ html.note-editor-open #note-editor-overlay {
 }
 
 .note-paie-plus-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
+}
+
+.note-paie-plus-note-project {
+  flex-shrink: 0;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--note-composer-muted);
+  font-size: 12px;
 }
 
 .note-paie-reply-form.is-drop-attach {
@@ -5336,7 +5349,10 @@ html.note-editor-open #note-editor-overlay {
 }
 
 .note-paie-kb-check {
+  display: inline-flex;
   flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
   box-sizing: border-box;
   width: 18px;
   height: 18px;
@@ -5354,9 +5370,10 @@ html.note-editor-open #note-editor-overlay {
 .note-paie-kb-check.is-on::after {
   content: "";
   display: block;
-  width: 4px;
-  height: 8px;
-  margin: 1px auto 0;
+  box-sizing: border-box;
+  width: 5px;
+  height: 9px;
+  margin-top: -1px;
   border: solid #19191a;
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
@@ -5367,7 +5384,6 @@ html.note-editor-open #note-editor-overlay {
   display: block;
   width: 8px;
   height: 2px;
-  margin: 6px auto 0;
   background: #19191a;
 }
 
@@ -5422,11 +5438,20 @@ html.note-editor-open #note-editor-overlay {
 }
 
 .note-paie-kb-group-chevron {
+  display: inline-flex;
   flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
   color: var(--note-composer-muted);
-  font-size: 12px;
-  line-height: 1;
+  line-height: 0;
   transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+
+.note-paie-kb-group-chevron svg {
+  display: block;
 }
 
 .note-paie-kb-group.is-open .note-paie-kb-group-chevron {

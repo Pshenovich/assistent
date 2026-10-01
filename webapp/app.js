@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261001-kb-plus";
+  var WEBAPP_BUILD = "20261001-kb-menus";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261001-kb-plus";
+  const NOTE_EDITOR_ASSET_V = "20261001-kb-menus";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -10689,7 +10689,7 @@
       '<div class="note-paie-menu-list"></div>' +
       "</div></div>" +
       '<div class="note-paie-kb-wrap">' +
-      '<button type="button" class="note-paie-kb-toggle is-on" aria-haspopup="true" aria-expanded="false" aria-pressed="true" title="База знаний">' +
+      '<button type="button" class="note-paie-kb-toggle" aria-haspopup="true" aria-expanded="false" aria-pressed="false" title="База знаний">' +
       noteKnowledgeIconHtml() +
       "</button>" +
       '<div class="note-paie-menu note-paie-menu--kb hidden" role="menu">' +
@@ -11482,6 +11482,15 @@
         sanitizeNoteTitle(n.title || n.content || "") ||
         String(n.title || n.content || "Без названия");
       btn.appendChild(title);
+      var project = noteProjectOf(n);
+      var projectName =
+        (project && (project.name || project.title)) || "";
+      if (projectName) {
+        var meta = document.createElement("span");
+        meta.className = "note-paie-plus-note-project";
+        meta.textContent = String(projectName);
+        btn.appendChild(meta);
+      }
       btn.addEventListener("click", function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -14077,7 +14086,8 @@
     if (wrap && Array.isArray(wrap._knowledgeNoteIds)) return wrap._knowledgeNoteIds.slice();
     var stored = readStoredKnowledgeNoteIds();
     if (stored.explicit) return stored.ids.slice();
-    return allKnowledgeNoteIds();
+    // По умолчанию БЗ выключена, пока пользователь сам ничего не выбрал.
+    return [];
   }
 
   function setNoteKnowledgeNoteIds(ids) {
@@ -14122,10 +14132,7 @@
     if (wrap && Array.isArray(wrap._knowledgeNoteIds)) return wrap._knowledgeNoteIds.length > 0;
     var stored = readStoredKnowledgeNoteIds();
     if (stored.explicit) return stored.ids.length > 0;
-    if (knowledgeDataCache && Array.isArray(knowledgeDataCache.notes)) {
-      return allKnowledgeNoteIds().length > 0;
-    }
-    return true;
+    return false;
   }
 
   function discussionKnowledgeFields() {
@@ -14288,7 +14295,8 @@
     var chevron = document.createElement("span");
     chevron.className = "note-paie-kb-group-chevron";
     chevron.setAttribute("aria-hidden", "true");
-    chevron.textContent = "▾";
+    chevron.innerHTML =
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
     toggle.appendChild(name);
     toggle.appendChild(chevron);
     toggle.addEventListener("click", function (e) {
