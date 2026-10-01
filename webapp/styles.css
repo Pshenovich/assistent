@@ -4804,6 +4804,23 @@ html.note-editor-open #note-editor-overlay {
   background: rgba(255, 255, 255, 0.04);
 }
 
+.note-discuss-attach-img-btn {
+  display: block;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+  max-width: 100%;
+  text-align: left;
+}
+
+.note-discuss-attach-img-btn:focus-visible {
+  outline: 2px solid var(--accent, #6cb6ff);
+  outline-offset: 2px;
+  border-radius: 12px;
+}
+
 .note-discuss-attach-file {
   display: inline-flex;
   align-items: center;
@@ -4817,6 +4834,118 @@ html.note-editor-open #note-editor-overlay {
   font-size: 0.875rem;
   text-align: left;
   cursor: pointer;
+}
+
+.discuss-media-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.discuss-media-viewer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.82);
+}
+
+.discuss-media-viewer-sheet {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.discuss-media-viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 10px;
+  background: rgba(12, 12, 14, 0.92);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.discuss-media-viewer-title {
+  flex: 1;
+  margin: 0;
+  min-width: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.discuss-media-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.discuss-media-viewer-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+
+.discuss-media-viewer-btn:hover,
+.discuss-media-viewer-btn:focus-visible {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.discuss-media-viewer-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  overflow: auto;
+}
+
+.discuss-media-viewer-img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.discuss-media-viewer-frame {
+  width: 100%;
+  height: 100%;
+  min-height: 60vh;
+  border: 0;
+  border-radius: 8px;
+  background: #111;
+}
+
+.discuss-media-viewer-hint {
+  margin: 0;
+  padding: 24px;
+  color: rgba(255, 255, 255, 0.8);
+  text-align: center;
+  font-size: 0.95rem;
 }
 
 .note-paie-composer-input,

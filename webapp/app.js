@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260927-md-lists";
+  var WEBAPP_BUILD = "20261001-discuss-lightbox";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260927-md-lists";
+  const NOTE_EDITOR_ASSET_V = "20261001-discuss-lightbox";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -10635,10 +10635,20 @@
       "</div>" +
       '<button type="button" class="note-paie-reply-target-clear" aria-label="Отменить ответ">&times;</button>' +
       "</div>" +
+      '<div id="note-paie-plus-menu" class="note-paie-plus-menu hidden">' +
+      '<div class="note-paie-plus-page" data-plus-page="root">' +
+      '<button type="button" class="note-paie-menu-item" data-plus-action="file">Добавить файл</button>' +
+      '<button type="button" class="note-paie-menu-item" data-plus-action="note">Добавить заметку</button>' +
+      "</div>" +
+      '<div class="note-paie-plus-page hidden" data-plus-page="notes">' +
+      '<button type="button" class="note-paie-plus-back" id="note-paie-plus-back">← Назад</button>' +
+      '<input type="search" class="note-paie-plus-search" id="note-paie-plus-search" placeholder="Поиск заметок" autocomplete="off" />' +
+      '<div class="note-paie-plus-notes" id="note-paie-plus-notes"></div>' +
+      "</div></div>" +
       '<div class="note-paie-composer-row">' +
-      '<button type="button" class="note-paie-attach" id="note-paie-attach" aria-label="Прикрепить фото или файл" title="Прикрепить фото или файл">' +
-      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-      '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>' +
+      '<button type="button" class="note-paie-attach" id="note-paie-attach" aria-label="Добавить" title="Добавить" aria-haspopup="true" aria-expanded="false">' +
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">' +
+      '<path d="M12 5v14M5 12h14"/>' +
       "</svg></button>" +
       '<input type="file" id="note-paie-attach-input" class="hidden" multiple accept="image/*,.pdf,.txt,.md,.csv,.json,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip">' +
       '<textarea id="note-paie-reply-input" class="note-paie-composer-input" rows="1" maxlength="4000" placeholder="' +
@@ -10733,7 +10743,12 @@
       if (except && menu === except) return;
       menu.classList.add("hidden");
     });
-    form.querySelectorAll(".note-paie-mode-compact, .note-paie-model-btn, .note-paie-kb-toggle").forEach(function (btn) {
+    var plusMenu = document.getElementById("note-paie-plus-menu");
+    if (plusMenu && plusMenu !== except) {
+      plusMenu.classList.add("hidden");
+      showPlusMenuPage("root");
+    }
+    form.querySelectorAll(".note-paie-mode-compact, .note-paie-model-btn, .note-paie-kb-toggle, .note-paie-attach").forEach(function (btn) {
       btn.classList.remove("is-open");
       btn.setAttribute("aria-expanded", "false");
     });
@@ -11229,6 +11244,7 @@
 
   var DISCUSS_ATTACH_MAX = 8;
   var DISCUSS_ATTACH_MAX_BYTES = 12 * 1024 * 1024;
+  var DISCUSS_CONTEXT_NOTES_MAX = 5;
   var discussFileBlobUrls = {};
 
   function discussPendingFiles() {
@@ -11236,6 +11252,53 @@
     if (!wrap) return [];
     if (!wrap._discussPending) wrap._discussPending = [];
     return wrap._discussPending;
+  }
+
+  function discussPendingContextNotes() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap) return [];
+    if (!wrap._discussContextNotes) wrap._discussContextNotes = [];
+    return wrap._discussContextNotes;
+  }
+
+  function discussContextNoteIds() {
+    return discussPendingContextNotes()
+      .map(function (n) {
+        return n && n.id != null ? String(n.id) : "";
+      })
+      .filter(Boolean);
+  }
+
+  function clearDiscussPendingContextNotes() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) wrap._discussContextNotes = [];
+    renderDiscussAttachPreview();
+    syncNotePaieReplyForm();
+  }
+
+  function addDiscussContextNote(note) {
+    var id = note && note.id != null ? String(note.id) : "";
+    if (!id) return;
+    var list = discussPendingContextNotes();
+    if (list.some(function (n) { return String(n.id) === id; })) return;
+    if (list.length >= DISCUSS_CONTEXT_NOTES_MAX) {
+      alert("Можно прикрепить не больше " + DISCUSS_CONTEXT_NOTES_MAX + " заметок");
+      return;
+    }
+    list.push({
+      id: id,
+      title:
+        sanitizeNoteTitle((note && (note.title || note.content)) || "") ||
+        String((note && (note.title || note.content)) || "Заметка"),
+    });
+    renderDiscussAttachPreview();
+    syncNotePaieReplyForm();
+  }
+
+  function removeDiscussContextNote(idx) {
+    discussPendingContextNotes().splice(idx, 1);
+    renderDiscussAttachPreview();
+    syncNotePaieReplyForm();
   }
 
   function clearDiscussPendingFiles() {
@@ -11299,12 +11362,33 @@
     var host = document.getElementById("note-paie-attach-preview");
     if (!host) return;
     var pending = discussPendingFiles();
+    var notes = discussPendingContextNotes();
     host.innerHTML = "";
-    if (!pending.length) {
+    if (!pending.length && !notes.length) {
       host.classList.add("hidden");
       return;
     }
     host.classList.remove("hidden");
+    notes.forEach(function (item, idx) {
+      var chip = document.createElement("div");
+      chip.className = "note-paie-attach-chip is-note";
+      var name = document.createElement("span");
+      name.className = "note-paie-attach-chip-name";
+      name.textContent = item.title || "Заметка";
+      chip.appendChild(name);
+      var rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "note-paie-attach-chip-remove";
+      rm.setAttribute("aria-label", "Убрать заметку");
+      rm.textContent = "×";
+      rm.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        removeDiscussContextNote(idx);
+      });
+      chip.appendChild(rm);
+      host.appendChild(chip);
+    });
     pending.forEach(function (item, idx) {
       var chip = document.createElement("div");
       chip.className = "note-paie-attach-chip" + (item.kind === "image" ? " is-image" : "");
@@ -11333,16 +11417,155 @@
     });
   }
 
+  function showPlusMenuPage(page) {
+    var menu = document.getElementById("note-paie-plus-menu");
+    if (!menu) return;
+    menu.querySelectorAll(".note-paie-plus-page").forEach(function (el) {
+      el.classList.toggle("hidden", el.getAttribute("data-plus-page") !== page);
+    });
+    if (page === "notes") {
+      var search = document.getElementById("note-paie-plus-search");
+      if (search) search.value = "";
+      renderPlusNotePicker("");
+      window.setTimeout(function () {
+        if (search) {
+          try {
+            search.focus();
+          } catch (_) {}
+        }
+      }, 20);
+    }
+  }
+
+  function plusPickerNotes(query) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var currentId = wrap && wrap._shareKind === "local" ? String(wrap._shareId || "") : "";
+    var selected = {};
+    discussContextNoteIds().forEach(function (id) {
+      selected[id] = true;
+    });
+    var q = String(query || "").trim().toLowerCase();
+    return ((notesDataCache && notesDataCache.local_notes) || []).filter(function (n) {
+      var id = String((n && n.id) || "");
+      if (!id || id === currentId || selected[id]) return false;
+      if (n.is_knowledge || n.role === "knowledge") return false;
+      if (!q) return true;
+      var title = String(n.title || n.content || "").toLowerCase();
+      var preview = notePlainExcerpt(n.description || n.body || "", 80).toLowerCase();
+      return title.indexOf(q) >= 0 || preview.indexOf(q) >= 0;
+    });
+  }
+
+  function renderPlusNotePicker(query) {
+    var list = document.getElementById("note-paie-plus-notes");
+    if (!list) return;
+    var notes = plusPickerNotes(query);
+    list.innerHTML = "";
+    if (!notes.length) {
+      var empty = document.createElement("p");
+      empty.className = "note-paie-menu-empty";
+      empty.textContent = notesDataCache
+        ? String(query || "").trim()
+          ? "Ничего не найдено"
+          : "Других заметок нет"
+        : "Загрузка…";
+      list.appendChild(empty);
+      return;
+    }
+    notes.forEach(function (n) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "note-paie-menu-item note-paie-plus-note";
+      var title = document.createElement("span");
+      title.className = "note-paie-kb-item-title";
+      title.textContent =
+        sanitizeNoteTitle(n.title || n.content || "") ||
+        String(n.title || n.content || "Без названия");
+      btn.appendChild(title);
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        addDiscussContextNote(n);
+        closeNoteComposerMenus();
+      });
+      list.appendChild(btn);
+    });
+  }
+
+  function ensurePlusPickerNotes() {
+    if (notesDataCache && Array.isArray(notesDataCache.local_notes)) {
+      return Promise.resolve(notesDataCache.local_notes);
+    }
+    return Promise.resolve(loadNotes())
+      .then(function () {
+        return (notesDataCache && notesDataCache.local_notes) || [];
+      })
+      .catch(function () {
+        return [];
+      });
+  }
+
   function bindDiscussAttachOnce(form) {
     var btn = document.getElementById("note-paie-attach");
     var input = document.getElementById("note-paie-attach-input");
+    var menu = document.getElementById("note-paie-plus-menu");
     if (!btn || !input || btn._bound) return;
     btn._bound = true;
     btn.addEventListener("click", function (e) {
       e.preventDefault();
+      e.stopPropagation();
       if (btn.disabled) return;
-      input.click();
+      var open = menu && menu.classList.contains("hidden");
+      closeNoteComposerMenus(open ? menu : null);
+      if (menu && open) {
+        showPlusMenuPage("root");
+        menu.classList.remove("hidden");
+        btn.classList.add("is-open");
+        btn.setAttribute("aria-expanded", "true");
+      }
+      syncNoteFormatToolbarForComposer();
     });
+    if (menu && !menu._bound) {
+      menu._bound = true;
+      menu.addEventListener("click", function (e) {
+        e.stopPropagation();
+      });
+      var fileBtn = menu.querySelector('[data-plus-action="file"]');
+      if (fileBtn) {
+        fileBtn.addEventListener("click", function (e) {
+          e.preventDefault();
+          closeNoteComposerMenus();
+          input.click();
+        });
+      }
+      var noteBtn = menu.querySelector('[data-plus-action="note"]');
+      if (noteBtn) {
+        noteBtn.addEventListener("click", function (e) {
+          e.preventDefault();
+          showPlusMenuPage("notes");
+          ensurePlusPickerNotes().then(function () {
+            var search = document.getElementById("note-paie-plus-search");
+            renderPlusNotePicker(search ? search.value : "");
+          });
+        });
+      }
+      var back = document.getElementById("note-paie-plus-back");
+      if (back) {
+        back.addEventListener("click", function (e) {
+          e.preventDefault();
+          showPlusMenuPage("root");
+        });
+      }
+      var search = document.getElementById("note-paie-plus-search");
+      if (search) {
+        search.addEventListener("input", function () {
+          renderPlusNotePicker(search.value);
+        });
+        search.addEventListener("click", function (e) {
+          e.stopPropagation();
+        });
+      }
+    }
     input.addEventListener("change", function () {
       if (input.files && input.files.length) addDiscussPendingFiles(input.files);
       input.value = "";
@@ -11404,6 +11627,103 @@
     return url;
   }
 
+  function closeDiscussMediaViewer() {
+    var ov = document.getElementById("discuss-media-viewer");
+    if (!ov) return;
+    if (ov._onKey) {
+      document.removeEventListener("keydown", ov._onKey, true);
+      ov._onKey = null;
+    }
+    if (ov.parentNode) ov.parentNode.removeChild(ov);
+  }
+
+  function downloadDiscussBlobUrl(src, filename) {
+    var a = document.createElement("a");
+    a.href = src;
+    a.download = filename || "file";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  function openDiscussMediaViewer(att, src) {
+    closeDiscussMediaViewer();
+    var name = (att && att.name) || "Файл";
+    var mime = String((att && att.mime) || "").toLowerCase();
+    var isImage = String((att && att.kind) || "") === "image" || mime.indexOf("image/") === 0;
+    var isPdf = mime.indexOf("pdf") >= 0 || /\.pdf$/i.test(name);
+    var ov = document.createElement("div");
+    ov.id = "discuss-media-viewer";
+    ov.className = "discuss-media-viewer";
+    ov.setAttribute("role", "dialog");
+    ov.setAttribute("aria-modal", "true");
+    ov.setAttribute("aria-label", name);
+    ov.innerHTML =
+      '<div class="discuss-media-viewer-backdrop" data-close="1"></div>' +
+      '<div class="discuss-media-viewer-sheet">' +
+      '<div class="discuss-media-viewer-bar">' +
+      '<p class="discuss-media-viewer-title"></p>' +
+      '<div class="discuss-media-viewer-actions">' +
+      '<button type="button" class="discuss-media-viewer-btn" data-download="1" aria-label="Скачать" title="Скачать">' +
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>' +
+      "</button>" +
+      '<button type="button" class="discuss-media-viewer-btn" data-close="1" aria-label="Закрыть" title="Закрыть">' +
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>' +
+      "</button>" +
+      "</div></div>" +
+      '<div class="discuss-media-viewer-body"></div>' +
+      "</div>";
+    var title = ov.querySelector(".discuss-media-viewer-title");
+    if (title) title.textContent = name;
+    var body = ov.querySelector(".discuss-media-viewer-body");
+    if (isImage) {
+      var img = document.createElement("img");
+      img.className = "discuss-media-viewer-img";
+      img.src = src;
+      img.alt = name;
+      body.appendChild(img);
+    } else if (isPdf) {
+      var frame = document.createElement("iframe");
+      frame.className = "discuss-media-viewer-frame";
+      frame.src = src;
+      frame.title = name;
+      body.appendChild(frame);
+    } else {
+      var hint = document.createElement("p");
+      hint.className = "discuss-media-viewer-hint";
+      hint.textContent = "Нажмите «Скачать», чтобы сохранить файл.";
+      body.appendChild(hint);
+    }
+    ov.addEventListener("click", function (e) {
+      var t = e.target;
+      if (!t) return;
+      if (t.closest && t.closest("[data-download]")) {
+        e.preventDefault();
+        e.stopPropagation();
+        downloadDiscussBlobUrl(src, name);
+        return;
+      }
+      if (t.closest && t.closest("[data-close]")) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeDiscussMediaViewer();
+      }
+    });
+    ov._onKey = function (e) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeDiscussMediaViewer();
+      }
+    };
+    document.addEventListener("keydown", ov._onKey, true);
+    document.body.appendChild(ov);
+  }
+
+  async function openDiscussAttachment(att) {
+    var src = await discussFileObjectUrl(att);
+    openDiscussMediaViewer(att, src);
+  }
+
   function renderDiscussAttachments(host, attachments) {
     var list = (attachments || []).filter(Boolean);
     if (!host || !list.length) return;
@@ -11411,16 +11731,28 @@
     wrap.className = "note-discuss-attach-list";
     list.forEach(function (att) {
       if (String(att.kind || "") === "image") {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "note-discuss-attach-img-btn";
+        btn.setAttribute("aria-label", "Открыть " + (att.name || "фото"));
         var img = document.createElement("img");
         img.className = "note-discuss-attach-img";
         img.alt = att.name || "Фото";
-        wrap.appendChild(img);
+        btn.appendChild(img);
+        btn.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          openDiscussAttachment(att).catch(function (err) {
+            alert(err.message || String(err));
+          });
+        });
+        wrap.appendChild(btn);
         discussFileObjectUrl(att)
           .then(function (src) {
             img.src = src;
           })
           .catch(function () {
-            img.replaceWith(renderDiscussFileChip(att));
+            btn.replaceWith(renderDiscussFileChip(att));
           });
         return;
       }
@@ -11437,18 +11769,9 @@
     btn.addEventListener("click", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      discussFileObjectUrl(att)
-        .then(function (src) {
-          var a = document.createElement("a");
-          a.href = src;
-          a.download = att.name || "file";
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-        })
-        .catch(function (err) {
-          alert(err.message || String(err));
-        });
+      openDiscussAttachment(att).catch(function (err) {
+        alert(err.message || String(err));
+      });
     });
     return btn;
   }
@@ -11480,6 +11803,7 @@
     if (
       !form ||
       !form.querySelector("#note-paie-attach") ||
+      !form.querySelector("#note-paie-plus-menu") ||
       !form.querySelector(".note-paie-kb-wrap") ||
       !form.querySelector("#note-paie-reply-editor") ||
       !form.querySelector('[data-mode="research"]')
@@ -12454,6 +12778,11 @@
     }
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && isNoteDiscussionOpen()) {
+        if (document.getElementById("discuss-media-viewer")) {
+          closeDiscussMediaViewer();
+          e.preventDefault();
+          return;
+        }
         if (document.getElementById("note-link-overlay") &&
             !document.getElementById("note-link-overlay").classList.contains("hidden")) {
           return;
@@ -13801,10 +14130,12 @@
 
   function discussionKnowledgeFields() {
     var ids = noteKnowledgeNoteIds();
+    var ctx = discussContextNoteIds();
     return {
       use_knowledge: ids.length > 0,
       knowledge_note_ids: ids,
       sheet_ids: selectedContextSheetIds(),
+      context_note_ids: ctx.length ? ctx : undefined,
     };
   }
 
@@ -13828,6 +14159,61 @@
     );
   }
 
+  function knowledgeNotesByProject() {
+    var groups = [];
+    var index = {};
+    knowledgeNotesList().forEach(function (n) {
+      var project = noteProjectOf(n);
+      var key = project && project.id != null ? String(project.id) : "";
+      var title = project && (project.name || project.title)
+        ? String(project.name || project.title)
+        : "Без проекта";
+      if (!index[key]) {
+        index[key] = { key: key, title: title, notes: [] };
+        groups.push(index[key]);
+      }
+      index[key].notes.push(n);
+    });
+    groups.sort(function (a, b) {
+      if (!a.key) return 1;
+      if (!b.key) return -1;
+      return String(a.title).localeCompare(String(b.title), "ru");
+    });
+    return groups;
+  }
+
+  function kbGroupIsOpen(key, hasSelected) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap && wrap._kbOpenGroups && Object.prototype.hasOwnProperty.call(wrap._kbOpenGroups, key)) {
+      return !!wrap._kbOpenGroups[key];
+    }
+    return !!hasSelected;
+  }
+
+  function setKbGroupOpen(key, open) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap) return;
+    if (!wrap._kbOpenGroups) wrap._kbOpenGroups = {};
+    wrap._kbOpenGroups[key] = !!open;
+  }
+
+  function setNoteKnowledgeProjectSelection(ids, selected) {
+    var want = {};
+    (ids || []).forEach(function (id) {
+      var sid = String(id || "").trim();
+      if (sid) want[sid] = true;
+    });
+    var next = noteKnowledgeNoteIds().filter(function (id) {
+      return !want[id];
+    });
+    if (selected) {
+      Object.keys(want).forEach(function (id) {
+        next.push(id);
+      });
+    }
+    setNoteKnowledgeNoteIds(next);
+  }
+
   function appendContextMenuSection(list, label) {
     var head = document.createElement("p");
     head.className = "note-paie-menu-section";
@@ -13835,27 +14221,98 @@
     list.appendChild(head);
   }
 
-  function appendContextToggleRow(list, title, on, onClick) {
+  function makeContextCheckbox(checked, indeterminate) {
+    var box = document.createElement("span");
+    box.className =
+      "note-paie-kb-check" +
+      (checked ? " is-on" : "") +
+      (indeterminate ? " is-mixed" : "");
+    box.setAttribute("aria-hidden", "true");
+    return box;
+  }
+
+  function appendContextCheckRow(list, title, on, onClick) {
     var row = document.createElement("button");
     row.type = "button";
     row.className = "note-paie-menu-item note-paie-kb-item";
     row.setAttribute("role", "menuitemcheckbox");
     row.setAttribute("aria-checked", on ? "true" : "false");
+    row.appendChild(makeContextCheckbox(on, false));
     var name = document.createElement("span");
     name.className = "note-paie-kb-item-title";
     name.textContent = title;
-    var toggle = document.createElement("span");
-    toggle.className = "svc-toggle" + (on ? " svc-toggle--on" : "");
-    toggle.setAttribute("aria-hidden", "true");
-    toggle.innerHTML = '<span class="svc-toggle-knob"></span>';
     row.appendChild(name);
-    row.appendChild(toggle);
     row.addEventListener("click", function (e) {
       e.preventDefault();
       e.stopPropagation();
       onClick();
     });
     list.appendChild(row);
+  }
+
+  function appendKnowledgeProjectGroup(list, group, selected) {
+    var ids = group.notes
+      .map(function (n) {
+        return n && n.id != null ? String(n.id) : "";
+      })
+      .filter(Boolean);
+    var selectedCount = ids.filter(function (id) {
+      return !!selected[id];
+    }).length;
+    var allOn = ids.length > 0 && selectedCount === ids.length;
+    var someOn = selectedCount > 0 && selectedCount < ids.length;
+    var open = kbGroupIsOpen(group.key, selectedCount > 0);
+    var wrap = document.createElement("div");
+    wrap.className = "note-paie-kb-group" + (open ? " is-open" : "");
+    var head = document.createElement("div");
+    head.className = "note-paie-kb-group-head";
+    var checkBtn = document.createElement("button");
+    checkBtn.type = "button";
+    checkBtn.className = "note-paie-kb-group-check";
+    checkBtn.setAttribute("aria-label", allOn ? "Снять выбор проекта" : "Выбрать весь проект");
+    var box = makeContextCheckbox(allOn, someOn);
+    checkBtn.appendChild(box);
+    checkBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      setNoteKnowledgeProjectSelection(ids, !allOn);
+      if (!allOn) setKbGroupOpen(group.key, true);
+    });
+    var toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "note-paie-kb-group-toggle";
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    var name = document.createElement("span");
+    name.className = "note-paie-kb-item-title";
+    name.textContent = group.title;
+    var chevron = document.createElement("span");
+    chevron.className = "note-paie-kb-group-chevron";
+    chevron.setAttribute("aria-hidden", "true");
+    chevron.textContent = "▾";
+    toggle.appendChild(name);
+    toggle.appendChild(chevron);
+    toggle.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var next = !kbGroupIsOpen(group.key, selectedCount > 0);
+      setKbGroupOpen(group.key, next);
+      renderNoteKnowledgeMenu();
+    });
+    head.appendChild(checkBtn);
+    head.appendChild(toggle);
+    wrap.appendChild(head);
+    var body = document.createElement("div");
+    body.className = "note-paie-kb-group-body";
+    if (!open) body.classList.add("hidden");
+    group.notes.forEach(function (n) {
+      var id = n && n.id != null ? String(n.id) : "";
+      if (!id) return;
+      appendContextCheckRow(body, knowledgeNoteMenuTitle(n), !!selected[id], function () {
+        toggleNoteKnowledgeNoteId(id);
+      });
+    });
+    wrap.appendChild(body);
+    list.appendChild(wrap);
   }
 
   function toggleNoteSheetContextId(id) {
@@ -14345,7 +14802,9 @@
     setGptDiscussPhase("sending");
     try {
       var fileIds = await uploadDiscussPendingFiles(kind, itemId);
+      var contextIds = discussContextNoteIds();
       clearDiscussPendingFiles();
+      clearDiscussPendingContextNotes();
       var saved = await apiFetch(
         "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
         {
@@ -14387,6 +14846,7 @@
           file_ids: fileIds,
           item_kind: kind,
           item_id: itemId,
+          context_note_ids: contextIds.length ? contextIds : undefined,
         }),
       });
       var ans = String((res && res.answer) || "").trim();
@@ -14455,6 +14915,7 @@
     var input = document.getElementById("note-paie-reply-input");
     try {
       var fileIds = await uploadDiscussPendingFiles(wrap._shareKind, wrap._shareId);
+      clearDiscussPendingContextNotes();
       await apiFetch(
         "/notes/" +
           encodeURIComponent(wrap._shareKind) +
@@ -14547,7 +15008,7 @@
       var hasText = noteAskUsesChips(noteAskMode())
         ? !gptComposerIsEmpty(editor)
         : !!(input && String(input.value || "").trim());
-      var hasFiles = discussPendingFiles().length > 0;
+      var hasFiles = discussPendingFiles().length > 0 || discussContextNoteIds().length > 0;
       var canLaunchPaie = noteAskMode() === "paie" && !hasChair;
       var canLaunchResearch = noteAskMode() === "research";
       var ready = !busy && (hasText || hasFiles || canLaunchPaie || canLaunchResearch);
@@ -14783,6 +15244,7 @@
       .then(function (data) {
         if (input) input.value = "";
         clearNoteComposerCommentTarget();
+        clearDiscussPendingContextNotes();
         refreshNoteCommentsList();
         var status = (data && data.status) || "running";
         if (status === "done") {
@@ -14955,6 +15417,7 @@
       .then(function (data) {
         clearGptComposer();
         if (editor) syncGptEditorEmpty(editor);
+        clearDiscussPendingContextNotes();
         markOptimisticUserSent();
         refreshNoteCommentsList();
         var status = (data && data.status) || "running";
