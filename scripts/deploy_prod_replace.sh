@@ -168,6 +168,9 @@ echo "==> Синхронизация кода (без .env, .venv, пользо�
   --exclude 'data/knowledge_bases.sqlite' \
   --exclude 'data/users/' \
   --exclude 'data/telegram-bot-api/' \
+  --exclude 'data/user_agents.sqlite' \
+  --exclude 'comment_files/' \
+  --exclude 'data/comment_files/' \
   --exclude 'miniapp_billing_state.json' \
   --exclude 'booking_store.json' \
   --exclude 'booking_whatsapp_sessions/' \

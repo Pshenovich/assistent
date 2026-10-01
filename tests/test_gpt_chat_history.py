@@ -184,6 +184,24 @@ def test_answer_with_context_replaces_base64_offer(monkeypatch):
     assert "вложении" in out["answer"]
 
 
+def test_answer_with_context_no_fake_ready_without_image(monkeypatch):
+    def fake_result(system, user, **kwargs):
+        return "Готово — файл во вложении.", []
+
+    def fake_images(prompt, **kwargs):
+        return []
+
+    monkeypatch.setattr(llm, "_chat_result", fake_result)
+    monkeypatch.setattr(
+        "assistant.integrations.openrouter_client.openrouter_generate_images",
+        fake_images,
+    )
+    out = llm.answer_with_context_result("еще раз отправь файл")
+    assert not out["images"]
+    assert "Не удалось" in out["answer"]
+    assert "во вложении" not in out["answer"]
+
+
 def test_chat_merges_context_prefix_into_system(monkeypatch):
     assert seen
     assert "кота" in seen[0]

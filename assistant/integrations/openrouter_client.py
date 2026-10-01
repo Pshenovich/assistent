@@ -260,11 +260,20 @@ def model_emits_images(model: str | None) -> bool:
     return any(tok in m for tok in ("image", "flux", "dall-e", "dalle", "gpt-image"))
 
 
-def _openrouter_images_url() -> str:
+def _openrouter_images_url() -> str | None:
+    """URL Image API. None — если кастомный gateway без /images (тогда только chat)."""
     chat = _openrouter_chat_url().rstrip("/")
     if chat.endswith("/chat/completions"):
-        return chat[: -len("/chat/completions")] + "/images"
-    return "https://openrouter.ai/api/v1/images"
+        base = chat[: -len("/chat/completions")]
+        # Прокси вида /v1/<uuid>/chat/completions часто без endpoint /images.
+        if re.search(r"/[0-9a-f]{8}-[0-9a-f-]{27,}/?$", base, re.I):
+            return None
+        if "openrouter.ai" not in base and re.search(r"/v1/[^/]+$", base):
+            return None
+        return base + "/images"
+    if "openrouter.ai" in chat:
+        return "https://openrouter.ai/api/v1/images"
+    return None
 
 
 def _data_url_to_image(url: str) -> dict[str, str] | None:
@@ -523,32 +532,39 @@ def openrouter_generate_images(
                 "image_url": {"url": f"data:{mime};base64,{b64}"},
             }
         )
-    payload: dict[str, Any] = {
-        "model": image_model,
-        "prompt": text[:4000],
-        "n": max(1, min(int(n), 4)),
-    }
+    images_url = _openrouter_images_url()
+    if images_url:
+        payload: dict[str, Any] = {
+            "model": image_model,
+            "prompt": text[:4000],
+            "n": max(1, min(int(n), 4)),
+        }
+        if refs:
+            payload["input_references"] = refs
+        try:
+            data = _post_json(
+                images_url,
+                or_key,
+                payload,
+                extra_headers=extra,
+                timeout=timeout,
+            )
+            if data.get("error") is not None:
+                raise RuntimeError(_format_api_error_body(data))
+            images = _images_from_api_data(data)
+            if images:
+                _log_usage(data, payload, operation="ask_image", provider="openrouter")
+                return images
+        except BaseException as e:
+            print(f"[openrouter_client] images_api_failed model={image_model!r} err={e!r} -> chat")
+    guide = (
+        "Generate an image now. Return the image in the response modalities, "
+        "not a text-only refusal.\n\n"
+        + text[:4000]
+    )
+    chat_content: Any = guide
     if refs:
-        payload["input_references"] = refs
-    try:
-        data = _post_json(
-            _openrouter_images_url(),
-            or_key,
-            payload,
-            extra_headers=extra,
-            timeout=timeout,
-        )
-        if data.get("error") is not None:
-            raise RuntimeError(_format_api_error_body(data))
-        images = _images_from_api_data(data)
-        if images:
-            _log_usage(data, payload, operation="ask_image", provider="openrouter")
-            return images
-    except BaseException as e:
-        print(f"[openrouter_client] images_api_failed model={image_model!r} err={e!r} -> chat")
-    chat_content: Any = text[:4000]
-    if refs:
-        chat_content = [{"type": "text", "text": text[:4000]}, *refs]
+        chat_content = [{"type": "text", "text": guide}, *refs]
     chat_payload: dict[str, Any] = {
         "model": image_model,
         "messages": [{"role": "user", "content": chat_content}],

@@ -4875,6 +4875,39 @@ async def miniapp_gpt_chat(
         kb_version = ""
         images, files, file_notes = _load_prompt_media()
         prompt = q or "Опиши вложение и ответь по нему."
+        if not images:
+            from assistant.stores import comment_files as _cf
+
+            kind = str(body.item_kind or "").strip()
+            iid = str(body.item_id or "").strip()
+            if kind in ("local", "journal") and iid and (
+                _cf.wants_image_delivery(prompt)
+                or _cf.wants_resend_attachment(prompt)
+            ):
+                owner = _resolve_item_owner(str(uid), kind, iid)
+                if owner:
+                    import base64 as _b64
+
+                    for item in _cf.list_recent_images(
+                        owner_user_id=owner,
+                        item_kind=kind,
+                        item_id=iid,
+                        limit=2,
+                    ):
+                        path = _cf.disk_path(int(item["id"]))
+                        if not path.is_file():
+                            continue
+                        blob = path.read_bytes()
+                        if not blob or len(blob) > 5 * 1024 * 1024:
+                            continue
+                        images.append(
+                            {
+                                "mime": str(item.get("mime") or "image/jpeg"),
+                                "b64": _b64.b64encode(blob).decode("ascii"),
+                            }
+                        )
+                    if images and not file_notes:
+                        file_notes = "Изображение из предыдущего сообщения в обсуждении."
         kb_ids = body.knowledge_note_ids
         if kb_ids is not None:
             kb_ids = [str(x).strip() for x in kb_ids if str(x).strip()]

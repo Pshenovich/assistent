@@ -94,6 +94,14 @@ _REFUSAL_RE = re.compile(
     r"скрипт под вашу ОС|сохраните как",
     re.IGNORECASE,
 )
+_CLAIMED_ATTACH_RE = re.compile(
+    r"файл во вложении|во вложении\.|прикрепил\b|attached (?:the )?(?:file|image)|here(?:'s| is) (?:the )?(?:file|image)",
+    re.IGNORECASE,
+)
+_SEND_AGAIN_RE = re.compile(
+    r"(еще|ещё)\s+раз|отправ\w*|пришли|скинь|вышли|send\s+again|resend",
+    re.IGNORECASE,
+)
 _CONFIRM_RE = re.compile(r"^\s*(да|yes|ок|ok|подтверждаю|начинай|ага)\s*[.!]?\s*$", re.IGNORECASE)
 _EMBEDDED_PNG_RE = re.compile(
     r"(?:data:image/png;base64,)?(iVBORw0KGgo[A-Za-z0-9+/=\s]{80,})",
@@ -303,6 +311,29 @@ def list_for_comment(comment_id: int) -> list[dict[str, Any]]:
         return [_row_to_dict(r) for r in cur.fetchall()]
 
 
+def list_recent_images(
+    *,
+    owner_user_id: int | str,
+    item_kind: str,
+    item_id: str | int,
+    limit: int = 2,
+) -> list[dict[str, Any]]:
+    owner = _uid(owner_user_id)
+    lim = max(1, min(int(limit), 8))
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            SELECT * FROM share_comment_files
+            WHERE owner_user_id = ? AND item_kind = ? AND item_id = ?
+              AND kind = 'image'
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (owner, str(item_kind), str(item_id), lim),
+        )
+        return [_row_to_dict(r) for r in cur.fetchall()]
+
+
 def list_for_comments(comment_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
     ids = [int(x) for x in comment_ids if int(x) > 0]
     if not ids:
@@ -469,6 +500,10 @@ def wants_image_delivery(
 ) -> bool:
     if looks_like_attachment_refusal(answer) or looks_like_attachment_refusal(text):
         return True
+    if claims_attachment_ready(answer) or claims_attachment_ready(text):
+        return True
+    if wants_resend_attachment(text):
+        return True
     if wants_generated_image(text):
         return True
     raw = (text or "").strip()
@@ -485,6 +520,57 @@ def wants_image_delivery(
 
 def looks_like_attachment_refusal(text: str) -> bool:
     return bool(_REFUSAL_RE.search(text or ""))
+
+
+def claims_attachment_ready(text: str) -> bool:
+    return bool(_CLAIMED_ATTACH_RE.search(text or ""))
+
+
+def wants_resend_attachment(text: str) -> bool:
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if _SEND_AGAIN_RE.search(raw) and re.search(
+        r"файл|фото|картинк|изображен|png|jpe?g|вложен|image|file",
+        raw,
+        re.I,
+    ):
+        return True
+    if re.search(r"отправ\w*|пришли|скинь|вышли", raw, re.I) and re.search(
+        r"файл|фото|картинк|png|jpe?g|вложен", raw, re.I
+    ):
+        return True
+    return False
+
+
+def visual_image_prompt(
+    question: str,
+    *,
+    history: list[dict[str, str]] | None = None,
+    has_source: bool = False,
+) -> str:
+    """Промпт для image-модели: не «отправь файл», а визуальное задание."""
+    q = (question or "").strip()
+    prior = ""
+    for it in reversed(history or []):
+        if str((it or {}).get("role") or "").strip().lower() != "user":
+            continue
+        content = str((it or {}).get("content") or "").strip()
+        if not content or is_bare_confirm(content) or wants_resend_attachment(content):
+            continue
+        if wants_generated_image(content) or wants_image_delivery(content, has_source=has_source):
+            prior = content
+            break
+    base = prior or q or "create the requested image"
+    if has_source:
+        return (
+            "Edit the attached photo. Keep the same subject and composition. "
+            f"User request: {base}"
+        )[:2000]
+    return (
+        "Create a single PNG image for this request. "
+        f"User request: {base}"
+    )[:2000]
 
 
 def is_bare_confirm(text: str) -> bool:

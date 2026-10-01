@@ -113,43 +113,72 @@ def _materialize_generated_media(
 ) -> tuple[str, list[dict[str, str]]]:
     from assistant.integrations.openrouter_client import openrouter_generate_images
     from assistant.stores.comment_files import (
+        claims_attachment_ready,
         extract_embedded_images,
         is_bare_confirm,
         looks_like_attachment_refusal,
         parse_generated_image_prompts,
         suggested_image_filename,
+        visual_image_prompt,
         wants_image_delivery,
+        wants_resend_attachment,
     )
 
     cleaned, prompts = parse_generated_image_prompts(text or "")
     cleaned, embedded = extract_embedded_images(cleaned)
     out_images = list(images or []) + embedded
     prompt_src = (question or "").strip()
-    if is_bare_confirm(prompt_src):
+    if is_bare_confirm(prompt_src) or wants_resend_attachment(prompt_src):
         for it in reversed(history or []):
             content = str((it or {}).get("content") or "").strip()
             role = str((it or {}).get("role") or "").strip().lower()
             if role == "user" and content and not is_bare_confirm(content):
+                if wants_resend_attachment(content):
+                    continue
                 prompt_src = content
                 break
     need = wants_image_delivery(
         prompt_src or question,
         has_source=bool(source_images),
         answer=text,
-    )
+    ) or claims_attachment_ready(text) or claims_attachment_ready(cleaned)
     if need and not prompts and not out_images:
-        fallback = prompt_src or (question or "").strip()
-        if fallback:
-            prompts.append(fallback[:2000])
+        prompts.append(
+            visual_image_prompt(
+                prompt_src or question,
+                history=history,
+                has_source=bool(source_images),
+            )
+        )
     for prompt in prompts[:2]:
+        if out_images:
+            break
         try:
             generated = openrouter_generate_images(
                 prompt,
                 source_images=source_images,
+                timeout=180,
             )
         except Exception as e:
             print(f"[llm] image_generate_failed prompt={prompt[:80]!r} err={e!r}")
             generated = []
+        if not generated:
+            # Один повтор с явным visual prompt — модель иногда отвечает текстом.
+            retry = visual_image_prompt(
+                prompt,
+                history=history,
+                has_source=bool(source_images),
+            )
+            if retry != prompt:
+                try:
+                    generated = openrouter_generate_images(
+                        retry,
+                        source_images=source_images,
+                        timeout=180,
+                    )
+                except Exception as e:
+                    print(f"[llm] image_generate_retry_failed prompt={retry[:80]!r} err={e!r}")
+                    generated = []
         out_images.extend(generated)
         if len(out_images) >= 4:
             break
@@ -161,8 +190,14 @@ def _materialize_generated_media(
     )
     if fname and out_images and isinstance(out_images[0], dict) and not out_images[0].get("filename"):
         out_images[0] = {**out_images[0], "filename": fname}
-    if out_images and looks_like_attachment_refusal(cleaned):
-        cleaned = "Готово — файл во вложении."
+    if out_images:
+        if looks_like_attachment_refusal(cleaned) or claims_attachment_ready(cleaned) or not cleaned.strip():
+            cleaned = "Готово — файл во вложении."
+    elif need or claims_attachment_ready(text) or claims_attachment_ready(cleaned):
+        cleaned = (
+            "Не удалось сгенерировать файл. Напишите ещё раз «нарисуй…» "
+            "или приложите фото и попросите апскейл."
+        )
     return cleaned, out_images
 
 

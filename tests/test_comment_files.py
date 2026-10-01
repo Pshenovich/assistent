@@ -102,6 +102,8 @@ class CommentFilesTests(unittest.TestCase):
         self.assertTrue(comment_files.wants_generated_image("апскейл ×3 и DPI ×3"))
         self.assertTrue(comment_files.wants_generated_image("увеличь это фото в 3 раза"))
         self.assertFalse(comment_files.wants_generated_image("что на фото в заметке?"))
+        self.assertTrue(comment_files.wants_resend_attachment("еще раз отправь файл"))
+        self.assertTrue(comment_files.claims_attachment_ready("Готово — файл во вложении."))
         self.assertTrue(
             comment_files.looks_like_attachment_refusal(
                 "Похоже, вложения всё ещё не проходят. Могу выслать PNG в виде base64"
