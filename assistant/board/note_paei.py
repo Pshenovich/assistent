@@ -222,6 +222,7 @@ def begin_job(
     quote: str = "",
     reply_to_id: int | None = None,
     sheet_ids: list[str] | None = None,
+    attached_notes: str = "",
 ) -> tuple[dict[str, Any], bool]:
     key = job_key(user_id, kind, item_id)
     now = time.time()
@@ -257,6 +258,7 @@ def begin_job(
                 if sheet_ids is not None
                 else None
             ),
+            "attached_notes": str(attached_notes or "").strip(),
             "progress": _progress_view(
                 {
                     "phase": "ANALYZING",
@@ -495,6 +497,7 @@ async def run_note_paei(
     quote: str = "",
     reply_to_id: int | None = None,
     sheet_ids: list[str] | None = None,
+    attached_notes: str = "",
 ) -> dict[str, Any]:
     store.init_db()
     if sheet_ids is not None:
@@ -554,6 +557,9 @@ async def run_note_paei(
         heading = "PAIE · решение CHAIR"
         root_id = None
     extra = _knowledge_instruction_prefix(use_knowledge, knowledge_note_ids) + extra
+    attached = str(attached_notes or "").strip()
+    if attached:
+        extra += "\nПРИКРЕПЛЁННЫЕ ЗАМЕТКИ:\n" + attached
     from assistant.stores import user_agents
 
     cfg = user_agents.runtime_config(int(user_id), "paie")
@@ -628,6 +634,7 @@ async def run_note_paei_job(
     quote: str = "",
     reply_to_id: int | None = None,
     sheet_ids: list[str] | None = None,
+    attached_notes: str = "",
 ) -> None:
     key = job_key(user_id, kind, item_id)
     job = get_job(user_id, kind, item_id) or {}
@@ -652,6 +659,8 @@ async def run_note_paei_job(
         use_knowledge = bool(knowledge_note_ids)
     elif "use_knowledge" in job:
         use_knowledge = bool(job.get("use_knowledge"))
+    if not attached_notes:
+        attached_notes = str(job.get("attached_notes") or "")
     try:
         thread_parent = (
             int(thread_parent) if thread_parent not in (None, "", 0, "0") else None
@@ -683,6 +692,7 @@ async def run_note_paei_job(
             quote=quote_text,
             reply_to_id=target_id,
             sheet_ids=sheet_ids,
+            attached_notes=attached_notes,
         )
         comment = result.get("comment") or {}
         _update_job(

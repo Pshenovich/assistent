@@ -541,6 +541,7 @@ def answer_with_context(
     quote: str = "",
     quotes: list[str] | None = None,
     knowledge_brief: str = "",
+    attached_notes: str = "",
     images: list[dict[str, str]] | None = None,
     files: list[dict[str, str]] | None = None,
     file_notes: str = "",
@@ -555,6 +556,7 @@ def answer_with_context(
         quote=quote,
         quotes=quotes,
         knowledge_brief=knowledge_brief,
+        attached_notes=attached_notes,
         images=images,
         files=files,
         file_notes=file_notes,
@@ -572,6 +574,7 @@ def answer_with_context_result(
     quote: str = "",
     quotes: list[str] | None = None,
     knowledge_brief: str = "",
+    attached_notes: str = "",
     images: list[dict[str, str]] | None = None,
     files: list[dict[str, str]] | None = None,
     file_notes: str = "",
@@ -589,6 +592,7 @@ def answer_with_context_result(
         quote=quote,
         quotes=quotes,
         knowledge_brief=knowledge_brief,
+        attached_notes=attached_notes,
     )
     notes = (file_notes or "").strip()
     if notes:

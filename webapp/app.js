@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261001-discuss-lightbox";
+  var WEBAPP_BUILD = "20261001-kb-plus";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261001-discuss-lightbox";
+  const NOTE_EDITOR_ASSET_V = "20261001-kb-plus";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -11493,7 +11493,7 @@
   }
 
   function ensurePlusPickerNotes() {
-    if (notesDataCache && Array.isArray(notesDataCache.local_notes)) {
+    if (notesDataCache && Array.isArray(notesDataCache.local_notes) && notesDataCache.local_notes.length) {
       return Promise.resolve(notesDataCache.local_notes);
     }
     return Promise.resolve(loadNotes())
@@ -11509,7 +11509,7 @@
     var btn = document.getElementById("note-paie-attach");
     var input = document.getElementById("note-paie-attach-input");
     var menu = document.getElementById("note-paie-plus-menu");
-    if (!btn || !input || btn._bound) return;
+    if (!btn || !input || !menu || btn._bound) return;
     btn._bound = true;
     btn.addEventListener("click", function (e) {
       e.preventDefault();
@@ -14130,7 +14130,7 @@
 
   function discussionKnowledgeFields() {
     var ids = noteKnowledgeNoteIds();
-    var ctx = discussContextNoteIds();
+    var ctx = noteAskMode() === "comment" ? [] : discussContextNoteIds();
     return {
       use_knowledge: ids.length > 0,
       knowledge_note_ids: ids,
@@ -14344,7 +14344,7 @@
       });
       noteSheetState.sheets.forEach(function (s) {
         var sid = String(s.id);
-        appendContextToggleRow(list, s.title || "Лист", !!selectedSheets[sid], function () {
+        appendContextCheckRow(list, s.title || "Лист", !!selectedSheets[sid], function () {
           toggleNoteSheetContextId(sid);
         });
       });
@@ -14362,12 +14362,8 @@
     noteKnowledgeNoteIds().forEach(function (id) {
       selected[id] = true;
     });
-    notes.forEach(function (n) {
-      var id = n && n.id != null ? String(n.id) : "";
-      if (!id) return;
-      appendContextToggleRow(list, knowledgeNoteMenuTitle(n), !!selected[id], function () {
-        toggleNoteKnowledgeNoteId(id);
-      });
+    knowledgeNotesByProject().forEach(function (group) {
+      appendKnowledgeProjectGroup(list, group, selected);
     });
   }
 
@@ -14455,6 +14451,7 @@
       form.classList.toggle("is-comment-mode", current === "comment");
       var compactLabel = form.querySelector(".note-paie-mode-compact-label");
       if (compactLabel) compactLabel.textContent = noteAskModeLabel(current);
+      if (current === "comment") showPlusMenuPage("root");
     }
     var input = document.getElementById("note-paie-reply-input");
     if (input) {
@@ -14786,7 +14783,8 @@
     var body = packed.text || String(text || "").trim();
     var quote = quotes.join("\n");
     var pending = discussPendingFiles();
-    if (!wrap || !wrap._shareKind || !wrap._shareId || wrap._gptBusy || (!body && !pending.length)) return;
+    var contextIds = discussContextNoteIds();
+    if (!wrap || !wrap._shareKind || !wrap._shareId || wrap._gptBusy || (!body && !pending.length && !contextIds.length)) return;
     var kind = wrap._shareKind;
     var itemId = wrap._shareId;
     var panel = document.getElementById("note-editor-comments");
@@ -14802,7 +14800,6 @@
     setGptDiscussPhase("sending");
     try {
       var fileIds = await uploadDiscussPendingFiles(kind, itemId);
-      var contextIds = discussContextNoteIds();
       clearDiscussPendingFiles();
       clearDiscussPendingContextNotes();
       var saved = await apiFetch(
@@ -15008,7 +15005,9 @@
       var hasText = noteAskUsesChips(noteAskMode())
         ? !gptComposerIsEmpty(editor)
         : !!(input && String(input.value || "").trim());
-      var hasFiles = discussPendingFiles().length > 0 || discussContextNoteIds().length > 0;
+      var hasFiles =
+        discussPendingFiles().length > 0 ||
+        (noteAskMode() !== "comment" && discussContextNoteIds().length > 0);
       var canLaunchPaie = noteAskMode() === "paie" && !hasChair;
       var canLaunchResearch = noteAskMode() === "research";
       var ready = !busy && (hasText || hasFiles || canLaunchPaie || canLaunchResearch);
@@ -15159,6 +15158,7 @@
         });
       })
       .then(function (data) {
+        clearDiscussPendingContextNotes();
         var status = (data && data.status) || "running";
         if (status === "done") {
           wrap._paeiRunning = false;

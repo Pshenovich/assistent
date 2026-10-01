@@ -129,6 +129,7 @@ def begin_job(
     knowledge_note_ids: list[str] | None = None,
     quote: str = "",
     sheet_ids: list[str] | None = None,
+    attached_notes: str = "",
 ) -> tuple[dict[str, Any], bool]:
     key = job_key(user_id, kind, item_id)
     now = time.time()
@@ -162,6 +163,7 @@ def begin_job(
                 if sheet_ids is not None
                 else None
             ),
+            "attached_notes": str(attached_notes or "").strip(),
             "progress": _progress_view({"phase": "SEARCH", "pct": 14}),
         }
         _jobs[key] = row
@@ -347,6 +349,7 @@ def _build_user_prompt(
     quote: str,
     history: str,
     knowledge_brief: str,
+    attached_notes: str = "",
 ) -> str:
     parts = [
         f"Заметка «{title}».",
@@ -356,6 +359,10 @@ def _build_user_prompt(
     if knowledge_brief:
         parts.append("База знаний компании (фон, не замена веба):")
         parts.append(knowledge_brief)
+    extra_notes = (attached_notes or "").strip()
+    if extra_notes:
+        parts.append("Прикреплённые заметки:")
+        parts.append(extra_notes)
     if history:
         parts.append("Уже было в Research по этой заметке:")
         parts.append(history)
@@ -391,6 +398,7 @@ def run_note_research(
     knowledge_note_ids: list[str] | None = None,
     quote: str = "",
     sheet_ids: list[str] | None = None,
+    attached_notes: str = "",
     on_progress: Any | None = None,
 ) -> dict[str, Any]:
     if sheet_ids is not None:
@@ -420,6 +428,7 @@ def run_note_research(
         quote=quote,
         history=_research_history(comments),
         knowledge_brief=kb,
+        attached_notes=attached_notes,
     )
     if callable(on_progress):
         on_progress({"phase": "READ", "pct": 48})
@@ -470,6 +479,7 @@ async def run_note_research_job(
     knowledge_note_ids: list[str] | None = None,
     quote: str = "",
     sheet_ids: list[str] | None = None,
+    attached_notes: str = "",
 ) -> None:
     key = job_key(user_id, kind, item_id)
     job = get_job(user_id, kind, item_id) or {}
@@ -493,6 +503,8 @@ async def run_note_research_job(
         use_knowledge = bool(knowledge_note_ids)
     elif "use_knowledge" in job:
         use_knowledge = bool(job.get("use_knowledge"))
+    if not attached_notes:
+        attached_notes = str(job.get("attached_notes") or "")
 
     def on_progress(payload: dict[str, Any]) -> None:
         _update_job(key, progress=payload)
@@ -508,6 +520,7 @@ async def run_note_research_job(
             knowledge_note_ids=knowledge_note_ids,
             quote=quote_text,
             sheet_ids=sheet_ids,
+            attached_notes=attached_notes,
             on_progress=on_progress,
         )
         comment = result.get("comment") or {}

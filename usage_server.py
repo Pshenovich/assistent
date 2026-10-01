@@ -2583,6 +2583,7 @@ class _MiniappNotePaeiStart(BaseModel):
     use_knowledge: bool = True
     knowledge_note_ids: Optional[list[str]] = None
     sheet_ids: Optional[list[str]] = None
+    context_note_ids: Optional[list[str]] = None
 
 
 class _MiniappNoteResearchStart(_MiniappNotePaeiStart):
@@ -2604,6 +2605,7 @@ class _MiniappGptChatBody(BaseModel):
     use_knowledge: bool = False
     knowledge_note_ids: Optional[list[str]] = None
     sheet_ids: Optional[list[str]] = None
+    context_note_ids: Optional[list[str]] = None
     history: list[_MiniappGptChatTurn] = Field(default_factory=list)
     model: Optional[str] = None
     file_ids: list[int] = Field(default_factory=list)
@@ -4869,7 +4871,7 @@ async def miniapp_gpt_chat(
 
     def _run() -> dict[str, Any] | None:
         from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
-        from assistant.nlu.ask_context import pack_knowledge_brief
+        from assistant.nlu.ask_context import pack_attached_notes, pack_knowledge_brief
 
         kb_brief = ""
         kb_version = ""
@@ -4926,6 +4928,7 @@ async def miniapp_gpt_chat(
             kb_brief, kb_version = pack_knowledge_brief(
                 uid, query, note_ids=kb_ids if body.knowledge_note_ids is not None else None
             )
+        attached_notes = pack_attached_notes(uid, body.context_note_ids)
         try:
             set_openrouter_usage_telegram_user(
                 telegram_user_id=uid,
@@ -4941,6 +4944,7 @@ async def miniapp_gpt_chat(
                 quote=(body.quote or "").strip(),
                 quotes=[str(x).strip() for x in (body.quotes or []) if str(x).strip()],
                 knowledge_brief=kb_brief,
+                attached_notes=attached_notes,
                 images=images or None,
                 files=files or None,
                 file_notes=file_notes,
@@ -6397,6 +6401,12 @@ async def miniapp_note_paei_start(
     sheet_ids = payload.sheet_ids
     if sheet_ids is not None:
         sheet_ids = [str(x).strip() for x in sheet_ids if str(x).strip()]
+    ctx_ids = payload.context_note_ids
+    if ctx_ids is not None:
+        ctx_ids = [str(x).strip() for x in ctx_ids if str(x).strip()]
+    from assistant.nlu.ask_context import pack_attached_notes
+
+    attached_notes = pack_attached_notes(int(principal.telegram_user_id), ctx_ids)
     if reply_text:
         comments = await run_in_threadpool(
             share_comments_store.list_comments, owner, kind, item_id
@@ -6448,6 +6458,7 @@ async def miniapp_note_paei_start(
             quote=quote_text,
             reply_to_id=reply_to_id,
             sheet_ids=sheet_ids,
+            attached_notes=attached_notes,
         )
         followup_parent = int(root_id)
     else:
@@ -6458,6 +6469,7 @@ async def miniapp_note_paei_start(
             use_knowledge=use_knowledge,
             knowledge_note_ids=kb_ids,
             sheet_ids=sheet_ids,
+            attached_notes=attached_notes,
         )
         followup_parent = None
     if started:
@@ -6471,6 +6483,7 @@ async def miniapp_note_paei_start(
                 use_knowledge=use_knowledge,
                 knowledge_note_ids=kb_ids,
                 sheet_ids=sheet_ids,
+                attached_notes=attached_notes,
             )
         )
     return {
@@ -6536,6 +6549,12 @@ async def miniapp_note_research_start(
     sheet_ids = payload.sheet_ids
     if sheet_ids is not None:
         sheet_ids = [str(x).strip() for x in sheet_ids if str(x).strip()]
+    ctx_ids = payload.context_note_ids
+    if ctx_ids is not None:
+        ctx_ids = [str(x).strip() for x in ctx_ids if str(x).strip()]
+    from assistant.nlu.ask_context import pack_attached_notes
+
+    attached_notes = pack_attached_notes(int(principal.telegram_user_id), ctx_ids)
     running = get_job(owner, kind, item_id)
     if running and str(running.get("status") or "") == "running":
         raise HTTPException(status_code=409, detail="Дождитесь ответа Research")
@@ -6585,6 +6604,7 @@ async def miniapp_note_research_start(
         knowledge_note_ids=kb_ids,
         quote=quote_text,
         sheet_ids=sheet_ids,
+        attached_notes=attached_notes,
     )
     if started:
         asyncio.create_task(
@@ -6598,6 +6618,7 @@ async def miniapp_note_research_start(
                 knowledge_note_ids=kb_ids,
                 quote=quote_text,
                 sheet_ids=sheet_ids,
+                attached_notes=attached_notes,
             )
         )
     return {

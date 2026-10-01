@@ -1,5 +1,10 @@
 from assistant.nlu import llm
-from assistant.nlu.ask_context import assemble_ask_messages, build_context_prefix, clip_text
+from assistant.nlu.ask_context import (
+    assemble_ask_messages,
+    build_context_prefix,
+    clip_text,
+    pack_attached_notes,
+)
 
 
 def test_answer_with_context_forwards_history(monkeypatch):
@@ -62,6 +67,40 @@ def test_clip_and_prefix_budgets():
     assert "фрагмент" in user
     assert "ВЫДЕЛЕННЫЙ ТЕКСТ:" in user
     assert "фрагмент" not in extra
+
+
+def test_build_context_prefix_includes_attached_notes():
+    prefix = build_context_prefix(
+        note_title="Текущая",
+        note_text="тело",
+        attached_notes="[Другая]\nплан",
+    )
+    assert "ЗАМЕТКА:" in prefix
+    assert "ПРИКРЕПЛЁННЫЕ ЗАМЕТКИ:" in prefix
+    assert "[Другая]" in prefix
+    assert prefix.index("ЗАМЕТКА:") < prefix.index("ПРИКРЕПЛЁННЫЕ ЗАМЕТКИ:")
+
+
+def test_pack_attached_notes_skips_knowledge_and_clips(monkeypatch):
+    rows = {
+        1: {"title": "План", "body": "abc" * 2000, "is_knowledge": False},
+        2: {"title": "БЗ", "body": "секрет", "is_knowledge": True},
+        3: None,
+    }
+
+    def fake_get(user_id, note_id, **kwargs):
+        assert int(user_id) == 42
+        return rows.get(int(note_id))
+
+    monkeypatch.setattr(
+        "assistant.stores.notes.get_accessible_note", fake_get
+    )
+    packed = pack_attached_notes(42, ["1", "2", "oops", "3", "1"], each=80, budget=400)
+    assert "[План]" in packed
+    assert "секрет" not in packed
+    assert "БЗ" not in packed
+    assert packed.count("[План]") == 1
+    assert len(packed) <= 400
 
 
 def test_assemble_ask_messages_multiple_quotes():

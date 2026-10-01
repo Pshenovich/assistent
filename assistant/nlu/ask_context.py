@@ -5,6 +5,9 @@ from __future__ import annotations
 NOTE_BUDGET = 8000
 QUOTE_BUDGET = 2000
 KB_BUDGET = 3500
+ATTACHED_NOTE_BUDGET = 8000
+ATTACHED_NOTE_EACH = 2500
+ATTACHED_NOTE_MAX = 5
 _EMPTY_BRIEFS = {
     "",
     "(пусто)",
@@ -56,6 +59,58 @@ def pack_note_sheets(
     return clip_text("\n\n".join(chunks), lim)
 
 
+def clean_note_ids(raw: list[str] | None, *, limit: int = ATTACHED_NOTE_MAX) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw or []:
+        sid = str(item or "").strip()
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        out.append(sid)
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
+
+
+def pack_attached_notes(
+    user_id: int | str,
+    note_ids: list[str] | None,
+    *,
+    budget: int = ATTACHED_NOTE_BUDGET,
+    each: int = ATTACHED_NOTE_EACH,
+) -> str:
+    """Тексты обычных заметок (не БЗ), к которым есть доступ у user_id."""
+    from assistant.lib.telegram_html import html_to_plain, uses_html_markup
+    from assistant.stores import notes as notes_store
+
+    ids = clean_note_ids(note_ids)
+    if not ids:
+        return ""
+    chunks: list[str] = []
+    remain = max(200, int(budget))
+    for sid in ids:
+        try:
+            nid = int(sid)
+        except (TypeError, ValueError):
+            continue
+        row = notes_store.get_accessible_note(user_id, nid)
+        if not row or row.get("is_knowledge"):
+            continue
+        title = str(row.get("title") or "Заметка").strip() or "Заметка"
+        body = str(row.get("body") or row.get("description") or "")
+        if uses_html_markup(body):
+            body = html_to_plain(body)
+        size = min(max(80, int(each)), remain)
+        piece = clip_text(body, size)
+        block = f"[{title}]\n{piece}" if piece else f"[{title}]"
+        chunks.append(block)
+        remain -= len(block) + 2
+        if remain < 80:
+            break
+    return clip_text("\n\n".join(chunks), budget)
+
+
 def pack_knowledge_brief(
     user_id: int | str,
     query: str,
@@ -84,6 +139,7 @@ def build_context_prefix(
     note_text: str = "",
     quote: str = "",
     knowledge_brief: str = "",
+    attached_notes: str = "",
 ) -> str:
     del quote  # цитата волатильна — в user, не в кэшируемый префикс
     parts: list[str] = []
@@ -95,6 +151,9 @@ def build_context_prefix(
     note = "\n\n".join(p for p in (title, body) if p)
     if note:
         parts.append(f"ЗАМЕТКА:\n{note}")
+    extra = (attached_notes or "").strip()
+    if extra:
+        parts.append(f"ПРИКРЕПЛЁННЫЕ ЗАМЕТКИ:\n{extra}")
     return "\n\n".join(parts)
 
 
@@ -121,12 +180,14 @@ def assemble_ask_messages(
     quote: str = "",
     quotes: list[str] | None = None,
     knowledge_brief: str = "",
+    attached_notes: str = "",
 ) -> tuple[str, str]:
     """Стабильный system-префикс (БЗ+заметка) и user (цитата + вопрос)."""
     prefix = build_context_prefix(
         note_title=note_title,
         note_text=note_text,
         knowledge_brief=knowledge_brief,
+        attached_notes=attached_notes,
     )
     q = (question or "").strip()
     items = _quote_fragments(quote, quotes)
