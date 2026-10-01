@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261001-kb-menu-dots";
+  var WEBAPP_BUILD = "20261001-kb-project-persist";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261001-kb-menu-dots";
+  const NOTE_EDITOR_ASSET_V = "20261001-kb-project-persist";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -1761,10 +1761,32 @@
     if (!knowledgeDataCache.notes) knowledgeDataCache.notes = [];
     var lid = localNoteIdFrom(item);
     if (!lid) return;
+    var prev = null;
+    knowledgeDataCache.notes.forEach(function (x) {
+      if (String(x.id) === String(lid)) prev = x;
+    });
     knowledgeDataCache.notes = knowledgeDataCache.notes.filter(function (x) {
       return String(x.id) !== String(lid);
     });
-    var entry = noteCacheEntry(item, { role: "knowledge", is_knowledge: true });
+    var merged = Object.assign({}, item);
+    // PATCH/create ответы иногда приходят без tags — не затираем уже выбранный проект.
+    var incomingTags = Array.isArray(merged.tags) ? merged.tags : null;
+    var incomingProject = merged.project && merged.project.id ? merged.project : null;
+    if ((!incomingTags || !incomingTags.length) && !incomingProject && prev) {
+      var keep = noteTagsOf(prev);
+      if (keep.length) {
+        merged.tags = keep.slice();
+        merged.project = keep[0];
+      } else if (prev.project) {
+        merged.project = prev.project;
+        merged.tags = noteTagsOf(prev);
+      }
+    }
+    if ((!Array.isArray(merged.hashtags) || !merged.hashtags.length) && prev && Array.isArray(prev.hashtags)) {
+      merged.hashtags = prev.hashtags.slice();
+    }
+    if (merged.pinned == null && prev) merged.pinned = !!prev.pinned;
+    var entry = noteCacheEntry(merged, { role: "knowledge", is_knowledge: true });
     knowledgeDataCache.notes.unshift(entry);
     writeMiniappCache("knowledge", knowledgeDataCache);
     renderKnowledgePaneFromData(knowledgeDataCache);
@@ -5585,7 +5607,7 @@
 
   function openKnowledgeNoteDetail(n, opts) {
     opts = Object.assign({ isLocal: true, knowledge: true }, opts || {});
-    openLocalNoteDetail(n, opts);
+    openLocalNoteDetail(resolveKnowledgeNoteFromCache(n), opts);
   }
 
   function openKnowledgeNote() {
@@ -9665,12 +9687,33 @@
   }
 
   function resolveLocalNoteFromCache(n) {
-    if (!n || !notesDataCache || !notesDataCache.local_notes) return n;
+    if (!n) return n;
     var lid = localNoteIdFrom(n);
     if (!lid) return n;
-    for (var i = 0; i < notesDataCache.local_notes.length; i++) {
-      if (String(notesDataCache.local_notes[i].id) === String(lid)) {
-        return notesDataCache.local_notes[i];
+    if (notesDataCache && notesDataCache.local_notes) {
+      for (var i = 0; i < notesDataCache.local_notes.length; i++) {
+        if (String(notesDataCache.local_notes[i].id) === String(lid)) {
+          return notesDataCache.local_notes[i];
+        }
+      }
+    }
+    if (knowledgeDataCache && knowledgeDataCache.notes) {
+      for (var k = 0; k < knowledgeDataCache.notes.length; k++) {
+        if (String(knowledgeDataCache.notes[k].id) === String(lid)) {
+          return knowledgeDataCache.notes[k];
+        }
+      }
+    }
+    return n;
+  }
+
+  function resolveKnowledgeNoteFromCache(n) {
+    if (!n || !knowledgeDataCache || !knowledgeDataCache.notes) return n;
+    var lid = localNoteIdFrom(n);
+    if (!lid) return n;
+    for (var i = 0; i < knowledgeDataCache.notes.length; i++) {
+      if (String(knowledgeDataCache.notes[i].id) === String(lid)) {
+        return knowledgeDataCache.notes[i];
       }
     }
     return n;
@@ -16485,6 +16528,7 @@
     syncAppOverlay();
     syncNotesCreateFab();
     if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+    if (knowledgeDataCache) renderKnowledgePaneFromData(knowledgeDataCache);
 
     function teardown() {
       closeNoteDiscussion(true);
@@ -16514,6 +16558,7 @@
         if (closeSeq !== noteEditorCloseSeq || isNoteEditorModalOpen()) return;
         teardown();
         if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+        if (knowledgeDataCache) renderKnowledgePaneFromData(knowledgeDataCache);
       });
   }
 
@@ -17706,22 +17751,34 @@
     var noteIsCreate = !!opts.create;
     var noteId = localNoteIdFrom(n);
     noteId = noteId != null ? String(noteId) : "";
+    var isKnowledge = !!(opts && opts.knowledge) || isKnowledgeNoteItem(n);
     var proceed = function () {
       openLocalNoteDetailReady(n, opts, noteIsCreate, noteId);
     };
-    if (noteIsCreate || !noteId || opts.knowledge || isKnowledgeNoteItem(n)) {
+    if (noteIsCreate || !noteId) {
       proceed();
       return;
     }
-    apiFetch("/notes?limit=120", { method: "GET" })
-      .then(function (bundle) {
-        var fresh = ((bundle && bundle.local_notes) || []).find(function (x) {
-          return String(x.id) === String(noteId);
-        });
+    // Всегда подтягиваем свежие labels (проект/теги), иначе после PATCH без tags
+    // шапка и карточка БЗ теряют проект до полной перезагрузки списка.
+    apiFetch("/notes/local/" + encodeURIComponent(noteId), { method: "GET" })
+      .then(function (res) {
+        var fresh = res && res.item;
         if (fresh) {
+          var keptTags = noteTagsOf(n);
+          var keptProject = noteProjectOf(n);
           n = Object.assign({}, n, fresh);
-          if (notesDataCache) {
-            prependLocalInCache(fresh);
+          if (!noteTagsOf(n).length && keptTags.length) {
+            n.tags = keptTags.slice();
+            n.project = keptProject || keptTags[0] || null;
+          }
+          if (isKnowledge || isKnowledgeNoteItem(n) || isKnowledgeNoteItem(fresh)) {
+            n.role = n.role || "knowledge";
+            n.is_knowledge = true;
+            prependKnowledgeInCache(n);
+            n = resolveKnowledgeNoteFromCache(n) || n;
+          } else if (notesDataCache) {
+            prependLocalInCache(n);
           }
         }
         openLocalNoteDetailReady(n, opts, noteIsCreate, noteId);
@@ -17916,8 +17973,18 @@
           if (isKnowledge) {
             patchedItem.role = "knowledge";
             patchedItem.is_knowledge = true;
+            var localTags = noteTagsOf(n);
+            if (!noteTagsOf(patchedItem).length && localTags.length) {
+              patchedItem.tags = localTags.slice();
+              patchedItem.project = localTags[0];
+            }
             prependKnowledgeInCache(patchedItem);
           } else {
+            var localTags2 = noteTagsOf(n);
+            if (!noteTagsOf(patchedItem).length && localTags2.length) {
+              patchedItem.tags = localTags2.slice();
+              patchedItem.project = localTags2[0];
+            }
             syncLocalNoteInList(patchedItem);
           }
         }
@@ -17951,6 +18018,8 @@
           return;
         }
         try {
+          var keptTagsBeforePatch = noteTagsOf(n);
+          var keptProjectBeforePatch = noteProjectOf(n);
           var patchRes = await apiFetch("/notes/local/" + encodeURIComponent(noteId), {
             method: "PATCH",
             body: JSON.stringify(patchBody),
@@ -17961,8 +18030,8 @@
             description: fields.description,
             body: fields.description,
             todoist_id: n.todoist_id,
-            tags: noteTagsOf(n),
-            project: noteProjectOf(n),
+            tags: keptTagsBeforePatch,
+            project: keptProjectBeforePatch,
             hashtags: noteHashtagsOf(n),
             members: moreWrap && moreWrap._noteMembers,
             revision: moreWrap && moreWrap._noteRevision,
@@ -17972,11 +18041,19 @@
           };
           if (patchRes && patchRes.item) {
             n = Object.assign(n, patchRes.item);
+            if (!noteTagsOf(n).length && keptTagsBeforePatch.length) {
+              n.tags = keptTagsBeforePatch.slice();
+              n.project = keptProjectBeforePatch || keptTagsBeforePatch[0] || null;
+            }
             if (moreWrap) {
               moreWrap._noteRevision = patchRes.item.revision || moreWrap._noteRevision;
               moreWrap._noteUpdatedAt = patchRes.item.updated_at || moreWrap._noteUpdatedAt;
               moreWrap._noteMembers = patchRes.item.members || moreWrap._noteMembers;
             }
+          }
+          if (!noteTagsOf(patchedItem).length && keptTagsBeforePatch.length) {
+            patchedItem.tags = keptTagsBeforePatch.slice();
+            patchedItem.project = keptProjectBeforePatch || keptTagsBeforePatch[0] || null;
           }
           applyPatchedLocal(patchedItem);
         } catch (patchErr) {
