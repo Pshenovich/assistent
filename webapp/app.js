@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20260927-md-lists";
+  var WEBAPP_BUILD = "20260928-collab-discuss";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20260927-md-lists";
+  const NOTE_EDITOR_ASSET_V = "20260928-collab-discuss";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -237,6 +237,19 @@
     syncOfflineQueueBadge();
   }
 
+  function mergeOfflinePatchBody(prev, next) {
+    var base = prev && typeof prev === "object" ? prev : {};
+    var incoming = next && typeof next === "object" ? next : {};
+    var prevRev = base.expected_revision;
+    var prevUpdated = base.expected_updated_at;
+    var out = Object.assign({}, base, incoming);
+    // Keep the earliest expected_* so coalesced offline patches still hit the
+    // revision the client started from (optimistic locking).
+    if (prevRev != null && prevRev !== "") out.expected_revision = prevRev;
+    if (prevUpdated != null && prevUpdated !== "") out.expected_updated_at = prevUpdated;
+    return out;
+  }
+
   function enqueueOfflineOp(op) {
     var q = readOfflineQueue();
     op = op || {};
@@ -251,7 +264,7 @@
           return q[i];
         }
         if (q[i].type === "note_patch" && String(q[i].clientId) === String(op.clientId)) {
-          q[i].body = Object.assign({}, q[i].body || {}, op.body || {});
+          q[i].body = mergeOfflinePatchBody(q[i].body, op.body);
           writeOfflineQueue(q);
           return q[i];
         }
@@ -328,7 +341,7 @@
           return q[si];
         }
         if (q[si].type === "sheet_patch" && String(q[si].clientId) === String(op.clientId)) {
-          q[si].body = Object.assign({}, q[si].body || {}, op.body || {});
+          q[si].body = mergeOfflinePatchBody(q[si].body, op.body);
           writeOfflineQueue(q);
           return q[si];
         }
@@ -559,9 +572,37 @@
               null;
             if (rid) remapOfflineReminderId(op.clientId, rid);
           }
+          if (op.type === "note_patch" && res && res.item) {
+            var moreWrapFlush = document.getElementById("note-editor-more-wrap");
+            if (moreWrapFlush && String(moreWrapFlush._shareId) === String(op.clientId)) {
+              moreWrapFlush._noteRevision =
+                res.item.revision || moreWrapFlush._noteRevision;
+              moreWrapFlush._noteUpdatedAt =
+                res.item.updated_at || moreWrapFlush._noteUpdatedAt;
+            }
+          }
+          if (op.type === "sheet_patch" && res && res.item) {
+            upsertNoteSheet(res.item);
+          }
           q.shift();
           writeOfflineQueue(q);
         } catch (e) {
+          if (e && e.status === 409) {
+            if (op.type === "note_patch" && e.conflictItem) {
+              try {
+                applyRemoteSharedNote(e.conflictItem, true);
+              } catch (_) {}
+            }
+            if (op.type === "sheet_patch" && e.conflictItem) {
+              try {
+                upsertNoteSheet(e.conflictItem);
+              } catch (_) {}
+            }
+            q.shift();
+            writeOfflineQueue(q);
+            console.warn("offline op conflict dropped", op, e);
+            continue;
+          }
           if (isTransientApiError(e)) break;
           // Permanent failure: drop op so the queue does not stick forever.
           q.shift();
@@ -9851,6 +9892,7 @@
   }
 
   function hideShareControls() {
+    stopDiscussCommentPoll();
     closeNoteMoreMenu();
     closeShareAccessSheet();
     hideNoteCommentsPanel();
@@ -9880,6 +9922,8 @@
     lastTypedAt: 0,
     photoBlobs: {},
   };
+
+  var discussPollState = { timer: null, key: "", inFlight: false };
 
   function noteMemberInitials(member) {
     var name = String((member && (member.name || member.username)) || "").trim();
@@ -10286,11 +10330,22 @@
       });
     }
 
-    if (wrap._shareKind === "local") {
+    var canManageShare = wrap._shareKind !== "local" || wrap._isNoteOwner !== false;
+
+    if (wrap._shareKind === "local" && canManageShare) {
       addItem("Участники", function () {
         closeNoteMoreMenu();
         openShareAccessSheet();
       });
+    }
+
+    if (!canManageShare) {
+      if (shared) {
+        addItem("Скопировать ссылку", function () {
+          copyExistingShareLink();
+        });
+      }
+      return;
     }
 
     if (!shared) {
@@ -12061,6 +12116,8 @@
     if (isAppOffline() || String(noteId).indexOf("tmp_") === 0) {
       sheet.body = html;
       sheet.description = html;
+      var sheetOfflineBody = { title: title, description: html };
+      if (sheet.revision != null) sheetOfflineBody.expected_revision = sheet.revision;
       enqueueOfflineOp({
         type: "sheet_patch",
         clientId: id,
@@ -12071,7 +12128,7 @@
           "/sheets/" +
           encodeURIComponent(id),
         method: "PATCH",
-        body: { title: title, description: html },
+        body: sheetOfflineBody,
       });
       showOfflineSavedToast();
       return;
@@ -12529,6 +12586,7 @@
   }
 
   function closeNoteDiscussion(force) {
+    stopDiscussCommentPoll();
     var wrap = document.getElementById("note-editor-more-wrap");
     if (!force && isDesktopLayout() && isNoteEditorModalOpen() && wrap) {
       wrap._discussionDismissed = true;
@@ -12726,6 +12784,7 @@
     syncTelegramNativeBack();
     syncNoteFormatToolbarForComposer();
     updateModalSheetForKeyboard();
+    startDiscussCommentPoll();
   }
 
   function ensureNotePaieThread() {
@@ -12856,7 +12915,50 @@
     if (api && api.isPaieComment && api.isPaieComment(c)) return true;
     if (api && api.isGptComment && api.isGptComment(c)) return true;
     if (api && api.isResearchComment && api.isResearchComment(c)) return true;
+    if (api && api.isAgentTurn && api.isAgentTurn(c)) return true;
+    if (c.is_agent || c.is_paie || c.is_gpt || c.is_research) return true;
     return false;
+  }
+
+  function currentDiscussionUserId() {
+    var me = getMiniappCacheUserKey();
+    if (!me || me === "anon" || String(me).indexOf("s_") === 0) return "";
+    return String(me);
+  }
+
+  function isOwnDiscussionComment(c) {
+    if (!c || isAssistantComment(c)) return false;
+    if (c.is_mine === true) return true;
+    if (c.is_mine === false) return false;
+    var me = currentDiscussionUserId();
+    if (!me) return false;
+    return String(c.author_user_id || "") === me;
+  }
+
+  function discussionHasMultipleHumans(comments) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var members = (wrap && wrap._noteMembers) || [];
+    var humanMembers = 0;
+    members.forEach(function (m) {
+      if (m && m.user_id) humanMembers += 1;
+    });
+    if (humanMembers > 1) return true;
+    var seen = {};
+    var n = 0;
+    (comments || []).forEach(function (c) {
+      if (!c || isAssistantComment(c)) return;
+      var id = String(c.author_user_id || "");
+      if (!id || seen[id]) return;
+      seen[id] = true;
+      n += 1;
+    });
+    return n > 1;
+  }
+
+  function discussionMessageAuthorLabel(c) {
+    if (isAssistantComment(c)) return shareCommentAuthorLabel(c);
+    if (isOwnDiscussionComment(c)) return "Вы";
+    return shareCommentAuthorLabel(c);
   }
 
   function closeNoteAnswerMenu() {
@@ -13531,18 +13633,29 @@
     document.addEventListener("pointerdown", onDismiss, true);
   }
 
-  function renderDiscussionMessage(c) {
+  function renderDiscussionMessage(c, opts) {
+    opts = opts || {};
     var item = document.createElement("article");
     var assistant = isAssistantComment(c);
+    var mine = isOwnDiscussionComment(c);
+    var groupHumans = !!opts.groupHumans;
     var api = window.NoteComments;
     var isGpt = !!(api && api.isGptComment && api.isGptComment(c));
     var isResearch = !!(api && api.isResearchComment && api.isResearchComment(c));
+    var sideClass = assistant
+      ? "is-assistant"
+      : mine || !groupHumans
+        ? "is-user"
+        : "is-peer";
     item.className =
       "note-discuss-msg " +
-      (assistant ? "is-assistant" : "is-user") +
+      sideClass +
       (isGpt ? " is-gpt" : "") +
       (isResearch ? " is-research" : "");
     item.setAttribute("data-comment-id", String(c.id));
+    if (!assistant && c.author_user_id) {
+      item.setAttribute("data-author-id", String(c.author_user_id));
+    }
     var quoteText = String((c && c.quote) || "").trim();
     var bodyHasQuote = String((c && c.body) || "").indexOf("«") >= 0;
     if (quoteText && !bodyHasQuote) {
@@ -13553,7 +13666,7 @@
     }
     var role = document.createElement("p");
     role.className = "note-discuss-role";
-    role.textContent = assistant ? shareCommentAuthorLabel(c) : "Вы";
+    role.textContent = discussionMessageAuthorLabel(c);
     item.appendChild(role);
     var bodyText = String((c && c.body) || "");
     var attachments = (c && c.attachments) || [];
@@ -13601,7 +13714,14 @@
     return item;
   }
 
-  function renderNotePaieThread(comments, kind, itemId) {
+  function isDiscussionNearEnd() {
+    var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
+    if (!scroll) return true;
+    return scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 96;
+  }
+
+  function renderNotePaieThread(comments, kind, itemId, opts) {
+    opts = opts || {};
     var wrap = document.getElementById("note-editor-more-wrap");
     var running = !!(wrap && wrap._paeiRunning);
     ensureNotePaieThread();
@@ -13615,8 +13735,10 @@
       if (at !== bt) return at - bt;
       return Number(a.id || 0) - Number(b.id || 0);
     });
+    var groupHumans = discussionHasMultipleHumans(rows);
     if (list) {
       list.innerHTML = "";
+      list.classList.toggle("is-group-chat", groupHumans);
       if (
         !rows.length &&
         !statusOn &&
@@ -13631,7 +13753,7 @@
       } else {
         var cut = gptContextCutId();
         rows.forEach(function (c, idx) {
-          var msg = renderDiscussionMessage(c);
+          var msg = renderDiscussionMessage(c, { groupHumans: groupHumans });
           if (cut && Number(c.id) <= cut) msg.classList.add("is-ctx-stale");
           list.appendChild(msg);
           var next = rows[idx + 1];
@@ -13654,7 +13776,11 @@
     if (isNoteDiscussionOpen()) {
       var pinId = wrap && wrap._discussionPinId;
       if (pinId && !(wrap && wrap._gptBusy)) scrollDiscussionToComment(pinId);
-      else scrollDiscussionToEnd();
+      else if (opts.live) {
+        if (isDiscussionNearEnd()) scrollDiscussionToEnd();
+      } else {
+        scrollDiscussionToEnd();
+      }
     }
     void kind;
     void itemId;
@@ -14622,6 +14748,109 @@
     return loadNoteComments(wrap._shareKind, wrap._shareId, listEl);
   }
 
+  function commentsFingerprint(comments) {
+    return (comments || [])
+      .map(function (c) {
+        if (!c || !c.id) return "";
+        return (
+          String(c.id) +
+          ":" +
+          String((c.body || "").length) +
+          ":" +
+          String(c.created_at || "") +
+          ":" +
+          String(((c.attachments || []) && c.attachments.length) || 0)
+        );
+      })
+      .join("|");
+  }
+
+  function stopDiscussCommentPoll() {
+    if (discussPollState.timer) {
+      clearInterval(discussPollState.timer);
+      discussPollState.timer = null;
+    }
+    discussPollState.key = "";
+    discussPollState.inFlight = false;
+  }
+
+  function startDiscussCommentPoll() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || !wrap._shareKind || !wrap._shareId || !isNoteDiscussionOpen()) {
+      stopDiscussCommentPoll();
+      return;
+    }
+    var key = String(wrap._shareKind) + ":" + String(wrap._shareId);
+    if (discussPollState.timer && discussPollState.key === key) return;
+    stopDiscussCommentPoll();
+    discussPollState.key = key;
+    discussPollState.timer = setInterval(discussCommentPollTick, 1800);
+  }
+
+  function discussCommentPollTick() {
+    if (!isNoteDiscussionOpen()) {
+      stopDiscussCommentPoll();
+      return;
+    }
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || !wrap._shareKind || !wrap._shareId) {
+      stopDiscussCommentPoll();
+      return;
+    }
+    var key = String(wrap._shareKind) + ":" + String(wrap._shareId);
+    if (discussPollState.key !== key) {
+      stopDiscussCommentPoll();
+      return;
+    }
+    if (
+      wrap._gptBusy ||
+      wrap._paeiRunning ||
+      wrap._researchRunning ||
+      discussPollState.inFlight
+    ) {
+      return;
+    }
+    var kind = wrap._shareKind;
+    var itemId = wrap._shareId;
+    discussPollState.inFlight = true;
+    apiFetch(
+      "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
+      { method: "GET" }
+    )
+      .then(function (data) {
+        if (!isNoteDiscussionOpen()) return;
+        if (discussPollState.key !== kind + ":" + itemId) return;
+        var liveWrap = document.getElementById("note-editor-more-wrap");
+        if (
+          liveWrap &&
+          (liveWrap._gptBusy || liveWrap._paeiRunning || liveWrap._researchRunning)
+        ) {
+          return;
+        }
+        var comments = (data && data.comments) || [];
+        var panel = document.getElementById("note-editor-comments");
+        var prev = (panel && panel._allComments) || [];
+        if (commentsFingerprint(comments) === commentsFingerprint(prev)) return;
+        var api = window.NoteComments;
+        var thread = api && api.paieThread ? api.paieThread(comments) : [];
+        var anchored =
+          api && api.selectionComments ? api.selectionComments(comments) : comments;
+        if (panel) {
+          panel._commentsCache = anchored;
+          panel._allComments = comments;
+          panel._paieComments = thread;
+        }
+        var listEl = panel && panel.querySelector(".note-comments-list");
+        if (listEl) renderNoteCommentsList(listEl, anchored, kind, itemId);
+        renderNotePaieThread(comments, kind, itemId, { live: true });
+        syncDesktopNoteDiscussion();
+      })
+      .catch(function () {})
+      .then(function () {
+        discussPollState.inFlight = false;
+      });
+  }
+
   function pollNotePaei(path) {
     var tries = 0;
     function tick() {
@@ -15113,6 +15342,10 @@
   function openShareAccessSheet() {
     var wrap = getShareCtx();
     if (!wrap || !wrap._shareKind || !wrap._shareId) return;
+    if (wrap._shareKind === "local" && wrap._isNoteOwner === false) {
+      alert("Управлять доступом может только автор заметки");
+      return;
+    }
     var ov = document.getElementById("note-share-sheet-overlay");
     if (!ov) {
       ov = document.createElement("div");
@@ -15704,12 +15937,16 @@
     if (api && api.isPaieComment && api.isPaieComment(c)) return "CHAIR";
     if (api && api.isGptComment && api.isGptComment(c)) return "GPT";
     if (api && api.isResearchComment && api.isResearchComment(c)) return "Research";
+    if (api && api.isAgentTurn && api.isAgentTurn(c)) {
+      var agentName = String((c && c.author_name) || "").trim();
+      return agentName || "Агент";
+    }
     var name = String((c && c.author_name) || "Пользователь").trim();
     var uname = String((c && c.author_username) || "").trim();
     if (uname && name.toLowerCase() !== "@" + uname.toLowerCase()) {
       return name + " · @" + uname;
     }
-    return name;
+    return name || "Пользователь";
   }
 
   async function loadNoteComments(kind, itemId, listEl) {
@@ -16233,6 +16470,7 @@
         ? n.share_sheet_ids.map(function (id) { return String(id); })
         : [],
       _noteMembers: Array.isArray(n.members) ? n.members : [],
+      _isNoteOwner: n.is_owner !== false,
     };
   }
 
@@ -17429,12 +17667,22 @@
             owner_user_id: n.owner_user_id,
           };
           applyPatchedLocal(localPatch);
+          var offlinePatchBody = {
+            title: fields.title,
+            description: fields.description,
+          };
+          if (moreWrap && moreWrap._noteRevision) {
+            offlinePatchBody.expected_revision = moreWrap._noteRevision;
+          }
+          if (moreWrap && moreWrap._noteUpdatedAt) {
+            offlinePatchBody.expected_updated_at = moreWrap._noteUpdatedAt;
+          }
           enqueueOfflineOp({
             type: "note_patch",
             clientId: noteId,
             path: "/notes/local/" + encodeURIComponent(noteId),
             method: "PATCH",
-            body: { title: fields.title, description: fields.description },
+            body: offlinePatchBody,
           });
           showOfflineSavedToast();
           return;
@@ -17484,12 +17732,22 @@
             project: noteProjectOf(n),
             hashtags: noteHashtagsOf(n),
           });
+          var transientPatchBody = {
+            title: fields.title,
+            description: fields.description,
+          };
+          if (moreWrap && moreWrap._noteRevision) {
+            transientPatchBody.expected_revision = moreWrap._noteRevision;
+          }
+          if (moreWrap && moreWrap._noteUpdatedAt) {
+            transientPatchBody.expected_updated_at = moreWrap._noteUpdatedAt;
+          }
           enqueueOfflineOp({
             type: "note_patch",
             clientId: noteId,
             path: "/notes/local/" + encodeURIComponent(noteId),
             method: "PATCH",
-            body: { title: fields.title, description: fields.description },
+            body: transientPatchBody,
           });
           showOfflineSavedToast();
         }

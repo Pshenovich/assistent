@@ -1,19 +1,19 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20260927-md-lists";
+var CACHE_VERSION = "miniapp-v1-20260928-collab-discuss";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20260927-md-lists",
-  "./app.js?v=20260927-md-lists",
-  "./note-html.js?v=20260927-md-lists",
-  "./note-comments.js?v=20260927-md-lists",
-  "./note-rich-editor.js?v=20260927-md-lists",
-  "./icons/arrow-up-right.svg?v=20260927-md-lists",
-  "./icons/chevron-up-muted.svg?v=20260927-md-lists",
-  "./icons/chevron-up-on-fill.svg?v=20260927-md-lists",
+  "./styles.css?v=20260928-collab-discuss",
+  "./app.js?v=20260928-collab-discuss",
+  "./note-html.js?v=20260928-collab-discuss",
+  "./note-comments.js?v=20260928-collab-discuss",
+  "./note-rich-editor.js?v=20260928-collab-discuss",
+  "./icons/arrow-up-right.svg?v=20260928-collab-discuss",
+  "./icons/chevron-up-muted.svg?v=20260928-collab-discuss",
+  "./icons/chevron-up-on-fill.svg?v=20260928-collab-discuss",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",

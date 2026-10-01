@@ -2875,6 +2875,7 @@ def _comment_api(row: dict[str, Any], *, viewer_uid: str | None = None) -> dict[
         "is_research": share_comments_store.is_research_comment(row),
         "is_agent": share_comments_store.is_agent_turn(row),
         "agent_id": share_comments_store.agent_id_of(row),
+        "is_mine": bool(viewer_uid) and str(viewer_uid) == author,
         "can_delete": can_delete,
         "attachments": attachments,
     }
@@ -5937,6 +5938,10 @@ async def miniapp_note_members_add(
         if not note:
             raise HTTPException(status_code=404, detail="Заметка не найдена")
         owner = str(note.get("owner_user_id") or uid)
+        if str(uid) != owner:
+            raise HTTPException(
+                status_code=403, detail="Добавлять участников может только автор"
+            )
         member_id, _contact = note_members.resolve_contact_telegram_id(
             owner_user_id=uid,
             email=body.email,
@@ -6160,6 +6165,10 @@ async def miniapp_share_create(
     owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
     if not owner:
         raise HTTPException(status_code=404, detail="Запись не найдена")
+    if str(uid) != str(owner):
+        raise HTTPException(
+            status_code=403, detail="Управлять доступом может только автор"
+        )
     access = (body.access if body else None)
     sheet_ids = body.sheet_ids if body else None
     try:
@@ -6187,7 +6196,11 @@ async def miniapp_share_revoke(
     uid = str(int(principal.telegram_user_id))
     owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
     if not owner:
-        return {"shared": False, "revoked": False, "access": None}
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    if str(uid) != str(owner):
+        raise HTTPException(
+            status_code=403, detail="Управлять доступом может только автор"
+        )
     revoked = await run_in_threadpool(share_links_store.revoke_share, owner, kind, item_id)
     return {"shared": False, "revoked": bool(revoked), "access": None}
 
