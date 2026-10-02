@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261002-ios-boot">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261002-chats-host">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -46,7 +46,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261002-ios-boot" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261002-chats-host" />
   <link rel="preload" href="/webapp/note-rich-editor.js?v=20261002-ios-boot" as="script" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
@@ -138,6 +138,7 @@
           <div class="notes-subtabs-row">
             <div class="subtab-bar" role="tablist" aria-label="Тип записей">
               <button type="button" class="subtab-btn active" data-subtab="notes">Заметки</button>
+              <button type="button" class="subtab-btn" data-subtab="chats">Чаты</button>
               <button type="button" class="subtab-btn" data-subtab="transcriptions">Транскрипции</button>
               <button type="button" class="subtab-btn" data-subtab="summaries">Саммари</button>
             </div>
@@ -191,6 +192,13 @@
             <div class="notes-project-chips" id="notes-project-chips" role="listbox" aria-label="Проекты"></div>
           </div>
           <div id="notes-pane-notes" class="notes-pane notes-pane--stack"></div>
+          <div id="notes-pane-chats" class="notes-pane chat-threads-pane hidden">
+            <div id="chat-threads-list" class="chat-threads-list" role="list"></div>
+            <div class="chat-threads-splitter" aria-hidden="true"></div>
+            <div id="chat-thread-pane" class="chat-thread-pane">
+              <p id="chat-thread-empty" class="chat-thread-empty muted">Выберите чат или создайте новый</p>
+            </div>
+          </div>
           <div id="notes-pane-transcriptions" class="notes-pane notes-pane--stack hidden"></div>
           <div id="notes-pane-summaries" class="notes-pane notes-pane--stack hidden"></div>
           <p id="notes-global-error" class="error hidden"></p>
@@ -1292,6 +1300,7 @@
         <button type="button" class="btn-text" id="note-link-cancel">Отмена</button>
       </div>
       <input type="search" id="note-link-search" class="note-link-search" placeholder="Поиск заметок" autocomplete="off" />
+      <div id="note-link-project-chips" class="notes-project-chips note-picker-project-chips note-link-project-chips hidden" role="listbox" aria-label="Проекты"></div>
       <div id="note-link-list" class="note-link-list"></div>
     </div>
   </div>
@@ -1319,6 +1328,6 @@
   <script src="/webapp/note-html.js?v=20261002-ios-boot" defer></script>
   <script src="/webapp/note-comments.js?v=20261002-ios-boot" defer></script>
   <script src="/webapp/note-rich-editor.js?v=20261002-ios-boot" defer></script>
-  <script src="/webapp/app.js?v=20261002-ios-boot" defer></script>
+  <script src="/webapp/app.js?v=20261002-chats-host" defer></script>
 </body>
 </html>

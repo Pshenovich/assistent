@@ -80,8 +80,9 @@ def pack_attached_notes(
     budget: int = ATTACHED_NOTE_BUDGET,
     each: int = ATTACHED_NOTE_EACH,
 ) -> str:
-    """Тексты обычных заметок (не БЗ), к которым есть доступ у user_id."""
+    """Тексты обычных заметок и journal-записей (транскрипции/саммари), к которым есть доступ."""
     from assistant.lib.telegram_html import html_to_plain, uses_html_markup
+    from assistant.lib.usage_store import get_user_usage_event, journal_text_from_raw
     from assistant.stores import notes as notes_store
 
     ids = clean_note_ids(note_ids)
@@ -90,15 +91,46 @@ def pack_attached_notes(
     chunks: list[str] = []
     remain = max(200, int(budget))
     for sid in ids:
-        try:
-            nid = int(sid)
-        except (TypeError, ValueError):
-            continue
-        row = notes_store.get_accessible_note(user_id, nid)
-        if not row or row.get("is_knowledge"):
-            continue
-        title = str(row.get("title") or "Заметка").strip() or "Заметка"
-        body = str(row.get("body") or row.get("description") or "")
+        title = ""
+        body = ""
+        if sid.startswith("journal:"):
+            raw_id = sid.split(":", 1)[1].strip()
+            try:
+                eid = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            row = get_user_usage_event(str(int(user_id)), eid)
+            if not row:
+                continue
+            raw = row.get("raw_usage_json")
+            body = journal_text_from_raw(raw if isinstance(raw, str) else None)
+            op = str(row.get("operation") or "")
+            title = "Саммари" if op == "summarize" else "Транскрипция"
+            # Prefer topic from raw JSON if present
+            try:
+                import json
+
+                parsed = json.loads(raw) if isinstance(raw, str) and raw.strip() else {}
+                if isinstance(parsed, dict):
+                    topic = (
+                        str(parsed.get("main_topic") or "").strip()
+                        or str(parsed.get("meeting_topic") or "").strip()
+                        or str(parsed.get("title") or "").strip()
+                    )
+                    if topic:
+                        title = topic[:120]
+            except Exception:
+                pass
+        else:
+            try:
+                nid = int(sid)
+            except (TypeError, ValueError):
+                continue
+            row = notes_store.get_accessible_note(user_id, nid)
+            if not row or row.get("is_knowledge"):
+                continue
+            title = str(row.get("title") or "Заметка").strip() or "Заметка"
+            body = str(row.get("body") or row.get("description") or "")
         if uses_html_markup(body):
             body = html_to_plain(body)
         size = min(max(80, int(each)), remain)

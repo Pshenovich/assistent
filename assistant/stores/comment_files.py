@@ -415,6 +415,38 @@ def delete_for_comment(comment_id: int) -> None:
             pass
 
 
+def delete_for_item(
+    owner_user_id: int | str, item_kind: str, item_id: str | int
+) -> int:
+    owner = _uid(owner_user_id)
+    kind = str(item_kind)
+    iid = str(item_id)
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            SELECT * FROM share_comment_files
+            WHERE owner_user_id = ? AND item_kind = ? AND item_id = ?
+            """,
+            (owner, kind, iid),
+        )
+        rows = [_row_to_dict(r) for r in cur.fetchall()]
+        _conn().execute(
+            """
+            DELETE FROM share_comment_files
+            WHERE owner_user_id = ? AND item_kind = ? AND item_id = ?
+            """,
+            (owner, kind, iid),
+        )
+        _conn().commit()
+    for row in rows:
+        path = disk_path(int(row["id"]))
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return len(rows)
+
+
 def is_pdf(item: dict[str, Any]) -> bool:
     mime = str(item.get("mime") or "").split(";")[0].strip().lower()
     name = str(item.get("filename") or "").lower()

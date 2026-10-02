@@ -10,7 +10,7 @@ from assistant.stores import notes as notes_store
 from assistant.stores import share_links as share_links_store
 
 _LOCK = notes_store._LOCK  # type: ignore[attr-defined]
-_VALID_KINDS = frozenset({"local", "journal"})
+_VALID_KINDS = frozenset({"local", "journal", "chat"})
 MAX_BODY_LEN = 4000
 MAX_GPT_BODY_LEN = 24000
 MAX_QUOTE_LEN = 2000

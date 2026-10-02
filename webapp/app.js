@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261002-ios-boot";
+  var WEBAPP_BUILD = "20261002-chats-host";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -660,6 +660,10 @@
   let gateLoginBootstrapped = false;
   let cachedMe = null;
   let notesSubTab = "notes";
+  var chatThreadsCache = [];
+  var activeChatThreadId = "";
+  var chatThreadsLoading = false;
+  var leavingChatsTab = false;
   let selectedPaymentMethod = "";
   let miniappDev = false;
   var meetingsPageDate = null;
@@ -670,7 +674,9 @@
   var knowledgeSearchQuery = "";
   var notesActiveProjectId = 0;
   var plusPickerActiveProjectId = 0;
+  var plusPickerKind = "note";
   var panePickerActiveProjectId = 0;
+  var linkPickerActiveProjectId = 0;
   var noteAgentSessions = {};
   var noteAgentPollers = {};
   var pendingDiscussOpen = null;
@@ -2439,6 +2445,63 @@
     });
   }
 
+  function promptDialog(message, defaultValue) {
+    return new Promise(function (resolve) {
+      var existing = document.getElementById("leo-prompt-overlay");
+      if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+      var ov = document.createElement("div");
+      ov.id = "leo-prompt-overlay";
+      ov.className = "leo-prompt-overlay";
+      ov.innerHTML =
+        '<div class="leo-prompt-sheet" role="dialog" aria-modal="true">' +
+        '<p class="leo-prompt-message"></p>' +
+        '<input type="text" class="leo-prompt-input field-input" autocomplete="off" />' +
+        '<div class="leo-prompt-actions">' +
+        '<button type="button" class="btn-text leo-prompt-cancel">Отмена</button>' +
+        '<button type="button" class="btn leo-prompt-ok">Сохранить</button>' +
+        "</div></div>";
+      var msg = ov.querySelector(".leo-prompt-message");
+      var input = ov.querySelector(".leo-prompt-input");
+      var cancel = ov.querySelector(".leo-prompt-cancel");
+      var ok = ov.querySelector(".leo-prompt-ok");
+      if (msg) msg.textContent = String(message || "");
+      if (input) input.value = String(defaultValue || "");
+      function finish(value) {
+        if (ov.parentNode) ov.parentNode.removeChild(ov);
+        document.removeEventListener("keydown", onKey, true);
+        resolve(value);
+      }
+      function onKey(e) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          finish(null);
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          finish(input ? input.value : "");
+        }
+      }
+      cancel.addEventListener("click", function () {
+        finish(null);
+      });
+      ok.addEventListener("click", function () {
+        finish(input ? input.value : "");
+      });
+      ov.addEventListener("click", function (e) {
+        if (e.target === ov) finish(null);
+      });
+      document.addEventListener("keydown", onKey, true);
+      document.body.appendChild(ov);
+      window.setTimeout(function () {
+        try {
+          if (input) {
+            input.focus();
+            input.select();
+          }
+        } catch (_) {}
+      }, 30);
+    });
+  }
+
   function noteEditorSnapshot(title, description) {
     return {
       title: String(title || "").trim(),
@@ -2825,6 +2888,9 @@
     var voice = document.getElementById("voice-overlay");
     var noteUnsaved = document.getElementById("note-unsaved-overlay");
     var tagsSheet = document.getElementById("tags-manage-overlay");
+    var chatsSplit =
+      document.documentElement.classList.contains("chats-split-open") &&
+      isDesktopLayout();
     var immersive =
       (detail && !detail.classList.contains("hidden")) ||
       (digestDetail && !digestDetail.classList.contains("hidden")) ||
@@ -2833,7 +2899,7 @@
       (exp && !exp.classList.contains("hidden")) ||
       (booking && !booking.classList.contains("hidden")) ||
       (gpt && !gpt.classList.contains("hidden")) ||
-      (discussion && !discussion.classList.contains("hidden")) ||
+      (discussion && !discussion.classList.contains("hidden") && !chatsSplit) ||
       (modal && !modal.classList.contains("hidden")) ||
       (voice && !voice.classList.contains("hidden")) ||
       (noteUnsaved && !noteUnsaved.classList.contains("hidden")) ||
@@ -9854,7 +9920,15 @@
       ) {
         return;
       }
+      if (
+        e.target &&
+        e.target.closest &&
+        (e.target.closest(".chat-thread-more-wrap") || e.target.closest(".chat-thread-menu"))
+      ) {
+        return;
+      }
       closeNoteCardMenus();
+      closeChatThreadMenus();
     });
   }
 
@@ -10554,7 +10628,7 @@
     var notesRoot = document.getElementById("notes-root");
     var show =
       currentTab === "notes" &&
-      notesSubTab === "notes" &&
+      (notesSubTab === "notes" || notesSubTab === "chats") &&
       notesPanel &&
       !notesPanel.classList.contains("hidden") &&
       (!notesDetail || notesDetail.classList.contains("hidden")) &&
@@ -10589,17 +10663,689 @@
     if (!show) closeActualCreateMenu();
   }
 
-  function setNotesSubTab(name) {
-    notesSubTab = name;
-    document.querySelectorAll(".subtab-btn").forEach(function (b) {
-      b.classList.toggle("active", b.getAttribute("data-subtab") === name);
-    });
-    setHidden(document.getElementById("notes-pane-notes"), name !== "notes");
-    setHidden(document.getElementById("notes-pane-transcriptions"), name !== "transcriptions");
-    setHidden(document.getElementById("notes-pane-summaries"), name !== "summaries");
-    syncNotesCreateFab();
+  function leaveChatThreadsMode() {
+    activeChatThreadId = "";
+    leavingChatsTab = true;
+    try {
+      if (isNoteDiscussionOpen()) closeNoteDiscussion(true);
+      restoreDiscussionOverlayHost();
+      clearChatShareWrap();
+      document.documentElement.classList.remove("chats-split-open");
+      var empty = document.getElementById("chat-thread-empty");
+      if (empty) setHidden(empty, false);
+      pruneEmptyChatDrafts("");
+    } finally {
+      leavingChatsTab = false;
+      syncChatDiscussionChrome();
+      renderNoteAskModes();
+    }
   }
 
+  function ensureChatShareHost() {
+    var host = document.getElementById("chat-share-host");
+    if (!host) {
+      host = document.createElement("div");
+      host.id = "chat-share-host";
+      host.className = "hidden";
+      host.setAttribute("aria-hidden", "true");
+      document.body.appendChild(host);
+    }
+    return host;
+  }
+
+  function clearChatShareWrap() {
+    var host = document.getElementById("chat-share-host");
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap && host && wrap.parentNode === host) {
+      wrap._shareKind = "";
+      wrap._shareId = "";
+      if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+    }
+    var panel = document.getElementById("note-editor-comments");
+    if (panel && host && panel.parentNode === host) {
+      panel._allComments = [];
+      panel._commentsCache = [];
+      if (panel.parentNode) panel.parentNode.removeChild(panel);
+    }
+  }
+
+  function ensureChatShareWrap(threadId) {
+    var host = ensureChatShareHost();
+    if (isNoteEditorModalOpen()) {
+      try {
+        handleNoteEditorModalClose();
+      } catch (_) {}
+    }
+    var existing = document.getElementById("note-editor-more-wrap");
+    while (existing) {
+      if (existing.parentNode) existing.parentNode.removeChild(existing);
+      existing = document.getElementById("note-editor-more-wrap");
+    }
+    var stalePanel = document.getElementById("note-editor-comments");
+    if (stalePanel && stalePanel.parentNode && stalePanel.parentNode !== host) {
+      stalePanel.parentNode.removeChild(stalePanel);
+      stalePanel = null;
+    } else if (stalePanel && host && stalePanel.parentNode === host) {
+      stalePanel._allComments = [];
+      stalePanel._commentsCache = [];
+    }
+    var wrap = document.createElement("div");
+    wrap.id = "note-editor-more-wrap";
+    wrap.className = "note-more-wrap hidden";
+    wrap._shareKind = "chat";
+    wrap._shareId = String(threadId);
+    wrap._shareShared = false;
+    wrap._shareUrl = "";
+    wrap._shareAccess = "view";
+    wrap._shareSheetIds = [];
+    wrap._paeiRunning = false;
+    wrap._askMode = "gpt";
+    wrap._noteMembers = [];
+    wrap._noteRevision = 1;
+    wrap._noteUpdatedAt = "";
+    wrap._isNoteOwner = true;
+    wrap._discussionDismissed = false;
+    host.appendChild(wrap);
+    var panel = document.getElementById("note-editor-comments");
+    if (!panel || panel.parentNode !== host) {
+      if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+      panel = document.createElement("aside");
+      panel.id = "note-editor-comments";
+      panel.className = "note-comments hidden";
+      panel.innerHTML = '<div class="note-comments-list"></div>';
+      host.appendChild(panel);
+    }
+    return wrap;
+  }
+
+  function restoreDiscussionOverlayHost() {
+    var ov = document.getElementById("note-discussion-overlay");
+    if (!ov) return;
+    ov.classList.remove("chat-hosted-discussion");
+    if (ov._chatHostStyles) {
+      ov.style.cssText = ov._chatHostStylesPrev || "";
+      ov._chatHostStyles = false;
+      ov._chatHostStylesPrev = "";
+    }
+    if (!ov._chatHomeParent) return;
+    if (ov.parentNode !== ov._chatHomeParent) {
+      ov._chatHomeParent.appendChild(ov);
+    }
+  }
+
+  function chatSplitPaneReady() {
+    if (notesSubTab !== "chats") return false;
+    var pane = document.getElementById("chat-thread-pane");
+    var root = document.getElementById("notes-pane-chats");
+    if (!pane || !root || root.classList.contains("hidden")) return false;
+    document.documentElement.classList.add("notes-chats-tab");
+    var cs = window.getComputedStyle(pane);
+    if (cs.display === "none") {
+      // принудительно включаем split, если CSS ещё не применился
+      pane.style.display = "flex";
+    }
+    var rect = pane.getBoundingClientRect();
+    return rect.width >= 80 && rect.height >= 80;
+  }
+
+  function applyChatHostedOverlayStyles(ov) {
+    if (!ov) return;
+    if (!ov._chatHostStyles) {
+      ov._chatHostStylesPrev = ov.getAttribute("style") || "";
+      ov._chatHostStyles = true;
+    }
+    ov.classList.add("chat-hosted-discussion");
+    ov.style.setProperty("position", "absolute", "important");
+    ov.style.setProperty("inset", "0px", "important");
+    ov.style.setProperty("top", "0px", "important");
+    ov.style.setProperty("right", "0px", "important");
+    ov.style.setProperty("bottom", "0px", "important");
+    ov.style.setProperty("left", "0px", "important");
+    ov.style.setProperty("width", "100%", "important");
+    ov.style.setProperty("height", "100%", "important");
+    ov.style.setProperty("max-width", "none", "important");
+    ov.style.setProperty("display", "flex", "important");
+    ov.style.setProperty("visibility", "visible", "important");
+    ov.style.setProperty("opacity", "1", "important");
+    ov.style.setProperty("z-index", "5", "important");
+    ov.style.setProperty("border", "none", "important");
+    ov.style.setProperty("box-shadow", "none", "important");
+    ov.style.setProperty("background", "var(--bg, #0a0a0a)", "important");
+    ov.style.setProperty("pointer-events", "auto", "important");
+  }
+
+  function hostDiscussionInChatPane() {
+    var ov = document.getElementById("note-discussion-overlay");
+    var pane = document.getElementById("chat-thread-pane");
+    if (!ov) return;
+    if (!ov._chatHomeParent) ov._chatHomeParent = ov.parentNode;
+    if (chatSplitPaneReady() && pane) {
+      if (ov.parentNode !== pane) pane.appendChild(ov);
+      document.documentElement.classList.add("notes-chats-tab");
+      document.documentElement.classList.add("chats-split-open");
+      document.documentElement.classList.add("note-discussion-open");
+      var empty = document.getElementById("chat-thread-empty");
+      if (empty) setHidden(empty, true);
+      ov.classList.remove("hidden");
+      ov.setAttribute("aria-hidden", "false");
+      applyChatHostedOverlayStyles(ov);
+      var sheet = ov.querySelector(".note-discussion-sheet");
+      if (sheet) {
+        sheet.style.maxWidth = "none";
+        sheet.style.height = "100%";
+        sheet.style.maxHeight = "100%";
+        sheet.style.width = "100%";
+      }
+    } else {
+      restoreDiscussionOverlayHost();
+      document.documentElement.classList.remove("chats-split-open");
+    }
+  }
+
+  function syncChatDiscussionTitle(title) {
+    var label = document.getElementById("note-discussion-title-label");
+    var t = String(title || "Чат").trim() || "Чат";
+    if (label) label.textContent = t;
+    var btn = document.getElementById("note-discussion-title");
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add("note-pane-switch--plain");
+      btn.title = t;
+      btn.setAttribute("aria-expanded", "false");
+    }
+  }
+
+  function sortChatThreadsCache() {
+    chatThreadsCache.sort(function (a, b) {
+      var pin = (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+      if (pin) return pin;
+      return String(b.updated_at || "").localeCompare(String(a.updated_at || ""));
+    });
+  }
+
+  function chatThreadHasMessages(thread) {
+    return !!String((thread && thread.last_preview) || "").trim();
+  }
+
+  function visibleChatThreads() {
+    return (chatThreadsCache || []).filter(chatThreadHasMessages);
+  }
+
+  function findEmptyChatDraft(exceptId) {
+    for (var i = 0; i < (chatThreadsCache || []).length; i++) {
+      var t = chatThreadsCache[i];
+      if (!chatThreadHasMessages(t) && String(t.id) !== String(exceptId || "")) {
+        return t;
+      }
+    }
+    return null;
+  }
+
+  async function pruneEmptyChatDrafts(keepId) {
+    var empties = (chatThreadsCache || []).filter(function (t) {
+      return !chatThreadHasMessages(t) && String(t.id) !== String(keepId || "");
+    });
+    if (!empties.length) return;
+    for (var i = 0; i < empties.length; i++) {
+      var id = String(empties[i].id);
+      try {
+        await apiFetch("/chats/" + encodeURIComponent(id), { method: "DELETE" });
+      } catch (_) {}
+    }
+    chatThreadsCache = (chatThreadsCache || []).filter(function (t) {
+      return chatThreadHasMessages(t) || String(t.id) === String(keepId || "");
+    });
+    renderChatThreadsList();
+  }
+
+  function closeChatThreadMenus() {
+    document.querySelectorAll(".chat-thread-menu:not(.hidden)").forEach(function (el) {
+      el.classList.add("hidden");
+      el.style.position = "";
+      el.style.top = "";
+      el.style.left = "";
+      el.style.right = "";
+      el.style.zIndex = "";
+      if (el._homeParent && el.parentNode !== el._homeParent) {
+        el._homeParent.appendChild(el);
+      }
+    });
+    document.querySelectorAll(".chat-thread-more-btn[aria-expanded='true']").forEach(function (btn) {
+      btn.setAttribute("aria-expanded", "false");
+    });
+  }
+
+  var chatThreadMenuDocClickBound = false;
+  function bindChatThreadMenuDocClickOnce() {
+    if (chatThreadMenuDocClickBound) return;
+    chatThreadMenuDocClickBound = true;
+    document.addEventListener("click", function (e) {
+      if (
+        e.target &&
+        e.target.closest &&
+        (e.target.closest(".chat-thread-more-wrap") || e.target.closest(".chat-thread-menu"))
+      ) {
+        return;
+      }
+      closeChatThreadMenus();
+    });
+  }
+
+  function syncChatDiscussionChrome() {
+    var closeBtn = document.getElementById("note-discussion-close");
+    if (closeBtn) {
+      setHidden(closeBtn, notesSubTab === "chats" && isDesktopLayout());
+    }
+    document.documentElement.classList.toggle(
+      "notes-chats-tab",
+      currentTab === "notes" && notesSubTab === "chats"
+    );
+  }
+
+  function upsertChatThreadCache(thread) {
+    if (!thread || thread.id == null) return;
+    var id = String(thread.id);
+    var found = false;
+    chatThreadsCache = (chatThreadsCache || []).map(function (t) {
+      if (String(t.id) === id) {
+        found = true;
+        return Object.assign({}, t, thread);
+      }
+      return t;
+    });
+    if (!found) chatThreadsCache.unshift(thread);
+    sortChatThreadsCache();
+    renderChatThreadsList();
+    if (String(activeChatThreadId) === id) {
+      syncChatDiscussionTitle(thread.title);
+    }
+  }
+
+  function renderChatThreadsList() {
+    var list = document.getElementById("chat-threads-list");
+    if (!list) return;
+    bindChatThreadMenuDocClickOnce();
+    closeChatThreadMenus();
+    list.innerHTML = "";
+    var rows = visibleChatThreads();
+    if (!rows.length) {
+      list.innerHTML =
+        '<p class="muted empty-hint">Чатов пока нет. Нажмите «+», чтобы начать диалог с GPT.</p>';
+      return;
+    }
+    rows.forEach(function (thread) {
+      var id = String(thread.id);
+      var row = document.createElement("div");
+      row.className = "chat-thread-row";
+      row.setAttribute("role", "listitem");
+      row.setAttribute("data-chat-id", id);
+      if (String(activeChatThreadId) === id) row.classList.add("is-active");
+      var main = document.createElement("div");
+      main.className = "chat-thread-row-main";
+      var title = document.createElement("p");
+      title.className = "chat-thread-row-title";
+      if (thread.pinned) {
+        var pin = document.createElement("span");
+        pin.className = "chat-thread-pin";
+        pin.setAttribute("aria-hidden", "true");
+        pin.textContent = "📌";
+        title.appendChild(pin);
+      }
+      title.appendChild(document.createTextNode(String(thread.title || "Новый чат")));
+      var preview = document.createElement("p");
+      preview.className = "chat-thread-row-preview";
+      preview.textContent = String(thread.last_preview || "");
+      main.appendChild(title);
+      main.appendChild(preview);
+      row.appendChild(main);
+
+      var moreWrap = document.createElement("div");
+      moreWrap.className = "chat-thread-more-wrap";
+      var moreBtn = document.createElement("button");
+      moreBtn.type = "button";
+      moreBtn.className = "chat-thread-more-btn";
+      moreBtn.setAttribute("aria-label", "Действия");
+      moreBtn.setAttribute("aria-haspopup", "menu");
+      moreBtn.setAttribute("aria-expanded", "false");
+      moreBtn.innerHTML =
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+        '<circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/>' +
+        "</svg>";
+      var menu = document.createElement("div");
+      menu.className = "chat-thread-menu note-card-menu hidden";
+      menu.setAttribute("role", "menu");
+      function addMenuItem(label, fn, danger) {
+        var item = document.createElement("button");
+        item.type = "button";
+        item.className =
+          "chat-thread-menu-item" + (danger ? " chat-thread-menu-item--danger" : "");
+        item.setAttribute("role", "menuitem");
+        item.textContent = label;
+        item.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          closeChatThreadMenus();
+          fn();
+        });
+        menu.appendChild(item);
+      }
+      addMenuItem("Переименовать", function () {
+        renameChatThread(thread);
+      });
+      addMenuItem(thread.pinned ? "Открепить" : "Закрепить чат", function () {
+        toggleChatThreadPin(thread, !thread.pinned);
+      });
+      addMenuItem("Поделиться", function () {
+        shareChatThread(thread);
+      });
+      addMenuItem("Участники", function () {
+        shareChatThread(thread);
+      });
+      addMenuItem("Добавить к заметке", function () {
+        addChatThreadToNote(thread);
+      });
+      addMenuItem(
+        "Удалить",
+        function () {
+          deleteChatThread(id);
+        },
+        true
+      );
+      moreBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var wasOpen = !menu.classList.contains("hidden");
+        closeChatThreadMenus();
+        closeNoteCardMenus();
+        if (wasOpen) return;
+        if (!menu._homeParent) menu._homeParent = menu.parentNode;
+        document.body.appendChild(menu);
+        menu.classList.remove("hidden");
+        moreBtn.setAttribute("aria-expanded", "true");
+        positionNoteCardMenu(moreBtn, menu);
+      });
+      moreWrap.appendChild(moreBtn);
+      moreWrap.appendChild(menu);
+      row.appendChild(moreWrap);
+
+      row.addEventListener("click", function () {
+        openChatThread(thread);
+      });
+      list.appendChild(row);
+    });
+  }
+
+  async function renameChatThread(thread) {
+    if (!thread || thread.id == null) return;
+    var next = await promptDialog("Название чата", String(thread.title || "Новый чат"));
+    if (next == null) return;
+    next = String(next).trim();
+    if (!next) {
+      alert("Введите название");
+      return;
+    }
+    try {
+      var data = await apiFetch("/chats/" + encodeURIComponent(String(thread.id)), {
+        method: "PATCH",
+        body: JSON.stringify({ title: next }),
+      });
+      if (data && data.chat) upsertChatThreadCache(data.chat);
+      else {
+        upsertChatThreadCache(Object.assign({}, thread, { title: next }));
+      }
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
+  async function toggleChatThreadPin(thread, pinned) {
+    if (!thread || thread.id == null) return;
+    try {
+      var data = await apiFetch("/chats/" + encodeURIComponent(String(thread.id)), {
+        method: "PATCH",
+        body: JSON.stringify({ pinned: !!pinned }),
+      });
+      if (data && data.chat) upsertChatThreadCache(data.chat);
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
+  async function formatChatThreadTranscript(thread) {
+    var id = String((thread && thread.id) || "");
+    if (!id) return "";
+    var data = await apiFetch(
+      "/notes/chat/" + encodeURIComponent(id) + "/comments",
+      { method: "GET" }
+    );
+    var rows = (data && data.comments) || [];
+    var lines = ["# " + String((thread && thread.title) || "Чат"), ""];
+    rows.forEach(function (c) {
+      if (!c) return;
+      var who =
+        c.is_gpt || String(c.author_username || "").toLowerCase() === "gpt"
+          ? "GPT"
+          : c.is_agent
+            ? String(c.author_name || "Агент")
+            : "Вы";
+      var body = String(c.body || "").trim();
+      if (!body) return;
+      lines.push("**" + who + ":** " + body);
+      lines.push("");
+    });
+    return lines.join("\n").trim();
+  }
+
+  async function shareChatThread(thread) {
+    if (!thread || thread.id == null) return;
+    try {
+      var id = String(thread.id);
+      ensureChatShareWrap(id);
+      var wrap = document.getElementById("note-editor-more-wrap");
+      if (!wrap) return;
+      try {
+        var data = await apiFetch(
+          "/notes/chat/" + encodeURIComponent(id) + "/share",
+          { method: "GET" }
+        );
+        applyShareState(wrap, data);
+      } catch (_) {}
+      openShareAccessSheet();
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
+  async function addChatThreadToNote(thread) {
+    try {
+      var text = await formatChatThreadTranscript(thread);
+      if (!text) {
+        showNoteToast("В чате пока нет сообщений");
+        return;
+      }
+      openNoteLinkPicker(text);
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
+  async function loadChatThreads() {
+    if (chatThreadsLoading) return;
+    chatThreadsLoading = true;
+    try {
+      var data = await apiFetch("/chats?limit=100", { method: "GET" });
+      chatThreadsCache = (data && data.chats) || [];
+      sortChatThreadsCache();
+      renderChatThreadsList();
+    } catch (e) {
+      var list = document.getElementById("chat-threads-list");
+      if (list && !visibleChatThreads().length) {
+        list.innerHTML = '<p class="error"></p>';
+        list.querySelector(".error").textContent = e.message || String(e);
+      }
+    } finally {
+      chatThreadsLoading = false;
+    }
+  }
+
+  async function deleteChatThread(id) {
+    await apiFetch("/chats/" + encodeURIComponent(String(id)), { method: "DELETE" });
+    chatThreadsCache = (chatThreadsCache || []).filter(function (t) {
+      return String(t.id) !== String(id);
+    });
+    if (String(activeChatThreadId) === String(id)) {
+      activeChatThreadId = "";
+      if (isNoteDiscussionOpen()) closeNoteDiscussion(true);
+      else if (isDesktopLayout() && notesSubTab === "chats") {
+        restoreDiscussionOverlayHost();
+        document.documentElement.classList.remove("chats-split-open");
+        clearChatShareWrap();
+        ensureDesktopChatComposer();
+      } else {
+        restoreDiscussionOverlayHost();
+        document.documentElement.classList.remove("chats-split-open");
+        var empty = document.getElementById("chat-thread-empty");
+        if (empty) setHidden(empty, false);
+        clearChatShareWrap();
+      }
+    }
+    renderChatThreadsList();
+  }
+
+  async function openChatThread(thread) {
+    if (!thread || thread.id == null) return;
+    var id = String(thread.id);
+    var prevId = activeChatThreadId;
+    activeChatThreadId = id;
+    ensureChatShareWrap(id);
+    var wrapEarly = document.getElementById("note-editor-more-wrap");
+    if (wrapEarly && Array.isArray(thread.members)) {
+      wrapEarly._noteMembers = thread.members;
+    }
+    renderChatThreadsList();
+    await pruneEmptyChatDrafts(id);
+    if (prevId && String(prevId) !== id) {
+      /* previous empty draft pruned above */
+    }
+    if (!document.getElementById("note-editor-more-wrap")) {
+      ensureChatShareWrap(id);
+    }
+    hostDiscussionInChatPane();
+    var panel = document.getElementById("note-editor-comments");
+    var listEl = panel && panel.querySelector(".note-comments-list");
+    try {
+      await loadNoteComments("chat", id, listEl);
+    } catch (e) {
+      alert(e.message || String(e));
+      return;
+    }
+    try {
+      var mem = await apiFetch("/chats/" + encodeURIComponent(id) + "/members", {
+        method: "GET",
+      });
+      var wrapMem = document.getElementById("note-editor-more-wrap");
+      if (wrapMem && mem) {
+        wrapMem._noteMembers = (mem.chat && mem.chat.members) || mem.members || [];
+        if (mem.chat) upsertChatThreadCache(mem.chat);
+      }
+    } catch (_) {}
+    if (!document.getElementById("note-editor-more-wrap")) {
+      ensureChatShareWrap(id);
+    }
+    hostDiscussionInChatPane();
+    openNoteDiscussion({
+      mode: "gpt",
+      focus: !chatSplitPaneReady(),
+      keepSheet: true,
+    });
+    hostDiscussionInChatPane();
+    syncChatDiscussionTitle(thread.title);
+    renderNoteAskModes();
+    syncChatDiscussionChrome();
+    syncNoteDiscussionOpenClass();
+    syncAppOverlay();
+    window.requestAnimationFrame(function () {
+      hostDiscussionInChatPane();
+    });
+  }
+
+  async function createAndOpenChatThread() {
+    try {
+      var blank = findEmptyChatDraft(activeChatThreadId);
+      if (blank) {
+        await openChatThread(blank);
+        return;
+      }
+      if (activeChatThreadId) {
+        var current = null;
+        for (var i = 0; i < (chatThreadsCache || []).length; i++) {
+          if (String(chatThreadsCache[i].id) === String(activeChatThreadId)) {
+            current = chatThreadsCache[i];
+            break;
+          }
+        }
+        if (current && !chatThreadHasMessages(current)) {
+          await openChatThread(current);
+          return;
+        }
+      }
+      await pruneEmptyChatDrafts("");
+      var data = await apiFetch("/chats", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      var thread = data && data.chat;
+      if (!thread) throw new Error("Не удалось создать чат");
+      upsertChatThreadCache(thread);
+      await openChatThread(thread);
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
+  async function ensureDesktopChatComposer() {
+    if (leavingChatsTab || notesSubTab !== "chats") return;
+    document.documentElement.classList.add("notes-chats-tab");
+    if (!chatSplitPaneReady() && !isDesktopLayout()) return;
+    if (activeChatThreadId && isNoteDiscussionOpen()) {
+      hostDiscussionInChatPane();
+      return;
+    }
+    var blank = findEmptyChatDraft("");
+    if (blank) await openChatThread(blank);
+    else await createAndOpenChatThread();
+  }
+
+  function setNotesSubTab(name) {
+    var next = name || "notes";
+    if (notesSubTab === "chats" && next !== "chats") {
+      leaveChatThreadsMode();
+    }
+    notesSubTab = next;
+    document.querySelectorAll("#panel-notes .subtab-btn").forEach(function (b) {
+      b.classList.toggle("active", b.getAttribute("data-subtab") === next);
+    });
+    setHidden(document.getElementById("notes-pane-notes"), next !== "notes");
+    setHidden(document.getElementById("notes-pane-chats"), next !== "chats");
+    setHidden(document.getElementById("notes-pane-transcriptions"), next !== "transcriptions");
+    setHidden(document.getElementById("notes-pane-summaries"), next !== "summaries");
+    var filterBar = document.querySelector("#panel-notes .notes-filter-bar");
+    setHidden(filterBar, next === "chats");
+    syncChatDiscussionChrome();
+    if (next === "chats") {
+      var openWrap = document.getElementById("note-editor-more-wrap");
+      if (isNoteDiscussionOpen() && (!openWrap || openWrap._shareKind !== "chat")) {
+        closeNoteDiscussion(true);
+      }
+      document.documentElement.classList.add("notes-chats-tab");
+      loadChatThreads().then(function () {
+        window.requestAnimationFrame(function () {
+          ensureDesktopChatComposer();
+        });
+      });
+    }
+    syncNotesCreateFab();
+  }
   function clearNoteEditorToolbarWrap() {
     var toolbarWrap = document.getElementById("note-editor-toolbar-wrap");
     var formatHost = document.getElementById("note-editor-format-toolbar-host");
@@ -11056,15 +11802,6 @@
       });
     }
 
-    addItem(
-      wrap._paeiRunning ? "PAIE · идёт разбор…" : "PAIE",
-      function () {
-        closeNoteMoreMenu();
-        startNotePaei();
-      },
-      !!wrap._paeiRunning
-    );
-
     if (noteSheetsEnabled()) {
       addItem("Новый лист", function () {
         closeNoteMoreMenu();
@@ -11127,10 +11864,14 @@
   function noteAskPlaceholder(mode) {
     var wrap = document.getElementById("note-editor-more-wrap");
     var quoted = !!(wrap && wrap._commentDraft && String(wrap._commentDraft.quote || "").trim());
+    var isChatThread = !!(wrap && wrap._shareKind === "chat");
     if (isChatAskMode(mode)) {
       var name = noteAskModeLabel(mode);
-      return gptComposerChipCount(noteGptEditor())
-        ? "Спросите " + name + " про выделенный текст"
+      if (gptComposerChipCount(noteGptEditor())) {
+        return "Спросите " + name + " про выделенный текст";
+      }
+      return isChatThread
+        ? "Задайте вопрос " + name
         : "Свободный запрос к " + name + " по заметке";
     }
     if (mode === "research") {
@@ -11425,13 +12166,16 @@
       '<div class="note-paie-plus-page" data-plus-page="root">' +
       '<button type="button" class="note-paie-menu-item" data-plus-action="file">Добавить файл</button>' +
       '<button type="button" class="note-paie-menu-item" data-plus-action="note">Добавить заметку</button>' +
+      '<button type="button" class="note-paie-menu-item" data-plus-action="transcription">Добавить транскрипцию</button>' +
+      '<button type="button" class="note-paie-menu-item" data-plus-action="summary">Добавить саммари</button>' +
       "</div>" +
       '<div class="note-paie-plus-page hidden" data-plus-page="notes">' +
       '<button type="button" class="note-paie-plus-back" id="note-paie-plus-back">← Назад</button>' +
-      '<input type="search" class="note-paie-plus-search" id="note-paie-plus-search" placeholder="Поиск заметок" autocomplete="off" />' +
+      '<input type="search" class="note-paie-plus-search" id="note-paie-plus-search" placeholder="Поиск" autocomplete="off" />' +
       '<div class="note-paie-plus-project-chips notes-project-chips hidden" id="note-paie-plus-project-chips" role="listbox" aria-label="Проекты"></div>' +
       '<div class="note-paie-plus-notes" id="note-paie-plus-notes"></div>' +
       "</div></div>" +
+      '<div id="note-paie-attach-preview" class="note-paie-attach-preview hidden"></div>' +
       '<div class="note-paie-composer-row">' +
       '<button type="button" class="note-paie-attach" id="note-paie-attach" aria-label="Добавить" title="Добавить" aria-haspopup="true" aria-expanded="false">' +
       '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">' +
@@ -11444,7 +12188,6 @@
       '<div id="note-paie-reply-editor" class="note-paie-composer-input note-paie-composer-editor is-empty" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="' +
       noteAskPlaceholder("gpt") +
       '"></div></div>' +
-      '<div id="note-paie-attach-preview" class="note-paie-attach-preview hidden"></div>' +
       '<div class="note-paie-composer-bar">' +
       '<div class="note-paie-composer-left">' +
       '<div class="note-paie-mode-switch" role="tablist" aria-label="Режим">' +
@@ -11676,9 +12419,19 @@
     var switchEl = form.querySelector(".note-paie-mode-switch");
     var menu = form.querySelector(".note-paie-mode-menu");
     if (!switchEl || !menu) return;
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var isChatThread =
+      !!(wrap && wrap._shareKind === "chat") &&
+      (notesSubTab === "chats" || !!activeChatThreadId);
     var current = noteAskMode();
+    if (isChatThread && current === "comment") {
+      if (wrap) wrap._askMode = "gpt";
+      current = "gpt";
+    }
     var items = (userAgentsState.agents || []).slice();
-    items.push({ id: "comment", title: "Текст", kind: "comment" });
+    if (!isChatThread) {
+      items.push({ id: "comment", title: "Текст", kind: "comment" });
+    }
     function makeBtn(agent, cls) {
       var btn = document.createElement("button");
       btn.type = "button";
@@ -12051,7 +12804,11 @@
   function discussContextNoteIds() {
     return discussPendingContextNotes()
       .map(function (n) {
-        return n && n.id != null ? String(n.id) : "";
+        if (!n || n.id == null) return "";
+        var id = String(n.id);
+        if (!id) return "";
+        if (n.kind === "journal") return "journal:" + id;
+        return id;
       })
       .filter(Boolean);
   }
@@ -12063,20 +12820,34 @@
     syncNotePaieReplyForm();
   }
 
-  function addDiscussContextNote(note) {
+  function addDiscussContextNote(note, kind) {
     var id = note && note.id != null ? String(note.id) : "";
     if (!id) return;
+    var itemKind = kind === "journal" ? "journal" : "local";
     var list = discussPendingContextNotes();
-    if (list.some(function (n) { return String(n.id) === id; })) return;
-    if (list.length >= DISCUSS_CONTEXT_NOTES_MAX) {
-      alert("Можно прикрепить не больше " + DISCUSS_CONTEXT_NOTES_MAX + " заметок");
+    if (
+      list.some(function (n) {
+        return String(n.id) === id && (n.kind || "local") === itemKind;
+      })
+    ) {
       return;
+    }
+    if (list.length >= DISCUSS_CONTEXT_NOTES_MAX) {
+      alert("Можно прикрепить не больше " + DISCUSS_CONTEXT_NOTES_MAX + " материалов");
+      return;
+    }
+    var title = "";
+    if (itemKind === "journal") {
+      title = journalCardTitle(note) || "Запись";
+    } else {
+      title =
+        sanitizeNoteTitle((note && (note.title || note.content)) || "") ||
+        String((note && (note.title || note.content)) || "Заметка");
     }
     list.push({
       id: id,
-      title:
-        sanitizeNoteTitle((note && (note.title || note.content)) || "") ||
-        String((note && (note.title || note.content)) || "Заметка"),
+      kind: itemKind,
+      title: title,
     });
     renderDiscussAttachPreview();
     syncNotePaieReplyForm();
@@ -12161,12 +12932,12 @@
       chip.className = "note-paie-attach-chip is-note";
       var name = document.createElement("span");
       name.className = "note-paie-attach-chip-name";
-      name.textContent = item.title || "Заметка";
+      name.textContent = item.title || "Материал";
       chip.appendChild(name);
       var rm = document.createElement("button");
       rm.type = "button";
       rm.className = "note-paie-attach-chip-remove";
-      rm.setAttribute("aria-label", "Убрать заметку");
+      rm.setAttribute("aria-label", "Убрать вложение");
       rm.textContent = "×";
       rm.addEventListener("click", function (e) {
         e.preventDefault();
@@ -12213,7 +12984,17 @@
     if (page === "notes") {
       plusPickerActiveProjectId = 0;
       var search = document.getElementById("note-paie-plus-search");
-      if (search) search.value = "";
+      if (search) {
+        search.value = "";
+        search.placeholder =
+          plusPickerKind === "transcription"
+            ? "Поиск транскрипций"
+            : plusPickerKind === "summary"
+              ? "Поиск саммари"
+              : "Поиск заметок";
+      }
+      var chips = document.getElementById("note-paie-plus-project-chips");
+      if (chips) setHidden(chips, false);
       ensureUserTagsLoaded().finally(function () {
         renderPlusNotePicker("");
       });
@@ -12227,20 +13008,44 @@
     }
   }
 
-  function plusPickerNotes(query) {
+  function plusPickerItems(query) {
     var wrap = document.getElementById("note-editor-more-wrap");
-    var currentId = wrap && wrap._shareKind === "local" ? String(wrap._shareId || "") : "";
+    var currentKind = wrap ? String(wrap._shareKind || "") : "";
+    var currentId = wrap && wrap._shareId ? String(wrap._shareId) : "";
     var selected = {};
-    discussContextNoteIds().forEach(function (id) {
-      selected[id] = true;
+    discussPendingContextNotes().forEach(function (n) {
+      if (!n || n.id == null) return;
+      var key = (n.kind || "local") + ":" + String(n.id);
+      selected[key] = true;
     });
     var q = String(query || "").trim().toLowerCase();
-    return ((notesDataCache && notesDataCache.local_notes) || []).filter(function (n) {
+    var kind = plusPickerKind || "note";
+    var source = [];
+    if (kind === "transcription") {
+      source = (notesDataCache && notesDataCache.transcriptions) || [];
+    } else if (kind === "summary") {
+      source = (notesDataCache && notesDataCache.summaries) || [];
+    } else {
+      source = (notesDataCache && notesDataCache.local_notes) || [];
+    }
+    return source.filter(function (n) {
       var id = String((n && n.id) || "");
-      if (!id || id === currentId || selected[id]) return false;
-      if (n.is_knowledge || n.role === "knowledge") return false;
+      if (!id) return false;
+      var itemKind = kind === "note" ? "local" : "journal";
+      if (selected[itemKind + ":" + id]) return false;
+      if (itemKind === "local") {
+        if (currentKind === "local" && id === currentId) return false;
+        if (n.is_knowledge || n.role === "knowledge") return false;
+      } else if (currentKind === "journal" && id === currentId) {
+        return false;
+      }
       if (!noteMatchesPickerProjectFilter(n, plusPickerActiveProjectId)) return false;
       if (!q) return true;
+      if (itemKind === "journal") {
+        var jTitle = String(journalCardTitle(n) || "").toLowerCase();
+        var jPrev = String(n.preview || "").toLowerCase();
+        return jTitle.indexOf(q) >= 0 || jPrev.indexOf(q) >= 0;
+      }
       var title = String(n.title || n.content || "").toLowerCase();
       var preview = notePlainExcerpt(n.description || n.body || "", 80).toLowerCase();
       return title.indexOf(q) >= 0 || preview.indexOf(q) >= 0;
@@ -12250,8 +13055,9 @@
   function renderPlusNotePicker(query) {
     var list = document.getElementById("note-paie-plus-notes");
     if (!list) return;
+    var chipsHost = document.getElementById("note-paie-plus-project-chips");
     renderNotePickerProjectChips(
-      document.getElementById("note-paie-plus-project-chips"),
+      chipsHost,
       function () {
         return plusPickerActiveProjectId;
       },
@@ -12263,16 +13069,22 @@
         renderPlusNotePicker(search ? search.value : "");
       }
     );
-    var notes = plusPickerNotes(query);
+    var notes = plusPickerItems(query);
     list.innerHTML = "";
     if (!notes.length) {
       var empty = document.createElement("p");
       empty.className = "note-paie-menu-empty";
-      empty.textContent = notesDataCache
-        ? String(query || "").trim() || plusPickerActiveProjectId
+      var emptyDefault =
+        plusPickerKind === "transcription"
+          ? "Транскрипций нет"
+          : plusPickerKind === "summary"
+            ? "Саммари нет"
+            : "Других заметок нет";
+      empty.textContent = !notesDataCache
+        ? "Загрузка…"
+        : String(query || "").trim() || plusPickerActiveProjectId
           ? "Ничего не найдено"
-          : "Других заметок нет"
-        : "Загрузка…";
+          : emptyDefault;
       list.appendChild(empty);
       return;
     }
@@ -12282,13 +13094,15 @@
       btn.className = "note-paie-menu-item note-paie-plus-note";
       var title = document.createElement("span");
       title.className = "note-paie-kb-item-title";
-      title.textContent =
-        sanitizeNoteTitle(n.title || n.content || "") ||
-        String(n.title || n.content || "Без названия");
+      var titleText =
+        plusPickerKind === "note"
+          ? sanitizeNoteTitle(n.title || n.content || "") ||
+            String(n.title || n.content || "Без названия")
+          : journalCardTitle(n) || "Без названия";
+      title.textContent = titleText;
       btn.appendChild(title);
       var project = noteProjectOf(n);
-      var projectName =
-        (project && (project.name || project.title)) || "";
+      var projectName = (project && (project.name || project.title)) || "";
       if (projectName) {
         var meta = document.createElement("span");
         meta.className = "note-paie-plus-note-project";
@@ -12298,7 +13112,7 @@
       btn.addEventListener("click", function (e) {
         e.preventDefault();
         e.stopPropagation();
-        addDiscussContextNote(n);
+        addDiscussContextNote(n, plusPickerKind === "note" ? "local" : "journal");
         closeNoteComposerMenus();
       });
       list.appendChild(btn);
@@ -12306,11 +13120,25 @@
   }
 
   function ensurePlusPickerNotes() {
-    if (notesDataCache && Array.isArray(notesDataCache.local_notes) && notesDataCache.local_notes.length) {
-      return Promise.resolve(notesDataCache.local_notes);
+    if (notesDataCache) {
+      if (plusPickerKind === "transcription") {
+        return Promise.resolve(notesDataCache.transcriptions || []);
+      }
+      if (plusPickerKind === "summary") {
+        return Promise.resolve(notesDataCache.summaries || []);
+      }
+      if (Array.isArray(notesDataCache.local_notes) && notesDataCache.local_notes.length) {
+        return Promise.resolve(notesDataCache.local_notes);
+      }
     }
     return Promise.resolve(loadNotes())
       .then(function () {
+        if (plusPickerKind === "transcription") {
+          return (notesDataCache && notesDataCache.transcriptions) || [];
+        }
+        if (plusPickerKind === "summary") {
+          return (notesDataCache && notesDataCache.summaries) || [];
+        }
         return (notesDataCache && notesDataCache.local_notes) || [];
       })
       .catch(function () {
@@ -12318,6 +13146,14 @@
       });
   }
 
+  function openPlusPicker(kind) {
+    plusPickerKind = kind || "note";
+    showPlusMenuPage("notes");
+    ensurePlusPickerNotes().then(function () {
+      var search = document.getElementById("note-paie-plus-search");
+      renderPlusNotePicker(search ? search.value : "");
+    });
+  }
   function bindDiscussAttachOnce(form) {
     var btn = document.getElementById("note-paie-attach");
     var input = document.getElementById("note-paie-attach-input");
@@ -12355,12 +13191,47 @@
       if (noteBtn) {
         noteBtn.addEventListener("click", function (e) {
           e.preventDefault();
-          showPlusMenuPage("notes");
-          ensurePlusPickerNotes().then(function () {
-            var search = document.getElementById("note-paie-plus-search");
-            renderPlusNotePicker(search ? search.value : "");
-          });
+          openPlusPicker("note");
         });
+      }
+      var transcriptionBtn = menu.querySelector('[data-plus-action="transcription"]');
+      if (transcriptionBtn) {
+        transcriptionBtn.addEventListener("click", function (e) {
+          e.preventDefault();
+          openPlusPicker("transcription");
+        });
+      }
+      var summaryBtn = menu.querySelector('[data-plus-action="summary"]');
+      if (summaryBtn) {
+        summaryBtn.addEventListener("click", function (e) {
+          e.preventDefault();
+          openPlusPicker("summary");
+        });
+      }
+      var notesList = document.getElementById("note-paie-plus-notes");
+      if (notesList && !notesList._scrollBound) {
+        notesList._scrollBound = true;
+        notesList.addEventListener(
+          "touchstart",
+          function (e) {
+            e.stopPropagation();
+          },
+          { passive: true }
+        );
+        notesList.addEventListener(
+          "touchmove",
+          function (e) {
+            e.stopPropagation();
+          },
+          { passive: true }
+        );
+        notesList.addEventListener(
+          "wheel",
+          function (e) {
+            e.stopPropagation();
+          },
+          { passive: true }
+        );
       }
       var back = document.getElementById("note-paie-plus-back");
       if (back) {
@@ -12611,12 +13482,23 @@
     host.appendChild(wrap);
   }
 
+  function ensureAttachPreviewAboveComposer(form) {
+    if (!form) return;
+    var preview = form.querySelector("#note-paie-attach-preview");
+    var row = form.querySelector(".note-paie-composer-row");
+    if (!preview || !row || !row.parentNode) return;
+    if (preview.nextElementSibling === row) return;
+    row.parentNode.insertBefore(preview, row);
+  }
+
   function bindNotePaieReplyForm(threadEl) {
     var form = document.getElementById("note-paie-reply-form");
     if (
       !form ||
       !form.querySelector("#note-paie-attach") ||
       !form.querySelector("#note-paie-plus-menu") ||
+      !form.querySelector('[data-plus-action="transcription"]') ||
+      !form.querySelector('[data-plus-action="summary"]') ||
       !form.querySelector(".note-paie-kb-wrap") ||
       !form.querySelector("#note-paie-reply-editor") ||
       !form.querySelector('[data-mode="research"]')
@@ -12627,6 +13509,7 @@
       form = document.getElementById("note-paie-reply-form");
     }
     if (!form) return;
+    ensureAttachPreviewAboveComposer(form);
     bindNoteKnowledgeToggle(form);
     bindDiscussAttachOnce(form);
     if (form._bound) return;
@@ -13059,6 +13942,18 @@
   function syncNotePaneHeader() {
     var label = document.getElementById("note-discussion-title-label");
     var btn = document.getElementById("note-discussion-title");
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap && wrap._shareKind === "chat") {
+      var chatTitle = "Чат";
+      for (var i = 0; i < (chatThreadsCache || []).length; i++) {
+        if (String(chatThreadsCache[i].id) === String(wrap._shareId)) {
+          chatTitle = String(chatThreadsCache[i].title || "Чат");
+          break;
+        }
+      }
+      syncChatDiscussionTitle(chatTitle);
+      return;
+    }
     var title = "Обсуждение";
     if (noteSheetState.rightMode === "sheet") {
       var sheet = findNoteSheet(noteSheetState.rightId);
@@ -13274,9 +14169,20 @@
       closeNotePaneSwitchMenu();
       setRightPaneMode("discussion");
     });
+    var discussSep = document.createElement("div");
+    discussSep.className = "note-pane-switch-sep";
+    menu.appendChild(discussSep);
     var leftOpenId = String(noteSheetState.leftId || NOTE_SHEET_MAIN);
-    noteSheetState.sheets.forEach(function (s) {
-      if (String(s.id) === leftOpenId) return;
+    var otherSheets = (noteSheetState.sheets || []).filter(function (s) {
+      return String(s.id) !== leftOpenId;
+    });
+    if (noteSheetsEnabled() || otherSheets.length) {
+      var sheetsLabel = document.createElement("div");
+      sheetsLabel.className = "note-pane-switch-label";
+      sheetsLabel.textContent = "Листы заметки";
+      menu.appendChild(sheetsLabel);
+    }
+    otherSheets.forEach(function (s) {
       addItem(
         s.title || "Лист",
         noteSheetState.rightMode === "sheet" && String(s.id) === String(noteSheetState.rightId),
@@ -13286,6 +14192,12 @@
         }
       );
     });
+    if (noteSheetsEnabled()) {
+      addItem("+ Новый лист", false, function () {
+        closeNotePaneSwitchMenu();
+        createNoteSheet({ openOn: "right" });
+      });
+    }
     if (noteSheetState.rightMode === "note" && noteSheetState.rightNote) {
       var openTitle =
         sanitizeNoteTitle(noteSheetState.rightNote.title || "") ||
@@ -13310,12 +14222,6 @@
         });
       });
     });
-    if (noteSheetsEnabled()) {
-      addItem("+ Новый лист", false, function () {
-        closeNotePaneSwitchMenu();
-        createNoteSheet({ openOn: "right" });
-      });
-    }
   }
 
   function toggleNotePaneSwitchMenu() {
@@ -14136,6 +15042,20 @@
     syncAppOverlay();
     syncTelegramNativeBack();
     if (isNoteEditorModalOpen()) updateModalSheetForKeyboard();
+    if (notesSubTab === "chats") {
+      activeChatThreadId = "";
+      restoreDiscussionOverlayHost();
+      document.documentElement.classList.remove("chats-split-open");
+      clearChatShareWrap();
+      renderChatThreadsList();
+      if (!leavingChatsTab && isDesktopLayout()) {
+        ensureDesktopChatComposer();
+      } else {
+        var empty = document.getElementById("chat-thread-empty");
+        if (empty) setHidden(empty, false);
+      }
+    }
+    syncChatDiscussionChrome();
   }
 
   function highlightDiscussionMessage(id) {
@@ -14308,6 +15228,8 @@
     syncTelegramNativeBack();
     syncNoteFormatToolbarForComposer();
     updateModalSheetForKeyboard();
+    syncChatDiscussionChrome();
+    renderNoteAskModes();
   }
 
   function ensureNotePaieThread() {
@@ -14513,6 +15435,14 @@
 
   function noteTitleForDiscussToast(kind, itemId, fallback) {
     var id = String(itemId || "");
+    if (kind === "chat") {
+      for (var c = 0; c < (chatThreadsCache || []).length; c++) {
+        if (String(chatThreadsCache[c].id) === id) {
+          return String(chatThreadsCache[c].title || "чате");
+        }
+      }
+      return fallback || "чате";
+    }
     function fromList(list) {
       for (var i = 0; i < (list || []).length; i++) {
         if (String(list[i].id) === id) {
@@ -14846,12 +15776,28 @@
   function renderNoteLinkList(query, answerText) {
     var list = document.getElementById("note-link-list");
     if (!list) return;
+    var chips = document.getElementById("note-link-project-chips");
+    if (chips) {
+      renderNotePickerProjectChips(
+        chips,
+        function () {
+          return linkPickerActiveProjectId;
+        },
+        function (v) {
+          linkPickerActiveProjectId = v;
+        },
+        function () {
+          renderNoteLinkList(query, answerText);
+        }
+      );
+    }
     var wrap = document.getElementById("note-editor-more-wrap");
     var currentId = wrap && wrap._shareKind === "local" ? String(wrap._shareId || "") : "";
     var q = String(query || "").trim().toLowerCase();
     var notes = ((notesDataCache && notesDataCache.local_notes) || []).filter(function (n) {
       var id = String((n && n.id) || "");
       if (!id || id === currentId) return false;
+      if (!noteMatchesPickerProjectFilter(n, linkPickerActiveProjectId)) return false;
       if (!q) return true;
       var title = String(n.title || n.content || "").toLowerCase();
       var preview = noteLinkPreview(n).toLowerCase();
@@ -14861,7 +15807,8 @@
     if (!notes.length) {
       var empty = document.createElement("p");
       empty.className = "note-link-empty";
-      empty.textContent = q ? "Ничего не найдено" : "Других заметок нет";
+      empty.textContent =
+        q || linkPickerActiveProjectId ? "Ничего не найдено" : "Других заметок нет";
       list.appendChild(empty);
       return;
     }
@@ -14912,10 +15859,13 @@
     var ov = document.getElementById("note-link-overlay");
     if (!ov) return;
     ov._answerText = String(answerText || "");
+    linkPickerActiveProjectId = 0;
     var search = document.getElementById("note-link-search");
     if (search) search.value = "";
     function show() {
-      renderNoteLinkList("", ov._answerText);
+      ensureUserTagsLoaded().finally(function () {
+        renderNoteLinkList("", ov._answerText);
+      });
       ov.classList.remove("hidden");
       ov.setAttribute("aria-hidden", "false");
       if (search) {
@@ -15987,6 +16937,10 @@
   }
 
   function activeNoteGptContext() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap && wrap._shareKind === "chat") {
+      return { title: "", text: "", sheet_ids: [] };
+    }
     var title = "";
     var titleEl = document.getElementById("note-editor-title-input");
     if (titleEl) title = String(titleEl.value || "").trim();
@@ -16268,6 +17222,7 @@
           }),
         }
       );
+      if (saved && saved.thread) upsertChatThreadCache(saved.thread);
       var input = document.getElementById("note-paie-reply-input");
       if (input) input.value = "";
       clearGptComposer();
@@ -16322,7 +17277,7 @@
         .filter(Boolean);
       if (!ans) ans = gptFileIds.length ? "📎" : "—";
       setGptDiscussPhase("saving");
-      await apiFetch(
+      var gptSaved = await apiFetch(
         "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
         {
           method: "POST",
@@ -16337,6 +17292,7 @@
           }),
         }
       );
+      if (gptSaved && gptSaved.thread) upsertChatThreadCache(gptSaved.thread);
       var liveWrap = document.getElementById("note-editor-more-wrap");
       if (liveWrap && String(liveWrap._shareId) === String(itemId)) {
         liveWrap._gptBusy = false;
@@ -16385,7 +17341,7 @@
     try {
       var fileIds = await uploadDiscussPendingFiles(wrap._shareKind, wrap._shareId);
       clearDiscussPendingContextNotes();
-      await apiFetch(
+      var footSaved = await apiFetch(
         "/notes/" +
           encodeURIComponent(wrap._shareKind) +
           "/" +
@@ -16403,6 +17359,7 @@
           }),
         }
       );
+      if (footSaved && footSaved.thread) upsertChatThreadCache(footSaved.thread);
       if (input) input.value = "";
       clearDiscussPendingFiles();
       clearNoteComposerCommentTarget();
@@ -17243,14 +18200,25 @@
     var copy = document.getElementById("note-share-sheet-copy");
     if (copy) copy.textContent = wrap._shareShared ? "Сохранить и скопировать" : "Скопировать ссылку";
     var membersBlock = ov.querySelector(".note-share-members-block");
+    var membersHint = document.getElementById("note-share-members-hint");
+    var supportsMembers =
+      wrap._shareKind === "local" || wrap._shareKind === "chat";
     if (membersBlock) {
-      membersBlock.classList.toggle("hidden", wrap._shareKind !== "local");
+      membersBlock.classList.toggle("hidden", !supportsMembers);
+    }
+    if (membersHint) {
+      membersHint.textContent =
+        wrap._shareKind === "chat"
+          ? "Добавьте человека из контактов — чат появится у него во вкладке «Чаты»."
+          : "Добавьте человека из контактов — заметка появится у него в списке с правом редактировать.";
     }
     paintShareMembersList();
     paintShareSheetPicker();
     ov.classList.remove("hidden");
-    if (wrap._shareKind === "local") {
+    if (supportsMembers) {
       loadShareMemberContacts();
+    }
+    if (wrap._shareKind === "local") {
       refreshShareSheetsState();
     }
   }
@@ -17533,7 +18501,12 @@
       name.textContent = m.name || m.username || "Участник";
       copy.appendChild(name);
       var role = document.createElement("small");
-      role.textContent = m.is_owner ? "Автор" : "Редактирование";
+      var wrapKind = (getShareCtx() || {})._shareKind;
+      role.textContent = m.is_owner
+        ? "Автор"
+        : wrapKind === "chat"
+          ? "Участник"
+          : "Редактирование";
       copy.appendChild(role);
       row.appendChild(copy);
       if (!m.is_owner) {
@@ -17555,21 +18528,37 @@
     var wrap = getShareCtx();
     var suggest = document.getElementById("note-share-member-suggest");
     var input = document.getElementById("note-share-member-input");
-    if (!wrap || wrap._shareKind !== "local" || !wrap._shareId) return;
+    if (
+      !wrap ||
+      !wrap._shareId ||
+      (wrap._shareKind !== "local" && wrap._shareKind !== "chat")
+    ) {
+      return;
+    }
     if (suggest) suggest.classList.add("hidden");
     try {
-      var data = await apiFetch(
-        "/notes/local/" + encodeURIComponent(wrap._shareId) + "/members",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            email: contact && contact.email ? contact.email : undefined,
-            telegram_username: contact && contact.telegram_username ? contact.telegram_username : undefined,
-            telegram_user_id: contact && contact.telegram_user_id ? contact.telegram_user_id : undefined,
-          }),
-        }
-      );
-      if (data && data.item) {
+      var membersUrl =
+        wrap._shareKind === "chat"
+          ? "/chats/" + encodeURIComponent(wrap._shareId) + "/members"
+          : "/notes/local/" + encodeURIComponent(wrap._shareId) + "/members";
+      var data = await apiFetch(membersUrl, {
+        method: "POST",
+        body: JSON.stringify({
+          email: contact && contact.email ? contact.email : undefined,
+          telegram_username:
+            contact && contact.telegram_username
+              ? contact.telegram_username
+              : undefined,
+          telegram_user_id:
+            contact && contact.telegram_user_id
+              ? contact.telegram_user_id
+              : undefined,
+        }),
+      });
+      if (wrap._shareKind === "chat" && data && data.chat) {
+        wrap._noteMembers = data.chat.members || wrap._noteMembers;
+        upsertChatThreadCache(data.chat);
+      } else if (data && data.item) {
         wrap._noteMembers = data.item.members || wrap._noteMembers;
         prependLocalInCache(data.item);
         renderOpenNoteMembers(wrap._noteMembers, []);
@@ -17586,18 +18575,27 @@
     var wrap = getShareCtx();
     if (!wrap || !wrap._shareId || !memberId) return;
     try {
-      await apiFetch(
-        "/notes/local/" +
-          encodeURIComponent(wrap._shareId) +
-          "/members/" +
-          encodeURIComponent(String(memberId)),
-        { method: "DELETE" }
-      );
-      wrap._noteMembers = (wrap._noteMembers || []).filter(function (m) {
-        return String(m.user_id) !== String(memberId);
-      });
+      var url =
+        wrap._shareKind === "chat"
+          ? "/chats/" +
+            encodeURIComponent(wrap._shareId) +
+            "/members/" +
+            encodeURIComponent(String(memberId))
+          : "/notes/local/" +
+            encodeURIComponent(wrap._shareId) +
+            "/members/" +
+            encodeURIComponent(String(memberId));
+      var data = await apiFetch(url, { method: "DELETE" });
+      if (wrap._shareKind === "chat" && data && data.chat) {
+        wrap._noteMembers = data.chat.members || [];
+        upsertChatThreadCache(data.chat);
+      } else {
+        wrap._noteMembers = (wrap._noteMembers || []).filter(function (m) {
+          return String(m.user_id) !== String(memberId);
+        });
+        renderOpenNoteMembers(wrap._noteMembers, []);
+      }
       paintShareMembersList();
-      renderOpenNoteMembers(wrap._noteMembers, []);
     } catch (e) {
       alert(e.message || String(e));
     }
@@ -18267,6 +19265,7 @@
 
   function closeNoteCardMenus() {
     document.querySelectorAll(".note-card-menu:not(.hidden)").forEach(function (el) {
+      if (el.classList.contains("chat-thread-menu")) return;
       el.classList.add("hidden");
       el.style.position = "";
       el.style.top = "";
@@ -18278,6 +19277,7 @@
       }
     });
     document.querySelectorAll(".note-card-menu-btn[aria-expanded='true']").forEach(function (btn) {
+      if (btn.classList.contains("chat-thread-more-btn")) return;
       btn.setAttribute("aria-expanded", "false");
     });
   }
@@ -20521,7 +21521,8 @@
     var notesCreateBtn = document.getElementById("notes-create-btn");
     if (notesCreateBtn) {
       notesCreateBtn.addEventListener("click", function () {
-        openNewTodoistNote();
+        if (notesSubTab === "chats") createAndOpenChatThread();
+        else openNewTodoistNote();
       });
     }
 

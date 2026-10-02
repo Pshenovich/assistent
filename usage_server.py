@@ -2581,6 +2581,15 @@ class _MiniappShareCommentCreate(BaseModel):
     file_ids: list[int] = Field(default_factory=list)
 
 
+class _MiniappChatCreate(BaseModel):
+    title: Optional[str] = None
+
+
+class _MiniappChatPatch(BaseModel):
+    title: Optional[str] = None
+    pinned: Optional[bool] = None
+
+
 class _MiniappNotePaeiStart(BaseModel):
     reply: str = ""
     parent_id: Optional[int] = None
@@ -3040,6 +3049,13 @@ def _resolve_item_owner(uid: str, kind: str, item_id: str) -> str | None:
         if not note:
             return None
         return str(note.get("owner_user_id") or "") or None
+    if kind == "chat":
+        from assistant.stores import chat_threads as chat_threads_store
+
+        thread = chat_threads_store.get_accessible_thread(uid, item_id)
+        if not thread:
+            return None
+        return str(thread.get("owner_user_id") or "") or None
     if _owner_can_share_item(uid, kind, item_id):
         return str(uid)
     return None
@@ -4917,7 +4933,7 @@ async def miniapp_gpt_chat(
 
         kind = str(body.item_kind or "").strip()
         iid = str(body.item_id or "").strip()
-        if kind not in ("local", "journal") or not iid:
+        if kind not in ("local", "journal", "chat") or not iid:
             return []
         owner = _resolve_item_owner(str(int(principal.telegram_user_id)), kind, iid)
         if not owner:
@@ -5034,7 +5050,7 @@ async def miniapp_gpt_chat(
 
             kind = str(body.item_kind or "").strip()
             iid = str(body.item_id or "").strip()
-            if kind in ("local", "journal") and iid and (
+            if kind in ("local", "journal", "chat") and iid and (
                 _cf.wants_image_delivery(prompt)
                 or _cf.wants_resend_attachment(prompt)
             ):
@@ -5269,6 +5285,170 @@ def _enrich_item_labels(
     _apply_project_fields(item, tags)
     item["hashtags"] = hashtags_store.get_item_hashtags(uid, item_kind, iid)
     return item
+
+
+@miniapp_router.get("/chats")
+async def miniapp_chats_list(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    limit: int = 100,
+) -> dict[str, Any]:
+    from assistant.stores import chat_threads as chat_threads_store
+
+    uid = int(principal.telegram_user_id)
+    lim = min(max(int(limit), 1), 300)
+    rows = await run_in_threadpool(partial(chat_threads_store.list_threads, uid, limit=lim))
+    return {"ok": True, "chats": rows}
+
+
+@miniapp_router.post("/chats")
+async def miniapp_chats_create(
+    body: Optional[_MiniappChatCreate] = Body(default=None),
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import chat_threads as chat_threads_store
+
+    uid = int(principal.telegram_user_id)
+    body = body or _MiniappChatCreate()
+    row = await run_in_threadpool(
+        partial(chat_threads_store.create_thread, uid, title=body.title)
+    )
+    return {"ok": True, "chat": row}
+
+
+@miniapp_router.patch("/chats/{thread_id}")
+async def miniapp_chats_patch(
+    thread_id: int,
+    body: _MiniappChatPatch,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import chat_threads as chat_threads_store
+
+    uid = int(principal.telegram_user_id)
+    title = (body.title or "").strip() if body.title is not None else None
+    pinned = body.pinned
+    if title is None and pinned is None:
+        raise HTTPException(status_code=400, detail="Нечего обновлять")
+    row = None
+    try:
+        if title is not None:
+            row = await run_in_threadpool(
+                partial(chat_threads_store.rename_thread, uid, thread_id, title, lock=True)
+            )
+        if pinned is not None:
+            row = await run_in_threadpool(
+                partial(chat_threads_store.set_pinned, uid, thread_id, bool(pinned))
+            )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not row:
+        raise HTTPException(status_code=404, detail="Чат не найден")
+    return {"ok": True, "chat": row}
+
+
+@miniapp_router.delete("/chats/{thread_id}")
+async def miniapp_chats_delete(
+    thread_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import chat_threads as chat_threads_store
+
+    uid = int(principal.telegram_user_id)
+    ok = await run_in_threadpool(chat_threads_store.delete_thread, uid, thread_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Чат не найден")
+    return {"ok": True}
+
+
+@miniapp_router.get("/chats/{thread_id}/members")
+async def miniapp_chat_members_list(
+    thread_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import chat_threads as chat_threads_store
+
+    uid = int(principal.telegram_user_id)
+    thread = await run_in_threadpool(
+        chat_threads_store.get_accessible_thread, uid, thread_id
+    )
+    if not thread:
+        raise HTTPException(status_code=404, detail="Чат не найден")
+    return {"ok": True, "members": thread.get("members") or [], "chat": thread}
+
+
+@miniapp_router.post("/chats/{thread_id}/members")
+async def miniapp_chat_members_add(
+    thread_id: int,
+    body: _MiniappNoteMemberAdd,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import chat_threads as chat_threads_store
+    from assistant.stores import note_members
+
+    uid = int(principal.telegram_user_id)
+    await run_in_threadpool(_remember_principal_profile, principal)
+
+    def _run() -> tuple[dict[str, Any], dict[str, Any]]:
+        thread = chat_threads_store.get_thread(uid, thread_id)
+        if not thread:
+            raise HTTPException(status_code=404, detail="Чат не найден")
+        owner = str(thread.get("owner_user_id") or uid)
+        if str(uid) != owner:
+            raise HTTPException(
+                status_code=403, detail="Добавлять участников может только автор"
+            )
+        member_id, _contact = note_members.resolve_contact_telegram_id(
+            owner_user_id=uid,
+            email=body.email,
+            telegram_user_id=body.telegram_user_id,
+            telegram_username=body.telegram_username,
+            owner_username=_miniapp_tg_username(principal),
+        )
+        if int(member_id) == int(owner):
+            raise HTTPException(status_code=400, detail="Это владелец чата")
+        member = chat_threads_store.add_member(owner, thread_id, member_id)
+        fresh = chat_threads_store.get_accessible_thread(uid, thread_id)
+        return member, fresh or thread
+
+    try:
+        member, thread = await run_in_threadpool(_run)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except HTTPException:
+        raise
+    return {"ok": True, "member": member, "chat": thread}
+
+
+@miniapp_router.delete("/chats/{thread_id}/members/{member_id}")
+async def miniapp_chat_members_remove(
+    thread_id: int,
+    member_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import chat_threads as chat_threads_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> bool:
+        thread = chat_threads_store.get_accessible_thread(uid, thread_id)
+        if not thread:
+            return False
+        owner = str(thread.get("owner_user_id") or uid)
+        if str(uid) != owner and int(member_id) != uid:
+            raise HTTPException(
+                status_code=403, detail="Удалять участников может только автор"
+            )
+        return chat_threads_store.remove_member(owner, thread_id, member_id)
+
+    try:
+        ok = await run_in_threadpool(_run)
+    except HTTPException:
+        raise
+    if not ok:
+        raise HTTPException(status_code=404, detail="Участник не найден")
+    thread = await run_in_threadpool(
+        chat_threads_store.get_accessible_thread, uid, thread_id
+    )
+    return {"ok": True, "chat": thread}
 
 
 @miniapp_router.get("/notes")
@@ -6431,7 +6611,24 @@ async def miniapp_share_comments_create(
             row = await run_in_threadpool(share_comments_store.get_comment, int(row["id"])) or row
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return {"ok": True, "comment": _comment_api(row, viewer_uid=uid)}
+    out: dict[str, Any] = {"ok": True, "comment": _comment_api(row, viewer_uid=uid)}
+    if kind == "chat":
+        from assistant.stores import chat_threads as chat_threads_store
+
+        role_l = str(body.as_role or "").strip().lower()
+        is_user = role_l not in ("gpt",) and not role_l.startswith("agent:")
+        thread = await run_in_threadpool(
+            partial(
+                chat_threads_store.after_comment,
+                owner,
+                item_id,
+                text,
+                is_user=is_user,
+            )
+        )
+        if thread:
+            out["thread"] = thread
+    return out
 
 
 @miniapp_router.delete("/notes/{kind}/{item_id}/comments/{comment_id}")
