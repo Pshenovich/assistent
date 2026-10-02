@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261002-digest-catchup";
+  var WEBAPP_BUILD = "20261002-ios-boot";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261002-digest-catchup";
+  const NOTE_EDITOR_ASSET_V = "20261002-ios-boot";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -3780,6 +3780,8 @@
       err.className = "error hidden";
       err.textContent = "";
     }
+    try {
+      var res = await apiFetch("/digest/refresh", {
         method: "POST",
         body: JSON.stringify({}),
       });
@@ -3794,6 +3796,7 @@
       }
     } catch (e) {
       if (err) {
+        err.className = "error";
         err.textContent = e.message || String(e);
         err.classList.remove("hidden");
       }
@@ -8703,14 +8706,13 @@
   function ensureTelegramFullscreen() {
     var tg = window.Telegram && window.Telegram.WebApp;
     if (!tg) return;
-    if (!isTelegramMobilePlatform(tg)) {
-      syncTelegramFullscreenClass();
-      return;
-    }
     try {
       tg.expand();
     } catch (_) {}
-    if (typeof tg.requestFullscreen === "function") {
+    // requestFullscreen на iOS Telegram WebView часто даёт белый/пустой экран.
+    var platform = String(tg.platform || "").toLowerCase();
+    var skipFullscreen = platform === "ios" || isIOSDevice();
+    if (!skipFullscreen && typeof tg.requestFullscreen === "function") {
       try {
         if (!tg.isFullscreen) tg.requestFullscreen();
       } catch (_) {}
@@ -21278,27 +21280,47 @@
 
   function init() {
     refreshMiniappDevFromUrl();
-    var tg = getTelegramWebApp();
-    if (tg) {
-      try {
-        tg.ready();
-      } catch (_) {}
-    }
-    if (hasTelegramWebAppAuth() || miniappDev || !looksLikeTelegramWebView()) {
-      initWhenReady();
-      return;
-    }
-    var tries = 0;
-    var maxTries = 40;
-    function waitForTma() {
-      tries += 1;
-      if (hasTelegramWebAppAuth() || tries >= maxTries) {
+    function kickoff() {
+      var tg = getTelegramWebApp();
+      if (tg) {
+        try {
+          tg.ready();
+        } catch (_) {}
+        try {
+          tg.expand();
+        } catch (_) {}
+      }
+      if (hasTelegramWebAppAuth() || miniappDev || !looksLikeTelegramWebView()) {
         initWhenReady();
         return;
       }
-      setTimeout(waitForTma, 50);
+      var tries = 0;
+      var maxTries = isIOSDevice() ? 80 : 40;
+      function waitForTma() {
+        tries += 1;
+        var readyTg = getTelegramWebApp();
+        if (readyTg) {
+          try {
+            readyTg.ready();
+          } catch (_) {}
+          try {
+            readyTg.expand();
+          } catch (_) {}
+        }
+        if (hasTelegramWebAppAuth() || (readyTg && tries >= 20) || tries >= maxTries) {
+          initWhenReady();
+          return;
+        }
+        setTimeout(waitForTma, 50);
+      }
+      waitForTma();
     }
-    waitForTma();
+    // telegram-web-app.js тоже defer — дождаться обоих перед стартом.
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", kickoff);
+    } else {
+      kickoff();
+    }
   }
 
   registerServiceWorker();
@@ -21313,9 +21335,5 @@
     console.error("window.error", (e && e.error) || (e && e.message) || e);
   });
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
+  init();
 })();
