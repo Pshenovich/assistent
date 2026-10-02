@@ -1,19 +1,19 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261001-kb-project-persist";
+var CACHE_VERSION = "miniapp-v1-20261002-dual-note-back";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261001-kb-project-persist",
-  "./app.js?v=20261001-kb-project-persist",
-  "./note-html.js?v=20261001-kb-project-persist",
-  "./note-comments.js?v=20261001-kb-project-persist",
-  "./note-rich-editor.js?v=20261001-kb-project-persist",
-  "./icons/arrow-up-right.svg?v=20261001-kb-project-persist",
-  "./icons/chevron-up-muted.svg?v=20261001-kb-project-persist",
-  "./icons/chevron-up-on-fill.svg?v=20261001-kb-project-persist",
+  "./styles.css?v=20261002-dual-note-back",
+  "./app.js?v=20261002-dual-note-back",
+  "./note-html.js?v=20261002-dual-note-back",
+  "./note-comments.js?v=20261002-dual-note-back",
+  "./note-rich-editor.js?v=20261002-dual-note-back",
+  "./icons/arrow-up-right.svg?v=20261002-dual-note-back",
+  "./icons/chevron-up-muted.svg?v=20261002-dual-note-back",
+  "./icons/chevron-up-on-fill.svg?v=20261002-dual-note-back",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",

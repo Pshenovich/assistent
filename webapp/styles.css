@@ -5738,6 +5738,11 @@ html.note-editor-open #note-editor-overlay {
   transform: translateX(-50%);
 }
 
+.note-pane-switch-menu.note-pane-switch-menu--picker {
+  min-width: min(340px, 92vw);
+  max-height: min(420px, 70vh);
+}
+
 .note-pane-switch-menu.hidden {
   display: none;
 }
@@ -5759,6 +5764,118 @@ html.note-editor-open #note-editor-overlay {
 .note-pane-switch-item.is-active,
 .note-pane-switch-item:hover {
   background: rgba(158, 173, 219, 0.22);
+}
+
+.note-pane-switch-back {
+  color: var(--text-secondary, #9aa0a6);
+  font-size: 14px;
+}
+
+.note-pane-switch-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 6px;
+  padding: 0 2px;
+}
+
+.note-pane-switch-search {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 10px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.06);
+  font: inherit;
+  font-size: 15px;
+}
+
+.note-pane-switch-search:focus {
+  outline: none;
+}
+
+.note-pane-switch-create {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+}
+
+.note-pane-switch-create:hover {
+  background: rgba(158, 173, 219, 0.22);
+}
+
+.note-pane-switch-note-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.note-pane-switch-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.note-pane-switch-note-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-pane-switch-note-project {
+  flex-shrink: 0;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary, #9aa0a6);
+  font-size: 12px;
+}
+
+.note-pane-switch-empty {
+  margin: 8px 4px;
+  color: var(--text-secondary, #9aa0a6);
+  font-size: 13px;
+}
+
+.note-discussion-right-note-title-wrap {
+  flex-shrink: 0;
+  padding: 10px 14px 0;
+}
+
+.note-discussion-right-note-title {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  resize: none;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.25;
+  outline: none;
+}
+
+.note-discussion-right-note-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .note-pane-switch-sep {
@@ -8578,6 +8695,10 @@ textarea.event-sheet-title--area {
   padding: 0;
   background: rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(4px);
+}
+
+#note-unsaved-overlay.modal-overlay {
+  z-index: 140;
 }
 
 .modal-overlay.hidden {

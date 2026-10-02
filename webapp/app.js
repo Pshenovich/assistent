@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261001-kb-project-persist";
+  var WEBAPP_BUILD = "20261002-dual-note-back";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261001-kb-project-persist";
+  const NOTE_EDITOR_ASSET_V = "20261002-dual-note-back";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -9725,6 +9725,8 @@
     leftId: NOTE_SHEET_MAIN,
     rightMode: "discussion",
     rightId: "",
+    rightNote: null,
+    rightNotePersistTimer: null,
     focus: "left",
     contextIds: null,
     contextExplicit: false,
@@ -9743,7 +9745,20 @@
   }
 
   function getActiveNoteRichEditor() {
-    if (noteSheetState.focus === "right" && noteSheetState.rightEditor) {
+    // Чужая заметка в правом слое не должна подменять dirty/save основной.
+    if (
+      noteSheetState.focus === "right" &&
+      noteSheetState.rightEditor &&
+      noteSheetState.rightMode === "sheet"
+    ) {
+      return noteSheetState.rightEditor;
+    }
+    if (
+      noteSheetState.focus === "right" &&
+      noteSheetState.rightEditor &&
+      noteSheetState.rightMode === "note" &&
+      isNoteDiscussionOpen()
+    ) {
       return noteSheetState.rightEditor;
     }
     return getLeftNoteRichEditor();
@@ -12154,6 +12169,10 @@
 
   function resetNoteSheetState(primaryBody) {
     destroyRightSheetEditor();
+    if (noteSheetState.rightNotePersistTimer) {
+      clearTimeout(noteSheetState.rightNotePersistTimer);
+      noteSheetState.rightNotePersistTimer = null;
+    }
     Object.keys(noteSheetState.sheetTimers || {}).forEach(function (id) {
       clearTimeout(noteSheetState.sheetTimers[id]);
     });
@@ -12161,6 +12180,7 @@
     noteSheetState.leftId = NOTE_SHEET_MAIN;
     noteSheetState.rightMode = "discussion";
     noteSheetState.rightId = "";
+    noteSheetState.rightNote = null;
     noteSheetState.focus = "left";
     noteSheetState.contextIds = null;
     noteSheetState.contextExplicit = false;
@@ -12189,6 +12209,17 @@
   function noteSheetsEnabled() {
     var wrap = noteSheetsShareWrap();
     return !!(noteSheetState.enabled && wrap && wrap._shareKind === "local" && wrap._shareId);
+  }
+
+  function notePaneSwitchEnabled() {
+    var wrap = noteSheetsShareWrap();
+    return !!(wrap && wrap._shareKind && wrap._shareId);
+  }
+
+  function currentDiscussSourceKey() {
+    var wrap = noteSheetsShareWrap();
+    if (!wrap || !wrap._shareKind || !wrap._shareId) return "";
+    return String(wrap._shareKind) + ":" + String(wrap._shareId);
   }
 
   function findNoteSheet(id) {
@@ -12256,7 +12287,9 @@
   }
 
   function syncNotePaneModeClass() {
-    var sheetOpen = noteSheetState.rightMode === "sheet" && isNoteDiscussionOpen();
+    var sheetOpen =
+      (noteSheetState.rightMode === "sheet" || noteSheetState.rightMode === "note") &&
+      isNoteDiscussionOpen();
     document.documentElement.classList.toggle("note-discussion-sheet-open", sheetOpen);
     var pane = document.getElementById("note-discussion-sheet-pane");
     var msgs = document.getElementById("note-discussion-messages");
@@ -12267,7 +12300,10 @@
   function closeNotePaneSwitchMenu() {
     var menu = document.getElementById("note-pane-switch-menu");
     var btn = document.getElementById("note-discussion-title");
-    if (menu) menu.classList.add("hidden");
+    if (menu) {
+      menu.classList.add("hidden");
+      menu.classList.remove("note-pane-switch-menu--picker");
+    }
     if (btn) {
       btn.classList.remove("is-open");
       btn.setAttribute("aria-expanded", "false");
@@ -12281,10 +12317,14 @@
     if (noteSheetState.rightMode === "sheet") {
       var sheet = findNoteSheet(noteSheetState.rightId);
       title = (sheet && sheet.title) || "Лист";
+    } else if (noteSheetState.rightMode === "note" && noteSheetState.rightNote) {
+      title =
+        sanitizeNoteTitle(noteSheetState.rightNote.title || "") ||
+        String(noteSheetState.rightNote.title || "Заметка");
     }
     if (label) label.textContent = title;
     if (btn) btn.title = title;
-    var canSwitch = noteSheetsEnabled();
+    var canSwitch = notePaneSwitchEnabled();
     if (btn) {
       btn.disabled = !canSwitch;
       btn.classList.toggle("note-pane-switch--plain", !canSwitch);
@@ -12292,9 +12332,166 @@
     syncNotePaneModeClass();
   }
 
+  function paneOpenNoteCandidates(query) {
+    var wrap = noteSheetsShareWrap();
+    var currentId = wrap && wrap._shareId ? String(wrap._shareId) : "";
+    var currentKind = wrap && wrap._shareKind ? String(wrap._shareKind) : "";
+    var rightId =
+      noteSheetState.rightMode === "note" && noteSheetState.rightNote
+        ? String(noteSheetState.rightNote.id || "")
+        : "";
+    var q = String(query || "").trim().toLowerCase();
+    var out = [];
+    var seen = {};
+    function pushItem(n, kind) {
+      if (!n) return;
+      var id = String(n.id || "");
+      if (!id) return;
+      if (seen[id]) return;
+      if (rightId && id === rightId) return;
+      if (currentId && id === currentId) {
+        if (currentKind === "journal") {
+          if (kind === "journal") return;
+        } else if (kind === "local" || kind === "knowledge") {
+          return;
+        }
+      }
+      var title =
+        sanitizeNoteTitle(n.title || n.content || n.main_topic || "") ||
+        String(n.title || n.content || n.main_topic || "Без названия");
+      if (q) {
+        var hay =
+          (title + " " + notePlainExcerpt(n.description || n.body || n.preview || "", 80)).toLowerCase();
+        if (hay.indexOf(q) < 0) return;
+      }
+      seen[id] = true;
+      out.push({
+        kind: kind,
+        id: id,
+        title: title,
+        project: noteProjectOf(n),
+        is_knowledge: !!(n.is_knowledge || n.role === "knowledge" || kind === "knowledge"),
+        raw: n,
+      });
+    }
+    ((notesDataCache && notesDataCache.local_notes) || []).forEach(function (n) {
+      pushItem(n, "local");
+    });
+    ((knowledgeDataCache && knowledgeDataCache.notes) || []).forEach(function (n) {
+      pushItem(n, "knowledge");
+    });
+    return out;
+  }
+
+  function ensurePaneOpenNoteCandidates() {
+    var tasks = [];
+    if (!notesDataCache || !Array.isArray(notesDataCache.local_notes)) {
+      tasks.push(Promise.resolve(loadNotes()).catch(function () {}));
+    }
+    if (!knowledgeDataCache || !Array.isArray(knowledgeDataCache.notes)) {
+      tasks.push(Promise.resolve(loadKnowledgeNotes()).catch(function () {}));
+    }
+    return Promise.all(tasks).then(function () {
+      return paneOpenNoteCandidates("");
+    });
+  }
+
+  function renderNotePaneOpenNotePicker(query) {
+    var menu = document.getElementById("note-pane-switch-menu");
+    if (!menu) return;
+    menu.classList.add("note-pane-switch-menu--picker");
+    menu.innerHTML = "";
+    var back = document.createElement("button");
+    back.type = "button";
+    back.className = "note-pane-switch-item note-pane-switch-back";
+    back.textContent = "← Назад";
+    back.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      renderNotePaneSwitchMenu();
+    });
+    menu.appendChild(back);
+    var searchRow = document.createElement("div");
+    searchRow.className = "note-pane-switch-search-row";
+    var search = document.createElement("input");
+    search.type = "search";
+    search.className = "note-pane-switch-search";
+    search.placeholder = "Поиск заметок";
+    search.autocomplete = "off";
+    search.value = String(query || "");
+    var createBtn = document.createElement("button");
+    createBtn.type = "button";
+    createBtn.className = "note-pane-switch-create";
+    createBtn.setAttribute("aria-label", "Новая заметка");
+    createBtn.title = "Новая заметка";
+    createBtn.innerHTML =
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+    createBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      createAndOpenNoteInRightPane();
+    });
+    searchRow.appendChild(search);
+    searchRow.appendChild(createBtn);
+    menu.appendChild(searchRow);
+    var list = document.createElement("div");
+    list.className = "note-pane-switch-note-list";
+    menu.appendChild(list);
+    function fill() {
+      var q = search.value || "";
+      var notes = paneOpenNoteCandidates(q);
+      list.innerHTML = "";
+      if (!notes.length) {
+        var empty = document.createElement("p");
+        empty.className = "note-pane-switch-empty";
+        empty.textContent =
+          notesDataCache || knowledgeDataCache
+            ? String(q).trim()
+              ? "Ничего не найдено"
+              : "Других заметок нет"
+            : "Загрузка…";
+        list.appendChild(empty);
+        return;
+      }
+      notes.forEach(function (n) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "note-pane-switch-item note-pane-switch-note";
+        var title = document.createElement("span");
+        title.className = "note-pane-switch-note-title";
+        title.textContent = n.title;
+        btn.appendChild(title);
+        var projectName = (n.project && (n.project.name || n.project.title)) || "";
+        if (projectName) {
+          var meta = document.createElement("span");
+          meta.className = "note-pane-switch-note-project";
+          meta.textContent = String(projectName);
+          btn.appendChild(meta);
+        }
+        btn.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          openNoteInRightPane(n);
+        });
+        list.appendChild(btn);
+      });
+    }
+    search.addEventListener("input", fill);
+    search.addEventListener("click", function (e) {
+      e.stopPropagation();
+    });
+    fill();
+    window.setTimeout(function () {
+      try {
+        search.focus();
+      } catch (_) {}
+    }, 20);
+  }
+
   function renderNotePaneSwitchMenu() {
     var menu = document.getElementById("note-pane-switch-menu");
     if (!menu) return;
+    menu.classList.remove("note-pane-switch-menu--picker");
     menu.innerHTML = "";
     function addItem(label, active, onClick) {
       var row = document.createElement("button");
@@ -12305,12 +12502,12 @@
       row.addEventListener("click", function (e) {
         e.preventDefault();
         e.stopPropagation();
-        closeNotePaneSwitchMenu();
         onClick();
       });
       menu.appendChild(row);
     }
     addItem("Обсуждение", noteSheetState.rightMode === "discussion", function () {
+      closeNotePaneSwitchMenu();
       setRightPaneMode("discussion");
     });
     var leftOpenId = String(noteSheetState.leftId || NOTE_SHEET_MAIN);
@@ -12320,22 +12517,43 @@
         s.title || "Лист",
         noteSheetState.rightMode === "sheet" && String(s.id) === String(noteSheetState.rightId),
         function () {
+          closeNotePaneSwitchMenu();
           setRightPaneMode("sheet", s.id);
         }
       );
     });
+    if (noteSheetState.rightMode === "note" && noteSheetState.rightNote) {
+      var openTitle =
+        sanitizeNoteTitle(noteSheetState.rightNote.title || "") ||
+        String(noteSheetState.rightNote.title || "Заметка");
+      addItem(openTitle, true, function () {
+        closeNotePaneSwitchMenu();
+      });
+    }
+    var sep = document.createElement("div");
+    sep.className = "note-pane-switch-sep";
+    menu.appendChild(sep);
+    addItem("Открыть заметку", false, function () {
+      renderNotePaneOpenNotePicker("");
+      ensurePaneOpenNoteCandidates().then(function () {
+        var menuEl = document.getElementById("note-pane-switch-menu");
+        if (menuEl && menuEl.classList.contains("note-pane-switch-menu--picker")) {
+          renderNotePaneOpenNotePicker(
+            (menuEl.querySelector(".note-pane-switch-search") || {}).value || ""
+          );
+        }
+      });
+    });
     if (noteSheetsEnabled()) {
-      var sep = document.createElement("div");
-      sep.className = "note-pane-switch-sep";
-      menu.appendChild(sep);
       addItem("+ Новый лист", false, function () {
+        closeNotePaneSwitchMenu();
         createNoteSheet({ openOn: "right" });
       });
     }
   }
 
   function toggleNotePaneSwitchMenu() {
-    if (!noteSheetsEnabled()) return;
+    if (!notePaneSwitchEnabled()) return;
     var menu = document.getElementById("note-pane-switch-menu");
     var btn = document.getElementById("note-discussion-title");
     if (!menu || !btn) return;
@@ -12351,6 +12569,10 @@
   }
 
   function destroyRightSheetEditor() {
+    if (noteSheetState.rightNotePersistTimer) {
+      clearTimeout(noteSheetState.rightNotePersistTimer);
+      noteSheetState.rightNotePersistTimer = null;
+    }
     var inst = noteSheetState.rightEditor;
     if (inst && typeof inst.destroy === "function") {
       try {
@@ -12363,6 +12585,201 @@
     if (host) host.innerHTML = "";
     if (bar) bar.innerHTML = "";
     if (noteSheetState.focus === "right") noteSheetState.focus = "left";
+  }
+
+  function scheduleRightForeignNotePersist() {
+    if (!noteSheetState.rightNote || noteSheetState.rightMode !== "note") return;
+    if (noteSheetState.rightNotePersistTimer) clearTimeout(noteSheetState.rightNotePersistTimer);
+    noteSheetState.rightNotePersistTimer = setTimeout(function () {
+      persistRightForeignNote().catch(function (e) {
+        setNoteEditorSaveHint(e.message || "Не удалось сохранить заметку");
+      });
+    }, 1500);
+  }
+
+  async function persistRightForeignNote(snap) {
+    var note = snap || noteSheetState.rightNote;
+    if (!note || !note.id) return;
+    var html =
+      snap && snap.body != null
+        ? snap.body
+        : readSheetEditorHtml("right") || note.body || note.description || "";
+    note.body = html;
+    note.description = html;
+    var title = String(note.title || "").trim() || "Без названия";
+    var kind = note.kind === "knowledge" ? "local" : note.kind || "local";
+    if (kind === "journal") {
+      await apiFetch("/notes/journal/" + encodeURIComponent(String(note.id)), {
+        method: "PATCH",
+        body: JSON.stringify({ title: title, description: html }),
+      });
+      updateJournalInCache(note.id, note.operation, {
+        id: note.id,
+        main_topic: title,
+        preview: notePlainExcerpt(html, 400),
+      });
+      if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+      return;
+    }
+    var patchRes = await apiFetch("/notes/local/" + encodeURIComponent(String(note.id)), {
+      method: "PATCH",
+      body: JSON.stringify({ title: title, description: html }),
+    });
+    var item = (patchRes && patchRes.item) || {
+      id: note.id,
+      title: title,
+      description: html,
+      body: html,
+      role: note.kind === "knowledge" ? "knowledge" : "",
+      is_knowledge: note.kind === "knowledge",
+    };
+    if (note.kind === "knowledge" || isKnowledgeNoteItem(item)) {
+      item.role = "knowledge";
+      item.is_knowledge = true;
+      prependKnowledgeInCache(Object.assign({}, item, { tags: note.tags, project: note.project }));
+    } else {
+      syncLocalNoteInList(Object.assign({}, item, { tags: note.tags, project: note.project }));
+    }
+    if (noteSheetState.rightNote && String(noteSheetState.rightNote.id) === String(note.id)) {
+      noteSheetState.rightNote.title = item.title || title;
+      syncNotePaneHeader();
+    }
+  }
+
+  function flushRightForeignNoteBeforeLeave() {
+    if (noteSheetState.rightMode !== "note" || !noteSheetState.rightNote) return;
+    if (noteSheetState.rightNotePersistTimer) {
+      clearTimeout(noteSheetState.rightNotePersistTimer);
+      noteSheetState.rightNotePersistTimer = null;
+    }
+    var note = noteSheetState.rightNote;
+    var html = readSheetEditorHtml("right") || note.body || note.description || "";
+    var snap = Object.assign({}, note, {
+      body: html,
+      description: html,
+      title: String(note.title || "").trim() || "Без названия",
+    });
+    persistRightForeignNote(snap).catch(function () {});
+  }
+
+  async function openNoteInRightPane(item) {
+    closeNotePaneSwitchMenu();
+    try {
+      flushRightForeignNoteBeforeLeave();
+      var loaded = await fetchNoteForRightPane(item);
+      if (!isNoteDiscussionOpen()) {
+        openNoteDiscussion({ fromDesktopSync: true, focus: false });
+      }
+      await flushSheetEditor("right").catch(function () {});
+      noteSheetState.rightMode = "note";
+      noteSheetState.rightId = "";
+      noteSheetState.rightNote = loaded;
+      setNoteSheetFocus("right");
+      syncNotePaneHeader();
+      mountRightForeignNote(loaded);
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
+  function mountRightForeignNote(note) {
+    var host = document.getElementById("note-discussion-sheet-host");
+    var bar = document.getElementById("note-discussion-sheet-toolbar");
+    if (!host || !note) return;
+    destroyRightSheetEditor();
+    host.innerHTML = "";
+    if (bar) bar.innerHTML = "";
+    var titleWrap = document.createElement("div");
+    titleWrap.className = "note-discussion-right-note-title-wrap";
+    var titleInput = document.createElement("textarea");
+    titleInput.className = "note-discussion-right-note-title";
+    titleInput.rows = 1;
+    titleInput.spellcheck = true;
+    titleInput.placeholder = "Заголовок";
+    titleInput.value = String(note.title || "");
+    titleInput.addEventListener("input", function () {
+      note.title = titleInput.value;
+      syncNotePaneHeader();
+      scheduleRightForeignNotePersist();
+      bindNoteTitleAutoresize(titleInput);
+    });
+    titleWrap.appendChild(titleInput);
+    host.appendChild(titleWrap);
+    var bodyHost = document.createElement("div");
+    bodyHost.className = "note-discussion-right-note-body";
+    host.appendChild(bodyHost);
+    bindNoteTitleAutoresize(titleInput);
+    mountNoteRichEditor(bodyHost, note.body || note.description || "", function () {
+      scheduleRightForeignNotePersist();
+    }, {
+      toolbarParent: bar,
+      showSharedToolbar: false,
+      mountId: "td-desc-right-note",
+      scrollParent: host,
+    }).then(function (editor) {
+      noteSheetState.rightEditor = editor;
+      host.addEventListener(
+        "focusin",
+        function () {
+          setNoteSheetFocus("right");
+        },
+        true
+      );
+    });
+  }
+
+  async function fetchNoteForRightPane(item) {
+    var kind = item.kind === "knowledge" ? "local" : item.kind || "local";
+    var id = String(item.id || "");
+    if (!id) throw new Error("Нет id заметки");
+    if (kind === "journal") {
+      var jres = await apiFetch("/notes/journal/" + encodeURIComponent(id), { method: "GET" });
+      var jit = (jres && jres.item) || item.raw || {};
+      return {
+        kind: "journal",
+        id: id,
+        title: journalTitleForEditor(jit, item.raw || jit),
+        body: prepareJournalBodyForEditor(jit),
+        description: prepareJournalBodyForEditor(jit),
+        operation: jit.operation || (item.raw && item.raw.operation) || "",
+        tags: noteTagsOf(jit),
+        project: noteProjectOf(jit),
+      };
+    }
+    var res = await apiFetch("/notes/local/" + encodeURIComponent(id), { method: "GET" });
+    var it = (res && res.item) || item.raw || {};
+    var isKb = item.kind === "knowledge" || isKnowledgeNoteItem(it) || item.is_knowledge;
+    return {
+      kind: isKb ? "knowledge" : "local",
+      id: String(it.id || id),
+      title: sanitizeNoteTitle(it.title || it.content || "") || String(it.title || "Без названия"),
+      body: it.body || it.description || "",
+      description: it.body || it.description || "",
+      tags: noteTagsOf(it),
+      project: noteProjectOf(it),
+    };
+  }
+
+  async function createAndOpenNoteInRightPane() {
+    closeNotePaneSwitchMenu();
+    try {
+      var res = await apiFetch("/notes/local", {
+        method: "POST",
+        body: JSON.stringify({ title: "Новая заметка", description: "" }),
+      });
+      var item = (res && res.item) || null;
+      if (!item || item.id == null) throw new Error("Не удалось создать заметку");
+      prependLocalInCache(item);
+      if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+      await openNoteInRightPane({
+        kind: "local",
+        id: item.id,
+        title: item.title || "Новая заметка",
+        raw: item,
+      });
+    } catch (e) {
+      alert(e.message || String(e));
+    }
   }
 
   function previewOpenNoteFromSheets() {
@@ -12521,16 +12938,23 @@
       if (!sheet) sheet = findNoteSheet(NOTE_SHEET_MAIN);
       if (!sheet) return;
       if (!isNoteDiscussionOpen()) openNoteDiscussion({ fromDesktopSync: true, focus: false });
+      flushRightForeignNoteBeforeLeave();
       noteSheetState.rightMode = "sheet";
       noteSheetState.rightId = String(sheet.id);
+      noteSheetState.rightNote = null;
       setNoteSheetFocus("right");
       syncNotePaneHeader();
       mountRightSheetEditor(sheet);
       return;
     }
+    if (mode === "note") {
+      return;
+    }
+    flushRightForeignNoteBeforeLeave();
     flushSheetEditor("right").catch(function () {});
     noteSheetState.rightMode = "discussion";
     noteSheetState.rightId = "";
+    noteSheetState.rightNote = null;
     destroyRightSheetEditor();
     setNoteSheetFocus("left");
     syncNotePaneHeader();
@@ -12757,6 +13181,7 @@
     noteSheetState.leftId = NOTE_SHEET_MAIN;
     noteSheetState.rightMode = "discussion";
     noteSheetState.rightId = "";
+    noteSheetState.rightNote = null;
     noteSheetState.focus = "left";
     noteSheetState.contextExplicit = false;
     noteSheetState.contextIds = null;
@@ -12923,12 +13348,21 @@
     closeNoteComposerMenus();
     hideDiscussClarify();
     resetDiscussionOverlayViewport();
-    flushSheetEditor("right").catch(function () {});
-    if (noteSheetState.rightMode === "sheet") {
+    if (noteSheetState.rightMode === "note") {
+      flushRightForeignNoteBeforeLeave();
       noteSheetState.rightMode = "discussion";
       noteSheetState.rightId = "";
+      noteSheetState.rightNote = null;
       destroyRightSheetEditor();
       setNoteSheetFocus("left");
+    } else {
+      flushSheetEditor("right").catch(function () {});
+      if (noteSheetState.rightMode === "sheet") {
+        noteSheetState.rightMode = "discussion";
+        noteSheetState.rightId = "";
+        destroyRightSheetEditor();
+        setNoteSheetFocus("left");
+      }
     }
     closeNotePaneSwitchMenu();
     syncNotePaneHeader();
@@ -18094,9 +18528,8 @@
     }
 
     async function openNoteGptComposer() {
-      if (isKnowledge) return;
       try {
-        await persistNoteDraft({ defaultTitle: "Новый чат", keepEmpty: true });
+        await persistNoteDraft({ defaultTitle: isKnowledge ? "Новый документ" : "Новый чат", keepEmpty: true });
       } catch (e) {
         alert(e.message || String(e));
         return;
@@ -18230,7 +18663,7 @@
       modalBody._openNoteGpt = openNoteGptComposer;
     }
     bindNoteGptToolbarButton();
-    syncNoteGptToolbarButton(!isKnowledge);
+    syncNoteGptToolbarButton(true);
     openNoteEditorModal(
       noteIsCreate
         ? isKnowledge
@@ -18327,7 +18760,8 @@
       mountShareControls("journal", journalId);
     }
     wrap.innerHTML = noteEditorPageInnerHtml("Заголовок");
-    syncNoteGptToolbarButton(false);
+    syncNoteGptToolbarButton(true);
+    bindNoteGptToolbarButton();
     var tocControls = bindNoteEditorTocControls(wrap);
     var editorPad = wrap.querySelector(".note-editor-pad--body");
     var titleInput = wrap.querySelector("#note-editor-title-input");
@@ -18338,7 +18772,7 @@
     function readFields() {
       return {
         title: getNoteEditorTitle().trim(),
-        description: readActiveNoteEditorHtml(),
+        description: readActiveNoteEditorHtml(getLeftNoteRichEditor()),
       };
     }
     async function persistJournalDraft() {
@@ -18387,6 +18821,15 @@
       modalBody.innerHTML = "";
       modalBody.appendChild(wrap);
       syncNoteCommentsPanel();
+      modalBody._openNoteGpt = async function () {
+        try {
+          await persistJournalDraft();
+        } catch (e) {
+          alert(e.message || String(e));
+          return;
+        }
+        openNoteDiscussion({ mode: "gpt", focus: true });
+      };
       modalBody._noteEditorFlush = async function () {
         if (saveTimer) {
           clearTimeout(saveTimer);
@@ -18398,7 +18841,10 @@
         ready: false,
         baseline: noteEditorSnapshot(cleanTitle, cleanBody),
         getCurrent: function () {
-          return noteEditorSnapshot(getNoteEditorTitle(), readActiveNoteEditorHtml());
+          return noteEditorSnapshot(
+            getNoteEditorTitle(),
+            readActiveNoteEditorHtml(getLeftNoteRichEditor())
+          );
         },
         runSave: async function () {
           if (saveTimer) {
