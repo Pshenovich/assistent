@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261002-digest-grid2";
+  var WEBAPP_BUILD = "20261002-digest-no-demo";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261002-digest-grid2";
+  const NOTE_EDITOR_ASSET_V = "20261002-digest-no-demo";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -4040,11 +4040,7 @@
         if (list) list.appendChild(row);
       });
       if (demoBtn) {
-        var isDev =
-          !!(window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.platform === "unknown") ||
-          location.hostname === "localhost" ||
-          location.hostname === "127.0.0.1";
-        setHidden(demoBtn, !isDev);
+        setHidden(demoBtn, !(data && data.miniapp_dev));
       }
     } catch (e) {
       if (err) {

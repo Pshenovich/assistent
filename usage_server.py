@@ -4194,6 +4194,7 @@ async def miniapp_digest_chats(
         return {
             "digest_enabled": user_prefs.digest_enabled(uid),
             "chats": chats,
+            "miniapp_dev": _miniapp_dev_mode_on(),
         }
 
     return await run_in_threadpool(_run)
