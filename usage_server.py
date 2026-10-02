@@ -4130,6 +4130,7 @@ async def miniapp_settings_get(
             "meeting_bot_available": mrec.service_available(),
             "digest_enabled": user_prefs.digest_enabled(uid),
             "digest_chat_ids": user_prefs.digest_chat_ids(uid),
+            "miniapp_dev": _miniapp_dev_mode_on(),
         }
 
     return await run_in_threadpool(_run)
