@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261002-digest-no-demo">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261002-digest-catchup">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -46,8 +46,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261002-digest-no-demo" />
-  <link rel="preload" href="/webapp/note-rich-editor.js?v=20261002-digest-no-demo" as="script" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261002-digest-catchup" />
+  <link rel="preload" href="/webapp/note-rich-editor.js?v=20261002-digest-catchup" as="script" />
   <!-- Same-origin, async: не блокирует парсер, если сеть/VPN тормозит. -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" async></script>
 </head>
@@ -250,7 +250,7 @@
           </div>
           <div id="digest-pane-chats">
             <div id="digest-list" class="stack digest-list"></div>
-            <p id="digest-empty" class="empty-state hidden">Пока нет отчётов. Нажмите Обновить.</p>
+            <p id="digest-empty" class="empty-state hidden">Пока нет отчётов. Нажмите Обновить — разберём дни с последнего анализа.</p>
             <p id="digest-error" class="error hidden"></p>
           </div>
           <div id="digest-pane-market" class="hidden">
@@ -1041,8 +1041,9 @@
         <button type="button" class="tabbar-btn tabbar-btn--digest hidden" data-tab="digest" role="tab" aria-selected="false" hidden>
           <span class="tabbar-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2" />
-              <path d="M10 7h8M10 11h8M10 15h5" />
+              <path d="M4 4h12a2 2 0 0 1 2 2v14H6a2 2 0 0 1-2-2V4z" />
+              <path d="M18 6h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-2" />
+              <path d="M8 8h6M8 12h6M8 16h4" />
             </svg>
           </span>
           <span class="tabbar-label">Дайджест</span>
@@ -1310,14 +1311,14 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20261002-digest-no-demo"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20261002-digest-catchup"><\/script>'
         );
       }
     })();
   </script>
-  <script src="/webapp/note-html.js?v=20261002-digest-no-demo" defer></script>
-  <script src="/webapp/note-comments.js?v=20261002-digest-no-demo" defer></script>
-  <script src="/webapp/note-rich-editor.js?v=20261002-digest-no-demo" defer></script>
-  <script src="/webapp/app.js?v=20261002-digest-no-demo" defer></script>
+  <script src="/webapp/note-html.js?v=20261002-digest-catchup" defer></script>
+  <script src="/webapp/note-comments.js?v=20261002-digest-catchup" defer></script>
+  <script src="/webapp/note-rich-editor.js?v=20261002-digest-catchup" defer></script>
+  <script src="/webapp/app.js?v=20261002-digest-catchup" defer></script>
 </body>
 </html>

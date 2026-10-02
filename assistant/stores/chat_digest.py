@@ -269,6 +269,65 @@ def ensure_demo_chats(user_id: int, chat_ids: list[int]) -> None:
         upsert_member(int(cid), uid)
 
 
+def latest_report_date(chat_id: int) -> str | None:
+    with _LOCK:
+        conn = _conn()
+        row = conn.execute(
+            """
+            SELECT report_date FROM leo_chat_daily_reports
+            WHERE chat_id = ?
+            ORDER BY report_date DESC
+            LIMIT 1
+            """,
+            (int(chat_id),),
+        ).fetchone()
+    if row is None:
+        return None
+    day = str(row["report_date"] or "").strip()
+    return day or None
+
+
+def earliest_message_date(chat_id: int) -> str | None:
+    with _LOCK:
+        conn = _conn()
+        row = conn.execute(
+            """
+            SELECT date_utc FROM leo_chat_messages
+            WHERE chat_id = ?
+            ORDER BY date_utc ASC
+            LIMIT 1
+            """,
+            (int(chat_id),),
+        ).fetchone()
+    if row is None:
+        return None
+    day = str(row["date_utc"] or "").strip()
+    return day or None
+
+
+def message_dates_between(
+    chat_id: int,
+    date_from: str,
+    date_to: str,
+) -> list[str]:
+    """Уникальные date_utc с сообщениями в [date_from, date_to], по возрастанию."""
+    d0 = (date_from or "").strip()
+    d1 = (date_to or "").strip()
+    if not d0 or not d1 or d0 > d1:
+        return []
+    with _LOCK:
+        conn = _conn()
+        rows = conn.execute(
+            """
+            SELECT DISTINCT date_utc FROM leo_chat_messages
+            WHERE chat_id = ? AND date_utc >= ? AND date_utc <= ?
+            ORDER BY date_utc ASC
+            """,
+            (int(chat_id), d0, d1),
+        ).fetchall()
+    return [str(r["date_utc"]) for r in rows if r["date_utc"]]
+
+
 def messages_for_chat_date(chat_id: int, date_utc: str) -> list[dict[str, Any]]:
     cid = int(chat_id)
     day = (date_utc or "").strip()

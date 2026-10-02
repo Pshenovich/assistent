@@ -36,6 +36,57 @@ def default_report_date(*, now: datetime | None = None) -> str:
     return (when.date() - timedelta(days=1)).isoformat()
 
 
+def digest_today(*, now: datetime | None = None) -> str:
+    tz = digest_tz()
+    when = now or datetime.now(tz)
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=tz)
+    else:
+        when = when.astimezone(tz)
+    return when.date().isoformat()
+
+
+def _next_day(ymd: str) -> str:
+    d = datetime.strptime(ymd, "%Y-%m-%d").date()
+    return (d + timedelta(days=1)).isoformat()
+
+
+def _days_span(date_from: str, date_to: str) -> int:
+    a = datetime.strptime(date_from, "%Y-%m-%d").date()
+    b = datetime.strptime(date_to, "%Y-%m-%d").date()
+    return (b - a).days
+
+
+def max_catchup_days() -> int:
+    raw = (os.getenv("CHAT_DIGEST_MAX_CATCHUP_DAYS") or "").strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        n = 14
+    return max(1, min(n, 60))
+
+
+def dates_to_analyze_for_chat(chat_id: int, *, end_day: str) -> list[str]:
+    """Дни с сообщениями с последнего отчёта (не включая его) до end_day включительно."""
+    end = (end_day or "").strip()
+    if not end:
+        return []
+    last = digest_store.latest_report_date(int(chat_id))
+    if last:
+        start = _next_day(last)
+    else:
+        start = digest_store.earliest_message_date(int(chat_id)) or end
+    if start > end:
+        return []
+    # Ограничиваем окно снизу, чтобы не разбирать слишком длинную историю.
+    span = _days_span(start, end)
+    max_days = max_catchup_days()
+    if span > max_days:
+        end_d = datetime.strptime(end, "%Y-%m-%d").date()
+        start = (end_d - timedelta(days=max_days)).isoformat()
+    return digest_store.message_dates_between(int(chat_id), start, end)
+
+
 def try_begin_refresh(user_id: int) -> bool:
     uid = int(user_id)
     with _refresh_lock:
@@ -117,7 +168,7 @@ def run_digest_for_user(
     report_date: str | None = None,
     telegram_username: str | None = None,
 ) -> dict[str, Any]:
-    """Разбирает выбранные чаты пользователя за день. Вызывать из threadpool."""
+    """Разбирает выбранные чаты. Без date — все дни с последнего отчёта до сегодня."""
     uid = int(user_id)
     if not user_prefs.digest_enabled(uid):
         return {"ok": False, "error": "digest_disabled", "reports_updated": 0}
@@ -125,7 +176,8 @@ def run_digest_for_user(
     if not selected:
         return {"ok": False, "error": "no_chats_selected", "reports_updated": 0}
 
-    day = (report_date or "").strip() or default_report_date()
+    explicit_day = (report_date or "").strip()
+    end_day = explicit_day or digest_today()
     set_openrouter_usage_telegram_user(
         telegram_user_id=uid,
         telegram_username=telegram_username,
@@ -133,41 +185,53 @@ def run_digest_for_user(
     updated = 0
     skipped = 0
     errors: list[str] = []
+    days_touched: list[str] = []
     model = nlu_llm.chat_digest_model_name()
 
     for chat_id in selected:
         chat = digest_store.get_chat(chat_id)
         title = (chat or {}).get("title") or f"Чат {chat_id}"
-        messages = digest_store.messages_for_chat_date(chat_id, day)
-        if not messages:
+        if explicit_day:
+            days = [explicit_day]
+        else:
+            days = dates_to_analyze_for_chat(int(chat_id), end_day=end_day)
+        if not days:
             skipped += 1
             continue
-        transcript = _format_transcript(messages)
-        try:
-            summary = nlu_llm.digest_chat_day(
-                chat_title=str(title),
+        for day in days:
+            messages = digest_store.messages_for_chat_date(chat_id, day)
+            if not messages:
+                skipped += 1
+                continue
+            transcript = _format_transcript(messages)
+            try:
+                summary = nlu_llm.digest_chat_day(
+                    chat_title=str(title),
+                    report_date=day,
+                    transcript=transcript,
+                )
+            except Exception as e:
+                errors.append(f"{chat_id}/{day}: {e!r}")
+                continue
+            if not summary:
+                errors.append(f"{chat_id}/{day}: empty_llm")
+                continue
+            digest_store.upsert_report(
                 report_date=day,
-                transcript=transcript,
+                chat_id=int(chat_id),
+                summary=summary,
+                message_count=len(messages),
+                model=model,
+                is_demo=False,
             )
-        except Exception as e:
-            errors.append(f"{chat_id}: {e!r}")
-            continue
-        if not summary:
-            errors.append(f"{chat_id}: empty_llm")
-            continue
-        digest_store.upsert_report(
-            report_date=day,
-            chat_id=int(chat_id),
-            summary=summary,
-            message_count=len(messages),
-            model=model,
-            is_demo=False,
-        )
-        updated += 1
+            updated += 1
+            if day not in days_touched:
+                days_touched.append(day)
 
     return {
         "ok": True,
-        "report_date": day,
+        "report_date": explicit_day or (days_touched[-1] if days_touched else end_day),
+        "report_dates": days_touched,
         "reports_updated": updated,
         "skipped_empty": skipped,
         "errors": errors,

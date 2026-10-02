@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261002-digest-no-demo";
+  var WEBAPP_BUILD = "20261002-digest-catchup";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261002-digest-no-demo";
+  const NOTE_EDITOR_ASSET_V = "20261002-digest-catchup";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -3777,11 +3777,9 @@
       btn.classList.add("is-spinning");
     }
     if (err) {
+      err.className = "error hidden";
       err.textContent = "";
-      err.classList.add("hidden");
     }
-    try {
-      var res = await apiFetch("/digest/refresh", {
         method: "POST",
         body: JSON.stringify({}),
       });
@@ -3789,8 +3787,9 @@
       var updated = (res && res.reports_updated) || 0;
       var skipped = (res && res.skipped_empty) || 0;
       if (err && updated === 0 && skipped > 0) {
+        err.className = "error";
         err.textContent =
-          "Нет новых сообщений за вчера в выбранных чатах. Дождитесь переписки или создайте демо в Профиль → Чаты.";
+          "Нет новых сообщений с последнего анализа в выбранных чатах. Дождитесь переписки или проверьте Профиль → Чаты.";
         err.classList.remove("hidden");
       }
     } catch (e) {
@@ -21192,9 +21191,31 @@
     }
 
     if (isInsideTelegramClient() && !hasTma && !miniappDev) {
-      showTelegramAuthError(
-        "Telegram не передал данные для входа. Закройте окно, напишите боту /start и откройте «Ассистент» снова."
-      );
+      var authTries = 0;
+      var maxAuthTries = 60;
+      function waitTelegramAuth() {
+        authTries += 1;
+        if (hasTelegramWebAppAuth()) {
+          startApp();
+          apiFetch("/me", { method: "GET" })
+            .then(function (me) {
+              cachedMe = me;
+              if (me.bot_username) cachedBotUsername = me.bot_username;
+              setSessionHint(true);
+              persistBrowserSessionFromCurrentAuth();
+            })
+            .catch(function () {});
+          return;
+        }
+        if (authTries >= maxAuthTries) {
+          showTelegramAuthError(
+            "Telegram не передал данные для входа. Закройте окно, напишите боту /start и откройте «Ассистент» снова."
+          );
+          return;
+        }
+        setTimeout(waitTelegramAuth, 50);
+      }
+      waitTelegramAuth();
       return;
     }
 
@@ -21268,7 +21289,7 @@
       return;
     }
     var tries = 0;
-    var maxTries = 8;
+    var maxTries = 40;
     function waitForTma() {
       tries += 1;
       if (hasTelegramWebAppAuth() || tries >= maxTries) {

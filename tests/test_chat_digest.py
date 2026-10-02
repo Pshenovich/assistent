@@ -104,3 +104,31 @@ def test_seed_demo(digest_db, prefs_dir, monkeypatch: pytest.MonkeyPatch):
     reports = digest_db.list_reports_for_chats(selected, limit=20)
     assert reports
     assert reports[0]["is_demo"] is True
+
+
+def test_catchup_dates_since_last_report(digest_db, monkeypatch: pytest.MonkeyPatch):
+    from assistant.services import chat_digest as svc
+
+    monkeypatch.setenv("CHAT_DIGEST_MAX_CATCHUP_DAYS", "14")
+    store = digest_db
+    store.upsert_chat(-55, title="Ops", chat_type="supergroup", touch_message=True)
+    for day, mid in (("2026-09-28", 1), ("2026-09-29", 2), ("2026-09-30", 3), ("2026-10-01", 4)):
+        store.insert_message(
+            chat_id=-55,
+            message_id=mid,
+            user_id=1,
+            username="a",
+            display_name="A",
+            text="msg " + day,
+            ts_utc=datetime.fromisoformat(day + "T12:00:00+00:00"),
+        )
+    store.upsert_report(
+        report_date="2026-09-28",
+        chat_id=-55,
+        summary={"brief": "old", "decisions": [], "next_steps": [], "deadlines": [], "open_questions": [], "context_topics": []},
+        message_count=1,
+        model="demo",
+    )
+    days = svc.dates_to_analyze_for_chat(-55, end_day="2026-10-01")
+    assert days == ["2026-09-29", "2026-09-30", "2026-10-01"]
+    assert store.latest_report_date(-55) == "2026-09-28"

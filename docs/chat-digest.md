@@ -6,7 +6,7 @@
 
 1. **Профиль → Чаты** — включить тумблер «Дайджест» и отметить нужные чаты.
 2. В tabbar появится раздел **Дайджест**.
-3. Кнопка **Обновить** (иконка справа вверху) запускает разбор **вчерашнего** дня по выбранным чатам. Автозапуска в v1 нет.
+3. Кнопка **Обновить** запускает разбор **с последнего отчёта** по выбранным чатам (все дни с сообщениями до сегодня, максимум `CHAT_DIGEST_MAX_CATCHUP_DAYS`, по умолчанию 14). Автозапуска в v1 нет.
 
 ## Privacy mode (BotFather)
 
@@ -23,7 +23,8 @@
 | Переменная | Смысл |
 |---|---|
 | `CHAT_DIGEST_INGEST_ENABLED` | `1` по умолчанию — лог сообщений |
-| `CHAT_DIGEST_TZ` | TZ для «вчера» (default `Europe/Moscow`) |
+| `CHAT_DIGEST_TZ` | TZ для границ дня (default `Europe/Moscow`) |
+| `CHAT_DIGEST_MAX_CATCHUP_DAYS` | макс. дней назад при «Обновить» (default 14) |
 | `OPENROUTER_MODEL_CHAT_DIGEST` | модель (default `google/gemini-2.5-flash` или `OPENROUTER_MODEL_BOARD`) |
 | `CHAT_DIGEST_DEMO_CHAT_IDS` | fallback chat id для демо-сида |
 | `CHAT_DIGEST_DB_PATH` | путь к sqlite |
