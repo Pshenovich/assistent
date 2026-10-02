@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261002-dual-note-back";
+  var WEBAPP_BUILD = "20261002-cal-range";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261002-dual-note-back";
+  const NOTE_EDITOR_ASSET_V = "20261002-cal-range";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -669,6 +669,8 @@
   var notesSearchQuery = "";
   var knowledgeSearchQuery = "";
   var notesActiveProjectId = 0;
+  var plusPickerActiveProjectId = 0;
+  var panePickerActiveProjectId = 0;
   var tagPickerSaveTimer = null;
   var tagPickerActiveClose = null;
   var tagPickerDocClickBound = false;
@@ -3368,11 +3370,18 @@
     return isoToDatetimeLocalValue(d.toISOString());
   }
 
+  function parseDatetimeLocal(val) {
+    var s = String(val || "").trim();
+    if (!s) return null;
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) s += ":00";
+    var d = new Date(s);
+    if (isNaN(d.getTime())) return null;
+    return d;
+  }
+
   function datetimeLocalToIso(val) {
-    if (!val) return "";
-    const d = new Date(val);
-    if (isNaN(d.getTime())) return "";
-    return d.toISOString();
+    var d = parseDatetimeLocal(val);
+    return d ? d.toISOString() : "";
   }
 
   function openExternal(url) {
@@ -6643,10 +6652,22 @@
   function meetingDurationMs() {
     var sEl = document.getElementById("m-ev-start");
     var eEl = document.getElementById("m-ev-end");
-    var a = sEl ? new Date(sEl.value).getTime() : NaN;
-    var b = eEl ? new Date(eEl.value).getTime() : NaN;
-    if (!isNaN(a) && !isNaN(b) && b > a) return b - a;
+    var a = sEl ? parseDatetimeLocal(sEl.value) : null;
+    var b = eEl ? parseDatetimeLocal(eEl.value) : null;
+    if (a && b && b.getTime() > a.getTime()) return b.getTime() - a.getTime();
     return 60 * 60 * 1000;
+  }
+
+  function ensureMeetingEndAfterStart() {
+    var startEl = document.getElementById("m-ev-start");
+    var endEl = document.getElementById("m-ev-end");
+    if (!startEl || !endEl || !startEl.value) return;
+    var start = parseDatetimeLocal(startEl.value);
+    if (!start) return;
+    var end = parseDatetimeLocal(endEl.value);
+    if (end && end.getTime() > start.getTime()) return;
+    endEl.value = isoToDatetimeLocalValue(new Date(start.getTime() + meetingDurationMs()).toISOString());
+    syncEventPillsFromHidden("end");
   }
 
   function datetimeLocalParts(value) {
@@ -6688,6 +6709,7 @@
       var timeEl = document.getElementById("m-ev-" + which + "-time");
       function onChange() {
         syncHiddenFromEventPills(which);
+        if (which === "start") ensureMeetingEndAfterStart();
       }
       if (dateEl) {
         dateEl.addEventListener("change", onChange);
@@ -7506,6 +7528,9 @@
     if (kind === "event") {
       const id = document.getElementById("modal-event-id").value;
       const calId = document.getElementById("modal-calendar-id").value || "primary";
+      syncHiddenFromEventPills("start");
+      syncHiddenFromEventPills("end");
+      ensureMeetingEndAfterStart();
       const body = {
         calendar_id: calId,
         title: document.getElementById("m-ev-sum").value.trim(),
@@ -9025,6 +9050,46 @@
       openTagsManageSheet();
     });
     row.appendChild(manage);
+  }
+
+  function noteMatchesPickerProjectFilter(item, activeProjectId) {
+    if (!activeProjectId) return true;
+    var project = noteProjectOf(item);
+    return !!(project && Number(project.id) === Number(activeProjectId));
+  }
+
+  function renderNotePickerProjectChips(container, getActiveId, setActiveId, onChange) {
+    if (!container) return;
+    container.innerHTML = "";
+    container.className = "notes-project-chips note-picker-project-chips";
+    container.setAttribute("role", "listbox");
+    container.setAttribute("aria-label", "Проекты");
+    var tags = getUserTagsFromCache();
+    if (!tags.length) {
+      setHidden(container, true);
+      return;
+    }
+    setHidden(container, false);
+    var activeProjectId = getActiveId();
+    tags.forEach(function (tag) {
+      var tid = Number(tag.id);
+      var active = Number(activeProjectId) === tid;
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className =
+        "tag-chip tag-chip--filter notes-project-chip" + (active ? " tag-chip--active" : "");
+      chip.setAttribute("role", "option");
+      chip.setAttribute("aria-selected", active ? "true" : "false");
+      chip.textContent = String(tag.name || "");
+      chip.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        setActiveId(active ? 0 : tid);
+        renderNotePickerProjectChips(container, getActiveId, setActiveId, onChange);
+        if (typeof onChange === "function") onChange();
+      });
+      container.appendChild(chip);
+    });
   }
 
   function appendTagChipsRow(parent, tags, opts) {
@@ -10701,6 +10766,7 @@
       '<div class="note-paie-plus-page hidden" data-plus-page="notes">' +
       '<button type="button" class="note-paie-plus-back" id="note-paie-plus-back">← Назад</button>' +
       '<input type="search" class="note-paie-plus-search" id="note-paie-plus-search" placeholder="Поиск заметок" autocomplete="off" />' +
+      '<div class="note-paie-plus-project-chips notes-project-chips hidden" id="note-paie-plus-project-chips" role="listbox" aria-label="Проекты"></div>' +
       '<div class="note-paie-plus-notes" id="note-paie-plus-notes"></div>' +
       "</div></div>" +
       '<div class="note-paie-composer-row">' +
@@ -11482,9 +11548,12 @@
       el.classList.toggle("hidden", el.getAttribute("data-plus-page") !== page);
     });
     if (page === "notes") {
+      plusPickerActiveProjectId = 0;
       var search = document.getElementById("note-paie-plus-search");
       if (search) search.value = "";
-      renderPlusNotePicker("");
+      ensureUserTagsLoaded().finally(function () {
+        renderPlusNotePicker("");
+      });
       window.setTimeout(function () {
         if (search) {
           try {
@@ -11507,6 +11576,7 @@
       var id = String((n && n.id) || "");
       if (!id || id === currentId || selected[id]) return false;
       if (n.is_knowledge || n.role === "knowledge") return false;
+      if (!noteMatchesPickerProjectFilter(n, plusPickerActiveProjectId)) return false;
       if (!q) return true;
       var title = String(n.title || n.content || "").toLowerCase();
       var preview = notePlainExcerpt(n.description || n.body || "", 80).toLowerCase();
@@ -11517,13 +11587,26 @@
   function renderPlusNotePicker(query) {
     var list = document.getElementById("note-paie-plus-notes");
     if (!list) return;
+    renderNotePickerProjectChips(
+      document.getElementById("note-paie-plus-project-chips"),
+      function () {
+        return plusPickerActiveProjectId;
+      },
+      function (v) {
+        plusPickerActiveProjectId = v;
+      },
+      function () {
+        var search = document.getElementById("note-paie-plus-search");
+        renderPlusNotePicker(search ? search.value : "");
+      }
+    );
     var notes = plusPickerNotes(query);
     list.innerHTML = "";
     if (!notes.length) {
       var empty = document.createElement("p");
       empty.className = "note-paie-menu-empty";
       empty.textContent = notesDataCache
-        ? String(query || "").trim()
+        ? String(query || "").trim() || plusPickerActiveProjectId
           ? "Ничего не найдено"
           : "Других заметок нет"
         : "Загрузка…";
@@ -12364,6 +12447,7 @@
           (title + " " + notePlainExcerpt(n.description || n.body || n.preview || "", 80)).toLowerCase();
         if (hay.indexOf(q) < 0) return;
       }
+      if (!noteMatchesPickerProjectFilter(n, panePickerActiveProjectId)) return;
       seen[id] = true;
       out.push({
         kind: kind,
@@ -12396,9 +12480,11 @@
     });
   }
 
-  function renderNotePaneOpenNotePicker(query) {
+  function renderNotePaneOpenNotePicker(query, opts) {
+    opts = opts || {};
     var menu = document.getElementById("note-pane-switch-menu");
     if (!menu) return;
+    if (opts.resetProjectFilter) panePickerActiveProjectId = 0;
     menu.classList.add("note-pane-switch-menu--picker");
     menu.innerHTML = "";
     var back = document.createElement("button");
@@ -12434,10 +12520,25 @@
     searchRow.appendChild(search);
     searchRow.appendChild(createBtn);
     menu.appendChild(searchRow);
+    var chips = document.createElement("div");
+    chips.className = "note-pane-switch-project-chips notes-project-chips hidden";
+    chips.setAttribute("role", "listbox");
+    chips.setAttribute("aria-label", "Проекты");
+    menu.appendChild(chips);
     var list = document.createElement("div");
     list.className = "note-pane-switch-note-list";
     menu.appendChild(list);
     function fill() {
+      renderNotePickerProjectChips(
+        chips,
+        function () {
+          return panePickerActiveProjectId;
+        },
+        function (v) {
+          panePickerActiveProjectId = v;
+        },
+        fill
+      );
       var q = search.value || "";
       var notes = paneOpenNoteCandidates(q);
       list.innerHTML = "";
@@ -12446,7 +12547,7 @@
         empty.className = "note-pane-switch-empty";
         empty.textContent =
           notesDataCache || knowledgeDataCache
-            ? String(q).trim()
+            ? String(q).trim() || panePickerActiveProjectId
               ? "Ничего не найдено"
               : "Других заметок нет"
             : "Загрузка…";
@@ -12534,14 +12635,16 @@
     sep.className = "note-pane-switch-sep";
     menu.appendChild(sep);
     addItem("Открыть заметку", false, function () {
-      renderNotePaneOpenNotePicker("");
+      renderNotePaneOpenNotePicker("", { resetProjectFilter: true });
       ensurePaneOpenNoteCandidates().then(function () {
-        var menuEl = document.getElementById("note-pane-switch-menu");
-        if (menuEl && menuEl.classList.contains("note-pane-switch-menu--picker")) {
-          renderNotePaneOpenNotePicker(
-            (menuEl.querySelector(".note-pane-switch-search") || {}).value || ""
-          );
-        }
+        ensureUserTagsLoaded().finally(function () {
+          var menuEl = document.getElementById("note-pane-switch-menu");
+          if (menuEl && menuEl.classList.contains("note-pane-switch-menu--picker")) {
+            renderNotePaneOpenNotePicker(
+              (menuEl.querySelector(".note-pane-switch-search") || {}).value || ""
+            );
+          }
+        });
       });
     });
     if (noteSheetsEnabled()) {

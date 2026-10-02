@@ -54,13 +54,45 @@ def _parse_dt(s: str, user_id: int) -> datetime:
     raw = (s or "").strip()
     if not raw:
         raise ValueError("empty datetime")
-    if "T" not in raw:
+    if "T" not in raw and " " not in raw:
         raw = f"{raw}T09:00:00"
+    raw = raw.replace(" ", "T", 1)
+    if raw.endswith(("Z", "z")):
+        raw = raw[:-1] + "+00:00"
     dt = datetime.fromisoformat(raw)
     tz = _tz_for(user_id)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=tz)
-    return dt
+        return dt.replace(tzinfo=tz)
+    return dt.astimezone(tz)
+
+
+def _ensure_event_range(
+    start: datetime,
+    end: datetime | None,
+    duration_min: int | None = 60,
+) -> tuple[datetime, datetime]:
+    dur = max(15, int(duration_min or 60))
+    if end is None or end <= start:
+        return start, start + timedelta(minutes=dur)
+    return start, end
+
+
+def _gcal_when(dt: datetime, user_id: int) -> dict[str, str]:
+    """Стена часов в TZ пользователя — без UTC-offset, чтобы Google не схлопывал интервал."""
+    tz = _tz_for(user_id)
+    local = dt.astimezone(tz) if dt.tzinfo else dt.replace(tzinfo=tz)
+    return {
+        "dateTime": local.strftime("%Y-%m-%dT%H:%M:%S"),
+        "timeZone": _tz_name_for(user_id),
+    }
+
+
+def public_calendar_error(exc: BaseException) -> tuple[int, str]:
+    text = str(exc or "").strip() or "Ошибка календаря"
+    low = text.lower()
+    if "timerangeempty" in low or "time range is empty" in low:
+        return 400, "Укажите время окончания позже начала встречи."
+    return 502, text
 
 
 _GENERIC_EVENT_TITLES = frozenset({"встреча", "созвон", "митинг", "meeting", "event"})
@@ -163,20 +195,16 @@ def create_event(
     calendar_id: str | None = None,
 ) -> dict[str, Any]:
     svc = _service(user_id)
-    tz_name = _tz_name_for(user_id)
     start = _parse_dt(str(parsed.get("start") or ""), user_id)
     end_s = str(parsed.get("end") or "").strip()
-    if end_s:
-        end = _parse_dt(end_s, user_id)
-    else:
-        dur = int(parsed.get("duration_min") or 60)
-        end = start + timedelta(minutes=max(15, dur))
+    end = _parse_dt(end_s, user_id) if end_s else None
+    start, end = _ensure_event_range(start, end, parsed.get("duration_min") or 60)
     title = normalize_event_title(parsed)
     parsed["title"] = title
     body: dict[str, Any] = {
         "summary": title,
-        "start": {"dateTime": start.isoformat(), "timeZone": tz_name},
-        "end": {"dateTime": end.isoformat(), "timeZone": tz_name},
+        "start": _gcal_when(start, user_id),
+        "end": _gcal_when(end, user_id),
     }
     desc = str(parsed.get("description") or "").strip()
     if desc:
@@ -835,7 +863,6 @@ def update_event(
     cal_id = (calendar_id or GOOGLE_CALENDAR_ID).strip() or GOOGLE_CALENDAR_ID
     cal_sources.assert_calendar_writable(user_id, cal_id)
     svc = _service(user_id)
-    tz_name = _tz_name_for(user_id)
     ev = svc.events().get(calendarId=cal_id, eventId=event_id).execute()
     body: dict[str, Any] = {}
     title = str(parsed.get("title") or "").strip()
@@ -843,11 +870,11 @@ def update_event(
         body["summary"] = title
     if parsed.get("start"):
         start = _parse_dt(str(parsed["start"]), user_id)
-        dur = int(parsed.get("duration_min") or 60)
         end_s = str(parsed.get("end") or "").strip()
-        end = _parse_dt(end_s, user_id) if end_s else start + timedelta(minutes=max(15, dur))
-        body["start"] = {"dateTime": start.isoformat(), "timeZone": tz_name}
-        body["end"] = {"dateTime": end.isoformat(), "timeZone": tz_name}
+        end = _parse_dt(end_s, user_id) if end_s else None
+        start, end = _ensure_event_range(start, end, parsed.get("duration_min") or 60)
+        body["start"] = _gcal_when(start, user_id)
+        body["end"] = _gcal_when(end, user_id)
     if "description" in parsed:
         body["description"] = str(parsed.get("description") or "")
     if "location" in parsed:

@@ -4774,6 +4774,31 @@ html.note-editor-open #note-editor-overlay {
   outline: none;
 }
 
+.note-paie-plus-project-chips,
+.note-pane-switch-project-chips,
+.note-picker-project-chips {
+  box-sizing: border-box;
+  width: 100%;
+  flex: 0 0 auto;
+  min-height: calc(2.5rem + 4px);
+  margin: 0 0 6px;
+  padding: 2px 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.note-paie-plus-project-chips.hidden,
+.note-pane-switch-project-chips.hidden,
+.note-picker-project-chips.hidden {
+  display: none;
+}
+
+.note-picker-project-chips .notes-project-chip,
+.note-picker-project-chips .tag-chip.notes-project-chip {
+  flex-shrink: 0;
+  height: 2.5rem;
+}
+
 .note-paie-plus-notes {
   display: flex;
   flex-direction: column;

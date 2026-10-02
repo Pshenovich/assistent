@@ -3276,6 +3276,13 @@ def _miniapp_contacts_by_email(telegram_user_id: int) -> dict[str, dict[str, Any
     return out
 
 
+def _raise_calendar_http(exc: BaseException) -> None:
+    from assistant.services.calendar import public_calendar_error
+
+    status, detail = public_calendar_error(exc)
+    raise HTTPException(status_code=status, detail=detail) from exc
+
+
 def _serialize_calendar_event(
     ev: dict[str, Any],
     *,
@@ -4397,7 +4404,7 @@ async def miniapp_calendar_event_create(
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
+        _raise_calendar_http(e)
     event_id = str(created.get("event_id") or created.get("id") or "").strip()
     if not event_id:
         raise HTTPException(status_code=502, detail="Пустой ответ календаря")
@@ -4472,7 +4479,7 @@ async def miniapp_calendar_event_update(
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
+        _raise_calendar_http(e)
     if not isinstance(ev, dict):
         raise HTTPException(status_code=502, detail="Пустой ответ календаря")
     try:
