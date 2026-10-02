@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261002-cal-range">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261002-digest-grid2">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -46,8 +46,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261002-cal-range" />
-  <link rel="preload" href="/webapp/note-rich-editor.js?v=20261002-cal-range" as="script" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261002-digest-grid2" />
+  <link rel="preload" href="/webapp/note-rich-editor.js?v=20261002-digest-grid2" as="script" />
   <!-- Same-origin, async: не блокирует парсер, если сеть/VPN тормозит. -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" async></script>
 </head>
@@ -225,6 +225,52 @@
         </div>
       </section>
 
+      <section id="panel-digest" class="panel hidden" role="tabpanel" hidden>
+        <div id="digest-root">
+          <div class="digest-head">
+            <h1 class="screen-title">Дайджест</h1>
+            <button
+              type="button"
+              id="digest-refresh-btn"
+              class="digest-refresh-btn"
+              aria-label="Обновить"
+              title="Обновить"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                <path d="M21 3v6h-6" />
+              </svg>
+            </button>
+          </div>
+          <div class="digest-subtabs-row">
+            <div class="subtab-bar" role="tablist" aria-label="Тип дайджеста">
+              <button type="button" class="subtab-btn active" data-digest-subtab="chats" role="tab" aria-selected="true">Чаты</button>
+              <button type="button" class="subtab-btn" data-digest-subtab="market" role="tab" aria-selected="false">Рынок</button>
+            </div>
+          </div>
+          <div id="digest-pane-chats">
+            <div id="digest-list" class="stack digest-list"></div>
+            <p id="digest-empty" class="empty-state hidden">Пока нет отчётов. Нажмите Обновить.</p>
+            <p id="digest-error" class="error hidden"></p>
+          </div>
+          <div id="digest-pane-market" class="hidden">
+            <div id="digest-market-body" class="digest-market"></div>
+            <p id="digest-market-empty" class="empty-state hidden">Пока нет выпуска. Обновите позже.</p>
+            <p id="digest-market-error" class="error hidden"></p>
+          </div>
+        </div>
+        <div id="digest-detail" class="notes-detail hidden">
+          <div class="notes-detail-sticky">
+            <div class="detail-toolbar">
+              <button type="button" class="btn-text" id="digest-detail-back">← Назад</button>
+              <span id="digest-detail-title" class="detail-title"></span>
+              <span class="detail-toolbar-spacer"></span>
+            </div>
+          </div>
+          <div id="digest-detail-body" class="detail-body"></div>
+        </div>
+      </section>
+
       <section id="panel-knowledge" class="panel hidden" role="tabpanel" hidden>
         <div id="knowledge-root">
           <div class="knowledge-list-head">
@@ -341,6 +387,20 @@
               <div>
                 <p class="expenses-label">Агенты</p>
                 <p class="expenses-total contacts-card-sub" id="profile-agents-hint">PAIE, Research, GPT и свои</p>
+              </div>
+            </div>
+            <span class="chevron">›</span>
+          </button>
+          <button type="button" class="expenses-card" id="profile-chats-open">
+            <div class="expenses-card-inner">
+              <div class="expenses-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+                </svg>
+              </div>
+              <div>
+                <p class="expenses-label">Чаты</p>
+                <p class="expenses-total contacts-card-sub" id="profile-chats-hint">Дайджест выбранных чатов</p>
               </div>
             </div>
             <span class="chevron">›</span>
@@ -640,6 +700,39 @@
             <div id="profile-agents-list" class="stack agents-list"></div>
             <button type="button" class="btn" id="agents-new">+ Новый агент</button>
             <p id="agents-err" class="error hidden"></p>
+          </div>
+        </div>
+
+        <div id="profile-chats" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-chats-back">← Назад</button>
+            <span class="detail-title">Чаты</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body">
+            <div class="svc-row calendars-row calendars-setting-row">
+              <div class="svc-text">
+                <p class="svc-name">Дайджест</p>
+                <p class="svc-desc muted small">Раздел в меню и отчёты по выбранным чатам</p>
+              </div>
+              <button
+                type="button"
+                class="svc-toggle"
+                id="digest-enabled-toggle"
+                aria-pressed="false"
+                aria-label="Дайджест"
+              >
+                <span class="svc-toggle-knob"></span>
+              </button>
+            </div>
+            <p class="muted small contacts-hint">
+              Отметьте чаты, куда добавлен Leo и по которым нужен ежедневный разбор. Список появляется после сообщений в чате.
+            </p>
+            <div id="profile-chats-list" class="stack contacts-list"></div>
+            <p id="profile-chats-empty" class="empty-state hidden">Пока нет чатов. Добавьте Leo в группу и напишите сообщение.</p>
+            <button type="button" class="btn ghost hidden" id="digest-demo-seed-btn">Создать демо-отчёт за вчера</button>
+            <p id="profile-chats-msg" class="billing-msg muted small hidden"></p>
+            <p id="profile-chats-err" class="error hidden"></p>
           </div>
         </div>
 
@@ -945,6 +1038,15 @@
           </span>
           <span class="tabbar-label">Сохранённое</span>
         </button>
+        <button type="button" class="tabbar-btn tabbar-btn--digest hidden" data-tab="digest" role="tab" aria-selected="false" hidden>
+          <span class="tabbar-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2" />
+              <path d="M10 7h8M10 11h8M10 15h5" />
+            </svg>
+          </span>
+          <span class="tabbar-label">Дайджест</span>
+        </button>
         <button type="button" class="tabbar-btn tabbar-btn--knowledge" data-tab="knowledge" role="tab" aria-selected="false">
           <span class="tabbar-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1208,14 +1310,14 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20261002-cal-range"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20261002-digest-grid2"><\/script>'
         );
       }
     })();
   </script>
-  <script src="/webapp/note-html.js?v=20261002-cal-range" defer></script>
-  <script src="/webapp/note-comments.js?v=20261002-cal-range" defer></script>
-  <script src="/webapp/note-rich-editor.js?v=20261002-cal-range" defer></script>
-  <script src="/webapp/app.js?v=20261002-cal-range" defer></script>
+  <script src="/webapp/note-html.js?v=20261002-digest-grid2" defer></script>
+  <script src="/webapp/note-comments.js?v=20261002-digest-grid2" defer></script>
+  <script src="/webapp/note-rich-editor.js?v=20261002-digest-grid2" defer></script>
+  <script src="/webapp/app.js?v=20261002-digest-grid2" defer></script>
 </body>
 </html>

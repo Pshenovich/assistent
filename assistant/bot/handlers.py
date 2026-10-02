@@ -349,6 +349,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 def register_handlers(app: Application) -> None:
+    from assistant.bot.chat_ingest import register_chat_ingest
+
+    register_chat_ingest(app)
     app.add_handler(TypeHandler(Update, _bind_usage_telegram_user), group=-1)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("onboarding", cmd_onboarding))

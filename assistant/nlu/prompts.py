@@ -168,6 +168,20 @@ SUMMARY_SEARCH_PARSE_SYSTEM = """Разбери запрос пользоват�
 - иначе field=summary
 - query — ключевые слова для поиска (без служебных слов)"""
 
+CHAT_DIGEST_SYSTEM = """Ты делаешь ежедневный дайджест переписки в рабочем Telegram-чате.
+Верни ТОЛЬКО JSON:
+{"brief":"","decisions":[{"text":""}],"next_steps":[{"assignee":"","task":"","deadline":""}],"deadlines":[{"item":"","when":"","assignee":""}],"open_questions":[{"text":""}],"context_topics":[]}
+
+Правила:
+- brief — 2–3 предложения: о чём был день в чате; без стенограммы
+- decisions — только твёрдые договорённости («решили», «согласовали», «берём»); не клади идеи и «давай подумаем»
+- next_steps — action items: кто → что → срок (deadline пустой, если не звучал); неясный кто → assignee=""
+- deadlines — явные даты/«к пятнице»/«до понедельника»; when — как в тексте или нормализованная дата
+- open_questions — незакрытые ветки, на которые ждут ответа
+- context_topics — до 5 коротких фоновых тем без задач (строки)
+- Не выдумывай факты, имена и сроки; пустые массивы, если нечего писать
+- Язык: русский"""
+
 ZOOM_PARSE_SYSTEM = """Ты помощник для Zoom-встреч. Верни ТОЛЬКО JSON:
 {"action":"instant|update|delete","match_query":"","match_date":"","start":"YYYY-MM-DDTHH:MM:SS","end":"","duration_min":60,"need_more_info":false,"questions":[]}
 Правила:

@@ -150,3 +150,51 @@ def mark_onboarding_completed(user_id: int) -> None:
     prefs = load_prefs(user_id)
     prefs["onboarding_completed_at"] = time.time()
     save_prefs(user_id, prefs)
+
+
+def digest_enabled(user_id: int) -> bool:
+    """Дайджест чатов выключен по умолчанию (явный opt-in)."""
+    prefs = load_prefs(user_id)
+    return bool(prefs.get("digest_enabled"))
+
+
+def set_digest_enabled(user_id: int, enabled: bool) -> None:
+    prefs = load_prefs(user_id)
+    prefs["digest_enabled"] = bool(enabled)
+    save_prefs(user_id, prefs)
+
+
+def digest_chat_ids(user_id: int) -> list[int]:
+    prefs = load_prefs(user_id)
+    raw = prefs.get("digest_chat_ids")
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    seen: set[int] = set()
+    for x in raw:
+        try:
+            cid = int(x)
+        except (TypeError, ValueError):
+            continue
+        if cid in seen:
+            continue
+        seen.add(cid)
+        out.append(cid)
+    return out
+
+
+def set_digest_chat_ids(user_id: int, chat_ids: list[int]) -> None:
+    prefs = load_prefs(user_id)
+    cleaned: list[int] = []
+    seen: set[int] = set()
+    for x in chat_ids or []:
+        try:
+            cid = int(x)
+        except (TypeError, ValueError):
+            continue
+        if cid in seen:
+            continue
+        seen.add(cid)
+        cleaned.append(cid)
+    prefs["digest_chat_ids"] = cleaned
+    save_prefs(user_id, prefs)

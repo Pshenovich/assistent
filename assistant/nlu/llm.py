@@ -20,6 +20,7 @@ from assistant.nlu.prompts import (
     ASK_ATTACHMENTS,
     ASK_SYSTEM,
     CALENDAR_PARSE_SYSTEM,
+    CHAT_DIGEST_SYSTEM,
     JOURNAL_QA_ANSWER_SYSTEM,
     JOURNAL_QA_PARSE_SYSTEM,
     KB_QA_ANSWER_SYSTEM,
@@ -52,6 +53,18 @@ def _model_summary() -> str:
         or os.getenv("OPENROUTER_MODEL_CHAT", "").strip()
         or "openai/gpt-4o"
     )
+
+
+def _model_chat_digest() -> str:
+    return (
+        os.getenv("OPENROUTER_MODEL_CHAT_DIGEST", "").strip()
+        or os.getenv("OPENROUTER_MODEL_BOARD", "").strip()
+        or "google/gemini-2.5-flash"
+    )
+
+
+def chat_digest_model_name() -> str:
+    return _model_chat_digest()
 
 
 def summary_model_name() -> str:
@@ -877,3 +890,116 @@ def parse_summary_search_query(text: str) -> dict[str, Any] | None:
     query = str(obj.get("query") or q).strip() or q
     assignee = str(obj.get("assignee") or "").strip()
     return {"field": field, "query": query, "assignee": assignee}
+
+
+_CHAT_DIGEST_TRANSCRIPT_MAX = 48000
+
+
+def _normalize_digest_summary(obj: dict[str, Any]) -> dict[str, Any]:
+    decisions_raw = obj.get("decisions") if isinstance(obj.get("decisions"), list) else []
+    decisions: list[dict[str, str]] = []
+    for item in decisions_raw:
+        if isinstance(item, dict):
+            text = str(item.get("text") or item.get("decision") or "").strip()
+        else:
+            text = str(item or "").strip()
+        if text:
+            decisions.append({"text": text})
+
+    steps_raw = obj.get("next_steps") if isinstance(obj.get("next_steps"), list) else []
+    next_steps: list[dict[str, str]] = []
+    for item in steps_raw:
+        if not isinstance(item, dict):
+            continue
+        task = str(item.get("task") or "").strip()
+        if not task:
+            continue
+        next_steps.append(
+            {
+                "assignee": str(item.get("assignee") or "").strip(),
+                "task": task,
+                "deadline": str(item.get("deadline") or "").strip(),
+            }
+        )
+
+    deadlines_raw = obj.get("deadlines") if isinstance(obj.get("deadlines"), list) else []
+    deadlines: list[dict[str, str]] = []
+    for item in deadlines_raw:
+        if not isinstance(item, dict):
+            continue
+        what = str(item.get("item") or item.get("text") or "").strip()
+        if not what:
+            continue
+        deadlines.append(
+            {
+                "item": what,
+                "when": str(item.get("when") or item.get("deadline") or "").strip(),
+                "assignee": str(item.get("assignee") or "").strip(),
+            }
+        )
+
+    questions_raw = (
+        obj.get("open_questions") if isinstance(obj.get("open_questions"), list) else []
+    )
+    open_questions: list[dict[str, str]] = []
+    for item in questions_raw:
+        if isinstance(item, dict):
+            text = str(item.get("text") or item.get("question") or "").strip()
+        else:
+            text = str(item or "").strip()
+        if text:
+            open_questions.append({"text": text})
+
+    topics_raw = (
+        obj.get("context_topics") if isinstance(obj.get("context_topics"), list) else []
+    )
+    context_topics: list[str] = []
+    for item in topics_raw:
+        t = str(item or "").strip()
+        if t:
+            context_topics.append(t)
+        if len(context_topics) >= 5:
+            break
+
+    return {
+        "brief": str(obj.get("brief") or "").strip(),
+        "decisions": decisions,
+        "next_steps": next_steps,
+        "deadlines": deadlines,
+        "open_questions": open_questions,
+        "context_topics": context_topics,
+    }
+
+
+def digest_chat_day(
+    *,
+    chat_title: str,
+    report_date: str,
+    transcript: str,
+) -> dict[str, Any] | None:
+    """Саммари дня по переписке чата. Usage: operation=chat_digest."""
+    text = (transcript or "").strip()
+    if not text:
+        return None
+    payload = {
+        "chat_title": (chat_title or "").strip(),
+        "report_date": (report_date or "").strip(),
+        "messages": text[:_CHAT_DIGEST_TRANSCRIPT_MAX],
+    }
+    raw = _chat(
+        CHAT_DIGEST_SYSTEM,
+        json.dumps(payload, ensure_ascii=False),
+        operation="chat_digest",
+        model=_model_chat_digest(),
+        timeout=180,
+        temperature=0.1,
+        max_tokens=4096,
+    )
+    try:
+        obj = json.loads(strip_json_from_markdown(raw))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    return _normalize_digest_summary(obj)
+

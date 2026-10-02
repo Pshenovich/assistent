@@ -265,6 +265,7 @@ OPERATION_LABELS_RU: dict[str, str] = {
     "obuchat_transcribe": "Транскрипция",
     "summarize": "Саммари",
     "summarize_llm": "Саммари (LLM)",
+    "chat_digest": "Дайджест чатов",
     "answer_with_context": "Обсуждение с GPT (архив)",
     "chat/completions": "Запрос к модели",
 }

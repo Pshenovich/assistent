@@ -2491,6 +2491,12 @@ class _MiniappSettingsPatch(BaseModel):
     meeting_reminders_enabled: Optional[bool] = None
     zoom_auto_record_enabled: Optional[bool] = None
     telemost_auto_record_enabled: Optional[bool] = None
+    digest_enabled: Optional[bool] = None
+    digest_chat_ids: Optional[list[int]] = None
+
+
+class _MiniappDigestRefreshBody(BaseModel):
+    date: Optional[str] = None
 
 
 class _MiniappBillingPromoBody(BaseModel):
@@ -4122,6 +4128,8 @@ async def miniapp_settings_get(
             "zoom_auto_record_enabled": user_prefs.zoom_auto_record_enabled(uid),
             "telemost_auto_record_enabled": user_prefs.telemost_auto_record_enabled(uid),
             "meeting_bot_available": mrec.service_available(),
+            "digest_enabled": user_prefs.digest_enabled(uid),
+            "digest_chat_ids": user_prefs.digest_chat_ids(uid),
         }
 
     return await run_in_threadpool(_run)
@@ -4151,6 +4159,10 @@ async def miniapp_settings_patch(
             user_prefs.set_telemost_auto_record_enabled(
                 uid, bool(body.telemost_auto_record_enabled)
             )
+        if body.digest_enabled is not None:
+            user_prefs.set_digest_enabled(uid, bool(body.digest_enabled))
+        if body.digest_chat_ids is not None:
+            user_prefs.set_digest_chat_ids(uid, list(body.digest_chat_ids))
         return {
             "ok": True,
             "meeting_reminders_enabled": user_prefs.meeting_reminders_enabled(uid),
@@ -4158,9 +4170,140 @@ async def miniapp_settings_patch(
             "zoom_auto_record_enabled": user_prefs.zoom_auto_record_enabled(uid),
             "telemost_auto_record_enabled": user_prefs.telemost_auto_record_enabled(uid),
             "meeting_bot_available": mrec.service_available(),
+            "digest_enabled": user_prefs.digest_enabled(uid),
+            "digest_chat_ids": user_prefs.digest_chat_ids(uid),
         }
 
     return await run_in_threadpool(_run)
+
+
+@miniapp_router.get("/digest/chats")
+async def miniapp_digest_chats(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import chat_digest as digest_store
+    from assistant.stores import user_prefs
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        selected = set(user_prefs.digest_chat_ids(uid))
+        chats = digest_store.list_chats_for_user(uid)
+        for c in chats:
+            c["selected"] = int(c["chat_id"]) in selected
+        return {
+            "digest_enabled": user_prefs.digest_enabled(uid),
+            "chats": chats,
+        }
+
+    return await run_in_threadpool(_run)
+
+
+@miniapp_router.get("/digest/reports")
+async def miniapp_digest_reports(
+    limit: int = 60,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import chat_digest as digest_store
+    from assistant.stores import user_prefs
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        if not user_prefs.digest_enabled(uid):
+            return {"digest_enabled": False, "reports": []}
+        selected = user_prefs.digest_chat_ids(uid)
+        reports = digest_store.list_reports_for_chats(selected, limit=limit)
+        return {"digest_enabled": True, "reports": reports}
+
+    return await run_in_threadpool(_run)
+
+
+@miniapp_router.get("/digest/reports/{report_date}/{chat_id}")
+async def miniapp_digest_report_detail(
+    report_date: str,
+    chat_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import chat_digest as digest_store
+    from assistant.stores import user_prefs
+
+    uid = int(principal.telegram_user_id)
+
+    def _run():
+        if not user_prefs.digest_enabled(uid):
+            return {"_error": "off"}
+        selected = set(user_prefs.digest_chat_ids(uid))
+        if int(chat_id) not in selected:
+            return {"_error": "not_selected"}
+        row = digest_store.get_report(report_date, int(chat_id))
+        if not row:
+            return {"_error": "missing"}
+        return row
+
+    result = await run_in_threadpool(_run)
+    if not result or result.get("_error"):
+        raise HTTPException(status_code=404, detail="Отчёт не найден")
+    return result
+
+
+@miniapp_router.post("/digest/refresh")
+async def miniapp_digest_refresh(
+    body: Optional[_MiniappDigestRefreshBody] = None,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.services import chat_digest as digest_svc
+    from assistant.stores import user_prefs
+
+    uid = int(principal.telegram_user_id)
+    body = body or _MiniappDigestRefreshBody()
+
+    if not await run_in_threadpool(user_prefs.digest_enabled, uid):
+        raise HTTPException(status_code=400, detail="Включите Дайджест в профиле")
+    selected = await run_in_threadpool(user_prefs.digest_chat_ids, uid)
+    if not selected:
+        raise HTTPException(
+            status_code=400, detail="Выберите хотя бы один чат в Профиль → Чаты"
+        )
+    if not digest_svc.try_begin_refresh(uid):
+        raise HTTPException(status_code=409, detail="Обновление уже выполняется")
+
+    try:
+        uname = _miniapp_tg_username(principal)
+
+        def _run() -> dict[str, Any]:
+            return digest_svc.run_digest_for_user(
+                uid,
+                report_date=(body.date or "").strip() or None,
+                telegram_username=uname,
+            )
+
+        result = await run_in_threadpool(_run)
+    finally:
+        digest_svc.end_refresh(uid)
+
+    if not result.get("ok"):
+        err = str(result.get("error") or "failed")
+        if err == "digest_disabled":
+            raise HTTPException(status_code=400, detail="Включите Дайджест в профиле")
+        if err == "no_chats_selected":
+            raise HTTPException(
+                status_code=400, detail="Выберите хотя бы один чат в Профиль → Чаты"
+            )
+        raise HTTPException(status_code=500, detail=err)
+    return result
+
+
+@miniapp_router.post("/digest/demo-seed")
+async def miniapp_digest_demo_seed(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    if not _miniapp_dev_mode_on():
+        raise HTTPException(status_code=404, detail="Not found")
+    from assistant.services import chat_digest as digest_svc
+
+    uid = int(principal.telegram_user_id)
+    return await run_in_threadpool(digest_svc.seed_demo_for_user, uid)
 
 
 @miniapp_router.get("/agents")

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261002-cal-range";
+  var WEBAPP_BUILD = "20261002-digest-grid2";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261002-cal-range";
+  const NOTE_EDITOR_ASSET_V = "20261002-digest-grid2";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -671,11 +671,19 @@
   var notesActiveProjectId = 0;
   var plusPickerActiveProjectId = 0;
   var panePickerActiveProjectId = 0;
+  var noteAgentSessions = {};
+  var noteAgentPollers = {};
+  var pendingDiscussOpen = null;
   var tagPickerSaveTimer = null;
   var tagPickerActiveClose = null;
   var tagPickerDocClickBound = false;
   var tabInited = { profile: false };
-  var TAB_ORDER = ["actual", "notes", "knowledge", "profile"];
+  var TAB_ORDER = ["actual", "notes", "digest", "knowledge", "profile"];
+  var digestTabEnabled = false;
+  var digestRefreshing = false;
+  var digestSubTab = "chats";
+  var digestMarketLoaded = false;
+  var digestMarketLoading = false;
   var currentTab = "actual";
   var currentProfileScreen = "main";
   var panelTransitionMs = 280;
@@ -2806,6 +2814,7 @@
     var app = document.getElementById("app");
     if (!app) return;
     var detail = document.getElementById("notes-detail");
+    var digestDetail = document.getElementById("digest-detail");
     var pay = document.getElementById("profile-payment");
     var exp = document.getElementById("profile-expenses");
     var booking = document.getElementById("profile-booking");
@@ -2818,6 +2827,7 @@
     var tagsSheet = document.getElementById("tags-manage-overlay");
     var immersive =
       (detail && !detail.classList.contains("hidden")) ||
+      (digestDetail && !digestDetail.classList.contains("hidden")) ||
       (noteEditor && !noteEditor.classList.contains("hidden")) ||
       (pay && !pay.classList.contains("hidden")) ||
       (exp && !exp.classList.contains("hidden")) ||
@@ -3258,9 +3268,18 @@
       loadKnowledgeNotes();
       ensureUserTagsLoaded();
     }
+    if (name === "digest") {
+      closeDigestDetail();
+      setDigestSubTab(digestSubTab || "chats");
+      if (digestSubTab === "market") loadMarketDigest();
+      else loadDigestReports();
+    }
     if (name !== "notes" && name !== "knowledge") {
       closeNotesDetail();
       if (isNoteEditorModalOpen()) handleNoteEditorModalClose({ skipPrompt: true });
+    }
+    if (name !== "digest") {
+      closeDigestDetail();
     }
     if (name !== "profile" && currentProfileScreen !== "main") {
       profileScreen("main");
@@ -3273,6 +3292,7 @@
 
   function setTab(name, options) {
     options = options || {};
+    if (name === "digest" && !digestTabEnabled) name = "actual";
     if (TAB_ORDER.indexOf(name) < 0) name = "actual";
     var prev = currentTab;
     document.querySelectorAll(".tabbar-btn").forEach(function (btn) {
@@ -3288,6 +3308,7 @@
         closeNotesDetail();
         if (isNoteEditorModalOpen()) handleNoteEditorModalClose({ skipPrompt: true });
       }
+      if (name === "digest") closeDigestDetail();
       postTabSwitch(name, prev);
       return;
     }
@@ -3463,12 +3484,641 @@
       ask: "Вопрос к GPT",
       obuchat_transcribe: "Транскрипция",
       summarize: "Саммари",
+      chat_digest: "Дайджест чатов",
       answer_with_context: "Обсуждение с GPT (архив)",
       "chat/completions": "Запрос к модели",
     };
     const key = String(op || "").trim();
     if (!key) return "—";
     return labels[key] || key;
+  }
+
+  function setDigestTabVisible(enabled) {
+    digestTabEnabled = !!enabled;
+    var btn = document.querySelector('.tabbar-btn[data-tab="digest"]');
+    if (btn) {
+      setHidden(btn, !digestTabEnabled);
+      if (digestTabEnabled) btn.removeAttribute("hidden");
+      else btn.setAttribute("hidden", "hidden");
+    }
+    var hint = document.getElementById("profile-chats-hint");
+    if (hint) {
+      hint.textContent = digestTabEnabled
+        ? "Включён · отчёты во вкладке Дайджест"
+        : "Дайджест выбранных чатов";
+    }
+    if (!digestTabEnabled && currentTab === "digest") {
+      setTab("actual", { noAnim: true });
+    }
+  }
+
+  async function syncDigestSettingsFromServer() {
+    try {
+      var data = await apiFetch("/settings", { method: "GET" });
+      setDigestTabVisible(!!(data && data.digest_enabled));
+      return data;
+    } catch (e) {
+      setDigestTabVisible(false);
+      return null;
+    }
+  }
+
+  function applyDigestEnabledToggleUi(on) {
+    var btn = document.getElementById("digest-enabled-toggle");
+    if (!btn) return;
+    btn.classList.toggle("svc-toggle--on", !!on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  function closeDigestDetail() {
+    var root = document.getElementById("digest-root");
+    var detail = document.getElementById("digest-detail");
+    setHidden(detail, true);
+    setHidden(root, false);
+    syncAppOverlay();
+    syncTelegramNativeBack();
+  }
+
+  function setDigestSubTab(name) {
+    digestSubTab = name === "market" ? "market" : "chats";
+    document.querySelectorAll("[data-digest-subtab]").forEach(function (b) {
+      var on = b.getAttribute("data-digest-subtab") === digestSubTab;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    setHidden(document.getElementById("digest-pane-chats"), digestSubTab !== "chats");
+    setHidden(document.getElementById("digest-pane-market"), digestSubTab !== "market");
+    var refreshBtn = document.getElementById("digest-refresh-btn");
+    if (refreshBtn) {
+      refreshBtn.title = digestSubTab === "market" ? "Обновить рынок" : "Обновить";
+      refreshBtn.setAttribute(
+        "aria-label",
+        digestSubTab === "market" ? "Обновить рынок" : "Обновить"
+      );
+    }
+    if (digestSubTab === "market") {
+      closeDigestDetail();
+      loadMarketDigest();
+    } else {
+      loadDigestReports();
+    }
+  }
+
+  function openDigestDetail(report) {
+    if (!report) return;
+    var root = document.getElementById("digest-root");
+    var detail = document.getElementById("digest-detail");
+    var titleEl = document.getElementById("digest-detail-title");
+    var body = document.getElementById("digest-detail-body");
+    if (!detail || !body) return;
+    setHidden(root, true);
+    setHidden(detail, false);
+    pulseMotionEnter(detail);
+    if (titleEl) {
+      titleEl.textContent = (report.title || "Чат") + (report.report_date ? " · " + formatDigestDate(report.report_date) : "");
+    }
+    body.innerHTML = renderDigestDetailHtml(report);
+    syncAppOverlay();
+    syncTelegramNativeBack();
+  }
+
+  function formatDigestDate(ymd) {
+    var s = String(ymd || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    var p = s.split("-");
+    return p[2] + "." + p[1] + "." + p[0];
+  }
+
+  function escapeHtmlDigest(s) {
+    return String(s || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function renderDigestSection(title, itemsHtml) {
+    if (!itemsHtml) return "";
+    return (
+      '<section class="digest-section"><h3 class="digest-section-title">' +
+      escapeHtmlDigest(title) +
+      "</h3>" +
+      itemsHtml +
+      "</section>"
+    );
+  }
+
+  function renderDigestDetailHtml(report) {
+    var summary = (report && report.summary) || {};
+    var parts = [];
+    if (report.is_demo) {
+      parts.push('<p class="digest-demo-badge">Демо-отчёт</p>');
+    }
+    var meta = [];
+    if (report.message_count) meta.push(report.message_count + " сообщ.");
+    if (report.generated_at) {
+      meta.push(String(report.generated_at).replace("T", " ").slice(0, 16));
+    }
+    if (meta.length) {
+      parts.push('<p class="muted small">' + escapeHtmlDigest(meta.join(" · ")) + "</p>");
+    }
+    if (summary.brief) {
+      parts.push(renderDigestSection("Коротко", "<p>" + escapeHtmlDigest(summary.brief) + "</p>"));
+    }
+    var decisions = summary.decisions || [];
+    if (decisions.length) {
+      var dHtml =
+        "<ul>" +
+        decisions
+          .map(function (d) {
+            var t = typeof d === "string" ? d : d.text || d.decision || "";
+            return "<li>" + escapeHtmlDigest(t) + "</li>";
+          })
+          .join("") +
+        "</ul>";
+      parts.push(renderDigestSection("Договорились", dHtml));
+    }
+    var steps = summary.next_steps || [];
+    if (steps.length) {
+      var sHtml =
+        "<ul>" +
+        steps
+          .map(function (st) {
+            var who = (st && st.assignee) || "не назначен";
+            var task = (st && st.task) || "";
+            var dl = (st && st.deadline) || "";
+            var line = who + " — " + task + (dl ? " (" + dl + ")" : "");
+            return "<li>" + escapeHtmlDigest(line) + "</li>";
+          })
+          .join("") +
+        "</ul>";
+      parts.push(renderDigestSection("Следующие шаги", sHtml));
+    }
+    var deadlines = summary.deadlines || [];
+    if (deadlines.length) {
+      var dlHtml =
+        "<ul>" +
+        deadlines
+          .map(function (d) {
+            var line =
+              ((d && d.item) || "") +
+              (d && d.when ? " — " + d.when : "") +
+              (d && d.assignee ? " (" + d.assignee + ")" : "");
+            return "<li>" + escapeHtmlDigest(line) + "</li>";
+          })
+          .join("") +
+        "</ul>";
+      parts.push(renderDigestSection("Дедлайны", dlHtml));
+    }
+    var questions = summary.open_questions || [];
+    if (questions.length) {
+      var qHtml =
+        "<ul>" +
+        questions
+          .map(function (q) {
+            var t = typeof q === "string" ? q : q.text || "";
+            return "<li>" + escapeHtmlDigest(t) + "</li>";
+          })
+          .join("") +
+        "</ul>";
+      parts.push(renderDigestSection("Открытые вопросы", qHtml));
+    }
+    var topics = summary.context_topics || [];
+    if (topics.length) {
+      var tHtml =
+        "<ul>" +
+        topics.map(function (t) {
+          return "<li>" + escapeHtmlDigest(t) + "</li>";
+        }).join("") +
+        "</ul>";
+      parts.push(renderDigestSection("Ещё обсуждали", tHtml));
+    }
+    if (!parts.length) {
+      return '<p class="muted">Пустой отчёт</p>';
+    }
+    return parts.join("");
+  }
+
+  function renderDigestList(reports) {
+    var list = document.getElementById("digest-list");
+    var empty = document.getElementById("digest-empty");
+    if (!list) return;
+    list.innerHTML = "";
+    var rows = Array.isArray(reports) ? reports : [];
+    setHidden(empty, rows.length > 0);
+    var lastDate = "";
+    rows.forEach(function (rep) {
+      var day = String(rep.report_date || "");
+      if (day && day !== lastDate) {
+        lastDate = day;
+        var head = document.createElement("p");
+        head.className = "digest-day-head";
+        head.textContent = formatDigestDate(day);
+        list.appendChild(head);
+      }
+      var card = document.createElement("button");
+      card.type = "button";
+      card.className = "note-card digest-card";
+      var title = document.createElement("p");
+      title.className = "note-card-title";
+      title.textContent = rep.title || "Чат";
+      var preview = document.createElement("p");
+      preview.className = "note-card-preview muted";
+      preview.textContent = rep.preview || (rep.summary && rep.summary.brief) || "Открыть отчёт";
+      card.appendChild(title);
+      if (rep.is_demo) {
+        var badge = document.createElement("span");
+        badge.className = "digest-demo-pill";
+        badge.textContent = "демо";
+        card.appendChild(badge);
+      }
+      card.appendChild(preview);
+      card.addEventListener("click", function () {
+        openDigestDetail(rep);
+      });
+      list.appendChild(card);
+    });
+  }
+
+  async function loadDigestReports() {
+    var err = document.getElementById("digest-error");
+    if (err) {
+      err.textContent = "";
+      err.classList.add("hidden");
+    }
+    try {
+      var data = await apiFetch("/digest/reports?limit=60", { method: "GET" });
+      if (data && data.digest_enabled === false) {
+        setDigestTabVisible(false);
+        return;
+      }
+      renderDigestList((data && data.reports) || []);
+    } catch (e) {
+      if (err) {
+        err.textContent = e.message || String(e);
+        err.classList.remove("hidden");
+      }
+      renderDigestList([]);
+    }
+  }
+
+  async function refreshDigestReports() {
+    if (digestSubTab === "market") {
+      digestMarketLoaded = false;
+      await loadMarketDigest({ force: true });
+      return;
+    }
+    if (digestRefreshing) return;
+    var btn = document.getElementById("digest-refresh-btn");
+    var err = document.getElementById("digest-error");
+    digestRefreshing = true;
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add("is-spinning");
+    }
+    if (err) {
+      err.textContent = "";
+      err.classList.add("hidden");
+    }
+    try {
+      var res = await apiFetch("/digest/refresh", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      await loadDigestReports();
+      var updated = (res && res.reports_updated) || 0;
+      var skipped = (res && res.skipped_empty) || 0;
+      if (err && updated === 0 && skipped > 0) {
+        err.textContent =
+          "Нет новых сообщений за вчера в выбранных чатах. Дождитесь переписки или создайте демо в Профиль → Чаты.";
+        err.classList.remove("hidden");
+      }
+    } catch (e) {
+      if (err) {
+        err.textContent = e.message || String(e);
+        err.classList.remove("hidden");
+      }
+    } finally {
+      digestRefreshing = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove("is-spinning");
+      }
+    }
+  }
+
+  function remapMarketClass(el) {
+    if (!el || !el.classList) return;
+    var map = {
+      eyebrow: "digest-market-eyebrow",
+      lead: "digest-market-lead",
+      meta: "digest-market-meta-line",
+      why: "digest-market-why",
+      footer: "digest-market-footer",
+      section: "digest-market-section",
+      card: "digest-market-card",
+      grid: "digest-market-grid",
+      pill: "digest-market-pill",
+      "strategy-list": "digest-market-strategy",
+      "strategy-item": "digest-market-strategy-item",
+      "strategy-trigger": "digest-market-strategy-trigger",
+      "strategy-hint": "digest-market-strategy-hint",
+      "strategy-tooltip": "digest-market-strategy-tip",
+    };
+    Object.keys(map).forEach(function (from) {
+      if (el.classList.contains(from)) {
+        el.classList.remove(from);
+        el.classList.add(map[from]);
+      }
+    });
+  }
+
+  function bindMarketStrategyTips(root) {
+    if (!root) return;
+    root.querySelectorAll(".digest-market-strategy-trigger").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var tipId = btn.getAttribute("aria-controls");
+        var tip = tipId ? document.getElementById(tipId) : null;
+        if (!tip) {
+          tip = btn.parentElement && btn.parentElement.querySelector(".digest-market-strategy-tip");
+        }
+        if (!tip) return;
+        var open = btn.getAttribute("aria-expanded") === "true";
+        root.querySelectorAll(".digest-market-strategy-trigger").forEach(function (other) {
+          other.setAttribute("aria-expanded", "false");
+        });
+        root.querySelectorAll(".digest-market-strategy-tip").forEach(function (t) {
+          t.hidden = true;
+        });
+        if (!open) {
+          btn.setAttribute("aria-expanded", "true");
+          tip.hidden = false;
+        }
+      });
+    });
+  }
+
+  function cleanMarketCard(card) {
+    if (!card) return;
+    var titleEl = card.querySelector("h3");
+    var titleNorm = normalizeMarketText(titleEl ? titleEl.textContent : "");
+    Array.prototype.slice.call(card.querySelectorAll("p")).forEach(function (p) {
+      if (
+        p.classList.contains("digest-market-why") ||
+        p.classList.contains("why") ||
+        p.classList.contains("digest-market-meta-line") ||
+        p.classList.contains("meta") ||
+        p.classList.contains("digest-market-footer") ||
+        p.classList.contains("footer")
+      ) {
+        return;
+      }
+      var t = normalizeMarketText(p.textContent);
+      if (!t) {
+        p.remove();
+        return;
+      }
+      if (!titleNorm) return;
+      var titleCore = titleNorm.split(" - ")[0];
+      if (
+        titleNorm.indexOf(t) >= 0 ||
+        t.indexOf(titleCore) >= 0 ||
+        titleCore.indexOf(t) >= 0
+      ) {
+        p.remove();
+      }
+    });
+  }
+
+  function normalizeMarketText(s) {
+    return String(s || "")
+      .toLowerCase()
+      .replace(/[—–|,:;]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function adaptMarketNewsDom(main) {
+    if (!main) return null;
+    var wrap = document.createElement("div");
+    wrap.className = "digest-market";
+
+    var header = main.querySelector("header");
+    if (header) {
+      var head = document.createElement("div");
+      head.className = "digest-market-header";
+      Array.prototype.forEach.call(header.children, function (child) {
+        var clone = child.cloneNode(true);
+        if (clone.tagName === "H1") clone.className = "digest-market-title";
+        remapMarketClass(clone);
+        head.appendChild(clone);
+      });
+      wrap.appendChild(head);
+    }
+
+    var grid = main.querySelector(".grid");
+    if (grid) {
+      var g = grid.cloneNode(true);
+      g.className = "digest-market-grid";
+      remapMarketClass(g);
+      g.querySelectorAll("*").forEach(remapMarketClass);
+      g.querySelectorAll(".digest-market-card, article").forEach(cleanMarketCard);
+      wrap.appendChild(g);
+    } else {
+      var sections = main.querySelectorAll(".section");
+      Array.prototype.forEach.call(sections, function (sec) {
+        var s = sec.cloneNode(true);
+        remapMarketClass(s);
+        s.querySelectorAll("*").forEach(remapMarketClass);
+        s.querySelectorAll(".digest-market-card, article").forEach(cleanMarketCard);
+        wrap.appendChild(s);
+      });
+    }
+
+    if (!wrap.querySelector(".digest-market-section") && !wrap.querySelector(".digest-market-grid")) {
+      var fallback = document.createElement("div");
+      fallback.className = "digest-market-section";
+      fallback.innerHTML = main.innerHTML;
+      fallback.querySelectorAll("*").forEach(remapMarketClass);
+      fallback.querySelectorAll(".digest-market-card, article").forEach(cleanMarketCard);
+      wrap.appendChild(fallback);
+    }
+    return wrap;
+  }
+
+  async function loadMarketDigest(opts) {
+    opts = opts || {};
+    var body = document.getElementById("digest-market-body");
+    var empty = document.getElementById("digest-market-empty");
+    var err = document.getElementById("digest-market-error");
+    var btn = document.getElementById("digest-refresh-btn");
+    if (!body) return;
+    if (digestMarketLoaded && !opts.force) return;
+    if (digestMarketLoading) return;
+    digestMarketLoading = true;
+    if (err) {
+      err.textContent = "";
+      err.classList.add("hidden");
+    }
+    setHidden(empty, true);
+    if (btn && digestSubTab === "market") {
+      btn.disabled = true;
+      btn.classList.add("is-spinning");
+    }
+    try {
+      var res = await fetch("/news/", {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { Accept: "text/html" },
+      });
+      if (!res.ok) throw new Error("Не удалось загрузить дайджест рынка (" + res.status + ")");
+      var html = await res.text();
+      var doc = new DOMParser().parseFromString(html, "text/html");
+      var main = doc.querySelector("main");
+      var adapted = adaptMarketNewsDom(main);
+      body.innerHTML = "";
+      if (!adapted || !adapted.children.length) {
+        setHidden(empty, false);
+        digestMarketLoaded = true;
+        return;
+      }
+      body.appendChild(adapted);
+      bindMarketStrategyTips(body);
+      digestMarketLoaded = true;
+    } catch (e) {
+      body.innerHTML = "";
+      if (err) {
+        err.textContent = (e && e.message) || String(e);
+        err.classList.remove("hidden");
+      }
+      setHidden(empty, false);
+      digestMarketLoaded = false;
+    } finally {
+      digestMarketLoading = false;
+      if (btn && digestSubTab === "market") {
+        btn.disabled = false;
+        btn.classList.remove("is-spinning");
+      }
+    }
+  }
+
+  async function loadProfileChatsScreen() {
+    var list = document.getElementById("profile-chats-list");
+    var empty = document.getElementById("profile-chats-empty");
+    var err = document.getElementById("profile-chats-err");
+    var msg = document.getElementById("profile-chats-msg");
+    var demoBtn = document.getElementById("digest-demo-seed-btn");
+    if (err) {
+      err.textContent = "";
+      err.classList.add("hidden");
+    }
+    if (msg) msg.classList.add("hidden");
+    try {
+      var data = await apiFetch("/digest/chats", { method: "GET" });
+      var enabled = !!(data && data.digest_enabled);
+      applyDigestEnabledToggleUi(enabled);
+      setDigestTabVisible(enabled);
+      var chats = (data && data.chats) || [];
+      if (list) list.innerHTML = "";
+      setHidden(empty, chats.length > 0);
+      chats.forEach(function (chat) {
+        var row = document.createElement("label");
+        row.className = "digest-chat-row";
+        var cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = !!chat.selected;
+        cb.addEventListener("change", function () {
+          saveDigestChatSelection();
+        });
+        cb.setAttribute("data-chat-id", String(chat.chat_id));
+        var text = document.createElement("span");
+        text.className = "digest-chat-title";
+        text.textContent = chat.title || "Чат " + chat.chat_id;
+        row.appendChild(cb);
+        row.appendChild(text);
+        if (list) list.appendChild(row);
+      });
+      if (demoBtn) {
+        var isDev =
+          !!(window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.platform === "unknown") ||
+          location.hostname === "localhost" ||
+          location.hostname === "127.0.0.1";
+        setHidden(demoBtn, !isDev);
+      }
+    } catch (e) {
+      if (err) {
+        err.textContent = e.message || String(e);
+        err.classList.remove("hidden");
+      }
+    }
+  }
+
+  async function saveDigestChatSelection() {
+    var list = document.getElementById("profile-chats-list");
+    var err = document.getElementById("profile-chats-err");
+    var ids = [];
+    if (list) {
+      list.querySelectorAll('input[type="checkbox"][data-chat-id]').forEach(function (cb) {
+        if (cb.checked) ids.push(parseInt(cb.getAttribute("data-chat-id"), 10));
+      });
+    }
+    try {
+      await apiFetch("/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ digest_chat_ids: ids }),
+      });
+    } catch (e) {
+      if (err) {
+        err.textContent = e.message || String(e);
+        err.classList.remove("hidden");
+      }
+    }
+  }
+
+  async function toggleDigestEnabled() {
+    var btn = document.getElementById("digest-enabled-toggle");
+    var err = document.getElementById("profile-chats-err");
+    var next = !(btn && btn.classList.contains("svc-toggle--on"));
+    applyDigestEnabledToggleUi(next);
+    try {
+      await apiFetch("/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ digest_enabled: next }),
+      });
+      setDigestTabVisible(next);
+    } catch (e) {
+      applyDigestEnabledToggleUi(!next);
+      if (err) {
+        err.textContent = e.message || String(e);
+        err.classList.remove("hidden");
+      }
+    }
+  }
+
+  async function runDigestDemoSeed() {
+    var err = document.getElementById("profile-chats-err");
+    var msg = document.getElementById("profile-chats-msg");
+    if (err) err.classList.add("hidden");
+    try {
+      var res = await apiFetch("/digest/demo-seed", { method: "POST", body: "{}" });
+      await loadProfileChatsScreen();
+      setDigestTabVisible(true);
+      if (msg) {
+        msg.textContent =
+          "Демо-отчёт за " +
+          ((res && res.report_date) || "вчера") +
+          " создан (" +
+          ((res && res.reports_updated) || 0) +
+          "). Откройте вкладку Дайджест.";
+        msg.classList.remove("hidden");
+      }
+    } catch (e) {
+      if (err) {
+        err.textContent = e.message || String(e);
+        err.classList.remove("hidden");
+      }
+    }
   }
 
   function initials(me) {
@@ -3633,6 +4283,7 @@
     const bitrix = document.getElementById("profile-bitrix");
     const knowledgeBase = document.getElementById("profile-knowledge-base");
     const agents = document.getElementById("profile-agents");
+    const chats = document.getElementById("profile-chats");
     setHidden(main, name !== "main");
     setHidden(pay, name !== "payment");
     setHidden(exp, name !== "expenses");
@@ -3645,6 +4296,7 @@
     if (bitrix) setHidden(bitrix, name !== "bitrix");
     if (knowledgeBase) setHidden(knowledgeBase, name !== "knowledge-base");
     if (agents) setHidden(agents, name !== "agents");
+    if (chats) setHidden(chats, name !== "chats");
     if (name !== "booking") stopBookingWaQrPoll();
     if (
       name !== "zoom" &&
@@ -4375,6 +5027,7 @@
       }
       await refreshProfileContactsCount();
       await refreshKnowledgeBaseHint();
+      await syncDigestSettingsFromServer();
     } catch (e) {
       showProfileError(e.message || String(e));
     }
@@ -8105,6 +8758,8 @@
     if (isNoteEditorModalOpen()) return true;
     var detail = document.getElementById("notes-detail");
     if (detail && !detail.classList.contains("hidden")) return true;
+    var digestDetail = document.getElementById("digest-detail");
+    if (digestDetail && !digestDetail.classList.contains("hidden")) return true;
     var profileIds = [
       "profile-payment",
       "profile-expenses",
@@ -8117,6 +8772,7 @@
       "profile-bitrix",
       "profile-knowledge-base",
       "profile-agents",
+      "profile-chats",
     ];
     for (var i = 0; i < profileIds.length; i++) {
       var el = document.getElementById(profileIds[i]);
@@ -8142,6 +8798,11 @@
     var detail = document.getElementById("notes-detail");
     if (detail && !detail.classList.contains("hidden")) {
       handleNotesDetailBack();
+      return true;
+    }
+    var digestDetail = document.getElementById("digest-detail");
+    if (digestDetail && !digestDetail.classList.contains("hidden")) {
+      closeDigestDetail();
       return true;
     }
     var pay = document.getElementById("profile-payment");
@@ -8186,6 +8847,11 @@
       return true;
     }
     if (agents && !agents.classList.contains("hidden")) {
+      profileScreen("main");
+      return true;
+    }
+    var chats = document.getElementById("profile-chats");
+    if (chats && !chats.classList.contains("hidden")) {
       profileScreen("main");
       return true;
     }
@@ -13589,6 +14255,7 @@
     bindNoteDiscussionOverlayOnce();
     var wrap = document.getElementById("note-editor-more-wrap");
     if (!wrap || !wrap._shareKind || !wrap._shareId) return;
+    clearDiscussUnread(wrap._shareKind, wrap._shareId);
     ensureNotePaieThread();
     if (opts.mode) setNoteAskMode(opts.mode);
     if (opts.draft) {
@@ -13786,15 +14453,212 @@
     });
   }
 
-  function showNoteToast(text) {
+  function showNoteToast(text, opts) {
+    opts = opts || {};
     var el = document.getElementById("note-toast");
     if (!el) return;
-    el.textContent = String(text || "");
+    el.innerHTML = "";
+    if (opts.node) {
+      el.appendChild(opts.node);
+    } else {
+      el.textContent = String(text || "");
+    }
+    el.classList.toggle("note-toast--action", !!opts.actionable);
     el.classList.remove("hidden");
     if (el._timer) window.clearTimeout(el._timer);
     el._timer = window.setTimeout(function () {
       el.classList.add("hidden");
-    }, 2400);
+      el.classList.remove("note-toast--action");
+    }, opts.duration || (opts.actionable ? 5600 : 2400));
+  }
+
+  function noteAgentSessionKey(kind, itemId) {
+    return String(kind || "") + ":" + String(itemId || "");
+  }
+
+  function discussUnreadStorageKey(kind, itemId) {
+    return "leo_discuss_unread:" + String(kind || "") + ":" + String(itemId || "");
+  }
+
+  function noteHasDiscussUnread(kind, itemId) {
+    if (!kind || itemId == null || itemId === "") return false;
+    try {
+      return localStorage.getItem(discussUnreadStorageKey(kind, itemId)) === "1";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function setDiscussUnread(kind, itemId, on) {
+    if (!kind || itemId == null || itemId === "") return;
+    try {
+      var key = discussUnreadStorageKey(kind, itemId);
+      if (on) localStorage.setItem(key, "1");
+      else localStorage.removeItem(key);
+    } catch (_) {}
+  }
+
+  function clearDiscussUnread(kind, itemId) {
+    if (!noteHasDiscussUnread(kind, itemId)) return;
+    setDiscussUnread(kind, itemId, false);
+    refreshDiscussUnreadUi();
+  }
+
+  function isViewingNoteDiscussion(kind, itemId) {
+    if (!isNoteDiscussionOpen()) return false;
+    var wrap = document.getElementById("note-editor-more-wrap");
+    return !!(
+      wrap &&
+      String(wrap._shareKind) === String(kind) &&
+      String(wrap._shareId) === String(itemId)
+    );
+  }
+
+  function noteTitleForDiscussToast(kind, itemId, fallback) {
+    var id = String(itemId || "");
+    function fromList(list) {
+      for (var i = 0; i < (list || []).length; i++) {
+        if (String(list[i].id) === id) {
+          return (
+            sanitizeNoteTitle(list[i].title || list[i].content || list[i].main_topic || "") ||
+            String(list[i].title || list[i].content || list[i].main_topic || "")
+          );
+        }
+      }
+      return "";
+    }
+    var title = "";
+    if (kind === "journal") {
+      title =
+        fromList(notesDataCache && notesDataCache.transcriptions) ||
+        fromList(notesDataCache && notesDataCache.summaries) ||
+        fromList(notesDataCache && notesDataCache.journal);
+    } else {
+      title =
+        fromList(notesDataCache && notesDataCache.local_notes) ||
+        fromList(knowledgeDataCache && knowledgeDataCache.notes);
+    }
+    if (!title) {
+      try {
+        title = getNoteEditorTitle().trim();
+      } catch (_) {}
+    }
+    return title || fallback || "заметке";
+  }
+
+  function beginNoteAgentSession(kind, itemId, mode, title) {
+    var key = noteAgentSessionKey(kind, itemId);
+    noteAgentSessions[key] = {
+      kind: String(kind || ""),
+      itemId: String(itemId || ""),
+      mode: mode || "gpt",
+      title: String(title || ""),
+      running: true,
+    };
+  }
+
+  function endNoteAgentSession(kind, itemId) {
+    delete noteAgentSessions[noteAgentSessionKey(kind, itemId)];
+  }
+
+  function parseNoteAgentPath(path) {
+    var m = String(path || "").match(/^\/notes\/([^/]+)\/([^/]+)\/(paei|research)(?:\?|$)/);
+    if (!m) return null;
+    return {
+      kind: decodeURIComponent(m[1]),
+      itemId: decodeURIComponent(m[2]),
+      mode: m[3] === "paei" ? "paie" : "research",
+    };
+  }
+
+  function refreshDiscussUnreadUi() {
+    if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+    if (knowledgeDataCache) renderKnowledgePaneFromData(knowledgeDataCache);
+  }
+
+  function mountDiscussUnreadBadge(parent, kind, itemId, solo) {
+    if (!parent || !noteHasDiscussUnread(kind, itemId)) return;
+    var dot = document.createElement("span");
+    dot.className =
+      "note-card-discuss-unread" + (solo ? " note-card-discuss-unread--solo" : "");
+    dot.setAttribute("aria-label", "Новый ответ в обсуждении");
+    dot.title = "Новый ответ в обсуждении";
+    parent.appendChild(dot);
+  }
+
+  function openNoteDiscussionFromNotify(kind, itemId, mode) {
+    clearDiscussUnread(kind, itemId);
+    pendingDiscussOpen = {
+      kind: String(kind || ""),
+      itemId: String(itemId || ""),
+      mode: mode || "gpt",
+    };
+    if (String(kind) === "journal") {
+      openJournalEditorDetail({ id: itemId });
+      return;
+    }
+    var kbNote = null;
+    if (knowledgeDataCache && knowledgeDataCache.notes) {
+      kbNote = knowledgeDataCache.notes.find(function (n) {
+        return String(n.id) === String(itemId);
+      });
+    }
+    if (kbNote) {
+      openKnowledgeNoteDetail(kbNote);
+      return;
+    }
+    openNoteDetail({ id: itemId }, { isLocal: true });
+  }
+
+  function consumePendingDiscussOpen(kind, itemId) {
+    if (!pendingDiscussOpen) return;
+    if (
+      String(pendingDiscussOpen.kind) !== String(kind) ||
+      String(pendingDiscussOpen.itemId) !== String(itemId)
+    ) {
+      return;
+    }
+    var mode = pendingDiscussOpen.mode || "gpt";
+    pendingDiscussOpen = null;
+    window.setTimeout(function () {
+      openNoteDiscussion({ mode: mode, focus: true });
+    }, 120);
+  }
+
+  function showDiscussReplyToast(kind, itemId, mode, title) {
+    var node = document.createElement("span");
+    node.className = "note-toast-copy";
+    node.appendChild(document.createTextNode("Новый ответ в "));
+    var link = document.createElement("button");
+    link.type = "button";
+    link.className = "note-toast-link";
+    link.textContent = "обсуждении";
+    if (title) link.title = String(title);
+    link.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var el = document.getElementById("note-toast");
+      if (el) {
+        el.classList.add("hidden");
+        if (el._timer) window.clearTimeout(el._timer);
+      }
+      openNoteDiscussionFromNotify(kind, itemId, mode);
+    });
+    node.appendChild(link);
+    showNoteToast("", { node: node, actionable: true, duration: 6500 });
+  }
+
+  function notifyAgentReplyArrived(kind, itemId, mode, title) {
+    endNoteAgentSession(kind, itemId);
+    shareHaptic();
+    if (isViewingNoteDiscussion(kind, itemId)) {
+      refreshNoteCommentsList();
+      return;
+    }
+    var label = title || noteTitleForDiscussToast(kind, itemId, "");
+    setDiscussUnread(kind, itemId, true);
+    refreshDiscussUnreadUi();
+    showDiscussReplyToast(kind, itemId, mode || "gpt", label);
   }
 
   function titleFromAnswerMarkdown(md) {
@@ -15375,13 +16239,17 @@
     if (!wrap || !wrap._shareKind || !wrap._shareId || wrap._gptBusy || (!body && !pending.length && !contextIds.length)) return;
     var kind = wrap._shareKind;
     var itemId = wrap._shareId;
+    var sessionTitle = noteTitleForDiscussToast(kind, itemId, getNoteEditorTitle().trim() || "");
     var panel = document.getElementById("note-editor-comments");
     var agentId = isCustomAskMode(noteAskMode()) ? noteAskMode() : "gpt";
     var agentPrefix = agentId === "gpt" ? "__gpt__" : "__agent__:" + agentId;
     var history = gptHistoryFromComments((panel && panel._allComments) || [], agentId);
+    var noteCtxEarly = activeNoteGptContext();
+    var kbEarly = discussionKnowledgeFields();
     wrap._gptBusy = true;
     wrap._gptPhase = "sending";
     wrap._discussionPinId = null;
+    beginNoteAgentSession(kind, itemId, agentId === "gpt" ? "gpt" : agentId, sessionTitle);
     syncNotePaieReplyForm(true);
     wrap._commentDraft = null;
     appendOptimisticUserMessage(body, "");
@@ -15411,9 +16279,14 @@
       setGptDiscussPhase("thinking");
       await refreshNoteCommentsList();
       setGptDiscussPhase("thinking");
-      var noteCtx = activeNoteGptContext();
       await ensureDiscussionKnowledgeNotes();
       var kb = discussionKnowledgeFields();
+      if (!kb.knowledge_note_ids || !kb.knowledge_note_ids.length) kb = kbEarly;
+      var noteCtx = noteCtxEarly;
+      try {
+        var liveCtx = activeNoteGptContext();
+        if (liveCtx && (liveCtx.text || liveCtx.title)) noteCtx = liveCtx;
+      } catch (_) {}
       var res = await apiFetch("/gpt/chat", {
         method: "POST",
         body: JSON.stringify({
@@ -15467,19 +16340,33 @@
           }),
         }
       );
-      shareHaptic();
+      var liveWrap = document.getElementById("note-editor-more-wrap");
+      if (liveWrap && String(liveWrap._shareId) === String(itemId)) {
+        liveWrap._gptBusy = false;
+        liveWrap._gptPhase = "";
+      }
+      notifyAgentReplyArrived(kind, itemId, agentId === "gpt" ? "gpt" : agentId, sessionTitle);
       clearNoteComposerCommentTarget();
-      wrap._gptBusy = false;
-      wrap._gptPhase = "";
-      await refreshNoteCommentsList();
+      if (isViewingNoteDiscussion(kind, itemId)) await refreshNoteCommentsList();
     } catch (e) {
-      wrap._gptBusy = false;
-      wrap._gptPhase = "";
-      alert(e.message || String(e));
-      await refreshNoteCommentsList();
+      endNoteAgentSession(kind, itemId);
+      var liveErr = document.getElementById("note-editor-more-wrap");
+      if (liveErr && String(liveErr._shareId) === String(itemId)) {
+        liveErr._gptBusy = false;
+        liveErr._gptPhase = "";
+      }
+      if (isViewingNoteDiscussion(kind, itemId) || (liveErr && String(liveErr._shareId) === String(itemId))) {
+        alert(e.message || String(e));
+        await refreshNoteCommentsList();
+      } else {
+        showNoteToast(e.message || "Не удалось получить ответ агента");
+      }
     } finally {
-      wrap._gptBusy = false;
-      wrap._gptPhase = "";
+      var liveFinally = document.getElementById("note-editor-more-wrap");
+      if (liveFinally && String(liveFinally._shareId) === String(itemId)) {
+        liveFinally._gptBusy = false;
+        liveFinally._gptPhase = "";
+      }
       var leftover = document.getElementById("note-discuss-pending");
       if (leftover && leftover.parentNode) leftover.parentNode.removeChild(leftover);
       syncNotePaieReplyForm();
@@ -15671,56 +16558,92 @@
   }
 
   function pollNotePaei(path) {
+    var meta = parseNoteAgentPath(path);
+    var pollKey = meta ? noteAgentSessionKey(meta.kind, meta.itemId) + ":paei" : path;
+    if (noteAgentPollers[pollKey]) return;
+    noteAgentPollers[pollKey] = true;
     var tries = 0;
+    function finishPoll() {
+      delete noteAgentPollers[pollKey];
+    }
     function tick() {
       var live = document.getElementById("note-editor-more-wrap");
-      if (!live || notePaeiPath() !== path) return;
+      var sameNote = !!(live && notePaeiPath() === path);
       apiFetch(path, { method: "GET" })
         .then(function (data) {
           var status = (data && data.status) || "idle";
           if (status === "running") {
             tries += 1;
-            setNotePaeiStatus(
-              (data.progress && data.progress.label) || "PAIE разбирает заметку…",
-              data.progress
-            );
+            if (sameNote) {
+              setNotePaeiStatus(
+                (data.progress && data.progress.label) || "PAIE разбирает заметку…",
+                data.progress
+              );
+            }
             if (tries > 180) {
-              live._paeiRunning = false;
-              setNotePaeiStatus("PAIE всё ещё работает. Обновите заметку чуть позже.");
+              if (sameNote) {
+                live._paeiRunning = false;
+                setNotePaeiStatus("PAIE всё ещё работает. Обновите заметку чуть позже.");
+              }
+              if (meta) endNoteAgentSession(meta.kind, meta.itemId);
+              finishPoll();
               return;
             }
             setTimeout(tick, 2500);
             return;
           }
-          live._paeiRunning = false;
+          if (sameNote) live._paeiRunning = false;
           if (status === "error") {
-            setNotePaeiStatus((data && data.error) || "Не удалось завершить PAIE");
+            if (sameNote) {
+              setNotePaeiStatus((data && data.error) || "Не удалось завершить PAIE");
+            } else if (meta) {
+              showNoteToast((data && data.error) || "Не удалось завершить PAIE");
+            }
+            if (meta) endNoteAgentSession(meta.kind, meta.itemId);
+            finishPoll();
             return;
           }
           if (status === "done") {
-            setNotePaeiStatus("");
-            shareHaptic();
-            refreshNoteCommentsList();
+            if (sameNote) setNotePaeiStatus("");
+            if (meta) {
+              var title =
+                (noteAgentSessions[noteAgentSessionKey(meta.kind, meta.itemId)] || {}).title ||
+                "";
+              notifyAgentReplyArrived(meta.kind, meta.itemId, "paie", title);
+            } else if (sameNote) {
+              shareHaptic();
+              refreshNoteCommentsList();
+            }
+            finishPoll();
             return;
           }
-          setNotePaeiStatus("PAIE прервался. Запустите ещё раз.");
+          if (sameNote) setNotePaeiStatus("PAIE прервался. Запустите ещё раз.");
+          if (meta) endNoteAgentSession(meta.kind, meta.itemId);
+          finishPoll();
         })
         .catch(function (e) {
           tries += 1;
           var code = e && e.status;
           var transient = code === 502 || code === 503 || code === 504 || !code;
           if (transient && tries <= 24) {
-            setNotePaeiStatus("Сервер временно недоступен, пробую снова…", {
-              label: "Сервер временно недоступен, пробую снова…",
-              pct: 16,
-            });
+            if (sameNote) {
+              setNotePaeiStatus("Сервер временно недоступен, пробую снова…", {
+                label: "Сервер временно недоступен, пробую снова…",
+                pct: 16,
+              });
+            }
             setTimeout(tick, 3000);
             return;
           }
           if (tries > 8) {
-            var w = document.getElementById("note-editor-more-wrap");
-            if (w) w._paeiRunning = false;
-            setNotePaeiStatus(e.message || "Не удалось проверить статус PAIE");
+            if (sameNote) {
+              live._paeiRunning = false;
+              setNotePaeiStatus(e.message || "Не удалось проверить статус PAIE");
+            } else {
+              showNoteToast(e.message || "Не удалось проверить статус PAIE");
+            }
+            if (meta) endNoteAgentSession(meta.kind, meta.itemId);
+            finishPoll();
             return;
           }
           setTimeout(tick, 2500);
@@ -15733,7 +16656,11 @@
     var wrap = document.getElementById("note-editor-more-wrap");
     var path = notePaeiPath();
     if (!wrap || !path || wrap._paeiRunning) return;
+    var kind = wrap._shareKind;
+    var itemId = wrap._shareId;
+    var sessionTitle = noteTitleForDiscussToast(kind, itemId, getNoteEditorTitle().trim() || "");
     wrap._paeiRunning = true;
+    beginNoteAgentSession(kind, itemId, "paie", sessionTitle);
     syncNoteCommentsPanel();
     ensureNotePaieThread();
     openNoteDiscussion({ mode: "paie" });
@@ -15748,26 +16675,40 @@
       .then(function (data) {
         clearDiscussPendingContextNotes();
         var status = (data && data.status) || "running";
+        var live = document.getElementById("note-editor-more-wrap");
+        var sameNote = !!(live && String(live._shareId) === String(itemId));
         if (status === "done") {
-          wrap._paeiRunning = false;
-          setNotePaeiStatus("");
-          shareHaptic();
-          refreshNoteCommentsList();
+          if (sameNote) {
+            live._paeiRunning = false;
+            setNotePaeiStatus("");
+          }
+          notifyAgentReplyArrived(kind, itemId, "paie", sessionTitle);
           return;
         }
         if (status === "error") {
-          wrap._paeiRunning = false;
-          setNotePaeiStatus((data && data.error) || "Не удалось запустить PAIE");
+          if (sameNote) {
+            live._paeiRunning = false;
+            setNotePaeiStatus((data && data.error) || "Не удалось запустить PAIE");
+          } else {
+            showNoteToast((data && data.error) || "Не удалось запустить PAIE");
+          }
+          endNoteAgentSession(kind, itemId);
           return;
         }
-        if (data && data.progress) {
+        if (sameNote && data && data.progress) {
           setNotePaeiStatus(data.progress.label, data.progress);
         }
         pollNotePaei(path);
       })
       .catch(function (e) {
-        wrap._paeiRunning = false;
-        setNotePaeiStatus(e.message || "Не удалось запустить PAIE");
+        var live = document.getElementById("note-editor-more-wrap");
+        if (live && String(live._shareId) === String(itemId)) {
+          live._paeiRunning = false;
+          setNotePaeiStatus(e.message || "Не удалось запустить PAIE");
+        } else {
+          showNoteToast(e.message || "Не удалось запустить PAIE");
+        }
+        endNoteAgentSession(kind, itemId);
       })
       .finally(function () {
         syncNotePaieReplyForm();
@@ -15798,7 +16739,11 @@
     if (!body) return;
     var draft = wrap._commentDraft;
     var replyToId = wrap._commentChairId || null;
+    var kind = wrap._shareKind;
+    var itemId = wrap._shareId;
+    var sessionTitle = noteTitleForDiscussToast(kind, itemId, getNoteEditorTitle().trim() || "");
     wrap._paeiRunning = true;
+    beginNoteAgentSession(kind, itemId, "paie", sessionTitle);
     ensureNotePaieThread();
     setNotePaeiStatus("CHAIR читает уточнение…", {
       label: "CHAIR читает уточнение…",
@@ -15835,31 +16780,45 @@
         clearDiscussPendingContextNotes();
         refreshNoteCommentsList();
         var status = (data && data.status) || "running";
+        var live = document.getElementById("note-editor-more-wrap");
+        var sameNote = !!(live && String(live._shareId) === String(itemId));
         if (status === "done") {
-          wrap._paeiRunning = false;
-          setNotePaeiStatus("");
-          shareHaptic();
-          refreshNoteCommentsList();
+          if (sameNote) {
+            live._paeiRunning = false;
+            setNotePaeiStatus("");
+          }
+          notifyAgentReplyArrived(kind, itemId, "paie", sessionTitle);
           return;
         }
         if (status === "error") {
-          wrap._paeiRunning = false;
-          setNotePaeiStatus((data && data.error) || "Не удалось отправить уточнение");
+          if (sameNote) {
+            live._paeiRunning = false;
+            setNotePaeiStatus((data && data.error) || "Не удалось отправить уточнение");
+          } else {
+            showNoteToast((data && data.error) || "Не удалось отправить уточнение");
+          }
+          endNoteAgentSession(kind, itemId);
           return;
         }
-        if (data && data.progress) {
+        if (sameNote && data && data.progress) {
           setNotePaeiStatus(data.progress.label, data.progress);
         }
         pollNotePaei(path);
       })
       .catch(function (e) {
-        wrap._paeiRunning = false;
-        setNotePaeiStatus(e.message || "Не удалось отправить уточнение");
-        renderNotePaieThread(
-          (panel && panel._allComments) || (panel && panel._paieComments) || [],
-          wrap._shareKind,
-          wrap._shareId
-        );
+        var live = document.getElementById("note-editor-more-wrap");
+        if (live && String(live._shareId) === String(itemId)) {
+          live._paeiRunning = false;
+          setNotePaeiStatus(e.message || "Не удалось отправить уточнение");
+          renderNotePaieThread(
+            (panel && panel._allComments) || (panel && panel._paieComments) || [],
+            kind,
+            itemId
+          );
+        } else {
+          showNoteToast(e.message || "Не удалось отправить уточнение");
+        }
+        endNoteAgentSession(kind, itemId);
       })
       .finally(function () {
         syncNotePaieReplyForm();
@@ -15876,6 +16835,12 @@
         if (!wrap || wrap._shareId !== String(itemId)) return;
         if (data && data.status === "running") {
           wrap._paeiRunning = true;
+          beginNoteAgentSession(
+            kind,
+            itemId,
+            "paie",
+            noteTitleForDiscussToast(kind, itemId, getNoteEditorTitle().trim() || "")
+          );
           ensureNotePaieThread();
           setNotePaeiStatus(
             (data.progress && data.progress.label) || "PAIE разбирает заметку…",
@@ -15905,56 +16870,92 @@
   }
 
   function pollNoteResearch(path) {
+    var meta = parseNoteAgentPath(path);
+    var pollKey = meta ? noteAgentSessionKey(meta.kind, meta.itemId) + ":research" : path;
+    if (noteAgentPollers[pollKey]) return;
+    noteAgentPollers[pollKey] = true;
     var tries = 0;
+    function finishPoll() {
+      delete noteAgentPollers[pollKey];
+    }
     function tick() {
       var live = document.getElementById("note-editor-more-wrap");
-      if (!live || noteResearchPath() !== path) return;
+      var sameNote = !!(live && noteResearchPath() === path);
       apiFetch(path, { method: "GET" })
         .then(function (data) {
           var status = (data && data.status) || "idle";
           if (status === "running") {
             tries += 1;
-            setNotePaeiStatus(
-              (data.progress && data.progress.label) || "Ищу в вебе…",
-              data.progress
-            );
+            if (sameNote) {
+              setNotePaeiStatus(
+                (data.progress && data.progress.label) || "Ищу в вебе…",
+                data.progress
+              );
+            }
             if (tries > 180) {
-              live._researchRunning = false;
-              setNotePaeiStatus("Research всё ещё работает. Обновите заметку чуть позже.");
+              if (sameNote) {
+                live._researchRunning = false;
+                setNotePaeiStatus("Research всё ещё работает. Обновите заметку чуть позже.");
+              }
+              if (meta) endNoteAgentSession(meta.kind, meta.itemId);
+              finishPoll();
               return;
             }
             setTimeout(tick, 2500);
             return;
           }
-          live._researchRunning = false;
+          if (sameNote) live._researchRunning = false;
           if (status === "error") {
-            setNotePaeiStatus((data && data.error) || "Не удалось завершить Research");
+            if (sameNote) {
+              setNotePaeiStatus((data && data.error) || "Не удалось завершить Research");
+            } else if (meta) {
+              showNoteToast((data && data.error) || "Не удалось завершить Research");
+            }
+            if (meta) endNoteAgentSession(meta.kind, meta.itemId);
+            finishPoll();
             return;
           }
           if (status === "done") {
-            setNotePaeiStatus("");
-            shareHaptic();
-            refreshNoteCommentsList();
+            if (sameNote) setNotePaeiStatus("");
+            if (meta) {
+              var title =
+                (noteAgentSessions[noteAgentSessionKey(meta.kind, meta.itemId)] || {}).title ||
+                "";
+              notifyAgentReplyArrived(meta.kind, meta.itemId, "research", title);
+            } else if (sameNote) {
+              shareHaptic();
+              refreshNoteCommentsList();
+            }
+            finishPoll();
             return;
           }
-          setNotePaeiStatus("Research прервался. Запустите ещё раз.");
+          if (sameNote) setNotePaeiStatus("Research прервался. Запустите ещё раз.");
+          if (meta) endNoteAgentSession(meta.kind, meta.itemId);
+          finishPoll();
         })
         .catch(function (e) {
           tries += 1;
           var code = e && e.status;
           var transient = code === 502 || code === 503 || code === 504 || !code;
           if (transient && tries <= 24) {
-            setNotePaeiStatus("Сервер временно недоступен, пробую снова…", {
-              label: "Сервер временно недоступен, пробую снова…",
-              pct: 16,
-            });
+            if (sameNote) {
+              setNotePaeiStatus("Сервер временно недоступен, пробую снова…", {
+                label: "Сервер временно недоступен, пробую снова…",
+                pct: 16,
+              });
+            }
             setTimeout(tick, 3000);
             return;
           }
           if (tries > 8) {
-            var w = document.getElementById("note-editor-more-wrap");
-            if (w) w._researchRunning = false;
-            setNotePaeiStatus(e.message || "Не удалось проверить статус Research");
+            if (sameNote) {
+              live._researchRunning = false;
+              setNotePaeiStatus(e.message || "Не удалось проверить статус Research");
+            } else {
+              showNoteToast(e.message || "Не удалось проверить статус Research");
+            }
+            if (meta) endNoteAgentSession(meta.kind, meta.itemId);
+            finishPoll();
             return;
           }
           setTimeout(tick, 2500);
@@ -15971,8 +16972,12 @@
     var body = packed.text || String(text || "").trim();
     var quote = quotes.join("\n");
     if (!wrap || !path || wrap._researchRunning) return;
+    var kind = wrap._shareKind;
+    var itemId = wrap._shareId;
+    var sessionTitle = noteTitleForDiscussToast(kind, itemId, getNoteEditorTitle().trim() || "");
     wrap._researchRunning = true;
     wrap._discussionPinId = null;
+    beginNoteAgentSession(kind, itemId, "research", sessionTitle);
     ensureNotePaieThread();
     openNoteDiscussion({ mode: "research" });
     setNotePaeiStatus(body ? "Ищу в вебе…" : "Исследую заметку…", {
@@ -16009,26 +17014,40 @@
         markOptimisticUserSent();
         refreshNoteCommentsList();
         var status = (data && data.status) || "running";
+        var live = document.getElementById("note-editor-more-wrap");
+        var sameNote = !!(live && String(live._shareId) === String(itemId));
         if (status === "done") {
-          wrap._researchRunning = false;
-          setNotePaeiStatus("");
-          shareHaptic();
-          refreshNoteCommentsList();
+          if (sameNote) {
+            live._researchRunning = false;
+            setNotePaeiStatus("");
+          }
+          notifyAgentReplyArrived(kind, itemId, "research", sessionTitle);
           return;
         }
         if (status === "error") {
-          wrap._researchRunning = false;
-          setNotePaeiStatus((data && data.error) || "Не удалось запустить Research");
+          if (sameNote) {
+            live._researchRunning = false;
+            setNotePaeiStatus((data && data.error) || "Не удалось запустить Research");
+          } else {
+            showNoteToast((data && data.error) || "Не удалось запустить Research");
+          }
+          endNoteAgentSession(kind, itemId);
           return;
         }
-        if (data && data.progress) {
+        if (sameNote && data && data.progress) {
           setNotePaeiStatus(data.progress.label, data.progress);
         }
         pollNoteResearch(path);
       })
       .catch(function (e) {
-        wrap._researchRunning = false;
-        setNotePaeiStatus(e.message || "Не удалось запустить Research");
+        var live = document.getElementById("note-editor-more-wrap");
+        if (live && String(live._shareId) === String(itemId)) {
+          live._researchRunning = false;
+          setNotePaeiStatus(e.message || "Не удалось запустить Research");
+        } else {
+          showNoteToast(e.message || "Не удалось запустить Research");
+        }
+        endNoteAgentSession(kind, itemId);
       })
       .finally(function () {
         syncNotePaieReplyForm();
@@ -16045,6 +17064,12 @@
         if (!wrap || wrap._shareId !== String(itemId)) return;
         if (data && data.status === "running") {
           wrap._researchRunning = true;
+          beginNoteAgentSession(
+            kind,
+            itemId,
+            "research",
+            noteTitleForDiscussToast(kind, itemId, getNoteEditorTitle().trim() || "")
+          );
           ensureNotePaieThread();
           setNotePaeiStatus(
             (data.progress && data.progress.label) || "Ищу в вебе…",
@@ -17317,6 +18342,8 @@
       e.stopPropagation();
     });
 
+    mountDiscussUnreadBadge(actions, "local", id, false);
+
     if (n.pinned) {
       var pinIcon = document.createElement("span");
       pinIcon.className = "note-card-pin";
@@ -17652,6 +18679,7 @@
           inner.appendChild(createJournalPdfButton(jid));
         }
         appendItemLabelChips(inner, row);
+        mountDiscussUnreadBadge(inner, "journal", jid, true);
         card.appendChild(inner);
         card.addEventListener("click", function () {
           openJournalEditorDetail(row);
@@ -18819,6 +19847,7 @@
     hydrateNoteSheets(isKnowledge ? null : n, cleanBody);
     bindNoteTitleAutoresize(titleInput);
     if (titleInput) titleInput.addEventListener("input", schedulePatch);
+    if (!noteIsCreate && noteId) consumePendingDiscussOpen("local", noteId);
   }
 
   async function openJournalEditorDetail(row) {
@@ -18988,6 +20017,7 @@
     });
     bindNoteTitleAutoresize(titleInput);
     if (titleInput) titleInput.addEventListener("input", schedulePatch);
+    if (journalId) consumePendingDiscussOpen("journal", journalId);
   }
 
   function openTodoistDetail(n, opts) {
@@ -19360,6 +20390,7 @@
 
   function bootApp(tg) {
     showApp();
+    syncDigestSettingsFromServer().catch(function () {});
     if (tg) {
       try {
         tg.ready();
@@ -19469,9 +20500,15 @@
     }
     syncSidebarToggleUi();
 
-    document.querySelectorAll(".subtab-btn").forEach(function (b) {
+    document.querySelectorAll("#panel-notes .subtab-btn").forEach(function (b) {
       b.addEventListener("click", function () {
         setNotesSubTab(b.getAttribute("data-subtab"));
+      });
+    });
+
+    document.querySelectorAll("[data-digest-subtab]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        setDigestSubTab(b.getAttribute("data-digest-subtab"));
       });
     });
 
@@ -19725,6 +20762,43 @@
     if (agentsOpenBtn) {
       agentsOpenBtn.addEventListener("click", function () {
         openProfileAgents();
+      });
+    }
+    var chatsOpenBtn = document.getElementById("profile-chats-open");
+    if (chatsOpenBtn) {
+      chatsOpenBtn.addEventListener("click", function () {
+        profileScreen("chats");
+        loadProfileChatsScreen();
+      });
+    }
+    var chatsBack = document.getElementById("profile-chats-back");
+    if (chatsBack) {
+      chatsBack.addEventListener("click", function () {
+        profileScreen("main");
+      });
+    }
+    var digestToggle = document.getElementById("digest-enabled-toggle");
+    if (digestToggle) {
+      digestToggle.addEventListener("click", function () {
+        toggleDigestEnabled();
+      });
+    }
+    var digestDemoBtn = document.getElementById("digest-demo-seed-btn");
+    if (digestDemoBtn) {
+      digestDemoBtn.addEventListener("click", function () {
+        runDigestDemoSeed();
+      });
+    }
+    var digestRefreshBtn = document.getElementById("digest-refresh-btn");
+    if (digestRefreshBtn) {
+      digestRefreshBtn.addEventListener("click", function () {
+        refreshDigestReports();
+      });
+    }
+    var digestDetailBack = document.getElementById("digest-detail-back");
+    if (digestDetailBack) {
+      digestDetailBack.addEventListener("click", function () {
+        closeDigestDetail();
       });
     }
     var agentsBack = document.getElementById("profile-agents-back");
