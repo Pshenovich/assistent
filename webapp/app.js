@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261003-discuss-mention";
+  var WEBAPP_BUILD = "20261003-text-mention";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -12293,6 +12293,14 @@
     return mode === "gpt" || mode === "research" || isCustomAskMode(mode);
   }
 
+  function noteAskUsesComposerEditor(mode) {
+    return noteAskUsesChips(mode) || mode === "comment";
+  }
+
+  function noteAskAllowsMentions(mode) {
+    return isChatAskMode(mode) || mode === "comment";
+  }
+
   function noteAskPlaceholder(mode) {
     var wrap = document.getElementById("note-editor-more-wrap");
     var quoted = !!(wrap && wrap._commentDraft && String(wrap._commentDraft.quote || "").trim());
@@ -12690,7 +12698,7 @@
 
   function syncDiscussMentionMenu() {
     var ed = noteGptEditor();
-    if (!ed || !isChatAskMode(noteAskMode())) {
+    if (!ed || !noteAskAllowsMentions(noteAskMode())) {
       closeDiscussMentionMenu();
       return;
     }
@@ -14193,8 +14201,10 @@
       } else if (noteAskMode() === "research") {
         var researchPacked = serializeGptComposer(editor);
         submitNoteResearch(researchPacked.text);
-      } else if (noteAskMode() === "comment") submitNoteFooterComment(input && input.value);
-      else submitNotePaieReply(input && input.value);
+      } else if (noteAskMode() === "comment") {
+        var commentPacked = serializeGptComposer(editor);
+        submitNoteFooterComment(commentPacked.text);
+      } else submitNotePaieReply(input && input.value);
     });
     var replyClear = form.querySelector(".note-paie-reply-target-clear");
     if (replyClear && !replyClear._bound) {
@@ -14203,11 +14213,17 @@
         e.preventDefault();
         e.stopPropagation();
         clearNoteComposerCommentTarget();
-        var ta = document.getElementById("note-paie-reply-input");
-        if (ta) {
-          ta.placeholder = noteAskPlaceholder(noteAskMode());
+        var focusEl = noteAskUsesComposerEditor(noteAskMode())
+          ? noteGptEditor()
+          : document.getElementById("note-paie-reply-input");
+        if (focusEl) {
+          if (focusEl.id === "note-paie-reply-input") {
+            focusEl.placeholder = noteAskPlaceholder(noteAskMode());
+          } else {
+            focusEl.setAttribute("data-placeholder", noteAskPlaceholder(noteAskMode()));
+          }
           try {
-            ta.focus();
+            focusEl.focus();
           } catch (_) {}
         }
       });
@@ -15884,7 +15900,7 @@
     );
     var input = document.getElementById("note-paie-reply-input");
     var editor = noteGptEditor();
-    var focusEl = noteAskUsesChips(noteAskMode()) ? editor : input;
+    var focusEl = noteAskUsesComposerEditor(noteAskMode()) ? editor : input;
     var shouldFocus =
       opts.focus === true ||
       (!!opts.draft && !isDesktopLayout() && opts.focus !== false);
@@ -18202,6 +18218,7 @@
       );
       if (footSaved && footSaved.thread) upsertChatThreadCache(footSaved.thread);
       if (input) input.value = "";
+      clearGptComposer();
       clearDiscussPendingFiles();
       clearNoteComposerCommentTarget();
       shareHaptic();
@@ -18272,7 +18289,7 @@
         });
     }
     if (submit) {
-      var hasText = noteAskUsesChips(noteAskMode())
+      var hasText = noteAskUsesComposerEditor(noteAskMode())
         ? !gptComposerIsEmpty(editor)
         : !!(input && String(input.value || "").trim());
       var hasFiles =
