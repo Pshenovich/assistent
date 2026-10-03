@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261003-share-menu">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261003-offline-fix">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -46,7 +46,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261003-share-menu" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261003-offline-fix" />
   <link rel="preload" href="/webapp/note-rich-editor.js?v=20261002-ios-boot" as="script" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
@@ -96,6 +96,7 @@
               <h2 class="section-head-inline" id="meetings-head-title">Встречи</h2>
               <span id="meetings-badge" class="pill-badge hidden">0</span>
             </div>
+            <button type="button" class="meetings-today-btn hidden" id="meetings-today">Сегодня</button>
             <button type="button" class="cal-nav-btn" id="meetings-next" aria-label="Следующий день">›</button>
           </div>
           <div id="meetings-board" class="meetings-board">
@@ -1338,8 +1339,8 @@
     })();
   </script>
   <script src="/webapp/note-html.js?v=20261002-ios-boot" defer></script>
-  <script src="/webapp/note-comments.js?v=20261003-share-menu" defer></script>
+  <script src="/webapp/note-comments.js?v=20261003-offline-fix" defer></script>
   <script src="/webapp/note-rich-editor.js?v=20261002-ios-boot" defer></script>
-  <script src="/webapp/app.js?v=20261003-share-menu" defer></script>
+  <script src="/webapp/app.js?v=20261003-offline-fix" defer></script>
 </body>
 </html>

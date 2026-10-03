@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261003-share-menu";
+  var WEBAPP_BUILD = "20261003-offline-fix";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -204,13 +204,22 @@
     lastNetworkFailAt = Date.now();
   }
 
+  function markNetworkSuccess() {
+    lastNetworkFailAt = 0;
+  }
+
   function isAppOffline() {
     try {
       if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
     } catch (_) {}
-    // Mobile airplane mode often keeps onLine=true while fetch hangs.
-    if (lastNetworkFailAt && Date.now() - lastNetworkFailAt < 60000) return true;
     return false;
+  }
+
+  function isNetworkUnreliable() {
+    // Soft signal after a recent timeout/5xx — used only to reduce retries,
+    // never to block requests. Blocking caused "ждут сеть" + empty discussions
+    // while the device was actually online.
+    return !!(lastNetworkFailAt && Date.now() - lastNetworkFailAt < 12000);
   }
 
   function persistNotesCacheToDisk() {
@@ -528,6 +537,9 @@
       syncOfflineQueueBadge();
       return;
     }
+    // Previous sticky-offline logic left the queue stuck even when online.
+    // Clear soft failure flag so pending ops can actually sync.
+    markNetworkSuccess();
     var q = readOfflineQueue();
     if (!q.length) {
       syncOfflineQueueBadge();
@@ -594,10 +606,14 @@
     if (window._leoOfflineQueueBound) return;
     window._leoOfflineQueueBound = true;
     window.addEventListener("online", function () {
+      markNetworkSuccess();
       flushOfflineQueue();
     });
     document.addEventListener("visibilitychange", function () {
-      if (document.visibilityState === "visible") flushOfflineQueue();
+      if (document.visibilityState === "visible") {
+        if (!isAppOffline()) markNetworkSuccess();
+        flushOfflineQueue();
+      }
     });
     syncOfflineQueueBadge();
     setTimeout(function () {
@@ -734,9 +750,71 @@
     return isDesktopLayout() ? 2 : 1;
   }
 
+  var meetingsLoadGen = 0;
+
+  function meetingsPageShowsToday() {
+    var left = meetingsPageDate || todayIsoLocal();
+    var today = todayIsoLocal();
+    if (left === today) return true;
+    if (isDesktopLayout() && addDaysIso(left, 1) === today) return true;
+    return false;
+  }
+
+  function syncMeetingsTodayBtn() {
+    var btn = document.getElementById("meetings-today");
+    if (!btn) return;
+    setHidden(btn, meetingsPageShowsToday());
+  }
+
+  function paintMeetingsListSkeleton(ui, dateIso) {
+    var listM = document.getElementById(ui.listId);
+    var emptyM = document.getElementById(ui.emptyId);
+    var titleEl = ui.titleId ? document.getElementById(ui.titleId) : null;
+    if (titleEl) titleEl.textContent = formatMeetingsDayTitle(dateIso || "");
+    var dayCol = ui.dayId ? document.getElementById(ui.dayId) : null;
+    if (dayCol) dayCol.classList.toggle("meetings-day--today", dateIso === todayIsoLocal());
+    if (emptyM) setHidden(emptyM, true);
+    if (!listM) return;
+    listM.classList.add("meetings-stack--timeline");
+    listM.innerHTML =
+      '<div class="meetings-skeleton" aria-hidden="true" aria-busy="true">' +
+      '<div class="meetings-skeleton-row" style="width:74%"></div>' +
+      '<div class="meetings-skeleton-row meetings-skeleton-row--tall" style="width:88%"></div>' +
+      '<div class="meetings-skeleton-row" style="width:62%"></div>' +
+      '<div class="meetings-skeleton-row meetings-skeleton-row--tall" style="width:80%"></div>' +
+      '<div class="meetings-skeleton-row" style="width:70%"></div>' +
+      "</div>";
+  }
+
+  function showMeetingsDaySkeleton() {
+    var dual = isDesktopLayout();
+    var leftIso = meetingsPageDate || todayIsoLocal();
+    var rightIso = dual ? addDaysIso(leftIso, 1) : null;
+    syncMeetingsHead(leftIso, rightIso);
+    paintMeetingsListSkeleton(meetingsUiMain, leftIso);
+    if (dual) paintMeetingsListSkeleton(meetingsUiNext, rightIso);
+    else {
+      var nextList = document.getElementById(meetingsUiNext.listId);
+      if (nextList) nextList.innerHTML = "";
+    }
+  }
+
   function shiftMeetingsPage(delta) {
     meetingsPageDate = addDaysIso(meetingsPageDate || todayIsoLocal(), delta);
     timelineScrolledKey = "";
+    showMeetingsDaySkeleton();
+    loadActual();
+  }
+
+  function goMeetingsToday() {
+    var today = todayIsoLocal();
+    if ((meetingsPageDate || today) === today) {
+      syncMeetingsTodayBtn();
+      return;
+    }
+    meetingsPageDate = today;
+    timelineScrolledKey = "";
+    showMeetingsDaySkeleton();
     loadActual();
   }
 
@@ -1114,8 +1192,7 @@
 
   async function loadMeetingsInto(ui, dateIso) {
     var errM = document.getElementById(ui.errId);
-    var listM = document.getElementById(ui.listId);
-    if (listM) listM.innerHTML = '<p class="muted small">Загрузка…</p>';
+    paintMeetingsListSkeleton(ui, dateIso);
     var calData;
     try {
       calData = await fetchCalendarDay(dateIso);
@@ -1130,6 +1207,7 @@
       meetingsPageDate = calData.date;
     }
     paintMeetingsList(ui, calData, lastRemindersItems);
+    syncMeetingsTodayBtn();
     return calData;
   }
 
@@ -1220,6 +1298,7 @@
     if (next) next.setAttribute("aria-label", dual ? "Следующие два дня" : "Следующий день");
     var board = document.getElementById("meetings-board");
     if (board) board.classList.toggle("meetings-board--dual", dual);
+    syncMeetingsTodayBtn();
   }
 
   function updateMeetingsBadge(leftData, rightData) {
@@ -2765,6 +2844,7 @@
         if (res.status >= 500) markNetworkFailure();
         throw err;
       }
+      markNetworkSuccess();
       return body;
     } catch (e) {
       if (abortTimer) clearTimeout(abortTimer);
@@ -2792,8 +2872,8 @@
     }
     const maxTries =
       method === "GET" || method === "HEAD"
-        ? isAppOffline() || lastNetworkFailAt
-          ? 1
+        ? isNetworkUnreliable()
+          ? 2
           : 12
         : 1;
     var lastErr = null;
@@ -9136,6 +9216,7 @@
     const errM = document.getElementById("meetings-error");
     var dual = isDesktopLayout();
     var leftIso = meetingsPageDate || todayIsoLocal();
+    var loadGen = ++meetingsLoadGen;
     var cacheKind = "actual_" + leftIso + (dual ? "_2" : "");
     var cached = readMiniappCache(cacheKind);
     if (cached) {
@@ -9157,6 +9238,7 @@
     var contactP = refreshCalendarContacts();
     var results = await Promise.allSettled(fetches);
     await contactP;
+    if (loadGen !== meetingsLoadGen) return;
 
     if (results[0].status === "fulfilled") {
       remData = results[0].value;
@@ -9194,6 +9276,7 @@
       }
     }
 
+    if (loadGen !== meetingsLoadGen) return;
     paintActual(remData, calData, calDataNext);
     writeMiniappCache(cacheKind, {
       remData: remData,
@@ -22940,6 +23023,9 @@
     });
     onId("meetings-next", "click", function () {
       shiftMeetingsPage(meetingsPageStep());
+    });
+    onId("meetings-today", "click", function () {
+      goMeetingsToday();
     });
 
     onId("gpt-close", "click", closeGptChat);
