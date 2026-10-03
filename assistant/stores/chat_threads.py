@@ -109,6 +109,34 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def _attach_message_stats(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not rows:
+        return rows
+    try:
+        from assistant.stores import share_comments
+
+        keys = [
+            (str(r.get("owner_user_id") or ""), "chat", str(r.get("id") or ""))
+            for r in rows
+            if r.get("id") is not None
+        ]
+        stats = share_comments.comment_activity(keys)
+    except Exception:
+        stats = {}
+    for row in rows:
+        owner = str(row.get("owner_user_id") or "")
+        tid = str(row.get("id") or "")
+        act = stats.get((owner, "chat", tid)) or {}
+        count = int(act.get("count") or 0)
+        row["has_messages"] = count > 0
+        row["message_count"] = count
+        if not str(row.get("last_preview") or "").strip():
+            fallback = str(act.get("preview") or "").strip()
+            if fallback:
+                row["last_preview"] = fallback[:MAX_PREVIEW_LEN]
+    return rows
+
+
 def list_threads(owner_user_id: int | str, *, limit: int = 100) -> list[dict[str, Any]]:
     uid = _uid(owner_user_id)
     lim = max(1, min(int(limit or 100), 300))
@@ -130,7 +158,7 @@ def list_threads(owner_user_id: int | str, *, limit: int = 100) -> list[dict[str
     for row in rows:
         row["members"] = list_members_public(row["owner_user_id"], row["id"])
         row["is_owner"] = str(row.get("owner_user_id") or "") == uid
-    return rows
+    return _attach_message_stats(rows)
 
 
 def get_thread(owner_user_id: int | str, thread_id: int | str) -> Optional[dict[str, Any]]:
@@ -151,6 +179,7 @@ def get_thread(owner_user_id: int | str, thread_id: int | str) -> Optional[dict[
     item = _row_to_dict(row)
     item["members"] = list_members_public(uid, tid)
     item["is_owner"] = True
+    _attach_message_stats([item])
     return item
 
 
@@ -173,6 +202,7 @@ def get_accessible_thread(
         return None
     item["members"] = list_members_public(owner, tid)
     item["is_owner"] = owner == uid
+    _attach_message_stats([item])
     return item
 
 
@@ -267,6 +297,8 @@ def touch_preview(
     except (TypeError, ValueError):
         return None
     prev = _clip(re.sub(r"\s+", " ", preview or ""), MAX_PREVIEW_LEN)
+    if not prev:
+        return get_thread(uid, tid)
     now = _now_iso()
     with _LOCK:
         cur = _conn().execute(

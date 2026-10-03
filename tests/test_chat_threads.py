@@ -90,6 +90,39 @@ def test_cascade_delete_comments(threads_db, monkeypatch):
     assert share_comments.list_comments(3, "chat", row["id"]) == []
 
 
+def test_list_marks_has_messages_from_comments(threads_db, monkeypatch):
+    store = threads_db
+    from assistant.stores import share_comments
+
+    monkeypatch.setattr(store, "suggest_chat_title", lambda _m: "X")
+    empty = store.create_thread(8)
+    filled = store.create_thread(8, title="Рабочий чат")
+    share_comments.add_comment(
+        8,
+        "chat",
+        filled["id"],
+        author_user_id=8,
+        author_name="User",
+        body="нужен план на неделю",
+    )
+    listed = {int(t["id"]): t for t in store.list_threads(8)}
+    assert listed[int(empty["id"])]["has_messages"] is False
+    assert listed[int(empty["id"])]["message_count"] == 0
+    assert listed[int(filled["id"])]["has_messages"] is True
+    assert listed[int(filled["id"])]["message_count"] == 1
+    assert "план" in listed[int(filled["id"])]["last_preview"]
+
+
+def test_touch_preview_ignores_empty(threads_db, monkeypatch):
+    store = threads_db
+    monkeypatch.setattr(store, "suggest_chat_title", lambda _m: "X")
+    row = store.create_thread(9)
+    store.after_comment(9, row["id"], "Первое сообщение", is_user=True)
+    again = store.touch_preview(9, row["id"], "   ")
+    assert again is not None
+    assert "Первое" in again["last_preview"]
+
+
 def test_chat_members(threads_db, monkeypatch):
     store = threads_db
     from assistant.stores import note_members

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261003-month-events";
+  var WEBAPP_BUILD = "20261003-chats-keep";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -693,6 +693,7 @@
   var activeChatThreadId = "";
   var chatThreadsLoading = false;
   var leavingChatsTab = false;
+  var sessionChatDraftIds = Object.create(null);
   let selectedPaymentMethod = "";
   let miniappDev = false;
   var meetingsPageDate = null;
@@ -12024,17 +12025,30 @@
   }
 
   function chatThreadHasMessages(thread) {
-    return !!String((thread && thread.last_preview) || "").trim();
+    if (!thread) return false;
+    if (thread.has_messages === true) return true;
+    if (Number(thread.message_count) > 0) return true;
+    if (String(thread.last_preview || "").trim()) return true;
+    return false;
+  }
+
+  function isEmptyChatDraft(thread) {
+    if (!thread || chatThreadHasMessages(thread)) return false;
+    if (thread.pinned || thread.title_locked) return false;
+    var title = String(thread.title || "").trim() || "Новый чат";
+    return title === "Новый чат";
   }
 
   function visibleChatThreads() {
-    return (chatThreadsCache || []).filter(chatThreadHasMessages);
+    return (chatThreadsCache || []).filter(function (t) {
+      return chatThreadHasMessages(t) || !isEmptyChatDraft(t);
+    });
   }
 
   function findEmptyChatDraft(exceptId) {
     for (var i = 0; i < (chatThreadsCache || []).length; i++) {
       var t = chatThreadsCache[i];
-      if (!chatThreadHasMessages(t) && String(t.id) !== String(exceptId || "")) {
+      if (isEmptyChatDraft(t) && String(t.id) !== String(exceptId || "")) {
         return t;
       }
     }
@@ -12043,19 +12057,26 @@
 
   async function pruneEmptyChatDrafts(keepId) {
     var empties = (chatThreadsCache || []).filter(function (t) {
-      return !chatThreadHasMessages(t) && String(t.id) !== String(keepId || "");
+      var id = String(t.id);
+      if (String(id) === String(keepId || "")) return false;
+      if (!isEmptyChatDraft(t)) return false;
+      return !!sessionChatDraftIds[id];
     });
     if (!empties.length) return;
     for (var i = 0; i < empties.length; i++) {
       var id = String(empties[i].id);
       try {
         await apiFetch("/chats/" + encodeURIComponent(id), { method: "DELETE" });
+        delete sessionChatDraftIds[id];
       } catch (_) {}
     }
     chatThreadsCache = (chatThreadsCache || []).filter(function (t) {
-      return chatThreadHasMessages(t) || String(t.id) === String(keepId || "");
+      return !empties.some(function (e) {
+        return String(e.id) === String(t.id);
+      });
     });
     renderChatThreadsList();
+    renderSidebarTrees();
   }
 
   function closeChatThreadMenus() {
@@ -12114,6 +12135,7 @@
       return t;
     });
     if (!found) chatThreadsCache.unshift(thread);
+    if (chatThreadHasMessages(thread)) delete sessionChatDraftIds[id];
     sortChatThreadsCache();
     renderChatThreadsList();
     if (String(activeChatThreadId) === id) {
@@ -12450,6 +12472,7 @@
       var thread = data && data.chat;
       if (!thread) throw new Error("Не удалось создать чат");
       upsertChatThreadCache(thread);
+      sessionChatDraftIds[String(thread.id)] = 1;
       await openChatThread(thread);
     } catch (e) {
       alert(e.message || String(e));

@@ -12331,6 +12331,9 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   height: auto;
   max-height: none;
   align-self: stretch;
+  position: relative;
+  z-index: 3;
+  visibility: visible !important;
 }
 
 #notes-pane-chats:not(.hidden) .chat-threads-splitter {

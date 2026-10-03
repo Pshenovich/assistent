@@ -468,6 +468,73 @@ def latest_briefs(
     return out
 
 
+def comment_activity(
+    keys: list[tuple[str, str, str]],
+) -> dict[tuple[str, str, str], dict[str, Any]]:
+    """Число комментариев и превью последнего непустого текста по ключам."""
+    want: set[tuple[str, str, str]] = set()
+    for owner, kind, item_id in keys:
+        o = str(owner or "").strip()
+        k = str(kind or "").strip()
+        i = str(item_id or "").strip()
+        if not o or k not in _VALID_KINDS or not i:
+            continue
+        want.add((o, k, i))
+    if not want:
+        return {}
+    owners = sorted({o for o, _, _ in want})
+    kinds = sorted({k for _, k, _ in want})
+    item_ids = sorted({i for _, _, i in want})
+    own_ph = ",".join("?" for _ in owners)
+    kind_ph = ",".join("?" for _ in kinds)
+    id_ph = ",".join("?" for _ in item_ids)
+    with _LOCK:
+        cur = _conn().execute(
+            f"""
+            SELECT owner_user_id, item_kind, item_id,
+                   COUNT(*) AS cnt,
+                   MAX(id) AS mid,
+                   MAX(CASE WHEN TRIM(body) != '' THEN id END) AS mid_text
+            FROM share_comments
+            WHERE owner_user_id IN ({own_ph})
+              AND item_kind IN ({kind_ph})
+              AND item_id IN ({id_ph})
+            GROUP BY owner_user_id, item_kind, item_id
+            """,
+            (*owners, *kinds, *item_ids),
+        )
+        grouped = [
+            (
+                str(r["owner_user_id"]),
+                str(r["item_kind"]),
+                str(r["item_id"]),
+                int(r["cnt"] or 0),
+                int(r["mid_text"] or r["mid"] or 0),
+            )
+            for r in cur.fetchall()
+            if (str(r["owner_user_id"]), str(r["item_kind"]), str(r["item_id"])) in want
+        ]
+        mids = [mid for *_, mid in grouped if mid]
+        by_id: dict[int, dict[str, Any]] = {}
+        if mids:
+            mid_ph = ",".join("?" for _ in mids)
+            cur = _conn().execute(
+                f"SELECT * FROM share_comments WHERE id IN ({mid_ph})",
+                mids,
+            )
+            by_id = {int(r["id"]): _row_to_dict(r) for r in cur.fetchall()}
+    out: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for owner, kind, item_id, count, mid in grouped:
+        row = by_id.get(mid) if mid else None
+        preview = _clip(str((row or {}).get("body") or ""), MAX_BODY_LEN).strip()
+        preview = " ".join(preview.split())
+        out[(owner, kind, item_id)] = {
+            "count": count,
+            "preview": preview[:160],
+        }
+    return out
+
+
 def attach_discuss_latest(
     items: list[dict[str, Any]],
     *,
