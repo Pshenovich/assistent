@@ -3859,8 +3859,8 @@ def _calendar_range_payload(
             raw["_calendarId"] = str(norm.get("calendar_id") or raw.get("_calendarId") or "primary")
             start = norm.get("start")
             end = norm.get("end")
-            if isinstance(start, datetime):
-                start_local = start.astimezone(tz)
+            start_local = start.astimezone(tz) if isinstance(start, datetime) else None
+            if start_local is not None:
                 raw["_start_day"] = start_local.date().isoformat()
                 raw["start"] = raw.get("start") if isinstance(raw.get("start"), dict) else {}
                 if not raw["start"].get("dateTime") and not raw["start"].get("date"):
@@ -3872,7 +3872,11 @@ def _calendar_range_payload(
                 end_local = end.astimezone(tz)
                 raw["_end_day"] = end_local.date().isoformat()
                 is_all_day = bool((raw.get("start") or {}).get("date") and not (raw.get("start") or {}).get("dateTime"))
-                raw["_day_end_exclusive"] = is_all_day or end_local.time() == datetime.min.time()
+                ends_midnight = end_local.time() == datetime.min.time()
+                raw["_day_end_exclusive"] = is_all_day or (
+                    ends_midnight
+                    and (start_local is None or end_local.date() > start_local.date())
+                )
                 raw["end"] = raw.get("end") if isinstance(raw.get("end"), dict) else {}
                 if not raw["end"].get("dateTime") and not raw["end"].get("date"):
                     raw["end"] = {

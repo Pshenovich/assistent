@@ -49,6 +49,33 @@ def test_dedupe_by_ical_uid_prefers_primary():
     assert out[0]["calendar_id"] == "primary"
 
 
+def test_dedupe_keeps_recurring_instances():
+    tz = ZoneInfo("Europe/Moscow")
+    first = datetime(2026, 10, 7, 11, 0, tzinfo=tz)
+    second = datetime(2026, 10, 14, 11, 0, tzinfo=tz)
+    a = {
+        "calendar_id": "primary",
+        "event_id": "rec_20261007",
+        "summary": "Еженедельный синк",
+        "ical_uid": "series-1",
+        "start": first,
+        "end": first + timedelta(hours=1),
+        "raw": {},
+    }
+    b = {
+        "calendar_id": "primary",
+        "event_id": "rec_20261014",
+        "summary": "Еженедельный синк",
+        "ical_uid": "series-1",
+        "start": second,
+        "end": second + timedelta(hours=1),
+        "raw": {},
+    }
+    out = cs.dedupe_events([a, b])
+    starts = {ev["start"] for ev in out}
+    assert starts == {first, second}
+
+
 def test_set_calendar_excluded_filters_unknown_ids():
     with patch.object(cs, "list_readable_calendars") as lst:
         lst.return_value = [

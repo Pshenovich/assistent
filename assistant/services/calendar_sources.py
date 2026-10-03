@@ -205,18 +205,33 @@ def _event_preference_key(norm: dict[str, Any]) -> tuple[int, int]:
     return (is_primary, has_meet)
 
 
+def _instance_dedupe_key(ev: dict[str, Any]) -> tuple[str, str] | None:
+    """Один ключ на экземпляр: серия (iCalUID) + старт, а не вся серия целиком."""
+    uid = str(ev.get("ical_uid") or "").strip()
+    if not uid:
+        return None
+    start = ev.get("start")
+    if isinstance(start, datetime):
+        start_key = start.isoformat()
+    else:
+        start_key = str(ev.get("start_iso") or ev.get("event_id") or "").strip()
+    if not start_key:
+        return None
+    return (uid, start_key)
+
+
 def dedupe_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_uid: dict[str, dict[str, Any]] = {}
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
     without_uid: list[dict[str, Any]] = []
     for ev in events:
-        uid = str(ev.get("ical_uid") or "").strip()
-        if not uid:
+        key = _instance_dedupe_key(ev)
+        if not key:
             without_uid.append(ev)
             continue
-        prev = by_uid.get(uid)
+        prev = by_key.get(key)
         if not prev or _event_preference_key(ev) > _event_preference_key(prev):
-            by_uid[uid] = ev
-    merged = list(by_uid.values()) + without_uid
+            by_key[key] = ev
+    merged = list(by_key.values()) + without_uid
     merged.sort(
         key=lambda e: (
             e.get("start").isoformat()

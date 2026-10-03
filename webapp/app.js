@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261003-chats-keep";
+  var WEBAPP_BUILD = "20261003-month-instances";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -1059,40 +1059,31 @@
 
   function eventCoversDate(ev, dateIso) {
     if (!ev || !dateIso) return false;
-    var taggedStart = String(ev.start_day || "").slice(0, 10);
-    if (taggedStart) {
-      var taggedEnd = String(ev.end_day || taggedStart).slice(0, 10);
-      if (!taggedEnd || taggedEnd < taggedStart) taggedEnd = taggedStart;
-      if (ev.day_end_exclusive) return taggedStart <= dateIso && dateIso < taggedEnd;
-      return taggedStart <= dateIso && dateIso <= taggedEnd;
-    }
     if (eventIsAllDay(ev)) {
-      var start = String((ev.start && ev.start.date) || "").slice(0, 10);
-      var end = String((ev.end && ev.end.date) || "").slice(0, 10);
+      var start = String((ev.start && ev.start.date) || ev.start_day || "").slice(0, 10);
+      var end = String((ev.end && ev.end.date) || ev.end_day || "").slice(0, 10);
       if (!start) return false;
       if (!end || end <= start) end = addDaysIso(start, 1);
       return start <= dateIso && dateIso < end;
     }
-    var rawStart = String((ev.start && (ev.start.dateTime || ev.start.date)) || "");
+    var day0 = dayStartMs(dateIso);
+    var day1 = dayStartMs(addDaysIso(dateIso, 1));
+    if (!isFinite(day0) || !isFinite(day1)) return false;
     var startMs = eventStartMs(ev);
-    var startIso =
-      startMs != null
-        ? localDateIsoFromMs(startMs)
-        : rawStart.length >= 10
-          ? rawStart.slice(0, 10)
-          : "";
-    if (!startIso) return false;
     var endMs = eventEndMs(ev);
-    var rawEnd = String((ev.end && (ev.end.dateTime || ev.end.date)) || "");
-    var endIso =
-      endMs != null
-        ? localDateIsoFromMs(endMs)
-        : rawEnd.length >= 10
-          ? rawEnd.slice(0, 10)
-          : startIso;
-    if (!endIso || endIso < startIso) endIso = startIso;
-    if (startIso === endIso) return startIso === dateIso;
-    return startIso <= dateIso && dateIso <= endIso && !(dateIso === endIso && endMs === dayStartMs(endIso));
+    if (startMs != null) {
+      if (endMs == null || endMs < startMs) endMs = startMs;
+      if (endMs === startMs) return startMs >= day0 && startMs < day1;
+      return startMs < day1 && endMs > day0;
+    }
+    var taggedStart = String(ev.start_day || "").slice(0, 10);
+    if (!taggedStart) return false;
+    var taggedEnd = String(ev.end_day || taggedStart).slice(0, 10);
+    if (!taggedEnd || taggedEnd < taggedStart) taggedEnd = taggedStart;
+    if (ev.day_end_exclusive && taggedEnd > taggedStart) {
+      return taggedStart <= dateIso && dateIso < taggedEnd;
+    }
+    return taggedStart <= dateIso && dateIso <= taggedEnd;
   }
 
   function eventsForDate(events, dateIso) {
