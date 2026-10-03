@@ -2876,6 +2876,12 @@ def _comment_api(row: dict[str, Any], *, viewer_uid: str | None = None) -> dict[
         ]
     except Exception:
         attachments = []
+    is_paie = share_comments_store.is_paie_comment(row)
+    is_gpt = share_comments_store.is_gpt_comment(row)
+    is_research = share_comments_store.is_research_comment(row)
+    is_agent = share_comments_store.is_agent_turn(row)
+    is_assistant = is_paie or is_gpt or is_research or is_agent
+    is_mine = bool(viewer_uid) and viewer_uid == author and not is_assistant
     return {
         "id": int(row["id"]),
         "author_user_id": author,
@@ -2887,11 +2893,12 @@ def _comment_api(row: dict[str, Any], *, viewer_uid: str | None = None) -> dict[
         "prefix": str(row.get("prefix") or ""),
         "suffix": str(row.get("suffix") or ""),
         "parent_id": parent_id,
-        "is_paie": share_comments_store.is_paie_comment(row),
-        "is_gpt": share_comments_store.is_gpt_comment(row),
-        "is_research": share_comments_store.is_research_comment(row),
-        "is_agent": share_comments_store.is_agent_turn(row),
+        "is_paie": is_paie,
+        "is_gpt": is_gpt,
+        "is_research": is_research,
+        "is_agent": is_agent,
         "agent_id": share_comments_store.agent_id_of(row),
+        "is_mine": is_mine,
         "can_delete": can_delete,
         "attachments": attachments,
     }
@@ -3123,6 +3130,134 @@ def _notify_edit_request(req: dict[str, Any], title: str) -> None:
         f"{link}\nпользователь {who} просит права редактировать",
         reply_markup=kb,
     )
+
+
+def _discussion_item_title(owner: str, kind: str, item_id: str) -> str:
+    kind = (kind or "").strip()
+    if kind == "local":
+        from assistant.stores import notes as notes_store
+
+        try:
+            note = notes_store.get_note(owner, int(item_id))
+        except (TypeError, ValueError):
+            note = None
+        if note:
+            return str(note.get("title") or note.get("content") or "Заметка").strip() or "Заметка"
+        return "Заметка"
+    if kind == "chat":
+        from assistant.stores import chat_threads as chat_threads_store
+
+        thread = chat_threads_store.get_thread(owner, item_id)
+        if thread:
+            return str(thread.get("title") or "Чат").strip() or "Чат"
+        return "Чат"
+    return "Обсуждение"
+
+
+def _discussion_participants(owner: str, kind: str, item_id: str) -> list[dict[str, Any]]:
+    kind = (kind or "").strip()
+    if kind == "local":
+        from assistant.stores import note_members
+
+        try:
+            return note_members.list_members_public(owner, int(item_id))
+        except (TypeError, ValueError):
+            return []
+    if kind == "chat":
+        from assistant.stores import chat_threads as chat_threads_store
+
+        return chat_threads_store.list_members_public(owner, item_id)
+    return []
+
+
+def _discussion_webapp_url(kind: str, item_id: str) -> str:
+    from urllib.parse import quote
+
+    from assistant.lib.webapp_public import webapp_entry_url
+
+    base = webapp_entry_url()
+    sep = "&" if "?" in base else "?"
+    kind = (kind or "").strip()
+    raw = str(item_id or "").strip()
+    if kind == "local":
+        return f"{base}{sep}note={quote(raw, safe='')}"
+    if kind == "chat":
+        return f"{base}{sep}chat={quote(raw, safe='')}"
+    return base
+
+
+def _discussion_title_link_html(title: str, kind: str, item_id: str) -> str:
+    from html import escape as html_escape
+
+    label = html_escape((title or "").strip() or "Обсуждение")
+    url = html_escape(_discussion_webapp_url(kind, item_id), quote=True)
+    return f'<a href="{url}">{label}</a>'
+
+
+def _discussion_participants_system_hint(owner: str, kind: str, item_id: str) -> str:
+    members = _discussion_participants(owner, kind, item_id)
+    if len(members) < 2:
+        return ""
+    lines: list[str] = []
+    for m in members:
+        name = str(m.get("name") or "Участник").strip() or "Участник"
+        uname = str(m.get("username") or "").strip().lstrip("@")
+        if uname:
+            lines.append(f"- @{uname} — {name}")
+        else:
+            lines.append(f"- {name} (id {m.get('user_id')})")
+    joined = "\n".join(lines)
+    return (
+        "Это совместное обсуждение нескольких людей. Участники:\n"
+        f"{joined}\n"
+        "Сообщения пользователей в истории помечены именем/@username автора. "
+        "Упоминание @username в тексте относится к этому участнику. "
+        "В ответах ссылайся на людей по @username или имени, когда это уместно."
+    )
+
+
+def _notify_discussion_comment(
+    *,
+    owner: str,
+    kind: str,
+    item_id: str,
+    author_user_id: str,
+    author_name: str,
+    author_username: str | None,
+    body: str,
+    is_assistant: bool,
+) -> None:
+    """Пуш участникам, у которых сейчас не открыто это обсуждение."""
+    from assistant.lib.telegram_notify import send_message
+    from assistant.stores import discussion_presence
+    from assistant.stores import note_members
+    from html import escape as html_escape
+
+    members = _discussion_participants(owner, kind, item_id)
+    if len(members) < 2:
+        return
+    present = discussion_presence.present_user_ids(owner, kind, item_id)
+    skip = set(present)
+    if not is_assistant:
+        skip.add(str(author_user_id))
+    title = _discussion_item_title(owner, kind, item_id)
+    link = _discussion_title_link_html(title, kind, item_id)
+    who = note_members.requester_label(author_username, author_name, str(author_user_id))
+    if is_assistant:
+        who = html_escape(str(author_name or "GPT"))
+    preview = " ".join(str(body or "").split())
+    if len(preview) > 180:
+        preview = preview[:179] + "…"
+    preview = html_escape(preview) if preview else "Новое сообщение"
+    text = f"{who} в обсуждении {link}:\n{preview}"
+    for m in members:
+        mid = str(m.get("user_id") or "").strip()
+        if not mid or mid in skip:
+            continue
+        try:
+            send_message(int(mid), text)
+        except Exception as e:
+            print(f"[discuss_notify] fail uid={mid} err={e!r}")
 
 
 def _event_meet_url(ev: dict[str, Any]) -> Optional[str]:
@@ -3803,9 +3938,11 @@ async def miniapp_me(principal: _MiniappPrincipal = Depends(require_miniapp_user
     u = principal.user
     await run_in_threadpool(_remember_principal_profile, principal)
     return {
-        "id": u.get("id"),
+        "id": u.get("id") if u.get("id") is not None else int(principal.telegram_user_id),
+        "telegram_user_id": int(principal.telegram_user_id),
         "username": u.get("username"),
         "first_name": u.get("first_name"),
+        "last_name": u.get("last_name"),
         "language_code": u.get("language_code"),
         "bot_username": _miniapp_resolve_bot_username(),
     }
@@ -5049,11 +5186,11 @@ async def miniapp_gpt_chat(
         kb_version = ""
         images, files, file_notes = _load_prompt_media()
         prompt = q or "Опиши вложение и ответь по нему."
+        kind = str(body.item_kind or "").strip()
+        iid = str(body.item_id or "").strip()
         if not images:
             from assistant.stores import comment_files as _cf
 
-            kind = str(body.item_kind or "").strip()
-            iid = str(body.item_id or "").strip()
             if kind in ("local", "journal", "chat") and iid and (
                 _cf.wants_image_delivery(prompt)
                 or _cf.wants_resend_attachment(prompt)
@@ -5101,6 +5238,13 @@ async def miniapp_gpt_chat(
                 uid, query, note_ids=kb_ids if body.knowledge_note_ids is not None else None
             )
         attached_notes = pack_attached_notes(uid, body.context_note_ids)
+        system_text = str(agent.get("system") or "")
+        if kind in ("local", "chat") and iid:
+            owner_for_hint = _resolve_item_owner(str(uid), kind, iid)
+            if owner_for_hint:
+                hint = _discussion_participants_system_hint(owner_for_hint, kind, iid)
+                if hint:
+                    system_text = (system_text.rstrip() + "\n\n" + hint).strip() if system_text else hint
         try:
             set_openrouter_usage_telegram_user(
                 telegram_user_id=uid,
@@ -5120,7 +5264,7 @@ async def miniapp_gpt_chat(
                 images=images or None,
                 files=files or None,
                 file_notes=file_notes,
-                system=str(agent.get("system") or ""),
+                system=system_text,
                 temperature=agent.get("temperature"),
                 web=bool(agent.get("web_search")),
             )
@@ -6633,7 +6777,74 @@ async def miniapp_share_comments_create(
         )
         if thread:
             out["thread"] = thread
+    is_assistant = bool(
+        role in ("gpt",)
+        or role.startswith("agent:")
+        or share_comments_store.is_gpt_comment(row)
+        or share_comments_store.is_paie_comment(row)
+        or share_comments_store.is_research_comment(row)
+        or share_comments_store.is_agent_turn(row)
+    )
+    try:
+        await run_in_threadpool(
+            partial(
+                _notify_discussion_comment,
+                owner=owner,
+                kind=kind,
+                item_id=str(item_id),
+                author_user_id=author_id,
+                author_name=author_name,
+                author_username=author_username,
+                body=text,
+                is_assistant=is_assistant,
+            )
+        )
+    except Exception as e:
+        print(f"[discuss_notify] schedule_fail err={e!r}")
     return out
+
+
+@miniapp_router.post("/notes/{kind}/{item_id}/discuss-presence")
+async def miniapp_discuss_presence_heartbeat(
+    kind: str,
+    item_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import discussion_presence
+
+    uid = str(int(principal.telegram_user_id))
+    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    if not owner:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    _, name, username = _comment_author_from_principal(principal)
+    present = await run_in_threadpool(
+        discussion_presence.heartbeat,
+        owner,
+        kind,
+        str(item_id),
+        uid,
+        display_name=name,
+        username=username,
+    )
+    return {"ok": True, "present": present}
+
+
+@miniapp_router.delete("/notes/{kind}/{item_id}/discuss-presence")
+async def miniapp_discuss_presence_leave(
+    kind: str,
+    item_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import discussion_presence
+
+    uid = str(int(principal.telegram_user_id))
+    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    if not owner:
+        return {"ok": True}
+    await run_in_threadpool(
+        discussion_presence.leave, owner, kind, str(item_id), uid
+    )
+    return {"ok": True}
 
 
 @miniapp_router.delete("/notes/{kind}/{item_id}/comments/{comment_id}")

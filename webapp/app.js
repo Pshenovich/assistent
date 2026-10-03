@@ -117,9 +117,10 @@
       (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
     );
   }
-  function getMiniappCacheUserKey() {
-    if (cachedMe && cachedMe.telegram_user_id != null) {
-      return String(cachedMe.telegram_user_id);
+  function currentTelegramUserId() {
+    if (cachedMe) {
+      if (cachedMe.telegram_user_id != null) return String(cachedMe.telegram_user_id);
+      if (cachedMe.id != null) return String(cachedMe.id);
     }
     var raw = getInitDataRaw();
     if (raw) {
@@ -129,6 +130,12 @@
         if (user && user.id != null) return String(user.id);
       } catch (_) {}
     }
+    return "";
+  }
+
+  function getMiniappCacheUserKey() {
+    var uid = currentTelegramUserId();
+    if (uid) return uid;
     var sess = getStoredSession();
     if (sess) return "s_" + sess.slice(0, 16);
     return "anon";
@@ -11532,12 +11539,7 @@
     var lines = ["# " + String((thread && thread.title) || "Чат"), ""];
     rows.forEach(function (c) {
       if (!c) return;
-      var who =
-        c.is_gpt || String(c.author_username || "").toLowerCase() === "gpt"
-          ? "GPT"
-          : c.is_agent
-            ? String(c.author_name || "Агент")
-            : "Вы";
+      var who = discussionAuthorLabel(c);
       var body = String(c.body || "").trim();
       if (!body) return;
       lines.push("**" + who + ":** " + body);
@@ -12153,6 +12155,24 @@
     return "";
   }
 
+  function pendingChatIdFromLocation() {
+    try {
+      var q = new URLSearchParams(location.search || "");
+      var c = q.get("chat") || q.get("c");
+      if (c && String(c).trim()) return String(c).trim();
+    } catch (_) {}
+    var hash = String(location.hash || "").replace(/^#/, "");
+    var hm = hash.match(/(?:^|&)chat=([^&]+)/) || hash.match(/^chat=([^&]+)/);
+    if (hm) return decodeURIComponent(hm[1]);
+    var tg = window.Telegram && window.Telegram.WebApp;
+    var start = tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param;
+    if (start) {
+      var sm = String(start).match(/^chat[_-](.+)$/i);
+      if (sm) return sm[1];
+    }
+    return "";
+  }
+
   function copyShareUrl(url) {
     if (!url) return Promise.resolve();
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -12369,6 +12389,11 @@
         }
         return;
       }
+      if (node.classList && node.classList.contains("note-discuss-mention")) {
+        var mention = String(node.getAttribute("data-mention") || node.textContent || "").trim();
+        if (mention) parts.push(mention.indexOf("@") === 0 ? mention : "@" + mention);
+        return;
+      }
       if (node.nodeName === "BR") {
         parts.push("\n");
         return;
@@ -12484,7 +12509,12 @@
     var node = range.startContainer;
     var offset = range.startOffset;
     function isChip(n) {
-      return !!(n && n.nodeType === 1 && n.classList && n.classList.contains("note-gpt-quote-chip"));
+      return !!(
+        n &&
+        n.nodeType === 1 &&
+        n.classList &&
+        (n.classList.contains("note-gpt-quote-chip") || n.classList.contains("note-discuss-mention"))
+      );
     }
     function isBlankText(n) {
       return !!(n && n.nodeType === 3 && !String(n.nodeValue || "").replace(/[\s\u00a0]/g, ""));
@@ -12529,7 +12559,10 @@
     if (!ed || !sel || !sel.rangeCount) return null;
     var node = sel.anchorNode;
     var el = node && (node.nodeType === 1 ? node : node.parentElement);
-    var chip = el && el.closest ? el.closest(".note-gpt-quote-chip") : null;
+    var chip =
+      el && el.closest
+        ? el.closest(".note-gpt-quote-chip, .note-discuss-mention")
+        : null;
     return chip && ed.contains(chip) ? chip : null;
   }
 
@@ -12549,6 +12582,214 @@
     autosizeNoteComposer(ed);
     if (ed) ed.setAttribute("data-placeholder", noteAskPlaceholder("gpt"));
     syncNotePaieReplyForm();
+  }
+
+  function discussionParticipants() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var rows = (wrap && wrap._noteMembers) || [];
+    return rows
+      .map(function (m) {
+        if (!m) return null;
+        var uname = String(m.username || "").trim().replace(/^@/, "");
+        var name = String(m.name || "").trim();
+        if (!name) {
+          name = uname
+            ? "@" + uname
+            : [m.first_name, m.last_name].filter(Boolean).join(" ").trim();
+        }
+        if (!name && !uname) name = "Участник";
+        return {
+          user_id: String(m.user_id || ""),
+          username: uname,
+          name: name,
+          mention: uname
+            ? "@" + uname
+            : "@" + String(name || "user").replace(/\s+/g, ""),
+        };
+      })
+      .filter(function (m) {
+        return m && m.user_id;
+      });
+  }
+
+  function closeDiscussMentionMenu() {
+    var menu = document.getElementById("note-discuss-mention-menu");
+    if (menu) menu.classList.add("hidden");
+  }
+
+  function ensureDiscussMentionMenu() {
+    var form = document.getElementById("note-paie-reply-form");
+    if (!form) return null;
+    var menu = document.getElementById("note-discuss-mention-menu");
+    if (menu) return menu;
+    menu = document.createElement("div");
+    menu.id = "note-discuss-mention-menu";
+    menu.className = "note-discuss-mention-menu hidden";
+    menu.setAttribute("role", "listbox");
+    form.appendChild(menu);
+    return menu;
+  }
+
+  function getMentionQueryAtCaret(ed) {
+    var sel = window.getSelection && window.getSelection();
+    if (!ed || !sel || !sel.rangeCount || !sel.isCollapsed) return null;
+    var range = sel.getRangeAt(0);
+    var node = range.startContainer;
+    if (!node || node.nodeType !== 3 || !ed.contains(node)) return null;
+    var before = String(node.nodeValue || "").slice(0, range.startOffset);
+    var m = before.match(/(^|[\s\u00a0([{\"'«])@([a-zA-Z0-9_]{0,32})$/);
+    if (!m) return null;
+    return {
+      query: String(m[2] || ""),
+      node: node,
+      start: range.startOffset - (String(m[2] || "").length + 1),
+      end: range.startOffset,
+    };
+  }
+
+  function renderDiscussMentionMenu(query) {
+    var menu = ensureDiscussMentionMenu();
+    if (!menu) return;
+    var q = String(query || "").toLowerCase();
+    var rows = discussionParticipants().filter(function (m) {
+      if (!q) return true;
+      return (
+        String(m.username || "").toLowerCase().indexOf(q) >= 0 ||
+        String(m.name || "").toLowerCase().indexOf(q) >= 0
+      );
+    });
+    menu.innerHTML = "";
+    if (!rows.length) {
+      menu.classList.add("hidden");
+      return;
+    }
+    rows.slice(0, 8).forEach(function (m) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "note-discuss-mention-item";
+      btn.setAttribute("role", "option");
+      var title = document.createElement("span");
+      title.className = "note-discuss-mention-item-name";
+      title.textContent = m.name;
+      btn.appendChild(title);
+      if (m.username) {
+        var handle = document.createElement("span");
+        handle.className = "note-discuss-mention-item-handle";
+        handle.textContent = "@" + m.username;
+        btn.appendChild(handle);
+      }
+      btn.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        insertDiscussMention(m);
+      });
+      menu.appendChild(btn);
+    });
+    menu.classList.remove("hidden");
+  }
+
+  function syncDiscussMentionMenu() {
+    var ed = noteGptEditor();
+    if (!ed || !isChatAskMode(noteAskMode())) {
+      closeDiscussMentionMenu();
+      return;
+    }
+    if (!discussionParticipants().length) {
+      closeDiscussMentionMenu();
+      return;
+    }
+    var at = getMentionQueryAtCaret(ed);
+    if (!at) {
+      closeDiscussMentionMenu();
+      return;
+    }
+    renderDiscussMentionMenu(at.query);
+  }
+
+  function insertDiscussMention(member) {
+    var ed = noteGptEditor();
+    if (!ed || !member) return;
+    var at = getMentionQueryAtCaret(ed);
+    var chip = document.createElement("span");
+    chip.className = "note-discuss-mention";
+    chip.setAttribute("contenteditable", "false");
+    chip.setAttribute("data-user-id", String(member.user_id || ""));
+    chip.setAttribute("data-mention", member.mention || ("@" + (member.username || member.name)));
+    if (member.username) chip.setAttribute("data-username", member.username);
+    chip.textContent = member.mention || ("@" + (member.username || member.name));
+    ed._ignoreRange = true;
+    try {
+      try {
+        ed.focus();
+      } catch (_) {}
+      var sel = window.getSelection();
+      if (at && at.node && sel) {
+        var del = document.createRange();
+        del.setStart(at.node, at.start);
+        del.setEnd(at.node, at.end);
+        del.deleteContents();
+        del.insertNode(chip);
+        var after = document.createTextNode("\u00a0");
+        if (chip.parentNode) chip.parentNode.insertBefore(after, chip.nextSibling);
+        var caret = document.createRange();
+        caret.setStart(after, after.nodeValue.length);
+        caret.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(caret);
+        ed._savedRange = caret.cloneRange();
+      } else {
+        restoreGptEditorRange(ed);
+        sel = window.getSelection();
+        if (sel && sel.rangeCount) {
+          var r = sel.getRangeAt(0);
+          r.deleteContents();
+          r.insertNode(chip);
+          r.setStartAfter(chip);
+          r.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(r);
+          ed._savedRange = r.cloneRange();
+        } else {
+          ed.appendChild(chip);
+        }
+      }
+    } finally {
+      ed._ignoreRange = false;
+    }
+    closeDiscussMentionMenu();
+    syncGptEditorEmpty(ed);
+    autosizeNoteComposer(ed);
+    syncNotePaieReplyForm();
+  }
+
+  function fillDiscussBodyWithMentions(el, text) {
+    if (!el) return;
+    var raw = String(text || "");
+    el.textContent = "";
+    if (!raw) return;
+    var re = /(^|[\s([{«"'])(@[a-zA-Z0-9_]{2,32})/g;
+    var last = 0;
+    var m;
+    while ((m = re.exec(raw))) {
+      var start = m.index + m[1].length;
+      if (start > last) el.appendChild(document.createTextNode(raw.slice(last, start)));
+      var span = document.createElement("span");
+      span.className = "note-discuss-mention-text";
+      span.textContent = m[2];
+      el.appendChild(span);
+      last = start + m[2].length;
+    }
+    if (last < raw.length) el.appendChild(document.createTextNode(raw.slice(last)));
+  }
+
+  function discussionHistoryAuthorLabel(c) {
+    if (isAssistantComment(c)) return "";
+    var uname = String((c && c.author_username) || "").trim().replace(/^@/, "");
+    var name = String((c && c.author_name) || "").trim();
+    if (uname && name) return "@" + uname + " (" + name + ")";
+    if (uname) return "@" + uname;
+    if (name) return name;
+    return "Участник";
   }
 
   function noteKnowledgeIconHtml() {
@@ -14077,13 +14318,21 @@
         autosizeNoteComposer(editor);
         rememberGptEditorRange();
         syncNotePaieReplyForm();
+        syncDiscussMentionMenu();
       });
-      editor.addEventListener("keyup", rememberGptEditorRange);
+      editor.addEventListener("keyup", function () {
+        rememberGptEditorRange();
+        syncDiscussMentionMenu();
+      });
       editor.addEventListener("pointerup", function () {
-        window.setTimeout(rememberGptEditorRange, 0);
+        window.setTimeout(function () {
+          rememberGptEditorRange();
+          syncDiscussMentionMenu();
+        }, 0);
       });
       editor.addEventListener("paste", function (e) {
         e.preventDefault();
+        closeDiscussMentionMenu();
         var clip = e.clipboardData || window.clipboardData;
         var text = clip ? clip.getData("text/plain") : "";
         if (document.queryCommandSupported && document.queryCommandSupported("insertText")) {
@@ -14101,18 +14350,24 @@
         autosizeNoteComposer(editor);
         rememberGptEditorRange();
         syncNotePaieReplyForm();
+        syncDiscussMentionMenu();
       });
       editor.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") {
+          closeDiscussMentionMenu();
+        }
         if (e.key === "Backspace" || e.key === "Delete") {
           var chip = selectedGptChip(editor) || adjacentGptChip(editor, e.key === "Backspace" ? -1 : 1);
           if (chip) {
             e.preventDefault();
             removeGptChip(editor, chip);
+            closeDiscussMentionMenu();
             return;
           }
         }
         if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
           e.preventDefault();
+          closeDiscussMentionMenu();
           if (typeof form.requestSubmit === "function") form.requestSubmit();
           else form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
         }
@@ -14129,8 +14384,10 @@
       document.addEventListener("click", function (e) {
         var t = e && e.target;
         if (t && t.closest && t.closest(".note-discuss-actions")) return;
+        if (t && t.closest && t.closest("#note-discuss-mention-menu")) return;
         closeNoteComposerMenus();
         closeNoteAnswerMenu();
+        closeDiscussMentionMenu();
       });
     }
     syncGptModelButton();
@@ -15429,6 +15686,8 @@
   }
 
   function closeNoteDiscussion(force) {
+    stopDiscussionLiveUpdates();
+    leaveDiscussPresence();
     var wrap = document.getElementById("note-editor-more-wrap");
     if (!force && isDesktopLayout() && isNoteEditorModalOpen() && wrap) {
       wrap._discussionDismissed = true;
@@ -15652,6 +15911,93 @@
     updateModalSheetForKeyboard();
     syncChatDiscussionChrome();
     renderNoteAskModes();
+    startDiscussionLiveUpdates();
+    startDiscussPresence();
+  }
+
+  var discussionLiveTimer = null;
+  var discussionLiveInflight = false;
+  var DISCUSSION_LIVE_MS = 2500;
+  var discussPresenceTimer = null;
+
+  function discussPresencePath() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || !wrap._shareKind || !wrap._shareId) return "";
+    if (wrap._shareKind !== "local" && wrap._shareKind !== "chat") return "";
+    return (
+      "/notes/" +
+      encodeURIComponent(wrap._shareKind) +
+      "/" +
+      encodeURIComponent(wrap._shareId) +
+      "/discuss-presence"
+    );
+  }
+
+  function tickDiscussPresence() {
+    if (!isNoteDiscussionOpen()) {
+      leaveDiscussPresence();
+      return;
+    }
+    var path = discussPresencePath();
+    if (!path) return;
+    apiFetch(path, { method: "POST", body: "{}" }).catch(function () {});
+  }
+
+  function startDiscussPresence() {
+    if (!isNoteDiscussionOpen() || !discussPresencePath()) return;
+    tickDiscussPresence();
+    if (discussPresenceTimer) return;
+    discussPresenceTimer = setInterval(tickDiscussPresence, 8000);
+  }
+
+  function leaveDiscussPresence() {
+    if (discussPresenceTimer) {
+      clearInterval(discussPresenceTimer);
+      discussPresenceTimer = null;
+    }
+    var path = discussPresencePath();
+    if (!path) return;
+    apiFetch(path, { method: "DELETE" }).catch(function () {});
+  }
+
+  function stopDiscussionLiveUpdates() {
+    if (discussionLiveTimer) {
+      clearTimeout(discussionLiveTimer);
+      discussionLiveTimer = null;
+    }
+  }
+
+  function startDiscussionLiveUpdates() {
+    stopDiscussionLiveUpdates();
+    if (!isNoteDiscussionOpen()) return;
+    discussionLiveTimer = setTimeout(tickDiscussionLiveUpdates, DISCUSSION_LIVE_MS);
+  }
+
+  function tickDiscussionLiveUpdates() {
+    discussionLiveTimer = null;
+    if (!isNoteDiscussionOpen()) return;
+    if (document.hidden) {
+      startDiscussionLiveUpdates();
+      return;
+    }
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || !wrap._shareKind || !wrap._shareId) return;
+    // Не перетирать оптимистичное сообщение и локальный pending во время своей отправки.
+    if (document.getElementById("note-discuss-optimistic-user")) {
+      startDiscussionLiveUpdates();
+      return;
+    }
+    if (discussionLiveInflight) {
+      startDiscussionLiveUpdates();
+      return;
+    }
+    discussionLiveInflight = true;
+    refreshNoteCommentsList()
+      .catch(function () {})
+      .finally(function () {
+        discussionLiveInflight = false;
+        if (isNoteDiscussionOpen()) startDiscussionLiveUpdates();
+      });
   }
 
   function ensureNotePaieThread() {
@@ -15782,7 +16128,28 @@
     if (api && api.isPaieComment && api.isPaieComment(c)) return true;
     if (api && api.isGptComment && api.isGptComment(c)) return true;
     if (api && api.isResearchComment && api.isResearchComment(c)) return true;
+    if (api && api.isAgentTurn && api.isAgentTurn(c)) return true;
+    if (c.is_paie || c.is_gpt || c.is_research || c.is_agent) return true;
     return false;
+  }
+
+  function isMineDiscussionComment(c) {
+    if (!c || isAssistantComment(c)) return false;
+    if (c.is_mine === true) return true;
+    if (c.is_mine === false) return false;
+    var me = currentTelegramUserId();
+    var author = String(c.author_user_id || "").trim();
+    return !!(me && author && me === author);
+  }
+
+  function discussionAuthorLabel(c) {
+    if (isAssistantComment(c)) return shareCommentAuthorLabel(c);
+    if (isMineDiscussionComment(c)) return "Вы";
+    var name = String((c && c.author_name) || "").trim();
+    if (name) return name;
+    var uname = String((c && c.author_username) || "").trim();
+    if (uname) return "@" + uname;
+    return "Пользователь";
   }
 
   function closeNoteAnswerMenu() {
@@ -16685,12 +17052,13 @@
   function renderDiscussionMessage(c) {
     var item = document.createElement("article");
     var assistant = isAssistantComment(c);
+    var mine = !assistant && isMineDiscussionComment(c);
     var api = window.NoteComments;
     var isGpt = !!(api && api.isGptComment && api.isGptComment(c));
     var isResearch = !!(api && api.isResearchComment && api.isResearchComment(c));
     item.className =
       "note-discuss-msg " +
-      (assistant ? "is-assistant" : "is-user") +
+      (assistant ? "is-assistant" : mine ? "is-user" : "is-other") +
       (isGpt ? " is-gpt" : "") +
       (isResearch ? " is-research" : "");
     item.setAttribute("data-comment-id", String(c.id));
@@ -16704,7 +17072,7 @@
     }
     var role = document.createElement("p");
     role.className = "note-discuss-role";
-    role.textContent = assistant ? shareCommentAuthorLabel(c) : "Вы";
+    role.textContent = discussionAuthorLabel(c);
     item.appendChild(role);
     var bodyText = String((c && c.body) || "");
     var attachments = (c && c.attachments) || [];
@@ -16715,7 +17083,7 @@
       bubble.className = "note-discuss-bubble note-discuss-bubble--md journal-summary-html";
       bubble.innerHTML = wrapTablesForScroll(simpleMarkdownToHtml(bodyText));
     } else if (!hideClipBody && bodyText.trim()) {
-      bubble.textContent = bodyText;
+      fillDiscussBodyWithMentions(bubble, bodyText);
     }
     renderDiscussAttachments(bubble, attachments);
     if (bubble.childNodes.length) item.appendChild(bubble);
@@ -16766,14 +17134,48 @@
       if (at !== bt) return at - bt;
       return Number(a.id || 0) - Number(b.id || 0);
     });
+    var gptBusy = !!(wrap && wrap._gptBusy);
+    var researchRunning = !!(wrap && wrap._researchRunning);
+    var fp =
+      rows
+        .map(function (c) {
+          return String(c && c.id) + ":" + String((c && c.body) || "").length;
+        })
+        .join("|") +
+      "|g:" +
+      (gptBusy ? String(wrap._gptPhase || "1") : "0") +
+      "|p:" +
+      (running ? "1" : "0") +
+      "|r:" +
+      (researchRunning ? "1" : "0") +
+      "|s:" +
+      (statusOn ? "1" : "0");
+    if (list && list._renderFp === fp && list.childNodes.length) {
+      if (form) {
+        form.classList.remove("hidden");
+        syncNotePaieReplyForm(running);
+        syncNoteComposerCommentTarget();
+      }
+      void kind;
+      void itemId;
+      return;
+    }
+    var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
+    var stickBottom = true;
+    var prevTop = 0;
+    if (scroll) {
+      prevTop = scroll.scrollTop;
+      stickBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 96;
+    }
     if (list) {
+      list._renderFp = fp;
       list.innerHTML = "";
       if (
         !rows.length &&
         !statusOn &&
         !running &&
-        !(wrap && wrap._gptBusy) &&
-        !(wrap && wrap._researchRunning)
+        !gptBusy &&
+        !researchRunning
       ) {
         var empty = document.createElement("p");
         empty.className = "note-discussion-empty";
@@ -16790,7 +17192,7 @@
             list.appendChild(renderGptContextDivider());
           }
         });
-        if (wrap && wrap._gptBusy) {
+        if (gptBusy) {
           list.appendChild(renderGptPendingStatus(wrap._gptPhase));
         }
       }
@@ -16804,8 +17206,9 @@
     refreshNoteEditorTocExtras();
     if (isNoteDiscussionOpen()) {
       var pinId = wrap && wrap._discussionPinId;
-      if (pinId && !(wrap && wrap._gptBusy)) scrollDiscussionToComment(pinId);
-      else scrollDiscussionToEnd();
+      if (pinId && !gptBusy) scrollDiscussionToComment(pinId);
+      else if (stickBottom) scrollDiscussionToEnd();
+      else if (scroll) scroll.scrollTop = prevTop;
     }
     void kind;
     void itemId;
@@ -17569,7 +17972,11 @@
         history.push({ role: "user", content: "CHAIR:\n" + content });
         return;
       }
-      history.push({ role: "user", content: content });
+      var who = discussionHistoryAuthorLabel(c);
+      history.push({
+        role: "user",
+        content: who ? who + ":\n" + content : content,
+      });
     });
     if (history.length > GPT_HISTORY_MAX_TURNS) {
       history = history.slice(-GPT_HISTORY_MAX_TURNS);
@@ -19661,11 +20068,15 @@
   }
 
   var noteDeepLinkConsumed = false;
+  var chatDeepLinkConsumed = false;
 
   function openPendingSharedNote(data) {
     if (noteDeepLinkConsumed) return;
     var pending = pendingNoteIdFromLocation();
-    if (!pending) return;
+    if (!pending) {
+      openPendingChatThread();
+      return;
+    }
     noteDeepLinkConsumed = true;
     function go(note) {
       if (!note) return;
@@ -19693,6 +20104,41 @@
           if (notesDataCache) renderNotesPanesFromData(notesDataCache);
           go(res.item);
         }
+      })
+      .catch(function () {});
+  }
+
+  function openPendingChatThread() {
+    if (chatDeepLinkConsumed) return;
+    var pending = pendingChatIdFromLocation();
+    if (!pending) return;
+    chatDeepLinkConsumed = true;
+    function go(thread) {
+      if (!thread) return;
+      setTab("notes");
+      setNotesSubTab("chats");
+      openChatThread(thread);
+      try {
+        var u = new URL(location.href);
+        u.searchParams.delete("chat");
+        u.searchParams.delete("c");
+        if (/chat=/.test(u.hash)) u.hash = "";
+        history.replaceState(null, "", u.pathname + u.search + u.hash);
+      } catch (_) {}
+    }
+    var found = (chatThreadsCache || []).find(function (t) {
+      return String(t.id) === String(pending);
+    });
+    if (found) {
+      go(found);
+      return;
+    }
+    loadChatThreads()
+      .then(function () {
+        var t = (chatThreadsCache || []).find(function (x) {
+          return String(x.id) === String(pending);
+        });
+        if (t) go(t);
       })
       .catch(function () {});
   }

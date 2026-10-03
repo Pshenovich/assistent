@@ -5274,6 +5274,80 @@ html.note-editor-open #note-editor-overlay {
   vertical-align: middle;
 }
 
+.note-discuss-mention {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 1px 7px;
+  margin: 0 2px;
+  border-radius: 999px;
+  background: rgba(82, 158, 244, 0.22);
+  color: #d7e9ff;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+  vertical-align: middle;
+}
+
+.note-discuss-mention-text {
+  color: #8ec2ff;
+  font-weight: 600;
+}
+
+.note-discuss-mention-menu {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% + 6px);
+  z-index: 40;
+  max-height: 220px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--vkui--color_background_content, #19191a);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+}
+
+.note-discuss-mention-menu.hidden {
+  display: none;
+}
+
+.note-discuss-mention-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 10px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.note-discuss-mention-item:hover,
+.note-discuss-mention-item:focus-visible {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.note-discuss-mention-item-name {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.note-discuss-mention-item-handle {
+  color: var(--text-secondary, #909499);
+  font-size: 0.8125rem;
+}
+
 .note-paie-mode-compact-label,
 .note-paie-model-label {
   overflow: hidden;
@@ -6111,6 +6185,11 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   align-items: flex-start;
 }
 
+.note-discuss-msg.is-other {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
 .note-discuss-msg.is-pending,
 .note-discuss-msg.is-optimistic {
   cursor: default;
@@ -6264,6 +6343,13 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 }
 
 .note-discuss-msg.is-assistant .note-discuss-bubble {
+  color: var(--text);
+  background: var(--surface, #19191a);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 6px;
+}
+
+.note-discuss-msg.is-other .note-discuss-bubble {
   color: var(--text);
   background: var(--surface, #19191a);
   border: 1px solid var(--border);
