@@ -3722,35 +3722,14 @@ def _calendar_today_payload(
         }
     try:
         events_raw = [e for e in (payload.get("events") or []) if isinstance(e, dict)]
-        ser: list[dict[str, Any]] = []
-        try:
-            contacts_by_email = _miniapp_contacts_by_email(uid)
-        except Exception as ex:
-            print(f"[miniapp_calendar] contacts_index err={ex!r}")
-            contacts_by_email = {}
-        for e in events_raw:
-            try:
-                item = _serialize_calendar_event(e, contacts_by_email=contacts_by_email)
-                if item.get("self_response_status") == "declined":
-                    continue
-                ser.append(item)
-            except Exception as ex:
-                print(f"[miniapp_calendar] skip_event id={e.get('id')!r} err={ex!r}")
-
-        def _sort_key(d: dict[str, Any]) -> str:
-            st = d.get("start") or {}
-            if not isinstance(st, dict):
-                return ""
-            return str(st.get("dateTime") or st.get("date") or "")
-
-        ser_sorted = sorted(ser, key=_sort_key)
+        ser_sorted = _serialize_gcal_events(uid, events_raw, 80)
         if not ser_sorted and _miniapp_dev_mode_on():
             ser_sorted = _local_dev_events_for(uid, day_iso, str(tz))
         return {
             "connected": True,
             "date": day_iso,
             "timezone": str(tz),
-            "events": ser_sorted[:80],
+            "events": ser_sorted,
             **({"dev_fixtures": True} if not events_raw and _miniapp_dev_mode_on() else {}),
         }
     except Exception as e:
@@ -3761,6 +3740,134 @@ def _calendar_today_payload(
             "timezone": str(tz),
             "events": [],
             "error": str(e),
+        }
+
+
+def _parse_calendar_day(raw: Optional[str], fallback) -> Any:
+    text = str(raw or "").strip()[:10]
+    if not text:
+        return fallback
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError:
+        return fallback
+
+
+def _serialize_gcal_events(
+    uid: int, events_raw: list[Any], limit: int
+) -> list[dict[str, Any]]:
+    ser: list[dict[str, Any]] = []
+    try:
+        contacts_by_email = _miniapp_contacts_by_email(uid)
+    except Exception as ex:
+        print(f"[miniapp_calendar] contacts_index err={ex!r}")
+        contacts_by_email = {}
+    for e in events_raw or []:
+        if not isinstance(e, dict):
+            continue
+        try:
+            item = _serialize_calendar_event(e, contacts_by_email=contacts_by_email)
+            if item.get("self_response_status") == "declined":
+                continue
+            ser.append(item)
+        except Exception as ex:
+            print(f"[miniapp_calendar] skip_event id={e.get('id')!r} err={ex!r}")
+
+    def _sort_key(d: dict[str, Any]) -> str:
+        st = d.get("start") or {}
+        if not isinstance(st, dict):
+            return ""
+        return str(st.get("dateTime") or st.get("date") or "")
+
+    return sorted(ser, key=_sort_key)[: max(0, int(limit))]
+
+
+def _local_dev_events_range(uid: int, from_d: Any, to_d: Any, timezone_name: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    cur = from_d
+    while cur <= to_d:
+        out.extend(_local_dev_events_for(uid, cur.isoformat(), timezone_name))
+        cur += timedelta(days=1)
+    return out
+
+
+def _calendar_range_payload(
+    telegram_user_id: int,
+    from_iso: Optional[str] = None,
+    to_iso: Optional[str] = None,
+) -> dict[str, Any]:
+    from assistant.integrations import google_calendar_oauth
+    from assistant.services import calendar_sources as cal_sources
+    from assistant.services.calendar import _tz_for
+
+    uid = int(telegram_user_id)
+    tz = _tz_for(uid)
+    today = datetime.now(tz).date()
+    start_d = _parse_calendar_day(from_iso, today)
+    end_d = _parse_calendar_day(to_iso, start_d)
+    if end_d < start_d:
+        start_d, end_d = end_d, start_d
+    if (end_d - start_d).days > 44:
+        end_d = start_d + timedelta(days=44)
+    from_s = start_d.isoformat()
+    to_s = end_d.isoformat()
+    has_token = google_calendar_oauth.user_token_path(uid).is_file()
+    if not has_token:
+        if _miniapp_dev_mode_on():
+            return {
+                "connected": True,
+                "timezone": str(tz),
+                "from": from_s,
+                "to": to_s,
+                "events": _local_dev_events_range(uid, start_d, end_d, str(tz)),
+                "dev_fixtures": True,
+            }
+        return {
+            "connected": False,
+            "timezone": str(tz),
+            "from": from_s,
+            "to": to_s,
+            "events": [],
+            "error": "Подключите Google Calendar в боте: /calendar_auth",
+        }
+    try:
+        win_start = datetime.combine(start_d, datetime.min.time(), tzinfo=tz)
+        win_end = datetime.combine(end_d + timedelta(days=1), datetime.min.time(), tzinfo=tz)
+        collected: list[dict[str, Any]] = []
+        for norm in cal_sources.list_events_in_window(uid, win_start, win_end):
+            raw = dict(norm.get("raw") or {})
+            raw["_calendarId"] = str(norm.get("calendar_id") or raw.get("_calendarId") or "primary")
+            collected.append(raw)
+        ser = _serialize_gcal_events(uid, collected, 400)
+        if not ser and _miniapp_dev_mode_on():
+            ser = _local_dev_events_range(uid, start_d, end_d, str(tz))
+        return {
+            "connected": True,
+            "timezone": str(tz),
+            "from": from_s,
+            "to": to_s,
+            "events": ser,
+            **({"dev_fixtures": True} if not collected and _miniapp_dev_mode_on() else {}),
+        }
+    except Exception as e:
+        err = str(e).strip() or "Ошибка загрузки календаря"
+        if _miniapp_dev_mode_on():
+            return {
+                "connected": True,
+                "timezone": str(tz),
+                "from": from_s,
+                "to": to_s,
+                "events": _local_dev_events_range(uid, start_d, end_d, str(tz)),
+                "dev_fixtures": True,
+                "error_ignored": err,
+            }
+        return {
+            "connected": False,
+            "timezone": str(tz),
+            "from": from_s,
+            "to": to_s,
+            "events": [],
+            "error": err,
         }
 
 
@@ -4618,6 +4725,25 @@ async def miniapp_calendar_today(
 ) -> dict[str, Any]:
     return await run_in_threadpool(
         _calendar_today_payload, int(principal.telegram_user_id), date
+    )
+
+
+@miniapp_router.get("/calendar/range")
+async def miniapp_calendar_range(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    from_date: Optional[str] = Query(
+        None,
+        alias="from",
+        description="Начало диапазона YYYY-MM-DD (включительно)",
+    ),
+    to_date: Optional[str] = Query(
+        None,
+        alias="to",
+        description="Конец диапазона YYYY-MM-DD (включительно)",
+    ),
+) -> dict[str, Any]:
+    return await run_in_threadpool(
+        _calendar_range_payload, int(principal.telegram_user_id), from_date, to_date
     )
 
 

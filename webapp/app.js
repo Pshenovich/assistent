@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261003-offline-fix";
+  var WEBAPP_BUILD = "20261003-cal-views";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -506,15 +506,21 @@
     writeOfflineQueue(q);
   }
 
+  function actualCacheKind() {
+    var leftIso = meetingsPageDate || todayIsoLocal();
+    if (meetingsViewMode === "week") return "actual_week_" + startOfWeekMonday(leftIso);
+    if (meetingsViewMode === "month") return "actual_month_" + startOfMonthIso(leftIso);
+    return "actual_" + leftIso + (isDesktopLayout() ? "_2" : "");
+  }
+
   function persistActualRemindersToDisk() {
     try {
-      var dual = isDesktopLayout();
-      var leftIso = meetingsPageDate || todayIsoLocal();
-      var cacheKind = "actual_" + leftIso + (dual ? "_2" : "");
+      var cacheKind = actualCacheKind();
       var cached = readMiniappCache(cacheKind) || {};
       cached.remData = { items: lastRemindersItems || [] };
       if (lastMeetingsLeft) cached.calData = lastMeetingsLeft;
       if (lastMeetingsRight) cached.calDataNext = lastMeetingsRight;
+      if (lastMeetingsRange) cached.rangeData = lastMeetingsRange;
       writeMiniappCache(cacheKind, cached);
     } catch (_) {}
   }
@@ -746,24 +752,202 @@
     return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
   }
 
+  var MEETINGS_VIEW_LS = "leo_meetings_view";
+  var meetingsViewMode = "day";
+  var lastMeetingsRange = null;
+  var meetingsViewMenuBound = false;
+
+  function readMeetingsViewMode() {
+    try {
+      var raw = String(localStorage.getItem(MEETINGS_VIEW_LS) || "").trim();
+      if (raw === "week" || raw === "month" || raw === "day") return raw;
+    } catch (_) {}
+    return "day";
+  }
+
+  function persistMeetingsViewMode(mode) {
+    try {
+      localStorage.setItem(MEETINGS_VIEW_LS, mode);
+    } catch (_) {}
+  }
+
+  function isoFromDate(d) {
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+
+  function dateFromIso(iso) {
+    return new Date((iso || todayIsoLocal()) + "T12:00:00");
+  }
+
+  function startOfWeekMonday(iso) {
+    var d = dateFromIso(iso);
+    if (isNaN(d.getTime())) d = dateFromIso(todayIsoLocal());
+    var wd = d.getDay();
+    var delta = wd === 0 ? -6 : 1 - wd;
+    d.setDate(d.getDate() + delta);
+    return isoFromDate(d);
+  }
+
+  function startOfMonthIso(iso) {
+    var d = dateFromIso(iso);
+    if (isNaN(d.getTime())) d = dateFromIso(todayIsoLocal());
+    d.setDate(1);
+    return isoFromDate(d);
+  }
+
+  function addMonthsIso(iso, months) {
+    var d = dateFromIso(iso);
+    if (isNaN(d.getTime())) d = dateFromIso(todayIsoLocal());
+    var day = d.getDate();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + Number(months || 0));
+    var last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    d.setDate(Math.min(day, last));
+    return isoFromDate(d);
+  }
+
+  function monthGridRange(iso) {
+    var monthStart = startOfMonthIso(iso);
+    var nextMonth = addMonthsIso(monthStart, 1);
+    var monthEnd = addDaysIso(nextMonth, -1);
+    return {
+      from: startOfWeekMonday(monthStart),
+      to: addDaysIso(startOfWeekMonday(monthEnd), 6),
+      monthStart: monthStart,
+    };
+  }
+
+  function meetingsVisibleRange(anchorIso) {
+    var iso = anchorIso || meetingsPageDate || todayIsoLocal();
+    if (meetingsViewMode === "week") {
+      var mon = startOfWeekMonday(iso);
+      return { from: mon, to: addDaysIso(mon, 6) };
+    }
+    if (meetingsViewMode === "month") {
+      var grid = monthGridRange(iso);
+      return { from: grid.from, to: grid.to };
+    }
+    var dual = isDesktopLayout();
+    return { from: iso, to: dual ? addDaysIso(iso, 1) : iso };
+  }
+
+  function eachIsoDay(fromIso, toIso) {
+    var out = [];
+    var cur = fromIso;
+    var guard = 0;
+    while (cur && cur <= toIso && guard < 50) {
+      out.push(cur);
+      cur = addDaysIso(cur, 1);
+      guard += 1;
+    }
+    return out;
+  }
+
   function meetingsPageStep() {
+    if (meetingsViewMode === "week") return 7;
+    if (meetingsViewMode === "month") return 1;
     return isDesktopLayout() ? 2 : 1;
   }
 
   var meetingsLoadGen = 0;
 
   function meetingsPageShowsToday() {
-    var left = meetingsPageDate || todayIsoLocal();
     var today = todayIsoLocal();
-    if (left === today) return true;
-    if (isDesktopLayout() && addDaysIso(left, 1) === today) return true;
-    return false;
+    var range = meetingsVisibleRange();
+    if (meetingsViewMode === "month") {
+      var a = dateFromIso(meetingsPageDate || today);
+      var t = dateFromIso(today);
+      return a.getFullYear() === t.getFullYear() && a.getMonth() === t.getMonth();
+    }
+    return today >= range.from && today <= range.to;
   }
 
   function syncMeetingsTodayBtn() {
     var btn = document.getElementById("meetings-today");
     if (!btn) return;
     setHidden(btn, meetingsPageShowsToday());
+  }
+
+  function syncMeetingsViewSurfaces() {
+    var board = document.getElementById("meetings-board");
+    var week = document.getElementById("meetings-week");
+    var month = document.getElementById("meetings-month");
+    var mode = meetingsViewMode;
+    if (board) {
+      board.classList.toggle("hidden", mode !== "day");
+      if (mode !== "day") board.setAttribute("hidden", "hidden");
+      else board.removeAttribute("hidden");
+    }
+    if (week) {
+      week.classList.toggle("hidden", mode !== "week");
+      if (mode !== "week") week.setAttribute("hidden", "hidden");
+      else week.removeAttribute("hidden");
+    }
+    if (month) {
+      month.classList.toggle("hidden", mode !== "month");
+      if (mode !== "month") month.setAttribute("hidden", "hidden");
+      else month.removeAttribute("hidden");
+    }
+    document.documentElement.setAttribute("data-meetings-view", mode);
+  }
+
+  function syncMeetingsViewMenu() {
+    var menu = document.getElementById("meetings-view-menu");
+    if (!menu) return;
+    menu.querySelectorAll("[data-meetings-view]").forEach(function (btn) {
+      btn.classList.toggle("is-active", btn.getAttribute("data-meetings-view") === meetingsViewMode);
+    });
+  }
+
+  function closeMeetingsViewMenu() {
+    var menu = document.getElementById("meetings-view-menu");
+    var btn = document.getElementById("meetings-view-btn");
+    if (menu) menu.classList.add("hidden");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+
+  function toggleMeetingsViewMenu() {
+    var menu = document.getElementById("meetings-view-menu");
+    var btn = document.getElementById("meetings-view-btn");
+    if (!menu || !btn) return;
+    var open = menu.classList.contains("hidden");
+    if (open) {
+      syncMeetingsViewMenu();
+      menu.classList.remove("hidden");
+      btn.setAttribute("aria-expanded", "true");
+    } else {
+      closeMeetingsViewMenu();
+    }
+  }
+
+  function bindMeetingsViewMenuOnce() {
+    if (meetingsViewMenuBound) return;
+    meetingsViewMenuBound = true;
+    document.addEventListener("click", function (e) {
+      var wrap = document.querySelector(".meetings-view-wrap");
+      if (!wrap || (e.target && wrap.contains(e.target))) return;
+      closeMeetingsViewMenu();
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") closeMeetingsViewMenu();
+    });
+  }
+
+  function setMeetingsViewMode(mode, opts) {
+    opts = opts || {};
+    var next = mode === "week" || mode === "month" ? mode : "day";
+    if (meetingsViewMode === next && !opts.force) {
+      closeMeetingsViewMenu();
+      return;
+    }
+    meetingsViewMode = next;
+    persistMeetingsViewMode(next);
+    syncMeetingsViewMenu();
+    closeMeetingsViewMenu();
+    syncMeetingsViewSurfaces();
+    timelineScrolledKey = "";
+    showMeetingsDaySkeleton();
+    if (!opts.skipLoad) loadActual();
   }
 
   function paintMeetingsListSkeleton(ui, dateIso) {
@@ -786,9 +970,33 @@
       "</div>";
   }
 
+  function paintMeetingsRangeSkeleton(host) {
+    if (!host) return;
+    host.innerHTML =
+      '<div class="meetings-skeleton" aria-hidden="true" aria-busy="true">' +
+      '<div class="meetings-skeleton-row" style="width:74%"></div>' +
+      '<div class="meetings-skeleton-row meetings-skeleton-row--tall" style="width:92%"></div>' +
+      '<div class="meetings-skeleton-row" style="width:68%"></div>' +
+      '<div class="meetings-skeleton-row meetings-skeleton-row--tall" style="width:86%"></div>' +
+      '<div class="meetings-skeleton-row" style="width:70%"></div>' +
+      "</div>";
+  }
+
   function showMeetingsDaySkeleton() {
-    var dual = isDesktopLayout();
+    syncMeetingsViewSurfaces();
     var leftIso = meetingsPageDate || todayIsoLocal();
+    var range = meetingsVisibleRange(leftIso);
+    if (meetingsViewMode === "week") {
+      syncMeetingsHead(range.from, range.to);
+      paintMeetingsRangeSkeleton(document.getElementById("meetings-week"));
+      return;
+    }
+    if (meetingsViewMode === "month") {
+      syncMeetingsHead(leftIso, null);
+      paintMeetingsRangeSkeleton(document.getElementById("meetings-month"));
+      return;
+    }
+    var dual = isDesktopLayout();
     var rightIso = dual ? addDaysIso(leftIso, 1) : null;
     syncMeetingsHead(leftIso, rightIso);
     paintMeetingsListSkeleton(meetingsUiMain, leftIso);
@@ -800,7 +1008,12 @@
   }
 
   function shiftMeetingsPage(delta) {
-    meetingsPageDate = addDaysIso(meetingsPageDate || todayIsoLocal(), delta);
+    var step = Number(delta || 0);
+    if (meetingsViewMode === "month") {
+      meetingsPageDate = addMonthsIso(meetingsPageDate || todayIsoLocal(), step);
+    } else {
+      meetingsPageDate = addDaysIso(meetingsPageDate || todayIsoLocal(), step);
+    }
     timelineScrolledKey = "";
     showMeetingsDaySkeleton();
     loadActual();
@@ -808,7 +1021,7 @@
 
   function goMeetingsToday() {
     var today = todayIsoLocal();
-    if ((meetingsPageDate || today) === today) {
+    if (meetingsPageShowsToday() && (meetingsPageDate || today) === today) {
       syncMeetingsTodayBtn();
       return;
     }
@@ -831,6 +1044,81 @@
     var q =
       dateIso && dateIso.length ? "?date=" + encodeURIComponent(dateIso) : "";
     return apiFetch("/calendar/today" + q, { method: "GET" });
+  }
+
+  async function fetchCalendarRange(fromIso, toIso) {
+    return apiFetch(
+      "/calendar/range?from=" +
+        encodeURIComponent(fromIso) +
+        "&to=" +
+        encodeURIComponent(toIso),
+      { method: "GET" }
+    );
+  }
+
+  function eventCoversDate(ev, dateIso) {
+    if (!ev || !dateIso) return false;
+    if (eventIsAllDay(ev)) {
+      var start = String((ev.start && ev.start.date) || "").slice(0, 10);
+      var end = String((ev.end && ev.end.date) || "").slice(0, 10);
+      if (!start) return false;
+      if (!end || end <= start) end = addDaysIso(start, 1);
+      return start <= dateIso && dateIso < end;
+    }
+    var startMs = eventStartMs(ev);
+    if (startMs == null) return false;
+    var startIso = localDateIsoFromMs(startMs);
+    var endMs = eventEndMs(ev);
+    var endIso = endMs != null ? localDateIsoFromMs(endMs) : startIso;
+    if (!endIso || endIso < startIso) endIso = startIso;
+    if (startIso === endIso) return startIso === dateIso;
+    return startIso <= dateIso && dateIso <= endIso && !(dateIso === endIso && endMs === dayStartMs(endIso));
+  }
+
+  function eventsForDate(events, dateIso) {
+    return (events || []).filter(function (ev) {
+      return !meetingIsDeclined(ev) && eventCoversDate(ev, dateIso);
+    });
+  }
+
+  function weekHourPx() {
+    return isDesktopLayout() ? 52 : 48;
+  }
+
+  function weekdayShort(iso) {
+    try {
+      return new Date(iso + "T12:00:00").toLocaleDateString("ru-RU", { weekday: "short" }).replace(".", "");
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function formatMeetingsWeekHead(fromIso, toIso) {
+    try {
+      var a = dateFromIso(fromIso);
+      var b = dateFromIso(toIso || fromIso);
+      if (isNaN(a.getTime()) || isNaN(b.getTime())) return "Встречи";
+      var sameMonth = a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
+      var left = a.toLocaleDateString("ru-RU", {
+        day: "numeric",
+        month: sameMonth ? undefined : "short",
+      });
+      var right = b.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+      return "Встречи · " + left + "–" + right;
+    } catch (_) {
+      return "Встречи";
+    }
+  }
+
+  function formatMeetingsMonthHead(iso) {
+    try {
+      var d = dateFromIso(iso);
+      if (isNaN(d.getTime())) return "Встречи";
+      var label = d.toLocaleDateString("ru-RU", { month: "long", year: "numeric" });
+      return "Встречи · " + label.charAt(0).toUpperCase() + label.slice(1);
+    } catch (_) {
+      return "Встречи";
+    }
   }
 
   function eventStartMs(ev) {
@@ -1292,12 +1580,41 @@
     var prev = document.getElementById("meetings-prev");
     var next = document.getElementById("meetings-next");
     if (head) {
-      head.textContent = dual && rightIso ? formatMeetingsHeadRange(leftIso, rightIso) : formatMeetingsHead(leftIso);
+      if (meetingsViewMode === "week") {
+        head.textContent = formatMeetingsWeekHead(leftIso, rightIso || addDaysIso(leftIso, 6));
+      } else if (meetingsViewMode === "month") {
+        head.textContent = formatMeetingsMonthHead(leftIso);
+      } else {
+        head.textContent = dual && rightIso ? formatMeetingsHeadRange(leftIso, rightIso) : formatMeetingsHead(leftIso);
+      }
     }
-    if (prev) prev.setAttribute("aria-label", dual ? "Предыдущие два дня" : "Предыдущий день");
-    if (next) next.setAttribute("aria-label", dual ? "Следующие два дня" : "Следующий день");
+    if (prev) {
+      prev.setAttribute(
+        "aria-label",
+        meetingsViewMode === "week"
+          ? "Предыдущая неделя"
+          : meetingsViewMode === "month"
+            ? "Предыдущий месяц"
+            : dual
+              ? "Предыдущие два дня"
+              : "Предыдущий день"
+      );
+    }
+    if (next) {
+      next.setAttribute(
+        "aria-label",
+        meetingsViewMode === "week"
+          ? "Следующая неделя"
+          : meetingsViewMode === "month"
+            ? "Следующий месяц"
+            : dual
+              ? "Следующие два дня"
+              : "Следующий день"
+      );
+    }
     var board = document.getElementById("meetings-board");
-    if (board) board.classList.toggle("meetings-board--dual", dual);
+    if (board) board.classList.toggle("meetings-board--dual", dual && meetingsViewMode === "day");
+    syncMeetingsViewSurfaces();
     syncMeetingsTodayBtn();
   }
 
@@ -1314,6 +1631,10 @@
   function ensureMeetingsNowTimer() {
     if (meetingsNowTimer) return;
     meetingsNowTimer = window.setInterval(function () {
+      if (meetingsViewMode === "week" && lastMeetingsRange) {
+        paintMeetingsWeek(lastMeetingsRange);
+        return;
+      }
       if (lastMeetingsLeft && lastMeetingsLeft.date === todayIsoLocal()) {
         paintMeetingsList(meetingsUiMain, lastMeetingsLeft, lastRemindersItems, { preserveScroll: true });
       } else if (lastMeetingsRight && lastMeetingsRight.date === todayIsoLocal()) {
@@ -1334,6 +1655,228 @@
     if (dual) paintMeetingsList(meetingsUiNext, lastMeetingsRight, lastRemindersItems);
     updateMeetingsBadge(lastMeetingsLeft, dual ? lastMeetingsRight : null);
     ensureMeetingsNowTimer();
+  }
+
+  function updateMeetingsRangeBadge(events) {
+    var badgeM = document.getElementById("meetings-badge");
+    if (!badgeM) return;
+    var n = (events || []).filter(function (ev) {
+      return !meetingIsDeclined(ev);
+    }).length;
+    setHidden(badgeM, n <= 0);
+    badgeM.textContent = String(n);
+  }
+
+  function paintMeetingsWeek(rangeData) {
+    var host = document.getElementById("meetings-week");
+    if (!host) return;
+    lastMeetingsRange = rangeData || lastMeetingsRange || { events: [] };
+    var range = meetingsVisibleRange();
+    var days = eachIsoDay(range.from, range.to);
+    var events = (lastMeetingsRange.events || []).filter(function (ev) {
+      return !meetingIsDeclined(ev);
+    });
+    syncMeetingsHead(range.from, range.to);
+    updateMeetingsRangeBadge(events);
+    if (lastMeetingsRange.connected === false) {
+      host.innerHTML = "";
+      var banner = document.createElement("p");
+      banner.className = "muted empty-hint day-timeline-connect";
+      banner.textContent = meetingsEmptyMessage(lastMeetingsRange);
+      host.appendChild(banner);
+      return;
+    }
+    var hourPx = weekHourPx();
+    var hours = (TIMELINE_END_MIN - TIMELINE_START_MIN) / 60;
+    var gridH = hours * hourPx;
+    var today = todayIsoLocal();
+    var wrap = document.createElement("div");
+    wrap.className = "meetings-week-scroll";
+    var grid = document.createElement("div");
+    grid.className = "meetings-week-grid";
+    grid.style.setProperty("--week-hour-h", hourPx + "px");
+
+    var head = document.createElement("div");
+    head.className = "meetings-week-head";
+    head.appendChild(document.createElement("div"));
+    days.forEach(function (iso) {
+      var d = dateFromIso(iso);
+      var cell = document.createElement("div");
+      cell.className = "meetings-week-dow" + (iso === today ? " is-today" : "");
+      var name = document.createElement("span");
+      name.className = "meetings-week-dow-name";
+      name.textContent = weekdayShort(iso);
+      var num = document.createElement("span");
+      num.className = "meetings-week-dow-num";
+      num.textContent = String(d.getDate());
+      cell.appendChild(name);
+      cell.appendChild(num);
+      head.appendChild(cell);
+    });
+
+    var allday = document.createElement("div");
+    allday.className = "meetings-week-allday";
+    allday.appendChild(document.createElement("div"));
+    days.forEach(function (iso) {
+      var cell = document.createElement("div");
+      cell.className = "meetings-week-allday-cell";
+      eventsForDate(events, iso).forEach(function (ev) {
+        if (!eventIsAllDay(ev)) return;
+        var chip = document.createElement("button");
+        chip.type = "button";
+        chip.className =
+          "meetings-week-chip" + (meetingNeedsRsvp(ev) ? " meetings-week-chip--pending" : "");
+        chip.textContent = meetingDisplayTitle(ev);
+        chip.addEventListener("click", function (e) {
+          e.stopPropagation();
+          openEventModal(ev);
+        });
+        cell.appendChild(chip);
+      });
+      allday.appendChild(cell);
+    });
+
+    var body = document.createElement("div");
+    body.className = "meetings-week-body";
+    var gutter = document.createElement("div");
+    gutter.className = "meetings-week-gutter";
+    gutter.style.height = gridH + "px";
+    for (var h = TIMELINE_START_MIN / 60; h < TIMELINE_END_MIN / 60; h += 1) {
+      var lab = document.createElement("div");
+      lab.className = "meetings-week-hour";
+      lab.textContent = formatTimelineHourLabel(h);
+      gutter.appendChild(lab);
+    }
+    body.appendChild(gutter);
+
+    days.forEach(function (iso) {
+      var col = document.createElement("div");
+      col.className = "meetings-week-col";
+      col.style.height = gridH + "px";
+      var timed = [];
+      eventsForDate(events, iso).forEach(function (ev) {
+        if (eventIsAllDay(ev)) return;
+        var span = timelineSpanForRange(iso, eventStartMs(ev), eventEndMs(ev));
+        if (!span || span.zone !== "grid") return;
+        timed.push({ ev: ev, startMin: span.startMin, endMin: span.endMin });
+      });
+      assignTimelineColumns(timed);
+      timed.forEach(function (it) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className =
+          "meetings-week-event" + (meetingNeedsRsvp(it.ev) ? " meetings-week-event--pending" : "");
+        var top = (it.startMin / 60) * hourPx;
+        var height = Math.max(18, ((it.endMin - it.startMin) / 60) * hourPx - 2);
+        var width = 100 / (it.cols || 1);
+        btn.style.top = top + "px";
+        btn.style.height = height + "px";
+        btn.style.left = "calc(" + (it.col || 0) * width + "% + 1px)";
+        btn.style.width = "calc(" + width + "% - 3px)";
+        btn.textContent = meetingDisplayTitle(it.ev);
+        btn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          openEventModal(it.ev);
+        });
+        col.appendChild(btn);
+      });
+      if (iso === today) {
+        var nowMs = Date.now();
+        var nowMin = (nowMs - dayStartMs(iso)) / 60000 - TIMELINE_START_MIN;
+        if (nowMin >= 0 && nowMin <= TIMELINE_END_MIN - TIMELINE_START_MIN) {
+          var nowEl = document.createElement("div");
+          nowEl.className = "meetings-week-now";
+          nowEl.style.top = (nowMin / 60) * hourPx + "px";
+          col.appendChild(nowEl);
+        }
+      }
+      body.appendChild(col);
+    });
+
+    grid.appendChild(head);
+    grid.appendChild(allday);
+    grid.appendChild(body);
+    wrap.appendChild(grid);
+    host.innerHTML = "";
+    host.appendChild(wrap);
+  }
+
+  function paintMeetingsMonth(rangeData) {
+    var host = document.getElementById("meetings-month");
+    if (!host) return;
+    lastMeetingsRange = rangeData || lastMeetingsRange || { events: [] };
+    var anchor = meetingsPageDate || todayIsoLocal();
+    var gridRange = monthGridRange(anchor);
+    var days = eachIsoDay(gridRange.from, gridRange.to);
+    var events = (lastMeetingsRange.events || []).filter(function (ev) {
+      return !meetingIsDeclined(ev);
+    });
+    syncMeetingsHead(anchor, null);
+    updateMeetingsRangeBadge(events);
+    host.innerHTML = "";
+    if (lastMeetingsRange.connected === false) {
+      var banner = document.createElement("p");
+      banner.className = "muted empty-hint day-timeline-connect";
+      banner.textContent = meetingsEmptyMessage(lastMeetingsRange);
+      host.appendChild(banner);
+      return;
+    }
+    var wd = document.createElement("div");
+    wd.className = "meetings-month-wd";
+    ["пн", "вт", "ср", "чт", "пт", "сб", "вс"].forEach(function (label) {
+      var s = document.createElement("span");
+      s.textContent = label;
+      wd.appendChild(s);
+    });
+    var grid = document.createElement("div");
+    grid.className = "meetings-month-grid";
+    var today = todayIsoLocal();
+    var monthPrefix = startOfMonthIso(anchor).slice(0, 7);
+    days.forEach(function (iso) {
+      var cell = document.createElement("div");
+      cell.className = "meetings-month-cell";
+      cell.setAttribute("role", "button");
+      cell.tabIndex = 0;
+      if (iso.slice(0, 7) !== monthPrefix) cell.classList.add("meetings-month-cell--out");
+      if (iso === today) cell.classList.add("is-today");
+      var num = document.createElement("span");
+      num.className = "meetings-month-num";
+      num.textContent = String(dateFromIso(iso).getDate());
+      cell.appendChild(num);
+      var dayEvs = eventsForDate(events, iso);
+      dayEvs.slice(0, 2).forEach(function (ev) {
+        var chip = document.createElement("button");
+        chip.type = "button";
+        chip.className =
+          "meetings-month-chip" + (meetingNeedsRsvp(ev) ? " meetings-month-chip--pending" : "");
+        chip.textContent = meetingDisplayTitle(ev);
+        chip.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          openEventModal(ev);
+        });
+        cell.appendChild(chip);
+      });
+      if (dayEvs.length > 2) {
+        var more = document.createElement("span");
+        more.className = "meetings-month-more";
+        more.textContent = "+" + (dayEvs.length - 2);
+        cell.appendChild(more);
+      }
+      cell.addEventListener("click", function () {
+        meetingsPageDate = iso;
+        setMeetingsViewMode("day", { force: true });
+      });
+      cell.addEventListener("keydown", function (e) {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        meetingsPageDate = iso;
+        setMeetingsViewMode("day", { force: true });
+      });
+      grid.appendChild(cell);
+    });
+    host.appendChild(wd);
+    host.appendChild(grid);
   }
 
   function heroDateLineFor(iso) {
@@ -9152,7 +9695,7 @@
     return wrap;
   }
 
-  function paintActual(remData, calData, calDataNext) {
+  function paintActual(remData, calData, calDataNext, rangeData) {
     const hero = document.getElementById("actual-hero");
     const listEl = document.getElementById("reminders-list");
     const emptyR = document.getElementById("reminders-empty");
@@ -9168,19 +9711,26 @@
     }
     setHidden(errR, true);
 
-    const calDate = (calData && calData.date) || "";
+    const calDate = (calData && calData.date) || meetingsPageDate || todayIsoLocal();
 
     const items = (remData && remData.items) || [];
     const active = items.filter(function (x) {
       return !x.done;
     });
-    const evs = ((calData && calData.events) || []).filter(function (ev) {
-      return !meetingIsDeclined(ev);
-    });
-    const nextEvs = ((calDataNext && calDataNext.events) || []).filter(function (ev) {
-      return !meetingIsDeclined(ev);
-    });
-    const meetingsCount = isDesktopLayout() ? evs.length + nextEvs.length : evs.length;
+    var meetingsCount = 0;
+    if (meetingsViewMode === "week" || meetingsViewMode === "month") {
+      meetingsCount = ((rangeData && rangeData.events) || []).filter(function (ev) {
+        return !meetingIsDeclined(ev);
+      }).length;
+    } else {
+      const evs = ((calData && calData.events) || []).filter(function (ev) {
+        return !meetingIsDeclined(ev);
+      });
+      const nextEvs = ((calDataNext && calDataNext.events) || []).filter(function (ev) {
+        return !meetingIsDeclined(ev);
+      });
+      meetingsCount = isDesktopLayout() ? evs.length + nextEvs.length : evs.length;
+    }
 
     hero.innerHTML =
       '<div class="hero-inner">' +
@@ -9208,7 +9758,15 @@
       });
     }
 
-    paintMeetingsBoard(calData, calDataNext, active);
+    lastRemindersItems = active;
+    if (meetingsViewMode === "week") {
+      paintMeetingsWeek(rangeData || lastMeetingsRange);
+      ensureMeetingsNowTimer();
+    } else if (meetingsViewMode === "month") {
+      paintMeetingsMonth(rangeData || lastMeetingsRange);
+    } else {
+      paintMeetingsBoard(calData, calDataNext, active);
+    }
   }
 
   async function loadActual() {
@@ -9217,24 +9775,29 @@
     var dual = isDesktopLayout();
     var leftIso = meetingsPageDate || todayIsoLocal();
     var loadGen = ++meetingsLoadGen;
-    var cacheKind = "actual_" + leftIso + (dual ? "_2" : "");
+    var range = meetingsVisibleRange(leftIso);
+    var cacheKind = actualCacheKind();
     var cached = readMiniappCache(cacheKind);
     if (cached) {
       paintActual(
         cached.remData || { items: [] },
         cached.calData || { events: [] },
-        cached.calDataNext || null
+        cached.calDataNext || null,
+        cached.rangeData || null
       );
     }
 
     var remData = { items: [] };
     var calData = { events: [], connected: false };
     var calDataNext = null;
-    var fetches = [
-      apiFetch("/reminders", { method: "GET" }),
-      fetchCalendarDay(meetingsPageDate || leftIso),
-    ];
-    if (dual) fetches.push(fetchCalendarDay(addDaysIso(leftIso, 1)));
+    var rangeData = null;
+    var fetches = [apiFetch("/reminders", { method: "GET" })];
+    if (meetingsViewMode === "week" || meetingsViewMode === "month") {
+      fetches.push(fetchCalendarRange(range.from, range.to));
+    } else {
+      fetches.push(fetchCalendarDay(meetingsPageDate || leftIso));
+      if (dual) fetches.push(fetchCalendarDay(addDaysIso(leftIso, 1)));
+    }
     var contactP = refreshCalendarContacts();
     var results = await Promise.allSettled(fetches);
     await contactP;
@@ -9251,13 +9814,22 @@
     }
 
     if (results[1].status === "fulfilled") {
-      calData = results[1].value;
-      if (calData && calData.date) {
-        meetingsPageDate = calData.date;
-      }
-      if (errM) {
-        errM.textContent = "";
-        setHidden(errM, true);
+      if (meetingsViewMode === "week" || meetingsViewMode === "month") {
+        rangeData = results[1].value;
+        lastMeetingsRange = rangeData;
+        if (errM) {
+          errM.textContent = "";
+          setHidden(errM, true);
+        }
+      } else {
+        calData = results[1].value;
+        if (calData && calData.date) {
+          meetingsPageDate = calData.date;
+        }
+        if (errM) {
+          errM.textContent = "";
+          setHidden(errM, true);
+        }
       }
     } else if (!cached && errM) {
       var calErr = results[1].reason;
@@ -9265,7 +9837,7 @@
       setHidden(errM, false);
     }
 
-    if (dual && results[2]) {
+    if (meetingsViewMode === "day" && dual && results[2]) {
       if (results[2].status === "fulfilled") {
         calDataNext = results[2].value;
       } else {
@@ -9277,11 +9849,12 @@
     }
 
     if (loadGen !== meetingsLoadGen) return;
-    paintActual(remData, calData, calDataNext);
+    paintActual(remData, calData, calDataNext, rangeData);
     writeMiniappCache(cacheKind, {
       remData: remData,
       calData: calData,
       calDataNext: calDataNext,
+      rangeData: rangeData,
     });
   }
 
@@ -22746,6 +23319,9 @@
     }
 
     syncAppOverlay();
+    meetingsViewMode = readMeetingsViewMode();
+    syncMeetingsViewMenu();
+    syncMeetingsViewSurfaces();
 
     if (listenersBound) {
       apiFetch("/me", { method: "GET" })
@@ -23027,6 +23603,22 @@
     onId("meetings-today", "click", function () {
       goMeetingsToday();
     });
+    onId("meetings-view-btn", "click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleMeetingsViewMenu();
+    });
+    var viewMenu = document.getElementById("meetings-view-menu");
+    if (viewMenu) {
+      viewMenu.addEventListener("click", function (e) {
+        var item = e.target && e.target.closest && e.target.closest("[data-meetings-view]");
+        if (!item) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setMeetingsViewMode(item.getAttribute("data-meetings-view"));
+      });
+    }
+    bindMeetingsViewMenuOnce();
 
     onId("gpt-close", "click", closeGptChat);
     onId("gpt-overlay-backdrop", "click", closeGptChat);
