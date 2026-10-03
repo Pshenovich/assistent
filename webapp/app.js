@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261003-model-switch";
+  var WEBAPP_BUILD = "20261003-discuss-mention";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
