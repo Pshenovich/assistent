@@ -1932,8 +1932,11 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
   min-width: 0;
   gap: var(--space-1);
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
 }
 
 .notes-project-chips::-webkit-scrollbar {
@@ -3135,18 +3138,38 @@ html.note-editor-open #note-editor-overlay {
   right: 0;
   z-index: 4;
   display: flex;
-  align-items: flex-start;
-  gap: 0;
+  align-items: center;
+  gap: 0.15rem;
+  max-width: calc(100% - 0.75rem);
+}
+
+.note-card-actions .note-card-avatars {
+  padding-top: 0;
+  margin-right: 0.05rem;
 }
 
 .note-card-inner {
   position: relative;
   padding-left: var(--space-1);
-  padding-right: 4.25rem;
+  padding-right: 2.75rem;
 }
 
-.note-card-inner:has(.note-card-pin):has(.note-card-share-btn) {
-  padding-right: 6.25rem;
+.note-card-inner:has(.note-card-share-btn),
+.note-card-inner:has(.note-card-pin) {
+  padding-right: 4.5rem;
+}
+
+.note-card-inner:has(.note-card-actions .note-card-avatars) {
+  padding-right: 6.5rem;
+}
+
+.note-card-inner:has(.note-card-actions .note-card-avatars):has(.note-card-share-btn),
+.note-card-inner:has(.note-card-actions .note-card-avatars):has(.note-card-pin) {
+  padding-right: 8.25rem;
+}
+
+.note-card-inner:has(.note-card-actions .note-card-avatars):has(.note-card-pin):has(.note-card-share-btn) {
+  padding-right: 10rem;
 }
 
 .note-card-menu-wrap {
@@ -4822,6 +4845,9 @@ html.note-editor-open #note-editor-overlay {
   padding: 2px 2px;
   overflow-x: auto;
   overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
 }
 
 .note-paie-plus-project-chips.hidden,

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261003-subtab-discuss";
+  var WEBAPP_BUILD = "20261003-chips-scroll";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -11934,11 +11934,11 @@
     return el;
   }
 
-  function appendNoteCardAvatars(inner, members) {
+  function buildNoteCardAvatars(members) {
     var list = (members || []).filter(function (m) {
       return m && m.user_id;
     });
-    if (list.length < 2) return;
+    if (list.length < 2) return null;
     var wrap = document.createElement("div");
     wrap.className = "note-card-avatars";
     list.slice(0, 4).forEach(function (m) {
@@ -11949,6 +11949,27 @@
       more.className = "note-member-avatar note-member-avatar-more";
       more.textContent = "+" + (list.length - 4);
       wrap.appendChild(more);
+    }
+    return wrap;
+  }
+
+  function syncNoteCardActionsPad(inner, actions) {
+    if (!inner || !actions) return;
+    var w = Math.ceil(actions.getBoundingClientRect().width || 0);
+    inner.style.paddingRight = Math.max(44, w + 10) + "px";
+  }
+
+  function appendNoteCardAvatars(inner, members) {
+    var wrap = buildNoteCardAvatars(members);
+    if (!wrap || !inner) return;
+    var actions = inner.querySelector(".note-card-actions");
+    if (actions) {
+      var menuWraps = actions.querySelectorAll(".note-card-menu-wrap");
+      var moreWrap = menuWraps.length ? menuWraps[menuWraps.length - 1] : null;
+      if (moreWrap) actions.insertBefore(wrap, moreWrap);
+      else actions.appendChild(wrap);
+      syncNoteCardActionsPad(inner, actions);
+      return;
     }
     var title = inner.querySelector(".note-card-excerpt");
     if (title) {
@@ -15722,8 +15743,13 @@
           e.preventDefault();
           return;
         }
-        if (t.closest(".note-discussion-scroll")) return;
-        if (t.closest("textarea, input, .note-paie-menu, .note-paie-model-search")) return;
+        if (
+          t.closest(
+            ".note-discussion-scroll, .notes-project-chips, .note-paie-plus-notes, .note-paie-plus-menu, .note-pane-switch-menu, .note-paie-menu, textarea, input, .note-paie-composer-editor, [contenteditable='true']"
+          )
+        ) {
+          return;
+        }
         e.preventDefault();
       },
       { passive: false }
@@ -20562,6 +20588,7 @@
     actions.appendChild(moreWrap);
     inner.appendChild(actions);
     if (n.pinned) card.classList.add("note-card--pinned");
+    syncNoteCardActionsPad(inner, actions);
   }
 
   async function toggleNotePin(noteId, pinned) {
@@ -20724,9 +20751,9 @@
               (descRaw.length >= 280 ? "…" : "") +
               "</p>"
             : "");
-        appendNoteCardAvatars(inner, n.members);
         appendItemLabelChips(inner, n);
         mountNoteCardActions(card, inner, n);
+        appendNoteCardAvatars(inner, n.members);
         card.appendChild(inner);
         card.addEventListener("click", function () {
           openNoteDetail(n, { isLocal: isLocal });
