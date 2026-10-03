@@ -3134,7 +3134,7 @@ html.note-editor-open #note-editor-overlay {
 
 .note-card-actions {
   position: absolute;
-  top: 0;
+  top: calc((0.9375rem * 1.35 - 2rem) / 2);
   right: 0;
   z-index: 4;
   display: flex;
@@ -10641,16 +10641,15 @@ html.modal-sheet-open body {
     min-width: 0;
   }
 
-  .sidebar-nav-row {
-    display: flex;
-    align-items: center;
-    gap: 0.15rem;
-    min-width: 0;
+  .sidebar-nav-group > .tabbar-btn {
+    width: 100%;
+    padding-right: 0.5rem;
   }
 
-  .sidebar-nav-row .tabbar-btn {
+  .sidebar-nav-group > .tabbar-btn .tabbar-label {
     flex: 1 1 auto;
     min-width: 0;
+    text-align: left;
   }
 
   .sidebar-tree-toggle {
@@ -10672,7 +10671,11 @@ html.modal-sheet-open body {
   .sidebar-tree-toggle:hover,
   .sidebar-tree-toggle:focus-visible {
     color: var(--text);
-    background: var(--surface-muted);
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .tabbar-btn.active .sidebar-tree-toggle {
+    color: inherit;
   }
 
   .sidebar-tree-toggle svg {
@@ -10692,9 +10695,10 @@ html.modal-sheet-open body {
   .sidebar-tree {
     display: flex;
     flex-direction: column;
-    gap: 0.1rem;
-    margin: 0.15rem 0 0.35rem;
-    padding: 0 0 0 0.15rem;
+    gap: 0.05rem;
+    margin: 0.1rem 0 0.35rem;
+    /* Depth-0 chevron sits midway between tabbar icon and label */
+    padding: 0 0.5rem 0 1.65rem;
     min-width: 0;
   }
 
@@ -10713,18 +10717,62 @@ html.modal-sheet-open body {
   }
 
   .sidebar-tree-children {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 0.05rem;
     min-width: 0;
   }
 
+  .sidebar-tree-children::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0.15rem;
+    left: calc(var(--parent-depth, 0) * 0.95rem + 13px);
+    width: 1px;
+    background: color-mix(in srgb, var(--border) 88%, transparent);
+    pointer-events: none;
+  }
+
   .sidebar-tree-row {
     display: flex;
     align-items: center;
-    gap: 0.1rem;
     min-width: 0;
-    padding-left: calc(var(--sidebar-depth, 0) * 0.7rem);
+    /* Nested chevrons sit between parent chevron and parent label */
+    padding-left: calc(var(--sidebar-depth, 0) * 0.95rem);
+  }
+
+  .sidebar-tree-label {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 0.2rem;
+    min-width: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0.2rem 0.35rem 0.2rem 0;
+    border: none;
+    border-radius: 8px;
+    color: var(--text-secondary);
+    background: transparent;
+    font: inherit;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .sidebar-tree-row--section > .sidebar-tree-label {
+    font-weight: 600;
+  }
+
+  .sidebar-tree-label-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .sidebar-tree-chevron,
@@ -10733,24 +10781,30 @@ html.modal-sheet-open body {
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    width: 18px;
-    height: 18px;
+    width: 28px;
+    height: 28px;
     margin: 0;
     padding: 0;
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
     color: var(--text-tertiary);
     background: transparent;
+  }
+
+  .sidebar-tree-chevron {
+    pointer-events: auto;
     cursor: pointer;
   }
 
   .sidebar-tree-chevron-spacer {
-    cursor: default;
     visibility: hidden;
+    pointer-events: none;
   }
 
   .sidebar-tree-chevron svg {
     display: block;
+    width: 12px;
+    height: 12px;
     transition: transform 140ms ease;
   }
 
@@ -10758,28 +10812,8 @@ html.modal-sheet-open body {
     transform: rotate(180deg);
   }
 
-  .sidebar-tree-chevron:hover {
+  .sidebar-tree-label:hover .sidebar-tree-chevron {
     color: var(--text);
-    background: var(--surface-muted);
-  }
-
-  .sidebar-tree-label {
-    flex: 1 1 auto;
-    min-width: 0;
-    margin: 0;
-    padding: 0.28rem 0.4rem;
-    overflow: hidden;
-    border: none;
-    border-radius: 8px;
-    color: var(--text-secondary);
-    background: transparent;
-    font: inherit;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    text-align: left;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    cursor: pointer;
   }
 
   .sidebar-tree-label:hover {
@@ -10796,11 +10830,22 @@ html.modal-sheet-open body {
     font-weight: 400;
   }
 
+  .sidebar-tree-label--action,
+  .sidebar-tree-label--action:hover {
+    color: var(--text-secondary);
+    font-weight: 400;
+  }
+
+  .sidebar-tree-label--action:hover {
+    color: var(--text);
+    background: var(--surface-muted);
+  }
+
   .sidebar-tree-empty {
     margin: 0;
-    padding: 0.2rem 0.4rem 0.35rem calc(0.7rem + 18px);
+    padding: 0.2rem 0.35rem 0.35rem 28px;
     color: var(--text-tertiary);
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
   }
 
   .tabbar-btn--knowledge {
