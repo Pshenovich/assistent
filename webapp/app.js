@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261002-chats-host";
+  var WEBAPP_BUILD = "20261003-sidebar-tree3";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -688,6 +688,12 @@
   var digestTabEnabled = false;
   var digestRefreshing = false;
   var digestSubTab = "chats";
+  var sidebarTreeState = {
+    notesOpen: true,
+    digestOpen: true,
+    sections: { notes: true, chats: false, transcriptions: false, summaries: false },
+    projects: {},
+  };
   var digestMarketLoaded = false;
   var digestMarketLoading = false;
   var currentTab = "actual";
@@ -3085,6 +3091,13 @@
     } catch (_) {}
     syncSidebarToggleUi();
     if (isDesktopLayout()) applyNotePaneWidths();
+    if (!collapsed) {
+      sidebarTreeState.notesOpen = true;
+      if (digestTabEnabled) sidebarTreeState.digestOpen = true;
+      if (!notesDataCache) loadNotes().catch(function () {});
+      if (!chatThreadsCache.length) loadChatThreads().catch(function () {});
+    }
+    renderSidebarTrees();
   }
 
   function toggleSidebarCollapsed() {
@@ -3354,6 +3367,7 @@
     syncAppOverlay();
     syncNotesCreateFab();
     syncActualCreateFab();
+    renderSidebarTrees();
   }
 
   function setTab(name, options) {
@@ -3559,13 +3573,407 @@
     return labels[key] || key;
   }
 
+  function sidebarTreesAllowed() {
+    return isDesktopLayout() && !isSidebarCollapsed();
+  }
+
+  function sidebarProjectKey(section, projectId) {
+    return String(section) + ":" + String(projectId || "none");
+  }
+
+  function isSidebarProjectOpen(section, projectId) {
+    var key = sidebarProjectKey(section, projectId);
+    if (Object.prototype.hasOwnProperty.call(sidebarTreeState.projects, key)) {
+      return !!sidebarTreeState.projects[key];
+    }
+    return false;
+  }
+
+  function setSidebarProjectOpen(section, projectId, open) {
+    sidebarTreeState.projects[sidebarProjectKey(section, projectId)] = !!open;
+  }
+
+  function groupItemsByProject(items) {
+    var tags = getUserTagsFromCache();
+    var byId = {};
+    var none = [];
+    (items || []).forEach(function (item) {
+      var project = noteProjectOf(item);
+      if (project && project.id != null) {
+        var pid = String(project.id);
+        if (!byId[pid]) byId[pid] = { project: project, items: [] };
+        byId[pid].items.push(item);
+      } else {
+        none.push(item);
+      }
+    });
+    var groups = [];
+    tags.forEach(function (tag) {
+      var pid = String(tag.id);
+      if (byId[pid] && byId[pid].items.length) {
+        groups.push({
+          project: { id: tag.id, name: tag.name || byId[pid].project.name || "Проект" },
+          items: byId[pid].items,
+        });
+        delete byId[pid];
+      }
+    });
+    Object.keys(byId).forEach(function (pid) {
+      groups.push(byId[pid]);
+    });
+    if (none.length) {
+      groups.push({ project: { id: "none", name: "Без проекта" }, items: none });
+    }
+    return groups;
+  }
+
+  function sidebarItemTitle(item, kind) {
+    if (kind === "local") {
+      return (
+        sanitizeNoteTitle((item && (item.title || item.content)) || "") ||
+        String((item && (item.title || item.content)) || "Без названия")
+      );
+    }
+    if (kind === "chat") {
+      return String((item && item.title) || "Новый чат");
+    }
+    return journalCardTitle(item) || "Запись";
+  }
+
+  function makeSidebarTreeToggle(expanded) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "sidebar-tree-chevron" + (expanded ? " is-open" : "");
+    btn.setAttribute("aria-expanded", expanded ? "true" : "false");
+    btn.innerHTML =
+      '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+    return btn;
+  }
+
+  function makeSidebarTreeRow(opts) {
+    opts = opts || {};
+    var row = document.createElement("div");
+    row.className =
+      "sidebar-tree-row" +
+      (opts.leaf ? " sidebar-tree-row--leaf" : "") +
+      (opts.active ? " is-active" : "");
+    row.style.setProperty("--sidebar-depth", String(opts.depth || 0));
+    if (opts.expandable) {
+      var chev = makeSidebarTreeToggle(!!opts.expanded);
+      chev.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof opts.onToggle === "function") opts.onToggle();
+      });
+      row.appendChild(chev);
+    } else {
+      var spacer = document.createElement("span");
+      spacer.className = "sidebar-tree-chevron-spacer";
+      spacer.setAttribute("aria-hidden", "true");
+      row.appendChild(spacer);
+    }
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "sidebar-tree-label";
+    btn.textContent = opts.label || "";
+    btn.title = opts.label || "";
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof opts.onClick === "function") opts.onClick();
+    });
+    row.appendChild(btn);
+    return row;
+  }
+
+  function appendSidebarProjectBranch(host, section, groups, kind, openItem) {
+    groups.forEach(function (group) {
+      var pid = group.project && group.project.id != null ? group.project.id : "none";
+      var open = isSidebarProjectOpen(section, pid);
+      var branch = document.createElement("div");
+      branch.className = "sidebar-tree-branch";
+      branch.appendChild(
+        makeSidebarTreeRow({
+          depth: 1,
+          expandable: true,
+          expanded: open,
+          label: String((group.project && group.project.name) || "Проект"),
+          active: false,
+          onToggle: function () {
+            setSidebarProjectOpen(section, pid, !open);
+            renderSidebarTrees();
+          },
+          onClick: function () {
+            setSidebarProjectOpen(section, pid, true);
+            setTab("notes", { noAnim: true });
+            setNotesSubTab(section);
+            if (pid !== "none" && kind !== "chat") {
+              notesActiveProjectId = Number(pid) || 0;
+              renderNotesTagFilterBar();
+              if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+            }
+            renderSidebarTrees();
+          },
+        })
+      );
+      if (open) {
+        var kids = document.createElement("div");
+        kids.className = "sidebar-tree-children";
+        (group.items || []).forEach(function (item) {
+          kids.appendChild(
+            makeSidebarTreeRow({
+              depth: 2,
+              leaf: true,
+              label: sidebarItemTitle(item, kind),
+              active: false,
+              onClick: function () {
+                openItem(item);
+              },
+            })
+          );
+        });
+        branch.appendChild(kids);
+      }
+      host.appendChild(branch);
+    });
+  }
+
+  function renderSidebarNotesTree() {
+    var tree = document.getElementById("sidebar-tree-notes");
+    var toggle = document.querySelector('[data-sidebar-toggle="notes"]');
+    if (!tree || !toggle) return;
+    var open = !!sidebarTreeState.notesOpen && sidebarTreesAllowed();
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    toggle.classList.toggle("is-open", open);
+    tree.classList.toggle("hidden", !open);
+    if (!open) {
+      tree.innerHTML = "";
+      return;
+    }
+    if (!chatThreadsCache.length && !chatThreadsLoading) {
+      loadChatThreads().catch(function () {});
+    }
+    tree.innerHTML = "";
+    var data = notesDataCache || {};
+    var sections = [
+      {
+        id: "notes",
+        label: "Заметки",
+        kind: "local",
+        items: data.local_notes || [],
+        openItem: function (n) {
+          setTab("notes", { noAnim: true });
+          setNotesSubTab("notes");
+          openNoteDetail(n, { isLocal: true });
+        },
+      },
+      {
+        id: "chats",
+        label: "Чаты",
+        kind: "chat",
+        items: visibleChatThreads(),
+        openItem: function (t) {
+          setTab("notes", { noAnim: true });
+          setNotesSubTab("chats");
+          openChatThread(t);
+        },
+      },
+      {
+        id: "transcriptions",
+        label: "Транскрипции",
+        kind: "journal",
+        items: data.transcriptions || [],
+        openItem: function (row) {
+          setTab("notes", { noAnim: true });
+          setNotesSubTab("transcriptions");
+          openJournalEditorDetail(row);
+        },
+      },
+      {
+        id: "summaries",
+        label: "Саммари",
+        kind: "journal",
+        items: data.summaries || [],
+        openItem: function (row) {
+          setTab("notes", { noAnim: true });
+          setNotesSubTab("summaries");
+          openJournalEditorDetail(row);
+        },
+      },
+    ];
+    sections.forEach(function (sec) {
+      var expanded = !!sidebarTreeState.sections[sec.id];
+      var branch = document.createElement("div");
+      branch.className = "sidebar-tree-branch";
+      branch.appendChild(
+        makeSidebarTreeRow({
+          depth: 0,
+          expandable: true,
+          expanded: expanded,
+          label: sec.label,
+          active: currentTab === "notes" && notesSubTab === sec.id,
+          onToggle: function () {
+            sidebarTreeState.sections[sec.id] = !expanded;
+            renderSidebarTrees();
+          },
+          onClick: function () {
+            setTab("notes", { noAnim: true });
+            setNotesSubTab(sec.id);
+            sidebarTreeState.sections[sec.id] = true;
+            renderSidebarTrees();
+          },
+        })
+      );
+      if (expanded) {
+        var kids = document.createElement("div");
+        kids.className = "sidebar-tree-children";
+        if (sec.id === "chats") {
+          var chats = sec.items || [];
+          if (!chats.length) {
+            var empty = document.createElement("p");
+            empty.className = "sidebar-tree-empty";
+            empty.textContent = "Чатов пока нет";
+            kids.appendChild(empty);
+          } else {
+            chats.forEach(function (t) {
+              kids.appendChild(
+                makeSidebarTreeRow({
+                  depth: 1,
+                  leaf: true,
+                  label: sidebarItemTitle(t, "chat"),
+                  active: String(activeChatThreadId) === String(t.id),
+                  onClick: function () {
+                    sec.openItem(t);
+                  },
+                })
+              );
+            });
+          }
+        } else {
+          var groups = groupItemsByProject(sec.items || []);
+          if (!groups.length) {
+            var empty2 = document.createElement("p");
+            empty2.className = "sidebar-tree-empty";
+            empty2.textContent = "Пусто";
+            kids.appendChild(empty2);
+          } else {
+            appendSidebarProjectBranch(kids, sec.id, groups, sec.kind, sec.openItem);
+          }
+        }
+        branch.appendChild(kids);
+      }
+      tree.appendChild(branch);
+    });
+  }
+
+  function renderSidebarDigestTree() {
+    var tree = document.getElementById("sidebar-tree-digest");
+    var toggle = document.querySelector('[data-sidebar-toggle="digest"]');
+    if (!tree || !toggle) return;
+    var open = !!sidebarTreeState.digestOpen && sidebarTreesAllowed() && digestTabEnabled;
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    toggle.classList.toggle("is-open", open);
+    tree.classList.toggle("hidden", !open);
+    if (!open) {
+      tree.innerHTML = "";
+      return;
+    }
+    tree.innerHTML = "";
+    [
+      { id: "chats", label: "Чаты" },
+      { id: "market", label: "Рынок" },
+    ].forEach(function (sec) {
+      tree.appendChild(
+        makeSidebarTreeRow({
+          depth: 0,
+          leaf: true,
+          label: sec.label,
+          active: currentTab === "digest" && digestSubTab === sec.id,
+          onClick: function () {
+            setTab("digest", { noAnim: true });
+            setDigestSubTab(sec.id);
+            renderSidebarTrees();
+          },
+        })
+      );
+    });
+  }
+
+  function syncSidebarTreeToggles() {
+    document.querySelectorAll("[data-sidebar-toggle]").forEach(function (btn) {
+      var key = btn.getAttribute("data-sidebar-toggle");
+      var allowed = sidebarTreesAllowed() && (key !== "digest" || digestTabEnabled);
+      btn.classList.toggle("hidden", !allowed);
+      if (!allowed) {
+        btn.setAttribute("aria-expanded", "false");
+        btn.classList.remove("is-open");
+      }
+    });
+  }
+
+  function renderSidebarTrees() {
+    syncSidebarTreeToggles();
+    if (!sidebarTreesAllowed()) {
+      var notesTree = document.getElementById("sidebar-tree-notes");
+      var digestTree = document.getElementById("sidebar-tree-digest");
+      if (notesTree) {
+        notesTree.classList.add("hidden");
+        notesTree.innerHTML = "";
+      }
+      if (digestTree) {
+        digestTree.classList.add("hidden");
+        digestTree.innerHTML = "";
+      }
+      return;
+    }
+    renderSidebarNotesTree();
+    renderSidebarDigestTree();
+  }
+
+  var sidebarTreeBound = false;
+  function bindSidebarTreesOnce() {
+    if (sidebarTreeBound) return;
+    sidebarTreeBound = true;
+    document.addEventListener("click", function (e) {
+      var toggle = e.target && e.target.closest && e.target.closest("[data-sidebar-toggle]");
+      if (!toggle) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var key = toggle.getAttribute("data-sidebar-toggle");
+      if (key === "notes") {
+        sidebarTreeState.notesOpen = !sidebarTreeState.notesOpen;
+        if (sidebarTreeState.notesOpen && !notesDataCache) {
+          loadNotes().catch(function () {});
+        }
+      } else if (key === "digest") {
+        sidebarTreeState.digestOpen = !sidebarTreeState.digestOpen;
+      }
+      renderSidebarTrees();
+    });
+    if (window.matchMedia) {
+      var mq = window.matchMedia("(min-width: 960px)");
+      var onChange = function () {
+        renderSidebarTrees();
+      };
+      if (mq.addEventListener) mq.addEventListener("change", onChange);
+      else if (mq.addListener) mq.addListener(onChange);
+    }
+  }
+
   function setDigestTabVisible(enabled) {
+
     digestTabEnabled = !!enabled;
     var btn = document.querySelector('.tabbar-btn[data-tab="digest"]');
+    var group = document.querySelector('.sidebar-nav-group[data-sidebar-group="digest"]');
     if (btn) {
       setHidden(btn, !digestTabEnabled);
       if (digestTabEnabled) btn.removeAttribute("hidden");
       else btn.setAttribute("hidden", "hidden");
+    }
+    if (group) {
+      setHidden(group, !digestTabEnabled);
+      if (digestTabEnabled) group.removeAttribute("hidden");
+      else group.setAttribute("hidden", "hidden");
     }
     var hint = document.getElementById("profile-chats-hint");
     if (hint) {
@@ -3576,6 +3984,7 @@
     if (!digestTabEnabled && currentTab === "digest") {
       setTab("actual", { noAnim: true });
     }
+    renderSidebarTrees();
   }
 
   async function syncDigestSettingsFromServer() {
@@ -3628,6 +4037,7 @@
     } else {
       loadDigestReports();
     }
+    renderSidebarTrees();
   }
 
   function openDigestDetail(report) {
@@ -11177,6 +11587,7 @@
       chatThreadsCache = (data && data.chats) || [];
       sortChatThreadsCache();
       renderChatThreadsList();
+      renderSidebarTrees();
     } catch (e) {
       var list = document.getElementById("chat-threads-list");
       if (list && !visibleChatThreads().length) {
@@ -11345,6 +11756,7 @@
       });
     }
     syncNotesCreateFab();
+    renderSidebarTrees();
   }
   function clearNoteEditorToolbarWrap() {
     var toolbarWrap = document.getElementById("note-editor-toolbar-wrap");
@@ -19560,6 +19972,7 @@
 
   function renderNotesPanesFromData(data) {
     renderNotesTagFilterBar();
+    renderSidebarTrees();
     const pn = document.getElementById("notes-pane-notes");
     const pt = document.getElementById("notes-pane-transcriptions");
     const ps = document.getElementById("notes-pane-summaries");
@@ -21496,6 +21909,8 @@
       });
     }
     syncSidebarToggleUi();
+    bindSidebarTreesOnce();
+    renderSidebarTrees();
 
     document.querySelectorAll("#panel-notes .subtab-btn").forEach(function (b) {
       b.addEventListener("click", function () {

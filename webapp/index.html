@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261002-chats-host">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261003-sidebar-tree3">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -46,7 +46,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261002-chats-host" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261003-sidebar-tree3" />
   <link rel="preload" href="/webapp/note-rich-editor.js?v=20261002-ios-boot" as="script" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
@@ -1037,25 +1037,41 @@
           </span>
           <span class="tabbar-label">Актуальное</span>
         </button>
-        <button type="button" class="tabbar-btn" data-tab="notes" role="tab" aria-selected="false">
-          <span class="tabbar-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" />
-            </svg>
-          </span>
-          <span class="tabbar-label">Сохранённое</span>
-        </button>
-        <button type="button" class="tabbar-btn tabbar-btn--digest hidden" data-tab="digest" role="tab" aria-selected="false" hidden>
-          <span class="tabbar-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 4h12a2 2 0 0 1 2 2v14H6a2 2 0 0 1-2-2V4z" />
-              <path d="M18 6h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-2" />
-              <path d="M8 8h6M8 12h6M8 16h4" />
-            </svg>
-          </span>
-          <span class="tabbar-label">Дайджест</span>
-        </button>
+        <div class="sidebar-nav-group" data-sidebar-group="notes">
+          <div class="sidebar-nav-row">
+            <button type="button" class="tabbar-btn" data-tab="notes" role="tab" aria-selected="false">
+              <span class="tabbar-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" />
+                </svg>
+              </span>
+              <span class="tabbar-label">Сохранённое</span>
+            </button>
+            <button type="button" class="sidebar-tree-toggle" data-sidebar-toggle="notes" aria-expanded="false" aria-label="Разделы сохранённого" title="Разделы">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </div>
+          <div class="sidebar-tree hidden" id="sidebar-tree-notes" role="group" aria-label="Сохранённое"></div>
+        </div>
+        <div class="sidebar-nav-group sidebar-nav-group--digest hidden" data-sidebar-group="digest" hidden>
+          <div class="sidebar-nav-row">
+            <button type="button" class="tabbar-btn tabbar-btn--digest" data-tab="digest" role="tab" aria-selected="false">
+              <span class="tabbar-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 4h12a2 2 0 0 1 2 2v14H6a2 2 0 0 1-2-2V4z" />
+                  <path d="M18 6h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-2" />
+                  <path d="M8 8h6M8 12h6M8 16h4" />
+                </svg>
+              </span>
+              <span class="tabbar-label">Дайджест</span>
+            </button>
+            <button type="button" class="sidebar-tree-toggle" data-sidebar-toggle="digest" aria-expanded="false" aria-label="Разделы дайджеста" title="Разделы">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </div>
+          <div class="sidebar-tree hidden" id="sidebar-tree-digest" role="group" aria-label="Дайджест"></div>
+        </div>
         <button type="button" class="tabbar-btn tabbar-btn--knowledge" data-tab="knowledge" role="tab" aria-selected="false">
           <span class="tabbar-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1328,6 +1344,6 @@
   <script src="/webapp/note-html.js?v=20261002-ios-boot" defer></script>
   <script src="/webapp/note-comments.js?v=20261002-ios-boot" defer></script>
   <script src="/webapp/note-rich-editor.js?v=20261002-ios-boot" defer></script>
-  <script src="/webapp/app.js?v=20261002-chats-host" defer></script>
+  <script src="/webapp/app.js?v=20261003-sidebar-tree3" defer></script>
 </body>
 </html>

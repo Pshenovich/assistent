@@ -1,19 +1,19 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261002-ios-boot";
+var CACHE_VERSION = "miniapp-v1-20261003-sidebar-tree3";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261002-ios-boot",
-  "./app.js?v=20261002-ios-boot",
-  "./note-html.js?v=20261002-ios-boot",
-  "./note-comments.js?v=20261002-ios-boot",
-  "./note-rich-editor.js?v=20261002-ios-boot",
-  "./icons/arrow-up-right.svg?v=20261002-ios-boot",
-  "./icons/chevron-up-muted.svg?v=20261002-ios-boot",
-  "./icons/chevron-up-on-fill.svg?v=20261002-ios-boot",
+  "./styles.css?v=20261003-sidebar-tree3",
+  "./app.js?v=20261003-sidebar-tree3",
+  "./note-html.js?v=20261003-sidebar-tree3",
+  "./note-comments.js?v=20261003-sidebar-tree3",
+  "./note-rich-editor.js?v=20261003-sidebar-tree3",
+  "./icons/arrow-up-right.svg?v=20261003-sidebar-tree3",
+  "./icons/chevron-up-muted.svg?v=20261003-sidebar-tree3",
+  "./icons/chevron-up-on-fill.svg?v=20261003-sidebar-tree3",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",

@@ -1640,6 +1640,16 @@ html.boot-open-app #app.hidden {
   display: none;
 }
 
+.sidebar-tree-toggle,
+.sidebar-tree {
+  display: none !important;
+}
+
+.sidebar-nav-group,
+.sidebar-nav-row {
+  display: contents;
+}
+
 /* ——— Notes / Сохранённое ——— */
 .notes-header {
   padding: var(--space-1) 0 var(--space-3);
@@ -5713,9 +5723,24 @@ html.note-editor-open #note-editor-overlay {
 
 .note-pane-switch-wrap {
   position: relative;
+  grid-column: 2;
   display: flex;
   justify-content: center;
   min-width: 0;
+  width: 100%;
+}
+
+#note-discussion-close {
+  grid-column: 1;
+  justify-self: start;
+}
+
+#note-discussion-title-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .note-pane-switch {
@@ -5740,6 +5765,7 @@ html.note-editor-open #note-editor-overlay {
 
 .note-pane-switch:disabled,
 .note-pane-switch.note-pane-switch--plain {
+  width: 100%;
   cursor: default;
   background: transparent;
 }
@@ -5755,13 +5781,6 @@ html.note-editor-open #note-editor-overlay {
   width: 18px;
   height: 18px;
   opacity: 0.85;
-}
-
-#note-discussion-title-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .note-pane-switch-menu {
@@ -10245,7 +10264,7 @@ html.modal-sheet-open body {
 /* ——— Desktop: sidebar nav + two-column cards ——— */
 @media (min-width: 960px) {
   :root {
-    --sidebar-w: 15.25rem;
+    --sidebar-w: 16.75rem;
     --sidebar-w-collapsed: 4.5rem;
     --content-max: 70rem;
     --discuss-w: var(--max-w);
@@ -10443,8 +10462,11 @@ html.modal-sheet-open body {
     gap: 0.3rem;
     min-height: 0;
     padding: 0.15rem 0 0;
+    overflow-x: hidden;
+    overflow-y: auto;
     border-top: none;
     background: transparent;
+    -webkit-overflow-scrolling: touch;
   }
 
   .tabbar-btn {
@@ -10462,6 +10484,175 @@ html.modal-sheet-open body {
 
   .tabbar-btn[data-tab="profile"] {
     margin-top: auto;
+  }
+
+  .sidebar-nav-group {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+
+  .sidebar-nav-row {
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+
+  .sidebar-nav-row .tabbar-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .sidebar-tree-toggle {
+    display: inline-flex !important;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: 8px;
+    color: var(--text-secondary);
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .sidebar-tree-toggle:hover,
+  .sidebar-tree-toggle:focus-visible {
+    color: var(--text);
+    background: var(--surface-muted);
+  }
+
+  .sidebar-tree-toggle svg {
+    display: block;
+    transition: transform 160ms ease;
+  }
+
+  .sidebar-tree-toggle.is-open svg {
+    transform: rotate(180deg);
+  }
+
+  html.sidebar-collapsed .sidebar-tree-toggle,
+  html.sidebar-collapsed .sidebar-tree {
+    display: none !important;
+  }
+
+  .sidebar-tree {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    margin: 0.15rem 0 0.35rem;
+    padding: 0 0 0 0.15rem;
+    min-width: 0;
+  }
+
+  .sidebar-tree:not(.hidden) {
+    display: flex !important;
+  }
+
+  .sidebar-tree.hidden {
+    display: none !important;
+  }
+
+  .sidebar-tree-branch {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .sidebar-tree-children {
+    display: flex;
+    flex-direction: column;
+    gap: 0.05rem;
+    min-width: 0;
+  }
+
+  .sidebar-tree-row {
+    display: flex;
+    align-items: center;
+    gap: 0.1rem;
+    min-width: 0;
+    padding-left: calc(var(--sidebar-depth, 0) * 0.7rem);
+  }
+
+  .sidebar-tree-chevron,
+  .sidebar-tree-chevron-spacer {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    color: var(--text-tertiary);
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .sidebar-tree-chevron-spacer {
+    cursor: default;
+    visibility: hidden;
+  }
+
+  .sidebar-tree-chevron svg {
+    display: block;
+    transition: transform 140ms ease;
+  }
+
+  .sidebar-tree-chevron.is-open svg {
+    transform: rotate(180deg);
+  }
+
+  .sidebar-tree-chevron:hover {
+    color: var(--text);
+    background: var(--surface-muted);
+  }
+
+  .sidebar-tree-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    padding: 0.28rem 0.4rem;
+    overflow: hidden;
+    border: none;
+    border-radius: 8px;
+    color: var(--text-secondary);
+    background: transparent;
+    font: inherit;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .sidebar-tree-label:hover {
+    color: var(--text);
+    background: var(--surface-muted);
+  }
+
+  .sidebar-tree-row.is-active > .sidebar-tree-label {
+    color: var(--text);
+    background: var(--accent-muted);
+  }
+
+  .sidebar-tree-row--leaf .sidebar-tree-label {
+    font-weight: 400;
+  }
+
+  .sidebar-tree-empty {
+    margin: 0;
+    padding: 0.2rem 0.4rem 0.35rem calc(0.7rem + 18px);
+    color: var(--text-tertiary);
+    font-size: 0.75rem;
   }
 
   .tabbar-btn--knowledge {
