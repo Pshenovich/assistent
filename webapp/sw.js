@@ -1,19 +1,19 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261003-discuss-unread-pwa";
+var CACHE_VERSION = "miniapp-v1-20261003-subtab-discuss";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261003-discuss-unread-pwa",
-  "./app.js?v=20261003-discuss-unread-pwa",
-  "./note-html.js?v=20261003-discuss-unread-pwa",
-  "./note-comments.js?v=20261003-discuss-unread-pwa",
-  "./note-rich-editor.js?v=20261003-discuss-unread-pwa",
-  "./icons/arrow-up-right.svg?v=20261003-discuss-unread-pwa",
-  "./icons/chevron-up-muted.svg?v=20261003-discuss-unread-pwa",
-  "./icons/chevron-up-on-fill.svg?v=20261003-discuss-unread-pwa",
+  "./styles.css?v=20261003-subtab-discuss",
+  "./app.js?v=20261003-subtab-discuss",
+  "./note-html.js?v=20261003-subtab-discuss",
+  "./note-comments.js?v=20261003-subtab-discuss",
+  "./note-rich-editor.js?v=20261003-subtab-discuss",
+  "./icons/arrow-up-right.svg?v=20261003-subtab-discuss",
+  "./icons/chevron-up-muted.svg?v=20261003-subtab-discuss",
+  "./icons/chevron-up-on-fill.svg?v=20261003-subtab-discuss",
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",

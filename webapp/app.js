@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261003-discuss-unread-pwa";
+  var WEBAPP_BUILD = "20261003-subtab-discuss";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -12379,13 +12379,49 @@
   function gptComposerIsEmpty(ed) {
     if (!ed) return true;
     if (ed.querySelector(".note-gpt-quote-chip")) return false;
+    if (ed.querySelector(".note-discuss-mention")) return false;
     return !String(ed.innerText || "").replace(/\u00a0/g, " ").trim();
+  }
+
+  function normalizeEmptyGptComposer(ed) {
+    if (!ed || !gptComposerIsEmpty(ed)) return false;
+    var html = String(ed.innerHTML || "")
+      .replace(/<br\s*\/?>/gi, "")
+      .replace(/&nbsp;/gi, "")
+      .replace(/\u00a0/g, "")
+      .replace(/<div><\/div>/gi, "")
+      .replace(/<p><\/p>/gi, "")
+      .trim();
+    if (!html) {
+      if (ed.innerHTML !== "") {
+        ed.innerHTML = "";
+        return true;
+      }
+      return false;
+    }
+    return false;
+  }
+
+  function placeComposerCaretAtStart(ed) {
+    if (!ed || document.activeElement !== ed) return;
+    try {
+      var sel = window.getSelection();
+      if (!sel) return;
+      var range = document.createRange();
+      range.selectNodeContents(ed);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch (_) {}
   }
 
   function syncGptEditorEmpty(ed) {
     ed = ed || noteGptEditor();
     if (!ed) return;
-    ed.classList.toggle("is-empty", gptComposerIsEmpty(ed));
+    var cleared = normalizeEmptyGptComposer(ed);
+    var empty = gptComposerIsEmpty(ed);
+    ed.classList.toggle("is-empty", empty);
+    if (cleared && empty) placeComposerCaretAtStart(ed);
   }
 
   function clearGptComposer() {
@@ -13464,7 +13500,10 @@
     var placeholderWraps = composerPlaceholderWraps(el);
     if (!valueWraps) {
       var singleH = Math.max(el.scrollHeight, minSingle);
-      if (!value && placeholderWraps) singleH = Math.max(singleH, minMulti);
+      if (!value && placeholderWraps) {
+        el.classList.add("is-multiline");
+        singleH = Math.max(singleH, minMulti);
+      }
       el.style.height = Math.min(singleH, maxH) + "px";
       return;
     }
@@ -15913,17 +15952,25 @@
     if (maxId) markDiscussSeenUpTo(wrap._shareKind, wrap._shareId, maxId);
     else clearDiscussUnread(wrap._shareKind, wrap._shareId);
     ensureNotePaieThread();
-    if (opts.mode) setNoteAskMode(opts.mode);
-    if (opts.draft) {
+    var draftQuote = opts.draft ? String(opts.draft.quote || "").trim() : "";
+    var mode = opts.mode;
+    if (draftQuote && !mode) {
+      mode = noteAskUsesChips(noteAskMode()) ? noteAskMode() : "gpt";
+    }
+    if (mode) setNoteAskMode(mode);
+    else if (!opts.fromDesktopSync && !opts.draft) setNoteAskMode(noteAskMode() || "gpt");
+
+    var useChips = !!(draftQuote && noteAskUsesChips(noteAskMode()));
+    if (draftQuote && !useChips) {
       wrap._commentDraft = {
-        quote: String(opts.draft.quote || "").trim(),
+        quote: draftQuote,
         prefix: opts.draft.prefix || "",
         suffix: opts.draft.suffix || "",
       };
       wrap._commentChairId = opts.chairId || null;
-      if (!opts.mode) setNoteAskMode("comment");
-    } else if (!opts.mode) {
-      setNoteAskMode("gpt");
+    } else if (useChips || opts.draft) {
+      wrap._commentDraft = null;
+      wrap._commentChairId = null;
     }
     if (opts.scrollToId) wrap._discussionPinId = opts.scrollToId;
     else if (!opts.fromDesktopSync) wrap._discussionPinId = null;
@@ -15939,6 +15986,7 @@
       wrap._shareKind,
       wrap._shareId
     );
+    if (useChips) insertGptQuoteChip(draftQuote);
     var input = document.getElementById("note-paie-reply-input");
     var editor = noteGptEditor();
     var focusEl = noteAskUsesComposerEditor(noteAskMode()) ? editor : input;
@@ -19893,7 +19941,13 @@
       }
       draft = sel;
       api.showBubble(sel.rect, function () {
-        openNoteDiscussion({ mode: "comment", draft: sel });
+        var current = noteAskMode();
+        var mode = noteAskUsesChips(current)
+          ? current
+          : current === "comment"
+            ? "comment"
+            : "gpt";
+        openNoteDiscussion({ mode: mode, draft: sel, focus: true });
       });
     }
     function onDocMouseDown(e) {

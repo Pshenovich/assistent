@@ -1720,6 +1720,27 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
   overflow: hidden;
 }
 
+.subtab-btn {
+  flex: 1 1 auto;
+  padding: 0.5rem 0.55rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.subtab-btn.active {
+  color: var(--on-accent);
+  background: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+
 .notes-fab {
   position: fixed;
   right: max(var(--space-4), calc((100vw - var(--max-w)) / 2 + var(--space-4)));
@@ -1794,27 +1815,6 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
 .actual-create-menu-btn:active {
   transform: scale(0.99);
   background: var(--accent-subtle);
-}
-
-.subtab-btn {
-  flex: 1;
-  min-width: 0;
-  padding: 0.5rem 0.35rem;
-  border: none;
-  border-radius: var(--radius-sm);
-  font-family: inherit;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  background: transparent;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.subtab-btn.active {
-  color: var(--on-accent);
-  background: var(--accent);
-  box-shadow: var(--shadow-sm);
 }
 
 .notes-search-wrap {
@@ -5247,6 +5247,7 @@ html.note-editor-open #note-editor-overlay {
 }
 
 .note-paie-composer-editor {
+  position: relative;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -5256,9 +5257,19 @@ html.note-editor-open #note-editor-overlay {
 
 .note-paie-composer-editor.is-empty::before {
   content: attr(data-placeholder);
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 11px;
   color: var(--note-composer-muted);
   pointer-events: none;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.note-paie-composer-editor.is-empty.is-multiline::before {
+  top: 10px;
 }
 
 .note-paie-composer-editor.is-disabled {
