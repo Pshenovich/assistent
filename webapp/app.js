@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261003-cal-views";
+  var WEBAPP_BUILD = "20261003-month-events";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -1048,9 +1048,9 @@
 
   async function fetchCalendarRange(fromIso, toIso) {
     return apiFetch(
-      "/calendar/range?from=" +
+      "/calendar/range?start=" +
         encodeURIComponent(fromIso) +
-        "&to=" +
+        "&end=" +
         encodeURIComponent(toIso),
       { method: "GET" }
     );
@@ -1058,6 +1058,13 @@
 
   function eventCoversDate(ev, dateIso) {
     if (!ev || !dateIso) return false;
+    var taggedStart = String(ev.start_day || "").slice(0, 10);
+    if (taggedStart) {
+      var taggedEnd = String(ev.end_day || taggedStart).slice(0, 10);
+      if (!taggedEnd || taggedEnd < taggedStart) taggedEnd = taggedStart;
+      if (ev.day_end_exclusive) return taggedStart <= dateIso && dateIso < taggedEnd;
+      return taggedStart <= dateIso && dateIso <= taggedEnd;
+    }
     if (eventIsAllDay(ev)) {
       var start = String((ev.start && ev.start.date) || "").slice(0, 10);
       var end = String((ev.end && ev.end.date) || "").slice(0, 10);
@@ -1065,11 +1072,23 @@
       if (!end || end <= start) end = addDaysIso(start, 1);
       return start <= dateIso && dateIso < end;
     }
+    var rawStart = String((ev.start && (ev.start.dateTime || ev.start.date)) || "");
     var startMs = eventStartMs(ev);
-    if (startMs == null) return false;
-    var startIso = localDateIsoFromMs(startMs);
+    var startIso =
+      startMs != null
+        ? localDateIsoFromMs(startMs)
+        : rawStart.length >= 10
+          ? rawStart.slice(0, 10)
+          : "";
+    if (!startIso) return false;
     var endMs = eventEndMs(ev);
-    var endIso = endMs != null ? localDateIsoFromMs(endMs) : startIso;
+    var rawEnd = String((ev.end && (ev.end.dateTime || ev.end.date)) || "");
+    var endIso =
+      endMs != null
+        ? localDateIsoFromMs(endMs)
+        : rawEnd.length >= 10
+          ? rawEnd.slice(0, 10)
+          : startIso;
     if (!endIso || endIso < startIso) endIso = startIso;
     if (startIso === endIso) return startIso === dateIso;
     return startIso <= dateIso && dateIso <= endIso && !(dateIso === endIso && endMs === dayStartMs(endIso));
@@ -1844,7 +1863,7 @@
       num.textContent = String(dateFromIso(iso).getDate());
       cell.appendChild(num);
       var dayEvs = eventsForDate(events, iso);
-      dayEvs.slice(0, 2).forEach(function (ev) {
+      dayEvs.slice(0, 3).forEach(function (ev) {
         var chip = document.createElement("button");
         chip.type = "button";
         chip.className =
@@ -1857,10 +1876,10 @@
         });
         cell.appendChild(chip);
       });
-      if (dayEvs.length > 2) {
+      if (dayEvs.length > 3) {
         var more = document.createElement("span");
         more.className = "meetings-month-more";
-        more.textContent = "+" + (dayEvs.length - 2);
+        more.textContent = "+" + (dayEvs.length - 3);
         cell.appendChild(more);
       }
       cell.addEventListener("click", function () {
@@ -3305,6 +3324,7 @@
     if (o && Number(o.timeout) > 0) return Number(o.timeout);
     var p = String(path || "");
     if (p.indexOf("/gpt/chat") >= 0) return 180000;
+    if (p.indexOf("/calendar/range") >= 0) return 30000;
     if (/\/paei(\/|\?|$)/.test(p) || p.slice(-5) === "/paei") return 180000;
     if (/\/research(\/|\?|$)/.test(p) || p.slice(-9) === "/research") return 180000;
     return 8000;

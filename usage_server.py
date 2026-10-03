@@ -3769,6 +3769,26 @@ def _serialize_gcal_events(
             item = _serialize_calendar_event(e, contacts_by_email=contacts_by_email)
             if item.get("self_response_status") == "declined":
                 continue
+            start_day = str(e.get("_start_day") or "").strip()[:10]
+            end_day = str(e.get("_end_day") or "").strip()[:10]
+            if start_day:
+                item["start_day"] = start_day
+                item["end_day"] = end_day or start_day
+                item["day_end_exclusive"] = bool(e.get("_day_end_exclusive"))
+            elif not item.get("start_day"):
+                st = item.get("start") or {}
+                en = item.get("end") or {}
+                if st.get("date") and not st.get("dateTime"):
+                    item["start_day"] = str(st.get("date"))[:10]
+                    item["end_day"] = str(en.get("date") or item["start_day"])[:10]
+                    item["day_end_exclusive"] = True
+                else:
+                    dt = str(st.get("dateTime") or "")
+                    if len(dt) >= 10:
+                        item["start_day"] = dt[:10]
+                        edt = str(en.get("dateTime") or dt)
+                        item["end_day"] = edt[:10] if len(edt) >= 10 else dt[:10]
+                        item["day_end_exclusive"] = False
             ser.append(item)
         except Exception as ex:
             print(f"[miniapp_calendar] skip_event id={e.get('id')!r} err={ex!r}")
@@ -3807,8 +3827,8 @@ def _calendar_range_payload(
     end_d = _parse_calendar_day(to_iso, start_d)
     if end_d < start_d:
         start_d, end_d = end_d, start_d
-    if (end_d - start_d).days > 44:
-        end_d = start_d + timedelta(days=44)
+    if (end_d - start_d).days > 62:
+        end_d = start_d + timedelta(days=62)
     from_s = start_d.isoformat()
     to_s = end_d.isoformat()
     has_token = google_calendar_oauth.user_token_path(uid).is_file()
@@ -3837,8 +3857,30 @@ def _calendar_range_payload(
         for norm in cal_sources.list_events_in_window(uid, win_start, win_end):
             raw = dict(norm.get("raw") or {})
             raw["_calendarId"] = str(norm.get("calendar_id") or raw.get("_calendarId") or "primary")
+            start = norm.get("start")
+            end = norm.get("end")
+            if isinstance(start, datetime):
+                start_local = start.astimezone(tz)
+                raw["_start_day"] = start_local.date().isoformat()
+                raw["start"] = raw.get("start") if isinstance(raw.get("start"), dict) else {}
+                if not raw["start"].get("dateTime") and not raw["start"].get("date"):
+                    raw["start"] = {
+                        "dateTime": start_local.isoformat(),
+                        "timeZone": str(tz),
+                    }
+            if isinstance(end, datetime):
+                end_local = end.astimezone(tz)
+                raw["_end_day"] = end_local.date().isoformat()
+                is_all_day = bool((raw.get("start") or {}).get("date") and not (raw.get("start") or {}).get("dateTime"))
+                raw["_day_end_exclusive"] = is_all_day or end_local.time() == datetime.min.time()
+                raw["end"] = raw.get("end") if isinstance(raw.get("end"), dict) else {}
+                if not raw["end"].get("dateTime") and not raw["end"].get("date"):
+                    raw["end"] = {
+                        "dateTime": end_local.isoformat(),
+                        "timeZone": str(tz),
+                    }
             collected.append(raw)
-        ser = _serialize_gcal_events(uid, collected, 400)
+        ser = _serialize_gcal_events(uid, collected, 1500)
         if not ser and _miniapp_dev_mode_on():
             ser = _local_dev_events_range(uid, start_d, end_d, str(tz))
         return {
@@ -4731,19 +4773,22 @@ async def miniapp_calendar_today(
 @miniapp_router.get("/calendar/range")
 async def miniapp_calendar_range(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
-    from_date: Optional[str] = Query(
+    start: Optional[str] = Query(
         None,
-        alias="from",
         description="Начало диапазона YYYY-MM-DD (включительно)",
     ),
-    to_date: Optional[str] = Query(
+    end: Optional[str] = Query(
         None,
-        alias="to",
         description="Конец диапазона YYYY-MM-DD (включительно)",
     ),
+    from_date: Optional[str] = Query(None, alias="from"),
+    to_date: Optional[str] = Query(None, alias="to"),
 ) -> dict[str, Any]:
     return await run_in_threadpool(
-        _calendar_range_payload, int(principal.telegram_user_id), from_date, to_date
+        _calendar_range_payload,
+        int(principal.telegram_user_id),
+        start or from_date,
+        end or to_date,
     )
 
 

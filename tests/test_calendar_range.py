@@ -25,8 +25,8 @@ class TestCalendarRangeHelpers(TestCase):
             patch("usage_server._miniapp_dev_mode_on", return_value=False),
         ):
             token_path.return_value.is_file.return_value = False
-            payload = _calendar_range_payload(1, "2026-12-01", "2026-10-01")
-            self.assertEqual(payload["from"], "2026-10-01")
-            self.assertEqual(payload["to"], "2026-11-14")
+            payload = _calendar_range_payload(1, "2026-12-31", "2026-01-01")
+            self.assertEqual(payload["from"], "2026-01-01")
+            self.assertEqual(payload["to"], "2026-03-04")
             self.assertFalse(payload["connected"])
             self.assertEqual(payload["events"], [])
