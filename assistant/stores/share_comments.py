@@ -394,3 +394,96 @@ def comments_allowed_for_link(link: dict[str, Any] | None) -> bool:
 
 def comments_visible_for_link(link: dict[str, Any] | None) -> bool:
     return bool(link)
+
+
+def _comment_is_assistant(row: dict[str, Any] | None) -> bool:
+    if not row:
+        return False
+    return bool(
+        is_gpt_turn(row)
+        or is_paie_comment(row)
+        or is_research_turn(row)
+        or is_agent_turn(row)
+    )
+
+
+def latest_briefs(
+    keys: list[tuple[str, str, str]],
+) -> dict[tuple[str, str, str], dict[str, Any]]:
+    """Latest comment meta for (owner_user_id, item_kind, item_id) triples."""
+    want: set[tuple[str, str, str]] = set()
+    for owner, kind, item_id in keys:
+        o = str(owner or "").strip()
+        k = str(kind or "").strip()
+        i = str(item_id or "").strip()
+        if not o or k not in _VALID_KINDS or not i:
+            continue
+        want.add((o, k, i))
+    if not want:
+        return {}
+    owners = sorted({o for o, _, _ in want})
+    kinds = sorted({k for _, k, _ in want})
+    item_ids = sorted({i for _, _, i in want})
+    own_ph = ",".join("?" for _ in owners)
+    kind_ph = ",".join("?" for _ in kinds)
+    id_ph = ",".join("?" for _ in item_ids)
+    with _LOCK:
+        cur = _conn().execute(
+            f"""
+            SELECT owner_user_id, item_kind, item_id, MAX(id) AS mid
+            FROM share_comments
+            WHERE owner_user_id IN ({own_ph})
+              AND item_kind IN ({kind_ph})
+              AND item_id IN ({id_ph})
+            GROUP BY owner_user_id, item_kind, item_id
+            """,
+            (*owners, *kinds, *item_ids),
+        )
+        max_rows = [
+            (str(r["owner_user_id"]), str(r["item_kind"]), str(r["item_id"]), int(r["mid"]))
+            for r in cur.fetchall()
+            if (str(r["owner_user_id"]), str(r["item_kind"]), str(r["item_id"])) in want
+        ]
+        if not max_rows:
+            return {}
+        mids = [mid for *_, mid in max_rows]
+        mid_ph = ",".join("?" for _ in mids)
+        cur = _conn().execute(
+            f"SELECT * FROM share_comments WHERE id IN ({mid_ph})",
+            mids,
+        )
+        by_id = {int(r["id"]): _row_to_dict(r) for r in cur.fetchall()}
+    out: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for owner, kind, item_id, mid in max_rows:
+        row = by_id.get(mid)
+        if not row:
+            continue
+        out[(owner, kind, item_id)] = {
+            "id": int(row["id"]),
+            "author_user_id": str(row.get("author_user_id") or ""),
+            "author_name": str(row.get("author_name") or ""),
+            "created_at": row.get("created_at"),
+            "is_assistant": _comment_is_assistant(row),
+        }
+    return out
+
+
+def attach_discuss_latest(
+    items: list[dict[str, Any]],
+    *,
+    kind: str,
+    owner_key: str = "owner_user_id",
+    id_key: str = "id",
+) -> None:
+    """Mutate items in place, setting discuss_latest from share_comments."""
+    keys: list[tuple[str, str, str]] = []
+    for item in items:
+        owner = str(item.get(owner_key) or item.get("user_id") or "").strip()
+        iid = str(item.get(id_key) or "").strip()
+        if owner and iid:
+            keys.append((owner, kind, iid))
+    briefs = latest_briefs(keys)
+    for item in items:
+        owner = str(item.get(owner_key) or item.get("user_id") or "").strip()
+        iid = str(item.get(id_key) or "").strip()
+        item["discuss_latest"] = briefs.get((owner, kind, iid)) if owner and iid else None

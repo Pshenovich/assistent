@@ -350,6 +350,52 @@ class ShareCommentsTests(unittest.TestCase):
                 prefix=share_comments.GPT_PREFIX,
             )
 
+    def test_latest_briefs_and_attach(self) -> None:
+        older = share_comments.add_comment(
+            42,
+            "local",
+            5,
+            author_user_id=7,
+            author_name="Анна",
+            author_username="anna",
+            body="старое",
+        )
+        newer = share_comments.add_comment(
+            42,
+            "local",
+            5,
+            author_user_id=42,
+            author_name="GPT",
+            author_username="gpt",
+            body="ответ",
+            prefix=share_comments.GPT_PREFIX,
+        )
+        share_comments.add_comment(
+            42,
+            "local",
+            9,
+            author_user_id=8,
+            author_name="Борис",
+            body="другая",
+        )
+        briefs = share_comments.latest_briefs(
+            [("42", "local", "5"), ("42", "local", "9"), ("42", "local", "missing")]
+        )
+        self.assertEqual(set(briefs.keys()), {("42", "local", "5"), ("42", "local", "9")})
+        self.assertEqual(briefs[("42", "local", "5")]["id"], newer["id"])
+        self.assertTrue(briefs[("42", "local", "5")]["is_assistant"])
+        self.assertNotEqual(briefs[("42", "local", "5")]["id"], older["id"])
+        self.assertFalse(briefs[("42", "local", "9")]["is_assistant"])
+        notes = [
+            {"id": 5, "owner_user_id": "42"},
+            {"id": 9, "user_id": "42"},
+            {"id": 1, "owner_user_id": "42"},
+        ]
+        share_comments.attach_discuss_latest(notes, kind="local")
+        self.assertEqual(notes[0]["discuss_latest"]["id"], newer["id"])
+        self.assertEqual(notes[1]["discuss_latest"]["author_user_id"], "8")
+        self.assertIsNone(notes[2]["discuss_latest"])
+
 
 if __name__ == "__main__":
     unittest.main()

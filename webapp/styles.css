@@ -117,8 +117,20 @@ html.tg-miniapp-fullscreen {
   --page-bottom: var(--tabbar-stack);
 }
 
-html.tg-android {
+html.tg-android:not(.app-standalone) {
   --tg-android-nav-inset: 88px;
+}
+
+html.app-standalone {
+  --tg-android-nav-inset: 0px;
+  /* PWA: trust the browser safe-area; ignore Telegram/webview overlay fallbacks. */
+  --tabbar-safe: max(
+    env(safe-area-inset-bottom, 0px),
+    var(--tg-safe-area-inset-bottom, 0px)
+  );
+  --tabbar-offset: var(--tabbar-safe);
+  --tabbar-stack: calc(var(--tabbar-h) + var(--tabbar-offset));
+  --page-bottom: var(--tabbar-stack);
 }
 
 /* Always keep tab bar above system UI:
@@ -6585,6 +6597,18 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   margin: 0;
   font-size: 0.9375rem;
   font-weight: 600;
+}
+
+.note-discussion-card.has-discuss-unread .note-discussion-card-title::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 8px;
+  border-radius: 50%;
+  vertical-align: middle;
+  background: var(--vkui--color_text_accent, #529ef4);
+  box-shadow: 0 0 0 2px rgba(82, 158, 244, 0.2);
 }
 
 .note-discussion-card-meta {

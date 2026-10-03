@@ -5717,6 +5717,23 @@ async def miniapp_notes_bundle(
         for n in local_notes:
             n.setdefault("shared", False)
 
+    def _attach_discuss_latest() -> None:
+        from assistant.stores import share_comments as share_comments_store
+
+        share_comments_store.attach_discuss_latest(local_notes, kind="local")
+        share_comments_store.attach_discuss_latest(
+            transcriptions + summaries, kind="journal"
+        )
+
+    try:
+        await run_in_threadpool(_attach_discuss_latest)
+    except Exception as e:
+        print(f"[miniapp_notes] discuss_latest_fail err={e!r}")
+        for n in local_notes:
+            n.setdefault("discuss_latest", None)
+        for row in transcriptions + summaries:
+            row.setdefault("discuss_latest", None)
+
     return {
         "journal": out_journal,
         "transcriptions": transcriptions,

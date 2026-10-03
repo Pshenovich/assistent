@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261003-text-mention";
+  var WEBAPP_BUILD = "20261003-discuss-unread-pwa";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -9594,10 +9594,31 @@
     ensureAppBackHistory();
   }
 
+  function isStandaloneDisplay() {
+    try {
+      return (
+        (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
+        (window.matchMedia && window.matchMedia("(display-mode: fullscreen)").matches) ||
+        window.navigator.standalone === true
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
   function applyTelegramSafeAreaInsets() {
     var tg = window.Telegram && window.Telegram.WebApp;
     var root = document.documentElement;
-    if (!tg) return;
+    var standalone = isStandaloneDisplay();
+    root.classList.toggle("app-standalone", standalone);
+    if (standalone) {
+      root.style.setProperty("--tg-android-nav-inset", "0px");
+      root.classList.remove("android-legacy-nav");
+    }
+    if (!tg) {
+      syncTelegramFullscreenClass();
+      return;
+    }
     try {
       var sa = tg.safeAreaInset || {};
       var csa = tg.contentSafeAreaInset || {};
@@ -9632,23 +9653,27 @@
       var vsh = typeof tg.viewportStableHeight === "number" ? tg.viewportStableHeight : 0;
       var overlay = 0;
       if (vh > 0 && vsh > 0) overlay = Math.max(0, vh - vsh);
+      // Standalone PWA already has env(safe-area); skip webview overlay heuristics.
+      if (standalone) overlay = 0;
       root.style.setProperty("--tg-viewport-bottom-overlay", overlay + "px");
 
       // Final fallback: VisualViewport delta (works in many Android WebViews)
       var vv = window.visualViewport;
       var vvOverlay = 0;
-      if (vv && typeof vv.height === "number") {
+      if (!standalone && vv && typeof vv.height === "number") {
         vvOverlay = Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0));
       }
       root.style.setProperty("--vv-bottom-overlay", Math.round(vvOverlay) + "px");
 
       // Android (3-button navigation) often reports all insets as 0 while system UI
-      // still overlays the bottom of the webview. Add a conservative fallback.
+      // still overlays the bottom of the webview. Add a conservative fallback —
+      // but never in installed PWA, where env(safe-area-inset-bottom) is reliable.
       var plat = String(tg.platform || "").toLowerCase();
       var ua = (navigator && navigator.userAgent) || "";
       var isAndroid =
         plat.indexOf("android") === 0 || /android/i.test(ua || "");
       var inferredInset =
+        !standalone &&
         isAndroid &&
         bottom <= 0 &&
         cBottom <= 0 &&
@@ -15738,6 +15763,7 @@
     syncNoteDiscussionOpenClass();
     syncAppOverlay();
     syncTelegramNativeBack();
+    updateNoteDiscussionCardUnread();
     if (isNoteEditorModalOpen()) updateModalSheetForKeyboard();
     if (notesSubTab === "chats") {
       activeChatThreadId = "";
@@ -15862,6 +15888,19 @@
     }
     var meta = card.querySelector(".note-discussion-card-meta");
     if (meta) meta.textContent = ruMessageCount(rows.length);
+    updateNoteDiscussionCardUnread();
+  }
+
+  function updateNoteDiscussionCardUnread() {
+    var card = document.getElementById("note-discussion-card");
+    if (!card) return;
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var on = !!(
+      wrap &&
+      noteHasDiscussUnread(wrap._shareKind, wrap._shareId) &&
+      !isNoteDiscussionOpen()
+    );
+    card.classList.toggle("has-discuss-unread", on);
   }
 
   function openNoteDiscussion(opts) {
@@ -15869,7 +15908,10 @@
     bindNoteDiscussionOverlayOnce();
     var wrap = document.getElementById("note-editor-more-wrap");
     if (!wrap || !wrap._shareKind || !wrap._shareId) return;
-    clearDiscussUnread(wrap._shareKind, wrap._shareId);
+    var panel = document.getElementById("note-editor-comments");
+    var maxId = maxCommentId((panel && panel._allComments) || []);
+    if (maxId) markDiscussSeenUpTo(wrap._shareKind, wrap._shareId, maxId);
+    else clearDiscussUnread(wrap._shareKind, wrap._shareId);
     ensureNotePaieThread();
     if (opts.mode) setNoteAskMode(opts.mode);
     if (opts.draft) {
@@ -15892,7 +15934,6 @@
       ov.classList.remove("hidden");
       ov.setAttribute("aria-hidden", "false");
     }
-    var panel = document.getElementById("note-editor-comments");
     renderNotePaieThread(
       (panel && panel._allComments) || [],
       wrap._shareKind,
@@ -16204,6 +16245,10 @@
     return "leo_discuss_unread:" + String(kind || "") + ":" + String(itemId || "");
   }
 
+  function discussSeenStorageKey(kind, itemId) {
+    return "leo_discuss_seen:" + String(kind || "") + ":" + String(itemId || "");
+  }
+
   function noteHasDiscussUnread(kind, itemId) {
     if (!kind || itemId == null || itemId === "") return false;
     try {
@@ -16220,12 +16265,101 @@
       if (on) localStorage.setItem(key, "1");
       else localStorage.removeItem(key);
     } catch (_) {}
+    updateNoteDiscussionCardUnread();
   }
 
   function clearDiscussUnread(kind, itemId) {
     if (!noteHasDiscussUnread(kind, itemId)) return;
     setDiscussUnread(kind, itemId, false);
     refreshDiscussUnreadUi();
+  }
+
+  function getDiscussSeenId(kind, itemId) {
+    try {
+      return parseInt(localStorage.getItem(discussSeenStorageKey(kind, itemId)) || "0", 10) || 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  function hasDiscussSeenBaseline(kind, itemId) {
+    try {
+      return localStorage.getItem(discussSeenStorageKey(kind, itemId)) != null;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function markDiscussSeenUpTo(kind, itemId, commentId) {
+    if (!kind || itemId == null || itemId === "") return;
+    var id = parseInt(commentId, 10) || 0;
+    if (!id) return;
+    var prev = getDiscussSeenId(kind, itemId);
+    if (id > prev) {
+      try {
+        localStorage.setItem(discussSeenStorageKey(kind, itemId), String(id));
+      } catch (_) {}
+    } else if (!hasDiscussSeenBaseline(kind, itemId)) {
+      try {
+        localStorage.setItem(discussSeenStorageKey(kind, itemId), String(id));
+      } catch (_) {}
+    }
+    if (noteHasDiscussUnread(kind, itemId)) {
+      setDiscussUnread(kind, itemId, false);
+      refreshDiscussUnreadUi();
+    } else {
+      updateNoteDiscussionCardUnread();
+    }
+  }
+
+  function maxCommentId(comments) {
+    var max = 0;
+    (comments || []).forEach(function (c) {
+      var id = parseInt(c && c.id, 10) || 0;
+      if (id > max) max = id;
+    });
+    return max;
+  }
+
+  function syncDiscussUnreadFromLatest(kind, itemId, latest) {
+    if (!kind || itemId == null || itemId === "") return;
+    if (!latest || latest.id == null) return;
+    var latestId = parseInt(latest.id, 10) || 0;
+    if (!latestId) return;
+    if (isViewingNoteDiscussion(kind, itemId)) {
+      markDiscussSeenUpTo(kind, itemId, latestId);
+      return;
+    }
+    if (!hasDiscussSeenBaseline(kind, itemId)) {
+      try {
+        localStorage.setItem(discussSeenStorageKey(kind, itemId), String(latestId));
+      } catch (_) {}
+      return;
+    }
+    var seen = getDiscussSeenId(kind, itemId);
+    if (latestId <= seen) {
+      if (noteHasDiscussUnread(kind, itemId)) setDiscussUnread(kind, itemId, false);
+      return;
+    }
+    var me = currentTelegramUserId();
+    var mine =
+      !!me &&
+      String(latest.author_user_id || "") === String(me) &&
+      !latest.is_assistant;
+    if (mine) {
+      try {
+        localStorage.setItem(discussSeenStorageKey(kind, itemId), String(latestId));
+      } catch (_) {}
+      if (noteHasDiscussUnread(kind, itemId)) setDiscussUnread(kind, itemId, false);
+      return;
+    }
+    setDiscussUnread(kind, itemId, true);
+  }
+
+  function syncDiscussUnreadFromNoteRow(kind, row) {
+    if (!row) return;
+    var id = row.id != null ? row.id : localNoteIdFrom(row);
+    syncDiscussUnreadFromLatest(kind, id, row.discuss_latest);
   }
 
   function isViewingNoteDiscussion(kind, itemId) {
@@ -19660,7 +19794,30 @@
       }
       renderNoteCommentsList(listEl, anchored, kind, itemId);
       renderNotePaieThread(comments, kind, itemId);
+      if (isViewingNoteDiscussion(kind, itemId) || isNoteDiscussionOpen()) {
+        var seenMax = maxCommentId(comments);
+        if (seenMax) markDiscussSeenUpTo(kind, itemId, seenMax);
+      } else {
+        var latestRow = null;
+        var mid = maxCommentId(comments);
+        if (mid) {
+          for (var ci = 0; ci < comments.length; ci++) {
+            if (Number(comments[ci].id) === mid) {
+              latestRow = comments[ci];
+              break;
+            }
+          }
+        }
+        if (latestRow) {
+          syncDiscussUnreadFromLatest(kind, itemId, {
+            id: latestRow.id,
+            author_user_id: latestRow.author_user_id,
+            is_assistant: isAssistantComment(latestRow),
+          });
+        }
+      }
       syncDesktopNoteDiscussion();
+      updateNoteDiscussionCardUnread();
     } catch (e) {
       listEl.innerHTML = "";
       var err = document.createElement("p");
@@ -20225,6 +20382,7 @@
   function mountNoteCardActions(card, inner, n) {
     var id = String(localNoteIdFrom(n) || "");
     if (!id) return;
+    syncDiscussUnreadFromNoteRow("local", n);
     var isOwner = n.is_owner !== false;
     var actions = document.createElement("div");
     actions.className = "note-card-actions";
@@ -20574,6 +20732,7 @@
           inner.appendChild(createJournalPdfButton(jid));
         }
         appendItemLabelChips(inner, row);
+        syncDiscussUnreadFromNoteRow("journal", row);
         mountDiscussUnreadBadge(inner, "journal", jid, true);
         card.appendChild(inner);
         card.addEventListener("click", function () {
@@ -22286,6 +22445,7 @@
   function bootApp(tg) {
     showApp();
     syncDigestSettingsFromServer().catch(function () {});
+    applyTelegramSafeAreaInsets();
     if (tg) {
       try {
         tg.ready();
