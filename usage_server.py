@@ -5031,9 +5031,13 @@ async def miniapp_gpt_chat(
     if agent["kind"] not in ("gpt", user_agents.CUSTOM_KIND):
         raise HTTPException(status_code=400, detail="Этот агент запускается из своего режима")
     run_model = model or sanitize_openrouter_model_id(str(agent.get("model") or ""))
-    if agent["kind"] == "gpt" and model and model != str(agent.get("model") or ""):
+    if (
+        model
+        and model != str(agent.get("model") or "")
+        and agent["kind"] in ("gpt", user_agents.CUSTOM_KIND)
+    ):
         try:
-            user_agents.patch_agent(uid, "gpt", {"model": model})
+            user_agents.patch_agent(uid, str(agent["id"]), {"model": model})
         except user_agents.AgentError:
             pass
 
@@ -5145,6 +5149,7 @@ async def miniapp_gpt_chat(
         "bullets": out.get("bullets") if isinstance(out.get("bullets"), list) else [],
         "kb_version": str(out.get("kb_version") or ""),
         "files": files,
+        "model": run_model or "",
     }
 
 

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261003-sidebar-tree3";
+  var WEBAPP_BUILD = "20261003-model-switch";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -12656,16 +12656,26 @@
 
   function setSelectedGptModelId(id) {
     var next = String(id || "").trim();
+    if (!next) return;
+    composerAgentModel = next;
+    syncGptModelButton();
     if (isCustomAskMode(noteAskMode())) {
-      composerAgentModel = next;
-      syncGptModelButton();
+      var agentId = noteAskMode();
+      var agent = findUserAgent(agentId);
+      if (agent) agent.model = next;
+      apiFetch("/agents/" + encodeURIComponent(agentId), {
+        method: "PATCH",
+        body: JSON.stringify({ model: next }),
+      })
+        .then(function () {
+          return loadUserAgents();
+        })
+        .catch(function () {});
       return;
     }
-    composerAgentModel = "";
     try {
-      if (next) localStorage.setItem(GPT_MODEL_LS, next);
+      localStorage.setItem(GPT_MODEL_LS, next);
     } catch (_) {}
-    syncGptModelButton();
   }
 
   function gptModelShortName(id) {
@@ -17235,18 +17245,30 @@
 
   function setNoteAskMode(mode) {
     var wrap = document.getElementById("note-editor-more-wrap");
+    var prev = wrap && wrap._askMode;
     var next =
       mode === "paie" || mode === "comment" || mode === "research" || mode === "gpt"
         ? mode
         : isCustomAskMode(mode)
           ? mode
           : "gpt";
+    var modeChanged = next !== prev;
     if (wrap) wrap._askMode = next;
-    if (isCustomAskMode(next)) {
-      var custom = findUserAgent(next);
-      composerAgentModel = (custom && custom.model) || "";
-    } else {
-      composerAgentModel = "";
+    // Не сбрасывать выбранную модель при каждом ensureNotePaieThread —
+    // только при реальной смене режима (gpt ↔ свой агент ↔ comment…).
+    if (modeChanged) {
+      if (isCustomAskMode(next)) {
+        var custom = findUserAgent(next);
+        composerAgentModel = (custom && custom.model) || "";
+      } else if (next === "gpt") {
+        try {
+          composerAgentModel = String(localStorage.getItem(GPT_MODEL_LS) || "").trim();
+        } catch (_) {
+          composerAgentModel = composerAgentModel || "";
+        }
+      } else {
+        composerAgentModel = "";
+      }
     }
     var current = noteAskMode();
     var form = document.getElementById("note-paie-reply-form");
