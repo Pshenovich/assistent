@@ -9473,6 +9473,10 @@ textarea.event-sheet-title--area {
   backdrop-filter: blur(4px);
 }
 
+#modal-overlay.modal-overlay {
+  z-index: 280;
+}
+
 #note-unsaved-overlay.modal-overlay {
   z-index: 140;
 }
@@ -11734,6 +11738,10 @@ html.modal-sheet-open body {
     justify-content: stretch;
     border-left: 1px solid var(--border);
     box-shadow: -12px 0 32px rgba(0, 0, 0, 0.28);
+  }
+
+  html.note-discussion-open #modal-overlay.modal-overlay {
+    right: var(--discuss-w, var(--max-w));
   }
 
   .note-discussion-sheet {
