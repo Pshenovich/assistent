@@ -258,6 +258,32 @@ class TestCalendarHeuristics(unittest.TestCase):
             )
         )
 
+    def test_gcal_timed_task_focus_slot_is_task(self):
+        from assistant.lib.calendar_event_utils import calendar_event_is_task
+
+        ev = {
+            "summary": "Тест 9 Гугл",
+            "eventType": "focusTime",
+            "transparency": "transparent",
+            "description": (
+                "Изменения в названии, описании или прикрепленных файлах не сохранятся. "
+                "Чтобы изменить данные, перейдите по ссылке https://tasks.google.com/task/B5UgeefnJQK_NpkN."
+            ),
+        }
+        self.assertTrue(calendar_event_is_task(ev))
+        self.assertEqual(calendar_entry_kind_label(ev), "Задача")
+
+    def test_real_focus_time_is_not_a_task(self):
+        from assistant.lib.calendar_event_utils import calendar_event_is_task
+
+        ev = {
+            "summary": "Focus time",
+            "eventType": "focusTime",
+            "transparency": "transparent",
+        }
+        self.assertFalse(calendar_event_is_task(ev))
+        self.assertEqual(calendar_entry_kind_label(ev), "Фокус")
+
     def test_event_with_guests_is_meeting(self):
         from assistant.lib.calendar_event_utils import calendar_event_is_task
 

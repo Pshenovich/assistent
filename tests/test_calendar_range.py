@@ -154,6 +154,7 @@ class TestCalendarRangeHelpers(TestCase):
         try:
             with (
                 patch("assistant.services.google_tasks.pull_into_leo_brief", return_value=[]),
+                patch("assistant.services.calendar.get_event", return_value={"eventType": "focusTime"}),
                 patch("assistant.services.calendar.delete_task_event"),
             ):
                 out = _attach_leo_tasks({"events": [ev]}, 1, start, end, tz)
@@ -164,7 +165,7 @@ class TestCalendarRangeHelpers(TestCase):
             self.assertEqual(tasks[0]["summary"], "Купить молоко")
             linked = calendar_tasks_store.get_task(1, row["id"])
             self.assertEqual(linked["google_task_id"], "gt-1")
-            self.assertFalse(linked.get("google_event_id"))
+            self.assertEqual(linked["google_event_id"], "gcal-meet-1")
         finally:
             calendar_tasks_store._CONN = None  # type: ignore[attr-defined]
             os.environ.pop("CALENDAR_TASKS_DB_PATH", None)
@@ -187,13 +188,56 @@ class TestCalendarRangeHelpers(TestCase):
             "calendar_id": "primary",
         }
         try:
-            with patch("assistant.services.google_tasks.pull_into_leo_brief", return_value=[]):
+            with (
+                patch("assistant.services.google_tasks.pull_into_leo_brief", return_value=[]),
+                patch("assistant.services.calendar.get_event", return_value={"eventType": "default"}),
+            ):
                 out = _attach_leo_tasks({"events": [ev]}, 1, start, end, tz)
             ids = [e.get("id") for e in out["events"]]
             self.assertNotIn("gcal-solo-1", ids)
             tasks = [e for e in out["events"] if e.get("entry_type") == "task"]
             self.assertEqual(len(tasks), 1)
             self.assertEqual(tasks[0]["summary"], "Купить молоко")
+            self.assertTrue(str(tasks[0]["id"]).startswith("task-"))
+        finally:
+            calendar_tasks_store._CONN = None  # type: ignore[attr-defined]
+            os.environ.pop("CALENDAR_TASKS_DB_PATH", None)
+            isolated.cleanup()
+
+    def test_attach_imports_gcal_focus_time_task(self) -> None:
+        from usage_server import _attach_leo_tasks, _serialize_calendar_event
+
+        isolated = self._isolated_tasks_db()
+        tz = ZoneInfo("Europe/Moscow")
+        start = datetime(2026, 10, 4, 0, 0, tzinfo=tz)
+        end = datetime(2026, 10, 5, 0, 0, tzinfo=tz)
+        raw = {
+            "id": "768kkuffknlp5bshbee4nru6q8",
+            "summary": "Тест 9 Гугл",
+            "eventType": "focusTime",
+            "transparency": "transparent",
+            "description": (
+                "Изменения в названии, описании или прикрепленных файлах не сохранятся. "
+                "Чтобы изменить данные, перейдите по ссылке https://tasks.google.com/task/B5UgeefnJQK_NpkN."
+            ),
+            "start": {"dateTime": "2026-10-04T14:30:00+03:00"},
+            "end": {"dateTime": "2026-10-04T15:30:00+03:00"},
+            "_calendarId": "primary",
+        }
+        ev = _serialize_calendar_event(raw)
+        try:
+            with (
+                patch("assistant.services.google_tasks.pull_into_leo_brief", return_value=[]),
+                patch("assistant.services.calendar.get_event", return_value=raw),
+            ):
+                out = _attach_leo_tasks({"events": [ev]}, 1, start, end, tz)
+            self.assertEqual(ev["entry_type"], "task")
+            self.assertEqual(ev["kind"], "Задача")
+            ids = [e.get("id") for e in out["events"]]
+            self.assertNotIn("768kkuffknlp5bshbee4nru6q8", ids)
+            tasks = [e for e in out["events"] if e.get("entry_type") == "task"]
+            self.assertEqual(len(tasks), 1)
+            self.assertEqual(tasks[0]["summary"], "Тест 9 Гугл")
             self.assertTrue(str(tasks[0]["id"]).startswith("task-"))
         finally:
             calendar_tasks_store._CONN = None  # type: ignore[attr-defined]

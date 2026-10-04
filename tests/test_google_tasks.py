@@ -266,6 +266,10 @@ def test_reconcile_drops_event_for_leo_duplicate(tmp_path, monkeypatch):
     )
     with (
         patch("assistant.services.google_tasks.delete_remote") as del_task,
+        patch(
+            "assistant.services.calendar.get_event",
+            return_value={"extendedProperties": {"private": {"leoEntry": "task"}}},
+        ),
         patch("assistant.services.calendar.delete_task_event") as del_ev,
     ):
         _reconcile_gcal_task_duplicates(1, start, end)
@@ -299,17 +303,23 @@ def test_reconcile_drops_event_for_imported_google_task(tmp_path, monkeypatch):
         google_calendar_id="primary",
     )
     with (
-        patch("assistant.services.google_tasks.remote_task_notes", return_value="купить молоко"),
         patch("assistant.services.google_tasks.delete_remote") as del_task,
+        patch(
+            "assistant.services.calendar.get_event",
+            return_value={
+                "description": "https://tasks.google.com/task/abc",
+                "eventType": "focusTime",
+            },
+        ),
         patch("assistant.services.calendar.delete_task_event") as del_ev,
     ):
         _reconcile_gcal_task_duplicates(1, start, end)
-    del_ev.assert_called_once()
+    del_ev.assert_not_called()
     del_task.assert_not_called()
     saved = store.get_task(1, row["id"])
     assert saved is not None
     assert saved.get("google_task_id") == "GT-IMP"
-    assert not saved.get("google_event_id")
+    assert saved.get("google_event_id") == "EV-IMP"
     store._CONN = None  # type: ignore[attr-defined]
 
 

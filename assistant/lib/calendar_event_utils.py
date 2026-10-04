@@ -21,12 +21,19 @@ def _event_private_props(event: dict[str, Any]) -> dict[str, Any]:
     return priv if isinstance(priv, dict) else {}
 
 
-def calendar_event_has_task_marker(event: dict[str, Any]) -> bool:
+def calendar_event_has_leo_task_marker(event: dict[str, Any]) -> bool:
     props = _event_private_props(event)
-    if str(props.get("leoEntry") or "").strip().lower() == "task":
+    return str(props.get("leoEntry") or "").strip().lower() == "task"
+
+
+def calendar_event_has_task_marker(event: dict[str, Any]) -> bool:
+    if calendar_event_has_leo_task_marker(event):
         return True
     et = str(event.get("eventType") or "").strip().lower()
     if et in {"task", "tasks"}:
+        return True
+    desc = str(event.get("description") or "")
+    if "tasks.google.com/task/" in desc.lower():
         return True
     summary = str(event.get("summary") or "").strip().lower()
     return summary.startswith("задача:") or "✓" in summary[:4]
@@ -37,9 +44,11 @@ def calendar_event_is_task(
     *,
     task_calendar_ids: set[str] | None = None,
 ) -> bool:
-    """Явные задачи: маркер Leo, префикс «задача:», календарь Tasks/Задачи."""
+    """Явные задачи: слот Google Tasks, маркер Leo, префикс «задача:», календарь Tasks."""
     if not isinstance(event, dict) or calendar_event_is_cancelled(event):
         return False
+    if calendar_event_has_task_marker(event):
+        return True
     et = str(event.get("eventType") or "default").strip().lower()
     if et in {
         "outofoffice",
@@ -50,14 +59,14 @@ def calendar_event_is_task(
         "fromgmail",
     }:
         return False
-    if calendar_event_has_task_marker(event):
-        return True
     cal_id = str(event.get("_calendarId") or event.get("calendar_id") or "").strip()
     return bool(task_calendar_ids and cal_id and cal_id in task_calendar_ids)
 
 
 def calendar_entry_kind_label(event: dict[str, Any]) -> str:
     """Единая подпись типа записи для списков календаря."""
+    if calendar_event_is_task(event):
+        return "Задача"
     et = str(event.get("eventType") or "default").strip().lower()
     if et in {"outofoffice", "out_of_office"}:
         return "Занятость"
@@ -67,8 +76,6 @@ def calendar_entry_kind_label(event: dict[str, Any]) -> str:
         return "Рабочее место"
     if et == "birthday":
         return "День рождения"
-    if calendar_event_is_task(event):
-        return "Задача"
     desc = str(event.get("description") or "").strip().lower()
     if "reminder" in desc[:40] or "напоминание" in desc[:40]:
         return "Напоминание"

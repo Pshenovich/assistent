@@ -7,6 +7,7 @@ import html as html_lib
 import ipaddress
 import json
 import os
+import re
 from functools import partial
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -3936,6 +3937,19 @@ def _event_local_day(ev: dict[str, Any], tz: Any):
     return start.date()
 
 
+_GCAL_TASK_LINK_RE = re.compile(
+    r"изменения в названии.*?tasks\.google\.com/task/\S+"
+    r"|changes to the title.*?tasks\.google\.com/task/\S+"
+    r"|https?://tasks\.google\.com/task/\S+",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+
+def _gcal_task_description(raw: str) -> str:
+    text = _GCAL_TASK_LINK_RE.sub("", str(raw or "")).strip()
+    return text
+
+
 def _import_gcal_task_events(uid: int, events: list[dict[str, Any]], tz: Any) -> None:
     from assistant.stores import calendar_tasks as calendar_tasks_store
 
@@ -3955,11 +3969,41 @@ def _import_gcal_task_events(uid: int, events: list[dict[str, Any]], tz: Any) ->
         title = str(ev.get("summary") or "").strip()
         if title.lower().startswith("задача:"):
             title = title.split(":", 1)[1].strip()
+        local = start.astimezone(tz) if start.tzinfo else start.replace(tzinfo=tz)
+        day = local.date()
+        already = None
+        day_start = local.replace(hour=0, minute=0, second=0, microsecond=0)
+        for row in calendar_tasks_store.list_tasks_in_window(
+            uid, day_start, day_start + timedelta(days=1)
+        ):
+            if _norm_task_title(str(row.get("title") or "")) != _norm_task_title(title):
+                continue
+            raw_s = str(row.get("start_at") or "")
+            try:
+                rs = datetime.fromisoformat(raw_s.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if rs.tzinfo is not None:
+                rs = rs.astimezone(tz)
+            if rs.date() == day:
+                already = row
+                break
         try:
+            if already:
+                calendar_tasks_store.update_task(
+                    uid,
+                    already["id"],
+                    start_at=start,
+                    end_at=end,
+                    google_event_id=eid,
+                    google_calendar_id=str(ev.get("calendar_id") or ""),
+                    tz=tz,
+                )
+                continue
             row = calendar_tasks_store.create_task(
                 uid,
                 title=title or "Задача",
-                description=str(ev.get("description") or ""),
+                description=_gcal_task_description(str(ev.get("description") or "")),
                 start_at=start,
                 end_at=end,
                 tz=tz,
@@ -4013,14 +4057,16 @@ def _link_events_to_google_tasks(
         row = by_key.get((title, day.isoformat()))
         if not row:
             continue
-        if str(row.get("google_event_id") or "").strip():
-            continue
-        calendar_tasks_store.update_task(
-            uid,
-            row["id"],
-            google_event_id=eid,
-            google_calendar_id=str(ev.get("calendar_id") or ""),
-        )
+        start_ev, end_ev = _gcal_bounds_for_task(ev, tz)
+        fields: dict[str, Any] = {
+            "google_event_id": eid,
+            "google_calendar_id": str(ev.get("calendar_id") or ""),
+        }
+        if start_ev is not None:
+            fields["start_at"] = start_ev
+            fields["end_at"] = end_ev
+            fields["tz"] = tz
+        calendar_tasks_store.update_task(uid, row["id"], **fields)
         ev["entry_type"] = "task"
         ev["kind"] = "Задача"
 
@@ -4083,12 +4129,23 @@ def _ensure_task_calendar_events(
 
 
 def _reconcile_gcal_task_duplicates(uid: int, start_dt: datetime, end_dt: datetime) -> None:
-    """Убрать зелёные встречи: задача в GCal живёт только как Google Task."""
+    """Удалить только слоты, которые Leo сам писал в календарь (leoEntry)."""
+    from assistant.lib.calendar_event_utils import calendar_event_has_leo_task_marker
     from assistant.services import calendar as calendar_svc
     from assistant.stores import calendar_tasks as calendar_tasks_store
 
     for row in calendar_tasks_store.list_tasks_in_window(uid, start_dt, end_dt):
         if not str(row.get("google_event_id") or "").strip():
+            continue
+        try:
+            remote = calendar_svc.get_event(
+                uid,
+                str(row.get("google_event_id") or ""),
+                calendar_id=str(row.get("google_calendar_id") or "") or None,
+            )
+        except Exception:
+            continue
+        if not calendar_event_has_leo_task_marker(remote):
             continue
         try:
             calendar_svc.delete_task_event(uid, row)

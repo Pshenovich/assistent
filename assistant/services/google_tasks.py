@@ -372,6 +372,41 @@ def pull_into_leo_brief(
     return list(imported)
 
 
+def _norm_title(raw: str) -> str:
+    title = str(raw or "").strip().lower().replace("ё", "е")
+    if title.startswith("задача:"):
+        title = title.split(":", 1)[1].strip()
+    return title
+
+
+def _local_task_on_day(
+    user_id: int,
+    title: str,
+    due_day: date,
+    start: datetime,
+    end: datetime,
+    tz: Any,
+) -> dict[str, Any] | None:
+    want = _norm_title(title)
+    if not want:
+        return None
+    for row in calendar_tasks_store.list_tasks_in_window(user_id, start, end):
+        if str(row.get("google_task_id") or "").strip():
+            continue
+        if _norm_title(str(row.get("title") or "")) != want:
+            continue
+        raw = str(row.get("start_at") or "")
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(tz)
+        if dt.date() == due_day:
+            return row
+    return None
+
+
 def _due_in_window(due_day: date, start: datetime, end: datetime) -> bool:
     start_d = start.date()
     end_d = end.date()
@@ -449,9 +484,20 @@ def pull_into_leo(
                 continue
             notes = notes_without_leo_meta(str(it.get("notes") or ""))
             start_at = start_from_google_task(it, due_day=due_day, tz=tz)
+            title = str(it.get("title") or "Задача")
+            twin = _local_task_on_day(user_id, title, due_day, start, end, tz)
+            if twin:
+                updated = calendar_tasks_store.update_task(
+                    user_id,
+                    twin["id"],
+                    google_task_id=gid,
+                    google_tasklist_id=list_id,
+                )
+                imported.append(updated or twin)
+                continue
             row = calendar_tasks_store.create_task(
                 user_id,
-                title=str(it.get("title") or "Задача"),
+                title=title,
                 description=notes,
                 start_at=start_at,
             )
