@@ -14,7 +14,8 @@ _TIME_NOTE_RE = re.compile(r"Время:\s*(\S+)")
 
 
 TASKS_SCOPE = "https://www.googleapis.com/auth/tasks"
-PULL_TIMEOUT_SEC = 3.0
+DEFAULT_TASKLIST = "@default"
+PULL_TIMEOUT_SEC = 8.0
 PUSH_TIMEOUT_SEC = 8.0
 PULL_MIN_INTERVAL_SEC = 45.0
 
@@ -67,19 +68,19 @@ def _service(user_id: int, timeout: float = PUSH_TIMEOUT_SEC):
 
 
 def _default_tasklist_id(svc: Any) -> str:
-    res = svc.tasklists().list(maxResults=20).execute()
-    items = res.get("items") or []
-    if not items:
-        created = svc.tasklists().insert(body={"title": "Leo"}).execute()
-        return str(created.get("id") or "")
-    for it in items:
-        if str(it.get("title") or "").strip().lower() in {"my tasks", "задачи", "leo"}:
-            return str(it.get("id") or "")
-    return str(items[0].get("id") or "")
+    """Список, который Google Calendar рисует на сетке — не отдельный Leo."""
+    try:
+        default = svc.tasklists().get(tasklist=DEFAULT_TASKLIST).execute()
+        tid = str((default or {}).get("id") or "").strip()
+        if tid:
+            return tid
+    except Exception as e:
+        print(f"[google_tasks] default_list_failed err={e!r}")
+    return DEFAULT_TASKLIST
 
 
 def _tasklist_ids(svc: Any) -> list[str]:
-    out: list[str] = []
+    out: list[str] = [DEFAULT_TASKLIST]
     page: str | None = None
     while True:
         kwargs: dict[str, Any] = {"maxResults": 100}
@@ -88,7 +89,7 @@ def _tasklist_ids(svc: Any) -> list[str]:
         res = svc.tasklists().list(**kwargs).execute()
         for it in res.get("items") or []:
             tid = str((it or {}).get("id") or "").strip()
-            if tid:
+            if tid and tid not in out:
                 out.append(tid)
         page = str(res.get("nextPageToken") or "").strip() or None
         if not page:
@@ -144,6 +145,7 @@ def notes_without_leo_meta(notes: str) -> str:
 
 
 def _due_rfc3339(task: dict[str, Any]) -> str | None:
+    """Google берёт только дату; полдень UTC, чтобы не съехать на вчера из‑за TZ."""
     raw = str(task.get("start_at") or "").strip()
     if not raw:
         return None
@@ -151,9 +153,7 @@ def _due_rfc3339(task: dict[str, Any]) -> str | None:
         dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
         return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return f"{dt.date().isoformat()}T12:00:00.000Z"
 
 
 def _notes_from_task(task: dict[str, Any]) -> str:
@@ -178,10 +178,10 @@ def _subtask_status(item: dict[str, Any]) -> str:
 def push_task(user_id: int, task: dict[str, Any]) -> dict[str, Any] | None:
     svc = _service(user_id)
     if svc is None or not task:
+        if svc is None:
+            print(f"[google_tasks] push_skipped uid={user_id} no_service")
         return task
-    list_id = str(task.get("google_tasklist_id") or "").strip() or _default_tasklist_id(svc)
-    if not list_id:
-        return task
+    list_id = DEFAULT_TASKLIST
     body = {
         "title": str(task.get("title") or "Задача"),
         "notes": _notes_from_task(task),
@@ -191,11 +191,18 @@ def push_task(user_id: int, task: dict[str, Any]) -> dict[str, Any] | None:
     if due:
         body["due"] = due
     gid = str(task.get("google_task_id") or "").strip()
+    remote = None
     if gid:
-        remote = svc.tasks().patch(tasklist=list_id, task=gid, body=body).execute()
-    else:
+        try:
+            remote = svc.tasks().patch(tasklist=list_id, task=gid, body=body).execute()
+        except Exception as e:
+            print(f"[google_tasks] patch_default_failed id={gid} err={e!r}")
+            remote = None
+            gid = ""
+    if remote is None:
         remote = svc.tasks().insert(tasklist=list_id, body=body).execute()
-        gid = str(remote.get("id") or "")
+        gid = str((remote or {}).get("id") or "")
+        print(f"[google_tasks] inserted uid={user_id} title={body['title']!r} gid={gid}")
     _sync_subtasks(svc, list_id, gid, task.get("checklist") or [])
     if gid and (
         gid != str(task.get("google_task_id") or "")
@@ -256,7 +263,7 @@ def delete_remote(user_id: int, task: dict[str, Any]) -> None:
     if svc is None or not gid:
         return
     if not list_id:
-        list_id = _default_tasklist_id(svc)
+        list_id = DEFAULT_TASKLIST
     try:
         svc.tasks().delete(tasklist=list_id, task=gid).execute()
     except Exception as e:
@@ -276,14 +283,17 @@ def schedule_pull(user_id: int, start: datetime, end: datetime) -> None:
         _PULL_INFLIGHT.add(uid)
 
     def _run() -> None:
+        ok = False
         try:
             pull_into_leo(uid, start, end, force=True)
+            ok = True
         except Exception as e:
             print(f"[google_tasks] pull_bg uid={uid} err={e!r}")
         finally:
             with _PULL_GUARD:
                 _PULL_INFLIGHT.discard(uid)
-                _LAST_PULL[uid] = time.monotonic()
+                if ok:
+                    _LAST_PULL[uid] = time.monotonic()
 
     threading.Thread(target=_run, name=f"leo-gtasks-pull-{uid}", daemon=True).start()
 
@@ -307,16 +317,19 @@ def pull_into_leo_brief(
         _PULL_INFLIGHT.add(uid)
 
     imported: list[dict[str, Any]] = []
+    ok = {"v": False}
 
     def _run() -> None:
         try:
             imported.extend(pull_into_leo(uid, start, end, force=True))
+            ok["v"] = True
         except Exception as e:
             print(f"[google_tasks] pull_brief uid={uid} err={e!r}")
         finally:
             with _PULL_GUARD:
                 _PULL_INFLIGHT.discard(uid)
-                _LAST_PULL[uid] = time.monotonic()
+                if ok["v"]:
+                    _LAST_PULL[uid] = time.monotonic()
 
     t = threading.Thread(target=_run, name=f"leo-gtasks-pull-{uid}", daemon=True)
     t.start()
@@ -333,14 +346,8 @@ def _due_in_window(due_day: date, start: datetime, end: datetime) -> bool:
 
 
 def _iter_task_items(svc: Any, list_id: str, start: datetime, end: datetime) -> Iterator[dict[str, Any]]:
-    due_min = (start - timedelta(days=1)).astimezone(timezone.utc).strftime(
-        "%Y-%m-%dT00:00:00.000Z"
-    )
-    due_max = (end + timedelta(days=1)).astimezone(timezone.utc).strftime(
-        "%Y-%m-%dT00:00:00.000Z"
-    )
+    del start, end
     page: str | None = None
-    used_due_filter = True
     while True:
         kwargs: dict[str, Any] = {
             "tasklist": list_id,
@@ -348,18 +355,11 @@ def _iter_task_items(svc: Any, list_id: str, start: datetime, end: datetime) -> 
             "showHidden": False,
             "maxResults": 100,
         }
-        if used_due_filter:
-            kwargs["dueMin"] = due_min
-            kwargs["dueMax"] = due_max
         if page:
             kwargs["pageToken"] = page
         try:
             res = svc.tasks().list(**kwargs).execute()
         except Exception as e:
-            if used_due_filter and page is None:
-                print(f"[google_tasks] list_due_filter_failed list={list_id} err={e!r}")
-                used_due_filter = False
-                continue
             print(f"[google_tasks] list_failed list={list_id} err={e!r}")
             return
         for it in res.get("items") or []:
@@ -385,22 +385,27 @@ def pull_into_leo(
             last = _LAST_PULL.get(uid)
             if last is not None and now - last < PULL_MIN_INTERVAL_SEC:
                 return []
-            _LAST_PULL[uid] = now
     svc = _service(uid, timeout=PULL_TIMEOUT_SEC)
     if svc is None:
+        print(f"[google_tasks] pull_skipped uid={uid} no_service")
         return []
+    if not force:
+        with _PULL_GUARD:
+            _LAST_PULL[uid] = time.monotonic()
     list_ids = _tasklist_ids(svc)
     if not list_ids:
         return []
     tz = start.tzinfo or timezone.utc
     imported: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     for list_id in list_ids:
         for it in _iter_task_items(svc, list_id, start, end):
             if it.get("parent"):
                 continue
             gid = str(it.get("id") or "").strip()
-            if not gid:
+            if not gid or gid in seen_ids:
                 continue
+            seen_ids.add(gid)
             existing = calendar_tasks_store.find_by_google_task(user_id, gid)
             if existing:
                 continue
@@ -419,4 +424,26 @@ def pull_into_leo(
                 user_id, row["id"], google_task_id=gid, google_tasklist_id=list_id
             )
             imported.append(updated or row)
+    pushed = push_unsynced_in_window(uid, start, end)
+    print(
+        f"[google_tasks] pull uid={uid} imported={len(imported)} backfilled={len(pushed)}"
+    )
     return imported
+
+
+def push_unsynced_in_window(
+    user_id: int, start: datetime, end: datetime
+) -> list[dict[str, Any]]:
+    """Дослать в Google Tasks локальные задачи, которые ещё не уехали после OAuth."""
+    out: list[dict[str, Any]] = []
+    for row in calendar_tasks_store.list_tasks_in_window(user_id, start, end):
+        if row.get("done") or str(row.get("google_task_id") or "").strip():
+            continue
+        try:
+            pushed = push_task(user_id, row)
+        except Exception as e:
+            print(f"[google_tasks] backfill id={row.get('id')} err={e!r}")
+            continue
+        if pushed and str(pushed.get("google_task_id") or "").strip():
+            out.append(pushed)
+    return out

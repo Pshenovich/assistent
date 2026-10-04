@@ -36,6 +36,7 @@ def test_push_task_inserts_and_subtasks(tmp_path, monkeypatch):
     with patch.object(gt, "_service", return_value=svc):
         out = gt.push_task(1, row)
     assert out is not None
+    assert any(kw.get("tasklist") == "@default" and "parent" not in kw for kw in inserts)
     assert any("parent" in kw for kw in inserts)
     store._CONN = None  # type: ignore[attr-defined]
 
@@ -67,6 +68,10 @@ def test_due_calendar_date_uses_date_part():
     assert start.hour == 15
     assert "Время:" not in gt.notes_without_leo_meta(
         "Купить\nВремя: 2026-10-07T15:00:00+03:00 — x\nИсполнитель: Я"
+    )
+    assert (
+        gt._due_rfc3339({"start_at": "2026-10-04T00:30:00+03:00"})
+        == "2026-10-04T12:00:00.000Z"
     )
 
 
@@ -116,9 +121,9 @@ def test_pull_into_leo_skips_when_recent():
         assert gt.pull_into_leo(9021, start, end) == []
         assert svc.call_count == 1
         assert gt.pull_into_leo(9021, start, end) == []
-        assert svc.call_count == 1
-        assert gt.pull_into_leo(9021, start, end, force=True) == []
         assert svc.call_count == 2
+        assert gt.pull_into_leo(9021, start, end, force=True) == []
+        assert svc.call_count == 3
     gt._reset_pull_state_for_tests()
 
 
@@ -155,6 +160,32 @@ def test_sync_task_google_deletes_leftover_event_and_pushes_task(tmp_path, monke
     assert out is not None
     assert not str(out.get("google_event_id") or "")
     store._CONN = None  # type: ignore[attr-defined]
+
+
+def test_pull_backfills_local_task_without_google_id(tmp_path, monkeypatch):
+    monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "t.sqlite"))
+    from assistant.stores import calendar_tasks as store
+
+    store._CONN = None  # type: ignore[attr-defined]
+    gt._reset_pull_state_for_tests()
+    tz = ZoneInfo("UTC")
+    start = datetime(2026, 10, 7, tzinfo=tz)
+    end = datetime(2026, 10, 8, tzinfo=tz)
+    row = store.create_task(
+        9040, title="Из вебаппа", start_at=datetime(2026, 10, 7, 15, 0, tzinfo=tz), tz=tz
+    )
+    svc = MagicMock()
+    svc.tasklists().list().execute.return_value = {"items": []}
+    svc.tasks().list().execute.return_value = {"items": []}
+    svc.tasks().insert().execute.return_value = {"id": "G-NEW"}
+    with patch.object(gt, "_service", return_value=svc):
+        imported = gt.pull_into_leo(9040, start, end, force=True)
+    assert imported == []
+    saved = store.get_task(9040, row["id"])
+    assert saved is not None
+    assert saved["google_task_id"] == "G-NEW"
+    store._CONN = None  # type: ignore[attr-defined]
+    gt._reset_pull_state_for_tests()
 
 
 def test_schedule_pull_runs_once_in_background():
