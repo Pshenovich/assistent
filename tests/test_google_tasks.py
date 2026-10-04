@@ -38,7 +38,7 @@ def test_push_task_inserts_and_subtasks(tmp_path, monkeypatch):
     assert out is not None
     parent = next(kw for kw in inserts if "parent" not in kw)
     assert parent.get("tasklist") == "@default"
-    assert "due" not in (parent.get("body") or {})
+    assert (parent.get("body") or {}).get("due") == "2026-10-07T12:00:00.000Z"
     assert any("parent" in kw for kw in inserts)
     store._CONN = None  # type: ignore[attr-defined]
 
@@ -69,6 +69,11 @@ def test_push_skips_without_scope():
     with patch.object(gt, "_service", return_value=None):
         task = {"id": 1, "title": "X"}
         assert gt.push_task(1, task) is task
+
+
+def test_due_rfc3339_uses_local_calendar_day():
+    task = {"start_at": "2026-10-03T21:30:00+00:00"}
+    assert gt._due_rfc3339(task, ZoneInfo("Europe/Moscow")) == "2026-10-04T12:00:00.000Z"
 
 
 def test_due_calendar_date_uses_date_part():
@@ -146,7 +151,7 @@ def test_pull_into_leo_skips_when_recent():
     gt._reset_pull_state_for_tests()
 
 
-def test_sync_task_google_leo_writes_event_only(tmp_path, monkeypatch):
+def test_sync_task_google_leo_pushes_task_only(tmp_path, monkeypatch):
     monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "t.sqlite"))
     from assistant.stores import calendar_tasks as store
     from usage_server import _sync_task_google
@@ -167,13 +172,13 @@ def test_sync_task_google_leo_writes_event_only(tmp_path, monkeypatch):
 
     with (
         patch("assistant.services.calendar.delete_task_event") as delete_ev,
-        patch("assistant.services.calendar.upsert_task_event", return_value=row) as upsert_ev,
+        patch("assistant.services.calendar.upsert_task_event") as upsert_ev,
         patch("assistant.services.google_tasks.push_task", _push),
     ):
         out = _sync_task_google(1, row, "update")
-    upsert_ev.assert_called_once()
+    upsert_ev.assert_not_called()
     delete_ev.assert_not_called()
-    assert pushed == []
+    assert pushed
     assert out is not None
     store._CONN = None  # type: ignore[attr-defined]
 
@@ -225,19 +230,21 @@ def test_pull_backfills_local_task_without_google_id(tmp_path, monkeypatch):
     svc.tasklists().list().execute.return_value = {"items": []}
     svc.tasks().list().execute.return_value = {"items": []}
     updated = dict(row)
-    updated["google_event_id"] = "ev-new"
+    updated["google_task_id"] = "G-NEW"
     with (
         patch.object(gt, "_service", return_value=svc),
-        patch("assistant.services.calendar.upsert_task_event", return_value=updated) as upsert_ev,
+        patch.object(gt, "push_task", return_value=updated) as push,
+        patch("assistant.services.calendar.upsert_task_event") as upsert_ev,
     ):
         imported = gt.pull_into_leo(9040, start, end, force=True)
     assert imported == []
-    upsert_ev.assert_called()
+    push.assert_called()
+    upsert_ev.assert_not_called()
     store._CONN = None  # type: ignore[attr-defined]
     gt._reset_pull_state_for_tests()
 
 
-def test_reconcile_drops_google_task_for_leo_duplicate(tmp_path, monkeypatch):
+def test_reconcile_drops_event_for_leo_duplicate(tmp_path, monkeypatch):
     monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "t.sqlite"))
     from assistant.stores import calendar_tasks as store
     from usage_server import _reconcile_gcal_task_duplicates
@@ -258,17 +265,16 @@ def test_reconcile_drops_google_task_for_leo_duplicate(tmp_path, monkeypatch):
         google_calendar_id="primary",
     )
     with (
-        patch("assistant.services.google_tasks.remote_task_notes", return_value="Время: 15:00"),
         patch("assistant.services.google_tasks.delete_remote") as del_task,
         patch("assistant.services.calendar.delete_task_event") as del_ev,
     ):
         _reconcile_gcal_task_duplicates(1, start, end)
-    del_task.assert_called_once()
-    del_ev.assert_not_called()
+    del_ev.assert_called_once()
+    del_task.assert_not_called()
     saved = store.get_task(1, row["id"])
     assert saved is not None
-    assert not saved.get("google_task_id")
-    assert saved.get("google_event_id") == "EV-LEO"
+    assert saved.get("google_task_id") == "GT-LEO"
+    assert not saved.get("google_event_id")
     store._CONN = None  # type: ignore[attr-defined]
 
 

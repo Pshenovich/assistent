@@ -154,7 +154,7 @@ class TestCalendarRangeHelpers(TestCase):
         try:
             with (
                 patch("assistant.services.google_tasks.pull_into_leo_brief", return_value=[]),
-                patch("assistant.services.google_tasks.remote_task_notes", return_value=None),
+                patch("assistant.services.calendar.delete_task_event"),
             ):
                 out = _attach_leo_tasks({"events": [ev]}, 1, start, end, tz)
             ids = [e.get("id") for e in out["events"]]
@@ -163,7 +163,8 @@ class TestCalendarRangeHelpers(TestCase):
             self.assertEqual(len(tasks), 1)
             self.assertEqual(tasks[0]["summary"], "Купить молоко")
             linked = calendar_tasks_store.get_task(1, row["id"])
-            self.assertEqual(linked["google_event_id"], "gcal-meet-1")
+            self.assertEqual(linked["google_task_id"], "gt-1")
+            self.assertFalse(linked.get("google_event_id"))
         finally:
             calendar_tasks_store._CONN = None  # type: ignore[attr-defined]
             os.environ.pop("CALENDAR_TASKS_DB_PATH", None)

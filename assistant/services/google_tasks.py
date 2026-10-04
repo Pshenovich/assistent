@@ -144,7 +144,7 @@ def notes_without_leo_meta(notes: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _due_rfc3339(task: dict[str, Any]) -> str | None:
+def _due_rfc3339(task: dict[str, Any], tz: Any = None) -> str | None:
     """Google берёт только дату; полдень UTC, чтобы не съехать на вчера из‑за TZ."""
     raw = str(task.get("start_at") or "").strip()
     if not raw:
@@ -153,6 +153,10 @@ def _due_rfc3339(task: dict[str, Any]) -> str | None:
         dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
         return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=tz or timezone.utc)
+    if tz is not None:
+        dt = dt.astimezone(tz)
     return f"{dt.date().isoformat()}T12:00:00.000Z"
 
 
@@ -197,12 +201,21 @@ def push_task(user_id: int, task: dict[str, Any]) -> dict[str, Any] | None:
         "notes": _notes_from_task(task),
         "status": "completed" if task.get("done") else "needsAction",
     }
-    # due только с датой — задача висит сверху дня. Время рисуем Calendar event.
+    tz = None
+    try:
+        from assistant.services.calendar import _tz_for
+
+        tz = _tz_for(user_id)
+    except Exception:
+        tz = None
+    due = _due_rfc3339(task, tz)
+    if due:
+        body["due"] = due
     gid = str(task.get("google_task_id") or "").strip()
     remote = None
     if gid:
         try:
-            remote = _update_task_without_due(svc, list_id, gid, body)
+            remote = svc.tasks().patch(tasklist=list_id, task=gid, body=body).execute()
         except Exception as e:
             print(f"[google_tasks] patch_default_failed id={gid} err={e!r}")
             remote = None
@@ -456,22 +469,18 @@ def pull_into_leo(
 def push_unsynced_in_window(
     user_id: int, start: datetime, end: datetime
 ) -> list[dict[str, Any]]:
-    """Дописать timed-слот в календарь для Leo-задач без Google Task."""
-    from assistant.services import calendar as calendar_svc
-
+    """Дописать Leo-задачи в Google Tasks, без событий-встреч."""
     out: list[dict[str, Any]] = []
     for row in calendar_tasks_store.list_tasks_in_window(user_id, start, end):
         if row.get("done"):
             continue
         if str(row.get("google_task_id") or "").strip():
             continue
-        if str(row.get("google_event_id") or "").strip():
-            continue
         try:
-            updated = calendar_svc.upsert_task_event(user_id, row)
+            updated = push_task(user_id, row)
         except Exception as e:
-            print(f"[google_tasks] backfill_event id={row.get('id')} err={e!r}")
+            print(f"[google_tasks] backfill_task id={row.get('id')} err={e!r}")
             continue
-        if updated and str(updated.get("google_event_id") or "").strip():
+        if updated and str(updated.get("google_task_id") or "").strip():
             out.append(updated)
     return out
