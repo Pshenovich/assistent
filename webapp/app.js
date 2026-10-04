@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261004-actual-net";
+  var WEBAPP_BUILD = "20261004-gcal-tasks";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261004-actual-net";
+  const NOTE_EDITOR_ASSET_V = "20261004-gcal-tasks";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -1280,6 +1280,7 @@
   function calendarEntryIsTask(ev) {
     if (!ev) return false;
     if (ev.entry_type === "task") return true;
+    if (ev.kind === "Задача") return true;
     return String(ev.id || "").indexOf("task-") === 0;
   }
 

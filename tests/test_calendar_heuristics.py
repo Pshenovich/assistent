@@ -229,6 +229,40 @@ class TestCalendarHeuristics(unittest.TestCase):
             "Занятость",
         )
 
+    def test_solo_personal_event_is_not_a_task(self):
+        from assistant.lib.calendar_event_utils import calendar_event_is_task
+
+        ev = {
+            "summary": "Обед",
+            "organizer": {"self": True},
+        }
+        self.assertFalse(calendar_event_is_task(ev))
+        self.assertEqual(calendar_entry_kind_label(ev), "Встреча")
+
+    def test_leo_marker_and_prefix_are_tasks(self):
+        from assistant.lib.calendar_event_utils import calendar_event_is_task
+
+        marked = {
+            "summary": "Купить молоко",
+            "organizer": {"self": True},
+            "extendedProperties": {"private": {"leoEntry": "task"}},
+        }
+        self.assertTrue(calendar_event_is_task(marked))
+        self.assertEqual(calendar_entry_kind_label(marked), "Задача")
+        self.assertTrue(calendar_event_is_task({"summary": "задача: отчёт"}))
+        self.assertEqual(calendar_entry_kind_label({"summary": "задача: отчёт"}), "Задача")
+
+    def test_event_with_guests_is_meeting(self):
+        from assistant.lib.calendar_event_utils import calendar_event_is_task
+
+        ev = {
+            "summary": "Синк",
+            "organizer": {"self": True},
+            "attendees": [{"email": "a@b.c"}],
+        }
+        self.assertFalse(calendar_event_is_task(ev))
+        self.assertEqual(calendar_entry_kind_label(ev), "Встреча")
+
     def test_cancelled_not_busy(self):
         self.assertFalse(
             calendar_event_counts_as_busy({"status": "cancelled"})

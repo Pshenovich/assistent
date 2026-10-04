@@ -13,6 +13,42 @@ def calendar_event_is_cancelled(event: dict[str, Any]) -> bool:
     return str(event.get("status") or "").strip().lower() == "cancelled"
 
 
+def _event_private_props(event: dict[str, Any]) -> dict[str, Any]:
+    ext = event.get("extendedProperties") if isinstance(event, dict) else None
+    if not isinstance(ext, dict):
+        return {}
+    priv = ext.get("private")
+    return priv if isinstance(priv, dict) else {}
+
+
+def calendar_event_has_task_marker(event: dict[str, Any]) -> bool:
+    props = _event_private_props(event)
+    if str(props.get("leoEntry") or "").strip().lower() == "task":
+        return True
+    et = str(event.get("eventType") or "").strip().lower()
+    if et in {"task", "tasks"}:
+        return True
+    summary = str(event.get("summary") or "").strip().lower()
+    return summary.startswith("задача:") or "✓" in summary[:4]
+
+
+def calendar_event_is_task(event: dict[str, Any]) -> bool:
+    """Только явные задачи: маркер Leo, Google Tasks или префикс «задача:»."""
+    if not isinstance(event, dict) or calendar_event_is_cancelled(event):
+        return False
+    et = str(event.get("eventType") or "default").strip().lower()
+    if et in {
+        "outofoffice",
+        "out_of_office",
+        "focustime",
+        "workinglocation",
+        "birthday",
+        "fromgmail",
+    }:
+        return False
+    return calendar_event_has_task_marker(event)
+
+
 def calendar_entry_kind_label(event: dict[str, Any]) -> str:
     """Единая подпись типа записи для списков календаря."""
     et = str(event.get("eventType") or "default").strip().lower()
@@ -24,8 +60,7 @@ def calendar_entry_kind_label(event: dict[str, Any]) -> str:
         return "Рабочее место"
     if et == "birthday":
         return "День рождения"
-    summary = str(event.get("summary") or "").strip().lower()
-    if summary.startswith("задача:") or "✓" in summary[:4]:
+    if calendar_event_is_task(event):
         return "Задача"
     desc = str(event.get("description") or "").strip().lower()
     if "reminder" in desc[:40] or "напоминание" in desc[:40]:

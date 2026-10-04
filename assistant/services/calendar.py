@@ -948,6 +948,86 @@ def delete_event(
     _service(user_id).events().delete(calendarId=cal_id, eventId=event_id).execute()
 
 
+LEO_TASK_COLOR_ID = "10"
+
+
+def _task_event_body(user_id: int, task: dict[str, Any]) -> dict[str, Any]:
+    start = _parse_dt(str(task.get("start_at") or ""), user_id)
+    end = _parse_dt(str(task.get("end_at") or ""), user_id)
+    start, end = _ensure_event_range(start, end, 30)
+    desc = str(task.get("description") or "").strip()
+    return {
+        "summary": str(task.get("title") or "Задача"),
+        "description": desc,
+        "start": _gcal_when(start, user_id),
+        "end": _gcal_when(end, user_id),
+        "colorId": LEO_TASK_COLOR_ID,
+        "extendedProperties": {
+            "private": {
+                "leoEntry": "task",
+                "leoTaskId": str(task.get("id") or ""),
+            }
+        },
+    }
+
+
+def upsert_task_event(user_id: int, task: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Показать Leo-задачу на сетке Google Calendar (не только в Google Tasks)."""
+    if not task:
+        return task
+    path = google_calendar_oauth.user_token_path(int(user_id))
+    if not path.is_file():
+        return task
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    svc = _service(user_id)
+    cal_id = str(task.get("google_calendar_id") or "").strip() or cal_sources.resolve_calendar_id(
+        user_id, GOOGLE_CALENDAR_ID
+    )
+    body = _task_event_body(user_id, task)
+    eid = str(task.get("google_event_id") or "").strip()
+    remote = None
+    if eid:
+        try:
+            remote = svc.events().patch(calendarId=cal_id, eventId=eid, body=body).execute()
+        except Exception as e:
+            print(f"[calendar] task_event_patch_failed id={eid} err={e!r}")
+            remote = None
+    if remote is None:
+        cal_sources.assert_calendar_writable(user_id, cal_id)
+        remote = svc.events().insert(calendarId=cal_id, body=body).execute()
+        eid = str((remote or {}).get("id") or "")
+    if not eid:
+        return task
+    if eid != str(task.get("google_event_id") or "") or cal_id != str(
+        task.get("google_calendar_id") or ""
+    ):
+        updated = calendar_tasks_store.update_task(
+            user_id,
+            task["id"],
+            google_event_id=eid,
+            google_calendar_id=cal_id,
+        )
+        return updated or task
+    return task
+
+
+def delete_task_event(user_id: int, task: dict[str, Any] | None) -> None:
+    eid = str((task or {}).get("google_event_id") or "").strip()
+    if not eid:
+        return
+    path = google_calendar_oauth.user_token_path(int(user_id))
+    if not path.is_file():
+        return
+    cal_id = str((task or {}).get("google_calendar_id") or "").strip() or cal_sources.resolve_calendar_id(
+        user_id, GOOGLE_CALENDAR_ID
+    )
+    try:
+        _service(user_id).events().delete(calendarId=cal_id, eventId=eid).execute()
+    except Exception as e:
+        print(f"[calendar] task_event_delete_failed id={eid} err={e!r}")
+
+
 def get_event(
     user_id: int,
     event_id: str,

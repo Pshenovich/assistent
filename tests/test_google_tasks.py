@@ -66,6 +66,36 @@ def test_pull_into_leo_skips_when_recent():
     gt._reset_pull_state_for_tests()
 
 
+def test_upsert_task_event_inserts_gcal_event(tmp_path, monkeypatch):
+    monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "t.sqlite"))
+    from assistant.services import calendar as cal
+    from assistant.stores import calendar_tasks as store
+
+    store._CONN = None  # type: ignore[attr-defined]
+    tz = ZoneInfo("UTC")
+    row = store.create_task(
+        1,
+        title="В GCal",
+        start_at=datetime(2026, 10, 7, 15, 0, tzinfo=tz),
+        tz=tz,
+    )
+    svc = MagicMock()
+    svc.events().insert().execute.return_value = {"id": "ev1"}
+    with (
+        patch.object(cal, "_service", return_value=svc),
+        patch.object(cal.google_calendar_oauth, "user_token_path") as token_path,
+        patch.object(cal.cal_sources, "resolve_calendar_id", return_value="primary"),
+        patch.object(cal.cal_sources, "assert_calendar_writable"),
+        patch.object(cal, "_tz_for", return_value=tz),
+        patch.object(cal, "_tz_name_for", return_value="UTC"),
+    ):
+        token_path.return_value.is_file.return_value = True
+        out = cal.upsert_task_event(1, row)
+    assert out is not None
+    assert out.get("google_event_id") == "ev1"
+    store._CONN = None  # type: ignore[attr-defined]
+
+
 def test_schedule_pull_runs_once_in_background():
     import time
 

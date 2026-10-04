@@ -3462,6 +3462,7 @@ def _serialize_calendar_event(
     from assistant.lib.calendar_event_utils import (
         calendar_description_plain,
         calendar_entry_kind_label,
+        calendar_event_is_task,
         event_is_invitation,
         event_needs_rsvp,
         event_self_response_status,
@@ -3474,11 +3475,14 @@ def _serialize_calendar_event(
     en = _gcal_json_time_fragment(en_raw if isinstance(en_raw, dict) else {})
     invited = event_is_invitation(ev)
     status = event_self_response_status(ev)
+    is_task = calendar_event_is_task(ev)
+    kind = "Задача" if is_task else calendar_entry_kind_label(ev)
     return {
         "id": str(ev.get("id") or ""),
         "calendar_id": cal_id,
         "summary": str(ev.get("summary") or "").strip(),
-        "kind": calendar_entry_kind_label(ev),
+        "kind": kind,
+        "entry_type": "task" if is_task else "event",
         "start": st,
         "end": en,
         "html_link": str(ev.get("htmlLink") or "").strip(),
@@ -3855,6 +3859,76 @@ def _leo_task_events(
     return events
 
 
+def _gcal_bounds_for_task(ev: dict[str, Any], tz: Any) -> tuple[datetime | None, datetime | None]:
+    st = ev.get("start") if isinstance(ev.get("start"), dict) else {}
+    en = ev.get("end") if isinstance(ev.get("end"), dict) else {}
+    raw_s = str(st.get("dateTime") or "").strip()
+    raw_e = str(en.get("dateTime") or "").strip()
+    if raw_s:
+        try:
+            start = datetime.fromisoformat(raw_s.replace("Z", "+00:00"))
+        except ValueError:
+            start = None
+        end = None
+        if raw_e:
+            try:
+                end = datetime.fromisoformat(raw_e.replace("Z", "+00:00"))
+            except ValueError:
+                end = None
+        if start and start.tzinfo is None:
+            start = start.replace(tzinfo=tz)
+        if end and end.tzinfo is None:
+            end = end.replace(tzinfo=tz)
+        return start, end
+    day_s = str(st.get("date") or "").strip()[:10]
+    if not day_s:
+        return None, None
+    try:
+        day = datetime.strptime(day_s, "%Y-%m-%d").date()
+    except ValueError:
+        return None, None
+    start = datetime.combine(day, datetime.min.time().replace(hour=9), tzinfo=tz)
+    return start, start + timedelta(minutes=30)
+
+
+def _import_gcal_task_events(uid: int, events: list[dict[str, Any]], tz: Any) -> None:
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        if ev.get("entry_type") != "task" and ev.get("kind") != "Задача":
+            continue
+        eid = str(ev.get("id") or "").strip()
+        if not eid or eid.startswith("task-"):
+            continue
+        if calendar_tasks_store.find_by_google_event(uid, eid):
+            continue
+        start, end = _gcal_bounds_for_task(ev, tz)
+        if start is None:
+            continue
+        title = str(ev.get("summary") or "").strip()
+        if title.lower().startswith("задача:"):
+            title = title.split(":", 1)[1].strip()
+        try:
+            row = calendar_tasks_store.create_task(
+                uid,
+                title=title or "Задача",
+                description=str(ev.get("description") or ""),
+                start_at=start,
+                end_at=end,
+                tz=tz,
+            )
+            calendar_tasks_store.update_task(
+                uid,
+                row["id"],
+                google_event_id=eid,
+                google_calendar_id=str(ev.get("calendar_id") or ""),
+            )
+        except Exception as e:
+            print(f"[miniapp_calendar] import_gcal_task id={eid!r} err={e!r}")
+
+
 def _attach_leo_tasks(
     payload: dict[str, Any],
     uid: int,
@@ -3862,8 +3936,21 @@ def _attach_leo_tasks(
     end_dt: datetime,
     tz: Any,
 ) -> dict[str, Any]:
-    extra = _leo_task_events(uid, start_dt, end_dt, tz)
     evs = [e for e in (payload.get("events") or []) if isinstance(e, dict)]
+    _import_gcal_task_events(uid, evs, tz)
+    extra = _leo_task_events(uid, start_dt, end_dt, tz)
+    linked = {
+        str(e.get("google_event_id") or "")
+        for e in extra
+        if e.get("google_event_id")
+    }
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    for row in calendar_tasks_store.list_tasks_in_window(uid, start_dt, end_dt):
+        gid = str(row.get("google_event_id") or "")
+        if gid:
+            linked.add(gid)
+    evs = [e for e in evs if str(e.get("id") or "") not in linked]
     evs.extend(extra)
 
     def _sk(d: dict[str, Any]) -> str:
@@ -3880,12 +3967,15 @@ def _sync_task_google(uid: int, task: dict[str, Any] | None, action: str) -> dic
     if not task:
         return task
     try:
+        from assistant.services import calendar as calendar_svc
         from assistant.services import google_tasks
 
         if action == "delete":
+            calendar_svc.delete_task_event(uid, task)
             google_tasks.delete_remote(uid, task)
             return task
-        return google_tasks.push_task(uid, task) or task
+        synced = calendar_svc.upsert_task_event(uid, task) or task
+        return google_tasks.push_task(uid, synced) or synced
     except Exception as e:
         print(f"[calendar_tasks] google_sync action={action} err={e!r}")
         return task

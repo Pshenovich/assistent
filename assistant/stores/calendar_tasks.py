@@ -71,8 +71,25 @@ def _conn() -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_calendar_tasks_owner_start "
         "ON calendar_tasks(owner_user_id, start_at)"
     )
+    _ensure_google_event_columns(_CONN)
     _CONN.commit()
     return _CONN
+
+
+def _ensure_google_event_columns(conn: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(calendar_tasks)")}
+    if "google_event_id" not in cols:
+        conn.execute(
+            "ALTER TABLE calendar_tasks ADD COLUMN google_event_id TEXT NOT NULL DEFAULT ''"
+        )
+    if "google_calendar_id" not in cols:
+        conn.execute(
+            "ALTER TABLE calendar_tasks ADD COLUMN google_calendar_id TEXT NOT NULL DEFAULT ''"
+        )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_calendar_tasks_google_event "
+        "ON calendar_tasks(owner_user_id, google_event_id)"
+    )
 
 
 def _now_iso() -> str:
@@ -142,6 +159,10 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "checklist": _normalize_checklist(row["checklist_json"]),
         "google_task_id": str(row["google_task_id"] or ""),
         "google_tasklist_id": str(row["google_tasklist_id"] or ""),
+        "google_event_id": str(row["google_event_id"] or "") if "google_event_id" in row.keys() else "",
+        "google_calendar_id": str(row["google_calendar_id"] or "")
+        if "google_calendar_id" in row.keys()
+        else "",
         "note_id": str(row["note_id"] or ""),
         "done": bool(int(row["done"] or 0)),
         "created_at": row["created_at"],
@@ -277,7 +298,8 @@ def as_calendar_event(task: dict[str, Any], *, tz: ZoneInfo | None = None) -> di
     return {
         "id": f"task-{task.get('id')}",
         "task_id": task.get("id"),
-        "calendar_id": "leo-tasks",
+        "calendar_id": str(task.get("google_calendar_id") or "") or "leo-tasks",
+        "google_event_id": str(task.get("google_event_id") or ""),
         "summary": str(task.get("title") or DEFAULT_TITLE),
         "kind": "Задача",
         "entry_type": "task",
@@ -429,6 +451,8 @@ def update_task(
     done: bool | None = None,
     google_task_id: str | None = None,
     google_tasklist_id: str | None = None,
+    google_event_id: str | None = None,
+    google_calendar_id: str | None = None,
     tz: ZoneInfo | None = None,
 ) -> Optional[dict[str, Any]]:
     uid = _uid(owner_user_id)
@@ -483,6 +507,12 @@ def update_task(
         "google_tasklist_id": _clip(google_tasklist_id, 200)
         if google_tasklist_id is not None
         else existing["google_tasklist_id"],
+        "google_event_id": _clip(google_event_id, 200)
+        if google_event_id is not None
+        else existing.get("google_event_id") or "",
+        "google_calendar_id": _clip(google_calendar_id, 200)
+        if google_calendar_id is not None
+        else existing.get("google_calendar_id") or "",
         "updated_at": _now_iso(),
     }
     with _LOCK:
@@ -492,7 +522,8 @@ def update_task(
                 title = ?, description = ?, start_at = ?, end_at = ?,
                 assignee_user_id = ?, assignee_email = ?, assignee_name = ?,
                 checklist_json = ?, note_id = ?, done = ?,
-                google_task_id = ?, google_tasklist_id = ?, updated_at = ?
+                google_task_id = ?, google_tasklist_id = ?,
+                google_event_id = ?, google_calendar_id = ?, updated_at = ?
             WHERE id = ? AND owner_user_id = ?
             """,
             (
@@ -508,6 +539,8 @@ def update_task(
                 fields["done"],
                 fields["google_task_id"],
                 fields["google_tasklist_id"],
+                fields["google_event_id"],
+                fields["google_calendar_id"],
                 fields["updated_at"],
                 int(existing["id"]),
                 uid,
@@ -530,6 +563,26 @@ def delete_task(owner_user_id: int | str, task_id: int | str) -> bool:
         )
         _conn().commit()
         return cur.rowcount > 0
+
+
+def find_by_google_event(
+    owner_user_id: int | str, google_event_id: str
+) -> Optional[dict[str, Any]]:
+    uid = _uid(owner_user_id)
+    gid = str(google_event_id or "").strip()
+    if not gid:
+        return None
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            SELECT * FROM calendar_tasks
+            WHERE owner_user_id = ? AND google_event_id = ?
+            LIMIT 1
+            """,
+            (uid, gid),
+        )
+        row = cur.fetchone()
+    return _row_to_dict(row) if row else None
 
 
 def find_by_google_task(

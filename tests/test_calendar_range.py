@@ -128,3 +128,33 @@ class TestCalendarRangeHelpers(TestCase):
             calendar_tasks_store._CONN = None  # type: ignore[attr-defined]
             os.environ.pop("CALENDAR_TASKS_DB_PATH", None)
             isolated.cleanup()
+
+    def test_attach_imports_solo_gcal_event_as_task(self) -> None:
+        from usage_server import _attach_leo_tasks
+
+        isolated = self._isolated_tasks_db()
+        tz = ZoneInfo("Europe/Moscow")
+        start = datetime(2026, 10, 7, 0, 0, tzinfo=tz)
+        end = datetime(2026, 10, 8, 0, 0, tzinfo=tz)
+        ev = {
+            "id": "gcal-solo-1",
+            "summary": "Купить молоко",
+            "kind": "Задача",
+            "entry_type": "task",
+            "start": {"dateTime": "2026-10-07T15:00:00+03:00"},
+            "end": {"dateTime": "2026-10-07T15:30:00+03:00"},
+            "calendar_id": "primary",
+        }
+        try:
+            with patch("assistant.services.google_tasks.schedule_pull"):
+                out = _attach_leo_tasks({"events": [ev]}, 1, start, end, tz)
+            ids = [e.get("id") for e in out["events"]]
+            self.assertNotIn("gcal-solo-1", ids)
+            tasks = [e for e in out["events"] if e.get("entry_type") == "task"]
+            self.assertEqual(len(tasks), 1)
+            self.assertEqual(tasks[0]["summary"], "Купить молоко")
+            self.assertTrue(str(tasks[0]["id"]).startswith("task-"))
+        finally:
+            calendar_tasks_store._CONN = None  # type: ignore[attr-defined]
+            os.environ.pop("CALENDAR_TASKS_DB_PATH", None)
+            isolated.cleanup()
