@@ -955,6 +955,12 @@ html.boot-open-app #app.hidden {
   background: rgba(232, 176, 72, 0.14);
 }
 
+.day-timeline-band-item--task {
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+  border-left-color: var(--success);
+  background: var(--success-muted);
+}
+
 .day-timeline-band-item--pending {
   border-color: rgba(255, 255, 255, 0.1);
   border-left-color: rgba(160, 160, 160, 0.55);
@@ -1046,9 +1052,20 @@ html.boot-open-app #app.hidden {
   z-index: 2;
 }
 
+.day-timeline-item--task {
+  z-index: 2;
+}
+
 .meeting-card-wrap--timeline {
   height: 100%;
   min-width: 0;
+}
+
+.meeting-card--task,
+.meeting-card--timeline.meeting-card--task {
+  background: var(--success-muted);
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
+  box-shadow: inset 3px 0 0 var(--success);
 }
 
 .meeting-card--timeline {
@@ -1061,6 +1078,12 @@ html.boot-open-app #app.hidden {
   border-left: 3px solid var(--accent);
   box-shadow: none;
   cursor: pointer;
+}
+
+.meeting-card--timeline.meeting-card--task {
+  border-left-color: var(--success);
+  background: var(--success-muted);
+  box-shadow: none;
 }
 
 .meeting-card--timeline-pending {
@@ -1816,6 +1839,11 @@ html.boot-open-app #app.hidden {
   cursor: pointer;
 }
 
+.meetings-week-chip--task,
+.meetings-month-chip--task {
+  background: var(--success);
+}
+
 .meetings-week-chip--pending,
 .meetings-month-chip--pending {
   background: color-mix(in srgb, var(--accent) 55%, var(--surface-muted));
@@ -1873,6 +1901,10 @@ html.boot-open-app #app.hidden {
   line-height: 1.2;
   text-align: left;
   cursor: pointer;
+}
+
+.meetings-week-event--task {
+  background: var(--success);
 }
 
 .meetings-week-event--pending {
@@ -2584,9 +2616,10 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
   cursor: pointer;
 }
 
+.note-task-slash-suggest,
 .note-hashtag-suggest {
-  position: absolute;
-  z-index: 80;
+  position: fixed;
+  z-index: 520;
   min-width: 10rem;
   max-width: 16rem;
   max-height: 12rem;
@@ -4702,6 +4735,18 @@ html.note-editor-open #note-editor-overlay {
   background: rgb(82, 158, 244);
 }
 
+.note-comment-bubble-wrap {
+  position: fixed;
+  z-index: 320;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.note-comment-bubble-wrap .note-comment-bubble {
+  position: relative;
+}
+
 .note-comment-bubble {
   position: fixed;
   z-index: 320;
@@ -4728,6 +4773,26 @@ html.note-editor-open #note-editor-overlay {
 .note-comment-bubble svg {
   display: block;
   pointer-events: none;
+}
+
+.note-comment-bubble--task {
+  background: var(--success);
+}
+
+.note-task-chip {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0.1em;
+  padding: 0.05em 0.5em;
+  border-radius: 999px;
+  background: var(--success-muted);
+  color: var(--success);
+  font-weight: 650;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .note-comment-sheet {

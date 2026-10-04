@@ -2473,6 +2473,20 @@ class _MiniappCalendarEventUpdate(BaseModel):
     attendees: Optional[list[str]] = None
 
 
+class _MiniappCalendarTaskBody(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    start: Optional[str] = None
+    end: Optional[str] = None
+    assignee_user_id: Optional[str] = None
+    assignee_email: Optional[str] = None
+    assignee_name: Optional[str] = None
+    checklist: Optional[list[dict[str, Any]]] = None
+    note_id: Optional[str] = None
+    done: Optional[bool] = None
+    text: Optional[str] = None
+
+
 class _MiniappCalendarAvailabilityBody(BaseModel):
     date: str = ""
     attendees: list[Any] = Field(default_factory=list)
@@ -3680,22 +3694,33 @@ def _calendar_today_payload(
             day_iso = datetime.now(tz).date().isoformat()
     else:
         day_iso = datetime.now(tz).date().isoformat()
+    day_d = datetime.strptime(day_iso, "%Y-%m-%d").date()
+    win_start = datetime.combine(day_d, datetime.min.time(), tzinfo=tz)
+    win_end = win_start + timedelta(days=1)
+
+    def _finish(payload: dict[str, Any]) -> dict[str, Any]:
+        return _attach_leo_tasks(payload, uid, win_start, win_end, tz)
+
     if not has_token:
         if _miniapp_dev_mode_on():
-            return {
-                "connected": True,
+            return _finish(
+                {
+                    "connected": True,
+                    "date": day_iso,
+                    "timezone": str(tz),
+                    "events": _local_dev_events_for(uid, day_iso, str(tz)),
+                    "dev_fixtures": True,
+                }
+            )
+        return _finish(
+            {
+                "connected": False,
                 "date": day_iso,
                 "timezone": str(tz),
-                "events": _local_dev_events_for(uid, day_iso, str(tz)),
-                "dev_fixtures": True,
+                "events": [],
+                "error": "Подключите Google Calendar в боте: /calendar_auth",
             }
-        return {
-            "connected": False,
-            "date": day_iso,
-            "timezone": str(tz),
-            "events": [],
-            "error": "Подключите Google Calendar в боте: /calendar_auth",
-        }
+        )
     try:
         payload = calendar_free_slots(
             {"free_slots_date": day_iso},
@@ -3705,42 +3730,50 @@ def _calendar_today_payload(
     except Exception as e:
         err = str(e).strip() or "Ошибка загрузки календаря"
         if _miniapp_dev_mode_on():
-            return {
-                "connected": True,
+            return _finish(
+                {
+                    "connected": True,
+                    "date": day_iso,
+                    "timezone": str(tz),
+                    "events": _local_dev_events_for(uid, day_iso, str(tz)),
+                    "dev_fixtures": True,
+                    "error_ignored": err,
+                }
+            )
+        return _finish(
+            {
+                "connected": False,
                 "date": day_iso,
                 "timezone": str(tz),
-                "events": _local_dev_events_for(uid, day_iso, str(tz)),
-                "dev_fixtures": True,
-                "error_ignored": err,
+                "events": [],
+                "error": err,
             }
-        return {
-            "connected": False,
-            "date": day_iso,
-            "timezone": str(tz),
-            "events": [],
-            "error": err,
-        }
+        )
     try:
         events_raw = [e for e in (payload.get("events") or []) if isinstance(e, dict)]
         ser_sorted = _serialize_gcal_events(uid, events_raw, 80)
         if not ser_sorted and _miniapp_dev_mode_on():
             ser_sorted = _local_dev_events_for(uid, day_iso, str(tz))
-        return {
-            "connected": True,
-            "date": day_iso,
-            "timezone": str(tz),
-            "events": ser_sorted,
-            **({"dev_fixtures": True} if not events_raw and _miniapp_dev_mode_on() else {}),
-        }
+        return _finish(
+            {
+                "connected": True,
+                "date": day_iso,
+                "timezone": str(tz),
+                "events": ser_sorted,
+                **({"dev_fixtures": True} if not events_raw and _miniapp_dev_mode_on() else {}),
+            }
+        )
     except Exception as e:
         print(f"[miniapp_calendar] serialize_failed err={e!r}")
-        return {
-            "connected": True,
-            "date": day_iso,
-            "timezone": str(tz),
-            "events": [],
-            "error": str(e),
-        }
+        return _finish(
+            {
+                "connected": True,
+                "date": day_iso,
+                "timezone": str(tz),
+                "events": [],
+                "error": str(e),
+            }
+        )
 
 
 def _parse_calendar_day(raw: Optional[str], fallback) -> Any:
@@ -3802,6 +3835,61 @@ def _serialize_gcal_events(
     return sorted(ser, key=_sort_key)[: max(0, int(limit))]
 
 
+def _leo_task_events(
+    uid: int, start_dt: datetime, end_dt: datetime, tz: Any
+) -> list[dict[str, Any]]:
+    try:
+        from assistant.services import google_tasks
+
+        google_tasks.pull_into_leo(uid, start_dt, end_dt)
+    except Exception as e:
+        print(f"[miniapp_calendar] tasks_pull err={e!r}")
+    try:
+        from assistant.stores import calendar_tasks as calendar_tasks_store
+
+        rows = calendar_tasks_store.list_tasks_in_window(uid, start_dt, end_dt)
+        return [calendar_tasks_store.as_calendar_event(r, tz=tz) for r in rows]
+    except Exception as e:
+        print(f"[miniapp_calendar] tasks_list err={e!r}")
+        return []
+
+
+def _attach_leo_tasks(
+    payload: dict[str, Any],
+    uid: int,
+    start_dt: datetime,
+    end_dt: datetime,
+    tz: Any,
+) -> dict[str, Any]:
+    extra = _leo_task_events(uid, start_dt, end_dt, tz)
+    evs = [e for e in (payload.get("events") or []) if isinstance(e, dict)]
+    evs.extend(extra)
+
+    def _sk(d: dict[str, Any]) -> str:
+        st = d.get("start") or {}
+        if not isinstance(st, dict):
+            return ""
+        return str(st.get("dateTime") or st.get("date") or "")
+
+    payload["events"] = sorted(evs, key=_sk)
+    return payload
+
+
+def _sync_task_google(uid: int, task: dict[str, Any] | None, action: str) -> dict[str, Any] | None:
+    if not task:
+        return task
+    try:
+        from assistant.services import google_tasks
+
+        if action == "delete":
+            google_tasks.delete_remote(uid, task)
+            return task
+        return google_tasks.push_task(uid, task) or task
+    except Exception as e:
+        print(f"[calendar_tasks] google_sync action={action} err={e!r}")
+        return task
+
+
 def _local_dev_events_range(uid: int, from_d: Any, to_d: Any, timezone_name: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     cur = from_d
@@ -3831,28 +3919,36 @@ def _calendar_range_payload(
         end_d = start_d + timedelta(days=62)
     from_s = start_d.isoformat()
     to_s = end_d.isoformat()
+    win_start = datetime.combine(start_d, datetime.min.time(), tzinfo=tz)
+    win_end = datetime.combine(end_d + timedelta(days=1), datetime.min.time(), tzinfo=tz)
+
+    def _finish(payload: dict[str, Any]) -> dict[str, Any]:
+        return _attach_leo_tasks(payload, uid, win_start, win_end, tz)
+
     has_token = google_calendar_oauth.user_token_path(uid).is_file()
     if not has_token:
         if _miniapp_dev_mode_on():
-            return {
-                "connected": True,
+            return _finish(
+                {
+                    "connected": True,
+                    "timezone": str(tz),
+                    "from": from_s,
+                    "to": to_s,
+                    "events": _local_dev_events_range(uid, start_d, end_d, str(tz)),
+                    "dev_fixtures": True,
+                }
+            )
+        return _finish(
+            {
+                "connected": False,
                 "timezone": str(tz),
                 "from": from_s,
                 "to": to_s,
-                "events": _local_dev_events_range(uid, start_d, end_d, str(tz)),
-                "dev_fixtures": True,
+                "events": [],
+                "error": "Подключите Google Calendar в боте: /calendar_auth",
             }
-        return {
-            "connected": False,
-            "timezone": str(tz),
-            "from": from_s,
-            "to": to_s,
-            "events": [],
-            "error": "Подключите Google Calendar в боте: /calendar_auth",
-        }
+        )
     try:
-        win_start = datetime.combine(start_d, datetime.min.time(), tzinfo=tz)
-        win_end = datetime.combine(end_d + timedelta(days=1), datetime.min.time(), tzinfo=tz)
         collected: list[dict[str, Any]] = []
         for norm in cal_sources.list_events_in_window(uid, win_start, win_end):
             raw = dict(norm.get("raw") or {})
@@ -3887,34 +3983,40 @@ def _calendar_range_payload(
         ser = _serialize_gcal_events(uid, collected, 1500)
         if not ser and _miniapp_dev_mode_on():
             ser = _local_dev_events_range(uid, start_d, end_d, str(tz))
-        return {
-            "connected": True,
-            "timezone": str(tz),
-            "from": from_s,
-            "to": to_s,
-            "events": ser,
-            **({"dev_fixtures": True} if not collected and _miniapp_dev_mode_on() else {}),
-        }
-    except Exception as e:
-        err = str(e).strip() or "Ошибка загрузки календаря"
-        if _miniapp_dev_mode_on():
-            return {
+        return _finish(
+            {
                 "connected": True,
                 "timezone": str(tz),
                 "from": from_s,
                 "to": to_s,
-                "events": _local_dev_events_range(uid, start_d, end_d, str(tz)),
-                "dev_fixtures": True,
-                "error_ignored": err,
+                "events": ser,
+                **({"dev_fixtures": True} if not collected and _miniapp_dev_mode_on() else {}),
             }
-        return {
-            "connected": False,
-            "timezone": str(tz),
-            "from": from_s,
-            "to": to_s,
-            "events": [],
-            "error": err,
-        }
+        )
+    except Exception as e:
+        err = str(e).strip() or "Ошибка загрузки календаря"
+        if _miniapp_dev_mode_on():
+            return _finish(
+                {
+                    "connected": True,
+                    "timezone": str(tz),
+                    "from": from_s,
+                    "to": to_s,
+                    "events": _local_dev_events_range(uid, start_d, end_d, str(tz)),
+                    "dev_fixtures": True,
+                    "error_ignored": err,
+                }
+            )
+        return _finish(
+            {
+                "connected": False,
+                "timezone": str(tz),
+                "from": from_s,
+                "to": to_s,
+                "events": [],
+                "error": err,
+            }
+        )
 
 
 def _todoist_notes_for_miniapp(telegram_user_id: int) -> list[dict[str, Any]]:
@@ -4302,6 +4404,180 @@ async def miniapp_reminders_delete(
     if not existing or int(existing.get("user_id") or 0) != int(principal.telegram_user_id):
         raise HTTPException(status_code=404, detail="Напоминание не найдено")
     await run_in_threadpool(reminders_store.remove_reminder, reminder_id)
+    return {"ok": True}
+
+
+def _task_api(task: dict[str, Any], *, tz: Any) -> dict[str, Any]:
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    item = dict(task)
+    item["event"] = calendar_tasks_store.as_calendar_event(task, tz=tz)
+    item["chip_label"] = item["event"].get("chip_label")
+    return item
+
+
+@miniapp_router.get("/calendar/tasks")
+async def miniapp_calendar_tasks_list(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+) -> dict[str, Any]:
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    tz = _tz_for(uid)
+    today = datetime.now(tz).date()
+    start_d = _parse_calendar_day(start, today)
+    end_d = _parse_calendar_day(end, start_d)
+    if end_d < start_d:
+        start_d, end_d = end_d, start_d
+    win_start = datetime.combine(start_d, datetime.min.time(), tzinfo=tz)
+    win_end = datetime.combine(end_d + timedelta(days=1), datetime.min.time(), tzinfo=tz)
+    rows = await run_in_threadpool(
+        calendar_tasks_store.list_tasks_in_window, uid, win_start, win_end
+    )
+    return {"ok": True, "tasks": [_task_api(r, tz=tz) for r in rows]}
+
+
+@miniapp_router.get("/calendar/tasks/{task_id}")
+async def miniapp_calendar_tasks_get(
+    task_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    tz = _tz_for(uid)
+    row = await run_in_threadpool(calendar_tasks_store.get_task, uid, task_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    return {"ok": True, "task": _task_api(row, tz=tz)}
+
+
+@miniapp_router.post("/calendar/tasks/parse")
+async def miniapp_calendar_tasks_parse(
+    body: _MiniappCalendarTaskBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    tz = _tz_for(uid)
+    raw = str(body.text or body.title or "").strip()
+    try:
+        parsed = calendar_tasks_store.parse_slash_when(raw, tz=tz)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {
+        "ok": True,
+        "title": parsed["title"],
+        "start": parsed["start"].isoformat(),
+        "end": parsed["end"].isoformat(),
+    }
+
+
+@miniapp_router.post("/calendar/tasks")
+async def miniapp_calendar_tasks_create(
+    body: _MiniappCalendarTaskBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    tz = _tz_for(uid)
+    title = str(body.title or "").strip()
+    start_raw = str(body.start or "").strip()
+    if not start_raw and str(body.text or "").strip():
+        try:
+            parsed = calendar_tasks_store.parse_slash_when(str(body.text or ""), tz=tz)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        title = title or parsed["title"]
+        start_raw = parsed["start"].isoformat()
+        if not body.end:
+            body.end = parsed["end"].isoformat()
+    if not start_raw:
+        raise HTTPException(status_code=400, detail="Укажите начало задачи")
+    try:
+        row = await run_in_threadpool(
+            partial(
+                calendar_tasks_store.create_task,
+                uid,
+                title=title,
+                description=body.description or "",
+                start_at=start_raw,
+                end_at=body.end,
+                assignee_user_id=body.assignee_user_id or uid,
+                assignee_email=body.assignee_email or "",
+                assignee_name=body.assignee_name or _principal_display_name(principal),
+                checklist=body.checklist,
+                note_id=body.note_id or "",
+                tz=tz,
+            )
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    synced = await run_in_threadpool(_sync_task_google, uid, row, "create")
+    return {"ok": True, "task": _task_api(synced or row, tz=tz)}
+
+
+@miniapp_router.patch("/calendar/tasks/{task_id}")
+async def miniapp_calendar_tasks_patch(
+    task_id: int,
+    body: _MiniappCalendarTaskBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    tz = _tz_for(uid)
+    try:
+        row = await run_in_threadpool(
+            partial(
+                calendar_tasks_store.update_task,
+                uid,
+                task_id,
+                title=body.title,
+                description=body.description,
+                start_at=body.start,
+                end_at=body.end,
+                assignee_user_id=body.assignee_user_id,
+                assignee_email=body.assignee_email,
+                assignee_name=body.assignee_name,
+                checklist=body.checklist,
+                note_id=body.note_id,
+                done=body.done,
+                tz=tz,
+            )
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not row:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    synced = await run_in_threadpool(_sync_task_google, uid, row, "update")
+    return {"ok": True, "task": _task_api(synced or row, tz=tz)}
+
+
+@miniapp_router.delete("/calendar/tasks/{task_id}")
+async def miniapp_calendar_tasks_delete(
+    task_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    existing = await run_in_threadpool(calendar_tasks_store.get_task, uid, task_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    await run_in_threadpool(_sync_task_google, uid, existing, "delete")
+    ok = await run_in_threadpool(calendar_tasks_store.delete_task, uid, task_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
     return {"ok": True}
 
 

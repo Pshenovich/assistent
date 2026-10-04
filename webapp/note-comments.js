@@ -263,45 +263,77 @@
   function isCommentBubbleEvent(e) {
     var t = e && e.target;
     if (!t) return false;
-    if (t.id === "note-comment-bubble") return true;
-    return !!(t.closest && t.closest("#note-comment-bubble"));
+    if (t.id === "note-comment-bubble" || t.id === "note-task-bubble" || t.id === "note-comment-bubble-wrap") {
+      return true;
+    }
+    return !!(
+      t.closest &&
+      t.closest("#note-comment-bubble-wrap, #note-comment-bubble, #note-task-bubble")
+    );
   }
 
   function hideBubble() {
+    var wrap = document.getElementById("note-comment-bubble-wrap");
+    if (wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
     var el = document.getElementById("note-comment-bubble");
-    if (el && el.parentNode) el.parentNode.removeChild(el);
+    if (el && el.parentNode && (!el.parentNode.id || el.parentNode.id !== "note-comment-bubble-wrap")) {
+      el.parentNode.removeChild(el);
+    }
   }
 
-  function placeBubble(btn, rect) {
+  function placeBubble(wrap, rect) {
     var vw = window.innerWidth;
     var vh = window.innerHeight;
+    var width = wrap.offsetWidth || BUBBLE_SIZE;
+    var height = wrap.offsetHeight || BUBBLE_SIZE;
     var left = rect.right + BUBBLE_GAP;
-    var top = rect.top + (rect.height - BUBBLE_SIZE) / 2;
-    if (left + BUBBLE_SIZE > vw - 8) left = rect.left - BUBBLE_SIZE - BUBBLE_GAP;
+    var top = rect.top + (rect.height - height) / 2;
+    if (left + width > vw - 8) left = rect.left - width - BUBBLE_GAP;
     if (left < 8) left = 8;
     if (top < 8) top = 8;
-    if (top + BUBBLE_SIZE > vh - 8) top = vh - BUBBLE_SIZE - 8;
-    btn.style.top = Math.round(top) + "px";
-    btn.style.left = Math.round(left) + "px";
+    if (top + height > vh - 8) top = vh - height - 8;
+    wrap.style.top = Math.round(top) + "px";
+    wrap.style.left = Math.round(left) + "px";
   }
 
-  function showBubble(rect, onClick) {
+  function makeBubbleBtn(id, label, extraClass, svg) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = id;
+    btn.className = "note-comment-bubble" + (extraClass ? " " + extraClass : "");
+    btn.setAttribute("aria-label", label);
+    btn.setAttribute("title", label);
+    btn.innerHTML = svg;
+    return btn;
+  }
+
+  function showBubble(rect, onClick, extras) {
+    extras = extras || {};
     if (!rect) {
       hideBubble();
       return;
     }
-    var btn = document.getElementById("note-comment-bubble");
-    if (!btn) {
-      btn = document.createElement("button");
-      btn.type = "button";
-      btn.id = "note-comment-bubble";
-      btn.className = "note-comment-bubble";
-      btn.setAttribute("aria-label", "Обсудить");
-      btn.setAttribute("title", "Обсудить");
-      btn.innerHTML =
+    var wrap = document.getElementById("note-comment-bubble-wrap");
+    if (!wrap) {
+      wrap = document.createElement("div");
+      wrap.id = "note-comment-bubble-wrap";
+      wrap.className = "note-comment-bubble-wrap";
+      var discuss = makeBubbleBtn(
+        "note-comment-bubble",
+        "Обсудить",
+        "",
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
-        '<path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z"/>' +
-        "</svg>";
+          '<path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z"/>' +
+          "</svg>"
+      );
+      var task = makeBubbleBtn(
+        "note-task-bubble",
+        "Задача",
+        "note-comment-bubble--task",
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' +
+          "</svg>"
+      );
       function stopSel(e) {
         e.preventDefault();
         e.stopPropagation();
@@ -309,22 +341,35 @@
       function activate(e) {
         e.preventDefault();
         e.stopPropagation();
-        if (btn._fired) return;
-        btn._fired = true;
-        var fn = btn._onComment;
+        if (wrap._fired) return;
+        var btn = e.target && e.target.closest && e.target.closest("button");
+        if (!btn || !wrap.contains(btn)) return;
+        wrap._fired = true;
+        var fn =
+          btn.id === "note-task-bubble" ? wrap._onTask : wrap._onComment;
         hideBubble();
         if (typeof fn === "function") fn();
       }
-      btn.addEventListener("pointerdown", stopSel);
-      btn.addEventListener("mousedown", stopSel);
-      btn.addEventListener("touchstart", stopSel, { passive: false });
-      btn.addEventListener("pointerup", activate);
-      btn.addEventListener("click", activate);
-      document.body.appendChild(btn);
+      wrap.addEventListener("pointerdown", stopSel);
+      wrap.addEventListener("mousedown", stopSel);
+      wrap.addEventListener("touchstart", stopSel, { passive: false });
+      wrap.addEventListener("pointerup", activate);
+      wrap.addEventListener("click", activate);
+      wrap.appendChild(discuss);
+      wrap.appendChild(task);
+      document.body.appendChild(wrap);
     }
-    btn._onComment = onClick;
-    btn._fired = false;
-    placeBubble(btn, rect);
+    wrap._onComment = onClick;
+    wrap._onTask = extras.onTask;
+    wrap._fired = false;
+    var discussBtn = document.getElementById("note-comment-bubble");
+    if (discussBtn) discussBtn.classList.toggle("hidden", typeof onClick !== "function");
+    var taskBtn = document.getElementById("note-task-bubble");
+    if (taskBtn) taskBtn.classList.toggle("hidden", typeof extras.onTask !== "function");
+    placeBubble(wrap, rect);
+    window.requestAnimationFrame(function () {
+      if (document.getElementById("note-comment-bubble-wrap") === wrap) placeBubble(wrap, rect);
+    });
   }
 
   function desiredTopFromRect(rect, listEl) {

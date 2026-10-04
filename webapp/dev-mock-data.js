@@ -12,6 +12,8 @@
   var nextMockTagId = -91004;
   var nextMockReminderId = 100;
   var nextMockEventId = 100;
+  var nextMockTaskId = 1;
+  var mockTasks = [];
 
   function nowIso() {
     return new Date().toISOString();
@@ -644,6 +646,156 @@
       return { ok: true };
     }
 
+    if (basePath === "/calendar/tasks/parse" && method === "POST") {
+      var parseBody = {};
+      try {
+        parseBody = opts && opts.body ? JSON.parse(opts.body) : {};
+      } catch (_) {}
+      var start = String(parseBody.start || new Date(Date.now() + 3600000).toISOString());
+      var endDate = new Date(start);
+      if (!isNaN(endDate.getTime())) endDate = new Date(endDate.getTime() + 30 * 60000);
+      return {
+        ok: true,
+        title: String(parseBody.title || parseBody.text || "Задача").trim() || "Задача",
+        start: start,
+        end: endDate.toISOString(),
+      };
+    }
+
+    function mockTaskEvent(task) {
+      return {
+        id: "task-" + task.id,
+        task_id: task.id,
+        calendar_id: "leo-tasks",
+        summary: task.title,
+        kind: "Задача",
+        entry_type: "task",
+        start: { dateTime: task.start_at },
+        end: { dateTime: task.end_at },
+        start_day: String(task.start_at || "").slice(0, 10),
+        end_day: String(task.end_at || "").slice(0, 10),
+        description: task.description || "",
+        checklist: task.checklist || [],
+        assignee: {
+          user_id: task.assignee_user_id || "",
+          email: task.assignee_email || "",
+          name: task.assignee_name || "",
+        },
+        chip_label: task.chip_label || "Задача",
+        done: !!task.done,
+        note_id: task.note_id || "",
+      };
+    }
+
+    function mockTaskApi(task) {
+      return {
+        ok: true,
+        task: Object.assign({}, task, {
+          event: mockTaskEvent(task),
+          chip_label: task.chip_label || "Задача",
+        }),
+      };
+    }
+
+    function upsertMockTaskEvent(task) {
+      var ev = mockTaskEvent(task);
+      var day = ev.start_day || todayYmd();
+      Object.keys(eventsByDate).forEach(function (d) {
+        eventsByDate[d] = (eventsByDate[d] || []).filter(function (item) {
+          return item.id !== ev.id;
+        });
+      });
+      if (!eventsByDate[day]) eventsByDate[day] = [];
+      eventsByDate[day].push(ev);
+      eventsByDate[day].sort(function (a, b) {
+        return String((a.start || {}).dateTime || "").localeCompare(
+          String((b.start || {}).dateTime || "")
+        );
+      });
+    }
+
+    function removeMockTaskEvent(taskId) {
+      var eid = "task-" + taskId;
+      Object.keys(eventsByDate).forEach(function (d) {
+        eventsByDate[d] = (eventsByDate[d] || []).filter(function (item) {
+          return item.id !== eid;
+        });
+      });
+    }
+
+    var taskIdMatch = basePath.match(/^\/calendar\/tasks\/(\d+)$/);
+    if (taskIdMatch) {
+      var tid = Number(taskIdMatch[1]);
+      var existing = mockTasks.filter(function (t) {
+        return Number(t.id) === tid;
+      })[0];
+      if (method === "GET") {
+        if (!existing) return realFetch(path, opts);
+        return mockTaskApi(existing);
+      }
+      if (method === "PATCH") {
+        if (!existing) return realFetch(path, opts);
+        var patch = {};
+        try {
+          patch = opts && opts.body ? JSON.parse(opts.body) : {};
+        } catch (_) {}
+        if (patch.title != null) existing.title = String(patch.title || "").trim() || existing.title;
+        if (patch.description != null) existing.description = String(patch.description || "");
+        if (patch.start) existing.start_at = String(patch.start);
+        if (patch.end) existing.end_at = String(patch.end);
+        if (patch.checklist) existing.checklist = patch.checklist;
+        if (patch.assignee_user_id != null) existing.assignee_user_id = String(patch.assignee_user_id || "");
+        if (patch.assignee_email != null) existing.assignee_email = String(patch.assignee_email || "");
+        if (patch.assignee_name != null) existing.assignee_name = String(patch.assignee_name || "");
+        if (patch.done != null) existing.done = !!patch.done;
+        upsertMockTaskEvent(existing);
+        return mockTaskApi(existing);
+      }
+      if (method === "DELETE") {
+        if (!existing) return realFetch(path, opts);
+        mockTasks = mockTasks.filter(function (t) {
+          return Number(t.id) !== tid;
+        });
+        removeMockTaskEvent(tid);
+        return { ok: true };
+      }
+    }
+
+    if (basePath === "/calendar/tasks" && method === "POST") {
+      var taskBody = {};
+      try {
+        taskBody = opts && opts.body ? JSON.parse(opts.body) : {};
+      } catch (_) {}
+      var taskStart = String(taskBody.start || "").trim();
+      if (!taskStart) {
+        taskStart = new Date(Date.now() + 3600000).toISOString();
+      }
+      var taskEnd = String(taskBody.end || "").trim();
+      if (!taskEnd) {
+        var te = new Date(taskStart);
+        taskEnd = isNaN(te.getTime())
+          ? taskStart
+          : new Date(te.getTime() + 30 * 60000).toISOString();
+      }
+      var task = {
+        id: nextMockTaskId++,
+        title: String(taskBody.title || "").trim() || "Задача",
+        description: String(taskBody.description || ""),
+        start_at: taskStart,
+        end_at: taskEnd,
+        checklist: Array.isArray(taskBody.checklist) ? taskBody.checklist : [],
+        assignee_user_id: String(taskBody.assignee_user_id || ""),
+        assignee_email: String(taskBody.assignee_email || ""),
+        assignee_name: String(taskBody.assignee_name || "Я"),
+        note_id: String(taskBody.note_id || ""),
+        done: false,
+        chip_label: "Задача",
+      };
+      mockTasks.unshift(task);
+      upsertMockTaskEvent(task);
+      return mockTaskApi(task);
+    }
+
     if (basePath === "/calendar/events" && method === "POST") {
       var evBody = {};
       try {
@@ -813,6 +965,31 @@
     }
     if (method === "GET" && basePath === "/calendar/today") {
       return mergeCalendar(result, calendarDateFromPath(path));
+    }
+    if (method === "GET" && basePath === "/calendar/range") {
+      var ranged = result || { events: [] };
+      var extra = [];
+      Object.keys(eventsByDate).forEach(function (d) {
+        (eventsByDate[d] || []).forEach(function (ev) {
+          extra.push(ev);
+        });
+      });
+      var seenR = {};
+      var evs = (ranged.events || []).slice();
+      evs.forEach(function (ev) {
+        seenR[ev.id] = true;
+      });
+      extra.forEach(function (ev) {
+        if (seenR[ev.id]) return;
+        evs.push(ev);
+        seenR[ev.id] = true;
+      });
+      evs.sort(function (a, b) {
+        var as = (a.start && (a.start.dateTime || a.start.date)) || "";
+        var bs = (b.start && (b.start.dateTime || b.start.date)) || "";
+        return as < bs ? -1 : as > bs ? 1 : 0;
+      });
+      return Object.assign({}, ranged, { events: evs, connected: true });
     }
     if (method === "GET" && basePath === "/notes") {
       return mergeNotes(result);

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from datetime import date
+import os
+import tempfile
+from datetime import date, datetime
 from unittest import TestCase
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
+
+from assistant.stores import calendar_tasks as calendar_tasks_store
 
 
 class TestCalendarRangeHelpers(TestCase):
@@ -14,19 +19,66 @@ class TestCalendarRangeHelpers(TestCase):
         self.assertEqual(_parse_calendar_day("bad", fallback), fallback)
         self.assertEqual(_parse_calendar_day(None, fallback), fallback)
 
-    def test_range_swaps_and_caps_dates(self) -> None:
-        from zoneinfo import ZoneInfo
+    def _isolated_tasks_db(self):
+        td = tempfile.TemporaryDirectory()
+        os.environ["CALENDAR_TASKS_DB_PATH"] = os.path.join(td.name, "t.sqlite")
+        calendar_tasks_store._CONN = None  # type: ignore[attr-defined]
+        return td
 
+    def test_range_swaps_and_caps_dates(self) -> None:
         from usage_server import _calendar_range_payload
 
-        with (
-            patch("assistant.integrations.google_calendar_oauth.user_token_path") as token_path,
-            patch("assistant.services.calendar._tz_for", return_value=ZoneInfo("Europe/Moscow")),
-            patch("usage_server._miniapp_dev_mode_on", return_value=False),
-        ):
-            token_path.return_value.is_file.return_value = False
-            payload = _calendar_range_payload(1, "2026-12-31", "2026-01-01")
-            self.assertEqual(payload["from"], "2026-01-01")
-            self.assertEqual(payload["to"], "2026-03-04")
-            self.assertFalse(payload["connected"])
-            self.assertEqual(payload["events"], [])
+        isolated = self._isolated_tasks_db()
+        try:
+            with (
+                patch("assistant.integrations.google_calendar_oauth.user_token_path") as token_path,
+                patch(
+                    "assistant.services.calendar._tz_for",
+                    return_value=ZoneInfo("Europe/Moscow"),
+                ),
+                patch("usage_server._miniapp_dev_mode_on", return_value=False),
+            ):
+                token_path.return_value.is_file.return_value = False
+                payload = _calendar_range_payload(1, "2026-12-31", "2026-01-01")
+                self.assertEqual(payload["from"], "2026-01-01")
+                self.assertEqual(payload["to"], "2026-03-04")
+                self.assertFalse(payload["connected"])
+                self.assertEqual(payload["events"], [])
+        finally:
+            calendar_tasks_store._CONN = None  # type: ignore[attr-defined]
+            os.environ.pop("CALENDAR_TASKS_DB_PATH", None)
+            isolated.cleanup()
+
+    def test_range_and_today_merge_leo_tasks(self) -> None:
+        from usage_server import _calendar_range_payload, _calendar_today_payload
+
+        isolated = self._isolated_tasks_db()
+        tz = ZoneInfo("Europe/Moscow")
+        try:
+            row = calendar_tasks_store.create_task(
+                1,
+                title="Зелёная",
+                start_at=datetime(2026, 10, 7, 15, 0, tzinfo=tz),
+                tz=tz,
+            )
+            with (
+                patch("assistant.integrations.google_calendar_oauth.user_token_path") as token_path,
+                patch("assistant.services.calendar._tz_for", return_value=tz),
+                patch("usage_server._miniapp_dev_mode_on", return_value=False),
+                patch("assistant.services.google_tasks.pull_into_leo", return_value=[]),
+            ):
+                token_path.return_value.is_file.return_value = False
+                ranged = _calendar_range_payload(1, "2026-10-07", "2026-10-07")
+                today = _calendar_today_payload(1, "2026-10-07")
+            task_events = [e for e in ranged["events"] if e.get("entry_type") == "task"]
+            self.assertEqual(len(task_events), 1)
+            self.assertEqual(task_events[0]["summary"], "Зелёная")
+            self.assertEqual(task_events[0]["task_id"], row["id"])
+            self.assertEqual(task_events[0]["kind"], "Задача")
+            today_tasks = [e for e in today["events"] if e.get("entry_type") == "task"]
+            self.assertEqual(len(today_tasks), 1)
+            self.assertEqual(today_tasks[0]["summary"], "Зелёная")
+        finally:
+            calendar_tasks_store._CONN = None  # type: ignore[attr-defined]
+            os.environ.pop("CALENDAR_TASKS_DB_PATH", None)
+            isolated.cleanup()

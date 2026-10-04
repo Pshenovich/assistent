@@ -1,4 +1,4 @@
-import { Editor, Extension } from "@tiptap/core";
+import { Editor, Extension, Node } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
@@ -1234,6 +1234,385 @@ function mountToolbar(toolbarEl, editor) {
 
 var HASHTAG_QUERY_RE = /(?:^|\s)(#([A-Za-zА-Яа-яЁё0-9_]{0,40}))$/;
 var HASHTAG_INLINE_RE = /#([A-Za-zА-Яа-яЁё0-9_]{1,40})/g;
+var TASK_SLASH_DAYS = [
+  "сегодня",
+  "завтра",
+  "послезавтра",
+  "понедельник",
+  "вторник",
+  "среда",
+  "четверг",
+  "пятница",
+  "суббота",
+  "воскресенье",
+];
+var TASK_SLASH_DAY =
+  "сегодня|завтра|послезавтра|понедельник|вторник|среда|четверг|пятница|суббота|воскресенье|пн|вт|ср|чт|пт|сб|вс";
+var TASK_SLASH_MONTHS = [
+  "января",
+  "февраля",
+  "марта",
+  "апреля",
+  "мая",
+  "июня",
+  "июля",
+  "августа",
+  "сентября",
+  "октября",
+  "ноября",
+  "декабря",
+];
+var TASK_SLASH_MONTH =
+  "янв\\w*|фев\\w*|мар\\w*|апр\\w*|ма[йя]\\w*|июн\\w*|июл\\w*|авг\\w*|сен\\w*|окт\\w*|ноя\\w*|дек\\w*";
+var TASK_SLASH_WHEN =
+  "(?:" +
+  TASK_SLASH_DAY +
+  "|\\d{1,2}[./]\\d{1,2}(?:[./]\\d{2,4})?" +
+  "|\\d{1,2}\\s+(?:" +
+  TASK_SLASH_MONTH +
+  "))";
+var TASK_SLASH_QUERY_RE = /(?:^|\s)(\/([^\n]*))$/;
+var TASK_SLASH_COMPLETE_RE = new RegExp(
+  "^/(" + TASK_SLASH_WHEN + ")(?:\\s+\\d{1,2}[:.]\\d{2})?(?:\\s+[^\\n/]+)?$",
+  "i"
+);
+var TASK_SLASH_TRAIL_RE = new RegExp(
+  "(?:^|\\s)(/(" + TASK_SLASH_WHEN + ")(?:\\s+\\d{1,2}[:.]\\d{2})(?:\\s+[^\\n/]+)?\\s)$",
+  "i"
+);
+var TASK_SLASH_ENTER_RE = new RegExp(
+  "(?:^|\\s)(/(" + TASK_SLASH_WHEN + ")(?:\\s+\\d{1,2}[:.]\\d{2})?(?:\\s+[^\\n/]+)?)$",
+  "i"
+);
+
+function collectLeoTaskIds(doc) {
+  var ids = new Set();
+  if (!doc) return ids;
+  doc.descendants(function (node) {
+    if (node.type && node.type.name === "leoTaskChip" && node.attrs && node.attrs.taskId) {
+      ids.add(String(node.attrs.taskId));
+    }
+  });
+  return ids;
+}
+
+function createLeoTaskExtensions(ctx) {
+  var LeoTaskChip = Node.create({
+    name: "leoTaskChip",
+    group: "inline",
+    inline: true,
+    atom: true,
+    selectable: true,
+    draggable: false,
+    addAttributes: function () {
+      return {
+        taskId: { default: "" },
+        label: { default: "Задача" },
+      };
+    },
+    parseHTML: function () {
+      return [
+        {
+          tag: "span[data-leo-task-id]",
+          getAttrs: function (el) {
+            return {
+              taskId: el.getAttribute("data-leo-task-id") || "",
+              label: String(el.textContent || "").trim() || "Задача",
+            };
+          },
+        },
+      ];
+    },
+    renderHTML: function (_ref) {
+      var HTMLAttributes = _ref.HTMLAttributes;
+      return [
+        "span",
+        {
+          "data-leo-task-id": HTMLAttributes.taskId,
+          class: "note-task-chip",
+          contenteditable: "false",
+        },
+        HTMLAttributes.label || "Задача",
+      ];
+    },
+    addNodeView: function () {
+      return function (_ref) {
+        var node = _ref.node;
+        var el = document.createElement("span");
+        el.className = "note-task-chip";
+        el.setAttribute("data-leo-task-id", node.attrs.taskId || "");
+        el.setAttribute("contenteditable", "false");
+        el.textContent = node.attrs.label || "Задача";
+        el.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var id = el.getAttribute("data-leo-task-id") || "";
+          if (id && typeof ctx.onTaskChipClick === "function") ctx.onTaskChipClick(id);
+        });
+        return {
+          dom: el,
+          update: function (updated) {
+            if (!updated || updated.type.name !== "leoTaskChip") return false;
+            el.setAttribute("data-leo-task-id", updated.attrs.taskId || "");
+            el.textContent = updated.attrs.label || "Задача";
+            return true;
+          },
+        };
+      };
+    },
+  });
+
+  var LeoTaskSlash = Extension.create({
+    name: "leoTaskSlash",
+    addProseMirrorPlugins: function () {
+      return [
+        new Plugin({
+          key: new PluginKey("leoTaskSlash"),
+          view: function () {
+            var el = document.createElement("div");
+            el.className = "note-task-slash-suggest note-hashtag-suggest hidden";
+            document.body.appendChild(el);
+            ctx.slashSuggestEl = el;
+
+            function hideSuggest() {
+              el.classList.add("hidden");
+              el.innerHTML = "";
+              ctx.slashItems = [];
+              ctx.slashIndex = 0;
+              ctx.slashFrom = null;
+            }
+            ctx.hideTaskSlashSuggest = hideSuggest;
+
+            function commitToken(view, token, from, to) {
+              if (!view || ctx.slashBusy || !token) return false;
+              if (from < 0 || to < from) return false;
+              ctx.slashBusy = true;
+              hideSuggest();
+              view.dispatch(view.state.tr.delete(from, to));
+              if (typeof ctx.onTaskSlash !== "function") {
+                ctx.slashBusy = false;
+                return true;
+              }
+              ctx.onTaskSlash(
+                token,
+                function (taskId, label) {
+                  ctx.slashBusy = false;
+                  if (!ctx.editor) return;
+                  ctx.editor
+                    .chain()
+                    .focus()
+                    .insertContent([
+                      {
+                        type: "leoTaskChip",
+                        attrs: {
+                          taskId: String(taskId || ""),
+                          label: label || "Задача",
+                        },
+                      },
+                      { type: "text", text: " " },
+                    ])
+                    .run();
+                },
+                function () {
+                  ctx.slashBusy = false;
+                }
+              );
+              return true;
+            }
+
+            function commit(view, re) {
+              if (!view || ctx.slashBusy) return false;
+              var $from = view.state.selection.$from;
+              var text = $from.parent.textBetween(0, $from.parentOffset, null, "\ufffc");
+              var match = text.match(re);
+              if (!match) return false;
+              var rawToken = String(match[1] || "");
+              var token = rawToken.trim();
+              if (!token) return false;
+              var trail = rawToken.length - token.length;
+              if (trail <= 0 && text.endsWith(" ")) trail = 1;
+              var from = $from.pos - token.length - trail;
+              var to = $from.pos;
+              if (from < $from.start() || to > $from.end() || from >= to) return false;
+              return commitToken(view, token, from, to);
+            }
+            ctx.commitTaskSlash = commit;
+
+            function pickDay(name) {
+              var view = ctx.editor && ctx.editor.view;
+              if (!view || ctx.slashFrom == null) {
+                hideSuggest();
+                return;
+              }
+              var to = view.state.selection.from;
+              view.dispatch(view.state.tr.insertText("/" + name + " ", ctx.slashFrom, to));
+              view.focus();
+            }
+
+            function pickCreate() {
+              var view = ctx.editor && ctx.editor.view;
+              if (!view) return;
+              commit(view, TASK_SLASH_ENTER_RE);
+            }
+
+            function render() {
+              el.innerHTML = "";
+              (ctx.slashItems || []).forEach(function (item, i) {
+                var btn = document.createElement("button");
+                btn.type = "button";
+                btn.className =
+                  "note-hashtag-suggest-item" + (i === ctx.slashIndex ? " is-active" : "");
+                btn.textContent = item.label;
+                btn.addEventListener("mousedown", function (e) {
+                  e.preventDefault();
+                  if (item.kind === "create") pickCreate();
+                  else if (item.kind === "day" && item.name) pickDay(item.name);
+                });
+                el.appendChild(btn);
+              });
+            }
+            ctx.renderTaskSlashSuggest = render;
+
+            return {
+              update: function (view) {
+                if (commit(view, TASK_SLASH_TRAIL_RE)) return;
+                if (!view.state.selection.empty) {
+                  hideSuggest();
+                  return;
+                }
+                var $from = view.state.selection.$from;
+                var text = $from.parent.textBetween(0, $from.parentOffset, null, "\ufffc");
+                var match = text.match(TASK_SLASH_QUERY_RE);
+                if (!match) {
+                  hideSuggest();
+                  return;
+                }
+                var token = String(match[1] || "");
+                var rest = String(match[2] || "").trim().toLowerCase();
+                ctx.slashFrom = $from.pos - token.length;
+                var items = [];
+                if (TASK_SLASH_COMPLETE_RE.test(token.trim())) {
+                  items.push({
+                    kind: "create",
+                    label: rest ? "Создать задачу · /" + rest : "Создать задачу",
+                  });
+                }
+                var datePrefix = rest.match(/^(\d{1,2})(?:\s+([а-яё]*))?$/i);
+                var dottedDate = /^\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?(?:\s|$)/.test(rest);
+                if (datePrefix && !dottedDate) {
+                  var dayNum = datePrefix[1];
+                  var monQ = String(datePrefix[2] || "").toLowerCase();
+                  TASK_SLASH_MONTHS.forEach(function (name) {
+                    if (!monQ || name.indexOf(monQ) === 0) {
+                      items.push({
+                        kind: "day",
+                        name: dayNum + " " + name,
+                        label: "/" + dayNum + " " + name,
+                      });
+                    }
+                  });
+                } else if (!rest || !/^\d/.test(rest)) {
+                  TASK_SLASH_DAYS.forEach(function (name) {
+                    if (!rest || name.indexOf(rest.split(/\s+/)[0]) === 0) {
+                      items.push({ kind: "day", name: name, label: "/" + name });
+                    }
+                  });
+                }
+                if (!items.length && /^\d/.test(rest)) {
+                  items.push({
+                    kind: "hint",
+                    label: "Например: /7 окт 15:00 или /7.10 15:00",
+                  });
+                }
+                if (!items.length) {
+                  hideSuggest();
+                  return;
+                }
+                ctx.slashItems = items.slice(0, 9);
+                ctx.slashIndex = 0;
+                render();
+                var coords = view.coordsAtPos($from.pos);
+                el.style.position = "fixed";
+                el.style.zIndex = "520";
+                el.style.left = Math.max(8, coords.left) + "px";
+                el.style.top = coords.bottom + 6 + "px";
+                el.classList.remove("hidden");
+              },
+              destroy: function () {
+                if (el.parentNode) el.parentNode.removeChild(el);
+              },
+            };
+          },
+          props: {
+            handleKeyDown: function (view, event) {
+              var items = ctx.slashItems || [];
+              var open =
+                items.length &&
+                ctx.slashSuggestEl &&
+                !ctx.slashSuggestEl.classList.contains("hidden");
+              if (open && event.key === "ArrowDown") {
+                event.preventDefault();
+                ctx.slashIndex = (ctx.slashIndex + 1) % items.length;
+                if (ctx.renderTaskSlashSuggest) ctx.renderTaskSlashSuggest();
+                return true;
+              }
+              if (open && event.key === "ArrowUp") {
+                event.preventDefault();
+                ctx.slashIndex = (ctx.slashIndex - 1 + items.length) % items.length;
+                if (ctx.renderTaskSlashSuggest) ctx.renderTaskSlashSuggest();
+                return true;
+              }
+              if (event.key === "Enter" || event.key === "Tab") {
+                if (open) {
+                  event.preventDefault();
+                  var item = items[ctx.slashIndex];
+                  if (item && item.kind === "create") {
+                    if (ctx.commitTaskSlash) ctx.commitTaskSlash(view, TASK_SLASH_ENTER_RE);
+                  } else if (item && item.kind === "day" && item.name) {
+                    var to = view.state.selection.from;
+                    view.dispatch(view.state.tr.insertText("/" + item.name + " ", ctx.slashFrom, to));
+                    view.focus();
+                  }
+                  return true;
+                }
+                if (ctx.commitTaskSlash && ctx.commitTaskSlash(view, TASK_SLASH_ENTER_RE)) {
+                  event.preventDefault();
+                  return true;
+                }
+              }
+              if (event.key === "Escape" && open) {
+                if (ctx.hideTaskSlashSuggest) ctx.hideTaskSlashSuggest();
+                return true;
+              }
+              return false;
+            },
+          },
+        }),
+        new Plugin({
+          key: new PluginKey("leoTaskChipWatch"),
+          appendTransaction: function (transactions, oldState, newState) {
+            if (ctx.suppressChipDelete) return null;
+            if (!transactions.some(function (tr) { return tr.docChanged; })) return null;
+            var user = transactions.some(function (tr) {
+              return tr.docChanged && tr.getMeta("addToHistory") !== false;
+            });
+            if (!user) return null;
+            var oldIds = collectLeoTaskIds(oldState.doc);
+            var newIds = collectLeoTaskIds(newState.doc);
+            oldIds.forEach(function (id) {
+              if (!newIds.has(id) && typeof ctx.onTaskChipRemoved === "function") {
+                ctx.onTaskChipRemoved(id);
+              }
+            });
+            return null;
+          },
+        }),
+      ];
+    },
+  });
+
+  return [LeoTaskChip, LeoTaskSlash];
+}
 
 function createHashtagExtensions(ctx) {
   var HashtagHighlight = Extension.create({
@@ -1352,6 +1731,7 @@ function createHashtagExtensions(ctx) {
                 render();
                 var coords = view.coordsAtPos($from.pos);
                 el.style.position = "fixed";
+                el.style.zIndex = "520";
                 el.style.left = Math.max(8, coords.left) + "px";
                 el.style.top = coords.bottom + 6 + "px";
                 el.classList.remove("hidden");
@@ -1423,6 +1803,14 @@ function mount(container, options) {
     hashtags: Array.isArray(options.hashtags) ? options.hashtags.slice() : [],
     editor: null,
   };
+  var taskCtx = {
+    editor: null,
+    slashBusy: false,
+    suppressChipDelete: false,
+    onTaskSlash: options.onTaskSlash,
+    onTaskChipClick: options.onTaskChipClick,
+    onTaskChipRemoved: options.onTaskChipRemoved,
+  };
 
   const editor = new Editor({
     element: content,
@@ -1453,7 +1841,9 @@ function mount(container, options) {
         placeholder: options.placeholder || "Начните писать…",
       }),
       IosSelectionGuard,
-    ].concat(createHashtagExtensions(hashtagCtx)),
+    ]
+      .concat(createHashtagExtensions(hashtagCtx))
+      .concat(createLeoTaskExtensions(taskCtx)),
     content: importBody(options.body || ""),
     autofocus: options.autofocus === true,
     editorProps: {
@@ -1505,6 +1895,7 @@ function mount(container, options) {
     },
   });
   hashtagCtx.editor = editor;
+  taskCtx.editor = editor;
 
   editor.view.dom.addEventListener(
     "paste",
@@ -1640,10 +2031,56 @@ function mount(container, options) {
     setHashtags: function (names) {
       hashtagCtx.hashtags = Array.isArray(names) ? names.slice() : [];
     },
+    insertTaskChip: function (taskId, label) {
+      editor
+        .chain()
+        .focus()
+        .insertContent([
+          {
+            type: "leoTaskChip",
+            attrs: { taskId: String(taskId || ""), label: label || "Задача" },
+          },
+          { type: "text", text: " " },
+        ])
+        .run();
+    },
+    updateTaskChip: function (taskId, label) {
+      var id = String(taskId || "");
+      var tr = editor.state.tr;
+      var changed = false;
+      editor.state.doc.descendants(function (node, pos) {
+        if (node.type.name === "leoTaskChip" && String(node.attrs.taskId) === id) {
+          tr.setNodeMarkup(pos, undefined, {
+            taskId: id,
+            label: label || node.attrs.label,
+          });
+          changed = true;
+        }
+      });
+      if (changed) editor.view.dispatch(tr);
+    },
+    removeTaskChip: function (taskId) {
+      var id = String(taskId || "");
+      var deletes = [];
+      editor.state.doc.descendants(function (node, pos) {
+        if (node.type.name === "leoTaskChip" && String(node.attrs.taskId) === id) {
+          deletes.push({ from: pos, to: pos + node.nodeSize });
+        }
+      });
+      if (!deletes.length) return;
+      var tr = editor.state.tr;
+      for (var i = deletes.length - 1; i >= 0; i--) {
+        tr.delete(deletes[i].from, deletes[i].to);
+      }
+      taskCtx.suppressChipDelete = true;
+      editor.view.dispatch(tr);
+      taskCtx.suppressChipDelete = false;
+    },
     destroy: function () {
       closeLinkPopover();
       closeTgMenus(toolbar);
       if (typeof hashtagCtx.hideHashtagSuggest === "function") hashtagCtx.hideHashtagSuggest();
+      if (typeof taskCtx.hideTaskSlashSuggest === "function") taskCtx.hideTaskSlashSuggest();
       if (typeof cleanupToolbar === "function") cleanupToolbar();
       if (typeof cleanupToc === "function") cleanupToc();
       editor.destroy();

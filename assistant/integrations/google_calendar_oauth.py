@@ -16,7 +16,10 @@ from assistant.config import ROOT
 
 HERE = Path(__file__).resolve().parent
 
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
+SCOPES = [
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/tasks",
+]
 
 STATE_TTL_SEC = int(os.getenv("GOOGLE_OAUTH_STATE_TTL_SEC", "900") or "900")
 

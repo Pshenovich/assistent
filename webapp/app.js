@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261003-month-instances";
+  var WEBAPP_BUILD = "20261004-slash-date";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261002-ios-boot";
+  const NOTE_EDITOR_ASSET_V = "20261004-slash-date";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -1277,6 +1277,45 @@
     return btn;
   }
 
+  function calendarEntryIsTask(ev) {
+    if (!ev) return false;
+    if (ev.entry_type === "task") return true;
+    return String(ev.id || "").indexOf("task-") === 0;
+  }
+
+  function calendarTaskId(ev) {
+    if (!ev) return "";
+    if (ev.task_id != null && ev.task_id !== "") return String(ev.task_id);
+    var id = String(ev.id || "");
+    if (id.indexOf("task-") === 0) return id.slice(5);
+    return /^\d+$/.test(id) ? id : "";
+  }
+
+  function withTaskClass(base, ev) {
+    return calendarEntryIsTask(ev) ? base + " " + base + "--task" : base;
+  }
+
+  function openCalendarEntry(ev) {
+    if (calendarEntryIsTask(ev)) openTaskModal(ev);
+    else openEventModal(ev);
+  }
+
+  function currentOpenNoteId() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    return wrap && wrap._shareId ? String(wrap._shareId) : "";
+  }
+
+  function defaultTaskAssignee() {
+    var me = cachedMe || {};
+    var name = [me.first_name, me.last_name].filter(Boolean).join(" ").trim();
+    if (!name) name = me.username || me.name || "Я";
+    return {
+      user_id: String(me.telegram_user_id || me.id || ""),
+      email: String(me.email || ""),
+      name: name,
+    };
+  }
+
   function renderTimelineBandItem(opts) {
     opts = opts || {};
     var el = document.createElement("button");
@@ -1332,9 +1371,11 @@
         band.appendChild(
           renderTimelineBandItem({
             title: meetingDisplayTitle(ev),
-            mod: meetingNeedsRsvp(ev) ? "day-timeline-band-item--pending" : "",
+            mod:
+              (meetingNeedsRsvp(ev) ? "day-timeline-band-item--pending" : "") +
+              (calendarEntryIsTask(ev) ? " day-timeline-band-item--task" : ""),
             onClick: function () {
-              openEventModal(ev);
+              openCalendarEntry(ev);
             },
           })
         );
@@ -1351,9 +1392,11 @@
         earlyItems.push(
           renderTimelineBandItem({
             title: earlyTitle || meetingDisplayTitle(ev),
-            mod: meetingNeedsRsvp(ev) ? "day-timeline-band-item--pending" : "",
+            mod:
+              (meetingNeedsRsvp(ev) ? "day-timeline-band-item--pending" : "") +
+              (calendarEntryIsTask(ev) ? " day-timeline-band-item--task" : ""),
             onClick: function () {
-              openEventModal(ev);
+              openCalendarEntry(ev);
             },
           })
         );
@@ -1440,6 +1483,9 @@
       var slot = document.createElement("div");
       slot.className = "day-timeline-item";
       if (it.kind === "reminder") slot.classList.add("day-timeline-item--reminder");
+      if (it.kind === "event" && calendarEntryIsTask(it.ev)) {
+        slot.classList.add("day-timeline-item--task");
+      }
       var cols = Math.max(1, it.cols || 1);
       var col = it.col || 0;
       var top = (it.startMin / 60) * hourPx;
@@ -1689,7 +1735,7 @@
     });
     syncMeetingsHead(range.from, range.to);
     updateMeetingsRangeBadge(events);
-    if (lastMeetingsRange.connected === false) {
+    if (lastMeetingsRange.connected === false && !events.length) {
       host.innerHTML = "";
       var banner = document.createElement("p");
       banner.className = "muted empty-hint day-timeline-connect";
@@ -1736,11 +1782,12 @@
         var chip = document.createElement("button");
         chip.type = "button";
         chip.className =
-          "meetings-week-chip" + (meetingNeedsRsvp(ev) ? " meetings-week-chip--pending" : "");
+          withTaskClass("meetings-week-chip", ev) +
+          (meetingNeedsRsvp(ev) ? " meetings-week-chip--pending" : "");
         chip.textContent = meetingDisplayTitle(ev);
         chip.addEventListener("click", function (e) {
           e.stopPropagation();
-          openEventModal(ev);
+          openCalendarEntry(ev);
         });
         cell.appendChild(chip);
       });
@@ -1776,7 +1823,8 @@
         var btn = document.createElement("button");
         btn.type = "button";
         btn.className =
-          "meetings-week-event" + (meetingNeedsRsvp(it.ev) ? " meetings-week-event--pending" : "");
+          withTaskClass("meetings-week-event", it.ev) +
+          (meetingNeedsRsvp(it.ev) ? " meetings-week-event--pending" : "");
         var top = (it.startMin / 60) * hourPx;
         var height = Math.max(18, ((it.endMin - it.startMin) / 60) * hourPx - 2);
         var width = 100 / (it.cols || 1);
@@ -1787,7 +1835,7 @@
         btn.textContent = meetingDisplayTitle(it.ev);
         btn.addEventListener("click", function (e) {
           e.stopPropagation();
-          openEventModal(it.ev);
+          openCalendarEntry(it.ev);
         });
         col.appendChild(btn);
       });
@@ -1825,7 +1873,7 @@
     syncMeetingsHead(anchor, null);
     updateMeetingsRangeBadge(events);
     host.innerHTML = "";
-    if (lastMeetingsRange.connected === false) {
+    if (lastMeetingsRange.connected === false && !events.length) {
       var banner = document.createElement("p");
       banner.className = "muted empty-hint day-timeline-connect";
       banner.textContent = meetingsEmptyMessage(lastMeetingsRange);
@@ -1859,12 +1907,13 @@
         var chip = document.createElement("button");
         chip.type = "button";
         chip.className =
-          "meetings-month-chip" + (meetingNeedsRsvp(ev) ? " meetings-month-chip--pending" : "");
+          withTaskClass("meetings-month-chip", ev) +
+          (meetingNeedsRsvp(ev) ? " meetings-month-chip--pending" : "");
         chip.textContent = meetingDisplayTitle(ev);
         chip.addEventListener("click", function (e) {
           e.preventDefault();
           e.stopPropagation();
-          openEventModal(ev);
+          openCalendarEntry(ev);
         });
         cell.appendChild(chip);
       });
@@ -8150,6 +8199,8 @@
     ov.classList.add("hidden");
     ov.setAttribute("aria-hidden", "true");
     document.getElementById("modal-delete").classList.add("hidden");
+    taskModalOnSaved = null;
+    taskModalOnDeleted = null;
     onModalSheetClose();
     syncAppOverlay();
   }
@@ -8312,6 +8363,9 @@
 
   var reminderChecklistApi = null;
   var meetingAttendeesApi = null;
+  var taskAssigneeApi = null;
+  var taskModalOnSaved = null;
+  var taskModalOnDeleted = null;
   var MEETING_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
 
   function meetingEmailKey(email) {
@@ -8966,6 +9020,296 @@
     el.style.height = Math.max(el.scrollHeight, 52) + "px";
   }
 
+  function mountTaskAssignee(host, initial) {
+    var fallback = defaultTaskAssignee();
+    var selected = {
+      user_id: String((initial && (initial.user_id || initial.assignee_user_id)) || "") || fallback.user_id,
+      email: String((initial && (initial.email || initial.assignee_email)) || "") || fallback.email,
+      name: String((initial && (initial.name || initial.assignee_name)) || "") || fallback.name,
+    };
+    if (!host) {
+      return {
+        getAssignee: function () {
+          return selected;
+        },
+      };
+    }
+    host.innerHTML = "";
+    var chips = document.createElement("div");
+    chips.className = "meeting-attendee-chips";
+    var add = document.createElement("div");
+    add.className = "meeting-attendee-add";
+    var input = document.createElement("input");
+    input.type = "text";
+    input.className = "field-input";
+    input.placeholder = "Контакт или имя";
+    input.autocomplete = "off";
+    var suggest = document.createElement("div");
+    suggest.className = "meeting-attendee-suggest hidden";
+    suggest.setAttribute("role", "listbox");
+    add.appendChild(input);
+    add.appendChild(suggest);
+    host.appendChild(chips);
+    host.appendChild(add);
+
+    function paint() {
+      chips.innerHTML = "";
+      var chip = document.createElement("span");
+      chip.className = "meeting-attendee-chip";
+      var text = document.createElement("span");
+      text.className = "meeting-attendee-chip-text";
+      text.textContent = selected.name || selected.email || "Я";
+      chip.appendChild(text);
+      chips.appendChild(chip);
+      var sum = document.getElementById("m-task-assignee-summary");
+      if (sum) sum.textContent = selected.name || selected.email || "Я";
+    }
+
+    function pick(person) {
+      selected = {
+        user_id: String((person && (person.telegram_user_id || person.user_id)) || ""),
+        email: String((person && person.email) || ""),
+        name: String((person && person.name) || selected.name || ""),
+      };
+      if (!selected.name) selected.name = selected.email || "Я";
+      input.value = "";
+      suggest.classList.add("hidden");
+      paint();
+    }
+
+    function paintSuggest() {
+      var q = String(input.value || "").trim().toLowerCase();
+      suggest.innerHTML = "";
+      var rows = [];
+      var me = defaultTaskAssignee();
+      if (!q || String(me.name || "").toLowerCase().indexOf(q) >= 0) {
+        rows.push({ name: me.name, email: me.email, user_id: me.user_id });
+      }
+      Object.keys(calendarContactsByEmail).forEach(function (k) {
+        var c = calendarContactsByEmail[k];
+        if (!c) return;
+        var hay = [c.name, c.email, c.telegram_username, (c.aliases || []).join(" ")]
+          .join(" ")
+          .toLowerCase();
+        if (q && hay.indexOf(q) < 0) return;
+        rows.push(c);
+      });
+      rows.slice(0, 8).forEach(function (c) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "meeting-attendee-suggest-item";
+        btn.textContent = c.name || c.email || "Я";
+        btn.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+        });
+        btn.addEventListener("click", function () {
+          pick(c);
+        });
+        suggest.appendChild(btn);
+      });
+      if (q && !rows.length) {
+        var custom = document.createElement("button");
+        custom.type = "button";
+        custom.className = "meeting-attendee-suggest-item";
+        custom.textContent = q;
+        custom.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+        });
+        custom.addEventListener("click", function () {
+          pick({ name: q, email: "", user_id: "" });
+        });
+        suggest.appendChild(custom);
+      }
+      suggest.classList.toggle("hidden", !suggest.childNodes.length);
+    }
+
+    input.addEventListener("input", paintSuggest);
+    input.addEventListener("focus", paintSuggest);
+    refreshCalendarContacts().then(paint);
+    paint();
+    return {
+      getAssignee: function () {
+        return selected;
+      },
+    };
+  }
+
+  function taskPayloadFromModal() {
+    syncHiddenFromEventPills("start");
+    syncHiddenFromEventPills("end");
+    var assignee = taskAssigneeApi ? taskAssigneeApi.getAssignee() : defaultTaskAssignee();
+    var noteEl = document.getElementById("modal-task-note-id");
+    return {
+      title: (document.getElementById("m-ev-sum") || {}).value
+        ? document.getElementById("m-ev-sum").value.trim()
+        : "",
+      description: (document.getElementById("m-task-desc") || {}).value || "",
+      start: datetimeLocalToIso((document.getElementById("m-ev-start") || {}).value || ""),
+      end: datetimeLocalToIso((document.getElementById("m-ev-end") || {}).value || ""),
+      checklist: reminderChecklistApi ? reminderChecklistApi.getItems() : [],
+      assignee_user_id: assignee.user_id || "",
+      assignee_email: assignee.email || "",
+      assignee_name: assignee.name || "",
+      note_id: noteEl ? String(noteEl.value || "") : "",
+    };
+  }
+
+  function openTaskModal(ev, opts) {
+    ev = ev || {};
+    opts = opts || {};
+    var taskId = calendarTaskId(ev);
+    var existing = !!taskId;
+    document.getElementById("modal-title").textContent = existing ? "Задача" : "Новая задача";
+    document.getElementById("modal-kind").value = "task";
+    document.getElementById("modal-reminder-id").value = "";
+    document.getElementById("modal-event-id").value = taskId;
+    document.getElementById("modal-calendar-id").value = ev.calendar_id || "leo-tasks";
+    taskModalOnSaved = typeof opts.onSaved === "function" ? opts.onSaved : null;
+    taskModalOnDeleted = typeof opts.onDeleted === "function" ? opts.onDeleted : null;
+    var st = ev.start || {};
+    var en = ev.end || {};
+    var sRaw = st.dateTime || ev.start_at || (st.date ? st.date + "T09:00:00" : "");
+    var eRaw = en.dateTime || ev.end_at || (en.date ? en.date + "T09:30:00" : "");
+    var startLocal = isoToDatetimeLocalValue(sRaw || defaultDatetimeLocalValue(60));
+    var endLocal = isoToDatetimeLocalValue(eRaw);
+    if (!endLocal) {
+      var startDt = parseDatetimeLocal(startLocal);
+      endLocal = startDt
+        ? isoToDatetimeLocalValue(new Date(startDt.getTime() + 30 * 60000).toISOString())
+        : defaultDatetimeLocalValue(90);
+    }
+    var fields = document.getElementById("modal-fields");
+    fields.innerHTML =
+      '<div class="event-sheet">' +
+      '<input id="m-ev-sum" type="text" class="event-sheet-title" placeholder="Название" autocomplete="off" />' +
+      '<textarea id="m-task-desc" class="field-textarea event-sheet-desc" rows="3" placeholder="Описание"></textarea>' +
+      '<input type="hidden" id="m-ev-start" />' +
+      '<input type="hidden" id="m-ev-end" />' +
+      '<input type="hidden" id="modal-task-note-id" />' +
+      '<div class="event-sheet-group event-sheet-checklist-group">' +
+      '<div id="m-task-checklist-host" class="rem-checklist-host"></div>' +
+      "</div>" +
+      '<div class="event-sheet-group">' +
+      '<div class="event-sheet-row">' +
+      '<span class="event-sheet-row-label">Начало</span>' +
+      '<span class="event-sheet-pills">' +
+      '<input id="m-ev-start-date" type="date" class="event-sheet-pill" />' +
+      '<input id="m-ev-start-time" type="time" class="event-sheet-pill" />' +
+      "</span></div>" +
+      '<div class="event-sheet-row">' +
+      '<span class="event-sheet-row-label">Конец</span>' +
+      '<span class="event-sheet-pills">' +
+      '<input id="m-ev-end-date" type="date" class="event-sheet-pill" />' +
+      '<input id="m-ev-end-time" type="time" class="event-sheet-pill" />' +
+      "</span></div></div>" +
+      '<div class="event-sheet-group meeting-attendees-field">' +
+      '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-task-assignee-toggle" aria-expanded="false">' +
+      '<span class="event-sheet-row-label">Исполнитель</span>' +
+      '<span class="event-sheet-row-value"><span id="m-task-assignee-summary">Я</span>' +
+      eventSheetChevronHtml() +
+      "</span></button>" +
+      '<div id="m-task-assignee-editor" class="event-sheet-attendees hidden">' +
+      '<div id="m-task-assignee-host"></div>' +
+      "</div></div></div>";
+    document.getElementById("m-ev-sum").value =
+      ev.summary || ev.title || (opts.quote ? String(opts.quote) : "") || "";
+    document.getElementById("m-task-desc").value = ev.description || "";
+    document.getElementById("m-ev-start").value = startLocal;
+    document.getElementById("m-ev-end").value = endLocal;
+    document.getElementById("modal-task-note-id").value = ev.note_id || currentOpenNoteId() || "";
+    syncEventPillsFromHidden("start");
+    syncEventPillsFromHidden("end");
+    bindEventDateTimePills();
+    reminderChecklistApi = mountReminderChecklist(
+      document.getElementById("m-task-checklist-host"),
+      ev.checklist
+    );
+    taskAssigneeApi = mountTaskAssignee(
+      document.getElementById("m-task-assignee-host"),
+      ev.assignee || {
+        user_id: ev.assignee_user_id,
+        email: ev.assignee_email,
+        name: ev.assignee_name,
+      }
+    );
+    var assEditor = document.getElementById("m-task-assignee-editor");
+    var assToggle = document.getElementById("m-task-assignee-toggle");
+    if (assToggle && assEditor) {
+      assToggle.addEventListener("click", function () {
+        var open = assEditor.classList.contains("hidden");
+        assEditor.classList.toggle("hidden", !open);
+        assToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+    }
+    document.getElementById("modal-delete").classList.toggle("hidden", !existing);
+    document.getElementById("modal-overlay").classList.remove("hidden");
+    document.getElementById("modal-overlay").setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
+    var titleEl = document.getElementById("m-ev-sum");
+    if (titleEl && !existing) {
+      window.setTimeout(function () {
+        titleEl.focus();
+      }, 0);
+    }
+  }
+
+  function openTaskFromChip(taskId) {
+    var id = String(taskId || "").trim();
+    if (!id) return;
+    apiFetch("/calendar/tasks/" + encodeURIComponent(id), { method: "GET" })
+      .then(function (r) {
+        var task = r && r.task;
+        if (!task) return;
+        var ev = Object.assign({}, task.event || {}, task, {
+          id: "task-" + id,
+          task_id: id,
+        });
+        openTaskModal(ev, {
+          onSaved: function (saved) {
+            var ed = getActiveNoteRichEditor && getActiveNoteRichEditor();
+            if (ed && ed.updateTaskChip && saved) {
+              ed.updateTaskChip(id, saved.chip_label || (saved.event && saved.event.chip_label));
+            }
+          },
+          onDeleted: function () {
+            var ed = getActiveNoteRichEditor && getActiveNoteRichEditor();
+            if (ed && ed.removeTaskChip) ed.removeTaskChip(id);
+          },
+        });
+      })
+      .catch(function (e) {
+        alert((e && e.message) || "Не удалось открыть задачу");
+      });
+  }
+
+  function createTaskFromSlash(text, done, fail) {
+    apiFetch("/calendar/tasks", {
+      method: "POST",
+      body: JSON.stringify({ text: String(text || ""), note_id: currentOpenNoteId() }),
+    })
+      .then(function (r) {
+        var task = r && r.task;
+        if (!task) throw new Error("Не удалось создать задачу");
+        if (typeof done === "function") done(task.id, task.chip_label || "Задача");
+        loadActual();
+      })
+      .catch(function (e) {
+        if (typeof fail === "function") fail(e);
+        alert((e && e.message) || "Не удалось создать задачу");
+      });
+  }
+
+  function deleteTaskFromChip(taskId) {
+    var id = String(taskId || "").trim();
+    if (!id) return;
+    apiFetch("/calendar/tasks/" + encodeURIComponent(id), { method: "DELETE" })
+      .then(function () {
+        loadActual();
+      })
+      .catch(function () {});
+  }
+
   function openReminderModal(r) {
     r = r || {};
     document.getElementById("modal-title").textContent = "Напоминание";
@@ -9018,6 +9362,10 @@
 
   function openEventModal(ev) {
     ev = ev || {};
+    if (calendarEntryIsTask(ev)) {
+      openTaskModal(ev);
+      return;
+    }
     document.getElementById("modal-title").textContent = ev.id ? "Встреча" : "Новое";
     document.getElementById("modal-kind").value = "event";
     document.getElementById("modal-reminder-id").value = "";
@@ -9336,6 +9684,24 @@
       }
       return;
     }
+    if (kind === "task") {
+      const id = document.getElementById("modal-event-id").value;
+      const body = taskPayloadFromModal();
+      try {
+        const r = await apiFetch(id ? "/calendar/tasks/" + encodeURIComponent(id) : "/calendar/tasks", {
+          method: id ? "PATCH" : "POST",
+          body: JSON.stringify(body),
+        });
+        var saved = r && r.task;
+        var savedCb = taskModalOnSaved;
+        closeModal();
+        if (savedCb) savedCb(saved);
+        await loadActual();
+      } catch (e) {
+        alert(e.message || String(e));
+      }
+      return;
+    }
     if (kind === "event") {
       const id = document.getElementById("modal-event-id").value;
       const calId = document.getElementById("modal-calendar-id").value || "primary";
@@ -9409,6 +9775,20 @@
           showOfflineSavedToast("Удалено офлайн");
           return;
         }
+        alert(e.message || String(e));
+      }
+      return;
+    }
+    if (kind === "task") {
+      const id = document.getElementById("modal-event-id").value;
+      if (!id || !confirm("Удалить задачу?")) return;
+      try {
+        await apiFetch("/calendar/tasks/" + encodeURIComponent(id), { method: "DELETE" });
+        var deletedCb = taskModalOnDeleted;
+        closeModal();
+        if (deletedCb) deletedCb(id);
+        await loadActual();
+      } catch (e) {
         alert(e.message || String(e));
       }
       return;
@@ -9657,8 +10037,9 @@
       card.classList.add("meeting-card--timeline-pending");
       card.title = "Не подтверждена — откройте, чтобы ответить";
     }
+    if (calendarEntryIsTask(ev)) card.classList.add("meeting-card--task");
     card.addEventListener("click", function () {
-      openEventModal(ev);
+      openCalendarEntry(ev);
     });
 
     const top = document.createElement("div");
@@ -11624,6 +12005,9 @@
             hashtags: getUserHashtagsFromCache().map(function (h) {
               return String(h.name || "");
             }),
+            onTaskSlash: createTaskFromSlash,
+            onTaskChipClick: openTaskFromChip,
+            onTaskChipRemoved: deleteTaskFromChip,
           });
           if (editor && typeof editor.bindTapFocus === "function" && !isIOSDevice()) {
             editor.bindTapFocus(container);
@@ -17831,6 +18215,8 @@
     } else if (action === "create-note") {
       if (html) createNoteFromAnswerHtml(html);
       else createNoteFromAnswer(quote);
+    } else if (action === "task") {
+      openTaskModal({ summary: quote, note_id: currentOpenNoteId() });
     }
     clearDiscussionSelection();
   }
@@ -17848,6 +18234,7 @@
       bar.className = "note-discuss-selection";
       bar.innerHTML =
         discussSelectionBtn("clarify", "clarify", "Уточнить") +
+        discussSelectionBtn("task", "task", "Задача") +
         discussSelectionBtn("copy", "copy", "Копировать") +
         discussSelectionBtn("into-note", "into-note", "В заметку") +
         discussSelectionBtn("create-note", "create-note", "Создать заметку");
@@ -20688,15 +21075,26 @@
         return;
       }
       draft = sel;
-      api.showBubble(sel.rect, function () {
-        var current = noteAskMode();
-        var mode = noteAskUsesChips(current)
-          ? current
-          : current === "comment"
-            ? "comment"
-            : "gpt";
-        openNoteDiscussion({ mode: mode, draft: sel, focus: true });
-      });
+      api.showBubble(
+        sel.rect,
+        function () {
+          var current = noteAskMode();
+          var mode = noteAskUsesChips(current)
+            ? current
+            : current === "comment"
+              ? "comment"
+              : "gpt";
+          openNoteDiscussion({ mode: mode, draft: sel, focus: true });
+        },
+        {
+          onTask: function () {
+            openTaskModal({
+              summary: sel.quote,
+              note_id: currentOpenNoteId(),
+            });
+          },
+        }
+      );
     }
     function onDocMouseDown(e) {
       if (api.isCommentBubbleEvent && api.isCommentBubbleEvent(e)) return;
@@ -23504,6 +23902,7 @@
         if (action === "voice") openVoiceModal();
         if (action === "reminder") openReminderModal({});
         if (action === "meeting") openEventModal({});
+        if (action === "task") openTaskModal({});
       });
     });
     document.addEventListener("click", function (e) {
