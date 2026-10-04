@@ -37,7 +37,7 @@ class TestCalendarRangeHelpers(TestCase):
                     return_value=ZoneInfo("Europe/Moscow"),
                 ),
                 patch("usage_server._miniapp_dev_mode_on", return_value=False),
-                patch("assistant.services.google_tasks.schedule_pull"),
+                patch("assistant.services.google_tasks.pull_into_leo_brief", return_value=[]),
             ):
                 token_path.return_value.is_file.return_value = False
                 payload = _calendar_range_payload(1, "2026-12-31", "2026-01-01")
@@ -66,7 +66,7 @@ class TestCalendarRangeHelpers(TestCase):
                 patch("assistant.integrations.google_calendar_oauth.user_token_path") as token_path,
                 patch("assistant.services.calendar._tz_for", return_value=tz),
                 patch("usage_server._miniapp_dev_mode_on", return_value=False),
-                patch("assistant.services.google_tasks.schedule_pull"),
+                patch("assistant.services.google_tasks.pull_into_leo_brief", return_value=[]),
             ):
                 token_path.return_value.is_file.return_value = False
                 ranged = _calendar_range_payload(1, "2026-10-07", "2026-10-07")
@@ -111,6 +111,7 @@ class TestCalendarRangeHelpers(TestCase):
                 patch("assistant.integrations.google_calendar_oauth.user_token_path") as token_path,
                 patch("assistant.services.calendar._tz_for", return_value=tz),
                 patch("usage_server._miniapp_dev_mode_on", return_value=False),
+                patch("assistant.services.google_tasks.pull_into_leo_brief", return_value=[]),
                 patch("assistant.services.google_tasks.pull_into_leo", _hang),
             ):
                 token_path.return_value.is_file.return_value = False
@@ -120,10 +121,46 @@ class TestCalendarRangeHelpers(TestCase):
             self.assertLess(elapsed, 2.0)
             titles = [e.get("summary") for e in today["events"] if e.get("entry_type") == "task"]
             self.assertEqual(titles, ["Локальная"])
-            deadline = time.monotonic() + 1.0
-            while hung["n"] < 1 and time.monotonic() < deadline:
-                time.sleep(0.01)
-            self.assertEqual(hung["n"], 1)
+            self.assertEqual(hung["n"], 0)
+        finally:
+            calendar_tasks_store._CONN = None  # type: ignore[attr-defined]
+            os.environ.pop("CALENDAR_TASKS_DB_PATH", None)
+            isolated.cleanup()
+
+    def test_attach_links_gcal_event_to_google_task_by_title(self) -> None:
+        from usage_server import _attach_leo_tasks
+
+        isolated = self._isolated_tasks_db()
+        tz = ZoneInfo("Europe/Moscow")
+        start = datetime(2026, 10, 7, 0, 0, tzinfo=tz)
+        end = datetime(2026, 10, 8, 0, 0, tzinfo=tz)
+        row = calendar_tasks_store.create_task(
+            1,
+            title="Купить молоко",
+            start_at=datetime(2026, 10, 7, 9, 0, tzinfo=tz),
+            tz=tz,
+        )
+        calendar_tasks_store.update_task(1, row["id"], google_task_id="gt-1")
+        ev = {
+            "id": "gcal-meet-1",
+            "summary": "Купить молоко",
+            "kind": "Встреча",
+            "entry_type": "event",
+            "start": {"dateTime": "2026-10-07T15:00:00+03:00"},
+            "end": {"dateTime": "2026-10-07T15:30:00+03:00"},
+            "start_day": "2026-10-07",
+            "calendar_id": "primary",
+        }
+        try:
+            with patch("assistant.services.google_tasks.pull_into_leo_brief", return_value=[]):
+                out = _attach_leo_tasks({"events": [ev]}, 1, start, end, tz)
+            ids = [e.get("id") for e in out["events"]]
+            self.assertNotIn("gcal-meet-1", ids)
+            tasks = [e for e in out["events"] if e.get("entry_type") == "task"]
+            self.assertEqual(len(tasks), 1)
+            self.assertEqual(tasks[0]["summary"], "Купить молоко")
+            linked = calendar_tasks_store.get_task(1, row["id"])
+            self.assertEqual(linked["google_event_id"], "gcal-meet-1")
         finally:
             calendar_tasks_store._CONN = None  # type: ignore[attr-defined]
             os.environ.pop("CALENDAR_TASKS_DB_PATH", None)
@@ -146,7 +183,7 @@ class TestCalendarRangeHelpers(TestCase):
             "calendar_id": "primary",
         }
         try:
-            with patch("assistant.services.google_tasks.schedule_pull"):
+            with patch("assistant.services.google_tasks.pull_into_leo_brief", return_value=[]):
                 out = _attach_leo_tasks({"events": [ev]}, 1, start, end, tz)
             ids = [e.get("id") for e in out["events"]]
             self.assertNotIn("gcal-solo-1", ids)

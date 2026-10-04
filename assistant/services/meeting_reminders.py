@@ -127,6 +127,11 @@ def events_due_for_reminder(
             continue
         if sent_store.was_sent(user_id, cal_id, ev_id, start_iso):
             continue
+        raw = ev.get("raw") if isinstance(ev.get("raw"), dict) else {}
+        from assistant.lib.calendar_event_utils import calendar_event_is_task
+
+        if calendar_event_is_task(raw):
+            continue
         start = ev.get("start")
         if not isinstance(start, datetime):
             continue

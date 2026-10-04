@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, time as dt_time, timedelta, timezone
 from typing import Any
 
 from assistant.stores import calendar_tasks as calendar_tasks_store
@@ -72,6 +72,33 @@ def _default_tasklist_id(svc: Any) -> str:
         if str(it.get("title") or "").strip().lower() in {"my tasks", "задачи", "leo"}:
             return str(it.get("id") or "")
     return str(items[0].get("id") or "")
+
+
+def _tasklist_ids(svc: Any) -> list[str]:
+    res = svc.tasklists().list(maxResults=20).execute()
+    out: list[str] = []
+    for it in res.get("items") or []:
+        tid = str((it or {}).get("id") or "").strip()
+        if tid:
+            out.append(tid)
+    return out
+
+
+def due_calendar_date(raw: str) -> date | None:
+    """Google Tasks due — только дата; время в API отбрасывается (обычно 00:00Z)."""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt.date()
+
+
+def is_tasks_calendar_name(summary: str | None) -> bool:
+    name = str(summary or "").strip().lower().replace("ё", "е")
+    return name in {"tasks", "задачи", "my tasks", "мои задачи"}
 
 
 def _due_rfc3339(task: dict[str, Any]) -> str | None:
@@ -195,7 +222,7 @@ def delete_remote(user_id: int, task: dict[str, Any]) -> None:
 
 
 def schedule_pull(user_id: int, start: datetime, end: datetime) -> None:
-    """Импорт Google Tasks в фоне: календарный GET не ждёт сеть Google."""
+    """Импорт Google Tasks в фоне, если краткое ожидание не успело."""
     uid = int(user_id)
     now = time.monotonic()
     with _PULL_GUARD:
@@ -219,6 +246,50 @@ def schedule_pull(user_id: int, start: datetime, end: datetime) -> None:
     threading.Thread(target=_run, name=f"leo-gtasks-pull-{uid}", daemon=True).start()
 
 
+def pull_into_leo_brief(
+    user_id: int,
+    start: datetime,
+    end: datetime,
+    *,
+    wait_sec: float = 2.0,
+) -> list[dict[str, Any]]:
+    """Дождаться короткого импорта, чтобы Актуальное сразу увидело задачи из GCal."""
+    uid = int(user_id)
+    now = time.monotonic()
+    with _PULL_GUARD:
+        last = _LAST_PULL.get(uid)
+        if last is not None and now - last < PULL_MIN_INTERVAL_SEC:
+            return []
+        if uid in _PULL_INFLIGHT:
+            return []
+        _PULL_INFLIGHT.add(uid)
+
+    imported: list[dict[str, Any]] = []
+
+    def _run() -> None:
+        try:
+            imported.extend(pull_into_leo(uid, start, end, force=True))
+        except Exception as e:
+            print(f"[google_tasks] pull_brief uid={uid} err={e!r}")
+        finally:
+            with _PULL_GUARD:
+                _PULL_INFLIGHT.discard(uid)
+                _LAST_PULL[uid] = time.monotonic()
+
+    t = threading.Thread(target=_run, name=f"leo-gtasks-pull-{uid}", daemon=True)
+    t.start()
+    t.join(max(0.2, float(wait_sec)))
+    return list(imported)
+
+
+def _due_in_window(due_day: date, start: datetime, end: datetime) -> bool:
+    start_d = start.date()
+    end_d = end.date()
+    if end_d <= start_d:
+        end_d = start_d + timedelta(days=1)
+    return start_d <= due_day < end_d
+
+
 def pull_into_leo(
     user_id: int,
     start: datetime,
@@ -238,47 +309,48 @@ def pull_into_leo(
     svc = _service(uid, timeout=PULL_TIMEOUT_SEC)
     if svc is None:
         return []
-    list_id = _default_tasklist_id(svc)
-    if not list_id:
+    list_ids = _tasklist_ids(svc)
+    if not list_ids:
         return []
-    res = (
-        svc.tasks()
-        .list(
-            tasklist=list_id,
-            showCompleted=False,
-            showHidden=False,
-            maxResults=100,
-        )
-        .execute()
-    )
+    tz = start.tzinfo or timezone.utc
     imported: list[dict[str, Any]] = []
-    for it in res.get("items") or []:
-        if it.get("parent"):
-            continue
-        gid = str(it.get("id") or "").strip()
-        if not gid:
-            continue
-        existing = calendar_tasks_store.find_by_google_task(user_id, gid)
-        if existing:
-            continue
-        due = str(it.get("due") or "").strip()
-        if not due:
-            continue
+    for list_id in list_ids:
         try:
-            due_dt = datetime.fromisoformat(due.replace("Z", "+00:00"))
-        except ValueError:
+            res = (
+                svc.tasks()
+                .list(
+                    tasklist=list_id,
+                    showCompleted=False,
+                    showHidden=False,
+                    maxResults=100,
+                )
+                .execute()
+            )
+        except Exception as e:
+            print(f"[google_tasks] list_failed list={list_id} err={e!r}")
             continue
-        if due_dt < start or due_dt >= end:
-            continue
-        notes = str(it.get("notes") or "")
-        row = calendar_tasks_store.create_task(
-            user_id,
-            title=str(it.get("title") or "Задача"),
-            description=notes,
-            start_at=due_dt,
-        )
-        updated = calendar_tasks_store.update_task(
-            user_id, row["id"], google_task_id=gid, google_tasklist_id=list_id
-        )
-        imported.append(updated or row)
+        for it in res.get("items") or []:
+            if it.get("parent"):
+                continue
+            gid = str(it.get("id") or "").strip()
+            if not gid:
+                continue
+            existing = calendar_tasks_store.find_by_google_task(user_id, gid)
+            if existing:
+                continue
+            due_day = due_calendar_date(str(it.get("due") or ""))
+            if due_day is None or not _due_in_window(due_day, start, end):
+                continue
+            notes = str(it.get("notes") or "")
+            start_at = datetime.combine(due_day, dt_time(9, 0), tzinfo=tz)
+            row = calendar_tasks_store.create_task(
+                user_id,
+                title=str(it.get("title") or "Задача"),
+                description=notes,
+                start_at=start_at,
+            )
+            updated = calendar_tasks_store.update_task(
+                user_id, row["id"], google_task_id=gid, google_tasklist_id=list_id
+            )
+            imported.append(updated or row)
     return imported

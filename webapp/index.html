@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261004-gcal-tasks">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261004-task-remind">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -46,8 +46,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261004-gcal-tasks" />
-  <link rel="preload" href="/webapp/note-rich-editor.js?v=20261004-gcal-tasks" as="script" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261004-task-remind" />
+  <link rel="preload" href="/webapp/note-rich-editor.js?v=20261004-task-remind" as="script" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -784,6 +784,22 @@
               </button>
             </div>
             <p id="meeting-reminders-setting-err" class="error hidden"></p>
+            <div id="task-reminders-setting" class="svc-row calendars-row calendars-setting-row hidden">
+              <div class="svc-text">
+                <p class="svc-name">Напоминания о задачах</p>
+                <p class="svc-desc muted small" id="task-reminders-setting-hint">За 15 минут до начала</p>
+              </div>
+              <button
+                type="button"
+                class="svc-toggle svc-toggle--on"
+                id="task-reminders-toggle"
+                aria-pressed="true"
+                aria-label="Напоминания о задачах"
+              >
+                <span class="svc-toggle-knob"></span>
+              </button>
+            </div>
+            <p id="task-reminders-setting-err" class="error hidden"></p>
             <p class="muted small contacts-hint">
               Отключите календари, которые не нужны для напоминаний и свободных слотов (например, праздники или личный календарь).
             </p>
@@ -1349,14 +1365,14 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20261004-gcal-tasks"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20261004-task-remind"><\/script>'
         );
       }
     })();
   </script>
-  <script src="/webapp/note-html.js?v=20261004-gcal-tasks" defer></script>
-  <script src="/webapp/note-comments.js?v=20261004-gcal-tasks" defer></script>
-  <script src="/webapp/note-rich-editor.js?v=20261004-gcal-tasks" defer></script>
-  <script src="/webapp/app.js?v=20261004-gcal-tasks" defer></script>
+  <script src="/webapp/note-html.js?v=20261004-task-remind" defer></script>
+  <script src="/webapp/note-comments.js?v=20261004-task-remind" defer></script>
+  <script src="/webapp/note-rich-editor.js?v=20261004-task-remind" defer></script>
+  <script src="/webapp/app.js?v=20261004-task-remind" defer></script>
 </body>
 </html>

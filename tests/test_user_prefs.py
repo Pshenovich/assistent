@@ -27,6 +27,21 @@ def test_meeting_reminders_enabled_can_be_disabled(monkeypatch):
         assert up.meeting_reminders_enabled(7) is True
 
 
+def test_task_reminders_enabled_default_on(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        monkeypatch.setenv("USER_PREFS_DIR", td)
+        assert up.task_reminders_enabled(7) is True
+
+
+def test_task_reminders_enabled_can_be_disabled(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        monkeypatch.setenv("USER_PREFS_DIR", td)
+        up.set_task_reminders_enabled(7, False)
+        assert up.task_reminders_enabled(7) is False
+        up.set_task_reminders_enabled(7, True)
+        assert up.task_reminders_enabled(7) is True
+
+
 def test_user_prefs_zoom_auto_record_default_off(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as td:
         monkeypatch.setenv("USER_PREFS_DIR", td)

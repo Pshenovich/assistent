@@ -398,6 +398,21 @@ def get_task(owner_user_id: int | str, task_id: int | str) -> Optional[dict[str,
     return _row_to_dict(row) if row else None
 
 
+def list_owner_user_ids() -> list[int]:
+    with _LOCK:
+        cur = _conn().execute(
+            "SELECT DISTINCT owner_user_id FROM calendar_tasks"
+        )
+        raw = [str(r[0] or "").strip() for r in cur.fetchall()]
+    out: list[int] = []
+    for item in raw:
+        try:
+            out.append(int(item))
+        except ValueError:
+            continue
+    return out
+
+
 def list_tasks_in_window(
     owner_user_id: int | str,
     start: datetime,

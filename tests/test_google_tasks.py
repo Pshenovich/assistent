@@ -51,6 +51,51 @@ def test_push_skips_without_scope():
         assert gt.push_task(1, task) is task
 
 
+def test_due_calendar_date_uses_date_part():
+    assert gt.due_calendar_date("2026-10-04T00:00:00.000Z").isoformat() == "2026-10-04"
+    assert gt.due_calendar_date("") is None
+    assert gt.is_tasks_calendar_name("Задачи")
+    assert gt.is_tasks_calendar_name("My Tasks")
+    assert not gt.is_tasks_calendar_name("Work")
+
+
+def test_pull_into_leo_reads_all_tasklists(tmp_path, monkeypatch):
+    monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "t.sqlite"))
+    from assistant.stores import calendar_tasks as store
+
+    store._CONN = None  # type: ignore[attr-defined]
+    gt._reset_pull_state_for_tests()
+    start = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    end = datetime(2026, 10, 8, tzinfo=timezone.utc)
+    svc = MagicMock()
+    svc.tasklists().list().execute.return_value = {
+        "items": [{"id": "L-leo", "title": "Leo"}, {"id": "L-my", "title": "My Tasks"}]
+    }
+
+    def _list(**kwargs):
+        res = MagicMock()
+        if kwargs.get("tasklist") == "L-my":
+            res.execute.return_value = {
+                "items": [
+                    {
+                        "id": "T1",
+                        "title": "Из календаря",
+                        "due": "2026-10-07T00:00:00.000Z",
+                    }
+                ]
+            }
+        else:
+            res.execute.return_value = {"items": []}
+        return res
+
+    svc.tasks().list.side_effect = _list
+    with patch.object(gt, "_service", return_value=svc):
+        imported = gt.pull_into_leo(9030, start, end, force=True)
+    assert [t["title"] for t in imported] == ["Из календаря"]
+    store._CONN = None  # type: ignore[attr-defined]
+    gt._reset_pull_state_for_tests()
+
+
 def test_pull_into_leo_skips_when_recent():
     gt._reset_pull_state_for_tests()
     start = datetime(2026, 10, 7, tzinfo=timezone.utc)

@@ -251,6 +251,12 @@ class TestCalendarHeuristics(unittest.TestCase):
         self.assertEqual(calendar_entry_kind_label(marked), "Задача")
         self.assertTrue(calendar_event_is_task({"summary": "задача: отчёт"}))
         self.assertEqual(calendar_entry_kind_label({"summary": "задача: отчёт"}), "Задача")
+        self.assertTrue(
+            calendar_event_is_task(
+                {"summary": "Купить", "calendar_id": "tasks-cal"},
+                task_calendar_ids={"tasks-cal"},
+            )
+        )
 
     def test_event_with_guests_is_meeting(self):
         from assistant.lib.calendar_event_utils import calendar_event_is_task

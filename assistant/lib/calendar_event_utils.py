@@ -32,8 +32,12 @@ def calendar_event_has_task_marker(event: dict[str, Any]) -> bool:
     return summary.startswith("задача:") or "✓" in summary[:4]
 
 
-def calendar_event_is_task(event: dict[str, Any]) -> bool:
-    """Только явные задачи: маркер Leo, Google Tasks или префикс «задача:»."""
+def calendar_event_is_task(
+    event: dict[str, Any],
+    *,
+    task_calendar_ids: set[str] | None = None,
+) -> bool:
+    """Явные задачи: маркер Leo, префикс «задача:», календарь Tasks/Задачи."""
     if not isinstance(event, dict) or calendar_event_is_cancelled(event):
         return False
     et = str(event.get("eventType") or "default").strip().lower()
@@ -46,7 +50,10 @@ def calendar_event_is_task(event: dict[str, Any]) -> bool:
         "fromgmail",
     }:
         return False
-    return calendar_event_has_task_marker(event)
+    if calendar_event_has_task_marker(event):
+        return True
+    cal_id = str(event.get("_calendarId") or event.get("calendar_id") or "").strip()
+    return bool(task_calendar_ids and cal_id and cal_id in task_calendar_ids)
 
 
 def calendar_entry_kind_label(event: dict[str, Any]) -> str:

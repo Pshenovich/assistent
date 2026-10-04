@@ -12,6 +12,7 @@ from assistant.lib.telegram_bot_api import attach_local_bot_api
 from assistant.lib.webapp_public import webapp_entry_url
 from assistant.bot.meeting_invite_job import register_meeting_invite_jobs
 from assistant.bot.meeting_reminder_job import register_meeting_reminder_jobs
+from assistant.bot.task_reminder_job import register_task_reminder_jobs
 from assistant.bot.meeting_bot_scheduler_job import register_meeting_bot_scheduler_jobs
 from assistant.bot.telemost_mail_job import register_telemost_mail_jobs
 from assistant.bot.reminder_job import register_reminder_jobs
@@ -46,6 +47,7 @@ def build_application() -> Application:
     app = builder.build()
     register_handlers(app)
     register_meeting_reminder_jobs(app)
+    register_task_reminder_jobs(app)
     register_meeting_invite_jobs(app)
     register_meeting_bot_scheduler_jobs(app)
     register_telemost_mail_jobs(app)

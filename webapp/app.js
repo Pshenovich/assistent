@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261004-gcal-tasks";
+  var WEBAPP_BUILD = "20261004-task-remind";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261004-gcal-tasks";
+  const NOTE_EDITOR_ASSET_V = "20261004-task-remind";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -6436,6 +6436,8 @@
   var calendarsSaveDoneTimer = null;
   var meetingRemindersEnabled = true;
   var meetingRemindersSaveInFlight = false;
+  var taskRemindersEnabled = true;
+  var taskRemindersSaveInFlight = false;
   var zoomAutoRecordEnabled = false;
   var zoomAutoRecordSaveInFlight = false;
   var zoomAutoRecordAvailable = false;
@@ -6539,6 +6541,55 @@
       var next = !meetingRemindersEnabled;
       applyMeetingRemindersToggleUi(next);
       saveMeetingRemindersEnabled(next);
+    });
+  }
+
+  function applyTaskRemindersToggleUi(enabled) {
+    var row = document.getElementById("task-reminders-setting");
+    var toggle = document.getElementById("task-reminders-toggle");
+    if (!row || !toggle) return;
+    taskRemindersEnabled = !!enabled;
+    setHidden(row, false);
+    toggle.classList.toggle("svc-toggle--on", taskRemindersEnabled);
+    toggle.classList.toggle("svc-toggle--pending", taskRemindersSaveInFlight);
+    toggle.setAttribute("aria-pressed", taskRemindersEnabled ? "true" : "false");
+  }
+
+  async function saveTaskRemindersEnabled(enabled) {
+    var errEl = document.getElementById("task-reminders-setting-err");
+    var toggle = document.getElementById("task-reminders-toggle");
+    taskRemindersSaveInFlight = true;
+    if (toggle) toggle.classList.add("svc-toggle--pending");
+    try {
+      var data = await apiFetch("/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ task_reminders_enabled: !!enabled }),
+      });
+      applyTaskRemindersToggleUi(!!(data && data.task_reminders_enabled));
+      if (errEl) setHidden(errEl, true);
+    } catch (e) {
+      applyTaskRemindersToggleUi(!enabled);
+      if (errEl) {
+        errEl.textContent = e.message || String(e);
+        setHidden(errEl, false);
+      }
+    } finally {
+      taskRemindersSaveInFlight = false;
+      if (toggle) toggle.classList.remove("svc-toggle--pending");
+    }
+  }
+
+  function initTaskRemindersToggle() {
+    var toggle = document.getElementById("task-reminders-toggle");
+    if (!toggle || toggle.getAttribute("data-bound") === "1") return;
+    toggle.setAttribute("data-bound", "1");
+    toggle.addEventListener("click", function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (taskRemindersSaveInFlight) return;
+      var next = !taskRemindersEnabled;
+      applyTaskRemindersToggleUi(next);
+      saveTaskRemindersEnabled(next);
     });
   }
 
@@ -6779,6 +6830,7 @@
     var err = document.getElementById("calendars-err");
     if (!list) return;
     initMeetingRemindersToggle();
+    initTaskRemindersToggle();
     await ensureCalendarsSaved();
     setHidden(err, true);
     list.innerHTML = "<p class=\"muted small\">Загрузка…</p>";
@@ -6794,7 +6846,13 @@
       if (hint && mins > 0) {
         hint.textContent = "За " + mins + " мин. до начала";
       }
+      var taskMins = parseInt(settings.task_reminder_minutes_before, 10);
+      var taskHint = document.getElementById("task-reminders-setting-hint");
+      if (taskHint && taskMins > 0) {
+        taskHint.textContent = "За " + taskMins + " мин. до начала";
+      }
       applyMeetingRemindersToggleUi(settings.meeting_reminders_enabled !== false);
+      applyTaskRemindersToggleUi(settings.task_reminders_enabled !== false);
       calendarsCache = data.calendars || [];
       paintCalendarsList();
     } catch (e) {

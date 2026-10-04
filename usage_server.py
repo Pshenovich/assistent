@@ -2503,6 +2503,7 @@ class _MiniappCalendarRsvpBody(BaseModel):
 
 class _MiniappSettingsPatch(BaseModel):
     meeting_reminders_enabled: Optional[bool] = None
+    task_reminders_enabled: Optional[bool] = None
     zoom_auto_record_enabled: Optional[bool] = None
     telemost_auto_record_enabled: Optional[bool] = None
     digest_enabled: Optional[bool] = None
@@ -3458,6 +3459,7 @@ def _serialize_calendar_event(
     ev: dict[str, Any],
     *,
     contacts_by_email: dict[str, dict[str, Any]] | None = None,
+    task_calendar_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     from assistant.lib.calendar_event_utils import (
         calendar_description_plain,
@@ -3475,7 +3477,7 @@ def _serialize_calendar_event(
     en = _gcal_json_time_fragment(en_raw if isinstance(en_raw, dict) else {})
     invited = event_is_invitation(ev)
     status = event_self_response_status(ev)
-    is_task = calendar_event_is_task(ev)
+    is_task = calendar_event_is_task(ev, task_calendar_ids=task_calendar_ids)
     kind = "Задача" if is_task else calendar_entry_kind_label(ev)
     return {
         "id": str(ev.get("id") or ""),
@@ -3790,6 +3792,21 @@ def _parse_calendar_day(raw: Optional[str], fallback) -> Any:
         return fallback
 
 
+def _google_tasks_calendar_ids(uid: int) -> set[str]:
+    try:
+        from assistant.services import calendar_sources as cal_sources
+        from assistant.services.google_tasks import is_tasks_calendar_name
+
+        return {
+            str(c.get("id") or "")
+            for c in cal_sources.list_readable_calendars(uid)
+            if is_tasks_calendar_name(str(c.get("summary") or ""))
+        } - {""}
+    except Exception as e:
+        print(f"[miniapp_calendar] tasks_calendars err={e!r}")
+        return set()
+
+
 def _serialize_gcal_events(
     uid: int, events_raw: list[Any], limit: int
 ) -> list[dict[str, Any]]:
@@ -3799,11 +3816,16 @@ def _serialize_gcal_events(
     except Exception as ex:
         print(f"[miniapp_calendar] contacts_index err={ex!r}")
         contacts_by_email = {}
+    task_cal_ids = _google_tasks_calendar_ids(uid)
     for e in events_raw or []:
         if not isinstance(e, dict):
             continue
         try:
-            item = _serialize_calendar_event(e, contacts_by_email=contacts_by_email)
+            item = _serialize_calendar_event(
+                e,
+                contacts_by_email=contacts_by_email,
+                task_calendar_ids=task_cal_ids,
+            )
             if item.get("self_response_status") == "declined":
                 continue
             start_day = str(e.get("_start_day") or "").strip()[:10]
@@ -3843,20 +3865,19 @@ def _leo_task_events(
     uid: int, start_dt: datetime, end_dt: datetime, tz: Any
 ) -> list[dict[str, Any]]:
     try:
+        from assistant.services import google_tasks
+
+        google_tasks.pull_into_leo_brief(uid, start_dt, end_dt, wait_sec=2.0)
+    except Exception as e:
+        print(f"[miniapp_calendar] tasks_pull err={e!r}")
+    try:
         from assistant.stores import calendar_tasks as calendar_tasks_store
 
         rows = calendar_tasks_store.list_tasks_in_window(uid, start_dt, end_dt)
-        events = [calendar_tasks_store.as_calendar_event(r, tz=tz) for r in rows]
+        return [calendar_tasks_store.as_calendar_event(r, tz=tz) for r in rows]
     except Exception as e:
         print(f"[miniapp_calendar] tasks_list err={e!r}")
-        events = []
-    try:
-        from assistant.services import google_tasks
-
-        google_tasks.schedule_pull(uid, start_dt, end_dt)
-    except Exception as e:
-        print(f"[miniapp_calendar] tasks_pull_schedule err={e!r}")
-    return events
+        return []
 
 
 def _gcal_bounds_for_task(ev: dict[str, Any], tz: Any) -> tuple[datetime | None, datetime | None]:
@@ -3889,6 +3910,28 @@ def _gcal_bounds_for_task(ev: dict[str, Any], tz: Any) -> tuple[datetime | None,
         return None, None
     start = datetime.combine(day, datetime.min.time().replace(hour=9), tzinfo=tz)
     return start, start + timedelta(minutes=30)
+
+
+def _norm_task_title(raw: str) -> str:
+    title = str(raw or "").strip().lower().replace("ё", "е")
+    if title.startswith("задача:"):
+        title = title.split(":", 1)[1].strip()
+    return title
+
+
+def _event_local_day(ev: dict[str, Any], tz: Any):
+    day = str(ev.get("start_day") or "").strip()[:10]
+    if day:
+        try:
+            return datetime.strptime(day, "%Y-%m-%d").date()
+        except ValueError:
+            pass
+    start, _end = _gcal_bounds_for_task(ev, tz)
+    if start is None:
+        return None
+    if start.tzinfo is not None:
+        start = start.astimezone(tz)
+    return start.date()
 
 
 def _import_gcal_task_events(uid: int, events: list[dict[str, Any]], tz: Any) -> None:
@@ -3929,6 +3972,57 @@ def _import_gcal_task_events(uid: int, events: list[dict[str, Any]], tz: Any) ->
             print(f"[miniapp_calendar] import_gcal_task id={eid!r} err={e!r}")
 
 
+def _link_events_to_google_tasks(
+    uid: int,
+    events: list[dict[str, Any]],
+    start_dt: datetime,
+    end_dt: datetime,
+    tz: Any,
+) -> None:
+    """Событие с тем же названием и днём, что Google Task, считаем задачей."""
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in calendar_tasks_store.list_tasks_in_window(uid, start_dt, end_dt):
+        title = _norm_task_title(str(row.get("title") or ""))
+        raw_start = str(row.get("start_at") or "").strip()
+        try:
+            start = datetime.fromisoformat(raw_start.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if not title:
+            continue
+        if start.tzinfo is not None:
+            start = start.astimezone(tz)
+        day = start.date().isoformat()
+        by_key[(title, day)] = row
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        eid = str(ev.get("id") or "").strip()
+        if not eid or eid.startswith("task-"):
+            continue
+        if calendar_tasks_store.find_by_google_event(uid, eid):
+            continue
+        title = _norm_task_title(str(ev.get("summary") or ""))
+        day = _event_local_day(ev, tz)
+        if not title or day is None:
+            continue
+        row = by_key.get((title, day.isoformat()))
+        if not row:
+            continue
+        if str(row.get("google_event_id") or "").strip():
+            continue
+        calendar_tasks_store.update_task(
+            uid,
+            row["id"],
+            google_event_id=eid,
+            google_calendar_id=str(ev.get("calendar_id") or ""),
+        )
+        ev["entry_type"] = "task"
+        ev["kind"] = "Задача"
+
+
 def _attach_leo_tasks(
     payload: dict[str, Any],
     uid: int,
@@ -3937,6 +4031,8 @@ def _attach_leo_tasks(
     tz: Any,
 ) -> dict[str, Any]:
     evs = [e for e in (payload.get("events") or []) if isinstance(e, dict)]
+    extra = _leo_task_events(uid, start_dt, end_dt, tz)
+    _link_events_to_google_tasks(uid, evs, start_dt, end_dt, tz)
     _import_gcal_task_events(uid, evs, tz)
     extra = _leo_task_events(uid, start_dt, end_dt, tz)
     linked = {
@@ -4790,6 +4886,7 @@ async def miniapp_settings_get(
 ) -> dict[str, Any]:
     from assistant.services import meeting_reminders as mr
     from assistant.services import meeting_record_schedule as mrec
+    from assistant.services import task_reminders as tr
     from assistant.stores import user_prefs
 
     uid = int(principal.telegram_user_id)
@@ -4798,6 +4895,8 @@ async def miniapp_settings_get(
         return {
             "meeting_reminders_enabled": user_prefs.meeting_reminders_enabled(uid),
             "meeting_reminder_minutes_before": mr.reminder_minutes_before(),
+            "task_reminders_enabled": user_prefs.task_reminders_enabled(uid),
+            "task_reminder_minutes_before": tr.reminder_minutes_before(),
             "zoom_auto_record_enabled": user_prefs.zoom_auto_record_enabled(uid),
             "telemost_auto_record_enabled": user_prefs.telemost_auto_record_enabled(uid),
             "meeting_bot_available": mrec.service_available(),
@@ -4816,6 +4915,7 @@ async def miniapp_settings_patch(
 ) -> dict[str, Any]:
     from assistant.services import meeting_reminders as mr
     from assistant.services import meeting_record_schedule as mrec
+    from assistant.services import task_reminders as tr
     from assistant.stores import user_prefs
 
     uid = int(principal.telegram_user_id)
@@ -4824,6 +4924,10 @@ async def miniapp_settings_patch(
         if body.meeting_reminders_enabled is not None:
             user_prefs.set_meeting_reminders_enabled(
                 uid, bool(body.meeting_reminders_enabled)
+            )
+        if body.task_reminders_enabled is not None:
+            user_prefs.set_task_reminders_enabled(
+                uid, bool(body.task_reminders_enabled)
             )
         if body.zoom_auto_record_enabled is not None:
             user_prefs.set_zoom_auto_record_enabled(
@@ -4841,6 +4945,8 @@ async def miniapp_settings_patch(
             "ok": True,
             "meeting_reminders_enabled": user_prefs.meeting_reminders_enabled(uid),
             "meeting_reminder_minutes_before": mr.reminder_minutes_before(),
+            "task_reminders_enabled": user_prefs.task_reminders_enabled(uid),
+            "task_reminder_minutes_before": tr.reminder_minutes_before(),
             "zoom_auto_record_enabled": user_prefs.zoom_auto_record_enabled(uid),
             "telemost_auto_record_enabled": user_prefs.telemost_auto_record_enabled(uid),
             "meeting_bot_available": mrec.service_available(),

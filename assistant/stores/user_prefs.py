@@ -103,6 +103,20 @@ def set_meeting_reminders_enabled(user_id: int, enabled: bool) -> None:
     save_prefs(user_id, prefs)
 
 
+def task_reminders_enabled(user_id: int) -> bool:
+    """По умолчанию напоминания о задачах включены."""
+    prefs = load_prefs(user_id)
+    if "task_reminders_enabled" not in prefs:
+        return True
+    return bool(prefs.get("task_reminders_enabled"))
+
+
+def set_task_reminders_enabled(user_id: int, enabled: bool) -> None:
+    prefs = load_prefs(user_id)
+    prefs["task_reminders_enabled"] = bool(enabled)
+    save_prefs(user_id, prefs)
+
+
 def zoom_auto_record_enabled(user_id: int) -> bool:
     """Автозапись Zoom-встреч через meeting bot (выкл. по умолчанию)."""
     prefs = load_prefs(user_id)
