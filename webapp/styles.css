@@ -9518,6 +9518,18 @@ textarea.event-sheet-title--area {
   }
 }
 
+@keyframes modal-center-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .modal-form {
   display: flex;
   flex-direction: column;
@@ -11608,6 +11620,16 @@ html.modal-sheet-open body {
     background: rgba(0, 0, 0, 0.55);
   }
 
+  #modal-overlay.modal-overlay {
+    align-items: center;
+    justify-content: center;
+    padding: 1.25rem;
+  }
+
+  #modal-overlay.modal-overlay:not(.hidden) .modal--sheet {
+    animation: modal-center-in 0.2s ease;
+  }
+
   .modal,
   .modal--sheet {
     width: min(32rem, 100%);
@@ -11738,10 +11760,6 @@ html.modal-sheet-open body {
     justify-content: stretch;
     border-left: 1px solid var(--border);
     box-shadow: -12px 0 32px rgba(0, 0, 0, 0.28);
-  }
-
-  html.note-discussion-open #modal-overlay.modal-overlay {
-    right: var(--discuss-w, var(--max-w));
   }
 
   .note-discussion-sheet {
