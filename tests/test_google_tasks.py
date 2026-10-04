@@ -146,7 +146,7 @@ def test_pull_into_leo_skips_when_recent():
     gt._reset_pull_state_for_tests()
 
 
-def test_sync_task_google_upserts_timed_event_and_pushes_task(tmp_path, monkeypatch):
+def test_sync_task_google_leo_writes_event_only(tmp_path, monkeypatch):
     monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "t.sqlite"))
     from assistant.stores import calendar_tasks as store
     from usage_server import _sync_task_google
@@ -173,8 +173,39 @@ def test_sync_task_google_upserts_timed_event_and_pushes_task(tmp_path, monkeypa
         out = _sync_task_google(1, row, "update")
     upsert_ev.assert_called_once()
     delete_ev.assert_not_called()
-    assert pushed
+    assert pushed == []
     assert out is not None
+    store._CONN = None  # type: ignore[attr-defined]
+
+
+def test_sync_imported_google_task_does_not_create_event(tmp_path, monkeypatch):
+    monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "t.sqlite"))
+    from assistant.stores import calendar_tasks as store
+    from usage_server import _sync_task_google
+
+    store._CONN = None  # type: ignore[attr-defined]
+    tz = ZoneInfo("UTC")
+    row = store.create_task(
+        1,
+        title="Из Google",
+        start_at=datetime(2026, 10, 7, 9, 0, tzinfo=tz),
+        tz=tz,
+    )
+    store.update_task(1, row["id"], google_task_id="GT1", google_tasklist_id="@default")
+    row = store.get_task(1, row["id"])
+    pushed = []
+
+    def _push(_uid, task):
+        pushed.append(task)
+        return task
+
+    with (
+        patch("assistant.services.calendar.upsert_task_event") as upsert_ev,
+        patch("assistant.services.google_tasks.push_task", _push),
+    ):
+        _sync_task_google(1, row, "update")
+    upsert_ev.assert_not_called()
+    assert pushed
     store._CONN = None  # type: ignore[attr-defined]
 
 
@@ -193,15 +224,87 @@ def test_pull_backfills_local_task_without_google_id(tmp_path, monkeypatch):
     svc = MagicMock()
     svc.tasklists().list().execute.return_value = {"items": []}
     svc.tasks().list().execute.return_value = {"items": []}
-    svc.tasks().insert().execute.return_value = {"id": "G-NEW"}
-    with patch.object(gt, "_service", return_value=svc):
+    updated = dict(row)
+    updated["google_event_id"] = "ev-new"
+    with (
+        patch.object(gt, "_service", return_value=svc),
+        patch("assistant.services.calendar.upsert_task_event", return_value=updated) as upsert_ev,
+    ):
         imported = gt.pull_into_leo(9040, start, end, force=True)
     assert imported == []
-    saved = store.get_task(9040, row["id"])
-    assert saved is not None
-    assert saved["google_task_id"] == "G-NEW"
+    upsert_ev.assert_called()
     store._CONN = None  # type: ignore[attr-defined]
     gt._reset_pull_state_for_tests()
+
+
+def test_reconcile_drops_google_task_for_leo_duplicate(tmp_path, monkeypatch):
+    monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "t.sqlite"))
+    from assistant.stores import calendar_tasks as store
+    from usage_server import _reconcile_gcal_task_duplicates
+
+    store._CONN = None  # type: ignore[attr-defined]
+    tz = ZoneInfo("UTC")
+    start = datetime(2026, 10, 7, tzinfo=tz)
+    end = datetime(2026, 10, 8, tzinfo=tz)
+    row = store.create_task(
+        1, title="тест 7 лео", start_at=datetime(2026, 10, 7, 15, 0, tzinfo=tz), tz=tz
+    )
+    store.update_task(
+        1,
+        row["id"],
+        google_task_id="GT-LEO",
+        google_tasklist_id="@default",
+        google_event_id="EV-LEO",
+        google_calendar_id="primary",
+    )
+    with (
+        patch("assistant.services.google_tasks.remote_task_notes", return_value="Время: 15:00"),
+        patch("assistant.services.google_tasks.delete_remote") as del_task,
+        patch("assistant.services.calendar.delete_task_event") as del_ev,
+    ):
+        _reconcile_gcal_task_duplicates(1, start, end)
+    del_task.assert_called_once()
+    del_ev.assert_not_called()
+    saved = store.get_task(1, row["id"])
+    assert saved is not None
+    assert not saved.get("google_task_id")
+    assert saved.get("google_event_id") == "EV-LEO"
+    store._CONN = None  # type: ignore[attr-defined]
+
+
+def test_reconcile_drops_event_for_imported_google_task(tmp_path, monkeypatch):
+    monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "t.sqlite"))
+    from assistant.stores import calendar_tasks as store
+    from usage_server import _reconcile_gcal_task_duplicates
+
+    store._CONN = None  # type: ignore[attr-defined]
+    tz = ZoneInfo("UTC")
+    start = datetime(2026, 10, 7, tzinfo=tz)
+    end = datetime(2026, 10, 8, tzinfo=tz)
+    row = store.create_task(
+        1, title="тест 6 гугл", start_at=datetime(2026, 10, 7, 9, 0, tzinfo=tz), tz=tz
+    )
+    store.update_task(
+        1,
+        row["id"],
+        google_task_id="GT-IMP",
+        google_tasklist_id="@default",
+        google_event_id="EV-IMP",
+        google_calendar_id="primary",
+    )
+    with (
+        patch("assistant.services.google_tasks.remote_task_notes", return_value="купить молоко"),
+        patch("assistant.services.google_tasks.delete_remote") as del_task,
+        patch("assistant.services.calendar.delete_task_event") as del_ev,
+    ):
+        _reconcile_gcal_task_duplicates(1, start, end)
+    del_ev.assert_called_once()
+    del_task.assert_not_called()
+    saved = store.get_task(1, row["id"])
+    assert saved is not None
+    assert saved.get("google_task_id") == "GT-IMP"
+    assert not saved.get("google_event_id")
+    store._CONN = None  # type: ignore[attr-defined]
 
 
 def test_schedule_pull_runs_once_in_background():

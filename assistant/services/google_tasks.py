@@ -264,6 +264,20 @@ def _sync_subtasks(svc: Any, list_id: str, parent_id: str, checklist: list[dict[
                 pass
 
 
+def remote_task_notes(user_id: int, task: dict[str, Any] | None) -> str | None:
+    svc = _service(user_id)
+    gid = str((task or {}).get("google_task_id") or "").strip()
+    list_id = str((task or {}).get("google_tasklist_id") or "").strip() or DEFAULT_TASKLIST
+    if svc is None or not gid:
+        return None
+    try:
+        remote = svc.tasks().get(tasklist=list_id, task=gid).execute() or {}
+    except Exception as e:
+        print(f"[google_tasks] get_notes_failed id={gid} err={e!r}")
+        return None
+    return str(remote.get("notes") or "")
+
+
 def delete_remote(user_id: int, task: dict[str, Any]) -> None:
     svc = _service(user_id)
     gid = str((task or {}).get("google_task_id") or "").strip()
@@ -442,16 +456,22 @@ def pull_into_leo(
 def push_unsynced_in_window(
     user_id: int, start: datetime, end: datetime
 ) -> list[dict[str, Any]]:
-    """Дослать в Google Tasks локальные задачи, которые ещё не уехали после OAuth."""
+    """Дописать timed-слот в календарь для Leo-задач без Google Task."""
+    from assistant.services import calendar as calendar_svc
+
     out: list[dict[str, Any]] = []
     for row in calendar_tasks_store.list_tasks_in_window(user_id, start, end):
-        if row.get("done") or str(row.get("google_task_id") or "").strip():
+        if row.get("done"):
+            continue
+        if str(row.get("google_task_id") or "").strip():
+            continue
+        if str(row.get("google_event_id") or "").strip():
             continue
         try:
-            pushed = push_task(user_id, row)
+            updated = calendar_svc.upsert_task_event(user_id, row)
         except Exception as e:
-            print(f"[google_tasks] backfill id={row.get('id')} err={e!r}")
+            print(f"[google_tasks] backfill_event id={row.get('id')} err={e!r}")
             continue
-        if pushed and str(pushed.get("google_task_id") or "").strip():
-            out.append(pushed)
+        if updated and str(updated.get("google_event_id") or "").strip():
+            out.append(updated)
     return out

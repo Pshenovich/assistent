@@ -4038,6 +4038,7 @@ def _attach_leo_tasks(
     _leo_task_events(uid, start_dt, end_dt, tz)
     _link_events_to_google_tasks(uid, evs, start_dt, end_dt, tz)
     _import_gcal_task_events(uid, evs, tz)
+    _reconcile_gcal_task_duplicates(uid, start_dt, end_dt)
     hide_ids: set[str] = set()
     for ev in evs:
         eid = str(ev.get("id") or "")
@@ -4068,17 +4069,50 @@ def _attach_leo_tasks(
 def _ensure_task_calendar_events(
     uid: int, start_dt: datetime, end_dt: datetime
 ) -> None:
-    """Дописать timed-слот в GCal для Leo-задач, у которых его ещё нет."""
+    """Слот в GCal только для задач из Leo, не для импорта из Google Tasks."""
     from assistant.services import calendar as calendar_svc
     from assistant.stores import calendar_tasks as calendar_tasks_store
 
     for row in calendar_tasks_store.list_tasks_in_window(uid, start_dt, end_dt):
         if row.get("done") or str(row.get("google_event_id") or "").strip():
             continue
+        if str(row.get("google_task_id") or "").strip():
+            continue
         try:
             calendar_svc.upsert_task_event(uid, row)
         except Exception as e:
             print(f"[calendar_tasks] ensure_event id={row.get('id')} err={e!r}")
+
+
+def _reconcile_gcal_task_duplicates(uid: int, start_dt: datetime, end_dt: datetime) -> None:
+    """Убрать пару «задача + зелёная встреча»: Leo → только слот, Google Task → только task."""
+    from assistant.services import calendar as calendar_svc
+    from assistant.services import google_tasks
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    for row in calendar_tasks_store.list_tasks_in_window(uid, start_dt, end_dt):
+        task_id = str(row.get("google_task_id") or "").strip()
+        event_id = str(row.get("google_event_id") or "").strip()
+        if not task_id or not event_id:
+            continue
+        notes = google_tasks.remote_task_notes(uid, row)
+        local_desc = str(row.get("description") or "")
+        if notes is None and "Время:" not in local_desc:
+            continue
+        from_leo = "Время:" in f"{notes or ''}\n{local_desc}"
+        try:
+            if from_leo:
+                google_tasks.delete_remote(uid, row)
+                calendar_tasks_store.update_task(
+                    uid, row["id"], google_task_id="", google_tasklist_id=""
+                )
+            else:
+                calendar_svc.delete_task_event(uid, row)
+                calendar_tasks_store.update_task(
+                    uid, row["id"], google_event_id="", google_calendar_id=""
+                )
+        except Exception as e:
+            print(f"[calendar_tasks] reconcile id={row.get('id')} err={e!r}")
 
 
 def _sync_task_google(uid: int, task: dict[str, Any] | None, action: str) -> dict[str, Any] | None:
@@ -4087,13 +4121,24 @@ def _sync_task_google(uid: int, task: dict[str, Any] | None, action: str) -> dic
     try:
         from assistant.services import calendar as calendar_svc
         from assistant.services import google_tasks
+        from assistant.stores import calendar_tasks as calendar_tasks_store
 
         if action == "delete":
             calendar_svc.delete_task_event(uid, task)
             google_tasks.delete_remote(uid, task)
             return task
-        synced = calendar_svc.upsert_task_event(uid, task) or task
-        return google_tasks.push_task(uid, synced) or synced
+        imported = bool(str(task.get("google_task_id") or "").strip()) and not bool(
+            str(task.get("google_event_id") or "").strip()
+        )
+        if imported:
+            return google_tasks.push_task(uid, task) or task
+        if str(task.get("google_task_id") or "").strip():
+            google_tasks.delete_remote(uid, task)
+            cleared = calendar_tasks_store.update_task(
+                uid, task["id"], google_task_id="", google_tasklist_id=""
+            )
+            task = cleared or task
+        return calendar_svc.upsert_task_event(uid, task) or task
     except Exception as e:
         print(f"[calendar_tasks] google_sync action={action} err={e!r}")
         return task

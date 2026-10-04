@@ -152,7 +152,10 @@ class TestCalendarRangeHelpers(TestCase):
             "calendar_id": "primary",
         }
         try:
-            with patch("assistant.services.google_tasks.pull_into_leo_brief", return_value=[]):
+            with (
+                patch("assistant.services.google_tasks.pull_into_leo_brief", return_value=[]),
+                patch("assistant.services.google_tasks.remote_task_notes", return_value=None),
+            ):
                 out = _attach_leo_tasks({"events": [ev]}, 1, start, end, tz)
             ids = [e.get("id") for e in out["events"]]
             self.assertNotIn("gcal-meet-1", ids)
