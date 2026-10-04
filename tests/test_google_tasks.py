@@ -49,3 +49,41 @@ def test_push_skips_without_scope():
     with patch.object(gt, "_service", return_value=None):
         task = {"id": 1, "title": "X"}
         assert gt.push_task(1, task) is task
+
+
+def test_pull_into_leo_skips_when_recent():
+    gt._reset_pull_state_for_tests()
+    start = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    end = datetime(2026, 10, 8, tzinfo=timezone.utc)
+    with patch.object(gt, "_service") as svc:
+        svc.return_value = None
+        assert gt.pull_into_leo(9021, start, end) == []
+        assert svc.call_count == 1
+        assert gt.pull_into_leo(9021, start, end) == []
+        assert svc.call_count == 1
+        assert gt.pull_into_leo(9021, start, end, force=True) == []
+        assert svc.call_count == 2
+    gt._reset_pull_state_for_tests()
+
+
+def test_schedule_pull_runs_once_in_background():
+    import time
+
+    gt._reset_pull_state_for_tests()
+    started: list[int] = []
+
+    def _pull(*_a, **_k):
+        started.append(1)
+        return []
+
+    start = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    end = datetime(2026, 10, 8, tzinfo=timezone.utc)
+    with patch.object(gt, "pull_into_leo", _pull):
+        gt.schedule_pull(9022, start, end)
+        gt.schedule_pull(9022, start, end)
+        deadline = time.monotonic() + 1.0
+        while not started and time.monotonic() < deadline:
+            time.sleep(0.01)
+        time.sleep(0.05)
+    assert started == [1]
+    gt._reset_pull_state_for_tests()

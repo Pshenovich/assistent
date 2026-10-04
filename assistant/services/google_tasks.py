@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -9,6 +11,19 @@ from assistant.stores import calendar_tasks as calendar_tasks_store
 
 
 TASKS_SCOPE = "https://www.googleapis.com/auth/tasks"
+PULL_TIMEOUT_SEC = 3.0
+PUSH_TIMEOUT_SEC = 8.0
+PULL_MIN_INTERVAL_SEC = 45.0
+
+_LAST_PULL: dict[int, float] = {}
+_PULL_INFLIGHT: set[int] = set()
+_PULL_GUARD = threading.Lock()
+
+
+def _reset_pull_state_for_tests() -> None:
+    with _PULL_GUARD:
+        _LAST_PULL.clear()
+        _PULL_INFLIGHT.clear()
 
 
 def _creds(user_id: int):
@@ -26,13 +41,25 @@ def _creds(user_id: int):
     return creds
 
 
-def _service(user_id: int):
+def _authorized_http(creds: Any, timeout: float):
+    import httplib2
+    from google_auth_httplib2 import AuthorizedHttp
+
+    return AuthorizedHttp(creds, http=httplib2.Http(timeout=float(timeout)))
+
+
+def _service(user_id: int, timeout: float = PUSH_TIMEOUT_SEC):
     creds = _creds(user_id)
     if creds is None:
         return None
     from googleapiclient.discovery import build
 
-    return build("tasks", "v1", credentials=creds, cache_discovery=False)
+    return build(
+        "tasks",
+        "v1",
+        http=_authorized_http(creds, timeout),
+        cache_discovery=False,
+    )
 
 
 def _default_tasklist_id(svc: Any) -> str:
@@ -167,9 +194,48 @@ def delete_remote(user_id: int, task: dict[str, Any]) -> None:
         print(f"[google_tasks] delete_failed id={gid} err={e!r}")
 
 
-def pull_into_leo(user_id: int, start: datetime, end: datetime) -> list[dict[str, Any]]:
+def schedule_pull(user_id: int, start: datetime, end: datetime) -> None:
+    """Импорт Google Tasks в фоне: календарный GET не ждёт сеть Google."""
+    uid = int(user_id)
+    now = time.monotonic()
+    with _PULL_GUARD:
+        if uid in _PULL_INFLIGHT:
+            return
+        last = _LAST_PULL.get(uid)
+        if last is not None and now - last < PULL_MIN_INTERVAL_SEC:
+            return
+        _PULL_INFLIGHT.add(uid)
+
+    def _run() -> None:
+        try:
+            pull_into_leo(uid, start, end, force=True)
+        except Exception as e:
+            print(f"[google_tasks] pull_bg uid={uid} err={e!r}")
+        finally:
+            with _PULL_GUARD:
+                _PULL_INFLIGHT.discard(uid)
+                _LAST_PULL[uid] = time.monotonic()
+
+    threading.Thread(target=_run, name=f"leo-gtasks-pull-{uid}", daemon=True).start()
+
+
+def pull_into_leo(
+    user_id: int,
+    start: datetime,
+    end: datetime,
+    *,
+    force: bool = False,
+) -> list[dict[str, Any]]:
     """Подтянуть задачи Google с due в окне; не затирать локальные интервалы."""
-    svc = _service(user_id)
+    uid = int(user_id)
+    if not force:
+        now = time.monotonic()
+        with _PULL_GUARD:
+            last = _LAST_PULL.get(uid)
+            if last is not None and now - last < PULL_MIN_INTERVAL_SEC:
+                return []
+            _LAST_PULL[uid] = now
+    svc = _service(uid, timeout=PULL_TIMEOUT_SEC)
     if svc is None:
         return []
     list_id = _default_tasklist_id(svc)

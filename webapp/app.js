@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261004-slash-date";
+  var WEBAPP_BUILD = "20261004-actual-net";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261004-slash-date";
+  const NOTE_EDITOR_ASSET_V = "20261004-actual-net";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -3365,6 +3365,7 @@
     if (o && Number(o.timeout) > 0) return Number(o.timeout);
     var p = String(path || "");
     if (p.indexOf("/gpt/chat") >= 0) return 180000;
+    if (p.indexOf("/calendar/today") >= 0) return 20000;
     if (p.indexOf("/calendar/range") >= 0) return 30000;
     if (/\/paei(\/|\?|$)/.test(p) || p.slice(-5) === "/paei") return 180000;
     if (/\/research(\/|\?|$)/.test(p) || p.slice(-9) === "/research") return 180000;
@@ -3474,11 +3475,17 @@
       offlineErr.status = 0;
       throw offlineErr;
     }
+    var calendarGet =
+      method === "GET" &&
+      (String(path || "").indexOf("/calendar/today") >= 0 ||
+        String(path || "").indexOf("/calendar/range") >= 0);
     const maxTries =
       method === "GET" || method === "HEAD"
-        ? isNetworkUnreliable()
+        ? calendarGet
           ? 2
-          : 12
+          : isNetworkUnreliable()
+            ? 2
+            : 12
         : 1;
     var lastErr = null;
     for (var i = 0; i < maxTries; i++) {
@@ -10196,17 +10203,23 @@
     await contactP;
     if (loadGen !== meetingsLoadGen) return;
 
-    if (results[0].status === "fulfilled") {
+    var remOk = results[0].status === "fulfilled";
+    var calOk = results[1].status === "fulfilled";
+    var nextOk = !!(results[2] && results[2].status === "fulfilled");
+
+    if (remOk) {
       remData = results[0].value;
       errR.textContent = "";
       setHidden(errR, true);
-    } else if (!cached) {
+    } else if (cached && cached.remData) {
+      remData = cached.remData;
+    } else {
       var remErr = results[0].reason;
       errR.textContent = (remErr && remErr.message) || String(remErr || "Ошибка");
       setHidden(errR, false);
     }
 
-    if (results[1].status === "fulfilled") {
+    if (calOk) {
       if (meetingsViewMode === "week" || meetingsViewMode === "month") {
         rangeData = results[1].value;
         lastMeetingsRange = rangeData;
@@ -10224,16 +10237,27 @@
           setHidden(errM, true);
         }
       }
-    } else if (!cached && errM) {
+    } else if (cached) {
+      if (meetingsViewMode === "week" || meetingsViewMode === "month") {
+        rangeData = cached.rangeData || lastMeetingsRange;
+      } else {
+        calData = cached.calData || lastMeetingsLeft || calData;
+        if (dual) {
+          calDataNext = cached.calDataNext || lastMeetingsRight || null;
+        }
+      }
+    } else if (errM) {
       var calErr = results[1].reason;
       errM.textContent = (calErr && calErr.message) || String(calErr || "Ошибка");
       setHidden(errM, false);
     }
 
     if (meetingsViewMode === "day" && dual && results[2]) {
-      if (results[2].status === "fulfilled") {
+      if (nextOk) {
         calDataNext = results[2].value;
-      } else {
+      } else if (cached && cached.calDataNext) {
+        calDataNext = cached.calDataNext;
+      } else if (!calDataNext) {
         calDataNext = {
           events: [],
           date: addDaysIso((calData && calData.date) || leftIso, 1),
@@ -10244,10 +10268,19 @@
     if (loadGen !== meetingsLoadGen) return;
     paintActual(remData, calData, calDataNext, rangeData);
     writeMiniappCache(cacheKind, {
-      remData: remData,
-      calData: calData,
-      calDataNext: calDataNext,
-      rangeData: rangeData,
+      remData: remOk ? remData : (cached && cached.remData) || remData,
+      calData:
+        meetingsViewMode === "day" && calOk
+          ? calData
+          : (cached && cached.calData) || calData,
+      calDataNext:
+        meetingsViewMode === "day" && (nextOk || !dual)
+          ? calDataNext
+          : (cached && cached.calDataNext) || calDataNext,
+      rangeData:
+        (meetingsViewMode === "week" || meetingsViewMode === "month") && calOk
+          ? rangeData
+          : (cached && cached.rangeData) || rangeData,
     });
   }
 

@@ -3839,19 +3839,20 @@ def _leo_task_events(
     uid: int, start_dt: datetime, end_dt: datetime, tz: Any
 ) -> list[dict[str, Any]]:
     try:
-        from assistant.services import google_tasks
-
-        google_tasks.pull_into_leo(uid, start_dt, end_dt)
-    except Exception as e:
-        print(f"[miniapp_calendar] tasks_pull err={e!r}")
-    try:
         from assistant.stores import calendar_tasks as calendar_tasks_store
 
         rows = calendar_tasks_store.list_tasks_in_window(uid, start_dt, end_dt)
-        return [calendar_tasks_store.as_calendar_event(r, tz=tz) for r in rows]
+        events = [calendar_tasks_store.as_calendar_event(r, tz=tz) for r in rows]
     except Exception as e:
         print(f"[miniapp_calendar] tasks_list err={e!r}")
-        return []
+        events = []
+    try:
+        from assistant.services import google_tasks
+
+        google_tasks.schedule_pull(uid, start_dt, end_dt)
+    except Exception as e:
+        print(f"[miniapp_calendar] tasks_pull_schedule err={e!r}")
+    return events
 
 
 def _attach_leo_tasks(
