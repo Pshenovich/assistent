@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from datetime import date, datetime, time as dt_time, timedelta, timezone
-from typing import Any
+from typing import Any, Iterator
 
 from assistant.stores import calendar_tasks as calendar_tasks_store
+
+_TIME_NOTE_RE = re.compile(r"Время:\s*(\S+)")
 
 
 TASKS_SCOPE = "https://www.googleapis.com/auth/tasks"
@@ -35,8 +38,9 @@ def _creds(user_id: int):
     if not path.is_file():
         return None
     creds = Credentials.from_authorized_user_file(str(path))
-    scopes = set(creds.scopes or [])
-    if TASKS_SCOPE not in scopes and "https://www.googleapis.com/auth/tasks" not in scopes:
+    scopes = {str(s).strip() for s in (creds.scopes or []) if str(s).strip()}
+    # Пустой список scopes в JSON не значит, что Tasks нет — пробуем API.
+    if scopes and TASKS_SCOPE not in scopes:
         return None
     return creds
 
@@ -75,30 +79,68 @@ def _default_tasklist_id(svc: Any) -> str:
 
 
 def _tasklist_ids(svc: Any) -> list[str]:
-    res = svc.tasklists().list(maxResults=20).execute()
     out: list[str] = []
-    for it in res.get("items") or []:
-        tid = str((it or {}).get("id") or "").strip()
-        if tid:
-            out.append(tid)
+    page: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {"maxResults": 100}
+        if page:
+            kwargs["pageToken"] = page
+        res = svc.tasklists().list(**kwargs).execute()
+        for it in res.get("items") or []:
+            tid = str((it or {}).get("id") or "").strip()
+            if tid:
+                out.append(tid)
+        page = str(res.get("nextPageToken") or "").strip() or None
+        if not page:
+            break
     return out
 
 
 def due_calendar_date(raw: str) -> date | None:
-    """Google Tasks due — только дата; время в API отбрасывается (обычно 00:00Z)."""
+    """Google Tasks due — только дата; берём YYYY-MM-DD, не UTC-instant."""
     text = str(raw or "").strip()
-    if not text:
-        return None
-    try:
-        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return dt.date()
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        try:
+            return date.fromisoformat(text[:10])
+        except ValueError:
+            return None
+    return None
 
 
-def is_tasks_calendar_name(summary: str | None) -> bool:
+def is_tasks_calendar_name(summary: str | None, calendar_id: str | None = None) -> bool:
     name = str(summary or "").strip().lower().replace("ё", "е")
-    return name in {"tasks", "задачи", "my tasks", "мои задачи"}
+    if name in {"tasks", "задачи", "my tasks", "мои задачи", "google tasks"}:
+        return True
+    cid = str(calendar_id or "").strip().lower()
+    return "#tasks" in cid or cid.startswith("tasks#") or "tasks@" in cid
+
+
+def start_from_google_task(
+    item: dict[str, Any], *, due_day: date, tz: Any
+) -> datetime:
+    notes = str(item.get("notes") or "")
+    match = _TIME_NOTE_RE.search(notes)
+    if match:
+        raw = match.group(1).strip().rstrip("—-")
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            dt = None
+        if dt is not None:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=tz)
+            return dt.astimezone(tz)
+    return datetime.combine(due_day, dt_time(9, 0), tzinfo=tz)
+
+
+def notes_without_leo_meta(notes: str) -> str:
+    lines = []
+    for line in str(notes or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Время:") or stripped.startswith("Исполнитель:"):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
 
 
 def _due_rfc3339(task: dict[str, Any]) -> str | None:
@@ -290,6 +332,44 @@ def _due_in_window(due_day: date, start: datetime, end: datetime) -> bool:
     return start_d <= due_day < end_d
 
 
+def _iter_task_items(svc: Any, list_id: str, start: datetime, end: datetime) -> Iterator[dict[str, Any]]:
+    due_min = (start - timedelta(days=1)).astimezone(timezone.utc).strftime(
+        "%Y-%m-%dT00:00:00.000Z"
+    )
+    due_max = (end + timedelta(days=1)).astimezone(timezone.utc).strftime(
+        "%Y-%m-%dT00:00:00.000Z"
+    )
+    page: str | None = None
+    used_due_filter = True
+    while True:
+        kwargs: dict[str, Any] = {
+            "tasklist": list_id,
+            "showCompleted": False,
+            "showHidden": False,
+            "maxResults": 100,
+        }
+        if used_due_filter:
+            kwargs["dueMin"] = due_min
+            kwargs["dueMax"] = due_max
+        if page:
+            kwargs["pageToken"] = page
+        try:
+            res = svc.tasks().list(**kwargs).execute()
+        except Exception as e:
+            if used_due_filter and page is None:
+                print(f"[google_tasks] list_due_filter_failed list={list_id} err={e!r}")
+                used_due_filter = False
+                continue
+            print(f"[google_tasks] list_failed list={list_id} err={e!r}")
+            return
+        for it in res.get("items") or []:
+            if isinstance(it, dict):
+                yield it
+        page = str(res.get("nextPageToken") or "").strip() or None
+        if not page:
+            break
+
+
 def pull_into_leo(
     user_id: int,
     start: datetime,
@@ -315,21 +395,7 @@ def pull_into_leo(
     tz = start.tzinfo or timezone.utc
     imported: list[dict[str, Any]] = []
     for list_id in list_ids:
-        try:
-            res = (
-                svc.tasks()
-                .list(
-                    tasklist=list_id,
-                    showCompleted=False,
-                    showHidden=False,
-                    maxResults=100,
-                )
-                .execute()
-            )
-        except Exception as e:
-            print(f"[google_tasks] list_failed list={list_id} err={e!r}")
-            continue
-        for it in res.get("items") or []:
+        for it in _iter_task_items(svc, list_id, start, end):
             if it.get("parent"):
                 continue
             gid = str(it.get("id") or "").strip()
@@ -341,8 +407,8 @@ def pull_into_leo(
             due_day = due_calendar_date(str(it.get("due") or ""))
             if due_day is None or not _due_in_window(due_day, start, end):
                 continue
-            notes = str(it.get("notes") or "")
-            start_at = datetime.combine(due_day, dt_time(9, 0), tzinfo=tz)
+            notes = notes_without_leo_meta(str(it.get("notes") or ""))
+            start_at = start_from_google_task(it, due_day=due_day, tz=tz)
             row = calendar_tasks_store.create_task(
                 user_id,
                 title=str(it.get("title") or "Задача"),

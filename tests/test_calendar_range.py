@@ -160,7 +160,7 @@ class TestCalendarRangeHelpers(TestCase):
             self.assertEqual(len(tasks), 1)
             self.assertEqual(tasks[0]["summary"], "Купить молоко")
             linked = calendar_tasks_store.get_task(1, row["id"])
-            self.assertEqual(linked["google_event_id"], "gcal-meet-1")
+            self.assertFalse(str(linked.get("google_event_id") or ""))
         finally:
             calendar_tasks_store._CONN = None  # type: ignore[attr-defined]
             os.environ.pop("CALENDAR_TASKS_DB_PATH", None)

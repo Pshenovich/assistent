@@ -972,7 +972,7 @@ def _task_event_body(user_id: int, task: dict[str, Any]) -> dict[str, Any]:
 
 
 def upsert_task_event(user_id: int, task: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Показать Leo-задачу на сетке Google Calendar (не только в Google Tasks)."""
+    """Больше не используем: Calendar event в GCal выглядит как встреча."""
     if not task:
         return task
     path = google_calendar_oauth.user_token_path(int(user_id))

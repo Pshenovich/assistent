@@ -56,7 +56,18 @@ def test_due_calendar_date_uses_date_part():
     assert gt.due_calendar_date("") is None
     assert gt.is_tasks_calendar_name("Задачи")
     assert gt.is_tasks_calendar_name("My Tasks")
+    assert gt.is_tasks_calendar_name("Inbox", "foo#tasks@group.v.calendar.google.com")
     assert not gt.is_tasks_calendar_name("Work")
+    tz = ZoneInfo("Europe/Moscow")
+    start = gt.start_from_google_task(
+        {"notes": "Время: 2026-10-07T15:00:00+03:00 — 2026-10-07T15:30:00+03:00"},
+        due_day=datetime(2026, 10, 7, tzinfo=tz).date(),
+        tz=tz,
+    )
+    assert start.hour == 15
+    assert "Время:" not in gt.notes_without_leo_meta(
+        "Купить\nВремя: 2026-10-07T15:00:00+03:00 — x\nИсполнитель: Я"
+    )
 
 
 def test_pull_into_leo_reads_all_tasklists(tmp_path, monkeypatch):
@@ -111,10 +122,10 @@ def test_pull_into_leo_skips_when_recent():
     gt._reset_pull_state_for_tests()
 
 
-def test_upsert_task_event_inserts_gcal_event(tmp_path, monkeypatch):
+def test_sync_task_google_deletes_leftover_event_and_pushes_task(tmp_path, monkeypatch):
     monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "t.sqlite"))
-    from assistant.services import calendar as cal
     from assistant.stores import calendar_tasks as store
+    from usage_server import _sync_task_google
 
     store._CONN = None  # type: ignore[attr-defined]
     tz = ZoneInfo("UTC")
@@ -124,20 +135,25 @@ def test_upsert_task_event_inserts_gcal_event(tmp_path, monkeypatch):
         start_at=datetime(2026, 10, 7, 15, 0, tzinfo=tz),
         tz=tz,
     )
-    svc = MagicMock()
-    svc.events().insert().execute.return_value = {"id": "ev1"}
+    store.update_task(1, row["id"], google_event_id="ev1", google_calendar_id="primary")
+    row = store.get_task(1, row["id"])
+    pushed = []
+
+    def _push(_uid, task):
+        pushed.append(task)
+        return task
+
     with (
-        patch.object(cal, "_service", return_value=svc),
-        patch.object(cal.google_calendar_oauth, "user_token_path") as token_path,
-        patch.object(cal.cal_sources, "resolve_calendar_id", return_value="primary"),
-        patch.object(cal.cal_sources, "assert_calendar_writable"),
-        patch.object(cal, "_tz_for", return_value=tz),
-        patch.object(cal, "_tz_name_for", return_value="UTC"),
+        patch("assistant.services.calendar.delete_task_event") as delete_ev,
+        patch("assistant.services.calendar.upsert_task_event") as upsert_ev,
+        patch("assistant.services.google_tasks.push_task", _push),
     ):
-        token_path.return_value.is_file.return_value = True
-        out = cal.upsert_task_event(1, row)
+        out = _sync_task_google(1, row, "update")
+    assert upsert_ev.call_count == 0
+    delete_ev.assert_called_once()
+    assert pushed
     assert out is not None
-    assert out.get("google_event_id") == "ev1"
+    assert not str(out.get("google_event_id") or "")
     store._CONN = None  # type: ignore[attr-defined]
 
 
