@@ -1,16 +1,16 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261004-task-remind";
+var CACHE_VERSION = "miniapp-v1-20261004-slash-title";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261004-task-remind",
-  "./app.js?v=20261004-task-remind",
-  "./note-html.js?v=20261004-task-remind",
-  "./note-comments.js?v=20261004-task-remind",
-  "./note-rich-editor.js?v=20261004-task-remind",
+  "./styles.css?v=20261004-slash-title",
+  "./app.js?v=20261004-slash-title",
+  "./note-html.js?v=20261004-slash-title",
+  "./note-comments.js?v=20261004-slash-title",
+  "./note-rich-editor.js?v=20261004-slash-title",
   "./icons/arrow-up-right.svg?v=20261003-month-instances",
   "./icons/chevron-up-muted.svg?v=20261003-month-instances",
   "./icons/chevron-up-on-fill.svg?v=20261003-month-instances",

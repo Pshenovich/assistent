@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261004-task-remind";
+  var WEBAPP_BUILD = "20261004-slash-title";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261004-task-remind";
+  const NOTE_EDITOR_ASSET_V = "20261004-slash-title";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -9349,10 +9349,14 @@
       });
   }
 
-  function createTaskFromSlash(text, done, fail) {
+  function createTaskFromSlash(text, done, fail, title) {
     apiFetch("/calendar/tasks", {
       method: "POST",
-      body: JSON.stringify({ text: String(text || ""), note_id: currentOpenNoteId() }),
+      body: JSON.stringify({
+        text: String(text || ""),
+        title: String(title || "").trim(),
+        note_id: currentOpenNoteId(),
+      }),
     })
       .then(function (r) {
         var task = r && r.task;

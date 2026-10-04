@@ -1271,19 +1271,31 @@ var TASK_SLASH_WHEN =
   "|\\d{1,2}\\s+(?:" +
   TASK_SLASH_MONTH +
   "))";
-var TASK_SLASH_QUERY_RE = /(?:^|\s)(\/([^\n]*))$/;
+var TASK_SLASH_LEAD = "(?:^|[\\s\\uFFFC]|[^:/\\s])";
+var TASK_SLASH_QUERY_RE = new RegExp(TASK_SLASH_LEAD + "(\\/([^\\n]*))$");
 var TASK_SLASH_COMPLETE_RE = new RegExp(
   "^/(" + TASK_SLASH_WHEN + ")(?:\\s+\\d{1,2}[:.]\\d{2})?(?:\\s+[^\\n/]+)?$",
   "i"
 );
 var TASK_SLASH_TRAIL_RE = new RegExp(
-  "(?:^|\\s)(/(" + TASK_SLASH_WHEN + ")(?:\\s+\\d{1,2}[:.]\\d{2})(?:\\s+[^\\n/]+)?\\s)$",
+  TASK_SLASH_LEAD + "(/(" + TASK_SLASH_WHEN + ")(?:\\s+\\d{1,2}[:.]\\d{2})(?:\\s+[^\\n/]+)?\\s)$",
   "i"
 );
 var TASK_SLASH_ENTER_RE = new RegExp(
-  "(?:^|\\s)(/(" + TASK_SLASH_WHEN + ")(?:\\s+\\d{1,2}[:.]\\d{2})?(?:\\s+[^\\n/]+)?)$",
+  TASK_SLASH_LEAD + "(/(" + TASK_SLASH_WHEN + ")(?:\\s+\\d{1,2}[:.]\\d{2})?(?:\\s+[^\\n/]+)?)$",
   "i"
 );
+
+function paragraphTitleBeforeSlash(text) {
+  var raw = String(text || "");
+  var idx = raw.lastIndexOf("/");
+  if (idx < 0) return "";
+  return raw
+    .slice(0, idx)
+    .replace(/\uFFFC/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 function collectLeoTaskIds(doc) {
   var ids = new Set();
@@ -1383,7 +1395,7 @@ function createLeoTaskExtensions(ctx) {
             }
             ctx.hideTaskSlashSuggest = hideSuggest;
 
-            function commitToken(view, token, from, to) {
+            function commitToken(view, token, from, to, title) {
               if (!view || ctx.slashBusy || !token) return false;
               if (from < 0 || to < from) return false;
               ctx.slashBusy = true;
@@ -1415,7 +1427,8 @@ function createLeoTaskExtensions(ctx) {
                 },
                 function () {
                   ctx.slashBusy = false;
-                }
+                },
+                title
               );
               return true;
             }
@@ -1434,7 +1447,7 @@ function createLeoTaskExtensions(ctx) {
               var from = $from.pos - token.length - trail;
               var to = $from.pos;
               if (from < $from.start() || to > $from.end() || from >= to) return false;
-              return commitToken(view, token, from, to);
+              return commitToken(view, token, from, to, paragraphTitleBeforeSlash(text));
             }
             ctx.commitTaskSlash = commit;
 
@@ -2093,6 +2106,7 @@ var noteRichEditorApi = {
   importBody: importBody,
   exportBody: exportBody,
   canonicalBody: canonicalBody,
+  paragraphTitleBeforeSlash: paragraphTitleBeforeSlash,
 };
 if (typeof window !== "undefined") window.NoteRichEditor = noteRichEditorApi;
 else globalThis.NoteRichEditor = noteRichEditorApi;
