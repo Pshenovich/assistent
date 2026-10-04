@@ -175,6 +175,16 @@ def _subtask_status(item: dict[str, Any]) -> str:
     return "completed" if item.get("done") else "needsAction"
 
 
+def _update_task_without_due(
+    svc: Any, list_id: str, gid: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    """PATCH не умеет обнулить due; update без поля снимает дату с сетки."""
+    prev = svc.tasks().get(tasklist=list_id, task=gid).execute() or {}
+    prev.pop("due", None)
+    prev.update(body)
+    return svc.tasks().update(tasklist=list_id, task=gid, body=prev).execute()
+
+
 def push_task(user_id: int, task: dict[str, Any]) -> dict[str, Any] | None:
     svc = _service(user_id)
     if svc is None or not task:
@@ -187,14 +197,12 @@ def push_task(user_id: int, task: dict[str, Any]) -> dict[str, Any] | None:
         "notes": _notes_from_task(task),
         "status": "completed" if task.get("done") else "needsAction",
     }
-    due = _due_rfc3339(task)
-    if due:
-        body["due"] = due
+    # due только с датой — задача висит сверху дня. Время рисуем Calendar event.
     gid = str(task.get("google_task_id") or "").strip()
     remote = None
     if gid:
         try:
-            remote = svc.tasks().patch(tasklist=list_id, task=gid, body=body).execute()
+            remote = _update_task_without_due(svc, list_id, gid, body)
         except Exception as e:
             print(f"[google_tasks] patch_default_failed id={gid} err={e!r}")
             remote = None

@@ -36,9 +36,28 @@ def test_push_task_inserts_and_subtasks(tmp_path, monkeypatch):
     with patch.object(gt, "_service", return_value=svc):
         out = gt.push_task(1, row)
     assert out is not None
-    assert any(kw.get("tasklist") == "@default" and "parent" not in kw for kw in inserts)
+    parent = next(kw for kw in inserts if "parent" not in kw)
+    assert parent.get("tasklist") == "@default"
+    assert "due" not in (parent.get("body") or {})
     assert any("parent" in kw for kw in inserts)
     store._CONN = None  # type: ignore[attr-defined]
+
+
+def test_update_task_without_due_strips_date():
+    svc = MagicMock()
+    svc.tasks().get().execute.return_value = {
+        "id": "G1",
+        "title": "Старое",
+        "due": "2026-10-04T00:00:00.000Z",
+    }
+    svc.tasks().update().execute.return_value = {"id": "G1", "title": "Новое"}
+    out = gt._update_task_without_due(
+        svc, "@default", "G1", {"title": "Новое", "status": "needsAction"}
+    )
+    assert out["id"] == "G1"
+    body = svc.tasks().update.call_args.kwargs["body"]
+    assert "due" not in body
+    assert body["title"] == "Новое"
 
 
 def test_delete_remote_noops_without_service():
@@ -127,7 +146,7 @@ def test_pull_into_leo_skips_when_recent():
     gt._reset_pull_state_for_tests()
 
 
-def test_sync_task_google_deletes_leftover_event_and_pushes_task(tmp_path, monkeypatch):
+def test_sync_task_google_upserts_timed_event_and_pushes_task(tmp_path, monkeypatch):
     monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "t.sqlite"))
     from assistant.stores import calendar_tasks as store
     from usage_server import _sync_task_google
@@ -140,8 +159,6 @@ def test_sync_task_google_deletes_leftover_event_and_pushes_task(tmp_path, monke
         start_at=datetime(2026, 10, 7, 15, 0, tzinfo=tz),
         tz=tz,
     )
-    store.update_task(1, row["id"], google_event_id="ev1", google_calendar_id="primary")
-    row = store.get_task(1, row["id"])
     pushed = []
 
     def _push(_uid, task):
@@ -150,15 +167,14 @@ def test_sync_task_google_deletes_leftover_event_and_pushes_task(tmp_path, monke
 
     with (
         patch("assistant.services.calendar.delete_task_event") as delete_ev,
-        patch("assistant.services.calendar.upsert_task_event") as upsert_ev,
+        patch("assistant.services.calendar.upsert_task_event", return_value=row) as upsert_ev,
         patch("assistant.services.google_tasks.push_task", _push),
     ):
         out = _sync_task_google(1, row, "update")
-    assert upsert_ev.call_count == 0
-    delete_ev.assert_called_once()
+    upsert_ev.assert_called_once()
+    delete_ev.assert_not_called()
     assert pushed
     assert out is not None
-    assert not str(out.get("google_event_id") or "")
     store._CONN = None  # type: ignore[attr-defined]
 
 

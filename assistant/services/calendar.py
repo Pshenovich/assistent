@@ -962,6 +962,7 @@ def _task_event_body(user_id: int, task: dict[str, Any]) -> dict[str, Any]:
         "start": _gcal_when(start, user_id),
         "end": _gcal_when(end, user_id),
         "colorId": LEO_TASK_COLOR_ID,
+        "transparency": "transparent",
         "extendedProperties": {
             "private": {
                 "leoEntry": "task",
@@ -972,7 +973,7 @@ def _task_event_body(user_id: int, task: dict[str, Any]) -> dict[str, Any]:
 
 
 def upsert_task_event(user_id: int, task: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Больше не используем: Calendar event в GCal выглядит как встреча."""
+    """Слот на сетке GCal: Tasks API не умеет время, только дату."""
     if not task:
         return task
     path = google_calendar_oauth.user_token_path(int(user_id))

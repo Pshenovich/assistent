@@ -4050,7 +4050,7 @@ def _attach_leo_tasks(
             or calendar_tasks_store.find_by_google_event(uid, eid)
         ):
             hide_ids.add(eid)
-    _purge_leo_gcal_task_meetings(uid, evs)
+    _ensure_task_calendar_events(uid, start_dt, end_dt)
     extra = _leo_task_events(uid, start_dt, end_dt, tz)
     evs = [e for e in evs if str(e.get("id") or "") not in hide_ids]
     evs.extend(extra)
@@ -4065,38 +4065,20 @@ def _attach_leo_tasks(
     return payload
 
 
-def _purge_leo_gcal_task_meetings(uid: int, events: list[dict[str, Any]]) -> None:
-    """Удалить из GCal leftover-события, которые Leo писал как «зелёные встречи»."""
+def _ensure_task_calendar_events(
+    uid: int, start_dt: datetime, end_dt: datetime
+) -> None:
+    """Дописать timed-слот в GCal для Leo-задач, у которых его ещё нет."""
     from assistant.services import calendar as calendar_svc
     from assistant.stores import calendar_tasks as calendar_tasks_store
 
-    for ev in events:
-        if not isinstance(ev, dict):
-            continue
-        eid = str(ev.get("id") or "").strip()
-        if not eid or eid.startswith("task-"):
-            continue
-        row = calendar_tasks_store.find_by_google_event(uid, eid)
-        if not row and not ev.get("leo_task_marker"):
+    for row in calendar_tasks_store.list_tasks_in_window(uid, start_dt, end_dt):
+        if row.get("done") or str(row.get("google_event_id") or "").strip():
             continue
         try:
-            calendar_svc.delete_task_event(
-                uid,
-                {
-                    "google_event_id": eid,
-                    "google_calendar_id": ev.get("calendar_id")
-                    or (row or {}).get("google_calendar_id"),
-                },
-            )
+            calendar_svc.upsert_task_event(uid, row)
         except Exception as e:
-            print(f"[calendar_tasks] purge_gcal_event id={eid!r} err={e!r}")
-        if row:
-            try:
-                calendar_tasks_store.update_task(
-                    uid, row["id"], google_event_id="", google_calendar_id=""
-                )
-            except Exception:
-                pass
+            print(f"[calendar_tasks] ensure_event id={row.get('id')} err={e!r}")
 
 
 def _sync_task_google(uid: int, task: dict[str, Any] | None, action: str) -> dict[str, Any] | None:
@@ -4105,20 +4087,13 @@ def _sync_task_google(uid: int, task: dict[str, Any] | None, action: str) -> dic
     try:
         from assistant.services import calendar as calendar_svc
         from assistant.services import google_tasks
-        from assistant.stores import calendar_tasks as calendar_tasks_store
 
         if action == "delete":
             calendar_svc.delete_task_event(uid, task)
             google_tasks.delete_remote(uid, task)
             return task
-        # Не создаём Calendar event: в GCal это всегда встреча, даже с другим цветом.
-        if str(task.get("google_event_id") or "").strip():
-            calendar_svc.delete_task_event(uid, task)
-            cleared = calendar_tasks_store.update_task(
-                uid, task["id"], google_event_id="", google_calendar_id=""
-            )
-            task = cleared or task
-        return google_tasks.push_task(uid, task) or task
+        synced = calendar_svc.upsert_task_event(uid, task) or task
+        return google_tasks.push_task(uid, synced) or synced
     except Exception as e:
         print(f"[calendar_tasks] google_sync action={action} err={e!r}")
         return task
