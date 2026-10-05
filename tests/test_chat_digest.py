@@ -74,6 +74,21 @@ def test_insert_message_and_report(digest_db):
     reports = store.list_reports_for_chats([-100], limit=10)
     assert len(reports) == 1
     assert reports[0]["preview"] == "Коротко"
+    assert reports[0]["item_id"] == "2026-10-01:-100"
+    assert store.parse_item_id("2026-10-01:-100") == ("2026-10-01", -100)
+    assert store.parse_item_id("bad") is None
+    updated = store.update_report_summary(
+        "2026-10-01",
+        -100,
+        {
+            "brief": "Коротко",
+            "editor_title": "Проект · 01.10.2026",
+            "body_html": "<h3>Коротко</h3><p>Новый текст</p>",
+        },
+    )
+    assert updated is not None
+    assert updated["summary"]["editor_title"] == "Проект · 01.10.2026"
+    assert "<p>Новый текст</p>" in updated["summary"]["body_html"]
 
 
 def test_digest_prefs_default_off(prefs_dir):

@@ -139,7 +139,7 @@ def _materialize_generated_media(
 
     cleaned, prompts = parse_generated_image_prompts(text or "")
     cleaned, embedded = extract_embedded_images(cleaned)
-    out_images = list(images or []) + embedded
+    model_images = list(images or [])
     prompt_src = (question or "").strip()
     if is_bare_confirm(prompt_src) or wants_resend_attachment(prompt_src):
         for it in reversed(history or []):
@@ -150,6 +150,17 @@ def _materialize_generated_media(
                     continue
                 prompt_src = content
                 break
+    # Intent only from the user turn — model answer must not invent image delivery.
+    user_wants = wants_image_delivery(
+        prompt_src or question,
+        has_source=bool(source_images),
+        answer="",
+    )
+    if not user_wants:
+        # Strip spontaneous :::image / base64; keep native model images if any.
+        return cleaned, model_images
+
+    out_images = model_images + embedded
     need = wants_image_delivery(
         prompt_src or question,
         has_source=bool(source_images),
@@ -259,7 +270,7 @@ def _chat_result(
     images: list[dict[str, str]] | None = None,
     files: list[dict[str, str]] | None = None,
     web: bool = False,
-) -> tuple[str, list[dict[str, str]]]:
+) -> tuple[str, list[dict[str, str]], str]:
     from assistant.integrations.openrouter_client import extract_chat_message_media
 
     system_text = system
@@ -303,7 +314,12 @@ def _chat_result(
     text, out_images = extract_chat_message_media(data)
     if not text and not out_images:
         text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
-    return text, out_images
+    from assistant.integrations.openrouter_client import sanitize_openrouter_model_id
+
+    used_model = (
+        sanitize_openrouter_model_id(str((data or {}).get("model") or "")) or run_model
+    )
+    return text, out_images, used_model
 
 
 def research_with_web(
@@ -615,7 +631,7 @@ def answer_with_context_result(
     sys = _system_with_attachments((system or "").strip() or ASK_SYSTEM)
     temp = 0.1 if temperature is None else float(temperature)
     run_model = model or _model_ask()
-    text, out_images = _chat_result(
+    chat_out = _chat_result(
         sys,
         user,
         operation="ask",
@@ -627,6 +643,9 @@ def answer_with_context_result(
         files=files,
         web=web,
     )
+    text = chat_out[0]
+    out_images = chat_out[1] if len(chat_out) > 1 else []
+    used_model = chat_out[2] if len(chat_out) > 2 else run_model
     text, out_images = _materialize_generated_media(
         text,
         out_images,
@@ -634,7 +653,7 @@ def answer_with_context_result(
         history=history,
         source_images=images,
     )
-    return {"answer": text, "images": out_images}
+    return {"answer": text, "images": out_images, "model": used_model or run_model}
 
 
 def parse_journal_qa_query(

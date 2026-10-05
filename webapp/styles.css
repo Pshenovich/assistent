@@ -496,9 +496,9 @@ html.boot-open-app #app.hidden {
 }
 
 .meetings-head {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
 }
@@ -506,20 +506,26 @@ html.boot-open-app #app.hidden {
 .meetings-head-tools {
   display: flex;
   flex-shrink: 0;
-  grid-column: 1;
   align-items: center;
-  justify-self: end;
   gap: var(--space-2);
 }
 
 .section-head-row--meetings {
   display: flex;
-  grid-column: 2;
+  flex: 1 1 auto;
+  width: 100%;
   align-items: center;
   gap: var(--space-3);
   min-width: 0;
   margin-bottom: 0;
   padding: 0;
+}
+
+@media (min-width: 960px) {
+  .section-head-row--meetings {
+    flex: 0 1 auto;
+    width: auto;
+  }
 }
 
 .section-head-center {
@@ -11944,9 +11950,15 @@ html.modal-sheet-open body {
 .digest-section {
   margin: 16px 0;
 }
+.note-editor-pad--body .digest-section {
+  margin: 1.1rem 0;
+}
 .digest-section-title {
   margin: 0 0 8px;
   font-size: 15px;
+}
+.note-editor-pad--body .digest-section-title {
+  font-size: 1.05rem;
 }
 .digest-section ul {
   margin: 0;

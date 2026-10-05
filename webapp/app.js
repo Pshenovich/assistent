@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261005-meetings-head";
+  var WEBAPP_BUILD = "20261005-digest-header";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261005-meetings-head";
+  const NOTE_EDITOR_ASSET_V = "20261005-digest-header";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -4778,22 +4778,186 @@
     renderSidebarTrees();
   }
 
+  function digestItemId(report) {
+    if (report && report.item_id) return String(report.item_id);
+    var day = String((report && report.report_date) || "").trim();
+    var chatId = report && report.chat_id;
+    if (!day || chatId == null || chatId === "") return "";
+    return day + ":" + String(chatId);
+  }
+
+  function digestTitleForEditor(report) {
+    var summary = (report && report.summary) || {};
+    var custom = String(summary.editor_title || "").trim();
+    if (custom) return custom;
+    var title = String((report && report.title) || "Чат").trim() || "Чат";
+    var day = report && report.report_date ? formatDigestDate(report.report_date) : "";
+    return day ? title + " · " + day : title;
+  }
+
+  function digestBodyForEditor(report) {
+    var summary = (report && report.summary) || {};
+    var saved = sanitizeNoteBody(summary.body_html || "");
+    if (saved) return saved;
+    return renderDigestDetailHtml(report);
+  }
+
   function openDigestDetail(report) {
     if (!report) return;
-    var root = document.getElementById("digest-root");
-    var detail = document.getElementById("digest-detail");
-    var titleEl = document.getElementById("digest-detail-title");
-    var body = document.getElementById("digest-detail-body");
-    if (!detail || !body) return;
-    setHidden(root, true);
-    setHidden(detail, false);
-    pulseMotionEnter(detail);
-    if (titleEl) {
-      titleEl.textContent = (report.title || "Чат") + (report.report_date ? " · " + formatDigestDate(report.report_date) : "");
+    closeDigestDetail();
+    var date = String(report.report_date || "").trim();
+    var chatId = report.chat_id;
+    if (!date || chatId == null || chatId === "") {
+      openDigestEditorDetail(report);
+      return;
     }
-    body.innerHTML = renderDigestDetailHtml(report);
-    syncAppOverlay();
-    syncTelegramNativeBack();
+    apiFetch(
+      "/digest/reports/" + encodeURIComponent(date) + "/" + encodeURIComponent(String(chatId)),
+      { method: "GET" }
+    )
+      .then(function (fresh) {
+        openDigestEditorDetail(fresh || report);
+      })
+      .catch(function () {
+        openDigestEditorDetail(report);
+      });
+  }
+
+  function openDigestEditorDetail(report) {
+    if (!report) return;
+    resetNoteSheetState("");
+    var itemId = digestItemId(report);
+    if (!itemId) return;
+    var cleanTitle = digestTitleForEditor(report);
+    var cleanBody = digestBodyForEditor(report);
+    var wrap = document.createElement("div");
+    wrap.className = "note-editor-page";
+    clearNoteEditorTagsWrap();
+    var tagsWrap = document.getElementById("note-editor-tags-wrap");
+    if (tagsWrap) setHidden(tagsWrap, false);
+    mountShareControls("digest", itemId);
+    wrap.innerHTML = noteEditorPageInnerHtml("Заголовок");
+    syncNoteGptToolbarButton(true);
+    bindNoteGptToolbarButton();
+    var tocControls = bindNoteEditorTocControls(wrap);
+    var editorPad = wrap.querySelector(".note-editor-pad--body");
+    var titleInput = wrap.querySelector("#note-editor-title-input");
+    if (titleInput) titleInput.value = cleanTitle;
+
+    var saveTimer = null;
+    function readFields() {
+      return {
+        title: getNoteEditorTitle().trim(),
+        description: readActiveNoteEditorHtml(getLeftNoteRichEditor()),
+      };
+    }
+    async function persistDigestDraft() {
+      var fields = readFields();
+      var date = String(report.report_date || "").trim();
+      var chatId = report.chat_id;
+      var patchRes = await apiFetch(
+        "/digest/reports/" +
+          encodeURIComponent(date) +
+          "/" +
+          encodeURIComponent(String(chatId)),
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            title: fields.title,
+            body_html: fields.description,
+          }),
+        }
+      );
+      if (patchRes && patchRes.summary) report.summary = patchRes.summary;
+      if (patchRes && patchRes.title) report.title = patchRes.title;
+      var detailBodyDraft = getNoteEditorBodyEl();
+      if (detailBodyDraft && detailBodyDraft._noteEditor) {
+        detailBodyDraft._noteEditor.baseline = noteEditorSnapshot(fields.title, fields.description);
+      }
+    }
+    function schedulePatch() {
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(function () {
+        persistDigestDraft()
+          .then(function () {
+            setNoteEditorSaveHint("");
+          })
+          .catch(function (e) {
+            setNoteEditorSaveHint(e.message || "Не удалось сохранить отчёт");
+          });
+      }, 1500);
+    }
+
+    var modalBody = getNoteEditorBodyEl();
+    if (modalBody) {
+      modalBody.innerHTML = "";
+      modalBody.appendChild(wrap);
+      syncNoteCommentsPanel();
+      modalBody._openNoteGpt = async function () {
+        try {
+          await persistDigestDraft();
+        } catch (e) {
+          alert(e.message || String(e));
+          return;
+        }
+        openNoteDiscussion({ mode: "gpt", focus: true });
+      };
+      modalBody._noteEditorFlush = async function () {
+        if (saveTimer) {
+          clearTimeout(saveTimer);
+          saveTimer = null;
+        }
+        await persistDigestDraft();
+      };
+      modalBody._noteEditor = {
+        ready: false,
+        baseline: noteEditorSnapshot(cleanTitle, cleanBody),
+        getCurrent: function () {
+          return noteEditorSnapshot(
+            getNoteEditorTitle(),
+            readActiveNoteEditorHtml(getLeftNoteRichEditor())
+          );
+        },
+        runSave: async function () {
+          if (saveTimer) {
+            clearTimeout(saveTimer);
+            saveTimer = null;
+          }
+          try {
+            await persistDigestDraft();
+          } catch (e) {
+            alert(e.message || String(e));
+            return false;
+          }
+          modalBody._noteEditorFlush = null;
+          closeNoteEditorModal();
+          return true;
+        },
+      };
+    }
+    openNoteEditorModal("Дайджест");
+    mountNoteRichEditor(editorPad, cleanBody, schedulePatch, {
+      tocParent: tocControls.tocParent,
+      onTocNavigate: tocControls.close,
+      scrollParent: document.querySelector("#note-editor-overlay .note-editor-modal-body"),
+      extraTocItems: function (tocEl) {
+        appendNoteDiscussionToc(tocEl, tocControls.close);
+      },
+    }).then(function (editor) {
+      var detailBodyMount = getNoteEditorBodyEl();
+      if (detailBodyMount) detailBodyMount._noteRichEditor = editor;
+      if (detailBodyMount && detailBodyMount._noteEditor) {
+        detailBodyMount._noteEditor.ready = true;
+        detailBodyMount._noteEditor.baseline = noteEditorSnapshot(
+          getNoteEditorTitle(),
+          readActiveNoteEditorHtml()
+        );
+      }
+      refreshNoteCommentAnchors();
+    });
+    bindNoteTitleAutoresize(titleInput);
+    if (titleInput) titleInput.addEventListener("input", schedulePatch);
+    consumePendingDiscussOpen("digest", itemId);
   }
 
   function formatDigestDate(ymd) {
@@ -10895,8 +11059,11 @@
       panelKnowledge && !panelKnowledge.classList.contains("hidden");
     var profilePanelVisible = panelProfile && !panelProfile.classList.contains("hidden");
     var notesOpen = detail && !detail.classList.contains("hidden") && notesPanelVisible;
+    var panelDigest = document.getElementById("panel-digest");
+    var digestPanelVisible = panelDigest && !panelDigest.classList.contains("hidden");
     var noteEditorOpen =
-      isNoteEditorModalOpen() && (notesPanelVisible || knowledgePanelVisible);
+      isNoteEditorModalOpen() &&
+      (notesPanelVisible || knowledgePanelVisible || digestPanelVisible);
     var payOpen = pay && !pay.classList.contains("hidden") && profilePanelVisible;
     var expOpen = exp && !exp.classList.contains("hidden") && profilePanelVisible;
     var bookingOpen =
@@ -14214,8 +14381,11 @@
     });
     if (found && found.name) return found.name;
     var raw = String(id || "");
-    if (!raw) return "Модель";
-    return raw.split("/").pop() || raw;
+    if (!raw) return "GPT";
+    var short = raw.split("/").pop() || raw;
+    if (/^gpt-/i.test(short)) return "GPT-" + short.slice(4);
+    if (/^gpt/i.test(short)) return "GPT-" + short.slice(3).replace(/^[-_\s]+/, "");
+    return "GPT-" + short;
   }
 
   function closeNoteComposerMenus(except) {
@@ -17667,6 +17837,12 @@
       return "";
     }
     var title = "";
+    if (kind === "digest") {
+      try {
+        title = getNoteEditorTitle().trim();
+      } catch (_) {}
+      return title || fallback || "дайджесте";
+    }
     if (kind === "journal") {
       title =
         fromList(notesDataCache && notesDataCache.transcriptions) ||
@@ -19262,7 +19438,13 @@
     item.setAttribute("aria-live", "polite");
     var role = document.createElement("p");
     role.className = "note-discuss-role";
-    role.textContent = "GPT";
+    var mode = noteAskMode();
+    if (mode === "gpt" || !mode) {
+      role.textContent = gptModelShortName(selectedGptModelId()) || "GPT";
+    } else {
+      var agent = findUserAgent(mode);
+      role.textContent = (agent && agent.title) || "Агент";
+    }
     var bubble = document.createElement("div");
     bubble.className = "note-discuss-bubble note-discuss-bubble--pending";
     bubble.innerHTML =
@@ -19555,6 +19737,7 @@
             suffix: "",
             parent_id: parentId || null,
             as_role: agentId === "gpt" ? "gpt" : "agent:" + agentId,
+            model: agentId === "gpt" ? String((res && res.model) || selectedGptModelId() || "") : undefined,
             file_ids: gptFileIds,
           }),
         }
@@ -21041,7 +21224,10 @@
   function shareCommentAuthorLabel(c) {
     var api = window.NoteComments;
     if (api && api.isPaieComment && api.isPaieComment(c)) return "CHAIR";
-    if (api && api.isGptComment && api.isGptComment(c)) return "GPT";
+    if (api && api.isGptComment && api.isGptComment(c)) {
+      var gptName = String((c && c.author_name) || "").trim();
+      return gptName || "GPT";
+    }
     if (api && api.isResearchComment && api.isResearchComment(c)) return "Research";
     var name = String((c && c.author_name) || "Пользователь").trim();
     var uname = String((c && c.author_username) || "").trim();

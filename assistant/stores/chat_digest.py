@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+
+_ITEM_ID_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}):(-?\d+)$")
 
 _LOCK = threading.Lock()
 _CONN: Optional[sqlite3.Connection] = None
@@ -100,6 +103,18 @@ def _conn() -> sqlite3.Connection:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def make_item_id(report_date: str, chat_id: int) -> str:
+    return f"{(report_date or '').strip()}:{int(chat_id)}"
+
+
+def parse_item_id(item_id: str | int) -> tuple[str, int] | None:
+    raw = str(item_id or "").strip()
+    match = _ITEM_ID_RE.fullmatch(raw)
+    if not match:
+        return None
+    return match.group(1), int(match.group(2))
 
 
 def upsert_chat(
@@ -413,6 +428,30 @@ def upsert_report(
         conn.commit()
 
 
+def update_report_summary(
+    report_date: str,
+    chat_id: int,
+    summary: dict[str, Any],
+) -> dict[str, Any] | None:
+    day = (report_date or "").strip()
+    cid = int(chat_id)
+    payload = json.dumps(summary, ensure_ascii=False)
+    with _LOCK:
+        conn = _conn()
+        cur = conn.execute(
+            """
+            UPDATE leo_chat_daily_reports
+            SET summary_json = ?
+            WHERE report_date = ? AND chat_id = ?
+            """,
+            (payload, day, cid),
+        )
+        conn.commit()
+        if cur.rowcount <= 0:
+            return None
+    return get_report(day, cid)
+
+
 def list_reports_for_chats(
     chat_ids: list[int],
     *,
@@ -470,9 +509,12 @@ def _report_row(row: sqlite3.Row) -> dict[str, Any]:
         except json.JSONDecodeError:
             summary = {"brief": str(raw)}
     title = str(row["title"] or "") or f"Чат {row['chat_id']}"
+    day = str(row["report_date"])
+    cid = int(row["chat_id"])
     return {
-        "report_date": str(row["report_date"]),
-        "chat_id": int(row["chat_id"]),
+        "report_date": day,
+        "chat_id": cid,
+        "item_id": make_item_id(day, cid),
         "title": title,
         "chat_type": str(row["chat_type"] or ""),
         "summary": summary,

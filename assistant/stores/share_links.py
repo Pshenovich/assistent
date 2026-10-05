@@ -11,7 +11,7 @@ from typing import Any, Optional
 from assistant.stores import notes as notes_store
 
 _LOCK = notes_store._LOCK  # type: ignore[attr-defined]
-_VALID_KINDS = frozenset({"local", "journal"})
+_VALID_KINDS = frozenset({"local", "journal", "digest"})
 _VALID_ACCESS = frozenset({"view", "comment"})
 _DEFAULT_ACCESS = "view"
 _TOKEN_BYTES = 24

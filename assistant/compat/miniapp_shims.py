@@ -85,6 +85,7 @@ def gpt_openrouter_answer_with_context(
         "answer": str(out.get("answer") or ""),
         "bullets": [],
         "images": out.get("images") if isinstance(out.get("images"), list) else [],
+        "model": str(out.get("model") or model or ""),
     }
 
 

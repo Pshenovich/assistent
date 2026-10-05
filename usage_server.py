@@ -2515,6 +2515,11 @@ class _MiniappDigestRefreshBody(BaseModel):
     date: Optional[str] = None
 
 
+class _MiniappDigestReportPatch(BaseModel):
+    title: Optional[str] = None
+    body_html: Optional[str] = None
+
+
 class _MiniappBillingPromoBody(BaseModel):
     code: str = ""
 
@@ -2594,6 +2599,7 @@ class _MiniappShareCommentCreate(BaseModel):
     suffix: str = ""
     parent_id: Optional[int] = None
     as_role: Optional[str] = None
+    model: Optional[str] = None
     file_ids: list[int] = Field(default_factory=list)
 
 
@@ -2824,6 +2830,7 @@ _SHARE_KIND_LABELS = {
     "obuchat_transcribe": "Транскрипция",
     "format_note": "Заметка",
     "answer_with_context": "Ответ",
+    "digest": "Дайджест",
 }
 
 
@@ -3050,7 +3057,47 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
             "updated_at": item.get("ts_utc"),
             "access": share_links_store.normalize_access(link.get("access")),
         }
+    if kind == "digest":
+        try:
+            uid_i = int(uid)
+        except (TypeError, ValueError):
+            return None
+        row = _digest_report_for_user(uid_i, item_id)
+        if not row:
+            return None
+        summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+        title = (
+            str((summary or {}).get("editor_title") or "").strip()
+            or str(row.get("title") or "").strip()
+            or "Дайджест"
+        )
+        body = str((summary or {}).get("body_html") or row.get("preview") or "")
+        return {
+            "kind": "digest",
+            "operation": "chat_digest",
+            "label": _SHARE_KIND_LABELS.get("digest", "Дайджест"),
+            "title": title[:500],
+            "body": body[:120000],
+            "updated_at": row.get("generated_at"),
+            "access": share_links_store.normalize_access(link.get("access")),
+            "item_id": item_id,
+        }
     return None
+
+
+def _digest_report_for_user(uid: int, item_id: str) -> dict[str, Any] | None:
+    from assistant.stores import chat_digest as digest_store
+    from assistant.stores import user_prefs
+
+    parsed = digest_store.parse_item_id(item_id)
+    if not parsed:
+        return None
+    day, chat_id = parsed
+    if not user_prefs.digest_enabled(uid):
+        return None
+    if int(chat_id) not in set(user_prefs.digest_chat_ids(uid)):
+        return None
+    return digest_store.get_report(day, chat_id)
 
 
 def _owner_can_share_item(uid: str, kind: str, item_id: str) -> bool:
@@ -3079,6 +3126,14 @@ def _resolve_item_owner(uid: str, kind: str, item_id: str) -> str | None:
         if not thread:
             return None
         return str(thread.get("owner_user_id") or "") or None
+    if kind == "digest":
+        try:
+            uid_i = int(uid)
+        except (TypeError, ValueError):
+            return None
+        if _digest_report_for_user(uid_i, item_id):
+            return str(uid)
+        return None
     if _owner_can_share_item(uid, kind, item_id):
         return str(uid)
     return None
@@ -5131,6 +5186,43 @@ async def miniapp_digest_report_detail(
     return result
 
 
+@miniapp_router.patch("/digest/reports/{report_date}/{chat_id}")
+async def miniapp_digest_report_patch(
+    report_date: str,
+    chat_id: int,
+    body: _MiniappDigestReportPatch,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import chat_digest as digest_store
+    from assistant.stores import user_prefs
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        if not user_prefs.digest_enabled(uid):
+            return {"_error": "off"}
+        selected = set(user_prefs.digest_chat_ids(uid))
+        if int(chat_id) not in selected:
+            return {"_error": "not_selected"}
+        row = digest_store.get_report(report_date, int(chat_id))
+        if not row:
+            return {"_error": "missing"}
+        summary = dict(row.get("summary") or {})
+        if body.title is not None:
+            summary["editor_title"] = str(body.title or "").strip()[:500]
+        if body.body_html is not None:
+            summary["body_html"] = str(body.body_html or "")[:120000]
+        updated = digest_store.update_report_summary(
+            report_date, int(chat_id), summary
+        )
+        return updated or {"_error": "missing"}
+
+    result = await run_in_threadpool(_run)
+    if not result or result.get("_error"):
+        raise HTTPException(status_code=404, detail="Отчёт не найден")
+    return result
+
+
 @miniapp_router.post("/digest/refresh")
 async def miniapp_digest_refresh(
     body: Optional[_MiniappDigestRefreshBody] = None,
@@ -5821,7 +5913,7 @@ async def miniapp_gpt_chat(
 
         kind = str(body.item_kind or "").strip()
         iid = str(body.item_id or "").strip()
-        if kind not in ("local", "journal", "chat") or not iid:
+        if kind not in ("local", "journal", "chat", "digest") or not iid:
             return []
         owner = _resolve_item_owner(str(int(principal.telegram_user_id)), kind, iid)
         if not owner:
@@ -5942,7 +6034,7 @@ async def miniapp_gpt_chat(
         if not images:
             from assistant.stores import comment_files as _cf
 
-            if kind in ("local", "journal", "chat") and iid and (
+            if kind in ("local", "journal", "chat", "digest") and iid and (
                 _cf.wants_image_delivery(prompt)
                 or _cf.wants_resend_attachment(prompt)
             ):
@@ -6038,13 +6130,17 @@ async def miniapp_gpt_chat(
         raise HTTPException(status_code=502, detail=str(e)) from e
     if not out:
         raise HTTPException(status_code=502, detail="Пустой ответ модели")
+    from assistant.integrations.openrouter_client import gpt_display_label
+
     files = out.get("files") if isinstance(out.get("files"), list) else []
+    used_model = str(out.get("model") or run_model or "").strip()
     return {
         "answer": str(out.get("answer") or ""),
         "bullets": out.get("bullets") if isinstance(out.get("bullets"), list) else [],
         "kb_version": str(out.get("kb_version") or ""),
         "files": files,
-        "model": run_model or "",
+        "model": used_model,
+        "model_label": gpt_display_label(used_model),
     }
 
 
@@ -7478,7 +7574,9 @@ async def miniapp_share_comments_create(
     prefix = body.prefix
     role = str(body.as_role or "").strip().lower()
     if role == "gpt":
-        author_name = share_comments_store.GPT_AUTHOR_NAME
+        from assistant.integrations.openrouter_client import gpt_display_label
+
+        author_name = gpt_display_label(body.model) or share_comments_store.GPT_AUTHOR_NAME
         author_username = share_comments_store.GPT_AUTHOR_USERNAME
         prefix = share_comments_store.GPT_PREFIX
     elif role.startswith("agent:"):

@@ -504,8 +504,9 @@
     if (!c) return false;
     if (c.is_gpt) return true;
     var uname = String(c.author_username || "").trim().toLowerCase();
+    if (uname === "gpt") return true;
     var name = String(c.author_name || "").trim().toUpperCase();
-    return uname === "gpt" || name === "GPT";
+    return name === "GPT" || name.indexOf("GPT-") === 0 || name.indexOf("GPT ") === 0;
   }
 
   function isGptTurn(c) {

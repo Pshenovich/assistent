@@ -266,6 +266,14 @@ class ShareCommentsTests(unittest.TestCase):
         listed = share_comments.list_comments(8, "local", 3)
         thread = share_comments.paie_thread(listed)
         self.assertTrue(share_comments.is_gpt_comment(gpt_a))
+        self.assertTrue(
+            share_comments.is_gpt_comment(
+                {"author_username": "gpt", "author_name": "GPT-4.1"}
+            )
+        )
+        self.assertTrue(
+            share_comments.is_gpt_comment({"author_username": "", "author_name": "GPT-4o"})
+        )
         self.assertFalse(share_comments.is_gpt_comment(gpt_q))
         self.assertTrue(share_comments.is_gpt_turn(gpt_q))
         self.assertFalse(share_comments.is_paie_comment(gpt_a))

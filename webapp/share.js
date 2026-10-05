@@ -298,7 +298,10 @@
   function authorLabel(c) {
     var api = commentsApi();
     if (api && api.isPaieComment && api.isPaieComment(c)) return "CHAIR";
-    if (api && api.isGptComment && api.isGptComment(c)) return "GPT";
+    if (api && api.isGptComment && api.isGptComment(c)) {
+      var gptName = String((c && c.author_name) || "").trim();
+      return gptName || "GPT";
+    }
     if (api && api.isResearchComment && api.isResearchComment(c)) return "Research";
     var name = String((c && c.author_name) || "Пользователь").trim();
     var uname = String((c && c.author_username) || "").trim();

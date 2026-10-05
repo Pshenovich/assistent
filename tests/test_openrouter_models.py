@@ -4,6 +4,7 @@ from assistant.integrations.openrouter_client import (
     _payload_for_comet,
     build_gpt_picker_models,
     extract_chat_message_media,
+    gpt_display_label,
     model_emits_images,
     normalize_openrouter_models,
     sanitize_openrouter_model_id,
@@ -19,6 +20,13 @@ class OpenRouterModelsTests(unittest.TestCase):
         )
         self.assertIsNone(sanitize_openrouter_model_id("../etc/passwd"))
         self.assertIsNone(sanitize_openrouter_model_id("bad model"))
+
+    def test_gpt_display_label(self) -> None:
+        self.assertEqual(gpt_display_label(None), "GPT")
+        self.assertEqual(gpt_display_label("openai/gpt-4.1"), "GPT-4.1")
+        self.assertEqual(gpt_display_label("openai/gpt-4o-mini"), "GPT-4o mini")
+        self.assertEqual(gpt_display_label("openai/gpt-5.6-sol"), "GPT-5.6 Sol")
+        self.assertEqual(gpt_display_label("anthropic/claude-sonnet-4"), "GPT-claude-sonnet-4")
 
     def test_normalize_filters_non_text_and_keeps_default(self) -> None:
         out = normalize_openrouter_models(

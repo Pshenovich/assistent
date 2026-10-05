@@ -73,6 +73,27 @@ GPT_PICKER_MODELS: tuple[tuple[str, str], ...] = (
 )
 
 
+def gpt_display_label(model_id: str | None) -> str:
+    """Короткий ярлык для пузыря ответа: GPT-4.1, GPT-4o mini, …"""
+    mid = sanitize_openrouter_model_id(model_id) or ""
+    if not mid:
+        return "GPT"
+    for pid, pname in GPT_PICKER_MODELS:
+        if pid == mid:
+            return pname
+    short = mid.split("/")[-1].strip()
+    if not short:
+        return "GPT"
+    lower = short.lower()
+    if lower.startswith("gpt-"):
+        rest = short[4:].strip()
+        return f"GPT-{rest}" if rest else "GPT"
+    if lower.startswith("gpt"):
+        rest = short[3:].lstrip("-_ ").strip()
+        return f"GPT-{rest}" if rest else "GPT"
+    return f"GPT-{short}"
+
+
 def default_openrouter_model() -> str:
     return (
         os.getenv("OPENROUTER_MODEL_ASK", "").strip()
