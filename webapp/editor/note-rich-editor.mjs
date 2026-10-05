@@ -358,6 +358,7 @@ function repairOrphanTaskText(root) {
     taskUl.setAttribute("data-type", "taskList");
 
     taskUl.querySelectorAll(":scope > li").forEach(function (li) {
+      if (li.querySelector(".note-task-chip, [data-leo-task-id]")) return;
       const text = extractTaskText(li);
       const checked =
         li.hasAttribute("checked") || li.getAttribute("data-checked") === "true";
@@ -459,6 +460,9 @@ function importBody(body) {
       /<input[^>]+type=["']checkbox["']/i.test(raw) ||
       /<li\b[^>]*\schecked(?:=["']|>|\s)/i.test(raw))
   ) {
+    return prepareHtmlForEditor(raw);
+  }
+  if (hasHtml && /data-leo-task-id|note-task-chip/i.test(raw)) {
     return prepareHtmlForEditor(raw);
   }
   if (hasHtml) {
@@ -1631,10 +1635,11 @@ function createLeoTaskExtensions(ctx) {
           appendTransaction: function (transactions, oldState, newState) {
             if (ctx.suppressChipDelete) return null;
             if (!transactions.some(function (tr) { return tr.docChanged; })) return null;
-            var user = transactions.some(function (tr) {
-              return tr.docChanged && tr.getMeta("addToHistory") !== false;
+            var fromUi = transactions.some(function (tr) {
+              var ev = tr.getMeta("uiEvent");
+              return ev === "key" || ev === "delete" || ev === "cut";
             });
-            if (!user) return null;
+            if (!fromUi) return null;
             var oldIds = collectLeoTaskIds(oldState.doc);
             var newIds = collectLeoTaskIds(newState.doc);
             oldIds.forEach(function (id) {
@@ -2016,7 +2021,12 @@ function mount(container, options) {
       var parsed = importBody(html || "");
       var keep = !!opts.preserveCursor;
       var from = editor.state.selection.from;
-      editor.commands.setContent(parsed, false);
+      taskCtx.suppressChipDelete = true;
+      try {
+        editor.commands.setContent(parsed, false);
+      } finally {
+        taskCtx.suppressChipDelete = false;
+      }
       if (keep) {
         var max = editor.state.doc.content.size;
         var pos = Math.max(1, Math.min(from, max));
@@ -2117,6 +2127,49 @@ function mount(container, options) {
         }
       });
       if (changed) editor.view.dispatch(tr);
+    },
+    getTaskChipMeta: function (taskId) {
+      var id = String(taskId || "");
+      var found = null;
+      editor.state.doc.descendants(function (node, pos) {
+        if (!id || found || node.type.name !== "leoTaskChip") return;
+        if (String(node.attrs.taskId) !== id) return;
+        var parent = editor.state.doc.resolve(pos).parent;
+        var around = "";
+        try {
+          around = parent.textBetween(0, parent.content.size, " ", " ");
+        } catch (_) {}
+        found = {
+          taskId: id,
+          label: normalizeTaskChipLabel(node.attrs.label),
+          title: String(around || "")
+            .replace(String(node.attrs.label || ""), " ")
+            .replace(/\s+/g, " ")
+            .trim(),
+        };
+      });
+      return found;
+    },
+    remapTaskChip: function (fromId, toId, label) {
+      var src = String(fromId || "");
+      var dst = String(toId || "");
+      if (!src || !dst) return;
+      var tr = editor.state.tr;
+      var changed = false;
+      editor.state.doc.descendants(function (node, pos) {
+        if (node.type.name === "leoTaskChip" && String(node.attrs.taskId) === src) {
+          tr.setNodeMarkup(pos, undefined, {
+            taskId: dst,
+            label: normalizeTaskChipLabel(label || node.attrs.label),
+          });
+          changed = true;
+        }
+      });
+      if (changed) {
+        taskCtx.suppressChipDelete = true;
+        editor.view.dispatch(tr);
+        taskCtx.suppressChipDelete = false;
+      }
     },
     removeTaskChip: function (taskId) {
       var id = String(taskId || "");

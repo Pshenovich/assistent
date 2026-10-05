@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261005-note-drafts-2";
+  var WEBAPP_BUILD = "20261005-task-chip-keep";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261005-note-drafts-2";
+  const NOTE_EDITOR_ASSET_V = "20261005-task-chip-keep";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -9869,28 +9869,72 @@
   function openTaskFromChip(taskId) {
     var id = String(taskId || "").trim();
     if (!id) return;
+    function show(task) {
+      if (!task) return;
+      var ev = Object.assign({}, task.event || {}, task, {
+        id: "task-" + task.id,
+        task_id: task.id,
+      });
+      openTaskModal(ev, {
+        onSaved: function (saved) {
+          var ed = getActiveNoteRichEditor && getActiveNoteRichEditor();
+          if (ed && ed.updateTaskChip && saved) {
+            ed.updateTaskChip(
+              String(saved.id || task.id),
+              saved.chip_label || (saved.event && saved.event.chip_label)
+            );
+          }
+        },
+        onDeleted: function () {
+          var ed = getActiveNoteRichEditor && getActiveNoteRichEditor();
+          if (ed && ed.removeTaskChip) ed.removeTaskChip(String(task.id || id));
+        },
+      });
+    }
+    function recreateFromChip() {
+      var ed = getActiveNoteRichEditor && getActiveNoteRichEditor();
+      var meta = ed && ed.getTaskChipMeta ? ed.getTaskChipMeta(id) : null;
+      var label = (meta && meta.label) || "";
+      var title = (meta && meta.title) || "";
+      if (!label && !title) {
+        alert("Задача не найдена");
+        return;
+      }
+      apiFetch("/calendar/tasks", {
+        method: "POST",
+        body: JSON.stringify({
+          text: label,
+          title: title,
+          note_id: currentOpenNoteId(),
+        }),
+      })
+        .then(function (r) {
+          var task = r && r.task;
+          if (!task) throw new Error("Не удалось восстановить задачу");
+          if (ed && ed.remapTaskChip) {
+            ed.remapTaskChip(id, task.id, task.chip_label || label);
+          }
+          loadActual();
+          show(task);
+        })
+        .catch(function (err) {
+          alert((err && err.message) || "Задача не найдена");
+        });
+    }
     apiFetch("/calendar/tasks/" + encodeURIComponent(id), { method: "GET" })
       .then(function (r) {
         var task = r && r.task;
-        if (!task) return;
-        var ev = Object.assign({}, task.event || {}, task, {
-          id: "task-" + id,
-          task_id: id,
-        });
-        openTaskModal(ev, {
-          onSaved: function (saved) {
-            var ed = getActiveNoteRichEditor && getActiveNoteRichEditor();
-            if (ed && ed.updateTaskChip && saved) {
-              ed.updateTaskChip(id, saved.chip_label || (saved.event && saved.event.chip_label));
-            }
-          },
-          onDeleted: function () {
-            var ed = getActiveNoteRichEditor && getActiveNoteRichEditor();
-            if (ed && ed.removeTaskChip) ed.removeTaskChip(id);
-          },
-        });
+        if (!task) {
+          recreateFromChip();
+          return;
+        }
+        show(task);
       })
       .catch(function (e) {
+        if (e && e.status === 404) {
+          recreateFromChip();
+          return;
+        }
         alert((e && e.message) || "Не удалось открыть задачу");
       });
   }

@@ -94,6 +94,11 @@ def test_parse_slash_today_tomorrow_weekday(tasks_db):
     assert dotted["start"].hour == 10
     assert dotted["title"] == "Задача"
 
+    chip = store.parse_slash_when("5 окт, 14:00", tz=tz, now=now)
+    assert chip["start"].date().isoformat() == "2026-10-05"
+    assert chip["start"].hour == 14
+    assert chip["start"].minute == 0
+
     full = store.parse_slash_when("/19.05.2026 09:30 план", tz=tz, now=now)
     assert full["start"].date().isoformat() == "2026-05-19"
     assert full["start"].hour == 9
