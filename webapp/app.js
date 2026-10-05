@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261005-note-task-sync";
+  var WEBAPP_BUILD = "20261005-heading-pdf";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261005-note-task-sync";
+  const NOTE_EDITOR_ASSET_V = "20261005-heading-pdf";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -2656,7 +2656,9 @@
   }
 
   function journalBodyForEditor(it) {
-    var body = stripJournalEmbeddedFooters(String((it && (it.body || it.preview)) || ""));
+    var body = stripJournalEmbeddedFooters(
+      String((it && (it.body || it.description || it.preview)) || "")
+    );
     if (
       window.NoteHtml &&
       typeof window.NoteHtml.normalizeCollapsedMarkdown === "function"
@@ -2680,7 +2682,7 @@
     var doc = new DOMParser().parseFromString("<div>" + raw + "</div>", "text/html");
     var root = doc.body.firstChild;
     if (!root) return raw;
-    var nodes = root.querySelectorAll("h2, h3, h4, h5, h6");
+    var nodes = root.querySelectorAll("h1, h2, h3, h4, h5, h6");
     for (var i = 0; i < nodes.length; i++) {
       var heading = nodes[i];
       if (!isTaskSectionHeadingText(heading.textContent || "")) continue;
@@ -2705,10 +2707,6 @@
     var clean = sanitizeNoteBody(journalBodyForEditor(it));
     if (!clean) return "";
     if (noteBodyHasHtml(clean)) {
-      var plain = htmlToPlainText(clean);
-      if (looksLikeMarkdown(plain)) {
-        return plain;
-      }
       return promoteSummaryTaskSections(
         normalizeSummarySectionHtml(sanitizeSummaryHtml(clean))
       );
@@ -3052,10 +3050,12 @@
     persistNotesCacheToDisk();
   }
 
-  async function requestTranscriptionPdf(noteId) {
-    await apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/pdf", {
-      method: "POST",
-    });
+  async function requestNotePdf(kind, noteId) {
+    var path =
+      kind === "journal"
+        ? "/notes/journal/" + encodeURIComponent(String(noteId)) + "/pdf"
+        : "/notes/local/" + encodeURIComponent(String(noteId)) + "/pdf";
+    await apiFetch(path, { method: "POST" });
     alert("Файл генерируется, по готовности будет отправлен в чат");
   }
 
@@ -14245,6 +14245,17 @@
       });
     }
 
+    var shareKind = String(wrap._shareKind || "");
+    var shareId = wrap._shareId ? String(wrap._shareId) : "";
+    if (shareId && (shareKind === "local" || shareKind === "journal")) {
+      addItem("Скачать PDF", function () {
+        closeNoteMoreMenu();
+        requestNotePdf(shareKind, shareId).catch(function (err) {
+          alert(err.message || String(err));
+        });
+      });
+    }
+
     if (!shared) {
       addItem("Поделиться", function () {
         closeNoteMoreMenu();
@@ -22788,13 +22799,11 @@
       listShareCtx = noteCardShareCtx(n);
       openShareAccessSheet();
     });
-    if (isTranscriptionNoteItem(n)) {
-      addMoreItem("Скачать PDF", function () {
-        requestTranscriptionPdf(id).catch(function (err) {
-          alert(err.message || String(err));
-        });
+    addMoreItem("Скачать PDF", function () {
+      requestNotePdf("local", id).catch(function (err) {
+        alert(err.message || String(err));
       });
-    }
+    });
     addMoreItem(n.pinned ? "Открепить" : "Закрепить", function () {
       toggleNotePin(id, !n.pinned);
     });
@@ -23520,6 +23529,7 @@
       br: true,
       p: true,
       a: true,
+      h1: true,
       h2: true,
       h3: true,
       h4: true,
@@ -23722,6 +23732,13 @@
     const cleanTitle = sanitizeNoteTitle(sourceTitle) || String(sourceTitle || "");
     const cleanBody = sanitizeNoteBody(sourceBody);
     var isKnowledge = !!(opts && opts.knowledge) || isKnowledgeNoteItem(n);
+    var editorBody = isTranscriptionNoteItem(n)
+      ? prepareJournalBodyForEditor({
+          body: sourceBody,
+          description: sourceBody,
+          preview: n && n.preview,
+        })
+      : cleanBody;
 
     const wrap = document.createElement("div");
     wrap.className = "note-editor-page";
@@ -24220,7 +24237,7 @@
       modalBody._noteEditorSchedule = schedulePatch;
       modalBody._noteEditor = {
         ready: false,
-        baseline: noteEditorSnapshot(cleanTitle, cleanBody),
+        baseline: noteEditorSnapshot(cleanTitle, editorBody),
         getCurrent: function () {
           return noteEditorSnapshot(
             getNoteEditorTitle(),
@@ -24256,7 +24273,7 @@
     } else {
     mountNoteRichEditor(
       editorPad,
-      isTranscriptionNoteItem(n) ? prepareJournalBodyForEditor(n) : cleanBody,
+      editorBody,
       function () {
         if (isPrimarySheetId(noteSheetState.leftId)) schedulePatch();
         else scheduleExtraSheetPersist(noteSheetState.leftId);
@@ -24295,7 +24312,7 @@
       if (!noteIsCreate && noteId && !isKnowledge) startNoteCollab(noteId, n);
     });
     }
-    hydrateNoteSheets(isKnowledge ? null : n, cleanBody);
+    hydrateNoteSheets(isKnowledge ? null : n, editorBody);
     bindNoteTitleAutoresize(titleInput);
     if (titleInput) titleInput.addEventListener("input", schedulePatch);
     if (!noteIsCreate && noteId) consumePendingDiscussOpen("local", noteId);

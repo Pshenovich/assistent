@@ -451,37 +451,16 @@ function importBody(body) {
   const raw = normalizeCollapsedMarkdown(body);
   if (!raw) return "";
   const hasHtml = /<[a-z][\s\S]*>/i.test(raw);
-  if (hasHtml && /<table[\s>]/i.test(raw)) {
-    return prepareHtmlForEditor(raw);
-  }
-  if (
-    hasHtml &&
-    (/\bnote-task-list\b/i.test(raw) ||
-      /<input[^>]+type=["']checkbox["']/i.test(raw) ||
-      /<li\b[^>]*\schecked(?:=["']|>|\s)/i.test(raw))
-  ) {
-    return prepareHtmlForEditor(raw);
-  }
-  if (hasHtml && /data-leo-task-id|note-task-chip/i.test(raw)) {
-    return prepareHtmlForEditor(raw);
-  }
   if (hasHtml) {
-    const plain = raw
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<\/(p|div|li|h[1-6])>/gi, "\n")
-      .replace(/<[^>]+>/g, "")
-      .replace(/\u00a0/g, " ")
-      .trim();
-    if (/(^|\n|\s)#{1,6}\s|\*\*[^*]+\*\*|(^|\n)-\s+\[[ xX]\]\s|(^|\n)[-*•]\s/.test(plain)) {
-      return window.NoteHtml && window.NoteHtml.markdownToHtml
-        ? prepareHtmlForEditor(window.NoteHtml.markdownToHtml(plain))
-        : prepareHtmlForEditor(markdownTasksToHtml(plain));
-    }
     const splitIdx = raw.split("\n").findIndex((l) => /^-\s+\[[ xX]\]\s/.test(l.trim()));
     if (splitIdx >= 0) {
       const htmlPart = raw.split("\n").slice(0, splitIdx).join("\n").trim();
       const taskPart = raw.split("\n").slice(splitIdx).join("\n").trim();
-      return prepareHtmlForEditor(htmlPart) + prepareHtmlForEditor(markdownTasksToHtml(taskPart));
+      if (htmlPart && !/<[a-z][\s\S]*>/i.test(taskPart)) {
+        return (
+          prepareHtmlForEditor(htmlPart) + prepareHtmlForEditor(markdownTasksToHtml(taskPart))
+        );
+      }
     }
     return prepareHtmlForEditor(raw);
   }

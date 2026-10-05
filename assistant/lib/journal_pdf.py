@@ -144,12 +144,19 @@ def _operation_label(op: str) -> str:
         return "Саммари"
     if op == "obuchat_transcribe":
         return "Транскрипция"
+    if op == "note":
+        return "Заметка"
     return op or "Запись"
 
 
 def _filename_for_row(row: dict[str, Any], *, title: str) -> str:
     op = str(row.get("operation") or "")
-    base = "samari" if op == "summarize" else "transkript"
+    if op == "summarize":
+        base = "samari"
+    elif op == "note":
+        base = "zametka"
+    else:
+        base = "transkript"
     eid = row.get("id")
     slug = re.sub(r"[^\w\-]+", "_", title.lower(), flags=re.UNICODE)[:40].strip("_")
     parts = [base]
@@ -262,11 +269,11 @@ def _looks_like_markdown(text: str) -> bool:
 def _prepare_body_text(raw_body: str, op: str) -> str:
     body = (raw_body or "").strip()
     body = _FOOTER_RE.sub("", body).strip()
-    if op == "summarize" and _HTML_TAG_RE.search(body) and not _looks_like_markdown(body):
+    if op in ("summarize", "note") and _HTML_TAG_RE.search(body) and not _looks_like_markdown(body):
         from assistant.lib.telegram_markdown import html_to_rich_markdown
 
         body = html_to_rich_markdown(body)
-    if op == "summarize" and _looks_like_markdown(body):
+    if op in ("summarize", "note") and _looks_like_markdown(body):
         body = normalize_collapsed_markdown(body)
     return body
 
@@ -375,8 +382,8 @@ def _render_journal_body(pdf: FPDF, body: str, op: str, font: str) -> None:
 def build_journal_pdf(row: dict[str, Any]) -> tuple[bytes, str, str]:
     """Возвращает (pdf_bytes, filename, caption)."""
     op = str(row.get("operation") or "")
-    if op not in ("obuchat_transcribe", "summarize"):
-        raise ValueError("PDF доступен только для транскрипций и саммари.")
+    if op not in ("obuchat_transcribe", "summarize", "note"):
+        raise ValueError("PDF доступен только для транскрипций, саммари и заметок.")
     raw = row.get("raw_usage_json")
     raw_s = raw if isinstance(raw, str) else None
     meta = journal_meta_from_raw(raw_s)
@@ -443,15 +450,17 @@ def journal_pdf_for_user(telegram_user_id: str, event_id: int) -> tuple[bytes, s
 def build_note_pdf(note: dict[str, Any], *, which: str = "auto") -> tuple[bytes, str, str]:
     from assistant.services import transcription_notes as tnotes
 
-    if not tnotes.is_transcription_note(note):
-        raise ValueError("PDF доступен только для транскрипций.")
-    mode = (which or "auto").strip().lower()
-    if mode == "transcript" or (mode == "auto" and not tnotes.has_summary(note)):
-        body = tnotes.transcript_html(note)
-        op = "obuchat_transcribe"
+    if tnotes.is_transcription_note(note):
+        mode = (which or "auto").strip().lower()
+        if mode == "transcript" or (mode == "auto" and not tnotes.has_summary(note)):
+            body = tnotes.transcript_html(note)
+            op = "obuchat_transcribe"
+        else:
+            body = tnotes.summary_html(note) or tnotes.transcript_html(note)
+            op = "summarize"
     else:
-        body = tnotes.summary_html(note) or tnotes.transcript_html(note)
-        op = "summarize"
+        body = str(note.get("body") or note.get("description") or "")
+        op = "note"
     meta = note.get("meta") if isinstance(note.get("meta"), dict) else {}
     raw = json.dumps(
         {

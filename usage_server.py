@@ -7336,13 +7336,12 @@ async def miniapp_local_note_pdf(
     background_tasks: BackgroundTasks,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
-    from assistant.services import transcription_notes as tnotes
     from assistant.stores import notes as notes_store
 
     uid = int(principal.telegram_user_id)
     note = await run_in_threadpool(notes_store.get_accessible_note, uid, note_id)
-    if not note or not tnotes.is_transcription_note(note):
-        raise HTTPException(status_code=404, detail="Транскрипция не найдена")
+    if not note:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
 
     def _send() -> None:
         from assistant.skills.journal_pdf import deliver_note_pdf_sync

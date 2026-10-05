@@ -150,3 +150,23 @@ def test_build_note_pdf_from_transcription_note(tmp_path, monkeypatch):
     assert data2[:4] == b"%PDF"
     assert "transkript" in fname2
     assert "Транскрипция" in caption2
+
+
+def test_build_note_pdf_from_local_note(tmp_path, monkeypatch):
+    try:
+        jp._resolve_font_paths()
+    except RuntimeError:
+        pytest.skip("нет шрифта для PDF")
+    monkeypatch.setenv("NOTES_DB_PATH", str(tmp_path / "notes.sqlite"))
+    from assistant.stores import notes as notes_store
+
+    notes_store._CONN = None  # type: ignore[attr-defined]
+    note = notes_store.create_note(
+        3,
+        "План спринта",
+        "<h2>Цели</h2><p>Закрыть релиз</p><ul><li>QA</li></ul>",
+    )
+    data, fname, caption = jp.build_note_pdf(note)
+    assert data[:4] == b"%PDF"
+    assert fname.startswith("zametka")
+    assert "Заметка" in caption
