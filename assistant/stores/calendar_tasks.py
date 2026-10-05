@@ -267,7 +267,7 @@ def chip_label(task: dict[str, Any], *, tz: ZoneInfo | None = None) -> str:
         "ноя",
         "дек",
     )
-    return f"Задача {start.day} {months[start.month - 1]}, {start.strftime('%H:%M')}"
+    return f"{start.day} {months[start.month - 1]}, {start.strftime('%H:%M')}"
 
 
 def task_chip_html(task: dict[str, Any], *, tz: ZoneInfo | None = None) -> str:
@@ -275,7 +275,9 @@ def task_chip_html(task: dict[str, Any], *, tz: ZoneInfo | None = None) -> str:
     label = html.escape(chip_label(task, tz=tz), quote=True)
     return (
         f'<span data-leo-task-id="{tid}" class="note-task-chip" '
-        f'contenteditable="false">{label}</span>'
+        f'contenteditable="false">'
+        f'<span class="note-task-chip-icon" aria-hidden="true"></span>'
+        f'<span class="note-task-chip-label">{label}</span></span>'
     )
 
 

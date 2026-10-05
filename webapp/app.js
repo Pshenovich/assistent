@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261005-digest-header";
+  var WEBAPP_BUILD = "20261005-task-chip";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261005-digest-header";
+  const NOTE_EDITOR_ASSET_V = "20261005-task-chip";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -9522,7 +9522,7 @@
       .then(function (r) {
         var task = r && r.task;
         if (!task) throw new Error("Не удалось создать задачу");
-        if (typeof done === "function") done(task.id, task.chip_label || "Задача");
+        if (typeof done === "function") done(task.id, task.chip_label || "");
         loadActual();
       })
       .catch(function (e) {
@@ -21367,10 +21367,27 @@
         },
         {
           onTask: function () {
-            openTaskModal({
-              summary: sel.quote,
-              note_id: currentOpenNoteId(),
-            });
+            var ed = getActiveNoteRichEditor && getActiveNoteRichEditor();
+            var range = ed && ed.getSelectionRange ? ed.getSelectionRange() : null;
+            openTaskModal(
+              {
+                summary: sel.quote,
+                note_id: currentOpenNoteId(),
+              },
+              {
+                onSaved: function (saved) {
+                  var inst = getActiveNoteRichEditor && getActiveNoteRichEditor();
+                  if (!inst || !saved || !saved.id) return;
+                  var label =
+                    saved.chip_label || (saved.event && saved.event.chip_label) || "";
+                  if (inst.insertTaskChipAfter && range) {
+                    inst.insertTaskChipAfter(saved.id, label, range.to);
+                  } else if (inst.insertTaskChip) {
+                    inst.insertTaskChip(saved.id, label);
+                  }
+                },
+              }
+            );
           },
         }
       );

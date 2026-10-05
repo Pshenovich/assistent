@@ -1286,6 +1286,34 @@ var TASK_SLASH_ENTER_RE = new RegExp(
   "i"
 );
 
+var TASK_CHIP_ICON_SVG =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' +
+  "</svg>";
+
+function normalizeTaskChipLabel(label) {
+  var s = String(label || "").trim();
+  if (/^Задача\s+/i.test(s)) s = s.replace(/^Задача\s+/i, "").trim();
+  return s;
+}
+
+function taskChipLabelFromEl(el) {
+  if (!el) return "";
+  var named = el.querySelector && el.querySelector(".note-task-chip-label");
+  return normalizeTaskChipLabel(named ? named.textContent : el.textContent);
+}
+
+function fillTaskChipEl(el, taskId, label) {
+  el.className = "note-task-chip";
+  el.setAttribute("data-leo-task-id", taskId || "");
+  el.setAttribute("contenteditable", "false");
+  el.innerHTML =
+    '<span class="note-task-chip-icon" aria-hidden="true">' +
+    TASK_CHIP_ICON_SVG +
+    '</span><span class="note-task-chip-label"></span>';
+  el.querySelector(".note-task-chip-label").textContent = normalizeTaskChipLabel(label);
+}
+
 function paragraphTitleBeforeSlash(text) {
   var raw = String(text || "");
   var idx = raw.lastIndexOf("/");
@@ -1319,7 +1347,7 @@ function createLeoTaskExtensions(ctx) {
     addAttributes: function () {
       return {
         taskId: { default: "" },
-        label: { default: "Задача" },
+        label: { default: "" },
       };
     },
     parseHTML: function () {
@@ -1329,7 +1357,7 @@ function createLeoTaskExtensions(ctx) {
           getAttrs: function (el) {
             return {
               taskId: el.getAttribute("data-leo-task-id") || "",
-              label: String(el.textContent || "").trim() || "Задача",
+              label: taskChipLabelFromEl(el),
             };
           },
         },
@@ -1344,17 +1372,15 @@ function createLeoTaskExtensions(ctx) {
           class: "note-task-chip",
           contenteditable: "false",
         },
-        HTMLAttributes.label || "Задача",
+        ["span", { class: "note-task-chip-icon", "aria-hidden": "true" }],
+        ["span", { class: "note-task-chip-label" }, normalizeTaskChipLabel(HTMLAttributes.label)],
       ];
     },
     addNodeView: function () {
       return function (_ref) {
         var node = _ref.node;
         var el = document.createElement("span");
-        el.className = "note-task-chip";
-        el.setAttribute("data-leo-task-id", node.attrs.taskId || "");
-        el.setAttribute("contenteditable", "false");
-        el.textContent = node.attrs.label || "Задача";
+        fillTaskChipEl(el, node.attrs.taskId, node.attrs.label);
         el.addEventListener("click", function (e) {
           e.preventDefault();
           e.stopPropagation();
@@ -1365,8 +1391,7 @@ function createLeoTaskExtensions(ctx) {
           dom: el,
           update: function (updated) {
             if (!updated || updated.type.name !== "leoTaskChip") return false;
-            el.setAttribute("data-leo-task-id", updated.attrs.taskId || "");
-            el.textContent = updated.attrs.label || "Задача";
+            fillTaskChipEl(el, updated.attrs.taskId, updated.attrs.label);
             return true;
           },
         };
@@ -1418,7 +1443,7 @@ function createLeoTaskExtensions(ctx) {
                         type: "leoTaskChip",
                         attrs: {
                           taskId: String(taskId || ""),
-                          label: label || "Задача",
+                          label: normalizeTaskChipLabel(label),
                         },
                       },
                       { type: "text", text: " " },
@@ -2044,6 +2069,10 @@ function mount(container, options) {
     setHashtags: function (names) {
       hashtagCtx.hashtags = Array.isArray(names) ? names.slice() : [];
     },
+    getSelectionRange: function () {
+      var sel = editor.state.selection;
+      return { from: sel.from, to: sel.to };
+    },
     insertTaskChip: function (taskId, label) {
       editor
         .chain()
@@ -2051,7 +2080,24 @@ function mount(container, options) {
         .insertContent([
           {
             type: "leoTaskChip",
-            attrs: { taskId: String(taskId || ""), label: label || "Задача" },
+            attrs: { taskId: String(taskId || ""), label: normalizeTaskChipLabel(label) },
+          },
+          { type: "text", text: " " },
+        ])
+        .run();
+    },
+    insertTaskChipAfter: function (taskId, label, pos) {
+      var size = editor.state.doc.content.size;
+      var at = typeof pos === "number" ? pos : editor.state.selection.to;
+      if (at < 0 || at > size) at = editor.state.selection.to;
+      editor
+        .chain()
+        .focus()
+        .insertContentAt(at, [
+          { type: "text", text: " " },
+          {
+            type: "leoTaskChip",
+            attrs: { taskId: String(taskId || ""), label: normalizeTaskChipLabel(label) },
           },
           { type: "text", text: " " },
         ])
@@ -2065,7 +2111,7 @@ function mount(container, options) {
         if (node.type.name === "leoTaskChip" && String(node.attrs.taskId) === id) {
           tr.setNodeMarkup(pos, undefined, {
             taskId: id,
-            label: label || node.attrs.label,
+            label: normalizeTaskChipLabel(label || node.attrs.label),
           });
           changed = true;
         }

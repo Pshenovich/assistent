@@ -110,5 +110,9 @@ def test_chip_html_roundtrip(tasks_db):
     chip = store.task_chip_html(row, tz=tz)
     assert 'data-leo-task-id="%s"' % row["id"] in chip
     assert "note-task-chip" in chip
+    assert "note-task-chip-label" in chip
+    assert "Задача " not in chip
+    assert "7 окт, 15:00" in chip
+    assert store.chip_label(row, tz=tz) == "7 окт, 15:00"
     assert store.task_id_from_chip_html(chip) == int(row["id"])
     assert store.task_id_from_chip_html("<p>без чипа</p>") is None
