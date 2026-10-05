@@ -761,6 +761,31 @@
       }
     }
 
+    if (basePath === "/calendar/tasks" && method === "GET") {
+      var noteFilter = "";
+      try {
+        var q = String(path || "").split("?")[1] || "";
+        q.split("&").forEach(function (part) {
+          var kv = part.split("=");
+          if (decodeURIComponent(kv[0] || "") === "note_id") {
+            noteFilter = decodeURIComponent(kv[1] || "").trim();
+          }
+        });
+      } catch (_) {}
+      var list = mockTasks.slice();
+      if (noteFilter) {
+        list = list.filter(function (t) {
+          return String(t.note_id || "") === noteFilter;
+        });
+      }
+      return {
+        ok: true,
+        tasks: list.map(function (t) {
+          return mockTaskApi(t).task;
+        }),
+      };
+    }
+
     if (basePath === "/calendar/tasks" && method === "POST") {
       var taskBody = {};
       try {

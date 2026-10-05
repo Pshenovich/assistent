@@ -151,6 +151,56 @@ def test_pull_into_leo_skips_when_recent():
     gt._reset_pull_state_for_tests()
 
 
+def test_pull_into_leo_does_not_duplicate_linked_same_title(tmp_path, monkeypatch):
+    monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "t.sqlite"))
+    from assistant.stores import calendar_tasks as store
+
+    store._CONN = None  # type: ignore[attr-defined]
+    gt._reset_pull_state_for_tests()
+    tz = ZoneInfo("Europe/Moscow")
+    start = datetime(2026, 10, 5, tzinfo=tz)
+    end = datetime(2026, 10, 6, tzinfo=tz)
+    row = store.create_task(
+        9050,
+        title="Разобрать паттерны",
+        start_at=datetime(2026, 10, 5, 15, 30, tzinfo=tz),
+        note_id="81",
+        tz=tz,
+    )
+    store.update_task(9050, row["id"], google_task_id="G-LEO", google_tasklist_id="@default")
+    orig = store.get_task(9050, row["id"])
+    svc = MagicMock()
+    svc.tasklists().list().execute.return_value = {"items": [{"id": "@default"}]}
+
+    def _list(**kwargs):
+        res = MagicMock()
+        res.execute.return_value = {
+            "items": [
+                {
+                    "id": "G-GCAL",
+                    "title": "Разобрать паттерны",
+                    "due": "2026-10-05T00:00:00.000Z",
+                }
+            ]
+        }
+        return res
+
+    svc.tasks().list.side_effect = _list
+    with (
+        patch.object(gt, "_service", return_value=svc),
+        patch.object(gt, "push_task", side_effect=lambda _u, t: t),
+    ):
+        imported = gt.pull_into_leo(9050, start, end, force=True)
+    assert imported == []
+    rows = store.list_tasks_in_window(9050, start, end)
+    assert len(rows) == 1
+    assert rows[0]["id"] == row["id"]
+    assert rows[0]["google_task_id"] == "G-LEO"
+    assert rows[0]["start_at"] == orig["start_at"]
+    store._CONN = None  # type: ignore[attr-defined]
+    gt._reset_pull_state_for_tests()
+
+
 def test_sync_task_google_leo_pushes_task_only(tmp_path, monkeypatch):
     monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "t.sqlite"))
     from assistant.stores import calendar_tasks as store

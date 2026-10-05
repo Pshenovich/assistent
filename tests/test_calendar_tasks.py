@@ -121,3 +121,36 @@ def test_chip_html_roundtrip(tasks_db):
     assert store.chip_label(row, tz=tz) == "7 окт, 15:00"
     assert store.task_id_from_chip_html(chip) == int(row["id"])
     assert store.task_id_from_chip_html("<p>без чипа</p>") is None
+
+
+def test_list_tasks_for_note_and_reuse(tasks_db):
+    store = tasks_db
+    tz = ZoneInfo("Europe/Moscow")
+    a = store.create_task(
+        8,
+        title="Разобрать паттерны",
+        start_at=datetime(2026, 10, 5, 15, 30, tzinfo=tz),
+        note_id="81",
+        tz=tz,
+    )
+    store.create_task(
+        8,
+        title="Другая",
+        start_at=datetime(2026, 10, 5, 11, 0, tzinfo=tz),
+        note_id="82",
+        tz=tz,
+    )
+    rows = store.list_tasks_for_note(8, "81")
+    assert [r["id"] for r in rows] == [a["id"]]
+    from usage_server import _find_reusable_note_task
+
+    reused = _find_reusable_note_task(
+        8, "81", "Разобрать паттерны", "2026-10-05T09:00:00+03:00", tz
+    )
+    assert reused is not None
+    assert reused["id"] == a["id"]
+    by_time = _find_reusable_note_task(
+        8, "81", "", "2026-10-05T15:30:00+03:00", tz
+    )
+    assert by_time is not None
+    assert by_time["id"] == a["id"]

@@ -3920,14 +3920,15 @@ def _serialize_gcal_events(
 
 
 def _leo_task_events(
-    uid: int, start_dt: datetime, end_dt: datetime, tz: Any
+    uid: int, start_dt: datetime, end_dt: datetime, tz: Any, *, pull: bool = True
 ) -> list[dict[str, Any]]:
-    try:
-        from assistant.services import google_tasks
+    if pull:
+        try:
+            from assistant.services import google_tasks
 
-        google_tasks.pull_into_leo_brief(uid, start_dt, end_dt, wait_sec=2.0)
-    except Exception as e:
-        print(f"[miniapp_calendar] tasks_pull err={e!r}")
+            google_tasks.pull_into_leo_brief(uid, start_dt, end_dt, wait_sec=2.0)
+        except Exception as e:
+            print(f"[miniapp_calendar] tasks_pull err={e!r}")
     try:
         from assistant.stores import calendar_tasks as calendar_tasks_store
 
@@ -3998,11 +3999,72 @@ _GCAL_TASK_LINK_RE = re.compile(
     r"|https?://tasks\.google\.com/task/\S+",
     flags=re.IGNORECASE | re.DOTALL,
 )
+_GCAL_TASK_ID_RE = re.compile(
+    r"tasks\.google\.com/task/([A-Za-z0-9_-]+)",
+    flags=re.IGNORECASE,
+)
 
 
 def _gcal_task_description(raw: str) -> str:
     text = _GCAL_TASK_LINK_RE.sub("", str(raw or "")).strip()
     return text
+
+
+def _google_task_id_from_gcal(ev: dict[str, Any]) -> str:
+    desc = str(ev.get("description") or "")
+    match = _GCAL_TASK_ID_RE.search(desc)
+    return str(match.group(1) or "").strip() if match else ""
+
+
+def _leo_task_on_local_day(
+    uid: int, title: str, day: Any, tz: Any
+) -> dict[str, Any] | None:
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    want = _norm_task_title(title)
+    if not want:
+        return None
+    day_start = datetime.combine(day, datetime.min.time(), tzinfo=tz)
+    noted: dict[str, Any] | None = None
+    first: dict[str, Any] | None = None
+    for row in calendar_tasks_store.list_tasks_in_window(
+        uid, day_start, day_start + timedelta(days=1)
+    ):
+        if _norm_task_title(str(row.get("title") or "")) != want:
+            continue
+        raw_s = str(row.get("start_at") or "")
+        try:
+            rs = datetime.fromisoformat(raw_s.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if rs.tzinfo is not None:
+            rs = rs.astimezone(tz)
+        if rs.date() != day:
+            continue
+        if first is None:
+            first = row
+        if str(row.get("note_id") or "").strip() and noted is None:
+            noted = row
+    return noted or first
+
+
+def _link_gcal_ids_to_task(
+    uid: int,
+    row: dict[str, Any],
+    *,
+    event_id: str,
+    calendar_id: str,
+    google_task_id: str = "",
+) -> None:
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    fields: dict[str, Any] = {
+        "google_event_id": event_id,
+        "google_calendar_id": calendar_id,
+    }
+    if google_task_id and not str(row.get("google_task_id") or "").strip():
+        fields["google_task_id"] = google_task_id
+    calendar_tasks_store.update_task(uid, row["id"], **fields)
 
 
 def _import_gcal_task_events(uid: int, events: list[dict[str, Any]], tz: Any) -> None:
@@ -4026,33 +4088,27 @@ def _import_gcal_task_events(uid: int, events: list[dict[str, Any]], tz: Any) ->
             title = title.split(":", 1)[1].strip()
         local = start.astimezone(tz) if start.tzinfo else start.replace(tzinfo=tz)
         day = local.date()
-        already = None
-        day_start = local.replace(hour=0, minute=0, second=0, microsecond=0)
-        for row in calendar_tasks_store.list_tasks_in_window(
-            uid, day_start, day_start + timedelta(days=1)
-        ):
-            if _norm_task_title(str(row.get("title") or "")) != _norm_task_title(title):
-                continue
-            raw_s = str(row.get("start_at") or "")
-            try:
-                rs = datetime.fromisoformat(raw_s.replace("Z", "+00:00"))
-            except ValueError:
-                continue
-            if rs.tzinfo is not None:
-                rs = rs.astimezone(tz)
-            if rs.date() == day:
-                already = row
-                break
+        gid = _google_task_id_from_gcal(ev)
+        cal_id = str(ev.get("calendar_id") or "")
         try:
-            if already:
-                calendar_tasks_store.update_task(
+            by_gid = calendar_tasks_store.find_by_google_task(uid, gid) if gid else None
+            if by_gid:
+                _link_gcal_ids_to_task(
                     uid,
-                    already["id"],
-                    start_at=start,
-                    end_at=end,
-                    google_event_id=eid,
-                    google_calendar_id=str(ev.get("calendar_id") or ""),
-                    tz=tz,
+                    by_gid,
+                    event_id=eid,
+                    calendar_id=cal_id,
+                    google_task_id=gid,
+                )
+                continue
+            already = _leo_task_on_local_day(uid, title, day, tz)
+            if already:
+                _link_gcal_ids_to_task(
+                    uid,
+                    already,
+                    event_id=eid,
+                    calendar_id=cal_id,
+                    google_task_id=gid,
                 )
                 continue
             row = calendar_tasks_store.create_task(
@@ -4063,11 +4119,12 @@ def _import_gcal_task_events(uid: int, events: list[dict[str, Any]], tz: Any) ->
                 end_at=end,
                 tz=tz,
             )
-            calendar_tasks_store.update_task(
+            _link_gcal_ids_to_task(
                 uid,
-                row["id"],
-                google_event_id=eid,
-                google_calendar_id=str(ev.get("calendar_id") or ""),
+                row,
+                event_id=eid,
+                calendar_id=cal_id,
+                google_task_id=gid,
             )
         except Exception as e:
             print(f"[miniapp_calendar] import_gcal_task id={eid!r} err={e!r}")
@@ -4095,8 +4152,13 @@ def _link_events_to_google_tasks(
             continue
         if start.tzinfo is not None:
             start = start.astimezone(tz)
-        day = start.date().isoformat()
-        by_key[(title, day)] = row
+        key = (title, start.date().isoformat())
+        prev = by_key.get(key)
+        if prev is None or (
+            str(row.get("note_id") or "").strip()
+            and not str(prev.get("note_id") or "").strip()
+        ):
+            by_key[key] = row
     for ev in events:
         if not isinstance(ev, dict):
             continue
@@ -4112,16 +4174,13 @@ def _link_events_to_google_tasks(
         row = by_key.get((title, day.isoformat()))
         if not row:
             continue
-        start_ev, end_ev = _gcal_bounds_for_task(ev, tz)
-        fields: dict[str, Any] = {
-            "google_event_id": eid,
-            "google_calendar_id": str(ev.get("calendar_id") or ""),
-        }
-        if start_ev is not None:
-            fields["start_at"] = start_ev
-            fields["end_at"] = end_ev
-            fields["tz"] = tz
-        calendar_tasks_store.update_task(uid, row["id"], **fields)
+        _link_gcal_ids_to_task(
+            uid,
+            row,
+            event_id=eid,
+            calendar_id=str(ev.get("calendar_id") or ""),
+            google_task_id=_google_task_id_from_gcal(ev),
+        )
         ev["entry_type"] = "task"
         ev["kind"] = "Задача"
 
@@ -4136,9 +4195,9 @@ def _attach_leo_tasks(
     from assistant.stores import calendar_tasks as calendar_tasks_store
 
     evs = [e for e in (payload.get("events") or []) if isinstance(e, dict)]
-    _leo_task_events(uid, start_dt, end_dt, tz)
     _link_events_to_google_tasks(uid, evs, start_dt, end_dt, tz)
     _import_gcal_task_events(uid, evs, tz)
+    _leo_task_events(uid, start_dt, end_dt, tz, pull=True)
     _reconcile_gcal_task_duplicates(uid, start_dt, end_dt)
     hide_ids: set[str] = set()
     for ev in evs:
@@ -4153,7 +4212,7 @@ def _attach_leo_tasks(
         ):
             hide_ids.add(eid)
     _ensure_task_calendar_events(uid, start_dt, end_dt)
-    extra = _leo_task_events(uid, start_dt, end_dt, tz)
+    extra = _leo_task_events(uid, start_dt, end_dt, tz, pull=False)
     evs = [e for e in evs if str(e.get("id") or "") not in hide_ids]
     evs.extend(extra)
 
@@ -4766,12 +4825,17 @@ async def miniapp_calendar_tasks_list(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
     start: Optional[str] = Query(None),
     end: Optional[str] = Query(None),
+    note_id: Optional[str] = Query(None),
 ) -> dict[str, Any]:
     from assistant.services.calendar import _tz_for
     from assistant.stores import calendar_tasks as calendar_tasks_store
 
     uid = int(principal.telegram_user_id)
     tz = _tz_for(uid)
+    nid = str(note_id or "").strip()
+    if nid:
+        rows = await run_in_threadpool(calendar_tasks_store.list_tasks_for_note, uid, nid)
+        return {"ok": True, "tasks": [_task_api(r, tz=tz) for r in rows]}
     today = datetime.now(tz).date()
     start_d = _parse_calendar_day(start, today)
     end_d = _parse_calendar_day(end, start_d)
@@ -4824,6 +4888,40 @@ async def miniapp_calendar_tasks_parse(
     }
 
 
+def _find_reusable_note_task(
+    uid: int,
+    note_id: str,
+    title: str,
+    start_raw: str,
+    tz: Any,
+) -> dict[str, Any] | None:
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    nid = str(note_id or "").strip()
+    if not nid:
+        return None
+    want = _norm_task_title(title)
+    start = calendar_tasks_store._parse_dt(start_raw, tz)
+    rows = calendar_tasks_store.list_tasks_for_note(uid, nid)
+    if start is not None and start.tzinfo is not None:
+        start = start.astimezone(tz)
+    if want:
+        for row in rows:
+            if _norm_task_title(str(row.get("title") or "")) == want:
+                return row
+    if start is None:
+        return None
+    for row in rows:
+        rs = calendar_tasks_store._parse_dt(row.get("start_at"))
+        if rs is None:
+            continue
+        if rs.tzinfo is not None:
+            rs = rs.astimezone(tz)
+        if abs((rs - start).total_seconds()) < 60:
+            return row
+    return None
+
+
 @miniapp_router.post("/calendar/tasks")
 async def miniapp_calendar_tasks_create(
     body: _MiniappCalendarTaskBody,
@@ -4847,6 +4945,11 @@ async def miniapp_calendar_tasks_create(
             body.end = parsed["end"].isoformat()
     if not start_raw:
         raise HTTPException(status_code=400, detail="Укажите начало задачи")
+    reused = await run_in_threadpool(
+        _find_reusable_note_task, uid, str(body.note_id or ""), title, start_raw, tz
+    )
+    if reused:
+        return {"ok": True, "task": _task_api(reused, tz=tz)}
     try:
         row = await run_in_threadpool(
             partial(

@@ -166,6 +166,8 @@ class TestCalendarRangeHelpers(TestCase):
             linked = calendar_tasks_store.get_task(1, row["id"])
             self.assertEqual(linked["google_task_id"], "gt-1")
             self.assertEqual(linked["google_event_id"], "gcal-meet-1")
+            self.assertEqual(linked["start_at"], row["start_at"])
+            self.assertIn("09:00", tasks[0]["start"]["dateTime"])
         finally:
             calendar_tasks_store._CONN = None  # type: ignore[attr-defined]
             os.environ.pop("CALENDAR_TASKS_DB_PATH", None)
@@ -239,6 +241,56 @@ class TestCalendarRangeHelpers(TestCase):
             self.assertEqual(len(tasks), 1)
             self.assertEqual(tasks[0]["summary"], "Тест 9 Гугл")
             self.assertTrue(str(tasks[0]["id"]).startswith("task-"))
+            saved = calendar_tasks_store.list_tasks_in_window(1, start, end)
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(saved[0]["google_task_id"], "B5UgeefnJQK_NpkN")
+            self.assertEqual(saved[0]["google_event_id"], "768kkuffknlp5bshbee4nru6q8")
+        finally:
+            calendar_tasks_store._CONN = None  # type: ignore[attr-defined]
+            os.environ.pop("CALENDAR_TASKS_DB_PATH", None)
+            isolated.cleanup()
+
+    def test_attach_keeps_note_task_time_and_does_not_duplicate(self) -> None:
+        from usage_server import _attach_leo_tasks
+
+        isolated = self._isolated_tasks_db()
+        tz = ZoneInfo("Europe/Moscow")
+        start = datetime(2026, 10, 5, 0, 0, tzinfo=tz)
+        end = datetime(2026, 10, 6, 0, 0, tzinfo=tz)
+        row = calendar_tasks_store.create_task(
+            1,
+            title="Разобрать паттерны",
+            start_at=datetime(2026, 10, 5, 15, 30, tzinfo=tz),
+            note_id="81",
+            tz=tz,
+        )
+        orig_start = row["start_at"]
+        ev = {
+            "id": "gcal-task-slot",
+            "summary": "Разобрать паттерны",
+            "kind": "Задача",
+            "entry_type": "task",
+            "start": {"date": "2026-10-05"},
+            "end": {"date": "2026-10-06"},
+            "start_day": "2026-10-05",
+            "calendar_id": "primary",
+            "description": "https://tasks.google.com/task/GtOther",
+        }
+        try:
+            with (
+                patch("assistant.services.google_tasks.pull_into_leo_brief", return_value=[]),
+                patch("assistant.services.calendar.get_event", return_value={"eventType": "default"}),
+            ):
+                out = _attach_leo_tasks({"events": [ev]}, 1, start, end, tz)
+            tasks = [e for e in out["events"] if e.get("entry_type") == "task"]
+            self.assertEqual(len(tasks), 1)
+            self.assertEqual(tasks[0]["task_id"], row["id"])
+            self.assertIn("15:30", tasks[0]["start"]["dateTime"])
+            saved = calendar_tasks_store.get_task(1, row["id"])
+            self.assertEqual(saved["start_at"], orig_start)
+            self.assertEqual(saved["google_event_id"], "gcal-task-slot")
+            self.assertEqual(saved["google_task_id"], "GtOther")
+            self.assertEqual(len(calendar_tasks_store.list_tasks_in_window(1, start, end)), 1)
         finally:
             calendar_tasks_store._CONN = None  # type: ignore[attr-defined]
             os.environ.pop("CALENDAR_TASKS_DB_PATH", None)

@@ -436,6 +436,25 @@ def list_tasks_in_window(
     return rows
 
 
+def list_tasks_for_note(
+    owner_user_id: int | str, note_id: str | int
+) -> list[dict[str, Any]]:
+    uid = _uid(owner_user_id)
+    nid = _clip(note_id, 40)
+    if not nid:
+        return []
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            SELECT * FROM calendar_tasks
+            WHERE owner_user_id = ? AND note_id = ?
+            ORDER BY start_at ASC, id ASC
+            """,
+            (uid, nid),
+        )
+        return [_row_to_dict(r) for r in cur.fetchall()]
+
+
 def list_tasks(owner_user_id: int | str, *, limit: int = 200) -> list[dict[str, Any]]:
     uid = _uid(owner_user_id)
     lim = max(1, min(int(limit or 200), 500))

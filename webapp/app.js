@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261005-task-chip-keep";
+  var WEBAPP_BUILD = "20261005-note-task-sync";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261005-task-chip-keep";
+  const NOTE_EDITOR_ASSET_V = "20261005-note-task-sync";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -9896,29 +9896,69 @@
       var meta = ed && ed.getTaskChipMeta ? ed.getTaskChipMeta(id) : null;
       var label = (meta && meta.label) || "";
       var title = (meta && meta.title) || "";
-      if (!label && !title) {
-        alert("Задача не найдена");
+      var noteId = currentOpenNoteId();
+      function bind(task) {
+        if (!task) throw new Error("Не удалось восстановить задачу");
+        if (ed && ed.remapTaskChip) {
+          ed.remapTaskChip(id, task.id, task.chip_label || label);
+        }
+        loadActual();
+        show(task);
+      }
+      function createFresh() {
+        if (!label && !title) {
+          alert("Задача не найдена");
+          return;
+        }
+        apiFetch("/calendar/tasks", {
+          method: "POST",
+          body: JSON.stringify({
+            text: label,
+            title: title,
+            note_id: noteId,
+          }),
+        })
+          .then(function (r) {
+            bind(r && r.task);
+          })
+          .catch(function (err) {
+            alert((err && err.message) || "Задача не найдена");
+          });
+      }
+      if (!noteId) {
+        createFresh();
         return;
       }
-      apiFetch("/calendar/tasks", {
-        method: "POST",
-        body: JSON.stringify({
-          text: label,
-          title: title,
-          note_id: currentOpenNoteId(),
-        }),
-      })
+      apiFetch("/calendar/tasks?note_id=" + encodeURIComponent(noteId), { method: "GET" })
         .then(function (r) {
-          var task = r && r.task;
-          if (!task) throw new Error("Не удалось восстановить задачу");
-          if (ed && ed.remapTaskChip) {
-            ed.remapTaskChip(id, task.id, task.chip_label || label);
+          var tasks = (r && r.tasks) || [];
+          var wantTitle = String(title || "")
+            .trim()
+            .toLowerCase();
+          var match = null;
+          for (var i = 0; i < tasks.length; i++) {
+            var t = tasks[i];
+            var tTitle = String((t && t.title) || "")
+              .trim()
+              .toLowerCase();
+            if (wantTitle && tTitle === wantTitle) {
+              match = t;
+              break;
+            }
+            var chip = String((t && t.chip_label) || "").trim();
+            if (label && chip && chip === label) {
+              match = t;
+              break;
+            }
           }
-          loadActual();
-          show(task);
+          if (match) {
+            bind(match);
+            return;
+          }
+          createFresh();
         })
-        .catch(function (err) {
-          alert((err && err.message) || "Задача не найдена");
+        .catch(function () {
+          createFresh();
         });
     }
     apiFetch("/calendar/tasks/" + encodeURIComponent(id), { method: "GET" })

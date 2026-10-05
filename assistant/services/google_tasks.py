@@ -386,12 +386,16 @@ def _local_task_on_day(
     start: datetime,
     end: datetime,
     tz: Any,
+    *,
+    require_unlinked: bool = True,
 ) -> dict[str, Any] | None:
     want = _norm_title(title)
     if not want:
         return None
+    noted: dict[str, Any] | None = None
+    first: dict[str, Any] | None = None
     for row in calendar_tasks_store.list_tasks_in_window(user_id, start, end):
-        if str(row.get("google_task_id") or "").strip():
+        if require_unlinked and str(row.get("google_task_id") or "").strip():
             continue
         if _norm_title(str(row.get("title") or "")) != want:
             continue
@@ -402,9 +406,15 @@ def _local_task_on_day(
             continue
         if dt.tzinfo is not None:
             dt = dt.astimezone(tz)
-        if dt.date() == due_day:
-            return row
-    return None
+        if dt.date() != due_day:
+            continue
+        if first is None:
+            first = row
+        if str(row.get("note_id") or "").strip() and noted is None:
+            noted = row
+            if not require_unlinked:
+                return noted
+    return noted or first
 
 
 def _due_in_window(due_day: date, start: datetime, end: datetime) -> bool:
@@ -494,6 +504,10 @@ def pull_into_leo(
                     google_tasklist_id=list_id,
                 )
                 imported.append(updated or twin)
+                continue
+            if _local_task_on_day(
+                user_id, title, due_day, start, end, tz, require_unlinked=False
+            ):
                 continue
             row = calendar_tasks_store.create_task(
                 user_id,
