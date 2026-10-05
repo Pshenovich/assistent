@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import html
 import os
 import re
 import threading
@@ -12,9 +11,9 @@ from typing import Any
 from assistant.integrations import meeting_bot, transcribe as obu
 from assistant.integrations.transcribe import TranscribeResult
 from assistant.lib.telegram_rich import append_footnotes, zoom_meeting_footnote
-from assistant.lib.usage_store import insert_usage_event
 from assistant.lib.vexa_transcript import formatted_transcript_from_vexa
 from assistant.nlu import llm as llm_mod
+from assistant.services import transcription_notes as tnotes
 from assistant.stores import meeting_recordings_store as mrs
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -94,75 +93,6 @@ def _format_transcript_display(transcript: str) -> str:
         r"(?m)^(SPEAKER_(\d+)):",
         lambda m: f"Спикер {m.group(2)}:",
         body,
-    )
-
-
-def _save_transcription_journal(
-    *,
-    user_id: int,
-    username: str | None,
-    transcript: str,
-    result: TranscribeResult | None,
-    filename: str | None,
-    source_url: str | None,
-    topic: str,
-    participant_names: list[str] | None,
-) -> int:
-    text = _format_transcript_display(transcript)
-    usage: dict[str, Any] = {
-        "text": text,
-        "source": "zoom_meeting_bot",
-    }
-    if filename:
-        usage["filename"] = filename
-    if source_url:
-        usage["source_url"] = source_url
-    meta: dict[str, Any] = {"meeting_topic": (topic or "").strip()}
-    if participant_names:
-        meta["participants"] = [
-            _display_participant_name(n) for n in participant_names if str(n).strip()
-        ]
-    usage["meta"] = meta
-    return insert_usage_event(
-        operation="obuchat_transcribe",
-        model=None,
-        generation_id=result.job_id if result else None,
-        usage=usage,
-        telegram_user_id=str(user_id) if user_id else None,
-        telegram_username=username,
-    )
-
-
-def _save_summary_journal(
-    *,
-    user_id: int,
-    username: str | None,
-    summary_text: str,
-    meta: dict,
-    result: TranscribeResult | None = None,
-    filename: str | None = None,
-    source_url: str | None = None,
-    transcript_event_id: int | None = None,
-) -> int:
-    usage_meta = dict(meta)
-    if transcript_event_id is not None:
-        usage_meta["transcript_event_id"] = int(transcript_event_id)
-    usage: dict[str, Any] = {
-        "text": summary_text,
-        "source": "zoom_meeting_bot",
-        "meta": usage_meta,
-    }
-    if filename:
-        usage["filename"] = filename
-    if source_url:
-        usage["source_url"] = source_url
-    return insert_usage_event(
-        operation="summarize",
-        model=llm_mod.summary_model_name(),
-        generation_id=result.job_id if result else None,
-        usage=usage,
-        telegram_user_id=str(user_id) if user_id else None,
-        telegram_username=username,
     )
 
 
@@ -261,33 +191,30 @@ def persist_meeting_artifacts_for_user(
     topic: str,
     source_url: str | None,
     filename: str | None,
-) -> tuple[int, int]:
-    """Сохранить транскрипцию и саммари в журнал мини-приложения. → (transcript_id, summary_id)."""
-    transcript = str(processed.get("transcript") or "")
-    result = processed.get("result")
-    tr_result = result if isinstance(result, TranscribeResult) else None
+) -> dict[str, Any]:
+    """Сохранить транскрипцию и саммари одной заметкой. Возвращает note."""
+    del username
+    transcript = _format_transcript_display(str(processed.get("transcript") or ""))
     participant_names = list(processed.get("participant_names") or [])
-    transcript_id = _save_transcription_journal(
-        user_id=int(user_id),
-        username=username,
+    meta = dict(processed.get("meta") or {})
+    meta["source"] = "zoom_meeting_bot"
+    meta["meeting_topic"] = (topic or "").strip()
+    if source_url:
+        meta["source_url"] = source_url
+    if filename:
+        meta["filename"] = filename
+    if participant_names and not meta.get("participants"):
+        meta["participants"] = [
+            _display_participant_name(n) for n in participant_names if str(n).strip()
+        ]
+    title = (topic or "").strip() or str(meta.get("main_topic") or "").strip() or "Встреча"
+    return tnotes.create_with_summary(
+        int(user_id),
+        title=title,
         transcript=transcript,
-        result=tr_result,
-        filename=filename,
-        source_url=source_url,
-        topic=topic,
-        participant_names=participant_names,
+        summary=str(processed.get("summary_text") or ""),
+        meta=meta,
     )
-    summary_id = _save_summary_journal(
-        user_id=int(user_id),
-        username=username,
-        summary_text=str(processed.get("summary_text") or ""),
-        meta=dict(processed.get("meta") or {}),
-        result=tr_result,
-        filename=filename,
-        source_url=source_url,
-        transcript_event_id=transcript_id,
-    )
-    return transcript_id, summary_id
 
 
 def notify_summary_ready(
@@ -295,13 +222,17 @@ def notify_summary_ready(
     user_id: int,
     topic: str,
     summary_text: str,
+    note_id: int | None = None,
     summary_event_id: int | None = None,
     transcript_event_id: int | None = None,
     yandex_disk_url: str | None = None,
     yandex_disk_saved: bool = False,
     meeting_ts: str | None = None,
 ) -> None:
-    from assistant.skills.journal_pdf import pdf_download_inline_keyboard
+    from assistant.skills.journal_pdf import (
+        pdf_download_inline_keyboard,
+        pdf_download_inline_keyboard_for_note,
+    )
 
     from assistant.lib import telegram_notify
     from assistant.lib.telegram_markdown import (
@@ -309,11 +240,13 @@ def notify_summary_ready(
         format_meeting_date,
     )
 
-    summary_markup = (
-        pdf_download_inline_keyboard(int(summary_event_id))
-        if summary_event_id
-        else None
-    )
+    pdf_id = int(note_id or summary_event_id or 0)
+    if note_id:
+        summary_markup = pdf_download_inline_keyboard_for_note(int(note_id))
+    elif pdf_id:
+        summary_markup = pdf_download_inline_keyboard(pdf_id)
+    else:
+        summary_markup = None
     body = append_yandex_disk_footer_markdown(
         summary_text,
         yandex_disk_url,
@@ -328,7 +261,7 @@ def notify_summary_ready(
         if date_line:
             title += f"\n*{date_line}*"
         body = f"{title}\n\n{body}"
-    body += "\n\nСохранено в мини-приложении → вкладка «Саммари»."
+    body += "\n\nСохранено в мини-приложении → вкладка «Транскрипции»."
     if not telegram_notify.send_rich_message(
         int(user_id),
         body,
@@ -337,10 +270,10 @@ def notify_summary_ready(
     ):
         telegram_notify.send_user_message(
             int(user_id),
-            "Не удалось отправить саммари в чат. Откройте мини-приложение → вкладка «Саммари».",
+            "Не удалось отправить саммари в чат. Откройте мини-приложение → вкладка «Транскрипции».",
             reply_markup=summary_markup,
         )
-    if transcript_event_id:
+    if transcript_event_id and not note_id:
         transcript_markup = pdf_download_inline_keyboard(int(transcript_event_id))
         telegram_notify.send_user_message(
             int(user_id),
@@ -396,12 +329,11 @@ def process_job_recording_async(job_id: int, recording: dict[str, Any]) -> None:
                 native_meeting_id=native_mid,
             )
             display_text = str(out.get("summary_text") or "")
-            journal_ids: dict[int, int] = {}
-            transcript_ids: dict[int, int] = {}
+            note_ids: dict[int, int] = {}
             yandex_uploads: dict[int, dict] = {}
             yandex_errors: dict[int, str] = {}
             for uid in recipients:
-                tr_id, sm_id = persist_meeting_artifacts_for_user(
+                note = persist_meeting_artifacts_for_user(
                     user_id=uid,
                     username=None,
                     processed=out,
@@ -409,8 +341,8 @@ def process_job_recording_async(job_id: int, recording: dict[str, Any]) -> None:
                     source_url=source_url,
                     filename=fname,
                 )
-                transcript_ids[uid] = tr_id
-                journal_ids[uid] = sm_id
+                nid = int(note["id"])
+                note_ids[uid] = nid
                 from assistant.services import yandex_disk_upload
 
                 upload_result = yandex_disk_upload.try_upload_meeting_for_user(
@@ -418,8 +350,7 @@ def process_job_recording_async(job_id: int, recording: dict[str, Any]) -> None:
                     media_bytes=data,
                     media_filename=fname,
                     topic=topic,
-                    transcript_event_id=tr_id,
-                    summary_event_id=sm_id,
+                    note_id=nid,
                 )
                 if upload_result.get("ok"):
                     yandex_uploads[uid] = dict(upload_result.get("paths") or {})
@@ -431,7 +362,7 @@ def process_job_recording_async(job_id: int, recording: dict[str, Any]) -> None:
                 job_id,
                 status="done",
                 vexa_recording_id=int(rec_id) if rec_id is not None else None,
-                journal_event_id=journal_ids.get(first_uid),
+                journal_event_id=note_ids.get(first_uid),
             )
             for uid in recipients:
                 yandex_paths = yandex_uploads.get(uid)
@@ -443,8 +374,7 @@ def process_job_recording_async(job_id: int, recording: dict[str, Any]) -> None:
                     user_id=uid,
                     topic=topic,
                     summary_text=display_text,
-                    summary_event_id=journal_ids.get(uid),
-                    transcript_event_id=transcript_ids.get(uid),
+                    note_id=note_ids.get(uid),
                     yandex_disk_url=yandex_public_url,
                     yandex_disk_saved=yandex_saved,
                 )

@@ -122,3 +122,31 @@ def test_build_journal_pdf_summary_markdown_sections():
     data, fname, caption = jp.build_journal_pdf(row)
     assert data[:4] == b"%PDF"
     assert fname.startswith("samari")
+
+
+def test_build_note_pdf_from_transcription_note(tmp_path, monkeypatch):
+    try:
+        jp._resolve_font_paths()
+    except RuntimeError:
+        pytest.skip("нет шрифта для PDF")
+    monkeypatch.setenv("NOTES_DB_PATH", str(tmp_path / "notes.sqlite"))
+    from assistant.services import transcription_notes as tnotes
+    from assistant.stores import notes as notes_store
+
+    notes_store._CONN = None  # type: ignore[attr-defined]
+    note = tnotes.create_with_summary(
+        3,
+        title="Weekly",
+        transcript="Полный текст встречи",
+        summary="Кратко о договорённостях",
+        meta={"main_topic": "Weekly"},
+    )
+    data, fname, caption = jp.build_note_pdf(note)
+    assert data[:4] == b"%PDF"
+    assert fname.startswith("samari")
+    assert "Саммари" in caption
+    only = tnotes.create_transcript_only(3, title="Голос", transcript="Сырой текст")
+    data2, fname2, caption2 = jp.build_note_pdf(only)
+    assert data2[:4] == b"%PDF"
+    assert "transkript" in fname2
+    assert "Транскрипция" in caption2

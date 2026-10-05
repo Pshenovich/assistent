@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261005-note-task-sync">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261005-transcript-sheets">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -46,7 +46,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261005-note-task-sync" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261005-transcript-sheets" />
   <link rel="preload" href="/webapp/note-rich-editor.js?v=20261005-note-task-sync" as="script" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
@@ -161,7 +161,6 @@
               <button type="button" class="subtab-btn active" data-subtab="notes">Заметки</button>
               <button type="button" class="subtab-btn" data-subtab="chats">Чаты</button>
               <button type="button" class="subtab-btn" data-subtab="transcriptions">Транскрипции</button>
-              <button type="button" class="subtab-btn" data-subtab="summaries">Саммари</button>
             </div>
           </div>
           <div class="notes-filter-bar">
@@ -221,7 +220,6 @@
             </div>
           </div>
           <div id="notes-pane-transcriptions" class="notes-pane notes-pane--stack hidden"></div>
-          <div id="notes-pane-summaries" class="notes-pane notes-pane--stack hidden"></div>
           <p id="notes-global-error" class="error hidden"></p>
         </div>
         <button
@@ -1369,7 +1367,7 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20261005-note-task-sync"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20261005-transcript-sheets"><\/script>'
         );
       }
     })();
@@ -1378,6 +1376,6 @@
   <script src="/webapp/note-comments.js?v=20261005-note-task-sync" defer></script>
   <script src="/webapp/note-rich-editor.js?v=20261005-note-task-sync" defer></script>
   <script src="/webapp/note-drafts.js?v=20261005-note-task-sync" defer></script>
-  <script src="/webapp/app.js?v=20261005-note-task-sync" defer></script>
+  <script src="/webapp/app.js?v=20261005-transcript-sheets" defer></script>
 </body>
 </html>

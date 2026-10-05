@@ -651,6 +651,15 @@ def journal_meta_from_raw(raw: str | None) -> dict[str, Any]:
     return meta if isinstance(meta, dict) else {}
 
 
+def journal_migrated_note_id(raw: str | None) -> int | None:
+    meta = journal_meta_from_raw(raw)
+    try:
+        nid = int(meta.get("migrated_to_note_id"))
+    except (TypeError, ValueError):
+        return None
+    return nid if nid > 0 else None
+
+
 def journal_has_content_text(raw: str | None) -> bool:
     """Есть ли в записи журнала пользовательский текст (не только токены LLM)."""
     j = journal_json_from_raw(raw)
@@ -844,9 +853,10 @@ def user_journal_entries(telegram_user_id: str, *, limit: int = 120) -> list[dic
     for row in rows:
         op = str(row.get("operation") or "")
         raw = row.get("raw_usage_json")
-        if op == "summarize" and not journal_has_content_text(
-            raw if isinstance(raw, str) else None
-        ):
+        raw_s = raw if isinstance(raw, str) else None
+        if journal_migrated_note_id(raw_s):
+            continue
+        if op == "summarize" and not journal_has_content_text(raw_s):
             continue
         out.append(row)
     return out
@@ -880,9 +890,10 @@ def search_transcriptions(
         rows = [dict(r) for r in cur.fetchall()]
     scored: list[tuple[int, str, dict[str, Any]]] = []
     for r in rows:
-        text = journal_text_from_raw(
-            str(r.get("raw_usage_json") or "") if r.get("raw_usage_json") else None
-        ).strip()
+        raw_s = str(r.get("raw_usage_json") or "") if r.get("raw_usage_json") else None
+        if journal_migrated_note_id(raw_s):
+            continue
+        text = journal_text_from_raw(raw_s).strip()
         if not text:
             continue
         hay = text.lower()
@@ -969,14 +980,25 @@ def get_latest_summary(telegram_user_id: str) -> dict[str, Any] | None:
             FROM usage_events
             WHERE telegram_user_id = ? AND operation = 'summarize'
             ORDER BY ts_utc DESC, id DESC
-            LIMIT 1
+            LIMIT 20
             """,
             (uid,),
         )
-        row = cur.fetchone()
-    if not row:
+        rows = [dict(r) for r in cur.fetchall()]
+    chosen: dict[str, Any] | None = None
+    for r in rows:
+        raw = str(r.get("raw_usage_json") or "")
+        if journal_migrated_note_id(raw):
+            continue
+        j = journal_json_from_raw(raw)
+        text = str(j.get("text") or "").strip()
+        if not text:
+            continue
+        chosen = r
+        break
+    if not chosen:
         return None
-    r = dict(row)
+    r = chosen
     raw = str(r.get("raw_usage_json") or "")
     j = journal_json_from_raw(raw)
     meta = journal_meta_from_raw(raw)
@@ -1034,6 +1056,8 @@ def search_summaries(
     scored: list[tuple[int, str, dict[str, Any]]] = []
     for r in rows:
         raw = str(r.get("raw_usage_json") or "") if r.get("raw_usage_json") else None
+        if journal_migrated_note_id(raw):
+            continue
         j = journal_json_from_raw(raw)
         meta = journal_meta_from_raw(raw)
         raw_summary_text = str(j.get("text") or "").strip()
@@ -1190,6 +1214,99 @@ def find_summary_event_for_transcript(
             if linked == tid:
                 return int(row["id"])
     return None
+
+
+def list_journal_events_for_ops(
+    telegram_user_id: str,
+    operations: tuple[str, ...] | list[str],
+    *,
+    include_migrated: bool = False,
+    limit: int = 5000,
+) -> list[dict[str, Any]]:
+    init_db()
+    uid = (telegram_user_id or "").strip()
+    ops = [str(op).strip() for op in operations if str(op).strip()]
+    if not uid or not ops:
+        return []
+    lim = max(1, min(int(limit), 10000))
+    placeholders = ",".join("?" * len(ops))
+    with _connect() as conn:
+        cur = conn.execute(
+            f"""
+            SELECT id, ts_utc, date_utc, operation, model, raw_usage_json, telegram_user_id
+            FROM usage_events
+            WHERE telegram_user_id = ?
+              AND operation IN ({placeholders})
+            ORDER BY ts_utc ASC, id ASC
+            LIMIT ?
+            """,
+            (uid, *ops, lim),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+    if include_migrated:
+        return rows
+    return [
+        r
+        for r in rows
+        if not journal_migrated_note_id(
+            str(r.get("raw_usage_json") or "") if r.get("raw_usage_json") else None
+        )
+    ]
+
+
+def list_user_ids_with_journal_ops(
+    operations: tuple[str, ...] | list[str],
+) -> list[str]:
+    init_db()
+    ops = [str(op).strip() for op in operations if str(op).strip()]
+    if not ops:
+        return []
+    placeholders = ",".join("?" * len(ops))
+    with _connect() as conn:
+        cur = conn.execute(
+            f"""
+            SELECT DISTINCT telegram_user_id
+            FROM usage_events
+            WHERE telegram_user_id IS NOT NULL AND telegram_user_id != ''
+              AND operation IN ({placeholders})
+            """,
+            ops,
+        )
+        return [str(r[0]) for r in cur.fetchall() if str(r[0] or "").strip()]
+
+
+def mark_journal_event_migrated(
+    telegram_user_id: str, event_id: int, note_id: int
+) -> bool:
+    init_db()
+    uid = (telegram_user_id or "").strip()
+    if not uid:
+        return False
+    try:
+        eid = int(event_id)
+        nid = int(note_id)
+    except (TypeError, ValueError):
+        return False
+    row = get_user_usage_event(uid, eid)
+    if not row:
+        return False
+    j = journal_json_from_raw(
+        str(row.get("raw_usage_json") or "") if row.get("raw_usage_json") else None
+    )
+    meta = j.get("meta") if isinstance(j.get("meta"), dict) else {}
+    meta["migrated_to_note_id"] = nid
+    j["meta"] = meta
+    new_raw = json.dumps(j, ensure_ascii=False)
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE usage_events
+            SET raw_usage_json = ?
+            WHERE id = ? AND telegram_user_id = ?
+            """,
+            (new_raw, eid, uid),
+        )
+        return (cur.rowcount or 0) > 0
 
 
 def delete_user_journal_event(telegram_user_id: str, event_id: int) -> bool:

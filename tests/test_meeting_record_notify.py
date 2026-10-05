@@ -85,17 +85,12 @@ def test_notify_sends_full_summary_with_pdf_buttons() -> None:
     assert msg_send.call_args.kwargs.get("reply_markup")
 
 
-def test_persist_creates_transcription_and_summary(monkeypatch) -> None:
-    events: list[tuple[str, dict]] = []
+def test_persist_creates_transcription_note(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NOTES_DB_PATH", str(tmp_path / "notes.sqlite"))
+    from assistant.stores import notes as notes_store
+    from assistant.stores import note_sheets as sheets
 
-    def _fake_insert(*, operation, usage, **kwargs):
-        events.append((operation, usage))
-        return len(events)
-
-    monkeypatch.setattr(
-        "assistant.services.meeting_record_pipeline.insert_usage_event",
-        _fake_insert,
-    )
+    notes_store._CONN = None  # type: ignore[attr-defined]
     processed = {
         "summary_text": "<b>ok</b>",
         "transcript": "Спикер 1:\nПривет",
@@ -103,7 +98,7 @@ def test_persist_creates_transcription_and_summary(monkeypatch) -> None:
         "meta": {"main_topic": "T"},
         "result": TranscribeResult(plain_text="x", formatted_text="Спикер 1:\nПривет"),
     }
-    tr_id, sm_id = persist_meeting_artifacts_for_user(
+    note = persist_meeting_artifacts_for_user(
         user_id=42,
         username=None,
         processed=processed,
@@ -111,10 +106,15 @@ def test_persist_creates_transcription_and_summary(monkeypatch) -> None:
         source_url="https://zoom.us/j/1",
         filename="meeting.wav",
     )
-    assert tr_id == 1
-    assert sm_id == 2
-    assert events[0][0] == "obuchat_transcribe"
-    assert "Привет" in events[0][1]["text"]
-    assert events[1][0] == "summarize"
-    assert events[1][1]["meta"]["transcript_event_id"] == 1
-    assert "transcript" not in events[1][1]
+    assert note["role"] == "transcription"
+    assert note["has_summary"] is True
+    assert note["primary_sheet_title"] == "Саммари"
+    assert "ok" in (note.get("body") or "")
+    extras = sheets.list_extra_sheets(int(note["id"]))
+    assert len(extras) == 1
+    assert extras[0]["title"] == "Транскрипции"
+    assert "Привет" in extras[0]["body"]
+    listed = notes_store.list_notes(42)
+    assert listed == []
+    trans = notes_store.list_transcription_notes(42)
+    assert len(trans) == 1

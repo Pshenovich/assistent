@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sqlite3
@@ -55,6 +56,7 @@ def _conn() -> sqlite3.Connection:
     _ensure_role_column(_CONN)
     _ensure_kb_enabled_column(_CONN)
     _ensure_revision_column(_CONN)
+    _ensure_transcription_columns(_CONN)
     _ensure_pins_table(_CONN)
     _CONN.commit()
     return _CONN
@@ -62,6 +64,9 @@ def _conn() -> sqlite3.Connection:
 
 KNOWLEDGE_ROLE = "knowledge"
 KNOWLEDGE_TITLE = "База знаний"
+TRANSCRIPTION_ROLE = "transcription"
+SUMMARY_SHEET_TITLE = "Саммари"
+TRANSCRIPT_SHEET_TITLE = "Транскрипции"
 
 
 def _ensure_role_column(conn: sqlite3.Connection) -> None:
@@ -92,6 +97,18 @@ def _ensure_revision_column(conn: sqlite3.Connection) -> None:
         )
 
 
+def _ensure_transcription_columns(conn: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(local_notes)")}
+    if "meta_json" not in cols:
+        conn.execute(
+            "ALTER TABLE local_notes ADD COLUMN meta_json TEXT NOT NULL DEFAULT '{}'"
+        )
+    if "primary_sheet_title" not in cols:
+        conn.execute(
+            "ALTER TABLE local_notes ADD COLUMN primary_sheet_title TEXT NOT NULL DEFAULT ''"
+        )
+
+
 def _ensure_pins_table(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
@@ -104,6 +121,18 @@ def _ensure_pins_table(conn: sqlite3.Connection) -> None:
         )
         """
     )
+
+
+def _parse_meta_json(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
 
 
 def note_kb_enabled(note: dict[str, Any] | None) -> bool:
@@ -140,6 +169,18 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
             revision = int(row["revision"] or 1)
     except (IndexError, KeyError, TypeError, ValueError):
         revision = 1
+    meta: dict[str, Any] = {}
+    try:
+        if "meta_json" in row.keys():
+            meta = _parse_meta_json(row["meta_json"])
+    except (IndexError, KeyError):
+        meta = {}
+    primary_sheet_title = ""
+    try:
+        if "primary_sheet_title" in row.keys():
+            primary_sheet_title = str(row["primary_sheet_title"] or "")
+    except (IndexError, KeyError):
+        primary_sheet_title = ""
     return {
         "id": int(row["id"]),
         "title": str(row["title"] or ""),
@@ -152,12 +193,18 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "source": "local",
         "role": role,
         "is_knowledge": role == KNOWLEDGE_ROLE,
+        "is_transcription": role == TRANSCRIPTION_ROLE,
         "owner_user_id": owner,
         "user_id": owner,
         "revision": max(1, revision),
         "kb_enabled": note_kb_enabled(
             {"kb_enabled": row["kb_enabled"] if "kb_enabled" in row.keys() else 1}
         ),
+        "meta": meta,
+        "primary_sheet_title": primary_sheet_title,
+        "has_summary": role == TRANSCRIPTION_ROLE
+        and primary_sheet_title == SUMMARY_SHEET_TITLE,
+        "summary_generating": bool(meta.get("summary_generating")),
     }
 
 
@@ -203,30 +250,56 @@ def search_notes(
     return [n for _, _, n in scored[:lim]]
 
 
+def _excluded_list_roles(
+    *, include_knowledge: bool, include_transcription: bool
+) -> list[str]:
+    excluded: list[str] = []
+    if not include_knowledge:
+        excluded.append(KNOWLEDGE_ROLE)
+    if not include_transcription:
+        excluded.append(TRANSCRIPTION_ROLE)
+    return excluded
+
+
 def list_notes(
-    user_id: int | str, *, limit: int = 200, include_knowledge: bool = False
+    user_id: int | str,
+    *,
+    limit: int = 200,
+    include_knowledge: bool = False,
+    include_transcription: bool = False,
 ) -> list[dict[str, Any]]:
     uid = str(int(user_id))
     lim = max(1, min(int(limit), 500))
-    sql = """
+    excluded = _excluded_list_roles(
+        include_knowledge=include_knowledge,
+        include_transcription=include_transcription,
+    )
+    if excluded:
+        placeholders = ",".join("?" * len(excluded))
+        sql = f"""
+            SELECT * FROM local_notes
+            WHERE user_id = ? AND IFNULL(role, '') NOT IN ({placeholders})
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """
+        params: tuple[Any, ...] = (uid, *excluded, lim)
+    else:
+        sql = """
             SELECT * FROM local_notes
             WHERE user_id = ?
             ORDER BY updated_at DESC
             LIMIT ?
             """
-    params: tuple[Any, ...] = (uid, lim)
-    if not include_knowledge:
-        sql = """
-            SELECT * FROM local_notes
-            WHERE user_id = ? AND IFNULL(role, '') != ?
-            ORDER BY updated_at DESC
-            LIMIT ?
-            """
-        params = (uid, KNOWLEDGE_ROLE, lim)
+        params = (uid, lim)
     with _LOCK:
         cur = _conn().execute(sql, params)
         own = [_row_to_dict(r) for r in cur.fetchall()]
-    notes = _merge_shared_notes(uid, own, include_knowledge=include_knowledge)
+    notes = _merge_shared_notes(
+        uid,
+        own,
+        include_knowledge=include_knowledge,
+        include_transcription=include_transcription,
+    )
     notes.sort(key=lambda n: str(n.get("updated_at") or ""), reverse=True)
     notes = notes[:lim]
     out = [_with_sharing(n, uid) for n in notes]
@@ -275,7 +348,11 @@ def get_accessible_note(
 
 
 def _merge_shared_notes(
-    uid: str, own: list[dict[str, Any]], *, include_knowledge: bool
+    uid: str,
+    own: list[dict[str, Any]],
+    *,
+    include_knowledge: bool,
+    include_transcription: bool = False,
 ) -> list[dict[str, Any]]:
     seen = {int(n["id"]) for n in own}
     out = list(own)
@@ -290,6 +367,8 @@ def _merge_shared_notes(
         if not note:
             continue
         if not include_knowledge and note.get("is_knowledge"):
+            continue
+        if not include_transcription and note.get("is_transcription"):
             continue
         seen.add(nid)
         out.append(note)
@@ -319,19 +398,26 @@ def create_note(
     *,
     todoist_id: Optional[str] = None,
     role: str = "",
+    meta: Optional[dict[str, Any]] = None,
+    primary_sheet_title: str = "",
 ) -> dict[str, Any]:
     uid = str(int(user_id))
     title = (title or "").strip() or "(без названия)"
     body = (body or "").strip()
     note_role = (role or "").strip()
+    sheet_title = (primary_sheet_title or "").strip()
+    meta_raw = json.dumps(meta or {}, ensure_ascii=False)
     ts = _now_iso()
     with _LOCK:
         cur = _conn().execute(
             """
-            INSERT INTO local_notes (user_id, title, body, todoist_id, created_at, updated_at, role)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO local_notes (
+                user_id, title, body, todoist_id, created_at, updated_at, role,
+                meta_json, primary_sheet_title
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (uid, title, body, todoist_id, ts, ts, note_role),
+            (uid, title, body, todoist_id, ts, ts, note_role, meta_raw, sheet_title),
         )
         _conn().commit()
         nid = int(cur.lastrowid)
@@ -354,6 +440,9 @@ def update_note(
     body: Optional[str] = None,
     todoist_id: Optional[str] = None,
     kb_enabled: Optional[bool] = None,
+    meta: Optional[dict[str, Any]] = None,
+    primary_sheet_title: Optional[str] = None,
+    allow_empty_body: bool = False,
     expected_updated_at: Optional[str] = None,
     expected_revision: Optional[int] = None,
     actor_user_id: Optional[int | str] = None,
@@ -374,13 +463,26 @@ def update_note(
     new_title = existing["title"] if title is None else (title or "").strip() or "(без названия)"
     new_body = existing["body"] if body is None else (body or "").strip()
     # Автосохранение пустого редактора не должно затирать текст заметки.
-    if body is not None and not _plain_note_text(new_body) and _plain_note_text(existing["body"] or ""):
+    if (
+        body is not None
+        and not allow_empty_body
+        and not _plain_note_text(new_body)
+        and _plain_note_text(existing["body"] or "")
+    ):
         new_body = existing["body"]
     tid = existing.get("todoist_id") if todoist_id is None else todoist_id
     enabled = (
         1
         if (existing.get("kb_enabled") if kb_enabled is None else bool(kb_enabled))
         else 0
+    )
+    new_meta = existing.get("meta") if meta is None else dict(meta)
+    if not isinstance(new_meta, dict):
+        new_meta = {}
+    new_sheet_title = (
+        str(existing.get("primary_sheet_title") or "")
+        if primary_sheet_title is None
+        else str(primary_sheet_title or "").strip()
     )
     ts = _now_iso()
     new_rev = int(existing.get("revision") or 1) + 1
@@ -389,10 +491,22 @@ def update_note(
             """
             UPDATE local_notes
             SET title = ?, body = ?, todoist_id = ?, kb_enabled = ?,
+                meta_json = ?, primary_sheet_title = ?,
                 updated_at = ?, revision = ?
             WHERE user_id = ? AND id = ?
             """,
-            (new_title, new_body, tid, enabled, ts, new_rev, uid, int(note_id)),
+            (
+                new_title,
+                new_body,
+                tid,
+                enabled,
+                json.dumps(new_meta, ensure_ascii=False),
+                new_sheet_title,
+                ts,
+                new_rev,
+                uid,
+                int(note_id),
+            ),
         )
         _conn().commit()
     viewer = actor_user_id if actor_user_id is not None else uid
@@ -454,6 +568,37 @@ def list_knowledge_notes(
         n["pinned"] = str(n.get("id") or "") in pins
     notes.sort(key=lambda n: 0 if n.get("pinned") else 1)
     return notes
+
+
+def list_transcription_notes(
+    user_id: int | str, *, limit: int = 200
+) -> list[dict[str, Any]]:
+    uid = str(int(user_id))
+    lim = max(1, min(int(limit), 500))
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            SELECT * FROM local_notes
+            WHERE user_id = ? AND role = ?
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (uid, TRANSCRIPTION_ROLE, lim),
+        )
+        own = [_row_to_dict(r) for r in cur.fetchall()]
+    notes = _merge_shared_notes(
+        uid, own, include_knowledge=False, include_transcription=True
+    )
+    notes = [n for n in notes if n.get("is_transcription")]
+    notes.sort(key=lambda n: str(n.get("updated_at") or ""), reverse=True)
+    notes = notes[:lim]
+    out = [_with_sharing(n, uid) for n in notes]
+    pins = pinned_id_set(uid, "local")
+    for n in out:
+        n["pinned"] = str(n.get("id") or "") in pins
+    out.sort(key=lambda n: str(n.get("updated_at") or ""), reverse=True)
+    out.sort(key=lambda n: 0 if n.get("pinned") else 1)
+    return out
 
 
 def get_knowledge_note(user_id: int | str) -> Optional[dict[str, Any]]:
@@ -521,7 +666,14 @@ def duplicate_note(user_id: int | str, note_id: int) -> Optional[dict[str, Any]]
     src_role = str(src.get("role") or "").strip()
     if not src_role and src.get("is_knowledge"):
         src_role = KNOWLEDGE_ROLE
-    dup = create_note(uid, title, body, role=src_role)
+    dup = create_note(
+        uid,
+        title,
+        body,
+        role=src_role,
+        meta=dict(src.get("meta") or {}) if isinstance(src.get("meta"), dict) else {},
+        primary_sheet_title=str(src.get("primary_sheet_title") or ""),
+    )
     try:
         from assistant.stores import note_sheets as note_sheets_store
 

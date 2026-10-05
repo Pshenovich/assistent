@@ -21,12 +21,9 @@ from assistant.lib.tg_media_fetch import MediaTooLargeError, download_telegram_f
 from assistant.lib.telegram_html import format_transcription_html
 from assistant.lib.telegram_message import reply_formatted
 from assistant.lib.urls import extract_urls
-from assistant.lib.usage_store import (
-    insert_usage_event,
-    search_transcriptions,
-    title_from_media_filename,
-)
+from assistant.lib.usage_store import title_from_media_filename
 from assistant.nlu.regex import parse_transcribe_intent
+from assistant.services import transcription_notes as tnotes
 
 _DONE_FLAG = "_transcribe_done"
 
@@ -68,7 +65,7 @@ async def handle_search(
         )
         return
     uid = int(user.id)
-    matches = await asyncio.to_thread(search_transcriptions, str(uid), q, limit=5)
+    matches = await asyncio.to_thread(tnotes.search_transcripts, str(uid), q, limit=5)
     if not matches:
         await msg.reply_text(f"Транскрипций по запросу «{q}» не найдено.")
         return
@@ -172,34 +169,29 @@ def _document_is_video(doc) -> bool:
     return name.endswith((".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"))
 
 
-def _save_transcription_journal(
+def _save_transcription_note(
     *,
     user_id: int,
-    username: str | None,
     result: TranscribeResult,
     filename: str | None = None,
     url: str | None = None,
 ) -> int:
     text = (result.formatted_text or result.plain_text or "").strip()
-    usage: dict = {
-        "text": text,
-        "source": "telegram",
-    }
-    if filename:
-        usage["filename"] = filename
-    if url:
-        usage["url"] = url
     topic = title_from_media_filename(filename)
+    meta: dict = {"source": "telegram"}
+    if filename:
+        meta["filename"] = filename
+    if url:
+        meta["source_url"] = url
     if topic:
-        usage["meta"] = {"main_topic": topic}
-    return insert_usage_event(
-        operation="obuchat_transcribe",
-        model=None,
-        generation_id=result.job_id,
-        usage=usage,
-        telegram_user_id=str(user_id) if user_id else None,
-        telegram_username=username,
+        meta["main_topic"] = topic
+    note = tnotes.create_transcript_only(
+        user_id,
+        title=topic or filename or "Транскрипция",
+        transcript=text,
+        meta=meta,
     )
+    return int(note["id"])
 
 
 async def run_explicit_transcribe(
@@ -214,7 +206,6 @@ async def run_explicit_transcribe(
         return
     user = update.effective_user
     uid = int(user.id) if user else 0
-    username = user.username if user else None
 
     status = take_work_status(context)
     if status is None:
@@ -248,11 +239,10 @@ async def run_explicit_transcribe(
             await set_status(status, "(пустая транскрипция)", anchor=msg, context=context)
             return
 
-        from assistant.skills.journal_pdf import pdf_download_keyboard
+        from assistant.skills.journal_pdf import pdf_download_keyboard_for_note
 
-        event_id = _save_transcription_journal(
+        note_id = _save_transcription_note(
             user_id=uid,
-            username=username,
             result=result,
             filename=fname,
             url=link,
@@ -261,7 +251,7 @@ async def run_explicit_transcribe(
             await status.delete()
         except Exception:
             pass
-        keyboard = pdf_download_keyboard(event_id) if event_id else None
+        keyboard = pdf_download_keyboard_for_note(note_id) if note_id else None
         await _reply_long_text(
             msg,
             body,

@@ -6586,13 +6586,23 @@ async def miniapp_notes_bundle(
             continue
         item = _journal_row_api(dict(row))
         out_journal.append(item)
-        op = str(row.get("operation") or "")
-        if op == "obuchat_transcribe":
-            transcriptions.append(item)
-        elif op == "summarize":
-            summaries.append(item)
 
-    _enrich_transcription_summary_links(str(uid), transcriptions, summaries)
+    try:
+        from assistant.services.transcription_notes_migrate import migrate_user_if_needed
+
+        await run_in_threadpool(migrate_user_if_needed, uid)
+    except Exception as e:
+        print(f"[miniapp_notes] transcription_migrate_fail err={e!r}")
+
+    try:
+        from assistant.services import transcription_notes as tnotes
+
+        transcriptions = await run_in_threadpool(
+            partial(tnotes.list_for_user, uid, limit=lim)
+        )
+    except Exception as e:
+        print(f"[miniapp_notes] transcription_notes_fail err={e!r}")
+        transcriptions = []
 
     def _attach_tags() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         from assistant.stores import hashtags as hashtags_store
@@ -6605,8 +6615,8 @@ async def miniapp_notes_bundle(
         tag_items: list[tuple[str, str]] = []
         for n in local_notes:
             tag_items.append(("local", str(n.get("id"))))
-        for row in transcriptions + summaries:
-            tag_items.append(("journal", str(row.get("id"))))
+        for row in transcriptions:
+            tag_items.append(("local", str(row.get("id"))))
         mapping = tags_store.tags_by_items(uid, tag_items)
         for n in local_notes:
             hashtags_store.sync_item_hashtags(
@@ -6616,13 +6626,21 @@ async def miniapp_notes_bundle(
                 str(n.get("title") or ""),
                 str(n.get("body") or n.get("description") or ""),
             )
+        for row in transcriptions:
+            hashtags_store.sync_item_hashtags(
+                uid,
+                "local",
+                row.get("id"),
+                str(row.get("title") or ""),
+                str(row.get("body") or row.get("description") or row.get("preview") or ""),
+            )
         hash_mapping = hashtags_store.hashtags_by_items(uid, tag_items)
         for n in local_notes:
             key = ("local", str(n.get("id")))
             _apply_project_fields(n, mapping.get(key, []))
             n["hashtags"] = hash_mapping.get(key, [])
-        for row in transcriptions + summaries:
-            key = ("journal", str(row.get("id")))
+        for row in transcriptions:
+            key = ("local", str(row.get("id")))
             _apply_project_fields(row, mapping.get(key, []))
             row["hashtags"] = hash_mapping.get(key, [])
         return tags_store.list_tags(uid), hashtags_store.list_hashtags(uid)
@@ -6637,7 +6655,7 @@ async def miniapp_notes_bundle(
             n.setdefault("tags", [])
             n.setdefault("project", None)
             n.setdefault("hashtags", [])
-        for row in transcriptions + summaries:
+        for row in transcriptions:
             row.setdefault("tags", [])
             row.setdefault("project", None)
             row.setdefault("hashtags", [])
@@ -6645,9 +6663,13 @@ async def miniapp_notes_bundle(
     def _attach_shares() -> None:
         from assistant.stores import share_links as share_links_store
 
-        ids = [str(n.get("id") or "") for n in local_notes if n.get("id") is not None]
+        ids = [
+            str(n.get("id") or "")
+            for n in (local_notes + transcriptions)
+            if n.get("id") is not None
+        ]
         shares = share_links_store.list_active_by_item_ids("local", ids)
-        for n in local_notes:
+        for n in local_notes + transcriptions:
             owner = str(n.get("owner_user_id") or n.get("user_id") or "")
             iid = str(n.get("id") or "")
             link = shares.get((owner, iid))
@@ -6664,25 +6686,21 @@ async def miniapp_notes_bundle(
         await run_in_threadpool(_attach_shares)
     except Exception as e:
         print(f"[miniapp_notes] share_meta_fail err={e!r}")
-        for n in local_notes:
+        for n in local_notes + transcriptions:
             n.setdefault("shared", False)
 
     def _attach_discuss_latest() -> None:
         from assistant.stores import share_comments as share_comments_store
 
         share_comments_store.attach_discuss_latest(local_notes, kind="local")
-        share_comments_store.attach_discuss_latest(
-            transcriptions + summaries, kind="journal"
-        )
+        share_comments_store.attach_discuss_latest(transcriptions, kind="local")
 
     try:
         await run_in_threadpool(_attach_discuss_latest)
     except Exception as e:
         print(f"[miniapp_notes] discuss_latest_fail err={e!r}")
-        for n in local_notes:
+        for n in local_notes + transcriptions:
             n.setdefault("discuss_latest", None)
-        for row in transcriptions + summaries:
-            row.setdefault("discuss_latest", None)
 
     return {
         "journal": out_journal,
@@ -7231,6 +7249,10 @@ async def miniapp_local_note_get(
     item = await run_in_threadpool(notes_store.get_accessible_note, uid, note_id)
     if not item:
         raise HTTPException(status_code=404, detail="Заметка не найдена")
+    from assistant.services import transcription_notes as tnotes
+
+    if tnotes.is_transcription_note(item):
+        item = tnotes.enrich(item)
     item = await run_in_threadpool(_enrich_item_labels, uid, "local", item)
     return {"ok": True, "item": item}
 
@@ -7281,6 +7303,52 @@ async def miniapp_note_sheet_create(
     if item is None:
         raise HTTPException(status_code=404, detail="Заметка не найдена")
     return {"ok": True, "item": item}
+
+
+@miniapp_router.post("/notes/local/{note_id}/make-summary")
+async def miniapp_note_make_summary(
+    note_id: int,
+    background_tasks: BackgroundTasks,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.services import transcription_notes as tnotes
+
+    uid = int(principal.telegram_user_id)
+
+    def _begin() -> dict[str, Any]:
+        return tnotes.begin_make_summary(uid, note_id)
+
+    try:
+        item = await run_in_threadpool(_begin)
+    except tnotes.TranscriptionNoteError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    background_tasks.add_task(tnotes.generate_summary_for_note, uid, note_id)
+    return {"ok": True, "item": item}
+
+
+@miniapp_router.post("/notes/local/{note_id}/pdf")
+async def miniapp_local_note_pdf(
+    note_id: int,
+    background_tasks: BackgroundTasks,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.services import transcription_notes as tnotes
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    note = await run_in_threadpool(notes_store.get_accessible_note, uid, note_id)
+    if not note or not tnotes.is_transcription_note(note):
+        raise HTTPException(status_code=404, detail="Транскрипция не найдена")
+
+    def _send() -> None:
+        from assistant.skills.journal_pdf import deliver_note_pdf_sync
+
+        deliver_note_pdf_sync(
+            telegram_user_id=uid, note_id=int(note_id), notify_on_fail=True
+        )
+
+    background_tasks.add_task(_send)
+    return {"ok": True}
 
 
 @miniapp_router.patch("/notes/local/{note_id}/sheets/{sheet_id}")

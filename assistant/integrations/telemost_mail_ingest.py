@@ -195,7 +195,7 @@ def _process_message(telegram_user_id: int, msg: Message, *, subject: str) -> bo
         "meta": {"content_type": "meeting", "source": "telemost_mail"},
         "result": None,
     }
-    tr_id, sum_id = mrp.persist_meeting_artifacts_for_user(
+    note = mrp.persist_meeting_artifacts_for_user(
         user_id=int(telegram_user_id),
         username=None,
         processed=processed,
@@ -203,12 +203,12 @@ def _process_message(telegram_user_id: int, msg: Message, *, subject: str) -> bo
         source_url=None,
         filename=None,
     )
+    note_id = int(note["id"])
     mrp.notify_summary_ready(
         user_id=int(telegram_user_id),
         topic=topic,
         summary_text=summary_part,
-        summary_event_id=sum_id,
-        transcript_event_id=tr_id if transcript_part else None,
+        note_id=note_id,
     )
     return True
 

@@ -7,11 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from assistant.lib.telegram_html import html_to_plain
-from assistant.lib.usage_store import (
-    get_latest_summary,
-    search_summaries,
-    search_transcriptions,
-)
+from assistant.services import transcription_notes as tnotes
 from assistant.stores import notes as notes_store
 
 _CONTEXT_MAX_CHARS = 12000
@@ -178,11 +174,13 @@ def _note_fragment(note: dict[str, Any], *, score: float) -> JournalFragment:
 def _transcript_fragment(item: dict[str, Any], *, score: float) -> JournalFragment:
     text = _plain_text(str(item.get("text") or ""))
     headline = str(item.get("headline") or "Транскрипция").strip()[:120]
+    ts = str(item.get("ts_utc") or "")
+    date_utc = str(item.get("date_utc") or "")[:10] or (ts[:10] if ts else None)
     return JournalFragment(
         source_type="transcript",
         item_id=int(item.get("id") or 0),
-        ts_utc=str(item.get("ts_utc") or ""),
-        date_utc=str(item.get("date_utc") or "")[:10] or None,
+        ts_utc=ts,
+        date_utc=date_utc,
         headline=headline,
         text=text[:_FRAGMENT_TEXT_MAX],
         score=score,
@@ -194,6 +192,8 @@ def _summary_fragment(item: dict[str, Any], *, score: float) -> JournalFragment:
     summary_text = _plain_text(str(item.get("text") or ""))
     raw_json_transcript = str(item.get("transcript") or "").strip()
     transcript_event_id = meta.get("transcript_event_id")
+    if transcript_event_id is None and item.get("is_transcription_note"):
+        transcript_event_id = item.get("note_id") or item.get("id")
     tid: int | None = None
     try:
         if transcript_event_id is not None:
@@ -209,11 +209,13 @@ def _summary_fragment(item: dict[str, Any], *, score: float) -> JournalFragment:
         parts.append(f"[Фрагмент транскрипта]\n{transcript_excerpt}")
     text = "\n\n".join(p for p in parts if p).strip()
     headline = str(item.get("headline") or "Саммари").strip()[:120]
+    ts = str(item.get("ts_utc") or "")
+    date_utc = str(item.get("date_utc") or "")[:10] or (ts[:10] if ts else None)
     return JournalFragment(
         source_type="summary",
         item_id=int(item.get("id") or 0),
-        ts_utc=str(item.get("ts_utc") or ""),
-        date_utc=str(item.get("date_utc") or "")[:10] or None,
+        ts_utc=ts,
+        date_utc=date_utc,
         headline=headline,
         text=text[:_FRAGMENT_TEXT_MAX],
         score=score,
@@ -222,11 +224,9 @@ def _summary_fragment(item: dict[str, Any], *, score: float) -> JournalFragment:
 
 
 def _fetch_latest_meeting_fragments(user_id: str) -> list[JournalFragment]:
-    latest = get_latest_summary(user_id)
+    latest = tnotes.get_latest_summary(user_id)
     if not latest:
         return []
-    meta = latest.get("meta") if isinstance(latest.get("meta"), dict) else {}
-    transcript_event_id = meta.get("transcript_event_id")
     return [
         _summary_fragment(latest, score=10.0),
     ]
@@ -293,14 +293,14 @@ def retrieve_journal_context(
 
     if "transcripts" in sources and search_q:
         for i, item in enumerate(
-            search_transcriptions(uid, search_q, limit=per_source_limit)
+            tnotes.search_transcripts(uid, search_q, limit=per_source_limit)
         ):
             score = float(per_source_limit - i)
             fragments.append(_transcript_fragment(item, score=score))
 
     if "summaries" in sources and search_q:
         for i, item in enumerate(
-            search_summaries(
+            tnotes.search_summaries(
                 uid,
                 search_q,
                 field=field,
@@ -335,10 +335,13 @@ def retrieve_journal_context(
         for f in fragments
         if f.source_type == "summary" and f.transcript_event_id
     }
+    summary_ids = {f.item_id for f in fragments if f.source_type == "summary"}
     deduped: list[JournalFragment] = []
     seen: set[tuple[str, str | int]] = set()
     for f in fragments:
-        if f.source_type == "transcript" and f.item_id in linked_transcript_ids:
+        if f.source_type == "transcript" and (
+            f.item_id in linked_transcript_ids or f.item_id in summary_ids
+        ):
             continue
         key = (f.source_type, f.item_id)
         if key in seen:

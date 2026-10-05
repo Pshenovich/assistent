@@ -76,10 +76,12 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 
 def primary_sheet(note: dict[str, Any]) -> dict[str, Any]:
     body = str(note.get("body") or note.get("description") or "")
+    custom = str(note.get("primary_sheet_title") or "").strip()
+    title = custom or PRIMARY_SHEET_TITLE
     return {
         "id": PRIMARY_SHEET_ID,
         "note_id": int(note["id"]),
-        "title": PRIMARY_SHEET_TITLE,
+        "title": title,
         "body": body,
         "description": body,
         "position": 0,
@@ -173,7 +175,7 @@ def _next_position(note_id: int) -> int:
     return int(row["mx"] or 0) + 1 if row else 1
 
 
-def create_sheet(note: dict[str, Any], title: str = "") -> dict[str, Any]:
+def create_sheet(note: dict[str, Any], title: str = "", body: str = "") -> dict[str, Any]:
     if not note_allows_sheets(note):
         raise SheetError("Листы доступны только у обычных заметок")
     note_id = int(note["id"])
@@ -182,13 +184,14 @@ def create_sheet(note: dict[str, Any], title: str = "") -> dict[str, Any]:
     name = (title or "").strip() or f"Лист {extra_count(note_id) + 2}"
     ts = _now_iso()
     pos = _next_position(note_id)
+    sheet_body = body if body is not None else ""
     with _LOCK:
         cur = _conn().execute(
             """
             INSERT INTO note_sheets (note_id, title, body, position, revision, created_at, updated_at)
-            VALUES (?, ?, '', ?, 1, ?, ?)
+            VALUES (?, ?, ?, ?, 1, ?, ?)
             """,
-            (note_id, name, pos, ts, ts),
+            (note_id, name, sheet_body, pos, ts, ts),
         )
         _conn().commit()
         sid = int(cur.lastrowid)

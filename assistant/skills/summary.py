@@ -18,10 +18,10 @@ from assistant.lib.telegram_html import html_to_plain, uses_html_markup
 from assistant.lib.telegram_markdown import prepare_summary_markdown
 from assistant.lib.telegram_message import reply_formatted
 from assistant.lib.urls import extract_urls
-from assistant.lib.usage_store import get_latest_summary, insert_usage_event, search_summaries
+from assistant.lib.telegram_status import post_status, set_status, take_work_status
 from assistant.nlu import llm as llm_mod
 from assistant.nlu.regex import parse_summary_intent
-from assistant.lib.telegram_status import post_status, set_status, take_work_status
+from assistant.services import transcription_notes as tnotes
 from assistant.skills.transcribe import _bytes_from_tg_message
 
 _DONE_FLAG = "_summary_done"
@@ -145,39 +145,37 @@ def _build_meta(result: dict, *, speakers_detected: bool) -> dict:
     }
 
 
-def _save_summary_journal(
+def _save_summary_note(
     *,
     user_id: int,
-    username: str | None,
     transcript: str,
     summary_text: str,
     meta: dict,
-    result: TranscribeResult | None = None,
     filename: str | None = None,
     source_url: str | None = None,
     telegram_link: str | None = None,
-    model: str | None = None,
 ) -> int:
-    usage: dict = {
-        "text": summary_text,
-        "transcript": transcript,
-        "source": "telegram",
-        "meta": meta,
-    }
+    payload = dict(meta or {})
+    payload["source"] = "telegram"
     if filename:
-        usage["filename"] = filename
+        payload["filename"] = filename
     if source_url:
-        usage["source_url"] = source_url
+        payload["source_url"] = source_url
     if telegram_link:
-        usage["telegram_link"] = telegram_link
-    return insert_usage_event(
-        operation="summarize",
-        model=model,
-        generation_id=result.job_id if result else None,
-        usage=usage,
-        telegram_user_id=str(user_id) if user_id else None,
-        telegram_username=username,
+        payload["telegram_link"] = telegram_link
+    title = (
+        str(payload.get("main_topic") or "").strip()
+        or filename
+        or "Саммари"
     )
+    note = tnotes.create_with_summary(
+        user_id,
+        title=title,
+        transcript=transcript,
+        summary=summary_text,
+        meta=payload,
+    )
+    return int(note["id"])
 
 
 def _format_summary_message(item: dict) -> str:
@@ -189,14 +187,22 @@ async def handle_latest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user = update.effective_user
     if not msg or not user:
         return
-    item = await asyncio.to_thread(get_latest_summary, str(user.id))
+    item = await asyncio.to_thread(tnotes.get_latest_summary, str(user.id))
     if not item:
         await msg.reply_text("Сохранённых саммари пока нет.")
         return
-    from assistant.skills.journal_pdf import pdf_download_keyboard
+    from assistant.skills.journal_pdf import pdf_download_keyboard_for_note
 
-    event_id = int(item.get("id") or 0)
-    keyboard = pdf_download_keyboard(event_id) if event_id else None
+    note_id = int(item.get("note_id") or item.get("id") or 0)
+    keyboard = (
+        pdf_download_keyboard_for_note(note_id)
+        if item.get("is_transcription_note") and note_id
+        else None
+    )
+    if keyboard is None and note_id and not item.get("is_transcription_note"):
+        from assistant.skills.journal_pdf import pdf_download_keyboard
+
+        keyboard = pdf_download_keyboard(note_id)
     await _reply_text_safe(msg, _summary_item_markdown(item), reply_markup=keyboard)
 
 
@@ -224,7 +230,7 @@ async def handle_search(
         assignee = parsed.get("assignee") or None
         search_q = str(parsed.get("query") or q).strip() or q
     matches = await asyncio.to_thread(
-        search_summaries,
+        tnotes.search_summaries,
         str(uid),
         search_q,
         field=field,
@@ -235,10 +241,15 @@ async def handle_search(
         await msg.reply_text(f"Саммари по запросу «{q}» не найдено.")
         return
     best = matches[0]
-    from assistant.skills.journal_pdf import pdf_download_keyboard
+    from assistant.skills.journal_pdf import pdf_download_keyboard_for_note
 
-    event_id = int(best.get("id") or 0)
-    keyboard = pdf_download_keyboard(event_id) if event_id else None
+    pdf_id = int(best.get("note_id") or best.get("id") or 0)
+    if best.get("is_transcription_note") and pdf_id:
+        keyboard = pdf_download_keyboard_for_note(pdf_id)
+    else:
+        from assistant.skills.journal_pdf import pdf_download_keyboard
+
+        keyboard = pdf_download_keyboard(pdf_id) if pdf_id else None
     await _reply_text_safe(msg, _format_summary_message(best), reply_markup=keyboard)
     if len(matches) > 1:
         others = ", ".join(
@@ -262,7 +273,6 @@ async def run_explicit_summary(
         return
     user = update.effective_user
     uid = int(user.id) if user else 0
-    username = user.username if user else None
 
     status = take_work_status(context)
     if status is None:
@@ -321,25 +331,22 @@ async def run_explicit_summary(
             ts=ts,
         )
         meta = _build_meta(summary_result, speakers_detected=speakers)
-        from assistant.skills.journal_pdf import pdf_download_keyboard
+        from assistant.skills.journal_pdf import pdf_download_keyboard_for_note
 
-        event_id = _save_summary_journal(
+        note_id = _save_summary_note(
             user_id=uid,
-            username=username,
             transcript=transcript,
             summary_text=display_text,
             meta=meta,
-            result=result,
             filename=fname,
             source_url=source_url,
             telegram_link=telegram_link,
-            model=llm_mod.summary_model_name(),
         )
         try:
             await status.delete()
         except Exception:
             pass
-        keyboard = pdf_download_keyboard(event_id) if event_id else None
+        keyboard = pdf_download_keyboard_for_note(note_id) if note_id else None
         try:
             await _reply_text_safe(msg, display_text, reply_markup=keyboard)
         except Exception as e:

@@ -67,7 +67,7 @@ def test_pipeline_upload_failure_does_not_fail_job(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "assistant.services.meeting_record_pipeline.persist_meeting_artifacts_for_user",
-        lambda **_k: (10, 11),
+        lambda **_k: {"id": 10},
     )
     monkeypatch.setattr(
         "assistant.services.meeting_record_pipeline.notify_summary_ready",

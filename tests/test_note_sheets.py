@@ -27,6 +27,20 @@ class NoteSheetsStoreTests(unittest.TestCase):
         self.assertEqual(listed[0]["title"], "Основная")
         self.assertIn("план", listed[0]["body"])
 
+    def test_custom_primary_sheet_title(self) -> None:
+        note = notes_store.create_note(
+            11,
+            "Созвон",
+            "<p>текст</p>",
+            role=notes_store.TRANSCRIPTION_ROLE,
+            primary_sheet_title="Транскрипции",
+        )
+        listed = sheets.list_sheets(note)
+        self.assertEqual(listed[0]["title"], "Транскрипции")
+        extra = sheets.create_sheet(note, "Саммари", body="<p>кратко</p>")
+        self.assertEqual(extra["title"], "Саммари")
+        self.assertIn("кратко", extra["body"])
+
     def test_create_update_delete(self) -> None:
         note = notes_store.create_note(2, "Сделка", "тело")
         extra = sheets.create_sheet(note, "Черновик")

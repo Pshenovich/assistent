@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html as html_lib
+import json
 import re
 from datetime import datetime
 from io import BytesIO
@@ -437,3 +438,47 @@ def journal_pdf_for_user(telegram_user_id: str, event_id: int) -> tuple[bytes, s
     if op not in ("obuchat_transcribe", "summarize"):
         raise ValueError("PDF недоступен для этой записи.")
     return build_journal_pdf(row)
+
+
+def build_note_pdf(note: dict[str, Any], *, which: str = "auto") -> tuple[bytes, str, str]:
+    from assistant.services import transcription_notes as tnotes
+
+    if not tnotes.is_transcription_note(note):
+        raise ValueError("PDF доступен только для транскрипций.")
+    mode = (which or "auto").strip().lower()
+    if mode == "transcript" or (mode == "auto" and not tnotes.has_summary(note)):
+        body = tnotes.transcript_html(note)
+        op = "obuchat_transcribe"
+    else:
+        body = tnotes.summary_html(note) or tnotes.transcript_html(note)
+        op = "summarize"
+    meta = note.get("meta") if isinstance(note.get("meta"), dict) else {}
+    raw = json.dumps(
+        {
+            "text": body,
+            "source_url": str(meta.get("source_url") or "").strip() or None,
+            "telegram_link": str(meta.get("telegram_link") or "").strip() or None,
+            "meta": {
+                "main_topic": str(meta.get("main_topic") or note.get("title") or "").strip()
+            },
+        },
+        ensure_ascii=False,
+    )
+    synthetic = {
+        "id": note.get("id"),
+        "operation": op,
+        "ts_utc": note.get("updated_at") or note.get("created_at") or "",
+        "raw_usage_json": raw,
+    }
+    return build_journal_pdf(synthetic)
+
+
+def note_pdf_for_user(
+    telegram_user_id: str, note_id: int, *, which: str = "auto"
+) -> tuple[bytes, str, str]:
+    from assistant.stores import notes as notes_store
+
+    note = notes_store.get_accessible_note(telegram_user_id, int(note_id))
+    if not note:
+        raise ValueError("Запись не найдена.")
+    return build_note_pdf(note, which=which)

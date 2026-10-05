@@ -1106,7 +1106,7 @@
   var sidebarTreeState = {
     notesOpen: true,
     digestOpen: true,
-    sections: { notes: true, chats: false, transcriptions: false, summaries: false },
+    sections: { notes: true, chats: false, transcriptions: false },
     projects: {},
   };
   var digestMarketLoaded = false;
@@ -2567,28 +2567,6 @@
     openJournalEditorDetail({ id: journalId });
   }
 
-  function createJournalPdfButton(journalId) {
-    var btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "note-card-action-btn";
-    btn.setAttribute("aria-label", "Скачать PDF");
-    btn.title = "Скачать PDF";
-    btn.innerHTML =
-      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' +
-      '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
-      '<polyline points="7 10 12 15 17 10"/>' +
-      '<line x1="12" y1="15" x2="12" y2="3"/>' +
-      "</svg>";
-    btn.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      requestJournalPdf(journalId).catch(function (err) {
-        alert(err.message || String(err));
-      });
-    });
-    return btn;
-  }
-
   function isGenericMeetingTopic(topic) {
     var t = String(topic || "")
       .trim()
@@ -2850,6 +2828,23 @@
     return !!(item && (item.is_knowledge || item.role === "knowledge"));
   }
 
+  function isTranscriptionNoteItem(item) {
+    return !!(item && (item.is_transcription || item.role === "transcription"));
+  }
+
+  function transcriptionHasSummary(item) {
+    if (!item) return false;
+    if (item.has_summary) return true;
+    return String(item.primary_sheet_title || "") === "Саммари";
+  }
+
+  function transcriptionIsGenerating(item) {
+    if (!item) return false;
+    if (item.summary_generating) return true;
+    var meta = item.meta;
+    return !!(meta && meta.summary_generating);
+  }
+
   function prependKnowledgeInCache(item) {
     if (!knowledgeDataCache) knowledgeDataCache = { notes: [] };
     if (!knowledgeDataCache.notes) knowledgeDataCache.notes = [];
@@ -2899,6 +2894,10 @@
       prependKnowledgeInCache(item);
       return;
     }
+    if (isTranscriptionNoteItem(item)) {
+      prependTranscriptionInCache(item);
+      return;
+    }
     if (!notesDataCache) notesDataCache = { local_notes: [] };
     if (!notesDataCache.local_notes) notesDataCache.local_notes = [];
     var lid = localNoteIdFrom(item);
@@ -2907,6 +2906,30 @@
       return String(x.id) !== String(lid);
     });
     notesDataCache.local_notes.unshift(noteCacheEntry(item));
+    persistNotesCacheToDisk();
+  }
+
+  function prependTranscriptionInCache(item) {
+    if (!notesDataCache) notesDataCache = { transcriptions: [] };
+    if (!notesDataCache.transcriptions) notesDataCache.transcriptions = [];
+    var lid = localNoteIdFrom(item);
+    if (!lid) return;
+    notesDataCache.transcriptions = notesDataCache.transcriptions.filter(function (x) {
+      return String(x.id) !== String(lid);
+    });
+    var merged = Object.assign({}, item, {
+      role: "transcription",
+      is_transcription: true,
+    });
+    notesDataCache.transcriptions.unshift(merged);
+    persistNotesCacheToDisk();
+  }
+
+  function removeTranscriptionFromCache(id) {
+    if (!notesDataCache || !notesDataCache.transcriptions) return;
+    notesDataCache.transcriptions = notesDataCache.transcriptions.filter(function (x) {
+      return String(x.id) !== String(id);
+    });
     persistNotesCacheToDisk();
   }
 
@@ -2959,13 +2982,8 @@
     persistNotesCacheToDisk();
   }
 
-  function isJournalPdfOp(op) {
-    var k = String(op || "");
-    return k === "obuchat_transcribe" || k === "summarize";
-  }
-
-  async function requestJournalPdf(eventId) {
-    await apiFetch("/notes/journal/" + encodeURIComponent(String(eventId)) + "/pdf", {
+  async function requestTranscriptionPdf(noteId) {
+    await apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/pdf", {
       method: "POST",
     });
     alert("Файл генерируется, по готовности будет отправлен в чат");
@@ -3715,6 +3733,7 @@
     if (isAppOffline() || String(id).indexOf("tmp_") === 0) {
       removeLocalFromCache(id);
       removeKnowledgeFromCache(id);
+      removeTranscriptionFromCache(id);
       enqueueOfflineOp({
         type: "note_delete",
         clientId: id,
@@ -3730,10 +3749,12 @@
       });
       removeLocalFromCache(id);
       removeKnowledgeFromCache(id);
+      removeTranscriptionFromCache(id);
     } catch (e) {
       if (!isTransientApiError(e)) throw e;
       removeLocalFromCache(id);
       removeKnowledgeFromCache(id);
+      removeTranscriptionFromCache(id);
       enqueueOfflineOp({
         type: "note_delete",
         clientId: id,
@@ -4873,23 +4894,12 @@
       {
         id: "transcriptions",
         label: "Транскрипции",
-        kind: "journal",
+        kind: "local",
         items: data.transcriptions || [],
         openItem: function (row) {
           setTab("notes", { noAnim: true });
           setNotesSubTab("transcriptions");
-          openJournalEditorDetail(row);
-        },
-      },
-      {
-        id: "summaries",
-        label: "Саммари",
-        kind: "journal",
-        items: data.summaries || [],
-        openItem: function (row) {
-          setTab("notes", { noAnim: true });
-          setNotesSubTab("summaries");
-          openJournalEditorDetail(row);
+          openNoteDetail(row, { isLocal: true });
         },
       },
     ];
@@ -12142,7 +12152,10 @@
       });
     }
     if (itemKind === "local") {
-      if (notesDataCache) patch(notesDataCache.local_notes);
+      if (notesDataCache) {
+        patch(notesDataCache.local_notes);
+        patch(notesDataCache.transcriptions);
+      }
       if (knowledgeDataCache) patch(knowledgeDataCache.notes);
     } else if (notesDataCache) {
       patch(notesDataCache.transcriptions);
@@ -12761,6 +12774,13 @@
       for (var i = 0; i < notesDataCache.local_notes.length; i++) {
         if (String(notesDataCache.local_notes[i].id) === String(lid)) {
           return notesDataCache.local_notes[i];
+        }
+      }
+    }
+    if (notesDataCache && notesDataCache.transcriptions) {
+      for (var t = 0; t < notesDataCache.transcriptions.length; t++) {
+        if (String(notesDataCache.transcriptions[t].id) === String(lid)) {
+          return notesDataCache.transcriptions[t];
         }
       }
     }
@@ -13598,6 +13618,7 @@
 
   function setNotesSubTab(name) {
     var next = name || "notes";
+    if (next === "summaries") next = "transcriptions";
     if (notesSubTab === "chats" && next !== "chats") {
       leaveChatThreadsMode();
     }
@@ -13608,7 +13629,6 @@
     setHidden(document.getElementById("notes-pane-notes"), next !== "notes");
     setHidden(document.getElementById("notes-pane-chats"), next !== "chats");
     setHidden(document.getElementById("notes-pane-transcriptions"), next !== "transcriptions");
-    setHidden(document.getElementById("notes-pane-summaries"), next !== "summaries");
     var filterBar = document.querySelector("#panel-notes .notes-filter-bar");
     setHidden(filterBar, next === "chats");
     syncChatDiscussionChrome();
@@ -15639,21 +15659,21 @@
     if (kind === "transcription") {
       source = (notesDataCache && notesDataCache.transcriptions) || [];
     } else if (kind === "summary") {
-      source = (notesDataCache && notesDataCache.summaries) || [];
+      source = ((notesDataCache && notesDataCache.transcriptions) || []).filter(
+        function (n) {
+          return transcriptionHasSummary(n);
+        }
+      );
     } else {
       source = (notesDataCache && notesDataCache.local_notes) || [];
     }
     return source.filter(function (n) {
       var id = String((n && n.id) || "");
       if (!id) return false;
-      var itemKind = kind === "note" ? "local" : "journal";
+      var itemKind = "local";
       if (selected[itemKind + ":" + id]) return false;
-      if (itemKind === "local") {
-        if (currentKind === "local" && id === currentId) return false;
-        if (n.is_knowledge || n.role === "knowledge") return false;
-      } else if (currentKind === "journal" && id === currentId) {
-        return false;
-      }
+      if (currentKind === "local" && id === currentId) return false;
+      if (n.is_knowledge || n.role === "knowledge") return false;
       if (!noteMatchesPickerProjectFilter(n, plusPickerActiveProjectId)) return false;
       if (!q) return true;
       if (itemKind === "journal") {
@@ -15710,10 +15730,8 @@
       var title = document.createElement("span");
       title.className = "note-paie-kb-item-title";
       var titleText =
-        plusPickerKind === "note"
-          ? sanitizeNoteTitle(n.title || n.content || "") ||
-            String(n.title || n.content || "Без названия")
-          : journalCardTitle(n) || "Без названия";
+        sanitizeNoteTitle(n.title || n.content || n.main_topic || "") ||
+        String(n.title || n.content || n.main_topic || "Без названия");
       title.textContent = titleText;
       btn.appendChild(title);
       var project = noteProjectOf(n);
@@ -15727,7 +15745,7 @@
       btn.addEventListener("click", function (e) {
         e.preventDefault();
         e.stopPropagation();
-        addDiscussContextNote(n, plusPickerKind === "note" ? "local" : "journal");
+        addDiscussContextNote(n, "local");
         closeNoteComposerMenus();
       });
       list.appendChild(btn);
@@ -15740,7 +15758,9 @@
         return Promise.resolve(notesDataCache.transcriptions || []);
       }
       if (plusPickerKind === "summary") {
-        return Promise.resolve(notesDataCache.summaries || []);
+        return Promise.resolve(
+          ((notesDataCache && notesDataCache.transcriptions) || []).filter(transcriptionHasSummary)
+        );
       }
       if (Array.isArray(notesDataCache.local_notes) && notesDataCache.local_notes.length) {
         return Promise.resolve(notesDataCache.local_notes);
@@ -15752,7 +15772,9 @@
           return (notesDataCache && notesDataCache.transcriptions) || [];
         }
         if (plusPickerKind === "summary") {
-          return (notesDataCache && notesDataCache.summaries) || [];
+          return ((notesDataCache && notesDataCache.transcriptions) || []).filter(
+            transcriptionHasSummary
+          );
         }
         return (notesDataCache && notesDataCache.local_notes) || [];
       })
@@ -17360,7 +17382,18 @@
       }
     }
     noteSheetState.leftId = String(next.id);
-    applyLeftSheetHtml(next);
+    var transNote = resolveLocalNoteFromCache({ id: noteSheetsNoteId() });
+    var pad = document.querySelector("#note-editor-overlay .note-editor-pad--body");
+    if (
+      isTranscriptionNoteItem(transNote) &&
+      transcriptionIsGenerating(transNote) &&
+      isPrimarySheetId(next.id) &&
+      pad
+    ) {
+      pad.innerHTML = noteSheetSkeletonHtml();
+    } else {
+      applyLeftSheetHtml(next);
+    }
     setNoteSheetFocus("left");
     renderNoteSheetChips();
     var restore = function () {
@@ -17385,6 +17418,40 @@
     host.innerHTML = "";
     if (!noteSheetsEnabled()) {
       host.classList.add("hidden");
+      return;
+    }
+    var transNote = resolveLocalNoteFromCache({ id: noteSheetsNoteId() });
+    var isTrans = isTranscriptionNoteItem(transNote);
+    if (isTrans) {
+      host.classList.remove("hidden");
+      noteSheetState.sheets.forEach(function (s) {
+        var chip = document.createElement("button");
+        chip.type = "button";
+        chip.className =
+          "note-sheet-chip" +
+          (String(s.id) === String(noteSheetState.leftId) ? " is-active" : "");
+        var label = document.createElement("span");
+        label.className = "note-sheet-chip-label";
+        label.textContent = s.title || "Лист";
+        chip.appendChild(label);
+        chip.addEventListener("click", function (e) {
+          e.preventDefault();
+          switchLeftSheet(s.id);
+        });
+        host.appendChild(chip);
+      });
+      if (!transcriptionHasSummary(transNote) && !transcriptionIsGenerating(transNote)) {
+        var makeBtn = document.createElement("button");
+        makeBtn.type = "button";
+        makeBtn.className = "note-sheet-chip note-sheet-chip--make-summary";
+        makeBtn.textContent = "Сделать саммари";
+        makeBtn.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          requestTranscriptionSummary();
+        });
+        host.appendChild(makeBtn);
+      }
       return;
     }
     var extras = extraNoteSheets();
@@ -17432,7 +17499,122 @@
       e.preventDefault();
       createNoteSheet({ openOn: "left" });
     });
-    host.appendChild(add);
+      host.appendChild(add);
+  }
+
+  var transcriptionSummaryPollTimer = null;
+
+  function confirmYesNoDialog(message) {
+    return new Promise(function (resolve) {
+      var existing = document.getElementById("leo-prompt-overlay");
+      if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+      var ov = document.createElement("div");
+      ov.id = "leo-prompt-overlay";
+      ov.className = "leo-prompt-overlay";
+      ov.innerHTML =
+        '<div class="leo-prompt-sheet" role="dialog" aria-modal="true">' +
+        '<p class="leo-prompt-message"></p>' +
+        '<div class="leo-prompt-actions">' +
+        '<button type="button" class="btn-text leo-prompt-cancel">Нет</button>' +
+        '<button type="button" class="btn leo-prompt-ok">Да</button>' +
+        "</div></div>";
+      var msg = ov.querySelector(".leo-prompt-message");
+      if (msg) msg.textContent = String(message || "");
+      function finish(ok) {
+        if (ov.parentNode) ov.parentNode.removeChild(ov);
+        document.removeEventListener("keydown", onKey, true);
+        resolve(!!ok);
+      }
+      function onKey(e) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          finish(false);
+        }
+        if (e.key === "Enter") {
+          e.preventDefault();
+          finish(true);
+        }
+      }
+      ov.querySelector(".leo-prompt-cancel").addEventListener("click", function () {
+        finish(false);
+      });
+      ov.querySelector(".leo-prompt-ok").addEventListener("click", function () {
+        finish(true);
+      });
+      ov.addEventListener("click", function (e) {
+        if (e.target === ov) finish(false);
+      });
+      document.addEventListener("keydown", onKey, true);
+      document.body.appendChild(ov);
+    });
+  }
+
+  function noteSheetSkeletonHtml() {
+    return (
+      '<div class="note-sheet-skeleton" aria-hidden="true" aria-busy="true">' +
+      '<div class="note-sheet-skeleton-row" style="width:74%"></div>' +
+      '<div class="note-sheet-skeleton-row note-sheet-skeleton-row--tall" style="width:88%"></div>' +
+      '<div class="note-sheet-skeleton-row" style="width:62%"></div>' +
+      '<div class="note-sheet-skeleton-row note-sheet-skeleton-row--tall" style="width:80%"></div>' +
+      '<div class="note-sheet-skeleton-row" style="width:70%"></div>' +
+      "</div>"
+    );
+  }
+
+  function stopTranscriptionSummaryPoll() {
+    if (transcriptionSummaryPollTimer) {
+      clearTimeout(transcriptionSummaryPollTimer);
+      transcriptionSummaryPollTimer = null;
+    }
+  }
+
+  function pollTranscriptionSummary(noteId) {
+    stopTranscriptionSummaryPoll();
+    var id = String(noteId || "");
+    if (!id) return;
+    transcriptionSummaryPollTimer = setTimeout(function () {
+      apiFetch("/notes/local/" + encodeURIComponent(id), { method: "GET" })
+        .then(function (res) {
+          var item = res && res.item;
+          if (!item) return;
+          prependTranscriptionInCache(item);
+          if (transcriptionIsGenerating(item)) {
+            pollTranscriptionSummary(id);
+            return;
+          }
+          if (noteSheetsNoteId() === id) {
+            openNoteDetail(item, { isLocal: true });
+          } else if (notesDataCache) {
+            renderNotesPanesFromData(notesDataCache);
+          }
+        })
+        .catch(function () {
+          pollTranscriptionSummary(id);
+        });
+    }, 1600);
+  }
+
+  async function requestTranscriptionSummary() {
+    var ok = await confirmYesNoDialog(
+      "У этого файла еще нет саммари. Хотите его сделать?"
+    );
+    if (!ok) return;
+    var noteId = noteSheetsNoteId();
+    if (!noteId) return;
+    try {
+      var res = await apiFetch(
+        "/notes/local/" + encodeURIComponent(String(noteId)) + "/make-summary",
+        { method: "POST" }
+      );
+      var item = res && res.item;
+      if (item) {
+        prependTranscriptionInCache(item);
+        openNoteDetail(item, { isLocal: true });
+        pollTranscriptionSummary(noteId);
+      }
+    } catch (e) {
+      alert(e.message || String(e));
+    }
   }
 
   function startNoteSheetRename(chip, sheet) {
@@ -17547,7 +17729,7 @@
     noteSheetState.sheets = [
       {
         id: NOTE_SHEET_MAIN,
-        title: "Основная",
+        title: (note && note.primary_sheet_title) || "Основная",
         body: noteSheetState.primaryBody,
         description: noteSheetState.primaryBody,
         revision: (note && note.revision) || 1,
@@ -22115,6 +22297,7 @@
   var noteEditorCloseSeq = 0;
 
   function closeNoteEditorModal() {
+    stopTranscriptionSummaryPoll();
     var ov = document.getElementById("note-editor-overlay");
     var body = getNoteEditorBodyEl();
     var flushFn =
@@ -22405,18 +22588,6 @@
     };
   }
 
-  function journalCardShareCtx(row) {
-    return {
-      _shareKind: "journal",
-      _shareId: String((row && row.id) || ""),
-      _shareShared: !!(row && row.shared),
-      _shareUrl: (row && row.share_url) || "",
-      _shareAccess: row && row.share_access === "comment" ? "comment" : "view",
-      _shareSheetIds: [],
-      _noteMembers: [],
-    };
-  }
-
   function openNoteCardMenu(btn, menu) {
     var wasOpen = !menu.classList.contains("hidden");
     closeNoteCardMenus();
@@ -22539,6 +22710,13 @@
       listShareCtx = noteCardShareCtx(n);
       openShareAccessSheet();
     });
+    if (isTranscriptionNoteItem(n)) {
+      addMoreItem("Скачать PDF", function () {
+        requestTranscriptionPdf(id).catch(function (err) {
+          alert(err.message || String(err));
+        });
+      });
+    }
     addMoreItem(n.pinned ? "Открепить" : "Закрепить", function () {
       toggleNotePin(id, !n.pinned);
     });
@@ -22561,83 +22739,6 @@
     syncNoteCardActionsPad(inner, actions);
   }
 
-  function mountJournalCardActions(card, inner, row) {
-    var id = String((row && row.id) || "");
-    if (!id) return;
-    syncDiscussUnreadFromNoteRow("journal", row);
-    var actions = document.createElement("div");
-    actions.className = "note-card-actions";
-    actions.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    });
-    actions.addEventListener("pointerdown", function (e) {
-      e.stopPropagation();
-    });
-
-    mountDiscussUnreadBadge(actions, "journal", id, false);
-
-    var moreWrap = document.createElement("div");
-    moreWrap.className = "note-card-menu-wrap";
-    var moreBtn = document.createElement("button");
-    moreBtn.type = "button";
-    moreBtn.className = "note-card-menu-btn";
-    moreBtn.setAttribute("aria-label", "Ещё");
-    moreBtn.setAttribute("aria-haspopup", "menu");
-    moreBtn.setAttribute("aria-expanded", "false");
-    moreBtn.innerHTML =
-      '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
-      '<circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/>' +
-      "</svg>";
-    var moreMenu = document.createElement("div");
-    moreMenu.className = "note-card-menu hidden";
-    moreMenu.setAttribute("role", "menu");
-    function addMoreItem(label, fn, danger) {
-      var item = document.createElement("button");
-      item.type = "button";
-      item.className = "note-card-menu-item" + (danger ? " note-card-menu-item--danger" : "");
-      item.textContent = label;
-      item.addEventListener("click", function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        closeNoteCardMenus();
-        fn();
-      });
-      moreMenu.appendChild(item);
-    }
-    addMoreItem("Поделиться", function () {
-      listShareCtx = journalCardShareCtx(row);
-      openShareAccessSheet();
-    });
-    addMoreItem(
-      "Удалить",
-      function () {
-        confirmDialog(journalDeleteConfirmMessage(row.operation)).then(function (ok) {
-          if (!ok) return;
-          apiFetch("/notes/journal/" + encodeURIComponent(id), { method: "DELETE" })
-            .then(function () {
-              removeJournalFromCache(id);
-              if (notesDataCache) renderNotesPanesFromData(notesDataCache);
-            })
-            .catch(function (e) {
-              alert(e.message || String(e));
-            });
-        });
-      },
-      true
-    );
-    moreBtn.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      openNoteCardMenu(moreBtn, moreMenu);
-    });
-    moreWrap.appendChild(moreBtn);
-    moreWrap.appendChild(moreMenu);
-    actions.appendChild(moreWrap);
-    inner.appendChild(actions);
-    syncNoteCardActionsPad(inner, actions);
-  }
-
   async function toggleNotePin(noteId, pinned) {
     function applyLocalPin() {
       if (notesDataCache && notesDataCache.local_notes) {
@@ -22649,6 +22750,13 @@
         });
         notesDataCache.local_notes.sort(function (a, b) {
           return (a.pinned ? 0 : 1) - (b.pinned ? 0 : 1);
+        });
+        persistNotesCacheToDisk();
+        renderNotesPanesFromData(notesDataCache);
+      }
+      if (notesDataCache && notesDataCache.transcriptions) {
+        notesDataCache.transcriptions.forEach(function (row) {
+          if (String(row.id) === String(noteId)) row.pinned = !!pinned;
         });
         persistNotesCacheToDisk();
         renderNotesPanesFromData(notesDataCache);
@@ -22730,7 +22838,9 @@
         ? "Убрать заметку из списка?"
         : isKb
           ? "Удалить документ?"
-          : "Удалить заметку?";
+          : isTranscriptionNoteItem(n)
+            ? "Удалить транскрипцию?"
+            : "Удалить заметку?";
     if (!(await confirmDialog(msg))) return;
     try {
       await deleteLocalNoteById(id);
@@ -22746,11 +22856,9 @@
     renderSidebarTrees();
     const pn = document.getElementById("notes-pane-notes");
     const pt = document.getElementById("notes-pane-transcriptions");
-    const ps = document.getElementById("notes-pane-summaries");
-    if (!pn || !pt || !ps) return;
+    if (!pn || !pt) return;
     pn.innerHTML = "";
     pt.innerHTML = "";
-    ps.innerHTML = "";
 
     const localAll = (data && data.local_notes) || [];
     const local = localAll.filter(function (n) {
@@ -22820,76 +22928,61 @@
       });
     }
 
-    function journalCards(listAll, pane, accent) {
-      var list = (listAll || []).filter(function (row) {
-        return noteItemMatchesFilter(row, "journal");
+    function appendTranscriptionCard(n) {
+      const noteId = localNoteIdFrom(n);
+      const id = noteId != null ? String(noteId) : "";
+      const card = document.createElement("div");
+      card.className = "note-card";
+      if (id) card.setAttribute("data-note-id", id);
+      const inner = document.createElement("div");
+      inner.className = "note-card-inner";
+      const titleRaw =
+        sanitizeNoteTitle(n.title || n.content || "") ||
+        (n.title || n.content || "(без названия)");
+      const descRaw = notePlainExcerpt(n.preview || n.description || n.body || "", 280);
+      const descHtml = linkifyEscaped(escapeHtml(descRaw));
+      inner.innerHTML =
+        '<p class="note-card-excerpt">' +
+        escapeHtml(titleRaw) +
+        "</p>" +
+        (descRaw
+          ? '<p class="note-card-excerpt note-card-excerpt--secondary muted">' +
+            descHtml +
+            (descRaw.length >= 280 ? "…" : "") +
+            "</p>"
+          : "");
+      appendItemLabelChips(inner, n);
+      mountNoteCardActions(card, inner, n);
+      appendNoteCardAvatars(inner, n.members);
+      card.appendChild(inner);
+      card.addEventListener("click", function () {
+        openNoteDetail(n, { isLocal: true });
       });
-      var emptyHint =
-        accent && accent.emptyHint
-          ? accent.emptyHint
-          : "Пока нет записей";
-      if (!listAll || !listAll.length) {
-        pane.innerHTML = '<p class="muted empty-hint">' + escapeHtml(emptyHint) + "</p>";
-        return;
-      }
-      if (!list.length) {
-        pane.innerHTML =
-          '<p class="muted empty-hint">Ничего не найдено. Измените поиск, проект или #хэштег.</p>';
-        return;
-      }
-      list.forEach(function (row) {
-        const jid = row.id;
-        const card = document.createElement("div");
-        card.className = "note-card";
-        const inner = document.createElement("div");
-        inner.className = "note-card-inner";
-        const titleRaw = journalCardTitle(row);
-        const descRaw = notePlainExcerpt(row.preview || "", 280);
-        const descHtml = linkifyEscaped(escapeHtml(descRaw));
-        inner.innerHTML =
-          '<p class="note-card-excerpt">' +
-          escapeHtml(titleRaw) +
-          "</p>" +
-          (descRaw
-            ? '<p class="note-card-excerpt note-card-excerpt--secondary muted">' +
-              descHtml +
-              (descRaw.length >= 280 ? "…" : "") +
-              "</p>"
-            : "");
-        if (isJournalPdfOp(row.operation)) {
-          inner.appendChild(createJournalPdfButton(jid));
-        }
-        appendItemLabelChips(inner, row);
-        mountJournalCardActions(card, inner, row);
-        card.appendChild(inner);
-        card.addEventListener("click", function () {
-          openJournalEditorDetail(row);
-        });
-        pane.appendChild(
-          wrapWithSwipeDelete(
-            card,
-            async function () {
-              await apiFetch("/notes/journal/" + encodeURIComponent(String(jid)), {
-                method: "DELETE",
-              });
-              removeJournalFromCache(jid);
-              if (notesDataCache) renderNotesPanesFromData(notesDataCache);
-            },
-            {
-              removeStack: true,
-              confirmMessage: journalDeleteConfirmMessage(row.operation),
-            }
-          )
-        );
-      });
+      pt.appendChild(
+        wrapWithSwipeDelete(
+          card,
+          async function () {
+            await deleteLocalNoteById(id);
+            removeTranscriptionFromCache(id);
+            if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+          },
+          { removeStack: true, confirmMessage: "Удалить транскрипцию?" }
+        )
+      );
     }
 
-    journalCards(data.transcriptions || [], pt, {
-      emptyHint: "Транскрипций пока нет.",
+    var transAll = (data && data.transcriptions) || [];
+    var trans = transAll.filter(function (n) {
+      return noteItemMatchesFilter(n, "local");
     });
-    journalCards(data.summaries || [], ps, {
-      emptyHint: "Саммари пока нет.",
-    });
+    if (!transAll.length) {
+      pt.innerHTML = '<p class="muted empty-hint">Транскрипций пока нет.</p>';
+    } else if (!trans.length) {
+      pt.innerHTML =
+        '<p class="muted empty-hint">Ничего не найдено. Измените поиск, проект или #хэштег.</p>';
+    } else {
+      trans.forEach(appendTranscriptionCard);
+    }
   }
 
   function formatJournalListTime(iso) {
@@ -23572,7 +23665,11 @@
       }
     }
     wrap.innerHTML = noteEditorPageInnerHtml(
-      isKnowledge ? "Заголовок документа" : "Заголовок заметки"
+      isKnowledge
+        ? "Заголовок документа"
+        : isTranscriptionNoteItem(n)
+          ? "Заголовок"
+          : "Заголовок заметки"
     );
     var tocControls = bindNoteEditorTocControls(wrap);
     var editorPad = wrap.querySelector(".note-editor-pad--body");
@@ -24050,11 +24147,21 @@
           : "Новая заметка"
         : isKnowledge
           ? "Документ"
-          : "Заметка"
+          : isTranscriptionNoteItem(n)
+            ? "Транскрипция"
+            : "Заметка"
     );
+    var generatingSummary =
+      isTranscriptionNoteItem(n) &&
+      transcriptionIsGenerating(n) &&
+      isPrimarySheetId(noteSheetState.leftId);
+    if (generatingSummary && editorPad) {
+      editorPad.innerHTML = noteSheetSkeletonHtml();
+      pollTranscriptionSummary(noteId);
+    } else {
     mountNoteRichEditor(
       editorPad,
-      cleanBody,
+      isTranscriptionNoteItem(n) ? prepareJournalBodyForEditor(n) : cleanBody,
       function () {
         if (isPrimarySheetId(noteSheetState.leftId)) schedulePatch();
         else scheduleExtraSheetPersist(noteSheetState.leftId);
@@ -24092,6 +24199,7 @@
       refreshNoteCommentAnchors();
       if (!noteIsCreate && noteId && !isKnowledge) startNoteCollab(noteId, n);
     });
+    }
     hydrateNoteSheets(isKnowledge ? null : n, cleanBody);
     bindNoteTitleAutoresize(titleInput);
     if (titleInput) titleInput.addEventListener("input", schedulePatch);

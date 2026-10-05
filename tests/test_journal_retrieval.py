@@ -19,9 +19,11 @@ class JournalRetrievalTests(unittest.TestCase):
         os.environ["USAGE_DB_PATH"] = os.path.join(self._tmpdir.name, "usage.sqlite")
         os.environ["NOTES_DB_PATH"] = os.path.join(self._tmpdir.name, "notes.sqlite")
         usage_store.init_db()
+        notes_store._CONN = None  # type: ignore[attr-defined]
 
     def tearDown(self) -> None:
         self._tmpdir.cleanup()
+        notes_store._CONN = None  # type: ignore[attr-defined]
 
     def _insert_summary(
         self,
@@ -76,6 +78,32 @@ class JournalRetrievalTests(unittest.TestCase):
         self.assertIn("transcript", types)
         self.assertIn("summary", types)
         self.assertIn("GPT", context)
+
+    def test_retrieve_from_transcription_notes(self) -> None:
+        from assistant.services import transcription_notes as tnotes
+
+        tnotes.create_with_summary(
+            42,
+            title="Bitrix",
+            transcript="Интеграция Bitrix API на встрече",
+            summary="Решили подключить Bitrix",
+            meta={
+                "main_topic": "Bitrix",
+                "decisions": ["подключить Bitrix"],
+            },
+        )
+        parsed = {
+            "search_query": "Bitrix",
+            "focus": "general",
+            "sources": ["notes", "transcripts", "summaries"],
+        }
+        fragments, context = retrieve_journal_context(
+            "42", parsed, original_question="Bitrix"
+        )
+        types = {f.source_type for f in fragments}
+        self.assertIn("summary", types)
+        self.assertNotIn("transcript", types)
+        self.assertIn("Bitrix", context)
 
     def test_search_summary_by_transcript(self) -> None:
         self._insert_summary(

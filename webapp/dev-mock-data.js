@@ -283,91 +283,77 @@
       { id: -91003, name: "Личное", created_at: ts, updated_at: ts },
     ];
 
-    transcriptions = [
+    var transRows = [
       {
         id: -9001,
-        operation: "obuchat_transcribe",
-        main_topic: "Голосовое от коллеги",
+        title: "Голосовое от коллеги",
         preview:
           "Обсудили дедлайн по проекту Лео и договорились закрыть баги до пятницы.",
-        ts_utc: isoUtcDaysAgo(0, 9, 12),
+        updated_at: isoUtcDaysAgo(0, 9, 12),
         tags: [tagSnapshot(tags[0]), tagSnapshot(tags[1])],
+        has_summary: true,
+        summary:
+          "Ключевые решения: приоритет на mini app, фикс сохранения заметок, деплой в пятницу.",
+        transcript:
+          "Обсудили дедлайн по проекту Лео и договорились закрыть баги до пятницы.",
       },
       {
         id: -9002,
-        operation: "obuchat_transcribe",
-        main_topic: "Интервью с кандидатом",
+        title: "Интервью с кандидатом",
         preview:
           "Кандидат рассказал о опыте с Python, FastAPI и интеграциях с Telegram.",
-        ts_utc: isoUtcDaysAgo(1, 14, 5),
+        updated_at: isoUtcDaysAgo(1, 14, 5),
         tags: [tagSnapshot(tags[2])],
+        has_summary: true,
+        summary: "Клиент согласовал макеты, попросил ускорить интеграцию с календарём.",
+        transcript:
+          "Кандидат рассказал о опыте с Python, FastAPI и интеграциях с Telegram.",
       },
       {
         id: -9003,
-        operation: "obuchat_transcribe",
-        main_topic: "Заметки с созвона",
+        title: "Заметки с созвона",
         preview: "Нужно обновить документацию API и добавить примеры для мини-приложения.",
-        ts_utc: isoUtcDaysAgo(2, 11, 40),
+        updated_at: isoUtcDaysAgo(2, 11, 40),
         tags: [],
+        has_summary: false,
+        transcript:
+          "Нужно обновить документацию API и добавить примеры для мини-приложения.",
       },
       {
         id: -9004,
-        operation: "obuchat_transcribe",
-        main_topic: "Диктовка идей",
+        title: "Диктовка идей",
         preview:
           "Идея: добавить мок-данные для локальной разработки, чтобы тестировать UI без продакшена.",
-        ts_utc: isoUtcDaysAgo(3, 20, 15),
+        updated_at: isoUtcDaysAgo(3, 20, 15),
         tags: [],
+        has_summary: false,
+        transcript:
+          "Идея: добавить мок-данные для локальной разработки, чтобы тестировать UI без продакшена.",
       },
     ];
-
-    summaries = [
-      {
-        id: -9005,
-        operation: "summarize",
-        main_topic: "Итоги weekly",
-        preview:
-          "Ключевые решения: приоритет на mini app, фикс сохранения заметок, деплой в пятницу.",
-        ts_utc: isoUtcDaysAgo(0, 16, 0),
-        tags: [tagSnapshot(tags[0])],
-      },
-      {
-        id: -9006,
-        operation: "summarize",
-        main_topic: "Саммари встречи с клиентом",
-        preview: "Клиент согласовал макеты, попросил ускорить интеграцию с календарём.",
-        ts_utc: isoUtcDaysAgo(1, 17, 30),
-        tags: [tagSnapshot(tags[1])],
-      },
-      {
-        id: -9007,
-        operation: "summarize",
-        main_topic: "Кратко: подкаст про AI",
-        preview:
-          "Основные тезисы: автоматизация рутины, агенты в продакшене, важность проверки ответов.",
-        ts_utc: isoUtcDaysAgo(4, 8, 50),
-        tags: [],
-      },
-    ];
-
-    function journalBody(row) {
-      return (
-        (row.main_topic ? row.main_topic + "\n\n" : "") +
-        (row.preview || "") +
-        "\n\n—\n[Демо-запись для локальной разработки]"
-      );
-    }
-
-    transcriptions.concat(summaries).forEach(function (row) {
-      journalItems[String(row.id)] = {
+    transcriptions = transRows.map(function (row) {
+      return {
         id: row.id,
-        operation: row.operation,
-        main_topic: row.main_topic,
+        title: row.title,
+        body: row.has_summary ? row.summary : row.transcript,
+        description: row.has_summary ? row.summary : row.transcript,
         preview: row.preview,
-        ts_utc: row.ts_utc,
-        body: journalBody(row),
+        role: "transcription",
+        is_transcription: true,
+        has_summary: row.has_summary,
+        primary_sheet_title: row.has_summary ? "Саммари" : "Транскрипции",
+        updated_at: row.updated_at,
+        created_at: row.updated_at,
         tags: row.tags || [],
+        meta: {},
+        _transcript: row.transcript,
+        _summary: row.summary || "",
       };
+    });
+    summaries = [];
+    journalItems = {};
+    transcriptions.forEach(function (row) {
+      journalItems[String(row.id)] = row;
     });
   }
 
@@ -480,30 +466,16 @@
     initMocks();
     var out = Object.assign({}, data || {});
     var trans = (out.transcriptions || []).slice();
-    var sums = (out.summaries || []).slice();
     var journal = (out.journal || []).slice();
     var seenT = {};
-    var seenS = {};
-    var seenJ = {};
     trans.forEach(function (r) {
       seenT[r.id] = true;
     });
-    sums.forEach(function (r) {
-      seenS[r.id] = true;
-    });
-    journal.forEach(function (r) {
-      seenJ[r.id] = true;
-    });
     transcriptions.forEach(function (r) {
       if (!seenT[r.id]) trans.push(r);
-      if (!seenJ[r.id]) journal.push(r);
-    });
-    summaries.forEach(function (r) {
-      if (!seenS[r.id]) sums.push(r);
-      if (!seenJ[r.id]) journal.push(r);
     });
     out.transcriptions = trans;
-    out.summaries = sums;
+    out.summaries = [];
     out.journal = journal;
     out.tags = mergeTagsList(out.tags);
     out.hashtags = Array.isArray(out.hashtags) ? out.hashtags : [];
@@ -514,6 +486,81 @@
     initMocks();
     var method = String((opts && opts.method) || "GET").toUpperCase();
     var basePath = String(path || "").split("?")[0];
+
+    var localMatch = basePath.match(/^\/notes\/local\/([^/]+)(?:\/(sheets|make-summary|pdf))?$/);
+    if (localMatch) {
+      var lid = decodeURIComponent(localMatch[1]);
+      var extra = localMatch[2] || "";
+      var mockNote = transcriptions.find(function (r) {
+        return String(r.id) === lid;
+      });
+      if (mockNote) {
+        if (extra === "sheets" && method === "GET") {
+          var sheets = [
+            {
+              id: "main",
+              title: mockNote.primary_sheet_title || "Транскрипции",
+              body: mockNote.body || "",
+              description: mockNote.body || "",
+              is_primary: true,
+              revision: 1,
+            },
+          ];
+          if (mockNote.has_summary) {
+            sheets.push({
+              id: -91,
+              title: "Транскрипции",
+              body: mockNote._transcript || "",
+              description: mockNote._transcript || "",
+              is_primary: false,
+              revision: 1,
+            });
+          }
+          return { ok: true, sheets: sheets };
+        }
+        if (extra === "make-summary" && method === "POST") {
+          mockNote.has_summary = true;
+          mockNote.summary_generating = true;
+          mockNote.primary_sheet_title = "Саммари";
+          mockNote.meta = Object.assign({}, mockNote.meta, { summary_generating: true });
+          mockNote.body = "";
+          mockNote.description = "";
+          setTimeout(function () {
+            mockNote.summary_generating = false;
+            mockNote.meta.summary_generating = false;
+            mockNote._summary = mockNote._summary || "Демо-саммари для локальной разработки.";
+            mockNote.body = mockNote._summary;
+            mockNote.description = mockNote._summary;
+            mockNote.preview = mockNote._summary;
+          }, 1200);
+          return { ok: true, item: Object.assign({}, mockNote) };
+        }
+        if (extra === "pdf" && method === "POST") {
+          return { ok: true };
+        }
+        if (!extra && method === "GET") {
+          return { ok: true, item: Object.assign({}, mockNote) };
+        }
+        if (!extra && method === "DELETE") {
+          transcriptions = transcriptions.filter(function (r) {
+            return String(r.id) !== lid;
+          });
+          return { ok: true };
+        }
+        if (!extra && method === "PATCH") {
+          var localPatch = {};
+          try {
+            localPatch = opts && opts.body ? JSON.parse(opts.body) : {};
+          } catch (_) {}
+          if (localPatch.title != null) mockNote.title = String(localPatch.title);
+          if (localPatch.description != null) {
+            mockNote.body = String(localPatch.description);
+            mockNote.description = mockNote.body;
+          }
+          return { ok: true, item: Object.assign({}, mockNote) };
+        }
+      }
+    }
 
     var journalMatch = basePath.match(/^\/notes\/journal\/([^/]+)$/);
     if (journalMatch) {

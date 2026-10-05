@@ -39,6 +39,15 @@ class NotesStoreTests(unittest.TestCase):
         listed = notes_store.list_notes(9)
         self.assertEqual(len(listed), 1)
         self.assertEqual(listed[0]["title"], "Обычная")
+        trans = notes_store.create_note(
+            9, "Созвон", "текст", role=notes_store.TRANSCRIPTION_ROLE
+        )
+        listed = notes_store.list_notes(9)
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["title"], "Обычная")
+        listed_tr = notes_store.list_transcription_notes(9)
+        self.assertEqual(len(listed_tr), 1)
+        self.assertEqual(listed_tr[0]["id"], trans["id"])
         self.assertTrue(notes_store.delete_note(9, a["id"]))
         self.assertEqual(len(notes_store.list_knowledge_notes(9)), 1)
         self.assertEqual(notes_store.list_knowledge_notes(9)[0]["id"], b["id"])
