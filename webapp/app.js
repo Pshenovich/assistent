@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261004-task-modal-center";
+  var WEBAPP_BUILD = "20261005-meetings-head";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261004-task-modal-center";
+  const NOTE_EDITOR_ASSET_V = "20261005-meetings-head";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -1108,27 +1108,27 @@
     try {
       var a = dateFromIso(fromIso);
       var b = dateFromIso(toIso || fromIso);
-      if (isNaN(a.getTime()) || isNaN(b.getTime())) return "Встречи";
+      if (isNaN(a.getTime()) || isNaN(b.getTime())) return "";
       var sameMonth = a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
       var left = a.toLocaleDateString("ru-RU", {
         day: "numeric",
         month: sameMonth ? undefined : "short",
       });
       var right = b.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
-      return "Встречи · " + left + "–" + right;
+      return left + "–" + right;
     } catch (_) {
-      return "Встречи";
+      return "";
     }
   }
 
   function formatMeetingsMonthHead(iso) {
     try {
       var d = dateFromIso(iso);
-      if (isNaN(d.getTime())) return "Встречи";
+      if (isNaN(d.getTime())) return "";
       var label = d.toLocaleDateString("ru-RU", { month: "long", year: "numeric" });
-      return "Встречи · " + label.charAt(0).toUpperCase() + label.slice(1);
+      return label.charAt(0).toUpperCase() + label.slice(1);
     } catch (_) {
-      return "Встречи";
+      return "";
     }
   }
 
@@ -1583,21 +1583,18 @@
   };
 
   function formatMeetingsHead(iso) {
-    if (!iso) return "Встречи";
+    if (!iso) return "";
     try {
       var d = new Date(iso + "T12:00:00");
-      if (isNaN(d.getTime())) return "Встречи";
-      return (
-        "Встречи · " +
-        d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" })
-      );
+      if (isNaN(d.getTime())) return "";
+      return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
     } catch (_) {
-      return "Встречи";
+      return "";
     }
   }
 
   function formatMeetingsHeadRange(isoA, isoB) {
-    if (!isoA) return "Встречи";
+    if (!isoA) return "";
     if (!isoB || isoB === isoA) return formatMeetingsHead(isoA);
     try {
       var a = new Date(isoA + "T12:00:00");
@@ -1609,7 +1606,7 @@
         month: sameMonth ? undefined : "short",
       });
       var right = b.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
-      return "Встречи · " + left + "–" + right;
+      return left + "–" + right;
     } catch (_) {
       return formatMeetingsHead(isoA);
     }

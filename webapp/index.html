@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261004-task-modal-center">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261005-meetings-head">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -46,8 +46,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261004-task-modal-center" />
-  <link rel="preload" href="/webapp/note-rich-editor.js?v=20261004-task-modal-center" as="script" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261005-meetings-head" />
+  <link rel="preload" href="/webapp/note-rich-editor.js?v=20261005-meetings-head" as="script" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -90,27 +90,31 @@
           <p id="reminders-error" class="error hidden"></p>
         </div>
         <div class="section">
-          <div class="section-head-row section-head-row--meetings">
-            <button type="button" class="cal-nav-btn" id="meetings-prev" aria-label="Предыдущий день">‹</button>
-            <div class="section-head-center">
-              <h2 class="section-head-inline" id="meetings-head-title">Встречи</h2>
-              <span id="meetings-badge" class="pill-badge hidden">0</span>
-            </div>
-            <button type="button" class="meetings-today-btn hidden" id="meetings-today">Сегодня</button>
-            <div class="meetings-view-wrap">
-              <button type="button" class="cal-nav-btn meetings-view-btn" id="meetings-view-btn" aria-label="Вид" aria-haspopup="menu" aria-expanded="false" title="Вид">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <rect x="3" y="4" width="18" height="18" rx="2" />
-                  <path d="M16 2v4M8 2v4M3 10h18" />
-                </svg>
-              </button>
-              <div id="meetings-view-menu" class="meetings-view-menu hidden" role="menu" aria-label="Вид календаря">
-                <button type="button" class="meetings-view-menu-item is-active" role="menuitem" data-meetings-view="day">День</button>
-                <button type="button" class="meetings-view-menu-item" role="menuitem" data-meetings-view="week">Неделя</button>
-                <button type="button" class="meetings-view-menu-item" role="menuitem" data-meetings-view="month">Месяц</button>
+          <div class="meetings-head">
+            <div class="meetings-head-tools">
+              <div class="meetings-view-wrap">
+                <button type="button" class="cal-nav-btn meetings-view-btn" id="meetings-view-btn" aria-label="Вид" aria-haspopup="menu" aria-expanded="false" title="Вид">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="4" width="18" height="18" rx="2" />
+                    <path d="M16 2v4M8 2v4M3 10h18" />
+                  </svg>
+                </button>
+                <div id="meetings-view-menu" class="meetings-view-menu hidden" role="menu" aria-label="Вид календаря">
+                  <button type="button" class="meetings-view-menu-item is-active" role="menuitem" data-meetings-view="day">День</button>
+                  <button type="button" class="meetings-view-menu-item" role="menuitem" data-meetings-view="week">Неделя</button>
+                  <button type="button" class="meetings-view-menu-item" role="menuitem" data-meetings-view="month">Месяц</button>
+                </div>
               </div>
+              <button type="button" class="meetings-today-btn hidden" id="meetings-today">Сегодня</button>
             </div>
-            <button type="button" class="cal-nav-btn" id="meetings-next" aria-label="Следующий день">›</button>
+            <div class="section-head-row section-head-row--meetings">
+              <button type="button" class="cal-nav-btn" id="meetings-prev" aria-label="Предыдущий день">‹</button>
+              <div class="section-head-center">
+                <h2 class="section-head-inline" id="meetings-head-title"></h2>
+                <span id="meetings-badge" class="pill-badge hidden">0</span>
+              </div>
+              <button type="button" class="cal-nav-btn" id="meetings-next" aria-label="Следующий день">›</button>
+            </div>
           </div>
           <div id="meetings-board" class="meetings-board">
             <div class="meetings-day" id="meetings-day-left">
@@ -1365,14 +1369,14 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20261004-task-modal-center"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20261005-meetings-head"><\/script>'
         );
       }
     })();
   </script>
-  <script src="/webapp/note-html.js?v=20261004-task-modal-center" defer></script>
-  <script src="/webapp/note-comments.js?v=20261004-task-modal-center" defer></script>
-  <script src="/webapp/note-rich-editor.js?v=20261004-task-modal-center" defer></script>
-  <script src="/webapp/app.js?v=20261004-task-modal-center" defer></script>
+  <script src="/webapp/note-html.js?v=20261005-meetings-head" defer></script>
+  <script src="/webapp/note-comments.js?v=20261005-meetings-head" defer></script>
+  <script src="/webapp/note-rich-editor.js?v=20261005-meetings-head" defer></script>
+  <script src="/webapp/app.js?v=20261005-meetings-head" defer></script>
 </body>
 </html>
