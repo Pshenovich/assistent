@@ -7127,6 +7127,10 @@ async def miniapp_local_note_patch(
             ) from e
         if item is None:
             return None
+        from assistant.services import transcription_notes as tnotes
+
+        if tnotes.is_transcription_note(item):
+            item = tnotes.enrich(item)
         if body.description is not None or body.title is not None:
             item = _sync_local_note_hashtags(owner, item)
         else:

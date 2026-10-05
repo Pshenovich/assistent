@@ -298,15 +298,19 @@
     drafts.forEach(function (draft) {
       var id = String((draft && draft.itemId) || "");
       if (!id) return;
-      data.local_notes.forEach(function (note) {
-        if (String(note.id) !== id) return;
-        var h = api.hydrateNoteFromDraft(note, draft);
-        if (h.use === "draft") {
-          note.title = h.title;
-          note.body = h.body;
-          note.description = h.body;
-        }
-      });
+      function hydrateList(list) {
+        (list || []).forEach(function (note) {
+          if (String(note.id) !== id) return;
+          var h = api.hydrateNoteFromDraft(note, draft);
+          if (h.use === "draft") {
+            note.title = h.title;
+            note.body = h.body;
+            note.description = h.body;
+          }
+        });
+      }
+      hydrateList(data.local_notes);
+      hydrateList(data.transcriptions);
     });
     return data;
   }
@@ -2819,6 +2823,14 @@
         shared: !!item.shared,
         share_url: item.share_url || null,
         share_access: item.share_access || null,
+        role: item.role || extra.role || "",
+        is_knowledge: !!(item.is_knowledge || extra.is_knowledge),
+        is_transcription: !!(item.is_transcription || extra.is_transcription),
+        has_summary: !!item.has_summary,
+        primary_sheet_title: item.primary_sheet_title || "",
+        preview: item.preview || "",
+        meta: item.meta && typeof item.meta === "object" ? item.meta : {},
+        summary_generating: !!item.summary_generating,
       },
       extra
     );
@@ -2830,6 +2842,56 @@
 
   function isTranscriptionNoteItem(item) {
     return !!(item && (item.is_transcription || item.role === "transcription"));
+  }
+
+  function looksLikeTranscriptionNote(item) {
+    if (!item) return false;
+    if (isTranscriptionNoteItem(item)) return true;
+    var sheet = String(item.primary_sheet_title || "");
+    return sheet === "Саммари" || sheet === "Транскрипции";
+  }
+
+  function stampTranscriptionFields(dst, src) {
+    dst = dst || {};
+    src = src || {};
+    if (!looksLikeTranscriptionNote(src) && !looksLikeTranscriptionNote(dst)) return dst;
+    dst.role = "transcription";
+    dst.is_transcription = true;
+    dst.primary_sheet_title =
+      dst.primary_sheet_title || src.primary_sheet_title || "";
+    if (dst.has_summary == null) dst.has_summary = !!src.has_summary;
+    if (dst.summary_generating == null) dst.summary_generating = !!src.summary_generating;
+    if (!dst.meta && src.meta) dst.meta = src.meta;
+    if (!dst.preview && src.preview) dst.preview = src.preview;
+    return dst;
+  }
+
+  function splitTranscriptionsOutOfLocalNotes(data) {
+    if (!data || !Array.isArray(data.local_notes)) return data;
+    var trans = Array.isArray(data.transcriptions) ? data.transcriptions.slice() : [];
+    var transIds = {};
+    trans.forEach(function (n) {
+      var id = localNoteIdFrom(n);
+      if (id != null) transIds[String(id)] = true;
+    });
+    var keep = [];
+    data.local_notes.forEach(function (n) {
+      var id = localNoteIdFrom(n);
+      var leak = looksLikeTranscriptionNote(n) || (id != null && transIds[String(id)]);
+      if (!leak) {
+        keep.push(n);
+        return;
+      }
+      if (id != null && !transIds[String(id)]) {
+        trans.unshift(
+          Object.assign({}, n, { role: "transcription", is_transcription: true })
+        );
+        transIds[String(id)] = true;
+      }
+    });
+    data.local_notes = keep;
+    data.transcriptions = trans;
+    return data;
   }
 
   function transcriptionHasSummary(item) {
@@ -2894,13 +2956,21 @@
       prependKnowledgeInCache(item);
       return;
     }
-    if (isTranscriptionNoteItem(item)) {
+    var lid = localNoteIdFrom(item);
+    var alreadyTrans = false;
+    if (lid && notesDataCache && Array.isArray(notesDataCache.transcriptions)) {
+      alreadyTrans = notesDataCache.transcriptions.some(function (x) {
+        return String(x.id) === String(lid);
+      });
+    }
+    if (looksLikeTranscriptionNote(item) || alreadyTrans) {
+      stampTranscriptionFields(item, item);
+      if (lid) removeLocalFromCache(lid);
       prependTranscriptionInCache(item);
       return;
     }
     if (!notesDataCache) notesDataCache = { local_notes: [] };
     if (!notesDataCache.local_notes) notesDataCache.local_notes = [];
-    var lid = localNoteIdFrom(item);
     if (!lid) return;
     notesDataCache.local_notes = notesDataCache.local_notes.filter(function (x) {
       return String(x.id) !== String(lid);
@@ -4873,7 +4943,12 @@
         id: "notes",
         label: "Заметки",
         kind: "local",
-        items: data.local_notes || [],
+        items: (function () {
+          splitTranscriptionsOutOfLocalNotes(data);
+          return (data.local_notes || []).filter(function (n) {
+            return !looksLikeTranscriptionNote(n);
+          });
+        })(),
         openItem: function (n) {
           setTab("notes", { noAnim: true });
           setNotesSubTab("notes");
@@ -16998,9 +17073,12 @@
       title: title,
       description: html,
       body: html,
-      role: note.kind === "knowledge" ? "knowledge" : "",
+      role: note.kind === "knowledge" ? "knowledge" : note.role || "",
       is_knowledge: note.kind === "knowledge",
+      is_transcription: !!note.is_transcription,
+      primary_sheet_title: note.primary_sheet_title || "",
     };
+    stampTranscriptionFields(item, note);
     if (patchRes && patchRes.item) {
       note.revision = patchRes.item.revision || note.revision;
       note.updated_at = patchRes.item.updated_at || note.updated_at;
@@ -22429,7 +22507,7 @@
     } else {
       var cachedNotes = readMiniappCache("notes");
       if (cachedNotes) {
-        notesDataCache = cachedNotes;
+        notesDataCache = splitTranscriptionsOutOfLocalNotes(cachedNotes);
         applyDraftsToNotesList(notesDataCache);
         renderNotesPanesFromData(notesDataCache);
       }
@@ -22446,7 +22524,7 @@
       }
       return;
     }
-    notesDataCache = data;
+    notesDataCache = splitTranscriptionsOutOfLocalNotes(data);
     if (notesDataCache && Array.isArray(notesDataCache.tags)) {
       notesDataCache._tagsLoaded = true;
     }
@@ -22860,8 +22938,17 @@
     pn.innerHTML = "";
     pt.innerHTML = "";
 
+    splitTranscriptionsOutOfLocalNotes(data);
     const localAll = (data && data.local_notes) || [];
+    const transIds = {};
+    ((data && data.transcriptions) || []).forEach(function (n) {
+      var tid = localNoteIdFrom(n);
+      if (tid != null) transIds[String(tid)] = true;
+    });
     const local = localAll.filter(function (n) {
+      var nid = localNoteIdFrom(n);
+      if (nid != null && transIds[String(nid)]) return false;
+      if (looksLikeTranscriptionNote(n)) return false;
       return noteItemMatchesFilter(n, "local");
     });
     local.sort(function (a, b) {
@@ -23617,6 +23704,7 @@
             prependKnowledgeInCache(n);
             n = resolveKnowledgeNoteFromCache(n) || n;
           } else if (notesDataCache) {
+            stampTranscriptionFields(n, fresh);
             prependLocalInCache(n);
           }
         }
@@ -23847,6 +23935,7 @@
             }
             prependKnowledgeInCache(patchedItem);
           } else {
+            stampTranscriptionFields(patchedItem, n);
             var localTags2 = noteTagsOf(n);
             if (!noteTagsOf(patchedItem).length && localTags2.length) {
               patchedItem.tags = localTags2.slice();
@@ -23872,6 +23961,12 @@
             updated_at: moreWrap && moreWrap._noteUpdatedAt,
             is_owner: moreWrap ? moreWrap._isNoteOwner : n.is_owner,
             owner_user_id: n.owner_user_id,
+            role: n.role,
+            is_transcription: n.is_transcription,
+            is_knowledge: n.is_knowledge,
+            has_summary: n.has_summary,
+            primary_sheet_title: n.primary_sheet_title,
+            meta: n.meta,
           };
           applyPatchedLocal(localPatch);
           enqueueOfflineOp({
