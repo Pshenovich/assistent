@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261005-note-drafts";
+  var WEBAPP_BUILD = "20261005-note-drafts-2";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261005-note-drafts";
+  const NOTE_EDITOR_ASSET_V = "20261005-note-drafts-2";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -359,7 +359,6 @@
           title: title,
           description: body,
           expected_revision: wrap._noteRevision || undefined,
-          expected_updated_at: wrap._noteUpdatedAt || undefined,
         }),
         credentials: "same-origin",
         keepalive: true,
@@ -434,7 +433,6 @@
         title: title,
         description: body,
         expected_revision: server && server.revision,
-        expected_updated_at: server && server.updated_at,
       }),
     }).then(function (res) {
       var item = res && res.item;
@@ -519,8 +517,43 @@
       description: fields.description,
     };
     if (wrap && wrap._noteRevision) body.expected_revision = wrap._noteRevision;
-    if (wrap && wrap._noteUpdatedAt) body.expected_updated_at = wrap._noteUpdatedAt;
     return body;
+  }
+
+  function notePayloadEquals(titleA, bodyA, titleB, bodyB) {
+    var api = noteDraftsApi();
+    if (api) return api.bodiesEqual(titleA, titleB) && api.bodiesEqual(bodyA, bodyB);
+    return String(titleA || "") === String(titleB || "") && String(bodyA || "") === String(bodyB || "");
+  }
+
+  function adoptNoteRevision(item, itemId) {
+    if (!item) return;
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var api = noteDraftsApi();
+    var next = api ? api.revNum(item.revision) : Number(item.revision || 0);
+    if (wrap) {
+      var cur = api ? api.revNum(wrap._noteRevision) : Number(wrap._noteRevision || 0);
+      if (next >= cur) {
+        wrap._noteRevision = item.revision || wrap._noteRevision;
+        wrap._noteUpdatedAt = item.updated_at || wrap._noteUpdatedAt;
+      }
+    }
+    var id = String(itemId || (item && item.id) || currentOpenNoteId() || "");
+    var draft = id ? readLocalNoteDraft(id) : null;
+    if (draft && next) {
+      writeLocalNoteDraft(id, {
+        title: draft.title,
+        body: draft.body,
+        baseRevision: item.revision,
+        baseUpdatedAt: item.updated_at,
+        conflict: null,
+      });
+    }
+  }
+
+  function noteEditorBaseline() {
+    var el = getNoteEditorBodyEl();
+    return el && el._noteEditor && el._noteEditor.baseline ? el._noteEditor.baseline : null;
   }
 
   function offlineQueueStorageKey() {
@@ -886,9 +919,24 @@
           writeOfflineQueue(q);
         } catch (e) {
           if (op.type === "note_patch" && e && e.status === 409) {
+            var conflictBody = op.body || {};
+            var remoteQ = e.conflictItem || {};
+            if (
+              notePayloadEquals(
+                conflictBody.title,
+                conflictBody.description,
+                remoteQ.title,
+                remoteQ.body || remoteQ.description
+              )
+            ) {
+              q.shift();
+              writeOfflineQueue(q);
+              adoptNoteRevision(remoteQ, op.clientId);
+              clearLocalNoteDraftIfUnchanged(op.clientId, conflictBody.title, conflictBody.description);
+              continue;
+            }
             q.shift();
             writeOfflineQueue(q);
-            var conflictBody = op.body || {};
             handleNotePatchConflict(
               op.clientId,
               e.conflictItem,
@@ -13807,22 +13855,28 @@
       var draftId = currentOpenNoteId() || (item && item.id);
       var draft = readLocalNoteDraft(draftId);
       var api = noteDraftsApi();
+      var remoteBody = item.body || item.description;
       if (
         draft &&
         api &&
-        !(api.bodiesEqual(draft.title, item.title) &&
-          api.bodiesEqual(draft.body, item.body || item.description))
+        !(api.bodiesEqual(draft.title, item.title) && api.bodiesEqual(draft.body, remoteBody))
       ) {
-        if (api.revNum(item.revision) > api.revNum(draft.baseRevision)) {
-          handleNotePatchConflict(draftId, item, draft.title, draft.body);
+        var base = noteEditorBaseline();
+        if (base && notePayloadEquals(base.title, base.description, item.title, remoteBody)) {
+          adoptNoteRevision(item, draftId);
         }
         return;
       }
     }
     var wrap = document.getElementById("note-editor-more-wrap");
     if (wrap) {
-      wrap._noteRevision = item.revision || wrap._noteRevision;
-      wrap._noteUpdatedAt = item.updated_at || wrap._noteUpdatedAt;
+      var apiRev = noteDraftsApi();
+      var nextRev = apiRev ? apiRev.revNum(item.revision) : Number(item.revision || 0);
+      var curRev = apiRev ? apiRev.revNum(wrap._noteRevision) : Number(wrap._noteRevision || 0);
+      if (nextRev >= curRev) {
+        wrap._noteRevision = item.revision || wrap._noteRevision;
+        wrap._noteUpdatedAt = item.updated_at || wrap._noteUpdatedAt;
+      }
       wrap._noteMembers = item.members || wrap._noteMembers || [];
       wrap._isNoteOwner = item.is_owner !== false;
     }
@@ -13885,9 +13939,8 @@
         var remoteRev = Number(item.revision || 0);
         var localRev = Number(wrap._noteRevision || 0);
         if (remoteRev > localRev) applyRemoteSharedNote(item, false);
-        else {
-          wrap._noteRevision = item.revision || wrap._noteRevision;
-          wrap._noteUpdatedAt = item.updated_at || wrap._noteUpdatedAt;
+        else if (remoteRev === localRev && item.updated_at) {
+          wrap._noteUpdatedAt = item.updated_at;
         }
       })
       .catch(function () {});
@@ -16812,7 +16865,6 @@
     });
     var patchBody = { title: title, description: html };
     if (note.revision) patchBody.expected_revision = note.revision;
-    if (note.updated_at) patchBody.expected_updated_at = note.updated_at;
     var patchRes;
     try {
       patchRes = await apiFetch("/notes/local/" + encodeURIComponent(String(note.id)), {
@@ -16821,7 +16873,15 @@
       });
     } catch (e) {
       if (e && e.status === 409 && e.conflictItem) {
-        handleNotePatchConflict(note.id, e.conflictItem, title, html);
+        var remoteRight = e.conflictItem;
+        if (notePayloadEquals(title, html, remoteRight.title, remoteRight.body || remoteRight.description)) {
+          adoptNoteRevision(remoteRight, note.id);
+          note.revision = remoteRight.revision || note.revision;
+          note.updated_at = remoteRight.updated_at || note.updated_at;
+          clearLocalNoteDraftIfUnchanged(note.id, title, html);
+          return;
+        }
+        handleNotePatchConflict(note.id, remoteRight, title, html);
         return;
       }
       throw e;
@@ -16971,8 +17031,6 @@
       loaded.title = hydrated.title;
       loaded.body = hydrated.body;
       loaded.description = hydrated.body;
-    } else if (hydrated.use === "conflict") {
-      handleNotePatchConflict(loaded.id, loaded, hydrated.draft && hydrated.draft.title, hydrated.draft && hydrated.draft.body);
     }
     return loaded;
   }
@@ -23597,9 +23655,6 @@
         if (moreWrap && moreWrap._noteRevision) {
           patchBody.expected_revision = moreWrap._noteRevision;
         }
-        if (moreWrap && moreWrap._noteUpdatedAt) {
-          patchBody.expected_updated_at = moreWrap._noteUpdatedAt;
-        }
         function applyPatchedLocal(patchedItem) {
           if (isKnowledge) {
             patchedItem.role = "knowledge";
@@ -23689,7 +23744,26 @@
           applyPatchedLocal(patchedItem);
         } catch (patchErr) {
           if (patchErr && patchErr.status === 409 && patchErr.conflictItem) {
-            handleNotePatchConflict(noteId, patchErr.conflictItem, fields.title, fields.description);
+            var remote = patchErr.conflictItem;
+            var remoteBody = remote.body || remote.description;
+            if (notePayloadEquals(fields.title, fields.description, remote.title, remoteBody)) {
+              adoptNoteRevision(remote, noteId);
+              applyPatchedLocal(remote);
+              clearLocalNoteDraftIfUnchanged(noteId, fields.title, fields.description);
+              return;
+            }
+            var baseline = noteEditorBaseline();
+            if (
+              !opts._conflictRetry &&
+              baseline &&
+              notePayloadEquals(baseline.title, baseline.description, remote.title, remoteBody)
+            ) {
+              adoptNoteRevision(remote, noteId);
+              return persistNoteDraft(
+                Object.assign({}, opts, { _conflictRetry: true, snapshot: fields, force: true })
+              );
+            }
+            handleNotePatchConflict(noteId, remote, fields.title, fields.description);
             return;
           }
           if (!isTransientApiError(patchErr)) throw patchErr;
@@ -23713,7 +23787,20 @@
           showOfflineSavedToast();
         }
       }
-      if (noteId) clearLocalNoteDraftIfUnchanged(noteId, fields.title, fields.description);
+      if (noteId) {
+        var savedWrap = document.getElementById("note-editor-more-wrap");
+        var keepDraft = readLocalNoteDraft(noteId);
+        if (keepDraft && savedWrap) {
+          writeLocalNoteDraft(noteId, {
+            title: keepDraft.title,
+            body: keepDraft.body,
+            baseRevision: savedWrap._noteRevision,
+            baseUpdatedAt: savedWrap._noteUpdatedAt,
+            conflict: null,
+          });
+        }
+        clearLocalNoteDraftIfUnchanged(noteId, fields.title, fields.description);
+      }
       var detailBodyDraft = getNoteEditorBodyEl();
       if (detailBodyDraft && detailBodyDraft._noteEditor) {
         detailBodyDraft._noteEditor.baseline = noteEditorSnapshot(
@@ -23925,9 +24012,6 @@
     bindNoteTitleAutoresize(titleInput);
     if (titleInput) titleInput.addEventListener("input", schedulePatch);
     if (!noteIsCreate && noteId) consumePendingDiscussOpen("local", noteId);
-    if (hydrated.use === "conflict" && noteId) {
-      showNoteDraftConflictDialog(noteId, n, hydrated.draft);
-    }
   }
 
   async function openJournalEditorDetail(row) {

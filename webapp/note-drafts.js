@@ -133,7 +133,6 @@
     function hydrateNoteFromDraft(server, draft) {
       var title = String((server && (server.title || server.content)) || "");
       var body = String((server && (server.body || server.description)) || "");
-      var revision = revNum(server && server.revision);
       if (!draft) {
         return { use: "server", title: title, body: body, draft: null };
       }
@@ -141,16 +140,6 @@
       var dBody = String(draft.body || "");
       if (bodiesEqual(dTitle, title) && bodiesEqual(dBody, body)) {
         return { use: "server", title: title, body: body, draft: draft };
-      }
-      if (draft.conflict && draft.conflict.body != null) {
-        return { use: "conflict", title: title, body: body, draft: draft };
-      }
-      var base = revNum(draft.baseRevision);
-      if (!revision || base === revision) {
-        return { use: "draft", title: dTitle, body: dBody, draft: draft };
-      }
-      if (revision > base) {
-        return { use: "conflict", title: title, body: body, draft: draft };
       }
       return { use: "draft", title: dTitle, body: dBody, draft: draft };
     }

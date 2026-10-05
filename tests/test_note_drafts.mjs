@@ -46,12 +46,12 @@ const sameRev = store.hydrateNoteFromDraft(
 assert.equal(sameRev.use, "draft");
 assert.equal(sameRev.body, "<p>с телефона</p>");
 
-const conflict = store.hydrateNoteFromDraft(
-  { title: "Десктоп", body: "<p>с компьютера</p>", revision: 4 },
+const newerServer = store.hydrateNoteFromDraft(
+  { title: "Старое", body: "<p>сервер</p>", revision: 4 },
   store.getDraft("7", "local", "99")
 );
-assert.equal(conflict.use, "conflict");
-assert.equal(conflict.body, "<p>с компьютера</p>");
+assert.equal(newerServer.use, "draft");
+assert.equal(newerServer.body, "<p>с телефона</p>");
 
 const sameText = store.hydrateNoteFromDraft(
   { title: "Черновик", body: "<p>с телефона</p>", revision: 4 },
@@ -74,7 +74,8 @@ const flagged = store.hydrateNoteFromDraft(
   { title: "Десктоп", body: "<p>с компьютера</p>", revision: 4 },
   store.getDraft("7", "local", "99")
 );
-assert.equal(flagged.use, "conflict");
+assert.equal(flagged.use, "draft");
+assert.equal(flagged.body, "<p>с телефона</p>");
 
 store.clearDraft("7", "local", "99");
 assert.equal(store.getDraft("7", "local", "99"), null);
