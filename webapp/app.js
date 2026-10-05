@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261005-heading-pdf";
+  var WEBAPP_BUILD = "20261005-teams-api";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -7053,9 +7053,385 @@
       }
     });
     actions.appendChild(editBtn);
+    var teamBtn = document.createElement("button");
+    teamBtn.type = "button";
+    teamBtn.className = "btn ghost btn-sm";
+    teamBtn.textContent = "Участник команды";
+    teamBtn.addEventListener("click", function () {
+      openContactTeamsSheet(c);
+    });
+    actions.appendChild(teamBtn);
     actions.appendChild(delBtn);
     card.appendChild(actions);
     return card;
+  }
+
+  var teamPickerState = {
+    mode: "",
+    email: "",
+    noteId: "",
+    hasTelegram: true,
+    selected: {},
+    teams: [],
+    loadGen: 0,
+  };
+
+  function contactHasTelegram(contact) {
+    if (!contact) return false;
+    if (contact.telegram_user_id) return true;
+    return !!(String(contact.telegram_username || "").replace(/^@/, "").trim());
+  }
+
+  function closeTeamPicker() {
+    var ov = document.getElementById("team-picker-overlay");
+    if (ov) ov.classList.add("hidden");
+    teamPickerState.mode = "";
+    teamPickerState.email = "";
+    teamPickerState.noteId = "";
+  }
+
+  function bindTeamPickerControls(ov) {
+    if (!ov || ov._teamPickerBound) return;
+    ov._teamPickerBound = true;
+    ov.addEventListener("click", function (e) {
+      if (e.target === ov) closeTeamPicker();
+    });
+    var createBtn = ov.querySelector("#team-picker-create");
+    var saveBtn = ov.querySelector("#team-picker-save");
+    var cancelBtn = ov.querySelector("#team-picker-cancel");
+    var nameInput = ov.querySelector("#team-picker-new-name");
+    if (createBtn) {
+      createBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        createTeamFromPicker();
+      });
+    }
+    if (nameInput) {
+      nameInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopPropagation();
+          createTeamFromPicker();
+        }
+      });
+    }
+    if (saveBtn) {
+      saveBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        saveTeamPicker();
+      });
+    }
+    if (cancelBtn) {
+      cancelBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeTeamPicker();
+      });
+    }
+  }
+
+  function ensureTeamPickerOverlay() {
+    var ov = document.getElementById("team-picker-overlay");
+    if (ov) {
+      if (!ov.querySelector("#team-picker-error")) {
+        var createRow = ov.querySelector(".team-picker-create");
+        if (createRow && createRow.parentNode) {
+          var err = document.createElement("p");
+          err.id = "team-picker-error";
+          err.className = "error hidden";
+          createRow.parentNode.insertBefore(err, createRow.nextSibling);
+        }
+      }
+      bindTeamPickerControls(ov);
+      return ov;
+    }
+    ov = document.createElement("div");
+    ov.id = "team-picker-overlay";
+    ov.className = "note-share-sheet-overlay hidden";
+    ov.innerHTML =
+      '<div class="note-share-sheet" role="dialog" aria-labelledby="team-picker-title">' +
+      '<h3 id="team-picker-title" class="note-share-sheet-title">Команды</h3>' +
+      '<p id="team-picker-hint" class="note-share-members-hint muted small"></p>' +
+      '<div class="team-picker-create">' +
+      '<input id="team-picker-new-name" type="text" class="field-input" maxlength="80" placeholder="Название команды" autocomplete="off" />' +
+      '<button type="button" class="btn ghost btn-sm" id="team-picker-create">Создать</button>' +
+      "</div>" +
+      '<p id="team-picker-error" class="error hidden"></p>' +
+      '<div id="team-picker-list" class="team-picker-list"></div>' +
+      '<p id="team-picker-empty" class="team-picker-empty muted small">Пока нет команд — создайте первую.</p>' +
+      '<div class="note-share-sheet-actions">' +
+      '<button type="button" class="btn" id="team-picker-save">Сохранить</button>' +
+      '<button type="button" class="btn-text" id="team-picker-cancel">Закрыть</button>' +
+      "</div></div>";
+    document.body.appendChild(ov);
+    bindTeamPickerControls(ov);
+    return ov;
+  }
+
+  function selectedTeamIdsFromPicker() {
+    return Object.keys(teamPickerState.selected)
+      .filter(function (id) {
+        return teamPickerState.selected[id];
+      })
+      .map(function (id) {
+        return parseInt(id, 10);
+      })
+      .filter(function (id) {
+        return id > 0;
+      });
+  }
+
+  function paintTeamPickerList() {
+    var list = document.getElementById("team-picker-list");
+    var empty = document.getElementById("team-picker-empty");
+    if (!list) return;
+    list.innerHTML = "";
+    var teams = teamPickerState.teams || [];
+    if (empty) empty.classList.toggle("hidden", !!teams.length);
+    teams.forEach(function (team) {
+      var id = String(team.id);
+      var label = document.createElement("label");
+      label.className = "note-share-option";
+      var input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = !!teamPickerState.selected[id];
+      input.addEventListener("change", function () {
+        teamPickerState.selected[id] = !!input.checked;
+      });
+      var copy = document.createElement("span");
+      var strong = document.createElement("strong");
+      strong.textContent = team.name || "Команда";
+      copy.appendChild(strong);
+      var count = Number(team.member_count || 0);
+      if (count) {
+        var small = document.createElement("small");
+        small.textContent =
+          count +
+          " " +
+          (count === 1 ? "участник" : count < 5 ? "участника" : "участников");
+        copy.appendChild(small);
+      }
+      label.appendChild(input);
+      label.appendChild(copy);
+      list.appendChild(label);
+    });
+  }
+
+  function applyTeamPickerHint() {
+    var hint = document.getElementById("team-picker-hint");
+    if (!hint) return;
+    if (teamPickerState.mode === "contact" && !teamPickerState.hasTelegram) {
+      hint.textContent =
+        "У контакта нет Telegram — файл появится в его базе знаний после того, как он откроет Leo.";
+      hint.classList.remove("hidden");
+      return;
+    }
+    if (teamPickerState.mode === "note") {
+      hint.textContent =
+        "Выберите команды — документ появится в базе знаний у всех участников.";
+      hint.classList.remove("hidden");
+      return;
+    }
+    hint.textContent = "Можно выбрать несколько команд.";
+    hint.classList.remove("hidden");
+  }
+
+  function setTeamPickerError(text) {
+    var el = document.getElementById("team-picker-error");
+    if (el) {
+      el.textContent = text || "";
+      el.classList.toggle("hidden", !text);
+    }
+    if (text && typeof showNoteToast === "function") {
+      try {
+        showNoteToast(text);
+      } catch (_) {}
+    }
+  }
+
+  function mergeTeamsIntoPicker(serverTeams, selectedIds) {
+    var byId = {};
+    (teamPickerState.teams || []).forEach(function (team) {
+      if (team && team.id != null) byId[String(team.id)] = team;
+    });
+    (serverTeams || []).forEach(function (team) {
+      if (team && team.id != null) byId[String(team.id)] = team;
+    });
+    teamPickerState.teams = Object.keys(byId)
+      .map(function (id) {
+        return byId[id];
+      })
+      .sort(function (a, b) {
+        return Number(a.id) - Number(b.id);
+      });
+    (selectedIds || []).forEach(function (id) {
+      teamPickerState.selected[String(id)] = true;
+    });
+  }
+
+  async function createTeamFromPicker() {
+    var ov = document.getElementById("team-picker-overlay");
+    var input = ov
+      ? ov.querySelector("#team-picker-new-name")
+      : document.getElementById("team-picker-new-name");
+    var createBtn = ov
+      ? ov.querySelector("#team-picker-create")
+      : document.getElementById("team-picker-create");
+    var name = String((input && input.value) || "").trim();
+    if (!name) {
+      setTeamPickerError("Введите название команды");
+      if (input) input.focus();
+      return;
+    }
+    if (createBtn && createBtn.disabled) return;
+    setTeamPickerError("");
+    var prevLabel = createBtn ? createBtn.textContent : "";
+    if (createBtn) {
+      createBtn.disabled = true;
+      createBtn.textContent = "…";
+    }
+    // Invalidate in-flight list loads so they cannot wipe a just-created team.
+    teamPickerState.loadGen += 1;
+    try {
+      var data = await apiFetch("/teams", {
+        method: "POST",
+        body: JSON.stringify({ name: name }),
+      });
+      var team = data && data.team;
+      if (!team || team.id == null) {
+        setTeamPickerError("Не удалось создать команду");
+        return;
+      }
+      mergeTeamsIntoPicker([team], [team.id]);
+      if (input) input.value = "";
+      paintTeamPickerList();
+    } catch (err) {
+      setTeamPickerError(err.message || String(err));
+    } finally {
+      if (createBtn) {
+        createBtn.disabled = false;
+        createBtn.textContent = prevLabel || "Создать";
+      }
+    }
+  }
+
+  async function saveTeamPicker() {
+    var ids = selectedTeamIdsFromPicker();
+    try {
+      if (teamPickerState.mode === "contact" && teamPickerState.email) {
+        await apiFetch(
+          "/contacts/" + encodeURIComponent(teamPickerState.email) + "/teams",
+          { method: "PUT", body: JSON.stringify({ team_ids: ids }) }
+        );
+      } else if (teamPickerState.mode === "note" && teamPickerState.noteId) {
+        await apiFetch(
+          "/notes/local/" +
+            encodeURIComponent(teamPickerState.noteId) +
+            "/team-shares",
+          { method: "PUT", body: JSON.stringify({ team_ids: ids }) }
+        );
+      }
+      closeTeamPicker();
+      if (typeof shareHaptic === "function") shareHaptic();
+    } catch (err) {
+      setTeamPickerError(err.message || String(err));
+    }
+  }
+
+  async function openContactTeamsSheet(contact) {
+    if (!contact || !contact.email) return;
+    var ov = ensureTeamPickerOverlay();
+    var title = ov.querySelector("#team-picker-title");
+    if (title) title.textContent = "Участник команды";
+    teamPickerState.mode = "contact";
+    teamPickerState.email = String(contact.email);
+    teamPickerState.noteId = "";
+    teamPickerState.hasTelegram = contactHasTelegram(contact);
+    teamPickerState.selected = {};
+    teamPickerState.teams = [];
+    teamPickerState.loadGen += 1;
+    var loadGen = teamPickerState.loadGen;
+    applyTeamPickerHint();
+    setTeamPickerError("");
+    ov.classList.remove("hidden");
+    paintTeamPickerList();
+    var nameInput = ov.querySelector("#team-picker-new-name");
+    if (nameInput) {
+      nameInput.value = "";
+      setTimeout(function () {
+        try {
+          nameInput.focus();
+        } catch (_) {}
+      }, 50);
+    }
+    try {
+      var data = await apiFetch(
+        "/contacts/" + encodeURIComponent(contact.email) + "/teams",
+        { method: "GET" }
+      );
+      if (
+        loadGen !== teamPickerState.loadGen ||
+        teamPickerState.mode !== "contact" ||
+        teamPickerState.email !== String(contact.email)
+      ) {
+        return;
+      }
+      mergeTeamsIntoPicker(data && data.teams, data && data.team_ids);
+      paintTeamPickerList();
+    } catch (err) {
+      if (loadGen !== teamPickerState.loadGen) return;
+      setTeamPickerError(err.message || String(err));
+    }
+  }
+
+  async function openNoteTeamShareSheet(note) {
+    var wrap = getShareCtx();
+    var noteId =
+      (note && String(localNoteIdFrom(note) || note.id || "")) ||
+      (wrap && wrap._shareId ? String(wrap._shareId) : "");
+    if (!noteId) return;
+    var ov = ensureTeamPickerOverlay();
+    var title = ov.querySelector("#team-picker-title");
+    if (title) title.textContent = "Поделиться с командой";
+    teamPickerState.mode = "note";
+    teamPickerState.email = "";
+    teamPickerState.noteId = noteId;
+    teamPickerState.hasTelegram = true;
+    teamPickerState.selected = {};
+    teamPickerState.teams = [];
+    teamPickerState.loadGen += 1;
+    var loadGen = teamPickerState.loadGen;
+    applyTeamPickerHint();
+    setTeamPickerError("");
+    ov.classList.remove("hidden");
+    paintTeamPickerList();
+    var nameInput = ov.querySelector("#team-picker-new-name");
+    if (nameInput) nameInput.value = "";
+    try {
+      var data = await apiFetch(
+        "/notes/local/" + encodeURIComponent(noteId) + "/team-shares",
+        { method: "GET" }
+      );
+      if (
+        loadGen !== teamPickerState.loadGen ||
+        teamPickerState.mode !== "note" ||
+        teamPickerState.noteId !== noteId
+      ) {
+        return;
+      }
+      var selectedIds = ((data && data.teams) || [])
+        .map(function (team) {
+          return team && team.id;
+        })
+        .filter(Boolean);
+      mergeTeamsIntoPicker(data && data.all_teams, selectedIds);
+      paintTeamPickerList();
+    } catch (err) {
+      if (loadGen !== teamPickerState.loadGen) return;
+      setTeamPickerError(err.message || String(err));
+    }
   }
 
   var calendarsCache = [];
@@ -8110,6 +8486,7 @@
           : "");
       appendItemLabelChips(inner, n);
       mountNoteCardActions(card, inner, n);
+      appendNoteCardAvatars(inner, n.members);
       card.appendChild(inner);
       card.addEventListener("click", function () {
         openKnowledgeNoteDetail(n);
@@ -8121,7 +8498,11 @@
             await deleteLocalNoteById(id);
             if (knowledgeDataCache) renderKnowledgePaneFromData(knowledgeDataCache);
           },
-          { removeStack: true, confirmMessage: "Удалить документ?" }
+          {
+            removeStack: true,
+            confirmMessage:
+              n.is_owner === false ? "Убрать документ из списка?" : "Удалить документ?",
+          }
         )
       );
     });
@@ -13777,6 +14158,7 @@
       wrap._noteRevision = 1;
       wrap._noteUpdatedAt = "";
       wrap._isNoteOwner = true;
+      wrap._isKnowledge = false;
       if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
     }
   }
@@ -14253,6 +14635,13 @@
         requestNotePdf(shareKind, shareId).catch(function (err) {
           alert(err.message || String(err));
         });
+      });
+    }
+
+    if (wrap._isKnowledge && wrap._isNoteOwner !== false) {
+      addItem("Поделиться с командой", function () {
+        closeNoteMoreMenu();
+        openNoteTeamShareSheet();
       });
     }
 
@@ -22328,6 +22717,7 @@
     wrap._noteRevision = 1;
     wrap._noteUpdatedAt = "";
     wrap._isNoteOwner = true;
+    wrap._isKnowledge = false;
     var btn = document.createElement("button");
     btn.type = "button";
     btn.id = "note-editor-more-btn";
@@ -22799,6 +23189,12 @@
       listShareCtx = noteCardShareCtx(n);
       openShareAccessSheet();
     });
+    if (isKnowledgeNoteItem(n) && isOwner) {
+      addMoreItem("Поделиться с командой", function () {
+        listShareCtx = noteCardShareCtx(n);
+        openNoteTeamShareSheet(n);
+      });
+    }
     addMoreItem("Скачать PDF", function () {
       requestNotePdf("local", id).catch(function (err) {
         alert(err.message || String(err));
@@ -22922,7 +23318,9 @@
     var isKb = isKnowledgeNoteItem(n);
     var msg =
       n && n.is_owner === false
-        ? "Убрать заметку из списка?"
+        ? isKb
+          ? "Убрать документ из списка?"
+          : "Убрать заметку из списка?"
         : isKb
           ? "Удалить документ?"
           : isTranscriptionNoteItem(n)
@@ -23763,6 +24161,7 @@
       mountShareControls("local", noteId);
       var shareWrap = document.getElementById("note-editor-more-wrap");
       if (shareWrap && n) {
+        shareWrap._isKnowledge = !!isKnowledge;
         if (n.revision) shareWrap._noteRevision = n.revision;
         if (n.updated_at) shareWrap._noteUpdatedAt = n.updated_at;
         if (n.members) shareWrap._noteMembers = n.members;
@@ -23873,9 +24272,15 @@
               console.error("mountTagPicker", err);
             }
           }
-          if (noteId && !isKnowledge) {
-            ensureNoteShareMounted(noteId);
-            hydrateNoteSheets(Object.assign({}, n, createdLocal), noteSheetState.primaryBody || fields.description);
+          if (noteId) {
+            var createdShareWrap = ensureNoteShareMounted(noteId);
+            if (createdShareWrap) createdShareWrap._isKnowledge = !!isKnowledge;
+            if (!isKnowledge) {
+              hydrateNoteSheets(
+                Object.assign({}, n, createdLocal),
+                noteSheetState.primaryBody || fields.description
+              );
+            }
           }
           if (noteId) {
             writeLocalNoteDraft(noteId, {
@@ -24309,7 +24714,13 @@
         );
       }
       refreshNoteCommentAnchors();
-      if (!noteIsCreate && noteId && !isKnowledge) startNoteCollab(noteId, n);
+      if (
+        !noteIsCreate &&
+        noteId &&
+        (!isKnowledge || (n.members && n.members.length > 1))
+      ) {
+        startNoteCollab(noteId, n);
+      }
     });
     }
     hydrateNoteSheets(isKnowledge ? null : n, editorBody);

@@ -60,6 +60,11 @@ class NoteMembersTests(unittest.TestCase):
         kb = notes_store.create_note(1, "KB", "k", role=notes_store.KNOWLEDGE_ROLE)
         with self.assertRaises(ValueError):
             note_members.add_member(1, kb["id"], 2)
+        member = note_members.add_member(1, kb["id"], 2, allow_knowledge=True)
+        self.assertEqual(member["user_id"], "2")
+        listed = notes_store.list_knowledge_notes(2)
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["id"], kb["id"])
 
     def test_conflict_on_stale_revision(self) -> None:
         note = notes_store.create_note(3, "T", "one")

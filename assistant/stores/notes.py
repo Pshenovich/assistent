@@ -524,9 +524,34 @@ def knowledge_version(user_id: int | str) -> str:
     import hashlib
 
     uid = str(int(user_id))
-    with _LOCK:
-        row = _conn().execute(
+    try:
+        from assistant.stores import note_members
+
+        note_members._conn()  # type: ignore[attr-defined]
+        members_sql = """
+            SELECT
+                COUNT(*) AS n,
+                COALESCE(MAX(src.updated_at), '') AS mx,
+                COALESCE(SUM(LENGTH(src.body)), 0) AS sz,
+                COALESCE(SUM(src.revision), 0) AS rev
+            FROM (
+                SELECT body, updated_at, revision FROM local_notes
+                WHERE user_id = ?
+                  AND role = ?
+                  AND COALESCE(kb_enabled, 1) != 0
+                UNION ALL
+                SELECT ln.body, ln.updated_at, ln.revision
+                FROM local_notes ln
+                JOIN note_members nm
+                  ON nm.owner_user_id = ln.user_id AND nm.note_id = ln.id
+                WHERE nm.member_user_id = ?
+                  AND ln.role = ?
+                  AND COALESCE(ln.kb_enabled, 1) != 0
+            ) src
             """
+        members_params: tuple[Any, ...] = (uid, KNOWLEDGE_ROLE, uid, KNOWLEDGE_ROLE)
+    except Exception:
+        members_sql = """
             SELECT
                 COUNT(*) AS n,
                 COALESCE(MAX(updated_at), '') AS mx,
@@ -536,9 +561,10 @@ def knowledge_version(user_id: int | str) -> str:
             WHERE user_id = ?
               AND role = ?
               AND COALESCE(kb_enabled, 1) != 0
-            """,
-            (uid, KNOWLEDGE_ROLE),
-        ).fetchone()
+            """
+        members_params = (uid, KNOWLEDGE_ROLE)
+    with _LOCK:
+        row = _conn().execute(members_sql, members_params).fetchone()
     n = int(row["n"] or 0) if row else 0
     mx = str(row["mx"] or "") if row else ""
     sz = int(row["sz"] or 0) if row else 0
@@ -562,12 +588,20 @@ def list_knowledge_notes(
             """,
             (uid, KNOWLEDGE_ROLE, lim),
         )
-        notes = [_row_to_dict(r) for r in cur.fetchall()]
+        own = [_row_to_dict(r) for r in cur.fetchall()]
+    notes = _merge_shared_notes(
+        uid, own, include_knowledge=True, include_transcription=False
+    )
+    notes = [n for n in notes if n.get("is_knowledge")]
+    notes.sort(key=lambda n: str(n.get("updated_at") or ""), reverse=True)
+    notes = notes[:lim]
+    out = [_with_sharing(n, uid) for n in notes]
     pins = pinned_id_set(uid, "local")
-    for n in notes:
+    for n in out:
         n["pinned"] = str(n.get("id") or "") in pins
-    notes.sort(key=lambda n: 0 if n.get("pinned") else 1)
-    return notes
+    out.sort(key=lambda n: str(n.get("updated_at") or ""), reverse=True)
+    out.sort(key=lambda n: 0 if n.get("pinned") else 1)
+    return out
 
 
 def list_transcription_notes(
@@ -602,8 +636,19 @@ def list_transcription_notes(
 
 
 def get_knowledge_note(user_id: int | str) -> Optional[dict[str, Any]]:
-    notes = list_knowledge_notes(user_id, limit=1)
-    return notes[0] if notes else None
+    uid = str(int(user_id))
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            SELECT * FROM local_notes
+            WHERE user_id = ? AND role = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (uid, KNOWLEDGE_ROLE),
+        )
+        row = cur.fetchone()
+    return _row_to_dict(row) if row else None
 
 
 def ensure_knowledge_note(user_id: int | str) -> dict[str, Any]:
@@ -732,6 +777,12 @@ def delete_note(user_id: int | str, note_id: int) -> bool:
             from assistant.stores import note_members
 
             note_members.delete_all_for_note(uid, int(note_id))
+        except Exception:
+            pass
+        try:
+            from assistant.stores import teams_store
+
+            teams_store.delete_all_for_note(uid, int(note_id))
         except Exception:
             pass
     try:

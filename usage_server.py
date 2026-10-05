@@ -2588,6 +2588,22 @@ class _MiniappNoteMemberAdd(BaseModel):
     telegram_username: Optional[str] = None
 
 
+class _MiniappTeamCreate(BaseModel):
+    name: str = ""
+
+
+class _MiniappTeamPatch(BaseModel):
+    name: str = ""
+
+
+class _MiniappContactTeamsBody(BaseModel):
+    team_ids: list[int] = Field(default_factory=list)
+
+
+class _MiniappNoteTeamSharesBody(BaseModel):
+    team_ids: list[int] = Field(default_factory=list)
+
+
 class _MiniappNoteCollabBody(BaseModel):
     cursor: Optional[int] = None
 
@@ -3176,6 +3192,28 @@ def _notify_member_added(
         int(member_user_id),
         f"{who} добавил(а) вас в заметку {link}.",
     )
+
+
+def _notify_team_members_added(added: list[dict[str, Any]], adder_name: str) -> None:
+    seen: set[tuple[str, int]] = set()
+    for row in added or []:
+        try:
+            mid = int(row.get("user_id") or 0)
+            nid = int(row.get("note_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if mid <= 0 or nid <= 0:
+            continue
+        key = (str(mid), nid)
+        if key in seen:
+            continue
+        seen.add(key)
+        _notify_member_added(
+            member_user_id=mid,
+            title=str(row.get("title") or "База знаний"),
+            note_id=nid,
+            adder_name=adder_name,
+        )
 
 
 def _notify_edit_request(req: dict[str, Any], title: str) -> None:
@@ -5117,6 +5155,21 @@ async def miniapp_contacts_update(
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Контакт не найден")
+    new_email = str(item.get("email") or old_email).strip().lower()
+    from assistant.stores import teams_store
+
+    if new_email and new_email != old_email.lower():
+        await run_in_threadpool(
+            teams_store.rename_contact_email,
+            int(principal.telegram_user_id),
+            old_email.lower(),
+            new_email,
+        )
+    await run_in_threadpool(
+        teams_store.refresh_contact_telegram,
+        int(principal.telegram_user_id),
+        new_email or old_email.lower(),
+    )
     return {"item": item}
 
 
@@ -5138,7 +5191,154 @@ async def miniapp_contacts_delete(
     )
     if not ok:
         raise HTTPException(status_code=404, detail="Контакт не найден")
+    from assistant.stores import teams_store
+
+    await run_in_threadpool(
+        teams_store.remove_contact_from_all_teams,
+        int(principal.telegram_user_id),
+        target,
+    )
     return {"ok": True}
+
+
+@miniapp_router.get("/teams")
+async def miniapp_teams_list(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import teams_store
+
+    items = await run_in_threadpool(
+        teams_store.list_teams, int(principal.telegram_user_id)
+    )
+    return {"ok": True, "teams": items}
+
+
+@miniapp_router.post("/teams")
+async def miniapp_teams_create(
+    body: _MiniappTeamCreate,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import teams_store
+
+    try:
+        team = await run_in_threadpool(
+            teams_store.create_team, int(principal.telegram_user_id), body.name
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "team": team}
+
+
+@miniapp_router.patch("/teams/{team_id}")
+async def miniapp_teams_rename(
+    team_id: int,
+    body: _MiniappTeamPatch,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import teams_store
+
+    try:
+        team = await run_in_threadpool(
+            teams_store.rename_team,
+            int(principal.telegram_user_id),
+            int(team_id),
+            body.name,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not team:
+        raise HTTPException(status_code=404, detail="Команда не найдена")
+    return {"ok": True, "team": team}
+
+
+@miniapp_router.delete("/teams/{team_id}")
+async def miniapp_teams_delete(
+    team_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import teams_store
+
+    ok = await run_in_threadpool(
+        teams_store.delete_team, int(principal.telegram_user_id), int(team_id)
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Команда не найдена")
+    return {"ok": True}
+
+
+def _contact_exists_for_principal(principal: _MiniappPrincipal, email: str) -> bool:
+    from assistant.stores import contacts_store
+
+    key = (email or "").strip().lower()
+    if not key:
+        return False
+    items = contacts_store.load_contacts(
+        telegram_user_id=int(principal.telegram_user_id),
+        telegram_username=_miniapp_tg_username(principal),
+    )
+    return any(str(c.get("email") or "").strip().lower() == key for c in items or [])
+
+
+@miniapp_router.get("/contacts/{email}/teams")
+async def miniapp_contact_teams_get(
+    email: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import teams_store
+
+    target = unquote(email or "").strip().lower()
+    if not target:
+        raise HTTPException(status_code=400, detail="Некорректный email")
+    exists = await run_in_threadpool(_contact_exists_for_principal, principal, target)
+    if not exists:
+        raise HTTPException(status_code=404, detail="Контакт не найден")
+    team_ids = await run_in_threadpool(
+        teams_store.list_contact_team_ids, int(principal.telegram_user_id), target
+    )
+    teams = await run_in_threadpool(
+        teams_store.list_teams, int(principal.telegram_user_id)
+    )
+    return {"ok": True, "team_ids": team_ids, "teams": teams}
+
+
+@miniapp_router.put("/contacts/{email}/teams")
+async def miniapp_contact_teams_put(
+    email: str,
+    body: _MiniappContactTeamsBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import teams_store
+
+    target = unquote(email or "").strip().lower()
+    if not target:
+        raise HTTPException(status_code=400, detail="Некорректный email")
+    exists = await run_in_threadpool(_contact_exists_for_principal, principal, target)
+    if not exists:
+        raise HTTPException(status_code=404, detail="Контакт не найден")
+
+    def _run() -> dict[str, Any]:
+        return teams_store.set_contact_teams(
+            int(principal.telegram_user_id), target, list(body.team_ids or [])
+        )
+
+    try:
+        result = await run_in_threadpool(_run)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    await run_in_threadpool(
+        partial(
+            _notify_team_members_added,
+            result.get("added_members") or [],
+            _principal_display_name(principal),
+        )
+    )
+    return {
+        "ok": True,
+        "team_ids": result.get("team_ids") or [],
+        "teams": await run_in_threadpool(
+            teams_store.list_teams, int(principal.telegram_user_id)
+        ),
+    }
 
 
 @miniapp_router.get("/settings")
@@ -7441,6 +7641,73 @@ async def miniapp_note_members_list(
     if not note:
         raise HTTPException(status_code=404, detail="Заметка не найдена")
     return {"ok": True, "members": note.get("members") or []}
+
+
+@miniapp_router.get("/notes/local/{note_id}/team-shares")
+async def miniapp_note_team_shares_get(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import notes as notes_store
+    from assistant.stores import teams_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any] | None:
+        note = notes_store.get_note(uid, note_id)
+        if not note:
+            return None
+        if not note.get("is_knowledge"):
+            raise HTTPException(
+                status_code=400,
+                detail="С командой можно делиться только документами базы знаний",
+            )
+        return {
+            "ok": True,
+            "teams": teams_store.list_note_teams(uid, note_id),
+            "all_teams": teams_store.list_teams(uid),
+        }
+
+    try:
+        data = await run_in_threadpool(_run)
+    except HTTPException:
+        raise
+    if not data:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return data
+
+
+@miniapp_router.put("/notes/local/{note_id}/team-shares")
+async def miniapp_note_team_shares_put(
+    note_id: int,
+    body: _MiniappNoteTeamSharesBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import notes as notes_store
+    from assistant.stores import teams_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        note = notes_store.get_note(uid, note_id)
+        if not note:
+            raise HTTPException(status_code=404, detail="Заметка не найдена")
+        return teams_store.set_note_teams(uid, note_id, list(body.team_ids or []))
+
+    try:
+        result = await run_in_threadpool(_run)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    await run_in_threadpool(
+        partial(
+            _notify_team_members_added,
+            result.get("added_members") or [],
+            _principal_display_name(principal),
+        )
+    )
+    return {"ok": True, "teams": result.get("teams") or []}
 
 
 @miniapp_router.post("/notes/local/{note_id}/members")

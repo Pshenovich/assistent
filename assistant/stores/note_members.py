@@ -290,6 +290,7 @@ def add_member(
     member_user_id: int | str,
     *,
     role: str = "edit",
+    allow_knowledge: bool = False,
 ) -> dict[str, Any]:
     owner = _uid(owner_user_id)
     mid = _uid(member_user_id)
@@ -298,7 +299,7 @@ def add_member(
     note = notes_store.get_note(owner, int(note_id))
     if not note:
         raise ValueError("Заметка не найдена")
-    if note.get("is_knowledge"):
+    if note.get("is_knowledge") and not allow_knowledge:
         raise ValueError("Документ базы знаний нельзя расшарить участникам")
     member_role = (role or "edit").strip() or "edit"
     if member_role not in _VALID_ROLES:

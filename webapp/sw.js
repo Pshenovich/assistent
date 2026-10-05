@@ -1,13 +1,13 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261005-heading-pdf";
+var CACHE_VERSION = "miniapp-v1-20261005-teams-api";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261005-heading-pdf",
-  "./app.js?v=20261005-heading-pdf",
+  "./styles.css?v=20261005-teams-api",
+  "./app.js?v=20261005-teams-api",
   "./note-html.js?v=20261005-heading-pdf",
   "./note-comments.js?v=20261005-heading-pdf",
   "./note-rich-editor.js?v=20261005-heading-pdf",
