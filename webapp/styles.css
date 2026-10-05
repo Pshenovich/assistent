@@ -12560,6 +12560,46 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   gap: 0.35rem;
 }
 
+.note-draft-conflict-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 340;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.note-draft-conflict-sheet {
+  width: min(22rem, 100%);
+  padding: 1rem 1rem 0.85rem;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 14px;
+  background: var(--vkui--color_background_content, #1c1c1e);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+.note-draft-conflict-sheet p {
+  margin: 0 0 0.85rem;
+  color: var(--text, #f2f2f2);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.note-draft-conflict-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.note-draft-conflict-actions .btn,
+.note-draft-conflict-actions .btn-text {
+  width: 100%;
+  justify-content: center;
+}
+
 .note-link-project-chips {
   flex: 0 0 auto;
   margin: 0 0 8px;

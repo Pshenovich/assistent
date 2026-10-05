@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261005-task-chip";
+  var WEBAPP_BUILD = "20261005-note-drafts";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -106,7 +106,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261005-task-chip";
+  const NOTE_EDITOR_ASSET_V = "20261005-note-drafts";
   const MINIAPP_CACHE_SCHEMA = 2;
   let noteEditorScriptsPromise = null;
 
@@ -224,6 +224,303 @@
 
   function persistNotesCacheToDisk() {
     if (notesDataCache) writeMiniappCache("notes", notesDataCache);
+  }
+
+  function noteDraftsApi() {
+    return (typeof window !== "undefined" && window.NoteDrafts) || null;
+  }
+
+  function noteDraftUserKey() {
+    return getMiniappCacheUserKey();
+  }
+
+  function writeLocalNoteDraft(itemId, fields) {
+    var api = noteDraftsApi();
+    if (!api || !itemId) return null;
+    try {
+      return api.putDraft(noteDraftUserKey(), "local", itemId, fields || {});
+    } catch (e) {
+      console.warn("writeLocalNoteDraft", e);
+      return null;
+    }
+  }
+
+  function readLocalNoteDraft(itemId) {
+    var api = noteDraftsApi();
+    if (!api || !itemId) return null;
+    try {
+      return api.getDraft(noteDraftUserKey(), "local", itemId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function clearLocalNoteDraft(itemId) {
+    var api = noteDraftsApi();
+    if (!api || !itemId) return;
+    try {
+      api.clearDraft(noteDraftUserKey(), "local", itemId);
+    } catch (_) {}
+  }
+
+  function remapLocalNoteDraft(fromId, toId) {
+    var api = noteDraftsApi();
+    if (!api || !fromId || !toId) return;
+    try {
+      api.remapItemId(noteDraftUserKey(), "local", fromId, toId);
+    } catch (_) {}
+  }
+
+  function hydrateLocalNoteWithDraft(note) {
+    var api = noteDraftsApi();
+    var id = localNoteIdFrom(note);
+    if (!api || !id) return { use: "server", title: note && note.title, body: (note && (note.body || note.description)) || "", draft: null };
+    var draft = readLocalNoteDraft(id);
+    return api.hydrateNoteFromDraft(
+      {
+        title: note && (note.title || note.content),
+        body: note && (note.body || note.description),
+        revision: note && note.revision,
+      },
+      draft
+    );
+  }
+
+  function applyDraftsToNotesList(data) {
+    var api = noteDraftsApi();
+    if (!api || !data || !Array.isArray(data.local_notes)) return data;
+    var drafts = [];
+    try {
+      drafts = api.listUnsynced(noteDraftUserKey(), "local") || [];
+    } catch (_) {
+      return data;
+    }
+    drafts.forEach(function (draft) {
+      var id = String((draft && draft.itemId) || "");
+      if (!id) return;
+      data.local_notes.forEach(function (note) {
+        if (String(note.id) !== id) return;
+        var h = api.hydrateNoteFromDraft(note, draft);
+        if (h.use === "draft") {
+          note.title = h.title;
+          note.body = h.body;
+          note.description = h.body;
+        }
+      });
+    });
+    return data;
+  }
+
+  function snapshotOpenLocalNoteDraft() {
+    if (!isNoteEditorModalOpen()) return null;
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || wrap._shareKind !== "local" || !wrap._shareId) return null;
+    var title = "";
+    try {
+      title = getNoteEditorTitle().trim();
+    } catch (_) {}
+    var body = "";
+    try {
+      body = isPrimarySheetId(noteSheetState.leftId)
+        ? readActiveNoteEditorHtml(getLeftNoteRichEditor())
+        : noteSheetState.primaryBody || "";
+    } catch (_) {
+      body = noteSheetState.primaryBody || "";
+    }
+    return writeLocalNoteDraft(wrap._shareId, {
+      title: title,
+      body: body,
+      baseRevision: wrap._noteRevision,
+      baseUpdatedAt: wrap._noteUpdatedAt,
+    });
+  }
+
+  function keepaliveOpenLocalNotePatch() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || wrap._shareKind !== "local" || !wrap._shareId) return;
+    var id = String(wrap._shareId);
+    if (!id || id.indexOf("tmp_") === 0) return;
+    if (isAppOffline()) return;
+    var title = "";
+    try {
+      title = getNoteEditorTitle().trim();
+    } catch (_) {}
+    var body = "";
+    try {
+      body = isPrimarySheetId(noteSheetState.leftId)
+        ? readActiveNoteEditorHtml(getLeftNoteRichEditor())
+        : noteSheetState.primaryBody || "";
+    } catch (_) {}
+    try {
+      fetch(API + "/notes/local/" + encodeURIComponent(id), {
+        method: "PATCH",
+        headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+        body: JSON.stringify({
+          title: title,
+          description: body,
+          expected_revision: wrap._noteRevision || undefined,
+          expected_updated_at: wrap._noteUpdatedAt || undefined,
+        }),
+        credentials: "same-origin",
+        keepalive: true,
+      });
+    } catch (_) {}
+  }
+
+  function applyNoteDraftToOpenEditor(title, body) {
+    var titleInput = document.getElementById("note-editor-title-input");
+    if (titleInput && title != null) {
+      titleInput.value = String(title || "");
+      titleInput.dispatchEvent(new Event("input"));
+    }
+    noteSheetState.primaryBody = String(body || "");
+    var left = getLeftNoteRichEditor();
+    if (left && typeof left.setHtml === "function" && isPrimarySheetId(noteSheetState.leftId)) {
+      left.setHtml(String(body || ""));
+    }
+  }
+
+  var noteDraftConflictBusy = false;
+
+  function persistNoteDraftConflict(itemId, server, choice) {
+    var api = noteDraftsApi();
+    var draft = readLocalNoteDraft(itemId);
+    if (!draft) return Promise.resolve();
+    var serverTitle = String((server && server.title) || "");
+    var serverBody = String((server && (server.body || server.description)) || "");
+    if (choice === "server") {
+      clearLocalNoteDraft(itemId);
+      if (isNoteEditorModalOpen() && currentOpenNoteId() === String(itemId)) {
+        applyRemoteSharedNote(server, true);
+      } else if (server) {
+        prependLocalInCache(server);
+      }
+      return Promise.resolve();
+    }
+    var title = choice === "both" ? serverTitle || draft.title : draft.title;
+    var body =
+      choice === "both" && api
+        ? api.mergeKeepBoth(serverBody, draft.body)
+        : draft.body;
+    if (isNoteEditorModalOpen() && currentOpenNoteId() === String(itemId)) {
+      var wrap = document.getElementById("note-editor-more-wrap");
+      if (wrap) {
+        wrap._noteRevision = (server && server.revision) || wrap._noteRevision;
+        wrap._noteUpdatedAt = (server && server.updated_at) || wrap._noteUpdatedAt;
+      }
+      applyNoteDraftToOpenEditor(title, body);
+      writeLocalNoteDraft(itemId, {
+        title: title,
+        body: body,
+        baseRevision: server && server.revision,
+        baseUpdatedAt: server && server.updated_at,
+        conflict: null,
+      });
+      var flush = getNoteEditorBodyEl();
+      if (flush && typeof flush._noteEditorFlush === "function") {
+        return flush._noteEditorFlush();
+      }
+    }
+    writeLocalNoteDraft(itemId, {
+      title: title,
+      body: body,
+      baseRevision: server && server.revision,
+      baseUpdatedAt: server && server.updated_at,
+      conflict: null,
+    });
+    return apiFetch("/notes/local/" + encodeURIComponent(itemId), {
+      method: "PATCH",
+      body: JSON.stringify({
+        title: title,
+        description: body,
+        expected_revision: server && server.revision,
+        expected_updated_at: server && server.updated_at,
+      }),
+    }).then(function (res) {
+      var item = res && res.item;
+      if (item) {
+        prependLocalInCache(item);
+        clearLocalNoteDraft(itemId);
+      }
+    });
+  }
+
+  function showNoteDraftConflictDialog(itemId, server, draft) {
+    if (noteDraftConflictBusy) return;
+    var existing = document.getElementById("note-draft-conflict-overlay");
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+    noteDraftConflictBusy = true;
+    var ov = document.createElement("div");
+    ov.id = "note-draft-conflict-overlay";
+    ov.className = "note-draft-conflict-overlay";
+    ov.innerHTML =
+      '<div class="note-draft-conflict-sheet" role="dialog" aria-modal="true">' +
+      "<p>Заметка уже изменилась на другом устройстве. Что оставить?</p>" +
+      '<div class="note-draft-conflict-actions">' +
+      '<button type="button" class="btn" data-choice="server">Оставить с сервера</button>' +
+      '<button type="button" class="btn" data-choice="mine">Заменить своим текстом</button>' +
+      '<button type="button" class="btn-text" data-choice="both">Оставить оба</button>' +
+      "</div></div>";
+    function finish(choice) {
+      if (ov.parentNode) ov.parentNode.removeChild(ov);
+      noteDraftConflictBusy = false;
+      persistNoteDraftConflict(itemId, server, choice).catch(function (e) {
+        alert((e && e.message) || "Не удалось сохранить выбор");
+      });
+    }
+    ov.addEventListener("click", function (e) {
+      var btn = e.target && e.target.closest && e.target.closest("[data-choice]");
+      if (!btn || !ov.contains(btn)) return;
+      finish(btn.getAttribute("data-choice"));
+    });
+    document.body.appendChild(ov);
+  }
+
+  var noteDraftConflictNotified = {};
+
+  function handleNotePatchConflict(itemId, conflictItem, localTitle, localBody) {
+    var id = String(itemId || "");
+    if (!id) return;
+    var server = conflictItem || {};
+    writeLocalNoteDraft(id, {
+      title: localTitle,
+      body: localBody,
+      conflict: {
+        title: server.title,
+        body: server.body || server.description,
+        revision: server.revision,
+        updated_at: server.updated_at,
+      },
+    });
+    if (isNoteEditorModalOpen() && currentOpenNoteId() === id) {
+      showNoteDraftConflictDialog(id, server, readLocalNoteDraft(id));
+      return;
+    }
+    var notifyKey = id + ":" + String(server.revision || "");
+    if (noteDraftConflictNotified[notifyKey]) return;
+    noteDraftConflictNotified[notifyKey] = true;
+    showNoteToast("Заметка изменилась на другом устройстве. Откройте её, чтобы выбрать версию.", {
+      duration: 7000,
+    });
+  }
+
+  function clearLocalNoteDraftIfUnchanged(itemId, title, body) {
+    var api = noteDraftsApi();
+    var d = readLocalNoteDraft(itemId);
+    if (!d) return;
+    if (!api || (api.bodiesEqual(d.title, title) && api.bodiesEqual(d.body, body))) {
+      clearLocalNoteDraft(itemId);
+    }
+  }
+
+  function notePatchQueueBody(fields, wrap) {
+    var body = {
+      title: fields.title,
+      description: fields.description,
+    };
+    if (wrap && wrap._noteRevision) body.expected_revision = wrap._noteRevision;
+    if (wrap && wrap._noteUpdatedAt) body.expected_updated_at = wrap._noteUpdatedAt;
+    return body;
   }
 
   function offlineQueueStorageKey() {
@@ -453,6 +750,7 @@
       }
     });
     writeOfflineQueue(q);
+    remapLocalNoteDraft(tmpId, realId);
   }
 
   function remapOfflineSheetId(tmpId, realId, noteId) {
@@ -587,6 +885,28 @@
           q.shift();
           writeOfflineQueue(q);
         } catch (e) {
+          if (op.type === "note_patch" && e && e.status === 409) {
+            q.shift();
+            writeOfflineQueue(q);
+            var conflictBody = op.body || {};
+            handleNotePatchConflict(
+              op.clientId,
+              e.conflictItem,
+              conflictBody.title,
+              conflictBody.description
+            );
+            continue;
+          }
+          if (op.type === "note_patch" && e && e.status === 404) {
+            q.shift();
+            writeOfflineQueue(q);
+            clearLocalNoteDraft(op.clientId);
+            continue;
+          }
+          if (op.type === "note_patch" && !isTransientApiError(e)) {
+            console.warn("offline note_patch kept", op, e);
+            break;
+          }
           if (isTransientApiError(e)) break;
           // Permanent failure: drop op so the queue does not stick forever.
           q.shift();
@@ -611,16 +931,33 @@
   function bindOfflineQueueListenersOnce() {
     if (window._leoOfflineQueueBound) return;
     window._leoOfflineQueueBound = true;
+    function flushOpenNoteOnHide() {
+      snapshotOpenLocalNoteDraft();
+      keepaliveOpenLocalNotePatch();
+      var body = getNoteEditorBodyEl();
+      if (body && typeof body._noteEditorFlush === "function") {
+        try {
+          var p = body._noteEditorFlush();
+          if (p && typeof p.catch === "function") p.catch(function () {});
+        } catch (_) {}
+      }
+    }
     window.addEventListener("online", function () {
       markNetworkSuccess();
       flushOfflineQueue();
     });
     document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "hidden") {
+        flushOpenNoteOnHide();
+        return;
+      }
       if (document.visibilityState === "visible") {
         if (!isAppOffline()) markNetworkSuccess();
         flushOfflineQueue();
       }
     });
+    window.addEventListener("pagehide", flushOpenNoteOnHide);
+    window.addEventListener("freeze", flushOpenNoteOnHide);
     syncOfflineQueueBadge();
     setTimeout(function () {
       flushOfflineQueue();
@@ -13466,6 +13803,22 @@
 
   function applyRemoteSharedNote(item, force) {
     if (!item) return;
+    if (!force) {
+      var draftId = currentOpenNoteId() || (item && item.id);
+      var draft = readLocalNoteDraft(draftId);
+      var api = noteDraftsApi();
+      if (
+        draft &&
+        api &&
+        !(api.bodiesEqual(draft.title, item.title) &&
+          api.bodiesEqual(draft.body, item.body || item.description))
+      ) {
+        if (api.revNum(item.revision) > api.revNum(draft.baseRevision)) {
+          handleNotePatchConflict(draftId, item, draft.title, draft.body);
+        }
+        return;
+      }
+    }
     var wrap = document.getElementById("note-editor-more-wrap");
     if (wrap) {
       wrap._noteRevision = item.revision || wrap._noteRevision;
@@ -16410,6 +16763,15 @@
 
   function scheduleRightForeignNotePersist() {
     if (!noteSheetState.rightNote || noteSheetState.rightMode !== "note") return;
+    var rightNote = noteSheetState.rightNote;
+    if (rightNote && rightNote.id && (rightNote.kind || "local") !== "journal") {
+      writeLocalNoteDraft(rightNote.id, {
+        title: String(rightNote.title || "").trim(),
+        body: readSheetEditorHtml("right") || rightNote.body || rightNote.description || "",
+        baseRevision: rightNote.revision,
+        baseUpdatedAt: rightNote.updated_at,
+      });
+    }
     if (noteSheetState.rightNotePersistTimer) clearTimeout(noteSheetState.rightNotePersistTimer);
     noteSheetState.rightNotePersistTimer = setTimeout(function () {
       persistRightForeignNote().catch(function (e) {
@@ -16442,10 +16804,29 @@
       if (notesDataCache) renderNotesPanesFromData(notesDataCache);
       return;
     }
-    var patchRes = await apiFetch("/notes/local/" + encodeURIComponent(String(note.id)), {
-      method: "PATCH",
-      body: JSON.stringify({ title: title, description: html }),
+    writeLocalNoteDraft(note.id, {
+      title: title,
+      body: html,
+      baseRevision: note.revision,
+      baseUpdatedAt: note.updated_at,
     });
+    var patchBody = { title: title, description: html };
+    if (note.revision) patchBody.expected_revision = note.revision;
+    if (note.updated_at) patchBody.expected_updated_at = note.updated_at;
+    var patchRes;
+    try {
+      patchRes = await apiFetch("/notes/local/" + encodeURIComponent(String(note.id)), {
+        method: "PATCH",
+        body: JSON.stringify(patchBody),
+      });
+    } catch (e) {
+      if (e && e.status === 409 && e.conflictItem) {
+        handleNotePatchConflict(note.id, e.conflictItem, title, html);
+        return;
+      }
+      throw e;
+    }
+    clearLocalNoteDraftIfUnchanged(note.id, title, html);
     var item = (patchRes && patchRes.item) || {
       id: note.id,
       title: title,
@@ -16454,6 +16835,10 @@
       role: note.kind === "knowledge" ? "knowledge" : "",
       is_knowledge: note.kind === "knowledge",
     };
+    if (patchRes && patchRes.item) {
+      note.revision = patchRes.item.revision || note.revision;
+      note.updated_at = patchRes.item.updated_at || note.updated_at;
+    }
     if (note.kind === "knowledge" || isKnowledgeNoteItem(item)) {
       item.role = "knowledge";
       item.is_knowledge = true;
@@ -16570,7 +16955,7 @@
     var res = await apiFetch("/notes/local/" + encodeURIComponent(id), { method: "GET" });
     var it = (res && res.item) || item.raw || {};
     var isKb = item.kind === "knowledge" || isKnowledgeNoteItem(it) || item.is_knowledge;
-    return {
+    var loaded = {
       kind: isKb ? "knowledge" : "local",
       id: String(it.id || id),
       title: sanitizeNoteTitle(it.title || it.content || "") || String(it.title || "Без названия"),
@@ -16578,7 +16963,18 @@
       description: it.body || it.description || "",
       tags: noteTagsOf(it),
       project: noteProjectOf(it),
+      revision: it.revision,
+      updated_at: it.updated_at,
     };
+    var hydrated = hydrateLocalNoteWithDraft(loaded);
+    if (hydrated.use === "draft") {
+      loaded.title = hydrated.title;
+      loaded.body = hydrated.body;
+      loaded.description = hydrated.body;
+    } else if (hydrated.use === "conflict") {
+      handleNotePatchConflict(loaded.id, loaded, hydrated.draft && hydrated.draft.title, hydrated.draft && hydrated.draft.body);
+    }
+    return loaded;
   }
 
   async function createAndOpenNoteInRightPane() {
@@ -21703,12 +22099,14 @@
       setHidden(err, true);
     }
     if (notesDataCache) {
+      applyDraftsToNotesList(notesDataCache);
       renderNotesPanesFromData(notesDataCache);
     } else {
       var cachedNotes = readMiniappCache("notes");
       if (cachedNotes) {
         notesDataCache = cachedNotes;
-        renderNotesPanesFromData(cachedNotes);
+        applyDraftsToNotesList(notesDataCache);
+        renderNotesPanesFromData(notesDataCache);
       }
     }
     let data;
@@ -21728,12 +22126,13 @@
       notesDataCache._tagsLoaded = true;
     }
     writeMiniappCache("notes", data);
+    applyDraftsToNotesList(notesDataCache);
     if (data.journal_error && err) {
       err.textContent = data.journal_error;
       setHidden(err, false);
     }
     renderNotesTagFilterBar();
-    renderNotesPanesFromData(data);
+    renderNotesPanesFromData(notesDataCache);
     openPendingSharedNote(data);
   }
 
@@ -22994,9 +23393,11 @@
   }
 
   function openLocalNoteDetailReady(n, opts, noteIsCreate, noteId) {
-    const cleanTitle =
-      sanitizeNoteTitle(n.title || n.content || "") || String(n.title || n.content || "");
-    const cleanBody = sanitizeNoteBody(n.description || n.body || "");
+    var hydrated = noteIsCreate ? { use: "server" } : hydrateLocalNoteWithDraft(n);
+    var sourceTitle = hydrated.use === "draft" ? hydrated.title : n.title || n.content || "";
+    var sourceBody = hydrated.use === "draft" ? hydrated.body : n.description || n.body || "";
+    const cleanTitle = sanitizeNoteTitle(sourceTitle) || String(sourceTitle || "");
+    const cleanBody = sanitizeNoteBody(sourceBody);
     var isKnowledge = !!(opts && opts.knowledge) || isKnowledgeNoteItem(n);
 
     const wrap = document.createElement("div");
@@ -23020,6 +23421,13 @@
         setHidden(tagsWrap, true);
       }
       mountShareControls("local", noteId);
+      var shareWrap = document.getElementById("note-editor-more-wrap");
+      if (shareWrap && n) {
+        if (n.revision) shareWrap._noteRevision = n.revision;
+        if (n.updated_at) shareWrap._noteUpdatedAt = n.updated_at;
+        if (n.members) shareWrap._noteMembers = n.members;
+        if (n.is_owner != null) shareWrap._isNoteOwner = n.is_owner !== false;
+      }
     }
     wrap.innerHTML = noteEditorPageInnerHtml(
       isKnowledge ? "Заголовок документа" : "Заголовок заметки"
@@ -23072,6 +23480,15 @@
       ) {
         return;
       }
+      var persistWrap = document.getElementById("note-editor-more-wrap");
+      if (noteId) {
+        writeLocalNoteDraft(noteId, {
+          title: fields.title,
+          body: fields.description,
+          baseRevision: persistWrap && persistWrap._noteRevision,
+          baseUpdatedAt: persistWrap && persistWrap._noteUpdatedAt,
+        });
+      }
       if (noteIsCreate || !noteId) {
         var createBody = {
           title: fields.title,
@@ -23115,6 +23532,14 @@
           if (noteId && !isKnowledge) {
             ensureNoteShareMounted(noteId);
             hydrateNoteSheets(Object.assign({}, n, createdLocal), noteSheetState.primaryBody || fields.description);
+          }
+          if (noteId) {
+            writeLocalNoteDraft(noteId, {
+              title: fields.title,
+              body: fields.description,
+              baseRevision: createdLocal.revision,
+              baseUpdatedAt: createdLocal.updated_at,
+            });
           }
         }
         if (isAppOffline()) {
@@ -23161,6 +23586,7 @@
             body: createBody,
           });
           showOfflineSavedToast();
+          return;
         }
       } else {
         var moreWrap = document.getElementById("note-editor-more-wrap");
@@ -23217,7 +23643,7 @@
             clientId: noteId,
             path: "/notes/local/" + encodeURIComponent(noteId),
             method: "PATCH",
-            body: { title: fields.title, description: fields.description },
+            body: notePatchQueueBody(fields, moreWrap),
           });
           showOfflineSavedToast();
           return;
@@ -23263,7 +23689,7 @@
           applyPatchedLocal(patchedItem);
         } catch (patchErr) {
           if (patchErr && patchErr.status === 409 && patchErr.conflictItem) {
-            applyRemoteSharedNote(patchErr.conflictItem, true);
+            handleNotePatchConflict(noteId, patchErr.conflictItem, fields.title, fields.description);
             return;
           }
           if (!isTransientApiError(patchErr)) throw patchErr;
@@ -23282,11 +23708,12 @@
             clientId: noteId,
             path: "/notes/local/" + encodeURIComponent(noteId),
             method: "PATCH",
-            body: { title: fields.title, description: fields.description },
+            body: notePatchQueueBody(fields, moreWrap),
           });
           showOfflineSavedToast();
         }
       }
+      if (noteId) clearLocalNoteDraftIfUnchanged(noteId, fields.title, fields.description);
       var detailBodyDraft = getNoteEditorBodyEl();
       if (detailBodyDraft && detailBodyDraft._noteEditor) {
         detailBodyDraft._noteEditor.baseline = noteEditorSnapshot(
@@ -23355,6 +23782,16 @@
       if (noteCollabState.applying) return;
       noteCollabState.lastTypedAt = Date.now();
       previewOpenNoteInList();
+      if (noteId) {
+        var fieldsNow = readFields();
+        var wrapNow = document.getElementById("note-editor-more-wrap");
+        writeLocalNoteDraft(noteId, {
+          title: fieldsNow.title,
+          body: fieldsNow.description,
+          baseRevision: wrapNow && wrapNow._noteRevision,
+          baseUpdatedAt: wrapNow && wrapNow._noteUpdatedAt,
+        });
+      }
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(function () {
         persistNoteDraft()
@@ -23488,6 +23925,9 @@
     bindNoteTitleAutoresize(titleInput);
     if (titleInput) titleInput.addEventListener("input", schedulePatch);
     if (!noteIsCreate && noteId) consumePendingDiscussOpen("local", noteId);
+    if (hydrated.use === "conflict" && noteId) {
+      showNoteDraftConflictDialog(noteId, n, hydrated.draft);
+    }
   }
 
   async function openJournalEditorDetail(row) {
