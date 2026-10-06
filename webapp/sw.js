@@ -1,16 +1,13 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261006-teams-edit-ui";
+var CACHE_VERSION = "miniapp-v1-20261006-vpn-browser";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261006-teams-edit-ui",
-  "./app.js?v=20261006-teams-edit-ui",
-  "./note-html.js?v=20261005-heading-pdf",
-  "./note-comments.js?v=20261005-heading-pdf",
-  "./note-rich-editor.js?v=20261005-heading-pdf",
+  "./styles.css?v=20261006-vpn-browser",
+  "./app.js?v=20261006-vpn-browser",
   "./note-drafts.js?v=20261005-heading-pdf",
   "./icons/arrow-up-right.svg?v=20261003-month-instances",
   "./icons/chevron-up-muted.svg?v=20261003-month-instances",
@@ -60,31 +57,6 @@ function isShellAsset(path) {
       path.endsWith(".woff") ||
       path.endsWith(".woff2"))
   );
-}
-
-function fetchWithTimeout(request, ms) {
-  return new Promise(function (resolve, reject) {
-    var settled = false;
-    var timer = setTimeout(function () {
-      if (settled) return;
-      settled = true;
-      reject(new Error("timeout"));
-    }, ms);
-    fetch(request).then(
-      function (response) {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(response);
-      },
-      function (err) {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        reject(err);
-      }
-    );
-  });
 }
 
 function cachePut(cacheName, request, response) {
@@ -138,6 +110,18 @@ self.addEventListener("activate", function (event) {
       .then(function () {
         return self.clients.claim();
       })
+      .then(function () {
+        return self.clients.matchAll({ type: "window" });
+      })
+      .then(function (clients) {
+        clients.forEach(function (client) {
+          try {
+            if (client && client.url && typeof client.navigate === "function") {
+              client.navigate(client.url);
+            }
+          } catch (_) {}
+        });
+      })
   );
 });
 
@@ -156,10 +140,10 @@ self.addEventListener("fetch", function (event) {
 
   if (path.indexOf("/webapp/sw.js") !== -1) return;
 
-  // Navigation: network-first with short timeout, then cached shell (offline open).
+  // Browser/VPN: never abort HTML with a short timeout (that served a stale shell).
   if (isNavigationRequest(request) || isHtmlPath(path)) {
     event.respondWith(
-      fetchWithTimeout(request, 2500)
+      fetch(request)
         .then(function (response) {
           if (response && response.ok) {
             cachePut(SHELL_CACHE, "./index.html", response.clone());
@@ -181,10 +165,9 @@ self.addEventListener("fetch", function (event) {
 
   if (!isShellAsset(path)) return;
 
-  // Versioned assets: cache-first for instant warm start, refresh in background.
   event.respondWith(
     caches.match(request).then(function (cached) {
-      var network = fetchWithTimeout(request, 5000)
+      var network = fetch(request)
         .then(function (response) {
           if (response && response.ok) cachePut(SHELL_CACHE, request, response);
           return response;

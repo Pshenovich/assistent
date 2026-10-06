@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261006-teams-edit-ui";
+  var WEBAPP_BUILD = "20261006-vpn-browser";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -84,7 +84,7 @@
         (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
         window.navigator.standalone === true;
     } catch (_) {}
-    if (!standalone && looksLikeTelegramWebView()) {
+    if (!standalone) {
       navigator.serviceWorker.getRegistrations().then(function (regs) {
         regs.forEach(function (reg) {
           try {
@@ -92,6 +92,13 @@
           } catch (_) {}
         });
       });
+      if (typeof caches !== "undefined" && caches.keys) {
+        caches.keys().then(function (keys) {
+          keys.forEach(function (key) {
+            if (String(key).indexOf("miniapp-") === 0) caches.delete(key);
+          });
+        }).catch(function () {});
+      }
       return;
     }
     var run = function () {

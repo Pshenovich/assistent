@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261006-teams-edit-ui">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261006-vpn-browser">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -20,12 +20,9 @@
       var standalone =
         (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
         window.navigator.standalone === true;
-      var inTg =
-        !standalone &&
-        (/Telegram/i.test(ua) ||
-          !!(window.TelegramWebviewProxy) ||
-          /tgWebApp/i.test(String(location.href || "") + String(location.hash || "")));
-      if (inTg && navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+      // Browser tab + VPN: an old SW with a 2.5s fetch timeout serves stale/failed shell.
+      // Keep SW only for installed PWA (standalone).
+      if (!standalone && navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
         navigator.serviceWorker.getRegistrations().then(function (regs) {
           regs.forEach(function (reg) {
             try {
@@ -46,8 +43,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261006-teams-edit-ui" />
-  <link rel="preload" href="/webapp/note-rich-editor.js?v=20261005-heading-pdf" as="script" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261006-vpn-browser" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -1481,10 +1477,7 @@
       }
     })();
   </script>
-  <script src="/webapp/note-html.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/note-comments.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/note-rich-editor.js?v=20261005-heading-pdf" defer></script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/app.js?v=20261006-teams-edit-ui" defer></script>
+  <script src="/webapp/app.js?v=20261006-vpn-browser" defer></script>
 </body>
 </html>

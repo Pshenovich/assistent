@@ -373,6 +373,32 @@ if [[ -f /etc/nginx/sites-available/assistant.obuchat.me ]]; then
   nginx -t && systemctl reload nginx
 fi
 
+python3 - <<'PY'
+from pathlib import Path
+p = Path("/etc/nginx/sites-available/assistent.networ.ru")
+if not p.is_file():
+    raise SystemExit(0)
+t = p.read_text()
+if "gzip on;" in t:
+    print("nginx gzip: already on")
+    raise SystemExit(0)
+needle = "client_max_body_size 500m;"
+gzip = (
+    "client_max_body_size 500m;\n\n"
+    "    gzip on;\n"
+    "    gzip_vary on;\n"
+    "    gzip_min_length 256;\n"
+    "    gzip_comp_level 5;\n"
+    "    gzip_types text/plain text/css application/javascript application/json application/xml image/svg+xml;"
+)
+if needle in t:
+    p.write_text(t.replace(needle, gzip))
+    print("nginx gzip: inserted")
+else:
+    print("nginx gzip: skip (no client_max_body_size)")
+PY
+nginx -t && systemctl reload nginx
+
 # Дайджест генерирует assistant-news-sync; rsync репозитория его затирал.
 if [[ -d /opt/obuchat-news/public/news ]]; then
   mkdir -p /opt/assistant/news
