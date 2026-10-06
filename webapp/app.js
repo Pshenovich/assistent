@@ -24610,49 +24610,59 @@
     syncNotesCreateFab();
   }
 
+  var notesLoadPromise = null;
+
   async function loadNotes() {
-    setNotesSubTab(notesSubTab);
-    const err = document.getElementById("notes-global-error");
-    if (err) {
-      err.textContent = "";
-      setHidden(err, true);
-    }
-    if (notesDataCache) {
-      applyDraftsToNotesList(notesDataCache);
-      renderNotesPanesFromData(notesDataCache);
-    } else {
-      var cachedNotes = readMiniappCache("notes");
-      if (cachedNotes) {
-        notesDataCache = splitTranscriptionsOutOfLocalNotes(cachedNotes);
+    // sidebar/tab могут дернуть loadNotes десятки раз до первого ответа —
+    // без coalesce это валило API сотнями параллельных GET /notes (~2MB).
+    if (notesLoadPromise) return notesLoadPromise;
+    notesLoadPromise = (async function () {
+      setNotesSubTab(notesSubTab);
+      const err = document.getElementById("notes-global-error");
+      if (err) {
+        err.textContent = "";
+        setHidden(err, true);
+      }
+      if (notesDataCache) {
         applyDraftsToNotesList(notesDataCache);
         renderNotesPanesFromData(notesDataCache);
-      }
-    }
-    let data;
-    try {
-      data = await apiFetch("/notes?limit=120", { method: "GET" });
-    } catch (e) {
-      if (!notesDataCache) {
-        if (err) {
-          err.textContent = e.message || String(e);
-          setHidden(err, false);
+      } else {
+        var cachedNotes = readMiniappCache("notes");
+        if (cachedNotes) {
+          notesDataCache = splitTranscriptionsOutOfLocalNotes(cachedNotes);
+          applyDraftsToNotesList(notesDataCache);
+          renderNotesPanesFromData(notesDataCache);
         }
       }
-      return;
-    }
-    notesDataCache = splitTranscriptionsOutOfLocalNotes(data);
-    if (notesDataCache && Array.isArray(notesDataCache.tags)) {
-      notesDataCache._tagsLoaded = true;
-    }
-    writeMiniappCache("notes", data);
-    applyDraftsToNotesList(notesDataCache);
-    if (data.journal_error && err) {
-      err.textContent = data.journal_error;
-      setHidden(err, false);
-    }
-    renderNotesTagFilterBar();
-    renderNotesPanesFromData(notesDataCache);
-    openPendingSharedNote(data);
+      let data;
+      try {
+        data = await apiFetch("/notes?limit=120", { method: "GET" });
+      } catch (e) {
+        if (!notesDataCache) {
+          if (err) {
+            err.textContent = e.message || String(e);
+            setHidden(err, false);
+          }
+        }
+        return;
+      }
+      notesDataCache = splitTranscriptionsOutOfLocalNotes(data);
+      if (notesDataCache && Array.isArray(notesDataCache.tags)) {
+        notesDataCache._tagsLoaded = true;
+      }
+      writeMiniappCache("notes", data);
+      applyDraftsToNotesList(notesDataCache);
+      if (data.journal_error && err) {
+        err.textContent = data.journal_error;
+        setHidden(err, false);
+      }
+      renderNotesTagFilterBar();
+      renderNotesPanesFromData(notesDataCache);
+      openPendingSharedNote(data);
+    })().finally(function () {
+      notesLoadPromise = null;
+    });
+    return notesLoadPromise;
   }
 
   var noteDeepLinkConsumed = false;
