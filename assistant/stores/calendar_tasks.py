@@ -288,7 +288,10 @@ def chip_label(task: dict[str, Any], *, tz: ZoneInfo | None = None) -> str:
     start = _parse_dt(task.get("start_at"))
     if start is None:
         return str(task.get("title") or DEFAULT_TITLE)
-    if tz is not None:
+    if task.get("all_day"):
+        local_tz = tz or start.tzinfo or timezone.utc
+        start = _coerce_aware(start, local_tz)
+    elif tz is not None:
         start = start.astimezone(tz)
     months = (
         "янв",
@@ -334,15 +337,21 @@ def as_calendar_event(
 ) -> dict[str, Any]:
     start = _parse_dt(task.get("start_at"))
     end = _parse_dt(task.get("end_at")) or (start + DEFAULT_DURATION if start else None)
-    if start and tz is not None:
-        start = start.astimezone(tz)
-    if end and tz is not None:
-        end = end.astimezone(tz)
+    all_day = bool(task.get("all_day"))
+    # All-day: гражданская дата в tz календаря (не «вчера» из UTC midnight).
+    if all_day and start is not None:
+        local_tz = tz or start.tzinfo or timezone.utc
+        start = _coerce_aware(start, local_tz)
+        end = start + timedelta(days=1)
+    else:
+        if start and tz is not None:
+            start = start.astimezone(tz)
+        if end and tz is not None:
+            end = end.astimezone(tz)
     start_iso = start.isoformat() if start else str(task.get("start_at") or "")
     end_iso = end.isoformat() if end else str(task.get("end_at") or "")
     start_day = start.date().isoformat() if start else start_iso[:10]
     end_day = end.date().isoformat() if end else start_day
-    all_day = bool(task.get("all_day"))
     if all_day and start is not None:
         # Exclusive end.date like Google all-day events.
         end_exclusive = (start.date() + timedelta(days=1)).isoformat()
@@ -393,6 +402,23 @@ def as_calendar_event(
     }
 
 
+def _coerce_aware(dt: datetime, tz: ZoneInfo | timezone) -> datetime:
+    """Naive datetime = wall time в tz (не системный UTC-сервер!)."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=tz)
+    return dt.astimezone(tz)
+
+
+def _all_day_bounds(
+    start: datetime, *, tz: ZoneInfo | timezone | None
+) -> tuple[datetime, datetime]:
+    local_tz: ZoneInfo | timezone = tz or start.tzinfo or timezone.utc
+    aware = _coerce_aware(start, local_tz)
+    day = aware.date()
+    day_start = datetime.combine(day, time.min, tzinfo=local_tz)
+    return day_start, day_start + timedelta(days=1)
+
+
 def create_task(
     owner_user_id: int | str,
     *,
@@ -413,12 +439,13 @@ def create_task(
     if start is None:
         raise ValueError("Укажите начало задачи")
     if all_day:
-        local_tz = tz or start.tzinfo or timezone.utc
-        day = start.astimezone(local_tz).date()
-        start = datetime.combine(day, time.min, tzinfo=local_tz)
-        end = start + timedelta(days=1)
+        start, end = _all_day_bounds(start, tz=tz)
     else:
+        if start.tzinfo is None and tz is not None:
+            start = start.replace(tzinfo=tz)
         end = end_at if isinstance(end_at, datetime) else _parse_dt(end_at, tz)
+        if end is not None and end.tzinfo is None and tz is not None:
+            end = end.replace(tzinfo=tz)
         if end is None or end <= start:
             end = _default_end(start)
     now = _now_iso()
@@ -660,12 +687,14 @@ def update_task(
         raise ValueError("Укажите начало задачи")
     is_all_day = bool(existing.get("all_day")) if all_day is None else bool(all_day)
     if is_all_day:
-        local_tz = tz or start.tzinfo or timezone.utc
-        day = start.astimezone(local_tz).date()
-        start = datetime.combine(day, time.min, tzinfo=local_tz)
-        end = start + timedelta(days=1)
-    elif end is None or end <= start:
-        end = _default_end(start)
+        start, end = _all_day_bounds(start, tz=tz)
+    else:
+        if start.tzinfo is None and tz is not None:
+            start = start.replace(tzinfo=tz)
+        if end is not None and end.tzinfo is None and tz is not None:
+            end = end.replace(tzinfo=tz)
+        if end is None or end <= start:
+            end = _default_end(start)
     fields = {
         "title": _clip(title, MAX_TITLE_LEN) or existing["title"]
         if title is not None

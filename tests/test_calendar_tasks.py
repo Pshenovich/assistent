@@ -35,6 +35,25 @@ def test_create_defaults_end_plus_30(tasks_db):
     assert ev["id"] == f"task-{row['id']}"
 
 
+def test_all_day_naive_datetime_uses_calendar_tz(tasks_db):
+    """Naive midnight на UTC-сервере не должен уезжать на вчера у MSK."""
+    store = tasks_db
+    tz = ZoneInfo("Europe/Moscow")
+    row = store.create_task(
+        11,
+        title="All day",
+        start_at=datetime(2026, 10, 6, 0, 0, 0),  # naive
+        all_day=True,
+        tz=tz,
+    )
+    assert row["all_day"] is True
+    # 6 окт 00:00 MSK → 5 окт 21:00 UTC
+    assert row["start_at"].startswith("2026-10-05T21:00:00")
+    ev = store.as_calendar_event(row, tz=tz, viewer_id=11)
+    assert ev["start"]["date"] == "2026-10-06"
+    assert store.chip_label(row, tz=tz) == "6 окт"
+
+
 def test_list_window_and_update(tasks_db):
     store = tasks_db
     tz = ZoneInfo("Europe/Moscow")

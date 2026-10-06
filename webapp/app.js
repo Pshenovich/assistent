@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261006-notes-preview";
+  var WEBAPP_BUILD = "20261006-cal-longpress";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -1877,8 +1877,20 @@
 
   var CAL_DRAG_THRESHOLD_PX = 6;
   var CAL_RESIZE_MIN_MS = 15 * 60 * 1000;
+  var CAL_LONG_PRESS_MS = 420;
   var calendarSuppressClickUntil = 0;
   var calendarGestureBusy = false;
+
+  function calendarPointerNeedsLongPress(e) {
+    if (!e) return false;
+    if (e.pointerType === "touch" || e.pointerType === "pen") return true;
+    try {
+      if (window.matchMedia && window.matchMedia("(hover: none)").matches) {
+        return e.pointerType !== "mouse";
+      }
+    } catch (_) {}
+    return false;
+  }
 
   function calendarSuppressClick(ms) {
     calendarSuppressClickUntil = Date.now() + (ms || 400);
@@ -2073,14 +2085,14 @@
       if (e.button != null && e.button !== 0) return;
       if (calendarGestureBusy) return;
       if (e.target && e.target.closest && e.target.closest(".meeting-card-join-btn")) return;
-      e.preventDefault();
-      e.stopPropagation();
-      calendarGestureBusy = true;
+      var needsLongPress = calendarPointerNeedsLongPress(e);
       var pointerId = e.pointerId;
       var originX = e.clientX;
       var originY = e.clientY;
       var dragging = false;
       var finished = false;
+      var armed = !needsLongPress;
+      var longPressTimer = null;
       var curStart = startMs0;
       var curEnd = endMs0;
       var curDate = ctx.dateIso;
@@ -2088,13 +2100,40 @@
       var originParent = el.parentNode;
       var originLeft = el.style.left;
       var originWidth = el.style.width;
-      el.classList.add(mode === "resize" ? "is-resizing" : "is-dragging");
-      document.documentElement.classList.add("cal-gesture-active");
+
+      function armGesture() {
+        if (finished || armed) return;
+        armed = true;
+        calendarGestureBusy = true;
+        el.classList.add(mode === "resize" ? "is-resizing" : "is-dragging");
+        document.documentElement.classList.add("cal-gesture-active");
+        try {
+          if (navigator.vibrate) navigator.vibrate(12);
+        } catch (_) {}
+      }
+
+      function cleanupListeners() {
+        document.removeEventListener("pointermove", onMove, true);
+        document.removeEventListener("pointerup", finish, true);
+        document.removeEventListener("pointercancel", finish, true);
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+      }
 
       function onMove(evMove) {
         if (finished || evMove.pointerId !== pointerId) return;
         var dx = evMove.clientX - originX;
         var dy = evMove.clientY - originY;
+        if (!armed) {
+          // Сдвиг до long-press — это скролл, не drag.
+          if (Math.abs(dx) > CAL_DRAG_THRESHOLD_PX || Math.abs(dy) > CAL_DRAG_THRESHOLD_PX) {
+            finished = true;
+            cleanupListeners();
+          }
+          return;
+        }
         if (!dragging) {
           if (Math.abs(dx) < CAL_DRAG_THRESHOLD_PX && Math.abs(dy) < CAL_DRAG_THRESHOLD_PX) return;
           dragging = true;
@@ -2139,15 +2178,19 @@
         if (finished) return;
         if (evUp && evUp.pointerId != null && evUp.pointerId !== pointerId) return;
         finished = true;
-        document.removeEventListener("pointermove", onMove, true);
-        document.removeEventListener("pointerup", finish, true);
-        document.removeEventListener("pointercancel", finish, true);
+        cleanupListeners();
         el.classList.remove("is-dragging", "is-resizing");
         document.documentElement.classList.remove("cal-gesture-active");
         calendarGestureBusy = false;
-        if (!dragging) {
+        if (!armed || !dragging) {
           calendarSuppressClick(450);
-          if (mode === "move") openCalendarEntry(ev);
+          if (originParent && el.parentNode !== originParent) {
+            originParent.appendChild(el);
+            el.style.left = originLeft;
+            el.style.width = originWidth;
+          }
+          applyTimedEntryLayout(el, ctx.dateIso, startMs0, endMs0, ctx.hourPx);
+          if (!dragging && mode === "move") openCalendarEntry(ev);
           return;
         }
         calendarSuppressClick(450);
@@ -2166,6 +2209,14 @@
           return;
         }
         persistCalendarEntryTimes(ev, curStart, curEnd);
+      }
+
+      if (needsLongPress) {
+        longPressTimer = setTimeout(armGesture, CAL_LONG_PRESS_MS);
+      } else {
+        e.preventDefault();
+        e.stopPropagation();
+        armGesture();
       }
 
       document.addEventListener("pointermove", onMove, true);
@@ -2195,22 +2246,48 @@
     chip.addEventListener("pointerdown", function (e) {
       if (e.button != null && e.button !== 0) return;
       if (calendarGestureBusy) return;
-      e.preventDefault();
-      e.stopPropagation();
-      calendarGestureBusy = true;
+      var needsLongPress = calendarPointerNeedsLongPress(e);
       var pointerId = e.pointerId;
       var originX = e.clientX;
       var originY = e.clientY;
       var dragging = false;
       var finished = false;
+      var armed = !needsLongPress;
+      var longPressTimer = null;
       var targetIso = null;
-      chip.classList.add("is-dragging");
-      document.documentElement.classList.add("cal-gesture-active");
+
+      function armGesture() {
+        if (finished || armed) return;
+        armed = true;
+        calendarGestureBusy = true;
+        chip.classList.add("is-dragging");
+        document.documentElement.classList.add("cal-gesture-active");
+        try {
+          if (navigator.vibrate) navigator.vibrate(12);
+        } catch (_) {}
+      }
+
+      function cleanupListeners() {
+        document.removeEventListener("pointermove", onMove, true);
+        document.removeEventListener("pointerup", finish, true);
+        document.removeEventListener("pointercancel", finish, true);
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+      }
 
       function onMove(evMove) {
         if (finished || evMove.pointerId !== pointerId) return;
         var dx = evMove.clientX - originX;
         var dy = evMove.clientY - originY;
+        if (!armed) {
+          if (Math.abs(dx) > CAL_DRAG_THRESHOLD_PX || Math.abs(dy) > CAL_DRAG_THRESHOLD_PX) {
+            finished = true;
+            cleanupListeners();
+          }
+          return;
+        }
         if (!dragging) {
           if (Math.abs(dx) < CAL_DRAG_THRESHOLD_PX && Math.abs(dy) < CAL_DRAG_THRESHOLD_PX) return;
           dragging = true;
@@ -2228,9 +2305,7 @@
         if (finished) return;
         if (evUp && evUp.pointerId != null && evUp.pointerId !== pointerId) return;
         finished = true;
-        document.removeEventListener("pointermove", onMove, true);
-        document.removeEventListener("pointerup", finish, true);
-        document.removeEventListener("pointercancel", finish, true);
+        cleanupListeners();
         chip.classList.remove("is-dragging");
         document.documentElement.classList.remove("cal-gesture-active");
         document.querySelectorAll(".meetings-month-cell.is-drop-target").forEach(function (c) {
@@ -2238,7 +2313,7 @@
         });
         calendarGestureBusy = false;
         calendarSuppressClick(450);
-        if (!dragging) {
+        if (!armed || !dragging) {
           openCalendarEntry(ev);
           return;
         }
@@ -2247,6 +2322,14 @@
         if (oldDate === targetIso) return;
         var dayDelta = dayStartMs(targetIso) - dayStartMs(oldDate);
         persistCalendarEntryTimes(ev, startMs0 + dayDelta, endMs0 + dayDelta);
+      }
+
+      if (needsLongPress) {
+        longPressTimer = setTimeout(armGesture, CAL_LONG_PRESS_MS);
+      } else {
+        e.preventDefault();
+        e.stopPropagation();
+        armGesture();
       }
 
       document.addEventListener("pointermove", onMove, true);
