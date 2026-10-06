@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261006-cal-refresh";
+  var WEBAPP_BUILD = "20261006-notes-dedupe";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -4580,7 +4580,12 @@
       }
       if (e && e.status != null) throw e;
       markNetworkFailure();
-      var nErr = new Error((e && e.message) || "Нет сети");
+      var rawMsg = String((e && e.message) || "");
+      var niceMsg =
+        /failed to fetch|networkerror|load failed|network request failed/i.test(rawMsg)
+          ? "Нет сети"
+          : rawMsg || "Нет сети";
+      var nErr = new Error(niceMsg);
       nErr.status = 0;
       throw nErr;
     }
@@ -4594,17 +4599,21 @@
       offlineErr.status = 0;
       throw offlineErr;
     }
-    var calendarGet =
+    var p = String(path || "");
+    var heavyGet =
       method === "GET" &&
-      (String(path || "").indexOf("/calendar/today") >= 0 ||
-        String(path || "").indexOf("/calendar/range") >= 0);
+      (p.indexOf("/calendar/today") >= 0 ||
+        p.indexOf("/calendar/range") >= 0 ||
+        p.indexOf("/notes") === 0 ||
+        p === "/notes" ||
+        p.indexOf("/notes?") === 0);
     const maxTries =
       method === "GET" || method === "HEAD"
-        ? calendarGet
+        ? heavyGet
           ? 2
           : isNetworkUnreliable()
             ? 2
-            : 12
+            : 4
         : 1;
     var lastErr = null;
     for (var i = 0; i < maxTries; i++) {
