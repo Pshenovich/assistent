@@ -328,8 +328,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         replied=msg.reply_to_message,
         urls=extract_urls(text),
     )
-    if msg.voice and not text:
-        # Голос обрабатывает MessageHandler(filters.VOICE) — не дублируем.
+    if msg.voice:
+        # Голос обрабатывает MessageHandler(VOICE) — не дублируем по caption.
         return
     if text:
         from assistant.lib.telegram_status import maybe_post_early_work_status
@@ -351,8 +351,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 def register_handlers(app: Application) -> None:
     from assistant.bot.chat_ingest import register_chat_ingest
+    from assistant.lib.update_once import claim_update_once
+    from telegram.ext import ApplicationHandlerStop
+
+    async def _claim_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not claim_update_once(getattr(update, "update_id", None)):
+            raise ApplicationHandlerStop
 
     register_chat_ingest(app)
+    # Раньше всех групп: один update_id → одна обработка (защита от двойного getUpdates).
+    app.add_handler(TypeHandler(Update, _claim_update), group=-3)
     app.add_handler(TypeHandler(Update, _bind_usage_telegram_user), group=-1)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("onboarding", cmd_onboarding))
@@ -407,23 +415,24 @@ def register_handlers(app: Application) -> None:
             pattern=r"^jmpdf:",
         )
     )
-    app.add_handler(MessageHandler(filters.VOICE, transcribe_skill.handle_voice))
     app.add_handler(
         MessageHandler(
-            filters.Document.ALL | filters.AUDIO | filters.VIDEO | filters.VIDEO_NOTE,
+            filters.UpdateType.MESSAGE & filters.VOICE,
+            transcribe_skill.handle_voice,
+        )
+    )
+    app.add_handler(
+        MessageHandler(
+            filters.UpdateType.MESSAGE
+            & (filters.Document.ALL | filters.AUDIO | filters.VIDEO | filters.VIDEO_NOTE),
             transcribe_skill.handle_document,
         )
     )
-    # Voice с автоподписью не должен второй раз уходить в handle_message.
+    # Один handler на текст/подпись; только первичные message (не edited_*).
     app.add_handler(
         MessageHandler(
-            filters.TEXT & ~filters.COMMAND & ~filters.VOICE,
-            handle_message,
-        )
-    )
-    app.add_handler(
-        MessageHandler(
-            filters.CAPTION & ~filters.COMMAND & ~filters.VOICE,
+            filters.UpdateType.MESSAGE
+            & ((filters.TEXT & ~filters.COMMAND) | filters.CAPTION),
             handle_message,
         )
     )
