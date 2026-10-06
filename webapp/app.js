@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261005-teams-api";
+  var WEBAPP_BUILD = "20261006-teams-edit-ui";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -2470,7 +2470,7 @@
   }
 
   function getActiveModalSheet() {
-    var ids = ["note-editor-overlay", "tags-manage-overlay", "modal-overlay", "voice-overlay"];
+    var ids = ["note-editor-overlay", "tags-manage-overlay", "contacts-form-overlay", "teams-manage-overlay", "modal-overlay", "voice-overlay"];
     for (var i = 0; i < ids.length; i++) {
       var ov = document.getElementById(ids[i]);
       if (ov && !ov.classList.contains("hidden")) {
@@ -4066,6 +4066,8 @@
     var voice = document.getElementById("voice-overlay");
     var noteUnsaved = document.getElementById("note-unsaved-overlay");
     var tagsSheet = document.getElementById("tags-manage-overlay");
+    var contactsForm = document.getElementById("contacts-form-overlay");
+    var teamsManage = document.getElementById("teams-manage-overlay");
     var chatsSplit =
       document.documentElement.classList.contains("chats-split-open") &&
       isDesktopLayout();
@@ -4081,7 +4083,9 @@
       (modal && !modal.classList.contains("hidden")) ||
       (voice && !voice.classList.contains("hidden")) ||
       (noteUnsaved && !noteUnsaved.classList.contains("hidden")) ||
-      (tagsSheet && !tagsSheet.classList.contains("hidden"));
+      (tagsSheet && !tagsSheet.classList.contains("hidden")) ||
+      (contactsForm && !contactsForm.classList.contains("hidden")) ||
+      (teamsManage && !teamsManage.classList.contains("hidden"));
     app.classList.toggle("app--immersive", !!immersive);
   }
 
@@ -4539,6 +4543,7 @@
     syncAppOverlay();
     syncNotesCreateFab();
     syncActualCreateFab();
+    syncContactsCreateFab();
     renderSidebarTrees();
   }
 
@@ -6158,6 +6163,7 @@
     }
     syncTelegramNativeBack();
     syncAppOverlay();
+    syncContactsCreateFab();
   }
 
   function openLegalLink(path) {
@@ -6953,8 +6959,11 @@
     }
   }
 
+  var contactsFormTeamSelected = {};
+
   function contactsResetForm() {
     contactsEditingEmail = null;
+    contactsFormTeamSelected = {};
     var hid = document.getElementById("contacts-edit-email");
     if (hid) hid.value = "";
     var t = document.getElementById("contacts-form-title");
@@ -6970,12 +6979,105 @@
     }
     if (tg) tg.value = "";
     if (al) al.value = "";
-    var cancel = document.getElementById("contacts-cancel-edit");
-    if (cancel) setHidden(cancel, true);
     contactsShowFormMsg("", "");
+    paintContactsFormTeams([]);
   }
 
-  function contactsFillForm(c) {
+  function selectedContactFormTeamIds() {
+    return Object.keys(contactsFormTeamSelected)
+      .filter(function (id) {
+        return contactsFormTeamSelected[id];
+      })
+      .map(function (id) {
+        return parseInt(id, 10);
+      })
+      .filter(function (id) {
+        return id > 0;
+      });
+  }
+
+  function paintContactsFormTeams(allTeams) {
+    var list = document.getElementById("contacts-form-teams-list");
+    var empty = document.getElementById("contacts-form-teams-empty");
+    if (!list) return;
+    list.innerHTML = "";
+    var teams = allTeams || [];
+    if (empty) empty.classList.toggle("hidden", !!teams.length);
+    teams.forEach(function (team) {
+      var id = String(team.id);
+      var label = document.createElement("label");
+      label.className = "note-share-option contacts-form-team-option";
+      var input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = !!contactsFormTeamSelected[id];
+      input.addEventListener("change", function () {
+        contactsFormTeamSelected[id] = !!input.checked;
+      });
+      var copy = document.createElement("span");
+      var strong = document.createElement("strong");
+      strong.textContent = team.name || "Команда";
+      copy.appendChild(strong);
+      label.appendChild(input);
+      label.appendChild(copy);
+      list.appendChild(label);
+    });
+  }
+
+  function updateContactsFormTelegramHint() {
+    var hint = document.getElementById("contacts-form-teams-hint");
+    if (!hint) return;
+    var tg = (document.getElementById("contacts-f-tg") && document.getElementById("contacts-f-tg").value) || "";
+    var hasTg = !!String(tg).replace(/^@/, "").trim();
+    hint.classList.toggle("hidden", hasTg);
+  }
+
+  async function loadContactsFormTeams(preselectedIds) {
+    contactsFormTeamSelected = {};
+    (preselectedIds || []).forEach(function (id) {
+      contactsFormTeamSelected[String(id)] = true;
+    });
+    try {
+      var data = await apiFetch("/teams", { method: "GET" });
+      paintContactsFormTeams((data && data.teams) || []);
+    } catch (_) {
+      paintContactsFormTeams([]);
+    }
+    updateContactsFormTelegramHint();
+  }
+
+  function openContactsFormModal() {
+    var ov = document.getElementById("contacts-form-overlay");
+    if (!ov) return;
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    syncAppOverlay();
+    var nameInput = document.getElementById("contacts-f-name");
+    if (nameInput) {
+      setTimeout(function () {
+        try {
+          nameInput.focus();
+        } catch (_) {}
+      }, 50);
+    }
+  }
+
+  function closeContactsFormModal() {
+    var ov = document.getElementById("contacts-form-overlay");
+    if (ov) {
+      ov.classList.add("hidden");
+      ov.setAttribute("aria-hidden", "true");
+    }
+    contactsResetForm();
+    syncAppOverlay();
+  }
+
+  async function openNewContactModal() {
+    contactsResetForm();
+    await loadContactsFormTeams([]);
+    openContactsFormModal();
+  }
+
+  async function contactsFillForm(c) {
     contactsEditingEmail = (c && c.email) || null;
     var hid = document.getElementById("contacts-edit-email");
     if (hid) hid.value = contactsEditingEmail || "";
@@ -6995,11 +7097,12 @@
       var aliases = (c && c.aliases) || [];
       al.value = Array.isArray(aliases) ? aliases.join(", ") : "";
     }
-    var cancel = document.getElementById("contacts-cancel-edit");
-    if (cancel) setHidden(cancel, false);
     contactsShowFormMsg("", "");
-    var card = document.getElementById("contacts-form-card");
-    if (card && card.scrollIntoView) card.scrollIntoView({ behavior: "smooth", block: "start" });
+    var preselected = ((c && c.teams) || []).map(function (team) {
+      return team && team.id;
+    }).filter(Boolean);
+    openContactsFormModal();
+    await loadContactsFormTeams(preselected);
   }
 
   function contactsParseAliases(raw) {
@@ -7028,6 +7131,19 @@
     meta.textContent = lines.filter(Boolean).join("\n");
     card.appendChild(name);
     card.appendChild(meta);
+    var teams = Array.isArray(c.teams) ? c.teams : [];
+    if (teams.length) {
+      var teamsEl = document.createElement("p");
+      teamsEl.className = "contact-card-teams muted small";
+      teamsEl.textContent =
+        "Команды: " +
+        teams
+          .map(function (t) {
+            return t.name || "Команда";
+          })
+          .join(", ");
+      card.appendChild(teamsEl);
+    }
     var actions = document.createElement("div");
     actions.className = "contact-card-actions";
     var editBtn = document.createElement("button");
@@ -7045,7 +7161,7 @@
       if (!confirm("Удалить контакт «" + (c.name || c.email) + "»?")) return;
       try {
         await apiFetch("/contacts/" + encodeURIComponent(c.email), { method: "DELETE" });
-        if (contactsEditingEmail === c.email) contactsResetForm();
+        if (contactsEditingEmail === c.email) closeContactsFormModal();
         await loadContacts();
         await refreshProfileContactsCount();
       } catch (err) {
@@ -7053,14 +7169,6 @@
       }
     });
     actions.appendChild(editBtn);
-    var teamBtn = document.createElement("button");
-    teamBtn.type = "button";
-    teamBtn.className = "btn ghost btn-sm";
-    teamBtn.textContent = "Участник команды";
-    teamBtn.addEventListener("click", function () {
-      openContactTeamsSheet(c);
-    });
-    actions.appendChild(teamBtn);
     actions.appendChild(delBtn);
     card.appendChild(actions);
     return card;
@@ -7431,6 +7539,593 @@
     } catch (err) {
       if (loadGen !== teamPickerState.loadGen) return;
       setTeamPickerError(err.message || String(err));
+    }
+  }
+
+  function closeContactsCreateMenu() {
+    var menu = document.getElementById("contacts-create-menu");
+    var btn = document.getElementById("contacts-create-btn");
+    if (menu) menu.classList.add("hidden");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+
+  function toggleContactsCreateMenu() {
+    var menu = document.getElementById("contacts-create-menu");
+    var btn = document.getElementById("contacts-create-btn");
+    if (!menu || !btn) return;
+    var open = menu.classList.contains("hidden");
+    menu.classList.toggle("hidden", !open);
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  function syncContactsCreateFab() {
+    var createBtn = document.getElementById("contacts-create-btn");
+    if (!createBtn) return;
+    var contacts = document.getElementById("profile-contacts");
+    var profilePanel = document.getElementById("panel-profile");
+    var show =
+      currentTab === "profile" &&
+      currentProfileScreen === "contacts" &&
+      contacts &&
+      !contacts.classList.contains("hidden") &&
+      profilePanel &&
+      !profilePanel.classList.contains("hidden");
+    setHidden(createBtn, !show);
+    if (!show) closeContactsCreateMenu();
+  }
+
+  function setTeamsManageError(text) {
+    var el = document.getElementById("teams-manage-err");
+    if (!el) return;
+    el.textContent = text || "";
+    el.classList.toggle("hidden", !text);
+  }
+
+  var teamsManageState = {
+    editingId: null,
+    team: null,
+    contacts: [],
+    kbNotes: [],
+  };
+
+  var TEAMS_ICON_CLOSE =
+    '<path d="M18 6 6 18M6 6l12 12" />';
+  var TEAMS_ICON_BACK =
+    '<path d="M15 18l-6-6 6-6" />';
+  var TEAMS_ICON_EDIT =
+    '<path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />';
+  var TEAMS_ICON_TRASH =
+    '<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14zM10 11v6M14 11v6" />';
+
+  function teamsManageIconBtn(opts) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className =
+      "btn-icon-tile" + (opts.neutral ? " btn-icon-tile--neutral" : "");
+    btn.setAttribute("aria-label", opts.label || "");
+    btn.title = opts.label || "";
+    btn.innerHTML =
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' +
+      (opts.paths || "") +
+      "</svg>";
+    if (opts.onClick) btn.addEventListener("click", opts.onClick);
+    return btn;
+  }
+
+  function syncTeamsManageHeader() {
+    var title = document.getElementById("teams-manage-title");
+    var closeBtn = document.getElementById("teams-manage-close");
+    var closeIcon = document.getElementById("teams-manage-close-icon");
+    var saveBtn = document.getElementById("teams-manage-save");
+    var spacer = document.getElementById("teams-manage-header-spacer");
+    var editing = !!teamsManageState.editingId;
+    if (title) {
+      title.textContent = editing
+        ? (teamsManageState.team && teamsManageState.team.name) || "Команда"
+        : "Команды";
+    }
+    if (closeBtn) {
+      closeBtn.setAttribute("aria-label", editing ? "Назад" : "Закрыть");
+      closeBtn.title = editing ? "Назад" : "Закрыть";
+    }
+    if (closeIcon) {
+      closeIcon.innerHTML = editing ? TEAMS_ICON_BACK : TEAMS_ICON_CLOSE;
+    }
+    if (saveBtn) saveBtn.classList.toggle("hidden", !editing);
+    if (spacer) spacer.classList.toggle("hidden", editing);
+  }
+
+  function showTeamsManageListView() {
+    teamsManageState.editingId = null;
+    teamsManageState.team = null;
+    var listView = document.getElementById("teams-manage-list-view");
+    var editView = document.getElementById("teams-manage-edit-view");
+    if (listView) listView.classList.remove("hidden");
+    if (editView) editView.classList.add("hidden");
+    syncTeamsManageHeader();
+    setTeamsManageError("");
+  }
+
+  function memberLabel(m) {
+    var label = (m && (m.name || m.email)) || "Участник";
+    if (m && m.telegram_username) label += " · @" + m.telegram_username;
+    else if (m && m.email && m.name) label += " · " + m.email;
+    return label;
+  }
+
+  function paintTeamsManageList(teams) {
+    var list = document.getElementById("teams-manage-list");
+    var empty = document.getElementById("teams-manage-empty");
+    if (!list) return;
+    list.innerHTML = "";
+    var rows = teams || [];
+    if (empty) empty.classList.toggle("hidden", !!rows.length);
+    rows.forEach(function (team) {
+      var card = document.createElement("div");
+      card.className = "teams-manage-card";
+      var head = document.createElement("div");
+      head.className = "teams-manage-card-head";
+      var title = document.createElement("p");
+      title.className = "teams-manage-card-title";
+      title.textContent = team.name || "Команда";
+      head.appendChild(title);
+      var actions = document.createElement("div");
+      actions.className = "teams-manage-card-actions";
+      actions.appendChild(
+        teamsManageIconBtn({
+          label: "Редактировать",
+          neutral: true,
+          paths: TEAMS_ICON_EDIT,
+          onClick: function () {
+            openTeamsManageEdit(team);
+          },
+        })
+      );
+      actions.appendChild(
+        teamsManageIconBtn({
+          label: "Удалить",
+          paths: TEAMS_ICON_TRASH,
+          onClick: async function () {
+            if (!confirm("Удалить команду «" + (team.name || "") + "»?")) return;
+            try {
+              await apiFetch("/teams/" + encodeURIComponent(String(team.id)), {
+                method: "DELETE",
+              });
+              await loadTeamsManageList();
+              await loadContacts();
+            } catch (err) {
+              setTeamsManageError(err.message || String(err));
+            }
+          },
+        })
+      );
+      head.appendChild(actions);
+      card.appendChild(head);
+
+      var membersLabel = document.createElement("p");
+      membersLabel.className = "field-label";
+      membersLabel.textContent = "Участники";
+      card.appendChild(membersLabel);
+      var members = team.members || [];
+      if (!members.length) {
+        var noMembers = document.createElement("p");
+        noMembers.className = "muted small";
+        noMembers.textContent = "Пока никого нет";
+        card.appendChild(noMembers);
+      } else {
+        var membersList = document.createElement("ul");
+        membersList.className = "teams-manage-meta-list";
+        members.forEach(function (m) {
+          var li = document.createElement("li");
+          li.textContent = memberLabel(m);
+          membersList.appendChild(li);
+        });
+        card.appendChild(membersList);
+      }
+
+      var sharesLabel = document.createElement("p");
+      sharesLabel.className = "field-label";
+      sharesLabel.textContent = "Документы базы знаний";
+      card.appendChild(sharesLabel);
+      var shares = team.shares || [];
+      if (!shares.length) {
+        var noShares = document.createElement("p");
+        noShares.className = "muted small";
+        noShares.textContent = "Нет расшаренных документов.";
+        card.appendChild(noShares);
+      } else {
+        var sharesList = document.createElement("ul");
+        sharesList.className = "teams-manage-meta-list";
+        shares.forEach(function (s) {
+          var li = document.createElement("li");
+          li.textContent = s.title || "Документ";
+          sharesList.appendChild(li);
+        });
+        card.appendChild(sharesList);
+      }
+      list.appendChild(card);
+    });
+  }
+
+  function fillTeamsManageAddMemberSelect() {
+    var sel = document.getElementById("teams-manage-add-member");
+    if (!sel) return;
+    var team = teamsManageState.team || {};
+    var memberEmails = {};
+    (team.members || []).forEach(function (m) {
+      if (m && m.email) memberEmails[String(m.email).toLowerCase()] = true;
+    });
+    sel.innerHTML = '<option value="">Добавить контакт…</option>';
+    (teamsManageState.contacts || []).forEach(function (c) {
+      var email = String((c && c.email) || "").toLowerCase();
+      if (!email || memberEmails[email]) return;
+      var opt = document.createElement("option");
+      opt.value = email;
+      opt.textContent = (c.name || email) + (c.name ? " · " + email : "");
+      sel.appendChild(opt);
+    });
+  }
+
+  function fillTeamsManageAddShareSelect() {
+    var sel = document.getElementById("teams-manage-add-share");
+    if (!sel) return;
+    var team = teamsManageState.team || {};
+    var sharedIds = {};
+    (team.shares || []).forEach(function (s) {
+      if (s && s.note_id != null) sharedIds[String(s.note_id)] = true;
+    });
+    sel.innerHTML = '<option value="">Добавить документ…</option>';
+    (teamsManageState.kbNotes || []).forEach(function (n) {
+      var id = n && (n.id != null ? n.id : n.note_id);
+      if (id == null || sharedIds[String(id)]) return;
+      // Only own knowledge docs (not shared-into) for sharing out
+      if (n.is_owner === false) return;
+      var opt = document.createElement("option");
+      opt.value = String(id);
+      opt.textContent = n.title || "Документ";
+      sel.appendChild(opt);
+    });
+  }
+
+  function paintTeamsManageEdit() {
+    var team = teamsManageState.team;
+    if (!team) return;
+    var nameInput = document.getElementById("teams-manage-edit-name");
+    if (nameInput && document.activeElement !== nameInput) {
+      nameInput.value = team.name || "";
+    }
+    var membersEl = document.getElementById("teams-manage-edit-members");
+    if (membersEl) {
+      membersEl.innerHTML = "";
+      var members = team.members || [];
+      if (!members.length) {
+        var emptyM = document.createElement("p");
+        emptyM.className = "muted small";
+        emptyM.textContent = "Пока никого нет";
+        membersEl.appendChild(emptyM);
+      } else {
+        members.forEach(function (m) {
+          var row = document.createElement("div");
+          row.className = "teams-manage-edit-row";
+          var label = document.createElement("span");
+          label.className = "teams-manage-edit-row-label";
+          label.textContent = memberLabel(m);
+          row.appendChild(label);
+          row.appendChild(
+            teamsManageIconBtn({
+              label: "Удалить участника",
+              paths: TEAMS_ICON_TRASH,
+              onClick: function () {
+                removeTeamMemberFromEdit(m.email);
+              },
+            })
+          );
+          membersEl.appendChild(row);
+        });
+      }
+    }
+    var sharesEl = document.getElementById("teams-manage-edit-shares");
+    if (sharesEl) {
+      sharesEl.innerHTML = "";
+      var shares = team.shares || [];
+      if (!shares.length) {
+        var emptyS = document.createElement("p");
+        emptyS.className = "muted small";
+        emptyS.textContent = "Нет расшаренных документов.";
+        sharesEl.appendChild(emptyS);
+      } else {
+        shares.forEach(function (s) {
+          var row = document.createElement("div");
+          row.className = "teams-manage-edit-row";
+          var label = document.createElement("span");
+          label.className = "teams-manage-edit-row-label";
+          label.textContent = s.title || "Документ";
+          row.appendChild(label);
+          row.appendChild(
+            teamsManageIconBtn({
+              label: "Убрать документ",
+              paths: TEAMS_ICON_TRASH,
+              onClick: function () {
+                removeTeamShareFromEdit(s.note_id);
+              },
+            })
+          );
+          sharesEl.appendChild(row);
+        });
+      }
+    }
+    fillTeamsManageAddMemberSelect();
+    fillTeamsManageAddShareSelect();
+    syncTeamsManageHeader();
+  }
+
+  async function refreshTeamsManageEditTeam() {
+    var tid = teamsManageState.editingId;
+    if (!tid) return null;
+    var data = await apiFetch("/teams?detailed=1", { method: "GET" });
+    var teams = (data && data.teams) || [];
+    var found = null;
+    for (var i = 0; i < teams.length; i++) {
+      if (String(teams[i].id) === String(tid)) {
+        found = teams[i];
+        break;
+      }
+    }
+    teamsManageState.team = found;
+    return found;
+  }
+
+  async function openTeamsManageEdit(team) {
+    if (!team || team.id == null) return;
+    setTeamsManageError("");
+    teamsManageState.editingId = team.id;
+    teamsManageState.team = team;
+    var listView = document.getElementById("teams-manage-list-view");
+    var editView = document.getElementById("teams-manage-edit-view");
+    if (listView) listView.classList.add("hidden");
+    if (editView) editView.classList.remove("hidden");
+    paintTeamsManageEdit();
+    try {
+      var contactsData = await apiFetch("/contacts", { method: "GET" });
+      teamsManageState.contacts = (contactsData && contactsData.items) || [];
+    } catch (_) {
+      teamsManageState.contacts = [];
+    }
+    try {
+      if (!knowledgeDataCache) {
+        var kbData = await apiFetch("/notes/knowledge", { method: "GET" });
+        knowledgeDataCache = { notes: (kbData && kbData.notes) || [] };
+      }
+      teamsManageState.kbNotes = knowledgeNotesList().filter(function (n) {
+        return n && n.is_owner !== false;
+      });
+    } catch (_) {
+      teamsManageState.kbNotes = knowledgeNotesList().slice();
+    }
+    try {
+      var fresh = await refreshTeamsManageEditTeam();
+      if (!fresh) {
+        setTeamsManageError("Команда не найдена");
+        showTeamsManageListView();
+        await loadTeamsManageList();
+        return;
+      }
+      paintTeamsManageEdit();
+    } catch (err) {
+      setTeamsManageError(err.message || String(err));
+    }
+  }
+
+  async function saveTeamsManageEditName() {
+    var tid = teamsManageState.editingId;
+    var input = document.getElementById("teams-manage-edit-name");
+    if (!tid || !input) return;
+    var name = String(input.value || "").trim();
+    if (!name) {
+      setTeamsManageError("Введите название команды");
+      input.focus();
+      return;
+    }
+    setTeamsManageError("");
+    try {
+      var data = await apiFetch("/teams/" + encodeURIComponent(String(tid)), {
+        method: "PATCH",
+        body: JSON.stringify({ name: name }),
+      });
+      if (data && data.team) {
+        teamsManageState.team = Object.assign({}, teamsManageState.team || {}, data.team);
+      } else if (teamsManageState.team) {
+        teamsManageState.team.name = name;
+      }
+      syncTeamsManageHeader();
+    } catch (err) {
+      setTeamsManageError(err.message || String(err));
+    }
+  }
+
+  async function setContactTeamsForEmail(email, teamIds) {
+    await apiFetch("/contacts/" + encodeURIComponent(email) + "/teams", {
+      method: "PUT",
+      body: JSON.stringify({ team_ids: teamIds }),
+    });
+  }
+
+  async function setNoteTeamShares(noteId, teamIds) {
+    await apiFetch(
+      "/notes/local/" + encodeURIComponent(String(noteId)) + "/team-shares",
+      {
+        method: "PUT",
+        body: JSON.stringify({ team_ids: teamIds }),
+      }
+    );
+  }
+
+  async function removeTeamMemberFromEdit(email) {
+    var tid = teamsManageState.editingId;
+    var key = String(email || "").trim().toLowerCase();
+    if (!tid || !key) return;
+    setTeamsManageError("");
+    try {
+      var data = await apiFetch("/contacts/" + encodeURIComponent(key) + "/teams", {
+        method: "GET",
+      });
+      var ids = ((data && data.team_ids) || [])
+        .map(function (id) {
+          return Number(id);
+        })
+        .filter(function (id) {
+          return id && id !== Number(tid);
+        });
+      await setContactTeamsForEmail(key, ids);
+      await refreshTeamsManageEditTeam();
+      paintTeamsManageEdit();
+      await loadContacts();
+    } catch (err) {
+      setTeamsManageError(err.message || String(err));
+    }
+  }
+
+  async function addTeamMemberFromEdit() {
+    var tid = teamsManageState.editingId;
+    var sel = document.getElementById("teams-manage-add-member");
+    var email = sel ? String(sel.value || "").trim().toLowerCase() : "";
+    if (!tid || !email) {
+      setTeamsManageError("Выберите контакт");
+      return;
+    }
+    setTeamsManageError("");
+    try {
+      var data = await apiFetch("/contacts/" + encodeURIComponent(email) + "/teams", {
+        method: "GET",
+      });
+      var ids = ((data && data.team_ids) || [])
+        .map(function (id) {
+          return Number(id);
+        })
+        .filter(Boolean);
+      if (ids.indexOf(Number(tid)) < 0) ids.push(Number(tid));
+      await setContactTeamsForEmail(email, ids);
+      if (sel) sel.value = "";
+      await refreshTeamsManageEditTeam();
+      paintTeamsManageEdit();
+      await loadContacts();
+    } catch (err) {
+      setTeamsManageError(err.message || String(err));
+    }
+  }
+
+  async function removeTeamShareFromEdit(noteId) {
+    var tid = teamsManageState.editingId;
+    if (!tid || noteId == null) return;
+    setTeamsManageError("");
+    try {
+      var data = await apiFetch(
+        "/notes/local/" + encodeURIComponent(String(noteId)) + "/team-shares",
+        { method: "GET" }
+      );
+      var ids = ((data && data.teams) || [])
+        .map(function (t) {
+          return t && t.id != null ? Number(t.id) : 0;
+        })
+        .filter(function (id) {
+          return id && id !== Number(tid);
+        });
+      await setNoteTeamShares(noteId, ids);
+      await refreshTeamsManageEditTeam();
+      paintTeamsManageEdit();
+    } catch (err) {
+      setTeamsManageError(err.message || String(err));
+    }
+  }
+
+  async function addTeamShareFromEdit() {
+    var tid = teamsManageState.editingId;
+    var sel = document.getElementById("teams-manage-add-share");
+    var noteId = sel ? String(sel.value || "").trim() : "";
+    if (!tid || !noteId) {
+      setTeamsManageError("Выберите документ");
+      return;
+    }
+    setTeamsManageError("");
+    try {
+      var data = await apiFetch(
+        "/notes/local/" + encodeURIComponent(noteId) + "/team-shares",
+        { method: "GET" }
+      );
+      var ids = ((data && data.teams) || [])
+        .map(function (t) {
+          return t && t.id != null ? Number(t.id) : 0;
+        })
+        .filter(Boolean);
+      if (ids.indexOf(Number(tid)) < 0) ids.push(Number(tid));
+      await setNoteTeamShares(noteId, ids);
+      if (sel) sel.value = "";
+      await refreshTeamsManageEditTeam();
+      paintTeamsManageEdit();
+    } catch (err) {
+      setTeamsManageError(err.message || String(err));
+    }
+  }
+
+  async function loadTeamsManageList() {
+    setTeamsManageError("");
+    try {
+      var data = await apiFetch("/teams?detailed=1", { method: "GET" });
+      paintTeamsManageList((data && data.teams) || []);
+    } catch (err) {
+      paintTeamsManageList([]);
+      setTeamsManageError(err.message || String(err));
+    }
+  }
+
+  function openTeamsManageModal() {
+    var ov = document.getElementById("teams-manage-overlay");
+    if (!ov) return;
+    showTeamsManageListView();
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    syncAppOverlay();
+    loadTeamsManageList();
+  }
+
+  function closeTeamsManageModal() {
+    var ov = document.getElementById("teams-manage-overlay");
+    if (ov) {
+      ov.classList.add("hidden");
+      ov.setAttribute("aria-hidden", "true");
+    }
+    showTeamsManageListView();
+    setTeamsManageError("");
+    syncAppOverlay();
+  }
+
+  function teamsManageCloseOrBack() {
+    if (teamsManageState.editingId) {
+      showTeamsManageListView();
+      loadTeamsManageList();
+      return;
+    }
+    closeTeamsManageModal();
+  }
+
+  async function createTeamFromManage() {
+    var input = document.getElementById("teams-manage-new-input");
+    var name = String((input && input.value) || "").trim();
+    if (!name) {
+      setTeamsManageError("Введите название команды");
+      if (input) input.focus();
+      return;
+    }
+    setTeamsManageError("");
+    try {
+      await apiFetch("/teams", {
+        method: "POST",
+        body: JSON.stringify({ name: name }),
+      });
+      if (input) input.value = "";
+      await loadTeamsManageList();
+    } catch (err) {
+      setTeamsManageError(err.message || String(err));
     }
   }
 
@@ -7926,19 +8621,26 @@
       return;
     }
     contactsShowFormMsg("", "");
+    var teamIds = selectedContactFormTeamIds();
     try {
+      var savedEmail = email.toLowerCase();
       if (contactsEditingEmail) {
-        await apiFetch("/contacts/" + encodeURIComponent(contactsEditingEmail), {
-          method: "PUT",
-          body: JSON.stringify({
-            name: name,
-            email: email,
-            telegram_username: tg || "",
-            aliases: aliases,
-            clear_telegram: !tg,
-          }),
-        });
-        contactsShowFormMsg("Сохранено", "");
+        var updated = await apiFetch(
+          "/contacts/" + encodeURIComponent(contactsEditingEmail),
+          {
+            method: "PUT",
+            body: JSON.stringify({
+              name: name,
+              email: email,
+              telegram_username: tg || "",
+              aliases: aliases,
+              clear_telegram: !tg,
+            }),
+          }
+        );
+        if (updated && updated.item && updated.item.email) {
+          savedEmail = String(updated.item.email).toLowerCase();
+        }
       } else {
         var created = await apiFetch("/contacts", {
           method: "POST",
@@ -7949,13 +8651,15 @@
             aliases: aliases.length ? aliases : null,
           }),
         });
-        var st = (created && created.status) || "added";
-        contactsShowFormMsg(
-          st === "updated" ? "Контакт обновлён" : st === "existing" ? "Уже в списке" : "Контакт добавлен",
-          ""
-        );
+        if (created && created.item && created.item.email) {
+          savedEmail = String(created.item.email).toLowerCase();
+        }
       }
-      contactsResetForm();
+      await apiFetch("/contacts/" + encodeURIComponent(savedEmail) + "/teams", {
+        method: "PUT",
+        body: JSON.stringify({ team_ids: teamIds }),
+      });
+      closeContactsFormModal();
       await loadContacts();
       await refreshProfileContactsCount();
       var tgApp = window.Telegram && window.Telegram.WebApp;
@@ -25648,7 +26352,6 @@
     if (contactsOpenBtn) {
       contactsOpenBtn.addEventListener("click", async function () {
         profileScreen("contacts");
-        contactsResetForm();
         await loadContacts();
       });
     }
@@ -25803,8 +26506,87 @@
     }
     var contactsSaveBtn = document.getElementById("contacts-save");
     if (contactsSaveBtn) contactsSaveBtn.addEventListener("click", contactsSave);
-    var contactsCancelBtn = document.getElementById("contacts-cancel-edit");
-    if (contactsCancelBtn) contactsCancelBtn.addEventListener("click", contactsResetForm);
+    var contactsFormClose = document.getElementById("contacts-form-close");
+    if (contactsFormClose) {
+      contactsFormClose.addEventListener("click", closeContactsFormModal);
+    }
+    var contactsFormOverlay = document.getElementById("contacts-form-overlay");
+    if (contactsFormOverlay) {
+      contactsFormOverlay.addEventListener("click", function (e) {
+        if (e.target.id === "contacts-form-overlay") closeContactsFormModal();
+      });
+    }
+    var contactsTgInput = document.getElementById("contacts-f-tg");
+    if (contactsTgInput) {
+      contactsTgInput.addEventListener("input", updateContactsFormTelegramHint);
+    }
+    var contactsCreateBtn = document.getElementById("contacts-create-btn");
+    if (contactsCreateBtn) {
+      contactsCreateBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        toggleContactsCreateMenu();
+      });
+    }
+    document.querySelectorAll("#contacts-create-menu [data-contacts-action]").forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var action = btn.getAttribute("data-contacts-action");
+        closeContactsCreateMenu();
+        if (action === "contact") openNewContactModal();
+        if (action === "teams") openTeamsManageModal();
+      });
+    });
+    document.addEventListener("click", function (e) {
+      var menu = document.getElementById("contacts-create-menu");
+      var btn = document.getElementById("contacts-create-btn");
+      if (!menu || menu.classList.contains("hidden")) return;
+      if (menu.contains(e.target) || (btn && btn.contains(e.target))) return;
+      closeContactsCreateMenu();
+    });
+    var teamsManageClose = document.getElementById("teams-manage-close");
+    if (teamsManageClose) {
+      teamsManageClose.addEventListener("click", teamsManageCloseOrBack);
+    }
+    var teamsManageSave = document.getElementById("teams-manage-save");
+    if (teamsManageSave) {
+      teamsManageSave.addEventListener("click", saveTeamsManageEditName);
+    }
+    var teamsManageOverlay = document.getElementById("teams-manage-overlay");
+    if (teamsManageOverlay) {
+      teamsManageOverlay.addEventListener("click", function (e) {
+        if (e.target.id === "teams-manage-overlay") closeTeamsManageModal();
+      });
+    }
+    var teamsManageCreateBtn = document.getElementById("teams-manage-create-btn");
+    if (teamsManageCreateBtn) {
+      teamsManageCreateBtn.addEventListener("click", createTeamFromManage);
+    }
+    var teamsManageNewInput = document.getElementById("teams-manage-new-input");
+    if (teamsManageNewInput) {
+      teamsManageNewInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          createTeamFromManage();
+        }
+      });
+    }
+    var teamsManageEditName = document.getElementById("teams-manage-edit-name");
+    if (teamsManageEditName) {
+      teamsManageEditName.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          saveTeamsManageEditName();
+        }
+      });
+    }
+    var teamsManageAddMemberBtn = document.getElementById("teams-manage-add-member-btn");
+    if (teamsManageAddMemberBtn) {
+      teamsManageAddMemberBtn.addEventListener("click", addTeamMemberFromEdit);
+    }
+    var teamsManageAddShareBtn = document.getElementById("teams-manage-add-share-btn");
+    if (teamsManageAddShareBtn) {
+      teamsManageAddShareBtn.addEventListener("click", addTeamShareFromEdit);
+    }
     var zoomBack = document.getElementById("profile-zoom-back");
     if (zoomBack) {
       zoomBack.addEventListener("click", function () {

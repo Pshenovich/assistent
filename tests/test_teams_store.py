@@ -156,5 +156,21 @@ class TeamsStoreTests(unittest.TestCase):
         self.assertEqual(len(listed), 2)
 
 
+    def test_teams_detailed_and_by_contact(self) -> None:
+        self._add_contact(1, name="Анна", email="anna@test.com", telegram_user_id=2)
+        team = teams_store.create_team(1, "Продукт")
+        teams_store.set_contact_teams(1, "anna@test.com", [team["id"]])
+        kb = notes_store.create_note(
+            1, "Регламент", "текст", role=notes_store.KNOWLEDGE_ROLE
+        )
+        teams_store.set_note_teams(1, kb["id"], [team["id"]])
+        detailed = teams_store.list_teams_detailed(1)
+        self.assertEqual(len(detailed), 1)
+        self.assertEqual(detailed[0]["members"][0]["email"], "anna@test.com")
+        self.assertEqual(detailed[0]["shares"][0]["note_id"], kb["id"])
+        by_email = teams_store.teams_by_contact_email(1)
+        self.assertEqual(by_email["anna@test.com"][0]["id"], team["id"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -190,10 +190,14 @@ def _update_task_without_due(
 
 
 def push_task(user_id: int, task: dict[str, Any]) -> dict[str, Any] | None:
+    if not task:
+        return task
+    owner = str(task.get("owner_user_id") or "")
+    if owner and owner != str(int(user_id)):
+        return task
     svc = _service(user_id)
-    if svc is None or not task:
-        if svc is None:
-            print(f"[google_tasks] push_skipped uid={user_id} no_service")
+    if svc is None:
+        print(f"[google_tasks] push_skipped uid={user_id} no_service")
         return task
     list_id = DEFAULT_TASKLIST
     body = {
@@ -395,6 +399,8 @@ def _local_task_on_day(
     noted: dict[str, Any] | None = None
     first: dict[str, Any] | None = None
     for row in calendar_tasks_store.list_tasks_in_window(user_id, start, end):
+        if str(row.get("owner_user_id") or "") != str(int(user_id)):
+            continue
         if require_unlinked and str(row.get("google_task_id") or "").strip():
             continue
         if _norm_title(str(row.get("title") or "")) != want:
@@ -532,6 +538,8 @@ def push_unsynced_in_window(
     """Дописать Leo-задачи в Google Tasks, без событий-встреч."""
     out: list[dict[str, Any]] = []
     for row in calendar_tasks_store.list_tasks_in_window(user_id, start, end):
+        if str(row.get("owner_user_id") or "") != str(int(user_id)):
+            continue
         if row.get("done"):
             continue
         if str(row.get("google_task_id") or "").strip():

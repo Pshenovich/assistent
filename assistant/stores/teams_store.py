@@ -118,6 +118,105 @@ def list_teams(owner_user_id: int | str) -> list[dict[str, Any]]:
     return [_team_row(r, member_count=int(r["member_count"] or 0)) for r in rows]
 
 
+def teams_by_contact_email(owner_user_id: int | str) -> dict[str, list[dict[str, Any]]]:
+    """email → [{id, name}, ...] для всех контактов владельца."""
+    owner = _uid(owner_user_id)
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            SELECT m.contact_email, t.id, t.name
+            FROM team_members m
+            JOIN teams t ON t.id = m.team_id
+            WHERE t.owner_user_id = ?
+            ORDER BY t.created_at ASC, t.id ASC
+            """,
+            (owner,),
+        )
+        rows = cur.fetchall()
+    out: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        email = _norm_email(row["contact_email"])
+        if not email:
+            continue
+        out.setdefault(email, []).append(
+            {"id": int(row["id"]), "name": str(row["name"] or "")}
+        )
+    return out
+
+
+def list_teams_detailed(owner_user_id: int | str) -> list[dict[str, Any]]:
+    """Команды с участниками и расшаренными документами БЗ."""
+    from assistant.stores import contacts_store
+    from assistant.stores import notes as notes_store
+
+    owner = _uid(owner_user_id)
+    teams = list_teams(owner)
+    if not teams:
+        return []
+    contacts = {
+        _norm_email(c.get("email")): c
+        for c in (contacts_store.load_contacts(telegram_user_id=int(owner)) or [])
+        if _norm_email(c.get("email"))
+    }
+    with _LOCK:
+        member_rows = _conn().execute(
+            """
+            SELECT m.team_id, m.contact_email, m.member_user_id, m.added_at
+            FROM team_members m
+            JOIN teams t ON t.id = m.team_id
+            WHERE t.owner_user_id = ?
+            ORDER BY m.added_at ASC
+            """,
+            (owner,),
+        ).fetchall()
+        share_rows = _conn().execute(
+            """
+            SELECT s.team_id, s.note_id, s.shared_at
+            FROM team_note_shares s
+            WHERE s.owner_user_id = ?
+            ORDER BY s.shared_at ASC
+            """,
+            (owner,),
+        ).fetchall()
+    members_by_team: dict[int, list[dict[str, Any]]] = {}
+    for row in member_rows:
+        tid = int(row["team_id"])
+        email = _norm_email(row["contact_email"])
+        contact = contacts.get(email) or {}
+        members_by_team.setdefault(tid, []).append(
+            {
+                "email": email,
+                "name": str(contact.get("name") or email),
+                "member_user_id": str(row["member_user_id"])
+                if row["member_user_id"]
+                else None,
+                "telegram_username": contact.get("telegram_username") or None,
+                "added_at": row["added_at"],
+            }
+        )
+    shares_by_team: dict[int, list[dict[str, Any]]] = {}
+    for row in share_rows:
+        tid = int(row["team_id"])
+        nid = int(row["note_id"])
+        note = notes_store.get_note(owner, nid)
+        shares_by_team.setdefault(tid, []).append(
+            {
+                "note_id": nid,
+                "title": str((note or {}).get("title") or "Без названия"),
+                "shared_at": row["shared_at"],
+            }
+        )
+    out: list[dict[str, Any]] = []
+    for team in teams:
+        tid = int(team["id"])
+        item = dict(team)
+        item["members"] = members_by_team.get(tid, [])
+        item["shares"] = shares_by_team.get(tid, [])
+        item["member_count"] = len(item["members"])
+        out.append(item)
+    return out
+
+
 def create_team(owner_user_id: int | str, name: str) -> dict[str, Any]:
     owner = _uid(owner_user_id)
     title = (name or "").strip()

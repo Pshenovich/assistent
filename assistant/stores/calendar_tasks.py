@@ -71,6 +71,10 @@ def _conn() -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_calendar_tasks_owner_start "
         "ON calendar_tasks(owner_user_id, start_at)"
     )
+    _CONN.execute(
+        "CREATE INDEX IF NOT EXISTS idx_calendar_tasks_assignee_start "
+        "ON calendar_tasks(assignee_user_id, start_at)"
+    )
     _ensure_google_event_columns(_CONN)
     _CONN.commit()
     return _CONN
@@ -286,7 +290,12 @@ def task_id_from_chip_html(raw: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
-def as_calendar_event(task: dict[str, Any], *, tz: ZoneInfo | None = None) -> dict[str, Any]:
+def as_calendar_event(
+    task: dict[str, Any],
+    *,
+    tz: ZoneInfo | None = None,
+    viewer_id: int | str | None = None,
+) -> dict[str, Any]:
     start = _parse_dt(task.get("start_at"))
     end = _parse_dt(task.get("end_at")) or (start + DEFAULT_DURATION if start else None)
     if start and tz is not None:
@@ -297,6 +306,9 @@ def as_calendar_event(task: dict[str, Any], *, tz: ZoneInfo | None = None) -> di
     end_iso = end.isoformat() if end else str(task.get("end_at") or "")
     start_day = start.date().isoformat() if start else start_iso[:10]
     end_day = end.date().isoformat() if end else start_day
+    owner = str(task.get("owner_user_id") or "")
+    viewer = _uid(viewer_id) if viewer_id not in (None, "") else ""
+    is_owner = (not viewer) or viewer == owner
     return {
         "id": f"task-{task.get('id')}",
         "task_id": task.get("id"),
@@ -315,7 +327,7 @@ def as_calendar_event(task: dict[str, Any], *, tz: ZoneInfo | None = None) -> di
         "description": str(task.get("description") or ""),
         "location": "",
         "attendees": [],
-        "is_organizer": True,
+        "is_organizer": is_owner,
         "self_response_status": None,
         "needs_rsvp": False,
         "checklist": list(task.get("checklist") or []),
@@ -324,6 +336,8 @@ def as_calendar_event(task: dict[str, Any], *, tz: ZoneInfo | None = None) -> di
             "email": str(task.get("assignee_email") or ""),
             "name": str(task.get("assignee_name") or ""),
         },
+        "owner_user_id": owner,
+        "is_owner": is_owner,
         "done": bool(task.get("done")),
         "note_id": str(task.get("note_id") or ""),
         "chip_label": chip_label(task, tz=tz),
@@ -385,19 +399,66 @@ def create_task(
     return item
 
 
-def get_task(owner_user_id: int | str, task_id: int | str) -> Optional[dict[str, Any]]:
-    uid = _uid(owner_user_id)
+def _parse_task_id(task_id: int | str) -> int | None:
     try:
-        tid = int(task_id)
+        return int(task_id)
     except (TypeError, ValueError):
         return None
+
+
+def _get_task_row(task_id: int) -> Optional[dict[str, Any]]:
     with _LOCK:
         cur = _conn().execute(
-            "SELECT * FROM calendar_tasks WHERE id = ? AND owner_user_id = ?",
-            (tid, uid),
+            "SELECT * FROM calendar_tasks WHERE id = ?",
+            (int(task_id),),
         )
         row = cur.fetchone()
     return _row_to_dict(row) if row else None
+
+
+def user_can_access_task(user_id: int | str, task: dict[str, Any] | None) -> bool:
+    if not task:
+        return False
+    uid = _uid(user_id)
+    return uid == str(task.get("owner_user_id") or "") or uid == str(
+        task.get("assignee_user_id") or ""
+    )
+
+
+def get_task(owner_user_id: int | str, task_id: int | str) -> Optional[dict[str, Any]]:
+    uid = _uid(owner_user_id)
+    tid = _parse_task_id(task_id)
+    if tid is None:
+        return None
+    item = _get_task_row(tid)
+    if not item or str(item.get("owner_user_id") or "") != uid:
+        return None
+    return item
+
+
+def get_task_for_user(user_id: int | str, task_id: int | str) -> Optional[dict[str, Any]]:
+    tid = _parse_task_id(task_id)
+    if tid is None:
+        return None
+    item = _get_task_row(tid)
+    if not user_can_access_task(user_id, item):
+        return None
+    return item
+
+
+def _int_user_ids(raw: list[str]) -> list[int]:
+    out: list[int] = []
+    seen: set[int] = set()
+    for item in raw:
+        try:
+            n = int(str(item or "").strip())
+        except ValueError:
+            continue
+        if n in seen:
+            continue
+        seen.add(n)
+        out.append(n)
+    return out
 
 
 def list_owner_user_ids() -> list[int]:
@@ -406,13 +467,21 @@ def list_owner_user_ids() -> list[int]:
             "SELECT DISTINCT owner_user_id FROM calendar_tasks"
         )
         raw = [str(r[0] or "").strip() for r in cur.fetchall()]
-    out: list[int] = []
-    for item in raw:
-        try:
-            out.append(int(item))
-        except ValueError:
-            continue
-    return out
+    return _int_user_ids(raw)
+
+
+def list_involved_user_ids() -> list[int]:
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            SELECT DISTINCT owner_user_id FROM calendar_tasks
+            UNION
+            SELECT DISTINCT assignee_user_id FROM calendar_tasks
+            WHERE assignee_user_id != ''
+            """
+        )
+        raw = [str(r[0] or "").strip() for r in cur.fetchall()]
+    return _int_user_ids(raw)
 
 
 def list_tasks_in_window(
@@ -425,12 +494,12 @@ def list_tasks_in_window(
         cur = _conn().execute(
             """
             SELECT * FROM calendar_tasks
-            WHERE owner_user_id = ?
+            WHERE (owner_user_id = ? OR assignee_user_id = ?)
               AND start_at < ?
               AND end_at > ?
             ORDER BY start_at ASC, id ASC
             """,
-            (uid, _iso(end), _iso(start)),
+            (uid, uid, _iso(end), _iso(start)),
         )
         rows = [_row_to_dict(r) for r in cur.fetchall()]
     return rows
@@ -492,7 +561,7 @@ def update_task(
     tz: ZoneInfo | None = None,
 ) -> Optional[dict[str, Any]]:
     uid = _uid(owner_user_id)
-    existing = get_task(uid, task_id)
+    existing = get_task_for_user(uid, task_id)
     if not existing:
         return None
     start = (
@@ -560,7 +629,7 @@ def update_task(
                 checklist_json = ?, note_id = ?, done = ?,
                 google_task_id = ?, google_tasklist_id = ?,
                 google_event_id = ?, google_calendar_id = ?, updated_at = ?
-            WHERE id = ? AND owner_user_id = ?
+            WHERE id = ?
             """,
             (
                 fields["title"],
@@ -579,23 +648,20 @@ def update_task(
                 fields["google_calendar_id"],
                 fields["updated_at"],
                 int(existing["id"]),
-                uid,
             ),
         )
         _conn().commit()
-    return get_task(uid, existing["id"])
+    return _get_task_row(int(existing["id"]))
 
 
 def delete_task(owner_user_id: int | str, task_id: int | str) -> bool:
-    uid = _uid(owner_user_id)
-    try:
-        tid = int(task_id)
-    except (TypeError, ValueError):
+    existing = get_task_for_user(owner_user_id, task_id)
+    if not existing:
         return False
     with _LOCK:
         cur = _conn().execute(
-            "DELETE FROM calendar_tasks WHERE id = ? AND owner_user_id = ?",
-            (tid, uid),
+            "DELETE FROM calendar_tasks WHERE id = ?",
+            (int(existing["id"]),),
         )
         _conn().commit()
         return cur.rowcount > 0

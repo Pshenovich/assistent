@@ -3971,7 +3971,7 @@ def _leo_task_events(
         from assistant.stores import calendar_tasks as calendar_tasks_store
 
         rows = calendar_tasks_store.list_tasks_in_window(uid, start_dt, end_dt)
-        return [calendar_tasks_store.as_calendar_event(r, tz=tz) for r in rows]
+        return [calendar_tasks_store.as_calendar_event(r, tz=tz, viewer_id=uid) for r in rows]
     except Exception as e:
         print(f"[miniapp_calendar] tasks_list err={e!r}")
         return []
@@ -4272,6 +4272,8 @@ def _ensure_task_calendar_events(
     from assistant.stores import calendar_tasks as calendar_tasks_store
 
     for row in calendar_tasks_store.list_tasks_in_window(uid, start_dt, end_dt):
+        if str(row.get("owner_user_id") or "") != str(uid):
+            continue
         if row.get("done") or str(row.get("google_task_id") or "").strip():
             continue
         try:
@@ -4287,6 +4289,8 @@ def _reconcile_gcal_task_duplicates(uid: int, start_dt: datetime, end_dt: dateti
     from assistant.stores import calendar_tasks as calendar_tasks_store
 
     for row in calendar_tasks_store.list_tasks_in_window(uid, start_dt, end_dt):
+        if str(row.get("owner_user_id") or "") != str(uid):
+            continue
         if not str(row.get("google_event_id") or "").strip():
             continue
         try:
@@ -4316,9 +4320,12 @@ def _sync_task_google(uid: int, task: dict[str, Any] | None, action: str) -> dic
         from assistant.services import google_tasks
         from assistant.stores import calendar_tasks as calendar_tasks_store
 
+        owner = _task_owner_uid(task, uid)
         if action == "delete":
-            calendar_svc.delete_task_event(uid, task)
-            google_tasks.delete_remote(uid, task)
+            calendar_svc.delete_task_event(owner, task)
+            google_tasks.delete_remote(owner, task)
+            return task
+        if owner != int(uid):
             return task
         if str(task.get("google_event_id") or "").strip():
             calendar_svc.delete_task_event(uid, task)
@@ -4849,13 +4856,50 @@ async def miniapp_reminders_delete(
     return {"ok": True}
 
 
-def _task_api(task: dict[str, Any], *, tz: Any) -> dict[str, Any]:
+def _task_api(task: dict[str, Any], *, tz: Any, viewer_id: int | str | None = None) -> dict[str, Any]:
     from assistant.stores import calendar_tasks as calendar_tasks_store
 
     item = dict(task)
-    item["event"] = calendar_tasks_store.as_calendar_event(task, tz=tz)
+    item["event"] = calendar_tasks_store.as_calendar_event(
+        task, tz=tz, viewer_id=viewer_id
+    )
     item["chip_label"] = item["event"].get("chip_label")
     return item
+
+
+def _task_owner_uid(task: dict[str, Any] | None, fallback: int) -> int:
+    try:
+        return int(str((task or {}).get("owner_user_id") or fallback) or fallback)
+    except (TypeError, ValueError):
+        return int(fallback)
+
+
+def _resolve_calendar_task_assignee(
+    principal: "_MiniappPrincipal",
+    body: "_MiniappCalendarTaskBody",
+) -> str:
+    raw = str(body.assignee_user_id or "").strip()
+    if raw:
+        try:
+            n = int(raw)
+            if n > 0:
+                return str(n)
+        except (TypeError, ValueError):
+            pass
+    email = str(body.assignee_email or "").strip()
+    if not email:
+        return raw
+    try:
+        from assistant.stores import note_members
+
+        found, _ = note_members.resolve_contact_telegram_id(
+            owner_user_id=int(principal.telegram_user_id),
+            email=email,
+            owner_username=_miniapp_tg_username(principal),
+        )
+        return str(int(found))
+    except ValueError:
+        return raw
 
 
 @miniapp_router.get("/calendar/tasks")
@@ -4873,7 +4917,7 @@ async def miniapp_calendar_tasks_list(
     nid = str(note_id or "").strip()
     if nid:
         rows = await run_in_threadpool(calendar_tasks_store.list_tasks_for_note, uid, nid)
-        return {"ok": True, "tasks": [_task_api(r, tz=tz) for r in rows]}
+        return {"ok": True, "tasks": [_task_api(r, tz=tz, viewer_id=uid) for r in rows]}
     today = datetime.now(tz).date()
     start_d = _parse_calendar_day(start, today)
     end_d = _parse_calendar_day(end, start_d)
@@ -4884,7 +4928,7 @@ async def miniapp_calendar_tasks_list(
     rows = await run_in_threadpool(
         calendar_tasks_store.list_tasks_in_window, uid, win_start, win_end
     )
-    return {"ok": True, "tasks": [_task_api(r, tz=tz) for r in rows]}
+    return {"ok": True, "tasks": [_task_api(r, tz=tz, viewer_id=uid) for r in rows]}
 
 
 @miniapp_router.get("/calendar/tasks/{task_id}")
@@ -4897,10 +4941,10 @@ async def miniapp_calendar_tasks_get(
 
     uid = int(principal.telegram_user_id)
     tz = _tz_for(uid)
-    row = await run_in_threadpool(calendar_tasks_store.get_task, uid, task_id)
+    row = await run_in_threadpool(calendar_tasks_store.get_task_for_user, uid, task_id)
     if not row:
         raise HTTPException(status_code=404, detail="Задача не найдена")
-    return {"ok": True, "task": _task_api(row, tz=tz)}
+    return {"ok": True, "task": _task_api(row, tz=tz, viewer_id=uid)}
 
 
 @miniapp_router.post("/calendar/tasks/parse")
@@ -4987,7 +5031,8 @@ async def miniapp_calendar_tasks_create(
         _find_reusable_note_task, uid, str(body.note_id or ""), title, start_raw, tz
     )
     if reused:
-        return {"ok": True, "task": _task_api(reused, tz=tz)}
+        return {"ok": True, "task": _task_api(reused, tz=tz, viewer_id=uid)}
+    assignee_uid = _resolve_calendar_task_assignee(principal, body)
     try:
         row = await run_in_threadpool(
             partial(
@@ -4997,7 +5042,7 @@ async def miniapp_calendar_tasks_create(
                 description=body.description or "",
                 start_at=start_raw,
                 end_at=body.end,
-                assignee_user_id=body.assignee_user_id or uid,
+                assignee_user_id=assignee_uid or uid,
                 assignee_email=body.assignee_email or "",
                 assignee_name=body.assignee_name or _principal_display_name(principal),
                 checklist=body.checklist,
@@ -5008,7 +5053,7 @@ async def miniapp_calendar_tasks_create(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     synced = await run_in_threadpool(_sync_task_google, uid, row, "create")
-    return {"ok": True, "task": _task_api(synced or row, tz=tz)}
+    return {"ok": True, "task": _task_api(synced or row, tz=tz, viewer_id=uid)}
 
 
 @miniapp_router.patch("/calendar/tasks/{task_id}")
@@ -5022,6 +5067,9 @@ async def miniapp_calendar_tasks_patch(
 
     uid = int(principal.telegram_user_id)
     tz = _tz_for(uid)
+    assignee_uid = None
+    if body.assignee_user_id is not None or body.assignee_email is not None:
+        assignee_uid = _resolve_calendar_task_assignee(principal, body) or None
     try:
         row = await run_in_threadpool(
             partial(
@@ -5032,7 +5080,7 @@ async def miniapp_calendar_tasks_patch(
                 description=body.description,
                 start_at=body.start,
                 end_at=body.end,
-                assignee_user_id=body.assignee_user_id,
+                assignee_user_id=assignee_uid,
                 assignee_email=body.assignee_email,
                 assignee_name=body.assignee_name,
                 checklist=body.checklist,
@@ -5046,7 +5094,7 @@ async def miniapp_calendar_tasks_patch(
     if not row:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     synced = await run_in_threadpool(_sync_task_google, uid, row, "update")
-    return {"ok": True, "task": _task_api(synced or row, tz=tz)}
+    return {"ok": True, "task": _task_api(synced or row, tz=tz, viewer_id=uid)}
 
 
 @miniapp_router.delete("/calendar/tasks/{task_id}")
@@ -5057,7 +5105,7 @@ async def miniapp_calendar_tasks_delete(
     from assistant.stores import calendar_tasks as calendar_tasks_store
 
     uid = int(principal.telegram_user_id)
-    existing = await run_in_threadpool(calendar_tasks_store.get_task, uid, task_id)
+    existing = await run_in_threadpool(calendar_tasks_store.get_task_for_user, uid, task_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     await run_in_threadpool(_sync_task_google, uid, existing, "delete")
@@ -5093,13 +5141,19 @@ async def miniapp_contacts_list(
 ) -> dict[str, Any]:
     from assistant.lib.calendar_attendees import enrich_contacts_calendar_flags
     from assistant.stores import contacts_store
+    from assistant.stores import teams_store
 
     def _load() -> list:
         items = contacts_store.load_contacts(
             telegram_user_id=int(principal.telegram_user_id),
             telegram_username=_miniapp_tg_username(principal),
         )
-        return enrich_contacts_calendar_flags(list(items or []))
+        items = enrich_contacts_calendar_flags(list(items or []))
+        teams_map = teams_store.teams_by_contact_email(int(principal.telegram_user_id))
+        for row in items:
+            email = str(row.get("email") or "").strip().lower()
+            row["teams"] = list(teams_map.get(email) or [])
+        return items
 
     return {"items": await run_in_threadpool(_load)}
 
@@ -5203,13 +5257,16 @@ async def miniapp_contacts_delete(
 
 @miniapp_router.get("/teams")
 async def miniapp_teams_list(
+    detailed: bool = Query(False),
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     from assistant.stores import teams_store
 
-    items = await run_in_threadpool(
-        teams_store.list_teams, int(principal.telegram_user_id)
-    )
+    uid = int(principal.telegram_user_id)
+    if detailed:
+        items = await run_in_threadpool(teams_store.list_teams_detailed, uid)
+    else:
+        items = await run_in_threadpool(teams_store.list_teams, uid)
     return {"ok": True, "teams": items}
 
 

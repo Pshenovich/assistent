@@ -63,3 +63,20 @@ def test_collect_due_skips_done_and_sent(tasks_db):
         42, tr.TASK_REMINDER_CAL, f"task-{pending['id']}", pending["start_at"]
     )
     assert tr.collect_due_reminders(42, now=now) == []
+
+
+def test_collect_due_for_assignee(tasks_db):
+    tz = ZoneInfo("Europe/Moscow")
+    now = datetime(2026, 10, 7, 12, 0, tzinfo=tz)
+    row = tasks_db.create_task(
+        11,
+        title="Для исполнителя",
+        start_at=now + timedelta(minutes=15),
+        assignee_user_id=22,
+        tz=tz,
+    )
+    due_assignee = tr.collect_due_reminders(22, now=now)
+    due_owner = tr.collect_due_reminders(11, now=now)
+    assert [t["id"] for t in due_assignee] == [row["id"]]
+    assert [t["id"] for t in due_owner] == [row["id"]]
+    assert 22 in tr.iter_task_user_ids()

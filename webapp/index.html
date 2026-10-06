@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261005-teams-api">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261006-teams-edit-ui">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -46,7 +46,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261005-teams-api" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261006-teams-edit-ui" />
   <link rel="preload" href="/webapp/note-rich-editor.js?v=20261005-heading-pdf" as="script" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
@@ -681,36 +681,26 @@
             <p class="muted small contacts-hint">
               Контакты подставляются в гостей календаря по имени или email.
             </p>
-            <div class="contacts-form-card" id="contacts-form-card">
-              <p class="field-label field-label--caps" id="contacts-form-title">Новый контакт</p>
-              <input type="hidden" id="contacts-edit-email" value="" />
-              <label class="field">
-                <span class="field-label">Имя</span>
-                <input type="text" id="contacts-f-name" class="field-input" autocomplete="name" />
-              </label>
-              <label class="field">
-                <span class="field-label">Email</span>
-                <input type="email" id="contacts-f-email" class="field-input" autocomplete="email" />
-              </label>
-              <label class="field">
-                <span class="field-label">Telegram (без @)</span>
-                <input type="text" id="contacts-f-tg" class="field-input" autocomplete="off" placeholder="username" />
-              </label>
-              <label class="field">
-                <span class="field-label">Другие имена (через запятую)</span>
-                <input type="text" id="contacts-f-aliases" class="field-input" autocomplete="off" placeholder="Вова, Владимир" />
-              </label>
-              <div class="contacts-form-actions">
-                <button type="button" class="btn" id="contacts-save">Сохранить</button>
-                <button type="button" class="btn ghost hidden" id="contacts-cancel-edit">Отмена</button>
-              </div>
-              <p id="contacts-form-msg" class="billing-msg muted small hidden"></p>
-              <p id="contacts-form-err" class="error hidden"></p>
-            </div>
-            <p class="field-label field-label--caps">Список</p>
             <div id="contacts-list" class="stack contacts-list"></div>
-            <p id="contacts-empty" class="empty-state hidden">Пока нет контактов — добавьте выше.</p>
+            <p id="contacts-empty" class="empty-state hidden">Пока нет контактов — нажмите «+», чтобы добавить.</p>
             <p id="contacts-err" class="error hidden"></p>
+          </div>
+          <button
+            type="button"
+            id="contacts-create-btn"
+            class="notes-fab contacts-fab hidden"
+            aria-label="Добавить"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            title="Добавить"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+          <div id="contacts-create-menu" class="actual-create-menu contacts-create-menu hidden" role="menu" aria-label="Добавить">
+            <button type="button" class="actual-create-menu-btn" data-contacts-action="contact" role="menuitem">Добавить контакт</button>
+            <button type="button" class="actual-create-menu-btn" data-contacts-action="teams" role="menuitem">Управление командами</button>
           </div>
         </div>
 
@@ -1233,6 +1223,125 @@
     </div>
   </div>
 
+  <div id="contacts-form-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal--sheet contacts-form-sheet" role="dialog" aria-modal="true" aria-labelledby="contacts-form-title">
+      <div class="modal-form">
+        <div class="modal-header">
+          <button type="button" class="modal-header-btn modal-header-btn--close" id="contacts-form-close" aria-label="Закрыть" title="Закрыть">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+          <h2 id="contacts-form-title" class="modal-title">Новый контакт</h2>
+          <button type="button" class="modal-header-btn modal-header-btn--save" id="contacts-save" aria-label="Сохранить" title="Сохранить">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body contacts-form-body">
+          <input type="hidden" id="contacts-edit-email" value="" />
+          <label class="field">
+            <span class="field-label">Имя</span>
+            <input type="text" id="contacts-f-name" class="field-input" autocomplete="name" />
+          </label>
+          <label class="field">
+            <span class="field-label">Email</span>
+            <input type="email" id="contacts-f-email" class="field-input" autocomplete="email" />
+          </label>
+          <label class="field">
+            <span class="field-label">Telegram (без @)</span>
+            <input type="text" id="contacts-f-tg" class="field-input" autocomplete="off" placeholder="username" />
+          </label>
+          <label class="field">
+            <span class="field-label">Другие имена (через запятую)</span>
+            <input type="text" id="contacts-f-aliases" class="field-input" autocomplete="off" placeholder="Вова, Владимир" />
+          </label>
+          <div class="contacts-form-teams">
+            <p class="field-label">Команды</p>
+            <div id="contacts-form-teams-list" class="contacts-form-teams-list"></div>
+            <p id="contacts-form-teams-empty" class="muted small">Пока нет команд — создайте в «Управление командами».</p>
+            <p id="contacts-form-teams-hint" class="muted small hidden">У контакта нет Telegram — файл появится в его базе знаний после того, как он откроет Leo.</p>
+          </div>
+          <p id="contacts-form-msg" class="billing-msg muted small hidden"></p>
+          <p id="contacts-form-err" class="error hidden"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="teams-manage-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal--sheet teams-manage-sheet" role="dialog" aria-modal="true" aria-labelledby="teams-manage-title">
+      <div class="modal-form">
+        <div class="modal-header">
+          <button type="button" class="modal-header-btn modal-header-btn--close" id="teams-manage-close" aria-label="Закрыть" title="Закрыть">
+            <svg id="teams-manage-close-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+          <h2 id="teams-manage-title" class="modal-title">Команды</h2>
+          <button type="button" class="modal-header-btn modal-header-btn--save hidden" id="teams-manage-save" aria-label="Сохранить" title="Сохранить">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          </button>
+          <span id="teams-manage-header-spacer" class="modal-header-btn modal-header-btn--placeholder" aria-hidden="true"></span>
+        </div>
+        <div class="modal-body teams-manage-body">
+          <p id="teams-manage-err" class="error hidden"></p>
+          <div id="teams-manage-list-view">
+            <div class="teams-manage-create">
+              <input
+                type="text"
+                id="teams-manage-new-input"
+                class="field-input"
+                placeholder="Новая команда"
+                maxlength="80"
+                aria-label="Название новой команды"
+              />
+              <button type="button" id="teams-manage-create-btn" class="btn primary">Создать</button>
+            </div>
+            <div id="teams-manage-list" class="teams-manage-list"></div>
+            <p id="teams-manage-empty" class="muted small">Пока нет команд — создайте первую.</p>
+          </div>
+          <div id="teams-manage-edit-view" class="teams-manage-edit-view hidden">
+            <label class="field">
+              <span class="field-label">Название</span>
+              <input
+                type="text"
+                id="teams-manage-edit-name"
+                class="field-input"
+                maxlength="80"
+                autocomplete="off"
+                aria-label="Название команды"
+              />
+            </label>
+            <div class="teams-manage-edit-section">
+              <p class="field-label">Участники</p>
+              <div id="teams-manage-edit-members" class="teams-manage-edit-rows"></div>
+              <div class="teams-manage-add-row">
+                <select id="teams-manage-add-member" class="field-input" aria-label="Добавить участника">
+                  <option value="">Добавить контакт…</option>
+                </select>
+                <button type="button" id="teams-manage-add-member-btn" class="btn primary btn-sm">Добавить</button>
+              </div>
+            </div>
+            <div class="teams-manage-edit-section">
+              <p class="field-label">Документы базы знаний</p>
+              <div id="teams-manage-edit-shares" class="teams-manage-edit-rows"></div>
+              <div class="teams-manage-add-row">
+                <select id="teams-manage-add-share" class="field-input" aria-label="Добавить документ">
+                  <option value="">Добавить документ…</option>
+                </select>
+                <button type="button" id="teams-manage-add-share-btn" class="btn primary btn-sm">Добавить</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="note-unsaved-overlay" class="modal-overlay hidden" aria-hidden="true">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="note-unsaved-title">
       <h2 id="note-unsaved-title" class="modal-title">Несохранённые изменения</h2>
@@ -1376,6 +1485,6 @@
   <script src="/webapp/note-comments.js?v=20261005-heading-pdf" defer></script>
   <script src="/webapp/note-rich-editor.js?v=20261005-heading-pdf" defer></script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/app.js?v=20261005-teams-api" defer></script>
+  <script src="/webapp/app.js?v=20261006-teams-edit-ui" defer></script>
 </body>
 </html>

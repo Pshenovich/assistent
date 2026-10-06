@@ -154,3 +154,78 @@ def test_list_tasks_for_note_and_reuse(tasks_db):
     )
     assert by_time is not None
     assert by_time["id"] == a["id"]
+
+
+def test_assignee_sees_and_can_edit_task(tasks_db):
+    store = tasks_db
+    tz = ZoneInfo("Europe/Moscow")
+    start = datetime(2026, 10, 7, 15, 0, tzinfo=tz)
+    row = store.create_task(
+        11,
+        title="Для Андрея",
+        start_at=start,
+        assignee_user_id=22,
+        assignee_email="a@example.com",
+        assignee_name="Андрей",
+        tz=tz,
+    )
+    win_start = datetime(2026, 10, 7, 0, 0, tzinfo=tz)
+    win_end = datetime(2026, 10, 8, 0, 0, tzinfo=tz)
+    assert [t["id"] for t in store.list_tasks_in_window(11, win_start, win_end)] == [row["id"]]
+    assert [t["id"] for t in store.list_tasks_in_window(22, win_start, win_end)] == [row["id"]]
+    assert store.list_tasks_in_window(33, win_start, win_end) == []
+
+    assert store.get_task(11, row["id"]) is not None
+    assert store.get_task(22, row["id"]) is None
+    assert store.get_task_for_user(22, row["id"]) is not None
+    assert store.get_task_for_user(33, row["id"]) is None
+
+    updated = store.update_task(22, row["id"], title="Обновил исполнитель")
+    assert updated is not None
+    assert updated["title"] == "Обновил исполнитель"
+    assert updated["owner_user_id"] == "11"
+    assert store.update_task(33, row["id"], title="Чужой") is None
+
+    ev_owner = store.as_calendar_event(updated, tz=tz, viewer_id=11)
+    ev_assignee = store.as_calendar_event(updated, tz=tz, viewer_id=22)
+    assert ev_owner["is_owner"] is True
+    assert ev_assignee["is_owner"] is False
+    assert ev_assignee["owner_user_id"] == "11"
+
+    assert sorted(store.list_involved_user_ids()) == [11, 22]
+    assert store.delete_task(33, row["id"]) is False
+    assert store.delete_task(22, row["id"]) is True
+    assert store.get_task_for_user(11, row["id"]) is None
+
+
+def test_push_task_skips_non_owner(tasks_db, monkeypatch):
+    from assistant.services import google_tasks
+
+    store = tasks_db
+    tz = ZoneInfo("Europe/Moscow")
+    row = store.create_task(
+        11,
+        title="Не пушить исполнителю",
+        start_at=datetime(2026, 10, 7, 15, 0, tzinfo=tz),
+        assignee_user_id=22,
+        tz=tz,
+    )
+    called = []
+
+    def _boom(user_id):
+        called.append(user_id)
+        raise AssertionError("should not open Google as assignee")
+
+    monkeypatch.setattr(google_tasks, "_service", _boom)
+    out = google_tasks.push_task(22, row)
+    assert out == row
+    assert called == []
+    owner_called = []
+
+    def _none(user_id):
+        owner_called.append(user_id)
+        return None
+
+    monkeypatch.setattr(google_tasks, "_service", _none)
+    google_tasks.push_task(11, row)
+    assert owner_called == [11]

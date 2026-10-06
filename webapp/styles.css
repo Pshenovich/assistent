@@ -8381,6 +8381,246 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   overflow: hidden;
 }
 
+.contacts-form-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.contacts-form-teams {
+  margin-top: var(--space-1);
+}
+
+.contacts-form-teams-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 10rem;
+  overflow-y: auto;
+}
+
+.contacts-form-team-option {
+  margin: 0;
+}
+
+.contact-card-teams {
+  margin: var(--space-2) 0 0;
+}
+
+/* FAB lives inside the fixed contacts subscreen (max-w / desktop pane),
+   so viewport-based notes-fab `right` would land near center — pin to the pane. */
+.contacts-fab,
+.contacts-create-menu {
+  right: var(--space-4);
+  z-index: 45;
+}
+
+.contacts-create-menu {
+  bottom: calc(var(--tabbar-stack) + var(--space-4) + 3.75rem);
+}
+
+.teams-manage-sheet {
+  height: min(100vh, 100dvh);
+  max-height: min(100vh, 100dvh);
+  border-radius: var(--radius-lg, 16px) var(--radius-lg, 16px) 0 0;
+}
+
+.teams-manage-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1;
+  min-height: 0;
+}
+
+#teams-manage-list-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  flex: 1;
+  min-height: 0;
+}
+
+#teams-manage-list-view.hidden {
+  display: none !important;
+}
+
+.teams-manage-create {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+  flex-shrink: 0;
+}
+
+.teams-manage-create .field-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.teams-manage-create .btn,
+.teams-manage-add-row .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  height: auto;
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.teams-manage-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.teams-manage-card {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+}
+
+.teams-manage-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.teams-manage-card-title {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 650;
+  min-width: 0;
+  flex: 1;
+}
+
+.teams-manage-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.teams-manage-card-actions .btn-icon-tile {
+  width: 2rem;
+  height: 2rem;
+}
+
+.btn-icon-tile--neutral {
+  color: var(--text-secondary);
+}
+
+.btn-icon-tile--neutral:hover {
+  color: var(--text);
+}
+
+.teams-manage-meta-list {
+  margin: 0 0 var(--space-2);
+  padding-left: 1.1rem;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.teams-manage-meta-list:last-child {
+  margin-bottom: 0;
+}
+
+.teams-manage-edit-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.teams-manage-edit-view.hidden {
+  display: none !important;
+}
+
+.teams-manage-edit-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.teams-manage-edit-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.teams-manage-edit-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.teams-manage-edit-row-label {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--bg);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.teams-manage-edit-row .btn-icon-tile {
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+}
+
+.teams-manage-add-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.teams-manage-add-row .field-input,
+.teams-manage-add-row select.field-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.teams-manage-add-row select.field-input {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 2.5rem;
+  background-color: var(--surface);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23898991' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.9rem center;
+  background-size: 1rem;
+}
+
+.teams-manage-card .field-label {
+  margin: var(--space-2) 0 var(--space-1);
+}
+
 .contacts-form-actions {
   display: flex;
   flex-wrap: wrap;
@@ -11694,6 +11934,19 @@ html.modal-sheet-open body {
     width: 14rem;
   }
 
+  .contacts-fab,
+  .contacts-create-menu {
+    right: 2rem;
+  }
+
+  .contacts-fab {
+    bottom: 2rem;
+  }
+
+  .contacts-create-menu {
+    bottom: 5.75rem;
+  }
+
   #notes-detail:not(.hidden),
   #digest-detail:not(.hidden),
   #profile-payment:not(.hidden),
@@ -11767,6 +12020,15 @@ html.modal-sheet-open body {
     border-radius: var(--radius-lg, 16px);
     box-shadow: var(--shadow-md);
     padding-bottom: var(--space-5);
+  }
+
+  .teams-manage-sheet.modal--sheet {
+    height: min(100dvh, 100vh);
+    max-height: min(100dvh, 100vh);
+    width: min(32rem, 100%);
+    max-width: 32rem;
+    border-radius: var(--radius-lg, 16px);
+    padding-bottom: 0;
   }
 
   .voice-sheet {

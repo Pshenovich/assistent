@@ -37,7 +37,7 @@ def reminder_window_sec() -> float:
 def iter_task_user_ids() -> list[int]:
     ids = set(mr.iter_calendar_user_ids())
     try:
-        ids.update(calendar_tasks_store.list_owner_user_ids())
+        ids.update(calendar_tasks_store.list_involved_user_ids())
     except Exception:
         pass
     return sorted(ids)
