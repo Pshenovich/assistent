@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261006-cal-colorrow";
+  var WEBAPP_BUILD = "20261006-cal-fast";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
