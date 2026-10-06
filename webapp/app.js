@@ -15784,6 +15784,8 @@
     applying: false,
     lastTypedAt: 0,
     photoBlobs: {},
+    photoMiss: {},
+    photoInflight: {},
   };
 
   function noteMemberInitials(member) {
@@ -15817,12 +15819,28 @@
       if (!key || !blob || !blob.size) return false;
       var url = URL.createObjectURL(blob);
       noteCollabState.photoBlobs[key] = url;
+      delete noteCollabState.photoMiss[key];
       img.src = url;
       img.classList.add("has-photo");
       return true;
     }
     function fetchPhoto(path, key) {
-      return fetch(API + path, {
+      if (!key || noteCollabState.photoMiss[key]) return Promise.resolve(false);
+      if (noteCollabState.photoBlobs[key]) {
+        img.src = noteCollabState.photoBlobs[key];
+        img.classList.add("has-photo");
+        return Promise.resolve(true);
+      }
+      if (noteCollabState.photoInflight[key]) {
+        return noteCollabState.photoInflight[key].then(function (ok) {
+          if (ok && noteCollabState.photoBlobs[key]) {
+            img.src = noteCollabState.photoBlobs[key];
+            img.classList.add("has-photo");
+          }
+          return ok;
+        });
+      }
+      var req = fetch(API + path, {
         credentials: "same-origin",
         headers: authHeaders(),
       })
@@ -15830,15 +15848,27 @@
           return res.ok ? res.blob() : null;
         })
         .then(function (blob) {
-          return setBlob(key, blob);
+          var ok = setBlob(key, blob);
+          if (!ok) noteCollabState.photoMiss[key] = 1;
+          return ok;
         })
         .catch(function () {
+          noteCollabState.photoMiss[key] = 1;
           return false;
+        })
+        .then(function (ok) {
+          delete noteCollabState.photoInflight[key];
+          return ok;
         });
+      noteCollabState.photoInflight[key] = req;
+      return req;
     }
     if (uid) {
+      if (noteCollabState.photoMiss[uid] && !(uname && unameKey && !noteCollabState.photoMiss[unameKey])) {
+        return;
+      }
       fetchPhoto("/users/" + encodeURIComponent(uid) + "/photo", uid).then(function (ok) {
-        if (!ok && uname) {
+        if (!ok && uname && unameKey) {
           fetchPhoto("/contacts/telegram-photo/" + encodeURIComponent(uname), unameKey);
         }
       });

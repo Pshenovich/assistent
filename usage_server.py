@@ -4069,7 +4069,8 @@ def _leo_task_events(
         try:
             from assistant.services import google_tasks
 
-            google_tasks.pull_into_leo_brief(uid, start_dt, end_dt, wait_sec=2.0)
+            # Не блокируем ответ календаря на 2с — импорт задач в фоне.
+            google_tasks.schedule_pull(uid, start_dt, end_dt)
         except Exception as e:
             print(f"[miniapp_calendar] tasks_pull err={e!r}")
     try:
