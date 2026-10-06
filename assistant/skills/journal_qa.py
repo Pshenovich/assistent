@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes
 from assistant.lib.journal_retrieval import retrieve_journal_context
 from assistant.lib.telegram_markdown import prepare_journal_qa_markdown
 from assistant.lib.telegram_message import reply_formatted
-from assistant.lib.telegram_status import post_status, take_work_status
+from assistant.lib.telegram_status import dismiss_status, post_status
 from assistant.lib.user_timezone import resolve_user_tz_name
 from assistant.nlu import llm as nlu_llm
 from assistant.stores import user_prefs
@@ -72,4 +72,4 @@ async def handle(
     except Exception as e:
         await msg.reply_text(f"Ошибка: {e}")
     finally:
-        await take_work_status(status)
+        await dismiss_status(status)

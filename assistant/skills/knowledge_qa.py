@@ -16,7 +16,7 @@ from assistant.lib.knowledge_retrieval import (
 from assistant.lib.knowledge_urls import format_kb_sources_footer_html, strip_kb_source_line
 from assistant.lib.telegram_markdown import prepare_journal_qa_markdown
 from assistant.lib.telegram_message import reply_formatted
-from assistant.lib.telegram_status import post_status, take_work_status
+from assistant.lib.telegram_status import dismiss_status, post_status
 from assistant.nlu import llm as nlu_llm
 from assistant.stores import knowledge_base_store as kb_store
 
@@ -106,4 +106,4 @@ async def handle(
     except Exception as e:
         await msg.reply_text(f"Ошибка: {e}")
     finally:
-        await take_work_status(status)
+        await dismiss_status(status)

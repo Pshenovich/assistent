@@ -39,6 +39,51 @@ class TestBitrixMcpSearch(unittest.TestCase):
         self.assertTrue(search_mod.is_task_list_request("найди задачи про бустра ллм"))
         self.assertTrue(search_mod.is_task_list_request("Найди в задачах про оплату в боте"))
         self.assertFalse(search_mod.is_task_list_request("дай описание задачи по кордекса"))
+        self.assertFalse(
+            search_mod.is_task_list_request('найди задачу "Перенос BoostraGPT на Кордекса"')
+        )
+        self.assertFalse(
+            search_mod.is_task_list_request("найди задачу «Перенос BoostraGPT на Кордекса»")
+        )
+
+    def test_extract_quoted_phrases(self) -> None:
+        self.assertEqual(
+            search_mod.extract_quoted_phrases('найди задачу "Перенос на Кордекса"'),
+            ["Перенос на Кордекса"],
+        )
+        self.assertEqual(
+            search_mod.extract_quoted_phrases("кто исполнитель в «Оплата займа»"),
+            ["Оплата займа"],
+        )
+
+    def test_title_matches_exact_with_project_prefix(self) -> None:
+        self.assertTrue(
+            search_mod.title_matches_exact(
+                "[Бустра LLM] Перенос BoostraGPT на Кордекса",
+                "Перенос BoostraGPT на Кордекса",
+            )
+        )
+        self.assertFalse(
+            search_mod.title_matches_exact(
+                "[Бустра LLM] Другая задача про Кордекса",
+                "Перенос BoostraGPT на Кордекса",
+            )
+        )
+
+    def test_has_clear_winner_for_quoted_exact(self) -> None:
+        candidates = [
+            {
+                "taskId": 1,
+                "title": "[Бустра LLM] Перенос BoostraGPT на Кордекса",
+                "score": 220,
+            },
+        ]
+        self.assertTrue(
+            search_mod.has_clear_winner(
+                candidates,
+                'найди задачу "Перенос BoostraGPT на Кордекса"',
+            )
+        )
 
     def test_has_clear_winner_false_for_list(self) -> None:
         candidates = [

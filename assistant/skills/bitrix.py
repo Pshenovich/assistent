@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import re
 from typing import Any
 
@@ -14,10 +15,17 @@ from assistant.integrations.bitrix_mcp_client import (
     run_with_mcp_session,
 )
 from assistant.integrations.bitrix_mcp_portal import fix_bitrix_links, portal_host_from_token
-from assistant.integrations.bitrix_mcp_token import get_user_token, is_connected, is_token_expired, remove_user_token
+from assistant.integrations.bitrix_mcp_token import (
+    get_personal_token,
+    get_user_token,
+    has_mcp_access,
+    is_token_expired,
+    remove_user_token,
+)
 from assistant.lib.exception_format import format_exception_message
 from assistant.lib.bitrix_task_format import (
     _parse_task_payload,
+    _task_responsible_name,
     format_candidates_markdown,
     format_task_from_tool_result,
     format_task_list_markdown,
@@ -25,7 +33,7 @@ from assistant.lib.bitrix_task_format import (
 from assistant.lib.telegram_html import uses_html_markup
 from assistant.lib.telegram_markdown import prepare_bitrix_markdown
 from assistant.lib.telegram_message import reply_formatted
-from assistant.lib.telegram_status import post_status, take_work_status
+from assistant.lib.telegram_status import dismiss_status, post_status
 from assistant.lib.webapp_public import webapp_entry_url
 from assistant.nlu.regex import parse_bitrix_intent
 from assistant.services import bitrix_mcp_agent
@@ -35,12 +43,12 @@ from assistant.services.bitrix_task_create import (
     parse_create_task_request,
 )
 from assistant.services.bitrix_mcp_search import (
+    extract_quoted_phrases,
     find_task_candidates,
     find_tasks_for_list_query,
     has_clear_winner,
     is_task_list_request,
 )
-
 BITRIX_HISTORY_KEY = "bitrix_chat_history"
 BITRIX_HISTORY_MAX = 6
 
@@ -68,6 +76,26 @@ def _looks_like_task_description_request(text: str) -> bool:
     )
 
 
+def _looks_like_assignee_request(text: str) -> bool:
+    s = _norm(text)
+    return bool(
+        re.search(
+            r"(?:исполнител|ответственн|кто\s+исполн|"
+            r"на\s+ком\s+задач|"
+            r"кто\s+(?:назначен|делает|ведёт|ведет)\b)",
+            s,
+        )
+    )
+
+
+def _wants_single_task_lookup(text: str) -> bool:
+    return bool(
+        extract_quoted_phrases(text)
+        or _looks_like_task_description_request(text)
+        or _looks_like_assignee_request(text)
+    )
+
+
 def _bitrix_auth_help_message() -> str:
     url = webapp_entry_url()
     return (
@@ -84,6 +112,7 @@ def _is_bitrix_unauthorized_error(exc: BaseException) -> bool:
 
 
 async def _reply_bitrix_auth_error(msg, *, telegram_user_id: int) -> None:
+    # Сбрасываем только личный токен; серверный BITRIX_MCP_TOKEN правится в .env.
     remove_user_token(telegram_user_id)
     await msg.reply_text(_bitrix_auth_help_message(), disable_web_page_preview=True)
 
@@ -183,7 +212,7 @@ async def _direct_task_answer_body(session: Any, token: str, text: str) -> str |
         return None
     portal = portal_host_from_token(token)
     if not has_clear_winner(candidates, text):
-        if _looks_like_task_description_request(text) and len(candidates) > 1:
+        if _wants_single_task_lookup(text) and len(candidates) > 1:
             return format_candidates_markdown(candidates, portal_host=portal)
         return None
     best = candidates[0]
@@ -192,6 +221,16 @@ async def _direct_task_answer_body(session: Any, token: str, text: str) -> str |
         "get_task_by_id",
         {"taskId": int(best["taskId"])},
     )
+    if _looks_like_assignee_request(text):
+        task = _parse_task_payload(raw)
+        if not task:
+            return None
+        name = _task_responsible_name(task)
+        title = str(task.get("title") or "задача").strip()
+        return (
+            f"<p>Исполнитель задачи «{html.escape(title)}»: "
+            f"<b>{html.escape(name)}</b></p>"
+        )
     return format_task_from_tool_result(raw, token=token)
 
 
@@ -213,7 +252,7 @@ async def try_continue_bitrix(
     if not text:
         return False
     user = update.effective_user
-    if not user or not is_connected(int(user.id)):
+    if not user or not has_mcp_access(int(user.id)):
         return False
     if not get_chat_history(context):
         return False
@@ -260,7 +299,8 @@ async def handle(
         return
 
     uid = int(user.id)
-    if not is_connected(uid):
+    token = get_user_token(uid) or ""
+    if not token:
         url = webapp_entry_url()
         await msg.reply_text(
             "Подключите Битрикс24 в мини-приложении:\n"
@@ -278,9 +318,12 @@ async def handle(
         )
         return
 
-    token = get_user_token(uid) or ""
     if is_token_expired(token):
-        await _reply_bitrix_auth_error(msg, telegram_user_id=uid)
+        # Личный токен можно сбросить; если истёк только серверный — подсказка та же.
+        if get_personal_token(uid):
+            await _reply_bitrix_auth_error(msg, telegram_user_id=uid)
+        else:
+            await msg.reply_text(_bitrix_auth_help_message(), disable_web_page_preview=True)
         return
 
     history = get_chat_history(context)
@@ -301,7 +344,7 @@ async def handle(
                 append_chat_history(context, user_text=question, assistant_text=rendered)
                 return
 
-        if _looks_like_task_description_request(question):
+        if _wants_single_task_lookup(question):
             direct = await _try_direct_task_answer(uid, question)
             if direct:
                 rendered = await _reply_bitrix(msg, direct, token=token)
@@ -322,4 +365,4 @@ async def handle(
         else:
             await msg.reply_text(f"Битрикс24: {format_exception_message(e)}")
     finally:
-        await take_work_status(status)
+        await dismiss_status(status)

@@ -15,7 +15,7 @@ from assistant.integrations.bitrix_mcp_client import (
 from assistant.integrations.bitrix_mcp_portal import portal_host_from_token
 from assistant.integrations.bitrix_mcp_token import get_user_token
 from assistant.integrations.openrouter_client import is_llm_configured, openrouter_chat_completion
-from assistant.services.bitrix_mcp_search import find_task_candidates
+from assistant.services.bitrix_mcp_search import extract_quoted_phrases, find_task_candidates
 
 BITRIX_AGENT_SYSTEM = """Ты ассистент Bitrix24 в Telegram-боте Leo.
 Используй доступные инструменты MCP для выполнения запроса пользователя.
@@ -23,9 +23,11 @@ BITRIX_AGENT_SYSTEM = """Ты ассистент Bitrix24 в Telegram-боте L
 КРИТИЧЕСКИ ВАЖНО:
 - Сначала ВСЕГДА вызывай инструменты. Не отвечай текстом, пока не попробовал поиск/получение данных.
 - search_tasks принимает поля title и description (НЕ searchQuery). Для поиска по названию используй title.
+- Если пользователь указал название в кавычках («…» или "…") — ищи ТОЛЬКО по этому названию (поле title), без description. Если есть точное совпадение — верни ОДНУ эту задачу, без альтернатив.
 - НЕ ищи по description широкими словам вроде «Кордекса» — это даёт ложные совпадения. Сначала title с ключевыми словами из запроса.
-- Если в контексте есть «Предварительный поиск задач» с несколькими кандидатами — для запроса «найди задачи» верни ВСЕ подходящие, не только первую.
+- Если в контексте есть «Предварительный поиск задач» с несколькими кандидатами — для запроса «найди задачи» верни ВСЕ подходящие, не только первую. Если название было в кавычках — только точное совпадение.
 - «Описание задачи про X»: найди задачу → get_task_by_id → верни ОДНУ задачу с полным описанием.
+- «Кто исполнитель / ответственный»: найди задачу → get_task_by_id → ответь ТОЛЬКО полем responsible.name из ответа инструмента. НИКОГДА не угадывай исполнителя из текста description / чек-листа / комментариев.
 - Для «найди задачи» / множественного поиска: перечисли все совпадения с названием, исполнителем, сроком, статусом и ссылкой.
 - Формат списка задач (Rich HTML):
   - Заголовок: <h2>Нашёл N задач</h2>
@@ -125,9 +127,16 @@ async def _run_async(
 
         candidates = await find_task_candidates(token, text, session=session)
         if candidates:
+            quoted = extract_quoted_phrases(text)
+            note = (
+                "Предварительный поиск. Название в кавычках — бери только точное совпадение title, без альтернатив."
+                if quoted
+                else "Предварительный поиск (title + REST). Начни с get_task_by_id для лучшего совпадения."
+            )
             hint = {
-                "note": "Предварительный поиск (title + REST). Начни с get_task_by_id для лучшего совпадения.",
+                "note": note,
                 "candidates": candidates[:8],
+                "exact_title_required": bool(quoted),
             }
             messages.append(
                 {

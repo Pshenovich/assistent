@@ -17,7 +17,10 @@ class TestBitrixMcpToken(unittest.TestCase):
         self.tokens_dir = Path(self.tmp.name) / "tokens"
         self.env_patch = patch.dict(
             os.environ,
-            {"BITRIX_MCP_USER_TOKENS_DIR": str(self.tokens_dir)},
+            {
+                "BITRIX_MCP_USER_TOKENS_DIR": str(self.tokens_dir),
+                "BITRIX_MCP_TOKEN": "",
+            },
             clear=False,
         )
         self.env_patch.start()
@@ -52,3 +55,15 @@ class TestBitrixMcpToken(unittest.TestCase):
         token_mod.save_user_token(7, f"Bearer {jwt}")
         self.assertEqual(token_mod.get_user_token(7), jwt)
         self.assertTrue(token_mod.is_token_expired(jwt))
+
+    def test_env_token_fallback(self) -> None:
+        tid = 99
+        self.assertFalse(token_mod.is_connected(tid))
+        self.assertIsNone(token_mod.get_user_token(tid))
+        with patch.dict(os.environ, {"BITRIX_MCP_TOKEN": "Bearer env-secret"}, clear=False):
+            self.assertEqual(token_mod.get_user_token(tid), "env-secret")
+            self.assertTrue(token_mod.has_mcp_access(tid))
+            self.assertFalse(token_mod.is_connected(tid))
+        token_mod.save_user_token(tid, "personal-secret")
+        with patch.dict(os.environ, {"BITRIX_MCP_TOKEN": "Bearer env-secret"}, clear=False):
+            self.assertEqual(token_mod.get_user_token(tid), "personal-secret")

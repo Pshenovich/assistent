@@ -82,11 +82,58 @@ _STOP_WORDS = {
 }
 
 
+_QUOTE_RE = re.compile(
+    r"«([^»]{2,200})»|"
+    r'"([^"]{2,200})"|'
+    r"„([^“]{2,200})“|"
+    r"“([^”]{2,200})”|"
+    r"'([^']{2,200})'",
+    re.UNICODE,
+)
+
+
+def extract_quoted_phrases(text: str) -> list[str]:
+    """Фразы в кавычках — точные названия задач."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in _QUOTE_RE.finditer(text or ""):
+        phrase = next((g for g in m.groups() if g), "")
+        phrase = " ".join(str(phrase).split()).strip()
+        key = phrase.lower()
+        if len(key) < 2 or key in seen:
+            continue
+        seen.add(key)
+        out.append(phrase)
+    return out
+
+
+def _normalize_title(value: str) -> str:
+    return " ".join((value or "").strip().lower().split())
+
+
+def title_matches_exact(title: str, needle: str) -> bool:
+    t = _normalize_title(title)
+    n = _normalize_title(needle)
+    if not t or not n:
+        return False
+    if t == n:
+        return True
+    stripped = re.sub(r"^\[[^\]]+\]\s*", "", t).strip()
+    if stripped == n:
+        return True
+    return t.endswith(n) and (len(n) >= 8 or " " in n)
+
+
 def is_task_list_request(text: str) -> bool:
     s = " ".join((text or "").strip().lower().split())
     if not s or "задач" not in s:
         return False
     if re.search(r"(описан|детал|подробн)", s):
+        return False
+    # «найди задачу „Точное имя“» — точечный поиск, не список
+    if extract_quoted_phrases(text) and not re.search(
+        r"\b(список|перечисли|какие|все|всех)\b", s
+    ):
         return False
     if re.search(r"\b(найди|найти|покажи|список|перечисли|выведи|какие|поиск)\b", s):
         return True
@@ -173,6 +220,10 @@ def extract_search_queries(text: str) -> list[str]:
         seen.add(key)
         queries.append(q)
 
+    # Кавычки — самый точный запрос, первым
+    for phrase in extract_quoted_phrases(raw):
+        add(phrase)
+
     m_tasks = re.search(
         r"(?:найди|найти|покажи|поиск|выведи|перечисли)\s+(?:мне\s+)?"
         r"(?:в\s+)?задач\w*\s+про\s+(.+)$",
@@ -235,6 +286,12 @@ def _score_title(title: str, keywords: list[str], user_text: str, queries: list[
     t_low = t.lower()
     q = (user_text or "").lower()
     score = 0
+
+    for quoted in extract_quoted_phrases(user_text):
+        if title_matches_exact(t, quoted):
+            score += 200
+        elif _normalize_title(quoted) and _normalize_title(quoted) in _normalize_title(t):
+            score += 40
 
     for query in queries:
         tokens = tokenize_query(query)
@@ -341,12 +398,14 @@ async def find_task_candidates(
 
     gid = filters.get("group_id")
     stage_ids = filters.get("stage_ids") or None
+    quoted = extract_quoted_phrases(user_text)
 
     for query in queries:
         if not query:
             continue
         await collect(await _mcp_task_search(token, title=query, session=session))
-        if len(query) >= 3:
+        # Для фраз в кавычках не ищем по description — только точное название
+        if len(query) >= 3 and query not in quoted:
             await collect(
                 await _mcp_task_search(token, description=query, session=session)
             )
@@ -382,13 +441,34 @@ async def find_task_candidates(
             continue
         ranked.append({**item, "score": score})
     ranked.sort(key=lambda x: (-int(x.get("score") or 0), -int(x.get("taskId") or 0)))
+
+    if quoted:
+        exact = [
+            item
+            for item in ranked
+            if any(title_matches_exact(str(item.get("title") or ""), q) for q in quoted)
+        ]
+        if exact:
+            return exact[:25]
+
     return ranked[:25]
 
 
 def has_clear_winner(candidates: list[dict[str, Any]], user_text: str) -> bool:
-    if is_task_list_request(user_text):
-        return False
     if not candidates:
+        return False
+    quoted = extract_quoted_phrases(user_text)
+    if quoted:
+        exact = [
+            c
+            for c in candidates
+            if any(title_matches_exact(str(c.get("title") or ""), q) for q in quoted)
+        ]
+        if len(exact) == 1:
+            return True
+        if len(exact) > 1:
+            return False
+    if is_task_list_request(user_text):
         return False
     if len(candidates) == 1:
         return int(candidates[0].get("score") or 0) >= 8

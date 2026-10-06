@@ -58,11 +58,19 @@ def user_token_path(telegram_user_id: int) -> Path:
     return _tokens_dir() / f"{int(telegram_user_id)}.json"
 
 
+def env_mcp_token() -> str | None:
+    """Серверный токен из BITRIX_MCP_TOKEN (общий fallback, если нет личного)."""
+    raw = (os.getenv("BITRIX_MCP_TOKEN") or "").strip()
+    value = strip_bearer_prefix(raw)
+    return value or None
+
+
 def is_connected(telegram_user_id: int) -> bool:
+    """Личное MCP-подключение пользователя (мини-приложение)."""
     return user_token_path(telegram_user_id).is_file()
 
 
-def get_user_token(telegram_user_id: int) -> str | None:
+def get_personal_token(telegram_user_id: int) -> str | None:
     path = user_token_path(telegram_user_id)
     if not path.is_file():
         return None
@@ -74,6 +82,18 @@ def get_user_token(telegram_user_id: int) -> str | None:
         return None
     token = strip_bearer_prefix(str(data.get("token") or ""))
     return token or None
+
+
+def get_user_token(telegram_user_id: int) -> str | None:
+    """Личный токен пользователя или серверный BITRIX_MCP_TOKEN."""
+    personal = get_personal_token(telegram_user_id)
+    if personal:
+        return personal
+    return env_mcp_token()
+
+
+def has_mcp_access(telegram_user_id: int) -> bool:
+    return bool(get_user_token(telegram_user_id))
 
 
 def save_user_token(telegram_user_id: int, token: str) -> None:

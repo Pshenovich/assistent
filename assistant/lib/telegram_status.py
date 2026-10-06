@@ -98,6 +98,16 @@ def take_work_status(context: ContextTypes.DEFAULT_TYPE) -> Message | None:
     return raw if isinstance(raw, Message) else None
 
 
+async def dismiss_status(status_msg: Message | None) -> None:
+    """Удаляет промежуточное статусное сообщение («Ищу…» / «Работаю…»)."""
+    if not status_msg:
+        return
+    try:
+        await status_msg.delete()
+    except Exception:
+        pass
+
+
 async def maybe_post_early_work_status(
     update,
     context: ContextTypes.DEFAULT_TYPE,

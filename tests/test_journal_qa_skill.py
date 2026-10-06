@@ -24,7 +24,7 @@ class JournalQaSkillTests(unittest.IsolatedAsyncioTestCase):
         update.effective_user.id = user_id
         return update
 
-    @patch("assistant.skills.journal_qa.take_work_status", new_callable=AsyncMock)
+    @patch("assistant.skills.journal_qa.dismiss_status", new_callable=AsyncMock)
     @patch("assistant.skills.journal_qa.post_status", new_callable=AsyncMock)
     @patch("assistant.skills.journal_qa.retrieve_journal_context")
     @patch("assistant.skills.journal_qa.nlu_llm.parse_journal_qa_query")
@@ -35,7 +35,7 @@ class JournalQaSkillTests(unittest.IsolatedAsyncioTestCase):
         mock_parse,
         mock_retrieve,
         mock_post_status,
-        mock_take_status,
+        mock_dismiss_status,
     ) -> None:
         mock_post_status.return_value = None
         mock_parse.return_value = {"search_query": "GPT", "focus": "general", "sources": ["summaries"]}
@@ -49,7 +49,7 @@ class JournalQaSkillTests(unittest.IsolatedAsyncioTestCase):
         mock_answer.assert_not_called()
 
     @patch("assistant.skills.journal_qa.reply_formatted", new_callable=AsyncMock)
-    @patch("assistant.skills.journal_qa.take_work_status", new_callable=AsyncMock)
+    @patch("assistant.skills.journal_qa.dismiss_status", new_callable=AsyncMock)
     @patch("assistant.skills.journal_qa.post_status", new_callable=AsyncMock)
     @patch("assistant.skills.journal_qa.retrieve_journal_context")
     @patch("assistant.skills.journal_qa.nlu_llm.parse_journal_qa_query")
@@ -60,7 +60,7 @@ class JournalQaSkillTests(unittest.IsolatedAsyncioTestCase):
         mock_parse,
         mock_retrieve,
         mock_post_status,
-        mock_take_status,
+        mock_dismiss_status,
         mock_reply_formatted,
     ) -> None:
         mock_post_status.return_value = None
