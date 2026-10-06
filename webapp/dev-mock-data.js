@@ -12,8 +12,25 @@
   var nextMockTagId = -91004;
   var nextMockReminderId = 100;
   var nextMockEventId = 100;
-  var nextMockTaskId = 1;
-  var mockTasks = [];
+  var mockTasks = [
+    {
+      id: 9001,
+      owner_user_id: "1",
+      title: "Сделать презентацию",
+      description: "",
+      start_at: new Date().toISOString().slice(0, 10) + "T00:00:00+03:00",
+      end_at: new Date().toISOString().slice(0, 10) + "T23:59:00+03:00",
+      checklist: [],
+      assignee_user_id: "22",
+      assignee_email: "uliana@example.com",
+      assignee_name: "Ульяна",
+      note_id: "",
+      all_day: true,
+      done: false,
+      chip_label: "сегодня",
+    },
+  ];
+  var nextMockTaskId = 9100;
 
   function nowIso() {
     return new Date().toISOString();
@@ -710,6 +727,21 @@
     }
 
     function mockTaskEvent(task) {
+      var allDay = !!task.all_day;
+      var startDay = String(task.start_at || "").slice(0, 10);
+      var startPayload = allDay
+        ? { date: startDay }
+        : { dateTime: task.start_at };
+      var endPayload = allDay
+        ? { date: startDay }
+        : { dateTime: task.end_at };
+      if (allDay && startDay) {
+        try {
+          var d = new Date(startDay + "T12:00:00");
+          d.setDate(d.getDate() + 1);
+          endPayload = { date: d.toISOString().slice(0, 10) };
+        } catch (_) {}
+      }
       return {
         id: "task-" + task.id,
         task_id: task.id,
@@ -717,10 +749,11 @@
         summary: task.title,
         kind: "Задача",
         entry_type: "task",
-        start: { dateTime: task.start_at },
-        end: { dateTime: task.end_at },
-        start_day: String(task.start_at || "").slice(0, 10),
-        end_day: String(task.end_at || "").slice(0, 10),
+        all_day: allDay,
+        start: startPayload,
+        end: endPayload,
+        start_day: startDay,
+        end_day: String((endPayload.date || task.end_at) || "").slice(0, 10),
         description: task.description || "",
         checklist: task.checklist || [],
         assignee: {
@@ -728,6 +761,7 @@
           email: task.assignee_email || "",
           name: task.assignee_name || "",
         },
+        owner_user_id: task.owner_user_id || "1",
         chip_label: task.chip_label || "Задача",
         done: !!task.done,
         note_id: task.note_id || "",
@@ -808,6 +842,21 @@
       }
     }
 
+    if (basePath === "/calendar/tasks/posted" && method === "GET") {
+      var posted = mockTasks.filter(function (t) {
+        var owner = String(t.owner_user_id || "1");
+        var assignee = String(t.assignee_user_id || "");
+        return !t.done && assignee && assignee !== owner;
+      });
+      return {
+        ok: true,
+        items: posted.map(function (t) {
+          return mockTaskApi(t).task;
+        }),
+        count: posted.length,
+      };
+    }
+
     if (basePath === "/calendar/tasks" && method === "GET") {
       var noteFilter = "";
       try {
@@ -851,15 +900,17 @@
       }
       var task = {
         id: nextMockTaskId++,
+        owner_user_id: "1",
         title: String(taskBody.title || "").trim() || "Задача",
         description: String(taskBody.description || ""),
         start_at: taskStart,
         end_at: taskEnd,
         checklist: Array.isArray(taskBody.checklist) ? taskBody.checklist : [],
-        assignee_user_id: String(taskBody.assignee_user_id || ""),
+        assignee_user_id: String(taskBody.assignee_user_id || "1"),
         assignee_email: String(taskBody.assignee_email || ""),
         assignee_name: String(taskBody.assignee_name || "Я"),
         note_id: String(taskBody.note_id || ""),
+        all_day: !!taskBody.all_day,
         done: false,
         chip_label: "Задача",
       };

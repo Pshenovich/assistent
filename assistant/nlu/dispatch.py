@@ -25,6 +25,7 @@ from assistant.nlu.intent_router import (
 )
 from assistant.skills import bitrix as bitrix_skill
 from assistant.skills import ask as ask_skill
+from assistant.skills import assign_task as assign_task_skill
 from assistant.skills import calendar as calendar_skill
 from assistant.skills import contacts as contacts_skill
 from assistant.skills import journal_qa as journal_qa_skill
@@ -101,6 +102,9 @@ async def dispatch_route(
 
     if route.skill == "reminder":
         await reminders_skill.handle(update, context, text or full)
+        return True
+    if route.skill == "assign_task":
+        await assign_task_skill.handle(update, context, text or full)
         return True
     if route.skill == "note_search":
         await notes_skill.handle_search(update, context, text or full)

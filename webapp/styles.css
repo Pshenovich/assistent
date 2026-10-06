@@ -13113,3 +13113,23 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   flex: 0 0 auto;
   margin: 0 0 8px;
 }
+
+/* Posted tasks on Actual */
+#panel-actual.panel-actual--posted > #actual-hero,
+#panel-actual.panel-actual--posted > .section,
+#panel-actual.panel-actual--posted > .actual-fab,
+#panel-actual.panel-actual--posted > #actual-create-menu {
+  display: none !important;
+}
+#panel-actual.panel-actual--posted > #actual-posted-tasks {
+  display: flex !important;
+  flex-direction: column;
+  min-height: 60vh;
+}
+#actual-posted-tasks.actual-subscreen {
+  margin: 0 -4px;
+}
+#panel-actual .posted-tasks-card {
+  width: 100%;
+  text-align: left;
+}

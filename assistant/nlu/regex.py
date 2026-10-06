@@ -63,6 +63,15 @@ def parse_remind_intent(text: str) -> str | None:
     return None
 
 
+def parse_assign_task_intent(text: str) -> str | None:
+    from assistant.skills.assign_task import is_assign_task_request
+
+    raw = (text or "").strip()
+    if is_assign_task_request(raw):
+        return raw
+    return None
+
+
 def parse_transcribe_search_intent(text: str) -> str | None:
     s = (text or "").strip()
     if not s:
@@ -329,6 +338,16 @@ def regex_route(text: str) -> Route | None:
     s = (text or "").strip()
     if not s:
         return None
+
+    assign_task = parse_assign_task_intent(s)
+    if assign_task is not None:
+        return Route(
+            skill="assign_task",
+            sub_intent="create",
+            body=assign_task,
+            confidence=1.0,
+            source="regex",
+        )
 
     remind = parse_remind_intent(s)
     if remind is not None:

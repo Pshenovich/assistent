@@ -192,6 +192,10 @@ def _update_task_without_due(
 def push_task(user_id: int, task: dict[str, Any]) -> dict[str, Any] | None:
     if not task:
         return task
+    from assistant.stores.calendar_tasks import task_is_delegated
+
+    if task_is_delegated(task):
+        return task
     owner = str(task.get("owner_user_id") or "")
     if owner and owner != str(int(user_id)):
         return task

@@ -12672,21 +12672,20 @@
     return wrap;
   }
 
-  function paintActual(remData, calData, calDataNext, rangeData) {
+  function paintActual(remData, calData, calDataNext, rangeData, postedData) {
     const hero = document.getElementById("actual-hero");
-    const listEl = document.getElementById("reminders-list");
-    const emptyR = document.getElementById("reminders-empty");
-    const errR = document.getElementById("reminders-error");
+    const errP = document.getElementById("posted-tasks-error");
     const errM = document.getElementById("meetings-error");
-    const badgeR = document.getElementById("reminders-badge");
+    const countEl = document.getElementById("posted-tasks-count");
 
-    listEl.innerHTML = "";
-    errR.textContent = "";
+    if (errP) {
+      errP.textContent = "";
+      setHidden(errP, true);
+    }
     if (errM) {
       errM.textContent = "";
       setHidden(errM, true);
     }
-    setHidden(errR, true);
 
     const calDate = (calData && calData.date) || meetingsPageDate || todayIsoLocal();
 
@@ -12694,6 +12693,19 @@
     const active = items.filter(function (x) {
       return !x.done;
     });
+    var postedItems = (postedData && postedData.items) || lastPostedTasksItems || [];
+    var postedCount =
+      postedData && typeof postedData.count === "number"
+        ? postedData.count
+        : postedItems.length;
+    lastPostedTasksItems = postedItems;
+    if (countEl) {
+      countEl.textContent =
+        "Поставлено " +
+        postedCount +
+        " " +
+        pluralRu(postedCount, "задача", "задачи", "задач");
+    }
     var meetingsCount = 0;
     if (meetingsViewMode === "week" || meetingsViewMode === "month") {
       meetingsCount = ((rangeData && rangeData.events) || []).filter(function (ev) {
@@ -12716,24 +12728,12 @@
       "</p>" +
       '<h1 class="hero-title">Добрый день 👋</h1>' +
       '<div class="hero-stats">' +
-      '<div class="hero-stat"><p class="hero-stat-label">Напоминаний</p><p class="hero-stat-value">' +
-      active.length +
+      '<div class="hero-stat"><p class="hero-stat-label">Поставлено</p><p class="hero-stat-value">' +
+      postedCount +
       "</p></div>" +
       '<div class="hero-stat"><p class="hero-stat-label">Встреч</p><p class="hero-stat-value">' +
       meetingsCount +
       "</p></div></div></div>";
-
-    if (!active.length) {
-      setHidden(emptyR, false);
-      setHidden(badgeR, true);
-    } else {
-      setHidden(emptyR, true);
-      setHidden(badgeR, false);
-      badgeR.textContent = String(active.length);
-      active.forEach(function (r) {
-        listEl.appendChild(renderReminderCard(r));
-      });
-    }
 
     lastRemindersItems = active;
     if (meetingsViewMode === "week") {
@@ -12746,8 +12746,184 @@
     }
   }
 
+  function pluralRu(n, one, few, many) {
+    var abs = Math.abs(Number(n) || 0) % 100;
+    var n1 = abs % 10;
+    if (abs > 10 && abs < 20) return many;
+    if (n1 === 1) return one;
+    if (n1 >= 2 && n1 <= 4) return few;
+    return many;
+  }
+
+  var lastPostedTasksItems = [];
+
+  function renderPostedTaskCard(task) {
+    var wrap = document.createElement("div");
+    wrap.className = "reminder-card";
+    var ev = (task && task.event) || {};
+    var title = String((task && task.title) || ev.summary || "Задача");
+    var assignee =
+      (task && task.assignee_name) ||
+      (ev.assignee && ev.assignee.name) ||
+      "";
+    var checklist = normalizeReminderChecklist(
+      (task && task.checklist) || ev.checklist || []
+    );
+    var whenLabel =
+      (task && task.chip_label) ||
+      (ev && ev.chip_label) ||
+      "";
+    if (!whenLabel && task && task.all_day) whenLabel = "на день";
+
+    function openThisTask() {
+      var payload = Object.assign({}, ev, {
+        task_id: task.id,
+        id: "task-" + task.id,
+        summary: title,
+        checklist: checklist,
+        assignee: ev.assignee || {
+          name: assignee,
+          user_id: task.assignee_user_id,
+          email: task.assignee_email,
+        },
+        all_day: !!(task.all_day || ev.all_day),
+      });
+      openTaskModal(payload);
+    }
+
+    var edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "meeting-card-edit-btn reminder-card-edit-btn";
+    edit.setAttribute("aria-label", "Изменить");
+    edit.title = "Изменить";
+    edit.innerHTML =
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' +
+      '<path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />' +
+      "</svg>";
+    edit.addEventListener("click", function (e) {
+      e.stopPropagation();
+      openThisTask();
+    });
+    wrap.appendChild(edit);
+
+    var row = document.createElement("div");
+    row.className = "reminder-row";
+
+    var check = document.createElement("button");
+    check.type = "button";
+    check.className = "reminder-check";
+    check.innerHTML = "";
+    check.addEventListener("click", async function (e) {
+      e.stopPropagation();
+      try {
+        await apiFetch("/calendar/tasks/" + encodeURIComponent(String(task.id)), {
+          method: "PATCH",
+          body: JSON.stringify({ done: true }),
+        });
+        await loadPostedTasksList();
+        loadActual();
+        var tg = window.Telegram && window.Telegram.WebApp;
+        if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
+      } catch (err) {
+        alert(err.message || String(err));
+      }
+    });
+
+    var textCol = document.createElement("div");
+    textCol.style.flex = "1";
+    textCol.style.minWidth = "0";
+    var p = document.createElement("p");
+    p.className = "reminder-text";
+    p.textContent = title;
+    textCol.appendChild(p);
+    if (checklist.length) {
+      var cl = document.createElement("ul");
+      cl.className = "reminder-card-checklist";
+      checklist.forEach(function (it) {
+        var li = document.createElement("li");
+        li.className =
+          "reminder-card-checklist-item" +
+          (it.done ? " reminder-card-checklist-item--done" : "");
+        li.textContent = (it.done ? "☑ " : "☐ ") + it.text;
+        cl.appendChild(li);
+      });
+      textCol.appendChild(cl);
+    }
+    var meta = document.createElement("div");
+    meta.className = "reminder-meta";
+    if (assignee) {
+      var who = document.createElement("span");
+      who.className = "time-pill";
+      who.textContent = assignee;
+      meta.appendChild(who);
+    }
+    if (whenLabel) {
+      var dateMuted = document.createElement("span");
+      dateMuted.className = "muted small";
+      dateMuted.textContent = whenLabel;
+      meta.appendChild(dateMuted);
+    }
+    textCol.appendChild(meta);
+    row.appendChild(check);
+    row.appendChild(textCol);
+    wrap.appendChild(row);
+
+    wrap.addEventListener("click", openThisTask);
+
+    return wrapWithSwipeDelete(wrap, async function () {
+      await apiFetch("/calendar/tasks/" + encodeURIComponent(String(task.id)), {
+        method: "DELETE",
+      });
+      await loadPostedTasksList();
+      loadActual();
+    });
+  }
+
+  async function loadPostedTasksList() {
+    var listEl = document.getElementById("posted-tasks-list");
+    var emptyEl = document.getElementById("posted-tasks-empty");
+    if (!listEl) return;
+    try {
+      var data = await apiFetch("/calendar/tasks/posted", { method: "GET" });
+      var items = (data && data.items) || [];
+      lastPostedTasksItems = items;
+      listEl.innerHTML = "";
+      items.forEach(function (t) {
+        listEl.appendChild(renderPostedTaskCard(t));
+      });
+      setHidden(emptyEl, items.length > 0);
+      var countEl = document.getElementById("posted-tasks-count");
+      if (countEl) {
+        countEl.textContent =
+          "Поставлено " +
+          items.length +
+          " " +
+          pluralRu(items.length, "задача", "задачи", "задач");
+      }
+    } catch (err) {
+      if (emptyEl) {
+        emptyEl.textContent = (err && err.message) || String(err);
+        setHidden(emptyEl, false);
+      }
+    }
+  }
+
+  function setPostedTasksScreen(open) {
+    var panel = document.getElementById("panel-actual");
+    var sub = document.getElementById("actual-posted-tasks");
+    if (!panel || !sub) return;
+    panel.classList.toggle("panel-actual--posted", !!open);
+    setHidden(sub, !open);
+    if (open) loadPostedTasksList();
+  }
+
+  function isPostedTasksOpen() {
+    var sub = document.getElementById("actual-posted-tasks");
+    return !!(sub && !sub.classList.contains("hidden"));
+  }
+
   async function loadActual() {
-    const errR = document.getElementById("reminders-error");
+    const errP = document.getElementById("posted-tasks-error");
     const errM = document.getElementById("meetings-error");
     var dual = isDesktopLayout();
     var leftIso = meetingsPageDate || todayIsoLocal();
@@ -12760,15 +12936,21 @@
         cached.remData || { items: [] },
         cached.calData || { events: [] },
         cached.calDataNext || null,
-        cached.rangeData || null
+        cached.rangeData || null,
+        cached.postedData || null
       );
     }
 
     var remData = { items: [] };
+    var postedData = { items: [], count: 0 };
     var calData = { events: [], connected: false };
     var calDataNext = null;
     var rangeData = null;
-    var fetches = [apiFetch("/reminders", { method: "GET" })];
+    var fetches = [
+      apiFetch("/reminders", { method: "GET" }),
+      apiFetch("/calendar/tasks/posted", { method: "GET" }),
+    ];
+    var calFetchIndex = 2;
     if (meetingsViewMode === "week" || meetingsViewMode === "month") {
       fetches.push(fetchCalendarRange(range.from, range.to));
     } else {
@@ -12781,31 +12963,40 @@
     if (loadGen !== meetingsLoadGen) return;
 
     var remOk = results[0].status === "fulfilled";
-    var calOk = results[1].status === "fulfilled";
-    var nextOk = !!(results[2] && results[2].status === "fulfilled");
+    var postedOk = results[1].status === "fulfilled";
+    var calOk = results[calFetchIndex].status === "fulfilled";
+    var nextOk = !!(results[calFetchIndex + 1] && results[calFetchIndex + 1].status === "fulfilled");
 
     if (remOk) {
       remData = results[0].value;
-      errR.textContent = "";
-      setHidden(errR, true);
     } else if (cached && cached.remData) {
       remData = cached.remData;
-    } else {
-      var remErr = results[0].reason;
-      errR.textContent = (remErr && remErr.message) || String(remErr || "Ошибка");
-      setHidden(errR, false);
+    }
+
+    if (postedOk) {
+      postedData = results[1].value || postedData;
+      if (errP) {
+        errP.textContent = "";
+        setHidden(errP, true);
+      }
+    } else if (cached && cached.postedData) {
+      postedData = cached.postedData;
+    } else if (errP) {
+      var pErr = results[1].reason;
+      errP.textContent = (pErr && pErr.message) || String(pErr || "Ошибка");
+      setHidden(errP, false);
     }
 
     if (calOk) {
       if (meetingsViewMode === "week" || meetingsViewMode === "month") {
-        rangeData = results[1].value;
+        rangeData = results[calFetchIndex].value;
         lastMeetingsRange = rangeData;
         if (errM) {
           errM.textContent = "";
           setHidden(errM, true);
         }
       } else {
-        calData = results[1].value;
+        calData = results[calFetchIndex].value;
         if (calData && calData.date) {
           meetingsPageDate = calData.date;
         }
@@ -12824,14 +13015,14 @@
         }
       }
     } else if (errM) {
-      var calErr = results[1].reason;
+      var calErr = results[calFetchIndex].reason;
       errM.textContent = (calErr && calErr.message) || String(calErr || "Ошибка");
       setHidden(errM, false);
     }
 
-    if (meetingsViewMode === "day" && dual && results[2]) {
+    if (meetingsViewMode === "day" && dual && results[calFetchIndex + 1]) {
       if (nextOk) {
-        calDataNext = results[2].value;
+        calDataNext = results[calFetchIndex + 1].value;
       } else if (cached && cached.calDataNext) {
         calDataNext = cached.calDataNext;
       } else if (!calDataNext) {
@@ -12843,9 +13034,10 @@
     }
 
     if (loadGen !== meetingsLoadGen) return;
-    paintActual(remData, calData, calDataNext, rangeData);
+    paintActual(remData, calData, calDataNext, rangeData, postedData);
     writeMiniappCache(cacheKind, {
       remData: remOk ? remData : (cached && cached.remData) || remData,
+      postedData: postedOk ? postedData : (cached && cached.postedData) || postedData,
       calData:
         meetingsViewMode === "day" && calOk
           ? calData
@@ -12935,6 +13127,7 @@
 
   function canPerformAppBack() {
     if (isAppSheetModalOpen()) return true;
+    if (isPostedTasksOpen()) return true;
     if (isNoteDiscussionOpen()) return true;
     if (isNoteEditorModalOpen()) return true;
     var detail = document.getElementById("notes-detail");
@@ -12966,6 +13159,10 @@
   function performAppBack() {
     if (isAppSheetModalOpen()) {
       closeModal();
+      return true;
+    }
+    if (isPostedTasksOpen()) {
+      setPostedTasksScreen(false);
       return true;
     }
     if (isNoteDiscussionOpen() && !isDesktopLayout()) {
@@ -15954,6 +16151,24 @@
     var start = tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param;
     if (start) {
       var sm = String(start).match(/^note[_-]?(\d+)$/i);
+      if (sm) return sm[1];
+    }
+    return "";
+  }
+
+  function pendingTaskIdFromLocation() {
+    try {
+      var q = new URLSearchParams(location.search || "");
+      var t = q.get("task") || q.get("t");
+      if (t && /^\d+$/.test(t)) return t;
+    } catch (_) {}
+    var hash = String(location.hash || "").replace(/^#/, "");
+    var hm = hash.match(/(?:^|&)task=(\d+)/) || hash.match(/^task=(\d+)/);
+    if (hm) return hm[1];
+    var tg = window.Telegram && window.Telegram.WebApp;
+    var start = tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param;
+    if (start) {
+      var sm = String(start).match(/^task[_-]?(\d+)$/i);
       if (sm) return sm[1];
     }
     return "";
@@ -24360,6 +24575,46 @@
 
   var noteDeepLinkConsumed = false;
   var chatDeepLinkConsumed = false;
+  var taskDeepLinkConsumed = false;
+
+  async function openPendingTaskFromLocation() {
+    if (taskDeepLinkConsumed) return;
+    var pending = pendingTaskIdFromLocation();
+    if (!pending) return;
+    taskDeepLinkConsumed = true;
+    try {
+      var data = await apiFetch(
+        "/calendar/tasks/" + encodeURIComponent(pending),
+        { method: "GET" }
+      );
+      var task = data && data.task;
+      var ev = (task && task.event) || {};
+      if (task) {
+        setTab("actual");
+        openTaskModal(
+          Object.assign({}, ev, {
+            task_id: task.id,
+            id: "task-" + task.id,
+            summary: task.title || ev.summary,
+            checklist: task.checklist || ev.checklist,
+            assignee: {
+              user_id: task.assignee_user_id,
+              email: task.assignee_email,
+              name: task.assignee_name,
+            },
+            all_day: !!task.all_day,
+          })
+        );
+      }
+    } catch (_) {}
+    try {
+      var u = new URL(location.href);
+      u.searchParams.delete("task");
+      u.searchParams.delete("t");
+      if (/task=/.test(u.hash)) u.hash = "";
+      history.replaceState(null, "", u.pathname + u.search + u.hash);
+    } catch (_) {}
+  }
 
   function openPendingSharedNote(data) {
     if (noteDeepLinkConsumed) return;
@@ -26847,6 +27102,18 @@
         toggleActualCreateMenu();
       });
     }
+    var postedOpen = document.getElementById("posted-tasks-open");
+    if (postedOpen) {
+      postedOpen.addEventListener("click", function () {
+        setPostedTasksScreen(true);
+      });
+    }
+    var postedBack = document.getElementById("posted-tasks-back");
+    if (postedBack) {
+      postedBack.addEventListener("click", function () {
+        setPostedTasksScreen(false);
+      });
+    }
     document.querySelectorAll("#actual-create-menu [data-actual-action]").forEach(function (btn) {
       btn.addEventListener("click", function (e) {
         e.stopPropagation();
@@ -27583,6 +27850,7 @@
     }
 
     setTab("actual", { noAnim: true });
+    openPendingTaskFromLocation();
   }
 
   var bootAppStarted = false;

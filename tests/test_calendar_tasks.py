@@ -220,6 +220,7 @@ def test_push_task_skips_non_owner(tasks_db, monkeypatch):
     out = google_tasks.push_task(22, row)
     assert out == row
     assert called == []
+    # Delegated: even owner does not push to Google Tasks
     owner_called = []
 
     def _none(user_id):
@@ -228,4 +229,14 @@ def test_push_task_skips_non_owner(tasks_db, monkeypatch):
 
     monkeypatch.setattr(google_tasks, "_service", _none)
     google_tasks.push_task(11, row)
+    assert owner_called == []
+
+    personal = store.create_task(
+        11,
+        title="Себе",
+        start_at=datetime(2026, 10, 7, 16, 0, tzinfo=tz),
+        tz=tz,
+    )
+    owner_called.clear()
+    google_tasks.push_task(11, personal)
     assert owner_called == [11]

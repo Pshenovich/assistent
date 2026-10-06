@@ -76,6 +76,7 @@ def _conn() -> sqlite3.Connection:
         "ON calendar_tasks(assignee_user_id, start_at)"
     )
     _ensure_google_event_columns(_CONN)
+    _ensure_all_day_column(_CONN)
     _CONN.commit()
     return _CONN
 
@@ -94,6 +95,14 @@ def _ensure_google_event_columns(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_calendar_tasks_google_event "
         "ON calendar_tasks(owner_user_id, google_event_id)"
     )
+
+
+def _ensure_all_day_column(conn: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(calendar_tasks)")}
+    if "all_day" not in cols:
+        conn.execute(
+            "ALTER TABLE calendar_tasks ADD COLUMN all_day INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 def _now_iso() -> str:
@@ -150,6 +159,7 @@ def _iso(dt: datetime) -> str:
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    keys = row.keys()
     return {
         "id": int(row["id"]),
         "owner_user_id": str(row["owner_user_id"] or ""),
@@ -163,15 +173,38 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "checklist": _normalize_checklist(row["checklist_json"]),
         "google_task_id": str(row["google_task_id"] or ""),
         "google_tasklist_id": str(row["google_tasklist_id"] or ""),
-        "google_event_id": str(row["google_event_id"] or "") if "google_event_id" in row.keys() else "",
+        "google_event_id": str(row["google_event_id"] or "") if "google_event_id" in keys else "",
         "google_calendar_id": str(row["google_calendar_id"] or "")
-        if "google_calendar_id" in row.keys()
+        if "google_calendar_id" in keys
         else "",
+        "all_day": bool(int(row["all_day"] or 0)) if "all_day" in keys else False,
         "note_id": str(row["note_id"] or ""),
         "done": bool(int(row["done"] or 0)),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
+
+
+def task_is_delegated(task: dict[str, Any] | None) -> bool:
+    if not task:
+        return False
+    owner = str(task.get("owner_user_id") or "").strip()
+    assignee = str(task.get("assignee_user_id") or "").strip()
+    return bool(owner and assignee and owner != assignee)
+
+
+def task_visible_in_calendar(task: dict[str, Any] | None, viewer_id: int | str) -> bool:
+    """Делегированные задачи автора не показываем в его календаре — только у исполнителя."""
+    if not task or task.get("done"):
+        return False
+    viewer = _uid(viewer_id)
+    owner = str(task.get("owner_user_id") or "")
+    assignee = str(task.get("assignee_user_id") or "")
+    if not viewer:
+        return False
+    if task_is_delegated(task) and viewer == owner:
+        return False
+    return viewer == owner or viewer == assignee
 
 
 def _default_end(start: datetime) -> datetime:
@@ -271,7 +304,10 @@ def chip_label(task: dict[str, Any], *, tz: ZoneInfo | None = None) -> str:
         "ноя",
         "дек",
     )
-    return f"{start.day} {months[start.month - 1]}, {start.strftime('%H:%M')}"
+    day = f"{start.day} {months[start.month - 1]}"
+    if task.get("all_day"):
+        return day
+    return f"{day}, {start.strftime('%H:%M')}"
 
 
 def task_chip_html(task: dict[str, Any], *, tz: ZoneInfo | None = None) -> str:
@@ -306,6 +342,18 @@ def as_calendar_event(
     end_iso = end.isoformat() if end else str(task.get("end_at") or "")
     start_day = start.date().isoformat() if start else start_iso[:10]
     end_day = end.date().isoformat() if end else start_day
+    all_day = bool(task.get("all_day"))
+    if all_day and start is not None:
+        # Exclusive end.date like Google all-day events.
+        end_exclusive = (start.date() + timedelta(days=1)).isoformat()
+        start_payload: dict[str, Any] = {"date": start_day}
+        end_payload: dict[str, Any] = {"date": end_exclusive}
+        day_end_exclusive = True
+        end_day = end_exclusive
+    else:
+        start_payload = {"dateTime": start_iso}
+        end_payload = {"dateTime": end_iso}
+        day_end_exclusive = False
     owner = str(task.get("owner_user_id") or "")
     viewer = _uid(viewer_id) if viewer_id not in (None, "") else ""
     is_owner = (not viewer) or viewer == owner
@@ -317,11 +365,12 @@ def as_calendar_event(
         "summary": str(task.get("title") or DEFAULT_TITLE),
         "kind": "Задача",
         "entry_type": "task",
-        "start": {"dateTime": start_iso},
-        "end": {"dateTime": end_iso},
+        "all_day": all_day,
+        "start": start_payload,
+        "end": end_payload,
         "start_day": start_day,
         "end_day": end_day,
-        "day_end_exclusive": False,
+        "day_end_exclusive": day_end_exclusive,
         "html_link": "",
         "meet_url": None,
         "description": str(task.get("description") or ""),
@@ -356,15 +405,22 @@ def create_task(
     assignee_name: str = "",
     checklist: list[dict[str, Any]] | None = None,
     note_id: str = "",
+    all_day: bool = False,
     tz: ZoneInfo | None = None,
 ) -> dict[str, Any]:
     uid = _uid(owner_user_id)
     start = start_at if isinstance(start_at, datetime) else _parse_dt(start_at, tz)
     if start is None:
         raise ValueError("Укажите начало задачи")
-    end = end_at if isinstance(end_at, datetime) else _parse_dt(end_at, tz)
-    if end is None or end <= start:
-        end = _default_end(start)
+    if all_day:
+        local_tz = tz or start.tzinfo or timezone.utc
+        day = start.astimezone(local_tz).date()
+        start = datetime.combine(day, time.min, tzinfo=local_tz)
+        end = start + timedelta(days=1)
+    else:
+        end = end_at if isinstance(end_at, datetime) else _parse_dt(end_at, tz)
+        if end is None or end <= start:
+            end = _default_end(start)
     now = _now_iso()
     assignee = _uid(assignee_user_id) if assignee_user_id not in (None, "") else uid
     title_s = _clip(title, MAX_TITLE_LEN) or DEFAULT_TITLE
@@ -374,8 +430,8 @@ def create_task(
             INSERT INTO calendar_tasks (
                 owner_user_id, title, description, start_at, end_at,
                 assignee_user_id, assignee_email, assignee_name,
-                checklist_json, note_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                checklist_json, note_id, all_day, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 uid,
@@ -388,6 +444,7 @@ def create_task(
                 _clip(assignee_name, 120),
                 json.dumps(_normalize_checklist(checklist), ensure_ascii=False),
                 _clip(note_id, 40),
+                1 if all_day else 0,
                 now,
                 now,
             ),
@@ -524,6 +581,26 @@ def list_tasks_for_note(
         return [_row_to_dict(r) for r in cur.fetchall()]
 
 
+def list_posted_tasks(
+    owner_user_id: int | str, *, include_done: bool = False
+) -> list[dict[str, Any]]:
+    """Задачи, которые владелец поставил другим (не себе)."""
+    uid = _uid(owner_user_id)
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            SELECT * FROM calendar_tasks
+            WHERE owner_user_id = ?
+              AND assignee_user_id != ''
+              AND assignee_user_id != owner_user_id
+              AND (? = 1 OR done = 0)
+            ORDER BY start_at ASC, id ASC
+            """,
+            (uid, 1 if include_done else 0),
+        )
+        return [_row_to_dict(r) for r in cur.fetchall()]
+
+
 def list_tasks(owner_user_id: int | str, *, limit: int = 200) -> list[dict[str, Any]]:
     uid = _uid(owner_user_id)
     lim = max(1, min(int(limit or 200), 500))
@@ -554,6 +631,7 @@ def update_task(
     checklist: list[dict[str, Any]] | None = None,
     note_id: str | None = None,
     done: bool | None = None,
+    all_day: bool | None = None,
     google_task_id: str | None = None,
     google_tasklist_id: str | None = None,
     google_event_id: str | None = None,
@@ -580,7 +658,13 @@ def update_task(
     )
     if start is None:
         raise ValueError("Укажите начало задачи")
-    if end is None or end <= start:
+    is_all_day = bool(existing.get("all_day")) if all_day is None else bool(all_day)
+    if is_all_day:
+        local_tz = tz or start.tzinfo or timezone.utc
+        day = start.astimezone(local_tz).date()
+        start = datetime.combine(day, time.min, tzinfo=local_tz)
+        end = start + timedelta(days=1)
+    elif end is None or end <= start:
         end = _default_end(start)
     fields = {
         "title": _clip(title, MAX_TITLE_LEN) or existing["title"]
@@ -606,6 +690,7 @@ def update_task(
         ),
         "note_id": _clip(note_id, 40) if note_id is not None else existing["note_id"],
         "done": 1 if (existing["done"] if done is None else bool(done)) else 0,
+        "all_day": 1 if is_all_day else 0,
         "google_task_id": _clip(google_task_id, 200)
         if google_task_id is not None
         else existing["google_task_id"],
@@ -626,7 +711,7 @@ def update_task(
             UPDATE calendar_tasks SET
                 title = ?, description = ?, start_at = ?, end_at = ?,
                 assignee_user_id = ?, assignee_email = ?, assignee_name = ?,
-                checklist_json = ?, note_id = ?, done = ?,
+                checklist_json = ?, note_id = ?, done = ?, all_day = ?,
                 google_task_id = ?, google_tasklist_id = ?,
                 google_event_id = ?, google_calendar_id = ?, updated_at = ?
             WHERE id = ?
@@ -642,6 +727,7 @@ def update_task(
                 fields["checklist_json"],
                 fields["note_id"],
                 fields["done"],
+                fields["all_day"],
                 fields["google_task_id"],
                 fields["google_tasklist_id"],
                 fields["google_event_id"],

@@ -43,7 +43,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261006-cal-colorrow" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261006-posted-tasks" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -71,19 +71,33 @@
       <section id="panel-actual" class="panel" role="tabpanel">
         <div id="actual-hero" class="hero-card"></div>
         <div class="section">
-          <div class="section-head-row">
-            <span class="section-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-              </svg>
-            </span>
-            <h2 class="section-head-inline">Напоминания</h2>
-            <span id="reminders-badge" class="pill-badge hidden">0</span>
+          <button type="button" class="expenses-card posted-tasks-card" id="posted-tasks-open" aria-label="Поставленные задачи">
+            <div class="expenses-card-inner">
+              <div class="expenses-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9 11l3 3L22 4" />
+                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                </svg>
+              </div>
+              <div>
+                <p class="expenses-label">Поставленные задачи</p>
+                <p class="expenses-total contacts-card-sub" id="posted-tasks-count">Поставлено 0 задач</p>
+              </div>
+            </div>
+            <span class="chevron">›</span>
+          </button>
+          <p id="posted-tasks-error" class="error hidden"></p>
+        </div>
+        <div id="actual-posted-tasks" class="actual-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="posted-tasks-back">← Назад</button>
+            <h2 class="detail-title">Поставленные задачи</h2>
+            <span class="detail-toolbar-spacer" aria-hidden="true"></span>
           </div>
-          <div id="reminders-list" class="stack"></div>
-          <p id="reminders-empty" class="muted empty-hint hidden">Напоминаний нет</p>
-          <p id="reminders-error" class="error hidden"></p>
+          <div class="subscreen-body">
+            <div id="posted-tasks-list" class="stack"></div>
+            <p id="posted-tasks-empty" class="muted empty-hint hidden">Пока нет поставленных задач</p>
+          </div>
         </div>
         <div class="section">
           <div class="meetings-head">
@@ -1478,6 +1492,6 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/app.js?v=20261006-cal-colorrow" defer></script>
+  <script src="/webapp/app.js?v=20261006-posted-tasks" defer></script>
 </body>
 </html>

@@ -18,6 +18,7 @@ from assistant.integrations.openrouter_client import (
 Skill = Literal[
     "calendar",
     "reminder",
+    "assign_task",
     "todoist_note",
     "note_search",
     "transcribe_search",
@@ -86,10 +87,11 @@ def _min_confidence() -> float:
 INTENT_ROUTER_SYSTEM = """Ты классификатор намерений пользователя Telegram-бота-ассистента.
 Верни ТОЛЬКО JSON: skill, sub_intent, confidence, body, reason.
 
-skill (одно значение): calendar | reminder | todoist_note | note_search | transcribe_search | transcribe | summary_search | summary | zoom_record | journal_qa | knowledge_qa | bitrix | ask | none.
+skill (одно значение): calendar | reminder | assign_task | todoist_note | note_search | transcribe_search | transcribe | summary_search | summary | zoom_record | journal_qa | knowledge_qa | bitrix | ask | none.
 
 Правила (русские формулировки и синонимы; смысл важнее точной орфографии и падежа):
 - zoom_record: запись Zoom-встречи по ссылке join (zoom.us/j/…), «запиши встречу» + ссылка, опечатки (запипши) — если есть ссылка на встречу, это запись, не создание
+- assign_task: поставить Leo-задачу другому человеку — «поставь задачу Ульяне…», «закинь Артему в задаче…», «передай Андрею задачу…» (НЕ битрикс, НЕ личное напоминание)
 - reminder: напомни, напоминание, будильник, «не забудь», «уведоми в …»
 - calendar: встреча/встрече/встречу, созвон, календарь, слоты, «поставь встречу на 12 сегодня», перенеси/передвинь/отмени встречу, «что у меня завтра», опечатки — всё равно calendar если по смыслу про календарь
   - sub_intent для calendar: create | update | delete | free_slots | free (обзор дня/встреч) | zoom | zoom_update | zoom_delete | telemost | telemost_update | telemost_delete | contacts
@@ -121,6 +123,7 @@ def _valid_skill(s: str) -> Skill:
     skills = {
         "calendar",
         "reminder",
+        "assign_task",
         "todoist_note",
         "note_search",
         "transcribe_search",

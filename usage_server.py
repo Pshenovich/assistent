@@ -2485,6 +2485,7 @@ class _MiniappCalendarTaskBody(BaseModel):
     checklist: Optional[list[dict[str, Any]]] = None
     note_id: Optional[str] = None
     done: Optional[bool] = None
+    all_day: Optional[bool] = None
     text: Optional[str] = None
 
 
@@ -4075,7 +4076,14 @@ def _leo_task_events(
         from assistant.stores import calendar_tasks as calendar_tasks_store
 
         rows = calendar_tasks_store.list_tasks_in_window(uid, start_dt, end_dt)
-        return [calendar_tasks_store.as_calendar_event(r, tz=tz, viewer_id=uid) for r in rows]
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            if not calendar_tasks_store.task_visible_in_calendar(r, uid):
+                continue
+            out.append(
+                calendar_tasks_store.as_calendar_event(r, tz=tz, viewer_id=uid)
+            )
+        return out
     except Exception as e:
         print(f"[miniapp_calendar] tasks_list err={e!r}")
         return []
@@ -4403,6 +4411,8 @@ def _ensure_task_calendar_events(
     for row in calendar_tasks_store.list_tasks_in_window(uid, start_dt, end_dt):
         if str(row.get("owner_user_id") or "") != str(uid):
             continue
+        if calendar_tasks_store.task_is_delegated(row):
+            continue
         if row.get("done") or str(row.get("google_task_id") or "").strip():
             continue
         try:
@@ -4441,6 +4451,20 @@ def _reconcile_gcal_task_duplicates(uid: int, start_dt: datetime, end_dt: dateti
             print(f"[calendar_tasks] reconcile id={row.get('id')} err={e!r}")
 
 
+def _clear_task_google_ids(uid: int, task: dict[str, Any]) -> dict[str, Any]:
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    cleared = calendar_tasks_store.update_task(
+        uid,
+        task["id"],
+        google_task_id="",
+        google_tasklist_id="",
+        google_event_id="",
+        google_calendar_id="",
+    )
+    return cleared or task
+
+
 def _sync_task_google(uid: int, task: dict[str, Any] | None, action: str) -> dict[str, Any] | None:
     if not task:
         return task
@@ -4453,6 +4477,21 @@ def _sync_task_google(uid: int, task: dict[str, Any] | None, action: str) -> dic
         if action == "delete":
             calendar_svc.delete_task_event(owner, task)
             google_tasks.delete_remote(owner, task)
+            return task
+        if calendar_tasks_store.task_is_delegated(task):
+            # Делегированные — только Leo; снять старый Google-синк если был.
+            if str(task.get("google_task_id") or "").strip() or str(
+                task.get("google_event_id") or ""
+            ).strip():
+                try:
+                    calendar_svc.delete_task_event(owner, task)
+                except Exception:
+                    pass
+                try:
+                    google_tasks.delete_remote(owner, task)
+                except Exception:
+                    pass
+                return _clear_task_google_ids(owner, task)
             return task
         if owner != int(uid):
             return task
@@ -5003,6 +5042,33 @@ def _task_owner_uid(task: dict[str, Any] | None, fallback: int) -> int:
         return int(fallback)
 
 
+def task_webapp_url(task_id: int | str) -> str:
+    from assistant.lib.task_notify import task_webapp_url as _url
+
+    return _url(task_id)
+
+
+def task_title_link_html(title: str, task_id: int | str) -> str:
+    from assistant.lib.task_notify import task_title_link_html as _link
+
+    return _link(title, task_id)
+
+
+def _notify_task_assignee(
+    *,
+    assignee_user_id: int | str,
+    task: dict[str, Any],
+    assigner_name: str,
+) -> None:
+    from assistant.lib.task_notify import notify_task_assignee
+
+    notify_task_assignee(
+        assignee_user_id=assignee_user_id,
+        task=task,
+        assigner_name=assigner_name,
+    )
+
+
 def _resolve_calendar_task_assignee(
     principal: "_MiniappPrincipal",
     body: "_MiniappCalendarTaskBody",
@@ -5029,6 +5095,20 @@ def _resolve_calendar_task_assignee(
         return str(int(found))
     except ValueError:
         return raw
+
+
+@miniapp_router.get("/calendar/tasks/posted")
+async def miniapp_calendar_tasks_posted(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    tz = _tz_for(uid)
+    rows = await run_in_threadpool(calendar_tasks_store.list_posted_tasks, uid)
+    items = [_task_api(r, tz=tz, viewer_id=uid) for r in rows]
+    return {"ok": True, "items": items, "count": len(items)}
 
 
 @miniapp_router.get("/calendar/tasks")
@@ -5176,13 +5256,24 @@ async def miniapp_calendar_tasks_create(
                 assignee_name=body.assignee_name or _principal_display_name(principal),
                 checklist=body.checklist,
                 note_id=body.note_id or "",
+                all_day=bool(body.all_day),
                 tz=tz,
             )
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     synced = await run_in_threadpool(_sync_task_google, uid, row, "create")
-    return {"ok": True, "task": _task_api(synced or row, tz=tz, viewer_id=uid)}
+    out = synced or row
+    if calendar_tasks_store.task_is_delegated(out):
+        await run_in_threadpool(
+            partial(
+                _notify_task_assignee,
+                assignee_user_id=out.get("assignee_user_id") or "",
+                task=out,
+                assigner_name=_principal_display_name(principal),
+            )
+        )
+    return {"ok": True, "task": _task_api(out, tz=tz, viewer_id=uid)}
 
 
 @miniapp_router.patch("/calendar/tasks/{task_id}")
@@ -5196,6 +5287,10 @@ async def miniapp_calendar_tasks_patch(
 
     uid = int(principal.telegram_user_id)
     tz = _tz_for(uid)
+    existing = await run_in_threadpool(calendar_tasks_store.get_task_for_user, uid, task_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    prev_assignee = str(existing.get("assignee_user_id") or "")
     assignee_uid = None
     if body.assignee_user_id is not None or body.assignee_email is not None:
         assignee_uid = _resolve_calendar_task_assignee(principal, body) or None
@@ -5215,6 +5310,7 @@ async def miniapp_calendar_tasks_patch(
                 checklist=body.checklist,
                 note_id=body.note_id,
                 done=body.done,
+                all_day=body.all_day,
                 tz=tz,
             )
         )
@@ -5223,7 +5319,22 @@ async def miniapp_calendar_tasks_patch(
     if not row:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     synced = await run_in_threadpool(_sync_task_google, uid, row, "update")
-    return {"ok": True, "task": _task_api(synced or row, tz=tz, viewer_id=uid)}
+    out = synced or row
+    new_assignee = str(out.get("assignee_user_id") or "")
+    if (
+        calendar_tasks_store.task_is_delegated(out)
+        and new_assignee
+        and new_assignee != prev_assignee
+    ):
+        await run_in_threadpool(
+            partial(
+                _notify_task_assignee,
+                assignee_user_id=new_assignee,
+                task=out,
+                assigner_name=_principal_display_name(principal),
+            )
+        )
+    return {"ok": True, "task": _task_api(out, tz=tz, viewer_id=uid)}
 
 
 @miniapp_router.delete("/calendar/tasks/{task_id}")
