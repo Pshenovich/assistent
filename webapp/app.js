@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261006-notes-dedupe";
+  var WEBAPP_BUILD = "20261006-cal-noscroll";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -2499,17 +2499,8 @@
       requestAnimationFrame(function () {
         scroller.scrollTop = savedScroll;
       });
-    } else if (showNow && scrollKey !== timelineScrolledKey) {
-      timelineScrolledKey = scrollKey;
-      requestAnimationFrame(function () {
-        var nowEl = listM.querySelector(".day-timeline-now");
-        if (nowEl && nowEl.scrollIntoView) {
-          nowEl.scrollIntoView({ block: "center", inline: "nearest" });
-        }
-      });
-    } else {
-      timelineScrolledKey = scrollKey;
     }
+    timelineScrolledKey = scrollKey;
   }
 
   async function loadMeetingsInto(ui, dateIso) {
@@ -12707,7 +12698,6 @@
     const hero = document.getElementById("actual-hero");
     const errP = document.getElementById("posted-tasks-error");
     const errM = document.getElementById("meetings-error");
-    const countEl = document.getElementById("posted-tasks-count");
 
     if (errP) {
       errP.textContent = "";
@@ -12730,13 +12720,6 @@
         ? postedData.count
         : postedItems.length;
     lastPostedTasksItems = postedItems;
-    if (countEl) {
-      countEl.textContent =
-        "Поставлено " +
-        postedCount +
-        " " +
-        pluralRu(postedCount, "задача", "задачи", "задач");
-    }
     var meetingsCount = 0;
     if (meetingsViewMode === "week" || meetingsViewMode === "month") {
       meetingsCount = ((rangeData && rangeData.events) || []).filter(function (ev) {
@@ -12759,12 +12742,21 @@
       "</p>" +
       '<h1 class="hero-title">Добрый день 👋</h1>' +
       '<div class="hero-stats">' +
-      '<div class="hero-stat"><p class="hero-stat-label">Поставлено</p><p class="hero-stat-value">' +
+      '<button type="button" class="hero-stat hero-stat--posted" id="posted-tasks-open" aria-label="Поставленные задачи">' +
+      '<p class="hero-stat-label">Поставлено</p>' +
+      '<p class="hero-stat-value" id="posted-tasks-count">' +
       postedCount +
-      "</p></div>" +
-      '<div class="hero-stat"><p class="hero-stat-label">Встреч</p><p class="hero-stat-value">' +
+      "</p></button>" +
+      '<div class="hero-stat hero-stat--meetings"><p class="hero-stat-label">Встреч</p><p class="hero-stat-value">' +
       meetingsCount +
       "</p></div></div></div>";
+
+    var postedOpen = document.getElementById("posted-tasks-open");
+    if (postedOpen) {
+      postedOpen.addEventListener("click", function () {
+        setPostedTasksScreen(true);
+      });
+    }
 
     lastRemindersItems = active;
     if (meetingsViewMode === "week") {
@@ -12925,11 +12917,7 @@
       setHidden(emptyEl, items.length > 0);
       var countEl = document.getElementById("posted-tasks-count");
       if (countEl) {
-        countEl.textContent =
-          "Поставлено " +
-          items.length +
-          " " +
-          pluralRu(items.length, "задача", "задачи", "задач");
+        countEl.textContent = String(items.length);
       }
     } catch (err) {
       if (emptyEl) {
@@ -27195,7 +27183,8 @@
       });
     }
     var postedOpen = document.getElementById("posted-tasks-open");
-    if (postedOpen) {
+    if (postedOpen && !postedOpen.dataset.bound) {
+      postedOpen.dataset.bound = "1";
       postedOpen.addEventListener("click", function () {
         setPostedTasksScreen(true);
       });

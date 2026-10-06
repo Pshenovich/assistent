@@ -251,6 +251,11 @@ async def try_continue_bitrix(
     text = (msg.text or msg.caption or "").strip()
     if not text:
         return False
+    from assistant.skills.assign_task import is_assign_task_request
+
+    # Leo-постановка задачи контакту — не продолжение диалога Битрикс.
+    if is_assign_task_request(text):
+        return False
     user = update.effective_user
     if not user or not has_mcp_access(int(user.id)):
         return False
@@ -296,6 +301,24 @@ async def handle(
     msg = update.message
     user = update.effective_user
     if not msg or not user:
+        return
+
+    from assistant.skills.assign_task import is_assign_task_request
+    from assistant.skills import assign_task as assign_task_skill
+
+    # Страховка: «поставь Ульяне задачу…» никогда не уходит в Битрикс.
+    question_preview = text or ""
+    if is_assign_task_request(question_preview):
+        await assign_task_skill.handle(update, context, question_preview)
+        return
+    low = question_preview.lower()
+    if (
+        re.search(r"(?i)\b(поставь|закинь|передай|назначь|создай)\w*\b", question_preview)
+        and "задач" in low
+        and "битрикс" not in low
+        and "bitrix" not in low
+    ):
+        await assign_task_skill.handle(update, context, question_preview)
         return
 
     uid = int(user.id)

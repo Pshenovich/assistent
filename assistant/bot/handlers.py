@@ -29,6 +29,7 @@ from assistant.lib.urls import extract_urls
 from assistant.nlu.dispatch import RouteExtras, route_text
 from assistant.skills import calendar as calendar_skill
 from assistant.skills import reminders as reminders_skill
+from assistant.skills import assign_task as assign_task_skill
 from assistant.skills import telemost as telemost_skill
 from assistant.skills import zoom as zoom_skill
 from assistant.lib.webapp_public import webapp_entry_url
@@ -328,7 +329,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         urls=extract_urls(text),
     )
     if msg.voice and not text:
-        await transcribe_skill.handle_voice(update, context)
+        # Голос обрабатывает MessageHandler(filters.VOICE) — не дублируем.
         return
     if text:
         from assistant.lib.telegram_status import maybe_post_early_work_status
@@ -396,6 +397,12 @@ def register_handlers(app: Application) -> None:
     )
     app.add_handler(
         CallbackQueryHandler(
+            assign_task_skill.handle_callback,
+            pattern=r"^tsk:",
+        )
+    )
+    app.add_handler(
+        CallbackQueryHandler(
             journal_pdf_skill.handle_callback,
             pattern=r"^jmpdf:",
         )
@@ -407,9 +414,16 @@ def register_handlers(app: Application) -> None:
             transcribe_skill.handle_document,
         )
     )
+    # Voice с автоподписью не должен второй раз уходить в handle_message.
     app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND & ~filters.VOICE,
+            handle_message,
+        )
     )
     app.add_handler(
-        MessageHandler(filters.CAPTION & ~filters.COMMAND, handle_message)
+        MessageHandler(
+            filters.CAPTION & ~filters.COMMAND & ~filters.VOICE,
+            handle_message,
+        )
     )

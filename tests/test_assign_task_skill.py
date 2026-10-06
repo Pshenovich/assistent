@@ -22,6 +22,8 @@ from assistant.skills.assign_task import (
         ("Лев, поставь Ульяне задачу собрать отчёт", True),
         ("закинь Артему в задаче собрать отчет по выполненным работам", True),
         ("передай Андрею задачу посчитать метрики по продукту", True),
+        ("создай задачу Ульяне протестировать веб приложение", True),
+        ("поставь Ульяне на сегодня сделать презентацию", True),
         ("поставь встречу с Андреем завтра", False),
         ("создай задачу в битрикс для Ивана", False),
         ("напомни купить молоко", False),
@@ -29,6 +31,22 @@ from assistant.skills.assign_task import (
 )
 def test_is_assign_task_request(text, ok):
     assert is_assign_task_request(text) is ok
+
+
+def test_long_text_becomes_description():
+    from assistant.skills.assign_task import resolve_title_and_description, word_count
+
+    short = "Сделать отчёт"
+    title, desc = resolve_title_and_description(short)
+    assert title.startswith("С")
+    assert desc == ""
+
+    long = "протестировать веб приложение на предмет ошибок и багов"
+    assert word_count(long) > 5
+    title2, desc2 = resolve_title_and_description(long)
+    assert desc2 == long
+    assert word_count(title2) <= 8
+    assert title2[0].isupper()
 
 
 def test_parse_examples():
@@ -65,6 +83,20 @@ def test_parse_examples():
     assert "задач" not in d["title"].lower()
 
 
+def test_capitalize_and_urgency():
+    from assistant.skills.assign_task import (
+        apply_urgency_emoji,
+        capitalize_title,
+        strip_urgency_prefix,
+    )
+
+    assert capitalize_title("тестирование веб-приложения") == "Тестирование веб-приложения"
+    assert capitalize_title("ABC") == "ABC"
+    assert strip_urgency_prefix("🚨 Тест") == "Тест"
+    assert apply_urgency_emoji("тест", "❗️") == "❗️ тест"
+    assert apply_urgency_emoji("🚨 старое", "😴") == "😴 старое"
+
+
 def test_bitrix_does_not_steal_assign():
     from assistant.nlu.regex import parse_bitrix_intent, regex_route
 
@@ -72,6 +104,11 @@ def test_bitrix_does_not_steal_assign():
     assert parse_bitrix_intent(text) is None
     r = regex_route(text)
     assert r is not None and r.skill == "assign_task"
+
+    text2 = "создай задачу Ульяне протестировать веб приложение полностью"
+    assert parse_bitrix_intent(text2) is None
+    r2 = regex_route(text2)
+    assert r2 is not None and r2.skill == "assign_task"
 
 
 @pytest.fixture()

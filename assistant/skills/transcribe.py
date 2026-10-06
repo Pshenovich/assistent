@@ -295,12 +295,10 @@ async def _transcribe_and_route(update: Update, context: ContextTypes.DEFAULT_TY
     msg = update.message
     if not msg or not msg.voice:
         return
-    status = await post_status(msg, "Слушаю голосовое…", context=context)
+    status = None
     try:
+        status = await post_status(msg, "Скачиваю аудио…", context=context)
         voice = msg.voice
-        status = await set_status(
-            status, "Скачиваю аудио…", anchor=msg, context=context
-        )
         audio, _ = await download_telegram_file(
             context.bot,
             voice.file_id,
@@ -331,7 +329,8 @@ async def _transcribe_and_route(update: Update, context: ContextTypes.DEFAULT_TY
             chat_type="group" if is_group else "private",
         )
         try:
-            await status.delete()
+            if status:
+                await status.delete()
         except Exception:
             pass
         if not handled and not is_group:
@@ -347,15 +346,23 @@ async def _transcribe_and_route(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from assistant.bot.access_gate import ensure_access
+    from assistant.lib.voice_once import claim_voice_once
 
     if not should_process_message(update, context):
         return
     if not await ensure_access(update, context):
         return
     msg = update.message
-    if not msg:
+    if not msg or not msg.voice:
         return
     if is_forwarded(msg):
+        return
+    claimed = await claim_voice_once(
+        chat_id=msg.chat_id,
+        message_id=msg.message_id,
+        update_id=getattr(update, "update_id", None),
+    )
+    if not claimed:
         return
     chat = update.effective_chat
     if chat and chat.type in ("group", "supergroup"):

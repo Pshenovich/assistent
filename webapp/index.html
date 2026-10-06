@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261006-notes-dedupe">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261006-cal-noscroll">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -43,7 +43,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261006-notes-dedupe" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261006-cal-noscroll" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -70,24 +70,7 @@
       <!-- Актуальное -->
       <section id="panel-actual" class="panel" role="tabpanel">
         <div id="actual-hero" class="hero-card"></div>
-        <div class="section">
-          <button type="button" class="expenses-card posted-tasks-card" id="posted-tasks-open" aria-label="Поставленные задачи">
-            <div class="expenses-card-inner">
-              <div class="expenses-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M9 11l3 3L22 4" />
-                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-                </svg>
-              </div>
-              <div>
-                <p class="expenses-label">Поставленные задачи</p>
-                <p class="expenses-total contacts-card-sub" id="posted-tasks-count">Поставлено 0 задач</p>
-              </div>
-            </div>
-            <span class="chevron">›</span>
-          </button>
-          <p id="posted-tasks-error" class="error hidden"></p>
-        </div>
+        <p id="posted-tasks-error" class="error hidden"></p>
         <div id="actual-posted-tasks" class="actual-subscreen hidden">
           <div class="detail-toolbar detail-toolbar--subscreen">
             <button type="button" class="btn-text" id="posted-tasks-back">← Назад</button>
@@ -1492,6 +1475,6 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/app.js?v=20261006-notes-dedupe" defer></script>
+  <script src="/webapp/app.js?v=20261006-cal-noscroll" defer></script>
 </body>
 </html>

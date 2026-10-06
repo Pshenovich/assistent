@@ -36,6 +36,12 @@ def parse_bitrix_intent(text: str) -> str | None:
             return None
     except Exception:
         pass
+    # Страховка: «поставь/создай задачу …» без явного «битрикс» не уводим в Bitrix.
+    if re.search(r"\b(поставь|закинь|передай|назначь|создай)\w*\b", s) and re.search(
+        r"\bзадач", s
+    ):
+        if not re.search(r"\b(битрикс|bitrix24|bitrix)\b", s):
+            return None
     if re.search(r"\b(битрикс|bitrix24|bitrix)\b", s):
         return (text or "").strip()
     if re.search(r"\bсделк", s):

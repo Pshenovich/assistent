@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -272,6 +273,26 @@ async def route_text(
         has_url=bool(urls),
         has_attachment=has_attachment,
     )
+    # LLM иногда тянет «поставь … задачу» в bitrix — возвращаем в Leo.
+    if route is not None and route.skill == "bitrix":
+        from assistant.skills.assign_task import is_assign_task_request
+        from assistant.nlu.intent_router import Route
+
+        cleaned_l = cleaned.lower()
+        leo_like = is_assign_task_request(cleaned) or (
+            re.search(r"(?i)\b(поставь|закинь|передай|назначь|создай)\w*\b", cleaned)
+            and "задач" in cleaned_l
+            and "битрикс" not in cleaned_l
+            and "bitrix" not in cleaned_l
+        )
+        if leo_like:
+            route = Route(
+                skill="assign_task",
+                sub_intent="assign",
+                body=cleaned,
+                confidence=1.0,
+                reason="assign_task_overrides_bitrix",
+            )
     uid = int(update.effective_user.id) if update.effective_user else 0
     if route is None:
         if replied and cleaned:
