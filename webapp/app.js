@@ -1429,12 +1429,24 @@
   }
 
   function meetingsEmptyMessage(calData) {
+    if (calData && calData.load_error) {
+      return String(calData.load_error);
+    }
     if (calData && calData.connected === false) {
       var err = (calData.error || "").trim();
       if (err) return err;
       return "Подключите Google Calendar в боте: /calendar_auth";
     }
     return "Нет встреч на этот день";
+  }
+
+  function normalizeCachedCalData(cal) {
+    // Старые клиенты писали {connected:false} при таймауте без error — это не «отключён Google».
+    if (!cal || typeof cal !== "object") return cal;
+    if (cal.connected === false && !(cal.error || "").trim()) {
+      return Object.assign({}, cal, { connected: true });
+    }
+    return cal;
   }
 
   async function fetchCalendarDay(dateIso) {
@@ -2294,8 +2306,9 @@
     });
     var dayReminders = calDate ? remindersForDate(reminders, calDate) : [];
     var disconnected = calData && calData.connected === false;
+    var loadFailed = !!(calData && calData.load_error);
     setHidden(emptyM, true);
-    if (disconnected) {
+    if (disconnected || loadFailed) {
       var banner = document.createElement("p");
       banner.className = "muted empty-hint day-timeline-connect";
       banner.textContent = meetingsEmptyMessage(calData);
@@ -2506,11 +2519,20 @@
     try {
       calData = await fetchCalendarDay(dateIso);
     } catch (e) {
+      var msg = (e && e.message) || String(e) || "Не удалось загрузить календарь";
       if (errM) {
-        errM.textContent = e.message || String(e);
+        errM.textContent = msg;
         setHidden(errM, false);
       }
-      calData = { events: [], connected: false };
+      // Не показываем «подключите Google» при сетевой ошибке/таймауте.
+      calData = lastMeetingsLeft && lastMeetingsLeft.date === dateIso
+        ? lastMeetingsLeft
+        : {
+            events: [],
+            date: dateIso,
+            connected: true,
+            load_error: msg,
+          };
     }
     if (calData && calData.date && ui.trackDate) {
       meetingsPageDate = calData.date;
@@ -12943,7 +12965,8 @@
 
     var remData = { items: [] };
     var postedData = { items: [], count: 0 };
-    var calData = { events: [], connected: false };
+    // Пока нет ответа — не считаем календарь «не подключённым» (иначе мигает /calendar_auth).
+    var calData = { events: [], connected: true };
     var calDataNext = null;
     var rangeData = null;
     var fetches = [
@@ -13014,10 +13037,30 @@
           calDataNext = cached.calDataNext || lastMeetingsRight || null;
         }
       }
-    } else if (errM) {
+    } else {
       var calErr = results[calFetchIndex].reason;
-      errM.textContent = (calErr && calErr.message) || String(calErr || "Ошибка");
-      setHidden(errM, false);
+      var calErrMsg =
+        (calErr && calErr.message) || String(calErr || "Не удалось загрузить календарь");
+      if (errM) {
+        errM.textContent = calErrMsg;
+        setHidden(errM, false);
+      }
+      if (meetingsViewMode === "week" || meetingsViewMode === "month") {
+        rangeData = {
+          events: [],
+          connected: true,
+          from: range.from,
+          to: range.to,
+          load_error: calErrMsg,
+        };
+      } else {
+        calData = {
+          events: [],
+          date: leftIso,
+          connected: true,
+          load_error: calErrMsg,
+        };
+      }
     }
 
     if (meetingsViewMode === "day" && dual && results[calFetchIndex + 1]) {

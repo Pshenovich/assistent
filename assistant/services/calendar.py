@@ -8,7 +8,6 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -41,12 +40,15 @@ def _tz_name_for(user_id: int) -> str:
 
 
 def _service(user_id: int):
-    path = google_calendar_oauth.user_token_path(user_id)
-    if not path.is_file():
+    creds = google_calendar_oauth.load_user_credentials(user_id)
+    if creds is None:
         raise RuntimeError(
             "Календарь не подключён. Выполните /calendar_auth в боте."
         )
-    creds = Credentials.from_authorized_user_file(str(path))
+    if not getattr(creds, "valid", False) and not getattr(creds, "refresh_token", None):
+        raise RuntimeError(
+            "Сессия Google истекла. Выполните /calendar_auth в боте."
+        )
     return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
 

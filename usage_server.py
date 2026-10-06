@@ -9784,7 +9784,24 @@ if _webapp_static_dir.is_dir():
         return RedirectResponse(url=target, status_code=307)
 
     @app.get("/webapp/", include_in_schema=False)
-    async def webapp_index_route() -> FileResponse:
+    async def webapp_index_route(request: Request):
+        from urllib.parse import urlencode
+
+        from assistant.lib.webapp_public import WEBAPP_BUILD_ID
+
+        # Telegram/браузер кэшируют миниапп по ?b= — старый b оставлял битую оболочку.
+        current = (WEBAPP_BUILD_ID or "").strip()
+        got = (request.query_params.get("b") or "").strip()
+        if current and got and got != current:
+            params: list[tuple[str, str]] = [("b", current)]
+            for key, val in request.query_params.multi_items():
+                if key == "b":
+                    continue
+                params.append((key, val))
+            return RedirectResponse(
+                url="/webapp/?" + urlencode(params),
+                status_code=302,
+            )
         return FileResponse(
             _webapp_index_path,
             media_type="text/html",

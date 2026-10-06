@@ -52,6 +52,27 @@ def user_token_path(telegram_user_id: int) -> Path:
     return _tokens_dir() / f"{int(telegram_user_id)}.json"
 
 
+def load_user_credentials(telegram_user_id: int):
+    """Читает токен пользователя; при необходимости обновляет access token и сохраняет."""
+    from google.auth.transport.requests import Request as GoogleAuthRequest
+    from google.oauth2.credentials import Credentials
+
+    path = user_token_path(int(telegram_user_id))
+    if not path.is_file():
+        return None
+    creds = Credentials.from_authorized_user_file(str(path), scopes=SCOPES)
+    if creds.valid:
+        return creds
+    if not creds.refresh_token:
+        return creds
+    try:
+        creds.refresh(GoogleAuthRequest())
+        path.write_text(creds.to_json(), encoding="utf-8")
+    except Exception as e:
+        print(f"[google_calendar_oauth] refresh uid={int(telegram_user_id)} err={e!r}")
+    return creds
+
+
 def web_client_secrets_path() -> Path:
     raw = os.getenv("GOOGLE_WEB_CLIENT_SECRETS_PATH", "").strip()
     if not raw:

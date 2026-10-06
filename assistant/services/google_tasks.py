@@ -31,14 +31,11 @@ def _reset_pull_state_for_tests() -> None:
 
 
 def _creds(user_id: int):
-    from google.oauth2.credentials import Credentials
-
     from assistant.integrations import google_calendar_oauth
 
-    path = google_calendar_oauth.user_token_path(int(user_id))
-    if not path.is_file():
+    creds = google_calendar_oauth.load_user_credentials(int(user_id))
+    if creds is None:
         return None
-    creds = Credentials.from_authorized_user_file(str(path))
     scopes = {str(s).strip() for s in (creds.scopes or []) if str(s).strip()}
     # Пустой список scopes в JSON не значит, что Tasks нет — пробуем API.
     if scopes and TASKS_SCOPE not in scopes:
