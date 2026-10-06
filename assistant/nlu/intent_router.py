@@ -91,7 +91,7 @@ skill (одно значение): calendar | reminder | assign_task | todoist_n
 
 Правила (русские формулировки и синонимы; смысл важнее точной орфографии и падежа):
 - zoom_record: запись Zoom-встречи по ссылке join (zoom.us/j/…), «запиши встречу» + ссылка, опечатки (запипши) — если есть ссылка на встречу, это запись, не создание
-- assign_task: поставить Leo-задачу другому человеку — «поставь задачу Ульяне…», «закинь Артему в задаче…», «передай Андрею задачу…» (НЕ битрикс, НЕ личное напоминание)
+- assign_task: поставить Leo-задачу другому человеку по имени из контактов — «поставь задачу Ульяне…», «поставь Ульяне на сегодня задачу…», «закинь Артему в задаче…», «передай Андрею задачу…». Если есть имя человека и нет слова «битрикс» — это assign_task, НЕ bitrix и НЕ calendar.
 - reminder: напомни, напоминание, будильник, «не забудь», «уведоми в …»
 - calendar: встреча/встрече/встречу, созвон, календарь, слоты, «поставь встречу на 12 сегодня», перенеси/передвинь/отмени встречу, «что у меня завтра», опечатки — всё равно calendar если по смыслу про календарь
   - sub_intent для calendar: create | update | delete | free_slots | free (обзор дня/встреч) | zoom | zoom_update | zoom_delete | telemost | telemost_update | telemost_delete | contacts
@@ -249,6 +249,10 @@ def resolve_route(regex: Route | None, llm: Route | None) -> Route | None:
         return None
     if regex is not None and regex.skill == "zoom_record":
         log_route_resolution(regex, llm, regex, reason="zoom_record_regex_wins")
+        return regex
+    if regex is not None and regex.skill == "assign_task":
+        # Не отдаём в Bitrix/calendar LLM: «поставь Ульяне задачу…»
+        log_route_resolution(regex, llm, regex, reason="assign_task_regex_wins")
         return regex
     if regex is None:
         chosen = llm if llm and llm.confidence >= min_c else None

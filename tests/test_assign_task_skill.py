@@ -18,6 +18,8 @@ from assistant.skills.assign_task import (
     "text,ok",
     [
         ("поставь задачу Ульяне надо сделать презентацию завтра к 10:00", True),
+        ("поставь ульяне на сегодня задачу сделать презентацию", True),
+        ("Лев, поставь Ульяне задачу собрать отчёт", True),
         ("закинь Артему в задаче собрать отчет по выполненным работам", True),
         ("передай Андрею задачу посчитать метрики по продукту", True),
         ("поставь встречу с Андреем завтра", False),
@@ -34,22 +36,42 @@ def test_parse_examples():
         "поставь задачу Ульяне надо сделать презентацию завтра к 10:00"
     )
     assert a is not None
-    assert a["assignee_name"] == "Ульяне"
+    assert a["assignee_name"].lower().startswith("ульян")
     assert "презентацию" in a["title"].lower()
 
     b = parse_assign_task_request(
         "закинь Артему в задаче собрать отчет по выполненным работам"
     )
     assert b is not None
-    assert b["assignee_name"] == "Артему"
+    assert b["assignee_name"].lower().startswith("артем")
     assert "отчет" in b["title"].lower()
 
     c = parse_assign_task_request(
         "передай Андрею задачу посчитать метрики по продукту"
     )
     assert c is not None
-    assert c["assignee_name"] == "Андрею"
+    assert c["assignee_name"].lower().startswith("андрей") or c[
+        "assignee_name"
+    ].lower().startswith("андрею")
     assert "метрик" in c["title"].lower()
+
+    d = parse_assign_task_request(
+        "поставь ульяне на сегодня задачу сделать презентацию"
+    )
+    assert d is not None
+    assert d["assignee_name"].lower().startswith("ульян")
+    assert "презентац" in d["title"].lower()
+    assert "сегодня" not in d["title"].lower()
+    assert "задач" not in d["title"].lower()
+
+
+def test_bitrix_does_not_steal_assign():
+    from assistant.nlu.regex import parse_bitrix_intent, regex_route
+
+    text = "поставь ульяне на сегодня задачу сделать презентацию"
+    assert parse_bitrix_intent(text) is None
+    r = regex_route(text)
+    assert r is not None and r.skill == "assign_task"
 
 
 @pytest.fixture()

@@ -28,6 +28,14 @@ def parse_bitrix_intent(text: str) -> str | None:
     s = _norm(text)
     if not s:
         return None
+    # Leo-постановка задачи контакту («поставь Ульяне задачу…») — не Битрикс
+    try:
+        from assistant.skills.assign_task import is_assign_task_request
+
+        if is_assign_task_request(text):
+            return None
+    except Exception:
+        pass
     if re.search(r"\b(битрикс|bitrix24|bitrix)\b", s):
         return (text or "").strip()
     if re.search(r"\bсделк", s):

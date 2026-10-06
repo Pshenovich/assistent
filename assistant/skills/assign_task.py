@@ -20,31 +20,48 @@ from assistant.stores import note_members
 from assistant.stores.contacts_store import contact_display_name, normalize_telegram_username
 
 _BITRIX_RE = re.compile(r"(?i)\b(битрикс|bitrix24?)\b")
-_ASSIGN_TRIGGER_RE = re.compile(
+_ASR_PREFIX_RE = re.compile(
     r"(?is)^\s*(?:"
-    r"поставь(?:\s+пожалуйста)?\s+задачу|"
-    r"поставь(?:\s+пожалуйста)?|"
-    r"закинь(?:\s+пожалуйста)?|"
-    r"передай(?:\s+пожалуйста)?|"
-    r"назначь(?:\s+пожалуйста)?\s+задачу|"
-    r"назначь(?:\s+пожалуйста)?"
+    r"лев[,!\s]+|leo[,!\s]+|бот[,!\s]+|"
+    r"слушай[,!\s]+|слушай|э+[,!\s]*|ну[,!\s]+|"
+    r"пожалуйста[,!\s]+"
+    r")+"
+)
+_ASSIGN_TRIGGER_RE = re.compile(
+    r"(?is)(?:"
+    r"поставь(?:те)?(?:\s*,?\s*пожалуйста)?\s+задачу|"
+    r"поставь(?:те)?(?:\s*,?\s*пожалуйста)?|"
+    r"закинь(?:те)?(?:\s*,?\s*пожалуйста)?|"
+    r"передай(?:те)?(?:\s*,?\s*пожалуйста)?|"
+    r"назначь(?:те)?(?:\s*,?\s*пожалуйста)?\s+задачу|"
+    r"назначь(?:те)?(?:\s*,?\s*пожалуйста)?"
     r")\s+(?P<body>.+)$"
 )
 _NAME_LEAD_RE = re.compile(
-    r"(?is)^(?P<name>@[A-Za-z][A-Za-z0-9_]{2,31}|[А-ЯЁA-Z][а-яёa-zA-ZёЁ-]{1,40})"
+    r"(?is)^(?P<name>@[A-Za-z][A-Za-z0-9_]{2,31}|[А-ЯЁA-Zа-яё][а-яёa-zA-ZёЁ-]{1,40})"
+    r"(?:\s+(?:на\s+(?:сегодня|завтра|послезавтра)|"
+    r"сегодня|завтра|послезавтра))?"
     r"(?:\s+(?:в\s+задаче|задачу|надо|нужно))?\s*"
     r"(?P<title>.+)$"
 )
 _STRIP_FILLER_RE = re.compile(
-    r"(?i)^\s*(?:в\s+задаче|задачу|надо|нужно|чтобы)\s+"
+    r"(?i)^\s*(?:в\s+задаче|задачу|надо|нужно|чтобы|"
+    r"на\s+(?:сегодня|завтра|послезавтра)|сегодня|завтра|послезавтра)\s+"
 )
 
 
-def is_assign_task_request(text: str) -> bool:
+def _prep_assign_text(text: str) -> str:
     raw = (text or "").strip()
+    raw = _ASR_PREFIX_RE.sub("", raw).strip()
+    raw = re.sub(r"\s+", " ", raw)
+    return raw
+
+
+def is_assign_task_request(text: str) -> bool:
+    raw = _prep_assign_text(text)
     if not raw or _BITRIX_RE.search(raw):
         return False
-    if not _ASSIGN_TRIGGER_RE.match(raw):
+    if not _ASSIGN_TRIGGER_RE.search(raw):
         return False
     low = raw.lower()
     if "задач" in low:
@@ -53,7 +70,8 @@ def is_assign_task_request(text: str) -> bool:
 
 
 def parse_assign_task_request(text: str) -> dict[str, str] | None:
-    m = _ASSIGN_TRIGGER_RE.match((text or "").strip())
+    raw = _prep_assign_text(text)
+    m = _ASSIGN_TRIGGER_RE.search(raw)
     if not m:
         return None
     body = str(m.group("body") or "").strip()
@@ -63,10 +81,14 @@ def parse_assign_task_request(text: str) -> dict[str, str] | None:
         return None
     name = str(nm.group("name") or "").strip()
     title = str(nm.group("title") or "").strip()
+    # «на сегодня задачу сделать…» / «задачу сделать…»
     title = _STRIP_FILLER_RE.sub("", title).strip()
     title = re.sub(r"(?i)^\s*задачу\s+", "", title).strip()
-    if not name or not title:
+    title = _STRIP_FILLER_RE.sub("", title).strip()
+    if not name:
         return None
+    if not title or title.lower() in {"задачу", "задача", "на сегодня", "сегодня"}:
+        title = "Задача"
     return {"assignee_name": name, "title": title}
 
 
