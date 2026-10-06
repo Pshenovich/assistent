@@ -314,7 +314,7 @@ async def handle(
     from assistant.skills import assign_task as assign_task_skill
 
     question_preview = text or ""
-    # Уже ответили Leo-assign на это же message — не слать connect следом.
+    # Уже ответили Leo-assign на это же message / недавно в этом чате.
     if was_assign_handled(context, update):
         context.user_data.pop(BITRIX_HISTORY_KEY, None)
         print(
@@ -329,12 +329,12 @@ async def handle(
         return
 
     uid = int(user.id)
+    print(
+        f"[bitrix] enter uid={uid} mid={getattr(msg, 'message_id', None)} "
+        f"text={question_preview[:160]!r}"
+    )
     token = get_user_token(uid) or ""
     if not token:
-        # Ещё раз: не просим подключить Bitrix на Leo-фразе.
-        if prefers_leo_assign_over_bitrix(question_preview):
-            await assign_task_skill.handle(update, context, question_preview)
-            return
         url = webapp_entry_url()
         print(
             f"[bitrix] connect_prompt uid={uid} text={question_preview[:160]!r}"
@@ -356,6 +356,8 @@ async def handle(
         return
 
     if is_token_expired(token):
+        if was_assign_handled(context, update):
+            return
         # Личный токен можно сбросить; если истёк только серверный — подсказка та же.
         if get_personal_token(uid):
             await _reply_bitrix_auth_error(msg, telegram_user_id=uid)
@@ -366,10 +368,18 @@ async def handle(
     history = get_chat_history(context)
     status = await post_status(msg, "Работаю с Битрикс24…")
     try:
+        if was_assign_handled(context, update):
+            print(
+                f"[bitrix] abort_after_assign uid={uid} "
+                f"text={question_preview[:120]!r}"
+            )
+            return
         if is_create_task_request(question):
             req = parse_create_task_request(question)
             if req:
                 direct_create = await create_task_direct(token, req)
+                if was_assign_handled(context, update):
+                    return
                 rendered = await _reply_bitrix(msg, direct_create, token=token)
                 append_chat_history(context, user_text=question, assistant_text=rendered)
                 return
@@ -377,6 +387,8 @@ async def handle(
         if is_task_list_request(question):
             direct_list = await _try_direct_task_list_answer(uid, question)
             if direct_list:
+                if was_assign_handled(context, update):
+                    return
                 rendered = await _reply_bitrix(msg, direct_list, token=token)
                 append_chat_history(context, user_text=question, assistant_text=rendered)
                 return
@@ -384,6 +396,8 @@ async def handle(
         if _wants_single_task_lookup(question):
             direct = await _try_direct_task_answer(uid, question)
             if direct:
+                if was_assign_handled(context, update):
+                    return
                 rendered = await _reply_bitrix(msg, direct, token=token)
                 append_chat_history(context, user_text=question, assistant_text=rendered)
                 return
@@ -394,9 +408,17 @@ async def handle(
             question,
             history=history,
         )
+        if was_assign_handled(context, update):
+            print(
+                f"[bitrix] drop_mcp_after_assign uid={uid} "
+                f"text={question_preview[:120]!r}"
+            )
+            return
         rendered = await _reply_bitrix(msg, answer, token=token)
         append_chat_history(context, user_text=question, assistant_text=rendered)
     except BaseException as e:
+        if was_assign_handled(context, update):
+            return
         if _is_bitrix_unauthorized_error(e):
             await _reply_bitrix_auth_error(msg, telegram_user_id=uid)
         else:

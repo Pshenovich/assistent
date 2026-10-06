@@ -312,9 +312,15 @@ async def _transcribe_and_route(update: Update, context: ContextTypes.DEFAULT_TY
         if not text:
             await set_status(status, "(пустая транскрипция)", anchor=msg, context=context)
             return
+        print(f"[voice] asr chat={msg.chat_id} mid={msg.message_id} text={text[:200]!r}")
         status = await set_status(
             status, "Разбираю запрос…", anchor=msg, context=context
         )
+        # На всякий случай сбрасываем sticky Bitrix до роутинга.
+        try:
+            context.user_data.pop("bitrix_chat_history", None)
+        except Exception:
+            pass
         chat = update.effective_chat
         is_group = chat and chat.type in ("group", "supergroup")
         extras = RouteExtras(

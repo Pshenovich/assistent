@@ -303,6 +303,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
     if text and await try_cancel_operation(update, context, text=text):
         return
+    # Голос обрабатывает MessageHandler(VOICE) — не дублируем (в т.ч. sticky Bitrix).
+    if msg.voice:
+        return
     if await zoom_skill.try_continue_pending(update, context):
         return
     if await telemost_skill.try_continue_pending(update, context):
@@ -328,9 +331,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         replied=msg.reply_to_message,
         urls=extract_urls(text),
     )
-    if msg.voice:
-        # Голос обрабатывает MessageHandler(VOICE) — не дублируем по caption.
-        return
     if text:
         from assistant.lib.telegram_status import maybe_post_early_work_status
 

@@ -123,6 +123,40 @@ def test_bitrix_does_not_steal_assign():
     assert prefers_leo_assign_over_bitrix(text3)
 
 
+def test_resolve_assign_start_tomorrow_all_day():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from assistant.skills.assign_task import resolve_assign_start
+
+    tz = ZoneInfo("Europe/Moscow")
+    now = datetime(2026, 10, 6, 19, 10, tzinfo=tz)
+    start, all_day = resolve_assign_start(
+        "поставь ульяне на завтра задачу нарисовать розового слона",
+        now=now,
+        tz=tz,
+    )
+    assert all_day is True
+    assert start.date().isoformat() == "2026-10-07"
+
+    start2, all_day2 = resolve_assign_start(
+        "поставь ульяне на сегодня задачу выпить чай",
+        now=now,
+        tz=tz,
+    )
+    assert all_day2 is True
+    assert start2.date().isoformat() == "2026-10-06"
+
+    start3, all_day3 = resolve_assign_start(
+        "поставь ульяне задачу сделать отчёт завтра к 10:00",
+        now=now,
+        tz=tz,
+    )
+    assert all_day3 is False
+    assert start3.hour == 10
+    assert start3.date().isoformat() == "2026-10-07"
+
+
 @pytest.fixture()
 def tasks_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     db = tmp_path / "calendar_tasks.sqlite"

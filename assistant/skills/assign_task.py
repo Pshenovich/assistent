@@ -97,7 +97,9 @@ def prefers_leo_assign_over_bitrix(text: str) -> bool:
 
 
 def mark_assign_handled(context: ContextTypes.DEFAULT_TYPE, update: Update) -> None:
-    """Пометить message_id: Bitrix не должен слать connect следом."""
+    """Пометить message_id и chat: Bitrix не должен слать ответ следом."""
+    import time
+
     msg = update.effective_message or update.message
     if msg is None:
         return
@@ -109,22 +111,65 @@ def mark_assign_handled(context: ContextTypes.DEFAULT_TYPE, update: Update) -> N
             context.application.bot_data["_assign_handled_msgs"] = seen
         seen[key] = True
         if len(seen) > 500:
-            # простая обрезка: оставляем хвост
             for old in list(seen.keys())[: len(seen) - 400]:
                 seen.pop(old, None)
+        cool = context.application.bot_data.setdefault("_assign_chat_cooldown", {})
+        if not isinstance(cool, dict):
+            cool = {}
+            context.application.bot_data["_assign_chat_cooldown"] = cool
+        cool[str(msg.chat_id)] = time.monotonic()
     except Exception:
         pass
 
 
 def was_assign_handled(context: ContextTypes.DEFAULT_TYPE, update: Update) -> bool:
+    import time
+
     msg = update.effective_message or update.message
     if msg is None:
         return False
     try:
         seen = context.application.bot_data.get("_assign_handled_msgs") or {}
-        return bool(isinstance(seen, dict) and seen.get(f"{msg.chat_id}:{msg.message_id}"))
+        if isinstance(seen, dict) and seen.get(f"{msg.chat_id}:{msg.message_id}"):
+            return True
+        cool = context.application.bot_data.get("_assign_chat_cooldown") or {}
+        if isinstance(cool, dict):
+            ts = cool.get(str(msg.chat_id))
+            if isinstance(ts, (int, float)) and time.monotonic() - float(ts) < 45.0:
+                return True
     except Exception:
         return False
+    return False
+
+
+def resolve_assign_start(
+    text: str,
+    *,
+    now: datetime,
+    tz: ZoneInfo,
+) -> tuple[datetime, bool]:
+    """Дата/время задачи: с часами — timed; «на завтра» без часов — all-day на завтра."""
+    from datetime import time as time_cls
+
+    from assistant.lib.calendar_datetime_parse import (
+        calendar_extract_move_date,
+        calendar_parse_explicit_date,
+        calendar_relative_day,
+    )
+
+    when = parse_datetime_from_user_text(text, now=now)
+    if when is not None:
+        return when, False
+    today = now.astimezone(tz).date()
+    day = (
+        calendar_extract_move_date(text, today)
+        or calendar_relative_day(text, today, role="any")
+        or calendar_parse_explicit_date(text, today)
+    )
+    if day is None:
+        day = today
+    start = datetime.combine(day, time_cls.min, tzinfo=tz)
+    return start, True
 
 
 def is_assign_task_request(text: str) -> bool:
@@ -353,16 +398,9 @@ async def handle(
 
     tz = _tz()
     now = datetime.now(tz)
-    when = parse_datetime_from_user_text(raw, now=now)
-    all_day = when is None
-    start = (
-        when
-        if when is not None
-        else now.replace(hour=0, minute=0, second=0, microsecond=0)
-    )
+    start, all_day = resolve_assign_start(raw, now=now, tz=tz)
     title = parsed["title"]
-    if when is not None:
-        title = _strip_when_from_title(title)
+    title = _strip_when_from_title(title)
     title, description = resolve_title_and_description(title)
 
     row = calendar_tasks_store.create_task(
