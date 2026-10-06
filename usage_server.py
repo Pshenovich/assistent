@@ -5292,6 +5292,7 @@ async def miniapp_calendar_tasks_patch(
     if not existing:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     prev_assignee = str(existing.get("assignee_user_id") or "")
+    was_done = bool(existing.get("done"))
     assignee_uid = None
     if body.assignee_user_id is not None or body.assignee_email is not None:
         assignee_uid = _resolve_calendar_task_assignee(principal, body) or None
@@ -5333,6 +5334,24 @@ async def miniapp_calendar_tasks_patch(
                 assignee_user_id=new_assignee,
                 task=out,
                 assigner_name=_principal_display_name(principal),
+            )
+        )
+    # Исполнитель отметил задачу выполненной → пуш автору.
+    if (
+        body.done is True
+        and not was_done
+        and bool(out.get("done"))
+        and calendar_tasks_store.task_is_delegated(out)
+        and str(out.get("assignee_user_id") or "") == str(uid)
+        and str(out.get("owner_user_id") or "") != str(uid)
+    ):
+        from assistant.lib.task_notify import notify_task_owner_done
+
+        await run_in_threadpool(
+            partial(
+                notify_task_owner_done,
+                task=out,
+                completer_name=_principal_display_name(principal),
             )
         )
     return {"ok": True, "task": _task_api(out, tz=tz, viewer_id=uid)}

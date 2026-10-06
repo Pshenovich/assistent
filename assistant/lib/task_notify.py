@@ -48,3 +48,36 @@ def notify_task_assignee(
         send_message(mid, "\n".join(lines))
     except Exception as e:
         print(f"[calendar_tasks] notify_assignee uid={mid} err={e!r}")
+
+
+def notify_task_owner_done(
+    *,
+    task: dict[str, Any],
+    completer_name: str,
+) -> None:
+    """Пуш автору, когда исполнитель отметил делегированную задачу выполненной."""
+    from assistant.lib.telegram_notify import send_message
+    from assistant.stores.calendar_tasks import task_is_delegated
+
+    if not task_is_delegated(task):
+        return
+    try:
+        owner = int(str(task.get("owner_user_id") or "").strip() or 0)
+    except (TypeError, ValueError):
+        owner = 0
+    if owner <= 0:
+        return
+    try:
+        completer_uid = int(str(task.get("assignee_user_id") or "").strip() or 0)
+    except (TypeError, ValueError):
+        completer_uid = 0
+    # Не уведомляем, если автор сам себе закрыл.
+    if completer_uid and completer_uid == owner:
+        return
+    link = task_title_link_html(str(task.get("title") or "Задача"), task.get("id") or 0)
+    who = html.escape((completer_name or "").strip() or "Исполнитель")
+    text = f"{who} выполнил(а) задачу: {link}."
+    try:
+        send_message(owner, text)
+    except Exception as e:
+        print(f"[calendar_tasks] notify_owner_done uid={owner} err={e!r}")

@@ -51,6 +51,25 @@ from assistant.services.bitrix_mcp_search import (
 )
 BITRIX_HISTORY_KEY = "bitrix_chat_history"
 BITRIX_HISTORY_MAX = 6
+_BITRIX_EXPLICIT_RE = re.compile(r"(?i)\b(битрикс|bitrix24?)\b")
+_ROUTE_LOG = "/tmp/leo-route.log"
+
+
+def _route_log(msg: str) -> None:
+    line = f"{msg}\n"
+    try:
+        print(msg, flush=True)
+    except Exception:
+        pass
+    try:
+        with open(_ROUTE_LOG, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
+
+def _mentions_bitrix_explicitly(text: str) -> bool:
+    return bool(_BITRIX_EXPLICIT_RE.search(text or ""))
 
 
 def _truncate_telegram(text: str, limit: int = 4000) -> str:
@@ -317,7 +336,7 @@ async def handle(
     # Уже ответили Leo-assign на это же message / недавно в этом чате.
     if was_assign_handled(context, update):
         context.user_data.pop(BITRIX_HISTORY_KEY, None)
-        print(
+        _route_log(
             f"[bitrix] skip_after_assign mid={getattr(msg, 'message_id', None)} "
             f"text={question_preview[:120]!r}"
         )
@@ -325,18 +344,32 @@ async def handle(
     # Страховка: Leo-постановка / «поставь задачу …» без «битрикс».
     if prefers_leo_assign_over_bitrix(question_preview):
         context.user_data.pop(BITRIX_HISTORY_KEY, None)
+        _route_log(
+            f"[bitrix] redirect_assign mid={getattr(msg, 'message_id', None)} "
+            f"text={question_preview[:120]!r}"
+        )
         await assign_task_skill.handle(update, context, question_preview)
         return
 
     uid = int(user.id)
-    print(
+    token = get_user_token(uid) or ""
+    _route_log(
         f"[bitrix] enter uid={uid} mid={getattr(msg, 'message_id', None)} "
+        f"token={bool(token)} sticky={bool(get_chat_history(context))} "
         f"text={question_preview[:160]!r}"
     )
-    token = get_user_token(uid) or ""
     if not token:
+        # Не спамим «Подключите Битрикс» на ложных роутах без слова «битрикс»
+        # и без активного sticky-диалога.
+        if not _mentions_bitrix_explicitly(question_preview) and not get_chat_history(
+            context
+        ):
+            _route_log(
+                f"[bitrix] suppress_connect uid={uid} text={question_preview[:160]!r}"
+            )
+            return
         url = webapp_entry_url()
-        print(
+        _route_log(
             f"[bitrix] connect_prompt uid={uid} text={question_preview[:160]!r}"
         )
         await msg.reply_text(

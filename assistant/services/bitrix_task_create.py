@@ -43,7 +43,24 @@ class CreateTaskRequest:
 
 
 def is_create_task_request(text: str) -> bool:
-    return bool(_CREATE_RE.search((text or "").strip()))
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if not _CREATE_RE.search(raw):
+        return False
+    # Leo-постановка контакту — не Bitrix MCP create_task.
+    try:
+        from assistant.skills.assign_task import is_assign_task_request
+
+        if is_assign_task_request(raw):
+            return False
+    except Exception:
+        pass
+    # Без слова «битрикс» Bitrix-create только с названием в «кавычках».
+    if not re.search(r"(?i)\b(битрикс|bitrix24?)\b", raw):
+        if not _TITLE_QUOTED_RE.search(raw):
+            return False
+    return True
 
 
 def _name_search_queries(name: str) -> list[str]:

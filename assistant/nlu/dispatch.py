@@ -242,12 +242,18 @@ async def dispatch_route(
         await knowledge_qa_skill.handle(update, context, text or full)
         return True
     if route.skill == "bitrix":
-        from assistant.skills.assign_task import was_assign_handled
+        from assistant.skills.assign_task import (
+            prefers_leo_assign_over_bitrix,
+            was_assign_handled,
+        )
 
-        if was_assign_handled(context, update):
+        body = text or full
+        if was_assign_handled(context, update) or prefers_leo_assign_over_bitrix(body):
             context.user_data.pop("bitrix_chat_history", None)
+            if prefers_leo_assign_over_bitrix(body):
+                await assign_task_skill.handle(update, context, body)
             return True
-        await bitrix_skill.handle(update, context, text or full)
+        await bitrix_skill.handle(update, context, body)
         return True
     if route.skill == "ask":
         await ask_skill.handle(update, context, text or full, replied=extras.replied)
