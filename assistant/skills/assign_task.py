@@ -75,6 +75,58 @@ def _has_person_token(text: str) -> bool:
     return bool(_PERSON_TOKEN_RE.search(text or ""))
 
 
+def looks_like_non_bitrix_task_phrase(text: str) -> bool:
+    """«Поставь/создай задачу …» без слова битрикс — не Bitrix MCP."""
+    raw = _prep_assign_text(text)
+    if not raw or _BITRIX_RE.search(raw):
+        return False
+    low = raw.lower()
+    if "задач" not in low:
+        return False
+    return bool(
+        re.search(
+            r"(?i)\b(поставь|закинь|передай|назначь|создай|добавь|заведи|оформи|сделай)\w*\b",
+            raw,
+        )
+    )
+
+
+def prefers_leo_assign_over_bitrix(text: str) -> bool:
+    """Любая Leo-постановка — не уводим в Bitrix connect/MCP."""
+    return is_assign_task_request(text) or looks_like_non_bitrix_task_phrase(text)
+
+
+def mark_assign_handled(context: ContextTypes.DEFAULT_TYPE, update: Update) -> None:
+    """Пометить message_id: Bitrix не должен слать connect следом."""
+    msg = update.effective_message or update.message
+    if msg is None:
+        return
+    try:
+        key = f"{msg.chat_id}:{msg.message_id}"
+        seen = context.application.bot_data.setdefault("_assign_handled_msgs", {})
+        if not isinstance(seen, dict):
+            seen = {}
+            context.application.bot_data["_assign_handled_msgs"] = seen
+        seen[key] = True
+        if len(seen) > 500:
+            # простая обрезка: оставляем хвост
+            for old in list(seen.keys())[: len(seen) - 400]:
+                seen.pop(old, None)
+    except Exception:
+        pass
+
+
+def was_assign_handled(context: ContextTypes.DEFAULT_TYPE, update: Update) -> bool:
+    msg = update.effective_message or update.message
+    if msg is None:
+        return False
+    try:
+        seen = context.application.bot_data.get("_assign_handled_msgs") or {}
+        return bool(isinstance(seen, dict) and seen.get(f"{msg.chat_id}:{msg.message_id}"))
+    except Exception:
+        return False
+
+
 def is_assign_task_request(text: str) -> bool:
     """Leo-постановка другому человеку — не Битрикс."""
     raw = _prep_assign_text(text)
@@ -86,6 +138,7 @@ def is_assign_task_request(text: str) -> bool:
         return False
     m = _ASSIGN_TRIGGER_RE.search(raw)
     if not m:
+        # всё равно перехватим «создай/добавь задачу …» от Bitrix
         return False
     body = str(m.group("body") or "")
     if "задач" in low or re.search(r"(?i)\bв\s+задач", raw):
@@ -250,6 +303,13 @@ async def handle(
     user = update.effective_user
     if msg is None or user is None:
         return
+    # Сбрасываем sticky Bitrix-диалог: иначе follow-up/history может
+    # добить «Подключите Битрикс24» следом за Leo-ответом.
+    try:
+        context.user_data.pop("bitrix_chat_history", None)
+    except Exception:
+        pass
+    mark_assign_handled(context, update)
     uid = int(user.id)
     raw = (text or msg.text or msg.caption or "").strip()
     parsed = parse_assign_task_request(raw)

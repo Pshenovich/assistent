@@ -251,10 +251,14 @@ async def try_continue_bitrix(
     text = (msg.text or msg.caption or "").strip()
     if not text:
         return False
-    from assistant.skills.assign_task import is_assign_task_request
+    from assistant.skills.assign_task import (
+        prefers_leo_assign_over_bitrix,
+        was_assign_handled,
+    )
 
-    # Leo-постановка задачи контакту — не продолжение диалога Битрикс.
-    if is_assign_task_request(text):
+    # Leo-постановка / «поставь задачу …» без «битрикс» — не Bitrix-диалог.
+    if prefers_leo_assign_over_bitrix(text) or was_assign_handled(context, update):
+        context.user_data.pop(BITRIX_HISTORY_KEY, None)
         return False
     user = update.effective_user
     if not user or not has_mcp_access(int(user.id)):
@@ -303,28 +307,38 @@ async def handle(
     if not msg or not user:
         return
 
-    from assistant.skills.assign_task import is_assign_task_request
+    from assistant.skills.assign_task import (
+        prefers_leo_assign_over_bitrix,
+        was_assign_handled,
+    )
     from assistant.skills import assign_task as assign_task_skill
 
-    # Страховка: «поставь Ульяне задачу…» никогда не уходит в Битрикс.
     question_preview = text or ""
-    if is_assign_task_request(question_preview):
-        await assign_task_skill.handle(update, context, question_preview)
+    # Уже ответили Leo-assign на это же message — не слать connect следом.
+    if was_assign_handled(context, update):
+        context.user_data.pop(BITRIX_HISTORY_KEY, None)
+        print(
+            f"[bitrix] skip_after_assign mid={getattr(msg, 'message_id', None)} "
+            f"text={question_preview[:120]!r}"
+        )
         return
-    low = question_preview.lower()
-    if (
-        re.search(r"(?i)\b(поставь|закинь|передай|назначь|создай)\w*\b", question_preview)
-        and "задач" in low
-        and "битрикс" not in low
-        and "bitrix" not in low
-    ):
+    # Страховка: Leo-постановка / «поставь задачу …» без «битрикс».
+    if prefers_leo_assign_over_bitrix(question_preview):
+        context.user_data.pop(BITRIX_HISTORY_KEY, None)
         await assign_task_skill.handle(update, context, question_preview)
         return
 
     uid = int(user.id)
     token = get_user_token(uid) or ""
     if not token:
+        # Ещё раз: не просим подключить Bitrix на Leo-фразе.
+        if prefers_leo_assign_over_bitrix(question_preview):
+            await assign_task_skill.handle(update, context, question_preview)
+            return
         url = webapp_entry_url()
+        print(
+            f"[bitrix] connect_prompt uid={uid} text={question_preview[:160]!r}"
+        )
         await msg.reply_text(
             "Подключите Битрикс24 в мини-приложении:\n"
             "Профиль → Интеграции → Битрикс24.\n\n"

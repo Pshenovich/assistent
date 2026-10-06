@@ -99,16 +99,28 @@ def test_capitalize_and_urgency():
 
 def test_bitrix_does_not_steal_assign():
     from assistant.nlu.regex import parse_bitrix_intent, regex_route
+    from assistant.skills.assign_task import (
+        looks_like_non_bitrix_task_phrase,
+        prefers_leo_assign_over_bitrix,
+    )
 
     text = "поставь ульяне на сегодня задачу сделать презентацию"
     assert parse_bitrix_intent(text) is None
+    assert prefers_leo_assign_over_bitrix(text)
     r = regex_route(text)
     assert r is not None and r.skill == "assign_task"
 
     text2 = "создай задачу Ульяне протестировать веб приложение полностью"
     assert parse_bitrix_intent(text2) is None
+    assert looks_like_non_bitrix_task_phrase(text2)
+    assert prefers_leo_assign_over_bitrix(text2)
     r2 = regex_route(text2)
     assert r2 is not None and r2.skill == "assign_task"
+
+    text3 = "добавь задачу проверить отчёт по продажам"
+    assert parse_bitrix_intent(text3) is None
+    assert looks_like_non_bitrix_task_phrase(text3)
+    assert prefers_leo_assign_over_bitrix(text3)
 
 
 @pytest.fixture()

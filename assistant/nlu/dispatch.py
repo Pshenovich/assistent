@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -105,6 +104,8 @@ async def dispatch_route(
         await reminders_skill.handle(update, context, text or full)
         return True
     if route.skill == "assign_task":
+        context.user_data.pop("bitrix_chat_history", None)
+        assign_task_skill.mark_assign_handled(context, update)
         await assign_task_skill.handle(update, context, text or full)
         return True
     if route.skill == "note_search":
@@ -241,6 +242,11 @@ async def dispatch_route(
         await knowledge_qa_skill.handle(update, context, text or full)
         return True
     if route.skill == "bitrix":
+        from assistant.skills.assign_task import was_assign_handled
+
+        if was_assign_handled(context, update):
+            context.user_data.pop("bitrix_chat_history", None)
+            return True
         await bitrix_skill.handle(update, context, text or full)
         return True
     if route.skill == "ask":
@@ -266,6 +272,24 @@ async def route_text(
     has_attachment = bool(
         msg and (msg.document or msg.audio or msg.video or msg.voice)
     )
+    from assistant.skills.assign_task import prefers_leo_assign_over_bitrix
+    from assistant.nlu.intent_router import Route
+
+    # Раньше LLM/Bitrix: Leo-постановка не должна даже заходить в bitrix skill.
+    if prefers_leo_assign_over_bitrix(cleaned):
+        context.user_data.pop("bitrix_chat_history", None)
+        return await dispatch_route(
+            update,
+            context,
+            Route(
+                skill="assign_task",
+                sub_intent="assign",
+                body=cleaned,
+                confidence=1.0,
+                reason="assign_task_short_circuit",
+            ),
+            extras,
+        )
     route = await build_resolved_route(
         cleaned,
         chat_type=chat_type,
@@ -273,19 +297,9 @@ async def route_text(
         has_url=bool(urls),
         has_attachment=has_attachment,
     )
-    # LLM иногда тянет «поставь … задачу» в bitrix — возвращаем в Leo.
+    # LLM/regex иногда тянут «поставь … задачу» в bitrix — возвращаем в Leo.
     if route is not None and route.skill == "bitrix":
-        from assistant.skills.assign_task import is_assign_task_request
-        from assistant.nlu.intent_router import Route
-
-        cleaned_l = cleaned.lower()
-        leo_like = is_assign_task_request(cleaned) or (
-            re.search(r"(?i)\b(поставь|закинь|передай|назначь|создай)\w*\b", cleaned)
-            and "задач" in cleaned_l
-            and "битрикс" not in cleaned_l
-            and "bitrix" not in cleaned_l
-        )
-        if leo_like:
+        if prefers_leo_assign_over_bitrix(cleaned):
             route = Route(
                 skill="assign_task",
                 sub_intent="assign",
