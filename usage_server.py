@@ -2511,6 +2511,14 @@ class _MiniappSettingsPatch(BaseModel):
     digest_chat_ids: Optional[list[int]] = None
 
 
+class _MiniappEntryColorBody(BaseModel):
+    entry_key: Optional[str] = None
+    event_id: Optional[str] = None
+    calendar_id: Optional[str] = None
+    task_id: Optional[str] = None
+    color: Optional[str] = None
+
+
 class _MiniappDigestRefreshBody(BaseModel):
     date: Optional[str] = None
 
@@ -3604,32 +3612,128 @@ def _miniapp_dev_mode_on() -> bool:
 
 
 _LOCAL_DEV_RSVP: dict[str, str] = {}
+# In-memory overrides for fixture events (start/end/title) when Google is unavailable.
+_LOCAL_DEV_EVENT_OVERRIDES: dict[str, dict[str, Any]] = {}
 
 
 def _is_local_dev_event_id(event_id: str) -> bool:
     return str(event_id or "").startswith("local-dev-ev-")
 
 
-def _apply_local_dev_rsvp(uid: int, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _local_dev_event_key(uid: int, event_id: str) -> str:
+    return f"{int(uid)}:{str(event_id or '').strip()}"
+
+
+def _local_dev_iso_to_fragment(raw: str, timezone_name: str) -> dict[str, str]:
+    """Normalize client ISO into {dateTime, timeZone} for fixture events."""
+    s = str(raw or "").strip()
+    if not s:
+        return {}
+    if "T" not in s and " " not in s:
+        return {"date": s[:10]}
+    try:
+        from zoneinfo import ZoneInfo
+
+        cleaned = s.replace("Z", "+00:00").replace("z", "+00:00")
+        dt = datetime.fromisoformat(cleaned.replace(" ", "T", 1))
+        tz = ZoneInfo(timezone_name) if timezone_name else None
+        if dt.tzinfo is None and tz is not None:
+            dt = dt.replace(tzinfo=tz)
+        elif dt.tzinfo is not None and tz is not None:
+            dt = dt.astimezone(tz)
+        offset = dt.strftime("%z") if dt.tzinfo else ""
+        if len(offset) == 5:
+            offset = offset[:3] + ":" + offset[3:]
+        return {
+            "dateTime": dt.strftime("%Y-%m-%dT%H:%M:%S") + offset,
+            "timeZone": timezone_name or "UTC",
+        }
+    except Exception:
+        return {"dateTime": s, "timeZone": timezone_name or "UTC"}
+
+
+def _local_dev_event_day_key(ev: dict[str, Any]) -> str:
+    st = ev.get("start") if isinstance(ev.get("start"), dict) else {}
+    raw = str((st or {}).get("dateTime") or (st or {}).get("date") or "")
+    return raw[:10]
+
+
+def _apply_local_dev_event_state(
+    uid: int, events: list[dict[str, Any]], *, day_iso: str | None = None
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for ev in events or []:
         if not isinstance(ev, dict):
             continue
-        key = f"{int(uid)}:{ev.get('id')}"
+        key = _local_dev_event_key(uid, str(ev.get("id") or ""))
         st = _LOCAL_DEV_RSVP.get(key)
         if st == "declined":
             continue
         item = dict(ev)
+        ov = _LOCAL_DEV_EVENT_OVERRIDES.get(key) or {}
+        if ov.get("summary"):
+            item["summary"] = str(ov["summary"])
+        if ov.get("description") is not None:
+            item["description"] = str(ov.get("description") or "")
+        if isinstance(ov.get("start"), dict):
+            item["start"] = dict(ov["start"])
+        if isinstance(ov.get("end"), dict):
+            item["end"] = dict(ov["end"])
         if st in ("accepted", "tentative"):
             item["self_response_status"] = st
             item["needs_rsvp"] = False
+        if day_iso and _local_dev_event_day_key(item) and _local_dev_event_day_key(item) != day_iso:
+            continue
         out.append(item)
     return out
 
 
-def _local_dev_events_for(uid: int, day_iso: str, timezone_name: str) -> list[dict[str, Any]]:
-    return _apply_local_dev_rsvp(uid, _local_dev_calendar_events(day_iso, timezone_name))
+def _apply_local_dev_rsvp(uid: int, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return _apply_local_dev_event_state(uid, events)
 
+
+def _local_dev_events_for(uid: int, day_iso: str, timezone_name: str) -> list[dict[str, Any]]:
+    return _apply_local_dev_event_state(
+        uid, _local_dev_calendar_events(day_iso, timezone_name), day_iso=day_iso
+    )
+
+
+def _put_local_dev_event(
+    uid: int,
+    event_id: str,
+    parsed: dict[str, Any],
+    *,
+    calendar_id: str | None,
+    timezone_name: str,
+) -> dict[str, Any]:
+    key = _local_dev_event_key(uid, event_id)
+    cur = dict(_LOCAL_DEV_EVENT_OVERRIDES.get(key) or {})
+    if parsed.get("title"):
+        cur["summary"] = str(parsed["title"]).strip()
+    if "description" in parsed:
+        cur["description"] = str(parsed.get("description") or "")
+    if parsed.get("start"):
+        frag = _local_dev_iso_to_fragment(str(parsed["start"]), timezone_name)
+        if frag:
+            cur["start"] = frag
+    if parsed.get("end"):
+        frag = _local_dev_iso_to_fragment(str(parsed["end"]), timezone_name)
+        if frag:
+            cur["end"] = frag
+    _LOCAL_DEV_EVENT_OVERRIDES[key] = cur
+    base = {
+        "id": event_id,
+        "calendar_id": str(calendar_id or "primary"),
+        "summary": str(cur.get("summary") or event_id),
+        "kind": "Встреча",
+        "start": cur.get("start") or {},
+        "end": cur.get("end") or {},
+        "description": str(cur.get("description") or ""),
+        "attendees": [],
+        "is_organizer": True,
+        "needs_rsvp": False,
+    }
+    return base
 
 def _prepare_miniapp_voice_audio(
     data: bytes,
@@ -4261,6 +4365,31 @@ def _attach_leo_tasks(
         return str(st.get("dateTime") or st.get("date") or "")
 
     payload["events"] = sorted(evs, key=_sk)
+    return _apply_display_colors(uid, payload)
+
+
+def _apply_display_colors(uid: int, payload: dict[str, Any]) -> dict[str, Any]:
+    from assistant.stores import user_prefs
+
+    colors = user_prefs.get_calendar_entry_colors(uid)
+    if not colors:
+        return payload
+    evs = []
+    for ev in payload.get("events") or []:
+        if not isinstance(ev, dict):
+            continue
+        item = dict(ev)
+        key = user_prefs.calendar_entry_color_key(item)
+        color = colors.get(key) if key else None
+        if color:
+            item["display_color"] = color
+            item["color_key"] = key
+        else:
+            item.pop("display_color", None)
+            if key:
+                item["color_key"] = key
+        evs.append(item)
+    payload["events"] = evs
     return payload
 
 
@@ -5789,6 +5918,43 @@ async def miniapp_calendar_sources_excluded(
         raise HTTPException(status_code=502, detail=str(e)) from e
 
 
+@miniapp_router.put("/calendar/entry-color")
+async def miniapp_calendar_entry_color_put(
+    body: _MiniappEntryColorBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Personal display color for a meeting/task (viewer-only, not shared)."""
+    from assistant.stores import user_prefs
+
+    uid = int(principal.telegram_user_id)
+    key = str(body.entry_key or "").strip()
+    if not key:
+        key = user_prefs.calendar_entry_color_key(
+            {
+                "id": body.event_id or (f"task-{body.task_id}" if body.task_id else ""),
+                "calendar_id": body.calendar_id or "primary",
+                "task_id": body.task_id,
+                "entry_type": "task" if body.task_id else "event",
+            }
+        )
+    if not key:
+        raise HTTPException(status_code=400, detail="Нет id записи")
+
+    def _run() -> dict[str, Any]:
+        colors = user_prefs.set_calendar_entry_color(uid, key, body.color)
+        return {
+            "ok": True,
+            "entry_key": key,
+            "color": colors.get(key) or None,
+            "colors": colors,
+        }
+
+    try:
+        return await run_in_threadpool(_run)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @miniapp_router.get("/calendar/today")
 async def miniapp_calendar_today(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
@@ -5960,6 +6126,22 @@ async def miniapp_calendar_event_update(
         parsed["attendees"] = _normalize_attendee_emails(body.attendees)
     if not parsed:
         raise HTTPException(status_code=400, detail="Нет полей для обновления")
+
+    eid = str(event_id or "").strip()
+    cal_id = str(body.calendar_id or "").strip() or "primary"
+    if _is_local_dev_event_id(eid) and _miniapp_dev_mode_on():
+        from assistant.services.calendar import _tz_for
+
+        tz = _tz_for(int(principal.telegram_user_id))
+        ser = _put_local_dev_event(
+            int(principal.telegram_user_id),
+            eid,
+            parsed,
+            calendar_id=cal_id,
+            timezone_name=str(tz),
+        )
+        return {"event": ser}
+
     uname = (
         principal.user.get("username")
         if isinstance(principal.user, dict)
@@ -6067,7 +6249,7 @@ async def miniapp_calendar_event_rsvp(
     cal_id = str(body.calendar_id or "").strip() or "primary"
 
     if _is_local_dev_event_id(eid) and _miniapp_dev_mode_on():
-        key = f"{int(principal.telegram_user_id)}:{eid}"
+        key = _local_dev_event_key(int(principal.telegram_user_id), eid)
         _LOCAL_DEV_RSVP[key] = status
         if status == inv.RSVP_DECLINED:
             return {"ok": True, "declined": True, "self_response_status": status}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -14,6 +15,7 @@ from assistant.config import CALENDAR_TZ, ROOT
 
 _lock = threading.RLock()
 _TTL_SEC = float(os.getenv("USER_TZ_CACHE_TTL_SEC", "86400") or "86400")
+_ENTRY_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
 def _dir() -> Path:
@@ -212,3 +214,66 @@ def set_digest_chat_ids(user_id: int, chat_ids: list[int]) -> None:
         cleaned.append(cid)
     prefs["digest_chat_ids"] = cleaned
     save_prefs(user_id, prefs)
+
+
+def calendar_entry_color_key(entry: dict[str, Any] | None) -> str:
+    """Stable per-viewer key for a calendar entry color override."""
+    if not isinstance(entry, dict):
+        return ""
+    eid = str(entry.get("id") or "").strip()
+    if not eid:
+        return ""
+    task_id = entry.get("task_id")
+    if task_id is not None and str(task_id).strip():
+        return f"task:{str(task_id).strip()}"
+    if eid.startswith("task-"):
+        return f"task:{eid[5:]}"
+    if (
+        str(entry.get("entry_type") or "") == "task"
+        or str(entry.get("kind") or "") == "Задача"
+    ) and eid.isdigit():
+        return f"task:{eid}"
+    cal = str(entry.get("calendar_id") or "primary").strip() or "primary"
+    return f"event:{cal}:{eid}"
+
+
+def get_calendar_entry_colors(user_id: int) -> dict[str, str]:
+    prefs = load_prefs(user_id)
+    raw = prefs.get("calendar_entry_colors")
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in raw.items():
+        key = str(k or "").strip()
+        color = str(v or "").strip()
+        if key and _ENTRY_COLOR_RE.match(color):
+            out[key] = color.lower()
+    return out
+
+
+def set_calendar_entry_color(user_id: int, entry_key: str, color: str | None) -> dict[str, str]:
+    key = str(entry_key or "").strip()
+    if not key:
+        raise ValueError("Нет ключа записи")
+    prefs = load_prefs(user_id)
+    colors = prefs.get("calendar_entry_colors")
+    if not isinstance(colors, dict):
+        colors = {}
+    else:
+        colors = dict(colors)
+    cleaned = str(color or "").strip()
+    if not cleaned:
+        colors.pop(key, None)
+    else:
+        if not _ENTRY_COLOR_RE.match(cleaned):
+            raise ValueError("Некорректный цвет")
+        colors[key] = cleaned.lower()
+    # Cap map size to avoid unbounded growth
+    if len(colors) > 2000:
+        # drop arbitrary oldest-looking keys (dict order is insert order on 3.7+)
+        overflow = len(colors) - 2000
+        for drop_key in list(colors.keys())[:overflow]:
+            colors.pop(drop_key, None)
+    prefs["calendar_entry_colors"] = colors
+    save_prefs(user_id, prefs)
+    return get_calendar_entry_colors(user_id)

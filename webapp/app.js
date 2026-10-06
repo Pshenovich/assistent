@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261006-vpn-browser";
+  var WEBAPP_BUILD = "20261006-cal-colorrow";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -1697,6 +1697,552 @@
     else openEventModal(ev);
   }
 
+  var CAL_ENTRY_COLOR_PALETTE = [
+    "",
+    "#039be5",
+    "#3f51b5",
+    "#7986cb",
+    "#8e24aa",
+    "#e67c73",
+    "#f6bf26",
+    "#33b679",
+    "#0b8043",
+    "#f4511e",
+    "#d50000",
+    "#616161",
+  ];
+
+  function calendarEntryColorKey(ev) {
+    if (!ev) return "";
+    var tid = calendarTaskId(ev);
+    if (tid) return "task:" + tid;
+    var id = String(ev.id || "").trim();
+    if (!id) return "";
+    if (id.indexOf("task-") === 0) return "task:" + id.slice(5);
+    var cal = String(ev.calendar_id || "primary").trim() || "primary";
+    return "event:" + cal + ":" + id;
+  }
+
+  function applyEntryDisplayColor(el, ev) {
+    if (!el || !ev) return;
+    var color = String(ev.display_color || "").trim();
+    if (!/^#[0-9A-Fa-f]{6}$/.test(color)) {
+      el.classList.remove("has-entry-color");
+      el.style.removeProperty("--entry-color");
+      return;
+    }
+    el.classList.add("has-entry-color");
+    el.style.setProperty("--entry-color", color);
+  }
+
+  async function persistEntryDisplayColor(ev, color) {
+    var key = (ev && (ev.color_key || calendarEntryColorKey(ev))) || "";
+    if (!key) return;
+    var cleaned = String(color || "").trim();
+    await apiFetch("/calendar/entry-color", {
+      method: "PUT",
+      body: JSON.stringify({ entry_key: key, color: cleaned || null }),
+    });
+    if (ev) {
+      if (cleaned) ev.display_color = cleaned;
+      else delete ev.display_color;
+      ev.color_key = key;
+    }
+  }
+
+  function mountEntryColorPicker(host, initialColor) {
+    if (!host) {
+      return {
+        getColor: function () {
+          return "";
+        },
+      };
+    }
+    var selected = String(initialColor || "").trim().toLowerCase();
+    if (selected && !/^#[0-9a-f]{6}$/.test(selected)) selected = "";
+    host.innerHTML = "";
+    host.className = "event-sheet-group event-sheet-color-group";
+
+    var toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "event-sheet-row event-sheet-row--nav event-sheet-color-toggle";
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("aria-controls", "m-ev-color-menu");
+
+    var lab = document.createElement("span");
+    lab.className = "event-sheet-row-label";
+    lab.textContent = "Цвет";
+
+    var value = document.createElement("span");
+    value.className = "event-sheet-row-value";
+    var preview = document.createElement("span");
+    preview.className = "event-sheet-color-preview";
+    preview.setAttribute("aria-hidden", "true");
+    value.appendChild(preview);
+    value.insertAdjacentHTML("beforeend", eventSheetChevronHtml());
+
+    toggle.appendChild(lab);
+    toggle.appendChild(value);
+
+    var menu = document.createElement("div");
+    menu.id = "m-ev-color-menu";
+    menu.className = "event-sheet-color-menu hidden";
+    menu.setAttribute("role", "radiogroup");
+    menu.setAttribute("aria-label", "Цвет в календаре");
+
+    var menuHint = document.createElement("p");
+    menuHint.className = "event-sheet-color-menu-hint muted small";
+    menuHint.textContent = "Только у вас";
+    menu.appendChild(menuHint);
+
+    var swatches = document.createElement("div");
+    swatches.className = "event-sheet-color-swatches";
+
+    function syncPreview() {
+      preview.className =
+        "event-sheet-color-preview" +
+        (selected ? "" : " event-sheet-color-preview--default");
+      if (selected) {
+        preview.style.setProperty("--swatch-color", selected);
+        preview.style.background = selected;
+      } else {
+        preview.style.removeProperty("--swatch-color");
+        preview.style.background = "";
+      }
+    }
+
+    function paintSwatches() {
+      swatches.querySelectorAll(".event-sheet-color-swatch").forEach(function (btn) {
+        var val = btn.getAttribute("data-color") || "";
+        btn.classList.toggle("is-selected", val === selected);
+        btn.setAttribute("aria-checked", val === selected ? "true" : "false");
+      });
+      syncPreview();
+    }
+
+    function setOpen(open) {
+      menu.classList.toggle("hidden", !open);
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      host.classList.toggle("is-open", !!open);
+    }
+
+    CAL_ENTRY_COLOR_PALETTE.forEach(function (color) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "event-sheet-color-swatch" + (color ? "" : " event-sheet-color-swatch--default");
+      btn.setAttribute("role", "radio");
+      btn.setAttribute("data-color", color);
+      btn.setAttribute("aria-label", color ? "Цвет " + color : "По умолчанию");
+      btn.title = color ? color : "По умолчанию";
+      if (color) btn.style.setProperty("--swatch-color", color);
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        selected = color;
+        paintSwatches();
+        setOpen(false);
+      });
+      swatches.appendChild(btn);
+    });
+    menu.appendChild(swatches);
+
+    toggle.addEventListener("click", function () {
+      setOpen(menu.classList.contains("hidden"));
+    });
+
+    paintSwatches();
+    host.appendChild(toggle);
+    host.appendChild(menu);
+    return {
+      getColor: function () {
+        return selected;
+      },
+    };
+  }
+
+  var entryColorPickerApi = null;
+
+  var CAL_DRAG_THRESHOLD_PX = 6;
+  var CAL_RESIZE_MIN_MS = 15 * 60 * 1000;
+  var calendarSuppressClickUntil = 0;
+  var calendarGestureBusy = false;
+
+  function calendarSuppressClick(ms) {
+    calendarSuppressClickUntil = Date.now() + (ms || 400);
+  }
+
+  function calendarConsumeSuppressClick() {
+    if (Date.now() < calendarSuppressClickUntil) {
+      calendarSuppressClickUntil = 0;
+      return true;
+    }
+    return false;
+  }
+
+  function openCreateEventAtMs(startMs) {
+    var snapped = snapMsTo15(startMs);
+    var day0 = dayStartMs(localDateIsoFromMs(snapped));
+    var dayEnd = day0 + TIMELINE_END_MIN * 60000;
+    var endMs = Math.min(snapped + 60 * 60 * 1000, dayEnd);
+    if (endMs <= snapped) endMs = snapped + CAL_RESIZE_MIN_MS;
+    openEventModal({
+      start: { dateTime: new Date(snapped).toISOString() },
+      end: { dateTime: new Date(endMs).toISOString() },
+    });
+  }
+
+  function timelineClientYToStartMs(dateIso, hostEl, clientY, hourPx) {
+    if (!hostEl || !dateIso || !hourPx) return null;
+    var rect = hostEl.getBoundingClientRect();
+    var y = clientY - rect.top;
+    var minutesFromStart = (y / hourPx) * 60;
+    var absMin = TIMELINE_START_MIN + minutesFromStart;
+    absMin = Math.max(TIMELINE_START_MIN, Math.min(TIMELINE_END_MIN - 15, absMin));
+    return snapMsTo15(dayStartMs(dateIso) + absMin * 60000);
+  }
+
+  function timelineClientYToEndMs(dateIso, hostEl, clientY, hourPx, startMs) {
+    if (!hostEl || !dateIso || !hourPx || startMs == null) return null;
+    var rect = hostEl.getBoundingClientRect();
+    var y = clientY - rect.top;
+    var minutesFromStart = (y / hourPx) * 60;
+    var absMin = TIMELINE_START_MIN + minutesFromStart;
+    absMin = Math.max(TIMELINE_START_MIN + 15, Math.min(TIMELINE_END_MIN, absMin));
+    var endMs = snapMsTo15(dayStartMs(dateIso) + absMin * 60000);
+    if (endMs < startMs + CAL_RESIZE_MIN_MS) endMs = startMs + CAL_RESIZE_MIN_MS;
+    var dayEnd = dayStartMs(dateIso) + TIMELINE_END_MIN * 60000;
+    if (endMs > dayEnd) endMs = dayEnd;
+    if (endMs < startMs + CAL_RESIZE_MIN_MS) endMs = startMs + CAL_RESIZE_MIN_MS;
+    return endMs;
+  }
+
+  function applyTimedEntryLayout(el, dateIso, startMs, endMs, hourPx) {
+    if (!el || !dateIso || startMs == null || !hourPx) return;
+    var span = timelineSpanForRange(dateIso, startMs, endMs || startMs + CAL_RESIZE_MIN_MS);
+    if (!span || span.zone !== "grid") return;
+    el.style.top = (span.startMin / 60) * hourPx + "px";
+    el.style.height = Math.max(18, ((span.endMin - span.startMin) / 60) * hourPx - 2) + "px";
+  }
+
+  function showCalendarToast(msg) {
+    var text = String(msg || "").trim() || "Ошибка календаря";
+    try {
+      var tg = getTelegramWebApp();
+      if (tg && typeof tg.showAlert === "function") {
+        tg.showAlert(text);
+        return;
+      }
+    } catch (_) {}
+    window.alert(text);
+  }
+
+  function patchLocalCalendarEntryTimes(ev, startMs, endMs) {
+    if (!ev || startMs == null || endMs == null) return;
+    var startIso = new Date(startMs).toISOString();
+    var endIso = new Date(endMs).toISOString();
+    if (!ev.start) ev.start = {};
+    if (!ev.end) ev.end = {};
+    ev.start.dateTime = startIso;
+    delete ev.start.date;
+    ev.end.dateTime = endIso;
+    delete ev.end.date;
+    function patchList(list) {
+      (list || []).forEach(function (item) {
+        if (!item || String(item.id) !== String(ev.id)) return;
+        if (!item.start) item.start = {};
+        if (!item.end) item.end = {};
+        item.start.dateTime = startIso;
+        delete item.start.date;
+        item.end.dateTime = endIso;
+        delete item.end.date;
+      });
+    }
+    if (lastMeetingsLeft) patchList(lastMeetingsLeft.events);
+    if (lastMeetingsRight) patchList(lastMeetingsRight.events);
+    if (lastMeetingsRange) patchList(lastMeetingsRange.events);
+  }
+
+  async function persistCalendarEntryTimes(ev, startMs, endMs) {
+    if (!ev || startMs == null || endMs == null || endMs <= startMs) return;
+    var startIso = new Date(startMs).toISOString();
+    var endIso = new Date(endMs).toISOString();
+    patchLocalCalendarEntryTimes(ev, startMs, endMs);
+    try {
+      var isTask = calendarEntryIsTask(ev);
+      var tid = isTask ? calendarTaskId(ev) : "";
+      if (isTask && tid) {
+        await apiFetch("/calendar/tasks/" + encodeURIComponent(tid), {
+          method: "PATCH",
+          body: JSON.stringify({ start: startIso, end: endIso }),
+        });
+      } else {
+        if (!ev.id) throw new Error("Нет id встречи");
+        await apiFetch("/calendar/events/" + encodeURIComponent(ev.id), {
+          method: "PUT",
+          body: JSON.stringify({
+            calendar_id: ev.calendar_id || "primary",
+            start: startIso,
+            end: endIso,
+          }),
+        });
+      }
+      await loadActual();
+    } catch (err) {
+      showCalendarToast((err && err.message) || "Не удалось сохранить время");
+      try {
+        await loadActual();
+      } catch (_) {}
+    }
+  }
+
+  function clearCalendarGestureState() {
+    calendarGestureBusy = false;
+    calendarSuppressClickUntil = 0;
+    document.documentElement.classList.remove("cal-gesture-active");
+    document.querySelectorAll(".cal-entry--interactive.is-dragging, .cal-entry--interactive.is-resizing").forEach(function (n) {
+      n.classList.remove("is-dragging", "is-resizing");
+    });
+    document.querySelectorAll(".meetings-month-cell.is-drop-target").forEach(function (c) {
+      c.classList.remove("is-drop-target");
+    });
+  }
+
+  function appendCalResizeHandle(el) {
+    var handle = document.createElement("div");
+    handle.className = "cal-resize-handle";
+    handle.setAttribute("aria-hidden", "true");
+    el.appendChild(handle);
+    return handle;
+  }
+
+  function bindTimedEntryInteractions(el, ev, ctx) {
+    if (!el || !ev || eventIsAllDay(ev)) return;
+    var startMs0 = eventStartMs(ev);
+    var endMs0 = eventEndMs(ev);
+    if (startMs0 == null) return;
+    if (endMs0 == null || endMs0 <= startMs0) endMs0 = startMs0 + CAL_RESIZE_MIN_MS;
+    var duration0 = endMs0 - startMs0;
+    var handle = appendCalResizeHandle(el);
+    el.classList.add("cal-entry--interactive");
+
+    function dayHosts() {
+      return ctx.dayHosts || [];
+    }
+
+    function resolveHostAt(clientX) {
+      var hosts = dayHosts();
+      if (!hosts.length) {
+        return { el: ctx.axisHost, dateIso: ctx.dateIso };
+      }
+      for (var i = 0; i < hosts.length; i += 1) {
+        var r = hosts[i].el.getBoundingClientRect();
+        if (clientX >= r.left && clientX < r.right) return hosts[i];
+      }
+      var best = hosts[0];
+      var bestDist = Infinity;
+      hosts.forEach(function (h) {
+        var r = h.el.getBoundingClientRect();
+        var mid = (r.left + r.right) / 2;
+        var d = Math.abs(clientX - mid);
+        if (d < bestDist) {
+          bestDist = d;
+          best = h;
+        }
+      });
+      return best;
+    }
+
+    function canCrossDays() {
+      return dayHosts().length > 1;
+    }
+
+    function onPointerDown(e, mode) {
+      if (e.button != null && e.button !== 0) return;
+      if (calendarGestureBusy) return;
+      if (e.target && e.target.closest && e.target.closest(".meeting-card-join-btn")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      calendarGestureBusy = true;
+      var pointerId = e.pointerId;
+      var originX = e.clientX;
+      var originY = e.clientY;
+      var dragging = false;
+      var finished = false;
+      var curStart = startMs0;
+      var curEnd = endMs0;
+      var curDate = ctx.dateIso;
+      var axisHost = ctx.axisHost;
+      var originParent = el.parentNode;
+      var originLeft = el.style.left;
+      var originWidth = el.style.width;
+      el.classList.add(mode === "resize" ? "is-resizing" : "is-dragging");
+      document.documentElement.classList.add("cal-gesture-active");
+
+      function onMove(evMove) {
+        if (finished || evMove.pointerId !== pointerId) return;
+        var dx = evMove.clientX - originX;
+        var dy = evMove.clientY - originY;
+        if (!dragging) {
+          if (Math.abs(dx) < CAL_DRAG_THRESHOLD_PX && Math.abs(dy) < CAL_DRAG_THRESHOLD_PX) return;
+          dragging = true;
+        }
+        evMove.preventDefault();
+        if (mode === "resize") {
+          var endMs = timelineClientYToEndMs(
+            curDate,
+            axisHost,
+            evMove.clientY,
+            ctx.hourPx,
+            curStart
+          );
+          if (endMs == null) return;
+          curEnd = endMs;
+          applyTimedEntryLayout(el, curDate, curStart, curEnd, ctx.hourPx);
+          return;
+        }
+        if (canCrossDays()) {
+          var hostInfo = resolveHostAt(evMove.clientX);
+          axisHost = hostInfo.el;
+          curDate = hostInfo.dateIso;
+          if (el.parentNode !== axisHost) {
+            axisHost.appendChild(el);
+            el.style.left = ctx.view === "week" ? "1px" : "0";
+            el.style.width = ctx.view === "week" ? "calc(100% - 3px)" : "100%";
+          }
+        }
+        var newStart = timelineClientYToStartMs(curDate, axisHost, evMove.clientY, ctx.hourPx);
+        if (newStart == null) return;
+        var dayEnd = dayStartMs(curDate) + TIMELINE_END_MIN * 60000;
+        if (newStart + duration0 > dayEnd) newStart = dayEnd - duration0;
+        var dayStartTimed = dayStartMs(curDate) + TIMELINE_START_MIN * 60000;
+        if (newStart < dayStartTimed) newStart = dayStartTimed;
+        newStart = snapMsTo15(newStart);
+        curStart = newStart;
+        curEnd = newStart + duration0;
+        applyTimedEntryLayout(el, curDate, curStart, curEnd, ctx.hourPx);
+      }
+
+      function finish(evUp) {
+        if (finished) return;
+        if (evUp && evUp.pointerId != null && evUp.pointerId !== pointerId) return;
+        finished = true;
+        document.removeEventListener("pointermove", onMove, true);
+        document.removeEventListener("pointerup", finish, true);
+        document.removeEventListener("pointercancel", finish, true);
+        el.classList.remove("is-dragging", "is-resizing");
+        document.documentElement.classList.remove("cal-gesture-active");
+        calendarGestureBusy = false;
+        if (!dragging) {
+          calendarSuppressClick(450);
+          if (mode === "move") openCalendarEntry(ev);
+          return;
+        }
+        calendarSuppressClick(450);
+        var changed =
+          curStart !== startMs0 ||
+          curEnd !== endMs0 ||
+          curDate !== ctx.dateIso ||
+          el.parentNode !== originParent;
+        if (!changed) {
+          if (originParent && el.parentNode !== originParent) {
+            originParent.appendChild(el);
+            el.style.left = originLeft;
+            el.style.width = originWidth;
+          }
+          applyTimedEntryLayout(el, ctx.dateIso, startMs0, endMs0, ctx.hourPx);
+          return;
+        }
+        persistCalendarEntryTimes(ev, curStart, curEnd);
+      }
+
+      document.addEventListener("pointermove", onMove, true);
+      document.addEventListener("pointerup", finish, true);
+      document.addEventListener("pointercancel", finish, true);
+    }
+
+    handle.addEventListener("pointerdown", function (e) {
+      onPointerDown(e, "resize");
+    });
+    el.addEventListener("pointerdown", function (e) {
+      if (e.target === handle || (e.target && e.target.closest && e.target.closest(".cal-resize-handle"))) {
+        return;
+      }
+      onPointerDown(e, "move");
+    });
+  }
+
+  function bindMonthChipDrag(chip, ev, getCellAtPoint) {
+    if (!chip || !ev || !getCellAtPoint) return;
+    var startMs0 = eventStartMs(ev);
+    var endMs0 = eventEndMs(ev);
+    if (startMs0 == null) return;
+    if (endMs0 == null || endMs0 <= startMs0) endMs0 = startMs0 + CAL_RESIZE_MIN_MS;
+    chip.classList.add("cal-entry--interactive");
+
+    chip.addEventListener("pointerdown", function (e) {
+      if (e.button != null && e.button !== 0) return;
+      if (calendarGestureBusy) return;
+      e.preventDefault();
+      e.stopPropagation();
+      calendarGestureBusy = true;
+      var pointerId = e.pointerId;
+      var originX = e.clientX;
+      var originY = e.clientY;
+      var dragging = false;
+      var finished = false;
+      var targetIso = null;
+      chip.classList.add("is-dragging");
+      document.documentElement.classList.add("cal-gesture-active");
+
+      function onMove(evMove) {
+        if (finished || evMove.pointerId !== pointerId) return;
+        var dx = evMove.clientX - originX;
+        var dy = evMove.clientY - originY;
+        if (!dragging) {
+          if (Math.abs(dx) < CAL_DRAG_THRESHOLD_PX && Math.abs(dy) < CAL_DRAG_THRESHOLD_PX) return;
+          dragging = true;
+        }
+        evMove.preventDefault();
+        var cell = getCellAtPoint(evMove.clientX, evMove.clientY);
+        targetIso = cell ? cell.getAttribute("data-date-iso") : null;
+        document.querySelectorAll(".meetings-month-cell.is-drop-target").forEach(function (c) {
+          c.classList.remove("is-drop-target");
+        });
+        if (cell) cell.classList.add("is-drop-target");
+      }
+
+      function finish(evUp) {
+        if (finished) return;
+        if (evUp && evUp.pointerId != null && evUp.pointerId !== pointerId) return;
+        finished = true;
+        document.removeEventListener("pointermove", onMove, true);
+        document.removeEventListener("pointerup", finish, true);
+        document.removeEventListener("pointercancel", finish, true);
+        chip.classList.remove("is-dragging");
+        document.documentElement.classList.remove("cal-gesture-active");
+        document.querySelectorAll(".meetings-month-cell.is-drop-target").forEach(function (c) {
+          c.classList.remove("is-drop-target");
+        });
+        calendarGestureBusy = false;
+        calendarSuppressClick(450);
+        if (!dragging) {
+          openCalendarEntry(ev);
+          return;
+        }
+        if (!targetIso) return;
+        var oldDate = localDateIsoFromMs(startMs0);
+        if (oldDate === targetIso) return;
+        var dayDelta = dayStartMs(targetIso) - dayStartMs(oldDate);
+        persistCalendarEntryTimes(ev, startMs0 + dayDelta, endMs0 + dayDelta);
+      }
+
+      document.addEventListener("pointermove", onMove, true);
+      document.addEventListener("pointerup", finish, true);
+      document.addEventListener("pointercancel", finish, true);
+    });
+  }
+
   function currentOpenNoteId() {
     var wrap = document.getElementById("note-editor-more-wrap");
     return wrap && wrap._shareId ? String(wrap._shareId) : "";
@@ -1719,6 +2265,7 @@
     el.type = "button";
     el.className = "day-timeline-band-item" + (opts.mod ? " " + opts.mod : "");
     el.textContent = opts.title || "";
+    if (opts.ev) applyEntryDisplayColor(el, opts.ev);
     if (opts.onClick) el.addEventListener("click", opts.onClick);
     return el;
   }
@@ -1768,6 +2315,7 @@
         band.appendChild(
           renderTimelineBandItem({
             title: meetingDisplayTitle(ev),
+            ev: ev,
             mod:
               (meetingNeedsRsvp(ev) ? "day-timeline-band-item--pending" : "") +
               (calendarEntryIsTask(ev) ? " day-timeline-band-item--task" : ""),
@@ -1789,6 +2337,7 @@
         earlyItems.push(
           renderTimelineBandItem({
             title: earlyTitle || meetingDisplayTitle(ev),
+            ev: ev,
             mod:
               (meetingNeedsRsvp(ev) ? "day-timeline-band-item--pending" : "") +
               (calendarEntryIsTask(ev) ? " day-timeline-band-item--task" : ""),
@@ -1895,9 +2444,27 @@
       if (it.kind === "reminder") {
         slot.appendChild(renderTimelineReminder(it.reminder));
       } else {
-        slot.appendChild(renderMeetingCard(it.ev, { heightPx: height }));
+        slot.appendChild(renderMeetingCard(it.ev, { heightPx: height, skipClick: true }));
+        bindTimedEntryInteractions(slot, it.ev, {
+          view: "day",
+          dateIso: calDate,
+          hourPx: hourPx,
+          axisHost: canvas,
+          dayHosts: paintOpts.dayHosts || null,
+        });
       }
       canvas.appendChild(slot);
+    });
+
+    if (paintOpts.dayHosts && calDate) {
+      paintOpts.dayHosts.push({ el: canvas, dateIso: calDate });
+    }
+    canvas.addEventListener("click", function (e) {
+      if (calendarConsumeSuppressClick()) return;
+      if (e.target !== canvas) return;
+      var startMs = timelineClientYToStartMs(calDate, canvas, e.clientY, hourPx);
+      if (startMs == null) return;
+      openCreateEventAtMs(startMs);
     });
 
     var showNow = !!(ui.showNow && calDate && calDate === todayIsoLocal());
@@ -2087,9 +2654,29 @@
         return;
       }
       if (lastMeetingsLeft && lastMeetingsLeft.date === todayIsoLocal()) {
-        paintMeetingsList(meetingsUiMain, lastMeetingsLeft, lastRemindersItems, { preserveScroll: true });
+        var hostsA = [];
+        paintMeetingsList(meetingsUiMain, lastMeetingsLeft, lastRemindersItems, {
+          preserveScroll: true,
+          dayHosts: hostsA,
+        });
+        if (lastMeetingsRight) {
+          paintMeetingsList(meetingsUiNext, lastMeetingsRight, lastRemindersItems, {
+            preserveScroll: true,
+            dayHosts: hostsA,
+          });
+        }
       } else if (lastMeetingsRight && lastMeetingsRight.date === todayIsoLocal()) {
-        paintMeetingsList(meetingsUiNext, lastMeetingsRight, lastRemindersItems, { preserveScroll: true });
+        var hostsB = [];
+        if (lastMeetingsLeft) {
+          paintMeetingsList(meetingsUiMain, lastMeetingsLeft, lastRemindersItems, {
+            preserveScroll: true,
+            dayHosts: hostsB,
+          });
+        }
+        paintMeetingsList(meetingsUiNext, lastMeetingsRight, lastRemindersItems, {
+          preserveScroll: true,
+          dayHosts: hostsB,
+        });
       }
     }, 60000);
   }
@@ -2102,8 +2689,9 @@
     var leftIso = (leftData && leftData.date) || "";
     var rightIso = lastMeetingsRight && lastMeetingsRight.date;
     syncMeetingsHead(leftIso, rightIso);
-    paintMeetingsList(meetingsUiMain, lastMeetingsLeft, lastRemindersItems);
-    if (dual) paintMeetingsList(meetingsUiNext, lastMeetingsRight, lastRemindersItems);
+    var dayHosts = [];
+    paintMeetingsList(meetingsUiMain, lastMeetingsLeft, lastRemindersItems, { dayHosts: dayHosts });
+    if (dual) paintMeetingsList(meetingsUiNext, lastMeetingsRight, lastRemindersItems, { dayHosts: dayHosts });
     updateMeetingsBadge(lastMeetingsLeft, dual ? lastMeetingsRight : null);
     ensureMeetingsNowTimer();
   }
@@ -2183,6 +2771,7 @@
           e.stopPropagation();
           openCalendarEntry(ev);
         });
+        applyEntryDisplayColor(chip, ev);
         cell.appendChild(chip);
       });
       allday.appendChild(cell);
@@ -2201,10 +2790,13 @@
     }
     body.appendChild(gutter);
 
+    var weekDayHosts = [];
     days.forEach(function (iso) {
       var col = document.createElement("div");
       col.className = "meetings-week-col";
       col.style.height = gridH + "px";
+      col.setAttribute("data-date-iso", iso);
+      weekDayHosts.push({ el: col, dateIso: iso });
       var timed = [];
       eventsForDate(events, iso).forEach(function (ev) {
         if (eventIsAllDay(ev)) return;
@@ -2227,11 +2819,22 @@
         btn.style.left = "calc(" + (it.col || 0) * width + "% + 1px)";
         btn.style.width = "calc(" + width + "% - 3px)";
         btn.textContent = meetingDisplayTitle(it.ev);
-        btn.addEventListener("click", function (e) {
-          e.stopPropagation();
-          openCalendarEntry(it.ev);
+        applyEntryDisplayColor(btn, it.ev);
+        bindTimedEntryInteractions(btn, it.ev, {
+          view: "week",
+          dateIso: iso,
+          hourPx: hourPx,
+          axisHost: col,
+          dayHosts: weekDayHosts,
         });
         col.appendChild(btn);
+      });
+      col.addEventListener("click", function (e) {
+        if (calendarConsumeSuppressClick()) return;
+        if (e.target !== col) return;
+        var startMs = timelineClientYToStartMs(iso, col, e.clientY, hourPx);
+        if (startMs == null) return;
+        openCreateEventAtMs(startMs);
       });
       if (iso === today) {
         var nowMs = Date.now();
@@ -2290,6 +2893,7 @@
       cell.className = "meetings-month-cell";
       cell.setAttribute("role", "button");
       cell.tabIndex = 0;
+      cell.setAttribute("data-date-iso", iso);
       if (iso.slice(0, 7) !== monthPrefix) cell.classList.add("meetings-month-cell--out");
       if (iso === today) cell.classList.add("is-today");
       var num = document.createElement("span");
@@ -2304,11 +2908,24 @@
           withTaskClass("meetings-month-chip", ev) +
           (meetingNeedsRsvp(ev) ? " meetings-month-chip--pending" : "");
         chip.textContent = meetingDisplayTitle(ev);
-        chip.addEventListener("click", function (e) {
-          e.preventDefault();
-          e.stopPropagation();
-          openCalendarEntry(ev);
-        });
+        applyEntryDisplayColor(chip, ev);
+        if (!eventIsAllDay(ev) && eventStartMs(ev) != null) {
+          bindMonthChipDrag(chip, ev, function (x, y) {
+            var nodes = host.querySelectorAll(".meetings-month-cell[data-date-iso]");
+            for (var i = 0; i < nodes.length; i += 1) {
+              var r = nodes[i].getBoundingClientRect();
+              if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return nodes[i];
+            }
+            return null;
+          });
+        } else {
+          chip.addEventListener("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (calendarConsumeSuppressClick()) return;
+            openCalendarEntry(ev);
+          });
+        }
         cell.appendChild(chip);
       });
       if (dayEvs.length > 3) {
@@ -2318,14 +2935,13 @@
         cell.appendChild(more);
       }
       cell.addEventListener("click", function () {
-        meetingsPageDate = iso;
-        setMeetingsViewMode("day", { force: true });
+        if (calendarConsumeSuppressClick()) return;
+        openCreateEventAtMs(dayStartMs(iso) + 9 * 60 * 60000);
       });
       cell.addEventListener("keydown", function (e) {
         if (e.key !== "Enter" && e.key !== " ") return;
         e.preventDefault();
-        meetingsPageDate = iso;
-        setMeetingsViewMode("day", { force: true });
+        openCreateEventAtMs(dayStartMs(iso) + 9 * 60 * 60000);
       });
       grid.appendChild(cell);
     });
@@ -10312,15 +10928,22 @@
     return 60 * 60 * 1000;
   }
 
-  function ensureMeetingEndAfterStart() {
+  function ensureMeetingEndAfterStart(durMs) {
     var startEl = document.getElementById("m-ev-start");
     var endEl = document.getElementById("m-ev-end");
     if (!startEl || !endEl || !startEl.value) return;
     var start = parseDatetimeLocal(startEl.value);
     if (!start) return;
+    if (durMs != null && isFinite(durMs) && durMs > 0) {
+      endEl.value = isoToDatetimeLocalValue(new Date(start.getTime() + durMs).toISOString());
+      syncEventPillsFromHidden("end");
+      return;
+    }
     var end = parseDatetimeLocal(endEl.value);
     if (end && end.getTime() > start.getTime()) return;
-    endEl.value = isoToDatetimeLocalValue(new Date(start.getTime() + meetingDurationMs()).toISOString());
+    endEl.value = isoToDatetimeLocalValue(
+      new Date(start.getTime() + meetingDurationMs()).toISOString()
+    );
     syncEventPillsFromHidden("end");
   }
 
@@ -10362,8 +10985,9 @@
       var dateEl = document.getElementById("m-ev-" + which + "-date");
       var timeEl = document.getElementById("m-ev-" + which + "-time");
       function onChange() {
+        var dur = which === "start" ? meetingDurationMs() : null;
         syncHiddenFromEventPills(which);
-        if (which === "start") ensureMeetingEndAfterStart();
+        if (which === "start") ensureMeetingEndAfterStart(dur);
       }
       if (dateEl) {
         dateEl.addEventListener("change", onChange);
@@ -10944,6 +11568,7 @@
   }
 
   function openTaskModal(ev, opts) {
+    clearCalendarGestureState();
     ev = ev || {};
     opts = opts || {};
     var taskId = calendarTaskId(ev);
@@ -10991,6 +11616,7 @@
       '<input id="m-ev-end-date" type="date" class="event-sheet-pill" />' +
       '<input id="m-ev-end-time" type="time" class="event-sheet-pill" />' +
       "</span></div></div>" +
+      '<div id="m-ev-color-host"></div>' +
       '<div class="event-sheet-group meeting-attendees-field">' +
       '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-task-assignee-toggle" aria-expanded="false">' +
       '<span class="event-sheet-row-label">Исполнитель</span>' +
@@ -11009,6 +11635,10 @@
     syncEventPillsFromHidden("start");
     syncEventPillsFromHidden("end");
     bindEventDateTimePills();
+    entryColorPickerApi = mountEntryColorPicker(
+      document.getElementById("m-ev-color-host"),
+      ev.display_color || ""
+    );
     reminderChecklistApi = mountReminderChecklist(
       document.getElementById("m-task-checklist-host"),
       ev.checklist
@@ -11238,6 +11868,7 @@
   }
 
   function openEventModal(ev) {
+    clearCalendarGestureState();
     ev = ev || {};
     if (calendarEntryIsTask(ev)) {
       openTaskModal(ev);
@@ -11271,6 +11902,7 @@
       '<input id="m-ev-end-date" type="date" class="event-sheet-pill" />' +
       '<input id="m-ev-end-time" type="time" class="event-sheet-pill" />' +
       "</span></div></div>" +
+      '<div id="m-ev-color-host"></div>' +
       '<div class="event-sheet-group meeting-attendees-field">' +
       '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-ev-attendees-toggle" aria-expanded="false">' +
       '<span class="event-sheet-row-label">Участники</span>' +
@@ -11303,6 +11935,10 @@
     syncEventPillsFromHidden("start");
     syncEventPillsFromHidden("end");
     bindEventDateTimePills();
+    entryColorPickerApi = mountEntryColorPicker(
+      document.getElementById("m-ev-color-host"),
+      ev.display_color || ""
+    );
     document.getElementById("m-ev-desc").value = calendarDescriptionPlain(
       ev.description || ""
     );
@@ -11471,8 +12107,22 @@
     syncAppOverlay();
   }
 
+  var modalSubmitBusy = false;
+
   async function modalSubmit(ev) {
-    ev.preventDefault();
+    if (ev && typeof ev.preventDefault === "function") ev.preventDefault();
+    if (modalSubmitBusy) return;
+    modalSubmitBusy = true;
+    try {
+      await modalSubmitInner();
+    } catch (e) {
+      showCalendarToast((e && e.message) || "Не удалось сохранить");
+    } finally {
+      modalSubmitBusy = false;
+    }
+  }
+
+  async function modalSubmitInner() {
     const kind = document.getElementById("modal-kind").value;
     if (kind === "reminder") {
       const id = document.getElementById("modal-reminder-id").value;
@@ -11557,25 +12207,41 @@
           showOfflineSavedToast();
           return;
         }
-        alert(e.message || String(e));
+        showCalendarToast(e.message || String(e));
       }
       return;
     }
     if (kind === "task") {
       const id = document.getElementById("modal-event-id").value;
       const body = taskPayloadFromModal();
+      var taskColor = entryColorPickerApi ? entryColorPickerApi.getColor() : "";
       try {
         const r = await apiFetch(id ? "/calendar/tasks/" + encodeURIComponent(id) : "/calendar/tasks", {
           method: id ? "PATCH" : "POST",
           body: JSON.stringify(body),
         });
         var saved = r && r.task;
+        var colorId = id || (saved && (saved.id || (saved.task_id != null ? saved.task_id : "")));
+        if (colorId || taskColor) {
+          try {
+            await persistEntryDisplayColor(
+              {
+                id: String(colorId).indexOf("task-") === 0 ? colorId : "task-" + colorId,
+                task_id: colorId,
+                entry_type: "task",
+              },
+              taskColor
+            );
+          } catch (colorErr) {
+            showCalendarToast((colorErr && colorErr.message) || "Цвет не сохранён");
+          }
+        }
         var savedCb = taskModalOnSaved;
         closeModal();
         if (savedCb) savedCb(saved);
         await loadActual();
       } catch (e) {
-        alert(e.message || String(e));
+        showCalendarToast(e.message || String(e));
       }
       return;
     }
@@ -11585,29 +12251,66 @@
       syncHiddenFromEventPills("start");
       syncHiddenFromEventPills("end");
       ensureMeetingEndAfterStart();
+      var sumEl = document.getElementById("m-ev-sum");
+      var startEl = document.getElementById("m-ev-start");
+      var endEl = document.getElementById("m-ev-end");
+      var descEl = document.getElementById("m-ev-desc");
+      if (!sumEl || !startEl || !endEl) {
+        showCalendarToast("Форма встречи не готова — откройте снова");
+        return;
+      }
+      var title = String(sumEl.value || "").trim();
+      var startIso = datetimeLocalToIso(startEl.value);
+      var endIso = datetimeLocalToIso(endEl.value);
+      if (!id && !title) {
+        showCalendarToast("Укажите название встречи");
+        try {
+          sumEl.focus();
+        } catch (_) {}
+        return;
+      }
+      if (!startIso) {
+        showCalendarToast("Укажите начало встречи");
+        return;
+      }
+      var eventColor = entryColorPickerApi ? entryColorPickerApi.getColor() : "";
       const body = {
         calendar_id: calId,
-        title: document.getElementById("m-ev-sum").value.trim(),
-        start: datetimeLocalToIso(document.getElementById("m-ev-start").value),
-        end: datetimeLocalToIso(document.getElementById("m-ev-end").value),
-        description: document.getElementById("m-ev-desc").value,
+        title: title,
+        start: startIso,
+        end: endIso,
+        description: descEl ? descEl.value : "",
         attendees: meetingAttendeesApi ? meetingAttendeesApi.getEmails() : [],
       };
       try {
-        await apiFetch(id ? "/calendar/events/" + encodeURIComponent(id) : "/calendar/events", {
+        var savedEv = await apiFetch(id ? "/calendar/events/" + encodeURIComponent(id) : "/calendar/events", {
           method: id ? "PUT" : "POST",
           body: JSON.stringify(body),
         });
+        var savedEvent = savedEv && savedEv.event;
+        var colorTarget = {
+          id: (savedEvent && savedEvent.id) || id,
+          calendar_id: (savedEvent && savedEvent.calendar_id) || calId,
+        };
+        if (colorTarget.id) {
+          try {
+            await persistEntryDisplayColor(colorTarget, eventColor);
+          } catch (colorErr) {
+            showCalendarToast((colorErr && colorErr.message) || "Цвет не сохранён");
+          }
+        }
         closeModal();
         await loadActual();
       } catch (e) {
-        alert(e.message || String(e));
+        showCalendarToast(e.message || String(e));
       }
       return;
     }
     if (kind === "agent") {
       await saveAgentForm();
+      return;
     }
+    showCalendarToast("Неизвестный тип формы");
   }
 
   async function modalDelete() {
@@ -11915,9 +12618,13 @@
       card.title = "Не подтверждена — откройте, чтобы ответить";
     }
     if (calendarEntryIsTask(ev)) card.classList.add("meeting-card--task");
-    card.addEventListener("click", function () {
-      openCalendarEntry(ev);
-    });
+    applyEntryDisplayColor(card, ev);
+    if (!opts.skipClick) {
+      card.addEventListener("click", function () {
+        if (calendarConsumeSuppressClick()) return;
+        openCalendarEntry(ev);
+      });
+    }
 
     const top = document.createElement("div");
     top.className = "meeting-card-top";
@@ -26846,6 +27553,11 @@
       if (e.target.id === "modal-overlay") closeModal();
     });
     onId("modal-form", "submit", modalSubmit);
+    onId("modal-save", "click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      modalSubmit(e);
+    });
 
     apiFetch("/me", { method: "GET" })
       .then(function (me) {

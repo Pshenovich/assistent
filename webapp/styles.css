@@ -999,6 +999,14 @@ html.boot-open-app #app.hidden {
   );
 }
 
+.day-timeline-band-item.has-entry-color {
+  border-color: color-mix(in srgb, var(--entry-color) 45%, transparent);
+  border-left-color: var(--entry-color);
+  background: color-mix(in srgb, var(--entry-color) 22%, transparent);
+  background-image: none;
+  color: var(--text);
+}
+
 .day-timeline {
   --day-hour-h: 56px;
   --day-gutter: 2.75rem;
@@ -1082,6 +1090,65 @@ html.boot-open-app #app.hidden {
   z-index: 2;
 }
 
+.cal-entry--interactive {
+  touch-action: none;
+}
+
+.cal-entry--interactive.is-dragging,
+.cal-entry--interactive.is-resizing {
+  z-index: 8;
+  opacity: 0.95;
+}
+
+.cal-entry--interactive.is-dragging {
+  cursor: grabbing;
+}
+
+.cal-entry--interactive.is-resizing {
+  cursor: ns-resize;
+}
+
+.cal-resize-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 10px;
+  z-index: 5;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.cal-resize-handle::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  width: 22px;
+  height: 3px;
+  margin-left: -11px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.cal-entry--interactive:hover .cal-resize-handle::after,
+.cal-entry--interactive.is-resizing .cal-resize-handle::after {
+  opacity: 0.55;
+}
+
+html.cal-gesture-active,
+html.cal-gesture-active body {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.meetings-month-cell.is-drop-target {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
 .meeting-card-wrap--timeline {
   height: 100%;
   min-width: 0;
@@ -1110,6 +1177,18 @@ html.boot-open-app #app.hidden {
   border-left-color: var(--success);
   background: var(--success-muted);
   box-shadow: none;
+}
+
+.meeting-card--timeline.has-entry-color,
+.meeting-card--timeline.meeting-card--task.has-entry-color {
+  border-left-color: var(--entry-color);
+  background: color-mix(in srgb, var(--entry-color) 20%, transparent);
+  box-shadow: inset 3px 0 0 var(--entry-color);
+}
+
+.meeting-card--timeline.has-entry-color .meeting-card-join-btn {
+  color: var(--entry-color);
+  background: color-mix(in srgb, var(--entry-color) 18%, transparent);
 }
 
 .meeting-card--timeline-pending {
@@ -1876,6 +1955,12 @@ html.boot-open-app #app.hidden {
   background: color-mix(in srgb, var(--accent) 55%, var(--surface-muted));
 }
 
+.meetings-week-chip.has-entry-color,
+.meetings-month-chip.has-entry-color,
+.meetings-week-event.has-entry-color {
+  background: var(--entry-color);
+}
+
 .meetings-week-body {
   position: relative;
   align-items: stretch;
@@ -1928,6 +2013,10 @@ html.boot-open-app #app.hidden {
   line-height: 1.2;
   text-align: left;
   cursor: pointer;
+}
+
+.meetings-week-event .cal-resize-handle::after {
+  background: #fff;
 }
 
 .meetings-week-event--task {
@@ -9348,6 +9437,85 @@ textarea.event-sheet-title--area {
   background: var(--surface-elevated);
 }
 
+.event-sheet-color-group {
+  overflow: hidden;
+}
+
+.event-sheet-color-group.is-open {
+  overflow: visible;
+}
+
+.event-sheet-color-group > .event-sheet-color-toggle {
+  border-radius: 14px;
+}
+
+.event-sheet-color-group.is-open > .event-sheet-color-toggle {
+  border-radius: 14px 14px 0 0;
+}
+
+.event-sheet-color-preview {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--swatch-color, var(--accent));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.event-sheet-color-preview--default {
+  background:
+    linear-gradient(135deg, transparent 46%, var(--text-tertiary) 46% 54%, transparent 54%),
+    var(--surface-muted);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.event-sheet-color-menu {
+  padding: 0.55rem 0.9rem 0.85rem;
+  border-top: 0.5px solid var(--border);
+  background: var(--surface-elevated);
+  border-radius: 0 0 14px 14px;
+}
+
+.event-sheet-color-menu-hint {
+  margin: 0 0 0.55rem;
+}
+
+.event-sheet-color-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.event-sheet-color-swatch {
+  width: 1.55rem;
+  height: 1.55rem;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--swatch-color, var(--accent));
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.event-sheet-color-swatch--default {
+  background:
+    linear-gradient(135deg, transparent 46%, var(--text-tertiary) 46% 54%, transparent 54%),
+    var(--surface-muted);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.event-sheet-color-swatch.is-selected {
+  border-color: #fff;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--swatch-color, var(--accent)) 70%, #fff),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+
+.event-sheet-color-swatch--default.is-selected {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px var(--text-secondary);
+}
+
 .event-sheet-group.meeting-attendees-field {
   overflow: visible;
 }
@@ -9416,6 +9584,15 @@ textarea.event-sheet-title--area {
 
 .event-sheet-row--nav[aria-expanded="true"] .event-sheet-chevron {
   transform: rotate(180deg);
+}
+
+.event-sheet-color-toggle.event-sheet-row--nav .event-sheet-chevron {
+  transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+
+.event-sheet-color-toggle.event-sheet-row--nav[aria-expanded="true"] .event-sheet-chevron {
+  transform: rotate(0deg);
 }
 
 .event-sheet-pills {

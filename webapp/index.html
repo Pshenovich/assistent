@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261006-vpn-browser">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261006-cal-colorrow">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -43,7 +43,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261006-vpn-browser" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261006-cal-colorrow" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -1381,7 +1381,7 @@
 
   <div id="modal-overlay" class="modal-overlay hidden" aria-hidden="true">
     <div class="modal modal--sheet" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-      <form id="modal-form" class="modal-form">
+      <form id="modal-form" class="modal-form" novalidate>
         <input type="hidden" id="modal-kind" value="" />
         <input type="hidden" id="modal-reminder-id" />
         <input type="hidden" id="modal-event-id" />
@@ -1478,6 +1478,6 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/app.js?v=20261006-vpn-browser" defer></script>
+  <script src="/webapp/app.js?v=20261006-cal-colorrow" defer></script>
 </body>
 </html>

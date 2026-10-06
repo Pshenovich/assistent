@@ -906,6 +906,50 @@
       return { event: event };
     }
 
+    var eventIdMatch = basePath.match(/^\/calendar\/events\/([^/]+)$/);
+    if (eventIdMatch && method === "PUT") {
+      var eventId = decodeURIComponent(eventIdMatch[1]);
+      var putBody = {};
+      try {
+        putBody = opts && opts.body ? JSON.parse(opts.body) : {};
+      } catch (_) {}
+      var found = null;
+      var foundDay = "";
+      Object.keys(eventsByDate).forEach(function (d) {
+        (eventsByDate[d] || []).forEach(function (item) {
+          if (String(item.id) === String(eventId)) {
+            found = item;
+            foundDay = d;
+          }
+        });
+      });
+      if (!found) return realFetch(path, opts);
+      if (putBody.title != null && String(putBody.title).trim()) {
+        found.summary = String(putBody.title).trim();
+      }
+      if (putBody.description != null) found.description = String(putBody.description || "");
+      if (putBody.start) found.start = { dateTime: String(putBody.start) };
+      if (putBody.end) found.end = { dateTime: String(putBody.end) };
+      if (putBody.calendar_id) found.calendar_id = String(putBody.calendar_id);
+      if (putBody.attendees) {
+        found.attendees = (putBody.attendees || []).map(function (em) {
+          return { email: String(em || "").trim().toLowerCase(), name: "" };
+        }).filter(function (a) { return a.email; });
+      }
+      var newDay = String((found.start && found.start.dateTime) || foundDay).slice(0, 10) || foundDay;
+      if (foundDay && eventsByDate[foundDay]) {
+        eventsByDate[foundDay] = eventsByDate[foundDay].filter(function (item) {
+          return String(item.id) !== String(eventId);
+        });
+      }
+      if (!eventsByDate[newDay]) eventsByDate[newDay] = [];
+      eventsByDate[newDay].push(found);
+      eventsByDate[newDay].sort(function (a, b) {
+        return String((a.start || {}).dateTime || "").localeCompare(String((b.start || {}).dateTime || ""));
+      });
+      return { event: found };
+    }
+
     if (basePath === "/calendar/availability" && method === "POST") {
       var avBody = {};
       try {
