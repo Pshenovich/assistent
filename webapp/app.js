@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261006-cal-noscroll";
+  var WEBAPP_BUILD = "20261006-notes-preview";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -114,7 +114,7 @@
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
   const NOTE_EDITOR_ASSET_V = "20261005-heading-pdf";
-  const MINIAPP_CACHE_SCHEMA = 2;
+  const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
   function isIOSDevice() {

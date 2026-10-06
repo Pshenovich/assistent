@@ -6882,6 +6882,47 @@ def _project_from_tags(tags: list[dict[str, Any]]) -> dict[str, Any] | None:
     return tags[0] if tags else None
 
 
+# Список /notes отдаёт только превью: иначе одна заметка с base64-картинками
+# раздувает ответ до мегабайт и миниапп грузится десятки секунд.
+_NOTE_LIST_BODY_MAX = 600
+_HASHTAG_SYNC_BODY_MAX = 50_000
+_DATA_URI_RE = re.compile(
+    r"data:(?:image|video|audio|application)/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+",
+    re.IGNORECASE,
+)
+
+
+def note_body_list_preview(
+    text: str, *, max_len: int = _NOTE_LIST_BODY_MAX
+) -> tuple[str, bool]:
+    """Сжимает тело заметки для списка: без data-URI и с усечением."""
+    raw = str(text or "")
+    if not raw:
+        return "", False
+    cleaned = _DATA_URI_RE.sub("[image]", raw)
+    truncated = cleaned != raw or len(cleaned) > max_len
+    if len(cleaned) > max_len:
+        cleaned = cleaned[: max_len - 1] + "…"
+    return cleaned, truncated
+
+
+def minify_note_for_list(item: dict[str, Any]) -> dict[str, Any]:
+    """Оставляет в list-payload только превью body/description."""
+    if not isinstance(item, dict):
+        return item
+    touched = False
+    for key in ("body", "description"):
+        if key not in item or item.get(key) is None:
+            continue
+        preview, truncated = note_body_list_preview(str(item.get(key) or ""))
+        item[key] = preview
+        if truncated:
+            touched = True
+    if touched:
+        item["body_preview_only"] = True
+    return item
+
+
 def _apply_project_fields(item: dict[str, Any], tags: list[dict[str, Any]]) -> None:
     project_tags = tags[:1]
     item["tags"] = project_tags
@@ -7170,21 +7211,28 @@ async def miniapp_notes_bundle(
             tag_items.append(("local", str(row.get("id"))))
         mapping = tags_store.tags_by_items(uid, tag_items)
         for n in local_notes:
-            hashtags_store.sync_item_hashtags(
-                uid,
-                "local",
-                n.get("id"),
-                str(n.get("title") or ""),
-                str(n.get("body") or n.get("description") or ""),
-            )
+            body = str(n.get("body") or n.get("description") or "")
+            # Не гоняем мегабайтные base64-тела через extract hashtags на каждый /notes.
+            if len(body) <= _HASHTAG_SYNC_BODY_MAX:
+                hashtags_store.sync_item_hashtags(
+                    uid,
+                    "local",
+                    n.get("id"),
+                    str(n.get("title") or ""),
+                    body,
+                )
         for row in transcriptions:
-            hashtags_store.sync_item_hashtags(
-                uid,
-                "local",
-                row.get("id"),
-                str(row.get("title") or ""),
-                str(row.get("body") or row.get("description") or row.get("preview") or ""),
+            body = str(
+                row.get("body") or row.get("description") or row.get("preview") or ""
             )
+            if len(body) <= _HASHTAG_SYNC_BODY_MAX:
+                hashtags_store.sync_item_hashtags(
+                    uid,
+                    "local",
+                    row.get("id"),
+                    str(row.get("title") or ""),
+                    body,
+                )
         hash_mapping = hashtags_store.hashtags_by_items(uid, tag_items)
         for n in local_notes:
             key = ("local", str(n.get("id")))
@@ -7252,6 +7300,9 @@ async def miniapp_notes_bundle(
         print(f"[miniapp_notes] discuss_latest_fail err={e!r}")
         for n in local_notes + transcriptions:
             n.setdefault("discuss_latest", None)
+
+    local_notes = [minify_note_for_list(n) for n in local_notes]
+    transcriptions = [minify_note_for_list(n) for n in transcriptions]
 
     return {
         "journal": out_journal,
@@ -7567,13 +7618,15 @@ async def miniapp_knowledge_notes(
 
         notes = notes_store.list_knowledge_notes(uid)
         for n in notes:
-            hashtags_store.sync_item_hashtags(
-                uid,
-                "local",
-                n.get("id"),
-                str(n.get("title") or ""),
-                str(n.get("body") or n.get("description") or ""),
-            )
+            body = str(n.get("body") or n.get("description") or "")
+            if len(body) <= _HASHTAG_SYNC_BODY_MAX:
+                hashtags_store.sync_item_hashtags(
+                    uid,
+                    "local",
+                    n.get("id"),
+                    str(n.get("title") or ""),
+                    body,
+                )
         tag_items = [("local", str(n.get("id"))) for n in notes]
         mapping = tags_store.tags_by_items(uid, tag_items)
         hash_mapping = hashtags_store.hashtags_by_items(uid, tag_items)
@@ -7591,7 +7644,7 @@ async def miniapp_knowledge_notes(
             n.setdefault("tags", [])
             n.setdefault("project", None)
             n.setdefault("hashtags", [])
-    return {"notes": notes}
+    return {"notes": [minify_note_for_list(n) for n in notes]}
 
 
 @miniapp_router.post("/notes/knowledge")
