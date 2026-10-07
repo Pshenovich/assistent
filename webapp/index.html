@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261007-auth-signature">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261007-canonical-domain">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -12,6 +12,17 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/webapp/icons/icon-192.png" />
   <script>
     (function () {
+      // Login Widget /setdomain только для assistent.networ.ru — старый edge ломает вход.
+      var host = (location.hostname || "").toLowerCase();
+      if (host === "assistant.obuchat.me" || host === "www.assistant.obuchat.me") {
+        location.replace(
+          "https://assistent.networ.ru" +
+            location.pathname +
+            location.search +
+            location.hash
+        );
+        return;
+      }
       var root = document.documentElement;
       var ua = navigator.userAgent || "";
       if (/android/i.test(ua)) {
@@ -43,7 +54,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261007-auth-signature" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261007-canonical-domain" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -1478,6 +1489,6 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/app.js?v=20261007-auth-signature" defer></script>
+  <script src="/webapp/app.js?v=20261007-canonical-domain" defer></script>
 </body>
 </html>

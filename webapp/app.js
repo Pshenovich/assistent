@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261007-auth-signature";
+  var WEBAPP_BUILD = "20261007-canonical-domain";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
