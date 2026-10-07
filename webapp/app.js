@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261007-task-done-btn";
+  var WEBAPP_BUILD = "20261007-task-actions-row";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;

@@ -11212,25 +11212,44 @@ html.modal-sheet-open body {
 
 .modal-sheet-actions {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: stretch;
   gap: var(--space-2);
   margin-top: var(--space-3);
 }
 
-.modal-done-btn {
+.modal-sheet-actions .modal-done-btn,
+.modal-sheet-actions .modal-delete-btn {
   display: flex;
-  width: 100%;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-width: 0;
+  min-height: var(--vkui--size_button_large_height--regular, 44px);
   margin: 0;
-  min-height: 44px;
+  padding: 0 var(--space-3);
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--vkui--size_border_radius--regular, 10px);
+  font-family: inherit;
+  font-size: 0.9375rem;
   font-weight: 600;
-  color: var(--on-accent, #fff);
-  background: var(--success, #33b679);
+  background: var(--vkui--color_background_secondary_alpha, var(--surface-muted));
 }
 
-.modal-done-btn:active {
-  filter: brightness(1.06);
+.modal-done-btn {
+  color: var(--success, #33b679);
+}
+
+.modal-delete-btn,
+.modal-sheet-actions .modal-delete-btn.btn-text-danger {
+  color: var(--vkui--color_text_negative, var(--danger));
+  background: var(--vkui--color_background_secondary_alpha, var(--surface-muted));
+}
+
+.modal-done-btn:active,
+.modal-sheet-actions .modal-delete-btn:active {
+  opacity: 0.75;
 }
 
 .modal-done-btn.hidden,
@@ -11238,10 +11257,10 @@ html.modal-sheet-open body {
   display: none;
 }
 
-.modal-delete-btn {
-  display: flex;
-  width: 100%;
-  margin: 0;
+/* Одна кнопка на всю ширину, если вторая скрыта */
+.modal-sheet-actions .modal-done-btn:only-child,
+.modal-sheet-actions .modal-delete-btn:only-child {
+  flex: 1 1 100%;
 }
 
 .modal-title {
