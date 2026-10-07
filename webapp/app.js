@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261007-task-actions-row";
+  var WEBAPP_BUILD = "20261007-cal-resize-fix";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -2267,9 +2267,18 @@
           return;
         }
         calendarSuppressClick(450);
-        // Snap только при отпускании — во время жеста блок едет 1:1 за пальцем.
-        curStart = clampTimedMoveStart(curDate, curStart, duration0);
-        curEnd = curStart + duration0;
+        if (mode === "resize") {
+          // Ресайз: старт не двигаем, snap только конца.
+          curEnd = snapMsTo15(curEnd);
+          if (curEnd < curStart + CAL_RESIZE_MIN_MS) curEnd = curStart + CAL_RESIZE_MIN_MS;
+          var dayEnd = dayStartMs(curDate) + TIMELINE_END_MIN * 60000;
+          if (curEnd > dayEnd) curEnd = dayEnd;
+          if (curEnd < curStart + CAL_RESIZE_MIN_MS) curEnd = curStart + CAL_RESIZE_MIN_MS;
+        } else {
+          // Move: snap старта, длительность сохраняем.
+          curStart = clampTimedMoveStart(curDate, curStart, duration0);
+          curEnd = curStart + duration0;
+        }
         applyTimedEntryLayout(el, curDate, curStart, curEnd, hourPx);
         var changed =
           Math.abs(curStart - startMs0) > 1000 ||
