@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261007-posted-tasks-ui";
+  var WEBAPP_BUILD = "20261007-chat-stale-race";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -15353,6 +15353,26 @@
     }
   }
 
+  function clearDiscussionMessagesUi() {
+    var list = document.getElementById("note-discussion-messages");
+    if (!list) return;
+    list.innerHTML = "";
+    list._renderFp = "";
+    var pending = document.getElementById("note-discuss-pending");
+    if (pending && pending.parentNode) pending.parentNode.removeChild(pending);
+    var optimistic = document.getElementById("note-discuss-optimistic-user");
+    if (optimistic && optimistic.parentNode) optimistic.parentNode.removeChild(optimistic);
+  }
+
+  function isDiscussionTargetActive(kind, itemId) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    return !!(
+      wrap &&
+      String(wrap._shareKind || "") === String(kind || "") &&
+      String(wrap._shareId || "") === String(itemId || "")
+    );
+  }
+
   function ensureChatShareWrap(threadId) {
     var host = ensureChatShareHost();
     if (isNoteEditorModalOpen()) {
@@ -15372,12 +15392,19 @@
     } else if (stalePanel && host && stalePanel.parentNode === host) {
       stalePanel._allComments = [];
       stalePanel._commentsCache = [];
+      stalePanel._paieComments = [];
+      stalePanel._commentsKind = "chat";
+      stalePanel._commentsItemId = String(threadId);
     }
+    // Сразу убираем ленту прошлого чата — иначе гонка loadNoteComments вернёт старые сообщения.
+    clearDiscussionMessagesUi();
     var wrap = document.createElement("div");
     wrap.id = "note-editor-more-wrap";
     wrap.className = "note-more-wrap hidden";
     wrap._shareKind = "chat";
     wrap._shareId = String(threadId);
+    wrap._gptBusy = false;
+    wrap._gptPhase = "";
     wrap._shareShared = false;
     wrap._shareUrl = "";
     wrap._shareAccess = "view";
@@ -15399,6 +15426,11 @@
       panel.innerHTML = '<div class="note-comments-list"></div>';
       host.appendChild(panel);
     }
+    panel._allComments = [];
+    panel._commentsCache = [];
+    panel._paieComments = [];
+    panel._commentsKind = "chat";
+    panel._commentsItemId = String(threadId);
     return wrap;
   }
 
@@ -20955,13 +20987,7 @@
   }
 
   function isViewingNoteDiscussion(kind, itemId) {
-    if (!isNoteDiscussionOpen()) return false;
-    var wrap = document.getElementById("note-editor-more-wrap");
-    return !!(
-      wrap &&
-      String(wrap._shareKind) === String(kind) &&
-      String(wrap._shareId) === String(itemId)
-    );
+    return isNoteDiscussionOpen() && isDiscussionTargetActive(kind, itemId);
   }
 
   function noteTitleForDiscussToast(kind, itemId, fallback) {
@@ -21888,6 +21914,10 @@
     var gptBusy = !!(wrap && wrap._gptBusy);
     var researchRunning = !!(wrap && wrap._researchRunning);
     var fp =
+      String(kind || "") +
+      ":" +
+      String(itemId || "") +
+      "|" +
       rows
         .map(function (c) {
           return String(c && c.id) + ":" + String((c && c.body) || "").length;
@@ -21907,8 +21937,10 @@
         syncNotePaieReplyForm(running);
         syncNoteComposerCommentTarget();
       }
-      void kind;
-      void itemId;
+      return;
+    }
+    // Не рисовать чужой тред поверх текущего чата/заметки.
+    if (kind && itemId && wrap && !isDiscussionTargetActive(kind, itemId)) {
       return;
     }
     var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
@@ -22792,7 +22824,15 @@
     var panel = document.getElementById("note-editor-comments");
     var agentId = isCustomAskMode(noteAskMode()) ? noteAskMode() : "gpt";
     var agentPrefix = agentId === "gpt" ? "__gpt__" : "__agent__:" + agentId;
-    var history = gptHistoryFromComments((panel && panel._allComments) || [], agentId);
+    var histComments = [];
+    if (
+      panel &&
+      String(panel._commentsKind || "") === String(kind) &&
+      String(panel._commentsItemId || "") === String(itemId)
+    ) {
+      histComments = panel._allComments || [];
+    }
+    var history = gptHistoryFromComments(histComments, agentId);
     var noteCtxEarly = activeNoteGptContext();
     var kbEarly = discussionKnowledgeFields();
     wrap._gptBusy = true;
@@ -22826,17 +22866,25 @@
       clearGptComposer();
       var parentId = saved && saved.comment && saved.comment.id;
       markOptimisticUserSent();
-      setGptDiscussPhase("thinking");
-      await refreshNoteCommentsList();
-      setGptDiscussPhase("thinking");
+      if (isDiscussionTargetActive(kind, itemId)) setGptDiscussPhase("thinking");
+      if (isDiscussionTargetActive(kind, itemId)) await refreshNoteCommentsList();
+      if (isDiscussionTargetActive(kind, itemId)) setGptDiscussPhase("thinking");
       await ensureDiscussionKnowledgeNotes();
-      var kb = discussionKnowledgeFields();
+      var kb = isDiscussionTargetActive(kind, itemId)
+        ? discussionKnowledgeFields()
+        : kbEarly;
       if (!kb.knowledge_note_ids || !kb.knowledge_note_ids.length) kb = kbEarly;
       var noteCtx = noteCtxEarly;
-      try {
-        var liveCtx = activeNoteGptContext();
-        if (liveCtx && (liveCtx.text || liveCtx.title)) noteCtx = liveCtx;
-      } catch (_) {}
+      if (isDiscussionTargetActive(kind, itemId)) {
+        try {
+          var liveCtx = activeNoteGptContext();
+          if (liveCtx && (liveCtx.text || liveCtx.title)) noteCtx = liveCtx;
+        } catch (_) {}
+      }
+      // Для чатов не подмешиваем текст заметки — только история этого треда.
+      if (kind === "chat") {
+        noteCtx = { title: "", text: "", sheet_ids: [] };
+      }
       var res = await apiFetch("/gpt/chat", {
         method: "POST",
         body: JSON.stringify({
@@ -24388,11 +24436,17 @@
 
   async function loadNoteComments(kind, itemId, listEl) {
     if (!listEl) return;
+    var wantKind = String(kind || "");
+    var wantId = String(itemId || "");
     try {
       var data = await apiFetch(
-        "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
+        "/notes/" + encodeURIComponent(wantKind) + "/" + encodeURIComponent(wantId) + "/comments",
         { method: "GET" }
       );
+      // Устаревший ответ после смены чата/заметки — не трогаем текущую ленту.
+      if (!isDiscussionTargetActive(wantKind, wantId)) {
+        return;
+      }
       var comments = (data && data.comments) || [];
       var api = window.NoteComments;
       var thread = api && api.paieThread ? api.paieThread(comments) : [];
@@ -24402,12 +24456,14 @@
         panel._commentsCache = anchored;
         panel._allComments = comments;
         panel._paieComments = thread;
+        panel._commentsKind = wantKind;
+        panel._commentsItemId = wantId;
       }
-      renderNoteCommentsList(listEl, anchored, kind, itemId);
-      renderNotePaieThread(comments, kind, itemId);
-      if (isViewingNoteDiscussion(kind, itemId) || isNoteDiscussionOpen()) {
+      renderNoteCommentsList(listEl, anchored, wantKind, wantId);
+      renderNotePaieThread(comments, wantKind, wantId);
+      if (isViewingNoteDiscussion(wantKind, wantId) || isNoteDiscussionOpen()) {
         var seenMax = maxCommentId(comments);
-        if (seenMax) markDiscussSeenUpTo(kind, itemId, seenMax);
+        if (seenMax) markDiscussSeenUpTo(wantKind, wantId, seenMax);
       } else {
         var latestRow = null;
         var mid = maxCommentId(comments);
@@ -24420,7 +24476,7 @@
           }
         }
         if (latestRow) {
-          syncDiscussUnreadFromLatest(kind, itemId, {
+          syncDiscussUnreadFromLatest(wantKind, wantId, {
             id: latestRow.id,
             author_user_id: latestRow.author_user_id,
             is_assistant: isAssistantComment(latestRow),
@@ -24430,6 +24486,7 @@
       syncDesktopNoteDiscussion();
       updateNoteDiscussionCardUnread();
     } catch (e) {
+      if (!isDiscussionTargetActive(wantKind, wantId)) return;
       listEl.innerHTML = "";
       var err = document.createElement("p");
       err.className = "note-comments-empty";
