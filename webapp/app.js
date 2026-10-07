@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261007-task-schedule-log";
+  var WEBAPP_BUILD = "20261007-posted-tasks-ui";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -12378,6 +12378,13 @@
         var savedCb = taskModalOnSaved;
         closeModal();
         if (savedCb) savedCb(saved);
+        if (isPostedTasksOpen()) {
+          if (saved && saved.done) {
+            removePostedTaskFromState(saved.id || id);
+          } else {
+            await loadPostedTasksList();
+          }
+        }
         await loadActual();
       } catch (e) {
         showCalendarToast(e.message || String(e));
@@ -12506,6 +12513,8 @@
         var deletedCb = taskModalOnDeleted;
         closeModal();
         if (deletedCb) deletedCb(id);
+        else removePostedTaskFromState(id);
+        if (isPostedTasksOpen()) await loadPostedTasksList();
         await loadActual();
       } catch (e) {
         alert(e.message || String(e));
@@ -12874,6 +12883,9 @@
         setPostedTasksScreen(true);
       });
     }
+    if (isPostedTasksOpen()) {
+      renderPostedTasksList(postedItems);
+    }
 
     lastRemindersItems = active;
     if (meetingsViewMode === "week") {
@@ -12897,23 +12909,129 @@
 
   var lastPostedTasksItems = [];
 
+  function postedTaskDayIso(task) {
+    var ev = (task && task.event) || {};
+    var day = String(
+      (ev && (ev.start_day || (ev.start && ev.start.date))) || ""
+    ).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
+    var raw = String((task && task.start_at) || (ev && ev.start && ev.start.dateTime) || "");
+    if (!raw) return "";
+    try {
+      var d = new Date(raw);
+      if (isNaN(d.getTime())) return raw.slice(0, 10);
+      return localDateIsoFromMs(d.getTime()) || raw.slice(0, 10);
+    } catch (_) {
+      return raw.slice(0, 10);
+    }
+  }
+
+  function postedTaskTimeLabel(task) {
+    if (!task) return "";
+    var ev = task.event || {};
+    if (task.all_day || ev.all_day) return "";
+    var raw =
+      (ev.start && ev.start.dateTime) ||
+      task.start_at ||
+      "";
+    if (!raw) return "";
+    try {
+      var d = new Date(raw);
+      if (isNaN(d.getTime())) return "";
+      return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function postedTaskAssigneeLabel(task) {
+    var ev = (task && task.event) || {};
+    var ass = (ev && ev.assignee) || {};
+    return (
+      String((task && task.assignee_name) || ass.name || "").trim() ||
+      String((task && task.assignee_email) || ass.email || "").trim() ||
+      ""
+    );
+  }
+
+  function syncPostedTasksState(items) {
+    items = Array.isArray(items) ? items : [];
+    lastPostedTasksItems = items;
+    var countEl = document.getElementById("posted-tasks-count");
+    if (countEl) countEl.textContent = String(items.length);
+    if (isPostedTasksOpen()) renderPostedTasksList(items);
+    try {
+      var cacheKind = actualCacheKind();
+      var cached = readMiniappCache(cacheKind);
+      if (cached) {
+        writeMiniappCache(
+          cacheKind,
+          Object.assign({}, cached, {
+            postedData: { ok: true, items: items, count: items.length },
+          })
+        );
+      }
+    } catch (_) {}
+  }
+
+  function removePostedTaskFromState(taskId) {
+    var id = String(taskId || "");
+    if (!id) return;
+    syncPostedTasksState(
+      lastPostedTasksItems.filter(function (t) {
+        return String((t && t.id) || "") !== id;
+      })
+    );
+  }
+
+  function renderPostedTasksList(items) {
+    var listEl = document.getElementById("posted-tasks-list");
+    var emptyEl = document.getElementById("posted-tasks-empty");
+    if (!listEl) return;
+    items = Array.isArray(items) ? items.slice() : [];
+    items.sort(function (a, b) {
+      var da = postedTaskDayIso(a);
+      var db = postedTaskDayIso(b);
+      if (da !== db) return da < db ? -1 : 1;
+      var sa = String((a && a.start_at) || "");
+      var sb = String((b && b.start_at) || "");
+      if (sa !== sb) return sa < sb ? -1 : 1;
+      return Number((a && a.id) || 0) - Number((b && b.id) || 0);
+    });
+    listEl.innerHTML = "";
+    var lastDay = null;
+    items.forEach(function (t) {
+      var day = postedTaskDayIso(t) || "без-даты";
+      if (day !== lastDay) {
+        lastDay = day;
+        var heading = document.createElement("h3");
+        heading.className = "posted-tasks-day";
+        heading.textContent =
+          day === "без-даты"
+            ? "Без даты"
+            : formatMeetingsDayTitle(day) || day;
+        listEl.appendChild(heading);
+      }
+      listEl.appendChild(renderPostedTaskCard(t));
+    });
+    setHidden(emptyEl, items.length > 0);
+    if (emptyEl && items.length === 0) {
+      emptyEl.textContent = "Пока нет поставленных задач";
+    }
+    var countEl = document.getElementById("posted-tasks-count");
+    if (countEl) countEl.textContent = String(items.length);
+  }
+
   function renderPostedTaskCard(task) {
     var wrap = document.createElement("div");
-    wrap.className = "reminder-card";
+    wrap.className = "reminder-card posted-task-card";
     var ev = (task && task.event) || {};
     var title = String((task && task.title) || ev.summary || "Задача");
-    var assignee =
-      (task && task.assignee_name) ||
-      (ev.assignee && ev.assignee.name) ||
-      "";
+    var assignee = postedTaskAssigneeLabel(task);
     var checklist = normalizeReminderChecklist(
       (task && task.checklist) || ev.checklist || []
     );
-    var whenLabel =
-      (task && task.chip_label) ||
-      (ev && ev.chip_label) ||
-      "";
-    if (!whenLabel && task && task.all_day) whenLabel = "на день";
+    var timeLabel = postedTaskTimeLabel(task);
 
     function openThisTask() {
       var payload = Object.assign({}, ev, {
@@ -12930,7 +13048,18 @@
         schedule_log_lines:
           task.schedule_log_lines || ev.schedule_log_lines || [],
       });
-      openTaskModal(payload);
+      openTaskModal(payload, {
+        onSaved: function (saved) {
+          if (saved && saved.done) {
+            removePostedTaskFromState(saved.id || task.id);
+          } else {
+            loadPostedTasksList();
+          }
+        },
+        onDeleted: function (id) {
+          removePostedTaskFromState(id || task.id);
+        },
+      });
     }
 
     var edit = document.createElement("button");
@@ -12957,8 +13086,10 @@
     check.innerHTML = "";
     check.addEventListener("click", async function (e) {
       e.stopPropagation();
+      var tid = String(task.id);
+      removePostedTaskFromState(tid);
       try {
-        await apiFetch("/calendar/tasks/" + encodeURIComponent(String(task.id)), {
+        await apiFetch("/calendar/tasks/" + encodeURIComponent(tid), {
           method: "PATCH",
           body: JSON.stringify({ done: true }),
         });
@@ -12967,6 +13098,7 @@
         var tg = window.Telegram && window.Telegram.WebApp;
         if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
       } catch (err) {
+        await loadPostedTasksList();
         alert(err.message || String(err));
       }
     });
@@ -12992,33 +13124,39 @@
       textCol.appendChild(cl);
     }
     var meta = document.createElement("div");
-    meta.className = "reminder-meta";
+    meta.className = "reminder-meta posted-task-meta";
     if (assignee) {
       var who = document.createElement("span");
-      who.className = "time-pill";
+      who.className = "posted-task-assignee";
       who.textContent = assignee;
       meta.appendChild(who);
     }
-    if (whenLabel) {
-      var dateMuted = document.createElement("span");
-      dateMuted.className = "muted small";
-      dateMuted.textContent = whenLabel;
-      meta.appendChild(dateMuted);
+    if (timeLabel) {
+      var timeEl = document.createElement("span");
+      timeEl.className = "muted small";
+      timeEl.textContent = timeLabel;
+      meta.appendChild(timeEl);
     }
-    textCol.appendChild(meta);
+    if (meta.childNodes.length) textCol.appendChild(meta);
     row.appendChild(check);
     row.appendChild(textCol);
     wrap.appendChild(row);
 
     wrap.addEventListener("click", openThisTask);
 
-    return wrapWithSwipeDelete(wrap, async function () {
-      await apiFetch("/calendar/tasks/" + encodeURIComponent(String(task.id)), {
-        method: "DELETE",
-      });
-      await loadPostedTasksList();
-      loadActual();
-    });
+    return wrapWithSwipeDelete(
+      wrap,
+      async function () {
+        var tid = String(task.id);
+        removePostedTaskFromState(tid);
+        await apiFetch("/calendar/tasks/" + encodeURIComponent(tid), {
+          method: "DELETE",
+        });
+        await loadPostedTasksList();
+        loadActual();
+      },
+      { removeStack: true }
+    );
   }
 
   async function loadPostedTasksList() {
@@ -13028,16 +13166,7 @@
     try {
       var data = await apiFetch("/calendar/tasks/posted", { method: "GET" });
       var items = (data && data.items) || [];
-      lastPostedTasksItems = items;
-      listEl.innerHTML = "";
-      items.forEach(function (t) {
-        listEl.appendChild(renderPostedTaskCard(t));
-      });
-      setHidden(emptyEl, items.length > 0);
-      var countEl = document.getElementById("posted-tasks-count");
-      if (countEl) {
-        countEl.textContent = String(items.length);
-      }
+      syncPostedTasksState(items);
     } catch (err) {
       if (emptyEl) {
         emptyEl.textContent = (err && err.message) || String(err);

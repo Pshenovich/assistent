@@ -1,13 +1,13 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261007-task-schedule-log";
+var CACHE_VERSION = "miniapp-v1-20261007-posted-tasks-ui";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261007-task-schedule-log",
-  "./app.js?v=20261007-task-schedule-log",
+  "./styles.css?v=20261007-posted-tasks-ui",
+  "./app.js?v=20261007-posted-tasks-ui",
   "./note-drafts.js?v=20261005-heading-pdf",
   "./icons/arrow-up-right.svg?v=20261003-month-instances",
   "./icons/chevron-up-muted.svg?v=20261003-month-instances",
