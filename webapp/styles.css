@@ -1155,6 +1155,14 @@ html.cal-gesture-active,
 html.cal-gesture-active body {
   user-select: none;
   -webkit-user-select: none;
+  touch-action: none;
+}
+
+html.cal-gesture-active .main-scroll,
+html.cal-gesture-active .meetings-week-scroll {
+  overflow: hidden !important;
+  touch-action: none !important;
+  overscroll-behavior: none;
 }
 
 .meetings-month-cell.is-drop-target {
@@ -4475,6 +4483,14 @@ html.note-editor-open #note-editor-overlay {
 .note-more-menu-item.is-busy {
   opacity: 0.55;
   cursor: default;
+}
+
+.note-more-menu-item--danger {
+  color: var(--vkui--color_text_negative, var(--danger, #f87171));
+}
+
+.note-more-menu-item--danger:hover {
+  background: var(--danger-muted, rgba(248, 113, 113, 0.12));
 }
 
 .note-paei-status {

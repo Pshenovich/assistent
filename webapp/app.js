@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261007-cal-drag-grab";
+  var WEBAPP_BUILD = "20261007-cal-drag-note-ux";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -1947,14 +1947,21 @@
     return endMs;
   }
 
-  function clampTimedMoveStart(dateIso, startMs, durationMs) {
+  function clampTimedMoveStart(dateIso, startMs, durationMs, opts) {
+    opts = opts || {};
     var day0 = dayStartMs(dateIso);
     var dayStartTimed = day0 + TIMELINE_START_MIN * 60000;
     var dayEnd = day0 + TIMELINE_END_MIN * 60000;
     var next = startMs;
     if (next + durationMs > dayEnd) next = dayEnd - durationMs;
     if (next < dayStartTimed) next = dayStartTimed;
-    return snapMsTo15(next);
+    return opts.snap === false ? next : snapMsTo15(next);
+  }
+
+  function timelineTopPxToStartMs(dateIso, topPx, hourPx) {
+    if (!dateIso || hourPx == null || !isFinite(topPx)) return null;
+    var visMin = (topPx / hourPx) * 60;
+    return dayStartMs(dateIso) + (TIMELINE_START_MIN + visMin) * 60000;
   }
 
   function applyTimedEntryLayout(el, dateIso, startMs, endMs, hourPx) {
@@ -2096,10 +2103,18 @@
       return ctx.dayHosts || [];
     }
 
-    function resolveHostAt(clientX) {
+    function resolveHostAt(clientX, stickyHost) {
       var hosts = dayHosts();
       if (!hosts.length) {
         return { el: ctx.axisHost, dateIso: ctx.dateIso };
+      }
+      // Гистерезис: не прыгать в соседний день от микродрожания пальца.
+      if (stickyHost && stickyHost.el) {
+        var sr = stickyHost.el.getBoundingClientRect();
+        var pad = Math.max(20, Math.min(40, sr.width * 0.2));
+        if (clientX >= sr.left - pad && clientX < sr.right + pad) {
+          return stickyHost;
+        }
       }
       for (var i = 0; i < hosts.length; i += 1) {
         var r = hosts[i].el.getBoundingClientRect();
@@ -2108,8 +2123,8 @@
       var best = hosts[0];
       var bestDist = Infinity;
       hosts.forEach(function (h) {
-        var r = h.el.getBoundingClientRect();
-        var mid = (r.left + r.right) / 2;
+        var hr = h.el.getBoundingClientRect();
+        var mid = (hr.left + hr.right) / 2;
         var d = Math.abs(clientX - mid);
         if (d < bestDist) {
           bestDist = d;
@@ -2142,9 +2157,10 @@
       var originParent = el.parentNode;
       var originLeft = el.style.left;
       var originWidth = el.style.width;
-      // Смещение курсора внутри события — иначе верх «прыгает» к пальцу.
-      var grabOffsetMs = 0;
+      // Пиксельный offset точки захвата внутри карточки — 1:1 с пальцем.
+      var grabOffsetY = 0;
       var grabOffsetReady = false;
+      var stickyHost = { el: ctx.axisHost, dateIso: ctx.dateIso };
 
       function armGesture() {
         if (finished || armed) return;
@@ -2204,28 +2220,27 @@
           return;
         }
         if (canCrossDays()) {
-          var hostInfo = resolveHostAt(evMove.clientX);
+          var hostInfo = resolveHostAt(evMove.clientX, stickyHost);
           axisHost = hostInfo.el;
           curDate = hostInfo.dateIso;
+          stickyHost = hostInfo;
           if (el.parentNode !== axisHost) {
             axisHost.appendChild(el);
             el.style.left = ctx.view === "week" ? "1px" : "0";
             el.style.width = ctx.view === "week" ? "calc(100% - 3px)" : "100%";
           }
         }
-        var pointerMs = timelineClientYToMsUnsnapped(
-          curDate,
-          axisHost,
-          evMove.clientY,
-          ctx.hourPx
-        );
-        if (pointerMs == null) return;
-        // Фиксируем точку захвата в первый кадр движения — без скачка.
+        // В первый кадр движения запоминаем, где внутри карточки взяли.
         if (!grabOffsetReady) {
-          grabOffsetMs = pointerMs - curStart;
+          grabOffsetY = evMove.clientY - el.getBoundingClientRect().top;
           grabOffsetReady = true;
         }
-        var newStart = clampTimedMoveStart(curDate, pointerMs - grabOffsetMs, duration0);
+        var hostRect = axisHost.getBoundingClientRect();
+        var topPx = evMove.clientY - hostRect.top - grabOffsetY;
+        var rawStart = timelineTopPxToStartMs(curDate, topPx, ctx.hourPx);
+        if (rawStart == null) return;
+        // Во время жеста без snap — иначе «живёт своей жизнью» по сетке 15 мин.
+        var newStart = clampTimedMoveStart(curDate, rawStart, duration0, { snap: false });
         curStart = newStart;
         curEnd = newStart + duration0;
         applyTimedEntryLayout(el, curDate, curStart, curEnd, ctx.hourPx);
@@ -2251,6 +2266,10 @@
           return;
         }
         calendarSuppressClick(450);
+        // Snap только при отпускании.
+        curStart = clampTimedMoveStart(curDate, curStart, duration0);
+        curEnd = curStart + duration0;
+        applyTimedEntryLayout(el, curDate, curStart, curEnd, ctx.hourPx);
         var changed =
           curStart !== startMs0 ||
           curEnd !== endMs0 ||
@@ -14925,6 +14944,12 @@
       if (tagPickerSaveTimer) clearTimeout(tagPickerSaveTimer);
       tagPickerSaveTimer = setTimeout(async function () {
         try {
+          // Новая заметка ещё без id — только локальный выбор, сохраним после create.
+          if (!itemId) {
+            if (typeof onChange === "function") onChange(stateTags.slice());
+            updateTrigger();
+            return;
+          }
           var saved = await saveItemTags(itemKind, itemId, tagIds());
           stateTags = saved.slice();
           if (typeof onChange === "function") onChange(saved);
@@ -15064,6 +15089,21 @@
     updateTrigger();
 
     container._tagPickerUnmount = closeMenu;
+    container._tagPickerSetItemId = function (nextId) {
+      itemId = nextId != null ? String(nextId) : "";
+    };
+    container._tagPickerGetTags = function () {
+      return stateTags.slice();
+    };
+    container._tagPickerFlush = function () {
+      if (!itemId) return Promise.resolve(stateTags.slice());
+      return saveItemTags(itemKind, itemId, tagIds()).then(function (saved) {
+        stateTags = saved.slice();
+        if (typeof onChange === "function") onChange(saved);
+        updateTrigger();
+        return saved;
+      });
+    };
   }
 
   function openTagsManageSheet() {
@@ -16824,10 +16864,12 @@
     menu.innerHTML = "";
     var shared = !!wrap._shareShared;
 
-    function addItem(label, onClick, disabled) {
+    function addItem(label, onClick, disabled, opts) {
+      opts = opts || {};
       var btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "note-more-menu-item";
+      btn.className =
+        "note-more-menu-item" + (opts.danger ? " note-more-menu-item--danger" : "");
       btn.textContent = label;
       if (disabled) {
         btn.disabled = true;
@@ -16880,21 +16922,60 @@
         closeNoteMoreMenu();
         openShareAccessSheet();
       });
-      return;
+    } else {
+      addItem(
+        wrap._shareAccess === "comment"
+          ? "Сменить доступ · комментарии"
+          : "Сменить доступ · просмотр",
+        function () {
+          closeNoteMoreMenu();
+          openShareAccessSheet();
+        }
+      );
+      addItem("Скопировать ссылку", function () {
+        copyExistingShareLink();
+      });
+      addItem("Закрыть доступ", function () {
+        revokeShareLink();
+      });
     }
-    addItem(
-      wrap._shareAccess === "comment" ? "Сменить доступ · комментарии" : "Сменить доступ · просмотр",
-      function () {
-        closeNoteMoreMenu();
-        openShareAccessSheet();
-      }
-    );
-    addItem("Скопировать ссылку", function () {
-      copyExistingShareLink();
-    });
-    addItem("Закрыть доступ", function () {
-      revokeShareLink();
-    });
+
+    if (shareId && (shareKind === "local" || shareKind === "journal")) {
+      var isKb = !!wrap._isKnowledge;
+      var deleteLabel =
+        wrap._isNoteOwner === false
+          ? isKb
+            ? "Убрать из списка"
+            : "Убрать из списка"
+          : isKb
+            ? "Удалить документ"
+            : "Удалить заметку";
+      addItem(
+        deleteLabel,
+        async function () {
+          closeNoteMoreMenu();
+          var msg =
+            wrap._isNoteOwner === false
+              ? isKb
+                ? "Убрать документ из списка?"
+                : "Убрать заметку из списка?"
+              : isKb
+                ? "Удалить документ?"
+                : "Удалить заметку?";
+          if (!(await confirmDialog(msg))) return;
+          try {
+            await deleteLocalNoteById(shareId);
+            closeNoteEditorModal();
+            if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+            if (knowledgeDataCache) renderKnowledgePaneFromData(knowledgeDataCache);
+          } catch (err) {
+            alert(err.message || String(err));
+          }
+        },
+        false,
+        { danger: true }
+      );
+    }
   }
 
   var GPT_MODEL_LS = "leo_gpt_model";
@@ -26477,12 +26558,13 @@
     wrap.className = "note-editor-page";
     clearNoteEditorTagsWrap();
     var tagsWrap = document.getElementById("note-editor-tags-wrap");
-    if (!noteIsCreate && noteId && tagsWrap) {
+    // Проект в шапке сразу — и для новой заметки (до первого сохранения).
+    if (tagsWrap) {
       try {
-        mountTagPicker(tagsWrap, "local", noteId, noteTagsOf(n), function (tags) {
+        mountTagPicker(tagsWrap, "local", noteId || "", noteTagsOf(n), function (tags) {
           n.tags = tags;
           n.project = tags[0] || null;
-          if (isKnowledge) {
+          if (noteId && isKnowledge) {
             updateItemTagsInCache("local", noteId, tags);
             if (knowledgeDataCache) renderKnowledgePaneFromData(knowledgeDataCache);
           }
@@ -26493,14 +26575,16 @@
         console.error("mountTagPicker", err);
         setHidden(tagsWrap, true);
       }
-      mountShareControls("local", noteId);
-      var shareWrap = document.getElementById("note-editor-more-wrap");
-      if (shareWrap && n) {
-        shareWrap._isKnowledge = !!isKnowledge;
-        if (n.revision) shareWrap._noteRevision = n.revision;
-        if (n.updated_at) shareWrap._noteUpdatedAt = n.updated_at;
-        if (n.members) shareWrap._noteMembers = n.members;
-        if (n.is_owner != null) shareWrap._isNoteOwner = n.is_owner !== false;
+      if (noteId) {
+        mountShareControls("local", noteId);
+        var shareWrap = document.getElementById("note-editor-more-wrap");
+        if (shareWrap && n) {
+          shareWrap._isKnowledge = !!isKnowledge;
+          if (n.revision) shareWrap._noteRevision = n.revision;
+          if (n.updated_at) shareWrap._noteUpdatedAt = n.updated_at;
+          if (n.members) shareWrap._noteMembers = n.members;
+          if (n.is_owner != null) shareWrap._isNoteOwner = n.is_owner !== false;
+        }
       }
     }
     wrap.innerHTML = noteEditorPageInnerHtml(
@@ -26591,21 +26675,30 @@
             prependLocalInCache(createdLocal);
             if (notesDataCache) renderNotesPanesFromData(notesDataCache);
           }
-          if (noteId && tagsWrap && tagsWrap.classList.contains("hidden")) {
-            try {
-              mountTagPicker(tagsWrap, "local", noteId, noteTagsOf(n), function (tags) {
-                n.tags = tags;
-                n.project = tags[0] || null;
-                if (isKnowledge) {
-                  updateItemTagsInCache("local", noteId, tags);
-                  if (knowledgeDataCache) renderKnowledgePaneFromData(knowledgeDataCache);
-                }
-              });
-              setHidden(tagsWrap, false);
-              ensureUserTagsLoaded();
-            } catch (err) {
-              console.error("mountTagPicker", err);
+          if (noteId && tagsWrap) {
+            if (typeof tagsWrap._tagPickerSetItemId === "function") {
+              tagsWrap._tagPickerSetItemId(noteId);
             }
+            var pendingTags =
+              (typeof tagsWrap._tagPickerGetTags === "function" &&
+                tagsWrap._tagPickerGetTags()) ||
+              noteTagsOf(n);
+            if (pendingTags && pendingTags.length) {
+              n.tags = pendingTags;
+              n.project = pendingTags[0] || null;
+              if (typeof tagsWrap._tagPickerFlush === "function") {
+                tagsWrap._tagPickerFlush().catch(function () {});
+              } else {
+                saveItemTags(
+                  "local",
+                  noteId,
+                  pendingTags.map(function (t) {
+                    return Number(t.id);
+                  })
+                ).catch(function () {});
+              }
+            }
+            setHidden(tagsWrap, false);
           }
           if (noteId) {
             var createdShareWrap = ensureNoteShareMounted(noteId);
