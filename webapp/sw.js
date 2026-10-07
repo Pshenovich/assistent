@@ -1,13 +1,18 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261007-canonical-domain";
+var CACHE_VERSION = "miniapp-v1-20261007-pwa-migrate";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
+var CANONICAL_ORIGIN = "https://assistent.networ.ru";
+var OBSOLETE_HOSTS = {
+  "assistant.obuchat.me": 1,
+  "www.assistant.obuchat.me": 1,
+};
 
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261007-canonical-domain",
-  "./app.js?v=20261007-canonical-domain",
+  "./styles.css?v=20261007-pwa-migrate",
+  "./app.js?v=20261007-pwa-migrate",
   "./note-drafts.js?v=20261005-heading-pdf",
   "./icons/arrow-up-right.svg?v=20261003-month-instances",
   "./icons/chevron-up-muted.svg?v=20261003-month-instances",
@@ -19,6 +24,23 @@ var PRECACHE_URLS = [
   "./icons/icon-512.png",
   "./icons/icon-180.png",
 ];
+
+function isObsoleteHost() {
+  try {
+    return !!OBSOLETE_HOSTS[(self.location.hostname || "").toLowerCase()];
+  } catch (_) {
+    return false;
+  }
+}
+
+function canonicalUrlFor(requestUrl) {
+  try {
+    var u = new URL(requestUrl, self.location.href);
+    return CANONICAL_ORIGIN + u.pathname + u.search + u.hash;
+  } catch (_) {
+    return CANONICAL_ORIGIN + "/webapp/";
+  }
+}
 
 function sameOrigin(url) {
   try {
@@ -76,7 +98,45 @@ function matchShellHtml() {
   });
 }
 
+function clearAllMiniappCaches() {
+  return caches.keys().then(function (keys) {
+    return Promise.all(
+      keys.map(function (key) {
+        if (String(key).indexOf("miniapp-") === 0) return caches.delete(key);
+        return null;
+      })
+    );
+  });
+}
+
+function migrateClients() {
+  return self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (clients) {
+    clients.forEach(function (client) {
+      try {
+        var dest = canonicalUrlFor(client.url || CANONICAL_ORIGIN + "/webapp/");
+        if (typeof client.navigate === "function") {
+          client.navigate(dest);
+        } else if (typeof client.postMessage === "function") {
+          client.postMessage({ type: "leo-migrate-origin", url: dest });
+        }
+      } catch (_) {}
+    });
+  });
+}
+
 self.addEventListener("install", function (event) {
+  if (isObsoleteHost()) {
+    event.waitUntil(
+      clearAllMiniappCaches()
+        .then(function () {
+          return self.skipWaiting();
+        })
+        .catch(function () {
+          return self.skipWaiting();
+        })
+    );
+    return;
+  }
   event.waitUntil(
     caches
       .open(SHELL_CACHE)
@@ -95,32 +155,25 @@ self.addEventListener("install", function (event) {
 
 self.addEventListener("activate", function (event) {
   event.waitUntil(
-    caches
-      .keys()
-      .then(function (keys) {
-        return Promise.all(
-          keys.map(function (key) {
-            if (key.indexOf("miniapp-") === 0 && key !== SHELL_CACHE) {
-              return caches.delete(key);
-            }
-            return null;
-          })
-        );
-      })
+    clearAllMiniappCaches()
       .then(function () {
         return self.clients.claim();
       })
       .then(function () {
-        return self.clients.matchAll({ type: "window" });
-      })
-      .then(function (clients) {
-        clients.forEach(function (client) {
-          try {
-            if (client && client.url && typeof client.navigate === "function") {
-              client.navigate(client.url);
-            }
-          } catch (_) {}
+        if (isObsoleteHost()) return migrateClients();
+        return self.clients.matchAll({ type: "window" }).then(function (clients) {
+          clients.forEach(function (client) {
+            try {
+              if (client && client.url && typeof client.navigate === "function") {
+                client.navigate(client.url);
+              }
+            } catch (_) {}
+          });
         });
+      })
+      .then(function () {
+        if (!isObsoleteHost()) return null;
+        return self.registration.unregister().catch(function () {});
       })
   );
 });
@@ -131,12 +184,21 @@ self.addEventListener("fetch", function (event) {
 
   var url = request.url;
   if (isApiRequest(url)) return;
-  if (!sameOrigin(url)) return;
 
   var path = "";
   try {
     path = new URL(url).pathname;
   } catch (_) {}
+
+  // Старый PWA на assistant.obuchat.me: не отдаём кэш, уводим на канонический домен.
+  if (isObsoleteHost()) {
+    if (isNavigationRequest(request) || isHtmlPath(path) || path.indexOf("/webapp") === 0) {
+      event.respondWith(Response.redirect(canonicalUrlFor(url), 302));
+    }
+    return;
+  }
+
+  if (!sameOrigin(url)) return;
 
   if (path.indexOf("/webapp/sw.js") !== -1) return;
 

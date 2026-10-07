@@ -1,5 +1,54 @@
 (function () {
-  var WEBAPP_BUILD = "20261007-canonical-domain";
+  var WEBAPP_BUILD = "20261007-pwa-migrate";
+  var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
+  var OBSOLETE_WEBAPP_HOSTS = {
+    "assistant.obuchat.me": 1,
+    "www.assistant.obuchat.me": 1,
+  };
+
+  function isObsoleteWebappHost() {
+    try {
+      return !!OBSOLETE_WEBAPP_HOSTS[(location.hostname || "").toLowerCase()];
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function canonicalWebappUrl() {
+    return (
+      CANONICAL_WEBAPP_ORIGIN +
+      location.pathname +
+      location.search +
+      location.hash
+    );
+  }
+
+  function nukeServiceWorkerAndCaches() {
+    var tasks = [];
+    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+      tasks.push(
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          return Promise.all(
+            regs.map(function (reg) {
+              return reg.unregister();
+            })
+          );
+        })
+      );
+    }
+    if (typeof caches !== "undefined" && caches.keys) {
+      tasks.push(
+        caches.keys().then(function (keys) {
+          return Promise.all(
+            keys.map(function (k) {
+              return caches.delete(k);
+            })
+          );
+        })
+      );
+    }
+    return Promise.all(tasks).catch(function () {});
+  }
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -78,6 +127,12 @@
 
   function registerServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
+    if (isObsoleteWebappHost()) {
+      nukeServiceWorkerAndCaches().then(function () {
+        location.replace(canonicalWebappUrl());
+      });
+      return;
+    }
     var standalone = false;
     try {
       standalone =
@@ -106,6 +161,14 @@
     };
     if (document.readyState === "complete") run();
     else window.addEventListener("load", run);
+  }
+
+  if (navigator.serviceWorker && navigator.serviceWorker.addEventListener) {
+    navigator.serviceWorker.addEventListener("message", function (ev) {
+      var data = ev && ev.data;
+      if (!data || data.type !== "leo-migrate-origin" || !data.url) return;
+      location.replace(String(data.url));
+    });
   }
 
   const API = "/api/miniapp";
@@ -27698,6 +27761,30 @@
       .catch(function () {});
   }
 
+  function renderPwaMigrateGate() {
+    var box = document.getElementById("gate-telegram-login");
+    if (!box) return;
+    box.innerHTML = "";
+    var note = document.createElement("p");
+    note.className = "muted small";
+    note.style.margin = "0 0 0.75rem";
+    note.textContent =
+      "Старый ярлык открывает assistant.obuchat.me — Telegram Login там не работает. Перейдите на новый адрес и добавьте на экран «Домой» заново.";
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn gate-login-btn";
+    btn.textContent = "Открыть assistent.networ.ru";
+    btn.addEventListener("click", function () {
+      nukeServiceWorkerAndCaches().finally(function () {
+        var u = new URL(canonicalWebappUrl());
+        u.searchParams.set("migrated", "1");
+        location.replace(u.toString());
+      });
+    });
+    box.appendChild(note);
+    box.appendChild(btn);
+  }
+
   function bootstrapGateLogin() {
     if (gateLoginBootstrapped) return;
     gateLoginBootstrapped = true;
@@ -27715,9 +27802,23 @@
         (miniappDev || /[?&]dev=1(?:&|$)/.test(window.location.search || ""));
       devHint.classList.toggle("hidden", !showDev);
     }
+    if (isObsoleteWebappHost()) {
+      setGateStatus("");
+      renderPwaMigrateGate();
+      return;
+    }
+    var migratedHint = false;
+    try {
+      migratedHint = new URLSearchParams(location.search || "").get("migrated") === "1";
+    } catch (_) {}
+    if (migratedHint) {
+      setGateStatus(
+        "Адрес обновился. Войдите здесь, затем при желании снова «На экран Домой»."
+      );
+    }
     apiFetch("/auth/config", { method: "GET" })
       .then(function (cfg) {
-        setGateStatus("");
+        if (!migratedHint) setGateStatus("");
         var u = (cfg && cfg.bot_username) || "";
         if (u) {
           cachedBotUsername = u.replace(/^@/, "");

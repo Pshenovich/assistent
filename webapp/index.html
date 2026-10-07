@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261007-canonical-domain">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261007-pwa-migrate">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -12,15 +12,48 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/webapp/icons/icon-192.png" />
   <script>
     (function () {
-      // Login Widget /setdomain только для assistent.networ.ru — старый edge ломает вход.
+      // Login Widget /setdomain только для assistent.networ.ru — старый PWA/edge ломает вход.
       var host = (location.hostname || "").toLowerCase();
       if (host === "assistant.obuchat.me" || host === "www.assistant.obuchat.me") {
-        location.replace(
+        var dest =
           "https://assistent.networ.ru" +
-            location.pathname +
-            location.search +
-            location.hash
-        );
+          location.pathname +
+          location.search +
+          location.hash;
+        try {
+          var u = new URL(dest);
+          u.searchParams.set("migrated", "1");
+          dest = u.toString();
+        } catch (_) {}
+        var done = false;
+        var go = function () {
+          if (done) return;
+          done = true;
+          location.replace(dest);
+        };
+        var tasks = [];
+        if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+          tasks.push(
+            navigator.serviceWorker.getRegistrations().then(function (regs) {
+              return Promise.all(
+                regs.map(function (reg) {
+                  return reg.unregister();
+                })
+              );
+            })
+          );
+        }
+        if (typeof caches !== "undefined" && caches.keys) {
+          tasks.push(
+            caches.keys().then(function (keys) {
+              return Promise.all(keys.map(function (k) {
+                return caches.delete(k);
+              }));
+            })
+          );
+        }
+        Promise.all(tasks).then(go, go);
+        setTimeout(go, 600);
         return;
       }
       var root = document.documentElement;
@@ -54,7 +87,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261007-canonical-domain" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261007-pwa-migrate" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -1489,6 +1522,6 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/app.js?v=20261007-canonical-domain" defer></script>
+  <script src="/webapp/app.js?v=20261007-pwa-migrate" defer></script>
 </body>
 </html>
