@@ -9628,6 +9628,49 @@ textarea.event-sheet-title--area {
   transform: rotate(0deg);
 }
 
+.event-sheet-kind-switch {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 0.65rem;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(120, 120, 128, 0.22);
+}
+
+.event-sheet-kind-btn {
+  flex: 1 1 0;
+  margin: 0;
+  padding: 0.45rem 0.35rem;
+  border: none;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.event-sheet-kind-btn.is-active {
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+.event-sheet-kind-btn:active:not(.is-active) {
+  opacity: 0.85;
+}
+
+.event-sheet-assignee--locked .event-sheet-row--nav {
+  opacity: 0.72;
+  cursor: default;
+}
+
+.event-sheet-assignee--locked .event-sheet-chevron {
+  display: none;
+}
+
 .event-sheet-pills {
   display: flex;
   flex-shrink: 0;

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261007-gpt-links";
+  var WEBAPP_BUILD = "20261007-modal-kind-switch";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -1985,6 +1985,16 @@
     if (lastMeetingsLeft) patchList(lastMeetingsLeft.events);
     if (lastMeetingsRight) patchList(lastMeetingsRight.events);
     if (lastMeetingsRange) patchList(lastMeetingsRange.events);
+    // Keep offline cache in sync so loadActual() doesn't flash the old slot.
+    try {
+      var cached = readMiniappCache(actualCacheKind());
+      if (cached) {
+        patchList(cached.calData && cached.calData.events);
+        patchList(cached.calDataNext && cached.calDataNext.events);
+        patchList(cached.rangeData && cached.rangeData.events);
+        writeMiniappCache(actualCacheKind(), cached);
+      }
+    } catch (_) {}
   }
 
   async function persistCalendarEntryTimes(ev, startMs, endMs) {
@@ -2026,11 +2036,12 @@
           }),
         });
       }
-      await loadActual();
+      // Skip stale-cache paint: otherwise the chip snaps back, then jumps forward.
+      await loadActual({ skipCachePaint: true });
     } catch (err) {
       showCalendarToast((err && err.message) || "Не удалось сохранить время");
       try {
-        await loadActual();
+        await loadActual({ skipCachePaint: true });
       } catch (_) {}
     }
   }
@@ -11131,7 +11142,14 @@
     var dateEl = document.getElementById("m-ev-" + which + "-date");
     var timeEl = document.getElementById("m-ev-" + which + "-time");
     if (!hidden || !dateEl || !timeEl) return;
-    hidden.value = joinDatetimeLocal(dateEl.value, timeEl.value);
+    var date = String(dateEl.value || "").trim();
+    var time = String(timeEl.value || "").trim();
+    // Mobile Safari sometimes clears time after date pick — keep a usable default.
+    if (date && !time) {
+      time = which === "end" ? "09:30" : "09:00";
+      timeEl.value = time;
+    }
+    hidden.value = joinDatetimeLocal(date, time);
     try {
       hidden.dispatchEvent(new Event("input", { bubbles: true }));
       hidden.dispatchEvent(new Event("change", { bubbles: true }));
@@ -11715,26 +11733,33 @@
     };
   }
 
-  function taskPayloadFromModal() {
+  function taskPayloadFromModal(opts) {
+    opts = opts || {};
     syncHiddenFromEventPills("start");
     syncHiddenFromEventPills("end");
-    var assignee = taskAssigneeApi ? taskAssigneeApi.getAssignee() : defaultTaskAssignee();
+    var startIso = datetimeLocalToIso((document.getElementById("m-ev-start") || {}).value || "");
+    var endIso = datetimeLocalToIso((document.getElementById("m-ev-end") || {}).value || "");
     var noteEl = document.getElementById("modal-task-note-id");
-    return {
+    var body = {
       title: (document.getElementById("m-ev-sum") || {}).value
         ? document.getElementById("m-ev-sum").value.trim()
         : "",
       description: (document.getElementById("m-task-desc") || {}).value || "",
-      start: datetimeLocalToIso((document.getElementById("m-ev-start") || {}).value || ""),
-      end: datetimeLocalToIso((document.getElementById("m-ev-end") || {}).value || ""),
+      start: startIso || null,
+      end: endIso || null,
       // Модалка всегда с часами — снимаем «весь день», иначе время сбрасывается.
       all_day: false,
       checklist: reminderChecklistApi ? reminderChecklistApi.getItems() : [],
-      assignee_user_id: assignee.user_id || "",
-      assignee_email: assignee.email || "",
-      assignee_name: assignee.name || "",
       note_id: noteEl ? String(noteEl.value || "") : "",
     };
+    // Исполнитель чужой задачи не должен переназначать её через форму.
+    if (!opts.skipAssignee) {
+      var assignee = taskAssigneeApi ? taskAssigneeApi.getAssignee() : defaultTaskAssignee();
+      body.assignee_user_id = assignee.user_id || "";
+      body.assignee_email = assignee.email || "";
+      body.assignee_name = assignee.name || "";
+    }
+    return body;
   }
 
   function openTaskModal(ev, opts) {
@@ -11765,6 +11790,7 @@
     var fields = document.getElementById("modal-fields");
     fields.innerHTML =
       '<div class="event-sheet">' +
+      (existing ? "" : eventSheetKindSwitcherHtml("task")) +
       '<input id="m-ev-sum" type="text" class="event-sheet-title" placeholder="Название" autocomplete="off" />' +
       '<textarea id="m-task-desc" class="field-textarea event-sheet-desc" rows="3" placeholder="Описание"></textarea>' +
       '<input type="hidden" id="m-ev-start" />' +
@@ -11801,6 +11827,7 @@
       '<div id="m-task-assignee-editor" class="event-sheet-attendees hidden">' +
       '<div id="m-task-assignee-host"></div>' +
       "</div></div></div>";
+    if (!existing) bindCreateKindSwitcher("task");
     document.getElementById("m-ev-sum").value =
       ev.summary || ev.title || (opts.quote ? String(opts.quote) : "") || "";
     document.getElementById("m-task-desc").value = ev.description || "";
@@ -11830,6 +11857,20 @@
       document.getElementById("m-task-checklist-host"),
       ev.checklist
     );
+    var meUid = String(
+      (cachedMe && (cachedMe.telegram_user_id || cachedMe.id)) || ""
+    );
+    var ownerUid = String(
+      ev.owner_user_id ||
+        (ev.event && ev.event.owner_user_id) ||
+        ""
+    );
+    var isTaskOwner =
+      ev.is_owner === true ||
+      (ev.is_owner !== false && (!existing || !ownerUid || !meUid || ownerUid === meUid));
+    if (ev.is_owner === false || (existing && ownerUid && meUid && ownerUid !== meUid)) {
+      isTaskOwner = false;
+    }
     taskAssigneeApi = mountTaskAssignee(
       document.getElementById("m-task-assignee-host"),
       ev.assignee || {
@@ -11840,13 +11881,25 @@
     );
     var assEditor = document.getElementById("m-task-assignee-editor");
     var assToggle = document.getElementById("m-task-assignee-toggle");
-    if (assToggle && assEditor) {
+    var assField = assToggle && assToggle.closest ? assToggle.closest(".meeting-attendees-field") : null;
+    if (!isTaskOwner && existing) {
+      // Исполнитель видит, кому задача, но не меняет назначение.
+      if (assField) assField.classList.add("event-sheet-assignee--locked");
+      if (assToggle) {
+        assToggle.disabled = true;
+        assToggle.setAttribute("aria-disabled", "true");
+      }
+      if (assEditor) assEditor.classList.add("hidden");
+    } else if (assToggle && assEditor) {
       assToggle.addEventListener("click", function () {
         var open = assEditor.classList.contains("hidden");
         assEditor.classList.toggle("hidden", !open);
         assToggle.setAttribute("aria-expanded", open ? "true" : "false");
       });
     }
+    // Remember ownership for save payload (assignee must not wipe assignee_*).
+    var kindEl = document.getElementById("modal-kind");
+    if (kindEl) kindEl.setAttribute("data-task-is-owner", isTaskOwner ? "1" : "0");
     document.getElementById("modal-delete").classList.toggle("hidden", !existing);
     document.getElementById("modal-overlay").classList.remove("hidden");
     document.getElementById("modal-overlay").setAttribute("aria-hidden", "false");
@@ -12012,8 +12065,10 @@
     document.getElementById("modal-event-id").value = "";
     document.getElementById("modal-calendar-id").value = "";
     const fields = document.getElementById("modal-fields");
+    var remExisting = !!r.id;
     fields.innerHTML =
       '<div class="event-sheet">' +
+      (remExisting ? "" : eventSheetKindSwitcherHtml("reminder")) +
       '<textarea id="m-rem-task" class="event-sheet-title event-sheet-title--area" rows="1" placeholder="Текст" autocomplete="off"></textarea>' +
       '<input type="hidden" id="m-rem-when" />' +
       '<div class="event-sheet-group">' +
@@ -12026,6 +12081,7 @@
       '<div class="event-sheet-group event-sheet-checklist-group">' +
       '<div id="m-rem-checklist-host" class="rem-checklist-host"></div>' +
       "</div></div>";
+    if (!remExisting) bindCreateKindSwitcher("reminder");
     var taskEl = document.getElementById("m-rem-task");
     taskEl.value = r.task || "";
     autosizeReminderTitle(taskEl);
@@ -12054,6 +12110,105 @@
     );
   }
 
+  function eventSheetKindSwitcherHtml(activeKind) {
+    var kinds = [
+      { id: "event", label: "Встреча" },
+      { id: "task", label: "Задача" },
+      { id: "reminder", label: "Напоминание" },
+    ];
+    return (
+      '<div class="event-sheet-kind-switch" role="tablist" aria-label="Тип записи">' +
+      kinds
+        .map(function (k) {
+          var on = k.id === activeKind;
+          return (
+            '<button type="button" class="event-sheet-kind-btn' +
+            (on ? " is-active" : "") +
+            '" role="tab" aria-selected="' +
+            (on ? "true" : "false") +
+            '" data-sheet-kind="' +
+            k.id +
+            '">' +
+            k.label +
+            "</button>"
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
+  function readCreateSheetDraft() {
+    syncHiddenFromEventPills("start");
+    syncHiddenFromEventPills("end");
+    var remWhen = document.getElementById("m-rem-when");
+    var remDate = document.getElementById("m-rem-when-date");
+    var remTime = document.getElementById("m-rem-when-time");
+    if (remWhen && remDate && remTime) {
+      var rd = String(remDate.value || "").trim();
+      var rt = String(remTime.value || "").trim() || "09:00";
+      if (rd) remWhen.value = joinDatetimeLocal(rd, rt);
+    }
+    var titleEl = document.getElementById("m-ev-sum") || document.getElementById("m-rem-task");
+    var startEl = document.getElementById("m-ev-start") || remWhen;
+    var endEl = document.getElementById("m-ev-end");
+    var startLocal = startEl ? String(startEl.value || "") : "";
+    var endLocal = endEl ? String(endEl.value || "") : "";
+    if (!endLocal && startLocal) {
+      var startDt = parseDatetimeLocal(startLocal);
+      endLocal = startDt
+        ? isoToDatetimeLocalValue(new Date(startDt.getTime() + 60 * 60000).toISOString())
+        : "";
+    }
+    return {
+      title: titleEl ? String(titleEl.value || "").trim() : "",
+      startLocal: startLocal,
+      endLocal: endLocal,
+      description: ((document.getElementById("m-task-desc") || document.getElementById("m-ev-desc") || {})
+        .value || ""),
+      checklist: reminderChecklistApi ? reminderChecklistApi.getItems() : [],
+    };
+  }
+
+  function draftToEventSeed(draft) {
+    draft = draft || {};
+    var startIso = datetimeLocalToIso(draft.startLocal || "") || new Date().toISOString();
+    var endIso =
+      datetimeLocalToIso(draft.endLocal || "") ||
+      new Date(new Date(startIso).getTime() + 60 * 60000).toISOString();
+    return {
+      summary: draft.title || "",
+      title: draft.title || "",
+      description: draft.description || "",
+      start: { dateTime: startIso },
+      end: { dateTime: endIso },
+      checklist: draft.checklist || [],
+    };
+  }
+
+  function bindCreateKindSwitcher(activeKind) {
+    var host = document.querySelector("#modal-fields .event-sheet-kind-switch");
+    if (!host) return;
+    host.querySelectorAll("[data-sheet-kind]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var next = btn.getAttribute("data-sheet-kind");
+        if (!next || next === activeKind) return;
+        var draft = readCreateSheetDraft();
+        if (next === "event") {
+          openEventModal(draftToEventSeed(draft));
+        } else if (next === "task") {
+          openTaskModal(draftToEventSeed(draft));
+        } else if (next === "reminder") {
+          openReminderModal({
+            task: draft.title || "",
+            when_iso: datetimeLocalToIso(draft.startLocal || "") || undefined,
+            checklist: draft.checklist || [],
+          });
+        }
+      });
+    });
+  }
+
   function openEventModal(ev) {
     clearCalendarGestureState();
     ev = ev || {};
@@ -12071,8 +12226,10 @@
     const sRaw = st.dateTime || (st.date ? st.date + "T09:00:00" : "");
     const eRaw = en.dateTime || (en.date ? en.date + "T10:00:00" : "");
     const fields = document.getElementById("modal-fields");
+    var eventExisting = !!ev.id;
     fields.innerHTML =
       '<div class="event-sheet">' +
+      (eventExisting ? "" : eventSheetKindSwitcherHtml("event")) +
       '<input id="m-ev-sum" type="text" class="event-sheet-title" placeholder="Название" autocomplete="off" />' +
       '<input type="hidden" id="m-ev-start" />' +
       '<input type="hidden" id="m-ev-end" />' +
@@ -12112,6 +12269,7 @@
       "</div>" +
       '<div class="event-sheet-link-row"></div>' +
       "</div>";
+    if (!eventExisting) bindCreateKindSwitcher("event");
     document.getElementById("m-ev-sum").value = meetingDisplayTitle(ev, { blank: true });
     document.getElementById("m-ev-start").value = isoToDatetimeLocalValue(
       sRaw || defaultDatetimeLocalValue(60)
@@ -12400,7 +12558,14 @@
     }
     if (kind === "task") {
       const id = document.getElementById("modal-event-id").value;
-      const body = taskPayloadFromModal();
+      var kindMeta = document.getElementById("modal-kind");
+      var isOwnerSave =
+        !id || !kindMeta || kindMeta.getAttribute("data-task-is-owner") !== "0";
+      const body = taskPayloadFromModal({ skipAssignee: !!id && !isOwnerSave });
+      if (!body.start) {
+        showCalendarToast("Укажите начало задачи");
+        return;
+      }
       var taskColor = entryColorPickerApi ? entryColorPickerApi.getColor() : "";
       try {
         const r = await apiFetch(id ? "/calendar/tasks/" + encodeURIComponent(id) : "/calendar/tasks", {
@@ -12433,7 +12598,7 @@
             await loadPostedTasksList();
           }
         }
-        await loadActual();
+        await loadActual({ skipCachePaint: true });
       } catch (e) {
         showCalendarToast(e.message || String(e));
       }
@@ -13237,7 +13402,8 @@
     return !!(sub && !sub.classList.contains("hidden"));
   }
 
-  async function loadActual() {
+  async function loadActual(opts) {
+    opts = opts || {};
     const errP = document.getElementById("posted-tasks-error");
     const errM = document.getElementById("meetings-error");
     var dual = isDesktopLayout();
@@ -13246,7 +13412,9 @@
     var range = meetingsVisibleRange(leftIso);
     var cacheKind = actualCacheKind();
     var cached = readMiniappCache(cacheKind);
-    if (cached) {
+    // After drag/save the in-memory layout is already correct; painting stale
+    // cache first makes the event snap back before the network refresh.
+    if (cached && !opts.skipCachePaint) {
       paintActual(
         cached.remData || { items: [] },
         cached.calData || { events: [] },

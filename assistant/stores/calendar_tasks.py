@@ -760,6 +760,11 @@ def update_task(
     existing = get_task_for_user(uid, task_id)
     if not existing:
         return None
+    # Пустая строка = поле не передавали (частый кейс JSON "" с фронта).
+    if isinstance(start_at, str) and not str(start_at).strip():
+        start_at = None
+    if isinstance(end_at, str) and not str(end_at).strip():
+        end_at = None
     start = (
         start_at
         if isinstance(start_at, datetime)

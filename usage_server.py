@@ -5296,8 +5296,13 @@ async def miniapp_calendar_tasks_patch(
     prev_assignee = str(existing.get("assignee_user_id") or "")
     was_done = bool(existing.get("done"))
     assignee_uid = None
-    if body.assignee_user_id is not None or body.assignee_email is not None:
+    # Пустые строки с фронта = «не менять», иначе исполнитель мог
+    # затереть назначение при неполном payload.
+    patch_assignee = body.assignee_user_id is not None or body.assignee_email is not None
+    if patch_assignee:
         assignee_uid = _resolve_calendar_task_assignee(principal, body) or None
+    start_raw = (body.start or "").strip() or None
+    end_raw = (body.end or "").strip() or None
     try:
         row = await run_in_threadpool(
             partial(
@@ -5306,11 +5311,11 @@ async def miniapp_calendar_tasks_patch(
                 task_id,
                 title=body.title,
                 description=body.description,
-                start_at=body.start,
-                end_at=body.end,
-                assignee_user_id=assignee_uid,
-                assignee_email=body.assignee_email,
-                assignee_name=body.assignee_name,
+                start_at=start_raw,
+                end_at=end_raw,
+                assignee_user_id=assignee_uid if patch_assignee else None,
+                assignee_email=body.assignee_email if patch_assignee else None,
+                assignee_name=body.assignee_name if patch_assignee else None,
                 checklist=body.checklist,
                 note_id=body.note_id,
                 done=body.done,

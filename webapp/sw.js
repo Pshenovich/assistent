@@ -1,13 +1,13 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261007-gpt-links";
+var CACHE_VERSION = "miniapp-v1-20261007-modal-kind-switch";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261007-gpt-links",
-  "./app.js?v=20261007-gpt-links",
+  "./styles.css?v=20261007-modal-kind-switch",
+  "./app.js?v=20261007-modal-kind-switch",
   "./note-drafts.js?v=20261005-heading-pdf",
   "./icons/arrow-up-right.svg?v=20261003-month-instances",
   "./icons/chevron-up-muted.svg?v=20261003-month-instances",
