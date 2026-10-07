@@ -7068,6 +7068,27 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   margin-bottom: 0;
 }
 
+.note-discuss-bubble a,
+.gpt-bubble--md a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  word-break: break-word;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.note-discuss-msg.is-assistant .note-discuss-bubble a,
+.note-discuss-msg.is-other .note-discuss-bubble a,
+.gpt-bubble--assistant a {
+  color: var(--accent, #5280e8);
+}
+
+.note-discuss-msg.is-user .note-discuss-bubble a {
+  color: inherit;
+  text-decoration-color: rgba(255, 255, 255, 0.75);
+}
+
 .note-discuss-bubble h1,
 .note-discuss-bubble h2,
 .note-discuss-bubble h3,

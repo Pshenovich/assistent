@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261007-chat-stale-race";
+  var WEBAPP_BUILD = "20261007-gpt-links";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -3073,10 +3073,45 @@
     }
   }
 
+  function safeHttpUrl(raw) {
+    var s = String(raw || "").trim();
+    if (!s) return "";
+    // Срезаем типичную пунктуацию в конце «голой» ссылки.
+    s = s.replace(/[),.;:!?'"»]+$/g, "");
+    if (/^www\./i.test(s)) s = "https://" + s;
+    if (!/^https?:\/\//i.test(s)) return "";
+    try {
+      var u = new URL(s);
+      if (u.protocol !== "http:" && u.protocol !== "https:") return "";
+      return u.href;
+    } catch (_) {
+      return "";
+    }
+  }
+
   function linkifyEscaped(html) {
     return String(html || "").replace(
-      /(https?:\/\/[^\s<]+[^<.,:;"')\]\s])/g,
-      '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
+      /(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi,
+      function (match) {
+        var href = safeHttpUrl(match);
+        if (!href) return match;
+        // Сохраняем обрезанный хвост пунктуации вне ссылки.
+        var shown = match;
+        var tail = "";
+        var m = shown.match(/^(.*?)([),.;:!?'"»]+)$/);
+        if (m && safeHttpUrl(m[1]) === href) {
+          shown = m[1];
+          tail = m[2];
+        }
+        return (
+          '<a href="' +
+          escapeHtml(href) +
+          '" target="_blank" rel="noopener noreferrer">' +
+          shown +
+          "</a>" +
+          tail
+        );
+      }
     );
   }
 
@@ -3832,7 +3867,20 @@
     var b = document.createElement("div");
     b.className =
       "gpt-bubble " + (role === "user" ? "gpt-bubble--user" : "gpt-bubble--assistant");
-    b.textContent = text;
+    if (role === "assistant") {
+      b.className += " gpt-bubble--md";
+      b.innerHTML = wrapTablesForScroll(simpleMarkdownToHtml(text));
+      b.addEventListener("click", function (e) {
+        var link = e.target && e.target.closest && e.target.closest("a[href]");
+        if (!link) return;
+        var href = String(link.getAttribute("href") || "").trim();
+        if (!/^https?:\/\//i.test(href) && !/^tg:\/\//i.test(href)) return;
+        e.preventDefault();
+        openExternal(href);
+      });
+    } else {
+      b.textContent = text;
+    }
     wrap.appendChild(b);
     wrap.scrollTop = wrap.scrollHeight;
   }
@@ -21887,6 +21935,16 @@
       item.appendChild(actions);
     }
     item.addEventListener("click", function (e) {
+      var link = e.target && e.target.closest && e.target.closest("a[href]");
+      if (link) {
+        var href = String(link.getAttribute("href") || "").trim();
+        if (/^https?:\/\//i.test(href) || /^tg:\/\//i.test(href)) {
+          e.preventDefault();
+          e.stopPropagation();
+          openExternal(href);
+        }
+        return;
+      }
       if (e.target && e.target.closest && e.target.closest(".note-discuss-more, .note-discuss-menu, #note-discuss-selection")) {
         return;
       }
@@ -25650,25 +25708,43 @@
   }
 
   function inlineMarkdown(s) {
+    // Ссылки [текст](url) и «голые» http(s)/www — кликабельные.
     return String(s || "")
-        .split(/(\*\*[^*]+\*\*|\*[^*]+\*|~~[^~]+~~|__[^_]+__|`[^`]+`)/g)
-        .map(function (part) {
+      .split(
+        /(\[[^\]]+\]\([^)]+\)|\*\*[^*]+\*\*|\*[^*]+\*|~~[^~]+~~|__[^_]+__|`[^`]+`)/g
+      )
+      .map(function (part) {
+        var mdLink = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+        if (mdLink) {
+          var label = mdLink[1];
+          var href = safeHttpUrl(mdLink[2]) || String(mdLink[2] || "").trim();
+          if (/^https?:\/\//i.test(href) || /^mailto:/i.test(href) || /^tg:\/\//i.test(href)) {
+            return (
+              '<a href="' +
+              escapeHtml(href) +
+              '" target="_blank" rel="noopener noreferrer">' +
+              escapeHtml(label) +
+              "</a>"
+            );
+          }
+          return escapeHtml(label);
+        }
         if (/^\*\*[^*]+\*\*$/.test(part)) {
-          return "<strong>" + escapeHtml(part.slice(2, -2)) + "</strong>";
+          return "<strong>" + linkifyEscaped(escapeHtml(part.slice(2, -2))) + "</strong>";
         }
         if (/^\*[^*]+\*$/.test(part)) {
-          return "<em>" + escapeHtml(part.slice(1, -1)) + "</em>";
+          return "<em>" + linkifyEscaped(escapeHtml(part.slice(1, -1))) + "</em>";
         }
         if (/^~~[^~]+~~$/.test(part)) {
-          return "<s>" + escapeHtml(part.slice(2, -2)) + "</s>";
+          return "<s>" + linkifyEscaped(escapeHtml(part.slice(2, -2))) + "</s>";
         }
         if (/^__[^_]+__$/.test(part)) {
-          return "<u>" + escapeHtml(part.slice(2, -2)) + "</u>";
+          return "<u>" + linkifyEscaped(escapeHtml(part.slice(2, -2))) + "</u>";
         }
         if (/^`[^`]+`$/.test(part)) {
           return "<code>" + escapeHtml(part.slice(1, -1)) + "</code>";
         }
-        return escapeHtml(part);
+        return linkifyEscaped(escapeHtml(part));
       })
       .join("");
   }
