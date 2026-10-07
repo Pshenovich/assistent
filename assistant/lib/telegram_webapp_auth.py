@@ -8,7 +8,7 @@ import json
 import os
 import time
 from typing import Any
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, unquote
 
 
 def _auth_max_age_sec() -> int:
@@ -21,57 +21,119 @@ def _auth_max_age_sec() -> int:
     return 86400
 
 
-def parse_and_validate_init_data(init_data: str, *, bot_token: str) -> dict[str, str]:
-    """Разбирает query-string initData, проверяет hash и свежесть auth_date.
+def _bot_tokens(*, primary: str | None = None) -> list[str]:
+    """Основные и запасные токены: initData мог быть подписан другим ботом того же продукта."""
+    seen: set[str] = set()
+    out: list[str] = []
 
-    Возвращает словарь полей (строки), без hash. Поле user — JSON-строка как в initData.
-    """
-    init_data = (init_data or "").strip()
-    token = (bot_token or "").strip()
-    if not init_data or not token:
-        raise ValueError("Пустой initData или токен бота.")
+    def add(tok: str) -> None:
+        t = (tok or "").strip().strip("'").strip('"')
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
 
-    # parse_qsl: пары key=value из query string; повторяющиеся ключи — берём последнее.
-    pairs = parse_qsl(init_data, keep_blank_values=True, strict_parsing=False)
-    data: dict[str, str] = dict(pairs)
+    add(primary or "")
+    for key in (
+        "TELEGRAM_BOT_TOKEN",
+        "TG_DONATELLO_BOT_TOKEN",
+        "TELEGRAM_WEBAPP_AUTH_EXTRA_TOKENS",
+    ):
+        raw = (os.getenv(key) or "").strip()
+        if not raw:
+            continue
+        parts = raw.split(",") if key.endswith("EXTRA_TOKENS") else [raw]
+        for p in parts:
+            add(p)
+    return out
 
-    received_hash = data.pop("hash", None)
-    if not received_hash:
-        raise ValueError("В initData нет поля hash.")
-    # Bot API 8.0+: поле signature (Ed25519) не входит в HMAC data-check-string.
-    # Если оставить — hash не сойдётся и всех разлогинит.
-    data.pop("signature", None)
 
-    # Цепочка проверки: все пары кроме hash/signature, по алфавиту, разделитель \n.
-    check_pairs = sorted(data.items())
-    data_check_string = "\n".join(f"{k}={v}" for k, v in check_pairs)
-
+def _hmac_hex(data_check_string: str, *, bot_token: str) -> str:
     secret_key = hmac.new(
         b"WebAppData",
-        token.encode("utf-8"),
+        bot_token.encode("utf-8"),
         hashlib.sha256,
     ).digest()
-    calculated = hmac.new(
+    return hmac.new(
         secret_key,
         data_check_string.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
-    if not hmac.compare_digest(calculated, received_hash):
-        raise ValueError("Неверная подпись initData.")
-
-    auth_raw = data.get("auth_date", "").strip()
-    try:
-        auth_ts = int(auth_raw)
-    except ValueError as e:
-        raise ValueError("Некорректное поле auth_date.") from e
-    now = int(time.time())
-    if auth_ts <= 0 or now - auth_ts > _auth_max_age_sec():
-        raise ValueError("Устаревший auth_date.")
-
-    return data
 
 
-def user_payload_from_init_data(init_data: str, *, bot_token: str) -> dict[str, Any]:
+def _init_data_variants(init_data: str) -> list[tuple[str, str]]:
+    """Варианты строки: as-is и один decode, если фронт/прокси обернули encodeURIComponent."""
+    raw = (init_data or "").strip()
+    variants: list[tuple[str, str]] = [("raw", raw)]
+    if not raw:
+        return variants
+    # Весь initData один раз percent-encoded: user%3D%7B...%26auth_date%3D...
+    if "%3D" in raw[:80] or "%26" in raw[:120]:
+        try:
+            decoded = unquote(raw)
+        except Exception:
+            decoded = raw
+        if decoded != raw:
+            variants.append(("unquote", decoded))
+    return variants
+
+
+def parse_and_validate_init_data(init_data: str, *, bot_token: str | None = None) -> dict[str, str]:
+    """Разбирает query-string initData, проверяет hash и свежесть auth_date.
+
+    Возвращает словарь полей (строки), без hash/signature. Поле user — JSON-строка.
+    """
+    tokens = _bot_tokens(primary=bot_token)
+    if not (init_data or "").strip() or not tokens:
+        raise ValueError("Пустой initData или токен бота.")
+
+    last_keys: list[str] = []
+    for variant_name, variant in _init_data_variants(init_data):
+        data = dict(parse_qsl(variant, keep_blank_values=True, strict_parsing=False))
+        received_hash = data.pop("hash", None)
+        if not received_hash:
+            continue
+        # Bot API 8+: signature (Ed25519) обычно не входит в HMAC; пробуем оба режима.
+        signature = data.pop("signature", None)
+        last_keys = sorted(list(data.keys()) + (["signature"] if signature else []))
+        field_sets: list[tuple[bool, dict[str, str]]] = [(False, dict(data))]
+        if signature is not None:
+            with_sig = dict(data)
+            with_sig["signature"] = signature
+            field_sets.append((True, with_sig))
+
+        for tok in tokens:
+            for include_sig, check_fields in field_sets:
+                data_check_string = "\n".join(
+                    f"{k}={v}" for k, v in sorted(check_fields.items())
+                )
+                calculated = _hmac_hex(data_check_string, bot_token=tok)
+                if not hmac.compare_digest(calculated, received_hash):
+                    continue
+                auth_raw = data.get("auth_date", "").strip()
+                try:
+                    auth_ts = int(auth_raw)
+                except ValueError as e:
+                    raise ValueError("Некорректное поле auth_date.") from e
+                now = int(time.time())
+                if auth_ts <= 0 or now - auth_ts > _auth_max_age_sec():
+                    raise ValueError("Устаревший auth_date.")
+                if variant_name != "raw" or include_sig or tok != tokens[0]:
+                    print(
+                        "[miniapp_auth] initData ok via",
+                        f"variant={variant_name}",
+                        f"include_signature={include_sig}",
+                        f"token_id={tok.split(':', 1)[0]}",
+                    )
+                return dict(data)
+
+    print(
+        f"[miniapp_auth] initData hash mismatch keys={last_keys!r} "
+        f"tokens={len(tokens)} len={len(init_data or '')}"
+    )
+    raise ValueError("Неверная подпись initData.")
+
+
+def user_payload_from_init_data(init_data: str, *, bot_token: str | None = None) -> dict[str, Any]:
     """После проверки подписи возвращает объект user из поля user (JSON)."""
     fields = parse_and_validate_init_data(init_data, bot_token=bot_token)
     raw_user = fields.get("user")
@@ -86,7 +148,7 @@ def user_payload_from_init_data(init_data: str, *, bot_token: str) -> dict[str, 
     return user
 
 
-def telegram_user_id_from_init_data(init_data: str, *, bot_token: str) -> int:
+def telegram_user_id_from_init_data(init_data: str, *, bot_token: str | None = None) -> int:
     """Идентификатор пользователя только из провалидированного payload."""
     user = user_payload_from_init_data(init_data, bot_token=bot_token)
     uid = user.get("id")

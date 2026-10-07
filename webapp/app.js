@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261007-pwa-migrate";
+  var WEBAPP_BUILD = "20261007-initdata-b64";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -4385,13 +4385,36 @@
     return getInitDataRaw().length > 0;
   }
 
+  function encodeInitDataB64(initData) {
+    try {
+      var bytes = new TextEncoder().encode(initData);
+      var bin = "";
+      for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+    } catch (_) {
+      try {
+        return btoa(unescape(encodeURIComponent(initData)))
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=+$/g, "");
+      } catch (_2) {
+        return "";
+      }
+    }
+  }
+
   function authHeaders() {
     var initData = getInitDataRaw();
     if (initData) {
-      return {
-        Authorization: "tma " + initData,
+      // tma-b64: сырой initData с UTF-8/& не ломается в Authorization.
+      var b64 = encodeInitDataB64(initData);
+      var headers = {
         Accept: "application/json",
+        "X-Telegram-Init-Data": initData,
       };
+      if (b64) headers.Authorization = "tma-b64 " + b64;
+      else headers.Authorization = "tma " + initData;
+      return headers;
     }
     if (miniappDev) {
       return {

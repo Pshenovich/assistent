@@ -2256,13 +2256,45 @@ class _MiniappPrincipal:
         self.user = user
 
 
+def _decode_tma_init_data_token(scheme: str, token: str) -> str | None:
+    """Достаёт raw initData из Authorization: tma|tma-b64 <…>."""
+    raw = (token or "").strip()
+    if not raw:
+        return None
+    if scheme == "tma-b64":
+        import base64
+
+        try:
+            pad = "=" * (-len(raw) % 4)
+            return base64.urlsafe_b64decode(raw + pad).decode("utf-8")
+        except Exception:
+            try:
+                pad = "=" * (-len(raw) % 4)
+                return base64.b64decode(raw + pad).decode("utf-8")
+            except Exception:
+                return None
+    return raw
+
+
 def _tma_init_data_from_header(authorization: str | None) -> str | None:
     if not authorization:
         return None
     parts = authorization.split(None, 1)
-    if len(parts) != 2 or parts[0].lower() != "tma":
+    if len(parts) != 2:
         return None
-    return parts[1] if parts[1] else None
+    scheme = parts[0].lower()
+    if scheme not in ("tma", "tma-b64"):
+        return None
+    return _decode_tma_init_data_token(scheme, parts[1])
+
+
+def _tma_init_data_from_request(request: Request) -> str | None:
+    """initData: Authorization tma/tma-b64, либо X-Telegram-Init-Data (без порчи UTF-8)."""
+    raw = _tma_init_data_from_header(request.headers.get("Authorization"))
+    if raw:
+        return raw
+    alt = (request.headers.get("X-Telegram-Init-Data") or "").strip()
+    return alt or None
 
 
 def _browser_session_from_header(authorization: str | None) -> str | None:
@@ -2371,30 +2403,28 @@ async def _resolve_miniapp_principal(
         return await _finish_miniapp_principal(
             dev_principal, enforce_access=enforce_access
         )
-    auth_header = (request.headers.get("Authorization") or "").strip()
     # Mini App в Telegram: initData важнее браузерной session-cookie.
     tma_error: str | None = None
-    if auth_header.lower().startswith("tma "):
-        raw = _tma_init_data_from_header(auth_header)
-        if raw:
-            bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-            if not bot_token:
-                raise HTTPException(
-                    status_code=503,
-                    detail="TELEGRAM_BOT_TOKEN не задан на сервере.",
-                )
-            try:
-                user = user_payload_from_init_data(raw, bot_token=bot_token)
-                uid = int(user.get("id"))
-            except ValueError as e:
-                # Устаревший/битый initData — пробуем cookie/session, не режем сразу.
-                tma_error = str(e)
-                print(f"[miniapp_auth] initData rejected: {tma_error!r}")
-            else:
-                principal = _MiniappPrincipal(uid, user)
-                return await _finish_miniapp_principal(
-                    principal, enforce_access=enforce_access
-                )
+    raw = _tma_init_data_from_request(request)
+    if raw:
+        bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+        if not bot_token:
+            raise HTTPException(
+                status_code=503,
+                detail="TELEGRAM_BOT_TOKEN не задан на сервере.",
+            )
+        try:
+            user = user_payload_from_init_data(raw, bot_token=bot_token)
+            uid = int(user.get("id"))
+        except ValueError as e:
+            # Устаревший/битый initData — пробуем cookie/session, не режем сразу.
+            tma_error = str(e)
+            print(f"[miniapp_auth] initData rejected: {tma_error!r}")
+        else:
+            principal = _MiniappPrincipal(uid, user)
+            return await _finish_miniapp_principal(
+                principal, enforce_access=enforce_access
+            )
     session_principal = _principal_from_browser_session_request(request)
     if session_principal is not None:
         return await _finish_miniapp_principal(
@@ -2402,7 +2432,7 @@ async def _resolve_miniapp_principal(
         )
     if tma_error:
         raise HTTPException(status_code=401, detail=tma_error)
-    raw = _tma_init_data_from_header(auth_header)
+    raw = _tma_init_data_from_request(request)
     if raw is None and request.method in ("POST", "PUT", "PATCH"):
         ct = (request.headers.get("content-type") or "").lower()
         if "application/x-www-form-urlencoded" in ct or "multipart/form-data" in ct:
@@ -2968,7 +2998,7 @@ def _optional_share_viewer(request: Request) -> _MiniappPrincipal | None:
     session_principal = _principal_from_browser_session_request(request)
     if session_principal is not None:
         return session_principal
-    raw = _tma_init_data_from_header((request.headers.get("Authorization") or "").strip())
+    raw = _tma_init_data_from_request(request)
     if not raw:
         return None
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()

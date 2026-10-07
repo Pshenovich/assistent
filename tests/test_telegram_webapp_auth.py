@@ -41,6 +41,19 @@ def test_init_data_with_signature_field_validates():
     assert out["id"] == 42
 
 
+def test_init_data_with_signature_included_in_hmac_also_validates():
+    """Запасной режим: если клиент подписал вместе с signature."""
+    bot_token = "123456:ABC-DEF"
+    fields = {
+        "auth_date": str(int(time.time())),
+        "user": json.dumps({"id": 7, "first_name": "B"}),
+        "signature": "sig-value",
+    }
+    fields["hash"] = _sign(fields, bot_token)
+    out = user_payload_from_init_data(urlencode(fields), bot_token=bot_token)
+    assert out["id"] == 7
+
+
 def test_init_data_rejects_bad_hash():
     bot_token = "123456:ABC-DEF"
     fields = {
@@ -50,3 +63,15 @@ def test_init_data_rejects_bad_hash():
     }
     with pytest.raises(ValueError, match="подпись"):
         parse_and_validate_init_data(urlencode(fields), bot_token=bot_token)
+
+
+def test_init_data_cyrillic_user_name():
+    bot_token = "123456:ABC-DEF"
+    user = {"id": 99, "first_name": "Иван"}
+    fields = {
+        "auth_date": str(int(time.time())),
+        "user": json.dumps(user, ensure_ascii=False, separators=(",", ":")),
+    }
+    fields["hash"] = _sign(fields, bot_token)
+    out = user_payload_from_init_data(urlencode(fields), bot_token=bot_token)
+    assert out["first_name"] == "Иван"
