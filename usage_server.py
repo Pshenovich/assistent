@@ -2373,6 +2373,7 @@ async def _resolve_miniapp_principal(
         )
     auth_header = (request.headers.get("Authorization") or "").strip()
     # Mini App в Telegram: initData важнее браузерной session-cookie.
+    tma_error: str | None = None
     if auth_header.lower().startswith("tma "):
         raw = _tma_init_data_from_header(auth_header)
         if raw:
@@ -2386,16 +2387,21 @@ async def _resolve_miniapp_principal(
                 user = user_payload_from_init_data(raw, bot_token=bot_token)
                 uid = int(user.get("id"))
             except ValueError as e:
-                raise HTTPException(status_code=401, detail=str(e)) from e
-            principal = _MiniappPrincipal(uid, user)
-            return await _finish_miniapp_principal(
-                principal, enforce_access=enforce_access
-            )
+                # Устаревший/битый initData — пробуем cookie/session, не режем сразу.
+                tma_error = str(e)
+                print(f"[miniapp_auth] initData rejected: {tma_error!r}")
+            else:
+                principal = _MiniappPrincipal(uid, user)
+                return await _finish_miniapp_principal(
+                    principal, enforce_access=enforce_access
+                )
     session_principal = _principal_from_browser_session_request(request)
     if session_principal is not None:
         return await _finish_miniapp_principal(
             session_principal, enforce_access=enforce_access
         )
+    if tma_error:
+        raise HTTPException(status_code=401, detail=tma_error)
     raw = _tma_init_data_from_header(auth_header)
     if raw is None and request.method in ("POST", "PUT", "PATCH"):
         ct = (request.headers.get("content-type") or "").lower()

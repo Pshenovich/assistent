@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261007-cal-resize-fix";
+  var WEBAPP_BUILD = "20261007-auth-signature";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -4343,8 +4343,9 @@
         Accept: "application/json",
       };
     }
+    // Без initData/session не шлём пустой "tma " — иначе сервер отвечает 401
+    // и фронт массово чистит сессии.
     return {
-      Authorization: "tma ",
       Accept: "application/json",
     };
   }

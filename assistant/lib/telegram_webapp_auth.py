@@ -38,8 +38,11 @@ def parse_and_validate_init_data(init_data: str, *, bot_token: str) -> dict[str,
     received_hash = data.pop("hash", None)
     if not received_hash:
         raise ValueError("В initData нет поля hash.")
+    # Bot API 8.0+: поле signature (Ed25519) не входит в HMAC data-check-string.
+    # Если оставить — hash не сойдётся и всех разлогинит.
+    data.pop("signature", None)
 
-    # Цепочка проверки: все пары кроме hash, по алфавиту ключей, разделитель \n.
+    # Цепочка проверки: все пары кроме hash/signature, по алфавиту, разделитель \n.
     check_pairs = sorted(data.items())
     data_check_string = "\n".join(f"{k}={v}" for k, v in check_pairs)
 
