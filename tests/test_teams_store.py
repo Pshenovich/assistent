@@ -171,6 +171,33 @@ class TeamsStoreTests(unittest.TestCase):
         by_email = teams_store.teams_by_contact_email(1)
         self.assertEqual(by_email["anna@test.com"][0]["id"], team["id"])
 
+    def test_team_member_gets_peer_contacts_without_overwrite(self) -> None:
+        self._add_contact(1, name="Анна", email="anna@test.com", telegram_user_id=2)
+        self._add_contact(1, name="Борис", email="boris@test.com", telegram_user_id=3)
+        # У Анны уже есть Борис под другим именем — не перезаписывать.
+        items = contacts_store.load_contacts(telegram_user_id=2)
+        items.append({"name": "Боря", "email": "boris@test.com", "aliases": []})
+        contacts_store.save_contacts(items, telegram_user_id=2)
+
+        team = teams_store.create_team(1, "Отдел")
+        teams_store.set_contact_teams(1, "anna@test.com", [team["id"]])
+        result = teams_store.set_contact_teams(1, "boris@test.com", [team["id"]])
+        self.assertEqual(result["contacts_synced"]["added_for_member"], 1)
+
+        anna_book = {
+            str(c.get("email")).lower(): c
+            for c in contacts_store.load_contacts(telegram_user_id=2)
+        }
+        boris_book = {
+            str(c.get("email")).lower(): c
+            for c in contacts_store.load_contacts(telegram_user_id=3)
+        }
+        # Борис появился у Анны только если его не было — имя «Боря» сохранилось.
+        self.assertEqual(anna_book["boris@test.com"]["name"], "Боря")
+        # У Бориса появилась Анна.
+        self.assertEqual(boris_book["anna@test.com"]["name"], "Анна")
+        self.assertEqual(int(boris_book["anna@test.com"].get("telegram_user_id") or 0), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

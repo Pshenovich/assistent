@@ -435,6 +435,71 @@ def add_or_update_contact(
     return "added"
 
 
+def ensure_contact_if_missing(
+    contacts: list[dict[str, Any]],
+    name: str,
+    email: str,
+    *,
+    telegram_username: str | None = None,
+    telegram_user_id: int | str | None = None,
+) -> Literal["added", "existing", "invalid"]:
+    """Добавить контакт только если email ещё нет. Существующие не меняет."""
+    name_clean = (name or "").strip()
+    email_clean = (email or "").strip().lower()
+    if not name_clean or not email_clean or not EMAIL_RE.fullmatch(email_clean):
+        return "invalid"
+    for c in contacts:
+        if str(c.get("email", "")).strip().lower() == email_clean:
+            return "existing"
+    row: dict[str, Any] = {"name": name_clean, "email": email_clean, "aliases": []}
+    tg_clean = normalize_telegram_username(telegram_username or "") or None
+    if tg_clean:
+        row["telegram_username"] = tg_clean
+    try:
+        tgid = int(telegram_user_id or 0)
+        if tgid > 0:
+            row["telegram_user_id"] = tgid
+    except (TypeError, ValueError):
+        pass
+    contacts.append(row)
+    return "added"
+
+
+def ensure_contact_for_user_if_missing(
+    *,
+    telegram_user_id: int,
+    name: str,
+    email: str,
+    telegram_username: str | None = None,
+    telegram_username_contact: str | None = None,
+    peer_telegram_user_id: int | str | None = None,
+) -> Literal["added", "existing", "invalid"]:
+    """Записать контакт в книгу пользователя, не перезаписывая существующий."""
+    try:
+        uid = int(telegram_user_id)
+    except (TypeError, ValueError):
+        return "invalid"
+    if uid <= 0:
+        return "invalid"
+    items = load_contacts(
+        telegram_user_id=uid, telegram_username=telegram_username
+    )
+    st = ensure_contact_if_missing(
+        items,
+        name,
+        email,
+        telegram_username=telegram_username_contact,
+        telegram_user_id=peer_telegram_user_id,
+    )
+    if st == "added":
+        save_contacts(
+            items,
+            telegram_user_id=uid,
+            telegram_username=telegram_username,
+        )
+    return st
+
+
 def delete_contact_by_email(
     contacts: list[dict[str, Any]], email: str
 ) -> bool:

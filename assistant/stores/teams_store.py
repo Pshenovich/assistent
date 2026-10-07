@@ -365,6 +365,171 @@ def _upsert_team_member_locked(
     )
 
 
+def _owner_contact_by_email(owner_user_id: int | str, email: str) -> dict[str, Any] | None:
+    from assistant.stores import contacts_store
+
+    key = _norm_email(email)
+    if not key:
+        return None
+    for row in contacts_store.load_contacts(telegram_user_id=int(owner_user_id)) or []:
+        if _norm_email(row.get("email")) == key:
+            return dict(row)
+    return None
+
+
+def _team_peer_contacts(
+    owner_user_id: int | str,
+    team_ids: list[int],
+    *,
+    exclude_email: str,
+) -> list[dict[str, Any]]:
+    """Контакты других участников команд (из книги владельца) + сам владелец, если есть email."""
+    from assistant.stores import contacts_store
+    from assistant.stores import note_members
+
+    owner = _uid(owner_user_id)
+    exclude = _norm_email(exclude_email)
+    if not team_ids:
+        return []
+    owner_contacts = {
+        _norm_email(c.get("email")): dict(c)
+        for c in (contacts_store.load_contacts(telegram_user_id=int(owner)) or [])
+        if _norm_email(c.get("email"))
+    }
+    with _LOCK:
+        placeholders = ",".join("?" * len(team_ids))
+        rows = _conn().execute(
+            f"""
+            SELECT DISTINCT m.contact_email, m.member_user_id
+            FROM team_members m
+            JOIN teams t ON t.id = m.team_id
+            WHERE t.owner_user_id = ? AND m.team_id IN ({placeholders})
+            """,
+            (owner, *[int(t) for t in team_ids]),
+        ).fetchall()
+    peers: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        email = _norm_email(row["contact_email"])
+        if not email or email == exclude or email in seen:
+            continue
+        seen.add(email)
+        src = owner_contacts.get(email) or {}
+        name = str(src.get("name") or email).strip() or email
+        peer: dict[str, Any] = {"name": name, "email": email}
+        tg = str(src.get("telegram_username") or src.get("tg_username") or "").strip()
+        if tg:
+            peer["telegram_username"] = tg
+        try:
+            tgid = int(src.get("telegram_user_id") or row["member_user_id"] or 0)
+            if tgid > 0:
+                peer["telegram_user_id"] = tgid
+        except (TypeError, ValueError):
+            pass
+        peers.append(peer)
+
+    # Владелец команды — если у него в книге есть запись о себе или профиль с email нет:
+    # ищем контакт с telegram_user_id владельца.
+    owner_email = ""
+    owner_name = ""
+    owner_tg = ""
+    for email, src in owner_contacts.items():
+        try:
+            if int(src.get("telegram_user_id") or 0) == int(owner):
+                owner_email = email
+                owner_name = str(src.get("name") or "").strip()
+                owner_tg = str(
+                    src.get("telegram_username") or src.get("tg_username") or ""
+                ).strip()
+                break
+        except (TypeError, ValueError):
+            continue
+    if owner_email and owner_email != exclude and owner_email not in seen:
+        profile = note_members.get_profile(owner) or {}
+        peers.append(
+            {
+                "name": owner_name
+                or note_members.profile_display_name(profile, fallback=owner_email)
+                or owner_email,
+                "email": owner_email,
+                "telegram_username": owner_tg
+                or str(profile.get("username") or "").strip(),
+                "telegram_user_id": int(owner),
+            }
+        )
+    return peers
+
+
+def sync_team_peer_contacts(
+    owner_user_id: int | str,
+    email: str,
+    team_ids: list[int] | None = None,
+) -> dict[str, int]:
+    """После добавления в команду: взаимно дописать контакты, не перезаписывая существующие."""
+    from assistant.stores import contacts_store
+
+    owner = _uid(owner_user_id)
+    key = _norm_email(email)
+    if not key:
+        return {"added_for_member": 0, "added_for_peers": 0}
+    if team_ids is None:
+        team_ids = list_contact_team_ids(owner, key)
+    team_ids = [int(t) for t in (team_ids or [])]
+    if not team_ids:
+        return {"added_for_member": 0, "added_for_peers": 0}
+
+    member_uid = _try_resolve_member_id(owner, key)
+    member_contact = _owner_contact_by_email(owner, key) or {
+        "name": key,
+        "email": key,
+    }
+    peers = _team_peer_contacts(owner, team_ids, exclude_email=key)
+    added_for_member = 0
+    added_for_peers = 0
+
+    if member_uid:
+        for peer in peers:
+            st = contacts_store.ensure_contact_for_user_if_missing(
+                telegram_user_id=int(member_uid),
+                name=str(peer.get("name") or peer.get("email") or ""),
+                email=str(peer.get("email") or ""),
+                telegram_username_contact=str(peer.get("telegram_username") or "")
+                or None,
+                peer_telegram_user_id=peer.get("telegram_user_id"),
+            )
+            if st == "added":
+                added_for_member += 1
+
+    # Остальным участникам с Telegram — новый контакт (если ещё нет).
+    new_name = str(member_contact.get("name") or key).strip() or key
+    new_tg = str(
+        member_contact.get("telegram_username")
+        or member_contact.get("tg_username")
+        or ""
+    ).strip() or None
+    for peer in peers:
+        try:
+            peer_uid = int(peer.get("telegram_user_id") or 0)
+        except (TypeError, ValueError):
+            peer_uid = 0
+        if peer_uid <= 0 or (member_uid and peer_uid == int(member_uid)):
+            continue
+        st = contacts_store.ensure_contact_for_user_if_missing(
+            telegram_user_id=peer_uid,
+            name=new_name,
+            email=key,
+            telegram_username_contact=new_tg,
+            peer_telegram_user_id=member_uid,
+        )
+        if st == "added":
+            added_for_peers += 1
+
+    return {
+        "added_for_member": added_for_member,
+        "added_for_peers": added_for_peers,
+    }
+
+
 def set_contact_teams(
     owner_user_id: int | str, email: str, team_ids: list[int]
 ) -> dict[str, Any]:
@@ -424,12 +589,17 @@ def set_contact_teams(
             )
             note_ids = [int(r["note_id"]) for r in cur.fetchall()]
 
+    contact_sync = {"added_for_member": 0, "added_for_peers": 0}
+    if to_add:
+        contact_sync = sync_team_peer_contacts(owner, key, to_add)
+
     added: list[dict[str, Any]] = []
     for nid in note_ids:
         added.extend(sync_note_team_members(owner, nid))
     return {
         "team_ids": list_contact_team_ids(owner, key),
         "added_members": added,
+        "contacts_synced": contact_sync,
     }
 
 
@@ -498,6 +668,8 @@ def refresh_contact_telegram(owner_user_id: int | str, email: str) -> list[dict[
                 tuple(team_ids),
             )
             note_ids = [int(r["note_id"]) for r in cur.fetchall()]
+    if member_uid and team_ids:
+        sync_team_peer_contacts(owner, key, team_ids)
     added: list[dict[str, Any]] = []
     for nid in note_ids:
         added.extend(sync_note_team_members(owner, nid))
