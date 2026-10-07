@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261007-cal-drag-note-ux";
+  var WEBAPP_BUILD = "20261007-cal-drag-delta";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -2157,10 +2157,11 @@
       var originParent = el.parentNode;
       var originLeft = el.style.left;
       var originWidth = el.style.width;
-      // Пиксельный offset точки захвата внутри карточки — 1:1 с пальцем.
-      var grabOffsetY = 0;
-      var grabOffsetReady = false;
+      // Delta-drag: ΔY пальца → Δвремени. Не зависит от scroll/rect сетки.
+      var dragOriginY = originY;
+      var dragOriginStart = startMs0;
       var stickyHost = { el: ctx.axisHost, dateIso: ctx.dateIso };
+      var hourPx = ctx.hourPx || 1;
 
       function armGesture() {
         if (finished || armed) return;
@@ -2204,46 +2205,46 @@
         if (!dragging) {
           if (Math.abs(dx) < CAL_DRAG_THRESHOLD_PX && Math.abs(dy) < CAL_DRAG_THRESHOLD_PX) return;
           dragging = true;
+          // База от текущего пальца — без скачка в момент старта жеста.
+          dragOriginY = evMove.clientY;
+          dragOriginStart = curStart;
         }
         evMove.preventDefault();
+        if (typeof evMove.stopPropagation === "function") evMove.stopPropagation();
         if (mode === "resize") {
           var endMs = timelineClientYToEndMs(
             curDate,
             axisHost,
             evMove.clientY,
-            ctx.hourPx,
+            hourPx,
             curStart
           );
           if (endMs == null) return;
           curEnd = endMs;
-          applyTimedEntryLayout(el, curDate, curStart, curEnd, ctx.hourPx);
+          applyTimedEntryLayout(el, curDate, curStart, curEnd, hourPx);
           return;
         }
         if (canCrossDays()) {
           var hostInfo = resolveHostAt(evMove.clientX, stickyHost);
-          axisHost = hostInfo.el;
-          curDate = hostInfo.dateIso;
-          stickyHost = hostInfo;
-          if (el.parentNode !== axisHost) {
-            axisHost.appendChild(el);
-            el.style.left = ctx.view === "week" ? "1px" : "0";
-            el.style.width = ctx.view === "week" ? "calc(100% - 3px)" : "100%";
+          if (hostInfo && hostInfo.dateIso && hostInfo.dateIso !== curDate) {
+            dragOriginStart += dayStartMs(hostInfo.dateIso) - dayStartMs(curDate);
+            curDate = hostInfo.dateIso;
+            axisHost = hostInfo.el;
+            stickyHost = hostInfo;
+            if (el.parentNode !== axisHost) {
+              axisHost.appendChild(el);
+              el.style.left = ctx.view === "week" ? "1px" : "0";
+              el.style.width = ctx.view === "week" ? "calc(100% - 3px)" : "100%";
+            }
           }
         }
-        // В первый кадр движения запоминаем, где внутри карточки взяли.
-        if (!grabOffsetReady) {
-          grabOffsetY = evMove.clientY - el.getBoundingClientRect().top;
-          grabOffsetReady = true;
-        }
-        var hostRect = axisHost.getBoundingClientRect();
-        var topPx = evMove.clientY - hostRect.top - grabOffsetY;
-        var rawStart = timelineTopPxToStartMs(curDate, topPx, ctx.hourPx);
-        if (rawStart == null) return;
-        // Во время жеста без snap — иначе «живёт своей жизнью» по сетке 15 мин.
-        var newStart = clampTimedMoveStart(curDate, rawStart, duration0, { snap: false });
+        var deltaMs = ((evMove.clientY - dragOriginY) / hourPx) * 60 * 60000;
+        var newStart = clampTimedMoveStart(curDate, dragOriginStart + deltaMs, duration0, {
+          snap: false,
+        });
         curStart = newStart;
         curEnd = newStart + duration0;
-        applyTimedEntryLayout(el, curDate, curStart, curEnd, ctx.hourPx);
+        applyTimedEntryLayout(el, curDate, curStart, curEnd, hourPx);
       }
 
       function finish(evUp) {
@@ -2261,18 +2262,18 @@
             el.style.left = originLeft;
             el.style.width = originWidth;
           }
-          applyTimedEntryLayout(el, ctx.dateIso, startMs0, endMs0, ctx.hourPx);
+          applyTimedEntryLayout(el, ctx.dateIso, startMs0, endMs0, hourPx);
           if (!dragging && mode === "move") openCalendarEntry(ev);
           return;
         }
         calendarSuppressClick(450);
-        // Snap только при отпускании.
+        // Snap только при отпускании — во время жеста блок едет 1:1 за пальцем.
         curStart = clampTimedMoveStart(curDate, curStart, duration0);
         curEnd = curStart + duration0;
-        applyTimedEntryLayout(el, curDate, curStart, curEnd, ctx.hourPx);
+        applyTimedEntryLayout(el, curDate, curStart, curEnd, hourPx);
         var changed =
-          curStart !== startMs0 ||
-          curEnd !== endMs0 ||
+          Math.abs(curStart - startMs0) > 1000 ||
+          Math.abs(curEnd - endMs0) > 1000 ||
           curDate !== ctx.dateIso ||
           el.parentNode !== originParent;
         if (!changed) {
@@ -2281,7 +2282,7 @@
             el.style.left = originLeft;
             el.style.width = originWidth;
           }
-          applyTimedEntryLayout(el, ctx.dateIso, startMs0, endMs0, ctx.hourPx);
+          applyTimedEntryLayout(el, ctx.dateIso, startMs0, endMs0, hourPx);
           return;
         }
         persistCalendarEntryTimes(ev, curStart, curEnd);
@@ -26686,16 +26687,18 @@
             if (pendingTags && pendingTags.length) {
               n.tags = pendingTags;
               n.project = pendingTags[0] || null;
-              if (typeof tagsWrap._tagPickerFlush === "function") {
-                tagsWrap._tagPickerFlush().catch(function () {});
-              } else {
-                saveItemTags(
-                  "local",
-                  noteId,
-                  pendingTags.map(function (t) {
-                    return Number(t.id);
-                  })
-                ).catch(function () {});
+              if (String(noteId).indexOf("tmp_") !== 0) {
+                if (typeof tagsWrap._tagPickerFlush === "function") {
+                  tagsWrap._tagPickerFlush().catch(function () {});
+                } else {
+                  saveItemTags(
+                    "local",
+                    noteId,
+                    pendingTags.map(function (t) {
+                      return Number(t.id);
+                    })
+                  ).catch(function () {});
+                }
               }
             }
             setHidden(tagsWrap, false);
