@@ -2521,6 +2521,7 @@ class _MiniappCalendarTaskBody(BaseModel):
     checklist: Optional[list[dict[str, Any]]] = None
     note_id: Optional[str] = None
     done: Optional[bool] = None
+    owner_archived: Optional[bool] = None
     all_day: Optional[bool] = None
     text: Optional[str] = None
 
@@ -5139,15 +5140,27 @@ def _resolve_calendar_task_assignee(
 @miniapp_router.get("/calendar/tasks/posted")
 async def miniapp_calendar_tasks_posted(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    archived: int = Query(0, ge=0, le=1),
 ) -> dict[str, Any]:
     from assistant.services.calendar import _tz_for
     from assistant.stores import calendar_tasks as calendar_tasks_store
 
     uid = int(principal.telegram_user_id)
     tz = _tz_for(uid)
-    rows = await run_in_threadpool(calendar_tasks_store.list_posted_tasks, uid)
+    want_archived = bool(archived)
+    rows = await run_in_threadpool(
+        partial(
+            calendar_tasks_store.list_posted_tasks,
+            uid,
+            include_done=True,
+            archived=want_archived,
+        )
+    )
     items = [_task_api(r, tz=tz, viewer_id=uid) for r in rows]
-    return {"ok": True, "items": items, "count": len(items)}
+    active_count = await run_in_threadpool(
+        calendar_tasks_store.count_active_posted_tasks, uid
+    )
+    return {"ok": True, "items": items, "count": active_count, "archived": want_archived}
 
 
 @miniapp_router.get("/calendar/tasks")
@@ -5329,6 +5342,11 @@ async def miniapp_calendar_tasks_patch(
     existing = await run_in_threadpool(calendar_tasks_store.get_task_for_user, uid, task_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Задача не найдена")
+    is_owner = str(existing.get("owner_user_id") or "") == str(uid)
+    if body.owner_archived is not None and not is_owner:
+        raise HTTPException(
+            status_code=403, detail="Архивировать может только постановщик"
+        )
     prev_assignee = str(existing.get("assignee_user_id") or "")
     was_done = bool(existing.get("done"))
     assignee_uid = None
@@ -5355,6 +5373,7 @@ async def miniapp_calendar_tasks_patch(
                 checklist=body.checklist,
                 note_id=body.note_id,
                 done=body.done,
+                owner_archived=body.owner_archived if is_owner else None,
                 all_day=body.all_day,
                 schedule_actor={
                     "by_user_id": str(uid),

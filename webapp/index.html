@@ -122,6 +122,12 @@
             <span class="detail-toolbar-spacer" aria-hidden="true"></span>
           </div>
           <div class="subscreen-body">
+            <div class="posted-tasks-subtabs-row">
+              <div class="subtab-bar" role="tablist" aria-label="Поставленные задачи">
+                <button type="button" class="subtab-btn active" id="posted-tasks-tab-current" data-posted-tab="current" role="tab" aria-selected="true">Текущие</button>
+                <button type="button" class="subtab-btn" id="posted-tasks-tab-archive" data-posted-tab="archive" role="tab" aria-selected="false">Архив</button>
+              </div>
+            </div>
             <div id="posted-tasks-list" class="stack"></div>
             <p id="posted-tasks-empty" class="muted empty-hint hidden">Пока нет поставленных задач</p>
           </div>

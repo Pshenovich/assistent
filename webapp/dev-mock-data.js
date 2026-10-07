@@ -27,6 +27,7 @@
       note_id: "",
       all_day: true,
       done: false,
+      owner_archived: false,
       chip_label: "сегодня",
     },
   ];
@@ -764,6 +765,7 @@
         owner_user_id: task.owner_user_id || "1",
         chip_label: task.chip_label || "Задача",
         done: !!task.done,
+        owner_archived: !!task.owner_archived,
         note_id: task.note_id || "",
       };
     }
@@ -829,6 +831,7 @@
         if (patch.assignee_email != null) existing.assignee_email = String(patch.assignee_email || "");
         if (patch.assignee_name != null) existing.assignee_name = String(patch.assignee_name || "");
         if (patch.done != null) existing.done = !!patch.done;
+        if (patch.owner_archived != null) existing.owner_archived = !!patch.owner_archived;
         upsertMockTaskEvent(existing);
         return mockTaskApi(existing);
       }
@@ -843,17 +846,34 @@
     }
 
     if (basePath === "/calendar/tasks/posted" && method === "GET") {
-      var posted = mockTasks.filter(function (t) {
+      var wantArchived = false;
+      try {
+        var postedQ = String(path || "").split("?")[1] || "";
+        postedQ.split("&").forEach(function (part) {
+          var kv = part.split("=");
+          if (decodeURIComponent(kv[0] || "") === "archived") {
+            wantArchived = decodeURIComponent(kv[1] || "") === "1";
+          }
+        });
+      } catch (_) {}
+      var postedAll = mockTasks.filter(function (t) {
         var owner = String(t.owner_user_id || "1");
         var assignee = String(t.assignee_user_id || "");
-        return !t.done && assignee && assignee !== owner;
+        return assignee && assignee !== owner;
       });
+      var posted = postedAll.filter(function (t) {
+        return !!t.owner_archived === wantArchived;
+      });
+      var activeCount = postedAll.filter(function (t) {
+        return !t.done && !t.owner_archived;
+      }).length;
       return {
         ok: true,
         items: posted.map(function (t) {
           return mockTaskApi(t).task;
         }),
-        count: posted.length,
+        count: activeCount,
+        archived: wantArchived,
       };
     }
 
@@ -912,6 +932,7 @@
         note_id: String(taskBody.note_id || ""),
         all_day: !!taskBody.all_day,
         done: false,
+        owner_archived: false,
         chip_label: "Задача",
       };
       mockTasks.unshift(task);

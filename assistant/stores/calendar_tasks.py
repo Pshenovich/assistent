@@ -78,6 +78,7 @@ def _conn() -> sqlite3.Connection:
     _ensure_google_event_columns(_CONN)
     _ensure_all_day_column(_CONN)
     _ensure_schedule_log_column(_CONN)
+    _ensure_owner_archived_column(_CONN)
     _CONN.commit()
     return _CONN
 
@@ -111,6 +112,14 @@ def _ensure_schedule_log_column(conn: sqlite3.Connection) -> None:
     if "schedule_log_json" not in cols:
         conn.execute(
             "ALTER TABLE calendar_tasks ADD COLUMN schedule_log_json TEXT NOT NULL DEFAULT '[]'"
+        )
+
+
+def _ensure_owner_archived_column(conn: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(calendar_tasks)")}
+    if "owner_archived" not in cols:
+        conn.execute(
+            "ALTER TABLE calendar_tasks ADD COLUMN owner_archived INTEGER NOT NULL DEFAULT 0"
         )
 
 
@@ -267,6 +276,9 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         ),
         "note_id": str(row["note_id"] or ""),
         "done": bool(int(row["done"] or 0)),
+        "owner_archived": bool(int(row["owner_archived"] or 0))
+        if "owner_archived" in keys
+        else False,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -281,8 +293,12 @@ def task_is_delegated(task: dict[str, Any] | None) -> bool:
 
 
 def task_visible_in_calendar(task: dict[str, Any] | None, viewer_id: int | str) -> bool:
-    """Делегированные задачи автора не показываем в его календаре — только у исполнителя."""
-    if not task or task.get("done"):
+    """Делегированные задачи автора не показываем в его календаре — только у исполнителя.
+
+    Выполненные (done) остаются видимыми (зачёркнутыми в UI). owner_archived
+    влияет только на список «Поставленные» у автора, не на календарь исполнителя.
+    """
+    if not task:
         return False
     viewer = _uid(viewer_id)
     owner = str(task.get("owner_user_id") or "")
@@ -484,6 +500,7 @@ def as_calendar_event(
         "owner_user_id": owner,
         "is_owner": is_owner,
         "done": bool(task.get("done")),
+        "owner_archived": bool(task.get("owner_archived")),
         "note_id": str(task.get("note_id") or ""),
         "chip_label": chip_label(task, tz=tz),
         "schedule_log": _normalize_schedule_log(task.get("schedule_log") or []),
@@ -698,10 +715,19 @@ def list_tasks_for_note(
 
 
 def list_posted_tasks(
-    owner_user_id: int | str, *, include_done: bool = False
+    owner_user_id: int | str,
+    *,
+    include_done: bool = False,
+    archived: bool | None = False,
 ) -> list[dict[str, Any]]:
-    """Задачи, которые владелец поставил другим (не себе)."""
+    """Задачи, которые владелец поставил другим (не себе).
+
+    archived=False — текущие (не в архиве постановщика);
+    archived=True — только архив;
+    archived=None — все (и текущие, и архив).
+    """
     uid = _uid(owner_user_id)
+    archived_flag = None if archived is None else (1 if archived else 0)
     with _LOCK:
         cur = _conn().execute(
             """
@@ -710,11 +736,31 @@ def list_posted_tasks(
               AND assignee_user_id != ''
               AND assignee_user_id != owner_user_id
               AND (? = 1 OR done = 0)
+              AND (? IS NULL OR IFNULL(owner_archived, 0) = ?)
             ORDER BY start_at ASC, id ASC
             """,
-            (uid, 1 if include_done else 0),
+            (uid, 1 if include_done else 0, archived_flag, archived_flag),
         )
         return [_row_to_dict(r) for r in cur.fetchall()]
+
+
+def count_active_posted_tasks(owner_user_id: int | str) -> int:
+    """Активные (не done) неархивные делегированные задачи — для счётчика «Поставлено»."""
+    uid = _uid(owner_user_id)
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            SELECT COUNT(*) AS n FROM calendar_tasks
+            WHERE owner_user_id = ?
+              AND assignee_user_id != ''
+              AND assignee_user_id != owner_user_id
+              AND done = 0
+              AND IFNULL(owner_archived, 0) = 0
+            """,
+            (uid,),
+        )
+        row = cur.fetchone()
+        return int(row["n"] if row else 0)
 
 
 def list_tasks(owner_user_id: int | str, *, limit: int = 200) -> list[dict[str, Any]]:
@@ -747,6 +793,7 @@ def update_task(
     checklist: list[dict[str, Any]] | None = None,
     note_id: str | None = None,
     done: bool | None = None,
+    owner_archived: bool | None = None,
     all_day: bool | None = None,
     google_task_id: str | None = None,
     google_tasklist_id: str | None = None,
@@ -841,6 +888,13 @@ def update_task(
         ),
         "note_id": _clip(note_id, 40) if note_id is not None else existing["note_id"],
         "done": 1 if (existing["done"] if done is None else bool(done)) else 0,
+        "owner_archived": 1
+        if (
+            existing.get("owner_archived")
+            if owner_archived is None
+            else bool(owner_archived)
+        )
+        else 0,
         "all_day": 1 if is_all_day else 0,
         "google_task_id": _clip(google_task_id, 200)
         if google_task_id is not None
@@ -863,7 +917,8 @@ def update_task(
             UPDATE calendar_tasks SET
                 title = ?, description = ?, start_at = ?, end_at = ?,
                 assignee_user_id = ?, assignee_email = ?, assignee_name = ?,
-                checklist_json = ?, note_id = ?, done = ?, all_day = ?,
+                checklist_json = ?, note_id = ?, done = ?, owner_archived = ?,
+                all_day = ?,
                 google_task_id = ?, google_tasklist_id = ?,
                 google_event_id = ?, google_calendar_id = ?,
                 schedule_log_json = ?, updated_at = ?
@@ -880,6 +935,7 @@ def update_task(
                 fields["checklist_json"],
                 fields["note_id"],
                 fields["done"],
+                fields["owner_archived"],
                 fields["all_day"],
                 fields["google_task_id"],
                 fields["google_tasklist_id"],

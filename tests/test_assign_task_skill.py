@@ -206,6 +206,40 @@ def test_delegated_hidden_from_owner_calendar_and_posted(tasks_db):
     assert "dateTime" not in ev["start"]
 
 
+def test_done_stays_visible_and_owner_archive(tasks_db):
+    store = tasks_db
+    tz = ZoneInfo("Europe/Moscow")
+    start = datetime(2026, 10, 7, 15, 0, tzinfo=tz)
+    delegated = store.create_task(
+        11,
+        title="Ульяне",
+        start_at=start,
+        assignee_user_id=22,
+        assignee_name="Ульяна",
+        tz=tz,
+    )
+    done = store.update_task(11, delegated["id"], done=True, tz=tz)
+    assert done is not None
+    assert done["done"] is True
+    # Исполнитель видит выполненную; постановщик — нет в календаре.
+    assert store.task_visible_in_calendar(done, 22) is True
+    assert store.task_visible_in_calendar(done, 11) is False
+    # В «Текущих» done остаётся; в архиве — после owner_archived.
+    current = store.list_posted_tasks(11, include_done=True, archived=False)
+    assert {t["id"] for t in current} == {delegated["id"]}
+    assert store.count_active_posted_tasks(11) == 0
+
+    archived = store.update_task(11, delegated["id"], owner_archived=True, tz=tz)
+    assert archived is not None
+    assert archived["owner_archived"] is True
+    assert store.list_posted_tasks(11, include_done=True, archived=False) == []
+    arch_list = store.list_posted_tasks(11, include_done=True, archived=True)
+    assert {t["id"] for t in arch_list} == {delegated["id"]}
+    # Архив постановщика не убирает задачу у исполнителя.
+    assert store.task_visible_in_calendar(archived, 22) is True
+    assert store.count_active_posted_tasks(11) == 0
+
+
 def test_push_skips_delegated_for_owner(tasks_db, monkeypatch):
     from assistant.services import google_tasks
 
