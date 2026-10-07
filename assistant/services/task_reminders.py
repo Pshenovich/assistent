@@ -75,9 +75,18 @@ def collect_due_reminders(
     window = reminder_window_sec() / 2.0
     target_sec = float(mins) * 60.0
     horizon = now + timedelta(minutes=mins + 12)
+    uid = str(int(user_id))
     due: list[dict[str, Any]] = []
     for row in calendar_tasks_store.list_tasks_in_window(user_id, now, horizon):
         if row.get("done"):
+            continue
+        # All-day — без «через 15 минут».
+        if row.get("all_day"):
+            continue
+        # Делегированная: пуш только исполнителю, не автору.
+        owner = str(row.get("owner_user_id") or "")
+        assignee = str(row.get("assignee_user_id") or "").strip() or owner
+        if uid != assignee:
             continue
         tid = str(row.get("id") or "")
         start = calendar_tasks_store._parse_dt(row.get("start_at"))

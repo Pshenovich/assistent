@@ -5033,6 +5033,8 @@ def _task_api(task: dict[str, Any], *, tz: Any, viewer_id: int | str | None = No
         task, tz=tz, viewer_id=viewer_id
     )
     item["chip_label"] = item["event"].get("chip_label")
+    item["schedule_log"] = list(item["event"].get("schedule_log") or [])
+    item["schedule_log_lines"] = list(item["event"].get("schedule_log_lines") or [])
     return item
 
 
@@ -5313,6 +5315,10 @@ async def miniapp_calendar_tasks_patch(
                 note_id=body.note_id,
                 done=body.done,
                 all_day=body.all_day,
+                schedule_actor={
+                    "by_user_id": str(uid),
+                    "by_name": _principal_display_name(principal),
+                },
                 tz=tz,
             )
         )

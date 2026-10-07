@@ -9669,6 +9669,15 @@ textarea.event-sheet-title--area {
   display: none;
 }
 
+.event-sheet-schedule-log {
+  min-height: 4.2rem;
+  color: var(--muted, #6b7280);
+  font-size: 0.92rem;
+  line-height: 1.45;
+  resize: none;
+  cursor: default;
+}
+
 .event-sheet-link-row {
   display: flex;
   gap: 8px;

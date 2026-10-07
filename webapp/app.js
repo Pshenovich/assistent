@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261006-cal-longpress";
+  var WEBAPP_BUILD = "20261007-task-schedule-log";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -1991,14 +1991,29 @@
     if (!ev || startMs == null || endMs == null || endMs <= startMs) return;
     var startIso = new Date(startMs).toISOString();
     var endIso = new Date(endMs).toISOString();
+    var keepAllDay = eventIsAllDay(ev);
     patchLocalCalendarEntryTimes(ev, startMs, endMs);
+    if (keepAllDay) {
+      // Месячный drag all-day: не превращать в timed.
+      var dayStart = localDateIsoFromMs(startMs);
+      var dayEndExclusive = localDateIsoFromMs(endMs);
+      if (dayStart) {
+        ev.start = { date: dayStart };
+        ev.end = { date: dayEndExclusive || dayStart };
+        ev.all_day = true;
+      }
+    }
     try {
       var isTask = calendarEntryIsTask(ev);
       var tid = isTask ? calendarTaskId(ev) : "";
       if (isTask && tid) {
         await apiFetch("/calendar/tasks/" + encodeURIComponent(tid), {
           method: "PATCH",
-          body: JSON.stringify({ start: startIso, end: endIso }),
+          body: JSON.stringify({
+            start: startIso,
+            end: endIso,
+            all_day: keepAllDay,
+          }),
         });
       } else {
         if (!ev.id) throw new Error("Нет id встречи");
@@ -11664,6 +11679,8 @@
       description: (document.getElementById("m-task-desc") || {}).value || "",
       start: datetimeLocalToIso((document.getElementById("m-ev-start") || {}).value || ""),
       end: datetimeLocalToIso((document.getElementById("m-ev-end") || {}).value || ""),
+      // Модалка всегда с часами — снимаем «весь день», иначе время сбрасывается.
+      all_day: false,
       checklist: reminderChecklistApi ? reminderChecklistApi.getItems() : [],
       assignee_user_id: assignee.user_id || "",
       assignee_email: assignee.email || "",
@@ -11721,6 +11738,11 @@
       '<input id="m-ev-end-date" type="date" class="event-sheet-pill" />' +
       '<input id="m-ev-end-time" type="time" class="event-sheet-pill" />' +
       "</span></div></div>" +
+      '<div id="m-task-schedule-log-wrap" class="event-sheet-group hidden">' +
+      '<div class="event-sheet-row">' +
+      '<span class="event-sheet-row-label">Изменения</span></div>' +
+      '<textarea id="m-task-schedule-log" class="field-textarea event-sheet-desc event-sheet-schedule-log" rows="3" readonly tabindex="-1"></textarea>' +
+      "</div>" +
       '<div id="m-ev-color-host"></div>' +
       '<div class="event-sheet-group meeting-attendees-field">' +
       '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-task-assignee-toggle" aria-expanded="false">' +
@@ -11737,6 +11759,18 @@
     document.getElementById("m-ev-start").value = startLocal;
     document.getElementById("m-ev-end").value = endLocal;
     document.getElementById("modal-task-note-id").value = ev.note_id || currentOpenNoteId() || "";
+    var logLines =
+      (ev.schedule_log_lines && ev.schedule_log_lines.length
+        ? ev.schedule_log_lines
+        : null) ||
+      (ev.event && ev.event.schedule_log_lines) ||
+      [];
+    var logWrap = document.getElementById("m-task-schedule-log-wrap");
+    var logEl = document.getElementById("m-task-schedule-log");
+    if (logWrap && logEl && logLines && logLines.length) {
+      logEl.value = logLines.join("\n");
+      logWrap.classList.remove("hidden");
+    }
     syncEventPillsFromHidden("start");
     syncEventPillsFromHidden("end");
     bindEventDateTimePills();
@@ -12893,6 +12927,8 @@
           email: task.assignee_email,
         },
         all_day: !!(task.all_day || ev.all_day),
+        schedule_log_lines:
+          task.schedule_log_lines || ev.schedule_log_lines || [],
       });
       openTaskModal(payload);
     }
@@ -24766,6 +24802,8 @@
               name: task.assignee_name,
             },
             all_day: !!task.all_day,
+            schedule_log_lines:
+              task.schedule_log_lines || ev.schedule_log_lines || [],
           })
         );
       }

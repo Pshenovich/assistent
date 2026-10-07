@@ -77,6 +77,7 @@ def _conn() -> sqlite3.Connection:
     )
     _ensure_google_event_columns(_CONN)
     _ensure_all_day_column(_CONN)
+    _ensure_schedule_log_column(_CONN)
     _CONN.commit()
     return _CONN
 
@@ -103,6 +104,89 @@ def _ensure_all_day_column(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE calendar_tasks ADD COLUMN all_day INTEGER NOT NULL DEFAULT 0"
         )
+
+
+def _ensure_schedule_log_column(conn: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(calendar_tasks)")}
+    if "schedule_log_json" not in cols:
+        conn.execute(
+            "ALTER TABLE calendar_tasks ADD COLUMN schedule_log_json TEXT NOT NULL DEFAULT '[]'"
+        )
+
+
+def _normalize_schedule_log(raw: Any) -> list[dict[str, Any]]:
+    if isinstance(raw, list):
+        items = raw
+    else:
+        try:
+            items = json.loads(raw or "[]")
+        except (TypeError, json.JSONDecodeError):
+            items = []
+    out: list[dict[str, Any]] = []
+    if not isinstance(items, list):
+        return out
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        out.append(
+            {
+                "at": str(it.get("at") or ""),
+                "by_user_id": str(it.get("by_user_id") or ""),
+                "by_name": str(it.get("by_name") or ""),
+                "from_start": str(it.get("from_start") or ""),
+                "to_start": str(it.get("to_start") or ""),
+                "from_end": str(it.get("from_end") or ""),
+                "to_end": str(it.get("to_end") or ""),
+                "from_all_day": bool(it.get("from_all_day")),
+                "to_all_day": bool(it.get("to_all_day")),
+            }
+        )
+    return out[-50:]
+
+
+def format_schedule_log_lines(
+    task: dict[str, Any], *, tz: ZoneInfo | None = None
+) -> list[str]:
+    """Человекочитаемые строки истории смены даты/времени."""
+    months = (
+        "янв",
+        "фев",
+        "мар",
+        "апр",
+        "мая",
+        "июн",
+        "июл",
+        "авг",
+        "сен",
+        "окт",
+        "ноя",
+        "дек",
+    )
+
+    def _fmt(iso: str, *, all_day: bool) -> str:
+        dt = _parse_dt(iso)
+        if dt is None:
+            return "—"
+        if tz is not None:
+            dt = dt.astimezone(tz)
+        day = f"{dt.day} {months[dt.month - 1]}"
+        if all_day:
+            return day
+        return f"{day}, {dt.strftime('%H:%M')}"
+
+    lines: list[str] = []
+    for it in _normalize_schedule_log(task.get("schedule_log") or []):
+        left = _fmt(it.get("from_start") or "", all_day=bool(it.get("from_all_day")))
+        right = _fmt(it.get("to_start") or "", all_day=bool(it.get("to_all_day")))
+        who = str(it.get("by_name") or "").strip() or "Участник"
+        at = _parse_dt(it.get("at") or "")
+        when = ""
+        if at is not None:
+            if tz is not None:
+                at = at.astimezone(tz)
+            when = f" · {at.day} {months[at.month - 1]} {at.strftime('%H:%M')}"
+        lines.append(f"{left} → {right} · {who}{when}")
+    return lines
 
 
 def _now_iso() -> str:
@@ -178,6 +262,9 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         if "google_calendar_id" in keys
         else "",
         "all_day": bool(int(row["all_day"] or 0)) if "all_day" in keys else False,
+        "schedule_log": _normalize_schedule_log(
+            row["schedule_log_json"] if "schedule_log_json" in keys else "[]"
+        ),
         "note_id": str(row["note_id"] or ""),
         "done": bool(int(row["done"] or 0)),
         "created_at": row["created_at"],
@@ -399,6 +486,8 @@ def as_calendar_event(
         "done": bool(task.get("done")),
         "note_id": str(task.get("note_id") or ""),
         "chip_label": chip_label(task, tz=tz),
+        "schedule_log": _normalize_schedule_log(task.get("schedule_log") or []),
+        "schedule_log_lines": format_schedule_log_lines(task, tz=tz),
     }
 
 
@@ -663,6 +752,8 @@ def update_task(
     google_tasklist_id: str | None = None,
     google_event_id: str | None = None,
     google_calendar_id: str | None = None,
+    schedule_log_entry: dict[str, Any] | None = None,
+    schedule_actor: dict[str, Any] | None = None,
     tz: ZoneInfo | None = None,
 ) -> Optional[dict[str, Any]]:
     uid = _uid(owner_user_id)
@@ -686,6 +777,9 @@ def update_task(
     if start is None:
         raise ValueError("Укажите начало задачи")
     is_all_day = bool(existing.get("all_day")) if all_day is None else bool(all_day)
+    # Явный timed-патч (all_day=false) снимает «весь день».
+    if all_day is False:
+        is_all_day = False
     if is_all_day:
         start, end = _all_day_bounds(start, tz=tz)
     else:
@@ -695,6 +789,29 @@ def update_task(
             end = end.replace(tzinfo=tz)
         if end is None or end <= start:
             end = _default_end(start)
+    new_start_iso = _iso(start)
+    new_end_iso = _iso(end)
+    log = _normalize_schedule_log(existing.get("schedule_log") or [])
+    schedule_changed = (
+        new_start_iso != str(existing.get("start_at") or "")
+        or new_end_iso != str(existing.get("end_at") or "")
+        or bool(is_all_day) != bool(existing.get("all_day"))
+    )
+    entry = schedule_log_entry if isinstance(schedule_log_entry, dict) else None
+    if schedule_changed and entry is None and isinstance(schedule_actor, dict):
+        entry = {
+            "at": _now_iso(),
+            "by_user_id": str(schedule_actor.get("by_user_id") or ""),
+            "by_name": str(schedule_actor.get("by_name") or ""),
+            "from_start": str(existing.get("start_at") or ""),
+            "to_start": new_start_iso,
+            "from_end": str(existing.get("end_at") or ""),
+            "to_end": new_end_iso,
+            "from_all_day": bool(existing.get("all_day")),
+            "to_all_day": bool(is_all_day),
+        }
+    if entry:
+        log = _normalize_schedule_log(log + [entry])
     fields = {
         "title": _clip(title, MAX_TITLE_LEN) or existing["title"]
         if title is not None
@@ -702,8 +819,8 @@ def update_task(
         "description": _clip(description, MAX_DESC_LEN)
         if description is not None
         else existing["description"],
-        "start_at": _iso(start),
-        "end_at": _iso(end),
+        "start_at": new_start_iso,
+        "end_at": new_end_iso,
         "assignee_user_id": _uid(assignee_user_id)
         if assignee_user_id not in (None, "")
         else existing["assignee_user_id"],
@@ -732,6 +849,7 @@ def update_task(
         "google_calendar_id": _clip(google_calendar_id, 200)
         if google_calendar_id is not None
         else existing.get("google_calendar_id") or "",
+        "schedule_log_json": json.dumps(log, ensure_ascii=False),
         "updated_at": _now_iso(),
     }
     with _LOCK:
@@ -742,7 +860,8 @@ def update_task(
                 assignee_user_id = ?, assignee_email = ?, assignee_name = ?,
                 checklist_json = ?, note_id = ?, done = ?, all_day = ?,
                 google_task_id = ?, google_tasklist_id = ?,
-                google_event_id = ?, google_calendar_id = ?, updated_at = ?
+                google_event_id = ?, google_calendar_id = ?,
+                schedule_log_json = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -761,6 +880,7 @@ def update_task(
                 fields["google_tasklist_id"],
                 fields["google_event_id"],
                 fields["google_calendar_id"],
+                fields["schedule_log_json"],
                 fields["updated_at"],
                 int(existing["id"]),
             ),

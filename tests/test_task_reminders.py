@@ -78,5 +78,18 @@ def test_collect_due_for_assignee(tasks_db):
     due_assignee = tr.collect_due_reminders(22, now=now)
     due_owner = tr.collect_due_reminders(11, now=now)
     assert [t["id"] for t in due_assignee] == [row["id"]]
-    assert [t["id"] for t in due_owner] == [row["id"]]
+    assert due_owner == []
     assert 22 in tr.iter_task_user_ids()
+
+
+def test_collect_due_skips_all_day(tasks_db):
+    tz = ZoneInfo("Europe/Moscow")
+    now = datetime(2026, 10, 7, 12, 0, tzinfo=tz)
+    tasks_db.create_task(
+        42,
+        title="На весь день",
+        start_at=now + timedelta(minutes=15),
+        all_day=True,
+        tz=tz,
+    )
+    assert tr.collect_due_reminders(42, now=now) == []

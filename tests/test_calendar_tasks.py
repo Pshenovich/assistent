@@ -259,3 +259,39 @@ def test_push_task_skips_non_owner(tasks_db, monkeypatch):
     owner_called.clear()
     google_tasks.push_task(11, personal)
     assert owner_called == [11]
+
+
+def test_assignee_can_change_schedule_and_log(tasks_db):
+    store = tasks_db
+    tz = ZoneInfo("Europe/Moscow")
+    row = store.create_task(
+        11,
+        title="Срок",
+        start_at=datetime(2026, 10, 7, 0, 0, tzinfo=tz),
+        all_day=True,
+        assignee_user_id=22,
+        assignee_name="Андрей",
+        tz=tz,
+    )
+    assert row["all_day"] is True
+    updated = store.update_task(
+        22,
+        row["id"],
+        start_at=datetime(2026, 10, 8, 15, 30, tzinfo=tz),
+        end_at=datetime(2026, 10, 8, 16, 0, tzinfo=tz),
+        all_day=False,
+        schedule_actor={"by_user_id": "22", "by_name": "Андрей"},
+        tz=tz,
+    )
+    assert updated is not None
+    assert updated["all_day"] is False
+    start = datetime.fromisoformat(updated["start_at"]).astimezone(tz)
+    assert start.day == 8 and start.hour == 15 and start.minute == 30
+    assert len(updated["schedule_log"]) == 1
+    assert updated["schedule_log"][0]["by_name"] == "Андрей"
+    assert updated["schedule_log"][0]["from_all_day"] is True
+    assert updated["schedule_log"][0]["to_all_day"] is False
+    lines = store.format_schedule_log_lines(updated, tz=tz)
+    assert lines and "→" in lines[0] and "Андрей" in lines[0]
+    ev = store.as_calendar_event(updated, tz=tz, viewer_id=22)
+    assert ev["schedule_log_lines"] == lines
