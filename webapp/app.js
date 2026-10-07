@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261007-modal-kind-switch";
+  var WEBAPP_BUILD = "20261007-cal-drag-grab";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -1916,29 +1916,45 @@
     });
   }
 
-  function timelineClientYToStartMs(dateIso, hostEl, clientY, hourPx) {
+  function timelineClientYToMsUnsnapped(dateIso, hostEl, clientY, hourPx) {
     if (!hostEl || !dateIso || !hourPx) return null;
     var rect = hostEl.getBoundingClientRect();
     var y = clientY - rect.top;
     var minutesFromStart = (y / hourPx) * 60;
-    var absMin = TIMELINE_START_MIN + minutesFromStart;
+    return dayStartMs(dateIso) + (TIMELINE_START_MIN + minutesFromStart) * 60000;
+  }
+
+  function timelineClientYToStartMs(dateIso, hostEl, clientY, hourPx) {
+    var raw = timelineClientYToMsUnsnapped(dateIso, hostEl, clientY, hourPx);
+    if (raw == null) return null;
+    var day0 = dayStartMs(dateIso);
+    var absMin = (raw - day0) / 60000;
     absMin = Math.max(TIMELINE_START_MIN, Math.min(TIMELINE_END_MIN - 15, absMin));
-    return snapMsTo15(dayStartMs(dateIso) + absMin * 60000);
+    return snapMsTo15(day0 + absMin * 60000);
   }
 
   function timelineClientYToEndMs(dateIso, hostEl, clientY, hourPx, startMs) {
-    if (!hostEl || !dateIso || !hourPx || startMs == null) return null;
-    var rect = hostEl.getBoundingClientRect();
-    var y = clientY - rect.top;
-    var minutesFromStart = (y / hourPx) * 60;
-    var absMin = TIMELINE_START_MIN + minutesFromStart;
+    var raw = timelineClientYToMsUnsnapped(dateIso, hostEl, clientY, hourPx);
+    if (raw == null || startMs == null) return null;
+    var day0 = dayStartMs(dateIso);
+    var absMin = (raw - day0) / 60000;
     absMin = Math.max(TIMELINE_START_MIN + 15, Math.min(TIMELINE_END_MIN, absMin));
-    var endMs = snapMsTo15(dayStartMs(dateIso) + absMin * 60000);
+    var endMs = snapMsTo15(day0 + absMin * 60000);
     if (endMs < startMs + CAL_RESIZE_MIN_MS) endMs = startMs + CAL_RESIZE_MIN_MS;
-    var dayEnd = dayStartMs(dateIso) + TIMELINE_END_MIN * 60000;
+    var dayEnd = day0 + TIMELINE_END_MIN * 60000;
     if (endMs > dayEnd) endMs = dayEnd;
     if (endMs < startMs + CAL_RESIZE_MIN_MS) endMs = startMs + CAL_RESIZE_MIN_MS;
     return endMs;
+  }
+
+  function clampTimedMoveStart(dateIso, startMs, durationMs) {
+    var day0 = dayStartMs(dateIso);
+    var dayStartTimed = day0 + TIMELINE_START_MIN * 60000;
+    var dayEnd = day0 + TIMELINE_END_MIN * 60000;
+    var next = startMs;
+    if (next + durationMs > dayEnd) next = dayEnd - durationMs;
+    if (next < dayStartTimed) next = dayStartTimed;
+    return snapMsTo15(next);
   }
 
   function applyTimedEntryLayout(el, dateIso, startMs, endMs, hourPx) {
@@ -2126,6 +2142,9 @@
       var originParent = el.parentNode;
       var originLeft = el.style.left;
       var originWidth = el.style.width;
+      // Смещение курсора внутри события — иначе верх «прыгает» к пальцу.
+      var grabOffsetMs = 0;
+      var grabOffsetReady = false;
 
       function armGesture() {
         if (finished || armed) return;
@@ -2133,6 +2152,9 @@
         calendarGestureBusy = true;
         el.classList.add(mode === "resize" ? "is-resizing" : "is-dragging");
         document.documentElement.classList.add("cal-gesture-active");
+        try {
+          if (el.setPointerCapture) el.setPointerCapture(pointerId);
+        } catch (_) {}
         try {
           if (navigator.vibrate) navigator.vibrate(12);
         } catch (_) {}
@@ -2142,6 +2164,9 @@
         document.removeEventListener("pointermove", onMove, true);
         document.removeEventListener("pointerup", finish, true);
         document.removeEventListener("pointercancel", finish, true);
+        try {
+          if (el.releasePointerCapture) el.releasePointerCapture(pointerId);
+        } catch (_) {}
         if (longPressTimer) {
           clearTimeout(longPressTimer);
           longPressTimer = null;
@@ -2188,13 +2213,19 @@
             el.style.width = ctx.view === "week" ? "calc(100% - 3px)" : "100%";
           }
         }
-        var newStart = timelineClientYToStartMs(curDate, axisHost, evMove.clientY, ctx.hourPx);
-        if (newStart == null) return;
-        var dayEnd = dayStartMs(curDate) + TIMELINE_END_MIN * 60000;
-        if (newStart + duration0 > dayEnd) newStart = dayEnd - duration0;
-        var dayStartTimed = dayStartMs(curDate) + TIMELINE_START_MIN * 60000;
-        if (newStart < dayStartTimed) newStart = dayStartTimed;
-        newStart = snapMsTo15(newStart);
+        var pointerMs = timelineClientYToMsUnsnapped(
+          curDate,
+          axisHost,
+          evMove.clientY,
+          ctx.hourPx
+        );
+        if (pointerMs == null) return;
+        // Фиксируем точку захвата в первый кадр движения — без скачка.
+        if (!grabOffsetReady) {
+          grabOffsetMs = pointerMs - curStart;
+          grabOffsetReady = true;
+        }
+        var newStart = clampTimedMoveStart(curDate, pointerMs - grabOffsetMs, duration0);
         curStart = newStart;
         curEnd = newStart + duration0;
         applyTimedEntryLayout(el, curDate, curStart, curEnd, ctx.hourPx);
