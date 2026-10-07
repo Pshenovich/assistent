@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261007-cal-drag-delta";
+  var WEBAPP_BUILD = "20261007-task-done-btn";
 
   function getTelegramWebApp() {
     return window.Telegram && window.Telegram.WebApp;
@@ -10829,11 +10829,19 @@
     document.querySelectorAll(".modal--sheet").forEach(resetModalSheetViewportStyles);
   }
 
+  function setModalSheetActions(opts) {
+    opts = opts || {};
+    var del = document.getElementById("modal-delete");
+    var done = document.getElementById("modal-done");
+    if (del) del.classList.toggle("hidden", !opts.showDelete);
+    if (done) done.classList.toggle("hidden", !opts.showDone);
+  }
+
   function closeModal() {
     const ov = document.getElementById("modal-overlay");
     ov.classList.add("hidden");
     ov.setAttribute("aria-hidden", "true");
-    document.getElementById("modal-delete").classList.add("hidden");
+    setModalSheetActions({ showDelete: false, showDone: false });
     taskModalOnSaved = null;
     taskModalOnDeleted = null;
     onModalSheetClose();
@@ -11951,7 +11959,10 @@
     // Remember ownership for save payload (assignee must not wipe assignee_*).
     var kindEl = document.getElementById("modal-kind");
     if (kindEl) kindEl.setAttribute("data-task-is-owner", isTaskOwner ? "1" : "0");
-    document.getElementById("modal-delete").classList.toggle("hidden", !existing);
+    setModalSheetActions({
+      showDelete: existing,
+      showDone: existing && !ev.done,
+    });
     document.getElementById("modal-overlay").classList.remove("hidden");
     document.getElementById("modal-overlay").setAttribute("aria-hidden", "false");
     onModalSheetOpen();
@@ -12147,7 +12158,7 @@
       document.getElementById("m-rem-checklist-host"),
       r.checklist
     );
-    document.getElementById("modal-delete").classList.toggle("hidden", !r.id);
+    setModalSheetActions({ showDelete: !!r.id, showDone: false });
     document.getElementById("modal-overlay").classList.remove("hidden");
     document.getElementById("modal-overlay").setAttribute("aria-hidden", "false");
     onModalSheetOpen();
@@ -12496,7 +12507,7 @@
         fields.appendChild(joinBtn);
       }
     }
-    document.getElementById("modal-delete").classList.toggle("hidden", !ev.id);
+    setModalSheetActions({ showDelete: !!ev.id, showDone: false });
     document.getElementById("modal-overlay").classList.remove("hidden");
     document.getElementById("modal-overlay").setAttribute("aria-hidden", "false");
     onModalSheetOpen();
@@ -12721,6 +12732,32 @@
       return;
     }
     showCalendarToast("Неизвестный тип формы");
+  }
+
+  async function modalMarkTaskDone() {
+    var kind = document.getElementById("modal-kind").value;
+    if (kind !== "task") return;
+    var id = document.getElementById("modal-event-id").value;
+    if (!id) return;
+    try {
+      var r = await apiFetch("/calendar/tasks/" + encodeURIComponent(id), {
+        method: "PATCH",
+        body: JSON.stringify({ done: true }),
+      });
+      var saved = r && r.task;
+      var savedCb = taskModalOnSaved;
+      closeModal();
+      if (savedCb) savedCb(saved);
+      removePostedTaskFromState(saved && saved.id ? saved.id : id);
+      if (isPostedTasksOpen()) await loadPostedTasksList();
+      await loadActual({ skipCachePaint: true });
+      try {
+        var tg = getTelegramWebApp();
+        if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
+      } catch (_) {}
+    } catch (e) {
+      showCalendarToast((e && e.message) || "Не удалось отметить выполненной");
+    }
   }
 
   async function modalDelete() {
@@ -18030,7 +18067,10 @@
         resetAgentForm();
       });
     }
-    document.getElementById("modal-delete").classList.toggle("hidden", isNew || !agent.can_delete);
+    setModalSheetActions({
+      showDelete: !isNew && !!agent.can_delete,
+      showDone: false,
+    });
     syncAgentFormFields(kind);
     profileAgentsMsg("", "");
     overlay.classList.remove("hidden");
@@ -28574,6 +28614,7 @@
     }
 
     onId("modal-cancel", "click", closeModal);
+    onId("modal-done", "click", modalMarkTaskDone);
     onId("modal-delete", "click", modalDelete);
     onId("modal-overlay", "click", function (e) {
       if (e.target.id === "modal-overlay") closeModal();
