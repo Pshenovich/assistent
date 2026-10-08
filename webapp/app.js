@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261008-npm-audit";
+  var WEBAPP_BUILD = "20261008-notes-storm";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261008-npm-audit";
+  const NOTE_EDITOR_ASSET_V = "20261008-notes-storm";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -25681,6 +25681,9 @@
     // без coalesce это валило API сотнями параллельных GET /notes (~2MB).
     if (notesLoadPromise) return notesLoadPromise;
     notesLoadPromise = (async function () {
+      // Отдать управление до рендера: setNotesSubTab → renderSidebarTrees снова зовёт
+      // loadNotes(), и без этого notesLoadPromise ещё null → рекурсия и тысячи GET /notes.
+      await null;
       setNotesSubTab(notesSubTab);
       const err = document.getElementById("notes-global-error");
       if (err) {
