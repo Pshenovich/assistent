@@ -232,6 +232,17 @@ def test_webapp_shell_is_served_with_matching_build(client: TestClient):
     assert build in sw.text
 
 
+@pytest.mark.parametrize("path", ["/openapi.json", "/redoc"])
+def test_api_docs_hidden_by_default(client: TestClient, path: str):
+    assert client.get(path).status_code == 404
+
+
+def test_swagger_hidden_but_public_docs_pages_served(client: TestClient):
+    assert "swagger" not in client.get("/docs", follow_redirects=True).text.lower()
+    assert client.get("/docs/zoom.html").status_code == 200
+    assert client.get("/docs/support.html").status_code == 200
+
+
 @pytest.mark.parametrize("path", ["/", "/webapp/", "/api/miniapp/me", "/oauth/google/callback"])
 def test_security_headers_present(client: TestClient, path: str):
     resp = client.get(path)
