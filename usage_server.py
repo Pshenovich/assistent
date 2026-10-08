@@ -287,6 +287,7 @@ async def google_calendar_oauth_callback(
             status_code=400,
         )
     except Exception as e:
+        print(f"[oauth] google_callback err={e!r}")
         return HTMLResponse(
             f"<html><head><meta charset=\"utf-8\"/></head><body><p>{html_lib.escape(str(e))}</p></body></html>",
             status_code=500,
@@ -329,6 +330,7 @@ async def todoist_oauth_callback(
             status_code=400,
         )
     except Exception as e:
+        print(f"[oauth] todoist_callback err={e!r}")
         return HTMLResponse(
             f"<html><head><meta charset=\"utf-8\"/></head><body><p>{html_lib.escape(str(e))}</p></body></html>",
             status_code=500,
@@ -371,6 +373,7 @@ async def yandex_disk_oauth_callback(
             status_code=400,
         )
     except Exception as e:
+        print(f"[oauth] yandex_disk_callback err={e!r}")
         return HTMLResponse(
             f"<html><head><meta charset=\"utf-8\"/></head><body><p>{html_lib.escape(str(e))}</p></body></html>",
             status_code=500,
@@ -429,6 +432,7 @@ async def telemost_oauth_callback(
             status_code=400,
         )
     except Exception as e:
+        print(f"[oauth] telemost_callback err={e!r}")
         return HTMLResponse(
             f"<html><head><meta charset=\"utf-8\"/></head><body><p>{html_lib.escape(str(e))}</p></body></html>",
             status_code=500,
@@ -512,6 +516,7 @@ async def zoom_oauth_callback(request: Request) -> HTMLResponse:
             status_code=400,
         )
     except Exception as e:
+        print(f"[oauth] zoom_callback err={e!r}")
         return HTMLResponse(
             f"<html><head><meta charset=\"utf-8\"/></head><body><p>{html_lib.escape(str(e))}</p></body></html>",
             status_code=500,
@@ -979,6 +984,8 @@ async def apple_reminders_setup_post(
             status_code=400,
         )
     except Exception as e:
+        # Только тип: сообщение CalDAV может содержать Apple ID пользователя.
+        print(f"[apple_reminders] setup_failed err={type(e).__name__}")
         body = (
             f"<div class=\"prose\"><p>{html_lib.escape(str(e))}</p>"
             "<p>Проверьте Apple ID, пароль приложения и при необходимости URL списка. "
@@ -3972,6 +3979,7 @@ def _calendar_today_payload(
             include_event_details=True,
         )
     except Exception as e:
+        print(f"[miniapp_calendar] today_load_failed uid={uid} err={e!r}")
         err = str(e).strip() or "Ошибка загрузки календаря"
         if _miniapp_dev_mode_on():
             return _finish(
@@ -4523,12 +4531,12 @@ def _sync_task_google(uid: int, task: dict[str, Any] | None, action: str) -> dic
             ).strip():
                 try:
                     calendar_svc.delete_task_event(owner, task)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[calendar_tasks] delete_task_event id={task.get('id')} err={e!r}")
                 try:
                     google_tasks.delete_remote(owner, task)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[calendar_tasks] delete_remote id={task.get('id')} err={e!r}")
                 return _clear_task_google_ids(owner, task)
             return task
         if owner != int(uid):
@@ -4649,6 +4657,7 @@ def _calendar_range_payload(
             }
         )
     except Exception as e:
+        print(f"[miniapp_calendar] range_load_failed uid={uid} err={e!r}")
         err = str(e).strip() or "Ошибка загрузки календаря"
         if _miniapp_dev_mode_on():
             return _finish(
@@ -6699,9 +6708,11 @@ async def miniapp_gpt_chat(
                         mime="text/plain",
                         data=text.encode("utf-8"),
                     )
-                except Exception:
+                except Exception as e:
+                    print(f"[gpt_files] save_txt_failed name={name!r} err={e!r}")
                     continue
-            except Exception:
+            except Exception as e:
+                print(f"[gpt_files] save_failed name={name!r} err={e!r}")
                 continue
             saved.append(_comment_file_api(row))
         import base64
@@ -6715,7 +6726,8 @@ async def miniapp_gpt_chat(
                 continue
             try:
                 blob = base64.b64decode(b64)
-            except Exception:
+            except Exception as e:
+                print(f"[gpt_files] image_decode_failed i={i} err={e!r}")
                 continue
             ext = "png"
             if "jpeg" in mime or "jpg" in mime:
@@ -6735,7 +6747,8 @@ async def miniapp_gpt_chat(
                     mime=mime,
                     data=blob,
                 )
-            except Exception:
+            except Exception as e:
+                print(f"[gpt_files] image_save_failed name={filename!r} err={e!r}")
                 continue
             saved.append(_comment_file_api(row))
         return saved
@@ -7240,7 +7253,8 @@ async def miniapp_notes_bundle(
         journal = await run_in_threadpool(
             partial(user_journal_entries, str(uid), limit=lim)
         )
-    except Exception:
+    except Exception as e:
+        print(f"[miniapp_notes] journal_fail err={e!r}")
         journal_err = "Не удалось загрузить журнал. Попробуйте обновить страницу позже."
     local_err: str | None = None
     tags_err: str | None = None
