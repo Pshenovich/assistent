@@ -63,7 +63,14 @@ from assistant.lib.usage_store import (
 from assistant.lib.telegram_webapp_auth import user_payload_from_init_data  # noqa: E402
 from assistant.lib.webapp_public import webapp_entry_url  # noqa: E402
 
-app = FastAPI(title="OpenRouter usage")
+# Swagger/ReDoc/OpenAPI раскрывают карту всех маршрутов — только для локальной разработки.
+_API_DOCS = os.getenv("USAGE_API_DOCS", "").strip().lower() in ("1", "true", "yes", "on")
+app = FastAPI(
+    title="OpenRouter usage",
+    docs_url="/docs" if _API_DOCS else None,
+    redoc_url="/redoc" if _API_DOCS else None,
+    openapi_url="/openapi.json" if _API_DOCS else None,
+)
 
 
 @app.on_event("startup")
