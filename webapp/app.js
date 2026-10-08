@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261008-sheet-delete";
+  var WEBAPP_BUILD = "20261008-npm-audit";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261008-sheet-delete";
+  const NOTE_EDITOR_ASSET_V = "20261008-npm-audit";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
