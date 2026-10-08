@@ -157,6 +157,72 @@ class TestMeetingInvites(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_invitee_calendar_candidates_skip_foreign_id(self) -> None:
+        with patch(
+            "assistant.services.calendar_sources.list_readable_calendars",
+            return_value=[{"id": "me@x.com", "primary": True}],
+        ), patch(
+            "assistant.services.calendar_sources.resolve_calendar_id",
+            return_value="me@x.com",
+        ), patch(
+            "assistant.services.calendar_sources.get_active_calendar_ids",
+            return_value=["me@x.com"],
+        ):
+            cals = inv._invitee_calendar_candidates(2, "organizer@x.com")
+        self.assertEqual(cals, ["me@x.com"])
+        self.assertNotIn("organizer@x.com", cals)
+
+    def test_apply_invitee_rsvp_copies_when_missing_on_invitee(self) -> None:
+        org_event = {
+            "id": "ev1",
+            "iCalUID": "ev1@google.com",
+            "summary": "Синк",
+            "start": {"dateTime": "2026-10-08T12:00:00+03:00"},
+            "end": {"dateTime": "2026-10-08T13:00:00+03:00"},
+            "attendees": [
+                {"email": "me@x.com", "responseStatus": "accepted"},
+            ],
+        }
+        copied = dict(org_event)
+        copied["id"] = "ev1-copy"
+        copied["_calendarId"] = "me@x.com"
+        with patch.object(
+            inv, "patch_self_rsvp", side_effect=RuntimeError("not found")
+        ), patch.object(
+            inv, "patch_attendee_rsvp", return_value=org_event
+        ), patch.object(
+            inv, "fetch_invitee_event", side_effect=RuntimeError("not found")
+        ), patch.object(
+            inv, "copy_event_to_invitee_calendar", return_value=copied
+        ) as copy_fn:
+            out = inv.apply_invitee_rsvp(
+                2,
+                event_id="ev1",
+                calendar_id="organizer@x.com",
+                response_status=inv.RSVP_ACCEPTED,
+                invitee_email="me@x.com",
+                organizer_user_id=1,
+            )
+        self.assertEqual(out["id"], "ev1-copy")
+        copy_fn.assert_called_once()
+
+    def test_event_copy_body_keeps_when_and_title(self) -> None:
+        body = inv._event_copy_body(
+            {
+                "id": "drop-me",
+                "etag": "x",
+                "summary": "Синк",
+                "start": {"dateTime": "2026-10-08T12:00:00+03:00"},
+                "end": {"dateTime": "2026-10-08T13:00:00+03:00"},
+                "htmlLink": "https://calendar.google.com/event",
+                "iCalUID": "uid-1",
+            }
+        )
+        self.assertEqual(body["summary"], "Синк")
+        self.assertEqual(body["iCalUID"], "uid-1")
+        self.assertNotIn("id", body)
+        self.assertNotIn("htmlLink", body)
+
 
 if __name__ == "__main__":
     unittest.main()

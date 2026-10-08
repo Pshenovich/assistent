@@ -195,6 +195,124 @@ def _apply_attendee_status(
     return attendees
 
 
+def _invitee_calendar_candidates(invitee_user_id: int, preferred_calendar_id: str) -> list[str]:
+    from assistant.services import calendar_sources as cal_sources
+
+    uid = int(invitee_user_id)
+    preferred = (preferred_calendar_id or "").strip()
+    readable = {
+        str(c.get("id") or "")
+        for c in cal_sources.list_readable_calendars(uid)
+        if c.get("id")
+    }
+    primary = cal_sources.resolve_calendar_id(uid, "primary")
+    out: list[str] = []
+    if preferred in ("primary", GOOGLE_CALENDAR_ID):
+        preferred = primary
+    if preferred and preferred in readable:
+        out.append(preferred)
+    if primary and primary not in out:
+        out.append(primary)
+    for cal_id in cal_sources.get_active_calendar_ids(uid):
+        if cal_id and cal_id not in out:
+            out.append(cal_id)
+    if not out:
+        out.append(primary or "primary")
+    return out
+
+
+def fetch_invitee_event(
+    invitee_user_id: int,
+    *,
+    event_id: str,
+    calendar_id: str = "",
+) -> tuple[str, dict[str, Any]]:
+    """Ищет событие на календарях приглашённого, не на календаре организатора."""
+    from assistant.services.calendar import _service
+
+    eid = str(event_id or "").strip()
+    if not eid:
+        raise RuntimeError("Нет события")
+    svc = _service(int(invitee_user_id))
+    last_err: Exception | None = None
+    for cal_id in _invitee_calendar_candidates(invitee_user_id, calendar_id):
+        try:
+            event = svc.events().get(calendarId=cal_id, eventId=eid).execute()
+            if isinstance(event, dict):
+                return cal_id, event
+        except Exception as e:
+            last_err = e
+            continue
+    if last_err:
+        raise last_err
+    raise RuntimeError("Событие не найдено в календаре")
+
+
+def _event_copy_body(source: dict[str, Any]) -> dict[str, Any]:
+    keep = (
+        "summary",
+        "description",
+        "location",
+        "start",
+        "end",
+        "attendees",
+        "conferenceData",
+        "recurrence",
+        "reminders",
+        "visibility",
+        "transparency",
+        "colorId",
+        "status",
+        "iCalUID",
+        "extendedProperties",
+        "source",
+        "hangoutLink",
+    )
+    body: dict[str, Any] = {}
+    for key in keep:
+        if key in source and source[key] not in (None, "", []):
+            body[key] = source[key]
+    return body
+
+
+def copy_event_to_invitee_calendar(
+    invitee_user_id: int,
+    source_event: dict[str, Any],
+) -> dict[str, Any]:
+    """Если Google-приглашение не село на календарь приглашённого — кладём копию."""
+    from assistant.services import calendar_sources as cal_sources
+    from assistant.services.calendar import _service
+
+    uid = int(invitee_user_id)
+    svc = _service(uid)
+    cal_id = cal_sources.resolve_calendar_id(uid, "primary")
+    body = _event_copy_body(source_event)
+    if not body.get("start") or not body.get("end"):
+        raise RuntimeError("Нечего копировать во встречу")
+    kwargs: dict[str, Any] = {}
+    if body.get("conferenceData"):
+        kwargs["conferenceDataVersion"] = 1
+    ical = str(body.get("iCalUID") or "").strip()
+    if ical:
+        try:
+            imported = svc.events().import_(
+                calendarId=cal_id, body=body, **kwargs
+            ).execute()
+            imported["_calendarId"] = cal_id
+            return imported
+        except Exception as e:
+            print(f"[meeting_invite] import uid={uid} err={e!r}")
+    body.pop("iCalUID", None)
+    inserted = svc.events().insert(
+        calendarId=cal_id,
+        body=body,
+        sendUpdates="none",
+        **kwargs,
+    ).execute()
+    inserted["_calendarId"] = cal_id
+    return inserted
+
+
 def patch_attendee_rsvp(
     organizer_user_id: int,
     *,
@@ -211,12 +329,14 @@ def patch_attendee_rsvp(
     attendees = _apply_attendee_status(
         event, invitee_email=invitee_email, response_status=response_status
     )
-    return svc.events().patch(
+    patched = svc.events().patch(
         calendarId=cal_id,
         eventId=event_id,
         body={"attendees": attendees},
         sendUpdates="all",
     ).execute()
+    patched["_calendarId"] = cal_id
+    return patched
 
 
 def patch_self_rsvp(
@@ -228,15 +348,13 @@ def patch_self_rsvp(
     invitee_email: str = "",
 ) -> dict[str, Any]:
     """RSVP в копии события на календаре приглашённого."""
-    from assistant.services import calendar_sources as cal_sources
     from assistant.services.calendar import _service
 
-    cal_id = cal_sources.resolve_calendar_id(
-        int(invitee_user_id), (calendar_id or GOOGLE_CALENDAR_ID).strip() or GOOGLE_CALENDAR_ID
-    )
     status = response_status if response_status in _RSVP_LABELS else RSVP_TENTATIVE
+    cal_id, event = fetch_invitee_event(
+        invitee_user_id, event_id=event_id, calendar_id=calendar_id
+    )
     svc = _service(int(invitee_user_id))
-    event = svc.events().get(calendarId=cal_id, eventId=event_id).execute()
     self_row = event_self_attendee(event)
     em = (invitee_email or "").strip().lower()
     if not em and self_row:
@@ -280,13 +398,31 @@ def apply_invitee_rsvp(
         print(f"[meeting_invite] self_rsvp uid={invitee_user_id} ev={event_id} err={e!r}")
     if organizer_user_id:
         try:
-            return patch_attendee_rsvp(
+            patched = patch_attendee_rsvp(
                 int(organizer_user_id),
                 event_id=event_id,
                 calendar_id=calendar_id,
                 invitee_email=invitee_email,
                 response_status=response_status,
             )
+            try:
+                fetch_invitee_event(
+                    invitee_user_id, event_id=event_id, calendar_id=calendar_id
+                )
+            except Exception:
+                try:
+                    copied = copy_event_to_invitee_calendar(invitee_user_id, patched)
+                    print(
+                        f"[meeting_invite] copied uid={invitee_user_id} "
+                        f"ev={copied.get('id') or event_id}"
+                    )
+                    return copied
+                except Exception as copy_err:
+                    print(
+                        f"[meeting_invite] copy uid={invitee_user_id} "
+                        f"ev={event_id} err={copy_err!r}"
+                    )
+            return patched
         except Exception as e:
             last_err = e
             print(
