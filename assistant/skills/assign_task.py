@@ -429,15 +429,12 @@ async def handle(
         disable_web_page_preview=True,
         reply_markup=urgency_keyboard(row["id"]),
     )
-    try:
-        with open("/tmp/leo-route.log", "a", encoding="utf-8") as f:
-            f.write(
-                f"[assign] ok uid={uid} tid={row.get('id')} "
-                f"all_day={all_day} start={start.isoformat()} "
-                f"title={title[:80]!r}\n"
-            )
-    except Exception:
-        pass
+    print(
+        f"[assign] ok uid={uid} tid={row.get('id')} "
+        f"all_day={all_day} start={start.isoformat()} "
+        f"title={title[:80]!r}",
+        flush=True,
+    )
 
 
 async def handle_callback(
