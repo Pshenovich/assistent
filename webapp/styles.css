@@ -1322,6 +1322,7 @@ html.cal-gesture-active .meetings-week-scroll {
   height: 100%;
   margin: 0;
   padding: 0 8px;
+  box-sizing: border-box;
   overflow: hidden;
   border: 1px solid rgba(232, 176, 72, 0.4);
   border-radius: 8px;
@@ -1330,7 +1331,13 @@ html.cal-gesture-active .meetings-week-scroll {
   color: var(--text);
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: grab;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.day-timeline-reminder:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, #e0a84a 55%, transparent);
 }
 
 .day-timeline-reminder-task {
@@ -2041,6 +2048,12 @@ html.cal-gesture-active .meetings-week-scroll {
 
 .meetings-week-event--task {
   background: var(--success);
+}
+
+.meetings-week-event--reminder,
+.meetings-month-chip--reminder {
+  background: color-mix(in srgb, #e0a84a 85%, #1a1a1a);
+  color: #1a1408;
 }
 
 .meetings-week-event--pending {
@@ -8135,18 +8148,42 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 }
 
 .avatar {
+  position: relative;
   display: flex;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
   width: 3.5rem;
   height: 3.5rem;
+  overflow: hidden;
   border-radius: var(--radius-full, 50%);
   font-size: 1.125rem;
   font-weight: 700;
   color: var(--accent);
   background: var(--accent-muted);
   border: 1px solid var(--accent-border);
+}
+
+.avatar .avatar-img {
+  display: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar .avatar-img.has-photo {
+  display: block;
+}
+
+.avatar .avatar-img.has-photo + .avatar-fallback {
+  display: none;
+}
+
+.avatar .avatar-fallback {
+  position: relative;
+  z-index: 1;
 }
 
 .profile-names h2 {
@@ -8902,6 +8939,26 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   overflow: hidden;
 }
 
+.contact-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.contact-card-head > .note-member-avatar {
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+  font-size: 0.8rem;
+  border-width: 0;
+}
+
+.contact-card-body {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 .contact-card-name {
   margin: 0;
   font-size: 0.9375rem;
@@ -8915,6 +8972,7 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   line-height: 1.45;
   color: var(--text-secondary);
   word-break: break-word;
+  white-space: pre-line;
 }
 
 .contact-card-actions {
@@ -9215,7 +9273,7 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   align-items: center;
   gap: 0.3rem;
   max-width: 100%;
-  padding: 0.25rem 0.45rem 0.25rem 0.6rem;
+  padding: 0.25rem 0.45rem 0.25rem 0.35rem;
   border: 1px solid var(--border);
   border-radius: 999px;
   font-size: 0.75rem;
@@ -9223,6 +9281,13 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   line-height: 1.2;
   color: var(--text-secondary);
   background: var(--surface);
+}
+
+.meeting-attendee-chip .note-member-avatar {
+  width: 1.35rem;
+  height: 1.35rem;
+  flex-shrink: 0;
+  font-size: 0.55rem;
 }
 
 .meeting-attendee-chip-text {
@@ -9295,6 +9360,26 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   cursor: pointer;
 }
 
+.meeting-attendee-suggest-item--with-avatar {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.meeting-attendee-suggest-item--with-avatar .note-member-avatar {
+  width: 1.75rem;
+  height: 1.75rem;
+  flex-shrink: 0;
+  font-size: 0.65rem;
+}
+
+.meeting-attendee-suggest-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
 .meeting-attendee-suggest-item:hover,
 .meeting-attendee-suggest-item.is-active {
   background: rgba(82, 158, 244, 0.12);
@@ -9308,6 +9393,21 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 .meeting-attendee-suggest-meta {
   font-size: 0.75rem;
   color: var(--text-tertiary);
+}
+
+.event-sheet-meet-link-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.55rem 0.9rem 0.75rem;
+}
+
+.event-sheet-meet-link-group .event-sheet-row-label {
+  margin: 0;
+}
+
+.event-sheet-meet-link-group .field-input {
+  width: 100%;
 }
 
 .meeting-avail {

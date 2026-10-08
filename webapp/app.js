@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261008-notes-storm";
+  var WEBAPP_BUILD = "20261008-contact-avatars";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261008-notes-storm";
+  const NOTE_EDITOR_ASSET_V = "20261008-contact-avatars";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -1731,10 +1731,13 @@
     return el;
   }
 
-  function renderTimelineReminder(r) {
-    var btn = document.createElement("button");
-    btn.type = "button";
+  function renderTimelineReminder(r, opts) {
+    opts = opts || {};
+    // div + role=button: иначе вложенный <button> перехватывает pointerdown у DnD-слота.
+    var btn = document.createElement("div");
     btn.className = "day-timeline-reminder";
+    btn.setAttribute("role", "button");
+    btn.tabIndex = 0;
     var taskText = r.task || "Напоминание";
     var clock = formatEventClock(r.when_iso);
     btn.setAttribute("aria-label", clock ? taskText + ", " + clock : taskText);
@@ -1742,9 +1745,11 @@
     task.className = "day-timeline-reminder-task";
     task.textContent = taskText;
     btn.appendChild(task);
-    btn.addEventListener("click", function () {
-      openReminderModal(r);
-    });
+    if (!opts.skipClick) {
+      btn.addEventListener("click", function () {
+        openReminderModal(r);
+      });
+    }
     return btn;
   }
 
@@ -2135,6 +2140,69 @@
     }
   }
 
+  function patchLocalReminderWhen(r, whenMs) {
+    if (!r || whenMs == null || !isFinite(whenMs)) return;
+    var whenIso = new Date(whenMs).toISOString();
+    r.when_iso = whenIso;
+    function patchList(list) {
+      (list || []).forEach(function (item) {
+        if (!item || String(item.id) !== String(r.id)) return;
+        item.when_iso = whenIso;
+      });
+    }
+    patchList(lastRemindersItems);
+    try {
+      var cached = readMiniappCache(actualCacheKind());
+      if (cached && cached.remData) {
+        patchList(cached.remData.items);
+        writeMiniappCache(actualCacheKind(), cached);
+      }
+    } catch (_) {}
+  }
+
+  async function persistReminderWhen(r, whenMs) {
+    if (!r || r.id == null || whenMs == null || !isFinite(whenMs)) return;
+    var whenIso = new Date(whenMs).toISOString();
+    var rid = String(r.id);
+    patchLocalReminderWhen(r, whenMs);
+    try {
+      if (isAppOffline() || rid.indexOf("tmp_") === 0) {
+        enqueueOfflineOp({
+          type: "reminder_patch",
+          clientId: rid,
+          path: "/reminders/" + encodeURIComponent(rid),
+          method: "PATCH",
+          body: { when_iso: whenIso },
+        });
+        showOfflineSavedToast();
+        await loadActual({ skipCachePaint: true });
+        return;
+      }
+      await apiFetch("/reminders/" + encodeURIComponent(rid), {
+        method: "PATCH",
+        body: JSON.stringify({ when_iso: whenIso }),
+      });
+      await loadActual({ skipCachePaint: true });
+    } catch (err) {
+      if (isTransientApiError(err)) {
+        enqueueOfflineOp({
+          type: "reminder_patch",
+          clientId: rid,
+          path: "/reminders/" + encodeURIComponent(rid),
+          method: "PATCH",
+          body: { when_iso: whenIso },
+        });
+        showOfflineSavedToast();
+        await loadActual({ skipCachePaint: true });
+        return;
+      }
+      showCalendarToast((err && err.message) || "Не удалось сохранить напоминание");
+      try {
+        await loadActual({ skipCachePaint: true });
+      } catch (_) {}
+    }
+  }
+
   function clearCalendarGestureState() {
     calendarGestureBusy = false;
     calendarSuppressClickUntil = 0;
@@ -2387,6 +2455,198 @@
     });
   }
 
+  function bindTimedReminderInteractions(el, reminder, ctx) {
+    if (!el || !reminder) return;
+    var startMs0 = Date.parse(reminder.when_iso || "");
+    if (!isFinite(startMs0)) return;
+    // Визуальный слот 30 мин — точка-во-времени, ресайз не хранится.
+    var duration0 = TIMELINE_REMINDER_SPAN_MIN * 60000;
+    var endMs0 = startMs0 + duration0;
+    el.classList.add("cal-entry--interactive");
+
+    function dayHosts() {
+      return ctx.dayHosts || [];
+    }
+
+    function resolveHostAt(clientX, stickyHost) {
+      var hosts = dayHosts();
+      if (!hosts.length) {
+        return { el: ctx.axisHost, dateIso: ctx.dateIso };
+      }
+      if (stickyHost && stickyHost.el) {
+        var sr = stickyHost.el.getBoundingClientRect();
+        var pad = Math.max(20, Math.min(40, sr.width * 0.2));
+        if (clientX >= sr.left - pad && clientX < sr.right + pad) {
+          return stickyHost;
+        }
+      }
+      for (var i = 0; i < hosts.length; i += 1) {
+        var box = hosts[i].el.getBoundingClientRect();
+        if (clientX >= box.left && clientX < box.right) return hosts[i];
+      }
+      var best = hosts[0];
+      var bestDist = Infinity;
+      hosts.forEach(function (h) {
+        var hr = h.el.getBoundingClientRect();
+        var mid = (hr.left + hr.right) / 2;
+        var d = Math.abs(clientX - mid);
+        if (d < bestDist) {
+          bestDist = d;
+          best = h;
+        }
+      });
+      return best;
+    }
+
+    function canCrossDays() {
+      return dayHosts().length > 1;
+    }
+
+    el.addEventListener("pointerdown", function (e) {
+      if (e.button != null && e.button !== 0) return;
+      if (calendarGestureBusy) return;
+      var needsLongPress = calendarPointerNeedsLongPress(e);
+      var pointerId = e.pointerId;
+      var originX = e.clientX;
+      var originY = e.clientY;
+      var dragging = false;
+      var finished = false;
+      var armed = !needsLongPress;
+      var longPressTimer = null;
+      var curStart = startMs0;
+      var curEnd = endMs0;
+      var curDate = ctx.dateIso;
+      var axisHost = ctx.axisHost;
+      var originParent = el.parentNode;
+      var originLeft = el.style.left;
+      var originWidth = el.style.width;
+      var dragOriginY = originY;
+      var dragOriginStart = startMs0;
+      var stickyHost = { el: ctx.axisHost, dateIso: ctx.dateIso };
+      var hourPx = ctx.hourPx || 1;
+
+      function armGesture() {
+        if (finished || armed) return;
+        armed = true;
+        calendarGestureBusy = true;
+        el.classList.add("is-dragging");
+        document.documentElement.classList.add("cal-gesture-active");
+        try {
+          if (el.setPointerCapture) el.setPointerCapture(pointerId);
+        } catch (_) {}
+        try {
+          if (navigator.vibrate) navigator.vibrate(12);
+        } catch (_) {}
+      }
+
+      function cleanupListeners() {
+        document.removeEventListener("pointermove", onMove, true);
+        document.removeEventListener("pointerup", finish, true);
+        document.removeEventListener("pointercancel", finish, true);
+        try {
+          if (el.releasePointerCapture) el.releasePointerCapture(pointerId);
+        } catch (_) {}
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+      }
+
+      function onMove(evMove) {
+        if (finished || evMove.pointerId !== pointerId) return;
+        var dx = evMove.clientX - originX;
+        var dy = evMove.clientY - originY;
+        if (!armed) {
+          if (Math.abs(dx) > CAL_DRAG_THRESHOLD_PX || Math.abs(dy) > CAL_DRAG_THRESHOLD_PX) {
+            finished = true;
+            cleanupListeners();
+          }
+          return;
+        }
+        if (!dragging) {
+          if (Math.abs(dx) < CAL_DRAG_THRESHOLD_PX && Math.abs(dy) < CAL_DRAG_THRESHOLD_PX) return;
+          dragging = true;
+          dragOriginY = evMove.clientY;
+          dragOriginStart = curStart;
+        }
+        evMove.preventDefault();
+        if (typeof evMove.stopPropagation === "function") evMove.stopPropagation();
+        if (canCrossDays()) {
+          var hostInfo = resolveHostAt(evMove.clientX, stickyHost);
+          if (hostInfo && hostInfo.dateIso && hostInfo.dateIso !== curDate) {
+            dragOriginStart += dayStartMs(hostInfo.dateIso) - dayStartMs(curDate);
+            curDate = hostInfo.dateIso;
+            axisHost = hostInfo.el;
+            stickyHost = hostInfo;
+            if (el.parentNode !== axisHost) {
+              axisHost.appendChild(el);
+              el.style.left = ctx.view === "week" ? "1px" : "0";
+              el.style.width = ctx.view === "week" ? "calc(100% - 3px)" : "100%";
+            }
+          }
+        }
+        var deltaMs = ((evMove.clientY - dragOriginY) / hourPx) * 60 * 60000;
+        var newStart = clampTimedMoveStart(curDate, dragOriginStart + deltaMs, duration0, {
+          snap: false,
+        });
+        curStart = newStart;
+        curEnd = newStart + duration0;
+        applyTimedEntryLayout(el, curDate, curStart, curEnd, hourPx);
+      }
+
+      function finish(evUp) {
+        if (finished) return;
+        if (evUp && evUp.pointerId != null && evUp.pointerId !== pointerId) return;
+        finished = true;
+        cleanupListeners();
+        el.classList.remove("is-dragging");
+        document.documentElement.classList.remove("cal-gesture-active");
+        calendarGestureBusy = false;
+        if (!armed || !dragging) {
+          calendarSuppressClick(450);
+          if (originParent && el.parentNode !== originParent) {
+            originParent.appendChild(el);
+            el.style.left = originLeft;
+            el.style.width = originWidth;
+          }
+          applyTimedEntryLayout(el, ctx.dateIso, startMs0, endMs0, hourPx);
+          if (!dragging) openReminderModal(reminder);
+          return;
+        }
+        calendarSuppressClick(450);
+        curStart = clampTimedMoveStart(curDate, curStart, duration0);
+        curEnd = curStart + duration0;
+        applyTimedEntryLayout(el, curDate, curStart, curEnd, hourPx);
+        var changed =
+          Math.abs(curStart - startMs0) > 1000 ||
+          curDate !== ctx.dateIso ||
+          el.parentNode !== originParent;
+        if (!changed) {
+          if (originParent && el.parentNode !== originParent) {
+            originParent.appendChild(el);
+            el.style.left = originLeft;
+            el.style.width = originWidth;
+          }
+          applyTimedEntryLayout(el, ctx.dateIso, startMs0, endMs0, hourPx);
+          return;
+        }
+        persistReminderWhen(reminder, curStart);
+      }
+
+      if (needsLongPress) {
+        longPressTimer = setTimeout(armGesture, CAL_LONG_PRESS_MS);
+      } else {
+        e.preventDefault();
+        e.stopPropagation();
+        armGesture();
+      }
+
+      document.addEventListener("pointermove", onMove, true);
+      document.addEventListener("pointerup", finish, true);
+      document.addEventListener("pointercancel", finish, true);
+    });
+  }
+
   function bindMonthChipDrag(chip, ev, getCellAtPoint) {
     if (!chip || !ev || !getCellAtPoint) return;
     var startMs0 = eventStartMs(ev);
@@ -2474,6 +2734,107 @@
         if (oldDate === targetIso) return;
         var dayDelta = dayStartMs(targetIso) - dayStartMs(oldDate);
         persistCalendarEntryTimes(ev, startMs0 + dayDelta, endMs0 + dayDelta);
+      }
+
+      if (needsLongPress) {
+        longPressTimer = setTimeout(armGesture, CAL_LONG_PRESS_MS);
+      } else {
+        e.preventDefault();
+        e.stopPropagation();
+        armGesture();
+      }
+
+      document.addEventListener("pointermove", onMove, true);
+      document.addEventListener("pointerup", finish, true);
+      document.addEventListener("pointercancel", finish, true);
+    });
+  }
+
+  function bindMonthReminderDrag(chip, reminder, getCellAtPoint) {
+    if (!chip || !reminder || !getCellAtPoint) return;
+    var startMs0 = Date.parse(reminder.when_iso || "");
+    if (!isFinite(startMs0)) return;
+    chip.classList.add("cal-entry--interactive");
+
+    chip.addEventListener("pointerdown", function (e) {
+      if (e.button != null && e.button !== 0) return;
+      if (calendarGestureBusy) return;
+      var needsLongPress = calendarPointerNeedsLongPress(e);
+      var pointerId = e.pointerId;
+      var originX = e.clientX;
+      var originY = e.clientY;
+      var dragging = false;
+      var finished = false;
+      var armed = !needsLongPress;
+      var longPressTimer = null;
+      var targetIso = null;
+
+      function armGesture() {
+        if (finished || armed) return;
+        armed = true;
+        calendarGestureBusy = true;
+        chip.classList.add("is-dragging");
+        document.documentElement.classList.add("cal-gesture-active");
+        try {
+          if (navigator.vibrate) navigator.vibrate(12);
+        } catch (_) {}
+      }
+
+      function cleanupListeners() {
+        document.removeEventListener("pointermove", onMove, true);
+        document.removeEventListener("pointerup", finish, true);
+        document.removeEventListener("pointercancel", finish, true);
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+      }
+
+      function onMove(evMove) {
+        if (finished || evMove.pointerId !== pointerId) return;
+        var dx = evMove.clientX - originX;
+        var dy = evMove.clientY - originY;
+        if (!armed) {
+          if (Math.abs(dx) > CAL_DRAG_THRESHOLD_PX || Math.abs(dy) > CAL_DRAG_THRESHOLD_PX) {
+            finished = true;
+            cleanupListeners();
+          }
+          return;
+        }
+        if (!dragging) {
+          if (Math.abs(dx) < CAL_DRAG_THRESHOLD_PX && Math.abs(dy) < CAL_DRAG_THRESHOLD_PX) return;
+          dragging = true;
+        }
+        evMove.preventDefault();
+        var cell = getCellAtPoint(evMove.clientX, evMove.clientY);
+        targetIso = cell ? cell.getAttribute("data-date-iso") : null;
+        document.querySelectorAll(".meetings-month-cell.is-drop-target").forEach(function (c) {
+          c.classList.remove("is-drop-target");
+        });
+        if (cell) cell.classList.add("is-drop-target");
+      }
+
+      function finish(evUp) {
+        if (finished) return;
+        if (evUp && evUp.pointerId != null && evUp.pointerId !== pointerId) return;
+        finished = true;
+        cleanupListeners();
+        chip.classList.remove("is-dragging");
+        document.documentElement.classList.remove("cal-gesture-active");
+        document.querySelectorAll(".meetings-month-cell.is-drop-target").forEach(function (c) {
+          c.classList.remove("is-drop-target");
+        });
+        calendarGestureBusy = false;
+        calendarSuppressClick(450);
+        if (!armed || !dragging) {
+          openReminderModal(reminder);
+          return;
+        }
+        if (!targetIso) return;
+        var oldDate = localDateIsoFromMs(startMs0);
+        if (oldDate === targetIso) return;
+        var dayDelta = dayStartMs(targetIso) - dayStartMs(oldDate);
+        persistReminderWhen(reminder, startMs0 + dayDelta);
       }
 
       if (needsLongPress) {
@@ -2697,7 +3058,14 @@
       slot.style.width = 100 / cols + "%";
       if (it.endMs != null && it.endMs < nowMs) slot.classList.add("is-past");
       if (it.kind === "reminder") {
-        slot.appendChild(renderTimelineReminder(it.reminder));
+        slot.appendChild(renderTimelineReminder(it.reminder, { skipClick: true }));
+        bindTimedReminderInteractions(slot, it.reminder, {
+          view: "day",
+          dateIso: calDate,
+          hourPx: hourPx,
+          axisHost: canvas,
+          dayHosts: paintOpts.dayHosts || null,
+        });
       } else {
         slot.appendChild(renderMeetingCard(it.ev, { heightPx: height, skipClick: true }));
         bindTimedEntryInteractions(slot, it.ev, {
@@ -3057,15 +3425,29 @@
         if (eventIsAllDay(ev)) return;
         var span = timelineSpanForRange(iso, eventStartMs(ev), eventEndMs(ev));
         if (!span || span.zone !== "grid") return;
-        timed.push({ ev: ev, startMin: span.startMin, endMin: span.endMin });
+        timed.push({ kind: "event", ev: ev, startMin: span.startMin, endMin: span.endMin });
+      });
+      remindersForDate(lastRemindersItems, iso).forEach(function (r) {
+        var startMs = Date.parse(r.when_iso || "");
+        if (!isFinite(startMs)) return;
+        var span = timelineSpanForRange(
+          iso,
+          startMs,
+          startMs + TIMELINE_REMINDER_SPAN_MIN * 60000,
+          { minSpanMin: TIMELINE_REMINDER_SPAN_MIN }
+        );
+        if (!span || span.zone !== "grid") return;
+        timed.push({
+          kind: "reminder",
+          reminder: r,
+          startMin: span.startMin,
+          endMin: span.endMin,
+        });
       });
       assignTimelineColumns(timed);
       timed.forEach(function (it) {
         var btn = document.createElement("button");
         btn.type = "button";
-        btn.className =
-          withTaskClass("meetings-week-event", it.ev) +
-          (meetingNeedsRsvp(it.ev) ? " meetings-week-event--pending" : "");
         var top = (it.startMin / 60) * hourPx;
         var height = Math.max(18, ((it.endMin - it.startMin) / 60) * hourPx - 2);
         var width = 100 / (it.cols || 1);
@@ -3073,15 +3455,30 @@
         btn.style.height = height + "px";
         btn.style.left = "calc(" + (it.col || 0) * width + "% + 1px)";
         btn.style.width = "calc(" + width + "% - 3px)";
-        btn.textContent = meetingDisplayTitle(it.ev);
-        applyEntryDisplayColor(btn, it.ev);
-        bindTimedEntryInteractions(btn, it.ev, {
-          view: "week",
-          dateIso: iso,
-          hourPx: hourPx,
-          axisHost: col,
-          dayHosts: weekDayHosts,
-        });
+        if (it.kind === "reminder") {
+          btn.className = "meetings-week-event meetings-week-event--reminder";
+          btn.textContent = (it.reminder && it.reminder.task) || "Напоминание";
+          bindTimedReminderInteractions(btn, it.reminder, {
+            view: "week",
+            dateIso: iso,
+            hourPx: hourPx,
+            axisHost: col,
+            dayHosts: weekDayHosts,
+          });
+        } else {
+          btn.className =
+            withTaskClass("meetings-week-event", it.ev) +
+            (meetingNeedsRsvp(it.ev) ? " meetings-week-event--pending" : "");
+          btn.textContent = meetingDisplayTitle(it.ev);
+          applyEntryDisplayColor(btn, it.ev);
+          bindTimedEntryInteractions(btn, it.ev, {
+            view: "week",
+            dateIso: iso,
+            hourPx: hourPx,
+            axisHost: col,
+            dayHosts: weekDayHosts,
+          });
+        }
         col.appendChild(btn);
       });
       col.addEventListener("click", function (e) {
@@ -3156,37 +3553,62 @@
       num.textContent = String(dateFromIso(iso).getDate());
       cell.appendChild(num);
       var dayEvs = eventsForDate(events, iso);
-      dayEvs.slice(0, 3).forEach(function (ev) {
+      var dayRems = remindersForDate(lastRemindersItems, iso);
+      var monthCellAtPoint = function (x, y) {
+        var nodes = host.querySelectorAll(".meetings-month-cell[data-date-iso]");
+        for (var i = 0; i < nodes.length; i += 1) {
+          var box = nodes[i].getBoundingClientRect();
+          if (x >= box.left && x < box.right && y >= box.top && y < box.bottom) {
+            return nodes[i];
+          }
+        }
+        return null;
+      };
+      var monthItems = [];
+      dayEvs.forEach(function (ev) {
+        monthItems.push({ kind: "event", ev: ev, sortMs: eventStartMs(ev) || 0 });
+      });
+      dayRems.forEach(function (r) {
+        var t = Date.parse(r.when_iso || "");
+        monthItems.push({
+          kind: "reminder",
+          reminder: r,
+          sortMs: isFinite(t) ? t : 0,
+        });
+      });
+      monthItems.sort(function (a, b) {
+        return a.sortMs - b.sortMs;
+      });
+      monthItems.slice(0, 3).forEach(function (it) {
         var chip = document.createElement("button");
         chip.type = "button";
-        chip.className =
-          withTaskClass("meetings-month-chip", ev) +
-          (meetingNeedsRsvp(ev) ? " meetings-month-chip--pending" : "");
-        chip.textContent = meetingDisplayTitle(ev);
-        applyEntryDisplayColor(chip, ev);
-        if (!eventIsAllDay(ev) && eventStartMs(ev) != null) {
-          bindMonthChipDrag(chip, ev, function (x, y) {
-            var nodes = host.querySelectorAll(".meetings-month-cell[data-date-iso]");
-            for (var i = 0; i < nodes.length; i += 1) {
-              var r = nodes[i].getBoundingClientRect();
-              if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return nodes[i];
-            }
-            return null;
-          });
+        if (it.kind === "reminder") {
+          chip.className = "meetings-month-chip meetings-month-chip--reminder";
+          chip.textContent = (it.reminder && it.reminder.task) || "Напоминание";
+          bindMonthReminderDrag(chip, it.reminder, monthCellAtPoint);
         } else {
-          chip.addEventListener("click", function (e) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (calendarConsumeSuppressClick()) return;
-            openCalendarEntry(ev);
-          });
+          chip.className =
+            withTaskClass("meetings-month-chip", it.ev) +
+            (meetingNeedsRsvp(it.ev) ? " meetings-month-chip--pending" : "");
+          chip.textContent = meetingDisplayTitle(it.ev);
+          applyEntryDisplayColor(chip, it.ev);
+          if (!eventIsAllDay(it.ev) && eventStartMs(it.ev) != null) {
+            bindMonthChipDrag(chip, it.ev, monthCellAtPoint);
+          } else {
+            chip.addEventListener("click", function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (calendarConsumeSuppressClick()) return;
+              openCalendarEntry(it.ev);
+            });
+          }
         }
         cell.appendChild(chip);
       });
-      if (dayEvs.length > 3) {
+      if (monthItems.length > 3) {
         var more = document.createElement("span");
         more.className = "meetings-month-more";
-        more.textContent = "+" + (dayEvs.length - 3);
+        more.textContent = "+" + (monthItems.length - 3);
         cell.appendChild(more);
       }
       cell.addEventListener("click", function () {
@@ -7782,8 +8204,10 @@
       const head = document.getElementById("profile-head");
       head.innerHTML =
         '<div class="avatar">' +
+        '<img class="avatar-img" alt="" />' +
+        '<span class="avatar-fallback">' +
         initials(me) +
-        "</div>" +
+        "</span></div>" +
         '<div class="profile-names">' +
         "<h2>" +
         (me.first_name || "Пользователь") +
@@ -7793,6 +8217,13 @@
         " · id " +
         (me.id != null ? me.id : "—") +
         "</p></div>";
+      var avatarImg = head.querySelector(".avatar-img");
+      if (avatarImg) {
+        applyTelegramAvatar(avatarImg, {
+          userId: me.id != null ? me.id : me.telegram_user_id,
+          username: me.username,
+        });
+      }
 
       const b = await apiFetch("/billing", { method: "GET" });
       const tariffCard = document.getElementById("profile-tariff-card");
@@ -8077,6 +8508,18 @@
   function renderContactCard(c) {
     var card = document.createElement("div");
     card.className = "contact-card";
+    var head = document.createElement("div");
+    head.className = "contact-card-head";
+    head.appendChild(
+      meetingAttendeeAvatarNode({
+        email: c.email,
+        name: c.name,
+        telegram_user_id: c.telegram_user_id,
+        telegram_username: c.telegram_username,
+      })
+    );
+    var body = document.createElement("div");
+    body.className = "contact-card-body";
     var name = document.createElement("p");
     name.className = "contact-card-name";
     name.textContent = c.name || "(без имени)";
@@ -8088,8 +8531,10 @@
       lines.push("Также: " + c.aliases.join(", "));
     }
     meta.textContent = lines.filter(Boolean).join("\n");
-    card.appendChild(name);
-    card.appendChild(meta);
+    body.appendChild(name);
+    body.appendChild(meta);
+    head.appendChild(body);
+    card.appendChild(head);
     var teams = Array.isArray(c.teams) ? c.teams : [];
     if (teams.length) {
       var teamsEl = document.createElement("p");
@@ -10990,7 +11435,7 @@
       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round">' +
       '<path d="M12 5v14M5 12h14"/>' +
       "</svg></span>" +
-      '<span class="rem-checklist-add-label">Добавить задачу</span>';
+      '<span class="rem-checklist-add-label">Добавить подзадачу</span>';
 
     function paintList() {
       listEl.innerHTML = "";
@@ -11521,6 +11966,7 @@
       items.forEach(function (it, idx) {
         var chip = document.createElement("span");
         chip.className = "meeting-attendee-chip";
+        chip.appendChild(meetingAttendeeAvatarNode(it));
         if (it.calendar) {
           var dot = document.createElement("span");
           dot.className = "meeting-attendee-chip-cal";
@@ -11570,6 +12016,8 @@
         telegram_username: String((person && person.telegram_username) || "")
           .trim()
           .replace(/^@/, ""),
+        telegram_user_id:
+          (person && (person.telegram_user_id || person.user_id)) || null,
       });
       if (person && person.name && String(person.name).indexOf("@") < 0) {
         calendarContactsByEmail[em] = person;
@@ -11610,7 +12058,11 @@
         var btn = document.createElement("button");
         btn.type = "button";
         btn.className =
-          "meeting-attendee-suggest-item" + (i === suggestIndex ? " is-active" : "");
+          "meeting-attendee-suggest-item meeting-attendee-suggest-item--with-avatar" +
+          (i === suggestIndex ? " is-active" : "");
+        btn.appendChild(meetingAttendeeAvatarNode(c));
+        var copy = document.createElement("span");
+        copy.className = "meeting-attendee-suggest-copy";
         var name = document.createElement("span");
         name.className = "meeting-attendee-suggest-name";
         name.textContent = c.name || c.email;
@@ -11618,8 +12070,9 @@
         meta.className = "meeting-attendee-suggest-meta";
         meta.textContent =
           (c.email || "") + (c.calendar_connected ? " · календарь" : "");
-        btn.appendChild(name);
-        btn.appendChild(meta);
+        copy.appendChild(name);
+        copy.appendChild(meta);
+        btn.appendChild(copy);
         btn.addEventListener("mousedown", function (e) {
           e.preventDefault();
         });
@@ -11689,11 +12142,12 @@
       if (!em || !MEETING_EMAIL_RE.test(em) || hasEmail(em)) return;
       items.push({
         email: em,
-        name: "",
+        name: String((raw && raw.name) || "").trim(),
         calendar: !!(raw && raw.calendar_connected),
         telegram_username: String((raw && raw.telegram_username) || "")
           .trim()
           .replace(/^@/, ""),
+        telegram_user_id: (raw && raw.telegram_user_id) || null,
       });
     });
     paintChips();
@@ -11705,10 +12159,13 @@
         items.forEach(function (it) {
           contacts.forEach(function (c) {
             if (meetingEmailKey(c.email) === it.email) {
-              it.name = c.name || "";
+              it.name = c.name || it.name || "";
               it.calendar = !!c.calendar_connected;
               if (!it.telegram_username) {
                 it.telegram_username = String(c.telegram_username || "").replace(/^@/, "");
+              }
+              if (!it.telegram_user_id && c.telegram_user_id) {
+                it.telegram_user_id = c.telegram_user_id;
               }
             }
           });
@@ -11827,6 +12284,14 @@
       chips.innerHTML = "";
       var chip = document.createElement("span");
       chip.className = "meeting-attendee-chip";
+      chip.appendChild(
+        meetingAttendeeAvatarNode({
+          email: selected.email,
+          name: selected.name,
+          telegram_user_id: selected.user_id,
+          telegram_username: selected.telegram_username || "",
+        })
+      );
       var text = document.createElement("span");
       text.className = "meeting-attendee-chip-text";
       text.textContent = selected.name || selected.email || "Я";
@@ -11841,6 +12306,9 @@
         user_id: String((person && (person.telegram_user_id || person.user_id)) || ""),
         email: String((person && person.email) || ""),
         name: String((person && person.name) || selected.name || ""),
+        telegram_username: String((person && person.telegram_username) || "")
+          .trim()
+          .replace(/^@/, ""),
       };
       if (!selected.name) selected.name = selected.email || "Я";
       input.value = "";
@@ -11854,7 +12322,12 @@
       var rows = [];
       var me = defaultTaskAssignee();
       if (!q || String(me.name || "").toLowerCase().indexOf(q) >= 0) {
-        rows.push({ name: me.name, email: me.email, user_id: me.user_id });
+        rows.push({
+          name: me.name,
+          email: me.email,
+          user_id: me.user_id,
+          telegram_user_id: me.user_id,
+        });
       }
       Object.keys(calendarContactsByEmail).forEach(function (k) {
         var c = calendarContactsByEmail[k];
@@ -11868,8 +12341,16 @@
       rows.slice(0, 8).forEach(function (c) {
         var btn = document.createElement("button");
         btn.type = "button";
-        btn.className = "meeting-attendee-suggest-item";
-        btn.textContent = c.name || c.email || "Я";
+        btn.className =
+          "meeting-attendee-suggest-item meeting-attendee-suggest-item--with-avatar";
+        btn.appendChild(meetingAttendeeAvatarNode(c));
+        var copy = document.createElement("span");
+        copy.className = "meeting-attendee-suggest-copy";
+        var name = document.createElement("span");
+        name.className = "meeting-attendee-suggest-name";
+        name.textContent = c.name || c.email || "Я";
+        copy.appendChild(name);
+        btn.appendChild(copy);
         btn.addEventListener("mousedown", function (e) {
           e.preventDefault();
         });
@@ -12462,6 +12943,10 @@
       "</button>" +
       '<textarea id="m-ev-desc" class="field-textarea event-sheet-desc hidden" rows="4"></textarea>' +
       "</div>" +
+      '<div class="event-sheet-group event-sheet-meet-link-group">' +
+      '<label class="event-sheet-row-label" for="m-ev-link">Ссылка на встречу</label>' +
+      '<input id="m-ev-link" type="url" class="field-input" placeholder="https://…" inputmode="url" autocomplete="off" />' +
+      "</div>" +
       '<div class="event-sheet-link-row"></div>' +
       "</div>";
     if (!eventExisting) bindCreateKindSwitcher("event");
@@ -12482,6 +12967,15 @@
     document.getElementById("m-ev-desc").value = calendarDescriptionPlain(
       ev.description || ""
     );
+    var linkInput = document.getElementById("m-ev-link");
+    if (linkInput) {
+      var origLoc = String(ev.location || "").trim();
+      var meetLink =
+        String(ev.meet_url || "").trim() ||
+        (/^https?:\/\//i.test(origLoc) ? origLoc : "");
+      linkInput.value = meetLink;
+      linkInput.dataset.origLocation = origLoc;
+    }
     var attEditor = document.getElementById("m-ev-attendees-editor");
     var attToggle = document.getElementById("m-ev-attendees-toggle");
     if ((ev.attendees || []).length && attEditor && attToggle) {
@@ -12547,10 +13041,14 @@
         );
         const join = (r && r.join_url) || "";
         if (join) {
+          var zoomLinkEl = document.getElementById("m-ev-link");
+          if (zoomLinkEl) zoomLinkEl.value = join;
           const ta = document.getElementById("m-ev-desc");
           var cur = (ta && ta.value) || "";
           var line = "Zoom: " + join;
-          ta.value = cur.trim() ? cur.trim() + "\n\n" + line : line;
+          if (cur.indexOf(join) < 0) {
+            ta.value = cur.trim() ? cur.trim() + "\n\n" + line : line;
+          }
           setEventDescOpen(true);
         }
         var msg = (r && r.already) ? "Ссылка уже была в календаре." : "Ссылка Zoom добавлена.";
@@ -12588,10 +13086,14 @@
         );
         const join = (r && r.join_url) || "";
         if (join) {
+          var telemostLinkEl = document.getElementById("m-ev-link");
+          if (telemostLinkEl) telemostLinkEl.value = join;
           const ta = document.getElementById("m-ev-desc");
           var cur = (ta && ta.value) || "";
           var line = "Телемост: " + join;
-          ta.value = cur.trim() ? cur.trim() + "\n\n" + line : line;
+          if (cur.indexOf(join) < 0) {
+            ta.value = cur.trim() ? cur.trim() + "\n\n" + line : line;
+          }
           setEventDescOpen(true);
         }
         var msg = (r && r.already) ? "Ссылка уже была в календаре." : "Ссылка Телемост добавлена.";
@@ -12822,12 +13324,21 @@
         return;
       }
       var eventColor = entryColorPickerApi ? entryColorPickerApi.getColor() : "";
+      var linkEl = document.getElementById("m-ev-link");
+      var meetLink = linkEl ? String(linkEl.value || "").trim() : "";
+      var origLoc = linkEl ? String(linkEl.dataset.origLocation || "").trim() : "";
+      var locationOut = meetLink;
+      if (!locationOut && origLoc && !/^https?:\/\//i.test(origLoc)) {
+        // Не затирать обычный адрес (не URL), если поле ссылки пустое.
+        locationOut = origLoc;
+      }
       const body = {
         calendar_id: calId,
         title: title,
         start: startIso,
         end: endIso,
         description: descEl ? descEl.value : "",
+        location: locationOut,
         attendees: meetingAttendeesApi ? meetingAttendeesApi.getEmails() : [],
       };
       try {
@@ -16840,7 +17351,10 @@
     fallback.className = "note-member-avatar-fallback";
     fallback.textContent = noteMemberInitials(member);
     el.appendChild(fallback);
-    if (member && member.user_id) applyNoteMemberPhoto(img, member.user_id);
+    applyTelegramAvatar(img, {
+      userId: member && (member.user_id || member.telegram_user_id),
+      username: member && member.username,
+    });
     return el;
   }
 
@@ -24876,19 +25390,24 @@
       var btn = document.createElement("button");
       btn.type = "button";
       btn.className =
-        "meeting-attendee-suggest-item" + (i === shareMemberSuggestIndex ? " is-active" : "");
+        "meeting-attendee-suggest-item meeting-attendee-suggest-item--with-avatar" +
+        (i === shareMemberSuggestIndex ? " is-active" : "");
       btn._contact = c;
+      btn.appendChild(meetingAttendeeAvatarNode(c));
+      var copy = document.createElement("span");
+      copy.className = "meeting-attendee-suggest-copy";
       var name = document.createElement("span");
       name.className = "meeting-attendee-suggest-name";
       name.textContent = c.name || c.email || "Контакт";
-      btn.appendChild(name);
+      copy.appendChild(name);
       var meta = document.createElement("span");
       meta.className = "meeting-attendee-suggest-meta";
       var tg = String(c.telegram_username || "").trim();
       meta.textContent = tg
         ? "@" + tg.replace(/^@/, "")
         : "Нужен Telegram в контакте";
-      btn.appendChild(meta);
+      copy.appendChild(meta);
+      btn.appendChild(copy);
       btn.addEventListener("click", function () {
         addShareMemberFromContact(c);
       });
