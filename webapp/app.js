@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261008-contact-avatars";
+  var WEBAPP_BUILD = "20261008-meet-link-toggle";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261008-contact-avatars";
+  const NOTE_EDITOR_ASSET_V = "20261008-meet-link-toggle";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -12944,8 +12944,11 @@
       '<textarea id="m-ev-desc" class="field-textarea event-sheet-desc hidden" rows="4"></textarea>' +
       "</div>" +
       '<div class="event-sheet-group event-sheet-meet-link-group">' +
-      '<label class="event-sheet-row-label" for="m-ev-link">Ссылка на встречу</label>' +
-      '<input id="m-ev-link" type="url" class="field-input" placeholder="https://…" inputmode="url" autocomplete="off" />' +
+      '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-ev-link-toggle" aria-expanded="false">' +
+      '<span class="field-label">Ссылка на встречу</span>' +
+      eventSheetChevronHtml() +
+      "</button>" +
+      '<input id="m-ev-link" type="url" class="field-input event-sheet-meet-link-input hidden" placeholder="https://…" inputmode="url" autocomplete="off" />' +
       "</div>" +
       '<div class="event-sheet-link-row"></div>' +
       "</div>";
@@ -12968,12 +12971,13 @@
       ev.description || ""
     );
     var linkInput = document.getElementById("m-ev-link");
+    var meetLinkValue = "";
     if (linkInput) {
       var origLoc = String(ev.location || "").trim();
-      var meetLink =
+      meetLinkValue =
         String(ev.meet_url || "").trim() ||
         (/^https?:\/\//i.test(origLoc) ? origLoc : "");
-      linkInput.value = meetLink;
+      linkInput.value = meetLinkValue;
       linkInput.dataset.origLocation = origLoc;
     }
     var attEditor = document.getElementById("m-ev-attendees-editor");
@@ -13001,6 +13005,19 @@
       if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
       if (open && opts && opts.focus) ta.focus();
     }
+    function setEventMeetLinkOpen(open, opts) {
+      var inp = document.getElementById("m-ev-link");
+      var toggle = document.getElementById("m-ev-link-toggle");
+      if (!inp) return;
+      inp.classList.toggle("hidden", !open);
+      if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open && opts && opts.focus) {
+        try {
+          inp.focus();
+          inp.select();
+        } catch (_) {}
+      }
+    }
     var descToggle = document.getElementById("m-ev-desc-toggle");
     var hasDesc = !!(ev.description && String(ev.description).trim());
     setEventDescOpen(hasDesc);
@@ -13008,6 +13025,16 @@
       descToggle.addEventListener("click", function () {
         var ta = document.getElementById("m-ev-desc");
         setEventDescOpen(!!(ta && ta.classList.contains("hidden")), { focus: true });
+      });
+    }
+    var linkToggle = document.getElementById("m-ev-link-toggle");
+    setEventMeetLinkOpen(!!meetLinkValue);
+    if (linkToggle) {
+      linkToggle.addEventListener("click", function () {
+        var inp = document.getElementById("m-ev-link");
+        setEventMeetLinkOpen(!!(inp && inp.classList.contains("hidden")), {
+          focus: true,
+        });
       });
     }
     meetingAttendeesApi = mountMeetingAttendees(
@@ -13043,6 +13070,7 @@
         if (join) {
           var zoomLinkEl = document.getElementById("m-ev-link");
           if (zoomLinkEl) zoomLinkEl.value = join;
+          setEventMeetLinkOpen(true);
           const ta = document.getElementById("m-ev-desc");
           var cur = (ta && ta.value) || "";
           var line = "Zoom: " + join;
@@ -13088,6 +13116,7 @@
         if (join) {
           var telemostLinkEl = document.getElementById("m-ev-link");
           if (telemostLinkEl) telemostLinkEl.value = join;
+          setEventMeetLinkOpen(true);
           const ta = document.getElementById("m-ev-desc");
           var cur = (ta && ta.value) || "";
           var line = "Телемост: " + join;

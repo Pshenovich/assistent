@@ -9395,19 +9395,19 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   color: var(--text-tertiary);
 }
 
-.event-sheet-meet-link-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.55rem 0.9rem 0.75rem;
-}
-
-.event-sheet-meet-link-group .event-sheet-row-label {
-  margin: 0;
-}
-
-.event-sheet-meet-link-group .field-input {
+.event-sheet-meet-link-input {
+  display: block;
   width: 100%;
+  margin: 0;
+  padding: 0.7rem 0.9rem 0.9rem;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.event-sheet-meet-link-input.hidden {
+  display: none;
 }
 
 .meeting-avail {
@@ -9768,7 +9768,8 @@ textarea.event-sheet-title--area {
 
 .event-sheet-row + .event-sheet-row,
 .event-sheet-row + .event-sheet-attendees,
-.event-sheet-row + .event-sheet-desc {
+.event-sheet-row + .event-sheet-desc,
+.event-sheet-row + .event-sheet-meet-link-input {
   border-top: 0.5px solid var(--border);
 }
 
