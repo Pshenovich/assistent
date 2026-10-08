@@ -1,3 +1,10 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["assistant", "usage_server"]
+
+[tool.coverage.report]
+# Храповик: поднимать вместе с новыми тестами, не опускать.
+fail_under = 52
