@@ -40,9 +40,10 @@ class TestBitrixMcpClient(unittest.TestCase):
             self.assertEqual(client_mod.mcp_url(), "https://example.com/mcp/")
 
     def test_raise_mcp_error_unwraps_task_group(self) -> None:
-        try:
-            ExceptionGroup
-        except NameError:
+        import builtins
+
+        ExceptionGroup = getattr(builtins, "ExceptionGroup", None)
+        if ExceptionGroup is None:
             from exceptiongroup import ExceptionGroup
 
         inner = httpx.HTTPStatusError(
