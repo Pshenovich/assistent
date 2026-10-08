@@ -64,6 +64,7 @@ def test_classify_skips_too_short_text(llm):
     [
         requests.Timeout("slow"),
         requests.ConnectionError("down"),
+        RuntimeError("Comet: 503; до этого OpenRouter: 429"),
         {"choices": []},
         {"error": "quota"},
         _completion("not json at all"),
@@ -71,7 +72,7 @@ def test_classify_skips_too_short_text(llm):
         _completion('{"skill":"launch_rockets","confidence":1}'),
         _completion('{"skill":"none","confidence":1}'),
     ],
-    ids=["timeout", "network", "no-choices", "error-body", "not-json", "json-list", "unknown-skill", "none-skill"],
+    ids=["timeout", "network", "both-providers-failed", "no-choices", "error-body", "not-json", "json-list", "unknown-skill", "none-skill"],
 )
 def test_classify_failures_fall_back_to_none(llm, outcome):
     if isinstance(outcome, Exception):

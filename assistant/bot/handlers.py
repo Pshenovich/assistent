@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import traceback
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp, Update, WebAppInfo
 from telegram.ext import (
@@ -54,8 +55,8 @@ async def _set_chat_webapp_menu_button(
                 text="Ассистент", web_app=WebAppInfo(url=_webapp_url())
             ),
         )
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[bot] set menu button failed chat={chat.id} err={e!r}")
 
 
 async def _bind_usage_telegram_user(
@@ -349,6 +350,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
 
 
+HANDLER_ERROR_REPLY = "Что-то пошло не так. Попробуйте ещё раз чуть позже."
+
+
+async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    err = context.error
+    # С зарегистрированным error handler PTB сам traceback больше не печатает.
+    tb = "".join(traceback.format_exception(type(err), err, err.__traceback__)) if err else ""
+    uid = getattr(getattr(update, "effective_user", None), "id", None)
+    print(f"[bot] handler_error user={uid} err={err!r}\n{tb}".rstrip())
+    chat = getattr(update, "effective_chat", None)
+    msg = getattr(update, "effective_message", None)
+    if msg is None or chat is None or chat.type != "private":
+        return
+    try:
+        await msg.reply_text(HANDLER_ERROR_REPLY)
+    except Exception as e:
+        print(f"[bot] handler_error reply failed user={uid} err={e!r}")
+
+
 def register_handlers(app: Application) -> None:
     from assistant.bot.chat_ingest import register_chat_ingest
     from assistant.lib.update_once import claim_update_once
@@ -436,3 +456,4 @@ def register_handlers(app: Application) -> None:
             handle_message,
         )
     )
+    app.add_error_handler(handle_error)

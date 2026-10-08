@@ -7,8 +7,6 @@ import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
-import requests
-
 from assistant.lib.llm_json import strip_json_from_markdown
 from assistant.integrations.openrouter_client import (
     is_llm_configured,
@@ -227,7 +225,8 @@ def classify_intent(ctx: IntentContext, *, force: bool = False) -> Route | None:
     payload = {"model": _router_model(), "messages": [{"role": "system", "content": INTENT_ROUTER_SYSTEM}, {"role": "user", "content": json.dumps(user_obj, ensure_ascii=False)}], "temperature": 0}
     try:
         data = openrouter_chat_completion(payload, operation="intent_route", timeout=45)
-    except (requests.Timeout, requests.RequestException) as e:
+    except Exception as e:
+        # openrouter_client бросает RuntimeError, когда оба провайдера вернули ошибку.
         print(f"[intent_route] llm_error={e!r}")
         return None
     try:
