@@ -52,18 +52,9 @@ from assistant.services.bitrix_mcp_search import (
 BITRIX_HISTORY_KEY = "bitrix_chat_history"
 BITRIX_HISTORY_MAX = 6
 _BITRIX_EXPLICIT_RE = re.compile(r"(?i)\b(битрикс|bitrix24?)\b")
-_ROUTE_LOG = "/tmp/leo-route.log"
-
-
 def _route_log(msg: str) -> None:
-    line = f"{msg}\n"
     try:
         print(msg, flush=True)
-    except Exception:
-        pass
-    try:
-        with open(_ROUTE_LOG, "a", encoding="utf-8") as f:
-            f.write(line)
     except Exception:
         pass
 
