@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261008-composer-scroll";
+  var WEBAPP_BUILD = "20261008-reply-jump";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261008-composer-scroll";
+  const NOTE_EDITOR_ASSET_V = "20261008-reply-jump";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -5268,12 +5268,15 @@
         }
         if (res.status === 401 && !hasTelegramWebAppAuth() && !miniappDev) {
           setStoredSession("");
+          setSessionHint(false);
           gateLoginBootstrapped = false;
           fetch(API + "/auth/logout", {
             method: "POST",
             credentials: "same-origin",
           }).catch(function () {});
-          if (isInsideTelegramClient()) {
+          // В обычном браузере всегда показываем кнопку «Войти через Telegram»,
+          // даже если telegram-web-app.js создал WebApp с platform≠unknown.
+          if (isInsideTelegramClient() && looksLikeTelegramWebView()) {
             showTelegramAuthError(
               apiErrorMessage(body, "Telegram не передал данные для входа. Закройте окно и откройте мини-приложение снова.")
             );
@@ -11564,6 +11567,13 @@
 
   var reminderChecklistApi = null;
   var meetingAttendeesApi = null;
+  var bookingSheetState = {
+    title: "",
+    attendees: [],
+    durationMin: "",
+    linkMode: "reusable",
+    expireDays: "14",
+  };
   var taskAssigneeApi = null;
   var taskModalOnSaved = null;
   var taskModalOnDeleted = null;
@@ -12791,6 +12801,7 @@
       { id: "event", label: "Встреча" },
       { id: "task", label: "Задача" },
       { id: "reminder", label: "Напоминание" },
+      { id: "booking", label: "Ссылка" },
     ];
     return (
       '<div class="event-sheet-kind-switch" role="tablist" aria-label="Тип записи">' +
@@ -12825,7 +12836,11 @@
       var rt = String(remTime.value || "").trim() || "09:00";
       if (rd) remWhen.value = joinDatetimeLocal(rd, rt);
     }
-    var titleEl = document.getElementById("m-ev-sum") || document.getElementById("m-rem-task");
+    snapshotBookingSheet();
+    var titleEl =
+      document.getElementById("m-ev-sum") ||
+      document.getElementById("m-book-title") ||
+      document.getElementById("m-rem-task");
     var startEl = document.getElementById("m-ev-start") || remWhen;
     var endEl = document.getElementById("m-ev-end");
     var startLocal = startEl ? String(startEl.value || "") : "";
@@ -12843,6 +12858,11 @@
       description: ((document.getElementById("m-task-desc") || document.getElementById("m-ev-desc") || {})
         .value || ""),
       checklist: reminderChecklistApi ? reminderChecklistApi.getItems() : [],
+      attendees: meetingAttendeesApi
+        ? meetingAttendeesApi.getEmails().map(function (e) {
+            return { email: e };
+          })
+        : bookingSheetState.attendees || [],
     };
   }
 
@@ -12859,6 +12879,7 @@
       start: { dateTime: startIso },
       end: { dateTime: endIso },
       checklist: draft.checklist || [],
+      attendees: draft.attendees || [],
     };
   }
 
@@ -12880,9 +12901,230 @@
             when_iso: datetimeLocalToIso(draft.startLocal || "") || undefined,
             checklist: draft.checklist || [],
           });
+        } else if (next === "booking") {
+          openBookingLinkModal(draftToEventSeed(draft));
         }
       });
     });
+  }
+
+  function snapshotBookingSheet() {
+    var titleEl = document.getElementById("m-book-title");
+    if (!titleEl) return;
+    bookingSheetState.title = String(titleEl.value || "").trim();
+    bookingSheetState.attendees = meetingAttendeesApi
+      ? meetingAttendeesApi.getEmails().map(function (e) {
+          return { email: e };
+        })
+      : bookingSheetState.attendees || [];
+    var durOn = document.querySelector("#modal-fields [data-book-duration].is-active");
+    bookingSheetState.durationMin = durOn ? String(durOn.getAttribute("data-book-duration") || "") : "";
+    var modeOn = document.querySelector("#modal-fields [data-book-mode].is-active");
+    bookingSheetState.linkMode = modeOn ? String(modeOn.getAttribute("data-book-mode") || "reusable") : "reusable";
+    var expOn = document.querySelector("#modal-fields [data-book-expire].is-active");
+    bookingSheetState.expireDays = expOn ? String(expOn.getAttribute("data-book-expire") || "14") : "14";
+  }
+
+  function bookingSegHtml(items, attr, active) {
+    return items
+      .map(function (it) {
+        var on = String(it.id) === String(active);
+        return (
+          '<button type="button" class="event-sheet-kind-btn' +
+          (on ? " is-active" : "") +
+          '" ' +
+          attr +
+          '="' +
+          it.id +
+          '">' +
+          it.label +
+          "</button>"
+        );
+      })
+      .join("");
+  }
+
+  function bindBookingSegs(root) {
+    if (!root) return;
+    root.querySelectorAll("[data-book-duration], [data-book-mode], [data-book-expire]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var attr = btn.hasAttribute("data-book-duration")
+          ? "data-book-duration"
+          : btn.hasAttribute("data-book-mode")
+            ? "data-book-mode"
+            : "data-book-expire";
+        var host = btn.parentNode;
+        if (host) {
+          host.querySelectorAll("[" + attr + "]").forEach(function (el) {
+            el.classList.toggle("is-active", el === btn);
+          });
+        }
+        var expireRow = document.getElementById("m-book-expire-row");
+        if (expireRow && attr === "data-book-mode") {
+          expireRow.classList.toggle("hidden", btn.getAttribute("data-book-mode") !== "expiring");
+        }
+      });
+    });
+  }
+
+  async function createAndCopyBookingLink() {
+    snapshotBookingSheet();
+    var titleEl = document.getElementById("m-book-title");
+    var title = titleEl ? String(titleEl.value || "").trim() : bookingSheetState.title || "";
+    var durOn = document.querySelector("#modal-fields [data-book-duration].is-active");
+    var durRaw = durOn ? String(durOn.getAttribute("data-book-duration") || "") : "";
+    var durationMin = durRaw ? parseInt(durRaw, 10) : null;
+    if (durationMin && [15, 30, 45, 60].indexOf(durationMin) < 0) durationMin = null;
+    var modeOn = document.querySelector("#modal-fields [data-book-mode].is-active");
+    var linkMode = modeOn ? String(modeOn.getAttribute("data-book-mode") || "reusable") : "reusable";
+    var expOn = document.querySelector("#modal-fields [data-book-expire].is-active");
+    var expireDays = expOn ? parseInt(expOn.getAttribute("data-book-expire") || "14", 10) : 14;
+    var body = {
+      title: title,
+      attendees: meetingAttendeesApi ? meetingAttendeesApi.getEmails() : [],
+      duration_min: durationMin,
+      link_mode: linkMode,
+      expire_days: linkMode === "expiring" ? expireDays : null,
+    };
+    var created = await apiFetch("/calendar/booking-links", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    var url = created && created.url ? String(created.url) : "";
+    if (!url) throw new Error("Не удалось получить ссылку");
+    var urlEl = document.getElementById("m-book-url");
+    if (urlEl) {
+      urlEl.value = url;
+      urlEl.classList.remove("hidden");
+    }
+    var copyBtn = document.getElementById("m-book-copy");
+    if (copyBtn) copyBtn.textContent = "Скопировать снова";
+    try {
+      await copyShareUrl(url);
+      showNoteToast("Скопировано");
+      shareHaptic();
+    } catch (_) {
+      showNoteToast("Ссылка готова — скопируйте её вручную");
+    }
+  }
+
+  function openBookingLinkModal(ev) {
+    clearCalendarGestureState();
+    ev = ev || {};
+    if (ev.title || ev.summary) {
+      bookingSheetState.title = String(ev.title || ev.summary || "").trim();
+    }
+    if (ev.attendees && ev.attendees.length) {
+      bookingSheetState.attendees = ev.attendees;
+    }
+    document.getElementById("modal-title").textContent = "Ссылка";
+    document.getElementById("modal-kind").value = "booking";
+    document.getElementById("modal-reminder-id").value = "";
+    document.getElementById("modal-event-id").value = "";
+    document.getElementById("modal-calendar-id").value = "";
+    var fields = document.getElementById("modal-fields");
+    var dur = bookingSheetState.durationMin || "";
+    var mode = bookingSheetState.linkMode || "reusable";
+    var expire = bookingSheetState.expireDays || "14";
+    fields.innerHTML =
+      '<div class="event-sheet">' +
+      eventSheetKindSwitcherHtml("booking") +
+      '<p class="booking-sheet-lead">Поделитесь ссылкой на свободные слоты в календаре с внешними участниками</p>' +
+      '<input id="m-book-title" type="text" class="event-sheet-title" placeholder="Название встречи" autocomplete="off" />' +
+      '<div class="event-sheet-group meeting-attendees-field">' +
+      '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-ev-attendees-toggle" aria-expanded="false">' +
+      '<span class="event-sheet-row-label">Участники команды</span>' +
+      '<span class="event-sheet-row-value"><span id="m-ev-attendees-summary">Нет</span>' +
+      eventSheetChevronHtml() +
+      "</span></button>" +
+      '<div id="m-ev-attendees-editor" class="event-sheet-attendees hidden">' +
+      '<div id="m-ev-attendees-chips" class="meeting-attendee-chips"></div>' +
+      '<div class="meeting-attendee-add">' +
+      '<input id="m-ev-attendee-input" type="text" class="field-input" placeholder="Контакт или email" autocomplete="off" />' +
+      '<div id="m-ev-attendee-suggest" class="meeting-attendee-suggest hidden" role="listbox"></div>' +
+      "</div></div></div>" +
+      '<div class="event-sheet-group">' +
+      '<div class="event-sheet-row event-sheet-row--stack">' +
+      '<span class="event-sheet-row-label">Длительность</span>' +
+      '<span class="event-sheet-kind-switch booking-sheet-seg" role="radiogroup" aria-label="Длительность">' +
+      bookingSegHtml(
+        [
+          { id: "", label: "Любая" },
+          { id: "15", label: "15 мин" },
+          { id: "30", label: "30 мин" },
+          { id: "45", label: "45 мин" },
+          { id: "60", label: "60 мин" },
+        ],
+        "data-book-duration",
+        dur
+      ) +
+      "</span></div></div>" +
+      '<div class="event-sheet-group">' +
+      '<div class="event-sheet-row event-sheet-row--stack">' +
+      '<span class="event-sheet-row-label">Режим ссылки</span>' +
+      '<span class="event-sheet-kind-switch booking-sheet-seg" role="radiogroup" aria-label="Режим ссылки">' +
+      bookingSegHtml(
+        [
+          { id: "one_shot", label: "Одноразовая" },
+          { id: "reusable", label: "Многоразовая" },
+          { id: "expiring", label: "Со сроком" },
+        ],
+        "data-book-mode",
+        mode
+      ) +
+      "</span></div>" +
+      '<div id="m-book-expire-row" class="event-sheet-row event-sheet-row--stack' +
+      (mode === "expiring" ? "" : " hidden") +
+      '">' +
+      '<span class="event-sheet-row-label">Срок</span>' +
+      '<span class="event-sheet-kind-switch booking-sheet-seg" role="radiogroup" aria-label="Срок">' +
+      bookingSegHtml(
+        [
+          { id: "7", label: "7 дней" },
+          { id: "14", label: "14 дней" },
+          { id: "30", label: "30 дней" },
+        ],
+        "data-book-expire",
+        expire
+      ) +
+      "</span></div></div>" +
+      '<input id="m-book-url" type="text" class="field-input booking-sheet-url hidden" readonly />' +
+      '<button type="button" class="btn primary booking-sheet-copy" id="m-book-copy">Получить ссылку</button>' +
+      "</div>";
+    bindCreateKindSwitcher("booking");
+    bindBookingSegs(fields);
+    document.getElementById("m-book-title").value =
+      bookingSheetState.title || String(ev.title || ev.summary || "").trim();
+    var attToggle = document.getElementById("m-ev-attendees-toggle");
+    var attEditor = document.getElementById("m-ev-attendees-editor");
+    if (attToggle && attEditor) {
+      attToggle.addEventListener("click", function () {
+        var open = attEditor.classList.contains("hidden");
+        attEditor.classList.toggle("hidden", !open);
+        attToggle.setAttribute("aria-expanded", open ? "true" : "false");
+        if (open) {
+          var inp = document.getElementById("m-ev-attendee-input");
+          if (inp) inp.focus();
+        }
+      });
+    }
+    meetingAttendeesApi = mountMeetingAttendees(
+      document.querySelector(".meeting-attendees-field"),
+      bookingSheetState.attendees || ev.attendees || []
+    );
+    var copyBtn = document.getElementById("m-book-copy");
+    if (copyBtn) {
+      copyBtn.addEventListener("click", function () {
+        createAndCopyBookingLink().catch(function (e) {
+          showCalendarToast((e && e.message) || "Не удалось получить ссылку");
+        });
+      });
+    }
+    setModalSheetActions({ showDelete: false, showDone: false });
+    document.getElementById("modal-overlay").classList.remove("hidden");
+    document.getElementById("modal-overlay").setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
   }
 
   function openEventModal(ev) {
@@ -13321,6 +13563,14 @@
         await loadActual({ skipCachePaint: true });
       } catch (e) {
         showCalendarToast(e.message || String(e));
+      }
+      return;
+    }
+    if (kind === "booking") {
+      try {
+        await createAndCopyBookingLink();
+      } catch (e) {
+        showCalendarToast((e && e.message) || "Не удалось получить ссылку");
       }
       return;
     }
@@ -18129,7 +18379,7 @@
     }
     syncGptEditorEmpty(ed);
     autosizeNoteComposer(ed);
-    ed.setAttribute("data-placeholder", noteAskPlaceholder("gpt"));
+    ed.setAttribute("data-placeholder", noteAskPlaceholder(noteAskMode()));
     syncNotePaieReplyForm();
     return true;
   }
@@ -22278,6 +22528,7 @@
     if (wrap) {
       wrap._commentChairId = null;
       wrap._commentDraft = null;
+      wrap._commentReplyWho = null;
     }
     syncNoteComposerCommentTarget();
   }
@@ -22315,10 +22566,93 @@
   function closeNoteAnswerMenu() {
     document.querySelectorAll(".note-discuss-menu").forEach(function (menu) {
       menu.classList.add("hidden");
+      menu.classList.remove("is-placed");
+      menu.style.top = "";
+      menu.style.left = "";
+      menu.style.right = "";
+      menu.style.bottom = "";
     });
     document.querySelectorAll(".note-discuss-more").forEach(function (btn) {
       btn.setAttribute("aria-expanded", "false");
     });
+  }
+
+  function positionDiscussAnswerMenu(btn, menu) {
+    if (!btn || !menu) return;
+    menu.classList.add("is-placed");
+    menu.style.top = "0px";
+    menu.style.left = "0px";
+    menu.style.right = "auto";
+    menu.style.bottom = "auto";
+    var btnRect = btn.getBoundingClientRect();
+    var menuRect = menu.getBoundingClientRect();
+    var mw = menuRect.width || 220;
+    var mh = menuRect.height || 200;
+    var pad = 8;
+    var header = document.querySelector("#note-discussion-overlay .note-discussion-header");
+    var headerBottom = header ? header.getBoundingClientRect().bottom : 0;
+    var topMin = Math.max(pad, headerBottom + 4);
+    var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    var vw = window.innerWidth || document.documentElement.clientWidth || 0;
+    var spaceAbove = btnRect.top - topMin;
+    var spaceBelow = vh - pad - btnRect.bottom;
+    var top;
+    if (spaceAbove >= mh + 6 || spaceAbove >= spaceBelow) {
+      top = btnRect.top - mh - 6;
+    } else {
+      top = btnRect.bottom + 6;
+    }
+    if (top < topMin) top = topMin;
+    if (top + mh > vh - pad) top = Math.max(topMin, vh - pad - mh);
+    var left = btnRect.left;
+    var msg = btn.closest && btn.closest(".note-discuss-msg");
+    if (msg && msg.classList.contains("is-user")) {
+      left = btnRect.right - mw;
+    }
+    if (left < pad) left = pad;
+    if (left + mw > vw - pad) left = Math.max(pad, vw - pad - mw);
+    menu.style.top = Math.round(top) + "px";
+    menu.style.left = Math.round(left) + "px";
+  }
+
+  function discussionCommentById(id) {
+    var want = Number(id) || 0;
+    if (!want) return null;
+    var panel = document.getElementById("note-editor-comments");
+    var rows = (panel && panel._allComments) || [];
+    for (var i = 0; i < rows.length; i++) {
+      if (Number(rows[i] && rows[i].id) === want) return rows[i];
+    }
+    return null;
+  }
+
+  function discussReplyWhoLabel(comment) {
+    var parent = discussionCommentById(comment && comment.parent_id);
+    if (parent) return discussionAuthorLabel(parent);
+    return "Фрагмент";
+  }
+
+  function discussionCommentReplyDraft(comment) {
+    if (!comment) return null;
+    var quote = discussDisplayBody(
+      String(comment.body || ""),
+      String(comment.quote || "").trim()
+    );
+    quote = String(quote || "").replace(/\s+/g, " ").trim();
+    if (!quote) return null;
+    var api = window.NoteComments;
+    var source = "reply";
+    if (api && api.isResearchComment && api.isResearchComment(comment)) source = "research";
+    else if (api && api.isGptComment && api.isGptComment(comment)) source = "gpt";
+    else if (isAssistantComment(comment)) source = "paie";
+    return {
+      quote: quote,
+      prefix: "",
+      suffix: "",
+      source: source,
+      commentId: parseInt(comment.id, 10) || 0,
+      replyWho: discussionAuthorLabel(comment),
+    };
   }
 
   function showNoteToast(text, opts) {
@@ -22956,6 +23290,8 @@
         '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
       clarify:
         '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/>',
+      reply:
+        '<path d="M9 17H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6"/><path d="M15 13l6 4-6 4v-8z"/>',
       "into-note":
         '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 11v7M9 15l3 3 3-3"/>',
       "create-note":
@@ -22996,6 +23332,7 @@
       if (open) {
         menu.classList.remove("hidden");
         btn.setAttribute("aria-expanded", "true");
+        positionDiscussAnswerMenu(btn, menu);
       }
     });
     menu.querySelectorAll("[data-answer-action]").forEach(function (item) {
@@ -23004,7 +23341,10 @@
         e.stopPropagation();
         var action = item.getAttribute("data-answer-action");
         closeNoteAnswerMenu();
-        if (action === "into-note") appendAnswerToCurrentNote(text);
+        if (action === "reply") {
+          var draft = discussionCommentReplyDraft(comment);
+          if (draft) applyDiscussClarify(draft);
+        } else if (action === "into-note") appendAnswerToCurrentNote(text);
         else if (action === "create-note") createNoteFromAnswer(text);
         else if (action === "link") openNoteLinkPicker(text);
         else if (action === "copy") copyAnswerText(text);
@@ -23205,11 +23545,19 @@
     if (!wrap || !draft || !String(draft.quote || "").trim()) return;
     var quote = String(draft.quote || "").trim();
     var src = String(draft.source || "");
-    // GPT/Research → чип в композере; чужие/свои реплики → reply-target над инпутом.
-    if (src === "gpt" || src === "research") {
-      wrap._commentDraft = null;
-      wrap._commentChairId = null;
-      setNoteAskMode(src === "research" ? "research" : "gpt");
+    // Draft нужен и в режиме агента: при отправке/переключении в «Текст» цитата не теряется.
+    wrap._commentDraft = {
+      quote: quote,
+      prefix: draft.prefix || "",
+      suffix: draft.suffix || "",
+    };
+    wrap._commentChairId = draft.commentId || null;
+    wrap._commentReplyWho = String(draft.replyWho || "").trim() || null;
+    // GPT/Research-баблы → чип + переключение режима.
+    // Чужие/свои реплики в режиме агента (GPT / Research / свой) → чип, режим не сбрасываем.
+    if (src === "gpt" || src === "research" || noteAskUsesChips(noteAskMode())) {
+      if (src === "research") setNoteAskMode("research");
+      else if (src === "gpt") setNoteAskMode("gpt");
       syncNoteComposerCommentTarget();
       insertGptQuoteChip(quote);
       var ed = noteGptEditor();
@@ -23221,19 +23569,14 @@
       clearDiscussionSelection();
       return;
     }
-    wrap._commentDraft = {
-      quote: quote,
-      prefix: draft.prefix || "",
-      suffix: draft.suffix || "",
-    };
-    wrap._commentChairId = draft.commentId || null;
     if (src === "paie") setNoteAskMode("paie");
-    else if (noteAskUsesChips(noteAskMode())) setNoteAskMode("comment");
     syncNoteComposerCommentTarget();
-    var input = document.getElementById("note-paie-reply-input");
-    if (input) {
+    var focusEl = noteAskUsesComposerEditor(noteAskMode())
+      ? noteGptEditor()
+      : document.getElementById("note-paie-reply-input");
+    if (focusEl) {
       try {
-        input.focus();
+        focusEl.focus();
       } catch (_) {}
     }
     clearDiscussionSelection();
@@ -23311,7 +23654,14 @@
     document.addEventListener("mouseup", onSelect);
     document.addEventListener("pointerup", onSelect);
     document.addEventListener("keyup", onSelect);
-    document.addEventListener("scroll", hideDiscussClarify, true);
+    document.addEventListener(
+      "scroll",
+      function () {
+        hideDiscussClarify();
+        closeNoteAnswerMenu();
+      },
+      true
+    );
     document.addEventListener("pointerdown", onDismiss, true);
   }
 
@@ -23328,12 +23678,70 @@
     return text.replace(re, "").replace(/^\s+/, "");
   }
 
-  function appendDiscussReplyQuote(host, quote, who) {
+  function findDiscussReplyTargetId(comment) {
+    var pid = Number(comment && comment.parent_id) || 0;
+    if (pid > 0) return pid;
+    var quote = String((comment && comment.quote) || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    if (!quote) return 0;
+    var myId = Number(comment && comment.id) || 0;
+    var panel = document.getElementById("note-editor-comments");
+    var rows = discussionComments((panel && panel._allComments) || []);
+    var best = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var id = Number(row && row.id) || 0;
+      if (!id || id === myId || (myId > 0 && id > myId)) continue;
+      var body = discussDisplayBody(String((row && row.body) || ""), String((row && row.quote) || "").trim())
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+      if (!body) continue;
+      if (body.indexOf(quote) >= 0 || quote.indexOf(body) >= 0) best = id;
+    }
+    return best;
+  }
+
+  function jumpToDiscussReplyTarget(replyToId, quote) {
+    var id = Number(replyToId) || 0;
+    if (!id) return false;
+    scrollDiscussionToComment(id);
+    var msg = document.querySelector(
+      '#note-discussion-messages [data-comment-id="' + String(id) + '"]'
+    );
+    var bubble = msg && msg.querySelector(".note-discuss-bubble");
+    var q = String(quote || "").trim();
+    if (!bubble || !q) return true;
+    var api = window.NoteComments;
+    if (api && api.rangeForAnchor) {
+      try {
+        var range = api.rangeForAnchor(bubble, q, "", "");
+        if (range) {
+          var node = range.startContainer;
+          var el = node && (node.nodeType === 1 ? node : node.parentElement);
+          if (el && el.scrollIntoView) {
+            el.scrollIntoView({ block: "center", behavior: "smooth" });
+          }
+        }
+      } catch (_) {}
+    }
+    return true;
+  }
+
+  function appendDiscussReplyQuote(host, quote, who, replyToId) {
     var q = String(quote || "").trim();
     if (!host || !q) return;
     var reply = document.createElement("div");
-    reply.className = "note-discuss-reply";
+    reply.className = "note-discuss-reply" + (replyToId ? " is-nav" : "");
     reply.setAttribute("aria-label", "Ответ на цитату");
+    if (replyToId) {
+      reply.setAttribute("role", "button");
+      reply.setAttribute("tabindex", "0");
+      reply.setAttribute("data-reply-to", String(replyToId));
+      reply.title = "Перейти к сообщению";
+    }
     var bar = document.createElement("span");
     bar.className = "note-discuss-reply-bar";
     bar.setAttribute("aria-hidden", "true");
@@ -23349,6 +23757,17 @@
     copy.appendChild(quoteEl);
     reply.appendChild(bar);
     reply.appendChild(copy);
+    if (replyToId) {
+      function go(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        jumpToDiscussReplyTarget(replyToId, q);
+      }
+      reply.addEventListener("click", go);
+      reply.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") go(e);
+      });
+    }
     host.appendChild(reply);
   }
 
@@ -23370,19 +23789,31 @@
     role.textContent = discussionAuthorLabel(c);
     item.appendChild(role);
     var quoteText = String((c && c.quote) || "").trim();
-    if (quoteText) {
-      appendDiscussReplyQuote(item, quoteText, "Фрагмент");
-    }
     var bodyText = discussDisplayBody(String((c && c.body) || ""), quoteText);
     var attachments = (c && c.attachments) || [];
     var hideClipBody = bodyText.trim() === "📎" && attachments.length;
     var bubble = document.createElement("div");
     bubble.className = "note-discuss-bubble";
+    // Реплай внутри бабла (как в Telegram). У ассистента quote — контекст модели, не UI-реплай.
+    if (quoteText && !assistant) {
+      appendDiscussReplyQuote(
+        bubble,
+        quoteText,
+        discussReplyWhoLabel(c),
+        findDiscussReplyTargetId(c)
+      );
+    }
     if (assistant && bodyText.trim() && !hideClipBody) {
       bubble.className = "note-discuss-bubble note-discuss-bubble--md journal-summary-html";
-      bubble.innerHTML = wrapTablesForScroll(simpleMarkdownToHtml(bodyText));
+      var mdBody = document.createElement("div");
+      mdBody.className = "note-discuss-bubble-body";
+      mdBody.innerHTML = wrapTablesForScroll(simpleMarkdownToHtml(bodyText));
+      bubble.appendChild(mdBody);
     } else if (!hideClipBody && bodyText.trim()) {
-      fillDiscussBodyWithMentions(bubble, bodyText);
+      var textBody = document.createElement("div");
+      textBody.className = "note-discuss-bubble-body";
+      fillDiscussBodyWithMentions(textBody, bodyText);
+      bubble.appendChild(textBody);
     }
     renderDiscussAttachments(bubble, attachments);
     if (bubble.childNodes.length) item.appendChild(bubble);
@@ -23398,6 +23829,7 @@
       var menu = document.createElement("div");
       menu.className = "note-discuss-menu hidden";
       menu.innerHTML =
+        discussMenuItem("reply", "reply", "Ответить") +
         discussMenuItem("into-note", "note", "В заметку") +
         discussMenuItem("create-note", "note", "Создать заметку") +
         discussMenuItem("link", "link", "Связать с заметкой") +
@@ -23419,7 +23851,11 @@
         }
         return;
       }
-      if (e.target && e.target.closest && e.target.closest(".note-discuss-more, .note-discuss-menu, #note-discuss-selection")) {
+      if (
+        e.target &&
+        e.target.closest &&
+        e.target.closest(".note-discuss-more, .note-discuss-menu, .note-discuss-reply, #note-discuss-selection")
+      ) {
         return;
       }
       var sel = window.getSelection && window.getSelection();
@@ -23452,7 +23888,15 @@
       "|" +
       rows
         .map(function (c) {
-          return String(c && c.id) + ":" + String((c && c.body) || "").length;
+          return (
+            String(c && c.id) +
+            ":" +
+            String((c && c.body) || "").length +
+            ":" +
+            String((c && c.quote) || "").length +
+            ":" +
+            String((c && c.parent_id) || "")
+          );
         })
         .join("|") +
       "|g:" +
@@ -23478,10 +23922,14 @@
     var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
     var stickBottom = true;
     var prevTop = 0;
+    var forceBottom = !!(wrap && wrap._forceDiscussScrollBottom);
     if (scroll) {
       prevTop = scroll.scrollTop;
-      stickBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 96;
+      stickBottom =
+        forceBottom ||
+        scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 120;
     }
+    if (forceBottom && wrap) wrap._forceDiscussScrollBottom = false;
     if (list) {
       list._renderFp = fp;
       list.innerHTML = "";
@@ -24179,8 +24627,23 @@
   }
 
   function scrollDiscussionToEnd() {
-    var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
-    if (scroll) scroll.scrollTop = scroll.scrollHeight;
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) wrap._forceDiscussScrollBottom = true;
+    function go() {
+      var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
+      if (!scroll) return;
+      scroll.scrollTop = scroll.scrollHeight;
+    }
+    go();
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(function () {
+        go();
+        requestAnimationFrame(go);
+      });
+    }
+    setTimeout(go, 50);
+    setTimeout(go, 180);
+    setTimeout(go, 400);
   }
 
   function setGptDiscussPhase(phase) {
@@ -24214,14 +24677,29 @@
     role.textContent = "Вы";
     item.appendChild(role);
     var quoteText = String(quote || "").trim();
-    if (quoteText) appendDiscussReplyQuote(item, quoteText, "Фрагмент");
     var bodyText = discussDisplayBody(String(text || ""), quoteText);
-    if (bodyText) {
-      var bubble = document.createElement("div");
-      bubble.className = "note-discuss-bubble";
-      bubble.textContent = bodyText;
-      item.appendChild(bubble);
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var replyWho =
+      (wrap && wrap._commentReplyWho) ||
+      discussReplyWhoLabel({ parent_id: wrap && wrap._commentChairId }) ||
+      "Фрагмент";
+    var bubble = document.createElement("div");
+    bubble.className = "note-discuss-bubble";
+    if (quoteText) {
+      appendDiscussReplyQuote(
+        bubble,
+        quoteText,
+        replyWho,
+        wrap && wrap._commentChairId ? Number(wrap._commentChairId) || 0 : 0
+      );
     }
+    if (bodyText) {
+      var textBody = document.createElement("div");
+      textBody.className = "note-discuss-bubble-body";
+      textBody.textContent = bodyText;
+      bubble.appendChild(textBody);
+    }
+    if (bubble.childNodes.length) item.appendChild(bubble);
     renderPendingAttachThumbs(item);
     var meta = document.createElement("p");
     meta.className = "note-discuss-send-state";
@@ -24343,7 +24821,9 @@
     var packed = serializeGptComposer();
     var quotes = packed.quotes || [];
     var body = packed.text || String(text || "").trim();
-    var quote = quotes.join("\n");
+    var draftQuote = wrap && wrap._commentDraft ? String(wrap._commentDraft.quote || "").trim() : "";
+    var quote = quotes.join("\n").trim() || draftQuote;
+    var replyToId = wrap && wrap._commentChairId ? Number(wrap._commentChairId) || null : null;
     var pending = discussPendingFiles();
     var contextIds = discussContextNoteIds();
     if (!wrap || !wrap._shareKind || !wrap._shareId || wrap._gptBusy || (!body && !pending.length && !contextIds.length)) return;
@@ -24369,8 +24849,10 @@
     wrap._discussionPinId = null;
     beginNoteAgentSession(kind, itemId, agentId === "gpt" ? "gpt" : agentId, sessionTitle);
     syncNotePaieReplyForm(true);
-    wrap._commentDraft = null;
     appendOptimisticUserMessage(body, quote);
+    wrap._commentDraft = null;
+    wrap._commentChairId = null;
+    wrap._commentReplyWho = null;
     setGptDiscussPhase("sending");
     try {
       var fileIds = await uploadDiscussPendingFiles(kind, itemId);
@@ -24385,6 +24867,7 @@
             quote: quote,
             prefix: agentPrefix,
             suffix: "",
+            parent_id: replyToId || null,
             file_ids: fileIds,
           }),
         }
@@ -24395,9 +24878,11 @@
       clearGptComposer();
       var parentId = saved && saved.comment && saved.comment.id;
       markOptimisticUserSent();
+      scrollDiscussionToEnd();
       if (isDiscussionTargetActive(kind, itemId)) setGptDiscussPhase("thinking");
       if (isDiscussionTargetActive(kind, itemId)) await refreshNoteCommentsList();
       if (isDiscussionTargetActive(kind, itemId)) setGptDiscussPhase("thinking");
+      scrollDiscussionToEnd();
       await ensureDiscussionKnowledgeNotes();
       var kb = isDiscussionTargetActive(kind, itemId)
         ? discussionKnowledgeFields()
@@ -24504,7 +24989,9 @@
 
   async function submitNoteFooterComment(text) {
     var wrap = document.getElementById("note-editor-more-wrap");
-    var body = String(text || "").trim();
+    var packed = serializeGptComposer(noteGptEditor());
+    var body = String((packed && packed.text) || text || "").trim();
+    var chipQuote = ((packed && packed.quotes) || []).join("\n").trim();
     var pending = discussPendingFiles();
     if (!wrap || !wrap._shareKind || !wrap._shareId || (!body && !pending.length)) return;
     var api = window.NoteComments;
@@ -24512,8 +24999,10 @@
     var draft =
       wrap._commentDraft ||
       (api && api.selectionAnchor ? api.selectionAnchor(noteEditorCommentRoot()) : null);
+    var quote = chipQuote || (draft && draft.quote) || "";
     wrap._discussionPinId = null;
     var input = document.getElementById("note-paie-reply-input");
+    appendOptimisticUserMessage(body, quote);
     try {
       var fileIds = await uploadDiscussPendingFiles(wrap._shareKind, wrap._shareId);
       clearDiscussPendingContextNotes();
@@ -24527,7 +25016,7 @@
           method: "POST",
           body: JSON.stringify({
             body: body,
-            quote: (draft && draft.quote) || "",
+            quote: quote,
             prefix: (draft && draft.prefix) || "",
             suffix: (draft && draft.suffix) || "",
             parent_id: chairId || null,
@@ -24541,7 +25030,10 @@
       clearDiscussPendingFiles();
       clearNoteComposerCommentTarget();
       shareHaptic();
-      refreshNoteCommentsList();
+      markOptimisticUserSent();
+      scrollDiscussionToEnd();
+      await refreshNoteCommentsList();
+      scrollDiscussionToEnd();
     } catch (e) {
       alert(e.message || String(e));
     }
@@ -25101,7 +25593,8 @@
     var packed = serializeGptComposer();
     var quotes = packed.quotes || [];
     var body = packed.text || String(text || "").trim();
-    var quote = quotes.join("\n");
+    var draftQuote = wrap && wrap._commentDraft ? String(wrap._commentDraft.quote || "").trim() : "";
+    var quote = quotes.join("\n").trim() || draftQuote;
     if (!wrap || !path || wrap._researchRunning) return;
     var kind = wrap._shareKind;
     var itemId = wrap._shareId;
@@ -28803,11 +29296,18 @@
   function startTelegramOAuth(botId) {
     // Telegram возвращает данные в #tgAuthResult на return_to (не в query API callback).
     var returnTo = window.location.origin + "/webapp/";
+    try {
+      var u = new URL(window.location.href);
+      if (u.pathname.indexOf("/webapp") === 0) {
+        returnTo = u.origin + u.pathname + (u.search || "");
+      }
+    } catch (_) {}
     window.location.href =
       "https://oauth.telegram.org/auth?bot_id=" +
       encodeURIComponent(String(botId)) +
       "&origin=" +
       encodeURIComponent(window.location.origin) +
+      "&request_access=write" +
       "&return_to=" +
       encodeURIComponent(returnTo);
   }
@@ -29999,23 +30499,24 @@
       return;
     }
 
-    if (getStoredSession() || hasSessionHint() || isStandalonePwa()) {
-      startApp();
-      tryExistingBrowserSession().then(function (ok) {
-        if (ok === true || ok === "offline" || getStoredSession()) return;
-        setSessionHint(false);
-        gateLoginBootstrapped = false;
-        showGate();
-        bootstrapGateLogin();
-      });
-      return;
-    }
-
-    startApp();
+    // Браузер: сначала проверяем сессию, не стартуем app (иначе шторм 401
+    // и gate/login мигает или прячется до клика «Войти»).
+    showGate();
+    setGateStatus("Проверка входа…");
     tryExistingBrowserSession().then(function (ok) {
-      if (ok === true || ok === "offline") {
+      if (ok === true) {
+        setGateStatus("");
+        startApp();
         return;
       }
+      if (ok === "offline" && (getStoredSession() || hasSessionHint() || isStandalonePwa())) {
+        setGateStatus("");
+        startApp();
+        return;
+      }
+      setSessionHint(false);
+      setStoredSession("");
+      setGateStatus("");
       gateLoginBootstrapped = false;
       showGate();
       bootstrapGateLogin();

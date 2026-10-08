@@ -10,7 +10,7 @@ import os
 import re
 from functools import partial
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 from urllib.parse import quote, unquote
 
@@ -2542,6 +2542,21 @@ class _MiniappCalendarExcludedBody(BaseModel):
 class _MiniappCalendarRsvpBody(BaseModel):
     status: str = ""
     calendar_id: Optional[str] = None
+
+
+class _MiniappBookingLinkCreate(BaseModel):
+    title: Optional[str] = None
+    attendees: list[Any] = Field(default_factory=list)
+    duration_min: Optional[int] = None
+    link_mode: str = "reusable"
+    expire_days: Optional[int] = None
+
+
+class _PublicBookBody(BaseModel):
+    start: str = ""
+    duration_min: Optional[int] = None
+    guest_email: Optional[str] = None
+    guest_emails: Optional[list[str]] = None
 
 
 class _MiniappSettingsPatch(BaseModel):
@@ -6228,6 +6243,33 @@ async def miniapp_calendar_availability(
         raise HTTPException(status_code=502, detail=str(e)) from e
 
 
+@miniapp_router.post("/calendar/booking-links")
+async def miniapp_calendar_booking_link_create(
+    body: _MiniappBookingLinkCreate,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.services.booking_links import BookingLinkError, create_booking_link
+
+    def _run() -> dict[str, Any]:
+        return create_booking_link(
+            int(principal.telegram_user_id),
+            title=body.title,
+            attendees=_normalize_attendee_emails(body.attendees),
+            duration_min=body.duration_min,
+            link_mode=body.link_mode,
+            expire_days=body.expire_days,
+        )
+
+    try:
+        return await run_in_threadpool(_run)
+    except BookingLinkError as e:
+        raise HTTPException(status_code=e.status, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        _raise_calendar_http(e)
+
+
 @miniapp_router.post("/calendar/events")
 async def miniapp_calendar_event_create(
     body: _MiniappCalendarEventUpdate,
@@ -9886,6 +9928,153 @@ async def public_share_request_edit(
     if req.get("new"):
         await run_in_threadpool(_notify_edit_request, req, title)
     return {"ok": True, "status": req.get("status")}
+
+
+def _booking_http_error(exc: BaseException) -> None:
+    from assistant.services.booking_links import BookingLinkError
+
+    if isinstance(exc, BookingLinkError):
+        raise HTTPException(
+            status_code=exc.status,
+            detail={"reason": exc.reason, "message": str(exc)},
+        ) from exc
+    raise exc
+
+
+@app.get("/api/public/book/{token}")
+async def public_book_json(
+    token: str,
+    duration_min: Optional[int] = Query(None),
+) -> dict[str, Any]:
+    from assistant.services.booking_links import BookingLinkError, public_booking_meta
+
+    def _run() -> dict[str, Any]:
+        return public_booking_meta(token, duration_min=duration_min)
+
+    try:
+        return await run_in_threadpool(_run)
+    except BookingLinkError as e:
+        _booking_http_error(e)
+        raise
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        _raise_calendar_http(e)
+
+
+@app.get("/api/public/book/{token}/slots")
+async def public_book_day_slots(
+    token: str,
+    date: str = Query(""),
+    duration_min: Optional[int] = Query(None),
+) -> dict[str, Any]:
+    from assistant.services.booking_links import BookingLinkError, public_booking_day_slots
+
+    def _run() -> dict[str, Any]:
+        return public_booking_day_slots(token, date, duration_min=duration_min)
+
+    try:
+        return await run_in_threadpool(_run)
+    except BookingLinkError as e:
+        _booking_http_error(e)
+        raise
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        _raise_calendar_http(e)
+
+
+@app.post("/api/public/book/{token}/book")
+async def public_book_slot(token: str, body: _PublicBookBody) -> dict[str, Any]:
+    from assistant.services.booking_links import BookingLinkError, book_public_slot
+
+    def _run() -> dict[str, Any]:
+        return book_public_slot(
+            token,
+            start=body.start,
+            duration_min=body.duration_min,
+            guest_email=body.guest_email,
+            guest_emails=body.guest_emails,
+        )
+
+    try:
+        result = await run_in_threadpool(_run)
+    except BookingLinkError as e:
+        _booking_http_error(e)
+        raise
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        _raise_calendar_http(e)
+    created = result.pop("_created", None) or {}
+    owner_id = int(result.pop("_owner_id", 0) or 0)
+    if created and owner_id:
+        try:
+            from assistant.services import meeting_invites as inv
+
+            await inv.notify_invitees_for_miniapp(
+                organizer_uid=owner_id,
+                organizer_user={},
+                result=created,
+            )
+        except Exception as e:
+            print(f"[public_book] invite_notify err={e!r}")
+    return result
+
+
+@app.get("/book/{token}")
+async def public_book_page(token: str) -> HTMLResponse:
+    from assistant.lib.webapp_public import WEBAPP_BUILD_ID
+    from assistant.services.booking_links import (
+        BookingLinkError,
+        first_bookable_day,
+        format_booking_day_heading,
+        public_booking_dates_html,
+        public_booking_meta,
+    )
+
+    book_html_path = Path(__file__).resolve().parent / "webapp" / "book.html"
+    if not book_html_path.is_file():
+        raise HTTPException(status_code=404, detail="Страница недоступна")
+    html = book_html_path.read_text(encoding="utf-8")
+    title = "Выберите время"
+    lead = "Свободные слоты на ближайшие дни"
+    dates_html = public_booking_dates_html([])
+    day_heading = ""
+    duration_class = ""
+    meta: dict[str, Any] = {}
+    try:
+        meta = await run_in_threadpool(public_booking_meta, token)
+        title = str(meta.get("title") or "").strip() or title
+        tz = str(meta.get("timezone") or "").strip()
+        if tz:
+            lead = f"Время указано в часовом поясе {tz}"
+        days = list(meta.get("days") or [])
+        selected = first_bookable_day(days)
+        dates_html = public_booking_dates_html(days, selected=selected)
+        today = None
+        if days:
+            try:
+                today = date.fromisoformat(str(days[0].get("date") or "")[:10])
+            except ValueError:
+                today = None
+        if selected:
+            day_heading = format_booking_day_heading(selected, today=today)
+        if meta.get("duration_min"):
+            duration_class = " hidden"
+    except BookingLinkError:
+        meta = {}
+    except Exception:
+        meta = {}
+    meta_json = json.dumps(meta, ensure_ascii=False).replace("<", "\\u003c")
+    html = html.replace("{{BUILD}}", html_lib.escape(WEBAPP_BUILD_ID))
+    html = html.replace("{{TITLE}}", html_lib.escape(title))
+    html = html.replace("{{LEAD}}", html_lib.escape(lead))
+    html = html.replace("{{DATES}}", dates_html)
+    html = html.replace("{{DAY_HEADING}}", html_lib.escape(day_heading))
+    html = html.replace("{{DURATION_CLASS}}", duration_class)
+    html = html.replace("{{META_JSON}}", meta_json)
+    return HTMLResponse(content=html, headers=dict(_SHARE_PAGE_NO_CACHE))
 
 
 @app.get("/share/{token}")

@@ -1546,3 +1546,201 @@ def validate_meeting_slot(
         "start": start,
         "end": end,
     }
+
+
+BOOKING_HORIZON_DAYS = 14
+BOOKING_DURATIONS = (15, 30, 45, 60)
+
+
+def normalize_booking_duration(raw: Any, *, default: int = 30) -> int:
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        n = int(default)
+    if n in BOOKING_DURATIONS:
+        return n
+    return int(default) if int(default) in BOOKING_DURATIONS else 30
+
+
+def _attendee_busy_day(
+    owner_id: int,
+    email: str,
+    day_iso: str,
+    *,
+    work_start: datetime,
+    work_end: datetime,
+    tz: Any,
+) -> list[tuple[datetime, datetime]]:
+    from assistant.lib.calendar_user_lookup import lookup_user_id_by_calendar_email
+
+    em = str(email or "").strip().lower()
+    if not em or "@" not in em:
+        return []
+    uid = lookup_user_id_by_calendar_email(em)
+    if uid and int(uid) != int(owner_id):
+        return busy_intervals_day(
+            int(uid),
+            day_iso,
+            tz=tz,
+            work_start=work_start,
+            work_end=work_end,
+        )
+    via = busy_intervals_via_viewer_email(
+        int(owner_id), em, work_start, work_end
+    )
+    return list(via or [])
+
+
+def joint_busy_day(
+    owner_id: int,
+    day_iso: str,
+    attendee_emails: list[str] | None = None,
+) -> tuple[list[tuple[datetime, datetime]], datetime, datetime]:
+    work_start, work_end = _work_window(int(owner_id), day_iso)
+    tz = work_start.tzinfo or _tz_for(int(owner_id))
+    busy = list(
+        busy_intervals_day(
+            int(owner_id),
+            day_iso,
+            tz=tz,
+            work_start=work_start,
+            work_end=work_end,
+        )
+    )
+    seen: set[str] = set()
+    for raw in attendee_emails or []:
+        em = str(raw or "").strip().lower()
+        if not em or "@" not in em or em in seen:
+            continue
+        seen.add(em)
+        busy.extend(
+            _attendee_busy_day(
+                int(owner_id),
+                em,
+                day_iso,
+                work_start=work_start,
+                work_end=work_end,
+                tz=tz,
+            )
+        )
+    return calendar_merge_busy_intervals(busy), work_start, work_end
+
+
+def _is_weekend(day: date) -> bool:
+    return int(day.weekday()) >= 5
+
+
+def booking_horizon_days(
+    owner_id: int,
+    *,
+    days: int = BOOKING_HORIZON_DAYS,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    tz = _tz_for(int(owner_id))
+    clock = now or datetime.now(tz)
+    if clock.tzinfo is None:
+        clock = clock.replace(tzinfo=tz)
+    else:
+        clock = clock.astimezone(tz)
+    today = clock.date()
+    horizon = max(1, min(31, int(days or BOOKING_HORIZON_DAYS)))
+    out: list[dict[str, Any]] = []
+    for offset in range(horizon):
+        day = today + timedelta(days=offset)
+        out.append({"date": day.isoformat(), "weekend": _is_weekend(day)})
+    return out
+
+
+def joint_slot_is_free(
+    owner_id: int,
+    start: datetime,
+    end: datetime,
+    attendee_emails: list[str] | None = None,
+) -> bool:
+    tz = _tz_for(int(owner_id))
+    local_start = start.astimezone(tz) if start.tzinfo else start.replace(tzinfo=tz)
+    local_end = end.astimezone(tz) if end.tzinfo else end.replace(tzinfo=tz)
+    if local_end <= local_start:
+        return False
+    if _is_weekend(local_start.date()):
+        return False
+    day_iso = local_start.date().isoformat()
+    busy, work_start, work_end = joint_busy_day(
+        int(owner_id), day_iso, attendee_emails
+    )
+    if local_start < work_start or local_end > work_end:
+        return False
+    not_before = earliest_bookable_start(int(owner_id), day_iso)
+    if local_start < not_before:
+        return False
+    return not any(
+        _intervals_overlap(local_start, local_end, bs, be) for bs, be in busy
+    )
+
+
+def joint_free_slots_day(
+    owner_id: int,
+    day_iso: str,
+    attendee_emails: list[str] | None = None,
+    *,
+    duration_min: int = 30,
+    step_min: int | None = None,
+) -> list[dict[str, str]]:
+    """Свободные окна одного рабочего дня. Выходные — пустой список."""
+    try:
+        day = date.fromisoformat(str(day_iso)[:10])
+    except ValueError:
+        return []
+    if _is_weekend(day):
+        return []
+    dur = normalize_booking_duration(duration_min)
+    step = max(15, int(step_min or (15 if dur == 15 else 30)))
+    emails = [str(e).strip().lower() for e in (attendee_emails or []) if str(e).strip()]
+    busy, work_start, work_end = joint_busy_day(int(owner_id), day.isoformat(), emails)
+    cursor = max(
+        work_start,
+        earliest_bookable_start(int(owner_id), day.isoformat(), step_min=step),
+    )
+    out: list[dict[str, str]] = []
+    t = cursor
+    delta = timedelta(minutes=dur)
+    step_delta = timedelta(minutes=step)
+    while t + delta <= work_end:
+        end = t + delta
+        if not any(_intervals_overlap(t, end, bs, be) for bs, be in busy):
+            out.append(
+                {
+                    "start": t.isoformat(),
+                    "end": end.isoformat(),
+                    "date": day.isoformat(),
+                }
+            )
+        t += step_delta
+    return out
+
+
+def joint_free_slots_range(
+    owner_id: int,
+    attendee_emails: list[str] | None = None,
+    *,
+    days: int = BOOKING_HORIZON_DAYS,
+    duration_min: int = 30,
+    step_min: int | None = None,
+    now: datetime | None = None,
+) -> list[dict[str, str]]:
+    """Свободные окна на горизонте, когда свободны организатор и участники."""
+    out: list[dict[str, str]] = []
+    for row in booking_horizon_days(int(owner_id), days=days, now=now):
+        if row.get("weekend"):
+            continue
+        out.extend(
+            joint_free_slots_day(
+                int(owner_id),
+                str(row["date"]),
+                attendee_emails,
+                duration_min=duration_min,
+                step_min=step_min,
+            )
+        )
+    return out
+

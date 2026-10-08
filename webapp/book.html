@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="ru" class="tg-dark vkui--vkIOS--dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#19191a" />
+  <title>{{TITLE}}</title>
+  <meta name="description" content="Выберите свободное время для встречи" />
+  <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v={{BUILD}}" />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: var(--vkui--color_background, #19191a);
+      --text: var(--vkui--color_text_primary, #e1e3e6);
+      --muted: var(--vkui--color_text_secondary, #909499);
+      --faint: var(--vkui--color_text_tertiary, #76787a);
+      --border: var(--vkui--color_separator_primary, rgba(255, 255, 255, 0.12));
+      --accent: var(--vkui--color_icon_accent, #529ef4);
+      --surface: var(--vkui--color_background_content, #232324);
+      --surface-2: rgba(255, 255, 255, 0.06);
+      --on-accent: #fff;
+      --danger: #f5a3a3;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: var(--vkui--font_family_base, -apple-system, system-ui, "Helvetica Neue", Roboto, sans-serif);
+      color: var(--text);
+      background: var(--bg);
+    }
+    .wrap {
+      max-width: 28rem;
+      margin: 0 auto;
+      padding: 1.5rem 1.15rem calc(8.75rem + env(safe-area-inset-bottom));
+    }
+    .brand {
+      margin: 0 0 1.1rem;
+      color: var(--text);
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+    h1 {
+      margin: 0 0 0.3rem;
+      font-size: 1.5rem;
+      font-weight: 650;
+      letter-spacing: -0.03em;
+      line-height: 1.2;
+    }
+    .lead {
+      margin: 0 0 1.15rem;
+      color: var(--muted);
+      font-size: 0.9375rem;
+      line-height: 1.45;
+    }
+    .status, .error { margin: 0 0 1rem; font-size: 0.9375rem; line-height: 1.4; }
+    .error { color: var(--danger); }
+    .hidden { display: none !important; }
+
+    .block-label {
+      margin: 0 0 0.45rem;
+      color: var(--faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .seg {
+      display: flex;
+      gap: 4px;
+      margin: 0 0 1.15rem;
+      padding: 3px;
+      border-radius: 12px;
+      background: rgba(120, 120, 128, 0.22);
+    }
+    .seg button {
+      flex: 1 1 0;
+      margin: 0;
+      padding: 0.55rem 0.2rem;
+      border: none;
+      border-radius: 10px;
+      font: inherit;
+      font-size: 0.8125rem;
+      font-weight: 650;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+    }
+    .seg button.is-active {
+      color: var(--text);
+      background: var(--surface);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+    }
+
+    .dates {
+      display: flex;
+      gap: 0.45rem;
+      margin: 0 0 1.15rem;
+      padding: 0.1rem 0 0.35rem;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      scroll-snap-type: x proximity;
+    }
+    .dates::-webkit-scrollbar { display: none; }
+    .date-chip {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 4.15rem;
+      min-height: 4.4rem;
+      padding: 0.45rem 0.3rem;
+      border: 1px solid transparent;
+      border-radius: 16px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+      cursor: pointer;
+      scroll-snap-align: start;
+    }
+    .date-chip.is-empty,
+    .date-chip.is-weekend {
+      opacity: 0.38;
+    }
+    .date-chip.is-weekend {
+      cursor: default;
+    }
+    .date-chip.is-active {
+      opacity: 1;
+      border-color: var(--accent);
+      background: rgba(82, 158, 244, 0.16);
+    }
+    .date-chip-wd {
+      color: var(--muted);
+      font-size: 0.6875rem;
+      font-weight: 650;
+      letter-spacing: 0.02em;
+      text-transform: lowercase;
+    }
+    .date-chip.is-active .date-chip-wd { color: var(--accent); }
+    .date-chip-num {
+      margin-top: 0.1rem;
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+    }
+    .date-chip-rel {
+      margin-top: 0.12rem;
+      color: var(--faint);
+      font-size: 0.625rem;
+      font-weight: 600;
+    }
+
+    .day-heading {
+      margin: 0 0 0.65rem;
+      font-size: 1.05rem;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+
+    .slots {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.45rem;
+    }
+    .slot {
+      appearance: none;
+      min-height: 44px;
+      margin: 0;
+      padding: 0.65rem 0.4rem;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+      font-size: 0.9375rem;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      cursor: pointer;
+    }
+    .slot:hover { border-color: rgba(82, 158, 244, 0.45); }
+    .slot.is-active {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: var(--on-accent);
+    }
+    .empty {
+      margin: 0.35rem 0 0;
+      padding: 1.1rem 0.9rem;
+      border-radius: 14px;
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 0.9375rem;
+      line-height: 1.4;
+    }
+
+    .sk {
+      position: relative;
+      overflow: hidden;
+      background: var(--surface);
+    }
+    .sk::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+      animation: sk 1.15s linear infinite;
+    }
+    @keyframes sk {
+      from { transform: translateX(-100%); }
+      to { transform: translateX(100%); }
+    }
+    .date-chip.sk { border: none; pointer-events: none; }
+    .slot.sk { border: none; pointer-events: none; min-height: 44px; }
+
+    .dock {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding: 0.75rem 1.15rem calc(0.85rem + env(safe-area-inset-bottom));
+      border-top: 1px solid var(--border);
+      background: rgba(25, 25, 26, 0.92);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+    .dock-inner {
+      max-width: 28rem;
+      margin: 0 auto;
+    }
+    .dock-summary {
+      margin: 0 0 0.55rem;
+      color: var(--muted);
+      font-size: 0.8125rem;
+      line-height: 1.35;
+    }
+    .dock-summary strong {
+      color: var(--text);
+      font-weight: 650;
+    }
+    .field {
+      display: block;
+      width: 100%;
+      margin: 0 0 0.55rem;
+      padding: 0.75rem 0.9rem;
+      border: none;
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+      font-size: 0.9375rem;
+    }
+    .field:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(82, 158, 244, 0.45);
+    }
+    .field.is-invalid {
+      box-shadow: 0 0 0 2px rgba(245, 163, 163, 0.55);
+    }
+    .book-btn {
+      width: 100%;
+      min-height: 46px;
+      margin: 0;
+      padding: 0.8rem 1rem;
+      border: none;
+      border-radius: 14px;
+      background: var(--accent);
+      color: var(--on-accent);
+      font: inherit;
+      font-size: 1rem;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .book-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .success {
+      margin-top: 1.5rem;
+      padding: 1.25rem 1.1rem;
+      border-radius: 18px;
+      background: var(--surface);
+    }
+    .success h2 {
+      margin: 0 0 0.35rem;
+      font-size: 1.25rem;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+    .success p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.45;
+    }
+    .success strong { color: var(--text); font-weight: 650; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <p class="brand">Leo</p>
+    <p id="book-status" class="status hidden"></p>
+    <p id="book-error" class="error hidden"></p>
+    <div id="book-form">
+      <h1 id="book-title">{{TITLE}}</h1>
+      <p class="lead" id="book-lead">{{LEAD}}</p>
+      <p class="block-label{{DURATION_CLASS}}" id="book-duration-label">Длительность</p>
+      <div id="book-duration" class="seg{{DURATION_CLASS}}" role="radiogroup" aria-label="Длительность">
+        <button type="button" data-dur="15">15 мин</button>
+        <button type="button" data-dur="30" class="is-active">30 мин</button>
+        <button type="button" data-dur="45">45 мин</button>
+        <button type="button" data-dur="60">60 мин</button>
+      </div>
+      <p class="block-label">День</p>
+      <div id="book-dates" class="dates" role="tablist" aria-label="Дни">{{DATES}}</div>
+      <h2 class="day-heading" id="book-day-heading">{{DAY_HEADING}}</h2>
+      <div id="book-slots" class="slots">
+        <div class="slot sk"></div><div class="slot sk"></div><div class="slot sk"></div>
+        <div class="slot sk"></div><div class="slot sk"></div><div class="slot sk"></div>
+        <div class="slot sk"></div><div class="slot sk"></div><div class="slot sk"></div>
+      </div>
+      <p id="book-empty" class="empty hidden">В этот день свободных слотов нет</p>
+    </div>
+    <div id="book-success" class="success hidden">
+      <h2>Встреча назначена</h2>
+      <p id="book-success-text"></p>
+    </div>
+  </main>
+  <div id="book-dock" class="dock">
+    <div class="dock-inner">
+      <p class="dock-summary" id="book-summary">Выберите день и время</p>
+      <input id="book-email" class="field" type="text" inputmode="email" autocomplete="email" required placeholder="Email участников, через запятую" />
+      <button type="button" class="book-btn" id="book-submit" disabled>Забронировать</button>
+    </div>
+  </div>
+  <script id="book-meta" type="application/json">{{META_JSON}}</script>
+  <script src="/webapp/book.js?v={{BUILD}}"></script>
+</body>
+</html>

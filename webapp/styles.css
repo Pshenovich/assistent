@@ -7090,15 +7090,30 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   align-items: stretch;
   gap: 8px;
   box-sizing: border-box;
+  width: 100%;
   max-width: 100%;
-  margin: 0 0 6px;
+  margin: 0 0 8px;
   padding: 6px 10px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.note-discuss-bubble .note-discuss-reply {
+  margin: 0 0 8px;
+}
+
+.note-discuss-reply.is-nav {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.note-discuss-reply.is-nav:hover,
+.note-discuss-reply.is-nav:active {
+  filter: brightness(1.08);
 }
 
 .note-discuss-msg.is-user .note-discuss-reply {
-  background: color-mix(in srgb, var(--accent, #5280e8) 18%, transparent);
+  background: rgba(255, 255, 255, 0.18);
 }
 
 .note-discuss-reply-bar {
@@ -7109,7 +7124,7 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 }
 
 .note-discuss-msg.is-user .note-discuss-reply-bar {
-  background: color-mix(in srgb, var(--on-accent, #fff) 70%, transparent);
+  background: rgba(255, 255, 255, 0.75);
 }
 
 .note-discuss-reply-copy {
@@ -7133,7 +7148,7 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 }
 
 .note-discuss-msg.is-user .note-discuss-reply-who {
-  color: color-mix(in srgb, var(--on-accent, #fff) 85%, transparent);
+  color: rgba(255, 255, 255, 0.92);
 }
 
 .note-discuss-reply-quote {
@@ -7143,7 +7158,11 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 }
 
 .note-discuss-msg.is-user .note-discuss-reply-quote {
-  color: color-mix(in srgb, var(--on-accent, #fff) 72%, transparent);
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.note-discuss-bubble-body {
+  min-width: 0;
 }
 
 .note-discuss-bubble {
@@ -7312,7 +7331,14 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
 }
 
-.note-discuss-msg.is-user .note-discuss-menu {
+.note-discuss-menu.is-placed {
+  position: fixed;
+  bottom: auto;
+  right: auto;
+  z-index: 360;
+}
+
+.note-discuss-msg.is-user .note-discuss-menu:not(.is-placed) {
   left: auto;
   right: 0;
 }
@@ -9893,11 +9919,11 @@ textarea.event-sheet-title--area {
 .event-sheet-kind-btn {
   flex: 1 1 0;
   margin: 0;
-  padding: 0.45rem 0.35rem;
+  padding: 0.4rem 0.2rem;
   border: none;
   border-radius: 8px;
   font: inherit;
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-tertiary);
   background: transparent;
@@ -9913,6 +9939,36 @@ textarea.event-sheet-title--area {
 
 .event-sheet-kind-btn:active:not(.is-active) {
   opacity: 0.85;
+}
+
+.booking-sheet-lead {
+  margin: 0 0 0.15rem;
+  padding: 0 0.15rem;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.event-sheet-row--stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  padding-top: 0.65rem;
+  padding-bottom: 0.65rem;
+}
+
+.booking-sheet-seg {
+  margin: 0;
+  width: 100%;
+}
+
+.booking-sheet-copy {
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
+.booking-sheet-url {
+  width: 100%;
 }
 
 .event-sheet-assignee--locked .event-sheet-row--nav {

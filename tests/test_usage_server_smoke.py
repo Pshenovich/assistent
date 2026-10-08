@@ -83,6 +83,26 @@ def test_public_auth_config_responds(client: TestClient):
     assert "telegram_login_enabled" in resp.json()
 
 
+def test_public_book_page_serves_html(client: TestClient):
+    resp = client.get("/book/abcdefghijklmnopqrstuvwx")
+    assert resp.status_code == 200
+    assert "text/html" in (resp.headers.get("content-type") or "")
+    assert "/webapp/book.js" in resp.text
+    assert "id=\"book-title\"" in resp.text
+    assert "Выберите время" in resp.text
+    assert "id=\"book-meta\"" in resp.text
+
+
+def test_public_book_slots_unknown_token(client: TestClient):
+    resp = client.get("/api/public/book/abcdefghijklmnopqrstuvwx/slots?date=2026-06-05")
+    assert resp.status_code == 404
+
+
+def test_public_book_api_unknown_token(client: TestClient):
+    resp = client.get("/api/public/book/abcdefghijklmnopqrstuvwx")
+    assert resp.status_code == 404
+
+
 @pytest.mark.parametrize(
     "headers",
     [
