@@ -312,7 +312,11 @@ def delete_remote(user_id: int, task: dict[str, Any]) -> None:
 
 def schedule_pull(user_id: int, start: datetime, end: datetime) -> None:
     """Импорт Google Tasks в фоне, если краткое ожидание не успело."""
+    from assistant.integrations import google_calendar_oauth
+
     uid = int(user_id)
+    if not google_calendar_oauth.user_token_path(uid).is_file():
+        return
     now = time.monotonic()
     with _PULL_GUARD:
         if uid in _PULL_INFLIGHT:

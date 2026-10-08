@@ -373,9 +373,11 @@ def test_reconcile_drops_event_for_imported_google_task(tmp_path, monkeypatch):
     store._CONN = None  # type: ignore[attr-defined]
 
 
-def test_schedule_pull_runs_once_in_background():
+def test_schedule_pull_runs_once_in_background(tmp_path, monkeypatch):
     import time
 
+    monkeypatch.setenv("GOOGLE_CALENDAR_USER_TOKENS_DIR", str(tmp_path))
+    (tmp_path / "9022.json").write_text("{}", encoding="utf-8")
     gt._reset_pull_state_for_tests()
     started: list[int] = []
 
@@ -393,4 +395,24 @@ def test_schedule_pull_runs_once_in_background():
             time.sleep(0.01)
         time.sleep(0.05)
     assert started == [1]
+    gt._reset_pull_state_for_tests()
+
+
+def test_schedule_pull_skips_users_without_google(tmp_path, monkeypatch):
+    import time
+
+    monkeypatch.setenv("GOOGLE_CALENDAR_USER_TOKENS_DIR", str(tmp_path))
+    gt._reset_pull_state_for_tests()
+    started: list[int] = []
+
+    def _pull(*_a, **_k):
+        started.append(1)
+        return []
+
+    start = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    end = datetime(2026, 10, 8, tzinfo=timezone.utc)
+    with patch.object(gt, "pull_into_leo", _pull):
+        gt.schedule_pull(9023, start, end)
+        time.sleep(0.05)
+    assert started == []
     gt._reset_pull_state_for_tests()
