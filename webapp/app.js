@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261008-discuss-reply";
+  var WEBAPP_BUILD = "20261008-composer-scroll";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261008-discuss-reply";
+  const NOTE_EDITOR_ASSET_V = "20261008-composer-scroll";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -19049,6 +19049,136 @@
     return wraps;
   }
 
+  function scrollTextareaCaretIntoView(el) {
+    if (!el || el.tagName !== "TEXTAREA") return;
+    var value = String(el.value || "");
+    var pos = el.selectionEnd != null ? el.selectionEnd : value.length;
+    if (pos >= value.length) {
+      el.scrollTop = el.scrollHeight;
+      return;
+    }
+    var cs = window.getComputedStyle(el);
+    var mirror = document.createElement("div");
+    var props = [
+      "boxSizing",
+      "width",
+      "paddingTop",
+      "paddingRight",
+      "paddingBottom",
+      "paddingLeft",
+      "borderTopWidth",
+      "borderRightWidth",
+      "borderBottomWidth",
+      "borderLeftWidth",
+      "fontFamily",
+      "fontSize",
+      "fontWeight",
+      "fontStyle",
+      "letterSpacing",
+      "textTransform",
+      "wordSpacing",
+      "textIndent",
+      "lineHeight",
+      "whiteSpace",
+      "wordWrap",
+      "overflowWrap",
+    ];
+    mirror.style.position = "absolute";
+    mirror.style.visibility = "hidden";
+    mirror.style.left = "-9999px";
+    mirror.style.top = "0";
+    mirror.style.whiteSpace = "pre-wrap";
+    mirror.style.wordWrap = "break-word";
+    mirror.style.overflowWrap = "break-word";
+    mirror.style.width = el.clientWidth + "px";
+    props.forEach(function (p) {
+      try {
+        mirror.style[p] = cs[p];
+      } catch (_) {}
+    });
+    mirror.textContent = value.slice(0, pos);
+    var marker = document.createElement("span");
+    marker.textContent = "|";
+    mirror.appendChild(marker);
+    document.body.appendChild(mirror);
+    var top = marker.offsetTop;
+    var bottom = top + Math.max(marker.offsetHeight, composerLineHeight(el));
+    document.body.removeChild(mirror);
+    var pad = 6;
+    if (bottom > el.scrollTop + el.clientHeight - pad) {
+      el.scrollTop = bottom - el.clientHeight + pad;
+    } else if (top < el.scrollTop + pad) {
+      el.scrollTop = Math.max(0, top - pad);
+    }
+  }
+
+  function scrollComposerCaretIntoView(el) {
+    if (!el) return;
+    if (el.scrollHeight <= el.clientHeight + 2) return;
+    var run = function () {
+      if (!el.isConnected) return;
+      if (el.scrollHeight <= el.clientHeight + 2) return;
+      if (el.tagName === "TEXTAREA") {
+        scrollTextareaCaretIntoView(el);
+        return;
+      }
+      if (!el.isContentEditable) {
+        el.scrollTop = el.scrollHeight;
+        return;
+      }
+      var sel = window.getSelection && window.getSelection();
+      if (!sel || !sel.rangeCount) {
+        el.scrollTop = el.scrollHeight;
+        return;
+      }
+      var range = sel.getRangeAt(0);
+      var root = range.commonAncestorContainer;
+      var rootEl = root && (root.nodeType === 1 ? root : root.parentNode);
+      if (!rootEl || (rootEl !== el && !el.contains(rootEl))) {
+        el.scrollTop = el.scrollHeight;
+        return;
+      }
+      var caretRect = null;
+      var rects = range.getClientRects();
+      if (rects && rects.length) caretRect = rects[rects.length - 1];
+      if (!caretRect || (!(caretRect.width || caretRect.height) && !caretRect.top)) {
+        caretRect = range.getBoundingClientRect();
+      }
+      if (!caretRect || (!(caretRect.width || caretRect.height) && !caretRect.top)) {
+        // Пустой rect у caret в конце строки — временный маркер.
+        try {
+          var marker = document.createElement("span");
+          marker.textContent = "\u200b";
+          var probe = range.cloneRange();
+          probe.collapse(false);
+          probe.insertNode(marker);
+          caretRect = marker.getBoundingClientRect();
+          var parent = marker.parentNode;
+          if (parent) {
+            parent.removeChild(marker);
+            if (parent.normalize) parent.normalize();
+          }
+          sel.removeAllRanges();
+          sel.addRange(range);
+        } catch (_) {
+          caretRect = null;
+        }
+      }
+      if (!caretRect || (!(caretRect.width || caretRect.height) && !caretRect.top)) {
+        el.scrollTop = el.scrollHeight;
+        return;
+      }
+      var box = el.getBoundingClientRect();
+      var margin = 6;
+      if (caretRect.bottom > box.bottom - margin) {
+        el.scrollTop += caretRect.bottom - (box.bottom - margin);
+      } else if (caretRect.top < box.top + margin) {
+        el.scrollTop -= box.top + margin - caretRect.top;
+      }
+    };
+    window.requestAnimationFrame(run);
+  }
+
   function autosizeNoteComposer(el) {
     if (!el) return;
     var line = composerLineHeight(el);
@@ -19057,8 +19187,10 @@
     var minSingle = Math.round(line + Math.max(padY, 8));
     var minMulti = Math.round(line * 2 + padY);
     var maxH = 136;
+    var focused = document.activeElement === el;
     el.classList.remove("is-multiline");
     el.classList.remove("is-overflowing");
+    // height:auto сбрасывает scrollTop — после ресайза вернём курсор в зону видимости.
     el.style.height = "auto";
     var value = composerEditorValue(el);
     if (el.querySelector && el.querySelector(".note-gpt-quote-chip")) {
@@ -19084,6 +19216,9 @@
       el.classList.add("is-overflowing");
     }
     el.style.height = h + "px";
+    if (focused && el.classList.contains("is-overflowing")) {
+      scrollComposerCaretIntoView(el);
+    }
   }
 
   var DISCUSS_ATTACH_MAX = 8;
@@ -19955,6 +20090,25 @@
           else form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
         }
       });
+      input.addEventListener("keyup", function (e) {
+        if (!input.classList.contains("is-overflowing")) return;
+        var key = e && e.key;
+        if (
+          key === "ArrowUp" ||
+          key === "ArrowDown" ||
+          key === "ArrowLeft" ||
+          key === "ArrowRight" ||
+          key === "Home" ||
+          key === "End" ||
+          key === "PageUp" ||
+          key === "PageDown"
+        ) {
+          scrollComposerCaretIntoView(input);
+        }
+      });
+      input.addEventListener("click", function () {
+        if (input.classList.contains("is-overflowing")) scrollComposerCaretIntoView(input);
+      });
     }
     if (editor) {
       function sizeGptEditor() {
@@ -19971,9 +20125,29 @@
         syncNotePaieReplyForm();
         syncDiscussMentionMenu();
       });
-      editor.addEventListener("keyup", function () {
+      editor.addEventListener("keyup", function (e) {
         rememberGptEditorRange();
         syncDiscussMentionMenu();
+        if (!editor.classList.contains("is-overflowing")) return;
+        var key = e && e.key;
+        if (
+          key === "ArrowUp" ||
+          key === "ArrowDown" ||
+          key === "ArrowLeft" ||
+          key === "ArrowRight" ||
+          key === "Home" ||
+          key === "End" ||
+          key === "PageUp" ||
+          key === "PageDown" ||
+          key === "Enter" ||
+          key === "Backspace" ||
+          key === "Delete"
+        ) {
+          scrollComposerCaretIntoView(editor);
+        }
+      });
+      editor.addEventListener("click", function () {
+        if (editor.classList.contains("is-overflowing")) scrollComposerCaretIntoView(editor);
       });
       editor.addEventListener("pointerup", function () {
         window.setTimeout(function () {
@@ -20002,6 +20176,7 @@
         rememberGptEditorRange();
         syncNotePaieReplyForm();
         syncDiscussMentionMenu();
+        if (editor.classList.contains("is-overflowing")) scrollComposerCaretIntoView(editor);
       });
       editor.addEventListener("keydown", function (e) {
         if (e.key === "Escape") {
