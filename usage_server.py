@@ -1030,13 +1030,6 @@ def _usd_to_rub() -> float:
         return 92.0
 
 
-def _host_header_hostname(request: Request) -> str:
-    h = (request.headers.get("host") or "").strip()
-    if not h:
-        return ""
-    return h.rsplit(":", 1)[0].strip().lower()
-
-
 def _is_loopback_addr(addr: str) -> bool:
     addr = (addr or "").strip()
     if not addr:
@@ -1049,17 +1042,22 @@ def _is_loopback_addr(addr: str) -> bool:
         return False
 
 
-def _forwarded_client_ip(request: Request) -> str | None:
-    """IP исходного клиента за reverse-proxy (nginx X-Real-IP / X-Forwarded-For)."""
-    xff = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-    if xff:
-        return xff
-    real = (request.headers.get("X-Real-IP") or "").strip()
-    return real or None
+def _forwarded_client_ips(request: Request) -> list[str]:
+    """Все IP из заголовков reverse-proxy (X-Forwarded-For целиком и X-Real-IP).
+
+    Начало X-Forwarded-For клиент может прислать сам, nginx лишь дописывает в конец.
+    """
+    ips = [p.strip() for p in (request.headers.get("X-Forwarded-For") or "").split(",")]
+    ips.append((request.headers.get("X-Real-IP") or "").strip())
+    return [ip for ip in ips if ip]
 
 
 def _is_local_dashboard_request(request: Request) -> bool:
-    """Локальный доступ без токена: прямой loopback, не публичный nginx-прокси."""
+    """Локальный доступ без токена: прямой loopback, не публичный nginx-прокси.
+
+    Заголовки Host и X-Forwarded-For задаёт клиент, поэтому их loopback-значения
+    сами по себе доступ не дают.
+    """
     if os.getenv("USAGE_DASHBOARD_FORCE_AUTH", "").strip().lower() in (
         "1",
         "true",
@@ -1068,18 +1066,10 @@ def _is_local_dashboard_request(request: Request) -> bool:
         "on",
     ):
         return False
-    forwarded = _forwarded_client_ip(request)
-    if forwarded:
-        return _is_loopback_addr(forwarded)
     client = request.client
-    if client is not None:
-        ch = (client.host or "").strip()
-        if ch and _is_loopback_addr(ch):
-            return True
-    hh = _host_header_hostname(request)
-    if hh and _is_loopback_addr(hh):
-        return True
-    return False
+    if client is None or not _is_loopback_addr(client.host or ""):
+        return False
+    return all(_is_loopback_addr(ip) for ip in _forwarded_client_ips(request))
 
 
 def _require_token(request: Request) -> None:

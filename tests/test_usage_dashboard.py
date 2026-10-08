@@ -38,6 +38,33 @@ def test_nginx_public_client_requires_token(monkeypatch):
     assert _is_local_dashboard_request(req) is False
 
 
+def test_loopback_via_local_nginx_is_local(monkeypatch):
+    monkeypatch.delenv("USAGE_DASHBOARD_FORCE_AUTH", raising=False)
+    req = _request(
+        client_host="127.0.0.1",
+        headers=[("x-real-ip", "127.0.0.1"), ("x-forwarded-for", "127.0.0.1")],
+    )
+    assert _is_local_dashboard_request(req) is True
+
+
+def test_spoofed_forwarded_for_through_nginx_requires_token(monkeypatch):
+    monkeypatch.delenv("USAGE_DASHBOARD_FORCE_AUTH", raising=False)
+    req = _request(
+        client_host="127.0.0.1",
+        headers=[("x-real-ip", "8.8.8.8"), ("x-forwarded-for", "127.0.0.1, 8.8.8.8")],
+    )
+    assert _is_local_dashboard_request(req) is False
+
+
+def test_spoofed_headers_from_remote_client_require_token(monkeypatch):
+    monkeypatch.delenv("USAGE_DASHBOARD_FORCE_AUTH", raising=False)
+    req = _request(
+        client_host="8.8.8.8",
+        headers=[("host", "127.0.0.1"), ("x-real-ip", "127.0.0.1"), ("x-forwarded-for", "127.0.0.1")],
+    )
+    assert _is_local_dashboard_request(req) is False
+
+
 def test_force_auth_disables_loopback_bypass(monkeypatch):
     monkeypatch.setenv("USAGE_DASHBOARD_FORCE_AUTH", "1")
     assert _is_local_dashboard_request(_request(client_host="127.0.0.1")) is False
