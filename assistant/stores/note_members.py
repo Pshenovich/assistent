@@ -154,8 +154,8 @@ def upsert_profile(
             telegram_registry.register_user(
                 telegram_user_id=int(uid), telegram_username=uname
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[note_members] registry update failed user={uid} err={e!r}")
 
 
 def get_profile(user_id: int | str) -> Optional[dict[str, Any]]:
@@ -456,8 +456,8 @@ def resolve_contact_telegram_id(
             pending_uid = access.lookup_pending_user_id(uname)
             if pending_uid:
                 direct = int(pending_uid)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[note_members] pending lookup failed username={uname} err={e!r}")
     if direct <= 0:
         who = f"@{uname}" if uname else "контакта"
         raise ValueError(

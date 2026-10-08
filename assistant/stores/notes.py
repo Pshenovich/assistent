@@ -724,8 +724,8 @@ def duplicate_note(user_id: int | str, note_id: int) -> Optional[dict[str, Any]]
 
         if note_sheets_store.note_allows_sheets(src):
             note_sheets_store.copy_sheets(int(src["id"]), int(dup["id"]))
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[notes] duplicate sheets failed src={src['id']} dup={dup['id']} err={e!r}")
     if src.get("is_owner"):
         try:
             from assistant.stores import tags as tags_store
@@ -742,8 +742,8 @@ def duplicate_note(user_id: int | str, note_id: int) -> Optional[dict[str, Any]]
                     uid, [("local", str(dup["id"]))]
                 ).get(("local", str(dup["id"])), [])
                 dup["project"] = dup["tags"][0] if dup["tags"] else None
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[notes] duplicate tags failed dup={dup['id']} err={e!r}")
     dup["pinned"] = False
     return _with_sharing(dup, uid)
 
@@ -762,8 +762,8 @@ def delete_note(user_id: int | str, note_id: int) -> bool:
             from assistant.stores import note_sheets as note_sheets_store
 
             note_sheets_store.delete_all_for_note(int(note_id))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[notes] delete sheets failed note={note_id} err={e!r}")
         try:
             with _LOCK:
                 _conn().execute(
@@ -771,26 +771,26 @@ def delete_note(user_id: int | str, note_id: int) -> bool:
                     (str(int(note_id)),),
                 )
                 _conn().commit()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[notes] delete note cleanup failed note={note_id} err={e!r}")
         try:
             from assistant.stores import note_members
 
             note_members.delete_all_for_note(uid, int(note_id))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[notes] delete members failed note={note_id} err={e!r}")
         try:
             from assistant.stores import teams_store
 
             teams_store.delete_all_for_note(uid, int(note_id))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[notes] delete team shares failed note={note_id} err={e!r}")
     try:
         from assistant.stores import hashtags as hashtags_store
 
         hashtags_store.delete_item_links(uid, "local", note_id)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[notes] delete hashtags failed note={note_id} err={e!r}")
     return ok
 
 

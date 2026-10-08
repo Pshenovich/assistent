@@ -155,8 +155,8 @@ def add_approved_user(
         telegram_registry.register_user(
             telegram_user_id=int(user_id), telegram_username=username
         )
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[access] registry update failed user={user_id} err={e!r}")
     clear_request_state(int(user_id), scope=scope)
 
 

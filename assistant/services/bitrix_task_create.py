@@ -54,8 +54,8 @@ def is_create_task_request(text: str) -> bool:
 
         if is_assign_task_request(raw):
             return False
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[bitrix_task_create] assign check failed err={e!r}")
     # Без слова «битрикс» Bitrix-create только с названием в «кавычках».
     if not re.search(r"(?i)\b(битрикс|bitrix24?)\b", raw):
         if not _TITLE_QUOTED_RE.search(raw):

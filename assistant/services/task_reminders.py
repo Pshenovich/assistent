@@ -38,8 +38,8 @@ def iter_task_user_ids() -> list[int]:
     ids = set(mr.iter_calendar_user_ids())
     try:
         ids.update(calendar_tasks_store.list_involved_user_ids())
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[task_reminder] list task users failed err={e!r}")
     return sorted(ids)
 
 

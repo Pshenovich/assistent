@@ -34,8 +34,8 @@ def parse_bitrix_intent(text: str) -> str | None:
 
         if is_assign_task_request(text):
             return None
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[nlu_regex] assign check failed err={e!r}")
     # Страховка: «поставь/создай задачу …» без явного «битрикс» не уводим в Bitrix.
     if re.search(
         r"\b(поставь|закинь|передай|назначь|создай|добавь|заведи|оформи|сделай)\w*\b",

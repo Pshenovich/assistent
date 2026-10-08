@@ -604,8 +604,8 @@ def contact_telegram_user_id(contact: dict[str, Any] | None) -> int | None:
             found = note_members._lookup_profile_by_username(uname)
             if found:
                 return int(found)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[calendar_attendees] profile lookup failed username={uname} err={e!r}")
     em = str(contact.get("email") or "").strip().lower()
     if em:
         found = lookup_user_id_by_calendar_email(em)

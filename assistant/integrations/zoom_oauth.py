@@ -308,8 +308,8 @@ def _persist_token_store(telegram_user_id: int, store: dict[str, object]) -> Non
     path.write_text(json.dumps(store, ensure_ascii=False, indent=2), encoding="utf-8")
     try:
         path.chmod(0o600)
-    except OSError:
-        pass
+    except OSError as e:
+        print(f"[zoom_oauth] chmod 600 token failed path={path} err={e!r}")
 
 
 def _apply_token_response_to_store(store: dict[str, object], body: dict[str, object]) -> None:
@@ -427,8 +427,8 @@ def exchange_code_and_save_token(
     try:
         pending_data["exchanged"] = True
         pending_path.write_text(json.dumps(pending_data, ensure_ascii=False), encoding="utf-8")
-    except OSError:
-        pass
+    except OSError as e:
+        print(f"[zoom_oauth] mark pending exchanged failed err={e!r}")
     try:
         fetch_and_store_user_profile(uid, str(store.get("access_token") or ""))
     except Exception as e:

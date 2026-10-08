@@ -235,8 +235,8 @@ def remove_user_token(telegram_user_id: int) -> bool:
                 from assistant.lib.calendar_user_lookup import invalidate_email_index
 
                 invalidate_email_index()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[google_oauth] invalidate email index failed err={e!r}")
             return True
     except OSError:
         pass

@@ -360,8 +360,8 @@ def delete_comment(
         from assistant.stores import comment_files
 
         comment_files.delete_for_comment(int(comment_id))
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[share_comments] delete comment files failed comment={comment_id} err={e!r}")
     with _LOCK:
         cur = _conn().execute(
             "DELETE FROM share_comments WHERE id = ?",

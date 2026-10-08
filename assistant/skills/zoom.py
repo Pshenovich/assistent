@@ -319,8 +319,8 @@ async def _update_zoom_only(msg, uid: int, meeting: dict[str, Any], parsed: dict
                 },
                 source=str(meeting.get("source") or "zoom_update"),
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[zoom] register recent meeting failed meeting_id={mid} err={e!r}")
         when = cal_svc.format_event_when(start, end, uid)
         await msg.reply_text(f"Zoom-встреча перенесена: {when}")
     except Exception as e:

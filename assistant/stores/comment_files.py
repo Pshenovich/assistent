@@ -411,8 +411,8 @@ def delete_for_comment(comment_id: int) -> None:
         path = disk_path(int(row["id"]))
         try:
             path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        except OSError as e:
+            print(f"[comment_files] unlink failed path={path} err={e!r}")
 
 
 def delete_for_item(
@@ -442,8 +442,8 @@ def delete_for_item(
         path = disk_path(int(row["id"]))
         try:
             path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        except OSError as e:
+            print(f"[comment_files] unlink failed path={path} err={e!r}")
     return len(rows)
 
 

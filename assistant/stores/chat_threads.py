@@ -428,14 +428,14 @@ def delete_thread(owner_user_id: int | str, thread_id: int | str) -> bool:
             from assistant.stores import share_comments
 
             share_comments.delete_all_for_item(uid, "chat", tid)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[chat_threads] delete comments failed thread={tid} err={e!r}")
         try:
             from assistant.stores import comment_files
 
             comment_files.delete_for_item(uid, "chat", tid)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[chat_threads] delete comment files failed thread={tid} err={e!r}")
     return deleted
 
 

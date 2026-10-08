@@ -107,8 +107,8 @@ def save_user_token(telegram_user_id: int, token: str) -> None:
     )
     try:
         path.chmod(0o600)
-    except OSError:
-        pass
+    except OSError as e:
+        print(f"[bitrix_mcp] chmod 600 token failed path={path} err={e!r}")
 
 
 def remove_user_token(telegram_user_id: int) -> bool:

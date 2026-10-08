@@ -278,8 +278,8 @@ def _sync_subtasks(svc: Any, list_id: str, parent_id: str, checklist: list[dict[
         if cid and cid not in keep_ids:
             try:
                 svc.tasks().delete(tasklist=list_id, task=cid).execute()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[google_tasks] delete stale task failed task={cid} err={e!r}")
 
 
 def remote_task_notes(user_id: int, task: dict[str, Any] | None) -> str | None:

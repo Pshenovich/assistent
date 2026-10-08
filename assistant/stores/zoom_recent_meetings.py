@@ -44,8 +44,8 @@ def _save(user_id: int, items: list[dict[str, Any]]) -> None:
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         try:
             path.chmod(0o600)
-        except OSError:
-            pass
+        except OSError as e:
+            print(f"[zoom_recent] chmod 600 failed path={path} err={e!r}")
 
 
 def _prune(items: list[dict[str, Any]]) -> list[dict[str, Any]]:

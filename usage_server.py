@@ -3217,8 +3217,8 @@ def _remember_principal_profile(principal: _MiniappPrincipal) -> None:
             last_name=str(u.get("last_name") or "") or None,
             photo_url=str(u.get("photo_url") or "") or None,
         )
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[miniapp_auth] remember profile failed uid={principal.telegram_user_id} err={e!r}")
 
 
 def _principal_display_name(principal: _MiniappPrincipal) -> str:
@@ -6767,8 +6767,8 @@ async def miniapp_gpt_chat(
     ):
         try:
             user_agents.patch_agent(uid, str(agent["id"]), {"model": model})
-        except user_agents.AgentError:
-            pass
+        except user_agents.AgentError as e:
+            print(f"[agents] save model failed uid={uid} agent={agent['id']} err={e!r}")
 
     def _run() -> dict[str, Any] | None:
         from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user

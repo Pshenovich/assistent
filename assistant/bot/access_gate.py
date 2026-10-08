@@ -167,8 +167,8 @@ async def ensure_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
         telegram_registry.register_user(
             telegram_user_id=uid, telegram_username=user.username
         )
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[access_gate] registry update failed user={uid} err={e!r}")
     scope = access_scope_from_context(context)
     if is_user_allowed(uid, user.username, scope=scope):
         return True
@@ -249,8 +249,8 @@ async def handle_access_callback(
                 int(uid),
                 f"Вам открыт доступ к {product}. Напишите /start, чтобы начать.",
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[access_gate] notify approved user={uid} failed err={e!r}")
         return
     if action == "no":
         access.deny_user(int(uid), scope=scope)
@@ -260,5 +260,5 @@ async def handle_access_callback(
                 int(uid),
                 "Администратор отклонил заявку на доступ к боту.",
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[access_gate] notify denied user={uid} failed err={e!r}")
