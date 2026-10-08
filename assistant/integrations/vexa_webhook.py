@@ -26,7 +26,8 @@ def webhook_secret() -> str:
 def _auth_ok(authorization: str | None) -> bool:
     sec = webhook_secret()
     if not sec:
-        return True
+        print("[vexa_webhook] VEXA_WEBHOOK_SECRET не задан — вебхук отклонён")
+        return False
     auth = (authorization or "").strip()
     expected = f"Bearer {sec}"
     return auth == expected

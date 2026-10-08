@@ -167,6 +167,30 @@ def test_vexa_webhook_rejects_wrong_secret(client: TestClient, monkeypatch: pyte
     assert handled == []
 
 
+def test_vexa_webhook_without_configured_secret_is_closed(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from assistant.integrations import vexa_webhook
+
+    monkeypatch.delenv("VEXA_WEBHOOK_SECRET", raising=False)
+    handled = []
+    monkeypatch.setattr(vexa_webhook, "handle_webhook_payload", lambda p: handled.append(p) or {})
+
+    resp = client.post("/webhook/vexa", content=b'{"event":"meeting.completed"}')
+
+    assert resp.status_code == 401
+    assert handled == []
+
+
+def test_vexa_webhook_accepts_configured_secret(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from assistant.integrations import vexa_webhook
+
+    monkeypatch.setenv("VEXA_WEBHOOK_SECRET", "smoke-secret")
+    monkeypatch.setattr(vexa_webhook, "handle_webhook_payload", lambda p: {"ok": True})
+
+    resp = client.post("/webhook/vexa", content=b"{}", headers={"Authorization": "Bearer smoke-secret"})
+
+    assert resp.status_code == 200
+
+
 @pytest.mark.parametrize("provider", OAUTH_PROVIDERS)
 @pytest.mark.parametrize("query", ["", "?code=x&state=bogus", "?error=access_denied&state=bogus"])
 def test_oauth_callback_rejects_unknown_state(client: TestClient, provider: str, query: str):
