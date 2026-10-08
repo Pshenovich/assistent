@@ -26,6 +26,36 @@ class JournalQaRoutingTests(unittest.TestCase):
         self.assertIsNotNone(route)
         self.assertEqual(route.skill, "calendar")
 
+    def test_weekday_schedule_questions_are_calendar(self) -> None:
+        for q in (
+            "какие встречи у меня в понедельник",
+            "какие встречи у меня в понедельник?",
+            "какие встречи в понедельник",
+            "какие встречи во вторник",
+            "что у меня в среду по встречам",
+            "какие встречи у меня в следующий понедельник",
+            "какие у меня встречи в понедельник",
+            "какие созвоны в пятницу",
+        ):
+            with self.subTest(q=q):
+                self.assertFalse(is_journal_archive_query(q))
+                self.assertTrue(calendar_is_meeting_overview_query(q.lower()))
+                route = regex_route(q)
+                self.assertIsNotNone(route)
+                self.assertEqual(route.skill, "calendar")
+
+    def test_weekday_past_meeting_questions_stay_archive(self) -> None:
+        for q in (
+            "какие встречи были в понедельник",
+            "что обсуждали на встрече в понедельник",
+            "какие задачи поставили на встрече в пятницу",
+            "что решили на созвоне во вторник",
+            "какие встречи были в прошлый понедельник",
+        ):
+            with self.subTest(q=q):
+                self.assertTrue(is_journal_archive_query(q))
+                self.assertFalse(calendar_is_meeting_overview_query(q.lower()))
+
 
 if __name__ == "__main__":
     unittest.main()
