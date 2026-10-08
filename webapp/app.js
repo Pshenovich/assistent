@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261007-initdata-b64";
+  var WEBAPP_BUILD = "20261008-posted-archive";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -10939,15 +10939,22 @@
     opts = opts || {};
     var del = document.getElementById("modal-delete");
     var done = document.getElementById("modal-done");
+    var archive = document.getElementById("modal-archive");
     if (del) del.classList.toggle("hidden", !opts.showDelete);
     if (done) done.classList.toggle("hidden", !opts.showDone);
+    if (archive) {
+      archive.classList.toggle("hidden", !opts.showArchive);
+      if (opts.showArchive) {
+        archive.textContent = opts.archiveLabel || "В архив";
+      }
+    }
   }
 
   function closeModal() {
     const ov = document.getElementById("modal-overlay");
     ov.classList.add("hidden");
     ov.setAttribute("aria-hidden", "true");
-    setModalSheetActions({ showDelete: false, showDone: false });
+    setModalSheetActions({ showDelete: false, showDone: false, showArchive: false });
     taskModalOnSaved = null;
     taskModalOnDeleted = null;
     onModalSheetClose();
@@ -12065,10 +12072,30 @@
     // Remember ownership for save payload (assignee must not wipe assignee_*).
     var kindEl = document.getElementById("modal-kind");
     if (kindEl) kindEl.setAttribute("data-task-is-owner", isTaskOwner ? "1" : "0");
+    var assigneeUid = String(
+      (ev.assignee && ev.assignee.user_id) ||
+        ev.assignee_user_id ||
+        (ev.event && ev.event.assignee && ev.event.assignee.user_id) ||
+        ""
+    );
+    var isDelegated =
+      !!existing &&
+      !!ownerUid &&
+      !!assigneeUid &&
+      ownerUid !== assigneeUid;
+    var isOwnerArchived = !!(
+      ev.owner_archived ||
+      (ev.event && ev.event.owner_archived)
+    );
     setModalSheetActions({
       showDelete: existing,
       showDone: existing && !ev.done,
+      showArchive: existing && isTaskOwner && isDelegated,
+      archiveLabel: isOwnerArchived ? "Вернуть из архива" : "В архив",
     });
+    if (kindEl) {
+      kindEl.setAttribute("data-task-owner-archived", isOwnerArchived ? "1" : "0");
+    }
     document.getElementById("modal-overlay").classList.remove("hidden");
     document.getElementById("modal-overlay").setAttribute("aria-hidden", "false");
     onModalSheetOpen();
@@ -12856,6 +12883,33 @@
       } catch (_) {}
     } catch (e) {
       showCalendarToast((e && e.message) || "Не удалось отметить выполненной");
+    }
+  }
+
+  async function modalToggleTaskArchive() {
+    var kind = document.getElementById("modal-kind").value;
+    if (kind !== "task") return;
+    var id = document.getElementById("modal-event-id").value;
+    if (!id) return;
+    var kindEl = document.getElementById("modal-kind");
+    var currentlyArchived =
+      kindEl && kindEl.getAttribute("data-task-owner-archived") === "1";
+    try {
+      var r = await apiFetch("/calendar/tasks/" + encodeURIComponent(id), {
+        method: "PATCH",
+        body: JSON.stringify({ owner_archived: !currentlyArchived }),
+      });
+      var saved = r && r.task;
+      var savedCb = taskModalOnSaved;
+      closeModal();
+      if (savedCb) savedCb(saved);
+      if (isPostedTasksOpen()) await loadPostedTasksList();
+      await loadActual({ skipCachePaint: true });
+      showCalendarToast(
+        currentlyArchived ? "Задача возвращена" : "Задача в архиве"
+      );
+    } catch (e) {
+      showCalendarToast((e && e.message) || "Не удалось изменить архив");
     }
   }
 
@@ -28905,6 +28959,7 @@
 
     onId("modal-cancel", "click", closeModal);
     onId("modal-done", "click", modalMarkTaskDone);
+    onId("modal-archive", "click", modalToggleTaskArchive);
     onId("modal-delete", "click", modalDelete);
     onId("modal-overlay", "click", function (e) {
       if (e.target.id === "modal-overlay") closeModal();
