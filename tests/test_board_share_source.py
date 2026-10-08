@@ -18,6 +18,9 @@ from assistant.board.share_source import (
 )
 from assistant.board import share_source
 
+TOKEN = "TestShareToken_0123456789-ab"
+SHARE_URL = f"https://assistent.networ.ru/share/{TOKEN}"
+
 
 class ShareSourceTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -35,9 +38,8 @@ class ShareSourceTest(unittest.TestCase):
             os.environ["BOARD_COMPANY_SHARE_URL"] = self._old
 
     def test_parse_share_url(self) -> None:
-        url = "https://assistent.networ.ru/share/lYS_LYaj9MI3aIGHJib2Tyn1nNLAZ-eO"
-        self.assertEqual(parse_share_token(url), "lYS_LYaj9MI3aIGHJib2Tyn1nNLAZ-eO")
-        self.assertTrue(looks_like_share_source(url))
+        self.assertEqual(parse_share_token(SHARE_URL), TOKEN)
+        self.assertTrue(looks_like_share_source(SHARE_URL))
         self.assertFalse(looks_like_share_source("SaaS, 12 клиентов"))
 
     def test_html_body_to_text(self) -> None:
@@ -47,38 +49,29 @@ class ShareSourceTest(unittest.TestCase):
         self.assertNotIn("<h3>", text)
 
     def test_fetch_uses_public_api(self) -> None:
-        url = "https://assistent.networ.ru/share/lYS_LYaj9MI3aIGHJib2Tyn1nNLAZ-eO"
         payload = {"title": "Все продукты", "body": "<p>Тариф Pro</p>", "updated_at": "2026-09-07"}
         with patch.object(share_source, "_fetch_http", return_value=payload) as http:
-            doc = fetch_share_document(url)
+            doc = fetch_share_document(SHARE_URL)
         http.assert_called_once()
         self.assertEqual(doc["title"], "Все продукты")
         self.assertIn("Тариф Pro", doc["text"])
         self.assertFalse(doc["stale"])
 
     def test_resolve_from_env(self) -> None:
-        os.environ["BOARD_COMPANY_SHARE_URL"] = (
-            "https://assistent.networ.ru/share/lYS_LYaj9MI3aIGHJib2Tyn1nNLAZ-eO"
-        )
+        os.environ["BOARD_COMPANY_SHARE_URL"] = SHARE_URL
         payload = {"title": "Все продукты", "body": "каталог"}
         with patch.object(share_source, "_fetch_http", return_value=payload):
             url, doc, err = resolve_company_share("")
-        self.assertTrue(url.endswith("/share/lYS_LYaj9MI3aIGHJib2Tyn1nNLAZ-eO"))
+        self.assertTrue(url.endswith(f"/share/{TOKEN}"))
         self.assertIsNone(err)
         self.assertIn("каталог", doc["text"])
 
-    def test_resolve_uses_builtin_default(self) -> None:
-        payload = {"title": "Все продукты", "body": "каталог"}
-        with patch.object(share_source, "_fetch_http", return_value=payload):
-            url, doc, err = resolve_company_share("")
-        self.assertEqual(url, DEFAULT_SHARE_URL)
-        self.assertIsNone(err)
-        self.assertIn("каталог", doc["text"])
-        self.assertEqual(default_company_share_url(), DEFAULT_SHARE_URL)
+    def test_resolve_without_config_is_disabled(self) -> None:
+        with patch.object(share_source, "_fetch_http") as http:
+            self.assertEqual(resolve_company_share(""), ("", None, None))
+        http.assert_not_called()
+        self.assertEqual(DEFAULT_SHARE_URL, "")
+        self.assertEqual(default_company_share_url(), "")
 
     def test_normalize_keeps_host(self) -> None:
-        url = "https://assistent.networ.ru/share/lYS_LYaj9MI3aIGHJib2Tyn1nNLAZ-eO?x=1"
-        self.assertEqual(
-            normalize_share_url(url),
-            "https://assistent.networ.ru/share/lYS_LYaj9MI3aIGHJib2Tyn1nNLAZ-eO",
-        )
+        self.assertEqual(normalize_share_url(SHARE_URL + "?x=1"), SHARE_URL)

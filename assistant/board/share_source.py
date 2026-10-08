@@ -21,9 +21,8 @@ _lock = threading.Lock()
 _cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _stale: dict[str, dict[str, Any]] = {}
 
-DEFAULT_SHARE_URL = (
-    "https://assistent.networ.ru/share/lYS_LYaj9MI3aIGHJib2Tyn1nNLAZ-eO"
-)
+# Ссылка — секрет (доступ к заметке без входа); задаётся только через BOARD_COMPANY_SHARE_URL.
+DEFAULT_SHARE_URL = ""
 
 
 def default_company_share_url() -> str:

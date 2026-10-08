@@ -14,6 +14,8 @@ from assistant.board.company_brief import (
 )
 from assistant.board.share_source import DEFAULT_SHARE_URL, default_company_share_url, share_body_to_text
 
+SHARE_URL = "https://assistent.networ.ru/share/TestShareToken_0123456789-ab"
+
 
 CATALOG = """
 Речевая аналитика
@@ -80,7 +82,7 @@ class CompanyBriefTest(unittest.TestCase):
     def test_brief_is_much_smaller_than_source(self) -> None:
         fat = CATALOG + (" подробности тарифа и роадмапа. " * 400)
         pack = {
-            "source_url": DEFAULT_SHARE_URL,
+            "source_url": SHARE_URL,
             "_live_share": {"title": "Все продукты", "updated_at": "2026-09-07"},
             "_documents": [{"filename": "Все продукты", "kind": "live", "text": fat}],
         }
@@ -334,7 +336,7 @@ class CompanyBriefTest(unittest.TestCase):
     def test_budget_param_caps_brief(self) -> None:
         fat = CATALOG + (" подробности тарифа и роадмапа. " * 400)
         pack = {
-            "source_url": DEFAULT_SHARE_URL,
+            "source_url": SHARE_URL,
             "_live_share": {"title": "Все продукты", "updated_at": "2026-09-07"},
             "_documents": [{"filename": "Все продукты", "kind": "live", "text": fat}],
         }
