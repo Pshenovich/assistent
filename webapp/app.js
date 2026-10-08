@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261008-posted-archive";
+  var WEBAPP_BUILD = "20261008-sheet-delete";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261005-heading-pdf";
+  const NOTE_EDITOR_ASSET_V = "20261008-sheet-delete";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -20750,12 +20750,27 @@
 
   function startNoteSheetRename(chip, sheet) {
     if (!chip || !sheet || sheet.is_primary) return;
+    if (chip.classList.contains("is-editing")) return;
     var input = document.createElement("input");
     input.type = "text";
     input.className = "note-sheet-chip-input";
     input.value = sheet.title || "";
+    chip.classList.add("is-editing");
     chip.innerHTML = "";
     chip.appendChild(input);
+    var delBtn = document.createElement("span");
+    delBtn.className = "note-sheet-chip-delete";
+    delBtn.setAttribute("role", "button");
+    delBtn.setAttribute("aria-label", "Удалить лист");
+    delBtn.innerHTML =
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<polyline points="3 6 5 6 21 6"/>' +
+      '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>' +
+      '<path d="M10 11v6M14 11v6"/>' +
+      '<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>' +
+      "</svg>";
+    chip.appendChild(delBtn);
     input.focus();
     input.select();
     var done = false;
@@ -20771,6 +20786,18 @@
       renderNoteSheetChips();
       renderNoteKnowledgeMenu();
     }
+    function guardDeletePointer(e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    delBtn.addEventListener("pointerdown", guardDeletePointer);
+    delBtn.addEventListener("mousedown", guardDeletePointer);
+    delBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      done = true;
+      deleteNoteSheet(sheet);
+    });
     input.addEventListener("blur", function () {
       finish(true);
     });
@@ -20784,6 +20811,70 @@
         finish(false);
       }
     });
+  }
+
+  async function deleteNoteSheet(sheet) {
+    if (!sheet || sheet.is_primary || isPrimarySheetId(sheet.id)) return;
+    var id = String(sheet.id);
+    var noteId = noteSheetsNoteId();
+    if (!id || !noteId) return;
+    var ok = await confirmYesNoDialog(
+      "Удалить лист «" + (sheet.title || "Лист") + "»?"
+    );
+    if (!ok) {
+      renderNoteSheetChips();
+      return;
+    }
+    if (noteSheetState.sheetTimers[id]) {
+      clearTimeout(noteSheetState.sheetTimers[id]);
+      delete noteSheetState.sheetTimers[id];
+    }
+    delete noteSheetState.sheetPersists[id];
+    var wasLeft = String(noteSheetState.leftId) === id;
+    var wasRight =
+      noteSheetState.rightMode === "sheet" && String(noteSheetState.rightId) === id;
+    noteSheetState.sheets = noteSheetState.sheets.filter(function (s) {
+      return String(s.id) !== id;
+    });
+    if (noteSheetState.leftScroll) delete noteSheetState.leftScroll[id];
+    if (Array.isArray(noteSheetState.contextIds)) {
+      noteSheetState.contextIds = noteSheetState.contextIds.filter(function (x) {
+        return String(x) !== id;
+      });
+    }
+    if (wasRight) setRightPaneMode("discussion");
+    if (wasLeft) await switchLeftSheet(NOTE_SHEET_MAIN);
+    else renderNoteSheetChips();
+    renderNoteKnowledgeMenu();
+    previewOpenNoteFromSheets();
+    if (isAppOffline() || String(noteId).indexOf("tmp_") === 0) {
+      enqueueOfflineOp({
+        type: "sheet_delete",
+        clientId: id,
+        noteId: String(noteId),
+        path:
+          "/notes/local/" +
+          encodeURIComponent(String(noteId)) +
+          "/sheets/" +
+          encodeURIComponent(id),
+        method: "DELETE",
+      });
+      showOfflineSavedToast();
+      return;
+    }
+    try {
+      await apiFetch(
+        "/notes/local/" +
+          encodeURIComponent(String(noteId)) +
+          "/sheets/" +
+          encodeURIComponent(id),
+        { method: "DELETE" }
+      );
+    } catch (e) {
+      alert(e.message || String(e));
+      var note = resolveLocalNoteFromCache({ id: noteId });
+      hydrateNoteSheets(note, noteSheetState.primaryBody);
+    }
   }
 
   async function ensureNoteIdForSheets() {
@@ -26704,6 +26795,7 @@
       span: true,
       code: true,
       pre: true,
+      img: true,
     };
     function allowedClass(tag, cls) {
       if (tag === "ul" && cls === "note-task-list") return true;
@@ -26715,6 +26807,7 @@
           });
       }
       if (tag === "span" && cls === "note-task-text") return true;
+      if (tag === "img" && cls === "note-editor-image") return true;
       return false;
     }
     function allowedAttr(tag, name, val) {
@@ -26724,6 +26817,29 @@
       if (tag === "li" && name === "checked") return true;
       if (name === "class" && allowedClass(tag, val)) return true;
       return false;
+    }
+    function sanitizeSummaryImageWidth(el) {
+      var widthAttr = String(el.getAttribute("width") || "").trim();
+      if (/^\d{1,3}%$/.test(widthAttr)) {
+        var fromAttr = parseInt(widthAttr, 10);
+        if (fromAttr >= 15 && fromAttr <= 100) return fromAttr;
+      }
+      var style = String(el.getAttribute("style") || "");
+      var m = style.match(/(?:^|;)\s*width\s*:\s*(\d+(?:\.\d+)?)\s*%/i);
+      if (m) {
+        var fromStyle = Math.round(parseFloat(m[1]));
+        if (fromStyle >= 15 && fromStyle <= 100) return fromStyle;
+      }
+      return null;
+    }
+    function isSafeSummaryImageSrc(src) {
+      var s = String(src || "").trim();
+      if (/^https:\/\//i.test(s)) return true;
+      var prefix = s.match(/^data:image\/(png|jpe?g|gif|webp|heic|heif);base64,/i);
+      if (!prefix) return false;
+      var b64 = s.slice(prefix[0].length);
+      if (!b64 || b64.length > 12 * 1024 * 1024) return false;
+      return !/[^A-Za-z0-9+/=\s]/.test(b64);
     }
     var doc = new DOMParser().parseFromString("<div>" + raw + "</div>", "text/html");
     function walk(node) {
@@ -26746,6 +26862,44 @@
             return;
           }
           out += '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer">' + walk(ch) + "</a>";
+          return;
+        }
+        if (tag === "img") {
+          var imgSrc = String(ch.getAttribute("src") || "").trim();
+          if (!isSafeSummaryImageSrc(imgSrc)) return;
+          var imgAlt = String(ch.getAttribute("alt") || "");
+          var imgTitle = String(ch.getAttribute("title") || "");
+          var imgClass = String(ch.getAttribute("class") || "");
+          var classAttr = "";
+          if (
+            imgClass
+              .split(/\s+/)
+              .filter(Boolean)
+              .indexOf("note-editor-image") >= 0
+          ) {
+            classAttr = ' class="note-editor-image"';
+          }
+          var widthPct = sanitizeSummaryImageWidth(ch);
+          var sizeAttr = "";
+          if (widthPct != null) {
+            sizeAttr =
+              ' width="' +
+              widthPct +
+              '%" style="width: ' +
+              widthPct +
+              '%"';
+          }
+          out +=
+            "<img" +
+            classAttr +
+            ' src="' +
+            escapeHtml(imgSrc) +
+            '" alt="' +
+            escapeHtml(imgAlt) +
+            '"' +
+            (imgTitle ? ' title="' + escapeHtml(imgTitle) + '"' : "") +
+            sizeAttr +
+            ">";
           return;
         }
         if (tag === "br") {

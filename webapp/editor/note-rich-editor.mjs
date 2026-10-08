@@ -14,6 +14,174 @@ import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { CellSelection, cellAround, isInTable } from "@tiptap/pm/tables";
 
+var IMAGE_WIDTH_MIN_PCT = 15;
+var IMAGE_WIDTH_MAX_PCT = 100;
+
+function clampImageWidthPct(n) {
+  var v = Math.round(Number(n));
+  if (!isFinite(v)) return IMAGE_WIDTH_MAX_PCT;
+  if (v < IMAGE_WIDTH_MIN_PCT) return IMAGE_WIDTH_MIN_PCT;
+  if (v > IMAGE_WIDTH_MAX_PCT) return IMAGE_WIDTH_MAX_PCT;
+  return v;
+}
+
+function parseImageWidthPct(el) {
+  if (!el || typeof el.getAttribute !== "function") return null;
+  var widthAttr = String(el.getAttribute("width") || "").trim();
+  if (/^\d{1,3}%$/.test(widthAttr)) {
+    return clampImageWidthPct(parseInt(widthAttr, 10));
+  }
+  var style = String(el.getAttribute("style") || "");
+  var m = style.match(/(?:^|;)\s*width\s*:\s*(\d+(?:\.\d+)?)\s*%/i);
+  if (m) return clampImageWidthPct(parseFloat(m[1]));
+  return null;
+}
+
+function applyImageWrapWidth(wrap, img, widthPct) {
+  if (!wrap || !img) return;
+  if (widthPct == null || widthPct === "") {
+    wrap.style.width = "";
+    img.style.width = "";
+    return;
+  }
+  var pct = clampImageWidthPct(widthPct);
+  wrap.style.width = pct + "%";
+  img.style.width = "100%";
+}
+
+var ResizableImage = Image.extend({
+  addAttributes: function () {
+    var parent = typeof this.parent === "function" ? this.parent() : {};
+    return Object.assign({}, parent, {
+      width: {
+        default: null,
+        parseHTML: function (element) {
+          return parseImageWidthPct(element);
+        },
+        renderHTML: function (attributes) {
+          if (attributes.width == null || attributes.width === "") return {};
+          var pct = clampImageWidthPct(attributes.width);
+          return {
+            width: String(pct) + "%",
+            style: "width: " + String(pct) + "%",
+          };
+        },
+      },
+    });
+  },
+  addNodeView: function () {
+    return function (props) {
+      var node = props.node;
+      var editor = props.editor;
+      var getPos = props.getPos;
+      var wrap = document.createElement("div");
+      wrap.className = "note-editor-image-wrap";
+      wrap.setAttribute("data-drag-handle", "");
+
+      var img = document.createElement("img");
+      img.className = "note-editor-image";
+      img.draggable = false;
+      img.src = node.attrs.src || "";
+      img.alt = node.attrs.alt || "";
+      if (node.attrs.title) img.title = node.attrs.title;
+      applyImageWrapWidth(wrap, img, node.attrs.width);
+
+      var handle = document.createElement("span");
+      handle.className = "note-editor-image-resize";
+      handle.contentEditable = "false";
+      handle.setAttribute("aria-hidden", "true");
+
+      wrap.appendChild(img);
+      wrap.appendChild(handle);
+
+      var pendingWidth = null;
+      var activePointerId = null;
+
+      function commitWidth() {
+        if (pendingWidth == null) return;
+        if (typeof getPos !== "function") return;
+        var pos = getPos();
+        if (typeof pos !== "number") return;
+        var nextAttrs = Object.assign({}, node.attrs, { width: pendingWidth });
+        var tr = editor.view.state.tr.setNodeMarkup(pos, undefined, nextAttrs);
+        editor.view.dispatch(tr);
+        pendingWidth = null;
+      }
+
+      function onPointerMove(e) {
+        if (activePointerId != null && e.pointerId !== activePointerId) return;
+        var parent = wrap.parentElement;
+        if (!parent) return;
+        var parentWidth = parent.getBoundingClientRect().width;
+        if (!(parentWidth > 0)) return;
+        var left = wrap.getBoundingClientRect().left;
+        var newPx = e.clientX - left;
+        var pct = clampImageWidthPct((newPx / parentWidth) * 100);
+        pendingWidth = pct;
+        applyImageWrapWidth(wrap, img, pct);
+      }
+
+      function onPointerUp(e) {
+        if (activePointerId != null && e.pointerId !== activePointerId) return;
+        activePointerId = null;
+        wrap.classList.remove("is-resizing");
+        try {
+          handle.releasePointerCapture(e.pointerId);
+        } catch (_) {}
+        document.removeEventListener("pointermove", onPointerMove);
+        document.removeEventListener("pointerup", onPointerUp);
+        document.removeEventListener("pointercancel", onPointerUp);
+        commitWidth();
+      }
+
+      function onPointerDown(e) {
+        if (e.button != null && e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        activePointerId = e.pointerId;
+        wrap.classList.add("is-resizing");
+        try {
+          handle.setPointerCapture(e.pointerId);
+        } catch (_) {}
+        document.addEventListener("pointermove", onPointerMove);
+        document.addEventListener("pointerup", onPointerUp);
+        document.addEventListener("pointercancel", onPointerUp);
+        onPointerMove(e);
+      }
+
+      handle.addEventListener("pointerdown", onPointerDown);
+
+      return {
+        dom: wrap,
+        update: function (updated) {
+          if (!updated || updated.type.name !== "image") return false;
+          node = updated;
+          img.src = updated.attrs.src || "";
+          img.alt = updated.attrs.alt || "";
+          if (updated.attrs.title) img.title = updated.attrs.title;
+          else img.removeAttribute("title");
+          if (pendingWidth == null) {
+            applyImageWrapWidth(wrap, img, updated.attrs.width);
+          }
+          return true;
+        },
+        selectNode: function () {
+          wrap.classList.add("is-selected");
+        },
+        deselectNode: function () {
+          wrap.classList.remove("is-selected");
+        },
+        destroy: function () {
+          handle.removeEventListener("pointerdown", onPointerDown);
+          document.removeEventListener("pointermove", onPointerMove);
+          document.removeEventListener("pointerup", onPointerUp);
+          document.removeEventListener("pointercancel", onPointerUp);
+        },
+      };
+    };
+  },
+});
+
 function isIOSDevice() {
   if (typeof navigator === "undefined") return false;
   return (
@@ -1072,7 +1240,17 @@ function mountToolbar(toolbarEl, editor) {
     reader.onload = function () {
       var src = String(reader.result || "");
       if (!src) return;
-      editor.chain().focus().setImage({ src: src, alt: file.name || "Фото" }).run();
+      editor
+        .chain()
+        .focus()
+        .insertContent([
+          {
+            type: "image",
+            attrs: { src: src, alt: file.name || "Фото" },
+          },
+          { type: "paragraph" },
+        ])
+        .run();
       refreshFn();
     };
     reader.readAsDataURL(file);
@@ -1842,7 +2020,7 @@ function mount(container, options) {
       }),
       Underline,
       Link.configure({ openOnClick: false, autolink: true, linkOnPaste: true }),
-      Image.configure({
+      ResizableImage.configure({
         inline: false,
         allowBase64: true,
         HTMLAttributes: { class: "note-editor-image" },
