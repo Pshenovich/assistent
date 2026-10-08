@@ -7085,6 +7085,67 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   white-space: nowrap;
 }
 
+.note-discuss-reply {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  box-sizing: border-box;
+  max-width: 100%;
+  margin: 0 0 6px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.note-discuss-msg.is-user .note-discuss-reply {
+  background: color-mix(in srgb, var(--accent, #5280e8) 18%, transparent);
+}
+
+.note-discuss-reply-bar {
+  flex: 0 0 3px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent, #5280e8);
+}
+
+.note-discuss-msg.is-user .note-discuss-reply-bar {
+  background: color-mix(in srgb, var(--on-accent, #fff) 70%, transparent);
+}
+
+.note-discuss-reply-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.note-discuss-reply-who,
+.note-discuss-reply-quote {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-discuss-reply-who {
+  color: var(--accent, #5280e8);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.note-discuss-msg.is-user .note-discuss-reply-who {
+  color: color-mix(in srgb, var(--on-accent, #fff) 85%, transparent);
+}
+
+.note-discuss-reply-quote {
+  color: var(--text-secondary, #909499);
+  font-size: 0.8125rem;
+  line-height: 1.3;
+}
+
+.note-discuss-msg.is-user .note-discuss-reply-quote {
+  color: color-mix(in srgb, var(--on-accent, #fff) 72%, transparent);
+}
+
 .note-discuss-bubble {
   box-sizing: border-box;
   min-width: 0;
@@ -7102,7 +7163,9 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   user-select: text;
 }
 
-.note-discuss-msg.is-assistant .note-discuss-bubble {
+.note-discuss-msg.is-assistant .note-discuss-bubble,
+.note-discuss-msg.is-other .note-discuss-bubble,
+.note-discuss-msg.is-user .note-discuss-bubble {
   -webkit-touch-callout: none;
 }
 

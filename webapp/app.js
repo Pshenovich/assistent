@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261008-meet-link-toggle";
+  var WEBAPP_BUILD = "20261008-discuss-reply";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261008-meet-link-toggle";
+  const NOTE_EDITOR_ASSET_V = "20261008-discuss-reply";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -18017,10 +18017,8 @@
       if (node.nodeType !== 1) return;
       if (node.classList && node.classList.contains("note-gpt-quote-chip")) {
         var q = String(node.getAttribute("data-quote") || "").trim();
-        if (q) {
-          quotes.push(q);
-          parts.push("«" + q + "»");
-        }
+        // Цитата уходит в поле quote / reply UI, не в тело бабла.
+        if (q) quotes.push(q);
         return;
       }
       if (node.classList && node.classList.contains("note-discuss-mention")) {
@@ -22077,7 +22075,9 @@
     var quote = draft && String(draft.quote || "").trim();
     var active = !!quote && !noteAskUsesChips(noteAskMode());
     if (whoEl) {
-      whoEl.textContent = chairId ? "CHAIR" : "Фрагмент";
+      if (noteAskMode() === "paie" && chairId) whoEl.textContent = "CHAIR";
+      else if (chairId) whoEl.textContent = "Ответ";
+      else whoEl.textContent = "Фрагмент";
     }
     if (form) form.classList.toggle("is-replying", active);
     if (targetEl) targetEl.classList.toggle("hidden", !active);
@@ -22906,8 +22906,13 @@
 
   function discussSelectableBubble(el) {
     if (!el || !el.closest) return null;
-    var msg = el.closest(".note-discuss-msg.is-assistant");
-    if (!msg || msg.classList.contains("is-pending")) return null;
+    // Реплай/цитата: ассистент, другие участники и свои сообщения.
+    var msg = el.closest(
+      ".note-discuss-msg.is-assistant, .note-discuss-msg.is-other, .note-discuss-msg.is-user"
+    );
+    if (!msg || msg.classList.contains("is-pending") || msg.classList.contains("is-optimistic")) {
+      return null;
+    }
     var bubble = el.closest(".note-discuss-bubble");
     if (!bubble || !msg.contains(bubble)) return null;
     return { msg: msg, bubble: bubble };
@@ -23023,33 +23028,37 @@
   function applyDiscussClarify(draft) {
     var wrap = document.getElementById("note-editor-more-wrap");
     if (!wrap || !draft || !String(draft.quote || "").trim()) return;
-    if (draft.source === "paie") {
-      wrap._commentDraft = {
-        quote: String(draft.quote || "").trim(),
-        prefix: draft.prefix || "",
-        suffix: draft.suffix || "",
-      };
-      wrap._commentChairId = draft.commentId || null;
-      setNoteAskMode("paie");
+    var quote = String(draft.quote || "").trim();
+    var src = String(draft.source || "");
+    // GPT/Research → чип в композере; чужие/свои реплики → reply-target над инпутом.
+    if (src === "gpt" || src === "research") {
+      wrap._commentDraft = null;
+      wrap._commentChairId = null;
+      setNoteAskMode(src === "research" ? "research" : "gpt");
       syncNoteComposerCommentTarget();
-      var input = document.getElementById("note-paie-reply-input");
-      if (input) {
+      insertGptQuoteChip(quote);
+      var ed = noteGptEditor();
+      if (ed) {
         try {
-          input.focus();
+          ed.focus();
         } catch (_) {}
       }
       clearDiscussionSelection();
       return;
     }
-    wrap._commentDraft = null;
-    wrap._commentChairId = null;
-    setNoteAskMode(draft.source === "research" ? "research" : "gpt");
+    wrap._commentDraft = {
+      quote: quote,
+      prefix: draft.prefix || "",
+      suffix: draft.suffix || "",
+    };
+    wrap._commentChairId = draft.commentId || null;
+    if (src === "paie") setNoteAskMode("paie");
+    else if (noteAskUsesChips(noteAskMode())) setNoteAskMode("comment");
     syncNoteComposerCommentTarget();
-    insertGptQuoteChip(draft.quote);
-    var ed = noteGptEditor();
-    if (ed) {
+    var input = document.getElementById("note-paie-reply-input");
+    if (input) {
       try {
-        ed.focus();
+        input.focus();
       } catch (_) {}
     }
     clearDiscussionSelection();
@@ -23069,9 +23078,10 @@
     var html = htmlFromDiscussionSelectionRange(range);
     var api = window.NoteComments;
     var draft = api && api.selectionAnchor ? api.selectionAnchor(bubble) : null;
-    var source = "paie";
+    var source = "reply";
     if (msg.classList.contains("is-research")) source = "research";
     else if (msg.classList.contains("is-gpt")) source = "gpt";
+    else if (msg.classList.contains("is-assistant")) source = "paie";
     var commentId = parseInt(msg.getAttribute("data-comment-id") || "", 10) || 0;
     if (draft && draft.quote) {
       draft.rect = copyClientRect(draft.rect) || draft.rect;
@@ -23130,6 +23140,43 @@
     document.addEventListener("pointerdown", onDismiss, true);
   }
 
+  function discussDisplayBody(body, quote) {
+    var text = String(body || "");
+    var q = String(quote || "").trim();
+    if (!q || !text) return text;
+    // Старые сообщения клали «цитату» прямо в body — убираем из бабла.
+    var escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    var re = new RegExp(
+      "^(?:Про текст:\\s*)?[«\"]" + escaped + "[»\"]\\s*(?:\\n+|$)",
+      "i"
+    );
+    return text.replace(re, "").replace(/^\s+/, "");
+  }
+
+  function appendDiscussReplyQuote(host, quote, who) {
+    var q = String(quote || "").trim();
+    if (!host || !q) return;
+    var reply = document.createElement("div");
+    reply.className = "note-discuss-reply";
+    reply.setAttribute("aria-label", "Ответ на цитату");
+    var bar = document.createElement("span");
+    bar.className = "note-discuss-reply-bar";
+    bar.setAttribute("aria-hidden", "true");
+    var copy = document.createElement("div");
+    copy.className = "note-discuss-reply-copy";
+    var whoEl = document.createElement("p");
+    whoEl.className = "note-discuss-reply-who";
+    whoEl.textContent = who || "Фрагмент";
+    var quoteEl = document.createElement("p");
+    quoteEl.className = "note-discuss-reply-quote";
+    quoteEl.textContent = q;
+    copy.appendChild(whoEl);
+    copy.appendChild(quoteEl);
+    reply.appendChild(bar);
+    reply.appendChild(copy);
+    host.appendChild(reply);
+  }
+
   function renderDiscussionMessage(c) {
     var item = document.createElement("article");
     var assistant = isAssistantComment(c);
@@ -23143,19 +23190,15 @@
       (isGpt ? " is-gpt" : "") +
       (isResearch ? " is-research" : "");
     item.setAttribute("data-comment-id", String(c.id));
-    var quoteText = String((c && c.quote) || "").trim();
-    var bodyHasQuote = String((c && c.body) || "").indexOf("«") >= 0;
-    if (quoteText && !bodyHasQuote) {
-      var q = document.createElement("p");
-      q.className = "note-discuss-quote";
-      q.textContent = "«" + quoteText + "»";
-      item.appendChild(q);
-    }
     var role = document.createElement("p");
     role.className = "note-discuss-role";
     role.textContent = discussionAuthorLabel(c);
     item.appendChild(role);
-    var bodyText = String((c && c.body) || "");
+    var quoteText = String((c && c.quote) || "").trim();
+    if (quoteText) {
+      appendDiscussReplyQuote(item, quoteText, "Фрагмент");
+    }
+    var bodyText = discussDisplayBody(String((c && c.body) || ""), quoteText);
     var attachments = (c && c.attachments) || [];
     var hideClipBody = bodyText.trim() === "📎" && attachments.length;
     var bubble = document.createElement("div");
@@ -23991,20 +24034,17 @@
     var item = document.createElement("article");
     item.id = "note-discuss-optimistic-user";
     item.className = "note-discuss-msg is-user is-optimistic";
-    if (quote) {
-      var q = document.createElement("p");
-      q.className = "note-discuss-quote";
-      q.textContent = "«" + String(quote) + "»";
-      item.appendChild(q);
-    }
     var role = document.createElement("p");
     role.className = "note-discuss-role";
     role.textContent = "Вы";
     item.appendChild(role);
-    if (text) {
+    var quoteText = String(quote || "").trim();
+    if (quoteText) appendDiscussReplyQuote(item, quoteText, "Фрагмент");
+    var bodyText = discussDisplayBody(String(text || ""), quoteText);
+    if (bodyText) {
       var bubble = document.createElement("div");
       bubble.className = "note-discuss-bubble";
-      bubble.textContent = String(text || "");
+      bubble.textContent = bodyText;
       item.appendChild(bubble);
     }
     renderPendingAttachThumbs(item);
@@ -24155,7 +24195,7 @@
     beginNoteAgentSession(kind, itemId, agentId === "gpt" ? "gpt" : agentId, sessionTitle);
     syncNotePaieReplyForm(true);
     wrap._commentDraft = null;
-    appendOptimisticUserMessage(body, "");
+    appendOptimisticUserMessage(body, quote);
     setGptDiscussPhase("sending");
     try {
       var fileIds = await uploadDiscussPendingFiles(kind, itemId);
