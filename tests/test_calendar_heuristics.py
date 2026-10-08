@@ -15,7 +15,9 @@ from assistant.lib.calendar_intent_heuristics import (
     calendar_apply_relative_day,
     calendar_detect_route_kind,
     calendar_free_slots_hide_meetings,
+    calendar_wants_booking_link,
 )
+from assistant.nlu.regex import regex_route
 
 
 class TestCalendarHeuristics(unittest.TestCase):
@@ -101,6 +103,33 @@ class TestCalendarHeuristics(unittest.TestCase):
 
     def test_hide_meetings_for_free_slots_query(self):
         self.assertTrue(calendar_free_slots_hide_meetings("когда я свободен завтра"))
+
+    def test_booking_link_phrases(self):
+        phrases = (
+            "слоты",
+            "календарь",
+            "свободные слоты",
+            "скинь слоты",
+            "пришли календарь",
+            "покажи свободные слоты",
+            "дай слоты",
+            "отправь слоты",
+            "мои слоты",
+            "свободные слоты на завтра",
+        )
+        for q in phrases:
+            with self.subTest(q=q):
+                self.assertTrue(calendar_wants_booking_link(q), q)
+                self.assertEqual(calendar_detect_route_kind(q), "free")
+                route = regex_route(q)
+                self.assertIsNotNone(route)
+                assert route is not None
+                self.assertEqual(route.skill, "calendar")
+
+    def test_booking_link_does_not_steal_meetings_or_create(self):
+        self.assertFalse(calendar_wants_booking_link("какие встречи завтра"))
+        self.assertFalse(calendar_wants_booking_link("поставь встречу на 12 сегодня"))
+        self.assertFalse(calendar_wants_booking_link("когда я свободен завтра"))
 
     def test_meeting_overview_flexible_order(self):
         self.assertTrue(

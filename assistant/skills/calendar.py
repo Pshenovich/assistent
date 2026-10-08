@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from datetime import date, datetime
@@ -19,7 +20,10 @@ from assistant.lib.slot_time import (
     user_text_mentions_calendar_day,
 )
 from assistant.lib.calendar_attendees import enrich_parsed_attendees, names_match
-from assistant.lib.calendar_intent_heuristics import calendar_free_slots_hide_meetings
+from assistant.lib.calendar_intent_heuristics import (
+    calendar_free_slots_hide_meetings,
+    calendar_wants_booking_link,
+)
 from assistant.lib.calendar_intent_heuristics import calendar_detect_amend_kind
 from assistant.lib.message_context import (
     add_reply_author_as_attendee,
@@ -1113,6 +1117,30 @@ async def _clarify_or_run_events(
         await msg.reply_text(f"Ошибка: {e}")
 
 
+async def _reply_booking_link(msg, uid: int, parsed: dict[str, Any]) -> None:
+    from assistant.services import booking_links as booking_svc
+
+    title = str(parsed.get("title") or "").strip() or None
+    attendees = list(parsed.get("attendees") or [])
+    duration = parsed.get("duration_min")
+    try:
+        created = await asyncio.to_thread(
+            booking_svc.create_booking_link,
+            uid,
+            title=title,
+            attendees=attendees,
+            duration_min=duration,
+        )
+    except Exception as e:
+        await msg.reply_text(f"Не удалось создать ссылку на слоты: {e}")
+        return
+    url = str(created.get("url") or "").strip()
+    if not url:
+        await msg.reply_text("Не удалось создать ссылку на слоты.")
+        return
+    await msg.reply_text(f"Свободные слоты:\n{url}", disable_web_page_preview=True)
+
+
 async def handle(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -1167,6 +1195,9 @@ async def handle(
         parsed, author, owner_user_id=uid, owner_username=user.username
     )
     intent = str(parsed.get("intent") or "none")
+    if calendar_wants_booking_link(merged):
+        await _reply_booking_link(msg, uid, parsed)
+        return
     if intent == "free_slots" and not calendar_free_slots_hide_meetings(merged):
         intent = "list_events"
     if parsed.get("need_more_info"):

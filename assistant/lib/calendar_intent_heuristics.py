@@ -21,6 +21,7 @@ __all__ = [
     "calendar_likely_user_text",
     "calendar_try_resolve_clarify",
     "calendar_user_text_blob",
+    "calendar_wants_booking_link",
 ]
 
 # Роутинг: корни слов, не точные фразы («встрече» / «встречу» → встреч\w*).
@@ -48,6 +49,11 @@ _HAS_THEME = re.compile(
     r"\bтем[аыуе]\b|«[^»]{3,}»|\"[^\"]{3,}\"",
     re.IGNORECASE,
 )
+_BOOKING_SEND = (
+    r"(?:скинь|скиньте|пришли|пришлите|отправь|отправьте|покажи|покажите|"
+    r"дай|дайте|перешли|перешлите|поделись|поделитесь|кинь|закинь)"
+)
+_BOOKING_OBJECT = r"(?:свободн\w*\s+(?:слот\w*|окн\w*|время)|слот\w*|календар\w*)"
 
 
 def _looks_like_schedule_create(sl: str) -> bool:
@@ -67,6 +73,40 @@ def _looks_like_schedule_create(sl: str) -> bool:
 
 def _calendar_sl(text: str) -> str:
     return " ".join((text or "").strip().lower().split())
+
+
+def calendar_wants_booking_link(text: str) -> bool:
+    """«слоты» / «календарь» / «скинь свободные слоты» — прислать публичную ссылку."""
+    sl = _calendar_sl(text)
+    if not sl or len(sl) > 240:
+        return False
+    if re.search(rf"(?:^|\s){_CREATE_VERBS}\b", sl):
+        return False
+    if re.search(rf"(?:^|\s){_UPDATE_VERBS}\b", sl):
+        return False
+    if re.search(rf"(?:^|\s){_DELETE_VERBS}\b", sl):
+        return False
+    if re.search(
+        r"(?:какие|что)\s+(?:у\s+меня\s+)?(?:будут\s+)?(?:встреч|созвон|митинг|событ)",
+        sl,
+    ):
+        return False
+    if re.fullmatch(
+        rf"(?:(?:мой|мои|моё|мое)\s+)?{_BOOKING_OBJECT}(?:\s+пожалуйста)?",
+        sl,
+    ):
+        return True
+    if re.search(rf"{_BOOKING_SEND}.{{0,32}}{_BOOKING_OBJECT}", sl):
+        return True
+    if re.search(rf"{_BOOKING_OBJECT}.{{0,16}}{_BOOKING_SEND}", sl):
+        return True
+    if re.search(r"свободн\w*\s+(?:слот\w*|окн\w*)", sl):
+        return True
+    if re.search(r"(?:^|\s)слот\w*", sl) and not re.search(
+        r"(встреч|созвон|митинг)", sl
+    ):
+        return True
+    return False
 
 
 def calendar_detect_amend_kind(text: str) -> str | None:
@@ -131,6 +171,8 @@ def calendar_detect_route_kind(text: str) -> str | None:
     if re.search(rf"^{_CREATE_VERBS}\s+{_CALENDAR_TOPIC}", sl):
         return "create"
 
+    if calendar_wants_booking_link(sl):
+        return "free"
     if re.search(r"(?:свободн|когда\s+(?:я\s+)?свобод|найди\s+(?:слот|окн))", sl):
         return "free"
     if calendar_is_meeting_overview_query(sl):
@@ -139,7 +181,7 @@ def calendar_detect_route_kind(text: str) -> str | None:
         _CREATE_VERBS, sl
     ):
         return "free"
-    if re.search(r"(?:^|\s)(?:покажи|дай|что|какие|расскаж)\b", sl):
+    if re.search(r"(?:^|\s)(?:покажи|дай|что|какие|расскаж|скинь|пришли|отправь)\b", sl):
         return "free"
 
     return None

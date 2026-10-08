@@ -94,6 +94,7 @@ skill (одно значение): calendar | reminder | assign_task | todoist_n
 - calendar: встреча/встрече/встречу, созвон, календарь, слоты, «поставь встречу на 12 сегодня», перенеси/передвинь/отмени встречу, «что у меня завтра», опечатки — всё равно calendar если по смыслу про календарь
   - sub_intent для calendar: create | update | delete | free_slots | free (обзор дня/встреч) | zoom | zoom_update | zoom_delete | telemost | telemost_update | telemost_delete | contacts
   - «свободные слоты», «когда я свободен», «слоты у Андрея» → sub_intent=free_slots
+  - «слоты», «календарь», «скинь слоты», «пришли календарь», «покажи свободные слоты», «дай слоты» → sub_intent=free_slots (бот пришлёт ссылку на запись)
   - zoom: онлайн-встреча Zoom — «зум», «дай ссылку на zoom» → sub_intent=zoom (мгновенная ссылка)
   - «перенеси зум на 15:00» → sub_intent=zoom_update; «удали зум» → sub_intent=zoom_delete
   - telemost: Yandex Telemost — «телемост», «дай ссылку на telemost» → sub_intent=telemost
