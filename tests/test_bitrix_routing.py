@@ -14,9 +14,13 @@ class TestBitrixRegex(unittest.TestCase):
         self.assertEqual(route.skill, "bitrix")
 
     def test_task_actions(self) -> None:
-        self.assertIsNotNone(parse_bitrix_intent("поставь задачу на завтра"))
         self.assertIsNotNone(parse_bitrix_intent("найди задачу про интеграцию"))
         self.assertIsNotNone(parse_bitrix_intent("дай описание задачи по переносу на кордекса"))
+
+    def test_create_task_without_bitrix_word_is_leo_task(self) -> None:
+        self.assertIsNone(parse_bitrix_intent("поставь задачу на завтра"))
+        self.assertIsNone(parse_bitrix_intent("создай задачу позвонить клиенту"))
+        self.assertIsNotNone(parse_bitrix_intent("поставь задачу в битрикс на завтра"))
 
     def test_task_followup_phrases(self) -> None:
         from assistant.skills.bitrix import bitrix_likely_followup

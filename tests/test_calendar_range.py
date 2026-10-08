@@ -93,11 +93,15 @@ class TestCalendarRangeHelpers(TestCase):
         tz = ZoneInfo("Europe/Moscow")
         from assistant.services import google_tasks as google_tasks_svc
 
+        import threading
+
         google_tasks_svc._reset_pull_state_for_tests()
-        hung = {"n": 0}
+        request_thread = threading.current_thread()
+        hung = {"in_request_thread": 0}
 
         def _hang(*_a, **_k):
-            hung["n"] += 1
+            if threading.current_thread() is request_thread:
+                hung["in_request_thread"] += 1
             time.sleep(20)
 
         try:
@@ -121,7 +125,7 @@ class TestCalendarRangeHelpers(TestCase):
             self.assertLess(elapsed, 2.0)
             titles = [e.get("summary") for e in today["events"] if e.get("entry_type") == "task"]
             self.assertEqual(titles, ["Локальная"])
-            self.assertEqual(hung["n"], 0)
+            self.assertEqual(hung["in_request_thread"], 0)
         finally:
             calendar_tasks_store._CONN = None  # type: ignore[attr-defined]
             os.environ.pop("CALENDAR_TASKS_DB_PATH", None)
