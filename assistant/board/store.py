@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import uuid
@@ -16,6 +17,8 @@ from assistant.board.numbers import safe_float
 
 _lock = threading.RLock()
 _CONN: sqlite3.Connection | None = None
+# update_meeting подставляет имена колонок в SQL — только идентификаторы.
+_SQL_IDENT_RE = re.compile(r"[a-z_][a-z0-9_]*")
 
 
 def _project_dir() -> Path:
@@ -517,6 +520,9 @@ def update_meeting(meeting_id: str, **fields: Any) -> None:
         return
     fields = dict(fields)
     fields["updated_at"] = _now()
+    for k in fields:
+        if not _SQL_IDENT_RE.fullmatch(k):
+            raise ValueError(f"invalid meetings column: {k!r}")
     cols = ", ".join(f"{k} = ?" for k in fields)
     vals = list(fields.values()) + [meeting_id]
     with _lock:

@@ -37,6 +37,14 @@ class BoardStoreTest(unittest.TestCase):
         store.set_meeting_status(m["id"], "COMPLETED")
         self.assertIsNone(store.get_active_meeting(1))
 
+    def test_update_meeting_rejects_non_identifier_columns(self) -> None:
+        m = store.create_meeting(user_id=1, chat_id=5, question="q")
+        store.update_meeting(m["id"], current_round=3, title="T")
+        self.assertEqual(store.get_meeting(m["id"])["current_round"], 3)
+        with self.assertRaises(ValueError):
+            store.update_meeting(m["id"], **{"title = 'x', status": "STOPPED"})
+        self.assertEqual(store.get_meeting(m["id"])["title"], "T")
+
     def test_decision_search(self) -> None:
         m = store.create_meeting(user_id=1, chat_id=99, question="pricing")
         store.save_decision(

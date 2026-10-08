@@ -27,4 +27,9 @@ usage.sqlite
 notes.sqlite
 *.log
 .DS_Store
+webapp/.npm-cache/
+webapp/node_modules/
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 .edge-sync/
