@@ -138,14 +138,38 @@ def test_answer_with_context_sends_pdf_as_openrouter_file(monkeypatch):
     assert seen["payload"]["plugins"] == [{"id": "file-parser"}]
 
 
-def test_answer_with_context_keeps_model_images(monkeypatch):
+def test_answer_with_context_drops_spontaneous_model_images(monkeypatch):
     def fake_result(system, user, **kwargs):
         return "вот фото", [{"mime": "image/png", "b64": "aaa"}]
 
     monkeypatch.setattr(llm, "_chat_result", fake_result)
     out = llm.answer_with_context_result("опиши картинку")
     assert out["answer"] == "вот фото"
-    assert out["images"] == [{"mime": "image/png", "b64": "aaa"}]
+    assert out["images"] == []
+
+
+def test_answer_with_context_no_image_on_увеличивается(monkeypatch):
+    """Регресс KPI @vinse_u: «увеличивается» не должно запускать image gen."""
+    calls: list[str] = []
+
+    def fake_result(system, user, **kwargs):
+        return "Согласен, без скриптов анализ слабее.", []
+
+    def fake_images(prompt, **kwargs):
+        calls.append(prompt)
+        return [{"mime": "image/png", "b64": "YmFiYQ=="}]
+
+    monkeypatch.setattr(llm, "_chat_result", fake_result)
+    monkeypatch.setattr(
+        "assistant.integrations.openrouter_client.openrouter_generate_images",
+        fake_images,
+    )
+    out = llm.answer_with_context_result(
+        "ценность анализа увеличивается, если есть точные скрипты звонков"
+    )
+    assert calls == []
+    assert out["images"] == []
+    assert "Согласен" in out["answer"]
 
 
 def test_answer_with_context_generates_image_from_block(monkeypatch):

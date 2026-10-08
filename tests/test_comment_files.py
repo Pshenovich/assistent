@@ -101,7 +101,22 @@ class CommentFilesTests(unittest.TestCase):
         self.assertTrue(comment_files.wants_generated_image("пришли фото офиса"))
         self.assertTrue(comment_files.wants_generated_image("апскейл ×3 и DPI ×3"))
         self.assertTrue(comment_files.wants_generated_image("увеличь это фото в 3 раза"))
+        self.assertTrue(comment_files.wants_generated_image("увеличить dpi этого png"))
         self.assertFalse(comment_files.wants_generated_image("что на фото в заметке?"))
+        # False positive from KPI note (@vinse_u): «увеличивается» ≠ request for image.
+        self.assertFalse(
+            comment_files.wants_generated_image(
+                "ценность анализа увеличивается, если есть точные скрипты звонков"
+            )
+        )
+        self.assertFalse(
+            comment_files.wants_image_delivery(
+                "ценность анализа увеличивается, если есть точные скрипты звонков"
+            )
+        )
+        self.assertFalse(
+            comment_files.wants_generated_image("нужно обсудить масштаб проекта на октябрь")
+        )
         self.assertTrue(comment_files.wants_resend_attachment("еще раз отправь файл"))
         self.assertTrue(comment_files.claims_attachment_ready("Готово — файл во вложении."))
         self.assertTrue(

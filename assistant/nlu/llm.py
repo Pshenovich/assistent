@@ -157,8 +157,9 @@ def _materialize_generated_media(
         answer="",
     )
     if not user_wants:
-        # Strip spontaneous :::image / base64; keep native model images if any.
-        return cleaned, model_images
+        # Без явного запроса картинки — выкидываем и :::image/base64, и «нативные»
+        # model images (иначе GPT снова прикрепляет png без просьбы).
+        return cleaned, []
 
     out_images = model_images + embedded
     need = wants_image_delivery(
