@@ -10008,17 +10008,22 @@ async def public_book_slot(token: str, body: _PublicBookBody) -> dict[str, Any]:
         _raise_calendar_http(e)
     created = result.pop("_created", None) or {}
     owner_id = int(result.pop("_owner_id", 0) or 0)
+    guests = list(result.pop("_guests", None) or [])
+    source_chat_id = result.pop("_source_chat_id", None)
+    source_message_id = result.pop("_source_message_id", None)
     if created and owner_id:
         try:
-            from assistant.services import meeting_invites as inv
+            from assistant.services.booking_links import announce_public_booking
 
-            await inv.notify_invitees_for_miniapp(
-                organizer_uid=owner_id,
-                organizer_user={},
-                result=created,
+            await announce_public_booking(
+                owner_id=owner_id,
+                created=created,
+                guests=guests,
+                source_chat_id=source_chat_id,
+                source_message_id=source_message_id,
             )
         except Exception as e:
-            print(f"[public_book] invite_notify err={e!r}")
+            print(f"[public_book] announce err={e!r}")
     return result
 
 

@@ -1135,10 +1135,17 @@ async def _reply_booking_link(msg, uid: int, parsed: dict[str, Any]) -> None:
         await msg.reply_text(f"Не удалось создать ссылку на слоты: {e}")
         return
     url = str(created.get("url") or "").strip()
+    token = str(created.get("token") or "").strip()
     if not url:
         await msg.reply_text("Не удалось создать ссылку на слоты.")
         return
-    await msg.reply_text(f"Свободные слоты:\n{url}", disable_web_page_preview=True)
+    sent = await msg.reply_text(
+        f"Свободные слоты:\n{url}", disable_web_page_preview=True
+    )
+    chat_id = getattr(getattr(msg, "chat", None), "id", None) or getattr(msg, "chat_id", None)
+    mid = getattr(sent, "message_id", None) if sent else None
+    if token and chat_id and mid:
+        await asyncio.to_thread(booking_svc.attach_source_message, token, chat_id, mid)
 
 
 async def handle(

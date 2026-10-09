@@ -6,7 +6,7 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
 from assistant.services import booking_links as booking_svc
@@ -310,3 +310,98 @@ class BookPublicSlotTests(unittest.TestCase):
         self.assertTrue(out["ok"])
         attendees = create.call_args.args[1]["attendees"]
         self.assertEqual(attendees, ["anna@x.com", "one@x.com", "two@x.com", "three@x.com"])
+
+    def test_attach_source_message_roundtrip(self) -> None:
+        created = booking_svc.create_booking_link(8, title="Синк")
+        self.assertTrue(store.attach_source_message(created["token"], 42, 77))
+        link = store.resolve_link(created["token"])
+        assert link is not None
+        self.assertEqual(link["source_chat_id"], 42)
+        self.assertEqual(link["source_message_id"], 77)
+
+    def test_book_returns_source_and_guests(self) -> None:
+        tz = ZoneInfo("Europe/Moscow")
+        start = datetime(2026, 6, 5, 10, 0, tzinfo=tz)
+        created = booking_svc.create_booking_link(8, title="Синк")
+        store.attach_source_message(created["token"], 42, 77)
+        with patch.object(cal_svc, "_parse_dt", return_value=start), patch.object(
+            cal_svc, "joint_slot_is_free", return_value=True
+        ), patch.object(
+            cal_svc,
+            "create_event",
+            return_value={
+                "event_id": "ev-3",
+                "summary": "Синк",
+                "html_link": "https://cal",
+                "attendee_emails": ["guest@x.com"],
+            },
+        ):
+            out = booking_svc.book_public_slot(
+                created["token"],
+                start=start.isoformat(),
+                duration_min=30,
+                guest_email="guest@x.com",
+            )
+        self.assertEqual(out["_guests"], ["guest@x.com"])
+        self.assertEqual(out["_source_chat_id"], 42)
+        self.assertEqual(out["_source_message_id"], 77)
+        self.assertEqual(out["_created"]["start"], start)
+
+    def test_owner_notify_html(self) -> None:
+        tz = ZoneInfo("Europe/Moscow")
+        start = datetime(2026, 6, 5, 10, 0, tzinfo=tz)
+        end = start + timedelta(minutes=30)
+        text = booking_svc.format_booking_owner_notify_html(
+            {"summary": "Синк", "html_link": "https://cal", "start": start, "end": end},
+            8,
+            guests=["guest@x.com"],
+        )
+        self.assertIn("Внешний контакт поставил встречу", text)
+        self.assertIn("Синк", text)
+        self.assertIn("guest@x.com", text)
+        card = booking_svc.format_booking_event_html(
+            {"summary": "Синк", "html_link": "https://cal", "start": start, "end": end, "attendee_emails": ["guest@x.com"]},
+            8,
+        )
+        self.assertIn("Создана встреча", card)
+        self.assertIn("guest@x.com", card)
+
+
+class AnnouncePublicBookingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_edits_link_message_and_notifies_owner(self) -> None:
+        tz = ZoneInfo("Europe/Moscow")
+        start = datetime(2026, 6, 5, 10, 0, tzinfo=tz)
+        end = start + timedelta(minutes=30)
+        created = {
+            "event_id": "ev-9",
+            "summary": "Синк",
+            "html_link": "https://cal",
+            "start": start,
+            "end": end,
+            "attendee_emails": ["guest@x.com"],
+        }
+        bot = MagicMock()
+        bot.edit_message_text = AsyncMock()
+        bot.send_message = AsyncMock()
+        bot.__aenter__ = AsyncMock(return_value=bot)
+        bot.__aexit__ = AsyncMock(return_value=False)
+        with patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "123:ABC"}), patch(
+            "telegram.Bot", return_value=bot
+        ), patch(
+            "assistant.services.meeting_invites.notify_invitees_for_miniapp",
+            new_callable=AsyncMock,
+        ) as invites:
+            await booking_svc.announce_public_booking(
+                owner_id=42,
+                created=created,
+                guests=["guest@x.com"],
+                source_chat_id=42,
+                source_message_id=77,
+            )
+        bot.edit_message_text.assert_awaited()
+        edit_text = bot.edit_message_text.await_args.kwargs.get("text") or ""
+        self.assertIn("Создана встреча", edit_text)
+        bot.send_message.assert_awaited()
+        note = bot.send_message.await_args.kwargs.get("text") or ""
+        self.assertIn("Внешний контакт поставил встречу", note)
+        invites.assert_awaited()

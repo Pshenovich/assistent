@@ -20,18 +20,27 @@ class CalendarBookingLinkSkillTests(unittest.IsolatedAsyncioTestCase):
         return update
 
     @patch("assistant.skills.calendar.nlu_llm.parse_calendar")
+    @patch("assistant.services.booking_links.attach_source_message")
     @patch("assistant.services.booking_links.create_booking_link")
-    async def test_skiny_slots_replies_with_url(self, mock_create, mock_parse) -> None:
+    async def test_skiny_slots_replies_with_url(
+        self, mock_create, mock_attach, mock_parse
+    ) -> None:
         mock_parse.return_value = {"intent": "free_slots", "attendees": []}
         mock_create.return_value = {
             "url": "https://assistent.networ.ru/book/abc",
             "token": "abc",
         }
         update = self._make_update("скинь слоты")
+        update.message.chat = MagicMock()
+        update.message.chat.id = 42
+        sent = MagicMock()
+        sent.message_id = 77
+        update.message.reply_text = AsyncMock(return_value=sent)
         context = MagicMock()
         context.bot.username = "LeoBot"
         await calendar_skill.handle(update, context, "скинь слоты", kind="free")
         mock_create.assert_called_once()
+        mock_attach.assert_called_once_with("abc", 42, 77)
         update.message.reply_text.assert_awaited()
         body = update.message.reply_text.await_args.args[0]
         self.assertIn("https://assistent.networ.ru/book/abc", body)

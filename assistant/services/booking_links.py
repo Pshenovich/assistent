@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import html
-from datetime import date, timedelta
+import os
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from assistant.integrations import google_calendar_oauth
@@ -60,6 +61,150 @@ def create_booking_link(
         "expires_at": link.get("expires_at"),
         "attendee_count": len(link.get("attendee_emails") or []),
     }
+
+
+def attach_source_message(token: str, chat_id: Any, message_id: Any) -> bool:
+    try:
+        return store.attach_source_message(token, int(chat_id), int(message_id))
+    except (TypeError, ValueError):
+        return False
+
+
+def _event_when(result: dict[str, Any], owner_id: int) -> str:
+    st = result.get("start")
+    en = result.get("end")
+    if not isinstance(st, datetime) or not isinstance(en, datetime):
+        return ""
+    return cal_svc.format_event_when(st, en, int(owner_id))
+
+
+def format_booking_event_html(
+    result: dict[str, Any],
+    owner_id: int,
+    *,
+    heading: str = "Создана встреча",
+) -> str:
+    title = html.escape(str(result.get("summary") or "Встреча"))
+    link = str(result.get("html_link") or "").strip()
+    title_html = f'<a href="{html.escape(link, quote=True)}">{title}</a>' if link else f"<b>{title}</b>"
+    parts = [f"<b>{html.escape(heading)}:</b> {title_html}"]
+    when = _event_when(result, owner_id)
+    if when:
+        parts.append(html.escape(when))
+    guests = [
+        str(e).strip()
+        for e in (result.get("attendee_emails") or [])
+        if str(e).strip()
+    ]
+    if guests:
+        parts.append("Участники: " + html.escape(", ".join(guests)))
+    return "\n".join(parts)
+
+
+def format_booking_owner_notify_html(
+    result: dict[str, Any],
+    owner_id: int,
+    *,
+    guests: list[str] | None = None,
+) -> str:
+    title = html.escape(str(result.get("summary") or "Встреча"))
+    link = str(result.get("html_link") or "").strip()
+    title_html = f'<a href="{html.escape(link, quote=True)}">{title}</a>' if link else f"<b>{title}</b>"
+    who = [str(e).strip() for e in (guests or []) if str(e).strip()]
+    who_line = html.escape(", ".join(who)) if who else "внешний контакт"
+    parts = [
+        "Внешний контакт поставил встречу",
+        title_html,
+    ]
+    when = _event_when(result, owner_id)
+    if when:
+        parts.append(html.escape(when))
+    parts.append(f"Участники: {who_line}")
+    return "\n".join(parts)
+
+
+async def announce_public_booking(
+    *,
+    owner_id: int,
+    created: dict[str, Any],
+    guests: list[str] | None = None,
+    source_chat_id: int | None = None,
+    source_message_id: int | None = None,
+    organizer_user: dict[str, Any] | None = None,
+) -> None:
+    """Заменяет сообщение со ссылкой карточкой встречи и пишет владельцу."""
+    from telegram import Bot
+    from telegram.constants import ParseMode
+
+    from assistant.lib import calendar_pending_store as cps
+    from assistant.lib.telegram_html import sanitize_telegram_html
+
+    uid = int(owner_id)
+    payload = dict(created or {})
+    guest_list = [str(e).strip() for e in (guests or payload.get("attendee_emails") or []) if str(e).strip()]
+    if guest_list and not payload.get("attendee_emails"):
+        payload["attendee_emails"] = guest_list
+    card = sanitize_telegram_html(format_booking_event_html(payload, uid))
+    notify = sanitize_telegram_html(
+        format_booking_owner_notify_html(payload, uid, guests=guest_list)
+    )
+    kb = cal_svc.build_created_event_keyboard(payload, user_id=uid)
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        return
+    edited = False
+    try:
+        async with Bot(token) as bot:
+            if source_chat_id and source_message_id and card:
+                try:
+                    await bot.edit_message_text(
+                        chat_id=int(source_chat_id),
+                        message_id=int(source_message_id),
+                        text=card,
+                        parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=True,
+                        reply_markup=kb,
+                    )
+                    edited = True
+                    st = payload.get("start")
+                    start_iso = st.isoformat() if hasattr(st, "isoformat") else str(st or "")
+                    cps.put_event_message_ref(
+                        int(source_chat_id),
+                        int(source_message_id),
+                        user_id=uid,
+                        event_id=str(payload.get("event_id") or ""),
+                        calendar_id=str(payload.get("calendar_id") or ""),
+                        summary=str(payload.get("summary") or ""),
+                        start_iso=start_iso,
+                    )
+                except Exception as e:
+                    print(
+                        f"[public_book] edit_link owner={uid} "
+                        f"chat={source_chat_id} mid={source_message_id} err={e!r}"
+                    )
+            try:
+                await bot.send_message(
+                    chat_id=uid,
+                    text=notify if edited else card or notify,
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                    reply_markup=None if edited else kb,
+                )
+            except Exception as e:
+                print(f"[public_book] notify_owner owner={uid} err={e!r}")
+    except Exception as e:
+        print(f"[public_book] announce owner={uid} err={e!r}")
+        return
+    try:
+        from assistant.services import meeting_invites as inv
+
+        await inv.notify_invitees_for_miniapp(
+            organizer_uid=uid,
+            organizer_user=organizer_user or {},
+            result=payload,
+        )
+    except Exception as e:
+        print(f"[public_book] invite_notify err={e!r}")
 
 
 def _require_open_link(token: str) -> dict[str, Any]:
@@ -317,13 +462,21 @@ def book_public_slot(
         if marked:
             store.clear_used(str(link["token"]))
         raise
+    payload = dict(created or {})
+    payload.setdefault("start", start_dt)
+    payload.setdefault("end", end_dt)
+    payload.setdefault("attendee_emails", emails)
+    payload.setdefault("summary", title)
     return {
         "ok": True,
-        "event_id": str(created.get("event_id") or ""),
-        "summary": str(created.get("summary") or title),
+        "event_id": str(payload.get("event_id") or ""),
+        "summary": str(payload.get("summary") or title),
         "start": start_dt.isoformat(),
         "end": end_dt.isoformat(),
-        "html_link": str(created.get("html_link") or ""),
-        "_created": created,
+        "html_link": str(payload.get("html_link") or ""),
+        "_created": payload,
         "_owner_id": owner_id,
+        "_guests": guests,
+        "_source_chat_id": link.get("source_chat_id"),
+        "_source_message_id": link.get("source_message_id"),
     }

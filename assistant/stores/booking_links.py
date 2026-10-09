@@ -101,7 +101,9 @@ def _conn() -> sqlite3.Connection:
             expires_at TEXT,
             used_at TEXT,
             created_at TEXT NOT NULL,
-            revoked_at TEXT
+            revoked_at TEXT,
+            source_chat_id TEXT,
+            source_message_id TEXT
         )
         """
     )
@@ -109,6 +111,11 @@ def _conn() -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_booking_links_owner "
         "ON booking_links(owner_user_id, created_at)"
     )
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(booking_links)")}
+    if "source_chat_id" not in cols:
+        conn.execute("ALTER TABLE booking_links ADD COLUMN source_chat_id TEXT")
+    if "source_message_id" not in cols:
+        conn.execute("ALTER TABLE booking_links ADD COLUMN source_message_id TEXT")
     conn.commit()
     return conn
 
@@ -151,7 +158,16 @@ def _token_ok(token: str) -> bool:
     return all(c in _TOKEN_CHARS for c in raw)
 
 
+def _int_or_none(raw: Any) -> int | None:
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return n if n else None
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    keys = set(row.keys())
     return {
         "token": str(row["token"] or ""),
         "owner_user_id": str(row["owner_user_id"] or ""),
@@ -163,6 +179,10 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "used_at": row["used_at"],
         "created_at": row["created_at"],
         "revoked_at": row["revoked_at"],
+        "source_chat_id": _int_or_none(row["source_chat_id"]) if "source_chat_id" in keys else None,
+        "source_message_id": _int_or_none(row["source_message_id"])
+        if "source_message_id" in keys
+        else None,
     }
 
 
@@ -238,7 +258,33 @@ def create_link(
         "used_at": None,
         "created_at": created,
         "revoked_at": None,
+        "source_chat_id": None,
+        "source_message_id": None,
     }
+
+
+def attach_source_message(token: str, chat_id: int, message_id: int) -> bool:
+    raw = (token or "").strip()
+    if not _token_ok(raw):
+        return False
+    try:
+        cid = int(chat_id)
+        mid = int(message_id)
+    except (TypeError, ValueError):
+        return False
+    if not cid or not mid:
+        return False
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            UPDATE booking_links
+            SET source_chat_id = ?, source_message_id = ?
+            WHERE token = ? AND revoked_at IS NULL
+            """,
+            (str(cid), str(mid), raw),
+        )
+        _conn().commit()
+        return cur.rowcount > 0
 
 
 def resolve_link(token: str) -> Optional[dict[str, Any]]:
