@@ -2617,12 +2617,22 @@ class _MiniappLocalNotePatch(BaseModel):
 
 class _MiniappNoteSheetCreate(BaseModel):
     title: str = ""
+    description: Optional[str] = None
+    kind: Optional[str] = None
 
 
 class _MiniappNoteSheetPatch(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    kind: Optional[str] = None
     expected_revision: Optional[int] = None
+
+
+class _MiniappCanvasSelection(BaseModel):
+    sheet_id: Optional[str] = None
+    leo_id: Optional[str] = None
+    label: Optional[str] = None
+    snippet: Optional[str] = None
 
 
 class _MiniappJournalPatch(BaseModel):
@@ -2730,6 +2740,7 @@ class _MiniappGptChatBody(BaseModel):
     item_kind: Optional[str] = None
     item_id: Optional[str] = None
     agent_id: Optional[str] = None
+    canvas_selections: list[_MiniappCanvasSelection] = Field(default_factory=list)
 
 
 class _MiniappAgentCreate(BaseModel):
@@ -4857,6 +4868,67 @@ async def miniapp_auth_session(
     return resp
 
 
+class _LoginCodeBody(BaseModel):
+    code: str
+
+
+@miniapp_router.post("/auth/login-code")
+async def miniapp_auth_login_code(body: _LoginCodeBody) -> JSONResponse:
+    """Обмен одноразового кода из бота (/web) на browser-сессию — без oauth.telegram.org."""
+    from assistant.lib.telegram_login_auth import issue_browser_session
+    from assistant.stores import web_login_codes
+
+    user = web_login_codes.consume_code(body.code)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Код неверный или устарел. Напишите боту /web и возьмите новый.",
+        )
+    uid = int(user["id"])
+    try:
+        token, exp = issue_browser_session(uid, user)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    resp = JSONResponse(
+        {
+            "session_token": token,
+            "expires_at": exp,
+            "user": user,
+        }
+    )
+    _attach_miniapp_session_cookie(resp, token)
+    return resp
+
+
+@miniapp_router.post("/auth/login-code/issue")
+async def miniapp_auth_login_code_issue(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Выдать код/ссылку для входа в браузер (из миниаппа, когда oauth.telegram.org недоступен)."""
+    from assistant.lib.webapp_public import webapp_entry_url
+    from assistant.stores import web_login_codes
+    from urllib.parse import urlencode
+
+    uid = int(principal.telegram_user_id)
+    u = dict(principal.user or {})
+    issued = web_login_codes.issue_code(
+        uid,
+        username=u.get("username"),
+        first_name=u.get("first_name"),
+        last_name=u.get("last_name"),
+        photo_url=u.get("photo_url"),
+    )
+    base = webapp_entry_url()
+    sep = "&" if "?" in base else "?"
+    login_url = f"{base}{sep}{urlencode({'login': issued['code']})}"
+    return {
+        "code": issued["code"],
+        "expires_at": issued["expires_at"],
+        "ttl_sec": issued["ttl_sec"],
+        "login_url": login_url,
+    }
+
+
 @miniapp_router.post("/auth/logout")
 async def miniapp_auth_logout() -> JSONResponse:
     resp = JSONResponse({"ok": True})
@@ -6879,6 +6951,20 @@ async def miniapp_gpt_chat(
                 hint = _discussion_participants_system_hint(owner_for_hint, kind, iid)
                 if hint:
                     system_text = (system_text.rstrip() + "\n\n" + hint).strip() if system_text else hint
+        canvas_enabled = kind == "local" and bool(iid)
+        if canvas_enabled:
+            from assistant.lib import web_canvas as web_canvas_lib
+
+            system_text = (
+                (system_text.rstrip() + "\n\n" + web_canvas_lib.canvas_system_addon()).strip()
+                if system_text
+                else web_canvas_lib.canvas_system_addon()
+            )
+            sel_block = web_canvas_lib.selections_prompt_block(
+                [s.model_dump() for s in (body.canvas_selections or [])]
+            )
+            if sel_block:
+                prompt = (prompt.rstrip() + "\n\n" + sel_block).strip()
         try:
             set_openrouter_usage_telegram_user(
                 telegram_user_id=uid,
@@ -6904,6 +6990,47 @@ async def miniapp_gpt_chat(
             )
             if out is None:
                 return None
+            if canvas_enabled:
+                from assistant.lib import web_canvas as web_canvas_lib
+                from assistant.stores import note_sheets as note_sheets_store
+                from assistant.stores import notes as notes_store
+
+                answer_raw = str(out.get("answer") or "")
+                clean_answer, canvas_actions = web_canvas_lib.parse_leo_canvas_blocks(answer_raw)
+                out["answer"] = clean_answer
+                applied: list[dict[str, Any]] = []
+                try:
+                    note_id_int = int(iid)
+                except (TypeError, ValueError):
+                    note_id_int = 0
+                note = (
+                    notes_store.get_accessible_note(uid, note_id_int)
+                    if note_id_int
+                    else None
+                )
+                if note and canvas_actions:
+                    for act in canvas_actions[:3]:
+                        try:
+                            sheet = web_canvas_lib.apply_canvas_action(
+                                note=note,
+                                action=act,
+                                note_sheets_mod=note_sheets_store,
+                            )
+                        except Exception as e:
+                            print(f"[web_canvas] apply failed err={e!r}")
+                            continue
+                        if sheet:
+                            applied.append(
+                                {
+                                    "action": str(act.get("action") or "create"),
+                                    "sheet_id": str(sheet.get("id")),
+                                    "title": str(sheet.get("title") or ""),
+                                    "kind": str(sheet.get("kind") or "web"),
+                                    "revision": sheet.get("revision"),
+                                }
+                            )
+                if applied:
+                    out["canvas"] = applied
             if kb_version:
                 out = {**out, "kb_version": kb_version}
             generated = _save_generated(out)
@@ -6925,11 +7052,13 @@ async def miniapp_gpt_chat(
 
     files = out.get("files") if isinstance(out.get("files"), list) else []
     used_model = str(out.get("model") or run_model or "").strip()
+    canvas = out.get("canvas") if isinstance(out.get("canvas"), list) else []
     return {
         "answer": str(out.get("answer") or ""),
         "bullets": out.get("bullets") if isinstance(out.get("bullets"), list) else [],
         "kb_version": str(out.get("kb_version") or ""),
         "files": files,
+        "canvas": canvas,
         "model": used_model,
         "model_label": gpt_display_label(used_model),
     }
@@ -8037,10 +8166,18 @@ async def miniapp_note_sheet_create(
     uid = int(principal.telegram_user_id)
 
     def _run() -> dict[str, Any] | None:
+        from assistant.lib import web_canvas as web_canvas_lib
+
         note = notes_store.get_accessible_note(uid, note_id)
         if not note:
             return None
-        return note_sheets_store.create_sheet(note, body.title)
+        kind = web_canvas_lib.normalize_kind(body.kind)
+        sheet_body = body.description if body.description is not None else ""
+        if kind == web_canvas_lib.SHEET_KIND_WEB and sheet_body:
+            sheet_body = web_canvas_lib.finalize_canvas_html(sheet_body)
+        return note_sheets_store.create_sheet(
+            note, body.title, body=sheet_body or "", kind=kind
+        )
 
     try:
         item = await run_in_threadpool(_run)
@@ -8070,6 +8207,116 @@ async def miniapp_note_make_summary(
         raise HTTPException(status_code=400, detail=str(e)) from e
     background_tasks.add_task(tnotes.generate_summary_for_note, uid, note_id)
     return {"ok": True, "item": item}
+
+
+def _truthy_form_flag(raw: str | bool | None) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    return str(raw or "").strip().lower() in ("1", "true", "yes", "on", "summary")
+
+
+@miniapp_router.post("/notes/transcriptions/upload")
+async def miniapp_transcription_upload(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    with_summary: str = Form("0"),
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Загрузка аудио/видео из миниаппа → транскрипция (+ опционально саммари)."""
+    from assistant.integrations import transcribe as obu
+    from assistant.lib.usage_store import insert_usage_event
+    from assistant.services import transcription_notes as tnotes
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Пустой файл")
+    max_bytes = 100 * 1024 * 1024
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail="Файл слишком большой (макс. 100 МБ)")
+    filename = str(file.filename or "audio.mp3").strip() or "audio.mp3"
+    source_filename = filename
+    source_size = len(data)
+    content_type = file.content_type
+    want_summary = _truthy_form_flag(with_summary)
+    try:
+        data, filename = await run_in_threadpool(
+            _prepare_miniapp_voice_audio,
+            data,
+            filename,
+            content_type,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    stem = Path(source_filename).stem.strip() or "Транскрипция"
+    title = stem[:120]
+    username = None
+    if isinstance(principal.user, dict) and principal.user.get("username"):
+        username = str(principal.user.get("username") or "").strip() or None
+    uid = int(principal.telegram_user_id)
+
+    def _transcribe_and_create() -> dict[str, Any]:
+        result = obu.transcribe_bytes(data, filename)
+        transcript = (result.formatted_text or result.plain_text or "").strip()
+        if not transcript:
+            raise RuntimeError("(пустая транскрипция)")
+        insert_usage_event(
+            operation="obuchat_transcribe",
+            model=None,
+            generation_id=result.job_id,
+            usage={
+                "text": transcript[:4000],
+                "source": "miniapp_transcription_upload",
+                "filename": filename,
+                "with_summary": want_summary,
+            },
+            telegram_user_id=str(uid),
+            telegram_username=username,
+        )
+        meta = {
+            "source": "miniapp_upload",
+            "filename": source_filename,
+            "job_id": result.job_id,
+        }
+        note = tnotes.create_transcript_only(
+            uid,
+            title=title,
+            transcript=transcript,
+            meta=meta,
+        )
+        return note
+
+    try:
+        item = await run_in_threadpool(_transcribe_and_create)
+    except RuntimeError as e:
+        print(
+            "[miniapp_transcription_upload] failed "
+            f"source_filename={source_filename!r} filename={filename!r} "
+            f"content_type={content_type!r} source_bytes={source_size} "
+            f"bytes={len(data)} err={e!r}"
+        )
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    except Exception as e:
+        print(
+            "[miniapp_transcription_upload] failed "
+            f"source_filename={source_filename!r} filename={filename!r} "
+            f"err={e!r}"
+        )
+        raise HTTPException(status_code=502, detail=f"Транскрибация: {e}") from e
+
+    if want_summary:
+        note_id = int(item["id"])
+
+        def _begin() -> dict[str, Any]:
+            return tnotes.begin_make_summary(uid, note_id)
+
+        try:
+            item = await run_in_threadpool(_begin)
+        except tnotes.TranscriptionNoteError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        background_tasks.add_task(tnotes.generate_summary_for_note, uid, note_id)
+
+    return {"ok": True, "id": item["id"], "item": item, "with_summary": want_summary}
 
 
 @miniapp_router.post("/notes/local/{note_id}/pdf")
@@ -8109,7 +8356,7 @@ async def miniapp_note_sheet_patch(
     uid = int(principal.telegram_user_id)
     if note_sheets_store.is_primary_id(sheet_id):
         raise HTTPException(status_code=400, detail="Основную правьте через заметку")
-    if body.title is None and body.description is None:
+    if body.title is None and body.description is None and body.kind is None:
         raise HTTPException(status_code=400, detail="Укажите title и/или description")
     try:
         extra_id = int(sheet_id)
@@ -8117,13 +8364,30 @@ async def miniapp_note_sheet_patch(
         raise HTTPException(status_code=400, detail="Некорректный лист") from e
 
     def _run() -> dict[str, Any] | None:
+        from assistant.lib import web_canvas as web_canvas_lib
+
         if notes_store.get_accessible_note(uid, note_id, with_sharing=False) is None:
             return None
+        existing = note_sheets_store.get_extra_sheet(note_id, extra_id)
+        kind = (
+            web_canvas_lib.normalize_kind(body.kind)
+            if body.kind is not None
+            else None
+        )
+        sheet_body = body.description
+        effective_kind = kind or (
+            web_canvas_lib.normalize_kind((existing or {}).get("kind"))
+            if existing
+            else web_canvas_lib.SHEET_KIND_DOC
+        )
+        if sheet_body is not None and effective_kind == web_canvas_lib.SHEET_KIND_WEB:
+            sheet_body = web_canvas_lib.finalize_canvas_html(sheet_body)
         return note_sheets_store.update_sheet(
             note_id,
             extra_id,
             title=body.title,
-            body=body.description,
+            body=sheet_body,
+            kind=kind,
             expected_revision=body.expected_revision,
         )
 

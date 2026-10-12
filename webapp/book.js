@@ -422,21 +422,11 @@
 
   function syncDock() {
     var btn = $("book-submit");
-    var summary = $("book-summary");
     var emailEl = $("book-email");
     var emails = parseEmails(emailEl ? emailEl.value : "");
     var okEmail = emailsValid(emails);
     if (emailEl) emailEl.classList.toggle("is-invalid", !!String(emailEl.value || "").trim() && !okEmail);
     if (btn) btn.disabled = loadingBook || !selectedStart || !okEmail;
-    if (!summary) return;
-    if (!selectedStart) {
-      summary.textContent = "Выберите день, время и email";
-      return;
-    }
-    var start = wallTime(selectedStart);
-    var end = wallTime(selectedEnd);
-    var range = end ? start + "–" + end : start;
-    summary.innerHTML = "Выбрано: <strong>" + formatDayHeading(selectedDay) + ", " + range + "</strong>";
   }
 
   async function boot() {

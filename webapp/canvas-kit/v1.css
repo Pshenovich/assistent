@@ -1,0 +1,320 @@
+/* Leo Presentation Kit v1 — curated presets via html[data-leo-theme] */
+
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@600;700;800&family=Newsreader:opsz,wght@6..72,400;6..72,600&family=Space+Grotesk:wght@500;600;700&display=swap");
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 18px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- Theme tokens ---- */
+
+html[data-leo-theme="editorial"] {
+  --bg: #f7f4ef;
+  --bg-elevated: #fffdf9;
+  --text: #1a1814;
+  --text-muted: #6a6358;
+  --accent: #b54a2e;
+  --accent-soft: rgba(181, 74, 46, 0.12);
+  --rule: #d9d0c3;
+  --font-display: "Fraunces", "Source Serif 4", Georgia, serif;
+  --font-body: "Source Serif 4", Georgia, serif;
+  --radius: 0;
+  --slide-pad: clamp(1.5rem, 5vw, 4rem);
+}
+
+html[data-leo-theme="product-dark"] {
+  --bg: #0e1116;
+  --bg-elevated: #161b22;
+  --text: #e8edf5;
+  --text-muted: #9aa6b5;
+  --accent: #3d9cf0;
+  --accent-soft: rgba(61, 156, 240, 0.16);
+  --rule: #2a3340;
+  --font-display: "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+  --radius: 12px;
+  --slide-pad: clamp(1.5rem, 5vw, 3.5rem);
+}
+
+html[data-leo-theme="poster"] {
+  --bg: #111111;
+  --bg-elevated: #1a1a1a;
+  --text: #f4f4f0;
+  --text-muted: #a3a39a;
+  --accent: #f0c24b;
+  --accent-soft: rgba(240, 194, 75, 0.14);
+  --rule: #2e2e2a;
+  --font-display: "Syne", "Space Grotesk", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+  --radius: 0;
+  --slide-pad: clamp(1.25rem, 4vw, 3rem);
+}
+
+html[data-leo-theme="soft-light"] {
+  --bg: #f3f6f8;
+  --bg-elevated: #ffffff;
+  --text: #1c2430;
+  --text-muted: #5c6b7a;
+  --accent: #0f766e;
+  --accent-soft: rgba(15, 118, 110, 0.12);
+  --rule: #d5dee6;
+  --font-display: "Newsreader", Georgia, serif;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+  --radius: 16px;
+  --slide-pad: clamp(1.5rem, 5vw, 3.5rem);
+}
+
+html[data-leo-theme="brutal"] {
+  --bg: #ffffff;
+  --bg-elevated: #ffffff;
+  --text: #000000;
+  --text-muted: #333333;
+  --accent: #000000;
+  --accent-soft: #eeeeee;
+  --rule: #000000;
+  --font-display: "IBM Plex Mono", ui-monospace, monospace;
+  --font-body: "IBM Plex Mono", ui-monospace, monospace;
+  --radius: 0;
+  --slide-pad: clamp(1.25rem, 4vw, 2.5rem);
+}
+
+/* ---- Layout primitives ---- */
+
+.deck {
+  min-height: 100vh;
+}
+
+.slide {
+  min-height: 100vh;
+  padding: var(--slide-pad);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1.25rem;
+  border-bottom: 1px solid var(--rule);
+  scroll-snap-align: start;
+  animation: leo-slide-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.deck {
+  scroll-snap-type: y proximity;
+}
+
+.hero {
+  gap: 1.5rem;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: clamp(1.5rem, 4vw, 3rem);
+  align-items: center;
+}
+
+@media (max-width: 720px) {
+  .split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  align-items: baseline;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 7rem;
+}
+
+.stat strong {
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 5vw, 3.25rem);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent);
+}
+
+/* ---- Type ---- */
+
+.display {
+  font-family: var(--font-display);
+  font-size: clamp(2.4rem, 7vw, 5.5rem);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  margin: 0;
+  max-width: 16ch;
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: clamp(1.6rem, 3.5vw, 2.6rem);
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  margin: 0;
+  max-width: 22ch;
+}
+
+.body {
+  font-family: var(--font-body);
+  font-size: clamp(1.05rem, 1.6vw, 1.25rem);
+  color: var(--text-muted);
+  margin: 0;
+  max-width: 38ch;
+}
+
+.caption {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.mark {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0;
+}
+
+.rule {
+  width: 4rem;
+  height: 2px;
+  background: var(--accent);
+  border: 0;
+  margin: 0.25rem 0;
+}
+
+.cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.85rem 1.35rem;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--bg);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  width: fit-content;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.cta:hover {
+  transform: translateY(-1px);
+  opacity: 0.92;
+}
+
+html[data-leo-theme="brutal"] .cta {
+  background: #000;
+  color: #fff;
+  border-width: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+html[data-leo-theme="editorial"] .cta {
+  background: transparent;
+  color: var(--accent);
+}
+
+html[data-leo-theme="poster"] .display {
+  max-width: 12ch;
+  font-size: clamp(3rem, 10vw, 7rem);
+}
+
+.panel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.5rem;
+}
+
+ul.stack {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+ul.stack li {
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--font-body);
+  color: var(--text);
+}
+
+ul.stack li:last-child {
+  border-bottom: 0;
+}
+
+/* Selection outline (driven by parent via class on html) */
+html.leo-pick-mode [data-leo-id] {
+  cursor: crosshair;
+}
+
+html.leo-pick-mode [data-leo-id]:hover {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+[data-leo-id].leo-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  background: var(--accent-soft);
+}
+
+@keyframes leo-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slide {
+    animation: none;
+  }
+  .cta {
+    transition: none;
+  }
+}

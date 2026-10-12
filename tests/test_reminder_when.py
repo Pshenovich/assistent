@@ -19,6 +19,14 @@ class ReminderWhenTests(unittest.TestCase):
         self.assertEqual(got.date(), now.date())
         self.assertEqual((got.hour, got.minute), (22, 0))
 
+    def test_parse_in_ten_minutes(self):
+        tz = ZoneInfo("Europe/Moscow")
+        now = datetime(2026, 6, 4, 16, 2, tzinfo=tz)
+        got = parse_datetime_from_user_text("напомни через 10 мин попить чай", now=now)
+        self.assertIsNotNone(got)
+        assert got is not None
+        self.assertEqual(got, datetime(2026, 6, 4, 16, 12, tzinfo=tz))
+
 
 if __name__ == "__main__":
     unittest.main()

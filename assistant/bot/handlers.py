@@ -120,6 +120,42 @@ async def cmd_app(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"Мини-приложение: {url}")
 
 
+async def cmd_web(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Код/ссылка для входа в браузер без oauth.telegram.org (VPN/прокси)."""
+    if not await ensure_access(update, context):
+        return
+    user = update.effective_user
+    msg = update.message
+    if not user or not msg:
+        return
+    from urllib.parse import urlencode
+
+    from assistant.stores import web_login_codes
+
+    telegram_registry.register_user(
+        telegram_user_id=int(user.id),
+        telegram_username=user.username,
+    )
+    issued = web_login_codes.issue_code(
+        int(user.id),
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name,
+    )
+    base = _webapp_url()
+    sep = "&" if "?" in base else "?"
+    login_url = f"{base}{sep}{urlencode({'login': issued['code']})}"
+    mins = max(1, int(issued["ttl_sec"]) // 60)
+    await msg.reply_text(
+        "Вход в браузер (если «Войти через Telegram» не открывается из‑за VPN/прокси):\n\n"
+        f"Код: <code>{issued['code']}</code>\n"
+        f"Действует {mins} мин.\n\n"
+        f"Или откройте ссылку:\n{login_url}",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+
+
 async def _reply_oauth_link(
     update: Update,
     *,
@@ -385,6 +421,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("onboarding", cmd_onboarding))
     app.add_handler(CommandHandler("app", cmd_app))
+    app.add_handler(CommandHandler("web", cmd_web))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("calendar_auth", cmd_calendar_auth))
     app.add_handler(CommandHandler("zoom_auth", cmd_zoom_auth))

@@ -25,7 +25,13 @@ _SNOOZE_MINUTES = {
     "60": 60,
 }
 _REMIND_PREFIX_RE = re.compile(
-    r"^(?:напомни|напоминание|не забудь|уведоми)(?:\s+мне)?\s*",
+    r"^(?:напомни(?:ть)?|напоминание|не забудь|уведоми(?:ть)?)(?:\s+мне)?[\s,.:;!—-]*",
+    re.IGNORECASE,
+)
+_REMIND_TIME_LEAD_RE = re.compile(
+    r"^(?:через\s+\d+(?:[.,]\d+)?\s*(?:мин(?:ут[уыа]?)?|час(?:а|ов)?|ч\.?|м)\s*|"
+    r"(?:сегодня|завтра|послезавтра)(?:\s+в\s+\d{1,2}(?::\d{2})?)?\s*|"
+    r"в\s+\d{1,2}(?::\d{2})?\s*)+",
     re.IGNORECASE,
 )
 
@@ -93,7 +99,12 @@ def schedule_reminder_job(
 
 def _strip_remind_prefix(text: str) -> str:
     s = (text or "").strip()
-    return _REMIND_PREFIX_RE.sub("", s).strip() or s
+    prev = None
+    while s and s != prev:
+        prev = s
+        s = _REMIND_PREFIX_RE.sub("", s).strip(" ,.;:—-")
+        s = _REMIND_TIME_LEAD_RE.sub("", s).strip(" ,.;:—-")
+    return s
 
 
 def _resolve_reminder_task(
@@ -108,7 +119,9 @@ def _resolve_reminder_task(
     if parsed:
         task = str(parsed.get("task") or "").strip()
         if task:
-            return task
+            cleaned = _strip_remind_prefix(task)
+            if cleaned:
+                return cleaned
     return _strip_remind_prefix(user_text)
 
 
@@ -236,16 +249,16 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) 
     chat_id = int(chat.id)
 
     reply_txt = reply_context_text(msg)
-    parsed = await asyncio.to_thread(
-        nlu_llm.parse_reminder, text, now=now, reply_context=reply_txt
-    )
-    when: datetime | None = None
-    if parsed and str(parsed.get("when_iso") or "").strip():
-        when = datetime.fromisoformat(str(parsed["when_iso"]))
-        if when.tzinfo is None:
-            when = when.replace(tzinfo=tz)
+    when = parse_datetime_from_user_text(text, now=now)
+    parsed: dict | None = None
     if when is None:
-        when = parse_datetime_from_user_text(text, now=now)
+        parsed = await asyncio.to_thread(
+            nlu_llm.parse_reminder, text, now=now, reply_context=reply_txt
+        )
+        if parsed and str(parsed.get("when_iso") or "").strip():
+            when = datetime.fromisoformat(str(parsed["when_iso"]))
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=tz)
 
     if not parsed and when is None:
         await msg.reply_text("Не смог разобрать напоминание.")

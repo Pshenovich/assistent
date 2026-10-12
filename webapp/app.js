@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261008-reply-jump";
+  var WEBAPP_BUILD = "20261012-week-card-2line";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261008-reply-jump";
+  const NOTE_EDITOR_ASSET_V = "20261012-note-ref-plus";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -3446,19 +3446,20 @@
       });
       assignTimelineColumns(timed);
       timed.forEach(function (it) {
-        var btn = document.createElement("button");
-        btn.type = "button";
+        var slot = document.createElement("div");
         var top = (it.startMin / 60) * hourPx;
-        var height = Math.max(18, ((it.endMin - it.startMin) / 60) * hourPx - 2);
+        var height = Math.max(22, ((it.endMin - it.startMin) / 60) * hourPx - 2);
         var width = 100 / (it.cols || 1);
-        btn.style.top = top + "px";
-        btn.style.height = height + "px";
-        btn.style.left = "calc(" + (it.col || 0) * width + "% + 1px)";
-        btn.style.width = "calc(" + width + "% - 3px)";
+        slot.style.top = top + "px";
+        slot.style.height = height + "px";
+        slot.style.left = "calc(" + (it.col || 0) * width + "% + 1px)";
+        slot.style.width = "calc(" + width + "% - 3px)";
         if (it.kind === "reminder") {
-          btn.className = "meetings-week-event meetings-week-event--reminder";
-          btn.textContent = (it.reminder && it.reminder.task) || "Напоминание";
-          bindTimedReminderInteractions(btn, it.reminder, {
+          slot.className = "meetings-week-event meetings-week-event--reminder";
+          slot.appendChild(
+            renderTimelineReminder(it.reminder, { skipClick: true })
+          );
+          bindTimedReminderInteractions(slot, it.reminder, {
             view: "week",
             dateIso: iso,
             hourPx: hourPx,
@@ -3466,12 +3467,15 @@
             dayHosts: weekDayHosts,
           });
         } else {
-          btn.className =
-            withTaskClass("meetings-week-event", it.ev) +
-            (meetingNeedsRsvp(it.ev) ? " meetings-week-event--pending" : "");
-          btn.textContent = meetingDisplayTitle(it.ev);
-          applyEntryDisplayColor(btn, it.ev);
-          bindTimedEntryInteractions(btn, it.ev, {
+          slot.className = "meetings-week-event";
+          if (calendarEntryIsTask(it.ev)) {
+            slot.classList.add("meetings-week-event--task");
+            if (it.ev && it.ev.done) slot.classList.add("meetings-week-event--task-done");
+          }
+          slot.appendChild(
+            renderMeetingCard(it.ev, { heightPx: height, skipClick: true })
+          );
+          bindTimedEntryInteractions(slot, it.ev, {
             view: "week",
             dateIso: iso,
             hourPx: hourPx,
@@ -3479,7 +3483,7 @@
             dayHosts: weekDayHosts,
           });
         }
-        col.appendChild(btn);
+        col.appendChild(slot);
       });
       col.addEventListener("click", function (e) {
         if (calendarConsumeSuppressClick()) return;
@@ -3805,7 +3809,15 @@
   }
 
   function getActiveModalSheet() {
-    var ids = ["note-editor-overlay", "tags-manage-overlay", "contacts-form-overlay", "teams-manage-overlay", "modal-overlay", "voice-overlay"];
+    var ids = [
+      "note-editor-overlay",
+      "tags-manage-overlay",
+      "contacts-form-overlay",
+      "teams-manage-overlay",
+      "modal-overlay",
+      "voice-overlay",
+      "transcription-upload-overlay",
+    ];
     for (var i = 0; i < ids.length; i++) {
       var ov = document.getElementById(ids[i]);
       if (ov && !ov.classList.contains("hidden")) {
@@ -4566,6 +4578,144 @@
     syncAppOverlay();
   }
 
+  var transcriptionUploadBusy = false;
+
+  function transcriptionUploadSelectedFile() {
+    var input = document.getElementById("transcription-upload-input");
+    return input && input.files && input.files[0] ? input.files[0] : null;
+  }
+
+  function syncTranscriptionUploadModeOptions() {
+    document.querySelectorAll(".transcription-upload-option").forEach(function (lab) {
+      var input = lab.querySelector('input[type="radio"]');
+      lab.classList.toggle("is-selected", !!(input && input.checked));
+    });
+  }
+
+  function setTranscriptionUploadError(message) {
+    var err = document.getElementById("transcription-upload-error");
+    if (!err) return;
+    err.textContent = message || "";
+    err.classList.toggle("hidden", !message);
+  }
+
+  function setTranscriptionUploadStatus(message) {
+    var el = document.getElementById("transcription-upload-status");
+    if (!el) return;
+    el.textContent = message || "";
+    el.classList.toggle("hidden", !message);
+  }
+
+  function syncTranscriptionUploadUi() {
+    var file = transcriptionUploadSelectedFile();
+    var nameEl = document.getElementById("transcription-upload-filename");
+    var pickLabel = document.getElementById("transcription-upload-pick-label");
+    var submit = document.getElementById("transcription-upload-submit");
+    if (nameEl) {
+      nameEl.textContent = file ? file.name : "";
+      nameEl.classList.toggle("hidden", !file);
+    }
+    if (pickLabel) {
+      pickLabel.textContent = file ? "Выбрать другой файл" : "Выбрать файл";
+    }
+    if (submit) {
+      submit.disabled = transcriptionUploadBusy || !file;
+      submit.textContent = transcriptionUploadBusy ? "Обработка…" : "Загрузить";
+    }
+    syncTranscriptionUploadModeOptions();
+  }
+
+  function resetTranscriptionUploadModal() {
+    transcriptionUploadBusy = false;
+    var input = document.getElementById("transcription-upload-input");
+    if (input) input.value = "";
+    var transcriptRadio = document.querySelector(
+      'input[name="transcription-upload-mode"][value="transcript"]'
+    );
+    if (transcriptRadio) transcriptRadio.checked = true;
+    setTranscriptionUploadError("");
+    setTranscriptionUploadStatus("");
+    syncTranscriptionUploadUi();
+  }
+
+  function openTranscriptionUploadModal() {
+    resetTranscriptionUploadModal();
+    var ov = document.getElementById("transcription-upload-overlay");
+    if (!ov) return;
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
+  }
+
+  function closeTranscriptionUploadModal() {
+    if (transcriptionUploadBusy) return;
+    resetTranscriptionUploadModal();
+    var ov = document.getElementById("transcription-upload-overlay");
+    if (!ov) return;
+    ov.classList.add("hidden");
+    ov.setAttribute("aria-hidden", "true");
+    onModalSheetClose();
+    syncAppOverlay();
+  }
+
+  function transcriptionUploadWantsSummary() {
+    var checked = document.querySelector(
+      'input[name="transcription-upload-mode"]:checked'
+    );
+    return !!(checked && checked.value === "summary");
+  }
+
+  async function submitTranscriptionUpload() {
+    if (transcriptionUploadBusy) return;
+    var file = transcriptionUploadSelectedFile();
+    if (!file) {
+      setTranscriptionUploadError("Выберите файл");
+      return;
+    }
+    var maxBytes = 100 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      setTranscriptionUploadError("Файл слишком большой (макс. 100 МБ)");
+      return;
+    }
+    var withSummary = transcriptionUploadWantsSummary();
+    transcriptionUploadBusy = true;
+    setTranscriptionUploadError("");
+    setTranscriptionUploadStatus(
+      withSummary
+        ? "Транскрибирую и готовлю саммари… Это может занять несколько минут."
+        : "Транскрибирую файл… Это может занять несколько минут."
+    );
+    syncTranscriptionUploadUi();
+    var fd = new FormData();
+    fd.append("file", file, file.name || "audio.mp3");
+    fd.append("with_summary", withSummary ? "1" : "0");
+    try {
+      var res = await apiFetch("/notes/transcriptions/upload", {
+        method: "POST",
+        body: fd,
+        timeout: 900000,
+      });
+      var item = res && res.item;
+      if (!item || item.id == null) throw new Error("Не удалось создать транскрипцию");
+      prependTranscriptionInCache(item);
+      if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+      transcriptionUploadBusy = false;
+      closeTranscriptionUploadModal();
+      setNotesSubTab("transcriptions");
+      openNoteDetail(item, { isLocal: true });
+      if (withSummary || transcriptionIsGenerating(item)) {
+        pollTranscriptionSummary(item.id);
+      }
+      shareHaptic();
+    } catch (e) {
+      transcriptionUploadBusy = false;
+      setTranscriptionUploadStatus("");
+      setTranscriptionUploadError(e.message || String(e));
+      syncTranscriptionUploadUi();
+    }
+  }
+
   function setVoiceError(message) {
     var err = document.getElementById("voice-error");
     if (!err) return;
@@ -5211,6 +5361,8 @@
     if (o && Number(o.timeout) > 0) return Number(o.timeout);
     var p = String(path || "");
     if (p.indexOf("/gpt/chat") >= 0) return 180000;
+    if (p.indexOf("/voice/transcribe") >= 0) return 300000;
+    if (p.indexOf("/notes/transcriptions/upload") >= 0) return 900000;
     if (p.indexOf("/calendar/today") >= 0) return 20000;
     if (p.indexOf("/calendar/range") >= 0) return 30000;
     if (/\/paei(\/|\?|$)/.test(p) || p.slice(-5) === "/paei") return 180000;
@@ -5380,6 +5532,7 @@
   function showAccessBlocked(msg) {
     var status = document.getElementById("gate-login-status");
     var login = document.getElementById("gate-telegram-login");
+    var codeLogin = document.getElementById("gate-code-login");
     var err = document.getElementById("gate-login-err");
     var alt = document.querySelector("#gate .gate-alt");
     if (status) {
@@ -5388,6 +5541,7 @@
       status.classList.remove("hidden");
     }
     if (login) login.classList.add("hidden");
+    if (codeLogin) codeLogin.classList.add("hidden");
     if (err) {
       err.textContent = "";
       err.classList.add("hidden");
@@ -5448,6 +5602,7 @@
     var noteEditor = document.getElementById("note-editor-overlay");
     var modal = document.getElementById("modal-overlay");
     var voice = document.getElementById("voice-overlay");
+    var transcriptionUpload = document.getElementById("transcription-upload-overlay");
     var noteUnsaved = document.getElementById("note-unsaved-overlay");
     var tagsSheet = document.getElementById("tags-manage-overlay");
     var contactsForm = document.getElementById("contacts-form-overlay");
@@ -5466,6 +5621,7 @@
       (discussion && !discussion.classList.contains("hidden") && !chatsSplit) ||
       (modal && !modal.classList.contains("hidden")) ||
       (voice && !voice.classList.contains("hidden")) ||
+      (transcriptionUpload && !transcriptionUpload.classList.contains("hidden")) ||
       (noteUnsaved && !noteUnsaved.classList.contains("hidden")) ||
       (tagsSheet && !tagsSheet.classList.contains("hidden")) ||
       (contactsForm && !contactsForm.classList.contains("hidden")) ||
@@ -6026,10 +6182,26 @@
   }
 
   function defaultDatetimeLocalValue(addMinutes) {
-    var d = new Date();
-    d.setMinutes(d.getMinutes() + (addMinutes || 60));
-    d.setSeconds(0, 0);
-    return isoToDatetimeLocalValue(d.toISOString());
+    var add = addMinutes == null ? 60 : Number(addMinutes) || 0;
+    var day = meetingsPageDate || todayIsoLocal();
+    var today = todayIsoLocal();
+    if (!day || day === today || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      var d = new Date();
+      d.setMinutes(d.getMinutes() + add);
+      d.setSeconds(0, 0);
+      return isoToDatetimeLocalValue(d.toISOString());
+    }
+    // Открытый день календаря: то же время суток, что «сейчас + add», на выбранной дате.
+    var t = new Date();
+    t.setMinutes(t.getMinutes() + add);
+    t.setSeconds(0, 0);
+    return (
+      day +
+      "T" +
+      pad2(t.getHours()) +
+      ":" +
+      pad2(t.getMinutes())
+    );
   }
 
   function parseDatetimeLocal(val) {
@@ -11398,6 +11570,8 @@
     }
   }
 
+  var pendingSheetConvert = null;
+
   function closeModal() {
     const ov = document.getElementById("modal-overlay");
     ov.classList.add("hidden");
@@ -11405,8 +11579,61 @@
     setModalSheetActions({ showDelete: false, showDone: false, showArchive: false });
     taskModalOnSaved = null;
     taskModalOnDeleted = null;
+    pendingSheetConvert = null;
     onModalSheetClose();
     syncAppOverlay();
+  }
+
+  async function deleteSheetConvertSource(source) {
+    if (!source || !source.id) return;
+    var kind = source.kind;
+    var id = source.id;
+    if (kind === "reminder") {
+      if (isAppOffline() || String(id).indexOf("tmp_") === 0) {
+        applyReminderLocal(function (items) {
+          return items.filter(function (r) {
+            return String(r.id) !== String(id);
+          });
+        });
+        enqueueOfflineOp({
+          type: "reminder_delete",
+          clientId: id,
+          path: "/reminders/" + encodeURIComponent(id),
+          method: "DELETE",
+        });
+        return;
+      }
+      await apiFetch("/reminders/" + encodeURIComponent(id), { method: "DELETE" });
+      return;
+    }
+    if (kind === "task") {
+      await apiFetch("/calendar/tasks/" + encodeURIComponent(id), { method: "DELETE" });
+      removePostedTaskFromState(id);
+      return;
+    }
+    if (kind === "event") {
+      var calId = source.calendarId || "primary";
+      var q =
+        calId && calId !== "primary"
+          ? "?calendar_id=" + encodeURIComponent(calId)
+          : "";
+      await apiFetch("/calendar/events/" + encodeURIComponent(id) + q, {
+        method: "DELETE",
+      });
+    }
+  }
+
+  async function finishPendingSheetConvertAfterCreate() {
+    var source = pendingSheetConvert;
+    pendingSheetConvert = null;
+    if (!source || !source.id) return;
+    try {
+      await deleteSheetConvertSource(source);
+    } catch (e) {
+      showCalendarToast(
+        (e && e.message) || "Новая запись сохранена, но старую удалить не удалось"
+      );
+    }
   }
 
   function normalizeReminderChecklist(raw) {
@@ -12453,7 +12680,7 @@
     var fields = document.getElementById("modal-fields");
     fields.innerHTML =
       '<div class="event-sheet">' +
-      (existing ? "" : eventSheetKindSwitcherHtml("task")) +
+      eventSheetKindSwitcherHtml("task", { excludeBooking: existing }) +
       '<input id="m-ev-sum" type="text" class="event-sheet-title" placeholder="Название" autocomplete="off" />' +
       '<textarea id="m-task-desc" class="field-textarea event-sheet-desc" rows="3" placeholder="Описание"></textarea>' +
       '<input type="hidden" id="m-ev-start" />' +
@@ -12490,7 +12717,10 @@
       '<div id="m-task-assignee-editor" class="event-sheet-attendees hidden">' +
       '<div id="m-task-assignee-host"></div>' +
       "</div></div></div>";
-    if (!existing) bindCreateKindSwitcher("task");
+    bindCreateKindSwitcher(
+      "task",
+      existing ? { source: { kind: "task", id: String(taskId), calendarId: "leo-tasks" } } : {}
+    );
     document.getElementById("m-ev-sum").value =
       ev.summary || ev.title || (opts.quote ? String(opts.quote) : "") || "";
     document.getElementById("m-task-desc").value = ev.description || "";
@@ -12754,7 +12984,7 @@
     var remExisting = !!r.id;
     fields.innerHTML =
       '<div class="event-sheet">' +
-      (remExisting ? "" : eventSheetKindSwitcherHtml("reminder")) +
+      eventSheetKindSwitcherHtml("reminder", { excludeBooking: remExisting }) +
       '<textarea id="m-rem-task" class="event-sheet-title event-sheet-title--area" rows="1" placeholder="Текст" autocomplete="off"></textarea>' +
       '<input type="hidden" id="m-rem-when" />' +
       '<div class="event-sheet-group">' +
@@ -12767,7 +12997,10 @@
       '<div class="event-sheet-group event-sheet-checklist-group">' +
       '<div id="m-rem-checklist-host" class="rem-checklist-host"></div>' +
       "</div></div>";
-    if (!remExisting) bindCreateKindSwitcher("reminder");
+    bindCreateKindSwitcher(
+      "reminder",
+      remExisting ? { source: { kind: "reminder", id: String(r.id), calendarId: "" } } : {}
+    );
     var taskEl = document.getElementById("m-rem-task");
     taskEl.value = r.task || "";
     autosizeReminderTitle(taskEl);
@@ -12796,13 +13029,16 @@
     );
   }
 
-  function eventSheetKindSwitcherHtml(activeKind) {
+  function eventSheetKindSwitcherHtml(activeKind, opts) {
+    opts = opts || {};
     var kinds = [
       { id: "event", label: "Встреча" },
       { id: "task", label: "Задача" },
       { id: "reminder", label: "Напоминание" },
-      { id: "booking", label: "Ссылка" },
     ];
+    if (!opts.excludeBooking) {
+      kinds.push({ id: "booking", label: "Ссылка" });
+    }
     return (
       '<div class="event-sheet-kind-switch" role="tablist" aria-label="Тип записи">' +
       kinds
@@ -12883,27 +13119,68 @@
     };
   }
 
-  function bindCreateKindSwitcher(activeKind) {
+  function openSheetKindFromDraft(next, draft, editSource) {
+    draft = draft || {};
+    var seed = draftToEventSeed(draft);
+    if (editSource && editSource.id && editSource.kind === next) {
+      if (next === "event") {
+        seed.id = editSource.id;
+        seed.calendar_id = editSource.calendarId || "primary";
+        openEventModal(seed);
+        return;
+      }
+      if (next === "task") {
+        seed.task_id = editSource.id;
+        seed.id = "task-" + editSource.id;
+        seed.entry_type = "task";
+        openTaskModal(seed);
+        return;
+      }
+      if (next === "reminder") {
+        openReminderModal({
+          id: editSource.id,
+          task: draft.title || "",
+          when_iso: datetimeLocalToIso(draft.startLocal || "") || undefined,
+          checklist: draft.checklist || [],
+        });
+        return;
+      }
+    }
+    if (next === "event") {
+      openEventModal(seed);
+    } else if (next === "task") {
+      openTaskModal(seed);
+    } else if (next === "reminder") {
+      openReminderModal({
+        task: draft.title || "",
+        when_iso: datetimeLocalToIso(draft.startLocal || "") || undefined,
+        checklist: draft.checklist || [],
+      });
+    } else if (next === "booking") {
+      openBookingLinkModal(seed);
+    }
+  }
+
+  function bindCreateKindSwitcher(activeKind, opts) {
+    opts = opts || {};
     var host = document.querySelector("#modal-fields .event-sheet-kind-switch");
     if (!host) return;
+    var origin = opts.source || null;
     host.querySelectorAll("[data-sheet-kind]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var next = btn.getAttribute("data-sheet-kind");
         if (!next || next === activeKind) return;
         var draft = readCreateSheetDraft();
-        if (next === "event") {
-          openEventModal(draftToEventSeed(draft));
-        } else if (next === "task") {
-          openTaskModal(draftToEventSeed(draft));
-        } else if (next === "reminder") {
-          openReminderModal({
-            task: draft.title || "",
-            when_iso: datetimeLocalToIso(draft.startLocal || "") || undefined,
-            checklist: draft.checklist || [],
-          });
-        } else if (next === "booking") {
-          openBookingLinkModal(draftToEventSeed(draft));
+        var originRef = pendingSheetConvert || origin;
+        if (originRef && originRef.id && next === originRef.kind) {
+          pendingSheetConvert = null;
+          openSheetKindFromDraft(next, draft, originRef);
+          return;
         }
+        if (originRef && originRef.id) {
+          pendingSheetConvert = originRef;
+        }
+        openSheetKindFromDraft(next, draft, null);
       });
     });
   }
@@ -13147,7 +13424,7 @@
     var eventExisting = !!ev.id;
     fields.innerHTML =
       '<div class="event-sheet">' +
-      (eventExisting ? "" : eventSheetKindSwitcherHtml("event")) +
+      eventSheetKindSwitcherHtml("event", { excludeBooking: eventExisting }) +
       '<input id="m-ev-sum" type="text" class="event-sheet-title" placeholder="Название" autocomplete="off" />' +
       '<input type="hidden" id="m-ev-start" />' +
       '<input type="hidden" id="m-ev-end" />' +
@@ -13194,7 +13471,18 @@
       "</div>" +
       '<div class="event-sheet-link-row"></div>' +
       "</div>";
-    if (!eventExisting) bindCreateKindSwitcher("event");
+    bindCreateKindSwitcher(
+      "event",
+      eventExisting
+        ? {
+            source: {
+              kind: "event",
+              id: String(ev.id),
+              calendarId: String(ev.calendar_id || "primary"),
+            },
+          }
+        : {}
+    );
     document.getElementById("m-ev-sum").value = meetingDisplayTitle(ev, { blank: true });
     document.getElementById("m-ev-start").value = isoToDatetimeLocalValue(
       sRaw || defaultDatetimeLocalValue(60)
@@ -13475,6 +13763,7 @@
               method: "POST",
               body: body,
             });
+            await finishPendingSheetConvertAfterCreate();
           }
           closeModal();
           showOfflineSavedToast();
@@ -13484,6 +13773,8 @@
           method: id ? "PATCH" : "POST",
           body: JSON.stringify(body),
         });
+        if (!id) await finishPendingSheetConvertAfterCreate();
+        else pendingSheetConvert = null;
         closeModal();
         await loadActual();
       } catch (e) {
@@ -13515,6 +13806,7 @@
               method: "POST",
               body: body,
             });
+            await finishPendingSheetConvertAfterCreate();
           }
           closeModal();
           showOfflineSavedToast();
@@ -13556,6 +13848,8 @@
             showCalendarToast((colorErr && colorErr.message) || "Цвет не сохранён");
           }
         }
+        if (!id) await finishPendingSheetConvertAfterCreate();
+        else pendingSheetConvert = null;
         var savedCb = taskModalOnSaved;
         closeModal();
         if (savedCb) savedCb(saved);
@@ -13637,6 +13931,8 @@
             showCalendarToast((colorErr && colorErr.message) || "Цвет не сохранён");
           }
         }
+        if (!id) await finishPendingSheetConvertAfterCreate();
+        else pendingSheetConvert = null;
         closeModal();
         await loadActual();
       } catch (e) {
@@ -13998,6 +14294,11 @@
     var heightPx = Number(opts.heightPx) || 0;
     var short = heightPx > 0 && heightPx < 52;
     var tiny = heightPx > 0 && heightPx < 36;
+    // В одну строку только совсем низкие; с ~40px — название и время в 2 строки.
+    var inlineTime = heightPx > 0 && heightPx < 40;
+    var startT = formatEventTime(ev);
+    var endT = formatEventEndTime(ev);
+    var timeText = startT + (endT ? "–" + endT : "");
 
     const wrap = document.createElement("div");
     wrap.className = "meeting-card-wrap meeting-card-wrap--timeline";
@@ -14005,6 +14306,7 @@
     card.className = "meeting-card meeting-card--timeline meeting-card--compact";
     if (short) card.classList.add("meeting-card--timeline-short");
     if (tiny) card.classList.add("meeting-card--timeline-tiny");
+    if (inlineTime) card.classList.add("meeting-card--timeline-inline-time");
     if (meetingNeedsRsvp(ev)) {
       card.classList.add("meeting-card--timeline-pending");
       card.title = "Не подтверждена — откройте, чтобы ответить";
@@ -14030,7 +14332,20 @@
     const title = document.createElement("div");
     title.className = "item-title";
     title.textContent = meetingDisplayTitle(ev);
-    topLeft.appendChild(title);
+
+    const meta = document.createElement("div");
+    meta.className = "day-timeline-event-meta";
+    meta.textContent = timeText;
+
+    if (inlineTime) {
+      var textCol = document.createElement("div");
+      textCol.className = "meeting-card-text";
+      textCol.appendChild(title);
+      textCol.appendChild(meta);
+      topLeft.appendChild(textCol);
+    } else {
+      topLeft.appendChild(title);
+    }
     top.appendChild(topLeft);
 
     if (ev.meet_url) {
@@ -14054,12 +14369,7 @@
 
     card.appendChild(top);
 
-    if (!tiny) {
-      const meta = document.createElement("div");
-      meta.className = "day-timeline-event-meta";
-      const startT = formatEventTime(ev);
-      const endT = formatEventEndTime(ev);
-      meta.textContent = startT + (endT ? "–" + endT : "");
+    if (!inlineTime) {
       card.appendChild(meta);
     }
 
@@ -16437,10 +16747,11 @@
 
   function noteEditorPageInnerHtml(titleLabel) {
     var titleAria = escapeHtml(titleLabel || "Заголовок");
-    var tocToggle = isMobileNoteLayout()
+    var mobileToc = isMobileNoteLayout();
+    var tocToggle = mobileToc
       ? ""
       : '<button type="button" class="note-editor-toc-toggle" aria-controls="note-editor-toc-panel" aria-expanded="false" title="Оглавление" aria-label="Оглавление">' +
-        '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
         '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1" fill="currentColor" stroke="none"/>' +
         "</svg>" +
         "</button>";
@@ -16452,12 +16763,13 @@
       "</div>" +
       '<div class="note-editor-toc-list"></div>' +
       "</aside>";
-    var tocChrome = isMobileNoteLayout()
-      ? tocPanel
+    var tocInSheetsBar = mobileToc
+      ? ""
       : '<div class="note-editor-toc-anchor">' + tocToggle + tocPanel + "</div>";
+    var tocInLayout = mobileToc ? tocPanel : "";
     return (
       '<div class="note-editor-doc-layout">' +
-      tocChrome +
+      tocInLayout +
       '<div class="note-editor-toc-backdrop" data-note-toc-close aria-hidden="true"></div>' +
       '<div class="note-editor-main-column">' +
       '<div class="note-editor-pad note-editor-pad--title-in-body">' +
@@ -16466,7 +16778,10 @@
       titleAria +
       '" maxlength="500" rows="1" autocapitalize="sentences" spellcheck="true"></textarea>' +
       '<div id="note-editor-members" class="note-editor-members hidden"></div>' +
+      '<div class="note-editor-sheets-bar">' +
+      tocInSheetsBar +
       '<div id="note-editor-sheets" class="note-editor-sheets hidden"></div>' +
+      "</div>" +
       "</div>" +
       '<div class="note-editor-pad note-editor-pad--body"></div>' +
       "</div>" +
@@ -16525,6 +16840,8 @@
             onTaskSlash: createTaskFromSlash,
             onTaskChipClick: openTaskFromChip,
             onTaskChipRemoved: deleteTaskFromChip,
+            onSearchNoteRefs: searchNoteRefItems,
+            onNoteRefChipClick: openNoteRefFromChip,
           });
           if (editor && typeof editor.bindTapFocus === "function" && !isIOSDevice()) {
             editor.bindTapFocus(container);
@@ -16599,7 +16916,325 @@
     leftScroll: {},
     skipCaretScroll: false,
     enabled: false,
+    pendingOpenSheetId: "",
+    leftWebCanvas: null,
+    rightWebCanvas: null,
+    canvasSelections: [],
   };
+
+  function isWebSheet(sheet) {
+    if (!sheet) return false;
+    return String(sheet.kind || "").toLowerCase() === "web";
+  }
+
+  function addCanvasSelection(sel) {
+    if (!sel) return;
+    var leoId = String(sel.leoId || "").trim();
+    var sheetId = String(sel.sheetId || "").trim();
+    if (!leoId && !sel.snippet) return;
+    noteSheetState.canvasSelections = (noteSheetState.canvasSelections || []).filter(
+      function (x) {
+        return !(String(x.leoId) === leoId && String(x.sheetId) === sheetId);
+      }
+    );
+    noteSheetState.canvasSelections.push({
+      sheetId: sheetId,
+      leoId: leoId,
+      label: String(sel.label || leoId || "элемент").slice(0, 80),
+      snippet: String(sel.snippet || "").slice(0, 4000),
+    });
+    if (noteSheetState.canvasSelections.length > 8) {
+      noteSheetState.canvasSelections = noteSheetState.canvasSelections.slice(-8);
+    }
+    renderCanvasSelectionChips();
+  }
+
+  function clearCanvasSelections() {
+    noteSheetState.canvasSelections = [];
+    renderCanvasSelectionChips();
+  }
+
+  function renderCanvasSelectionChips() {
+    var form = document.getElementById("note-paie-reply-form");
+    if (!form) return;
+    var host = form.querySelector(".note-canvas-sel-chips");
+    if (!host) {
+      host = document.createElement("div");
+      host.className = "note-canvas-sel-chips";
+      var target = form.querySelector(".note-paie-reply-target");
+      if (target && target.parentNode) target.parentNode.insertBefore(host, target.nextSibling);
+      else form.insertBefore(host, form.firstChild);
+    }
+    host.innerHTML = "";
+    (noteSheetState.canvasSelections || []).forEach(function (sel, idx) {
+      var chip = document.createElement("div");
+      chip.className = "note-canvas-sel-chip";
+      var span = document.createElement("span");
+      span.textContent = (sel.leoId ? sel.leoId + " · " : "") + (sel.label || "элемент");
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.setAttribute("aria-label", "Убрать");
+      btn.textContent = "×";
+      btn.addEventListener("click", function () {
+        noteSheetState.canvasSelections.splice(idx, 1);
+        renderCanvasSelectionChips();
+      });
+      chip.appendChild(span);
+      chip.appendChild(btn);
+      host.appendChild(chip);
+    });
+  }
+
+  function ensureLeftWebCanvasHost() {
+    var pad = document.querySelector("#note-editor-overlay .note-editor-pad--body");
+    if (!pad) return null;
+    var host = pad.querySelector(".note-web-canvas-host");
+    if (!host) {
+      host = document.createElement("div");
+      host.className = "note-web-canvas-host";
+      pad.appendChild(host);
+    }
+    return host;
+  }
+
+  function destroyLeftWebCanvas() {
+    if (noteSheetState.leftWebCanvas && noteSheetState.leftWebCanvas.destroy) {
+      noteSheetState.leftWebCanvas.destroy();
+    }
+    noteSheetState.leftWebCanvas = null;
+    var pad = document.querySelector("#note-editor-overlay .note-editor-pad--body");
+    if (pad) pad.classList.remove("is-web-canvas-mode");
+    var host = pad && pad.querySelector(".note-web-canvas-host");
+    if (host) host.innerHTML = "";
+    var toolbarWrap = document.getElementById("note-editor-toolbar-wrap");
+    if (toolbarWrap) setHidden(toolbarWrap, false);
+  }
+
+  function destroyRightWebCanvas() {
+    if (noteSheetState.rightWebCanvas && noteSheetState.rightWebCanvas.destroy) {
+      noteSheetState.rightWebCanvas.destroy();
+    }
+    noteSheetState.rightWebCanvas = null;
+  }
+
+  function mountLeftWebCanvas(sheet) {
+    var LeoWebCanvas = window.LeoWebCanvas;
+    var host = ensureLeftWebCanvasHost();
+    var pad = document.querySelector("#note-editor-overlay .note-editor-pad--body");
+    if (!LeoWebCanvas || !host || !pad || !sheet) return;
+    destroyLeftWebCanvas();
+    pad.classList.add("is-web-canvas-mode");
+    var toolbarWrap = document.getElementById("note-editor-toolbar-wrap");
+    if (toolbarWrap) setHidden(toolbarWrap, true);
+    noteSheetState.leftWebCanvas = LeoWebCanvas.create({
+      host: host,
+      html: sheet.body || sheet.description || "",
+      sheetId: String(sheet.id),
+      onSelect: addCanvasSelection,
+    });
+  }
+
+  function mountRightWebCanvas(sheet) {
+    var LeoWebCanvas = window.LeoWebCanvas;
+    var host = document.getElementById("note-discussion-sheet-host");
+    var bar = document.getElementById("note-discussion-sheet-toolbar");
+    if (!LeoWebCanvas || !host || !sheet) return;
+    destroyRightSheetEditor();
+    destroyRightWebCanvas();
+    host.innerHTML = "";
+    if (bar) bar.innerHTML = "";
+    noteSheetState.rightWebCanvas = LeoWebCanvas.create({
+      host: host,
+      html: sheet.body || sheet.description || "",
+      sheetId: String(sheet.id),
+      onSelect: addCanvasSelection,
+    });
+    noteSheetState.rightEditor = null;
+  }
+
+  async function applyCanvasChatResult(canvasActions) {
+    var rows = Array.isArray(canvasActions) ? canvasActions : [];
+    if (!rows.length) return;
+    var noteId = noteSheetsNoteId();
+    if (!noteId) return;
+    try {
+      var data = await apiFetch(
+        "/notes/local/" + encodeURIComponent(String(noteId)) + "/sheets",
+        { method: "GET" }
+      );
+      var sheets = (data && data.sheets) || [];
+      if (sheets.length) noteSheetState.sheets = sheets;
+      renderNoteSheetChips();
+      var last = rows[rows.length - 1];
+      var sid = String((last && last.sheet_id) || "");
+      if (sid && findNoteSheet(sid)) {
+        await switchLeftSheet(sid);
+        showNoteToast("Полотно обновлено");
+      }
+      clearCanvasSelections();
+    } catch (e) {
+      console.warn("applyCanvasChatResult", e);
+    }
+  }
+
+  function noteRefDisplayTitle(item) {
+    return String((item && (item.title || item.content)) || "").trim() || "Без названия";
+  }
+
+  function buildNoteRefSuggestItems(query) {
+    var q = String(query || "").trim().toLowerCase();
+    var currentId = String(noteSheetsNoteId() || "");
+    var items = [];
+    var seen = {};
+
+    function pushItem(item) {
+      if (!item || !item.noteId) return;
+      var key = String(item.noteId) + "::" + String(item.sheetId || "");
+      if (seen[key]) return;
+      seen[key] = true;
+      items.push(item);
+    }
+
+    (noteSheetState.sheets || []).forEach(function (s) {
+      if (!s || !currentId) return;
+      if (s.is_primary || isPrimarySheetId(s.id)) return;
+      var title = String(s.title || "Лист").trim() || "Лист";
+      if (q && title.toLowerCase().indexOf(q) < 0) return;
+      pushItem({
+        kind: "sheet",
+        noteId: currentId,
+        sheetId: String(s.id),
+        label: title,
+        hint: "Лист этой заметки",
+      });
+    });
+
+    var notes = (notesDataCache && notesDataCache.local_notes) || [];
+    notes.forEach(function (n) {
+      var id = String((n && n.id) || "");
+      if (!id || id === currentId) return;
+      if (String(id).indexOf("tmp_") === 0) return;
+      var title = noteRefDisplayTitle(n);
+      if (q && title.toLowerCase().indexOf(q) < 0) return;
+      pushItem({
+        kind: "note",
+        noteId: id,
+        sheetId: "",
+        label: title,
+        hint: "Заметка",
+      });
+    });
+
+    return items.slice(0, 12);
+  }
+
+  function searchNoteRefItems(query, done) {
+    if (typeof done !== "function") return;
+    var gen = (searchNoteRefItems._gen = (searchNoteRefItems._gen || 0) + 1);
+    function finish(items) {
+      if (gen !== searchNoteRefItems._gen) return;
+      done(items || []);
+    }
+    function enrichWithForeignSheets(baseItems) {
+      var q = String(query || "").trim().toLowerCase();
+      if (!q) {
+        finish(baseItems);
+        return;
+      }
+      var currentId = String(noteSheetsNoteId() || "");
+      var notes = ((notesDataCache && notesDataCache.local_notes) || [])
+        .filter(function (n) {
+          var id = String((n && n.id) || "");
+          if (!id || id === currentId || String(id).indexOf("tmp_") === 0) return false;
+          return noteRefDisplayTitle(n).toLowerCase().indexOf(q) >= 0;
+        })
+        .slice(0, 3);
+      if (!notes.length) {
+        finish(baseItems);
+        return;
+      }
+      Promise.all(
+        notes.map(function (n) {
+          return apiFetch("/notes/local/" + encodeURIComponent(String(n.id)) + "/sheets", {
+            method: "GET",
+          })
+            .then(function (data) {
+              return { note: n, sheets: (data && data.sheets) || [] };
+            })
+            .catch(function () {
+              return { note: n, sheets: [] };
+            });
+        })
+      ).then(function (rows) {
+        if (gen !== searchNoteRefItems._gen) return;
+        var seen = {};
+        var merged = [];
+        function push(item) {
+          if (!item || !item.noteId) return;
+          var key = String(item.noteId) + "::" + String(item.sheetId || "");
+          if (seen[key]) return;
+          seen[key] = true;
+          merged.push(item);
+        }
+        (baseItems || []).forEach(push);
+        rows.forEach(function (row) {
+          var noteTitle = noteRefDisplayTitle(row.note);
+          (row.sheets || []).forEach(function (s) {
+            if (!s || s.is_primary || isPrimarySheetId(s.id)) return;
+            var sheetTitle = String(s.title || "Лист").trim() || "Лист";
+            if (
+              sheetTitle.toLowerCase().indexOf(q) < 0 &&
+              noteTitle.toLowerCase().indexOf(q) < 0
+            ) {
+              return;
+            }
+            push({
+              kind: "sheet",
+              noteId: String(row.note.id),
+              sheetId: String(s.id),
+              label: sheetTitle,
+              hint: noteTitle,
+            });
+          });
+        });
+        finish(merged.slice(0, 12));
+      });
+    }
+    function run() {
+      var base = buildNoteRefSuggestItems(query);
+      finish(base);
+      enrichWithForeignSheets(base);
+    }
+    if (notesDataCache && notesDataCache.local_notes) {
+      run();
+      return;
+    }
+    apiFetch("/notes?limit=120", { method: "GET" })
+      .then(function (data) {
+        if (gen !== searchNoteRefItems._gen) return;
+        notesDataCache = data || notesDataCache;
+        if (data) writeMiniappCache("notes", data);
+        run();
+      })
+      .catch(function () {
+        run();
+      });
+  }
+
+  function openNoteRefFromChip(noteId, sheetId) {
+    var nid = String(noteId || "").trim();
+    var sid = String(sheetId || "").trim();
+    if (!nid) return;
+    var current = String(noteSheetsNoteId() || "");
+    if (current && current === nid) {
+      if (sid && !isPrimarySheetId(sid)) switchLeftSheet(sid);
+      return;
+    }
+    noteSheetState.pendingOpenSheetId =
+      sid && !isPrimarySheetId(sid) ? sid : "";
+    var note = resolveLocalNoteFromCache({ id: nid });
+    openNoteDetail(note && note.id ? note : { id: nid }, { isLocal: true });
+  }
 
   function getLeftNoteRichEditor() {
     var body = getNoteEditorBodyEl();
@@ -16688,13 +17323,25 @@
     var notesRoot = document.getElementById("notes-root");
     var show =
       currentTab === "notes" &&
-      (notesSubTab === "notes" || notesSubTab === "chats") &&
+      (notesSubTab === "notes" ||
+        notesSubTab === "chats" ||
+        notesSubTab === "transcriptions") &&
       notesPanel &&
       !notesPanel.classList.contains("hidden") &&
       (!notesDetail || notesDetail.classList.contains("hidden")) &&
       (!notesRoot || !notesRoot.classList.contains("hidden")) &&
       !isNoteEditorModalOpen();
     setHidden(createBtn, !show);
+    if (notesSubTab === "chats") {
+      createBtn.setAttribute("aria-label", "Создать чат");
+      createBtn.setAttribute("title", "Новый чат");
+    } else if (notesSubTab === "transcriptions") {
+      createBtn.setAttribute("aria-label", "Загрузить транскрипцию");
+      createBtn.setAttribute("title", "Новая транскрипция");
+    } else {
+      createBtn.setAttribute("aria-label", "Создать заметку");
+      createBtn.setAttribute("title", "Новая заметка");
+    }
     syncKnowledgeCreateFab();
   }
 
@@ -17982,6 +18629,32 @@
       }
       document.body.removeChild(ta);
     });
+  }
+
+  function copyTextWithOptionalHtml(plain, html) {
+    var text = String(plain || "");
+    var rich = String(html || "").trim();
+    if (!text && rich) text = htmlToPlainText(rich);
+    if (!text) return Promise.reject(new Error("empty"));
+    if (
+      rich &&
+      navigator.clipboard &&
+      typeof navigator.clipboard.write === "function" &&
+      typeof window.ClipboardItem === "function"
+    ) {
+      try {
+        var item = new ClipboardItem({
+          "text/plain": Promise.resolve(new Blob([text], { type: "text/plain" })),
+          "text/html": Promise.resolve(new Blob([rich], { type: "text/html" })),
+        });
+        return navigator.clipboard.write([item]).catch(function () {
+          return copyShareUrl(text);
+        });
+      } catch (_) {
+        /* fall through to plain */
+      }
+    }
+    return copyShareUrl(text);
   }
 
   function shareHaptic() {
@@ -21000,6 +21673,7 @@
       clearTimeout(noteSheetState.rightNotePersistTimer);
       noteSheetState.rightNotePersistTimer = null;
     }
+    destroyRightWebCanvas();
     var inst = noteSheetState.rightEditor;
     if (inst && typeof inst.destroy === "function") {
       try {
@@ -21278,7 +21952,18 @@
   }
 
   function readSheetEditorHtml(which) {
-    var inst = which === "right" ? noteSheetState.rightEditor : getLeftNoteRichEditor();
+    if (which === "right") {
+      if (noteSheetState.rightWebCanvas && typeof noteSheetState.rightWebCanvas.getHtml === "function") {
+        return noteSheetState.rightWebCanvas.getHtml();
+      }
+      var instR = noteSheetState.rightEditor;
+      if (instR && typeof instR.getHtml === "function") return instR.getHtml();
+      return "";
+    }
+    if (noteSheetState.leftWebCanvas && typeof noteSheetState.leftWebCanvas.getHtml === "function") {
+      return noteSheetState.leftWebCanvas.getHtml();
+    }
+    var inst = getLeftNoteRichEditor();
     if (inst && typeof inst.getHtml === "function") return inst.getHtml();
     return "";
   }
@@ -21323,9 +22008,9 @@
     if (String(noteSheetState.leftId) === id) html = readSheetEditorHtml("left");
     else if (String(noteSheetState.rightId) === id) html = readSheetEditorHtml("right");
     else html = sheet.body || sheet.description || "";
-    var title = sheet.title || "";
+    var titleAtStart = String(sheet.title || "");
     var body = {
-      title: title,
+      title: titleAtStart,
       description: html,
       expected_revision: sheet.revision,
     };
@@ -21342,7 +22027,7 @@
           "/sheets/" +
           encodeURIComponent(id),
         method: "PATCH",
-        body: { title: title, description: html },
+        body: { title: titleAtStart, description: html },
       });
       showOfflineSavedToast();
       return;
@@ -21359,9 +22044,21 @@
         var saved = res.item;
         saved.body = html;
         saved.description = html;
-        saved.title = title;
-        upsertNoteSheet(saved);
-        previewOpenNoteFromSheets();
+        var live = findNoteSheet(id);
+        var liveTitle = live ? String(live.title || "") : "";
+        // Пока шёл PATCH, могли переименовать чип — не откатываем более новое имя.
+        if (liveTitle && liveTitle !== titleAtStart) {
+          saved.title = liveTitle;
+          upsertNoteSheet(saved);
+          previewOpenNoteFromSheets();
+          persistExtraSheet(id).catch(function (e) {
+            setNoteEditorSaveHint(e.message || "Не удалось сохранить название листа");
+          });
+        } else {
+          saved.title = String(saved.title || titleAtStart);
+          upsertNoteSheet(saved);
+          previewOpenNoteFromSheets();
+        }
       }
     } catch (e) {
       var remote = e && e.conflictItem;
@@ -21381,8 +22078,20 @@
     var bar = document.getElementById("note-discussion-sheet-toolbar");
     if (!host || !sheet) return;
     destroyRightSheetEditor();
+    destroyRightWebCanvas();
     host.innerHTML = "";
     if (bar) bar.innerHTML = "";
+    if (isWebSheet(sheet)) {
+      mountRightWebCanvas(sheet);
+      host.addEventListener(
+        "focusin",
+        function () {
+          setNoteSheetFocus("right");
+        },
+        true
+      );
+      return;
+    }
     mountNoteRichEditor(host, sheet.body || sheet.description || "", function () {
       if (String(noteSheetState.rightId) === String(sheet.id) && !isPrimarySheetId(sheet.id)) {
         scheduleExtraSheetPersist(sheet.id);
@@ -21439,6 +22148,11 @@
   }
 
   function applyLeftSheetHtml(sheet) {
+    if (isWebSheet(sheet)) {
+      mountLeftWebCanvas(sheet);
+      return;
+    }
+    destroyLeftWebCanvas();
     var editor = getLeftNoteRichEditor();
     var html = (sheet && (sheet.body || sheet.description)) || "";
     if (editor && typeof editor.setHtml === "function") editor.setHtml(html);
@@ -21526,6 +22240,7 @@
         chip.type = "button";
         chip.className =
           "note-sheet-chip" +
+          (isWebSheet(s) ? " is-web" : "") +
           (String(s.id) === String(noteSheetState.leftId) ? " is-active" : "");
         var label = document.createElement("span");
         label.className = "note-sheet-chip-label";
@@ -21572,6 +22287,7 @@
       chip.type = "button";
       chip.className =
         "note-sheet-chip" +
+        (isWebSheet(s) ? " is-web" : "") +
         (String(s.id) === String(noteSheetState.leftId) ? " is-active" : "");
       var label = document.createElement("span");
       label.className = "note-sheet-chip-label";
@@ -21596,7 +22312,7 @@
       e.preventDefault();
       createNoteSheet({ openOn: "left" });
     });
-      host.appendChild(add);
+    host.appendChild(add);
   }
 
   var transcriptionSummaryPollTimer = null;
@@ -21720,10 +22436,17 @@
     var input = document.createElement("input");
     input.type = "text";
     input.className = "note-sheet-chip-input";
+    input.maxLength = 80;
     input.value = sheet.title || "";
     chip.classList.add("is-editing");
     chip.innerHTML = "";
     chip.appendChild(input);
+    function fitRenameInput() {
+      var len = Math.max(String(input.value || "").length, 4);
+      input.style.width = Math.min(280, Math.max(72, len * 12 + 8)) + "px";
+    }
+    fitRenameInput();
+    input.addEventListener("input", fitRenameInput);
     var delBtn = document.createElement("span");
     delBtn.className = "note-sheet-chip-delete";
     delBtn.setAttribute("role", "button");
@@ -21743,10 +22466,27 @@
     function finish(ok) {
       if (done) return;
       done = true;
-      var next = String(input.value || "").trim() || sheet.title;
-      if (ok && next !== sheet.title) {
+      var prevTitle = String(sheet.title || "");
+      var next = String(input.value || "").trim() || prevTitle;
+      if (next.length > 80) next = next.slice(0, 80).trim() || prevTitle;
+      if (ok && next !== prevTitle) {
         sheet.title = next;
-        persistExtraSheet(sheet.id).catch(function () {});
+        if (noteSheetState.sheetTimers[String(sheet.id)]) {
+          clearTimeout(noteSheetState.sheetTimers[String(sheet.id)]);
+          delete noteSheetState.sheetTimers[String(sheet.id)];
+        }
+        persistExtraSheet(sheet.id)
+          .then(function () {
+            renderNoteSheetChips();
+            renderNoteKnowledgeMenu();
+            if (String(noteSheetState.rightId) === String(sheet.id)) syncNotePaneHeader();
+          })
+          .catch(function (e) {
+            sheet.title = prevTitle;
+            renderNoteSheetChips();
+            renderNoteKnowledgeMenu();
+            setNoteEditorSaveHint(e.message || "Не удалось сохранить название листа");
+          });
         if (String(noteSheetState.rightId) === String(sheet.id)) syncNotePaneHeader();
       }
       renderNoteSheetChips();
@@ -21905,6 +22645,9 @@
   }
 
   function hydrateNoteSheets(note, primaryBody) {
+    destroyLeftWebCanvas();
+    destroyRightWebCanvas();
+    clearCanvasSelections();
     noteSheetState.enabled = !!(note && !isKnowledgeNoteItem(note));
     noteSheetState.primaryBody = primaryBody || (note && (note.body || note.description)) || "";
     noteSheetState.leftId = NOTE_SHEET_MAIN;
@@ -21920,6 +22663,7 @@
         title: (note && note.primary_sheet_title) || "Основная",
         body: noteSheetState.primaryBody,
         description: noteSheetState.primaryBody,
+        kind: "doc",
         revision: (note && note.revision) || 1,
         is_primary: true,
       },
@@ -21940,8 +22684,13 @@
         renderNoteSheetChips();
         syncNotePaneHeader();
         renderNoteKnowledgeMenu();
+        var pending = String(noteSheetState.pendingOpenSheetId || "");
+        noteSheetState.pendingOpenSheetId = "";
+        if (pending && findNoteSheet(pending)) switchLeftSheet(pending);
       })
-      .catch(function () {});
+      .catch(function () {
+        noteSheetState.pendingOpenSheetId = "";
+      });
   }
 
   function bindNotePaneSwitchOnce() {
@@ -23037,6 +23786,11 @@
   function appendAnswerHtmlToCurrentNote(html) {
     var clean = String(html || "").trim();
     if (!clean) return false;
+    var activeSheet = findNoteSheet(focusedNoteSheetId() || noteSheetState.leftId);
+    if (isWebSheet(activeSheet)) {
+      showNoteToast("В web-полотно вставляйте правки через обсуждение");
+      return true;
+    }
     var inst = getActiveNoteRichEditor();
     if (inst && typeof inst.appendHtml === "function") {
       inst.appendHtml(clean);
@@ -23265,8 +24019,8 @@
       });
   }
 
-  function copyAnswerText(text) {
-    copyShareUrl(String(text || "")).then(
+  function copyAnswerText(text, html) {
+    copyTextWithOptionalHtml(String(text || ""), html).then(
       function () {
         showNoteToast("Скопировано");
         shareHaptic();
@@ -23275,6 +24029,26 @@
         showNoteToast("Не удалось скопировать");
       }
     );
+  }
+
+  function plainTextFromDiscussionSelection(range, html) {
+    var rich = String(html || "").trim();
+    if (rich) {
+      var fromHtml = htmlToPlainText(rich);
+      if (fromHtml) return fromHtml;
+    }
+    var raw = "";
+    try {
+      raw = range && range.toString ? range.toString() : "";
+    } catch (_) {
+      raw = "";
+    }
+    return String(raw || "")
+      .replace(/\u00a0/g, " ")
+      .replace(/\r\n/g, "\n")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/^\s+|\s+$/g, "");
   }
 
   function discussMenuIcon(name) {
@@ -23473,16 +24247,17 @@
     }
     var quote = String(draft.quote || "").trim();
     var html = String(draft.html || "").trim();
-    if (action === "copy") copyAnswerText(quote);
+    var plain = String(draft.plain || "").trim() || quote;
+    if (action === "copy") copyAnswerText(plain, html);
     else if (action === "into-note") {
       if (html) {
-        if (!appendAnswerHtmlToCurrentNote(html)) appendAnswerToCurrentNote(quote);
+        if (!appendAnswerHtmlToCurrentNote(html)) appendAnswerToCurrentNote(plain);
       } else {
-        appendAnswerToCurrentNote(quote);
+        appendAnswerToCurrentNote(plain);
       }
     } else if (action === "create-note") {
       if (html) createNoteFromAnswerHtml(html);
-      else createNoteFromAnswer(quote);
+      else createNoteFromAnswer(plain);
     } else if (action === "task") {
       openTaskModal({ summary: quote, note_id: currentOpenNoteId() });
     }
@@ -23594,6 +24369,7 @@
     if (sel.focusNode && !bubble.contains(sel.focusNode)) return null;
     var range = sel.getRangeAt(0);
     var html = htmlFromDiscussionSelectionRange(range);
+    var plain = plainTextFromDiscussionSelection(range, html);
     var api = window.NoteComments;
     var draft = api && api.selectionAnchor ? api.selectionAnchor(bubble) : null;
     var source = "reply";
@@ -23604,19 +24380,23 @@
     if (draft && draft.quote) {
       draft.rect = copyClientRect(draft.rect) || draft.rect;
       draft.html = html;
+      draft.plain = plain || draft.quote;
       draft.source = source;
       draft.commentId = commentId;
       return draft;
     }
-    var text = String(sel.toString() || "").replace(/\s+/g, " ").trim();
-    if (!text) return null;
+    var text = String(plain || sel.toString() || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!text && !plain) return null;
     var rect = copyClientRect(range.getBoundingClientRect ? range.getBoundingClientRect() : null);
     return {
-      quote: text,
+      quote: text || String(plain || "").replace(/\s+/g, " ").trim(),
       prefix: "",
       suffix: "",
       rect: rect,
       html: html,
+      plain: plain || text,
       source: source,
       commentId: commentId,
     };
@@ -24504,7 +25284,29 @@
     ids.forEach(function (id) {
       var sheet = findNoteSheet(id);
       if (!sheet) return;
-      rows.push({ id: String(sheet.id), title: sheet.title || "Лист", body: sheetPlainText(sheet) });
+      var body;
+      if (isWebSheet(sheet)) {
+        var html = "";
+        if (String(noteSheetState.leftId) === String(sheet.id) && noteSheetState.leftWebCanvas) {
+          html = noteSheetState.leftWebCanvas.getHtml() || "";
+        } else if (
+          String(noteSheetState.rightId) === String(sheet.id) &&
+          noteSheetState.rightWebCanvas
+        ) {
+          html = noteSheetState.rightWebCanvas.getHtml() || "";
+        } else {
+          html = String(sheet.body || sheet.description || "");
+        }
+        if (html.length > 12000) html = html.slice(0, 11999) + "…";
+        body =
+          "[web-canvas kind=web sheet_id=" +
+          String(sheet.id) +
+          "]\n" +
+          html;
+      } else {
+        body = sheetPlainText(sheet);
+      }
+      rows.push({ id: String(sheet.id), title: sheet.title || "Лист", body: body });
     });
     if (!rows.length) return "";
     var focusRow = null;
@@ -24899,6 +25701,14 @@
       if (kind === "chat") {
         noteCtx = { title: "", text: "", sheet_ids: [] };
       }
+      var canvasSelections = (noteSheetState.canvasSelections || []).map(function (s) {
+        return {
+          sheet_id: s.sheetId,
+          leo_id: s.leoId,
+          label: s.label,
+          snippet: s.snippet,
+        };
+      });
       var res = await apiFetch("/gpt/chat", {
         method: "POST",
         body: JSON.stringify({
@@ -24917,8 +25727,12 @@
           item_kind: kind,
           item_id: itemId,
           context_note_ids: contextIds.length ? contextIds : undefined,
+          canvas_selections: canvasSelections.length ? canvasSelections : undefined,
         }),
       });
+      if (res && res.canvas && res.canvas.length) {
+        await applyCanvasChatResult(res.canvas);
+      }
       var ans = String((res && res.answer) || "").trim();
       var bullets = (res && res.bullets) || [];
       if (bullets.length) {
@@ -27560,7 +28374,8 @@
       return noteItemMatchesFilter(n, "local");
     });
     if (!transAll.length) {
-      pt.innerHTML = '<p class="muted empty-hint">Транскрипций пока нет.</p>';
+      pt.innerHTML =
+        '<p class="muted empty-hint">Транскрипций пока нет. Нажмите «+», чтобы загрузить файл.</p>';
     } else if (!trans.length) {
       pt.innerHTML =
         '<p class="muted empty-hint">Ничего не найдено. Измените поиск, проект или #хэштег.</p>';
@@ -29327,6 +30142,20 @@
     box.appendChild(btn);
   }
 
+  function applyBrowserSessionLogin(data) {
+    if (!data || !data.session_token) {
+      throw new Error("Нет токена сессии");
+    }
+    setStoredSession(data.session_token);
+    setGateStatus("");
+    clearLoginCodeFromUrl();
+    if (!bootAppStarted) {
+      bootAppStarted = true;
+    }
+    var tg = window.Telegram && window.Telegram.WebApp;
+    bootApp(tg);
+  }
+
   function completeTelegramLogin(user) {
     setGateError("");
     setGateStatus("Завершение входа…");
@@ -29356,17 +30185,89 @@
         }
         return body;
       });
-    }).then(function (data) {
-      if (!data || !data.session_token) {
-        throw new Error("Нет токена сессии");
-      }
-      setStoredSession(data.session_token);
-      setGateStatus("");
-      if (!bootAppStarted) {
-        bootAppStarted = true;
-      }
-      var tg = window.Telegram && window.Telegram.WebApp;
-      bootApp(tg);
+    }).then(applyBrowserSessionLogin);
+  }
+
+  function clearLoginCodeFromUrl() {
+    try {
+      var u = new URL(window.location.href);
+      if (!u.searchParams.has("login")) return;
+      u.searchParams.delete("login");
+      var q = u.searchParams.toString();
+      history.replaceState(null, "", u.pathname + (q ? "?" + q : "") + u.hash);
+    } catch (_) {}
+  }
+
+  function readLoginCodeFromUrl() {
+    try {
+      return (new URLSearchParams(location.search || "").get("login") || "").trim();
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function normalizeLoginCode(raw) {
+    return String(raw || "")
+      .trim()
+      .toUpperCase()
+      .replace(/[\s\-]/g, "");
+  }
+
+  function completeLoginCode(code) {
+    var normalized = normalizeLoginCode(code);
+    if (normalized.length < 6) {
+      return Promise.reject(new Error("Введите код из бота (/web)"));
+    }
+    setGateError("");
+    setGateStatus("Вход по коду…");
+    return fetch(API + "/auth/login-code", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ code: normalized }),
+    }).then(function (res) {
+      return res.text().then(function (text) {
+        var body = null;
+        try {
+          body = text ? JSON.parse(text) : null;
+        } catch (_) {
+          body = {
+            detail: looksLikeHtmlError(text)
+              ? httpStatusFallback(res.status, "Ошибка входа")
+              : text || res.statusText,
+          };
+        }
+        if (!res.ok) {
+          throw new Error(
+            apiErrorMessage(body, httpStatusFallback(res.status, "Ошибка входа"))
+          );
+        }
+        return body;
+      });
+    }).then(applyBrowserSessionLogin);
+  }
+
+  function bindGateCodeForm() {
+    var form = document.getElementById("gate-code-form");
+    var input = document.getElementById("gate-code-input");
+    if (!form || form.dataset.bound === "1") return;
+    form.dataset.bound = "1";
+    if (input) {
+      input.addEventListener("input", function () {
+        var cur = input.selectionStart;
+        input.value = normalizeLoginCode(input.value).slice(0, 12);
+        try {
+          input.setSelectionRange(cur, cur);
+        } catch (_) {}
+      });
+    }
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var code = input ? input.value : "";
+      completeLoginCode(code).catch(function (err) {
+        setGateStatus("");
+        setGateError(err.message || String(err));
+      });
     });
   }
 
@@ -29438,11 +30339,31 @@
     gateLoginBootstrapped = true;
     setGateError("");
     setGateStatus("Загрузка…");
+    bindGateCodeForm();
+    var codeLogin = document.getElementById("gate-code-login");
+    if (codeLogin) codeLogin.classList.remove("hidden");
     var box = document.getElementById("gate-telegram-login");
     if (box) {
       box.innerHTML =
         '<p class="muted small" style="margin:0">Подключение кнопки входа…</p>';
     }
+    var pendingLogin = readLoginCodeFromUrl();
+    if (pendingLogin) {
+      var codeInput = document.getElementById("gate-code-input");
+      if (codeInput) codeInput.value = normalizeLoginCode(pendingLogin);
+      setGateStatus("Вход по ссылке из бота…");
+      completeLoginCode(pendingLogin).catch(function (e) {
+        clearLoginCodeFromUrl();
+        setGateStatus("");
+        setGateError(e.message || String(e));
+        bootstrapGateLoginButtons();
+      });
+      return;
+    }
+    bootstrapGateLoginButtons();
+  }
+
+  function bootstrapGateLoginButtons() {
     var devHint = document.getElementById("gate-dev-hint");
     if (devHint) {
       var showDev =
@@ -29452,6 +30373,8 @@
     }
     if (isObsoleteWebappHost()) {
       setGateStatus("");
+      var codeBox = document.getElementById("gate-code-login");
+      if (codeBox) codeBox.classList.add("hidden");
       renderPwaMigrateGate();
       return;
     }
@@ -29463,6 +30386,8 @@
       setGateStatus(
         "Адрес обновился. Войдите здесь, затем при желании снова «На экран Домой»."
       );
+    } else {
+      setGateStatus("Загрузка…");
     }
     apiFetch("/auth/config", { method: "GET" })
       .then(function (cfg) {
@@ -29486,12 +30411,15 @@
           return;
         }
         setGateError(
-          "Вход в браузере недоступен. Откройте мини-приложение из Telegram или проверьте TELEGRAM_BOT_TOKEN на сервере."
+          "Кнопка Telegram недоступна. Напишите боту /web и войдите по коду ниже."
         );
       })
       .catch(function (e) {
         setGateStatus("");
-        setGateError(e.message || "Не удалось загрузить настройки входа");
+        setGateError(
+          (e.message || "Не удалось загрузить настройки входа") +
+            " Можно войти по коду из бота (/web)."
+        );
       });
   }
 
@@ -29641,6 +30569,7 @@
     if (notesCreateBtn) {
       notesCreateBtn.addEventListener("click", function () {
         if (notesSubTab === "chats") createAndOpenChatThread();
+        else if (notesSubTab === "transcriptions") openTranscriptionUploadModal();
         else openNewTodoistNote();
       });
     }
@@ -29710,6 +30639,33 @@
     if (voiceStop) voiceStop.addEventListener("click", stopVoiceRecording);
     var voiceSend = document.getElementById("voice-send");
     if (voiceSend) voiceSend.addEventListener("click", sendVoiceTranscriptMessage);
+
+    var transcriptionUploadClose = document.getElementById("transcription-upload-close");
+    if (transcriptionUploadClose) {
+      transcriptionUploadClose.addEventListener("click", closeTranscriptionUploadModal);
+    }
+    var transcriptionUploadOverlay = document.getElementById("transcription-upload-overlay");
+    if (transcriptionUploadOverlay) {
+      transcriptionUploadOverlay.addEventListener("click", function (e) {
+        if (e.target.id === "transcription-upload-overlay") closeTranscriptionUploadModal();
+      });
+    }
+    var transcriptionUploadInput = document.getElementById("transcription-upload-input");
+    if (transcriptionUploadInput) {
+      transcriptionUploadInput.addEventListener("change", function () {
+        setTranscriptionUploadError("");
+        syncTranscriptionUploadUi();
+      });
+    }
+    document.querySelectorAll('input[name="transcription-upload-mode"]').forEach(function (radio) {
+      radio.addEventListener("change", syncTranscriptionUploadModeOptions);
+    });
+    var transcriptionUploadSubmit = document.getElementById("transcription-upload-submit");
+    if (transcriptionUploadSubmit) {
+      transcriptionUploadSubmit.addEventListener("click", function () {
+        submitTranscriptionUpload();
+      });
+    }
 
     var notesSearchInput = document.getElementById("notes-search-input");
     if (notesSearchInput) {

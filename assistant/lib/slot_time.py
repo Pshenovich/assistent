@@ -9,6 +9,7 @@ from assistant.lib.calendar_datetime_parse import (
     calendar_extract_move_date,
     calendar_extract_time,
     calendar_parse_explicit_date,
+    calendar_parse_in_duration,
     calendar_relative_day,
 )
 
@@ -59,6 +60,9 @@ def parse_datetime_from_user_text(text: str, *, now: datetime) -> datetime | Non
         return None
     today = now.date()
     tz = now.tzinfo
+    relative = calendar_parse_in_duration(raw, now)
+    if relative is not None:
+        return relative
     day = (
         calendar_extract_move_date(raw, today)
         or calendar_relative_day(raw, today, role="any")

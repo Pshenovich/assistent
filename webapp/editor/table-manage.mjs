@@ -601,17 +601,18 @@ TableManageView.prototype.layoutHandles = function () {
     ) {
       rowH = this.drag.currentHeight;
     }
+    // Ручки строк — по центру левой границы таблицы.
     btn = this.overlay.querySelector('[data-role="move-row"][data-index="' + r + '"]');
     if (btn) {
-      btn.style.left = lp.x - 6 + "px";
+      btn.style.left = lp.x + "px";
       btn.style.top = rp.y + rowH / 2 + "px";
-      btn.style.transform = "translate(-100%, -50%)";
+      btn.style.transform = "translate(-50%, -50%)";
     }
     btn = this.overlay.querySelector('[data-role="resize-row"][data-index="' + r + '"]');
     if (btn) {
-      btn.style.left = lp.x - 6 + "px";
+      btn.style.left = lp.x + "px";
       btn.style.top = rp.y + rowH + "px";
-      btn.style.transform = "translate(-100%, -50%)";
+      btn.style.transform = "translate(-50%, -50%)";
     }
   }
 

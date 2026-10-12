@@ -13,6 +13,31 @@ import { DOMSerializer, Slice } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { CellSelection, cellAround, isInTable } from "@tiptap/pm/tables";
+import { trailingNode } from "@tiptap/pm/trailing-node";
+
+/** Always keep a paragraph after non-paragraph blocks (table, image, …) so typing below works. */
+var TrailingParagraph = Extension.create({
+  name: "trailingParagraph",
+  addProseMirrorPlugins: function () {
+    return [
+      trailingNode({
+        nodeName: "paragraph",
+        ignoredNodes: ["paragraph"],
+      }),
+    ];
+  },
+  onCreate: function () {
+    var editor = this.editor;
+    if (!editor || !editor.state) return;
+    var last = editor.state.doc.lastChild;
+    if (!last || last.type.name === "paragraph") return;
+    var paragraph = editor.state.schema.nodes.paragraph;
+    if (!paragraph) return;
+    editor.view.dispatch(
+      editor.state.tr.insert(editor.state.doc.content.size, paragraph.create())
+    );
+  },
+});
 
 var IMAGE_WIDTH_MIN_PCT = 15;
 var IMAGE_WIDTH_MAX_PCT = 100;
@@ -1395,6 +1420,289 @@ function mountToolbar(toolbarEl, editor) {
 
 var HASHTAG_QUERY_RE = /(?:^|\s)(#([A-Za-zА-Яа-яЁё0-9_]{0,40}))$/;
 var HASHTAG_INLINE_RE = /#([A-Za-zА-Яа-яЁё0-9_]{1,40})/g;
+/** «+» mention: link to a note or sheet (chip). After start/whitespace only. */
+var NOTE_REF_QUERY_RE = /(?:^|[\s\uFFFC])(\+([^\n]*))$/;
+
+var NOTE_REF_CHIP_ICON_SVG =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/>' +
+  "</svg>";
+
+function normalizeNoteRefLabel(label) {
+  return String(label || "").replace(/\s+/g, " ").trim() || "Заметка";
+}
+
+function noteRefLabelFromEl(el) {
+  if (!el) return "";
+  var named = el.querySelector && el.querySelector(".note-ref-chip-label");
+  return normalizeNoteRefLabel(named ? named.textContent : el.textContent);
+}
+
+function fillNoteRefChipEl(el, noteId, sheetId, label) {
+  el.className = "note-ref-chip";
+  el.setAttribute("data-leo-note-id", noteId || "");
+  if (sheetId) el.setAttribute("data-leo-sheet-id", sheetId);
+  else el.removeAttribute("data-leo-sheet-id");
+  el.setAttribute("contenteditable", "false");
+  el.innerHTML =
+    '<span class="note-ref-chip-icon" aria-hidden="true">' +
+    NOTE_REF_CHIP_ICON_SVG +
+    '</span><span class="note-ref-chip-label"></span>';
+  el.querySelector(".note-ref-chip-label").textContent = normalizeNoteRefLabel(label);
+}
+
+function createNoteRefExtensions(ctx) {
+  var LeoNoteRefChip = Node.create({
+    name: "leoNoteRefChip",
+    group: "inline",
+    inline: true,
+    atom: true,
+    selectable: true,
+    draggable: false,
+    addAttributes: function () {
+      return {
+        noteId: { default: "" },
+        sheetId: { default: "" },
+        label: { default: "" },
+      };
+    },
+    parseHTML: function () {
+      return [
+        {
+          tag: "span[data-leo-note-id]",
+          getAttrs: function (el) {
+            return {
+              noteId: el.getAttribute("data-leo-note-id") || "",
+              sheetId: el.getAttribute("data-leo-sheet-id") || "",
+              label: noteRefLabelFromEl(el),
+            };
+          },
+        },
+      ];
+    },
+    renderHTML: function (_ref) {
+      var HTMLAttributes = _ref.HTMLAttributes;
+      var attrs = {
+        "data-leo-note-id": HTMLAttributes.noteId,
+        class: "note-ref-chip",
+        contenteditable: "false",
+      };
+      if (HTMLAttributes.sheetId) attrs["data-leo-sheet-id"] = HTMLAttributes.sheetId;
+      return [
+        "span",
+        attrs,
+        ["span", { class: "note-ref-chip-icon", "aria-hidden": "true" }],
+        ["span", { class: "note-ref-chip-label" }, normalizeNoteRefLabel(HTMLAttributes.label)],
+      ];
+    },
+    addNodeView: function () {
+      return function (_ref) {
+        var node = _ref.node;
+        var el = document.createElement("span");
+        fillNoteRefChipEl(el, node.attrs.noteId, node.attrs.sheetId, node.attrs.label);
+        el.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var nid = el.getAttribute("data-leo-note-id") || "";
+          var sid = el.getAttribute("data-leo-sheet-id") || "";
+          if (nid && typeof ctx.onNoteRefChipClick === "function") {
+            ctx.onNoteRefChipClick(nid, sid);
+          }
+        });
+        return {
+          dom: el,
+          update: function (updated) {
+            if (!updated || updated.type.name !== "leoNoteRefChip") return false;
+            fillNoteRefChipEl(
+              el,
+              updated.attrs.noteId,
+              updated.attrs.sheetId,
+              updated.attrs.label
+            );
+            return true;
+          },
+        };
+      };
+    },
+  });
+
+  var LeoNoteRefPlus = Extension.create({
+    name: "leoNoteRefPlus",
+    addProseMirrorPlugins: function () {
+      return [
+        new Plugin({
+          key: new PluginKey("leoNoteRefPlus"),
+          view: function () {
+            var el = document.createElement("div");
+            el.className = "note-ref-plus-suggest note-hashtag-suggest hidden";
+            document.body.appendChild(el);
+            ctx.refSuggestEl = el;
+            var searchGen = 0;
+
+            function hideSuggest() {
+              el.classList.add("hidden");
+              el.innerHTML = "";
+              ctx.refItems = [];
+              ctx.refIndex = 0;
+              ctx.refFrom = null;
+              ctx.refTo = null;
+            }
+            ctx.hideNoteRefSuggest = hideSuggest;
+
+            function insertChip(item) {
+              var view = ctx.editor && ctx.editor.view;
+              if (!view || !item || !item.noteId) {
+                hideSuggest();
+                return;
+              }
+              var from = ctx.refFrom;
+              var to = view.state.selection.from;
+              if (from == null || from < 0 || to < from) {
+                hideSuggest();
+                return;
+              }
+              hideSuggest();
+              view.dispatch(view.state.tr.delete(from, to));
+              ctx.editor
+                .chain()
+                .focus()
+                .insertContent([
+                  {
+                    type: "leoNoteRefChip",
+                    attrs: {
+                      noteId: String(item.noteId || ""),
+                      sheetId: String(item.sheetId || ""),
+                      label: normalizeNoteRefLabel(item.label),
+                    },
+                  },
+                  { type: "text", text: " " },
+                ])
+                .run();
+            }
+            ctx.pickNoteRef = insertChip;
+
+            function render() {
+              el.innerHTML = "";
+              (ctx.refItems || []).forEach(function (item, i) {
+                var btn = document.createElement("button");
+                btn.type = "button";
+                btn.className =
+                  "note-hashtag-suggest-item note-ref-suggest-item" +
+                  (i === ctx.refIndex ? " is-active" : "");
+                var title = document.createElement("span");
+                title.className = "note-ref-suggest-label";
+                title.textContent = item.label || "Заметка";
+                btn.appendChild(title);
+                if (item.hint) {
+                  var hint = document.createElement("span");
+                  hint.className = "note-ref-suggest-hint";
+                  hint.textContent = item.hint;
+                  btn.appendChild(hint);
+                }
+                btn.addEventListener("mousedown", function (e) {
+                  e.preventDefault();
+                  insertChip(item);
+                });
+                el.appendChild(btn);
+              });
+            }
+            ctx.renderNoteRefSuggest = render;
+
+            function applyItems(items, view, $from) {
+              items = Array.isArray(items) ? items.slice(0, 12) : [];
+              if (!items.length) {
+                hideSuggest();
+                return;
+              }
+              ctx.refItems = items;
+              ctx.refIndex = 0;
+              render();
+              var coords = view.coordsAtPos($from.pos);
+              el.style.position = "fixed";
+              el.style.zIndex = "520";
+              el.style.left = Math.max(8, coords.left) + "px";
+              el.style.top = coords.bottom + 6 + "px";
+              el.classList.remove("hidden");
+            }
+
+            return {
+              update: function (view) {
+                if (!view.state.selection.empty) {
+                  hideSuggest();
+                  return;
+                }
+                var $from = view.state.selection.$from;
+                var text = $from.parent.textBetween(0, $from.parentOffset, null, "\ufffc");
+                var match = text.match(NOTE_REF_QUERY_RE);
+                if (!match) {
+                  hideSuggest();
+                  return;
+                }
+                var token = String(match[1] || "");
+                var query = String(match[2] || "");
+                ctx.refFrom = $from.pos - token.length;
+                ctx.refTo = $from.pos;
+                if (typeof ctx.onSearchNoteRefs !== "function") {
+                  hideSuggest();
+                  return;
+                }
+                var gen = ++searchGen;
+                ctx.onSearchNoteRefs(query, function (items) {
+                  if (gen !== searchGen) return;
+                  if (!ctx.editor || !ctx.editor.view) return;
+                  var sel = ctx.editor.view.state.selection;
+                  if (!sel.empty) return;
+                  var $now = sel.$from;
+                  var nowText = $now.parent.textBetween(0, $now.parentOffset, null, "\ufffc");
+                  if (!NOTE_REF_QUERY_RE.test(nowText)) return;
+                  applyItems(items, ctx.editor.view, $now);
+                });
+              },
+              destroy: function () {
+                searchGen += 1;
+                if (el.parentNode) el.parentNode.removeChild(el);
+              },
+            };
+          },
+          props: {
+            handleKeyDown: function (view, event) {
+              var items = ctx.refItems || [];
+              var open =
+                items.length &&
+                ctx.refSuggestEl &&
+                !ctx.refSuggestEl.classList.contains("hidden");
+              if (!open) return false;
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                ctx.refIndex = (ctx.refIndex + 1) % items.length;
+                if (ctx.renderNoteRefSuggest) ctx.renderNoteRefSuggest();
+                return true;
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                ctx.refIndex = (ctx.refIndex - 1 + items.length) % items.length;
+                if (ctx.renderNoteRefSuggest) ctx.renderNoteRefSuggest();
+                return true;
+              }
+              if (event.key === "Enter" || event.key === "Tab") {
+                event.preventDefault();
+                if (ctx.pickNoteRef) ctx.pickNoteRef(items[ctx.refIndex]);
+                return true;
+              }
+              if (event.key === "Escape") {
+                if (ctx.hideNoteRefSuggest) ctx.hideNoteRefSuggest();
+                return true;
+              }
+              return false;
+            },
+          },
+        }),
+      ];
+    },
+  });
+
+  return [LeoNoteRefChip, LeoNoteRefPlus];
+}
 var TASK_SLASH_DAYS = [
   "сегодня",
   "завтра",
@@ -2011,6 +2319,11 @@ function mount(container, options) {
     onTaskChipClick: options.onTaskChipClick,
     onTaskChipRemoved: options.onTaskChipRemoved,
   };
+  var noteRefCtx = {
+    editor: null,
+    onSearchNoteRefs: options.onSearchNoteRefs,
+    onNoteRefChipClick: options.onNoteRefChipClick,
+  };
 
   const editor = new Editor({
     element: content,
@@ -2033,6 +2346,7 @@ function mount(container, options) {
       ManagedTableRow,
       TableHeader,
       TableCell,
+      TrailingParagraph,
       BotTaskList.configure({
         HTMLAttributes: { class: "note-task-list" },
       }),
@@ -2043,7 +2357,8 @@ function mount(container, options) {
       IosSelectionGuard,
     ]
       .concat(createHashtagExtensions(hashtagCtx))
-      .concat(createLeoTaskExtensions(taskCtx)),
+      .concat(createLeoTaskExtensions(taskCtx))
+      .concat(createNoteRefExtensions(noteRefCtx)),
     content: importBody(options.body || ""),
     autofocus: options.autofocus === true,
     editorProps: {
@@ -2096,6 +2411,7 @@ function mount(container, options) {
   });
   hashtagCtx.editor = editor;
   taskCtx.editor = editor;
+  noteRefCtx.editor = editor;
 
   editor.view.dom.addEventListener(
     "paste",
@@ -2350,6 +2666,7 @@ function mount(container, options) {
       closeTgMenus(toolbar);
       if (typeof hashtagCtx.hideHashtagSuggest === "function") hashtagCtx.hideHashtagSuggest();
       if (typeof taskCtx.hideTaskSlashSuggest === "function") taskCtx.hideTaskSlashSuggest();
+      if (typeof noteRefCtx.hideNoteRefSuggest === "function") noteRefCtx.hideNoteRefSuggest();
       if (typeof cleanupToolbar === "function") cleanupToolbar();
       if (typeof cleanupToc === "function") cleanupToc();
       editor.destroy();

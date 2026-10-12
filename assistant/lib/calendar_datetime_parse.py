@@ -122,6 +122,19 @@ def calendar_parse_reference(today: date, tz: ZoneInfo) -> dict[str, Any]:
     }
 
 
+def calendar_parse_in_duration(text: str, now: datetime) -> datetime | None:
+    """«через 10 мин», «через 2 часа» → now + offset."""
+    raw = text or ""
+    m_h = _RE_IN_N_HOURS.search(raw)
+    if m_h:
+        hrs = float(m_h.group(1).replace(",", "."))
+        return now + timedelta(hours=hrs)
+    m_m = _RE_IN_N_MIN.search(raw)
+    if m_m:
+        return now + timedelta(minutes=int(m_m.group(1)))
+    return None
+
+
 def calendar_build_llm_user_payload(
     *,
     user_text: str,

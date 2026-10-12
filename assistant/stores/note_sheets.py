@@ -14,6 +14,8 @@ _LOCK = notes_store._LOCK  # type: ignore[attr-defined]
 PRIMARY_SHEET_ID = "main"
 PRIMARY_SHEET_TITLE = "Основная"
 MAX_EXTRA_SHEETS = 10
+SHEET_KIND_DOC = "doc"
+SHEET_KIND_WEB = "web"
 
 
 class SheetConflictError(Exception):
@@ -24,6 +26,21 @@ class SheetConflictError(Exception):
 
 class SheetError(ValueError):
     pass
+
+
+def _normalize_kind(raw: Any) -> str:
+    k = str(raw or "").strip().lower()
+    if k in (SHEET_KIND_WEB, "canvas", "presentation", "html"):
+        return SHEET_KIND_WEB
+    return SHEET_KIND_DOC
+
+
+def _ensure_kind_column(conn: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(note_sheets)").fetchall()}
+    if "kind" not in cols:
+        conn.execute(
+            "ALTER TABLE note_sheets ADD COLUMN kind TEXT NOT NULL DEFAULT 'doc'"
+        )
 
 
 def _conn() -> sqlite3.Connection:
@@ -38,10 +55,12 @@ def _conn() -> sqlite3.Connection:
             position INTEGER NOT NULL DEFAULT 0,
             revision INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'doc'
         )
         """
     )
+    _ensure_kind_column(conn)
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_note_sheets_note ON note_sheets(note_id, position)"
     )
@@ -60,12 +79,15 @@ def _plain_text(html: str) -> str:
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     body = str(row["body"] or "")
+    keys = set(row.keys())
+    kind = _normalize_kind(row["kind"] if "kind" in keys else SHEET_KIND_DOC)
     return {
         "id": int(row["id"]),
         "note_id": int(row["note_id"]),
         "title": str(row["title"] or "").strip() or PRIMARY_SHEET_TITLE,
         "body": body,
         "description": body,
+        "kind": kind,
         "position": int(row["position"] or 0),
         "revision": max(1, int(row["revision"] or 1)),
         "is_primary": False,
@@ -84,6 +106,7 @@ def primary_sheet(note: dict[str, Any]) -> dict[str, Any]:
         "title": title,
         "body": body,
         "description": body,
+        "kind": SHEET_KIND_DOC,
         "position": 0,
         "revision": max(1, int(note.get("revision") or 1)),
         "is_primary": True,
@@ -175,7 +198,13 @@ def _next_position(note_id: int) -> int:
     return int(row["mx"] or 0) + 1 if row else 1
 
 
-def create_sheet(note: dict[str, Any], title: str = "", body: str = "") -> dict[str, Any]:
+def create_sheet(
+    note: dict[str, Any],
+    title: str = "",
+    body: str = "",
+    *,
+    kind: str = SHEET_KIND_DOC,
+) -> dict[str, Any]:
     if not note_allows_sheets(note):
         raise SheetError("Листы доступны только у обычных заметок")
     note_id = int(note["id"])
@@ -185,13 +214,15 @@ def create_sheet(note: dict[str, Any], title: str = "", body: str = "") -> dict[
     ts = _now_iso()
     pos = _next_position(note_id)
     sheet_body = body if body is not None else ""
+    sheet_kind = _normalize_kind(kind)
     with _LOCK:
         cur = _conn().execute(
             """
-            INSERT INTO note_sheets (note_id, title, body, position, revision, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 1, ?, ?)
+            INSERT INTO note_sheets
+                (note_id, title, body, position, revision, created_at, updated_at, kind)
+            VALUES (?, ?, ?, ?, 1, ?, ?, ?)
             """,
-            (note_id, name, sheet_body, pos, ts, ts),
+            (note_id, name, sheet_body, pos, ts, ts, sheet_kind),
         )
         _conn().commit()
         sid = int(cur.lastrowid)
@@ -206,6 +237,7 @@ def update_sheet(
     *,
     title: Optional[str] = None,
     body: Optional[str] = None,
+    kind: Optional[str] = None,
     expected_revision: Optional[int] = None,
 ) -> dict[str, Any]:
     existing = get_extra_sheet(note_id, sheet_id)
@@ -219,18 +251,28 @@ def update_sheet(
             raise SheetConflictError(existing) from e
     new_title = existing["title"] if title is None else ((title or "").strip() or existing["title"])
     new_body = existing["body"] if body is None else (body or "").strip()
-    if body is not None and not _plain_text(new_body) and _plain_text(existing["body"] or ""):
+    # Web canvases may be CSS-heavy with little plain text — allow empty-ish overwrite.
+    is_web = _normalize_kind(kind if kind is not None else existing.get("kind")) == SHEET_KIND_WEB
+    if (
+        body is not None
+        and not is_web
+        and not _plain_text(new_body)
+        and _plain_text(existing["body"] or "")
+    ):
         new_body = existing["body"]
+    new_kind = existing.get("kind") or SHEET_KIND_DOC
+    if kind is not None:
+        new_kind = _normalize_kind(kind)
     ts = _now_iso()
     new_rev = int(existing.get("revision") or 1) + 1
     with _LOCK:
         _conn().execute(
             """
             UPDATE note_sheets
-            SET title = ?, body = ?, updated_at = ?, revision = ?
+            SET title = ?, body = ?, kind = ?, updated_at = ?, revision = ?
             WHERE note_id = ? AND id = ?
             """,
-            (new_title, new_body, ts, new_rev, int(note_id), int(sheet_id)),
+            (new_title, new_body, new_kind, ts, new_rev, int(note_id), int(sheet_id)),
         )
         _conn().commit()
     out = get_extra_sheet(note_id, sheet_id)
@@ -262,8 +304,8 @@ def copy_sheets(src_note_id: int, dest_note_id: int) -> list[dict[str, Any]]:
             cur = _conn().execute(
                 """
                 INSERT INTO note_sheets
-                    (note_id, title, body, position, revision, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 1, ?, ?)
+                    (note_id, title, body, position, revision, created_at, updated_at, kind)
+                VALUES (?, ?, ?, ?, 1, ?, ?, ?)
                 """,
                 (
                     int(dest_note_id),
@@ -272,6 +314,7 @@ def copy_sheets(src_note_id: int, dest_note_id: int) -> list[dict[str, Any]]:
                     int(src.get("position") or 0),
                     ts,
                     ts,
+                    _normalize_kind(src.get("kind")),
                 ),
             )
             _conn().commit()

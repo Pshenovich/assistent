@@ -11,6 +11,7 @@ search_events — match_query = фрагмент названия;
 update_event — match_query + match_date при необходимости, новые start/end/title."""
 
 REMINDER_PARSE_SYSTEM = """Извлеки напоминание. JSON: {"when_iso":"","task":"","need_more_info":false,"question":""}
+task — только суть дела, без глаголов «напомни/не забудь/уведоми» и без даты/времени («через 10 мин», «завтра в 10»).
 Если в user-message есть reply_context — task бери из reply_context; из text извлекай только дату/время (when_iso).
 Если времени нет — need_more_info=true, question с просьбой указать когда."""
 

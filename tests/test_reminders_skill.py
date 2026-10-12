@@ -27,6 +27,24 @@ def test_resolve_reminder_task_without_reply_falls_back_to_stripped():
     assert _resolve_reminder_task("напомни купить хлеб", None, "") == "купить хлеб"
 
 
+def test_resolve_reminder_task_strips_verb_from_parsed():
+    assert (
+        _resolve_reminder_task(
+            "напомни через 10 мин попить чай",
+            {"task": "напомни попить чай"},
+            "",
+        )
+        == "попить чай"
+    )
+
+
+def test_resolve_reminder_task_strips_relative_time():
+    assert (
+        _resolve_reminder_task("напомни через 10 мин попить чай", None, "")
+        == "попить чай"
+    )
+
+
 def test_reminder_keyboard_buttons():
     kb = reminder_actions_keyboard("abc123")
     rows = kb.inline_keyboard

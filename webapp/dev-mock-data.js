@@ -1078,6 +1078,50 @@
       };
     }
 
+    if (basePath === "/notes/transcriptions/upload" && method === "POST") {
+      var withSummary = false;
+      try {
+        if (opts && opts.body && typeof opts.body.get === "function") {
+          withSummary = String(opts.body.get("with_summary") || "") === "1";
+        }
+      } catch (_) {}
+      var newId = -(93000 + transcriptions.length + 1);
+      var transcriptBody =
+        "SPEAKER1: Тестовая транскрипция загруженного файла.\nSPEAKER2: Проверка режима миниаппа.";
+      var item = {
+        id: newId,
+        title: "Загруженный файл",
+        body: withSummary ? "" : transcriptBody,
+        description: withSummary ? "" : transcriptBody,
+        preview: withSummary ? "Готовим саммари…" : transcriptBody.slice(0, 120),
+        role: "transcription",
+        is_transcription: true,
+        has_summary: !!withSummary,
+        summary_generating: !!withSummary,
+        primary_sheet_title: withSummary ? "Саммари" : "Транскрипции",
+        created_at: nowIso(),
+        updated_at: nowIso(),
+        meta: {
+          source: "miniapp_upload",
+          summary_generating: !!withSummary,
+        },
+        _transcript: transcriptBody,
+        _summary: "Демо-саммари загруженного файла.",
+        tags: [],
+      };
+      transcriptions.unshift(item);
+      if (withSummary) {
+        setTimeout(function () {
+          item.summary_generating = false;
+          item.meta.summary_generating = false;
+          item.body = item._summary;
+          item.description = item._summary;
+          item.preview = item._summary;
+        }, 1200);
+      }
+      return { ok: true, id: newId, item: Object.assign({}, item), with_summary: withSummary };
+    }
+
     var itemTagsMatch = basePath.match(/^\/notes\/(journal|local)\/([^/]+)\/tags$/);
     if (itemTagsMatch && method === "PUT") {
       var itemKind = itemTagsMatch[1];

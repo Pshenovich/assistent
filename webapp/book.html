@@ -232,34 +232,30 @@
       max-width: 28rem;
       margin: 0 auto;
     }
-    .dock-summary {
-      margin: 0 0 0.55rem;
-      color: var(--muted);
-      font-size: 0.8125rem;
-      line-height: 1.35;
-    }
-    .dock-summary strong {
-      color: var(--text);
-      font-weight: 650;
-    }
     .field {
       display: block;
       width: 100%;
       margin: 0 0 0.55rem;
       padding: 0.75rem 0.9rem;
-      border: none;
+      border: 1.5px solid rgba(255, 255, 255, 0.28);
       border-radius: 12px;
       background: var(--surface);
       color: var(--text);
       font: inherit;
       font-size: 0.9375rem;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+    }
+    .field::placeholder {
+      color: rgba(163, 163, 163, 0.95);
     }
     .field:focus {
       outline: none;
-      box-shadow: 0 0 0 2px rgba(82, 158, 244, 0.45);
+      border-color: rgba(82, 158, 244, 0.85);
+      box-shadow: 0 0 0 3px rgba(82, 158, 244, 0.28);
     }
     .field.is-invalid {
-      box-shadow: 0 0 0 2px rgba(245, 163, 163, 0.55);
+      border-color: rgba(245, 163, 163, 0.9);
+      box-shadow: 0 0 0 3px rgba(245, 163, 163, 0.28);
     }
     .book-btn {
       width: 100%;
@@ -333,8 +329,7 @@
   </main>
   <div id="book-dock" class="dock">
     <div class="dock-inner">
-      <p class="dock-summary" id="book-summary">Выберите день и время</p>
-      <input id="book-email" class="field" type="text" inputmode="email" autocomplete="email" required placeholder="Email участников, через запятую" />
+      <input id="book-email" class="field" type="text" inputmode="email" autocomplete="email" required placeholder="Напишите свой имейл, чтобы получить приглашение на встречу" />
       <button type="button" class="book-btn" id="book-submit" disabled>Забронировать</button>
     </div>
   </div>
