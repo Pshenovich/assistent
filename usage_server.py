@@ -2741,6 +2741,7 @@ class _MiniappGptChatBody(BaseModel):
     item_id: Optional[str] = None
     agent_id: Optional[str] = None
     canvas_selections: list[_MiniappCanvasSelection] = Field(default_factory=list)
+    canvas_sheet_id: Optional[str] = None
 
 
 class _MiniappAgentCreate(BaseModel):
@@ -6953,6 +6954,8 @@ async def miniapp_gpt_chat(
                 if hint:
                     system_text = (system_text.rstrip() + "\n\n" + hint).strip() if system_text else hint
         canvas_enabled = kind == "local" and bool(iid)
+        open_canvas_sheet_id = str(body.canvas_sheet_id or "").strip()
+        canvas_sel_dumps = [s.model_dump() for s in (body.canvas_selections or [])]
         if canvas_enabled:
             from assistant.lib import web_canvas as web_canvas_lib
 
@@ -6961,9 +6964,10 @@ async def miniapp_gpt_chat(
                 if system_text
                 else web_canvas_lib.canvas_system_addon()
             )
-            sel_block = web_canvas_lib.selections_prompt_block(
-                [s.model_dump() for s in (body.canvas_selections or [])]
-            )
+            open_block = web_canvas_lib.open_canvas_prompt_block(open_canvas_sheet_id)
+            if open_block:
+                prompt = (prompt.rstrip() + "\n\n" + open_block).strip()
+            sel_block = web_canvas_lib.selections_prompt_block(canvas_sel_dumps)
             if sel_block:
                 prompt = (prompt.rstrip() + "\n\n" + sel_block).strip()
         try:
@@ -7010,12 +7014,20 @@ async def miniapp_gpt_chat(
                     else None
                 )
                 if note and canvas_actions:
+                    sel_sheet_ids = web_canvas_lib.selection_sheet_ids(canvas_sel_dumps)
                     for act in canvas_actions[:3]:
                         try:
+                            normalized = web_canvas_lib.normalize_canvas_action_for_apply(
+                                act,
+                                selection_sheet_ids=sel_sheet_ids,
+                                open_sheet_id=open_canvas_sheet_id,
+                            )
                             sheet = web_canvas_lib.apply_canvas_action(
                                 note=note,
-                                action=act,
+                                action=normalized,
                                 note_sheets_mod=note_sheets_store,
+                                selection_sheet_ids=sel_sheet_ids,
+                                open_sheet_id=open_canvas_sheet_id,
                             )
                         except Exception as e:
                             print(f"[web_canvas] apply failed err={e!r}")
@@ -7023,7 +7035,7 @@ async def miniapp_gpt_chat(
                         if sheet:
                             applied.append(
                                 {
-                                    "action": str(act.get("action") or "create"),
+                                    "action": str(normalized.get("action") or "create"),
                                     "sheet_id": str(sheet.get("id")),
                                     "title": str(sheet.get("title") or ""),
                                     "kind": str(sheet.get("kind") or "web"),

@@ -16947,11 +16947,71 @@
       noteSheetState.canvasSelections = noteSheetState.canvasSelections.slice(-8);
     }
     renderCanvasSelectionChips();
+    syncNotePaieReplyForm();
   }
 
   function clearCanvasSelections() {
     noteSheetState.canvasSelections = [];
     renderCanvasSelectionChips();
+  }
+
+  var CANVAS_QUOTE_MARK = "◆полотно◆ ";
+
+  function canvasSelectionLabel(sel) {
+    if (!sel) return "элемент";
+    return String((sel.leoId ? sel.leoId + " · " : "") + (sel.label || "элемент")).trim() || "элемент";
+  }
+
+  function formatCanvasSelectionQuote(sel) {
+    return CANVAS_QUOTE_MARK + canvasSelectionLabel(sel);
+  }
+
+  function encodeCanvasSelectionsQuote(sels) {
+    return (sels || [])
+      .map(formatCanvasSelectionQuote)
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  function splitDiscussQuote(quote) {
+    var canvas = [];
+    var textLines = [];
+    String(quote || "")
+      .split("\n")
+      .forEach(function (line) {
+        var raw = String(line || "").trim();
+        if (!raw) return;
+        if (raw.indexOf(CANVAS_QUOTE_MARK) === 0) {
+          var label = raw.slice(CANVAS_QUOTE_MARK.length).trim();
+          if (label) canvas.push({ label: label });
+        } else {
+          textLines.push(raw);
+        }
+      });
+    return { canvas: canvas, text: textLines.join("\n") };
+  }
+
+  function snapshotCanvasSelections() {
+    return (noteSheetState.canvasSelections || []).map(function (s) {
+      return {
+        sheetId: s.sheetId,
+        leoId: s.leoId,
+        label: s.label,
+        snippet: s.snippet,
+      };
+    });
+  }
+
+  function activeWebCanvasSheetId() {
+    var left = findNoteSheet(noteSheetState.leftId);
+    if (isWebSheet(left) && left.id != null) return String(left.id);
+    var right =
+      noteSheetState.rightMode === "sheet" ? findNoteSheet(noteSheetState.rightId) : null;
+    if (isWebSheet(right) && right.id != null) return String(right.id);
+    var fromSel = (noteSheetState.canvasSelections || []).find(function (s) {
+      return s && s.sheetId;
+    });
+    return fromSel ? String(fromSel.sheetId) : "";
   }
 
   function renderCanvasSelectionChips() {
@@ -16970,7 +17030,7 @@
       var chip = document.createElement("div");
       chip.className = "note-canvas-sel-chip";
       var span = document.createElement("span");
-      span.textContent = (sel.leoId ? sel.leoId + " · " : "") + (sel.label || "элемент");
+      span.textContent = canvasSelectionLabel(sel);
       var btn = document.createElement("button");
       btn.type = "button";
       btn.setAttribute("aria-label", "Убрать");
@@ -16978,11 +17038,27 @@
       btn.addEventListener("click", function () {
         noteSheetState.canvasSelections.splice(idx, 1);
         renderCanvasSelectionChips();
+        syncNotePaieReplyForm();
       });
       chip.appendChild(span);
       chip.appendChild(btn);
       host.appendChild(chip);
     });
+  }
+
+  function appendDiscussCanvasChips(host, selections) {
+    var rows = Array.isArray(selections) ? selections : [];
+    if (!host || !rows.length) return;
+    var wrap = document.createElement("div");
+    wrap.className = "note-discuss-canvas-chips";
+    wrap.setAttribute("aria-label", "Выделенные блоки полотна");
+    rows.forEach(function (sel) {
+      var chip = document.createElement("span");
+      chip.className = "note-discuss-canvas-chip";
+      chip.textContent = canvasSelectionLabel(sel);
+      wrap.appendChild(chip);
+    });
+    host.appendChild(wrap);
   }
 
   function ensureLeftWebCanvasHost() {
@@ -24465,7 +24541,7 @@
   function findDiscussReplyTargetId(comment) {
     var pid = Number(comment && comment.parent_id) || 0;
     if (pid > 0) return pid;
-    var quote = String((comment && comment.quote) || "")
+    var quote = String(splitDiscussQuote((comment && comment.quote) || "").text || "")
       .replace(/\s+/g, " ")
       .trim()
       .toLowerCase();
@@ -24572,20 +24648,24 @@
     role.className = "note-discuss-role";
     role.textContent = discussionAuthorLabel(c);
     item.appendChild(role);
-    var quoteText = String((c && c.quote) || "").trim();
+    var quoteSplit = splitDiscussQuote((c && c.quote) || "");
+    var quoteText = String(quoteSplit.text || "").trim();
     var bodyText = discussDisplayBody(String((c && c.body) || ""), quoteText);
     var attachments = (c && c.attachments) || [];
     var hideClipBody = bodyText.trim() === "📎" && attachments.length;
     var bubble = document.createElement("div");
     bubble.className = "note-discuss-bubble";
     // Реплай внутри бабла (как в Telegram). У ассистента quote — контекст модели, не UI-реплай.
-    if (quoteText && !assistant) {
-      appendDiscussReplyQuote(
-        bubble,
-        quoteText,
-        discussReplyWhoLabel(c),
-        findDiscussReplyTargetId(c)
-      );
+    if (!assistant) {
+      appendDiscussCanvasChips(bubble, quoteSplit.canvas);
+      if (quoteText) {
+        appendDiscussReplyQuote(
+          bubble,
+          quoteText,
+          discussReplyWhoLabel(c),
+          findDiscussReplyTargetId(c)
+        );
+      }
     }
     if (assistant && bodyText.trim() && !hideClipBody) {
       bubble.className = "note-discuss-bubble note-discuss-bubble--md journal-summary-html";
@@ -25468,7 +25548,7 @@
     scrollDiscussionToEnd();
   }
 
-  function appendOptimisticUserMessage(text, quote) {
+  function appendOptimisticUserMessage(text, quote, canvasSelections) {
     var list = document.getElementById("note-discussion-messages");
     if (!list) return;
     var empty = list.querySelector(".note-discussion-empty");
@@ -25482,7 +25562,12 @@
     role.className = "note-discuss-role";
     role.textContent = "Вы";
     item.appendChild(role);
-    var quoteText = String(quote || "").trim();
+    var split = splitDiscussQuote(quote);
+    var quoteText = String(split.text || "").trim();
+    var canvasRows =
+      Array.isArray(canvasSelections) && canvasSelections.length
+        ? canvasSelections
+        : split.canvas;
     var bodyText = discussDisplayBody(String(text || ""), quoteText);
     var wrap = document.getElementById("note-editor-more-wrap");
     var replyWho =
@@ -25491,6 +25576,7 @@
       "Фрагмент";
     var bubble = document.createElement("div");
     bubble.className = "note-discuss-bubble";
+    appendDiscussCanvasChips(bubble, canvasRows);
     if (quoteText) {
       appendDiscussReplyQuote(
         bubble,
@@ -25552,7 +25638,7 @@
         content = (content && content !== "📎" ? content + "\n" : "") + "[вложения: " + names.join(", ") + "]";
       }
       if (!content) return;
-      var quote = String((c && c.quote) || "").trim();
+      var quote = String(splitDiscussQuote((c && c.quote) || "").text || "").trim();
       if (quote && content.indexOf("«") === -1) content = "Про текст: «" + quote + "»\n\n" + content;
       if (content.length > 6000) content = content.slice(0, 5999) + "…";
       if (customId) {
@@ -25628,11 +25714,22 @@
     var quotes = packed.quotes || [];
     var body = packed.text || String(text || "").trim();
     var draftQuote = wrap && wrap._commentDraft ? String(wrap._commentDraft.quote || "").trim() : "";
-    var quote = quotes.join("\n").trim() || draftQuote;
+    var canvasSnapshot = snapshotCanvasSelections();
+    var textQuote = quotes.join("\n").trim() || draftQuote;
+    var canvasQuote = encodeCanvasSelectionsQuote(canvasSnapshot);
+    var quote = [textQuote, canvasQuote].filter(Boolean).join("\n");
+    if (!body && canvasSnapshot.length) body = "Поправь выделенный блок";
     var replyToId = wrap && wrap._commentChairId ? Number(wrap._commentChairId) || null : null;
     var pending = discussPendingFiles();
     var contextIds = discussContextNoteIds();
-    if (!wrap || !wrap._shareKind || !wrap._shareId || wrap._gptBusy || (!body && !pending.length && !contextIds.length)) return;
+    if (
+      !wrap ||
+      !wrap._shareKind ||
+      !wrap._shareId ||
+      wrap._gptBusy ||
+      (!body && !pending.length && !contextIds.length)
+    )
+      return;
     var kind = wrap._shareKind;
     var itemId = wrap._shareId;
     var sessionTitle = noteTitleForDiscussToast(kind, itemId, getNoteEditorTitle().trim() || "");
@@ -25655,7 +25752,8 @@
     wrap._discussionPinId = null;
     beginNoteAgentSession(kind, itemId, agentId === "gpt" ? "gpt" : agentId, sessionTitle);
     syncNotePaieReplyForm(true);
-    appendOptimisticUserMessage(body, quote);
+    appendOptimisticUserMessage(body, quote, canvasSnapshot);
+    clearCanvasSelections();
     wrap._commentDraft = null;
     wrap._commentChairId = null;
     wrap._commentReplyWho = null;
@@ -25705,7 +25803,7 @@
       if (kind === "chat") {
         noteCtx = { title: "", text: "", sheet_ids: [] };
       }
-      var canvasSelections = (noteSheetState.canvasSelections || []).map(function (s) {
+      var canvasSelections = canvasSnapshot.map(function (s) {
         return {
           sheet_id: s.sheetId,
           leo_id: s.leoId,
@@ -25713,13 +25811,17 @@
           snippet: s.snippet,
         };
       });
+      var openCanvasSheetId =
+        activeWebCanvasSheetId() ||
+        (canvasSelections[0] && canvasSelections[0].sheet_id) ||
+        "";
       var res = await apiFetch("/gpt/chat", {
         method: "POST",
         body: JSON.stringify({
           message: body,
           note_title: noteCtx.title,
           note_text: noteCtx.text,
-          quote: quote || undefined,
+          quote: textQuote || undefined,
           quotes: quotes.length ? quotes : undefined,
           use_knowledge: kb.use_knowledge,
           knowledge_note_ids: kb.knowledge_note_ids,
@@ -25732,6 +25834,7 @@
           item_id: itemId,
           context_note_ids: contextIds.length ? contextIds : undefined,
           canvas_selections: canvasSelections.length ? canvasSelections : undefined,
+          canvas_sheet_id: openCanvasSheetId || undefined,
         }),
       });
       if (res && res.canvas && res.canvas.length) {
@@ -25924,9 +26027,12 @@
       var hasFiles =
         discussPendingFiles().length > 0 ||
         (noteAskMode() !== "comment" && discussContextNoteIds().length > 0);
+      var hasCanvasSel =
+        isChatAskMode(noteAskMode()) && (noteSheetState.canvasSelections || []).length > 0;
       var canLaunchPaie = noteAskMode() === "paie" && !hasChair;
       var canLaunchResearch = noteAskMode() === "research";
-      var ready = !busy && (hasText || hasFiles || canLaunchPaie || canLaunchResearch);
+      var ready =
+        !busy && (hasText || hasFiles || hasCanvasSel || canLaunchPaie || canLaunchResearch);
       submit.disabled = !ready;
       submit.classList.toggle("is-ready", ready);
       var label = "Отправить";

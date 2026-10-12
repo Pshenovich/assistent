@@ -72,6 +72,29 @@ class WebCanvasLibTests(unittest.TestCase):
         self.assertNotIn("<script>", out.lower())
         self.assertNotIn("#7c3aed", out.lower())
 
+    def test_prompt_requires_visuals(self) -> None:
+        prompt = wc.canvas_system_addon()
+        self.assertIn(".bars", prompt)
+        self.assertIn("chart-svg", prompt)
+        self.assertIn("Visuals are REQUIRED", prompt)
+
+    def test_finalize_keeps_svg_and_bars(self) -> None:
+        raw = (
+            '<section class="slide">'
+            '<div class="bars" data-leo-id="bars">'
+            '<div class="bar"><span class="bar-label">A</span>'
+            '<span class="bar-track"><span class="bar-fill" style="width:50%"></span></span>'
+            '<span class="bar-value">50%</span></div></div>'
+            '<svg class="chart-svg" viewBox="0 0 10 10" data-leo-id="spark">'
+            '<polyline points="0,10 10,0"/></svg>'
+            "</section>"
+        )
+        out = wc.finalize_canvas_html(raw, theme="editorial")
+        self.assertIn('class="bars"', out)
+        self.assertIn("<svg", out.lower())
+        self.assertIn("bar-fill", out)
+        self.assertNotIn("<script>", out.lower().replace("leo-canvas-kit", ""))
+
     def test_apply_patch_by_leo_id(self) -> None:
         base = (
             '<html data-leo-theme="editorial"><body>'
@@ -140,6 +163,75 @@ class WebSheetStoreTests(unittest.TestCase):
         self.assertEqual(sheet["kind"], "web")
         self.assertEqual(sheet["title"], "Deck")
         self.assertIn("data-leo-theme=\"soft-light\"", sheet["body"])
+
+    def test_selection_create_coerced_to_update(self) -> None:
+        note = notes_store.create_note(45, "A", "b")
+        created = sheets.create_sheet(
+            note,
+            "Deck",
+            body=wc.finalize_canvas_html(
+                '<h1 class="display" data-leo-id="hero-title">Old</h1>',
+                theme="editorial",
+            ),
+            kind="web",
+        )
+        sid = str(created["id"])
+        before = len(sheets.list_extra_sheets(note["id"]))
+        updated = wc.apply_canvas_action(
+            note=note,
+            action={
+                "action": "create",
+                "title": "Should not spawn",
+                "theme": "editorial",
+                "html": (
+                    '<section class="slide"><h1 class="display" data-leo-id="hero-title">'
+                    "Brand new deck</h1><p class=\"body\" data-leo-id=\"other\">gone</p>"
+                    "</section>"
+                ),
+                "patches": [
+                    {
+                        "leo_id": "hero-title",
+                        "outer_html": (
+                            '<h1 class="display" data-leo-id="hero-title">Fixed</h1>'
+                        ),
+                    }
+                ],
+            },
+            note_sheets_mod=sheets,
+            selection_sheet_ids=[sid],
+        )
+        assert updated is not None
+        self.assertEqual(str(updated["id"]), sid)
+        self.assertIn(">Fixed</h1>", updated["body"])
+        self.assertNotIn("Brand new deck", updated["body"])
+        self.assertEqual(len(sheets.list_extra_sheets(note["id"])), before)
+
+    def test_update_without_sheet_id_does_not_create(self) -> None:
+        note = notes_store.create_note(46, "A", "b")
+        before = len(sheets.list_extra_sheets(note["id"]))
+        out = wc.apply_canvas_action(
+            note=note,
+            action={"action": "update", "patches": []},
+            note_sheets_mod=sheets,
+        )
+        self.assertIsNone(out)
+        self.assertEqual(len(sheets.list_extra_sheets(note["id"])), before)
+
+    def test_normalize_forces_update_for_selections(self) -> None:
+        act = wc.normalize_canvas_action_for_apply(
+            {"action": "create", "html": "<p>x</p>"},
+            selection_sheet_ids=["99"],
+        )
+        self.assertEqual(act["action"], "update")
+        self.assertEqual(act["sheet_id"], "99")
+
+    def test_selections_prompt_requires_update(self) -> None:
+        block = wc.selections_prompt_block(
+            [{"sheet_id": "7", "leo_id": "hero-title", "snippet": "<h1>Hi</h1>"}]
+        )
+        self.assertIn("action=update", block)
+        self.assertIn("sheet_id=7", block)
+        self.assertIn("Do NOT action=create", block)
 
 
 if __name__ == "__main__":

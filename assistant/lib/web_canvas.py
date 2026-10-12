@@ -82,7 +82,7 @@ def canvas_system_addon() -> str:
     return f"""
 ## Web-canvas presentations (Leo)
 When the user asks to create or edit a web presentation / landing / deck inside the note:
-1) Write ONE short Russian sentence confirming (e.g. «Готово. Собрал презентацию.»).
+1) Write ONE short Russian sentence confirming (e.g. «Готово. Собрал презентацию.» / «Готово. Поправил блок.»).
 2) Then IMMEDIATELY a fenced block with language tag leo-canvas — nothing else after it.
 
 CRITICAL formatting (the UI parses only this fence; bare JSON is wrong):
@@ -90,32 +90,61 @@ CRITICAL formatting (the UI parses only this fence; bare JSON is wrong):
 {{"action":"create","title":"Презентация","theme":"editorial","html":"<!DOCTYPE html>..."}}
 ```
 
+Edit existing (REQUIRED when an open sheet_id or selected elements are provided):
+```leo-canvas
+{{"action":"update","sheet_id":"123","patches":[{{"leo_id":"hero-title","outer_html":"<h1 class=\\"display\\" data-leo-id=\\"hero-title\\">Новый заголовок</h1>"}}]}}
+```
+
 NEVER paste the JSON outside the fence. NEVER use ```json. NEVER show the HTML/JSON to the user in the chat text.
 
 Rules for the JSON:
-- action: "create" (new sheet) or "update" (existing web sheet; include sheet_id)
+- action: "create" ONLY when the user asks for a new presentation and no edit target is given
+- action: "update" when editing an existing web sheet — MUST include sheet_id
+- NEVER create a second presentation for typo/copy/layout fixes; update the open/selected sheet instead
 - title: short sheet title
 - theme: one of [{themes}]
-- sheet_id: string id when updating an existing web sheet
-- html: a full self-contained HTML document (required for create; for update prefer patches)
-- optional patches: [{{"leo_id":"...","outer_html":"..."}}] for targeted edits (preferred when selections are provided)
+- sheet_id: string id of the existing web sheet (required for update)
+- html: full self-contained HTML (required for create; for update only if rewriting the whole deck)
+- patches: [{{"leo_id":"...","outer_html":"..."}}] — preferred for edits; each outer_html must keep the same data-leo-id
 
 HTML / design contract:
 - Put data-leo-theme="{{theme}}" on <html>
-- Use ONLY Leo Presentation Kit classes: .deck, .slide, .hero, .split, .stack, .rail, .stat, .display, .title, .body, .caption, .cta, .mark, .rule
+- Use ONLY Leo Presentation Kit classes: .deck, .slide, .hero, .split, .stack, .rail, .stat, .display, .title, .body, .caption, .cta, .mark, .rule, .panel, .bars, .bar, .bar-fill, .bar-label, .bar-value, .cols, .col, .table, .steps, .step, .chart-svg, .figure
 - Do NOT invent a design system, :root variables, Inter/Roboto, purple/indigo gradients, glow, emoji decoration, pill clusters, or card grids in the hero
 - First slide = one composition: brand/mark, one headline, one supporting line, one CTA; one job per slide
+- Visuals are REQUIRED when the note has numbers, comparisons, process, timeline, or structure: use at least one of .bars / inline <svg class="chart-svg"> / .rail of .stat / .table / .steps — do not ship a text-only deck
+- Allowed visuals (no JS): CSS bar charts (.bars > .bar > .bar-fill width=%%), inline SVG sparklines/pies, .stat metrics, .table, .steps process, .figure captions
 - Mark meaningful nodes with unique data-leo-id attributes (hero-title, cta-primary, slide-2-body, …)
 - Do not include <script> tags (kit nav is injected by Leo)
 - Prefer content from the note context; no lorem ipsum
 - Keep HTML reasonably compact (< 120KB)
 
+Mini patterns (copy structure, swap numbers/labels from the note):
+<div class="bars" data-leo-id="growth-bars"><div class="bar" data-leo-id="bar-a"><span class="bar-label">A</span><span class="bar-track"><span class="bar-fill" style="width:72%"></span></span><span class="bar-value">72%</span></div></div>
+<svg class="chart-svg" viewBox="0 0 120 48" data-leo-id="spark"><polyline fill="none" stroke="currentColor" stroke-width="3" points="0,40 20,28 40,32 60,18 80,22 100,8 120,12"/></svg>
+<ol class="steps" data-leo-id="process"><li class="step" data-leo-id="step-1"><strong>1</strong><span>Исследование</span></li></ol>
+
 If the user only chats and does not ask for a presentation, do not emit leo-canvas.
 """.strip()
 
 
+def open_canvas_prompt_block(sheet_id: str | None, *, title: str | None = None) -> str:
+    sid = str(sheet_id or "").strip()
+    if not sid:
+        return ""
+    label = str(title or "").strip()
+    extra = f' title="{label}"' if label else ""
+    return (
+        f"Open web-canvas sheet_id={sid}{extra}. "
+        "For any edit/fix/rewrite of this deck use action=update with this sheet_id. "
+        "Prefer patches on data-leo-id nodes. Do NOT action=create unless the user "
+        "explicitly asks for a new separate presentation."
+    )
+
+
 def selections_prompt_block(selections: list[dict[str, Any]] | None) -> str:
     rows = []
+    sheet_ids: list[str] = []
     for i, sel in enumerate(selections or []):
         if not isinstance(sel, dict):
             continue
@@ -125,16 +154,81 @@ def selections_prompt_block(selections: list[dict[str, Any]] | None) -> str:
         sheet_id = str(sel.get("sheet_id") or sel.get("sheetId") or "").strip()
         if not leo_id and not snippet:
             continue
+        if sheet_id and sheet_id not in sheet_ids:
+            sheet_ids.append(sheet_id)
         rows.append(
             f"- [{i + 1}] sheet_id={sheet_id or '—'} leo_id={leo_id or '—'} "
             f"label={label or '—'}\\n  snippet:\\n{snippet}"
         )
     if not rows:
         return ""
+    target = sheet_ids[0] if sheet_ids else "«sheet_id from selection»"
     return (
-        "Selected web-canvas elements (edit these preferentially via patches "
-        "or update with the same data-leo-id):\n" + "\n".join(rows)
+        "Selected web-canvas elements — MANDATORY edit mode:\n"
+        f"- Respond with action=update, sheet_id={target}\n"
+        "- Prefer patches: one entry per selected leo_id; keep the same data-leo-id\n"
+        "- Do NOT action=create and do NOT invent a new sheet\n"
+        "Selections:\n" + "\n".join(rows)
     )
+
+
+def selection_sheet_ids(selections: list[dict[str, Any]] | None) -> list[str]:
+    out: list[str] = []
+    for sel in selections or []:
+        if not isinstance(sel, dict):
+            continue
+        sid = str(sel.get("sheet_id") or sel.get("sheetId") or "").strip()
+        if sid and sid not in out:
+            out.append(sid)
+    return out
+
+
+def normalize_canvas_action_for_apply(
+    action: dict[str, Any],
+    *,
+    selection_sheet_ids: list[str] | None = None,
+    open_sheet_id: str | None = None,
+) -> dict[str, Any]:
+    """Force targeted edits onto an existing web sheet instead of spawning duplicates."""
+    if not isinstance(action, dict):
+        return action
+    act = dict(action)
+    sel_ids = [str(x).strip() for x in (selection_sheet_ids or []) if str(x).strip()]
+    open_id = str(open_sheet_id or "").strip()
+    current_id = str(act.get("sheet_id") or act.get("sheetId") or "").strip()
+    verb = str(act.get("action") or "create").strip().lower()
+    has_patches = isinstance(act.get("patches"), list) and bool(act.get("patches"))
+
+    preferred = ""
+    if sel_ids:
+        preferred = sel_ids[0]
+    elif current_id:
+        preferred = current_id
+    elif open_id and (verb == "update" or has_patches):
+        preferred = open_id
+
+    if sel_ids:
+        # User pointed at nodes in an existing deck — never create a sibling sheet.
+        act["action"] = "update"
+        act["sheet_id"] = preferred or sel_ids[0]
+        act.pop("sheetId", None)
+        return act
+
+    if verb == "update":
+        if not current_id and preferred:
+            act["sheet_id"] = preferred
+        elif not current_id and open_id:
+            act["sheet_id"] = open_id
+        act["action"] = "update"
+        return act
+
+    if has_patches and open_id:
+        act["action"] = "update"
+        act["sheet_id"] = open_id
+        act.pop("sheetId", None)
+        return act
+
+    return act
 
 
 def _is_canvas_action(data: Any) -> bool:
@@ -266,7 +360,7 @@ def _annotate_missing_ids(html: str) -> str:
     out: list[str] = []
     i = 0
     pattern = re.compile(
-        r"<(section|article|header|footer|h[1-6]|p|button|a|figure|nav|div)(\s[^>]*)?>",
+        r"<(section|article|header|footer|h[1-6]|p|button|a|figure|nav|div|table|svg|ol|ul|li)(\s[^>]*)?>",
         re.IGNORECASE,
     )
     while i < len(html):
@@ -426,8 +520,15 @@ def apply_canvas_action(
     note: dict[str, Any],
     action: dict[str, Any],
     note_sheets_mod: Any,
+    selection_sheet_ids: list[str] | None = None,
+    open_sheet_id: str | None = None,
 ) -> Optional[dict[str, Any]]:
     """Create or update a web sheet from a parsed leo-canvas action. Returns sheet dict."""
+    action = normalize_canvas_action_for_apply(
+        action,
+        selection_sheet_ids=selection_sheet_ids,
+        open_sheet_id=open_sheet_id,
+    )
     act = str(action.get("action") or "create").strip().lower()
     title = str(action.get("title") or "").strip() or "Презентация"
     theme = normalize_theme(action.get("theme"))
@@ -435,7 +536,9 @@ def apply_canvas_action(
     patches = action.get("patches") if isinstance(action.get("patches"), list) else None
     sheet_id_raw = action.get("sheet_id") or action.get("sheetId")
 
-    if act == "update" and sheet_id_raw is not None and str(sheet_id_raw).strip():
+    if act == "update":
+        if sheet_id_raw is None or not str(sheet_id_raw).strip():
+            return None
         try:
             sid = int(sheet_id_raw)
         except (TypeError, ValueError):
@@ -445,7 +548,13 @@ def apply_canvas_action(
             return None
         if normalize_kind(existing.get("kind")) != SHEET_KIND_WEB:
             return None
-        base_html = html_in if html_in.strip() else str(existing.get("body") or "")
+        existing_html = str(existing.get("body") or "")
+        # Targeted patches must run on the live sheet. Full html rewrite only when
+        # there are no patches (otherwise models often ship a partial/new deck).
+        if patches:
+            base_html = existing_html if existing_html.strip() else html_in
+        else:
+            base_html = html_in if html_in.strip() else existing_html
         if not theme and base_html:
             theme = extract_theme_from_html(base_html)
         finalized = finalize_canvas_html(base_html, theme=theme, patches=patches)

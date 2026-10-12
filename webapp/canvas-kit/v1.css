@@ -283,6 +283,143 @@ ul.stack li:last-child {
   border-bottom: 0;
 }
 
+/* ---- Visuals (CSS/SVG only; no chart JS) ---- */
+
+.bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  width: 100%;
+  max-width: 36rem;
+}
+
+.bar {
+  display: grid;
+  grid-template-columns: minmax(4rem, 8rem) 1fr auto;
+  gap: 0.65rem 0.85rem;
+  align-items: center;
+}
+
+.bar-label {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.bar-track {
+  display: block;
+  height: 0.65rem;
+  border-radius: calc(var(--radius) + 999px);
+  background: var(--accent-soft);
+  overflow: hidden;
+}
+
+.bar-fill {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.bar-value {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  text-align: right;
+  min-width: 3ch;
+}
+
+.cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 1rem 1.5rem;
+  width: 100%;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.table {
+  width: 100%;
+  max-width: 42rem;
+  border-collapse: collapse;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+}
+
+.table th,
+.table td {
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid var(--rule);
+  text-align: left;
+  vertical-align: top;
+}
+
+.table th {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  max-width: 36rem;
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 2.25rem 1fr;
+  gap: 0.85rem;
+  align-items: start;
+  font-family: var(--font-body);
+}
+
+.step strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-size: 1rem;
+}
+
+.chart-svg {
+  display: block;
+  width: min(100%, 28rem);
+  height: auto;
+  color: var(--accent);
+  overflow: visible;
+}
+
+.figure {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin: 0;
+  max-width: 36rem;
+}
+
+.figure .caption {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 /* Selection outline (driven by parent via class on html) */
 html.leo-pick-mode [data-leo-id] {
   cursor: crosshair;
