@@ -611,6 +611,7 @@ def answer_with_context_result(
     system: str | None = None,
     temperature: float | None = None,
     web: bool = False,
+    max_tokens: int | None = None,
 ) -> dict[str, Any]:
     from assistant.nlu.ask_context import assemble_ask_messages
 
@@ -643,6 +644,7 @@ def answer_with_context_result(
         images=images,
         files=files,
         web=web,
+        max_tokens=max_tokens,
     )
     text = chat_out[0]
     out_images = chat_out[1] if len(chat_out) > 1 else []

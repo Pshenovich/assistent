@@ -50,6 +50,29 @@ class WebCanvasLibTests(unittest.TestCase):
         clean, actions = wc.parse_leo_canvas_blocks(text)
         self.assertEqual(clean, "Готово. Собрал презентацию.")
         self.assertEqual(actions, [])
+        reconciled = wc.reconcile_canvas_chat_answer(
+            clean, actions=actions, applied=[], raw_answer=text
+        )
+        self.assertEqual(reconciled, wc.CANVAS_FAIL_MSG)
+
+    def test_reconcile_keeps_success_when_applied(self) -> None:
+        out = wc.reconcile_canvas_chat_answer(
+            "Готово. Собрал презентацию.",
+            actions=[{"action": "create"}],
+            applied=[{"sheet_id": "1"}],
+            raw_answer="…",
+        )
+        self.assertIn("Готово", out)
+
+    def test_salvage_truncated_html_payload(self) -> None:
+        html = "<!DOCTYPE html><html><body>" + ("<section class='slide'><h1>Hi</h1></section>" * 3)
+        raw = '{"action":"create","title":"X","theme":"editorial","html":"' + html
+        # unclosed string + object — salvage should close it
+        data = wc._salvage_truncated_canvas_json(raw)
+        self.assertIsNotNone(data)
+        assert data is not None
+        self.assertEqual(data["action"], "create")
+        self.assertIn("<section", data["html"])
 
     def test_finalize_injects_kit_and_theme(self) -> None:
         html = wc.finalize_canvas_html(
@@ -74,18 +97,33 @@ class WebCanvasLibTests(unittest.TestCase):
 
     def test_prompt_requires_visuals(self) -> None:
         prompt = wc.canvas_system_addon()
-        self.assertIn(".bars", prompt)
-        self.assertIn("chart-svg", prompt)
-        self.assertIn("Visuals REQUIRED", prompt)
-        self.assertIn("media-plane", prompt)
-        self.assertIn("slide recipes", prompt.lower())
-        self.assertIn("NO landing CTAs", prompt)
+        self.assertIn('theme":"bento"', prompt)
+        self.assertIn("bento", prompt)
+        self.assertIn("TEMPLATE FILL MODE", prompt)
+        self.assertIn("T2 problem-3cards", prompt)
+        self.assertIn("cards-3", prompt)
+        self.assertIn("Узнать подробнее", prompt)
         self.assertNotIn('cta-primary">Дальше', prompt)
 
     def test_kit_has_layout_primitives(self) -> None:
+        wc._KIT_CSS_CACHE = None
         css = wc.load_kit_css()
-        for token in (".media-plane", ".accent-block", ".quote", ".timeline", ".grid-2", ".tint", "--wash"):
+        for token in (
+            'data-leo-theme="bento"',
+            ".tile-ink",
+            ".bento-2x2",
+            ".vbars",
+            ".donut",
+            ".pill",
+            "--ice",
+        ):
             self.assertIn(token, css)
+
+    def test_default_theme_is_bento(self) -> None:
+        self.assertEqual(wc.DEFAULT_THEME, "bento")
+        self.assertEqual(wc.normalize_theme("pitch"), "bento")
+        html = wc.finalize_canvas_html("<section class='slide'><h1 class='title'>Hi</h1></section>")
+        self.assertIn('data-leo-theme="bento"', html)
 
     def test_finalize_keeps_svg_and_bars(self) -> None:
         raw = (

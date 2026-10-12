@@ -11,16 +11,28 @@ SHEET_KIND_DOC = "doc"
 SHEET_KIND_WEB = "web"
 KIT_VERSION = "v1"
 
-THEMES = ("editorial", "product-dark", "poster", "soft-light", "brutal")
-DEFAULT_THEME = "editorial"
+THEMES = ("bento", "editorial", "product-dark", "poster", "soft-light", "brutal")
+DEFAULT_THEME = "bento"
 
 _LEO_CANVAS_RE = re.compile(
     r"```(?:leo-canvas|json|javascript)?\s*\n?(.*?)```",
     re.IGNORECASE | re.DOTALL,
 )
+_FENCE_OPEN_RE = re.compile(r"```(?:leo-canvas|json|javascript)?\s*\n?", re.IGNORECASE)
 _BARE_ACTION_RE = re.compile(
     r"\{[^{}]*\"action\"\s*:\s*\"(?:create|update)\"",
     re.IGNORECASE,
+)
+_ACTION_KEY_RE = re.compile(r'"action"\s*:\s*"(?:create|update)"', re.IGNORECASE)
+_CANVAS_CLAIM_RE = re.compile(
+    r"(готово|собрал|собрала|обновил|обновила|поправил|поправила|"
+    r"сделал|сделала|нарисовал|нарисовала).{0,48}"
+    r"(презентац|полотн|слайд|deck|canvas)",
+    re.IGNORECASE | re.DOTALL,
+)
+CANVAS_FAIL_MSG = (
+    "Не удалось собрать полотно — ответ модели оборвался или не распознан. "
+    "Попробуйте ещё раз короче (4–6 слайдов)."
 )
 _SCRIPT_RE = re.compile(r"<script\b[^>]*>.*?</script>", re.IGNORECASE | re.DOTALL)
 _ON_ATTR_RE = re.compile(r"\s+on[a-z]+\s*=\s*(['\"]).*?\1", re.IGNORECASE | re.DOTALL)
@@ -57,6 +69,11 @@ def normalize_theme(raw: Any) -> str:
         "serif": "editorial",
         "type": "poster",
         "mono": "brutal",
+        "pitch": "bento",
+        "saas": "bento",
+        "startup": "bento",
+        "cards": "bento",
+        "ice": "bento",
     }
     return aliases.get(t, DEFAULT_THEME)
 
@@ -79,68 +96,71 @@ def load_kit_css() -> str:
 
 def canvas_system_addon() -> str:
     themes = ", ".join(THEMES)
+    templates = bento_slide_templates_prompt()
     return f"""
-## Web-canvas presentations (Leo)
-When the user asks to create or edit a web presentation / landing / deck inside the note:
-1) Write ONE short Russian sentence confirming (e.g. «Готово. Собрал презентацию.» / «Готово. Поправил блок.»).
-2) Then IMMEDIATELY a fenced block with language tag leo-canvas — nothing else after it.
+## Web-canvas presentations (Leo) — TEMPLATE FILL MODE
+When the user asks to create or edit a web presentation / deck inside the note:
+1) FIRST emit the fenced ```leo-canvas JSON (complete, valid).
+2) ONLY AFTER the fence, one short Russian sentence. Never claim success without a complete fence.
+3) Keep html compact: 4–6 slides, aim &lt;40KB. Prefer fewer slides over truncated JSON.
 
-CRITICAL formatting (the UI parses only this fence; bare JSON is wrong):
+CRITICAL formatting:
 ```leo-canvas
-{{"action":"create","title":"Презентация","theme":"editorial","html":"<!DOCTYPE html>..."}}
+{{"action":"create","title":"Презентация","theme":"bento","html":"<!DOCTYPE html>..."}}
 ```
 
-Edit existing (REQUIRED when an open sheet_id or selected elements are provided):
+Edit existing (when open sheet_id / selections provided):
 ```leo-canvas
-{{"action":"update","sheet_id":"123","patches":[{{"leo_id":"hero-title","outer_html":"<h1 class=\\"display\\" data-leo-id=\\"hero-title\\">Новый заголовок</h1>"}}]}}
+{{"action":"update","sheet_id":"123","patches":[{{"leo_id":"hero-title","outer_html":"..."}}]}}
 ```
 
-NEVER paste the JSON outside the fence. NEVER use ```json. NEVER show the HTML/JSON to the user in the chat text.
+NEVER paste JSON outside the fence. NEVER use ```json. NEVER show HTML/JSON in chat text.
 
-Rules for the JSON:
-- action: "create" ONLY when the user asks for a new presentation and no edit target is given
-- action: "update" when editing an existing web sheet — MUST include sheet_id
-- NEVER create a second presentation for typo/copy/layout fixes; update the open/selected sheet instead
-- title: short sheet title
-- theme: one of [{themes}]
-- sheet_id: string id of the existing web sheet (required for update)
-- html: full self-contained HTML (required for create; for update only if rewriting the whole deck)
-- patches: [{{"leo_id":"...","outer_html":"..."}}] — preferred for edits; each outer_html must keep the same data-leo-id
+JSON rules:
+- theme: default **bento** for new decks (black / white / ice-blue pitch style). Other themes [{themes}] only if user asks
+- action create|update as before; never spawn a second sheet for small edits
+- html: full document with data-leo-theme="bento" on <html>
 
-HTML / design contract:
-- Put data-leo-theme="{{theme}}" on <html>
-- Use ONLY Leo Presentation Kit classes:
-  layout: .deck .slide .hero .cover .tint .bleed .split .flip .top .stack .rail .band .frame .panel .accent-block .media-plane .grid-2 .grid-3 .cols .col .compare .timeline .footer-meta
-  type: .display .title .lead .body .caption .kicker .mark .quote .cta .ghost .rule
-  data: .stat .bars .bar .bar-track .bar-fill .bar-label .bar-value .table .steps .step .chart-svg .figure
-- Do NOT invent a design system, :root variables, Inter/Roboto, purple/indigo gradients, glow, emoji decoration, pill clusters, or card grids in the hero
-- Pick theme by content mood: editorial=essay/brand, product-dark=SaaS/metrics, poster=keynote/loud, soft-light=workshop/calm, brutal=manifesto/sharp
-- Composition rules (non-negotiable):
-  1) One job per slide — one idea, one dominant visual hierarchy
-  2) Cover/hero: .mark or .kicker + huge .display (≤10–12 words) + one .lead/.body; use .media-plane OR .accent-block on the side via .split — never a wall of paragraphs
-  3) NO landing CTAs: never put .cta / buttons like «Узнать подробнее», «Оставить заявку», «Связаться», «Демо», «Купить», «Начать» on the first/cover slide — this is a deck, not a landing page. .cta only on the final slide if there is a real next step from the note
-  4) Alternate slide recipes across the deck (do not repeat the same centered text stack):
-     - cover: .slide.hero.cover with .split (copy | .media-plane) — no button
-     - insight: .slide.tint with giant .quote or .display
-     - metrics: .rail of .stat OR .bars inside .band
-     - compare: .grid-2.compare with two .col
-     - process: .steps or .timeline
-     - close: short .title + optional .cta only if note implies an action + .footer-meta
-  5) Visuals REQUIRED when note has numbers/comparisons/process/structure — never ship a text-only deck
-  6) Prefer asymmetric .split, tinted slides, and media planes over centered bullet lists
-  7) Max ~6–8 slides unless user asks for more; cut filler
-- Allowed visuals (no JS): CSS bars, inline SVG (.chart-svg), .stat, .table, .steps, .timeline, .media-plane decorative blocks
-- Mark meaningful nodes with unique data-leo-id attributes (hero-title, slide-2-body, …)
-- Do not include <script> tags (kit nav is injected by Leo)
-- Prefer content from the note context; no lorem ipsum; keep HTML compact (< 120KB)
+## Design system (bento) — DO NOT invent layouts
+Fill ONLY the named templates below. Copy the HTML structure exactly; replace Russian/placeholder text and numbers from the note. Do not invent new grids, colors, fonts, or card systems.
+Allowed classes: .deck .slide .slide-ink .slide-ice .slide-head .split-pane .pane-copy .pane-stage .stack .tile .tile-ink .tile-mute .tile-white .tile-num .metric-xl .pill .pill-outline .pill-ink .pill-ice .icon-circle .cards-3 .cards-4 .bento-shell .bento-2x2 .vbars .vbar .vbar-fill .vbar-val .vbar-label .year-rail .donut .legend .hbar-row .hbar-track .hbar-fill .title .display .body .lead .caption .spark .chart-svg
+Colors come from the theme (ink / ice / white). No purple, no Inter, no landing CTAs on slide 1.
+No «Узнать подробнее» / demo / buy buttons on the cover.
+Mark filled nodes with unique data-leo-id. No <script>. No ``` inside html strings.
 
-Slide recipes (copy structure, fill from the note):
-<section class="slide hero cover" data-leo-id="slide-1"><div class="split" data-leo-id="hero-split"><div class="stack"><p class="mark" data-leo-id="brand">Бренд</p><h1 class="display" data-leo-id="hero-title">Короткий ударный заголовок</h1><p class="lead" data-leo-id="hero-lead">Одна поддерживающая мысль.</p></div><div class="media-plane" data-leo-id="hero-visual"><svg class="chart-svg" viewBox="0 0 160 90"><polyline fill="none" stroke="currentColor" stroke-width="4" points="0,70 30,55 60,60 90,30 120,38 160,12"/></svg></div></div></section>
-<section class="slide tint" data-leo-id="slide-quote"><p class="kicker">Инсайт</p><blockquote class="quote" data-leo-id="quote-1">Одна фраза, которую запомнят.</blockquote></section>
-<section class="slide" data-leo-id="slide-metrics"><p class="kicker">Цифры</p><h2 class="title">Что выросло</h2><div class="rail" data-leo-id="stats"><div class="stat"><strong>3×</strong><span class="caption">рост</span></div><div class="stat"><strong>18%</strong><span class="caption">маржа</span></div></div><div class="bars" data-leo-id="growth-bars"><div class="bar"><span class="bar-label">A</span><span class="bar-track"><span class="bar-fill" style="width:72%"></span></span><span class="bar-value">72%</span></div></div></section>
-<section class="slide" data-leo-id="slide-compare"><h2 class="title">Было / стало</h2><div class="grid-2 compare"><div class="col"><p class="kicker">Было</p><p class="body">…</p></div><div class="col"><p class="kicker">Стало</p><p class="body">…</p></div></div></section>
+Pick 4–6 templates that match the note (vary layouts; never 4× the same template):
+{templates}
 
 If the user only chats and does not ask for a presentation, do not emit leo-canvas.
+""".strip()
+
+
+def bento_slide_templates_prompt() -> str:
+    """Compact HTML skeletons for the model to copy and fill."""
+    return r"""
+### T1 cover-split (first slide — no button)
+<section class="slide slide-ink" data-leo-id="slide-cover"><div class="split-pane"><div class="pane-copy"><h1 class="title" data-leo-id="hero-title">Заголовок</h1><p class="pill pill-outline" data-leo-id="hero-pill">контекст</p><p class="body" data-leo-id="hero-body">Одна мысль.</p></div><div class="pane-stage" data-leo-id="hero-stage"><svg class="spark chart-svg" viewBox="0 0 200 110" data-leo-id="hero-spark"><polyline fill="none" stroke="currentColor" stroke-width="4" points="0,90 40,70 80,78 120,40 160,48 200,18"/></svg></div></div></section>
+
+### T2 problem-3cards
+<section class="slide" data-leo-id="slide-problem"><div class="slide-head"><h2 class="title" data-leo-id="problem-title">Проблема</h2><span class="icon-circle" aria-hidden="true">↓</span></div><div class="cards-3"><div class="tile" data-leo-id="p1"><p class="tile-num">01.</p><p class="body">…</p></div><div class="tile tile-ink" data-leo-id="p2"><p class="tile-num">02.</p><p class="body">…</p></div><div class="tile" data-leo-id="p3"><p class="tile-num">03.</p><p class="body">…</p></div></div></section>
+
+### T3 split-donut
+<section class="slide slide-ink" data-leo-id="slide-funds"><div class="split-pane"><div class="pane-copy"><h2 class="title" data-leo-id="funds-title">Куда идут деньги</h2><p class="body" data-leo-id="funds-body">…</p></div><div class="pane-stage"><div class="donut" data-leo-id="funds-donut"></div><div class="legend" data-leo-id="funds-legend"><span><i>A</i><b>40%</b></span><span><i>B</i><b>25%</b></span></div></div></div></section>
+
+### T4 split-line + pill
+<section class="slide slide-ink" data-leo-id="slide-opp"><div class="split-pane"><div class="pane-copy"><h2 class="title" data-leo-id="opp-title">Возможность</h2><p class="pill pill-ice" data-leo-id="opp-pill">ключ. цифра</p><p class="body" data-leo-id="opp-body">…</p></div><div class="pane-stage"><svg class="spark chart-svg" viewBox="0 0 220 120"><polyline fill="none" stroke="currentColor" stroke-width="4" points="0,100 40,85 80,90 120,55 160,60 220,20"/><circle cx="220" cy="20" r="5" fill="currentColor"/></svg></div></div></section>
+
+### T5 highlights-bento
+<section class="slide" data-leo-id="slide-hi"><div class="split-pane"><div class="pane-copy"><h2 class="title" data-leo-id="hi-title">Хайлайты</h2><p class="pill pill-ink" data-leo-id="hi-year">2026</p><p class="body" data-leo-id="hi-body">…</p></div><div class="bento-shell"><div class="bento-2x2"><div class="tile" data-leo-id="hi-a"><p class="metric-xl">12</p><p class="caption">метка</p></div><div class="tile tile-mute" data-leo-id="hi-b"><p class="metric-xl">87%</p><p class="caption">метка</p></div><div class="tile tile-mute" data-leo-id="hi-c"><p class="metric-xl">3×</p><p class="caption">метка</p></div><div class="tile" data-leo-id="hi-d"><p class="metric-xl">30k</p><p class="caption">метка</p></div></div></div></div></section>
+
+### T6 revenue-bars (dark)
+<section class="slide slide-ink" data-leo-id="slide-rev"><div class="slide-head"><h2 class="title" data-leo-id="rev-title">Выручка</h2><p class="pill pill-outline">по годам</p></div><div class="vbars" data-leo-id="rev-bars"><div class="vbar"><span class="vbar-val">1.2</span><span class="vbar-fill is-ink" style="height:35%"></span><span class="vbar-label">Y1</span></div><div class="vbar"><span class="vbar-val">2.1</span><span class="vbar-fill is-mid" style="height:55%"></span><span class="vbar-label">Y2</span></div><div class="vbar"><span class="vbar-val">3.4</span><span class="vbar-fill" style="height:75%"></span><span class="vbar-label">Y3</span></div><div class="vbar"><span class="vbar-val">4.8</span><span class="vbar-fill" style="height:95%"></span><span class="vbar-label">Y4</span></div></div></section>
+
+### T7 metric-row (dark)
+<section class="slide slide-ink" data-leo-id="slide-facts"><div class="slide-head"><h2 class="title" data-leo-id="facts-title">Факты</h2><p class="pill pill-outline">в цифрах</p></div><div class="cards-4"><div class="tile tile-white" data-leo-id="f1"><span class="icon-circle">→</span><p class="metric-xl">300%</p><p class="caption">рост</p></div><div class="tile tile-white" data-leo-id="f2"><span class="icon-circle">→</span><p class="metric-xl">30k</p><p class="caption">пользователи</p></div><div class="tile tile-white" data-leo-id="f3"><span class="icon-circle">→</span><p class="metric-xl">12</p><p class="caption">сделки</p></div><div class="tile tile-white" data-leo-id="f4"><span class="icon-circle">→</span><p class="metric-xl">2y</p><p class="caption">до окупаемости</p></div></div></section>
+
+### T8 quote-ice
+<section class="slide slide-ice" data-leo-id="slide-quote"><div class="tile tile-white" style="flex:1;justify-content:center;min-height:60vh"><p class="pill pill-ink">2026</p><p class="display" data-leo-id="quote-text" style="max-width:18ch">Короткая сильная фраза.</p></div></section>
 """.strip()
 
 
@@ -269,7 +289,42 @@ def _loads_canvas_json(raw: str) -> Optional[dict[str, Any]]:
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        # Truncated JSON: try to close common tails if html is present enough to salvage
+        data = _salvage_truncated_canvas_json(text)
+        if data is None:
+            return None
+    return data if _is_canvas_action(data) else None
+
+
+def _salvage_truncated_canvas_json(text: str) -> Optional[dict[str, Any]]:
+    """Best-effort close of truncated create payloads that already contain usable html."""
+    raw = (text or "").strip()
+    if not raw.startswith("{") or '"html"' not in raw:
+        return None
+    # Must look like a create/update attempt.
+    if not _ACTION_KEY_RE.search(raw):
+        return None
+    # Close an open html string at the last complete tag, then close the object.
+    candidate = raw
+    if candidate.count('"') % 2 == 1:
+        # Odd quotes → unclosed string; trim to last '>' or end of a tag-ish chunk
+        cut = candidate.rfind(">")
+        if cut < 0 or cut < candidate.find('"html"'):
+            return None
+        candidate = candidate[: cut + 1] + '"'
+    # Drop trailing commas / unfinished keys
+    candidate = re.sub(r",\s*$", "", candidate)
+    # Close open braces/brackets
+    opens = candidate.count("{") - candidate.count("}")
+    bracks = candidate.count("[") - candidate.count("]")
+    if opens < 0 or bracks < 0 or opens > 3:
+        return None
+    candidate += "]" * max(0, bracks) + "}" * max(0, opens)
+    try:
+        data = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    html = str(data.get("html") or "")
+    if len(html) < 80 or "<" not in html:
         return None
     return data if _is_canvas_action(data) else None
 
@@ -302,10 +357,52 @@ def _extract_balanced_object(text: str, start: int) -> Optional[tuple[str, int]]
     return None
 
 
+def _object_start_before_action(text: str, action_match_start: int) -> int:
+    """Find opening `{` of the object that contains the action key."""
+    starts = [i for i, ch in enumerate(text[: action_match_start + 1]) if ch == "{"]
+    for start in reversed(starts):
+        extracted = _extract_balanced_object(text, start)
+        if extracted and extracted[1] > action_match_start:
+            return start
+    return starts[-1] if starts else -1
+
+
 _UNCLOSED_FENCE_RE = re.compile(
     r"```(?:leo-canvas|json|javascript)?\s*\n?(\{.*)\Z",
     re.IGNORECASE | re.DOTALL,
 )
+
+
+def canvas_payload_attempted(raw: str) -> bool:
+    text = raw or ""
+    return bool(
+        re.search(r"```\s*leo-canvas", text, re.IGNORECASE)
+        or _ACTION_KEY_RE.search(text)
+    )
+
+
+def looks_like_canvas_claim(text: str) -> bool:
+    return bool(_CANVAS_CLAIM_RE.search(text or ""))
+
+
+def reconcile_canvas_chat_answer(
+    clean_answer: str,
+    *,
+    actions: list[dict[str, Any]] | None,
+    applied: list[dict[str, Any]] | None,
+    raw_answer: str = "",
+) -> str:
+    """Replace false «Готово» when no web sheet was actually created/updated."""
+    clean = (clean_answer or "").strip()
+    if applied:
+        return clean or "Готово. Полотно обновлено."
+    attempted = bool(actions) or canvas_payload_attempted(raw_answer)
+    claimed = looks_like_canvas_claim(clean) or looks_like_canvas_claim(raw_answer)
+    if attempted or claimed:
+        return CANVAS_FAIL_MSG
+    if not clean:
+        return CANVAS_FAIL_MSG if attempted else clean
+    return clean
 
 
 def parse_leo_canvas_blocks(text: str) -> tuple[str, list[dict[str, Any]]]:
@@ -318,14 +415,47 @@ def parse_leo_canvas_blocks(text: str) -> tuple[str, list[dict[str, Any]]]:
     if not text:
         return "", actions
 
+    cleaned = text
+
+    # Prefer balanced {...} after fence open — avoids early ``` inside HTML strings.
+    guard = 0
+    while guard < 5:
+        guard += 1
+        fm = _FENCE_OPEN_RE.search(cleaned)
+        if not fm:
+            break
+        brace = cleaned.find("{", fm.end())
+        if brace < 0:
+            cleaned = cleaned[: fm.start()].rstrip()
+            break
+        extracted = _extract_balanced_object(cleaned, brace)
+        if extracted:
+            raw_obj, end = extracted
+            data = _loads_canvas_json(raw_obj)
+            # Consume through closing ``` if present
+            rest = cleaned[end:]
+            close = re.match(r"\s*```", rest)
+            cut = end + (close.end() if close else 0)
+            if data is not None:
+                actions.append(data)
+            cleaned = (cleaned[: fm.start()] + cleaned[cut:]).strip()
+            continue
+        # Truncated fence body
+        data = _loads_canvas_json(cleaned[brace:])
+        if data is not None:
+            actions.append(data)
+        cleaned = cleaned[: fm.start()].rstrip()
+        break
+
+    # Legacy non-greedy fence (if any remain with valid JSON)
     def _fence_repl(match: re.Match[str]) -> str:
         data = _loads_canvas_json(match.group(1) or "")
         if data is None:
-            return match.group(0)
+            return ""
         actions.append(data)
         return ""
 
-    cleaned = _LEO_CANVAS_RE.sub(_fence_repl, text)
+    cleaned = _LEO_CANVAS_RE.sub(_fence_repl, cleaned)
 
     # Unclosed fence (model hit token limit mid-JSON)
     um = _UNCLOSED_FENCE_RE.search(cleaned)
@@ -339,20 +469,26 @@ def parse_leo_canvas_blocks(text: str) -> tuple[str, list[dict[str, Any]]]:
     guard = 0
     while guard < 5:
         guard += 1
-        m = _BARE_ACTION_RE.search(cleaned)
+        m = _BARE_ACTION_RE.search(cleaned) or _ACTION_KEY_RE.search(cleaned)
         if not m:
             break
-        start = cleaned.find("{", m.start())
+        if m.re is _ACTION_KEY_RE:
+            start = _object_start_before_action(cleaned, m.start())
+        else:
+            start = cleaned.find("{", m.start())
+        if start < 0:
+            cleaned = cleaned[: m.start()].rstrip()
+            break
         extracted = _extract_balanced_object(cleaned, start)
         if not extracted:
-            # Unbalanced/truncated — strip from the opening brace to end so user
-            # doesn't see raw JSON dump in the comment.
+            data = _loads_canvas_json(cleaned[start:])
+            if data is not None:
+                actions.append(data)
             cleaned = cleaned[:start].rstrip()
             break
         raw_obj, end = extracted
         data = _loads_canvas_json(raw_obj)
         if data is None:
-            # Not ours — skip past this match to avoid infinite loop
             cleaned = cleaned[: m.start()] + cleaned[m.start() + 1 :]
             continue
         actions.append(data)
@@ -365,7 +501,7 @@ def parse_leo_canvas_blocks(text: str) -> tuple[str, list[dict[str, Any]]]:
     if actions and not cleaned:
         cleaned = "Готово. Полотно обновлено."
     elif not actions and not cleaned:
-        cleaned = "Не удалось собрать полотно — ответ модели оборвался. Попробуйте ещё раз короче."
+        cleaned = CANVAS_FAIL_MSG
     return cleaned, actions
 
 

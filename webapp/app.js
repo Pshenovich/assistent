@@ -25839,6 +25839,8 @@
       });
       if (res && res.canvas && res.canvas.length) {
         await applyCanvasChatResult(res.canvas);
+      } else if (res && res.canvas_error) {
+        showNoteToast("Полотно не создалось — попробуйте короче");
       }
       var ans = String((res && res.answer) || "").trim();
       var bullets = (res && res.bullets) || [];

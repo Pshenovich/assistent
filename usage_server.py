@@ -6992,6 +6992,7 @@ async def miniapp_gpt_chat(
                 system=system_text,
                 temperature=agent.get("temperature"),
                 web=bool(agent.get("web_search")),
+                max_tokens=16384 if canvas_enabled else None,
             )
             if out is None:
                 return None
@@ -7002,7 +7003,6 @@ async def miniapp_gpt_chat(
 
                 answer_raw = str(out.get("answer") or "")
                 clean_answer, canvas_actions = web_canvas_lib.parse_leo_canvas_blocks(answer_raw)
-                out["answer"] = clean_answer
                 applied: list[dict[str, Any]] = []
                 try:
                     note_id_int = int(iid)
@@ -7016,6 +7016,7 @@ async def miniapp_gpt_chat(
                 if note and canvas_actions:
                     sel_sheet_ids = web_canvas_lib.selection_sheet_ids(canvas_sel_dumps)
                     for act in canvas_actions[:3]:
+                        normalized: dict[str, Any] = {}
                         try:
                             normalized = web_canvas_lib.normalize_canvas_action_for_apply(
                                 act,
@@ -7042,8 +7043,22 @@ async def miniapp_gpt_chat(
                                     "revision": sheet.get("revision"),
                                 }
                             )
+                        else:
+                            print(
+                                "[web_canvas] apply returned None "
+                                f"action={normalized.get('action')!r} "
+                                f"sheet_id={normalized.get('sheet_id')!r}"
+                            )
+                out["answer"] = web_canvas_lib.reconcile_canvas_chat_answer(
+                    clean_answer,
+                    actions=canvas_actions,
+                    applied=applied,
+                    raw_answer=answer_raw,
+                )
                 if applied:
                     out["canvas"] = applied
+                elif canvas_actions or web_canvas_lib.canvas_payload_attempted(answer_raw):
+                    out["canvas_error"] = "apply_failed"
             if kb_version:
                 out = {**out, "kb_version": kb_version}
             generated = _save_generated(out)
