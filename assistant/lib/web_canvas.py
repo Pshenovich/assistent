@@ -109,20 +109,36 @@ Rules for the JSON:
 
 HTML / design contract:
 - Put data-leo-theme="{{theme}}" on <html>
-- Use ONLY Leo Presentation Kit classes: .deck, .slide, .hero, .split, .stack, .rail, .stat, .display, .title, .body, .caption, .cta, .mark, .rule, .panel, .bars, .bar, .bar-fill, .bar-label, .bar-value, .cols, .col, .table, .steps, .step, .chart-svg, .figure
+- Use ONLY Leo Presentation Kit classes:
+  layout: .deck .slide .hero .cover .tint .bleed .split .flip .top .stack .rail .band .frame .panel .accent-block .media-plane .grid-2 .grid-3 .cols .col .compare .timeline .footer-meta
+  type: .display .title .lead .body .caption .kicker .mark .quote .cta .ghost .rule
+  data: .stat .bars .bar .bar-track .bar-fill .bar-label .bar-value .table .steps .step .chart-svg .figure
 - Do NOT invent a design system, :root variables, Inter/Roboto, purple/indigo gradients, glow, emoji decoration, pill clusters, or card grids in the hero
-- First slide = one composition: brand/mark, one headline, one supporting line, one CTA; one job per slide
-- Visuals are REQUIRED when the note has numbers, comparisons, process, timeline, or structure: use at least one of .bars / inline <svg class="chart-svg"> / .rail of .stat / .table / .steps — do not ship a text-only deck
-- Allowed visuals (no JS): CSS bar charts (.bars > .bar > .bar-fill width=%%), inline SVG sparklines/pies, .stat metrics, .table, .steps process, .figure captions
-- Mark meaningful nodes with unique data-leo-id attributes (hero-title, cta-primary, slide-2-body, …)
+- Pick theme by content mood: editorial=essay/brand, product-dark=SaaS/metrics, poster=keynote/loud, soft-light=workshop/calm, brutal=manifesto/sharp
+- Composition rules (non-negotiable):
+  1) One job per slide — one idea, one dominant visual hierarchy
+  2) Cover/hero: .mark or .kicker + huge .display (≤10–12 words) + one .lead/.body; use .media-plane OR .accent-block on the side via .split — never a wall of paragraphs
+  3) NO landing CTAs: never put .cta / buttons like «Узнать подробнее», «Оставить заявку», «Связаться», «Демо», «Купить», «Начать» on the first/cover slide — this is a deck, not a landing page. .cta only on the final slide if there is a real next step from the note
+  4) Alternate slide recipes across the deck (do not repeat the same centered text stack):
+     - cover: .slide.hero.cover with .split (copy | .media-plane) — no button
+     - insight: .slide.tint with giant .quote or .display
+     - metrics: .rail of .stat OR .bars inside .band
+     - compare: .grid-2.compare with two .col
+     - process: .steps or .timeline
+     - close: short .title + optional .cta only if note implies an action + .footer-meta
+  5) Visuals REQUIRED when note has numbers/comparisons/process/structure — never ship a text-only deck
+  6) Prefer asymmetric .split, tinted slides, and media planes over centered bullet lists
+  7) Max ~6–8 slides unless user asks for more; cut filler
+- Allowed visuals (no JS): CSS bars, inline SVG (.chart-svg), .stat, .table, .steps, .timeline, .media-plane decorative blocks
+- Mark meaningful nodes with unique data-leo-id attributes (hero-title, slide-2-body, …)
 - Do not include <script> tags (kit nav is injected by Leo)
-- Prefer content from the note context; no lorem ipsum
-- Keep HTML reasonably compact (< 120KB)
+- Prefer content from the note context; no lorem ipsum; keep HTML compact (< 120KB)
 
-Mini patterns (copy structure, swap numbers/labels from the note):
-<div class="bars" data-leo-id="growth-bars"><div class="bar" data-leo-id="bar-a"><span class="bar-label">A</span><span class="bar-track"><span class="bar-fill" style="width:72%"></span></span><span class="bar-value">72%</span></div></div>
-<svg class="chart-svg" viewBox="0 0 120 48" data-leo-id="spark"><polyline fill="none" stroke="currentColor" stroke-width="3" points="0,40 20,28 40,32 60,18 80,22 100,8 120,12"/></svg>
-<ol class="steps" data-leo-id="process"><li class="step" data-leo-id="step-1"><strong>1</strong><span>Исследование</span></li></ol>
+Slide recipes (copy structure, fill from the note):
+<section class="slide hero cover" data-leo-id="slide-1"><div class="split" data-leo-id="hero-split"><div class="stack"><p class="mark" data-leo-id="brand">Бренд</p><h1 class="display" data-leo-id="hero-title">Короткий ударный заголовок</h1><p class="lead" data-leo-id="hero-lead">Одна поддерживающая мысль.</p></div><div class="media-plane" data-leo-id="hero-visual"><svg class="chart-svg" viewBox="0 0 160 90"><polyline fill="none" stroke="currentColor" stroke-width="4" points="0,70 30,55 60,60 90,30 120,38 160,12"/></svg></div></div></section>
+<section class="slide tint" data-leo-id="slide-quote"><p class="kicker">Инсайт</p><blockquote class="quote" data-leo-id="quote-1">Одна фраза, которую запомнят.</blockquote></section>
+<section class="slide" data-leo-id="slide-metrics"><p class="kicker">Цифры</p><h2 class="title">Что выросло</h2><div class="rail" data-leo-id="stats"><div class="stat"><strong>3×</strong><span class="caption">рост</span></div><div class="stat"><strong>18%</strong><span class="caption">маржа</span></div></div><div class="bars" data-leo-id="growth-bars"><div class="bar"><span class="bar-label">A</span><span class="bar-track"><span class="bar-fill" style="width:72%"></span></span><span class="bar-value">72%</span></div></div></section>
+<section class="slide" data-leo-id="slide-compare"><h2 class="title">Было / стало</h2><div class="grid-2 compare"><div class="col"><p class="kicker">Было</p><p class="body">…</p></div><div class="col"><p class="kicker">Стало</p><p class="body">…</p></div></div></section>
 
 If the user only chats and does not ask for a presentation, do not emit leo-canvas.
 """.strip()
@@ -360,7 +376,7 @@ def _annotate_missing_ids(html: str) -> str:
     out: list[str] = []
     i = 0
     pattern = re.compile(
-        r"<(section|article|header|footer|h[1-6]|p|button|a|figure|nav|div|table|svg|ol|ul|li)(\s[^>]*)?>",
+        r"<(section|article|header|footer|h[1-6]|p|button|a|figure|nav|div|table|svg|ol|ul|li|blockquote)(\s[^>]*)?>",
         re.IGNORECASE,
     )
     while i < len(html):

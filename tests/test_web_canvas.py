@@ -76,7 +76,16 @@ class WebCanvasLibTests(unittest.TestCase):
         prompt = wc.canvas_system_addon()
         self.assertIn(".bars", prompt)
         self.assertIn("chart-svg", prompt)
-        self.assertIn("Visuals are REQUIRED", prompt)
+        self.assertIn("Visuals REQUIRED", prompt)
+        self.assertIn("media-plane", prompt)
+        self.assertIn("slide recipes", prompt.lower())
+        self.assertIn("NO landing CTAs", prompt)
+        self.assertNotIn('cta-primary">Дальше', prompt)
+
+    def test_kit_has_layout_primitives(self) -> None:
+        css = wc.load_kit_css()
+        for token in (".media-plane", ".accent-block", ".quote", ".timeline", ".grid-2", ".tint", "--wash"):
+            self.assertIn(token, css)
 
     def test_finalize_keeps_svg_and_bars(self) -> None:
         raw = (
