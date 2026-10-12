@@ -20,6 +20,37 @@ class WebCanvasLibTests(unittest.TestCase):
         self.assertEqual(actions[0]["action"], "create")
         self.assertEqual(actions[0]["theme"], "editorial")
 
+    def test_parse_bare_json_without_fence(self) -> None:
+        text = (
+            "Готово. Собрал презентацию по заметке и контексту обсуждения.\n"
+            '{"action":"create","title":"Антипаттерны коммуникаций","theme":"editorial",'
+            '"html":"<!DOCTYPE html><html><body><h1>Hi</h1></body></html>"}'
+        )
+        clean, actions = wc.parse_leo_canvas_blocks(text)
+        self.assertIn("Готово", clean)
+        self.assertNotIn('"action"', clean)
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0]["title"], "Антипаттерны коммуникаций")
+
+    def test_parse_json_fence(self) -> None:
+        text = (
+            "Ок\n```json\n"
+            '{"action":"update","sheet_id":"12","theme":"poster","patches":[]}'
+            "\n```"
+        )
+        clean, actions = wc.parse_leo_canvas_blocks(text)
+        self.assertEqual(clean, "Ок")
+        self.assertEqual(actions[0]["action"], "update")
+
+    def test_parse_truncated_bare_json_strips_dump(self) -> None:
+        text = (
+            "Готово. Собрал презентацию.\n"
+            '{"action":"create","title":"X","theme":"edito'
+        )
+        clean, actions = wc.parse_leo_canvas_blocks(text)
+        self.assertEqual(clean, "Готово. Собрал презентацию.")
+        self.assertEqual(actions, [])
+
     def test_finalize_injects_kit_and_theme(self) -> None:
         html = wc.finalize_canvas_html(
             "<section class='slide'><h1 class='display'>Hello</h1></section>",

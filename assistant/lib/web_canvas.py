@@ -15,8 +15,12 @@ THEMES = ("editorial", "product-dark", "poster", "soft-light", "brutal")
 DEFAULT_THEME = "editorial"
 
 _LEO_CANVAS_RE = re.compile(
-    r"```leo-canvas\s*\n(.*?)```",
+    r"```(?:leo-canvas|json|javascript)?\s*\n?(.*?)```",
     re.IGNORECASE | re.DOTALL,
+)
+_BARE_ACTION_RE = re.compile(
+    r"\{[^{}]*\"action\"\s*:\s*\"(?:create|update)\"",
+    re.IGNORECASE,
 )
 _SCRIPT_RE = re.compile(r"<script\b[^>]*>.*?</script>", re.IGNORECASE | re.DOTALL)
 _ON_ATTR_RE = re.compile(r"\s+on[a-z]+\s*=\s*(['\"]).*?\1", re.IGNORECASE | re.DOTALL)
@@ -77,18 +81,23 @@ def canvas_system_addon() -> str:
     themes = ", ".join(THEMES)
     return f"""
 ## Web-canvas presentations (Leo)
-When the user asks to create or edit a web presentation / landing / deck inside the note, respond with a short Russian confirmation AND a fenced block:
+When the user asks to create or edit a web presentation / landing / deck inside the note:
+1) Write ONE short Russian sentence confirming (e.g. «Готово. Собрал презентацию.»).
+2) Then IMMEDIATELY a fenced block with language tag leo-canvas — nothing else after it.
 
+CRITICAL formatting (the UI parses only this fence; bare JSON is wrong):
 ```leo-canvas
 {{"action":"create","title":"Презентация","theme":"editorial","html":"<!DOCTYPE html>..."}}
 ```
+
+NEVER paste the JSON outside the fence. NEVER use ```json. NEVER show the HTML/JSON to the user in the chat text.
 
 Rules for the JSON:
 - action: "create" (new sheet) or "update" (existing web sheet; include sheet_id)
 - title: short sheet title
 - theme: one of [{themes}]
 - sheet_id: string id when updating an existing web sheet
-- html: a full self-contained HTML document
+- html: a full self-contained HTML document (required for create; for update prefer patches)
 - optional patches: [{{"leo_id":"...","outer_html":"..."}}] for targeted edits (preferred when selections are provided)
 
 HTML / design contract:
@@ -97,7 +106,7 @@ HTML / design contract:
 - Do NOT invent a design system, :root variables, Inter/Roboto, purple/indigo gradients, glow, emoji decoration, pill clusters, or card grids in the hero
 - First slide = one composition: brand/mark, one headline, one supporting line, one CTA; one job per slide
 - Mark meaningful nodes with unique data-leo-id attributes (hero-title, cta-primary, slide-2-body, …)
-- Do not include <script> tags (except none — kit nav is injected by Leo)
+- Do not include <script> tags (kit nav is injected by Leo)
 - Prefer content from the note context; no lorem ipsum
 - Keep HTML reasonably compact (< 120KB)
 
@@ -128,26 +137,125 @@ def selections_prompt_block(selections: list[dict[str, Any]] | None) -> str:
     )
 
 
+def _is_canvas_action(data: Any) -> bool:
+    if not isinstance(data, dict):
+        return False
+    act = str(data.get("action") or "").strip().lower()
+    if act not in ("create", "update"):
+        return False
+    # Must look like a canvas payload, not arbitrary JSON.
+    if data.get("html") or data.get("patches") or data.get("theme") or data.get("title"):
+        return True
+    return False
+
+
+def _loads_canvas_json(raw: str) -> Optional[dict[str, Any]]:
+    text = (raw or "").strip()
+    if not text:
+        return None
+    # Strip accidental language label left inside fence
+    if text.lower().startswith("leo-canvas"):
+        text = text.split("\n", 1)[-1].strip()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        # Truncated JSON: try to close common tails if html is present enough to salvage
+        return None
+    return data if _is_canvas_action(data) else None
+
+
+def _extract_balanced_object(text: str, start: int) -> Optional[tuple[str, int]]:
+    """Return (json_str, end_index) for a balanced {...} starting at start."""
+    if start < 0 or start >= len(text) or text[start] != "{":
+        return None
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1], i + 1
+    return None
+
+
+_UNCLOSED_FENCE_RE = re.compile(
+    r"```(?:leo-canvas|json|javascript)?\s*\n?(\{.*)\Z",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
 def parse_leo_canvas_blocks(text: str) -> tuple[str, list[dict[str, Any]]]:
-    """Strip ```leo-canvas``` blocks from answer; return (clean_answer, actions)."""
+    """Strip canvas payloads from answer; return (clean_answer, actions).
+
+    Accepts ```leo-canvas / ```json fences and bare JSON with action create|update.
+    Also handles unclosed fences / truncated responses by stripping the dump from chat.
+    """
     actions: list[dict[str, Any]] = []
     if not text:
         return "", actions
 
-    def _repl(match: re.Match[str]) -> str:
-        raw = (match.group(1) or "").strip()
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            # try to recover truncated JSON loosely
+    def _fence_repl(match: re.Match[str]) -> str:
+        data = _loads_canvas_json(match.group(1) or "")
+        if data is None:
             return match.group(0)
-        if isinstance(data, dict):
-            actions.append(data)
-            return ""
-        return match.group(0)
+        actions.append(data)
+        return ""
 
-    cleaned = _LEO_CANVAS_RE.sub(_repl, text)
+    cleaned = _LEO_CANVAS_RE.sub(_fence_repl, text)
+
+    # Unclosed fence (model hit token limit mid-JSON)
+    um = _UNCLOSED_FENCE_RE.search(cleaned)
+    if um:
+        data = _loads_canvas_json(um.group(1) or "")
+        if data is not None:
+            actions.append(data)
+        cleaned = cleaned[: um.start()].rstrip()
+
+    # Bare JSON fallback (model forgot the fence)
+    guard = 0
+    while guard < 5:
+        guard += 1
+        m = _BARE_ACTION_RE.search(cleaned)
+        if not m:
+            break
+        start = cleaned.find("{", m.start())
+        extracted = _extract_balanced_object(cleaned, start)
+        if not extracted:
+            # Unbalanced/truncated — strip from the opening brace to end so user
+            # doesn't see raw JSON dump in the comment.
+            cleaned = cleaned[:start].rstrip()
+            break
+        raw_obj, end = extracted
+        data = _loads_canvas_json(raw_obj)
+        if data is None:
+            # Not ours — skip past this match to avoid infinite loop
+            cleaned = cleaned[: m.start()] + cleaned[m.start() + 1 :]
+            continue
+        actions.append(data)
+        cleaned = (cleaned[:start] + cleaned[end:]).strip()
+
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    # Drop leftover fence markers if any
+    cleaned = re.sub(r"```(?:leo-canvas|json)?\s*```", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    if actions and not cleaned:
+        cleaned = "Готово. Полотно обновлено."
+    elif not actions and not cleaned:
+        cleaned = "Не удалось собрать полотно — ответ модели оборвался. Попробуйте ещё раз короче."
     return cleaned, actions
 
 
