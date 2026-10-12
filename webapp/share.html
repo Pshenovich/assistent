@@ -163,6 +163,54 @@
       font-weight: var(--vkui--font_paragraph--font_weight--regular, 400);
       line-height: var(--vkui--font_paragraph--line_height--regular, 20px);
     }
+    #share-canvases {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      margin: 1rem 0 0;
+    }
+    #share-canvases:empty { display: none; }
+    .share-web-canvas-block {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      min-width: 0;
+    }
+    .share-web-canvas-title {
+      margin: 0;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--muted, #8e8e93);
+    }
+    .share-web-canvas-frame {
+      width: 100%;
+      height: min(86vh, 920px);
+      min-height: 70vh;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      background: #fff;
+    }
+    body.share-canvas-only #share-label,
+    body.share-canvas-only #share-title,
+    body.share-canvas-only #share-body-wrap:has(#share-body:empty) {
+      display: none;
+    }
+    body.share-canvas-only #share-canvases {
+      margin: 0;
+    }
+    body.share-canvas-only .share-web-canvas-frame {
+      height: calc(100dvh - 2rem);
+      min-height: calc(100dvh - 2rem);
+      border-radius: 0;
+      border: 0;
+    }
+    body.share-canvas-only .wrap {
+      max-width: none;
+      padding: 0;
+    }
+    body.share-canvas-only #share-doc {
+      margin: 0;
+    }
     #share-body > :first-child { margin-top: 0; }
     #share-body > :last-child { margin-bottom: 0; }
     #share-body h1,
@@ -665,6 +713,7 @@
         <div id="share-body" class="note-body-html"></div>
         <div id="share-comment-overlay" class="note-comment-overlay"></div>
       </div>
+      <div id="share-canvases"></div>
       <section id="share-paie-thread" class="share-paie-thread hidden">
         <h2 class="share-comments-title">Комментарий CHAIR</h2>
         <div id="share-paie-list" class="share-paie-list"></div>
@@ -697,6 +746,6 @@
   </main>
   <script src="/webapp/note-html.js?v=20260908-stable2"></script>
   <script src="/webapp/note-comments.js?v=20260908-stable2"></script>
-  <script src="/webapp/share.js?v=20260908-stable2"></script>
+  <script src="/webapp/share.js?v=20261012-web-canvas-share"></script>
 </body>
 </html>

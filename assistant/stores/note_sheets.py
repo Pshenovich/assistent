@@ -146,9 +146,9 @@ def list_sheets(note: dict[str, Any]) -> list[dict[str, Any]]:
     return [primary_sheet(note), *extras]
 
 
-def compose_share_body(
+def _selected_share_rows(
     note: dict[str, Any], sheet_ids: list[str] | None
-) -> tuple[str, list[dict[str, Any]]]:
+) -> list[dict[str, Any]]:
     rows = list_sheets(note)
     wanted = [str(x).strip() for x in (sheet_ids or []) if str(x).strip()]
     if wanted:
@@ -157,9 +157,20 @@ def compose_share_body(
         selected = [primary_sheet(note)]
     if not selected:
         selected = [primary_sheet(note)]
+    return selected
+
+
+def compose_share_body(
+    note: dict[str, Any], sheet_ids: list[str] | None
+) -> tuple[str, list[dict[str, Any]]]:
+    """Rich-text body for share page. Web-canvas sheets are omitted here —
+    they are delivered separately via list_share_canvases (iframe srcdoc)."""
+    selected = _selected_share_rows(note, sheet_ids)
     parts: list[str] = []
     extras_only = len(selected) > 1 or not selected[0].get("is_primary")
     for row in selected:
+        if _normalize_kind(row.get("kind")) == SHEET_KIND_WEB:
+            continue
         body = str(row.get("body") or "").strip()
         title = str(row.get("title") or "").strip() or PRIMARY_SHEET_TITLE
         if extras_only and not row.get("is_primary"):
@@ -168,6 +179,28 @@ def compose_share_body(
         elif body:
             parts.append(body)
     return "\n".join(parts).strip(), selected
+
+
+def list_share_canvases(
+    note: dict[str, Any], sheet_ids: list[str] | None
+) -> list[dict[str, Any]]:
+    """Web-canvas sheets selected for a share link (full HTML documents)."""
+    out: list[dict[str, Any]] = []
+    for row in _selected_share_rows(note, sheet_ids):
+        if _normalize_kind(row.get("kind")) != SHEET_KIND_WEB:
+            continue
+        html_doc = str(row.get("body") or "").strip()
+        if not html_doc:
+            continue
+        out.append(
+            {
+                "id": str(row.get("id")),
+                "title": str(row.get("title") or "").strip() or "Презентация",
+                "html": html_doc[:200000],
+                "kind": SHEET_KIND_WEB,
+            }
+        )
+    return out
 
 
 def get_extra_sheet(note_id: int, sheet_id: int) -> Optional[dict[str, Any]]:

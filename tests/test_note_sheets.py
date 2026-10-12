@@ -150,6 +150,32 @@ class NoteSheetsStoreTests(unittest.TestCase):
         self.assertIn("основная", both)
         self.assertIn("чистовик", both)
 
+    def test_compose_share_skips_web_html_and_lists_canvases(self) -> None:
+        note = notes_store.create_note(10, "Сделка", "<p>основная</p>")
+        web = sheets.create_sheet(
+            note,
+            "Презентация",
+            body="<!DOCTYPE html><html><body><h1>Deck</h1></body></html>",
+            kind="web",
+        )
+        note = notes_store.get_note(10, note["id"])
+        assert note is not None
+        body, selected = sheets.compose_share_body(
+            note, ["main", str(web["id"])]
+        )
+        self.assertIn("основная", body)
+        self.assertNotIn("<!DOCTYPE", body)
+        self.assertNotIn("Deck", body)
+        self.assertEqual(len(selected), 2)
+        canvases = sheets.list_share_canvases(note, ["main", str(web["id"])])
+        self.assertEqual(len(canvases), 1)
+        self.assertEqual(canvases[0]["id"], str(web["id"]))
+        self.assertIn("Deck", canvases[0]["html"])
+        only_web_body, _ = sheets.compose_share_body(note, [str(web["id"])])
+        self.assertEqual(only_web_body, "")
+        only_web = sheets.list_share_canvases(note, [str(web["id"])])
+        self.assertEqual(len(only_web), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

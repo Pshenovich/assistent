@@ -7194,6 +7194,15 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   padding: 16px 16px 12px;
 }
 
+.note-discussion-sheet-host:has(.note-web-canvas) {
+  overflow: hidden;
+  padding: 0;
+}
+
+.note-discussion-sheet-host .note-web-canvas {
+  min-height: 100%;
+}
+
 .note-discussion-sheet-host .note-rich-editor,
 .note-discussion-sheet-host .note-rich-editor-surface,
 .note-discussion-sheet-host .note-rich-editor-body {
@@ -8068,7 +8077,7 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 .note-web-canvas {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   height: 100%;
   background: var(--surface, #111);
@@ -8102,9 +8111,10 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 }
 
 .note-web-canvas-frame {
-  flex: 1;
+  flex: 1 1 auto;
   width: 100%;
-  min-height: 240px;
+  min-height: 0;
+  height: 100%;
   border: 0;
   background: #fff;
 }
@@ -8115,7 +8125,7 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 
 .note-editor-pad--body > .note-web-canvas-host {
   display: none;
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   height: 100%;
 }
@@ -8123,6 +8133,38 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 .note-editor-pad--body.is-web-canvas-mode > .note-web-canvas-host {
   display: flex;
   flex-direction: column;
+}
+
+/* Fill the note editor viewport when a web-canvas sheet is open */
+#note-editor-overlay.is-web-canvas-open .note-editor-modal-body {
+  overflow: hidden;
+}
+
+#note-editor-overlay.is-web-canvas-open .note-editor-modal-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+#note-editor-overlay.is-web-canvas-open .note-editor-modal-content .note-editor-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#note-editor-overlay.is-web-canvas-open .note-editor-pad--body.is-web-canvas-mode {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+#note-editor-overlay.is-web-canvas-open .note-editor-pad--title-in-body {
+  flex-shrink: 0;
 }
 
 .note-canvas-sel-chips {

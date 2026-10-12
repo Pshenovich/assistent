@@ -3102,19 +3102,20 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
         title = str(note.get("title") or "").strip() or "Без названия"
         from assistant.stores import note_sheets as note_sheets_store
 
-        body, _sheets = note_sheets_store.compose_share_body(
-            note, share_links_store.normalize_sheet_ids(link.get("sheet_ids"))
-        )
+        sheet_ids = share_links_store.normalize_sheet_ids(link.get("sheet_ids"))
+        body, _sheets = note_sheets_store.compose_share_body(note, sheet_ids)
+        canvases = note_sheets_store.list_share_canvases(note, sheet_ids)
         return {
             "kind": "local",
             "operation": None,
             "label": _SHARE_KIND_LABELS["local"],
             "title": title[:500],
             "body": body[:120000],
+            "canvases": canvases,
             "updated_at": note.get("updated_at"),
             "access": share_links_store.normalize_access(link.get("access")),
             "item_id": item_id,
-            "sheet_ids": share_links_store.normalize_sheet_ids(link.get("sheet_ids")),
+            "sheet_ids": sheet_ids,
         }
     if kind == "journal":
         try:

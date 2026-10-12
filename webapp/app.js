@@ -17006,6 +17006,8 @@
     if (pad) pad.classList.remove("is-web-canvas-mode");
     var host = pad && pad.querySelector(".note-web-canvas-host");
     if (host) host.innerHTML = "";
+    var overlay = document.getElementById("note-editor-overlay");
+    if (overlay) overlay.classList.remove("is-web-canvas-open");
     var toolbarWrap = document.getElementById("note-editor-toolbar-wrap");
     if (toolbarWrap) setHidden(toolbarWrap, false);
   }
@@ -17024,6 +17026,8 @@
     if (!LeoWebCanvas || !host || !pad || !sheet) return;
     destroyLeftWebCanvas();
     pad.classList.add("is-web-canvas-mode");
+    var overlay = document.getElementById("note-editor-overlay");
+    if (overlay) overlay.classList.add("is-web-canvas-open");
     var toolbarWrap = document.getElementById("note-editor-toolbar-wrap");
     if (toolbarWrap) setHidden(toolbarWrap, true);
     noteSheetState.leftWebCanvas = LeoWebCanvas.create({
