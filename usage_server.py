@@ -2562,6 +2562,7 @@ class _PublicBookBody(BaseModel):
 class _MiniappSettingsPatch(BaseModel):
     meeting_reminders_enabled: Optional[bool] = None
     task_reminders_enabled: Optional[bool] = None
+    discussion_notifications_enabled: Optional[bool] = None
     zoom_auto_record_enabled: Optional[bool] = None
     telemost_auto_record_enabled: Optional[bool] = None
     digest_enabled: Optional[bool] = None
@@ -3473,6 +3474,7 @@ def _notify_discussion_comment(
     from assistant.lib.telegram_notify import send_message
     from assistant.stores import discussion_presence
     from assistant.stores import note_members
+    from assistant.stores import user_prefs
     from html import escape as html_escape
 
     members = _discussion_participants(owner, kind, item_id)
@@ -3496,6 +3498,11 @@ def _notify_discussion_comment(
         mid = str(m.get("user_id") or "").strip()
         if not mid or mid in skip:
             continue
+        try:
+            if not user_prefs.discussion_notifications_enabled(int(mid)):
+                continue
+        except Exception:
+            pass
         try:
             send_message(int(mid), text)
         except Exception as e:
@@ -5891,6 +5898,9 @@ async def miniapp_settings_get(
             "meeting_reminder_minutes_before": mr.reminder_minutes_before(),
             "task_reminders_enabled": user_prefs.task_reminders_enabled(uid),
             "task_reminder_minutes_before": tr.reminder_minutes_before(),
+            "discussion_notifications_enabled": user_prefs.discussion_notifications_enabled(
+                uid
+            ),
             "zoom_auto_record_enabled": user_prefs.zoom_auto_record_enabled(uid),
             "telemost_auto_record_enabled": user_prefs.telemost_auto_record_enabled(uid),
             "meeting_bot_available": mrec.service_available(),
@@ -5923,6 +5933,10 @@ async def miniapp_settings_patch(
             user_prefs.set_task_reminders_enabled(
                 uid, bool(body.task_reminders_enabled)
             )
+        if body.discussion_notifications_enabled is not None:
+            user_prefs.set_discussion_notifications_enabled(
+                uid, bool(body.discussion_notifications_enabled)
+            )
         if body.zoom_auto_record_enabled is not None:
             user_prefs.set_zoom_auto_record_enabled(
                 uid, bool(body.zoom_auto_record_enabled)
@@ -5941,6 +5955,9 @@ async def miniapp_settings_patch(
             "meeting_reminder_minutes_before": mr.reminder_minutes_before(),
             "task_reminders_enabled": user_prefs.task_reminders_enabled(uid),
             "task_reminder_minutes_before": tr.reminder_minutes_before(),
+            "discussion_notifications_enabled": user_prefs.discussion_notifications_enabled(
+                uid
+            ),
             "zoom_auto_record_enabled": user_prefs.zoom_auto_record_enabled(uid),
             "telemost_auto_record_enabled": user_prefs.telemost_auto_record_enabled(uid),
             "meeting_bot_available": mrec.service_available(),

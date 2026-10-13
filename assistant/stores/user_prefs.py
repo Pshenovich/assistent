@@ -119,6 +119,20 @@ def set_task_reminders_enabled(user_id: int, enabled: bool) -> None:
     save_prefs(user_id, prefs)
 
 
+def discussion_notifications_enabled(user_id: int) -> bool:
+    """По умолчанию пуши о новых сообщениях в обсуждениях включены."""
+    prefs = load_prefs(user_id)
+    if "discussion_notifications_enabled" not in prefs:
+        return True
+    return bool(prefs.get("discussion_notifications_enabled"))
+
+
+def set_discussion_notifications_enabled(user_id: int, enabled: bool) -> None:
+    prefs = load_prefs(user_id)
+    prefs["discussion_notifications_enabled"] = bool(enabled)
+    save_prefs(user_id, prefs)
+
+
 def zoom_auto_record_enabled(user_id: int) -> bool:
     """Автозапись Zoom-встреч через meeting bot (выкл. по умолчанию)."""
     prefs = load_prefs(user_id)
