@@ -17111,6 +17111,9 @@
       html: sheet.body || sheet.description || "",
       sheetId: String(sheet.id),
       onSelect: addCanvasSelection,
+      onRefresh: function () {
+        return refreshWebCanvasSheet(String(sheet.id), "left");
+      },
     });
   }
 
@@ -17128,8 +17131,63 @@
       html: sheet.body || sheet.description || "",
       sheetId: String(sheet.id),
       onSelect: addCanvasSelection,
+      onRefresh: function () {
+        return refreshWebCanvasSheet(String(sheet.id), "right");
+      },
     });
     noteSheetState.rightEditor = null;
+  }
+
+  async function refreshWebCanvasSheet(sheetId, which) {
+    var sid = String(sheetId || "");
+    var noteId = noteSheetsNoteId();
+    if (!sid || !noteId) return;
+    try {
+      var data = await apiFetch(
+        "/notes/local/" + encodeURIComponent(String(noteId)) + "/sheets",
+        { method: "GET" }
+      );
+      var sheets = (data && data.sheets) || [];
+      if (sheets.length) noteSheetState.sheets = sheets;
+      renderNoteSheetChips();
+      var sheet = findNoteSheet(sid);
+      if (!sheet || !isWebSheet(sheet)) {
+        showNoteToast("Лист не найден");
+        return;
+      }
+      var html = String(sheet.body || sheet.description || "");
+      if (which === "right") {
+        if (
+          noteSheetState.rightWebCanvas &&
+          typeof noteSheetState.rightWebCanvas.setHtml === "function" &&
+          String(noteSheetState.rightId) === sid
+        ) {
+          noteSheetState.rightWebCanvas.setHtml(html);
+        } else {
+          mountRightWebCanvas(sheet);
+        }
+      } else {
+        reloadLeftWebCanvasHtml(sheet);
+      }
+      showNoteToast("Полотно обновлено");
+    } catch (e) {
+      console.warn("refreshWebCanvasSheet", e);
+      showNoteToast("Не удалось обновить полотно");
+    }
+  }
+
+  function reloadLeftWebCanvasHtml(sheet) {
+    if (!sheet || !isWebSheet(sheet)) return;
+    var html = String(sheet.body || sheet.description || "");
+    if (
+      noteSheetState.leftWebCanvas &&
+      typeof noteSheetState.leftWebCanvas.setHtml === "function" &&
+      String(noteSheetState.leftId) === String(sheet.id)
+    ) {
+      noteSheetState.leftWebCanvas.setHtml(html);
+      return;
+    }
+    applyLeftSheetHtml(sheet);
   }
 
   async function applyCanvasChatResult(canvasActions) {
@@ -17147,8 +17205,15 @@
       renderNoteSheetChips();
       var last = rows[rows.length - 1];
       var sid = String((last && last.sheet_id) || "");
-      if (sid && findNoteSheet(sid)) {
-        await switchLeftSheet(sid);
+      var sheet = sid ? findNoteSheet(sid) : null;
+      if (sheet && isWebSheet(sheet)) {
+        if (String(noteSheetState.leftId) === sid) {
+          reloadLeftWebCanvasHtml(sheet);
+        } else {
+          await switchLeftSheet(sid);
+          // switchLeftSheet no-ops when already open; force html if still needed
+          if (String(noteSheetState.leftId) === sid) reloadLeftWebCanvasHtml(sheet);
+        }
         showNoteToast("Полотно обновлено");
       }
       clearCanvasSelections();

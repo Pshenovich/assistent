@@ -123,10 +123,15 @@ JSON rules:
 
 ## Design system (bento) — DO NOT invent layouts
 Fill ONLY the named templates below. Copy the HTML structure exactly; replace Russian/placeholder text and numbers from the note. Do not invent new grids, colors, fonts, or card systems.
-Allowed classes: .deck .slide .slide-ink .slide-ice .slide-head .split-pane .pane-copy .pane-stage .stack .tile .tile-ink .tile-mute .tile-white .tile-num .metric-xl .pill .pill-outline .pill-ink .pill-ice .icon-circle .cards-3 .cards-4 .bento-shell .bento-2x2 .vbars .vbar .vbar-fill .vbar-val .vbar-label .year-rail .donut .legend .hbar-row .hbar-track .hbar-fill .title .display .body .lead .caption .spark .chart-svg
+Allowed classes: .deck .slide .slide-ink .slide-ice .slide-head .split-pane .pane-copy .pane-stage .stack .tile .tile-ink .tile-mute .tile-white .tile-num .metric-xl .pill .pill-outline .pill-ink .pill-ice .icon-circle .cards-3 .cards-4 .bento-shell .bento-2x2 .vbars .vbar .vbar-fill .vbar-val .vbar-label .year-rail .donut .legend .hbar-row .hbar-track .hbar-fill .title .display .body .lead .caption .spark .chart-svg .abstract .abstract-orb .abstract-grid .abstract-wave .abstract-arcs
 Colors come from the theme (ink / ice / white). No purple, no Inter, no landing CTAs on slide 1.
 No «Узнать подробнее» / demo / buy buttons on the cover.
 Mark filled nodes with unique data-leo-id. No <script>. No ``` inside html strings.
+
+Visuals policy (important):
+- Decorative / abstract / «картинка» / mood / cover art → use .abstract (+ .abstract-orb / .abstract-grid / .abstract-wave / .abstract-arcs). NEVER put charts there.
+- Charts (.donut .vbars .spark .chart-svg .hbar-*) ONLY when the slide is explicitly about numbers from the note (revenue, share, growth). If unsure → abstract, not a chart.
+- Do not invent fake scary charts with unclear axes.
 
 Pick 4–6 templates that match the note (vary layouts; never 4× the same template):
 {templates}
@@ -138,8 +143,8 @@ If the user only chats and does not ask for a presentation, do not emit leo-canv
 def bento_slide_templates_prompt() -> str:
     """Compact HTML skeletons for the model to copy and fill."""
     return r"""
-### T1 cover-split (first slide — no button)
-<section class="slide slide-ink" data-leo-id="slide-cover"><div class="split-pane"><div class="pane-copy"><h1 class="title" data-leo-id="hero-title">Заголовок</h1><p class="pill pill-outline" data-leo-id="hero-pill">контекст</p><p class="body" data-leo-id="hero-body">Одна мысль.</p></div><div class="pane-stage" data-leo-id="hero-stage"><svg class="spark chart-svg" viewBox="0 0 200 110" data-leo-id="hero-spark"><polyline fill="none" stroke="currentColor" stroke-width="4" points="0,90 40,70 80,78 120,40 160,48 200,18"/></svg></div></div></section>
+### T1 cover-split (first slide — no button; abstract art, not a chart)
+<section class="slide slide-ink" data-leo-id="slide-cover"><div class="split-pane"><div class="pane-copy"><h1 class="title" data-leo-id="hero-title">Заголовок</h1><p class="pill pill-outline" data-leo-id="hero-pill">контекст</p><p class="body" data-leo-id="hero-body">Одна мысль.</p></div><div class="pane-stage" data-leo-id="hero-stage"><div class="abstract abstract-orb" data-leo-id="hero-art" aria-hidden="true"></div></div></div></section>
 
 ### T2 problem-3cards
 <section class="slide" data-leo-id="slide-problem"><div class="slide-head"><h2 class="title" data-leo-id="problem-title">Проблема</h2><span class="icon-circle" aria-hidden="true">↓</span></div><div class="cards-3"><div class="tile" data-leo-id="p1"><p class="tile-num">01.</p><p class="body">…</p></div><div class="tile tile-ink" data-leo-id="p2"><p class="tile-num">02.</p><p class="body">…</p></div><div class="tile" data-leo-id="p3"><p class="tile-num">03.</p><p class="body">…</p></div></div></section>
@@ -161,6 +166,9 @@ def bento_slide_templates_prompt() -> str:
 
 ### T8 quote-ice
 <section class="slide slide-ice" data-leo-id="slide-quote"><div class="tile tile-white" style="flex:1;justify-content:center;min-height:60vh"><p class="pill pill-ink">2026</p><p class="display" data-leo-id="quote-text" style="max-width:18ch">Короткая сильная фраза.</p></div></section>
+
+### T9 abstract-stage (when user asks for abstract image / mood visual)
+<section class="slide" data-leo-id="slide-art"><div class="split-pane"><div class="pane-copy"><h2 class="title" data-leo-id="art-title">Визуал</h2><p class="body" data-leo-id="art-body">…</p></div><div class="pane-stage"><div class="abstract abstract-wave" data-leo-id="art-abstract" aria-hidden="true"></div></div></div></section>
 """.strip()
 
 
@@ -172,9 +180,10 @@ def open_canvas_prompt_block(sheet_id: str | None, *, title: str | None = None) 
     extra = f' title="{label}"' if label else ""
     return (
         f"Open web-canvas sheet_id={sid}{extra}. "
-        "For any edit/fix/rewrite of this deck use action=update with this sheet_id. "
-        "Prefer patches on data-leo-id nodes. Do NOT action=create unless the user "
-        "explicitly asks for a new separate presentation."
+        "For any edit/fix of this deck use action=update with this sheet_id. "
+        "Prefer patches on data-leo-id nodes; change only what the user asked. "
+        "Do NOT rewrite the whole deck for a small fix. "
+        "Do NOT action=create unless the user explicitly asks for a new separate presentation."
     )
 
 
@@ -200,10 +209,12 @@ def selections_prompt_block(selections: list[dict[str, Any]] | None) -> str:
         return ""
     target = sheet_ids[0] if sheet_ids else "«sheet_id from selection»"
     return (
-        "Selected web-canvas elements — MANDATORY edit mode:\n"
+        "Selected web-canvas elements — SURGICAL PATCH MODE (strict):\n"
         f"- Respond with action=update, sheet_id={target}\n"
-        "- Prefer patches: one entry per selected leo_id; keep the same data-leo-id\n"
-        "- Do NOT action=create and do NOT invent a new sheet\n"
+        "- Emit ONLY patches for the selected leo_id(s). Keep the same data-leo-id on each node\n"
+        "- Do NOT include an html field. Do NOT rewrite other slides, theme, or layout\n"
+        "- Do NOT action=create. Do NOT replace the whole deck\n"
+        "- Change only the requested text/style inside the selected node(s)\n"
         "Selections:\n" + "\n".join(rows)
     )
 
@@ -244,10 +255,12 @@ def normalize_canvas_action_for_apply(
         preferred = open_id
 
     if sel_ids:
-        # User pointed at nodes in an existing deck — never create a sibling sheet.
+        # User pointed at nodes in an existing deck — never create a sibling sheet
+        # and never allow a full-html rewrite that nukes the rest of the deck.
         act["action"] = "update"
         act["sheet_id"] = preferred or sel_ids[0]
         act.pop("sheetId", None)
+        act.pop("html", None)
         return act
 
     if verb == "update":
@@ -701,19 +714,27 @@ def apply_canvas_action(
         if normalize_kind(existing.get("kind")) != SHEET_KIND_WEB:
             return None
         existing_html = str(existing.get("body") or "")
+        surgical = bool(selection_sheet_ids)
         # Targeted patches must run on the live sheet. Full html rewrite only when
-        # there are no patches (otherwise models often ship a partial/new deck).
-        if patches:
+        # there are no patches and this is NOT a selection-driven edit.
+        if surgical:
+            if not patches:
+                return None
+            base_html = existing_html if existing_html.strip() else html_in
+        elif patches:
             base_html = existing_html if existing_html.strip() else html_in
         else:
             base_html = html_in if html_in.strip() else existing_html
         if not theme and base_html:
             theme = extract_theme_from_html(base_html)
+        # Keep existing theme on surgical edits so a stray theme field cannot restyle the deck.
+        if surgical:
+            theme = extract_theme_from_html(existing_html) or theme
         finalized = finalize_canvas_html(base_html, theme=theme, patches=patches)
         return note_sheets_mod.update_sheet(
             int(note["id"]),
             sid,
-            title=title if action.get("title") else None,
+            title=title if (action.get("title") and not surgical) else None,
             body=finalized,
             kind=SHEET_KIND_WEB,
         )

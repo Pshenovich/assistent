@@ -102,6 +102,8 @@ class WebCanvasLibTests(unittest.TestCase):
         self.assertIn("TEMPLATE FILL MODE", prompt)
         self.assertIn("T2 problem-3cards", prompt)
         self.assertIn("cards-3", prompt)
+        self.assertIn("abstract", prompt)
+        self.assertIn("Visuals policy", prompt)
         self.assertIn("Узнать подробнее", prompt)
         self.assertNotIn('cta-primary">Дальше', prompt)
 
@@ -116,6 +118,7 @@ class WebCanvasLibTests(unittest.TestCase):
             ".donut",
             ".pill",
             "--ice",
+            ".abstract-orb",
         ):
             self.assertIn(token, css)
 
@@ -266,11 +269,40 @@ class WebSheetStoreTests(unittest.TestCase):
 
     def test_normalize_forces_update_for_selections(self) -> None:
         act = wc.normalize_canvas_action_for_apply(
-            {"action": "create", "html": "<p>x</p>"},
+            {"action": "create", "html": "<p>x</p>", "patches": []},
             selection_sheet_ids=["99"],
         )
         self.assertEqual(act["action"], "update")
         self.assertEqual(act["sheet_id"], "99")
+        self.assertNotIn("html", act)
+
+    def test_selection_update_without_patches_is_rejected(self) -> None:
+        note = notes_store.create_note(47, "A", "b")
+        created = sheets.create_sheet(
+            note,
+            "Deck",
+            body=wc.finalize_canvas_html(
+                '<h1 class="display" data-leo-id="hero-title">Keep</h1>',
+                theme="bento",
+            ),
+            kind="web",
+        )
+        sid = str(created["id"])
+        before = created["body"]
+        out = wc.apply_canvas_action(
+            note=note,
+            action={
+                "action": "update",
+                "sheet_id": sid,
+                "html": "<h1>Nuked whole deck</h1>",
+            },
+            note_sheets_mod=sheets,
+            selection_sheet_ids=[sid],
+        )
+        self.assertIsNone(out)
+        again = sheets.get_extra_sheet(note["id"], int(sid))
+        assert again is not None
+        self.assertEqual(again["body"], before)
 
     def test_selections_prompt_requires_update(self) -> None:
         block = wc.selections_prompt_block(
@@ -278,7 +310,8 @@ class WebSheetStoreTests(unittest.TestCase):
         )
         self.assertIn("action=update", block)
         self.assertIn("sheet_id=7", block)
-        self.assertIn("Do NOT action=create", block)
+        self.assertIn("Do NOT include an html field", block)
+        self.assertIn("SURGICAL PATCH MODE", block)
 
 
 if __name__ == "__main__":

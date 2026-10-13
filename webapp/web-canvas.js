@@ -49,6 +49,7 @@
     var host = opts.host;
     if (!host) throw new Error("LeoWebCanvas: host required");
     var onSelect = typeof opts.onSelect === "function" ? opts.onSelect : null;
+    var onRefresh = typeof opts.onRefresh === "function" ? opts.onRefresh : null;
     var sheetId = String(opts.sheetId || "");
     var wrap = document.createElement("div");
     wrap.className = "note-web-canvas";
@@ -59,6 +60,12 @@
     pickBtn.className = "note-web-canvas-pick-btn";
     pickBtn.textContent = "Выделить";
     toolbar.appendChild(pickBtn);
+    var refreshBtn = document.createElement("button");
+    refreshBtn.type = "button";
+    refreshBtn.className = "note-web-canvas-pick-btn note-web-canvas-refresh-btn";
+    refreshBtn.textContent = "Обновить";
+    refreshBtn.title = "Перезагрузить полотно";
+    toolbar.appendChild(refreshBtn);
     var frame = document.createElement("iframe");
     frame.className = "note-web-canvas-frame";
     // Scripts for our picker only; no same-origin so page JS cannot touch parent.
@@ -104,6 +111,22 @@
     pickBtn.addEventListener("click", function (e) {
       e.preventDefault();
       setPick(!picking);
+    });
+
+    refreshBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      if (refreshBtn.disabled) return;
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = "…";
+      Promise.resolve()
+        .then(function () {
+          return onRefresh ? onRefresh() : null;
+        })
+        .catch(function () {})
+        .then(function () {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = "Обновить";
+        });
     });
 
     function onMessage(ev) {
