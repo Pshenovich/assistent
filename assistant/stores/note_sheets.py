@@ -203,6 +203,61 @@ def list_share_canvases(
     return out
 
 
+def copy_shared_selection(
+    src_note: dict[str, Any],
+    sheet_ids: list[str] | None,
+    dest_user_id: int | str,
+) -> dict[str, Any]:
+    """Копия заметки по публичной ссылке: только листы, открытые этой ссылкой.
+
+    Набор листов совпадает с тем, что видит гость (`_selected_share_rows`):
+    первый выбранный doc-лист становится «Основной» копии, остальные — доп. листами
+    в исходном порядке и с исходным kind. Невыбранные листы не попадают в копию.
+    """
+    selected = _selected_share_rows(src_note, sheet_ids)
+    primary_row = next(
+        (r for r in selected if _normalize_kind(r.get("kind")) == SHEET_KIND_DOC), None
+    )
+    primary_title = ""
+    if primary_row is not None:
+        raw_title = str(primary_row.get("title") or "").strip()
+        if raw_title and raw_title != PRIMARY_SHEET_TITLE:
+            primary_title = raw_title
+    dest = notes_store.create_note(
+        dest_user_id,
+        str(src_note.get("title") or "Без названия"),
+        str((primary_row or {}).get("body") or ""),
+        primary_sheet_title=primary_title,
+    )
+    if not note_allows_sheets(dest):
+        return dest
+    ts = _now_iso()
+    position = 0
+    for row in selected:
+        if row is primary_row:
+            continue
+        position += 1
+        with _LOCK:
+            _conn().execute(
+                """
+                INSERT INTO note_sheets
+                    (note_id, title, body, position, revision, created_at, updated_at, kind)
+                VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+                """,
+                (
+                    int(dest["id"]),
+                    str(row.get("title") or "").strip() or f"Лист {position + 1}",
+                    str(row.get("body") or ""),
+                    position,
+                    ts,
+                    ts,
+                    _normalize_kind(row.get("kind")),
+                ),
+            )
+            _conn().commit()
+    return dest
+
+
 def get_extra_sheet(note_id: int, sheet_id: int) -> Optional[dict[str, Any]]:
     with _LOCK:
         cur = _conn().execute(
