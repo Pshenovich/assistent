@@ -10275,13 +10275,17 @@ async def public_share_copy(
             raise HTTPException(status_code=404, detail="Документ недоступен")
         return {"ok": True, "item": note, "copied": False}
 
+    from assistant.stores import note_sheets as note_sheets_store
+    from assistant.stores import share_links as share_links_store
+
+    sheet_ids = share_links_store.normalize_sheet_ids(link.get("sheet_ids"))
+
     def _copy() -> dict[str, Any] | None:
         src = notes_store.get_note(owner, nid)
         if not src:
             return None
-        return notes_store.create_note(
-            uid, str(src.get("title") or "Без названия"), str(src.get("body") or "")
-        )
+        # Копируем ровно те листы, которые открыты этой ссылкой (как на странице share).
+        return note_sheets_store.copy_shared_selection(src, sheet_ids, uid)
 
     item = await run_in_threadpool(_copy)
     if not item:
