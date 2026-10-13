@@ -95,17 +95,13 @@ class WebCanvasLibTests(unittest.TestCase):
         self.assertNotIn("<script>", out.lower())
         self.assertNotIn("#7c3aed", out.lower())
 
-    def test_prompt_requires_visuals(self) -> None:
+    def test_prompt_is_slot_templates(self) -> None:
         prompt = wc.canvas_system_addon()
-        self.assertIn('theme":"bento"', prompt)
-        self.assertIn("bento", prompt)
-        self.assertIn("TEMPLATE FILL MODE", prompt)
-        self.assertIn("T2 problem-3cards", prompt)
-        self.assertIn("cards-3", prompt)
-        self.assertIn("abstract", prompt)
-        self.assertIn("Visuals policy", prompt)
-        self.assertIn("Узнать подробнее", prompt)
-        self.assertNotIn('cta-primary">Дальше', prompt)
+        self.assertIn("SLOT TEMPLATES", prompt)
+        self.assertIn("Never write HTML", prompt)
+        self.assertIn("content.cards", prompt)
+        self.assertIn("intent: compare|rank|trend", prompt)
+        self.assertIn("Never invent numbers", prompt)
 
     def test_kit_has_layout_primitives(self) -> None:
         wc._KIT_CSS_CACHE = None
@@ -341,10 +337,9 @@ class WebSheetStoreTests(unittest.TestCase):
         self.assertIn("BBBB", filled2)
         self.assertIn('data-leo-id="other"', filled2)
 
-    def test_prompt_mentions_media_slots(self) -> None:
+    def test_prompt_mentions_image_prompt_slot(self) -> None:
         addon = wc.canvas_system_addon()
-        self.assertIn("media-slot", addon)
-        self.assertIn("data-leo-img-prompt", addon)
+        self.assertIn("image_prompt", addon)
 
 
 if __name__ == "__main__":

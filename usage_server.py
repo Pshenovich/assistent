@@ -2633,6 +2633,23 @@ class _MiniappCanvasImageBody(BaseModel):
     prompt: str = ""
 
 
+class _MiniappCanvasOpBody(BaseModel):
+    op: str
+    slide_id: str = ""
+    variant: str = ""
+    group: str = ""
+    index: int = 0
+    after: Optional[int] = None
+    delta: int = 0
+    # Current editor HTML: inline text edits are synced before the op.
+    html: Optional[str] = None
+
+
+class _MiniappCanvasReviseBody(BaseModel):
+    comments: dict[str, str] = Field(default_factory=dict)
+    html: Optional[str] = None
+
+
 class _MiniappCanvasSelection(BaseModel):
     sheet_id: Optional[str] = None
     leo_id: Optional[str] = None
@@ -7036,7 +7053,21 @@ async def miniapp_gpt_chat(
                 if system_text
                 else web_canvas_lib.canvas_system_addon()
             )
-            open_block = web_canvas_lib.open_canvas_prompt_block(open_canvas_sheet_id)
+            ctx_sheet_id = open_canvas_sheet_id or next(
+                iter(web_canvas_lib.selection_sheet_ids(canvas_sel_dumps)), ""
+            )
+            ctx_sheet_html = ""
+            if ctx_sheet_id.isdigit():
+                try:
+                    from assistant.stores import note_sheets as note_sheets_store
+
+                    ctx_sheet = note_sheets_store.get_extra_sheet(int(iid), int(ctx_sheet_id))
+                    ctx_sheet_html = str((ctx_sheet or {}).get("body") or "")
+                except (TypeError, ValueError):
+                    ctx_sheet_html = ""
+            open_block = web_canvas_lib.open_canvas_prompt_block(
+                ctx_sheet_id, html=ctx_sheet_html
+            )
             if open_block:
                 prompt = (prompt.rstrip() + "\n\n" + open_block).strip()
             sel_block = web_canvas_lib.selections_prompt_block(canvas_sel_dumps)
@@ -9174,6 +9205,123 @@ async def miniapp_canvas_image_generate(
     if len(b64) > 1_800_000:
         raise HTTPException(status_code=413, detail="Картинка слишком большая")
     return {"ok": True, "data_url": f"data:{mime};base64,{b64}", "mime": mime}
+
+
+def _load_web_sheet_for_edit(uid: int, note_id: int, sheet_id: str) -> tuple[dict[str, Any], int, dict[str, Any]]:
+    """Note + extra web sheet the user may edit, or HTTPException."""
+    from assistant.lib import web_canvas as web_canvas_lib
+    from assistant.stores import note_sheets as note_sheets_store
+    from assistant.stores import notes as notes_store
+
+    try:
+        extra_id = int(sheet_id)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail="Некорректный лист") from e
+    note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
+    if note is None:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    sheet = note_sheets_store.get_extra_sheet(note_id, extra_id)
+    if not sheet or web_canvas_lib.normalize_kind(sheet.get("kind")) != web_canvas_lib.SHEET_KIND_WEB:
+        raise HTTPException(status_code=404, detail="Полотно не найдено")
+    return note, extra_id, sheet
+
+
+@miniapp_router.post("/notes/local/{note_id}/sheets/{sheet_id}/canvas-op")
+async def miniapp_canvas_op(
+    note_id: int,
+    sheet_id: str,
+    body: _MiniappCanvasOpBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Layout edits on a template deck: switch variant, add/remove items, move/delete slides."""
+    from assistant.lib import canvas_templates
+    from assistant.stores import note_sheets as note_sheets_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any] | None:
+        _note, extra_id, sheet = _load_web_sheet_for_edit(uid, note_id, sheet_id)
+        stored = str(sheet.get("body") or "")
+        base = body.html if body.html and canvas_templates.is_template_html(body.html) else stored
+        deck = canvas_templates.extract_deck(base)
+        if deck is None:
+            raise HTTPException(status_code=400, detail="Это полотно собрано без шаблонов")
+        deck = canvas_templates.sync_text_edits(deck, base)
+        try:
+            canvas_templates.apply_op(deck, body.model_dump())
+        except (canvas_templates.DeckOpError, ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=str(e) or "Не удалось изменить слайд") from e
+        media = {**canvas_templates.extract_media(stored), **canvas_templates.extract_media(base)}
+        html = canvas_templates.render_deck_html(deck, media)
+        return note_sheets_store.update_sheet(note_id, extra_id, body=html, kind="web")
+
+    try:
+        item = await run_in_threadpool(_run)
+    except note_sheets_store.SheetError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if item is None:
+        raise HTTPException(status_code=404, detail="Полотно не найдено")
+    return {"ok": True, "item": item}
+
+
+@miniapp_router.post("/notes/local/{note_id}/sheets/{sheet_id}/canvas-revise")
+async def miniapp_canvas_revise(
+    note_id: int,
+    sheet_id: str,
+    body: _MiniappCanvasReviseBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Apply per-slide edit comments (edit mode) with one model call."""
+    from assistant.compat.miniapp_shims import gpt_openrouter_answer_with_context
+    from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
+    from assistant.lib import canvas_revise, canvas_templates
+    from assistant.stores import note_sheets as note_sheets_store
+
+    uid = int(principal.telegram_user_id)
+    comments = canvas_revise.clean_comments(body.comments)
+    if not comments:
+        raise HTTPException(status_code=400, detail="Нет комментариев к слайдам")
+    tg_uname: str | None = None
+    if isinstance(principal.user, dict) and principal.user.get("username"):
+        tg_uname = str(principal.user.get("username")).strip() or None
+
+    def _run() -> dict[str, Any]:
+        note, extra_id, sheet = _load_web_sheet_for_edit(uid, note_id, sheet_id)
+        stored = str(sheet.get("body") or "")
+        base = stored
+        if body.html and canvas_templates.is_template_html(body.html) == canvas_templates.is_template_html(stored):
+            base = body.html
+        note_text = re.sub(r"<[^>]+>", " ", str(note.get("body") or ""))
+        note_text = re.sub(r"\s+", " ", note_text).strip()[:40000]
+        set_openrouter_usage_telegram_user(telegram_user_id=uid, telegram_username=tg_uname)
+
+        def _ask(system: str, user_msg: str) -> str | None:
+            out = gpt_openrouter_answer_with_context(
+                user_msg,
+                "",
+                note_title=str(note.get("title") or ""),
+                note_text=note_text,
+                system=system,
+                max_tokens=12000,
+            )
+            return str((out or {}).get("answer") or "")
+
+        new_html, results = canvas_revise.revise(base, comments, ask=_ask)
+        item = None
+        if new_html:
+            item = note_sheets_store.update_sheet(note_id, extra_id, body=new_html, kind="web")
+        return {"item": item, "results": results}
+
+    try:
+        res = await run_in_threadpool(_run)
+    except note_sheets_store.SheetError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001 — model/network errors
+        print(f"[web_canvas] revise failed note={note_id} sheet={sheet_id} err={e!r}")
+        raise HTTPException(status_code=502, detail="Модель не ответила, попробуйте ещё раз") from e
+    return {"ok": bool(res.get("item")), "item": res.get("item"), "results": res.get("results") or {}}
 
 
 @miniapp_router.get("/notes/{kind}/{item_id}/discuss-files/{file_id}")

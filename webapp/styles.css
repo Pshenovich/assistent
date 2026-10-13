@@ -8151,6 +8151,27 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   background: var(--accent-muted, rgba(82, 158, 244, 0.16));
 }
 
+.note-web-canvas-apply-btn[hidden] {
+  display: none !important;
+}
+
+.note-web-canvas-apply-btn.is-active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+}
+
+.note-web-canvas-apply-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.note-web-canvas.is-busy .note-web-canvas-frame {
+  opacity: 0.6;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
 .note-web-canvas.is-editing .note-web-canvas-edit-btn.is-active {
   border-color: var(--accent);
   color: var(--accent);
