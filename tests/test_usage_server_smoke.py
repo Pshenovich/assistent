@@ -26,6 +26,8 @@ PUBLIC_MINIAPP_ROUTES = {
     ("GET", "/api/miniapp/auth/config"),
     ("GET", "/api/miniapp/auth/telegram/callback"),
     ("POST", "/api/miniapp/auth/telegram"),
+    # Обмен одноразового кода из бота (/web) на сессию — это и есть вход.
+    ("POST", "/api/miniapp/auth/login-code"),
     ("POST", "/api/miniapp/auth/logout"),
 }
 
@@ -75,6 +77,13 @@ def test_every_miniapp_route_rejects_anonymous_requests(client: TestClient):
         if resp.status_code != 401:
             leaked.append((method, path, resp.status_code))
     assert leaked == []
+
+
+def test_login_code_rejects_unknown_code(client: TestClient):
+    resp = client.post("/api/miniapp/auth/login-code", json={"code": "ZZZZZZZZ"})
+    assert resp.status_code == 401
+    assert "session_token" not in resp.text
+    assert "set-cookie" not in resp.headers
 
 
 def test_public_auth_config_responds(client: TestClient):
