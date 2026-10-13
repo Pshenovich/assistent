@@ -2628,6 +2628,10 @@ class _MiniappNoteSheetPatch(BaseModel):
     expected_revision: Optional[int] = None
 
 
+class _MiniappCanvasImageBody(BaseModel):
+    prompt: str = ""
+
+
 class _MiniappCanvasSelection(BaseModel):
     sheet_id: Optional[str] = None
     leo_id: Optional[str] = None
@@ -2970,6 +2974,57 @@ def _comment_file_api(row: dict[str, Any]) -> dict[str, Any]:
         "kind": str(row.get("kind") or "file"),
         "url": f"/notes/{kind}/{item_id}/discuss-files/{fid}",
     }
+
+
+def _materialize_canvas_sheet_images(
+    *,
+    note: dict[str, Any],
+    sheet: dict[str, Any],
+    chat_images: list[Any],
+    note_sheets_mod: Any,
+) -> dict[str, Any]:
+    """Embed generated images into pending/abstract media slots on a web sheet."""
+    from assistant.integrations.openrouter_client import openrouter_generate_images
+    from assistant.lib import web_canvas as web_canvas_lib
+
+    if not sheet or web_canvas_lib.normalize_kind(sheet.get("kind")) != web_canvas_lib.SHEET_KIND_WEB:
+        return sheet
+    html = str(sheet.get("body") or "")
+    if not html.strip():
+        return sheet
+    images: list[dict[str, str]] = [
+        img for img in (chat_images or []) if isinstance(img, dict) and str(img.get("b64") or "").strip()
+    ]
+    prompts = web_canvas_lib.extract_canvas_img_prompts(html)
+    if prompts and not images:
+        for prompt in prompts[:2]:
+            try:
+                generated = openrouter_generate_images(prompt, n=1, timeout=180)
+            except Exception as e:
+                print(f"[web_canvas] img_prompt_generate failed err={e!r}")
+                generated = []
+            for g in generated or []:
+                if isinstance(g, dict) and str(g.get("b64") or "").strip():
+                    images.append(g)
+            if len(images) >= 2:
+                break
+    data_urls = web_canvas_lib.image_dicts_to_data_urls(images)
+    if not data_urls:
+        return sheet
+    filled = web_canvas_lib.fill_media_slots_with_data_urls(html, data_urls)
+    if filled == html:
+        return sheet
+    try:
+        sid = int(sheet["id"])
+    except (TypeError, ValueError, KeyError):
+        return sheet
+    updated = note_sheets_mod.update_sheet(
+        int(note["id"]),
+        sid,
+        body=filled,
+        kind=web_canvas_lib.SHEET_KIND_WEB,
+    )
+    return updated or {**sheet, "body": filled, "description": filled}
 
 
 def _comment_api(row: dict[str, Any], *, viewer_uid: str | None = None) -> dict[str, Any]:
@@ -7034,6 +7089,16 @@ async def miniapp_gpt_chat(
                             print(f"[web_canvas] apply failed err={e!r}")
                             continue
                         if sheet:
+                            # Fill pending media slots from chat images / data-leo-img-prompt
+                            try:
+                                sheet = _materialize_canvas_sheet_images(
+                                    note=note,
+                                    sheet=sheet,
+                                    chat_images=out.get("images") or [],
+                                    note_sheets_mod=note_sheets_store,
+                                )
+                            except Exception as e:
+                                print(f"[web_canvas] media_fill failed err={e!r}")
                             applied.append(
                                 {
                                     "action": str(normalized.get("action") or "create"),
@@ -8201,8 +8266,9 @@ async def miniapp_note_sheet_create(
             return None
         kind = web_canvas_lib.normalize_kind(body.kind)
         sheet_body = body.description if body.description is not None else ""
-        if kind == web_canvas_lib.SHEET_KIND_WEB and sheet_body:
-            sheet_body = web_canvas_lib.finalize_canvas_html(sheet_body)
+        if kind == web_canvas_lib.SHEET_KIND_WEB:
+            # Empty body → default stub deck so the sheet opens as a canvas
+            sheet_body = web_canvas_lib.finalize_canvas_html(sheet_body or "")
         return note_sheets_store.create_sheet(
             note, body.title, body=sheet_body or "", kind=kind
         )
@@ -9047,6 +9113,50 @@ async def miniapp_discuss_file_upload(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return {"ok": True, "file": _comment_file_api(row)}
+
+
+@miniapp_router.post("/notes/local/{note_id}/canvas-image")
+async def miniapp_canvas_image_generate(
+    note_id: int,
+    body: _MiniappCanvasImageBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Generate one image for a web-canvas media slot (edit mode)."""
+    from assistant.integrations.openrouter_client import openrouter_generate_images
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    prompt = str(body.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Нужен prompt")
+    if len(prompt) > 2000:
+        prompt = prompt[:2000]
+
+    def _check() -> bool:
+        return bool(notes_store.get_accessible_note(uid, note_id))
+
+    ok = await run_in_threadpool(_check)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+
+    def _gen() -> list[dict[str, str]]:
+        return openrouter_generate_images(prompt, n=1, timeout=180)
+
+    try:
+        images = await run_in_threadpool(_gen)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e) or "Не удалось сгенерировать") from e
+    if not images:
+        raise HTTPException(status_code=502, detail="Модель не вернула изображение")
+    img = images[0] if isinstance(images[0], dict) else {}
+    b64 = str(img.get("b64") or "").strip()
+    mime = str(img.get("mime") or "image/png").split(";")[0].strip() or "image/png"
+    if not b64:
+        raise HTTPException(status_code=502, detail="Модель не вернула изображение")
+    # Cap payload size for iframe data-URL embed
+    if len(b64) > 1_800_000:
+        raise HTTPException(status_code=413, detail="Картинка слишком большая")
+    return {"ok": True, "data_url": f"data:{mime};base64,{b64}", "mime": mime}
 
 
 @miniapp_router.get("/notes/{kind}/{item_id}/discuss-files/{file_id}")

@@ -313,6 +313,39 @@ class WebSheetStoreTests(unittest.TestCase):
         self.assertIn("Do NOT include an html field", block)
         self.assertIn("SURGICAL PATCH MODE", block)
 
+    def test_extract_and_fill_media_slots(self) -> None:
+        html = (
+            '<div class="abstract abstract-orb" data-leo-id="hero-art" '
+            'data-leo-img="pending" data-leo-img-prompt="soft blue orb">x</div>'
+            '<div class="abstract abstract-wave" data-leo-id="other">y</div>'
+        )
+        prompts = wc.extract_canvas_img_prompts(html)
+        self.assertEqual(prompts, ["soft blue orb"])
+        urls = wc.image_dicts_to_data_urls(
+            [{"mime": "image/png", "b64": "AAAA"}]
+        )
+        self.assertEqual(urls, ["data:image/png;base64,AAAA"])
+        filled = wc.fill_media_slots_with_data_urls(html, urls)
+        self.assertIn('src="data:image/png;base64,AAAA"', filled)
+        self.assertIn('data-leo-id="hero-art"', filled)
+        self.assertNotIn("data-leo-img-prompt", filled)
+        self.assertNotIn('data-leo-img="pending"', filled)
+        # leftover abstract gets second url
+        filled2 = wc.fill_media_slots_with_data_urls(
+            html,
+            [
+                "data:image/png;base64,AAAA",
+                "data:image/png;base64,BBBB",
+            ],
+        )
+        self.assertIn("BBBB", filled2)
+        self.assertIn('data-leo-id="other"', filled2)
+
+    def test_prompt_mentions_media_slots(self) -> None:
+        addon = wc.canvas_system_addon()
+        self.assertIn("media-slot", addon)
+        self.assertIn("data-leo-img-prompt", addon)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17114,6 +17114,12 @@
       onRefresh: function () {
         return refreshWebCanvasSheet(String(sheet.id), "left");
       },
+      onChange: function (html) {
+        onWebCanvasHtmlChange(String(sheet.id), html);
+      },
+      onMedia: function (req) {
+        handleWebCanvasMedia(String(sheet.id), req);
+      },
     });
   }
 
@@ -17134,8 +17140,122 @@
       onRefresh: function () {
         return refreshWebCanvasSheet(String(sheet.id), "right");
       },
+      onChange: function (html) {
+        onWebCanvasHtmlChange(String(sheet.id), html);
+      },
+      onMedia: function (req) {
+        handleWebCanvasMedia(String(sheet.id), req);
+      },
     });
     noteSheetState.rightEditor = null;
+  }
+
+  function onWebCanvasHtmlChange(sheetId, html) {
+    var sid = String(sheetId || "");
+    var sheet = findNoteSheet(sid);
+    if (!sheet || !isWebSheet(sheet)) return;
+    sheet.body = String(html || "");
+    sheet.description = sheet.body;
+    upsertNoteSheet(sheet);
+    if (!isPrimarySheetId(sid)) scheduleExtraSheetPersist(sid);
+  }
+
+  function fileToDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        resolve(String(reader.result || ""));
+      };
+      reader.onerror = function () {
+        reject(new Error("Не удалось прочитать файл"));
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function pickLocalImageFile() {
+    return new Promise(function (resolve) {
+      var input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      input.style.display = "none";
+      document.body.appendChild(input);
+      input.addEventListener("change", function () {
+        var file = input.files && input.files[0];
+        if (input.parentNode) input.parentNode.removeChild(input);
+        resolve(file || null);
+      });
+      input.click();
+    });
+  }
+
+  async function uploadCanvasImageFile(file) {
+    var noteId = noteSheetsNoteId();
+    if (!noteId || !file) throw new Error("Нет заметки или файла");
+    var fd = new FormData();
+    fd.append("file", file, file.name || "image.png");
+    var res = await apiFetch(
+      "/notes/local/" + encodeURIComponent(String(noteId)) + "/discuss-files",
+      { method: "POST", body: fd }
+    );
+    var row = res && res.file;
+    if (!row || !row.id) throw new Error("Не удалось загрузить изображение");
+    // iframe cannot auth-fetch; embed as data URL for reliable display
+    var dataUrl = await fileToDataUrl(file);
+    if (dataUrl.length > 2500000) {
+      throw new Error("Картинка слишком большая — сожмите файл");
+    }
+    return dataUrl;
+  }
+
+  async function generateCanvasImageDataUrl(prompt) {
+    var noteId = noteSheetsNoteId();
+    var text = String(prompt || "").trim();
+    if (!noteId) throw new Error("Нет заметки");
+    if (!text) throw new Error("Введите описание картинки");
+    var res = await apiFetch(
+      "/notes/local/" + encodeURIComponent(String(noteId)) + "/canvas-image",
+      {
+        method: "POST",
+        body: JSON.stringify({ prompt: text }),
+      }
+    );
+    var dataUrl = String((res && res.data_url) || "").trim();
+    if (!dataUrl) throw new Error("Модель не вернула изображение");
+    return dataUrl;
+  }
+
+  async function handleWebCanvasMedia(sheetId, req) {
+    if (!req) return;
+    var action = String(req.action || "");
+    try {
+      if (action === "clear") {
+        if (req.clearMedia) req.clearMedia();
+        showNoteToast("Картинка убрана");
+        return;
+      }
+      if (action === "upload") {
+        var file = await pickLocalImageFile();
+        if (!file) return;
+        showNoteToast("Загружаю…");
+        var uploaded = await uploadCanvasImageFile(file);
+        if (req.applyImg) req.applyImg(uploaded);
+        showNoteToast("Картинка вставлена");
+        return;
+      }
+      if (action === "generate") {
+        var prompt = window.prompt("Опишите картинку для слайда", "abstract geometric composition, soft ice blue and black, minimal");
+        if (prompt == null) return;
+        showNoteToast("Генерирую…");
+        var generated = await generateCanvasImageDataUrl(prompt);
+        if (req.applyImg) req.applyImg(generated);
+        showNoteToast("Картинка сгенерирована");
+        return;
+      }
+    } catch (e) {
+      console.warn("handleWebCanvasMedia", e);
+      showNoteToast((e && e.message) || "Не удалось обновить картинку");
+    }
   }
 
   async function refreshWebCanvasSheet(sheetId, which) {
@@ -18845,7 +18965,11 @@
     if (noteSheetsEnabled()) {
       addItem("Новый лист", function () {
         closeNoteMoreMenu();
-        createNoteSheet({ openOn: "left" });
+        createNoteSheet({ openOn: "left", kind: "doc" });
+      });
+      addItem("Новый канвас", function () {
+        closeNoteMoreMenu();
+        createNoteSheet({ openOn: "left", kind: "web" });
       });
     }
 
@@ -21768,7 +21892,11 @@
     if (noteSheetsEnabled()) {
       addItem("+ Новый лист", false, function () {
         closeNotePaneSwitchMenu();
-        createNoteSheet({ openOn: "right" });
+        createNoteSheet({ openOn: "right", kind: "doc" });
+      });
+      addItem("+ Новый канвас", false, function () {
+        closeNotePaneSwitchMenu();
+        createNoteSheet({ openOn: "right", kind: "web" });
       });
     }
     if (noteSheetState.rightMode === "note" && noteSheetState.rightNote) {
@@ -22418,10 +22546,13 @@
       var quiet = document.createElement("button");
       quiet.type = "button";
       quiet.className = "note-sheet-chip note-sheet-chip--add";
-      quiet.textContent = "＋ лист";
+      quiet.textContent = "＋";
+      quiet.setAttribute("aria-label", "Новый лист или канвас");
+      quiet.setAttribute("aria-haspopup", "menu");
       quiet.addEventListener("click", function (e) {
         e.preventDefault();
-        createNoteSheet({ openOn: "left" });
+        e.stopPropagation();
+        openNewSheetKindMenu(quiet, { openOn: "left" });
       });
       host.appendChild(quiet);
       host.classList.remove("hidden");
@@ -22452,10 +22583,12 @@
     add.type = "button";
     add.className = "note-sheet-chip note-sheet-chip--add";
     add.textContent = "+";
-    add.setAttribute("aria-label", "Новый лист");
+    add.setAttribute("aria-label", "Новый лист или канвас");
+    add.setAttribute("aria-haspopup", "menu");
     add.addEventListener("click", function (e) {
       e.preventDefault();
-      createNoteSheet({ openOn: "left" });
+      e.stopPropagation();
+      openNewSheetKindMenu(add, { openOn: "left" });
     });
     host.appendChild(add);
   }
@@ -22738,6 +22871,88 @@
     return noteSheetsNoteId();
   }
 
+  function closeNewSheetKindMenu() {
+    var menu = document.getElementById("note-sheet-kind-menu");
+    if (menu && menu.parentNode) menu.parentNode.removeChild(menu);
+    document.removeEventListener("click", onNewSheetKindMenuDocClick, true);
+    document.removeEventListener("keydown", onNewSheetKindMenuKey, true);
+  }
+
+  function onNewSheetKindMenuDocClick(e) {
+    var menu = document.getElementById("note-sheet-kind-menu");
+    if (!menu) return;
+    if (e.target && menu.contains(e.target)) return;
+    if (e.target && e.target.closest && e.target.closest(".note-sheet-chip--add")) return;
+    closeNewSheetKindMenu();
+  }
+
+  function onNewSheetKindMenuKey(e) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeNewSheetKindMenu();
+    }
+  }
+
+  function openNewSheetKindMenu(anchor, opts) {
+    opts = opts || {};
+    var existing = document.getElementById("note-sheet-kind-menu");
+    if (existing) {
+      closeNewSheetKindMenu();
+      return;
+    }
+    var menu = document.createElement("div");
+    menu.id = "note-sheet-kind-menu";
+    menu.className = "note-sheet-kind-menu";
+    menu.setAttribute("role", "menu");
+
+    function addItem(label, hint, kind) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "note-sheet-kind-menu-item";
+      btn.setAttribute("role", "menuitem");
+      var titleEl = document.createElement("span");
+      titleEl.className = "note-sheet-kind-menu-title";
+      titleEl.textContent = label;
+      var hintEl = document.createElement("span");
+      hintEl.className = "note-sheet-kind-menu-hint";
+      hintEl.textContent = hint;
+      btn.appendChild(titleEl);
+      btn.appendChild(hintEl);
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeNewSheetKindMenu();
+        createNoteSheet({ openOn: opts.openOn || "left", kind: kind });
+      });
+      menu.appendChild(btn);
+    }
+
+    addItem("Лист", "Текст и правки", "doc");
+    addItem("Канвас", "Презентация / полотно", "web");
+    // Append into the note editor overlay so we stay above its stacking context
+    var host =
+      (anchor && anchor.closest && anchor.closest("#note-editor-overlay")) ||
+      document.getElementById("note-editor-overlay") ||
+      document.body;
+    host.appendChild(menu);
+
+    var rect = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
+    var mw = menu.offsetWidth || 180;
+    var left = rect ? rect.left : 16;
+    var top = rect ? rect.bottom + 6 : 16;
+    if (left + mw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - mw - 8);
+    if (top + menu.offsetHeight > window.innerHeight - 8) {
+      top = rect ? Math.max(8, rect.top - menu.offsetHeight - 6) : 16;
+    }
+    menu.style.left = Math.round(left) + "px";
+    menu.style.top = Math.round(top) + "px";
+
+    setTimeout(function () {
+      document.addEventListener("click", onNewSheetKindMenuDocClick, true);
+      document.addEventListener("keydown", onNewSheetKindMenuKey, true);
+    }, 0);
+  }
+
   async function createNoteSheet(opts) {
     opts = opts || {};
     var noteId = await ensureNoteIdForSheets();
@@ -22745,15 +22960,21 @@
       showNoteToast("Сначала сохраните заметку");
       return;
     }
-    var title = opts.title || "";
+    var kind = String(opts.kind || "doc").toLowerCase() === "web" ? "web" : "doc";
+    var title =
+      opts.title ||
+      (kind === "web"
+        ? "Канвас"
+        : "Лист " + (extraNoteSheets().length + 2));
     if (isAppOffline() || String(noteId).indexOf("tmp_") === 0) {
       var tmpId = newTempId("tmp_sheet_");
       var local = {
         id: tmpId,
         note_id: noteId,
-        title: title || "Лист " + (extraNoteSheets().length + 2),
+        title: title,
         body: "",
         description: "",
+        kind: kind,
         revision: 1,
         is_primary: false,
       };
@@ -22764,7 +22985,7 @@
         noteId: String(noteId),
         path: "/notes/local/" + encodeURIComponent(String(noteId)) + "/sheets",
         method: "POST",
-        body: { title: local.title },
+        body: { title: local.title, kind: kind },
       });
       renderNoteSheetChips();
       if (opts.openOn === "right") setRightPaneMode("sheet", tmpId);
@@ -22775,7 +22996,7 @@
     try {
       var res = await apiFetch(
         "/notes/local/" + encodeURIComponent(String(noteId)) + "/sheets",
-        { method: "POST", body: JSON.stringify({ title: title }) }
+        { method: "POST", body: JSON.stringify({ title: title, kind: kind }) }
       );
       var item = res && res.item;
       if (!item) return;

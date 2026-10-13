@@ -8086,10 +8086,51 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 .note-web-canvas-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   flex-shrink: 0;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
+}
+
+.note-web-canvas-insert-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border);
+}
+
+.note-web-canvas-insert-bar[hidden] {
+  display: none !important;
+}
+
+.note-web-canvas-insert-btn {
+  font-size: 12px !important;
+  padding: 4px 10px !important;
+}
+
+.note-web-canvas-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0 !important;
+  line-height: 0;
+}
+
+.note-web-canvas-icon-btn svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.note-web-canvas-del-btn {
+  margin-left: auto;
+  color: var(--danger, #c44) !important;
+  border-color: rgba(196, 68, 68, 0.35) !important;
 }
 
 .note-web-canvas-pick-btn {
@@ -8108,6 +8149,11 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   border-color: var(--accent);
   color: var(--accent);
   background: var(--accent-muted, rgba(82, 158, 244, 0.16));
+}
+
+.note-web-canvas.is-editing .note-web-canvas-edit-btn.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .note-web-canvas-frame {
@@ -8137,7 +8183,13 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 
 /* Fill the note editor viewport when a web-canvas sheet is open */
 #note-editor-overlay.is-web-canvas-open .note-editor-modal-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
   overflow: hidden;
+  padding-bottom: 0;
 }
 
 #note-editor-overlay.is-web-canvas-open .note-editor-modal-content {
@@ -8145,22 +8197,42 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
+  height: 100%;
   overflow: hidden;
   padding-bottom: 0;
 }
 
-#note-editor-overlay.is-web-canvas-open .note-editor-modal-content .note-editor-page {
+#note-editor-overlay.is-web-canvas-open .note-editor-modal-content .note-editor-page,
+#note-editor-overlay.is-web-canvas-open .note-editor-doc-layout,
+#note-editor-overlay.is-web-canvas-open .note-editor-main-column {
+  display: flex;
   flex: 1 1 auto;
   min-height: 0;
+  height: 100%;
   overflow: hidden;
 }
 
+#note-editor-overlay.is-web-canvas-open .note-editor-modal-content .note-editor-page,
+#note-editor-overlay.is-web-canvas-open .note-editor-main-column {
+  flex-direction: column;
+}
+
 #note-editor-overlay.is-web-canvas-open .note-editor-pad--body.is-web-canvas-mode {
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
   padding-bottom: 0;
   overflow: hidden;
+}
+
+#note-editor-overlay.is-web-canvas-open .note-editor-pad--body.is-web-canvas-mode > .note-web-canvas-host,
+#note-editor-overlay.is-web-canvas-open .note-web-canvas,
+#note-editor-overlay.is-web-canvas-open .note-web-canvas-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
 }
 
 #note-editor-overlay.is-web-canvas-open .note-editor-pad--title-in-body {
@@ -8242,6 +8314,47 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 .note-sheet-chip--add {
   color: var(--text-secondary, #909499);
   border-style: dashed;
+}
+
+.note-sheet-kind-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 11.5rem;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.2));
+}
+
+.note-sheet-kind-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: none;
+  border-radius: var(--radius-sm, 8px);
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+}
+
+.note-sheet-kind-menu-item:hover {
+  background: var(--accent-subtle, rgba(158, 173, 219, 0.16));
+}
+
+.note-sheet-kind-menu-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.note-sheet-kind-menu-hint {
+  font-size: 0.75rem;
+  color: var(--text-secondary, #909499);
 }
 
 .note-sheet-chip--make-summary {
@@ -11677,6 +11790,33 @@ html.modal-sheet-open body {
   #note-editor-overlay .note-rich-editor-body {
     flex: 0 0 auto;
     min-height: 0;
+  }
+
+  /* Web-canvas must still fill the note pane on narrow viewports */
+  #note-editor-overlay.is-web-canvas-open .note-editor-modal-body,
+  #note-editor-overlay.is-web-canvas-open .note-editor-modal-content,
+  #note-editor-overlay.is-web-canvas-open .note-editor-modal-content .note-editor-page,
+  #note-editor-overlay.is-web-canvas-open .note-editor-doc-layout,
+  #note-editor-overlay.is-web-canvas-open .note-editor-main-column,
+  #note-editor-overlay.is-web-canvas-open .note-editor-pad--body.is-web-canvas-mode {
+    display: flex !important;
+    flex: 1 1 auto !important;
+    flex-direction: column !important;
+    min-height: 0 !important;
+    height: 100% !important;
+    overflow: hidden !important;
+  }
+
+  #note-editor-overlay.is-web-canvas-open .note-editor-modal-body {
+    padding-bottom: 0 !important;
+  }
+
+  #note-editor-overlay.is-web-canvas-open .note-editor-pad--body.is-web-canvas-mode > .note-web-canvas-host,
+  #note-editor-overlay.is-web-canvas-open .note-web-canvas,
+  #note-editor-overlay.is-web-canvas-open .note-web-canvas-frame {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: 100% !important;
   }
 
   #note-editor-overlay.note-editor-overlay--fullscreen .note-editor-toolbar-wrap:not(.hidden),

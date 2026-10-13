@@ -46,8 +46,122 @@ _PURPLE_GRAD_RE = re.compile(
     re.IGNORECASE,
 )
 _DATA_LEO_ID_RE = re.compile(r"""data-leo-id\s*=\s*['"]([^'"]+)['"]""", re.IGNORECASE)
+_DATA_LEO_IMG_PROMPT_RE = re.compile(
+    r"""data-leo-img-prompt\s*=\s*['"]([^'"]+)['"]""",
+    re.IGNORECASE,
+)
+_PENDING_MEDIA_SLOT_RE = re.compile(
+    r"""<(div|figure|span)(\s[^>]*?\b(?:data-leo-img-prompt\s*=\s*['"][^'"]+['"]|data-leo-img\s*=\s*['"]pending['"])[^>]*)>(.*?)</\1>""",
+    re.IGNORECASE | re.DOTALL,
+)
+_ABSTRACT_SLOT_RE = re.compile(
+    r"""<(div|figure)(\s[^>]*?\babstract\b[^>]*)>(.*?)</\1>""",
+    re.IGNORECASE | re.DOTALL,
+)
 
 _KIT_CSS_CACHE: str | None = None
+
+
+def image_dicts_to_data_urls(images: list[dict[str, str]] | None) -> list[str]:
+    """Convert openrouter image dicts ({mime,b64}) to data URLs."""
+    out: list[str] = []
+    for img in images or []:
+        if not isinstance(img, dict):
+            continue
+        b64 = str(img.get("b64") or "").strip()
+        mime = str(img.get("mime") or "image/png").split(";")[0].strip() or "image/png"
+        if not b64 or len(b64) > 1_800_000:
+            continue
+        out.append(f"data:{mime};base64,{b64}")
+    return out
+
+
+def extract_canvas_img_prompts(html: str) -> list[str]:
+    """data-leo-img-prompt values in document order."""
+    prompts: list[str] = []
+    for m in _DATA_LEO_IMG_PROMPT_RE.finditer(html or ""):
+        p = str(m.group(1) or "").strip()
+        if p:
+            prompts.append(p[:2000])
+    return prompts
+
+
+def _leo_id_from_attrs(attrs: str, fallback: str) -> str:
+    m = _DATA_LEO_ID_RE.search(attrs or "")
+    return str(m.group(1)).strip() if m else fallback
+
+
+def _strip_media_pending_attrs(attrs: str) -> str:
+    cleaned = re.sub(
+        r"""\s*data-leo-img-prompt\s*=\s*['"][^'"]*['"]""",
+        "",
+        attrs or "",
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"""\s*data-leo-img\s*=\s*['"][^'"]*['"]""",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if re.search(r"""\bclass\s*=\s*['"][^'"]*\bmedia-slot\b""", cleaned, re.I):
+        return cleaned
+    if re.search(r"""\bclass\s*=\s*['"]""", cleaned, re.I):
+        return re.sub(
+            r"""\bclass\s*=\s*(['"])""",
+            r"class=\1media-slot ",
+            cleaned,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    return f'{cleaned} class="media-slot"'
+
+
+def fill_media_slots_with_data_urls(html: str, data_urls: list[str]) -> str:
+    """Replace pending media slots (and then bare abstract slots) with embedded images."""
+    if not html or not data_urls:
+        return html or ""
+    urls = [u for u in data_urls if str(u).startswith("data:")]
+    if not urls:
+        return html
+    idx = 0
+
+    def _wrap(tag: str, attrs: str, url: str, n: int) -> str:
+        leo = _leo_id_from_attrs(attrs, f"media-{n}")
+        clean_attrs = _strip_media_pending_attrs(attrs)
+        # Keep leo-id on the wrapper; img is decorative fill
+        if not _DATA_LEO_ID_RE.search(clean_attrs):
+            clean_attrs = f'{clean_attrs} data-leo-id="{leo}"'
+        return (
+            f"<{tag}{clean_attrs}>"
+            f'<img class="media-img" alt="" src="{url}"/>'
+            f"</{tag}>"
+        )
+
+    def repl_pending(m: re.Match[str]) -> str:
+        nonlocal idx
+        if idx >= len(urls):
+            return m.group(0)
+        url = urls[idx]
+        idx += 1
+        return _wrap(m.group(1), m.group(2), url, idx)
+
+    out = _PENDING_MEDIA_SLOT_RE.sub(repl_pending, html)
+
+    def repl_abstract(m: re.Match[str]) -> str:
+        nonlocal idx
+        if idx >= len(urls):
+            return m.group(0)
+        inner = m.group(3) or ""
+        if re.search(r"<img\b", inner, re.I):
+            return m.group(0)
+        url = urls[idx]
+        idx += 1
+        return _wrap(m.group(1), m.group(2), url, idx)
+
+    if idx < len(urls):
+        out = _ABSTRACT_SLOT_RE.sub(repl_abstract, out)
+    return out
 
 
 def normalize_kind(raw: Any) -> str:
@@ -123,13 +237,16 @@ JSON rules:
 
 ## Design system (bento) — DO NOT invent layouts
 Fill ONLY the named templates below. Copy the HTML structure exactly; replace Russian/placeholder text and numbers from the note. Do not invent new grids, colors, fonts, or card systems.
-Allowed classes: .deck .slide .slide-ink .slide-ice .slide-head .split-pane .pane-copy .pane-stage .stack .tile .tile-ink .tile-mute .tile-white .tile-num .metric-xl .pill .pill-outline .pill-ink .pill-ice .icon-circle .cards-3 .cards-4 .bento-shell .bento-2x2 .vbars .vbar .vbar-fill .vbar-val .vbar-label .year-rail .donut .legend .hbar-row .hbar-track .hbar-fill .title .display .body .lead .caption .spark .chart-svg .abstract .abstract-orb .abstract-grid .abstract-wave .abstract-arcs
+Allowed classes: .deck .slide .slide-ink .slide-ice .slide-head .split-pane .pane-copy .pane-stage .stack .tile .tile-ink .tile-mute .tile-white .tile-num .metric-xl .pill .pill-outline .pill-ink .pill-ice .icon-circle .cards-3 .cards-4 .bento-shell .bento-2x2 .vbars .vbar .vbar-fill .vbar-val .vbar-label .year-rail .donut .legend .hbar-row .hbar-track .hbar-fill .title .display .body .lead .caption .spark .chart-svg .abstract .abstract-orb .abstract-grid .abstract-wave .abstract-arcs .media-slot .media-img
 Colors come from the theme (ink / ice / white). No purple, no Inter, no landing CTAs on slide 1.
 No «Узнать подробнее» / demo / buy buttons on the cover.
 Mark filled nodes with unique data-leo-id. No <script>. No ``` inside html strings.
 
 Visuals policy (important):
-- Decorative / abstract / «картинка» / mood / cover art → use .abstract (+ .abstract-orb / .abstract-grid / .abstract-wave / .abstract-arcs). NEVER put charts there.
+- Decorative / abstract / mood / cover art (no real photo) → use .abstract (+ .abstract-orb / .abstract-grid / .abstract-wave / .abstract-arcs). NEVER put charts there.
+- Real photo / illustration / «сгенерируй картинку» / brand image → media slot with CSS fallback:
+  <div class="media-slot abstract abstract-orb" data-leo-id="hero-art" data-leo-img="pending" data-leo-img-prompt="short English visual prompt" aria-hidden="true"></div>
+  Do NOT invent <img src="http...">. Do NOT put base64 in html. Leo fills the slot after generation.
 - Charts (.donut .vbars .spark .chart-svg .hbar-*) ONLY when the slide is explicitly about numbers from the note (revenue, share, growth). If unsure → abstract, not a chart.
 - Do not invent fake scary charts with unclear axes.
 
@@ -144,7 +261,7 @@ def bento_slide_templates_prompt() -> str:
     """Compact HTML skeletons for the model to copy and fill."""
     return r"""
 ### T1 cover-split (first slide — no button; abstract art, not a chart)
-<section class="slide slide-ink" data-leo-id="slide-cover"><div class="split-pane"><div class="pane-copy"><h1 class="title" data-leo-id="hero-title">Заголовок</h1><p class="pill pill-outline" data-leo-id="hero-pill">контекст</p><p class="body" data-leo-id="hero-body">Одна мысль.</p></div><div class="pane-stage" data-leo-id="hero-stage"><div class="abstract abstract-orb" data-leo-id="hero-art" aria-hidden="true"></div></div></div></section>
+<section class="slide slide-ink" data-leo-id="slide-cover"><div class="split-pane"><div class="pane-copy"><h1 class="title" data-leo-id="hero-title">Заголовок</h1><p class="pill pill-outline" data-leo-id="hero-pill">контекст</p><p class="body" data-leo-id="hero-body">Одна мысль.</p></div><div class="pane-stage" data-leo-id="hero-stage"><div class="media-slot abstract abstract-orb" data-leo-id="hero-art" aria-hidden="true"></div></div></div></section>
 
 ### T2 problem-3cards
 <section class="slide" data-leo-id="slide-problem"><div class="slide-head"><h2 class="title" data-leo-id="problem-title">Проблема</h2><span class="icon-circle" aria-hidden="true">↓</span></div><div class="cards-3"><div class="tile" data-leo-id="p1"><p class="tile-num">01.</p><p class="body">…</p></div><div class="tile tile-ink" data-leo-id="p2"><p class="tile-num">02.</p><p class="body">…</p></div><div class="tile" data-leo-id="p3"><p class="tile-num">03.</p><p class="body">…</p></div></div></section>
@@ -167,8 +284,8 @@ def bento_slide_templates_prompt() -> str:
 ### T8 quote-ice
 <section class="slide slide-ice" data-leo-id="slide-quote"><div class="tile tile-white" style="flex:1;justify-content:center;min-height:60vh"><p class="pill pill-ink">2026</p><p class="display" data-leo-id="quote-text" style="max-width:18ch">Короткая сильная фраза.</p></div></section>
 
-### T9 abstract-stage (when user asks for abstract image / mood visual)
-<section class="slide" data-leo-id="slide-art"><div class="split-pane"><div class="pane-copy"><h2 class="title" data-leo-id="art-title">Визуал</h2><p class="body" data-leo-id="art-body">…</p></div><div class="pane-stage"><div class="abstract abstract-wave" data-leo-id="art-abstract" aria-hidden="true"></div></div></div></section>
+### T9 abstract-stage (mood / CSS abstract — or pending real image)
+<section class="slide" data-leo-id="slide-art"><div class="split-pane"><div class="pane-copy"><h2 class="title" data-leo-id="art-title">Визуал</h2><p class="body" data-leo-id="art-body">…</p></div><div class="pane-stage"><div class="media-slot abstract abstract-wave" data-leo-id="art-abstract" aria-hidden="true"></div></div></div></section>
 """.strip()
 
 
