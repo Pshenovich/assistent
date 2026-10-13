@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261012-week-card-2line";
+  var WEBAPP_BUILD = "20261013-ref-plus-chats";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261012-note-ref-plus";
+  const NOTE_EDITOR_ASSET_V = "20261013-ref-plus-chats";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -5361,6 +5361,7 @@
     if (o && Number(o.timeout) > 0) return Number(o.timeout);
     var p = String(path || "");
     if (p.indexOf("/gpt/chat") >= 0) return 180000;
+    if (p.indexOf("/canvas-image") >= 0) return 240000;
     if (p.indexOf("/voice/transcribe") >= 0) return 300000;
     if (p.indexOf("/notes/transcriptions/upload") >= 0) return 900000;
     if (p.indexOf("/calendar/today") >= 0) return 20000;
@@ -9719,6 +9720,8 @@
   var meetingRemindersSaveInFlight = false;
   var taskRemindersEnabled = true;
   var taskRemindersSaveInFlight = false;
+  var discussionNotificationsEnabled = true;
+  var discussionNotificationsSaveInFlight = false;
   var zoomAutoRecordEnabled = false;
   var zoomAutoRecordSaveInFlight = false;
   var zoomAutoRecordAvailable = false;
@@ -9871,6 +9874,57 @@
       var next = !taskRemindersEnabled;
       applyTaskRemindersToggleUi(next);
       saveTaskRemindersEnabled(next);
+    });
+  }
+
+  function applyDiscussionNotificationsToggleUi(enabled) {
+    var row = document.getElementById("discussion-notifications-setting");
+    var toggle = document.getElementById("discussion-notifications-toggle");
+    if (!row || !toggle) return;
+    discussionNotificationsEnabled = !!enabled;
+    setHidden(row, false);
+    toggle.classList.toggle("svc-toggle--on", discussionNotificationsEnabled);
+    toggle.classList.toggle("svc-toggle--pending", discussionNotificationsSaveInFlight);
+    toggle.setAttribute("aria-pressed", discussionNotificationsEnabled ? "true" : "false");
+  }
+
+  async function saveDiscussionNotificationsEnabled(enabled) {
+    var errEl = document.getElementById("discussion-notifications-setting-err");
+    var toggle = document.getElementById("discussion-notifications-toggle");
+    discussionNotificationsSaveInFlight = true;
+    if (toggle) toggle.classList.add("svc-toggle--pending");
+    try {
+      var data = await apiFetch("/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ discussion_notifications_enabled: !!enabled }),
+      });
+      applyDiscussionNotificationsToggleUi(
+        !!(data && data.discussion_notifications_enabled)
+      );
+      if (errEl) setHidden(errEl, true);
+    } catch (e) {
+      applyDiscussionNotificationsToggleUi(!enabled);
+      if (errEl) {
+        errEl.textContent = e.message || String(e);
+        setHidden(errEl, false);
+      }
+    } finally {
+      discussionNotificationsSaveInFlight = false;
+      if (toggle) toggle.classList.remove("svc-toggle--pending");
+    }
+  }
+
+  function initDiscussionNotificationsToggle() {
+    var toggle = document.getElementById("discussion-notifications-toggle");
+    if (!toggle || toggle.getAttribute("data-bound") === "1") return;
+    toggle.setAttribute("data-bound", "1");
+    toggle.addEventListener("click", function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (discussionNotificationsSaveInFlight) return;
+      var next = !discussionNotificationsEnabled;
+      applyDiscussionNotificationsToggleUi(next);
+      saveDiscussionNotificationsEnabled(next);
     });
   }
 
@@ -10112,6 +10166,7 @@
     if (!list) return;
     initMeetingRemindersToggle();
     initTaskRemindersToggle();
+    initDiscussionNotificationsToggle();
     await ensureCalendarsSaved();
     setHidden(err, true);
     list.innerHTML = "<p class=\"muted small\">Загрузка…</p>";
@@ -10134,6 +10189,9 @@
       }
       applyMeetingRemindersToggleUi(settings.meeting_reminders_enabled !== false);
       applyTaskRemindersToggleUi(settings.task_reminders_enabled !== false);
+      applyDiscussionNotificationsToggleUi(
+        settings.discussion_notifications_enabled !== false
+      );
       calendarsCache = data.calendars || [];
       paintCalendarsList();
     } catch (e) {
@@ -17218,6 +17276,7 @@
       {
         method: "POST",
         body: JSON.stringify({ prompt: text }),
+        timeout: 240000,
       }
     );
     var dataUrl = String((res && res.data_url) || "").trim();
@@ -17228,6 +17287,7 @@
   async function handleWebCanvasMedia(sheetId, req) {
     if (!req) return;
     var action = String(req.action || "");
+    var setBusy = typeof req.setBusy === "function" ? req.setBusy : null;
     try {
       if (action === "clear") {
         if (req.clearMedia) req.clearMedia();
@@ -17237,22 +17297,36 @@
       if (action === "upload") {
         var file = await pickLocalImageFile();
         if (!file) return;
+        if (setBusy) setBusy(true, "Загрузка…");
         showNoteToast("Загружаю…");
-        var uploaded = await uploadCanvasImageFile(file);
-        if (req.applyImg) req.applyImg(uploaded);
-        showNoteToast("Картинка вставлена");
+        try {
+          var uploaded = await uploadCanvasImageFile(file);
+          if (req.applyImg) req.applyImg(uploaded);
+          showNoteToast("Картинка вставлена");
+        } finally {
+          if (setBusy) setBusy(false);
+        }
         return;
       }
       if (action === "generate") {
-        var prompt = window.prompt("Опишите картинку для слайда", "abstract geometric composition, soft ice blue and black, minimal");
+        var prompt = window.prompt(
+          "Опишите картинку для слайда",
+          "abstract geometric composition, soft ice blue and black, minimal"
+        );
         if (prompt == null) return;
+        if (setBusy) setBusy(true, "Генерация…");
         showNoteToast("Генерирую…");
-        var generated = await generateCanvasImageDataUrl(prompt);
-        if (req.applyImg) req.applyImg(generated);
-        showNoteToast("Картинка сгенерирована");
+        try {
+          var generated = await generateCanvasImageDataUrl(prompt);
+          if (req.applyImg) req.applyImg(generated);
+          showNoteToast("Картинка сгенерирована");
+        } finally {
+          if (setBusy) setBusy(false);
+        }
         return;
       }
     } catch (e) {
+      if (setBusy) setBusy(false);
       console.warn("handleWebCanvasMedia", e);
       showNoteToast((e && e.message) || "Не удалось обновить картинку");
     }
@@ -17353,8 +17427,11 @@
     var seen = {};
 
     function pushItem(item) {
-      if (!item || !item.noteId) return;
-      var key = String(item.noteId) + "::" + String(item.sheetId || "");
+      if (!item) return;
+      var key = item.chatId
+        ? "chat::" + String(item.chatId)
+        : String(item.noteId || "") + "::" + String(item.sheetId || "");
+      if (!item.chatId && !item.noteId) return;
       if (seen[key]) return;
       seen[key] = true;
       items.push(item);
@@ -17379,6 +17456,7 @@
       var id = String((n && n.id) || "");
       if (!id || id === currentId) return;
       if (String(id).indexOf("tmp_") === 0) return;
+      if (looksLikeTranscriptionNote(n)) return;
       var title = noteRefDisplayTitle(n);
       if (q && title.toLowerCase().indexOf(q) < 0) return;
       pushItem({
@@ -17387,6 +17465,38 @@
         sheetId: "",
         label: title,
         hint: "Заметка",
+      });
+    });
+
+    var transcriptions = (notesDataCache && notesDataCache.transcriptions) || [];
+    transcriptions.forEach(function (n) {
+      var id = String((n && n.id) || "");
+      if (!id || id === currentId) return;
+      if (String(id).indexOf("tmp_") === 0) return;
+      var title = noteRefDisplayTitle(n);
+      if (q && title.toLowerCase().indexOf(q) < 0) return;
+      var isSummary = transcriptionHasSummary(n);
+      pushItem({
+        kind: isSummary ? "summary" : "transcription",
+        noteId: id,
+        sheetId: "",
+        label: title,
+        hint: isSummary ? "Саммари" : "Транскрипция",
+      });
+    });
+
+    visibleChatThreads().forEach(function (t) {
+      var id = String((t && t.id) || "");
+      if (!id) return;
+      var title = String((t && t.title) || "").trim() || "Чат";
+      if (q && title.toLowerCase().indexOf(q) < 0) return;
+      pushItem({
+        kind: "chat",
+        chatId: id,
+        noteId: "",
+        sheetId: "",
+        label: title,
+        hint: "Чат",
       });
     });
 
@@ -17411,6 +17521,7 @@
         .filter(function (n) {
           var id = String((n && n.id) || "");
           if (!id || id === currentId || String(id).indexOf("tmp_") === 0) return false;
+          if (looksLikeTranscriptionNote(n)) return false;
           return noteRefDisplayTitle(n).toLowerCase().indexOf(q) >= 0;
         })
         .slice(0, 3);
@@ -17435,8 +17546,11 @@
         var seen = {};
         var merged = [];
         function push(item) {
-          if (!item || !item.noteId) return;
-          var key = String(item.noteId) + "::" + String(item.sheetId || "");
+          if (!item) return;
+          var key = item.chatId
+            ? "chat::" + String(item.chatId)
+            : String(item.noteId || "") + "::" + String(item.sheetId || "");
+          if (!item.chatId && !item.noteId) return;
           if (seen[key]) return;
           seen[key] = true;
           merged.push(item);
@@ -17466,27 +17580,54 @@
       });
     }
     function run() {
+      if (notesDataCache) splitTranscriptionsOutOfLocalNotes(notesDataCache);
       var base = buildNoteRefSuggestItems(query);
       finish(base);
       enrichWithForeignSheets(base);
     }
-    if (notesDataCache && notesDataCache.local_notes) {
+    var tasks = [];
+    if (!notesDataCache || !notesDataCache.local_notes) {
+      tasks.push(
+        apiFetch("/notes?limit=120", { method: "GET" })
+          .then(function (data) {
+            if (gen !== searchNoteRefItems._gen) return;
+            notesDataCache = data || notesDataCache;
+            if (data) {
+              splitTranscriptionsOutOfLocalNotes(notesDataCache);
+              writeMiniappCache("notes", data);
+            }
+          })
+          .catch(function () {})
+      );
+    }
+    if (!(chatThreadsCache || []).length) {
+      tasks.push(loadChatThreads().catch(function () {}));
+    }
+    if (!tasks.length) {
       run();
       return;
     }
-    apiFetch("/notes?limit=120", { method: "GET" })
-      .then(function (data) {
-        if (gen !== searchNoteRefItems._gen) return;
-        notesDataCache = data || notesDataCache;
-        if (data) writeMiniappCache("notes", data);
-        run();
-      })
-      .catch(function () {
-        run();
-      });
+    Promise.all(tasks).then(function () {
+      if (gen !== searchNoteRefItems._gen) return;
+      run();
+    });
   }
 
-  function openNoteRefFromChip(noteId, sheetId) {
+  function openNoteRefFromChip(noteId, sheetId, chatId) {
+    var cid = String(chatId || "").trim();
+    if (cid) {
+      setTab("notes", { noAnim: true });
+      setNotesSubTab("chats");
+      var thread = null;
+      for (var i = 0; i < (chatThreadsCache || []).length; i++) {
+        if (String(chatThreadsCache[i].id) === cid) {
+          thread = chatThreadsCache[i];
+          break;
+        }
+      }
+      openChatThread(thread || { id: cid });
+      return;
+    }
     var nid = String(noteId || "").trim();
     var sid = String(sheetId || "").trim();
     if (!nid) return;
@@ -17498,6 +17639,9 @@
     noteSheetState.pendingOpenSheetId =
       sid && !isPrimarySheetId(sid) ? sid : "";
     var note = resolveLocalNoteFromCache({ id: nid });
+    if (note && looksLikeTranscriptionNote(note)) {
+      setNotesSubTab("transcriptions");
+    }
     openNoteDetail(note && note.id ? note : { id: nid }, { isLocal: true });
   }
 
@@ -31628,6 +31772,10 @@
     });
     document.addEventListener("visibilitychange", function () {
       if (document.visibilityState !== "visible") return;
+      // Подтянуть транскрипции/заметки, созданные в боте, пока приложение было свёрнуто.
+      if (currentTab === "notes") {
+        loadNotes().catch(function () {});
+      }
       var panelProfile = document.getElementById("panel-profile");
       if (panelProfile && !panelProfile.classList.contains("hidden")) {
         loadIntegrations();

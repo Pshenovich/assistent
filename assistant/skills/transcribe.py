@@ -421,38 +421,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if is_forwarded(msg):
         return
 
-    if msg.video or msg.video_note or _document_is_video(msg.document):
-        mark_transcribe_handled(context)
-        await run_explicit_transcribe(update, context, source_message=msg)
-        return
-
-    try:
-        data, _ = await download_telegram_file(
-            context.bot,
-            media.file_id,
-            file_size=getattr(media, "file_size", None),
-        )
-        fname = _media_filename(media, default="audio.mp3")
-        result = await asyncio.to_thread(obu.transcribe_bytes, data, fname)
-        text = (result.plain_text or "").strip()
-        if text:
-            from assistant.nlu.dispatch import RouteExtras, route_text
-
-            is_group = chat and chat.type in ("group", "supergroup")
-            extras = RouteExtras(source="group" if is_group else "private")
-            await route_text(
-                update,
-                context,
-                text,
-                extras,
-                chat_type="group" if is_group else "private",
-            )
-        else:
-            await msg.reply_text("(пустая транскрипция)")
-    except MediaTooLargeError as e:
-        await msg.reply_text(str(e))
-    except Exception as e:
-        await msg.reply_text(f"Транскрибация: {e}")
+    # Видео, аудио и файлы — в список «Транскрипции».
+    # Голосовые команды (VOICE) идут через handle_voice → route_text.
+    mark_transcribe_handled(context)
+    await run_explicit_transcribe(update, context, source_message=msg)
 
 
 def is_group_with_transcribe_intent(msg: Message) -> bool:
