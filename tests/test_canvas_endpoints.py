@@ -63,6 +63,8 @@ def test_variant_switch_and_item_ops(env):
     assert r.status_code == 200
     assert len(_deck(r.json()["item"])["slides"][0]["slots"]["goals"]) == 4
     r = c.post(base + "/canvas-op", headers=h, json={"op": "add_item", "slide_id": "s1", "group": "goals"})
+    assert r.status_code == 200  # обложка держит до 5 тезисов
+    r = c.post(base + "/canvas-op", headers=h, json={"op": "add_item", "slide_id": "s1", "group": "goals"})
     assert r.status_code == 400
     assert "Максимум" in r.json()["detail"]
 

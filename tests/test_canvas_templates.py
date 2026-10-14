@@ -46,7 +46,7 @@ class CatalogTests(unittest.TestCase):
 
     def test_groups_are_clipped_to_max(self) -> None:
         deck = _deck({"role": "cover", "slots": {"title": "A", "goals": [str(i) for i in range(9)]}})
-        self.assertEqual(len(deck["slides"][0]["slots"]["goals"]), 4)
+        self.assertEqual(len(deck["slides"][0]["slots"]["goals"]), 5)
 
     def test_card_grid_adapts_to_count(self) -> None:
         for n, cols in ((1, 1), (2, 2), (3, 3), (5, 3), (6, 3)):
@@ -329,3 +329,66 @@ class InsertSlideTests(unittest.TestCase):
         html = tpl.render_deck_html(deck, {})
         with self.assertRaises(ValueError):
             canvas_revise.insert_slides(html, deck["slides"][0]["id"], "x", ask=lambda s, u: "")
+
+
+class MonoStyleTests(unittest.TestCase):
+    def test_every_variant_has_mono_renderer_and_renders(self):
+        from assistant.lib import canvas_style_mono
+
+        self.assertEqual(set(canvas_style_mono.RENDERERS), set(tpl.VARIANTS))
+        deck = tpl.build_deck(SAMPLE_ACTION)
+        html = tpl.render_deck_html(deck, {}, theme="mono")
+        self.assertIn('data-leo-theme="mono"', html)
+        self.assertNotIn("Не удалось отрисовать", html)
+        self.assertIn('class="m-slide', html)
+
+    def test_mono_keeps_edit_attributes(self):
+        deck = _deck({"role": "cover", "variant": "cover.goals", "slots": {"title": "A", "goals": ["x", "y"]}})
+        html = tpl.render_deck_html(deck, {}, theme="mono")
+        self.assertIn('data-group="goals" data-min="1" data-max="5"', html)
+        self.assertIn('data-slot="goals.1"', html)
+
+    def test_unknown_theme_falls_back_to_analytic(self):
+        html = tpl.render_deck_html(tpl.build_deck(SAMPLE_ACTION), {}, theme="nope")
+        self.assertIn('data-leo-theme="analytic"', html)
+
+
+class ThemeChoiceTests(unittest.TestCase):
+    def test_theme_from_action_and_op(self):
+        deck = tpl.build_deck(dict(SAMPLE_ACTION, theme="mono"))
+        self.assertEqual(deck["theme"], "mono")
+        self.assertEqual(tpl.build_deck(dict(SAMPLE_ACTION, theme="bento"))["theme"], "analytic")
+        before = copy.deepcopy(deck["slides"])
+        tpl.apply_op(deck, {"op": "theme", "theme": "analytic"})
+        self.assertEqual(deck["theme"], "analytic")
+        self.assertEqual(deck["slides"], before)  # содержимое не меняется
+        with self.assertRaises(tpl.DeckOpError):
+            tpl.apply_op(deck, {"op": "theme", "theme": "nope"})
+
+    def test_theme_survives_round_trip(self):
+        html = tpl.render_deck_html(tpl.build_deck(dict(SAMPLE_ACTION, theme="mono")))
+        self.assertEqual(tpl.extract_deck(html)["theme"], "mono")
+        self.assertIn('data-leo-theme="mono"', tpl.refinalize(html))
+
+    def test_chat_default_and_restyle(self):
+        from assistant.lib import web_canvas
+
+        calls = {}
+
+        class Sheets:
+            def create_sheet(self, note, title, body, kind):
+                calls["create"] = body
+                return {"id": 1, "body": body}
+
+            def get_extra_sheet(self, note_id, sid):
+                return {"id": sid, "kind": "web", "body": calls["create"]}
+
+            def update_sheet(self, note_id, sid, title=None, body=None, kind=None):
+                calls["update"] = body
+                return {"id": sid, "body": body}
+
+        note = {"id": 5}
+        web_canvas.apply_canvas_action(note=note, action=dict(SAMPLE_ACTION), note_sheets_mod=Sheets(), default_deck_theme="mono")
+        self.assertIn('data-leo-theme="mono"', calls["create"])
+        web_canvas.apply_canvas_action(note=note, action={"action": "update", "sheet_id": "1", "theme": "analytic"}, note_sheets_mod=Sheets())
+        self.assertIn('data-leo-theme="analytic"', calls["update"])

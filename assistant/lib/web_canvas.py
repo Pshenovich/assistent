@@ -228,6 +228,9 @@ Create (6–10 slides):
 - Use role=chart only for real numeric series from the source; pick chart.intent by what the reader must see.
 - Keep texts within the limits (≤N chars). Russian text. No markdown inside slots.
 - Repeated items: respect the ranges (e.g. 2–4). If there are more points, split into two slides.
+- Style: add "theme" ONLY if the user names one — "analytic" (Аналитика: тёмная, зелёные акценты) or
+  "mono" (Монохром: чёрный, белый и голубой). Otherwise omit it: Leo uses the user's last style.
+  To restyle an open deck without changing content: {{"action":"update","sheet_id":"123","theme":"mono"}}.
 
 Edit an existing template deck (an open sheet with slide ids s1, s2, …):
 ```leo-canvas
@@ -789,8 +792,13 @@ def apply_canvas_action(
     note_sheets_mod: Any,
     selection_sheet_ids: list[str] | None = None,
     open_sheet_id: str | None = None,
+    default_deck_theme: str | None = None,
 ) -> Optional[dict[str, Any]]:
-    """Create or update a web sheet from a parsed leo-canvas action. Returns sheet dict."""
+    """Create or update a web sheet from a parsed leo-canvas action. Returns sheet dict.
+
+    default_deck_theme — стиль новой презентации, если модель его не указала
+    (последний выбранный пользователем).
+    """
     action = normalize_canvas_action_for_apply(
         action,
         selection_sheet_ids=selection_sheet_ids,
@@ -823,7 +831,10 @@ def apply_canvas_action(
             )
         if canvas_templates.is_template_action(action) and not surgical:
             # The model rebuilt an old HTML deck as a template deck.
-            deck = canvas_templates.build_deck({**action, "title": action.get("title") or existing.get("title")})
+            rebuilt = {**action, "title": action.get("title") or existing.get("title")}
+            if str(rebuilt.get("theme") or "") not in canvas_templates.THEMES and default_deck_theme:
+                rebuilt["theme"] = default_deck_theme
+            deck = canvas_templates.build_deck(rebuilt)
             if not deck["slides"]:
                 return None
             return note_sheets_mod.update_sheet(
@@ -858,6 +869,8 @@ def apply_canvas_action(
         )
 
     if canvas_templates.is_template_action(action):
+        if str(action.get("theme") or "") not in canvas_templates.THEMES and default_deck_theme:
+            action = dict(action, theme=default_deck_theme)
         deck = canvas_templates.build_deck(action)
         if not deck["slides"]:
             return None
@@ -918,6 +931,11 @@ def _update_template_sheet(
     if deck is None:
         return None
     touched: list[str] = []
+    # «Сделай в монохроме» — меняем только стиль, содержимое остаётся.
+    want_theme = str(action.get("theme") or "")
+    if want_theme in canvas_templates.THEMES and want_theme != canvas_templates.deck_theme(deck):
+        deck["theme"] = want_theme
+        touched.append("theme")
     if any(action.get(k) for k in ("slides", "insert", "remove")):
         if surgical:
             # Selection edits may only change the slides they name.

@@ -14757,3 +14757,41 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   border-radius: 999px;
   font-size: 13px;
 }
+
+/* Стиль презентации: «Стиль: … ▾» в панели канваса. */
+.note-web-canvas-theme { position: relative; }
+.note-web-canvas-theme[hidden] { display: none !important; }
+.note-web-canvas-theme-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  min-width: 15rem;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface, #19191a);
+  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.2));
+}
+.note-web-canvas-theme-menu[hidden] { display: none; }
+.note-web-canvas-theme-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.note-web-canvas-theme-item:hover { background: var(--accent-subtle, rgba(158, 173, 219, 0.16)); }
+.note-web-canvas-theme-item.is-active { background: var(--accent-muted, rgba(82, 158, 244, 0.16)); }
+.note-web-canvas-theme-swatch { display: inline-flex; flex: none; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); }
+.note-web-canvas-theme-swatch i { width: 12px; height: 26px; }
+.note-web-canvas-theme-text { display: flex; flex-direction: column; min-width: 0; }
+.note-web-canvas-theme-text b { font-size: 14px; font-weight: 600; }
+.note-web-canvas-theme-text small { font-size: 12px; color: var(--text-secondary, #909499); }

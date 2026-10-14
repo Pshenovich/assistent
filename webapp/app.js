@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261014-sheets-live2";
+  var WEBAPP_BUILD = "20261014-deck-styles";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261014-sheets-live2";
+  const NOTE_EDITOR_ASSET_V = "20261014-deck-styles";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -17203,6 +17203,7 @@
       onRevise: function (req) {
         return reviseWebCanvas(String(sheet.id), req);
       },
+      onTheme: rememberDeckTheme,
       onNotify: showNoteToast,
     });
   }
@@ -17236,6 +17237,7 @@
       onRevise: function (req) {
         return reviseWebCanvas(String(sheet.id), req);
       },
+      onTheme: rememberDeckTheme,
       onNotify: showNoteToast,
     });
     noteSheetState.rightEditor = null;
@@ -17362,6 +17364,7 @@
         op: req.op,
         slide_id: req.slideId || "",
         variant: req.variant || "",
+        theme: req.theme || "",
         group: req.group || "",
         index: req.index || 0,
         after: req.after == null ? null : req.after,
@@ -17372,6 +17375,21 @@
     var html = acceptWebCanvasItem(res && res.item);
     if (!html) throw new Error("Не удалось изменить слайд");
     return html;
+  }
+
+  // Последний выбранный стиль презентаций — новые презентации из чата строятся в нём.
+  function rememberDeckTheme(theme) {
+    try {
+      localStorage.setItem("leo_deck_theme", String(theme || ""));
+    } catch (_) {}
+  }
+
+  function preferredDeckTheme() {
+    try {
+      return localStorage.getItem("leo_deck_theme") || "";
+    } catch (_) {
+      return "";
+    }
   }
 
   async function reviseWebCanvas(sheetId, req) {
@@ -27269,6 +27287,7 @@
           context_note_ids: contextIds.length ? contextIds : undefined,
           canvas_selections: canvasSelections.length ? canvasSelections : undefined,
           canvas_sheet_id: openCanvasSheetId || undefined,
+          canvas_theme: preferredDeckTheme() || undefined,
         }),
       });
       if (res && res.canvas && res.canvas.length) {
