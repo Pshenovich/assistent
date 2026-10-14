@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261014-chats-groups";
+  var WEBAPP_BUILD = "20261014-links";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261014-chats-groups";
+  const NOTE_EDITOR_ASSET_V = "20261014-links";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -16899,6 +16899,7 @@
               return String(h.name || "");
             }),
             onTaskSlash: createTaskFromSlash,
+            onOpenLink: openExternal,
             onTaskChipClick: openTaskFromChip,
             onTaskChipRemoved: deleteTaskFromChip,
             onSearchNoteRefs: searchNoteRefItems,
@@ -19819,6 +19820,34 @@
     syncNotePaieReplyForm();
   }
 
+  // Текст сообщения: ссылки кликабельны, @упоминания подсвечены.
+  function appendDiscussTextWithLinks(el, text) {
+    var re = /(https?:\/\/[^\s<>"]+|www\.[^\s<>"]+)/gi;
+    var last = 0;
+    var m;
+    while ((m = re.exec(text))) {
+      var href = safeHttpUrl(m[0]);
+      if (!href) continue;
+      var tail = (m[0].match(/[),.;:!?'"»]+$/) || [""])[0];
+      var shown = tail ? m[0].slice(0, -tail.length) : m[0];
+      if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
+      var a = document.createElement("a");
+      a.className = "note-discuss-link";
+      a.href = href;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = shown;
+      a.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openExternal(this.href);
+      });
+      el.appendChild(a);
+      last = m.index + shown.length;
+    }
+    if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+  }
+
   function fillDiscussBodyWithMentions(el, text) {
     if (!el) return;
     var raw = String(text || "");
@@ -19829,14 +19858,14 @@
     var m;
     while ((m = re.exec(raw))) {
       var start = m.index + m[1].length;
-      if (start > last) el.appendChild(document.createTextNode(raw.slice(last, start)));
+      if (start > last) appendDiscussTextWithLinks(el, raw.slice(last, start));
       var span = document.createElement("span");
       span.className = "note-discuss-mention-text";
       span.textContent = m[2];
       el.appendChild(span);
       last = start + m[2].length;
     }
-    if (last < raw.length) el.appendChild(document.createTextNode(raw.slice(last)));
+    if (last < raw.length) appendDiscussTextWithLinks(el, raw.slice(last));
   }
 
   function discussionHistoryAuthorLabel(c) {
