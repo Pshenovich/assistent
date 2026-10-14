@@ -195,3 +195,25 @@ def test_link_to_deleted_sheet_does_not_show_main_sheet(env):
     note_sheets.delete_sheet(int(env["note"]["id"]), int(sheet["id"]))
     r = env["c"].get(f"/api/public/share/{link['token']}")
     assert r.status_code == 404  # не подменяем удалённый лист основным
+
+
+def test_sheet_order_and_share_views(env):
+    from assistant.stores import note_sheets
+
+    a = note_sheets.create_sheet(env["note"], title="A", body="<p>a</p>")
+    b = note_sheets.create_sheet(env["note"], title="B", body="<p>b</p>", kind="web")
+    base = f"/api/miniapp/notes/local/{env['note']['id']}/sheets"
+    order = [str(b["id"]), "main", str(a["id"])]
+    r = env["c"].put(base + "/order", headers=_headers(env["owner"]), json={"order": order})
+    assert r.status_code == 200, r.text
+    assert [str(s["id"]) for s in r.json()["sheets"]] == order
+    assert [str(s["id"]) for s in env["c"].get(base, headers=_headers(env["member"])).json()["sheets"]] == order
+    stale = env["c"].put(base + "/order", headers=_headers(env["owner"]), json={"order": ["main"]})
+    assert stale.status_code == 409
+
+    link = share_links.create_or_get_share(str(env["owner"]), "local", str(env["note"]["id"]), "view", [str(b["id"])])
+    env["c"].get(f"/api/public/share/{link['token']}")
+    env["c"].get(f"/api/public/share/{link['token']}")
+    env["c"].get(f"/api/public/share/{link['token']}", headers=_headers(env["owner"]))  # владелец не считается
+    links = env["c"].get(env["base"] + "/share", headers=_headers(env["owner"])).json()["links"]
+    assert [x["views"] for x in links if x["token"] == link["token"]] == [2]

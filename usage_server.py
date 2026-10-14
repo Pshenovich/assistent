@@ -2997,6 +2997,7 @@ def _share_response(link: dict[str, Any]) -> dict[str, Any]:
         "created_at": link.get("created_at"),
         "access": share_links_store.normalize_access(link.get("access")),
         "sheet_ids": share_links_store.normalize_sheet_ids(link.get("sheet_ids")),
+        "views": int(link.get("views") or 0),
     }
 
 
@@ -8576,6 +8577,37 @@ async def miniapp_local_note_pdf(
     return {"ok": True}
 
 
+class _MiniappSheetOrder(BaseModel):
+    order: list[str] = Field(default_factory=list)
+
+
+@miniapp_router.put("/notes/local/{note_id}/sheets/order")
+async def miniapp_note_sheets_order(
+    note_id: int,
+    body: _MiniappSheetOrder,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Порядок вкладок листов (перетаскивание). «Основную» тоже можно двигать."""
+    from assistant.stores import note_sheets as note_sheets_store
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> list[dict[str, Any]] | None:
+        if notes_store.get_accessible_note(uid, note_id, with_sharing=False) is None:
+            return None
+        note = notes_store.get_accessible_note(uid, note_id)
+        return note_sheets_store.set_sheet_order(note, body.order)
+
+    try:
+        sheets = await run_in_threadpool(_run)
+    except note_sheets_store.SheetError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    if sheets is None:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return {"ok": True, "sheets": sheets}
+
+
 @miniapp_router.patch("/notes/local/{note_id}/sheets/{sheet_id}")
 async def miniapp_note_sheet_patch(
     note_id: int,
@@ -8865,6 +8897,9 @@ async def miniapp_note_collab(
             "members": note.get("members") or [],
             # Версии дополнительных листов: клиент подтягивает изменённые другими участниками.
             "sheets": note_sheets_store.list_sheet_versions(note_id)
+            if note_sheets_store.note_allows_sheets(note)
+            else [],
+            "sheet_order": note_sheets_store.sheet_order_ids(note)
             if note_sheets_store.note_allows_sheets(note)
             else [],
         }
@@ -10585,6 +10620,8 @@ async def public_share_json(token: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Документ недоступен")
     viewer = _optional_share_viewer(request)
     payload["viewer"] = _public_share_viewer_flags(link, viewer)
+    if not payload["viewer"].get("is_owner"):
+        await run_in_threadpool(share_links_store.count_view, str(link.get("token") or ""))
     return payload
 
 
