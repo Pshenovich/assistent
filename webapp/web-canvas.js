@@ -328,6 +328,7 @@
       var el = box.querySelector(".leo-review-status");
       el.textContent = (st && st.text) || "";
       el.setAttribute("data-state", (st && st.state) || "");
+      if (typeof box._syncSend === "function") box._syncSend();
     }
 
     function autosize(ta) {
@@ -346,18 +347,43 @@
         box.setAttribute("data-for", sid);
         box.innerHTML =
           '<div class="leo-review-head"><span>Слайд ' + (i + 1) + '</span><span class="leo-review-status"></span></div>' +
-          '<textarea rows="2" placeholder="Что поправить в этом слайде? Например: сократи заголовок, добавь цифры из заметки"></textarea>';
+          '<div class="leo-review-row"><textarea rows="2" placeholder="Что поправить в этом слайде? Например: сократи заголовок, добавь цифры из заметки"></textarea>' +
+          '<button type="button" class="leo-review-send" title="Применить правку к этому слайду" aria-label="Применить правку к слайду ' + (i + 1) + '">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>' +
+          "</button></div>";
         var ta = box.querySelector("textarea");
+        var send = box.querySelector(".leo-review-send");
         ta.setAttribute("aria-label", "Комментарий к слайду " + (i + 1));
         ta.value = comments[sid] || "";
+        function syncSend() {
+          var st = statuses[sid];
+          send.disabled = !ta.value.trim() || !!(st && st.state === "busy");
+        }
+        function sendThis() {
+          if (send.disabled) return;
+          comments[sid] = ta.value;
+          post("reviseSlide", { slideId: sid, text: ta.value });
+        }
         ta.addEventListener("input", function () {
           comments[sid] = ta.value;
           autosize(ta);
+          syncSend();
           post("comment", { slideId: sid, text: ta.value });
         });
         ta.addEventListener("keydown", function (e) {
           e.stopPropagation();
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            sendThis();
+          }
         });
+        send.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          sendThis();
+        });
+        box._syncSend = syncSend;
+        syncSend();
         sec.parentNode.insertBefore(box, sec.nextSibling);
         setTimeout(function () {
           autosize(ta);
@@ -501,19 +527,24 @@
         '<button type="button" data-act="remove" title="Удалить элемент">×</button>';
       var add = hover.querySelector('[data-act="add"]');
       var rem = hover.querySelector('[data-act="remove"]');
+      // На пределе кнопка не «мёртвая»: по нажатию объясняем ограничение.
       if (lim.count >= lim.max) {
-        add.disabled = true;
-        add.title = "Максимум " + lim.max;
+        add.classList.add("is-limit");
+        add.title = "В этом блоке максимум " + lim.max;
       }
       if (lim.count <= lim.min) {
-        rem.disabled = true;
-        rem.title = "Минимум " + lim.min;
+        rem.classList.add("is-limit");
+        rem.title = lim.min ? "В этом блоке минимум " + lim.min : "Нечего удалять";
       }
       hover.addEventListener("click", function (e) {
         var b = e.target.closest("button[data-act]");
-        if (!b || b.disabled) return;
+        if (!b) return;
         e.preventDefault();
         e.stopPropagation();
+        if (b.classList.contains("is-limit")) {
+          post("notice", { text: b.title });
+          return;
+        }
         var sid = sec.getAttribute("data-slide-id");
         if (b.getAttribute("data-act") === "add") post("op", { op: "add_item", slideId: sid, group: group, after: index });
         else post("op", { op: "remove_item", slideId: sid, group: group, index: index });
@@ -596,6 +627,12 @@
     ".leo-review-status[data-state=busy]{color:#4b5a54}.leo-review-status[data-state=ok]{color:#16805f}.leo-review-status[data-state=warn]{color:#9a6a12}.leo-review-status[data-state=err]{color:#b2465c}" +
     ".leo-review-box textarea{display:block;width:100%;box-sizing:border-box;min-height:40px;resize:none;border:1px solid #cfd8d4;border-radius:8px;padding:7px 9px;font:inherit;color:inherit;background:#fff}" +
     ".leo-review-box textarea:focus{outline:2px solid #3dd6a5;outline-offset:1px;border-color:transparent}" +
+    ".leo-review-row{display:flex;align-items:flex-end;gap:8px}" +
+    ".leo-review-row textarea{flex:1 1 auto;min-width:0}" +
+    ".leo-review-send{appearance:none;flex:0 0 auto;display:inline-grid;place-items:center;width:34px;height:34px;border:0;border-radius:50%;background:#18201d;color:#fff;cursor:pointer}" +
+    ".leo-review-send:disabled{opacity:.3;cursor:default}" +
+    ".leo-review-send:focus-visible{outline:2px solid #3dd6a5;outline-offset:2px}" +
+    ".leo-item-tools>button.is-limit{opacity:.45}" +
     ".leo-slide-tools{position:absolute;top:10px;right:10px;z-index:60;display:flex;gap:4px;font:12px/1 ui-sans-serif,system-ui,-apple-system,sans-serif}" +
     ".leo-slide-tools>button,.leo-item-tools>button,.leo-add-empty{appearance:none;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:8px;border:1px solid rgba(10,10,10,.12);background:rgba(255,255,255,.95);color:#18201d;font:inherit;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2)}" +
     ".leo-slide-tools>button:disabled,.leo-item-tools>button:disabled{opacity:.45;cursor:default}" +
@@ -887,8 +924,16 @@
         });
     }
 
-    function runRevise() {
+    // onlyIds — правка одного слайда кнопкой под ним; без аргумента — все комментарии.
+    function runRevise(onlyIds) {
       var pending = pendingComments();
+      if (onlyIds && onlyIds.length) {
+        var only = {};
+        onlyIds.forEach(function (sid) {
+          if (pending[sid]) only[sid] = pending[sid];
+        });
+        pending = only;
+      }
       var ids = Object.keys(pending);
       if (!onRevise || busy || !ids.length) return;
       setBusy(true);
@@ -911,23 +956,30 @@
               delete comments[sid];
               statuses[sid] = { state: "ok", text: "Применено" };
             } else if (r === "unchanged") {
-              statuses[sid] = { state: "warn", text: "ИИ ничего не поменял — уточните комментарий" };
+              statuses[sid] = {
+                state: "warn",
+                text: "ИИ не нашёл, что поменять. Уточните: какой текст, пункт или макет изменить",
+              };
             } else {
-              statuses[sid] = { state: "err", text: "Не удалось применить" };
+              statuses[sid] = { state: "err", text: "Не удалось применить — попробуйте ещё раз" };
             }
           });
           saveComments();
           if (res && res.html) setHtml(res.html);
           else postToFrame({ type: "reviewStatus", statuses: statuses, clear: applied });
           onNotify(
-            applied.length
-              ? "Применено к слайдам: " + applied.length + " из " + ids.length
-              : "Правки не применились — попробуйте переформулировать"
+            ids.length === 1
+              ? applied.length
+                ? "Слайд обновлён"
+                : "Правка не применилась — см. подсказку под слайдом"
+              : applied.length
+                ? "Применено к слайдам: " + applied.length + " из " + ids.length
+                : "Правки не применились — см. подсказки под слайдами"
           );
         })
         .catch(function (err) {
           ids.forEach(function (sid) {
-            statuses[sid] = { state: "err", text: "Не удалось применить" };
+            statuses[sid] = { state: "err", text: "Не удалось применить — попробуйте ещё раз" };
           });
           postToFrame({ type: "reviewStatus", statuses: statuses });
           onNotify((err && err.message) || "Не удалось применить правки");
@@ -1053,6 +1105,23 @@
       }
       if (d.type === "scroll") {
         restoreScrollY = Number(d.scrollY) || 0;
+        return;
+      }
+      if (d.type === "reviseSlide") {
+        var rsid = String(d.slideId || "");
+        if (!rsid) return;
+        comments[rsid] = String(d.text || "");
+        saveComments();
+        syncApplyBtn();
+        if (busy) {
+          onNotify("Дождитесь окончания текущей правки");
+          return;
+        }
+        runRevise([rsid]);
+        return;
+      }
+      if (d.type === "notice") {
+        onNotify(String(d.text || ""));
         return;
       }
       if (d.type === "comment") {

@@ -9501,6 +9501,7 @@ async def miniapp_canvas_revise(
             return str((out or {}).get("answer") or "")
 
         new_html, results = canvas_revise.revise(base, comments, ask=_ask)
+        print(f"[web_canvas] revise note={note_id} sheet={sheet_id} results={results}")
         item = None
         if new_html:
             item = note_sheets_store.update_sheet(note_id, extra_id, body=new_html, kind="web")
