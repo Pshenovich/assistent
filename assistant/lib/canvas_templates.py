@@ -14,10 +14,10 @@ import copy
 import json
 import re
 from dataclasses import dataclass, field
-from html import escape
+from html import escape, unescape
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from assistant.lib import canvas_charts
 
@@ -38,6 +38,7 @@ ROLES: tuple[tuple[str, str], ...] = (
     ("plan", "План"),
     ("closing", "Финал"),
     ("appendix", "Приложение"),
+    ("custom", "Свой макет"),
 )
 ROLE_IDS = tuple(r for r, _ in ROLES)
 _ROLE_ALIASES = {
@@ -1086,6 +1087,7 @@ _FALLBACK_VARIANT = {
     "plan": "plan.steps",
     "closing": "closing.next-steps",
     "appendix": "appendix.notes",
+    "custom": "custom.grid",
 }
 
 
@@ -1388,6 +1390,21 @@ def extract_deck(html: str) -> Optional[dict[str, Any]]:
     return data
 
 
+_PENDING_MID_RE = re.compile(r'data-media="([^"]+)"[^>]*\bdata-leo-img-prompt="([^"]+)"')
+
+
+def pending_media(html: str, slide_ids: Iterable[str]) -> list[tuple[str, str]]:
+    """(media id, prompt) пустых слотов с промптом — только на указанных слайдах (новых)."""
+    prefixes = tuple(f"{sid}-" for sid in slide_ids)
+    if not prefixes:
+        return []
+    return [
+        (m.group(1), unescape(m.group(2)))
+        for m in _PENDING_MID_RE.finditer(html or "")
+        if m.group(1).startswith(prefixes)
+    ]
+
+
 def extract_media(html: str) -> dict[str, str]:
     out: dict[str, str] = {}
     for m in _MEDIA_IMG_RE.finditer(html or ""):
@@ -1675,7 +1692,8 @@ def outline_prompt(deck: dict[str, Any]) -> str:
     return "\n".join(rows)
 
 
-# Отрисовки стилей регистрируются после того, как модуль целиком загружен.
+# «Свой макет» и отрисовки стилей регистрируются после того, как модуль целиком загружен.
+from assistant.lib import canvas_blocks  # noqa: E402,F401
 from assistant.lib import canvas_style_mono  # noqa: E402
 
 THEME_RENDERERS["mono"] = canvas_style_mono.RENDERERS

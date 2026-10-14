@@ -372,3 +372,30 @@ html[data-leo-theme="mono"] .leo-present-progress > i { background: var(--m-ice)
   font-family: var(--f-display); font-weight: 400; font-size: 44px; line-height: 1.02; letter-spacing: -0.035em;
 }
 html[data-leo-deck]:not(.leo-review) .tpl-stage .m-gtitle:empty { display: none; }
+
+/* «Свой макет» в «Монохроме» */
+.m-custom .title { font-family: var(--f-display); font-weight: 400; font-size: 54px; line-height: 1; letter-spacing: -0.045em; margin: 0; max-width: 18ch; }
+.m-custom .eyebrow { display: inline-flex; align-self: flex-start; padding: 5px 16px; border: 1.5px solid currentColor; border-radius: 999px; font-size: 15px; font-weight: 500; letter-spacing: 0; text-transform: none; color: inherit; margin: 0; }
+.m-black.m-custom { --s-text: #fff; --s-muted: rgba(255, 255, 255, 0.7); --s-rule: rgba(255, 255, 255, 0.18); }
+.m-custom .cb-heading { font-weight: 400; font-size: 42px; line-height: 1; letter-spacing: -0.04em; }
+.m-custom .cb-text { color: inherit; opacity: 0.78; }
+.m-custom .cb-list li { border-top: 0; margin-bottom: 8px; padding: 10px 16px; border-radius: 999px; background: var(--m-ice); color: var(--m-black); }
+.m-black.m-custom .cb-list li { background: #fff; }
+.m-custom .cb-num { font-weight: 400; font-size: 96px; letter-spacing: -0.06em; color: inherit; }
+.m-custom .cb-num-l { color: inherit; opacity: 0.7; }
+.m-custom .cb-card { background: var(--m-ice); color: var(--m-black); border: 0; border-radius: 26px; padding: 24px; }
+.m-custom .cb-card.cb-tone-dark { background: var(--m-black); color: #fff; }
+.m-black.m-custom .cb-card.cb-tone-dark { background: var(--m-graphite); }
+.m-custom .cb-card.cb-tone-accent { background: #fff; color: var(--m-black); box-shadow: inset 0 0 0 1.5px var(--m-black); }
+.m-custom .cb-card-h { font-weight: 500; font-size: 24px; letter-spacing: -0.015em; }
+.m-custom .cb-card-t { color: inherit; opacity: 0.72; }
+.m-custom .cb-quote { font-weight: 400; font-size: 36px; line-height: 1.08; letter-spacing: -0.035em; }
+.m-custom .cb-quote::before { color: inherit; font-size: 80px; }
+.m-custom .cb-who { color: inherit; opacity: 0.7; }
+.m-custom .cb-pill { border: 1.5px solid currentColor; color: inherit; text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 16px; }
+.m-custom .cb-media { border-radius: 28px; }
+.tpl-stage .m-custom .cb-media.tpl-media-empty { border: 0; background: var(--m-ice); color: var(--m-black); }
+.m-custom .cb-chart { background: var(--m-ice); border-radius: 26px; padding: 16px 18px; --s-text: #0d0d0e; --s-muted: #4d5560; --s-faint: #7d8590; --s-rule: rgba(13, 13, 14, 0.12); --s-el: #dceaf6; }
+.m-ice.m-custom .cb-card.cb-tone-plain,
+.m-ice.m-custom .cb-list li,
+.m-ice.m-custom .cb-chart { background: #fff; }

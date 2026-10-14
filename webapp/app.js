@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261015-gallery";
+  var WEBAPP_BUILD = "20261015-custom-slides";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261015-gallery";
+  const NOTE_EDITOR_ASSET_V = "20261015-custom-slides";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -17173,6 +17173,7 @@
   }
 
   function mountLeftWebCanvas(sheet) {
+    if (canvasLayoutsCache === null) loadCanvasLayouts();
     var LeoWebCanvas = window.LeoWebCanvas;
     var host = ensureLeftWebCanvasHost();
     var pad = document.querySelector("#note-editor-overlay .note-editor-pad--body");
@@ -17204,11 +17205,19 @@
         return reviseWebCanvas(String(sheet.id), req);
       },
       onTheme: rememberDeckTheme,
+      getLayouts: function () {
+        return canvasLayoutsCache || [];
+      },
+      onSaveLayout: function (req) {
+        return saveCanvasLayout(String(sheet.id), req);
+      },
+      onDeleteLayout: deleteCanvasLayout,
       onNotify: showNoteToast,
     });
   }
 
   function mountRightWebCanvas(sheet) {
+    if (canvasLayoutsCache === null) loadCanvasLayouts();
     var LeoWebCanvas = window.LeoWebCanvas;
     var host = document.getElementById("note-discussion-sheet-host");
     var bar = document.getElementById("note-discussion-sheet-toolbar");
@@ -17238,6 +17247,13 @@
         return reviseWebCanvas(String(sheet.id), req);
       },
       onTheme: rememberDeckTheme,
+      getLayouts: function () {
+        return canvasLayoutsCache || [];
+      },
+      onSaveLayout: function (req) {
+        return saveCanvasLayout(String(sheet.id), req);
+      },
+      onDeleteLayout: deleteCanvasLayout,
       onNotify: showNoteToast,
     });
     noteSheetState.rightEditor = null;
@@ -17752,6 +17768,34 @@
     }
   }
 
+  // «Мои макеты» (свои раскладки слайдов) — общие для всех презентаций пользователя.
+  var canvasLayoutsCache = null;
+
+  function loadCanvasLayouts() {
+    return apiFetch("/canvas-layouts", { method: "GET" })
+      .then(function (data) {
+        canvasLayoutsCache = (data && data.layouts) || [];
+        return canvasLayoutsCache;
+      })
+      .catch(function () {
+        return canvasLayoutsCache || [];
+      });
+  }
+
+  async function saveCanvasLayout(sheetId, req) {
+    var res = await apiFetch(webCanvasSheetPath(sheetId) + "/canvas-layouts", {
+      method: "POST",
+      body: JSON.stringify({ slide_id: req.slideId, html: req.html || null }),
+    });
+    await loadCanvasLayouts();
+    return res && res.layout;
+  }
+
+  async function deleteCanvasLayout(id) {
+    await apiFetch("/canvas-layouts/" + encodeURIComponent(String(id)), { method: "DELETE" });
+    await loadCanvasLayouts();
+  }
+
   // Последний выбранный стиль презентаций — новые презентации из чата строятся в нём.
   function rememberDeckTheme(theme) {
     try {
@@ -17777,6 +17821,7 @@
         html: req.html || null,
         insert_after: req.insertAfter || null,
         insert_text: req.insertText || null,
+        insert_layout: req.insertLayout || null,
       }),
     });
     return {

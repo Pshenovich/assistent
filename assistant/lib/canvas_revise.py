@@ -6,6 +6,7 @@ decks get section-level patches.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Callable, Optional
 
@@ -65,6 +66,66 @@ Slot schema by role:
 
 MAX_INSERT = 3
 
+_LAYOUT_SYSTEM = """
+Ты раскладываешь слайд на сетку блоков по описанию пользователя. Текст не пишешь — только раскладку.
+Блоки одной строки стоят РЯДОМ слева направо; строки идут сверху вниз.
+«слева X, справа Y» — ОДНА строка из блоков X и Y. «внизу/под ними Z» — следующая строка.
+span — доля ширины строки (1–12), сумма span в строке = 12.
+Типы: heading, text, list, number, card, quote, pill, image, chart. В строке 1–4 блока, строк 1–4.
+Если «справа три карточки» и слева ещё блок — это 4 блока в одной строке.
+Ответь ТОЛЬКО JSON без пояснений.
+
+Примеры:
+«слева большая цифра, справа три карточки, внизу вывод» →
+{"title":true,"rows":[{"blocks":[{"type":"number","span":3},{"type":"card","span":3},{"type":"card","span":3},{"type":"card","span":3}]},{"blocks":[{"type":"text","span":12}]}]}
+«фото слева, текст и список справа» →
+{"title":true,"rows":[{"blocks":[{"type":"image","span":6},{"type":"list","span":6}]}]}
+«цитата на тёмном фоне» →
+{"surface":"dark","title":false,"rows":[{"blocks":[{"type":"quote","span":12}]}]}
+«график, а справа три вывода» →
+{"title":true,"rows":[{"blocks":[{"type":"chart","span":8},{"type":"list","span":4,"items":3}]}]}
+""".strip()
+
+
+def _structure_prompt(structure: dict[str, Any]) -> dict[str, Any]:
+    """Раскладка для промпта: вместо флагов title/eyebrow — подсказки, что туда писать."""
+    out = {k: v for k, v in structure.items() if k not in ("title", "eyebrow")}
+    if structure.get("eyebrow"):
+        out["eyebrow"] = "<надзаголовок ≤30>"
+    if structure.get("title", True):
+        out["title"] = "<заголовок слайда ≤80 по смыслу>"
+    return out
+
+
+def plan_custom_layout(request: str, *, ask: Callable[[str, str], Optional[str]]) -> Optional[dict[str, Any]]:
+    """Шаг 1 «Своего макета»: только раскладка (строки/блоки/доли) по описанию; текст — шагом 2."""
+    from assistant.lib import canvas_blocks
+    from assistant.stores import canvas_layouts
+
+    answer = ask(_LAYOUT_SYSTEM, "Описание слайда: " + (request or "свободная раскладка по теме")) or ""
+    m = re.search(r"\{.*\}", answer, re.S)
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(0))
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    slots = {
+        "surface": data.get("surface") if data.get("surface") in ("light", "dark", "ice") else "light",
+        "title": "x" if data.get("title", True) else "",
+        "rows": data.get("rows"),
+    }
+    for r in slots["rows"] or []:
+        for b in (r.get("blocks") if isinstance(r, dict) else None) or []:
+            if isinstance(b, dict) and canvas_blocks._block_type(b) == "list" and not b.get("items"):
+                b["items"] = ["x"] * 3
+            elif isinstance(b, dict) and isinstance(b.get("items"), int):
+                b["items"] = ["x"] * b["items"]
+    structure = canvas_layouts.structure_of(slots)
+    return structure if structure["rows"] else None
+
 
 def insert_slides(
     html: str,
@@ -72,8 +133,14 @@ def insert_slides(
     request: str,
     *,
     ask: Callable[[str, str], Optional[str]],
+    layout: str = "auto",
+    structure: Optional[dict[str, Any]] = None,
 ) -> tuple[Optional[str], list[str]]:
-    """Add model-made slides after ``after_id``. Returns (new_html or None, new slide ids)."""
+    """Add model-made slides after ``after_id``. Returns (new_html or None, new slide ids).
+
+    layout: "auto" — модель выбирает макет; "custom" — «Свой макет» по описанию пользователя;
+    structure — сохранённая раскладка «Мои макеты», модель только заполняет блоки текстом.
+    """
     deck = canvas_templates.extract_deck(html)
     if deck is None:
         return None, []
@@ -88,9 +155,22 @@ def insert_slides(
     system = _INSERT_SYSTEM_TEMPLATE.format(
         after=after_id, max_new=min(MAX_INSERT, room), schema=canvas_templates.schema_prompt()
     )
+    if not structure and layout == "custom":
+        structure = plan_custom_layout(request, ask=ask)
+    hint = ""
+    if structure:
+        hint = (
+            "\n\nСделай ОДИН слайд role \"custom\", variant \"custom.grid\" СТРОГО по этой раскладке "
+            "(те же строки, типы блоков, span и tone; заполни текстовые поля по заметке и запросу; "
+            "для image — image_prompt на английском; для chart — данные только из заметки; суммы по таблицам считай аккуратно, по шагам. "
+            "НЕ выдумывай факты, которых нет в заметке (численность, имена, планы): если по теме запроса в заметке мало данных — "
+            "используй то, что есть по этой теме, или пиши короткие формулировки без новых фактов):\n"
+            + json.dumps(_structure_prompt(structure), ensure_ascii=False)
+        )
     user = (
         f"Новый слайд после {after_id}. Что на нём должно быть: "
         + (request or "продолжение темы предыдущего слайда, следующий логичный шаг по заметке")
+        + hint
         + "\n\nСоседние слайды (JSON):\n"
         + canvas_templates.deck_prompt_json(deck, only=_neighbours(ids, after_id))
         + "\n\nВесь дек по порядку:\n"
@@ -104,6 +184,14 @@ def insert_slides(
     ][: min(MAX_INSERT, room)]
     if not inserts:
         return None, []
+    if structure or layout == "custom":
+        from assistant.stores import canvas_layouts
+
+        inserts = inserts[:1]
+        slots = inserts[0].get("slots") or {}
+        if structure:
+            slots = canvas_layouts.fit_to_structure(slots, structure)
+        inserts[0] = dict(inserts[0], role="custom", variant="custom.grid", slots=slots)
     # Несколько слайдов — по порядку: каждый следующий после предыдущего нового.
     before = set(ids)
     new_ids: list[str] = []
@@ -201,6 +289,8 @@ def _revise_template(
             for s in deck["slides"]
             if str(s["id"]) in targets
         )
+        + "\n- любой слайд: custom.grid (свой макет из блоков) — только если комментарий описывает свою раскладку; "
+        "тогда пришли {\"id\",\"role\":\"custom\",\"variant\":\"custom.grid\",\"slots\":{…полные слоты…}}"
         + "\n\nВесь дек по порядку:\n"
         + canvas_templates.outline_prompt(deck)
     )

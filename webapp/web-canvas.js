@@ -271,6 +271,12 @@
     var comments = {};
     var statuses = {};
     var variantsUi = {};
+    var layouts = []; // «Мои макеты» пользователя
+    var LAYOUT_HINTS = {
+      auto: "Что будет на новом слайде? Можно оставить пустым — ИИ продолжит тему по заметке",
+      custom: "Опишите раскладку: например, слева большая цифра, справа три карточки, внизу цитата",
+      saved: "О чём слайд? ИИ заполнит сохранённый макет текстом из заметки",
+    };
     var menu = null;
     var hover = null;
     var hoverItem = null;
@@ -402,12 +408,55 @@
       wrap.innerHTML =
         '<button type="button" class="leo-add-slide-toggle">+ Слайд после этого</button>' +
         '<div class="leo-add-slide-form" hidden>' +
-        '<div class="leo-review-row"><textarea rows="2" placeholder="Что будет на новом слайде? Можно оставить пустым — ИИ продолжит тему по заметке"></textarea>' +
+        '<div class="leo-layout-chips" role="radiogroup" aria-label="Макет нового слайда"></div>' +
+        '<div class="leo-review-row"><textarea rows="2"></textarea>' +
         '<button type="button" class="leo-add-slide-go">Добавить</button></div></div>';
       var toggle = wrap.querySelector(".leo-add-slide-toggle");
       var form = wrap.querySelector(".leo-add-slide-form");
       var ta = form.querySelector("textarea");
       var go = form.querySelector(".leo-add-slide-go");
+      var chipsBox = form.querySelector(".leo-layout-chips");
+      var layout = "auto";
+      function chip(value, label, removable) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "leo-layout-chip" + (value === layout ? " is-on" : "");
+        b.setAttribute("role", "radio");
+        b.setAttribute("aria-checked", String(value === layout));
+        b.textContent = label;
+        b.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.target.closest(".leo-layout-del")) return;
+          layout = value;
+          paintChips();
+        });
+        if (removable) {
+          var x = document.createElement("span");
+          x.className = "leo-layout-del";
+          x.setAttribute("role", "button");
+          x.setAttribute("aria-label", "Удалить макет «" + label + "»");
+          x.textContent = "×";
+          x.addEventListener("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            post("deleteLayout", { id: removable });
+          });
+          b.appendChild(x);
+        }
+        chipsBox.appendChild(b);
+      }
+      function paintChips() {
+        chipsBox.innerHTML = "";
+        chip("auto", "Подобрать макет");
+        chip("custom", "Свой макет");
+        layouts.forEach(function (l) {
+          chip("saved:" + l.id, "★ " + l.name, l.id);
+        });
+        if (layout.indexOf("saved:") === 0 && !layouts.some(function (l) { return "saved:" + l.id === layout; })) layout = "auto";
+        ta.placeholder = LAYOUT_HINTS[layout.indexOf("saved:") === 0 ? "saved" : layout];
+      }
+      paintChips();
       ta.setAttribute("aria-label", "Описание нового слайда после слайда " + (i + 1));
       toggle.addEventListener("click", function (e) {
         e.preventDefault();
@@ -419,7 +468,7 @@
       function submit() {
         var st = statuses[sid];
         if (st && st.state === "busy") return;
-        post("insertSlide", { slideId: sid, text: ta.value });
+        post("insertSlide", { slideId: sid, text: ta.value, layout: layout });
       }
       go.addEventListener("click", function (e) {
         e.preventDefault();
@@ -452,6 +501,12 @@
         '<button type="button" data-act="up" title="Переместить выше" aria-label="Переместить слайд выше">↑</button>' +
         '<button type="button" data-act="down" title="Переместить ниже" aria-label="Переместить слайд ниже">↓</button>' +
         '<button type="button" data-act="delslide" title="Удалить слайд" aria-label="Удалить слайд">✕</button>';
+      if (cur === "custom.grid") {
+        tools.insertAdjacentHTML(
+          "afterbegin",
+          '<button type="button" data-act="savelayout" title="Сохранить в «Мои макеты»" aria-label="Сохранить макет">☆ Сохранить макет</button>'
+        );
+      }
       tools.querySelector(".leo-variant-btn span").textContent = curName;
       if (list.length < 2) tools.querySelector(".leo-variant-btn").disabled = true;
       var all = slides();
@@ -468,6 +523,8 @@
         if (act === "variant") {
           if (menu && menu.parentNode === tools) closeMenu();
           else openMenu(tools, sid, cur, list);
+        } else if (act === "savelayout") {
+          post("saveLayout", { slideId: sid });
         } else if (act === "up" || act === "down") {
           post("op", { op: "move_slide", slideId: sid, delta: act === "up" ? -1 : 1 });
         } else if (act === "delslide") {
@@ -631,6 +688,7 @@
         on = !!d.on;
         comments = Object.assign({}, d.comments || {});
         statuses = Object.assign({}, d.statuses || {});
+        layouts = Array.isArray(d.layouts) ? d.layouts : [];
         if (on) {
           build();
           if (d.scrollY) {
@@ -677,6 +735,11 @@
     ".leo-review-send{appearance:none;flex:0 0 auto;display:inline-grid;place-items:center;width:34px;height:34px;border:0;border-radius:50%;background:#18201d;color:#fff;cursor:pointer}" +
     ".leo-review-send:disabled{opacity:.3;cursor:default}" +
     ".leo-add-slide{margin-top:8px}" +
+    ".leo-layout-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}" +
+    ".leo-layout-chip{appearance:none;display:inline-flex;align-items:center;gap:6px;border:1px solid #cfd8d4;border-radius:999px;background:#fff;color:#18201d;padding:5px 12px;font:inherit;font-size:13px;cursor:pointer}" +
+    ".leo-layout-chip.is-on{background:#18201d;border-color:#18201d;color:#fff}" +
+    ".leo-layout-del{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;font-size:13px;line-height:1;opacity:.6}" +
+    ".leo-layout-del:hover{opacity:1;background:rgba(0,0,0,.12)}" +
     ".leo-add-slide-toggle{appearance:none;border:0;background:none;padding:4px 0;font:inherit;font-size:13px;font-weight:600;color:#16805f;cursor:pointer}" +
     ".leo-add-slide-toggle.is-open{color:#4b5a54}" +
     ".leo-add-slide-form{margin-top:4px}" +
@@ -946,7 +1009,14 @@
     var restoreScrollY = 0;
 
     function postReview() {
-      postToFrame({ type: "review", on: editing, comments: comments, statuses: statuses, scrollY: restoreScrollY });
+      postToFrame({
+        type: "review",
+        on: editing,
+        comments: comments,
+        statuses: statuses,
+        scrollY: restoreScrollY,
+        layouts: typeof opts.getLayouts === "function" ? opts.getLayouts() || [] : [],
+      });
       restoreScrollY = 0;
     }
 
@@ -1061,7 +1131,7 @@
         });
     }
 
-    function runInsert(sid, text) {
+    function runInsert(sid, text, layout) {
       if (!onRevise || busy) return;
       setBusy(true);
       postToFrame({ type: "getScroll" });
@@ -1069,7 +1139,7 @@
       postToFrame({ type: "reviewStatus", statuses: statuses });
       requestSnapshot()
         .then(function (html) {
-          return onRevise({ sheetId: sheetId, comments: {}, html: html, insertAfter: sid, insertText: text });
+          return onRevise({ sheetId: sheetId, comments: {}, html: html, insertAfter: sid, insertText: text, insertLayout: layout || "auto" });
         })
         .then(function (res) {
           var n = ((res && res.newIds) || []).length;
@@ -1306,7 +1376,35 @@
           onNotify("Дождитесь окончания текущей правки");
           return;
         }
-        runInsert(isid, String(d.text || ""));
+        runInsert(isid, String(d.text || ""), String(d.layout || "auto"));
+        return;
+      }
+      if (d.type === "saveLayout" && opts.onSaveLayout) {
+        if (busy) return;
+        requestSnapshot()
+          .then(function (html) {
+            return opts.onSaveLayout({ sheetId: sheetId, slideId: String(d.slideId || ""), html: html });
+          })
+          .then(function (item) {
+            if (item) {
+              onNotify("Макет «" + item.name + "» сохранён — он появится в «+ Слайд после этого» во всех презентациях");
+              postReview();
+            }
+          })
+          .catch(function (err) {
+            onNotify((err && err.message) || "Не удалось сохранить макет");
+          });
+        return;
+      }
+      if (d.type === "deleteLayout" && opts.onDeleteLayout) {
+        Promise.resolve(opts.onDeleteLayout(d.id))
+          .then(function () {
+            onNotify("Макет удалён");
+            postReview();
+          })
+          .catch(function (err) {
+            onNotify((err && err.message) || "Не удалось удалить макет");
+          });
         return;
       }
       if (d.type === "notice") {

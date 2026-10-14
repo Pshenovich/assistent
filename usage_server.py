@@ -2652,6 +2652,14 @@ class _MiniappCanvasReviseBody(BaseModel):
     # Новый слайд после insert_after по описанию insert_text (вместо правок комментариями).
     insert_after: Optional[str] = None
     insert_text: Optional[str] = None
+    # Макет нового слайда: "auto" | "custom" (свой по описанию) | "saved:<id>" («Мои макеты»).
+    insert_layout: Optional[str] = None
+
+
+class _MiniappCanvasLayoutSave(BaseModel):
+    slide_id: str
+    name: Optional[str] = None
+    html: Optional[str] = None
 
 
 class _MiniappCanvasSelection(BaseModel):
@@ -9513,7 +9521,10 @@ async def miniapp_canvas_image_generate(
     if not b64:
         raise HTTPException(status_code=502, detail="Модель не вернула изображение")
     # Cap payload size for iframe data-URL embed
-    if len(b64) > 1_800_000:
+    from assistant.lib import web_canvas as web_canvas_lib
+
+    b64, mime = web_canvas_lib.shrink_image_b64(b64, mime)
+    if len(b64) > web_canvas_lib.MAX_IMAGE_B64:
         raise HTTPException(status_code=413, detail="Картинка слишком большая")
     return {"ok": True, "data_url": f"data:{mime};base64,{b64}", "mime": mime}
 
@@ -9575,6 +9586,60 @@ async def miniapp_canvas_op(
     return {"ok": True, "item": item}
 
 
+@miniapp_router.get("/canvas-layouts")
+async def miniapp_canvas_layouts_list(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """«Мои макеты» пользователя — раскладки «Свой макет», общие для всех презентаций."""
+    from assistant.stores import canvas_layouts
+
+    items = await run_in_threadpool(canvas_layouts.list_layouts, int(principal.telegram_user_id))
+    return {"layouts": items}
+
+
+@miniapp_router.post("/notes/local/{note_id}/sheets/{sheet_id}/canvas-layouts")
+async def miniapp_canvas_layout_save(
+    note_id: int,
+    sheet_id: str,
+    body: _MiniappCanvasLayoutSave,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Сохранить раскладку слайда «Свой макет» в «Мои макеты»."""
+    from assistant.lib import canvas_templates
+    from assistant.stores import canvas_layouts
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        _note, _extra_id, sheet = _load_web_sheet_for_edit(uid, note_id, sheet_id)
+        html = body.html if body.html and canvas_templates.is_template_html(body.html) else str(sheet.get("body") or "")
+        deck = canvas_templates.extract_deck(html)
+        slide = next((x for x in (deck or {}).get("slides") or [] if str(x.get("id")) == body.slide_id), None)
+        if not slide or slide.get("variant") != "custom.grid":
+            raise ValueError("Сохранить можно только слайд «Свой макет»")
+        name = body.name or ""  # пусто → имя по раскладке («Цифра + 3 карточки / Текст»)
+        return canvas_layouts.create_layout(uid, name, slide.get("slots") or {})
+
+    try:
+        item = await run_in_threadpool(_run)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "layout": item}
+
+
+@miniapp_router.delete("/canvas-layouts/{layout_id}")
+async def miniapp_canvas_layout_delete(
+    layout_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import canvas_layouts
+
+    ok = await run_in_threadpool(canvas_layouts.delete_layout, int(principal.telegram_user_id), layout_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Макет не найден")
+    return {"ok": True}
+
+
 @miniapp_router.post("/notes/local/{note_id}/sheets/{sheet_id}/canvas-revise")
 async def miniapp_canvas_revise(
     note_id: int,
@@ -9618,22 +9683,74 @@ async def miniapp_canvas_revise(
             )
             return str((out or {}).get("answer") or "")
 
+        def _fill_images(
+            item: Optional[dict[str, Any]], slide_ids: list[str], skip: frozenset = frozenset()
+        ) -> Optional[dict[str, Any]]:
+            # Фото-блоки новых/переделанных слайдов (галерея, «Свой макет») — сгенерировать по image_prompt.
+            # Пустые слоты на остальных слайдах не трогаем: пользователь мог оставить их пустыми.
+            html = str((item or {}).get("body") or "")
+            todo = [t for t in canvas_templates.pending_media(html, slide_ids) if t[0] not in skip][:4] if item else []
+            if not todo:
+                return item
+            from concurrent.futures import ThreadPoolExecutor
+
+            from assistant.integrations.openrouter_client import openrouter_generate_images
+            from assistant.lib import web_canvas as web_canvas_lib
+
+            def _gen(prompt: str) -> str:
+                try:
+                    got = openrouter_generate_images(prompt, n=1, timeout=180) or []
+                except Exception as e:  # noqa: BLE001 — без картинки слайд всё равно сохранён
+                    print(f"[web_canvas] insert img failed err={e!r}")
+                    return ""
+                urls = web_canvas_lib.image_dicts_to_data_urls([g for g in got if isinstance(g, dict)])
+                return urls[0] if urls else ""
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                urls = list(pool.map(_gen, [p for _mid, p in todo]))
+            media = canvas_templates.extract_media(html)
+            media.update({mid: u for (mid, _p), u in zip(todo, urls) if u})
+            deck = canvas_templates.extract_deck(html)
+            if not deck or len(media) == len(canvas_templates.extract_media(html)):
+                return item
+            return note_sheets_store.update_sheet(
+                note_id, extra_id, body=canvas_templates.render_deck_html(deck, media), kind="web"
+            ) or item
+
         if insert_after:
             if not canvas_templates.is_template_html(base):
                 raise HTTPException(status_code=400, detail="Добавлять слайды можно только в презентации из шаблонов")
+            layout = str(body.insert_layout or "auto").strip()
+            structure = None
+            if layout.startswith("saved:"):
+                from assistant.stores import canvas_layouts as canvas_layouts_store
+
+                try:
+                    saved = canvas_layouts_store.get_layout(uid, int(layout.split(":", 1)[1]))
+                except (TypeError, ValueError):
+                    saved = None
+                if not saved:
+                    raise HTTPException(status_code=404, detail="Макет не найден — возможно, его удалили")
+                structure = saved["structure"]
             try:
-                new_html, new_ids = canvas_revise.insert_slides(base, insert_after, body.insert_text or "", ask=_ask)
+                new_html, new_ids = canvas_revise.insert_slides(
+                    base, insert_after, body.insert_text or "", ask=_ask, layout=layout, structure=structure
+                )
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
             results = {insert_after: "inserted" if new_html else "failed"}
             print(f"[web_canvas] insert note={note_id} sheet={sheet_id} after={insert_after} new={new_ids}")
             item = note_sheets_store.update_sheet(note_id, extra_id, body=new_html, kind="web") if new_html else None
-            return {"item": item, "results": results, "new_ids": new_ids}
+            return {"item": _fill_images(item, new_ids), "results": results, "new_ids": new_ids}
         new_html, results = canvas_revise.revise(base, comments, ask=_ask)
         print(f"[web_canvas] revise note={note_id} sheet={sheet_id} results={results}")
         item = None
         if new_html:
-            item = note_sheets_store.update_sheet(note_id, extra_id, body=new_html, kind="web")
+            item = _fill_images(
+                note_sheets_store.update_sheet(note_id, extra_id, body=new_html, kind="web"),
+                [sid for sid, st in (results or {}).items() if st == "applied"],
+                skip=frozenset(mid for mid, _p in canvas_templates.pending_media(base, list(results or {}))),
+            )
         return {"item": item, "results": results}
 
     try:

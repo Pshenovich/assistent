@@ -208,3 +208,33 @@ html[data-leo-deck].leo-review .leo-present-ui { display: none; }
 /* Удалённая подпись не занимает места; в режиме правок пустое поле видно, чтобы вернуть текст. */
 html[data-leo-deck]:not(.leo-review) .tpl-stage .g-cap:empty { display: none; }
 html[data-leo-deck].leo-review .tpl-stage .g-cap:empty { min-height: 1.4em; border: 1px dashed var(--s-rule); border-radius: 6px; }
+
+/* ---- «Свой макет» (custom.grid): блоки на сетке, вид — из токенов стиля ---- */
+.tpl-stage .cb-rows { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 18px; margin-top: 6px; }
+.tpl-stage .cb-row { flex: 1 1 0; min-height: 0; display: flex; }
+.tpl-stage .cb-blocks { flex: 1; min-height: 0; display: grid; gap: 18px; align-items: stretch; }
+.tpl-stage .cb { min-width: 0; min-height: 0; display: flex; flex-direction: column; justify-content: center; gap: 8px; }
+.tpl-stage .cb-heading { margin: 0; font-family: var(--f-display); font-weight: 800; font-size: 34px; line-height: 1.12; letter-spacing: -0.02em; text-wrap: balance; }
+.tpl-stage .cb-text { font-size: 19px; line-height: 1.45; color: var(--s-muted); }
+.tpl-stage .cb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.tpl-stage .cb-list li { padding: 9px 0; border-top: 1px solid var(--s-rule); font-size: 18px; }
+.tpl-stage .cb-num { display: flex; align-items: baseline; gap: 8px; font-family: var(--f-display); font-weight: 800; font-size: 78px; line-height: 1; letter-spacing: -0.04em; color: var(--s-acc); }
+.tpl-stage .cb-num-u { font-size: 26px; letter-spacing: -0.01em; }
+.tpl-stage .cb-num-l { font-size: 17px; color: var(--s-muted); }
+.tpl-stage .cb-card { background: var(--s-el); border: 1px solid var(--s-rule); border-radius: 14px; padding: 20px 22px; justify-content: flex-start; }
+.tpl-stage .cb-card.cb-tone-accent { border-color: rgba(61, 214, 165, 0.45); background: linear-gradient(160deg, rgba(61, 214, 165, 0.12), transparent), var(--s-el); }
+.tpl-stage .cb-card.cb-tone-dark { background: rgba(0, 0, 0, 0.35); }
+.tpl-stage .cb-card-h { font-family: var(--f-display); font-weight: 800; font-size: 22px; }
+.tpl-stage .cb-card-t { font-size: 17px; line-height: 1.4; color: var(--s-muted); }
+.tpl-stage .cb-quote { margin: 0; font-family: var(--f-display); font-weight: 700; font-size: 30px; line-height: 1.2; letter-spacing: -0.015em; text-wrap: pretty; }
+.tpl-stage .cb-quote::before { content: "“"; display: block; font-size: 64px; line-height: 0.6; color: var(--s-acc); }
+.tpl-stage .cb-who { font-size: 15px; color: var(--s-muted); }
+.tpl-stage .cb-pill { align-self: flex-start; padding: 5px 14px; border: 1px solid var(--s-acc); border-radius: 999px; color: var(--s-acc); font-size: 14px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.tpl-stage .cb-is-image { justify-content: stretch; }
+.tpl-stage .cb-is-pill { justify-content: center; }
+.tpl-stage .cb-media { flex: 1; min-height: 120px; height: auto; border-radius: 14px; }
+.tpl-stage .cb-chart { flex: 1; min-height: 0; display: flex; align-items: center; }
+.tpl-stage .cb-chart .chart { width: 100%; height: auto; max-height: 100%; }
+html[data-leo-deck]:not(.leo-review) .tpl-stage .cb-card-t:empty,
+html[data-leo-deck]:not(.leo-review) .tpl-stage .cb-num-l:empty,
+html[data-leo-deck]:not(.leo-review) .tpl-stage .cb-who:empty { display: none; }

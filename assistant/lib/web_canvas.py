@@ -64,6 +64,35 @@ _ABSTRACT_SLOT_RE = re.compile(
 _KIT_CSS_CACHE: str | None = None
 
 
+MAX_IMAGE_B64 = 1_800_000
+
+
+def shrink_image_b64(b64: str, mime: str) -> tuple[str, str]:
+    """Слишком большую картинку (PNG 1024² от модели бывает > 1,8 МБ) пережать в JPEG ≤1600px.
+
+    Без Pillow или при ошибке возвращаем как есть — вызывающий сам отбросит большую."""
+    if len(b64) <= MAX_IMAGE_B64:
+        return b64, mime
+    try:
+        import base64
+        import io
+
+        from PIL import Image
+
+        im = Image.open(io.BytesIO(base64.b64decode(b64)))
+        im = im.convert("RGB")
+        im.thumbnail((1600, 1600))
+        for quality in (86, 75, 62):
+            buf = io.BytesIO()
+            im.save(buf, "JPEG", quality=quality, optimize=True)
+            out = base64.b64encode(buf.getvalue()).decode("ascii")
+            if len(out) <= MAX_IMAGE_B64:
+                return out, "image/jpeg"
+    except Exception as e:  # noqa: BLE001
+        print(f"[web_canvas] image shrink failed err={e!r}")
+    return b64, mime
+
+
 def image_dicts_to_data_urls(images: list[dict[str, str]] | None) -> list[str]:
     """Convert openrouter image dicts ({mime,b64}) to data URLs."""
     out: list[str] = []
@@ -72,7 +101,9 @@ def image_dicts_to_data_urls(images: list[dict[str, str]] | None) -> list[str]:
             continue
         b64 = str(img.get("b64") or "").strip()
         mime = str(img.get("mime") or "image/png").split(";")[0].strip() or "image/png"
-        if not b64 or len(b64) > 1_800_000:
+        if b64:
+            b64, mime = shrink_image_b64(b64, mime)
+        if not b64 or len(b64) > MAX_IMAGE_B64:
             continue
         out.append(f"data:{mime};base64,{b64}")
     return out
