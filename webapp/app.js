@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261014-notes-comments";
+  var WEBAPP_BUILD = "20261014-canvas-timeout";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261014-notes-comments";
+  const NOTE_EDITOR_ASSET_V = "20261014-canvas-timeout";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -5362,6 +5362,9 @@
     var p = String(path || "");
     if (p.indexOf("/gpt/chat") >= 0) return 180000;
     if (p.indexOf("/canvas-image") >= 0) return 240000;
+    // Правки слайдов по комментариям ждут ответ модели — дольше общего лимита.
+    if (p.indexOf("/canvas-revise") >= 0) return 240000;
+    if (p.indexOf("/canvas-op") >= 0) return 30000;
     if (p.indexOf("/voice/transcribe") >= 0) return 300000;
     if (p.indexOf("/notes/transcriptions/upload") >= 0) return 900000;
     if (p.indexOf("/calendar/today") >= 0) return 20000;
@@ -21879,7 +21882,7 @@
       syncChatDiscussionTitle(chatTitle);
       return;
     }
-    var title = noteSheetState.rightMode === "comments" ? "Комментарии" : "Обсуждение";
+    var title = "Обсуждение";
     if (noteSheetState.rightMode === "sheet") {
       var sheet = findNoteSheet(noteSheetState.rightId);
       title = (sheet && sheet.title) || "Лист";
@@ -22093,10 +22096,6 @@
     addItem("Обсуждение", noteSheetState.rightMode === "discussion", function () {
       closeNotePaneSwitchMenu();
       setRightPaneMode("discussion");
-    });
-    addItem("Комментарии", noteSheetState.rightMode === "comments", function () {
-      closeNotePaneSwitchMenu();
-      setRightPaneMode("comments");
     });
     var discussSep = document.createElement("div");
     discussSep.className = "note-pane-switch-sep";
@@ -22644,17 +22643,12 @@
     }
     flushRightForeignNoteBeforeLeave();
     flushSheetEditor("right").catch(function () {});
-    var feed = mode === "comments" ? "comments" : "discussion";
-    noteSheetState.rightMode = feed;
+    noteSheetState.rightMode = "discussion";
     noteSheetState.rightId = "";
     noteSheetState.rightNote = null;
     destroyRightSheetEditor();
     setNoteSheetFocus("left");
     syncNotePaneHeader();
-    var ask = noteAskMode();
-    if (feed === "comments" && ask !== "comment") setNoteAskMode("comment");
-    else if (feed === "discussion" && ask === "comment") setNoteAskMode("gpt");
-    rerenderDiscussionFeed();
   }
 
   function applyLeftSheetHtml(sheet) {
@@ -23550,25 +23544,6 @@
   function discussionComments(comments) {
     return (comments || []).filter(function (c) {
       return c && c.id;
-    });
-  }
-
-  // Комментарии людей (к цитате или без неё), без тредов ИИ, «Совета» и исследований.
-  function humanComments(comments) {
-    var NC = window.NoteComments;
-    if (!NC || !NC.selectionComments || !NC.generalComments) return [];
-    return NC.selectionComments(comments).concat(NC.generalComments(comments));
-  }
-
-  function paneFeedComments(comments) {
-    var all = discussionComments(comments);
-    var human = {};
-    humanComments(all).forEach(function (c) {
-      human[String(c.id)] = true;
-    });
-    var wantComments = noteSheetState.rightMode === "comments";
-    return all.filter(function (c) {
-      return !!human[String(c.id)] === wantComments;
     });
   }
 
@@ -25299,8 +25274,7 @@
     var form = document.getElementById("note-paie-reply-form");
     var status = document.getElementById("note-editor-paei-status");
     var statusOn = !!(status && !status.classList.contains("hidden"));
-    var feedMode = noteSheetState.rightMode === "comments" ? "comments" : "discussion";
-    var rows = paneFeedComments(comments).slice().sort(function (a, b) {
+    var rows = discussionComments(comments).slice().sort(function (a, b) {
       var at = Date.parse(a && a.created_at) || 0;
       var bt = Date.parse(b && b.created_at) || 0;
       if (at !== bt) return at - bt;
@@ -25309,8 +25283,6 @@
     var gptBusy = !!(wrap && wrap._gptBusy);
     var researchRunning = !!(wrap && wrap._researchRunning);
     var fp =
-      feedMode +
-      "|" +
       String(kind || "") +
       ":" +
       String(itemId || "") +
@@ -25371,10 +25343,7 @@
       ) {
         var empty = document.createElement("p");
         empty.className = "note-discussion-empty";
-        empty.textContent =
-          feedMode === "comments"
-            ? "Комментариев пока нет. Выделите текст в заметке или напишите комментарий ниже"
-            : "Задайте вопрос ИИ по заметке";
+        empty.textContent = "Задайте вопрос или оставьте комментарий";
         list.appendChild(empty);
       } else {
         var cut = gptContextCutId();
@@ -25899,26 +25868,6 @@
     if (isChatAskMode(current)) loadGptModels();
     else closeNoteComposerMenus();
     syncNotePaieReplyForm();
-    syncDiscussionPaneWithAskMode(current);
-  }
-
-  // «Комментарии» и «Обсуждение» — две ленты одной панели: режим ввода «Текст»
-  // пишет комментарий, остальные — вопрос ИИ. Держим панель в ленте, куда уйдёт сообщение.
-  function syncDiscussionPaneWithAskMode(mode) {
-    var rm = noteSheetState.rightMode;
-    if (rm !== "discussion" && rm !== "comments") return;
-    var want = mode === "comment" ? "comments" : "discussion";
-    if (rm === want) return;
-    noteSheetState.rightMode = want;
-    syncNotePaneHeader();
-    rerenderDiscussionFeed();
-  }
-
-  function rerenderDiscussionFeed() {
-    var wrap = document.getElementById("note-editor-more-wrap");
-    var panel = document.getElementById("note-editor-comments");
-    if (!wrap || !wrap._shareKind || !wrap._shareId) return;
-    renderNotePaieThread((panel && panel._allComments) || [], wrap._shareKind, wrap._shareId);
   }
 
   function sheetPlainText(sheet) {
