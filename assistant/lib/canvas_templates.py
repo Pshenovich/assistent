@@ -866,13 +866,13 @@ def _r_timeline(c: Ctx) -> tuple[str, str]:
 
 _reg(Variant(
     "plan.timeline", "plan", "Таймлайн по периодам",
-    "eyebrow?, title, periods: [{label: str≤10, title: str≤36, items: [str≤60] 1–3}] 2–6",
+    "eyebrow?, title, periods: [{label: str≤10, title: str≤36, items: [str≤60] 1–5}] 2–6",
     _r_timeline,
     lambda s: _need(len(_dicts(s.get("periods"))) >= 2, "нужно 2–6 периодов"),
     prefer=lambda s: bool(_dicts(s.get("periods"))),
     groups=[
         Group("periods", 2, 6, lambda: {"label": "Период", "title": "Этап", "items": ["Результат"]}),
-        Group("periods.*.items", 0, 3, lambda: "Результат"),
+        Group("periods.*.items", 0, 5, lambda: "Результат"),
     ],
 ))
 
@@ -1504,10 +1504,14 @@ def apply_slide_updates(deck: dict[str, Any], action: dict[str, Any]) -> list[st
             by_id[new["id"]] = new
             touched.append(new["id"])
             continue
+        # Модель часто присылает только изменённые поля — остальные слоты сохраняем.
+        new_slots = dict(cur["slots"])
+        if isinstance(raw.get("slots"), dict):
+            new_slots.update(raw["slots"])
         merged = {
             "role": raw.get("role") or cur["role"],
             "variant": raw.get("variant") or cur["variant"],
-            "slots": raw.get("slots") if isinstance(raw.get("slots"), dict) else cur["slots"],
+            "slots": new_slots,
         }
         new = normalize_slide(merged, sid=sid)
         cur.update(new)

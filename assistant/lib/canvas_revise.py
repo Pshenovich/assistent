@@ -23,7 +23,10 @@ Answer with ONE fenced block and nothing else:
 ```leo-canvas
 {{"action":"update","slides":[{{"id":"s3","slots":{{…full new slots…}}}}],"insert":[{{"after":"s3","role":"…","slots":{{…}}}}],"remove":["s5"]}}
 ```
-- slides: full slots for every commented slide you change (optionally "variant" to switch layout).
+- slides: slots for every commented slide you change; send changed fields (others are kept).
+- You can change texts, items and numbers, and switch "variant" to another layout of the same role
+  (see "Available layouts"). Colors, fonts and spacing are fixed by the design — if a comment asks for
+  them, pick the closest layout or shorten/restructure the text instead of ignoring the comment.
 - insert/remove only when a comment asks to split, add or delete a slide.
 - Respect slot limits and item ranges from the schema.
 
@@ -111,6 +114,13 @@ def _revise_template(
         + "\n".join(f"- {sid}: {comments[sid]}" for sid in comments if sid in targets)
         + "\n\nТекущие данные этих слайдов (JSON):\n"
         + canvas_templates.deck_prompt_json(deck, only=targets)
+        + "\n\nДоступные макеты для этих слайдов:\n"
+        + "\n".join(
+            f"- {s['id']}: "
+            + ", ".join(v.id for v in canvas_templates.variants_for_role(s["role"]))
+            for s in deck["slides"]
+            if str(s["id"]) in targets
+        )
         + "\n\nВесь дек по порядку:\n"
         + canvas_templates.outline_prompt(deck)
     )

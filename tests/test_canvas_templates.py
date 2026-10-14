@@ -259,3 +259,23 @@ class ReviseTests(unittest.TestCase):
         new_html, results = canvas_revise.revise(html, {"s1": "сделай лучше"}, ask=lambda s, u: "не знаю")
         self.assertIsNone(new_html)
         self.assertEqual(results, {"s1": "failed"})
+
+
+class PartialSlotsTests(unittest.TestCase):
+    def test_model_sending_only_changed_fields_keeps_the_rest(self) -> None:
+        deck = tpl.build_deck(SAMPLE_ACTION)
+        s4 = next(s for s in deck["slides"] if s["id"] == "s4")
+        stats = copy.deepcopy(s4["slots"]["stats"])
+        tpl.apply_slide_updates(deck, {"slides": [{"id": "s4", "slots": {"title": "Новый заголовок"}}]})
+        s4 = next(s for s in deck["slides"] if s["id"] == "s4")
+        self.assertEqual(s4["slots"]["title"], "Новый заголовок")
+        self.assertEqual(s4["slots"]["stats"], stats)
+        self.assertEqual(s4["variant"], "context.stats")
+
+    def test_timeline_period_takes_up_to_five_items(self) -> None:
+        deck = tpl.build_deck({"slides": [copy.deepcopy(SAMPLE_ACTION_2["slides"][11])]})
+        for _ in range(4):
+            tpl.apply_op(deck, {"op": "add_item", "slide_id": "s1", "group": "periods.0.items"})
+        self.assertEqual(len(deck["slides"][0]["slots"]["periods"][0]["items"]), 5)
+        with self.assertRaises(tpl.DeckOpError):
+            tpl.apply_op(deck, {"op": "add_item", "slide_id": "s1", "group": "periods.0.items"})
