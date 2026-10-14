@@ -537,6 +537,18 @@ function extractTaskText(li) {
   return li.textContent.trim();
 }
 
+// Inline HTML of a checklist item's text (task chips, bold, links), or null when
+// the item has no single text paragraph. Call after extractTaskText stripped labels.
+function extractTaskInnerHtml(li) {
+  if (!li) return null;
+  const div = li.querySelector(":scope > div");
+  const p = div ? div.querySelector(":scope > p") : null;
+  if (p) return p.innerHTML.trim();
+  const ps = li.querySelectorAll(":scope > p");
+  if (ps.length === 1) return ps[0].innerHTML.trim();
+  return null;
+}
+
 function setTaskItemContent(li, text, checked) {
   li.classList.remove("note-task", "note-task--checked");
   li.removeAttribute("checked");
@@ -703,11 +715,13 @@ function normalizeExportedTaskHtml(html) {
       const checked =
         li.hasAttribute("checked") || li.getAttribute("data-checked") === "true";
       const text = extractTaskText(li);
+      // Keep inline markup: flattening to text dropped task chips («/» tasks) and links.
+      const inner = extractTaskInnerHtml(li);
       li.removeAttribute("data-type");
       li.removeAttribute("data-checked");
       if (checked) li.setAttribute("checked", "");
       else li.removeAttribute("checked");
-      li.innerHTML = "<p>" + escapeHtmlText(text) + "</p>";
+      li.innerHTML = "<p>" + (inner != null ? inner : escapeHtmlText(text)) + "</p>";
     });
   });
   return root.innerHTML;

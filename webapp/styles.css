@@ -26,6 +26,9 @@ html.vkui--vkIOS--dark {
   --accent-muted: rgba(82, 158, 244, 0.16);
   --accent-subtle: rgba(82, 158, 244, 0.1);
   --accent-border: rgba(82, 158, 244, 0.28);
+  /* Цитаты в заметке: голубой текст и полоса вместо серого. */
+  --quote-text: #8ec5ff;
+  --quote-border: rgba(82, 158, 244, 0.7);
   --purple: #7b68ee;
 
   --danger: var(--vkui--color_background_negative);
@@ -3803,8 +3806,8 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
 .note-rich-editor-body blockquote {
   margin: 0.375rem 0;
   padding-left: 0.75rem;
-  border-left: 3px solid var(--border);
-  color: var(--text-secondary);
+  border-left: 3px solid var(--quote-border);
+  color: var(--quote-text);
 }
 
 .note-rich-editor-body ul[data-type="taskList"],
@@ -8558,8 +8561,8 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 .note-editor-body.note-body-html blockquote {
   margin: 0.375rem 0;
   padding-left: 0.75rem;
-  border-left: 3px solid var(--border);
-  color: var(--text-secondary);
+  border-left: 3px solid var(--quote-border);
+  color: var(--quote-text);
 }
 
 .note-editor-body.note-body-html p {
