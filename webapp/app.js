@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261014-share-view";
+  var WEBAPP_BUILD = "20261014-share-sheets4";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261014-share-view";
+  const NOTE_EDITOR_ASSET_V = "20261014-share-sheets4";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -19751,7 +19751,18 @@
       });
     }
 
-    if (!shared) {
+    if (shareKind === "local") {
+      // У заметки своя ссылка на каждый лист: всё — в окне «Поделиться».
+      addItem(shared ? "Поделиться · ссылки" : "Поделиться", function () {
+        closeNoteMoreMenu();
+        openShareAccessSheet();
+      });
+      if (shared) {
+        addItem("Отключить все ссылки", function () {
+          revokeShareLink();
+        });
+      }
+    } else if (!shared) {
       addItem("Поделиться", function () {
         closeNoteMoreMenu();
         openShareAccessSheet();
@@ -28548,6 +28559,17 @@
     wrap._shareSheetIds = Array.isArray(data && data.sheet_ids)
       ? data.sheet_ids.map(function (id) { return String(id); })
       : [];
+    // Все ссылки записи (у заметки — своя на каждый набор листов). POST отдаёт одну — список не трогаем.
+    if (data && Array.isArray(data.links)) wrap._shareLinks = data.links.slice();
+    else if (!wrap._shareShared) wrap._shareLinks = [];
+    else if (data && data.token) {
+      // Ответ POST — одна ссылка: добавляем её в список или обновляем.
+      var links = (Array.isArray(wrap._shareLinks) ? wrap._shareLinks : []).filter(function (l) {
+        return l.token !== data.token;
+      });
+      links.unshift(data);
+      wrap._shareLinks = links;
+    }
     syncNoteCommentsPanel();
     patchLocalShareInCache(wrap._shareId, {
       shared: wrap._shareShared,
@@ -28622,6 +28644,10 @@
         '<input type="radio" name="note-share-access" value="comment" />' +
         "<span><strong>Комментарии</strong><small>Можно читать и оставлять комментарии после входа</small></span>" +
         "</label>" +
+        '<div id="note-share-links-block" class="note-share-links-block hidden">' +
+        '<p class="note-share-section-label">Ссылки на эту заметку</p>' +
+        '<div id="note-share-links-list" class="note-share-links-list"></div>' +
+        "</div>" +
         '<div class="note-share-sheet-actions">' +
         '<button type="button" class="btn" id="note-share-sheet-copy">Скопировать ссылку</button>' +
         '<button type="button" class="btn-text" id="note-share-sheet-cancel">Закрыть</button>' +
@@ -28702,10 +28728,6 @@
       if (val && ids.indexOf(val) < 0) ids.push(val);
     });
     if (ids.length) return ids;
-    var wrap = getShareCtx();
-    if (wrap && wrap._shareShared && Array.isArray(wrap._shareSheetIds) && wrap._shareSheetIds.length) {
-      return wrap._shareSheetIds.slice();
-    }
     return defaultShareSheetIds();
   }
 
@@ -28727,10 +28749,12 @@
     var show = wrap._shareKind === "local" && sheets.length > 1;
     block.classList.toggle("hidden", !show);
     list.innerHTML = "";
-    if (!show) return;
-    var selected = wrap._shareShared && Array.isArray(wrap._shareSheetIds) && wrap._shareSheetIds.length
-      ? wrap._shareSheetIds.slice()
-      : defaultShareSheetIds();
+    if (!show) {
+      if (wrap._shareKind === "local") syncShareSelectionState();
+      return;
+    }
+    // По умолчанию — открытый сейчас лист: ссылка на него отдельная от ссылок на другие листы.
+    var selected = defaultShareSheetIds();
     var known = {};
     selected.forEach(function (id) {
       known[String(id)] = true;
@@ -28751,10 +28775,115 @@
       var strong = document.createElement("strong");
       strong.textContent = s.title || (isPrimarySheetId(id) ? "Основная" : "Лист");
       span.appendChild(strong);
+      input.addEventListener("change", syncShareSelectionState);
       label.appendChild(input);
       label.appendChild(span);
       list.appendChild(label);
     });
+    syncShareSelectionState();
+  }
+
+  function sameShareSheets(a, b) {
+    var x = (a || []).map(String).sort().join("|");
+    var y = (b || []).map(String).sort().join("|");
+    return x === y;
+  }
+
+  // Ссылка на выбранный набор листов (если уже есть) — от неё доступ и подпись кнопки.
+  function shareLinkForSelection() {
+    var wrap = getShareCtx();
+    if (!wrap) return null;
+    var links = Array.isArray(wrap._shareLinks) ? wrap._shareLinks : [];
+    if (wrap._shareKind !== "local") return links[0] || null;
+    var sel = selectedShareSheetIds();
+    return links.filter(function (l) { return sameShareSheets(l.sheet_ids || [], sel); })[0] || null;
+  }
+
+  function syncShareSelectionState() {
+    var ov = document.getElementById("note-share-sheet-overlay");
+    if (!ov) return;
+    var link = shareLinkForSelection();
+    var access = link && link.access === "comment" ? "comment" : "view";
+    ov.querySelectorAll('input[name="note-share-access"]').forEach(function (radio) {
+      radio.checked = radio.value === access;
+    });
+    var copy = document.getElementById("note-share-sheet-copy");
+    if (copy) copy.textContent = link ? "Сохранить и скопировать" : "Скопировать ссылку";
+    paintShareLinksList();
+  }
+
+  function shareLinkSheetsLabel(link) {
+    var ids = (link && link.sheet_ids) || [];
+    if (!ids.length) return "Вся заметка";
+    var byId = {};
+    shareSheetOptions().forEach(function (s) {
+      byId[String(s.id)] = s.title || (isPrimarySheetId(s.id) ? "Основная" : "Лист");
+    });
+    return ids.map(function (id) { return byId[String(id)] || (isPrimarySheetId(id) ? "Основная" : "Удалённый лист"); }).join(", ");
+  }
+
+  function paintShareLinksList() {
+    var block = document.getElementById("note-share-links-block");
+    var list = document.getElementById("note-share-links-list");
+    var wrap = getShareCtx();
+    if (!block || !list || !wrap) return;
+    var links = Array.isArray(wrap._shareLinks) ? wrap._shareLinks : [];
+    block.classList.toggle("hidden", !links.length);
+    list.innerHTML = "";
+    var current = shareLinkForSelection();
+    links.forEach(function (link) {
+      var row = document.createElement("div");
+      row.className = "note-share-link-row" + (current && current.token === link.token ? " is-current" : "");
+      var text = document.createElement("div");
+      text.className = "note-share-link-text";
+      var name = document.createElement("strong");
+      name.textContent = shareLinkSheetsLabel(link);
+      var meta = document.createElement("small");
+      meta.textContent = link.access === "comment" ? "Комментарии" : "Просмотр";
+      text.appendChild(name);
+      text.appendChild(meta);
+      var copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "btn-text note-share-link-copy";
+      copy.textContent = "Копировать";
+      copy.addEventListener("click", function () {
+        copyShareUrl(link.url).then(shareHaptic).catch(function (e) {
+          alert(e.message || String(e));
+        });
+      });
+      var off = document.createElement("button");
+      off.type = "button";
+      off.className = "btn-text note-share-link-off";
+      off.textContent = "Отключить";
+      off.addEventListener("click", function () {
+        revokeOneShareLink(link);
+      });
+      row.appendChild(text);
+      row.appendChild(copy);
+      row.appendChild(off);
+      list.appendChild(row);
+    });
+  }
+
+  async function revokeOneShareLink(link) {
+    var wrap = getShareCtx();
+    var kind = wrap && wrap._shareKind;
+    var itemId = wrap && wrap._shareId;
+    if (!kind || !itemId || !link || !link.token) return;
+    if (!(await confirmDialog("Отключить ссылку «" + shareLinkSheetsLabel(link) + "»? Открыть её больше не получится."))) return;
+    try {
+      var data = await apiFetch(
+        "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/share?token=" + encodeURIComponent(link.token),
+        { method: "DELETE" }
+      );
+      var left = (data && data.links) || [];
+      applyShareState(wrap, left.length ? Object.assign({}, left[0], { shared: true, links: left }) : { shared: false, links: [] });
+      if (!left.length) hideNoteCommentsPanel();
+      syncShareSelectionState();
+      showNoteToast("Ссылка отключена");
+    } catch (e) {
+      alert(e.message || String(e));
+    }
   }
 
   function refreshShareSheetsState() {
@@ -28771,16 +28900,8 @@
       .then(function (data) {
         if (wrap._shareId !== String(itemId)) return;
         applyShareState(wrap, data);
-        var ov = document.getElementById("note-share-sheet-overlay");
-        if (ov) {
-          var access = wrap._shareShared && wrap._shareAccess === "comment" ? "comment" : "view";
-          ov.querySelectorAll('input[name="note-share-access"]').forEach(function (radio) {
-            radio.checked = radio.value === access;
-          });
-          var copy = document.getElementById("note-share-sheet-copy");
-          if (copy) copy.textContent = wrap._shareShared ? "Сохранить и скопировать" : "Скопировать ссылку";
-        }
         paintShareSheetPicker();
+        syncShareSelectionState();
       })
       .catch(function () {});
     if (
@@ -29105,7 +29226,7 @@
     var kind = wrap && wrap._shareKind;
     var itemId = wrap && wrap._shareId;
     if (!kind || !itemId) return;
-    if (!(await confirmDialog("Закрыть публичный доступ по ссылке?"))) return;
+    if (!(await confirmDialog(kind === "local" ? "Отключить все ссылки на эту заметку?" : "Закрыть публичный доступ по ссылке?"))) return;
     try {
       await apiFetch(
         "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/share",
@@ -30034,13 +30155,13 @@
         });
         shareMenu.appendChild(item);
       }
-      addShareItem("Копировать ссылку", function () {
+      addShareItem("Копировать последнюю ссылку", function () {
         copyExistingShareLink();
       });
-      addShareItem("Сменить доступ", function () {
+      addShareItem("Ссылки и доступ", function () {
         openShareAccessSheet();
       });
-      addShareItem("Закрыть доступ", function () {
+      addShareItem("Отключить все ссылки", function () {
         revokeShareLink();
       });
       shareBtn.addEventListener("click", function (e) {

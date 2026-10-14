@@ -3241,6 +3241,8 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
 
         sheet_ids = share_links_store.normalize_sheet_ids(link.get("sheet_ids"))
         body, _sheets = note_sheets_store.compose_share_body(note, sheet_ids)
+        if not _sheets:
+            return None  # листы ссылки удалены
         canvases = note_sheets_store.list_share_canvases(note, sheet_ids)
         return {
             "kind": "local",
@@ -8974,10 +8976,11 @@ async def miniapp_share_get(
     owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
     if not owner:
         return {"shared": False, "url": None, "token": None, "access": None, "sheet_ids": []}
-    link = await run_in_threadpool(share_links_store.get_active_share, owner, kind, item_id)
-    if not link:
-        return {"shared": False, "url": None, "token": None, "access": None, "sheet_ids": []}
-    return _share_response(link)
+    links = await run_in_threadpool(share_links_store.list_active_shares, owner, kind, item_id)
+    if not links:
+        return {"shared": False, "url": None, "token": None, "access": None, "sheet_ids": [], "links": []}
+    # Поля верхнего уровня — последняя ссылка (совместимость), links — все ссылки записи.
+    return {**_share_response(links[0]), "links": [_share_response(x) for x in links]}
 
 
 @miniapp_router.post("/notes/{kind}/{item_id}/share")
@@ -9013,6 +9016,7 @@ async def miniapp_share_create(
 async def miniapp_share_revoke(
     kind: str,
     item_id: str,
+    request: Request,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     from assistant.stores import share_links as share_links_store
@@ -9021,8 +9025,15 @@ async def miniapp_share_revoke(
     owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
     if not owner:
         return {"shared": False, "revoked": False, "access": None}
-    revoked = await run_in_threadpool(share_links_store.revoke_share, owner, kind, item_id)
-    return {"shared": False, "revoked": bool(revoked), "access": None}
+    token = str(request.query_params.get("token") or "").strip() or None
+    revoked = await run_in_threadpool(share_links_store.revoke_share, owner, kind, item_id, token)
+    left = await run_in_threadpool(share_links_store.list_active_shares, owner, kind, item_id)
+    return {
+        "shared": bool(left),
+        "revoked": bool(revoked),
+        "access": None,
+        "links": [_share_response(x) for x in left],
+    }
 
 
 @miniapp_router.get("/notes/{kind}/{item_id}/comments")

@@ -170,12 +170,9 @@ def _selected_share_rows(
     rows = list_sheets(note)
     wanted = [str(x).strip() for x in (sheet_ids or []) if str(x).strip()]
     if wanted:
-        selected = [row for row in rows if str(row.get("id")) in set(wanted)]
-    else:
-        selected = [primary_sheet(note)]
-    if not selected:
-        selected = [primary_sheet(note)]
-    return selected
+        # Удалённые листы не подменяем основным: по такой ссылке ничего не показываем.
+        return [row for row in rows if str(row.get("id")) in set(wanted)]
+    return [primary_sheet(note)]
 
 
 def compose_share_body(
@@ -185,6 +182,8 @@ def compose_share_body(
     they are delivered separately via list_share_canvases (iframe srcdoc)."""
     selected = _selected_share_rows(note, sheet_ids)
     parts: list[str] = []
+    if not selected:
+        return "", []
     extras_only = len(selected) > 1 or not selected[0].get("is_primary")
     for row in selected:
         if _normalize_kind(row.get("kind")) == SHEET_KIND_WEB:

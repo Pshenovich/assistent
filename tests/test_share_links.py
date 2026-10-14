@@ -82,12 +82,20 @@ class ShareLinksTests(unittest.TestCase):
     def test_create_or_get_stores_sheet_ids(self) -> None:
         first = share_links.create_or_get_share(3, "local", 11, sheet_ids=["main", "4"])
         self.assertEqual(first["sheet_ids"], ["main", "4"])
-        again = share_links.create_or_get_share(3, "local", 11, sheet_ids=["4"])
-        self.assertEqual(again["token"], first["token"])
-        self.assertEqual(again["sheet_ids"], ["4"])
-        resolved = share_links.resolve_share(first["token"])
-        assert resolved is not None
-        self.assertEqual(resolved["sheet_ids"], ["4"])
+        # Другой набор листов — отдельная ссылка; первая продолжает работать как была.
+        only4 = share_links.create_or_get_share(3, "local", 11, sheet_ids=["4"])
+        self.assertNotEqual(only4["token"], first["token"])
+        self.assertEqual(only4["sheet_ids"], ["4"])
+        self.assertEqual(share_links.resolve_share(first["token"])["sheet_ids"], ["main", "4"])
+        # Тот же набор (в любом порядке) — та же ссылка, меняется только доступ.
+        same = share_links.create_or_get_share(3, "local", 11, access="comment", sheet_ids=["4", "main"])
+        self.assertEqual(same["token"], first["token"])
+        self.assertEqual(share_links.resolve_share(first["token"])["access"], "comment")
+        self.assertEqual(len(share_links.list_active_shares(3, "local", 11)), 2)
+        # Отключить одну ссылку — вторая остаётся.
+        self.assertTrue(share_links.revoke_share(3, "local", 11, token=only4["token"]))
+        self.assertIsNone(share_links.resolve_share(only4["token"]))
+        self.assertIsNotNone(share_links.resolve_share(first["token"]))
         legacy = share_links.create_or_get_share(3, "local", 12)
         self.assertEqual(legacy["sheet_ids"], [])
 

@@ -142,6 +142,36 @@ def get_active_share(
     return _row_to_dict(row) if row else None
 
 
+def list_active_shares(
+    user_id: int | str, item_kind: str, item_id: str | int
+) -> list[dict[str, Any]]:
+    """Все активные ссылки на запись, свежие сверху (у заметки — своя ссылка на каждый набор листов)."""
+    kind = (item_kind or "").strip()
+    iid = str(item_id).strip()
+    if kind not in _VALID_KINDS or not iid:
+        return []
+    with _LOCK:
+        rows = _conn().execute(
+            """
+            SELECT * FROM share_links
+            WHERE user_id = ? AND item_kind = ? AND item_id = ? AND revoked_at IS NULL
+            ORDER BY created_at DESC, rowid DESC
+            """,
+            (_uid(user_id), kind, iid),
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def _same_sheets(a: list[str], b: list[str]) -> bool:
+    return sorted(normalize_sheet_ids(a)) == sorted(normalize_sheet_ids(b))
+
+
+def _set_access_by_token(token: str, access: str) -> None:
+    with _LOCK:
+        _conn().execute("UPDATE share_links SET access = ? WHERE token = ?", (normalize_access(access), token))
+        _conn().commit()
+
+
 def update_share_sheet_ids(
     user_id: int | str,
     item_kind: str,
@@ -240,16 +270,18 @@ def create_or_get_share(
     iid = str(item_id).strip()
     if not iid:
         raise ValueError("Не указан идентификатор записи")
-    existing = get_active_share(uid, kind, iid)
+    # Своя ссылка на каждый набор листов: тот же набор — та же ссылка (меняется только доступ).
+    # Без sheet_ids (журнал, чат, старые вызовы) — последняя активная ссылка, как раньше.
+    active = list_active_shares(uid, kind, iid)
+    if sheet_ids is None:
+        existing = active[0] if active else None
+    else:
+        existing = next((x for x in active if _same_sheets(x.get("sheet_ids") or [], sheet_ids)), None)
     if existing:
-        out = existing
-        if access is not None:
-            acc = normalize_access(access)
-            if acc != existing.get("access"):
-                out = update_share_access(uid, kind, iid, acc) or existing
-        if sheet_ids is not None:
-            out = update_share_sheet_ids(uid, kind, iid, sheet_ids) or out
-        return out
+        if access is not None and normalize_access(access) != existing.get("access"):
+            _set_access_by_token(existing["token"], access)
+            existing = dict(existing, access=normalize_access(access))
+        return existing
     acc = normalize_access(access)
     ids = normalize_sheet_ids(sheet_ids)
     token = _new_token()
@@ -292,7 +324,10 @@ def resolve_share(token: str) -> Optional[dict[str, Any]]:
     return _row_to_dict(row) if row else None
 
 
-def revoke_share(user_id: int | str, item_kind: str, item_id: str | int) -> bool:
+def revoke_share(
+    user_id: int | str, item_kind: str, item_id: str | int, token: str | None = None
+) -> bool:
+    """Отключить ссылку token или (без token) все ссылки на запись."""
     kind = (item_kind or "").strip()
     if kind not in _VALID_KINDS:
         return False
@@ -301,14 +336,16 @@ def revoke_share(user_id: int | str, item_kind: str, item_id: str | int) -> bool
     if not iid:
         return False
     ts = _now_iso()
+    extra = " AND token = ?" if token else ""
+    params: tuple[Any, ...] = (ts, uid, kind, iid) + ((str(token),) if token else ())
     with _LOCK:
         cur = _conn().execute(
             """
             UPDATE share_links
             SET revoked_at = ?
-            WHERE user_id = ? AND item_kind = ? AND item_id = ? AND revoked_at IS NULL
-            """,
-            (ts, uid, kind, iid),
+            WHERE user_id = ? AND item_kind = ? AND item_id = ? AND revoked_at IS NULL"""
+            + extra,
+            params,
         )
         _conn().commit()
         return cur.rowcount > 0
