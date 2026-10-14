@@ -7,6 +7,8 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
+from assistant.lib import canvas_templates
+
 SHEET_KIND_DOC = "doc"
 SHEET_KIND_WEB = "web"
 KIT_VERSION = "v1"
@@ -209,92 +211,61 @@ def load_kit_css() -> str:
 
 
 def canvas_system_addon() -> str:
-    themes = ", ".join(THEMES)
-    templates = bento_slide_templates_prompt()
+    schema = canvas_templates.schema_prompt()
     return f"""
-## Web-canvas presentations (Leo) — TEMPLATE FILL MODE
-When the user asks to create or edit a web presentation / deck inside the note:
-1) FIRST emit the fenced ```leo-canvas JSON (complete, valid).
-2) ONLY AFTER the fence, one short Russian sentence. Never claim success without a complete fence.
-3) Keep html compact: 4–6 slides, aim &lt;40KB. Prefer fewer slides over truncated JSON.
+## Web-canvas presentations (Leo) — SLOT TEMPLATES
+When the user asks to create a presentation / deck in the note:
+1) FIRST emit ONE fenced ```leo-canvas JSON. 2) AFTER the fence — one short Russian sentence.
+Never write HTML. You only choose slide roles and fill slot data; Leo renders the layouts.
 
-CRITICAL formatting:
+Create (6–10 slides):
 ```leo-canvas
-{{"action":"create","title":"Презентация","theme":"bento","html":"<!DOCTYPE html>..."}}
+{{"action":"create","title":"Название","slides":[{{"role":"cover","slots":{{"title":"…","lede":"…","goals":["…","…","…"]}}}},{{"role":"chart","slots":{{"title":"…","chart":{{"intent":"trend","x":["Апр","Май"],"series":[{{"values":[1,2]}}]}},"source":"…"}}}}]}}
 ```
+- role is required. variant is optional: Leo picks the layout from the data shape.
+- Arc (skip what the note has no material for): cover → context → insight → metrics/chart → comparison/content → plan → closing → appendix.
+- Content ONLY from the note and attachments. Never invent numbers: if there are no numbers, use text roles (insight, content), not metrics/chart.
+- Use role=chart only for real numeric series from the source; pick chart.intent by what the reader must see.
+- Keep texts within the limits (≤N chars). Russian text. No markdown inside slots.
+- Repeated items: respect the ranges (e.g. 2–4). If there are more points, split into two slides.
 
-Edit existing (when open sheet_id / selections provided):
+Edit an existing template deck (an open sheet with slide ids s1, s2, …):
 ```leo-canvas
-{{"action":"update","sheet_id":"123","patches":[{{"leo_id":"hero-title","outer_html":"..."}}]}}
+{{"action":"update","sheet_id":"123","slides":[{{"id":"s3","slots":{{…full new slots of s3…}}}}],"insert":[{{"after":"s3","role":"content","slots":{{…}}}}],"remove":["s7"]}}
 ```
+- Send FULL slots for every slide you change; omit slides you do not change.
+- To change only the layout of a slide send {{"id":"s3","variant":"<variant id>"}} with its current slots.
 
-NEVER paste JSON outside the fence. NEVER use ```json. NEVER show HTML/JSON in chat text.
+Older decks without slide ids are HTML decks: edit them with
+{{"action":"update","sheet_id":"123","patches":[{{"leo_id":"…","outer_html":"…"}}]}}
 
-JSON rules:
-- theme: default **bento** for new decks (black / white / ice-blue pitch style). Other themes [{themes}] only if user asks
-- action create|update as before; never spawn a second sheet for small edits
-- html: full document with data-leo-theme="bento" on <html>
+Slot schema by role (variant id → slots):
+{schema}
 
-## Design system (bento) — DO NOT invent layouts
-Fill ONLY the named templates below. Copy the HTML structure exactly; replace Russian/placeholder text and numbers from the note. Do not invent new grids, colors, fonts, or card systems.
-Allowed classes: .deck .slide .slide-ink .slide-ice .slide-head .split-pane .pane-copy .pane-stage .stack .tile .tile-ink .tile-mute .tile-white .tile-num .metric-xl .pill .pill-outline .pill-ink .pill-ice .icon-circle .cards-3 .cards-4 .bento-shell .bento-2x2 .vbars .vbar .vbar-fill .vbar-val .vbar-label .year-rail .donut .legend .hbar-row .hbar-track .hbar-fill .title .display .body .lead .caption .spark .chart-svg .abstract .abstract-orb .abstract-grid .abstract-wave .abstract-arcs .media-slot .media-img
-Colors come from the theme (ink / ice / white). No purple, no Inter, no landing CTAs on slide 1.
-No «Узнать подробнее» / demo / buy buttons on the cover.
-Mark filled nodes with unique data-leo-id. No <script>. No ``` inside html strings.
-
-Visuals policy (important):
-- Decorative / abstract / mood / cover art (no real photo) → use .abstract (+ .abstract-orb / .abstract-grid / .abstract-wave / .abstract-arcs). NEVER put charts there.
-- Real photo / illustration / «сгенерируй картинку» / brand image → media slot with CSS fallback:
-  <div class="media-slot abstract abstract-orb" data-leo-id="hero-art" data-leo-img="pending" data-leo-img-prompt="short English visual prompt" aria-hidden="true"></div>
-  Do NOT invent <img src="http...">. Do NOT put base64 in html. Leo fills the slot after generation.
-- Charts (.donut .vbars .spark .chart-svg .hbar-*) ONLY when the slide is explicitly about numbers from the note (revenue, share, growth). If unsure → abstract, not a chart.
-- Do not invent fake scary charts with unclear axes.
-
-Pick 4–6 templates that match the note (vary layouts; never 4× the same template):
-{templates}
-
-If the user only chats and does not ask for a presentation, do not emit leo-canvas.
+NEVER paste JSON outside the fence. NEVER use ```json. If the user only chats, do not emit leo-canvas.
 """.strip()
 
 
-def bento_slide_templates_prompt() -> str:
-    """Compact HTML skeletons for the model to copy and fill."""
-    return r"""
-### T1 cover-split (first slide — no button; abstract art, not a chart)
-<section class="slide slide-ink" data-leo-id="slide-cover"><div class="split-pane"><div class="pane-copy"><h1 class="title" data-leo-id="hero-title">Заголовок</h1><p class="pill pill-outline" data-leo-id="hero-pill">контекст</p><p class="body" data-leo-id="hero-body">Одна мысль.</p></div><div class="pane-stage" data-leo-id="hero-stage"><div class="media-slot abstract abstract-orb" data-leo-id="hero-art" aria-hidden="true"></div></div></div></section>
-
-### T2 problem-3cards
-<section class="slide" data-leo-id="slide-problem"><div class="slide-head"><h2 class="title" data-leo-id="problem-title">Проблема</h2><span class="icon-circle" aria-hidden="true">↓</span></div><div class="cards-3"><div class="tile" data-leo-id="p1"><p class="tile-num">01.</p><p class="body">…</p></div><div class="tile tile-ink" data-leo-id="p2"><p class="tile-num">02.</p><p class="body">…</p></div><div class="tile" data-leo-id="p3"><p class="tile-num">03.</p><p class="body">…</p></div></div></section>
-
-### T3 split-donut
-<section class="slide slide-ink" data-leo-id="slide-funds"><div class="split-pane"><div class="pane-copy"><h2 class="title" data-leo-id="funds-title">Куда идут деньги</h2><p class="body" data-leo-id="funds-body">…</p></div><div class="pane-stage"><div class="donut" data-leo-id="funds-donut"></div><div class="legend" data-leo-id="funds-legend"><span><i>A</i><b>40%</b></span><span><i>B</i><b>25%</b></span></div></div></div></section>
-
-### T4 split-line + pill
-<section class="slide slide-ink" data-leo-id="slide-opp"><div class="split-pane"><div class="pane-copy"><h2 class="title" data-leo-id="opp-title">Возможность</h2><p class="pill pill-ice" data-leo-id="opp-pill">ключ. цифра</p><p class="body" data-leo-id="opp-body">…</p></div><div class="pane-stage"><svg class="spark chart-svg" viewBox="0 0 220 120"><polyline fill="none" stroke="currentColor" stroke-width="4" points="0,100 40,85 80,90 120,55 160,60 220,20"/><circle cx="220" cy="20" r="5" fill="currentColor"/></svg></div></div></section>
-
-### T5 highlights-bento
-<section class="slide" data-leo-id="slide-hi"><div class="split-pane"><div class="pane-copy"><h2 class="title" data-leo-id="hi-title">Хайлайты</h2><p class="pill pill-ink" data-leo-id="hi-year">2026</p><p class="body" data-leo-id="hi-body">…</p></div><div class="bento-shell"><div class="bento-2x2"><div class="tile" data-leo-id="hi-a"><p class="metric-xl">12</p><p class="caption">метка</p></div><div class="tile tile-mute" data-leo-id="hi-b"><p class="metric-xl">87%</p><p class="caption">метка</p></div><div class="tile tile-mute" data-leo-id="hi-c"><p class="metric-xl">3×</p><p class="caption">метка</p></div><div class="tile" data-leo-id="hi-d"><p class="metric-xl">30k</p><p class="caption">метка</p></div></div></div></div></section>
-
-### T6 revenue-bars (dark)
-<section class="slide slide-ink" data-leo-id="slide-rev"><div class="slide-head"><h2 class="title" data-leo-id="rev-title">Выручка</h2><p class="pill pill-outline">по годам</p></div><div class="vbars" data-leo-id="rev-bars"><div class="vbar"><span class="vbar-val">1.2</span><span class="vbar-fill is-ink" style="height:35%"></span><span class="vbar-label">Y1</span></div><div class="vbar"><span class="vbar-val">2.1</span><span class="vbar-fill is-mid" style="height:55%"></span><span class="vbar-label">Y2</span></div><div class="vbar"><span class="vbar-val">3.4</span><span class="vbar-fill" style="height:75%"></span><span class="vbar-label">Y3</span></div><div class="vbar"><span class="vbar-val">4.8</span><span class="vbar-fill" style="height:95%"></span><span class="vbar-label">Y4</span></div></div></section>
-
-### T7 metric-row (dark)
-<section class="slide slide-ink" data-leo-id="slide-facts"><div class="slide-head"><h2 class="title" data-leo-id="facts-title">Факты</h2><p class="pill pill-outline">в цифрах</p></div><div class="cards-4"><div class="tile tile-white" data-leo-id="f1"><span class="icon-circle">→</span><p class="metric-xl">300%</p><p class="caption">рост</p></div><div class="tile tile-white" data-leo-id="f2"><span class="icon-circle">→</span><p class="metric-xl">30k</p><p class="caption">пользователи</p></div><div class="tile tile-white" data-leo-id="f3"><span class="icon-circle">→</span><p class="metric-xl">12</p><p class="caption">сделки</p></div><div class="tile tile-white" data-leo-id="f4"><span class="icon-circle">→</span><p class="metric-xl">2y</p><p class="caption">до окупаемости</p></div></div></section>
-
-### T8 quote-ice
-<section class="slide slide-ice" data-leo-id="slide-quote"><div class="tile tile-white" style="flex:1;justify-content:center;min-height:60vh"><p class="pill pill-ink">2026</p><p class="display" data-leo-id="quote-text" style="max-width:18ch">Короткая сильная фраза.</p></div></section>
-
-### T9 abstract-stage (mood / CSS abstract — or pending real image)
-<section class="slide" data-leo-id="slide-art"><div class="split-pane"><div class="pane-copy"><h2 class="title" data-leo-id="art-title">Визуал</h2><p class="body" data-leo-id="art-body">…</p></div><div class="pane-stage"><div class="media-slot abstract abstract-wave" data-leo-id="art-abstract" aria-hidden="true"></div></div></div></section>
-""".strip()
-
-
-def open_canvas_prompt_block(sheet_id: str | None, *, title: str | None = None) -> str:
+def open_canvas_prompt_block(
+    sheet_id: str | None,
+    *,
+    title: str | None = None,
+    html: str | None = None,
+) -> str:
     sid = str(sheet_id or "").strip()
     if not sid:
         return ""
     label = str(title or "").strip()
     extra = f' title="{label}"' if label else ""
+    deck = canvas_templates.extract_deck(html or "") if html else None
+    if deck is not None:
+        return (
+            f"Open template deck sheet_id={sid}{extra}. "
+            "For any edit use action=update with this sheet_id and slides:[{id, slots}] "
+            "(full slots of each changed slide). Change only what the user asked. "
+            "Do NOT action=create unless the user explicitly asks for a new separate presentation.\n"
+            "Current deck JSON:\n" + canvas_templates.deck_prompt_json(deck)[:24000]
+        )
     return (
         f"Open web-canvas sheet_id={sid}{extra}. "
         "For any edit/fix of this deck use action=update with this sheet_id. "
@@ -332,6 +303,8 @@ def selections_prompt_block(selections: list[dict[str, Any]] | None) -> str:
         "- Do NOT include an html field. Do NOT rewrite other slides, theme, or layout\n"
         "- Do NOT action=create. Do NOT replace the whole deck\n"
         "- Change only the requested text/style inside the selected node(s)\n"
+        "- Template deck (leo_id like s3 or s3-title): instead of patches send "
+        "slides:[{id:\"s3\", slots:{...full slots...}}] for that slide only\n"
         "Selections:\n" + "\n".join(rows)
     )
 
@@ -404,7 +377,15 @@ def _is_canvas_action(data: Any) -> bool:
     if act not in ("create", "update"):
         return False
     # Must look like a canvas payload, not arbitrary JSON.
-    if data.get("html") or data.get("patches") or data.get("theme") or data.get("title"):
+    if (
+        data.get("html")
+        or data.get("patches")
+        or data.get("slides")
+        or data.get("insert")
+        or data.get("remove")
+        or data.get("theme")
+        or data.get("title")
+    ):
         return True
     return False
 
@@ -714,6 +695,10 @@ def finalize_canvas_html(
     theme: str | None = None,
     patches: list[dict[str, Any]] | None = None,
 ) -> str:
+    if canvas_templates.is_template_html(html or ""):
+        rendered = canvas_templates.refinalize(html or "")
+        if rendered is not None:
+            return rendered
     theme_n = normalize_theme(theme)
     raw = (html or "").strip()
     if patches:
@@ -832,6 +817,22 @@ def apply_canvas_action(
             return None
         existing_html = str(existing.get("body") or "")
         surgical = bool(selection_sheet_ids)
+        if canvas_templates.is_template_html(existing_html):
+            return _update_template_sheet(
+                note, sid, existing_html, action, note_sheets_mod, surgical=surgical
+            )
+        if canvas_templates.is_template_action(action) and not surgical:
+            # The model rebuilt an old HTML deck as a template deck.
+            deck = canvas_templates.build_deck({**action, "title": action.get("title") or existing.get("title")})
+            if not deck["slides"]:
+                return None
+            return note_sheets_mod.update_sheet(
+                int(note["id"]),
+                sid,
+                title=title if action.get("title") else None,
+                body=canvas_templates.render_deck_html(deck),
+                kind=SHEET_KIND_WEB,
+            )
         # Targeted patches must run on the live sheet. Full html rewrite only when
         # there are no patches and this is NOT a selection-driven edit.
         if surgical:
@@ -856,10 +857,85 @@ def apply_canvas_action(
             kind=SHEET_KIND_WEB,
         )
 
+    if canvas_templates.is_template_action(action):
+        deck = canvas_templates.build_deck(action)
+        if not deck["slides"]:
+            return None
+        return note_sheets_mod.create_sheet(
+            note,
+            title=title,
+            body=canvas_templates.render_deck_html(deck),
+            kind=SHEET_KIND_WEB,
+        )
+
     finalized = finalize_canvas_html(html_in, theme=theme, patches=patches)
     return note_sheets_mod.create_sheet(
         note,
         title=title,
         body=finalized,
+        kind=SHEET_KIND_WEB,
+    )
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _patches_to_slots(deck: dict[str, Any], patches: list[Any]) -> list[str]:
+    """Map legacy text patches on template nodes (leo_id «s3-title») onto slots."""
+    import html as html_lib
+
+    touched: list[str] = []
+    ids = {str(s["id"]) for s in deck.get("slides") or []}
+    for p in patches or []:
+        if not isinstance(p, dict):
+            continue
+        leo_id = str(p.get("leo_id") or p.get("leoId") or "").strip()
+        sid, _, path = leo_id.partition("-")
+        if sid not in ids or not path:
+            continue
+        text = html_lib.unescape(_TAG_RE.sub(" ", str(p.get("outer_html") or p.get("outerHtml") or "")))
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text:
+            continue
+        slide = next(s for s in deck["slides"] if str(s["id"]) == sid)
+        if canvas_templates.get_path(slide["slots"], path) is None:
+            continue
+        canvas_templates.set_path(slide["slots"], path, text)
+        touched.append(sid)
+    return touched
+
+
+def _update_template_sheet(
+    note: dict[str, Any],
+    sid: int,
+    existing_html: str,
+    action: dict[str, Any],
+    note_sheets_mod: Any,
+    *,
+    surgical: bool,
+) -> Optional[dict[str, Any]]:
+    deck = canvas_templates.extract_deck(existing_html)
+    if deck is None:
+        return None
+    touched: list[str] = []
+    if any(action.get(k) for k in ("slides", "insert", "remove")):
+        if surgical:
+            # Selection edits may only change the slides they name.
+            action = {"slides": action.get("slides") or []}
+        touched += canvas_templates.apply_slide_updates(deck, action)
+    patches = action.get("patches") if isinstance(action.get("patches"), list) else []
+    if patches:
+        touched += _patches_to_slots(deck, patches)
+    new_title = str(action.get("title") or "").strip()
+    if new_title and not surgical:
+        deck["title"] = new_title[:120]
+    if not touched and not (new_title and not surgical):
+        return None
+    html = canvas_templates.render_deck_html(deck, canvas_templates.extract_media(existing_html))
+    return note_sheets_mod.update_sheet(
+        int(note["id"]),
+        sid,
+        title=new_title if (new_title and not surgical) else None,
+        body=html,
         kind=SHEET_KIND_WEB,
     )

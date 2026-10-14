@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261013-comment-hl";
+  var WEBAPP_BUILD = "20261014-canvas-templates";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261013-ref-plus-chats";
+  const NOTE_EDITOR_ASSET_V = "20261014-canvas-templates";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -17178,6 +17178,13 @@
       onMedia: function (req) {
         handleWebCanvasMedia(String(sheet.id), req);
       },
+      onOp: function (req) {
+        return runWebCanvasOp(String(sheet.id), req);
+      },
+      onRevise: function (req) {
+        return reviseWebCanvas(String(sheet.id), req);
+      },
+      onNotify: showNoteToast,
     });
   }
 
@@ -17204,6 +17211,13 @@
       onMedia: function (req) {
         handleWebCanvasMedia(String(sheet.id), req);
       },
+      onOp: function (req) {
+        return runWebCanvasOp(String(sheet.id), req);
+      },
+      onRevise: function (req) {
+        return reviseWebCanvas(String(sheet.id), req);
+      },
+      onNotify: showNoteToast,
     });
     noteSheetState.rightEditor = null;
   }
@@ -17282,6 +17296,76 @@
     var dataUrl = String((res && res.data_url) || "").trim();
     if (!dataUrl) throw new Error("Модель не вернула изображение");
     return dataUrl;
+  }
+
+  // Let a pending autosave of this sheet finish before a server-side canvas edit.
+  async function waitSheetPersistIdle(sheetId) {
+    var id = String(sheetId || "");
+    if (noteSheetState.sheetTimers[id]) {
+      clearTimeout(noteSheetState.sheetTimers[id]);
+      delete noteSheetState.sheetTimers[id];
+    }
+    var inflight = noteSheetState.sheetPersists[id];
+    if (inflight) {
+      try {
+        await inflight;
+      } catch (e) {}
+    }
+  }
+
+  function webCanvasSheetPath(sheetId) {
+    var noteId = noteSheetsNoteId();
+    if (!noteId || String(noteId).indexOf("tmp_") === 0) {
+      throw new Error("Заметка ещё не сохранена");
+    }
+    if (isAppOffline()) throw new Error("Нет сети — правки полотна недоступны офлайн");
+    return (
+      "/notes/local/" +
+      encodeURIComponent(String(noteId)) +
+      "/sheets/" +
+      encodeURIComponent(String(sheetId))
+    );
+  }
+
+  function acceptWebCanvasItem(item) {
+    if (!item) return "";
+    upsertNoteSheet(item);
+    previewOpenNoteFromSheets();
+    return String(item.body || item.description || "");
+  }
+
+  async function runWebCanvasOp(sheetId, req) {
+    var path = webCanvasSheetPath(sheetId);
+    await waitSheetPersistIdle(sheetId);
+    var res = await apiFetch(path + "/canvas-op", {
+      method: "POST",
+      body: JSON.stringify({
+        op: req.op,
+        slide_id: req.slideId || "",
+        variant: req.variant || "",
+        group: req.group || "",
+        index: req.index || 0,
+        after: req.after == null ? null : req.after,
+        delta: req.delta || 0,
+        html: req.html || null,
+      }),
+    });
+    var html = acceptWebCanvasItem(res && res.item);
+    if (!html) throw new Error("Не удалось изменить слайд");
+    return html;
+  }
+
+  async function reviseWebCanvas(sheetId, req) {
+    var path = webCanvasSheetPath(sheetId);
+    await waitSheetPersistIdle(sheetId);
+    var res = await apiFetch(path + "/canvas-revise", {
+      method: "POST",
+      body: JSON.stringify({ comments: req.comments || {}, html: req.html || null }),
+    });
+    return {
+      html: acceptWebCanvasItem(res && res.item),
+      results: (res && res.results) || {},
+    };
   }
 
   async function handleWebCanvasMedia(sheetId, req) {

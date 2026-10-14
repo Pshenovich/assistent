@@ -8,14 +8,16 @@
   var FRAME_SCRIPT =
     "(function(){" +
     "var pick=false,edit=false,selected=null,dragState=null;" +
-    "var TEXT_SEL='.title,.display,.body,.lead,.caption,.pill,.metric-xl,.tile-num,h1,h2,h3,p,span,blockquote';" +
+    // Template decks: only slot nodes are editable text; layout comes from the server.
+    "var TPL=document.documentElement.hasAttribute('data-leo-deck');" +
+    "var TEXT_SEL=TPL?'[data-slot]':'.title,.display,.body,.lead,.caption,.pill,.metric-xl,.tile-num,h1,h2,h3,p,span,blockquote';" +
     "var MEDIA_SEL='.abstract,.media-slot,img.media-img,.pane-stage';" +
     "function post(type,payload){try{parent.postMessage(Object.assign({source:'leo-web-canvas',type:type},payload||{}), '*');}catch(e){}}" +
     "function uid(prefix){return String(prefix||'el')+'-'+Math.random().toString(36).slice(2,8);}" +
     "function clearSel(){if(selected){selected.classList.remove('leo-selected','leo-edit-selected');selected=null;}document.querySelectorAll('.leo-drop-target').forEach(function(n){n.classList.remove('leo-drop-target');});}" +
     "function stripEditChrome(root){" +
     "root=root||document.documentElement;" +
-    "root.classList.remove('leo-pick-mode','leo-edit-mode');" +
+    "root.classList.remove('leo-pick-mode','leo-edit-mode','leo-review');" +
     "root.querySelectorAll('[contenteditable]').forEach(function(n){n.removeAttribute('contenteditable');});" +
     "root.querySelectorAll('.leo-selected,.leo-edit-selected,.leo-drop-target,.leo-dragging').forEach(function(n){n.classList.remove('leo-selected','leo-edit-selected','leo-drop-target','leo-dragging');});" +
     "root.querySelectorAll('.leo-edit-chrome').forEach(function(n){n.remove();});" +
@@ -38,7 +40,7 @@
     "function isMediaNode(n){return !!(n&&(n.matches&&n.matches(MEDIA_SEL)||n.classList&&(n.classList.contains('abstract')||n.classList.contains('media-slot')||n.classList.contains('media-img'))));}" +
     "function ensureLeoId(n){if(!n)return'';var id=n.getAttribute('data-leo-id');if(!id){id=uid('block');n.setAttribute('data-leo-id',id);}return id;}" +
     "function showEditChrome(node){" +
-    "document.querySelectorAll('.leo-edit-chrome').forEach(function(n){n.remove();});" +
+    "document.querySelectorAll('.leo-edit-chrome:not(.leo-review-ui)').forEach(function(n){n.remove();});" +
     "if(!node||!edit)return;" +
     "var bar=document.createElement('div');" +
     "bar.className='leo-edit-chrome';" +
@@ -198,8 +200,9 @@
     "if(!pick&&!edit)return;" +
     "if(dragState)return;" +
     "if(e.target&&e.target.closest&&e.target.closest('.leo-edit-chrome'))return;" +
-    "e.preventDefault();e.stopPropagation();" +
     "var el=e.target;if(!el||el===document.documentElement||el===document.body)return;" +
+    "if(edit&&TPL){var media=el.closest('[data-media]');if(!media)return;e.preventDefault();e.stopPropagation();selectNode(media);return;}" +
+    "e.preventDefault();e.stopPropagation();" +
     "var node=el.closest('[data-leo-id]')||el;" +
     "if(pick){" +
     "selectNode(node);" +
@@ -255,6 +258,362 @@
     "post('ready',{});" +
     "})();";
 
+  /**
+   * Edit-mode review UI inside the frame (serialized into srcdoc).
+   * Every slide gets a comment box below it; template decks also get a layout
+   * menu (chevron, top-right), slide move/delete, and add/remove for repeated items.
+   * All nodes carry .leo-edit-chrome so snapshots strip them.
+   */
+  function frameReviewMain() {
+    var root = document.documentElement;
+    var TPL = root.hasAttribute("data-leo-deck");
+    var on = false;
+    var comments = {};
+    var statuses = {};
+    var variantsUi = {};
+    var menu = null;
+    var hover = null;
+    var hoverItem = null;
+
+    function post(type, payload) {
+      if (type === "op") payload = Object.assign({ scrollY: window.scrollY || 0 }, payload);
+      try {
+        parent.postMessage(Object.assign({ source: "leo-web-canvas", type: type }, payload || {}), "*");
+      } catch (e) {}
+    }
+
+    function readUi() {
+      variantsUi = {};
+      try {
+        var el = document.getElementById("leo-deck");
+        var data = el ? JSON.parse(el.textContent || "{}") : {};
+        variantsUi = (data.ui && data.ui.variants) || {};
+      } catch (e) {}
+    }
+
+    function slides() {
+      return [].slice.call(document.querySelectorAll("section.slide")).filter(function (s) {
+        return !s.parentNode.closest || !s.parentNode.closest("section.slide");
+      });
+    }
+
+    function slideId(sec, i) {
+      if (TPL) return sec.getAttribute("data-slide-id") || "";
+      var id = sec.getAttribute("data-leo-id");
+      if (!id) {
+        id = "slide-" + (i + 1);
+        sec.setAttribute("data-leo-id", id);
+      }
+      return id;
+    }
+
+    function chrome(tag, cls) {
+      var el = document.createElement(tag);
+      el.className = "leo-edit-chrome leo-review-ui " + cls;
+      return el;
+    }
+
+    function clear() {
+      closeMenu();
+      hideHover();
+      document.querySelectorAll(".leo-review-ui").forEach(function (n) {
+        n.remove();
+      });
+      root.classList.remove("leo-review");
+    }
+
+    function setStatus(sid, st) {
+      var box = document.querySelector('.leo-review-box[data-for="' + String(sid).replace(/"/g, "") + '"]');
+      if (!box) return;
+      var el = box.querySelector(".leo-review-status");
+      el.textContent = (st && st.text) || "";
+      el.setAttribute("data-state", (st && st.state) || "");
+    }
+
+    function autosize(ta) {
+      ta.style.height = "auto";
+      ta.style.height = Math.min(ta.scrollHeight, 220) + "px";
+    }
+
+    function build() {
+      clear();
+      readUi();
+      root.classList.add("leo-review");
+      slides().forEach(function (sec, i) {
+        var sid = slideId(sec, i);
+        if (!sid) return;
+        var box = chrome("div", "leo-review-box");
+        box.setAttribute("data-for", sid);
+        box.innerHTML =
+          '<div class="leo-review-head"><span>Слайд ' + (i + 1) + '</span><span class="leo-review-status"></span></div>' +
+          '<textarea rows="2" placeholder="Что поправить в этом слайде? Например: сократи заголовок, добавь цифры из заметки"></textarea>';
+        var ta = box.querySelector("textarea");
+        ta.setAttribute("aria-label", "Комментарий к слайду " + (i + 1));
+        ta.value = comments[sid] || "";
+        ta.addEventListener("input", function () {
+          comments[sid] = ta.value;
+          autosize(ta);
+          post("comment", { slideId: sid, text: ta.value });
+        });
+        ta.addEventListener("keydown", function (e) {
+          e.stopPropagation();
+        });
+        sec.parentNode.insertBefore(box, sec.nextSibling);
+        setTimeout(function () {
+          autosize(ta);
+        }, 0);
+        setStatus(sid, statuses[sid]);
+        if (TPL) buildTools(sec, sid, i);
+      });
+      if (TPL) buildEmptyGroups();
+    }
+
+    function buildTools(sec, sid, i) {
+      var list = variantsUi[sid] || [];
+      var cur = sec.getAttribute("data-variant") || "";
+      var curName = "Макет";
+      list.forEach(function (v) {
+        if (v.id === cur) curName = v.name;
+      });
+      var tools = chrome("div", "leo-slide-tools");
+      tools.innerHTML =
+        '<button type="button" data-act="variant" class="leo-variant-btn" aria-haspopup="menu" title="Другой вариант дизайна"><span></span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>' +
+        '<button type="button" data-act="up" title="Переместить выше" aria-label="Переместить слайд выше">↑</button>' +
+        '<button type="button" data-act="down" title="Переместить ниже" aria-label="Переместить слайд ниже">↓</button>' +
+        '<button type="button" data-act="delslide" title="Удалить слайд" aria-label="Удалить слайд">✕</button>';
+      tools.querySelector(".leo-variant-btn span").textContent = curName;
+      if (list.length < 2) tools.querySelector(".leo-variant-btn").disabled = true;
+      var all = slides();
+      if (i === 0) tools.querySelector('[data-act="up"]').disabled = true;
+      if (i === all.length - 1) tools.querySelector('[data-act="down"]').disabled = true;
+      if (all.length < 2) tools.querySelector('[data-act="delslide"]').disabled = true;
+      var delArmed = null;
+      tools.addEventListener("click", function (e) {
+        var b = e.target.closest("button[data-act]");
+        if (!b || b.disabled) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var act = b.getAttribute("data-act");
+        if (act === "variant") {
+          if (menu && menu.parentNode === tools) closeMenu();
+          else openMenu(tools, sid, cur, list);
+        } else if (act === "up" || act === "down") {
+          post("op", { op: "move_slide", slideId: sid, delta: act === "up" ? -1 : 1 });
+        } else if (act === "delslide") {
+          if (delArmed) {
+            clearTimeout(delArmed);
+            post("op", { op: "delete_slide", slideId: sid });
+            return;
+          }
+          b.textContent = "Удалить?";
+          b.classList.add("is-armed");
+          delArmed = setTimeout(function () {
+            delArmed = null;
+            b.textContent = "✕";
+            b.classList.remove("is-armed");
+          }, 3000);
+        }
+      });
+      sec.appendChild(tools);
+    }
+
+    function openMenu(tools, sid, cur, list) {
+      closeMenu();
+      var m = chrome("div", "leo-variant-menu");
+      m.setAttribute("role", "menu");
+      list.forEach(function (v) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.setAttribute("role", "menuitemradio");
+        b.setAttribute("aria-checked", String(v.id === cur));
+        b.innerHTML = '<span class="leo-vm-name"></span><span class="leo-vm-note"></span>';
+        b.querySelector(".leo-vm-name").textContent = v.name;
+        b.querySelector(".leo-vm-note").textContent = v.id === cur ? "✓" : v.ok ? "" : v.why;
+        if (!v.ok && v.id !== cur) b.disabled = true;
+        b.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          closeMenu();
+          if (v.id !== cur && v.ok) post("op", { op: "variant", slideId: sid, variant: v.id });
+        });
+        m.appendChild(b);
+      });
+      tools.appendChild(m);
+      menu = m;
+      var first = m.querySelector("button:not([disabled])");
+      if (first) first.focus();
+    }
+
+    function closeMenu() {
+      if (menu) menu.remove();
+      menu = null;
+    }
+
+    function groupLimits(sec, group) {
+      var g = sec.querySelector('[data-group="' + group.replace(/"/g, "") + '"][data-max]');
+      if (!g) return null;
+      var re = new RegExp("^" + group.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\.\\d+$");
+      var count = [].slice.call(sec.querySelectorAll("[data-item]")).filter(function (n) {
+        return re.test(n.getAttribute("data-item") || "");
+      }).length;
+      return { min: +g.getAttribute("data-min") || 0, max: +g.getAttribute("data-max") || 99, count: count };
+    }
+
+    function buildEmptyGroups() {
+      slides().forEach(function (sec) {
+        sec.querySelectorAll("[data-group][data-max]").forEach(function (g) {
+          var group = g.getAttribute("data-group");
+          var lim = groupLimits(sec, group);
+          if (!lim || lim.count > 0 || lim.max < 1 || g.style.display === "none") return;
+          var b = chrome("button", "leo-add-empty");
+          b.type = "button";
+          b.textContent = "+ Добавить";
+          b.addEventListener("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            post("op", { op: "add_item", slideId: sec.getAttribute("data-slide-id"), group: group });
+          });
+          g.appendChild(b);
+        });
+      });
+    }
+
+    function hideHover() {
+      if (hover) hover.remove();
+      hover = null;
+      hoverItem = null;
+    }
+
+    function showHover(item) {
+      var sec = item.closest("section.slide");
+      if (!sec) return;
+      var path = item.getAttribute("data-item") || "";
+      var dot = path.lastIndexOf(".");
+      var group = path.slice(0, dot);
+      var index = +path.slice(dot + 1);
+      var lim = groupLimits(sec, group);
+      if (!lim) return;
+      hideHover();
+      hoverItem = item;
+      hover = chrome("div", "leo-item-tools");
+      hover.innerHTML =
+        '<button type="button" data-act="add" title="Добавить такой же элемент после">+</button>' +
+        '<button type="button" data-act="remove" title="Удалить элемент">×</button>';
+      var add = hover.querySelector('[data-act="add"]');
+      var rem = hover.querySelector('[data-act="remove"]');
+      if (lim.count >= lim.max) {
+        add.disabled = true;
+        add.title = "Максимум " + lim.max;
+      }
+      if (lim.count <= lim.min) {
+        rem.disabled = true;
+        rem.title = "Минимум " + lim.min;
+      }
+      hover.addEventListener("click", function (e) {
+        var b = e.target.closest("button[data-act]");
+        if (!b || b.disabled) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var sid = sec.getAttribute("data-slide-id");
+        if (b.getAttribute("data-act") === "add") post("op", { op: "add_item", slideId: sid, group: group, after: index });
+        else post("op", { op: "remove_item", slideId: sid, group: group, index: index });
+        hideHover();
+      });
+      var r = item.getBoundingClientRect();
+      var sr = sec.getBoundingClientRect();
+      hover.style.top = Math.max(4, r.top - sr.top + 4) + "px";
+      hover.style.left = Math.max(4, r.right - sr.left - 64) + "px";
+      sec.appendChild(hover);
+    }
+
+    document.addEventListener("mousemove", function (e) {
+      if (!on || !TPL) return;
+      var t = e.target;
+      if (hover && (t === hover || hover.contains(t))) return;
+      var item = t && t.closest ? t.closest("[data-item]") : null;
+      if (item && item.closest(".leo-edit-chrome")) item = null;
+      if (item === hoverItem) return;
+      if (item) showHover(item);
+      else hideHover();
+    });
+
+    document.addEventListener(
+      "click",
+      function (e) {
+        if (menu && !menu.contains(e.target) && !e.target.closest(".leo-variant-btn")) closeMenu();
+      },
+      true
+    );
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") closeMenu();
+    });
+
+    window.addEventListener("message", function (ev) {
+      var d = ev && ev.data;
+      if (!d || d.source !== "leo-web-canvas-host") return;
+      if (d.type === "review") {
+        on = !!d.on;
+        comments = Object.assign({}, d.comments || {});
+        statuses = Object.assign({}, d.statuses || {});
+        if (on) {
+          build();
+          if (d.scrollY) {
+            setTimeout(function () {
+              window.scrollTo(0, d.scrollY);
+            }, 0);
+          }
+        } else clear();
+      }
+      if (d.type === "getScroll") post("scroll", { scrollY: window.scrollY || 0 });
+      if (d.type === "reviewStatus") {
+        Object.keys(d.statuses || {}).forEach(function (sid) {
+          statuses[sid] = d.statuses[sid];
+          setStatus(sid, d.statuses[sid]);
+        });
+        (d.clear || []).forEach(function (sid) {
+          delete comments[sid];
+          var ta = document.querySelector('.leo-review-box[data-for="' + String(sid).replace(/"/g, "") + '"] textarea');
+          if (ta) {
+            ta.value = "";
+            autosize(ta);
+          }
+        });
+      }
+    });
+  }
+
+  var REVIEW_STYLE =
+    "<style id=\"leo-canvas-review-style\">" +
+    "html.leo-review body{overflow:auto!important;height:auto!important}" +
+    // Review UI reuses .leo-edit-chrome (so snapshots strip it) but not its floating-toolbar look.
+    ".leo-edit-chrome.leo-review-ui{position:static;top:auto;right:auto;display:block;flex-wrap:nowrap;gap:0;padding:0;border-radius:0;background:transparent;box-shadow:none}" +
+    ".leo-edit-chrome.leo-slide-tools{position:absolute;display:flex;gap:4px;top:10px;right:10px}" +
+    ".leo-edit-chrome.leo-item-tools{position:absolute;display:flex;gap:4px}" +
+    ".leo-edit-chrome.leo-variant-menu{position:absolute;display:grid}" +
+    "html.leo-review section.slide{position:relative}" +
+    ".leo-edit-chrome.leo-review-box{margin:6px 0 18px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.96);box-shadow:0 2px 10px rgba(0,0,0,.18);font:13px/1.4 ui-sans-serif,system-ui,-apple-system,sans-serif;color:#18201d}" +
+    ".leo-review-head{display:flex;justify-content:space-between;gap:10px;margin-bottom:6px;font-size:12px;font-weight:600;color:#4b5a54}" +
+    ".leo-review-status[data-state=busy]{color:#4b5a54}.leo-review-status[data-state=ok]{color:#16805f}.leo-review-status[data-state=warn]{color:#9a6a12}.leo-review-status[data-state=err]{color:#b2465c}" +
+    ".leo-review-box textarea{display:block;width:100%;box-sizing:border-box;min-height:40px;resize:none;border:1px solid #cfd8d4;border-radius:8px;padding:7px 9px;font:inherit;color:inherit;background:#fff}" +
+    ".leo-review-box textarea:focus{outline:2px solid #3dd6a5;outline-offset:1px;border-color:transparent}" +
+    ".leo-slide-tools{position:absolute;top:10px;right:10px;z-index:60;display:flex;gap:4px;font:12px/1 ui-sans-serif,system-ui,-apple-system,sans-serif}" +
+    ".leo-slide-tools>button,.leo-item-tools>button,.leo-add-empty{appearance:none;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:8px;border:1px solid rgba(10,10,10,.12);background:rgba(255,255,255,.95);color:#18201d;font:inherit;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2)}" +
+    ".leo-slide-tools>button:disabled,.leo-item-tools>button:disabled{opacity:.45;cursor:default}" +
+    ".leo-slide-tools>button.is-armed{background:#b2465c;color:#fff;border-color:#b2465c}" +
+    ".leo-slide-tools button:focus-visible,.leo-variant-menu button:focus-visible{outline:2px solid #3dd6a5;outline-offset:2px}" +
+    ".leo-edit-chrome.leo-variant-menu{top:34px;right:0;min-width:260px;max-height:320px;overflow:auto;padding:4px;border-radius:10px;background:#fff;box-shadow:0 8px 28px rgba(0,0,0,.28);gap:2px}" +
+    ".leo-variant-menu button{appearance:none;display:flex;justify-content:space-between;align-items:center;gap:12px;width:100%;padding:8px 10px;border:0;border-radius:7px;background:transparent;color:#18201d;font:inherit;font-size:13px;text-align:left;cursor:pointer}" +
+    ".leo-variant-menu button:hover:not(:disabled){background:#eef4f1}" +
+    ".leo-variant-menu button[aria-checked=true]{font-weight:700;color:#16805f}" +
+    ".leo-variant-menu button:disabled{color:#8a9691;cursor:default}" +
+    ".leo-vm-note{font-size:11px;color:#8a9691;font-weight:400;text-align:right}" +
+    ".leo-item-tools{position:absolute;z-index:55;display:flex;gap:4px;font:14px/1 ui-sans-serif,system-ui,sans-serif}" +
+    ".leo-item-tools>button{height:26px;width:28px;justify-content:center;padding:0}" +
+    ".leo-edit-chrome.leo-add-empty{display:inline-flex;height:auto;padding:10px 16px;font-size:16px;border-style:dashed;background:rgba(255,255,255,.12);color:inherit;box-shadow:none}" +
+    "html.leo-review [data-slot][contenteditable=true]:hover{outline:1px dashed rgba(61,214,165,.6);outline-offset:3px}" +
+    "html.leo-review [data-slot][contenteditable=true]:focus{outline:2px solid rgba(61,214,165,.9);outline-offset:3px}" +
+    "</style>";
+
   var EDIT_STYLE =
     "<style id=\"leo-canvas-edit-style\">" +
     "html.leo-edit-mode [data-leo-id]{cursor:default}" +
@@ -271,7 +630,14 @@
 
   function injectPicker(html) {
     var raw = String(html || "");
-    var tag = EDIT_STYLE + '<script id="leo-canvas-picker">\n' + FRAME_SCRIPT + "\n</script>";
+    var tag =
+      EDIT_STYLE +
+      REVIEW_STYLE +
+      '<script id="leo-canvas-picker">\n' +
+      FRAME_SCRIPT +
+      "\n(" +
+      frameReviewMain.toString() +
+      ")();\n</script>";
     if (/<\/body>/i.test(raw)) {
       return raw.replace(/<\/body>/i, tag + "</body>");
     }
@@ -339,6 +705,10 @@
     var onRefresh = typeof opts.onRefresh === "function" ? opts.onRefresh : null;
     var onChange = typeof opts.onChange === "function" ? opts.onChange : null;
     var onMedia = typeof opts.onMedia === "function" ? opts.onMedia : null;
+    // onOp({op, slideId, …, html}) → Promise<new html>; onRevise({comments, html}) → Promise<{html, results}>
+    var onOp = typeof opts.onOp === "function" ? opts.onOp : null;
+    var onRevise = typeof opts.onRevise === "function" ? opts.onRevise : null;
+    var onNotify = typeof opts.onNotify === "function" ? opts.onNotify : function () {};
     var sheetId = String(opts.sheetId || "");
     var wrap = document.createElement("div");
     wrap.className = "note-web-canvas";
@@ -369,8 +739,12 @@
     var editBtn = makeBtn("Редактировать", "note-web-canvas-edit-btn");
     var refreshBtn = makeBtn("Обновить", "note-web-canvas-refresh-btn");
     refreshBtn.title = "Перезагрузить полотно";
+    var applyBtn = makeBtn("Применить правки", "note-web-canvas-apply-btn");
+    applyBtn.hidden = true;
+    applyBtn.title = "Отправить комментарии к слайдам ИИ одним запросом";
     toolbar.appendChild(pickBtn);
     toolbar.appendChild(editBtn);
+    toolbar.appendChild(applyBtn);
     toolbar.appendChild(refreshBtn);
 
     var insertBar = document.createElement("div");
@@ -415,6 +789,153 @@
     var htmlDoc = "";
     var ready = false;
     var dirtyTimer = null;
+    var busy = false;
+    var statuses = {};
+    var snapshotWaiters = [];
+    var comments = loadComments();
+
+    function commentsKey() {
+      return "leo-canvas-comments:" + sheetId;
+    }
+
+    function loadComments() {
+      try {
+        var raw = global.localStorage && global.localStorage.getItem(commentsKey());
+        var data = raw ? JSON.parse(raw) : {};
+        return data && typeof data === "object" ? data : {};
+      } catch (e) {
+        return {};
+      }
+    }
+
+    function saveComments() {
+      try {
+        if (global.localStorage) global.localStorage.setItem(commentsKey(), JSON.stringify(comments));
+      } catch (e) {}
+    }
+
+    function pendingComments() {
+      var out = {};
+      Object.keys(comments).forEach(function (sid) {
+        var t = String(comments[sid] || "").trim();
+        if (t) out[sid] = t;
+      });
+      return out;
+    }
+
+    function isTemplateDeck() {
+      return /<html\b[^>]*\bdata-leo-deck\b/i.test(htmlDoc);
+    }
+
+    function syncApplyBtn() {
+      var n = Object.keys(pendingComments()).length;
+      applyBtn.hidden = !editing;
+      applyBtn.disabled = busy || n === 0;
+      applyBtn.textContent = busy ? "Применяю…" : n ? "Применить правки (" + n + ")" : "Применить правки";
+      applyBtn.classList.toggle("is-active", n > 0 && !busy);
+    }
+
+    var restoreScrollY = 0;
+
+    function postReview() {
+      postToFrame({ type: "review", on: editing, comments: comments, statuses: statuses, scrollY: restoreScrollY });
+      restoreScrollY = 0;
+    }
+
+    // Ask the frame for its current HTML (inline text edits) before a server op.
+    function requestSnapshot() {
+      return new Promise(function (resolve) {
+        if (!ready) {
+          resolve(htmlDoc);
+          return;
+        }
+        var done = false;
+        var finish = function (html) {
+          if (done) return;
+          done = true;
+          resolve(html || htmlDoc);
+        };
+        snapshotWaiters.push(finish);
+        postToFrame({ type: "getHtml" });
+        setTimeout(function () {
+          finish(htmlDoc);
+        }, 1500);
+      });
+    }
+
+    function setBusy(on) {
+      busy = !!on;
+      wrap.classList.toggle("is-busy", busy);
+      syncApplyBtn();
+    }
+
+    function runOp(req) {
+      if (!onOp || busy) return;
+      setBusy(true);
+      requestSnapshot()
+        .then(function (html) {
+          return onOp(Object.assign({ sheetId: sheetId, html: html }, req));
+        })
+        .then(function (html) {
+          if (html) setHtml(html);
+        })
+        .catch(function (err) {
+          onNotify((err && err.message) || "Не удалось изменить слайд");
+        })
+        .then(function () {
+          setBusy(false);
+        });
+    }
+
+    function runRevise() {
+      var pending = pendingComments();
+      var ids = Object.keys(pending);
+      if (!onRevise || busy || !ids.length) return;
+      setBusy(true);
+      postToFrame({ type: "getScroll" });
+      ids.forEach(function (sid) {
+        statuses[sid] = { state: "busy", text: "Применяется…" };
+      });
+      postToFrame({ type: "reviewStatus", statuses: statuses });
+      requestSnapshot()
+        .then(function (html) {
+          return onRevise({ sheetId: sheetId, comments: pending, html: html });
+        })
+        .then(function (res) {
+          var results = (res && res.results) || {};
+          var applied = [];
+          ids.forEach(function (sid) {
+            var r = results[sid] || "failed";
+            if (r === "applied") {
+              applied.push(sid);
+              delete comments[sid];
+              statuses[sid] = { state: "ok", text: "Применено" };
+            } else if (r === "unchanged") {
+              statuses[sid] = { state: "warn", text: "ИИ ничего не поменял — уточните комментарий" };
+            } else {
+              statuses[sid] = { state: "err", text: "Не удалось применить" };
+            }
+          });
+          saveComments();
+          if (res && res.html) setHtml(res.html);
+          else postToFrame({ type: "reviewStatus", statuses: statuses, clear: applied });
+          onNotify(
+            applied.length
+              ? "Применено к слайдам: " + applied.length + " из " + ids.length
+              : "Правки не применились — попробуйте переформулировать"
+          );
+        })
+        .catch(function (err) {
+          ids.forEach(function (sid) {
+            statuses[sid] = { state: "err", text: "Не удалось применить" };
+          });
+          postToFrame({ type: "reviewStatus", statuses: statuses });
+          onNotify((err && err.message) || "Не удалось применить правки");
+        })
+        .then(function () {
+          setBusy(false);
+        });
+    }
 
     function postToFrame(msg) {
       try {
@@ -442,8 +963,10 @@
     }
 
     function syncInsertBar() {
-      insertBar.hidden = !editing;
+      // Template decks are edited through slots, comments and the layout menu.
+      insertBar.hidden = !editing || isTemplateDeck();
       wrap.classList.toggle("is-editing", editing);
+      syncApplyBtn();
     }
 
     function setPick(on) {
@@ -461,6 +984,7 @@
       editBtn.textContent = editing ? "Готово" : "Редактировать";
       syncInsertBar();
       postToFrame({ type: "edit", on: editing });
+      postReview();
       if (!editing && onChange) onChange(htmlDoc);
     }
 
@@ -480,6 +1004,11 @@
     editBtn.addEventListener("click", function (e) {
       e.preventDefault();
       setEdit(!editing);
+    });
+
+    applyBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      runRevise();
     });
 
     refreshBtn.addEventListener("click", function (e) {
@@ -505,12 +1034,47 @@
       if (d.type === "ready") {
         ready = true;
         if (picking) postToFrame({ type: "pick", on: true });
-        if (editing) postToFrame({ type: "edit", on: true });
+        if (editing) {
+          postToFrame({ type: "edit", on: true });
+          postReview();
+        }
+        syncInsertBar();
         return;
       }
       if (d.type === "html") {
         htmlDoc = String(d.html || htmlDoc);
+        var waiters = snapshotWaiters;
+        snapshotWaiters = [];
+        waiters.forEach(function (fn) {
+          fn(htmlDoc);
+        });
         if (onChange) onChange(htmlDoc);
+        return;
+      }
+      if (d.type === "scroll") {
+        restoreScrollY = Number(d.scrollY) || 0;
+        return;
+      }
+      if (d.type === "comment") {
+        var sid = String(d.slideId || "");
+        if (!sid) return;
+        comments[sid] = String(d.text || "");
+        if (statuses[sid] && statuses[sid].state !== "busy") delete statuses[sid];
+        saveComments();
+        syncApplyBtn();
+        return;
+      }
+      if (d.type === "op") {
+        restoreScrollY = Number(d.scrollY) || 0;
+        runOp({
+          op: String(d.op || ""),
+          slideId: String(d.slideId || ""),
+          variant: d.variant != null ? String(d.variant) : "",
+          group: d.group != null ? String(d.group) : "",
+          index: Number(d.index) || 0,
+          after: d.after == null ? null : Number(d.after),
+          delta: Number(d.delta) || 0,
+        });
         return;
       }
       if (d.type === "dirty") {
@@ -551,6 +1115,7 @@
       getHtml: getHtml,
       setSheetId: function (id) {
         sheetId = String(id || "");
+        comments = loadComments();
       },
       setPick: setPick,
       setEdit: setEdit,
