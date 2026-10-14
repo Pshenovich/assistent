@@ -274,6 +274,67 @@ def comment_visible(row: Optional[dict[str, Any]], viewer_uid: Optional[str]) ->
     return can_view(get_chat(int(cid)), viewer_uid)
 
 
+READ_BASE_CHAT_ID = 0
+
+
+def read_marks(owner: str, kind: str, item_id: str, viewer_uid: str) -> tuple[int, dict[int, int]]:
+    """(точка отсчёта, {chat_id: id последнего прочитанного}) для пользователя.
+
+    При первом обращении точкой отсчёта становится последнее сообщение заметки —
+    старые сообщения не считаются новыми.
+    """
+    key = (str(viewer_uid), str(owner), kind, str(item_id))
+    with _LOCK:
+        conn = _conn()
+        marks = {
+            int(r["chat_id"]): int(r["last_seen_id"])
+            for r in conn.execute(
+                "SELECT chat_id, last_seen_id FROM note_chat_reads "
+                "WHERE user_id = ? AND owner_user_id = ? AND item_kind = ? AND item_id = ?",
+                key,
+            ).fetchall()
+        }
+        if READ_BASE_CHAT_ID not in marks:
+            row = conn.execute(
+                "SELECT MAX(id) AS m FROM share_comments WHERE owner_user_id = ? AND item_kind = ? AND item_id = ?",
+                key[1:],
+            ).fetchone()
+            base = int((row and row["m"]) or 0)
+            conn.execute(
+                "INSERT OR IGNORE INTO note_chat_reads VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (*key, READ_BASE_CHAT_ID, base, _now()),
+            )
+            conn.commit()
+            marks[READ_BASE_CHAT_ID] = base
+    base = marks.pop(READ_BASE_CHAT_ID)
+    return base, marks
+
+
+def mark_read(owner: str, kind: str, item_id: str, viewer_uid: str, chat_id: int, last_id: int) -> int:
+    """Запомнить, что пользователь видел чат до сообщения last_id. Возвращает итоговую отметку."""
+    key = (str(viewer_uid), str(owner), kind, str(item_id), int(chat_id))
+    with _LOCK:
+        conn = _conn()
+        row = conn.execute(
+            "SELECT MAX(id) AS m FROM share_comments WHERE owner_user_id = ? AND item_kind = ? AND item_id = ? AND chat_id = ?",
+            key[1:],
+        ).fetchone()
+        last_id = min(int(last_id), int((row and row["m"]) or 0))
+        conn.execute(
+            "INSERT INTO note_chat_reads VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(user_id, owner_user_id, item_kind, item_id, chat_id) DO UPDATE SET "
+            "last_seen_id = MAX(last_seen_id, excluded.last_seen_id), updated_at = excluded.updated_at",
+            (*key, max(0, last_id), _now()),
+        )
+        conn.commit()
+        got = conn.execute(
+            "SELECT last_seen_id FROM note_chat_reads WHERE user_id = ? AND owner_user_id = ? "
+            "AND item_kind = ? AND item_id = ? AND chat_id = ?",
+            key,
+        ).fetchone()
+    return int(got["last_seen_id"]) if got else 0
+
+
 def list_chats(owner: str, kind: str, item_id: str, viewer_uid: str) -> list[dict[str, Any]]:
     """Видимые чаты с ИИ (без «Комментариев»), свежие сверху, со статистикой."""
     migrate_legacy(owner, kind, item_id)
@@ -313,7 +374,7 @@ def list_chats(owner: str, kind: str, item_id: str, viewer_uid: str) -> list[dic
         out.append(c)
     out.sort(key=lambda c: str(c["last_at"] or ""), reverse=True)
     comments = stats.get(COMMENTS_CHAT_ID, (0, None, 0))
-    return out + [
+    out.append(
         {
             "id": COMMENTS_CHAT_ID,
             "title": "Комментарии",
@@ -322,4 +383,8 @@ def list_chats(owner: str, kind: str, item_id: str, viewer_uid: str) -> list[dic
             "last_at": comments[1],
             "is_comments": True,
         }
-    ]
+    )
+    base, marks = read_marks(owner, kind, item_id, viewer_uid)
+    for c in out:
+        c["last_seen_id"] = max(base, marks.get(int(c["id"]), 0))
+    return out

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261014-chat-badge";
+  var WEBAPP_BUILD = "20261014-sheet-tabs";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261014-chat-badge";
+  const NOTE_EDITOR_ASSET_V = "20261014-sheet-tabs";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -16809,9 +16809,8 @@
   function noteEditorPageInnerHtml(titleLabel) {
     var titleAria = escapeHtml(titleLabel || "Заголовок");
     var mobileToc = isMobileNoteLayout();
-    var tocToggle = mobileToc
-      ? ""
-      : '<button type="button" class="note-editor-toc-toggle" aria-controls="note-editor-toc-panel" aria-expanded="false" title="Оглавление" aria-label="Оглавление">' +
+    var tocToggle =
+      '<button type="button" class="note-editor-toc-toggle" aria-controls="note-editor-toc-panel" aria-expanded="false" title="Оглавление" aria-label="Оглавление">' +
         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
         '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1" fill="currentColor" stroke="none"/>' +
         "</svg>" +
@@ -16824,9 +16823,9 @@
       "</div>" +
       '<div class="note-editor-toc-list"></div>' +
       "</aside>";
-    var tocInSheetsBar = mobileToc
-      ? ""
-      : '<div class="note-editor-toc-anchor">' + tocToggle + tocPanel + "</div>";
+    // Кнопка оглавления — первой в строке вкладок; на телефоне панель выезжает слева.
+    var tocInSheetsBar =
+      '<div class="note-editor-toc-anchor">' + tocToggle + (mobileToc ? "" : tocPanel) + "</div>";
     var tocInLayout = mobileToc ? tocPanel : "";
     return (
       '<div class="note-editor-doc-layout">' +
@@ -26303,41 +26302,45 @@
   }
 
   // ---- Непрочитанные по чатам ----
-  // Для каждого чата храним id последнего увиденного сообщения. Первая точка отсчёта —
-  // прежняя отметка «обсуждение просмотрено», чтобы старые сообщения не стали новыми.
-  function noteChatsSeenBase() {
-    var key = "leo_chat_seen_base:" + noteChatKey();
-    try {
-      var v = localStorage.getItem(key);
-      if (v != null) return parseInt(v, 10) || 0;
-      var wrap = discussWrap();
-      var panel = document.getElementById("note-editor-comments");
-      var base =
-        getDiscussSeenId(wrap._shareKind, wrap._shareId) ||
-        maxCommentId((panel && panel._allComments) || []);
-      // Сообщения ещё не загружены — точку отсчёта не фиксируем.
-      if (!base) return Infinity;
-      localStorage.setItem(key, String(base));
-      return base;
-    } catch (_) {
-      return 0;
-    }
-  }
-
+  // Отметки «прочитано до сообщения N» хранятся на сервере (общие для всех устройств)
+  // и приходят в списке чатов как last_seen_id; локально держим только свежие отметки,
+  // ещё не вернувшиеся с сервера.
   function noteChatSeenId(chatId) {
-    var own = 0;
-    try {
-      own = parseInt(localStorage.getItem("leo_chat_seen:" + noteChatKey() + ":" + chatId) || "0", 10) || 0;
-    } catch (_) {}
-    return Math.max(own, noteChatsSeenBase());
+    var wrap = discussWrap();
+    if (!wrap || !wrap._noteChats || wrap._chatsFor !== noteChatKey()) return Infinity;
+    var chat = noteChatById(chatId);
+    var fromServer = chat && chat.last_seen_id != null ? Number(chat.last_seen_id) || 0 : 0;
+    var local = (wrap._chatSeen && wrap._chatSeen[noteChatKey() + ":" + chatId]) || 0;
+    return Math.max(fromServer, local);
   }
 
   function markNoteChatSeen(chatId, rows) {
+    var wrap = discussWrap();
     var max = maxCommentId(rows || []);
-    if (!max || max <= noteChatSeenId(chatId)) return;
-    try {
-      localStorage.setItem("leo_chat_seen:" + noteChatKey() + ":" + chatId, String(max));
-    } catch (_) {}
+    if (!wrap || !max || max <= noteChatSeenId(chatId)) return;
+    var key = noteChatKey();
+    wrap._chatSeen = wrap._chatSeen || {};
+    wrap._chatSeen[key + ":" + chatId] = max;
+    // Пачкой: при открытии чата лента может перерисоваться несколько раз подряд.
+    wrap._chatSeenQueue = wrap._chatSeenQueue || {};
+    wrap._chatSeenQueue[key + "|" + chatId] = max;
+    clearTimeout(wrap._chatSeenTimer);
+    wrap._chatSeenTimer = setTimeout(flushNoteChatSeen, 600);
+  }
+
+  function flushNoteChatSeen() {
+    var wrap = discussWrap();
+    var queue = (wrap && wrap._chatSeenQueue) || {};
+    if (wrap) wrap._chatSeenQueue = {};
+    Object.keys(queue).forEach(function (k) {
+      var parts = k.split("|");
+      var item = parts[0].split(":");
+      apiFetch(
+        "/notes/" + encodeURIComponent(item[0]) + "/" + encodeURIComponent(item.slice(1).join(":")) +
+          "/chats/" + encodeURIComponent(parts[1]) + "/read",
+        { method: "POST", body: JSON.stringify({ last_id: queue[k] }) }
+      ).catch(function () {});
+    });
   }
 
   // {chatId: число новых сообщений от других участников и ИИ}

@@ -154,3 +154,23 @@ def test_attached_chat_context_respects_visibility(env):
     assert pack_attached_notes(env["owner"], [f"chat:{nid}:{chat['id']}"]) == ""
     assert "общий комментарий" in pack_attached_notes(env["owner"], [f"chat:{nid}:-1"])
     assert pack_attached_notes(next(_ids), [f"chat:{nid}:-1"]) == ""  # не участник заметки
+
+
+def test_read_marks_are_per_user_and_shared_across_devices(env):
+    old = _post(env, env["owner"], body="до чатов", chat_id=note_chats.COMMENTS_CHAT_ID)
+    chats = env["c"].get(env["base"] + "/chats", headers=_headers(env["member"])).json()["chats"]
+    comments = [c for c in chats if c["id"] == note_chats.COMMENTS_CHAT_ID][0]
+    assert comments["last_seen_id"] == old["id"]  # старое — уже прочитано
+
+    new = _post(env, env["owner"], body="новое", chat_id=note_chats.COMMENTS_CHAT_ID)
+    r = env["c"].post(env["base"] + "/chats/-1/read", headers=_headers(env["member"]), json={"last_id": new["id"] + 100})
+    assert r.status_code == 200 and r.json()["last_seen_id"] == new["id"]  # не дальше последнего сообщения
+    # «Другое устройство» того же участника видит ту же отметку; у владельца — своя.
+    seen = {c["id"]: c["last_seen_id"] for c in env["c"].get(env["base"] + "/chats", headers=_headers(env["member"])).json()["chats"]}
+    assert seen[note_chats.COMMENTS_CHAT_ID] == new["id"]
+    seen_owner = {c["id"]: c["last_seen_id"] for c in env["c"].get(env["base"] + "/chats", headers=_headers(env["owner"])).json()["chats"]}
+    assert seen_owner[note_chats.COMMENTS_CHAT_ID] == new["id"]  # точка отсчёта владельца — момент первого открытия
+
+    secret = _new_chat(env, env["owner"])
+    r = env["c"].post(env["base"] + f"/chats/{secret['id']}/read", headers=_headers(env["member"]), json={"last_id": 1})
+    assert r.status_code == 404

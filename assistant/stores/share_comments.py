@@ -209,6 +209,22 @@ def _ensure_anchor_columns(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_note_chats_item "
         "ON note_chats(owner_user_id, item_kind, item_id)"
     )
+    # Отметки о прочтении чатов заметки (по пользователю, общие для всех его устройств).
+    # chat_id = 0 — точка отсчёта: всё, что было до первого открытия чатов, прочитано.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS note_chat_reads (
+            user_id TEXT NOT NULL,
+            owner_user_id TEXT NOT NULL,
+            item_kind TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            chat_id INTEGER NOT NULL,
+            last_seen_id INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, owner_user_id, item_kind, item_id, chat_id)
+        )
+        """
+    )
     conn.commit()
 
 
