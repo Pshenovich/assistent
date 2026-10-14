@@ -8,7 +8,7 @@ from assistant.lib import canvas_templates as tpl
 from assistant.lib import web_canvas as wc
 from assistant.stores import note_sheets as sheets
 from assistant.stores import notes as notes_store
-from tests.canvas_sample_deck import SAMPLE_ACTION, SAMPLE_ACTION_2
+from tests.canvas_sample_deck import SAMPLE_ACTION, SAMPLE_ACTION_2, SAMPLE_ACTION_3
 
 
 def _deck(*slides):
@@ -18,7 +18,7 @@ def _deck(*slides):
 class CatalogTests(unittest.TestCase):
     def test_every_variant_renders_from_samples(self) -> None:
         seen = set()
-        for action in (SAMPLE_ACTION, SAMPLE_ACTION_2):
+        for action in (SAMPLE_ACTION, SAMPLE_ACTION_2, SAMPLE_ACTION_3):
             deck = tpl.build_deck(action)
             html = tpl.render_deck_html(deck)
             self.assertNotIn("Не удалось отрисовать", html)
@@ -392,3 +392,24 @@ class ThemeChoiceTests(unittest.TestCase):
         self.assertIn('data-leo-theme="mono"', calls["create"])
         web_canvas.apply_canvas_action(note=note, action={"action": "update", "sheet_id": "1", "theme": "analytic"}, note_sheets_mod=Sheets())
         self.assertIn('data-leo-theme="analytic"', calls["update"])
+
+
+class GalleryTests(unittest.TestCase):
+    def test_images_keep_their_media_when_neighbour_removed(self):
+        deck = tpl.build_deck(SAMPLE_ACTION_3)
+        html = tpl.render_deck_html(deck)
+        deck = tpl.extract_deck(html)
+        s2 = deck["slides"][1]
+        keys = [it["key"] for it in s2["slots"]["images"]]
+        self.assertEqual(len(set(keys)), 3)
+        media = {f"{s2['id']}-m-{k}": f"data:image/png;base64,{k}" for k in keys}
+        tpl.apply_op(deck, {"op": "remove_item", "slide_id": s2["id"], "group": "images", "index": 0})
+        html2 = tpl.render_deck_html(deck, media)
+        self.assertNotIn(keys[0], html2.split('id="leo-deck"')[0])  # удалённая картинка исчезла
+        self.assertIn(f"base64,{keys[1]}", html2)
+        self.assertIn(f"base64,{keys[2]}", html2)
+
+    def test_pending_prompts_and_empty_caption(self):
+        html = tpl.render_deck_html(tpl.build_deck(SAMPLE_ACTION_3), theme="mono")
+        self.assertEqual(html.count('data-leo-img="pending"'), 4)
+        self.assertIn("m-gsolo", html)

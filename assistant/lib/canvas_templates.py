@@ -844,6 +844,65 @@ _reg(Variant(
     groups=[Group("points", 0, 3, lambda: "Новый пункт")],
 ))
 
+# --- gallery: 1–3 изображения с подписями
+
+
+def _new_media_key() -> str:
+    import secrets
+
+    return secrets.token_hex(3)
+
+
+def gallery_items(c: Ctx) -> list[dict[str, Any]]:
+    """Изображения слайда; у каждого стабильный key — картинка не «переезжает» при удалении соседа."""
+    items = _dicts(c.slots.get("images"))
+    for it in items:
+        if not _s(it.get("key")):
+            it["key"] = _new_media_key()  # сохранится в JSON дека (он пишется после отрисовки)
+    return items
+
+
+def media_slot_html(c: Ctx, mid: str, prompt: str, cls: str = "") -> str:
+    """Слот изображения: картинка, или заглушка «загрузите / сгенерируйте» (с промптом — ждёт генерации)."""
+    src = c.media.get(mid, "")
+    extra = f" {cls}" if cls else ""
+    if src:
+        return (
+            f'<div class="media-slot tpl-media{extra}" data-media="{mid}" data-leo-id="{mid}">'
+            f'<img class="media-img" alt="" src="{escape(src)}"/></div>'
+        )
+    pending = f' data-leo-img="pending" data-leo-img-prompt="{escape(prompt)}"' if prompt else ""
+    return (
+        f'<div class="media-slot tpl-media tpl-media-empty abstract{extra}" data-media="{mid}" data-leo-id="{mid}"{pending}>'
+        '<div><p class="lbl acc" style="margin:0 0 8px">Изображение</p>'
+        '<p style="max-width:30ch">Загрузите или сгенерируйте в режиме редактирования</p></div></div>'
+    )
+
+
+def _r_gallery(c: Ctx) -> tuple[str, str]:
+    items = gallery_items(c)
+    n = max(1, len(items))
+    figs = "".join(
+        f'<figure class="g-fig" {c.item_attrs("images", i)}>'
+        + media_slot_html(c, f"{c.sid}-m-{_s(it.get('key'))}", _s(it.get("image_prompt")), "g-media")
+        + c.t(f"images.{i}.caption", "p", "g-cap", force=True)
+        + "</figure>"
+        for i, it in enumerate(items)
+    )
+    head = c.t("eyebrow", "p", "eyebrow") + c.t("title", "h2", "title")
+    return head + c.group("images", figs, f"g-grid g-n{n}"), ""
+
+
+_reg(Variant(
+    "content.gallery", "content", "Изображения с подписями",
+    "eyebrow?, title?: str≤80, images: [{caption?: str≤140 (подпись под изображением), "
+    "image_prompt: str≤300 (на английском, что изобразить)}] 1–3",
+    _r_gallery,
+    lambda s: _need(len(_dicts(s.get("images"))) >= 1, "нет изображений"),
+    prefer=lambda s: len(_dicts(s.get("images"))) >= 1,
+    groups=[Group("images", 1, 3, lambda: {"caption": "Подпись к изображению", "key": _new_media_key()})],
+))
+
 # --- plan
 
 
