@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261014-note-chats";
+  var WEBAPP_BUILD = "20261014-chats-drawer";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261014-note-chats";
+  const NOTE_EDITOR_ASSET_V = "20261014-chats-drawer";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -22123,6 +22123,11 @@
       );
     });
     if (noteSheetsEnabled()) {
+      if (otherSheets.length) {
+        var newSep = document.createElement("div");
+        newSep.className = "note-pane-switch-sep";
+        menu.appendChild(newSep);
+      }
       addItem("+ Новый лист", false, function () {
         closeNotePaneSwitchMenu();
         createNoteSheet({ openOn: "right", kind: "doc" });
@@ -23334,6 +23339,7 @@
         var menu = document.getElementById("note-chats-menu");
         if (!menu || menu.classList.contains("hidden")) return;
         if (menu.contains(e.target) || newCtxBtn.contains(e.target)) return;
+        if (e.target && e.target.id === "note-chats-backdrop") return;
         closeNoteChatsMenu();
       });
     }
@@ -23430,6 +23436,7 @@
   }
 
   function closeNoteDiscussion(force) {
+    closeNoteChatsMenu();
     stopDiscussionLiveUpdates();
     leaveDiscussPresence();
     var wrap = document.getElementById("note-editor-more-wrap");
@@ -26220,11 +26227,37 @@
     return true;
   }
 
+  // Меню чатов — панель справа во всю высоту экрана. Переносим её в body, чтобы
+  // она перекрывала и оверлей обсуждения на телефоне, и правую колонку на десктопе.
+  function noteChatsDrawerEls() {
+    var menu = document.getElementById("note-chats-menu");
+    var backdrop = document.getElementById("note-chats-backdrop");
+    if (menu && menu.parentNode !== document.body) document.body.appendChild(menu);
+    if (!backdrop) {
+      backdrop = document.createElement("div");
+      backdrop.id = "note-chats-backdrop";
+      backdrop.className = "note-chats-backdrop hidden";
+      backdrop.addEventListener("click", function () {
+        closeNoteChatsMenu();
+      });
+      document.body.appendChild(backdrop);
+    }
+    return { menu: menu, backdrop: backdrop };
+  }
+
   function closeNoteChatsMenu() {
     var menu = document.getElementById("note-chats-menu");
+    var backdrop = document.getElementById("note-chats-backdrop");
     var btn = document.getElementById("note-discussion-new-ctx");
-    if (menu) menu.classList.add("hidden");
     if (btn) btn.setAttribute("aria-expanded", "false");
+    if (!menu || menu.classList.contains("hidden")) return;
+    menu.classList.remove("is-open");
+    if (backdrop) backdrop.classList.remove("is-open");
+    clearTimeout(menu._hideTimer);
+    menu._hideTimer = setTimeout(function () {
+      menu.classList.add("hidden");
+      if (backdrop) backdrop.classList.add("hidden");
+    }, 240);
   }
 
   function noteChatMeta(chat) {
@@ -26246,7 +26279,40 @@
     if (!menu || !wrap) return;
     menu.innerHTML = "";
     var cur = currentDiscussChatId();
-    function row(cls, onClick) {
+
+    var head = document.createElement("div");
+    head.className = "note-chats-head";
+    var headTitle = document.createElement("h2");
+    headTitle.className = "note-chats-head-title";
+    headTitle.textContent = "Чаты";
+    var closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "modal-header-btn note-chats-close";
+    closeBtn.setAttribute("aria-label", "Закрыть");
+    closeBtn.innerHTML =
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+    closeBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeNoteChatsMenu();
+    });
+    head.appendChild(headTitle);
+    head.appendChild(closeBtn);
+    menu.appendChild(head);
+
+    function section(label) {
+      var sec = document.createElement("div");
+      sec.className = "note-chats-section";
+      if (label) {
+        var l = document.createElement("div");
+        l.className = "note-pane-switch-label note-chats-section-label";
+        l.textContent = label;
+        sec.appendChild(l);
+      }
+      menu.appendChild(sec);
+      return sec;
+    }
+    function row(parent, cls, onClick) {
       var b = document.createElement("button");
       b.type = "button";
       b.className = "note-pane-switch-item " + cls;
@@ -26256,11 +26322,11 @@
         e.stopPropagation();
         onClick();
       });
-      menu.appendChild(b);
+      parent.appendChild(b);
       return b;
     }
-    function itemRow(chat, active) {
-      var b = row("note-chats-item" + (active ? " is-active" : ""), function () {
+    function itemRow(parent, chat, active) {
+      var b = row(parent, "note-chats-item" + (active ? " is-active" : ""), function () {
         closeNoteChatsMenu();
         setCurrentDiscussChat(Number(chat.id));
       });
@@ -26283,42 +26349,39 @@
       }
       if (active) b.setAttribute("aria-current", "true");
     }
-    var newBtn = row("note-chats-new" + (cur === 0 ? " is-active" : ""), function () {
+
+    var newSec = section("");
+    var newBtn = row(newSec, "note-chats-new" + (cur === 0 ? " is-active" : ""), function () {
       closeNoteChatsMenu();
       setCurrentDiscussChat(0);
     });
     newBtn.textContent = "+ Новый чат";
+
     var chats = wrap._noteChats || [];
     var comments = chats.filter(function (c) {
       return Number(c.id) === COMMENTS_CHAT_ID;
     })[0] || { id: COMMENTS_CHAT_ID, title: "Комментарии" };
-    itemRow(comments, cur === COMMENTS_CHAT_ID);
+    itemRow(section("Общие"), comments, cur === COMMENTS_CHAT_ID);
+
     var ai = chats.filter(function (c) {
       return Number(c.id) > 0;
     });
     if (ai.length) {
-      var sep = document.createElement("div");
-      sep.className = "note-pane-switch-sep";
-      menu.appendChild(sep);
+      var aiSec = section("Чаты с ИИ");
       ai.forEach(function (c) {
-        itemRow(c, Number(c.id) === cur);
+        itemRow(aiSec, c, Number(c.id) === cur);
       });
     }
+
     // «Кто видит» — для текущего чата с ИИ (менять может его автор) и для нового чата.
     var current = cur > 0 ? noteChatById(cur) : null;
     if (cur === 0 || current) {
-      var sep2 = document.createElement("div");
-      sep2.className = "note-pane-switch-sep";
-      menu.appendChild(sep2);
-      var box = document.createElement("div");
-      box.className = "note-chats-visibility";
-      var label = document.createElement("span");
-      label.className = "note-chats-visibility-label";
-      label.textContent = cur === 0 ? "Кто увидит новый чат" : "Кто видит этот чат";
+      var visSec = section(cur === 0 ? "Кто увидит новый чат" : "Кто видит этот чат");
+      visSec.classList.add("note-chats-visibility");
       var seg = document.createElement("div");
       seg.className = "note-chats-visibility-seg";
       seg.setAttribute("role", "group");
-      seg.setAttribute("aria-label", label.textContent);
+      seg.setAttribute("aria-label", cur === 0 ? "Кто увидит новый чат" : "Кто видит этот чат");
       var vis = cur === 0 ? wrap._newChatVisibility || "private" : current.visibility;
       var editable = cur === 0 || !!(current && current.can_edit);
       [
@@ -26338,9 +26401,7 @@
         });
         seg.appendChild(b);
       });
-      box.appendChild(label);
-      box.appendChild(seg);
-      menu.appendChild(box);
+      visSec.appendChild(seg);
     }
   }
 
@@ -26371,17 +26432,25 @@
   }
 
   function toggleNoteChatsMenu() {
-    var menu = document.getElementById("note-chats-menu");
+    var els = noteChatsDrawerEls();
+    var menu = els.menu;
     var btn = document.getElementById("note-discussion-new-ctx");
     if (!menu) return;
-    var open = menu.classList.contains("hidden");
+    var open = !menu.classList.contains("is-open");
     closeNotePaneSwitchMenu();
     if (!open) {
       closeNoteChatsMenu();
       return;
     }
+    clearTimeout(menu._hideTimer);
     renderNoteChatsMenu();
     menu.classList.remove("hidden");
+    els.backdrop.classList.remove("hidden");
+    // Следующий кадр — чтобы сработал переход выезда.
+    requestAnimationFrame(function () {
+      menu.classList.add("is-open");
+      els.backdrop.classList.add("is-open");
+    });
     if (btn) btn.setAttribute("aria-expanded", "true");
     var wrap = discussWrap();
     if (wrap && wrap._shareKind && wrap._shareId) {
