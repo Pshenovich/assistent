@@ -11991,6 +11991,8 @@ html.note-editor-kb-open
 
 .note-editor-toc-item {
   --toc-indent: 0px;
+  /* Список прокручивается — пункты не сжимаем, иначе длинные заголовки налезают друг на друга. */
+  flex-shrink: 0;
   appearance: none;
   -webkit-appearance: none;
   display: flex;
@@ -12168,10 +12170,6 @@ html.modal-sheet-open body {
     bottom: 0;
     z-index: 20;
     padding-bottom: 10px;
-  }
-
-  .note-editor-toc-toggle {
-    display: none !important;
   }
 
   .note-editor-toc-backdrop {
@@ -14661,4 +14659,101 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 
 .note-paie-reply-form.is-comments-chat .note-paie-composer-left {
   display: none;
+}
+
+/* Листы заметки — вкладки: [оглавление] вкладки… [+] над общей линией. */
+.note-editor-sheets-bar {
+  flex-wrap: nowrap;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.note-editor-sheets {
+  flex-wrap: nowrap;
+  gap: 2px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.note-editor-sheets::-webkit-scrollbar {
+  display: none;
+}
+
+.note-editor-sheets-bar .note-editor-toc-anchor {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: center;
+  margin-bottom: 4px;
+}
+
+.note-editor-sheets-bar .note-editor-toc-toggle {
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  border: none;
+  border-radius: 8px;
+  color: var(--vkui--color_text_secondary, var(--text-secondary));
+  background: transparent;
+  box-shadow: none;
+}
+
+.note-editor-sheets-bar .note-editor-toc-toggle:hover,
+.note-editor-page--toc-open .note-editor-sheets-bar .note-editor-toc-toggle {
+  color: var(--vkui--color_text_accent, var(--accent));
+  background: rgba(82, 158, 244, 0.14);
+}
+
+.note-sheet-chip {
+  position: relative;
+  flex: 0 0 auto;
+  padding: 8px 10px 10px;
+  border: none;
+  border-radius: 8px 8px 0 0;
+  font-size: 14px;
+  background: transparent;
+}
+
+.note-sheet-chip:not(.is-active):not(.note-sheet-chip--make-summary):hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.note-sheet-chip.is-active {
+  color: var(--text);
+  font-weight: 600;
+  background: transparent;
+}
+
+.note-sheet-chip.is-active::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--vkui--color_text_accent, #529ef4);
+}
+
+.note-sheet-chip.is-editing {
+  padding-right: 6px;
+}
+
+.note-sheet-chip--add {
+  justify-content: center;
+  min-width: 32px;
+  padding: 6px 8px 8px;
+  border-style: none;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.note-sheet-chip--make-summary {
+  align-self: center;
+  margin: 0 0 4px 4px;
+  padding: 4px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  font-size: 13px;
 }

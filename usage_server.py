@@ -2728,6 +2728,10 @@ class _MiniappNoteChatPatch(BaseModel):
     visibility: Optional[str] = None
 
 
+class _MiniappNoteChatRead(BaseModel):
+    last_id: int = Field(..., ge=0)
+
+
 class _MiniappNoteChatSplit(BaseModel):
     after_id: int
 
@@ -9219,6 +9223,7 @@ def _note_chat_api(chat: dict[str, Any], uid: str) -> dict[str, Any]:
         "message_count": int(chat.get("message_count") or 0),
         "first_message": str(chat.get("first_message") or ""),
         "legacy": chat.get("origin") == "legacy",
+        "last_seen_id": chat.get("last_seen_id"),
     }
 
 
@@ -9298,6 +9303,31 @@ async def miniapp_note_chats_patch(
 
     chat = await run_in_threadpool(_run)
     return {"ok": True, "chat": _note_chat_api(chat, uid)}
+
+
+@miniapp_router.post("/notes/{kind}/{item_id}/chats/{chat_id}/read")
+async def miniapp_note_chats_read(
+    kind: str,
+    item_id: str,
+    chat_id: int,
+    body: _MiniappNoteChatRead,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Отметка «прочитано до сообщения last_id» — общая для всех устройств пользователя."""
+    from assistant.stores import note_chats
+
+    uid = str(int(principal.telegram_user_id))
+
+    def _run() -> int:
+        owner = _note_chat_owner_or_404(uid, kind, item_id)
+        if chat_id != note_chats.COMMENTS_CHAT_ID:
+            chat = note_chats.chat_for_item(chat_id, owner, kind, str(item_id))
+            if not note_chats.can_view(chat, uid):
+                raise HTTPException(status_code=404, detail="Чат не найден")
+        return note_chats.mark_read(owner, kind, str(item_id), uid, chat_id, body.last_id)
+
+    seen = await run_in_threadpool(_run)
+    return {"ok": True, "last_seen_id": seen}
 
 
 @miniapp_router.post("/notes/{kind}/{item_id}/chats/{chat_id}/split")
