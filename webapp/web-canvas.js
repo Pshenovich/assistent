@@ -740,6 +740,12 @@
     );
   }
 
+  // Стили презентаций из шаблонов (assistant/lib/canvas_templates.THEMES).
+  var DECK_THEMES = [
+    { id: "analytic", name: "Аналитика", hint: "тёмный, зелёные акценты", colors: ["#0c1412", "#3dd6a5", "#5b8def"] },
+    { id: "mono", name: "Монохром", hint: "чёрный, белый и голубой", colors: ["#0d0d0e", "#ffffff", "#dceaf6"] },
+  ];
+
   var INSERT_ITEMS = [
     {
       kind: "heading",
@@ -830,8 +836,22 @@
     var applyBtn = makeBtn("Применить правки", "note-web-canvas-apply-btn");
     applyBtn.hidden = true;
     applyBtn.title = "Отправить комментарии к слайдам ИИ одним запросом";
+    // Стиль оформления презентации из шаблонов: перерисовка без ИИ, содержимое не меняется.
+    var themeWrap = document.createElement("div");
+    themeWrap.className = "note-web-canvas-theme";
+    themeWrap.hidden = true;
+    var themeBtn = makeBtn("Стиль", "note-web-canvas-theme-btn");
+    themeBtn.setAttribute("aria-haspopup", "menu");
+    themeBtn.setAttribute("aria-expanded", "false");
+    var themeMenu = document.createElement("div");
+    themeMenu.className = "note-web-canvas-theme-menu";
+    themeMenu.setAttribute("role", "menu");
+    themeMenu.hidden = true;
+    themeWrap.appendChild(themeBtn);
+    themeWrap.appendChild(themeMenu);
     toolbar.appendChild(pickBtn);
     toolbar.appendChild(editBtn);
+    toolbar.appendChild(themeWrap);
     toolbar.appendChild(applyBtn);
     toolbar.appendChild(refreshBtn);
 
@@ -955,6 +975,7 @@
       busy = !!on;
       wrap.classList.toggle("is-busy", busy);
       syncApplyBtn();
+      syncThemeBtn();
     }
 
     function runOp(req) {
@@ -1097,7 +1118,82 @@
       return htmlDoc;
     }
 
+    function currentDeckTheme() {
+      var m = /<html\b[^>]*\bdata-leo-theme="([a-z-]+)"/i.exec(htmlDoc);
+      return (m && m[1]) || "analytic";
+    }
+
+    function closeThemeMenu() {
+      themeMenu.hidden = true;
+      themeBtn.setAttribute("aria-expanded", "false");
+    }
+
+    function renderThemeMenu() {
+      var cur = currentDeckTheme();
+      themeMenu.innerHTML = "";
+      DECK_THEMES.forEach(function (t) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "note-web-canvas-theme-item" + (t.id === cur ? " is-active" : "");
+        b.setAttribute("role", "menuitemradio");
+        b.setAttribute("aria-checked", String(t.id === cur));
+        var sw = document.createElement("span");
+        sw.className = "note-web-canvas-theme-swatch";
+        t.colors.forEach(function (c) {
+          var i = document.createElement("i");
+          i.style.background = c;
+          sw.appendChild(i);
+        });
+        var txt = document.createElement("span");
+        txt.className = "note-web-canvas-theme-text";
+        var name = document.createElement("b");
+        name.textContent = t.name;
+        var hint = document.createElement("small");
+        hint.textContent = t.hint;
+        txt.appendChild(name);
+        txt.appendChild(hint);
+        b.appendChild(sw);
+        b.appendChild(txt);
+        b.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          closeThemeMenu();
+          if (opts.onTheme) opts.onTheme(t.id);
+          if (t.id === currentDeckTheme()) return;
+          runOp({ op: "theme", theme: t.id });
+        });
+        themeMenu.appendChild(b);
+      });
+    }
+
+    themeBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!themeMenu.hidden) return closeThemeMenu();
+      if (busy) return;
+      renderThemeMenu();
+      themeMenu.hidden = false;
+      themeBtn.setAttribute("aria-expanded", "true");
+    });
+    document.addEventListener("click", function (e) {
+      if (!themeMenu.hidden && !themeWrap.contains(e.target)) closeThemeMenu();
+    });
+
+    function syncThemeBtn() {
+      var tpl = isTemplateDeck();
+      themeWrap.hidden = !tpl;
+      if (!tpl) return closeThemeMenu();
+      var cur = currentDeckTheme();
+      var name = "Стиль";
+      DECK_THEMES.forEach(function (t) {
+        if (t.id === cur) name = t.name;
+      });
+      themeBtn.textContent = "Стиль: " + name + " ▾";
+      themeBtn.disabled = busy;
+    }
+
     function syncInsertBar() {
+      syncThemeBtn();
       // Template decks are edited through slots, comments and the layout menu.
       insertBar.hidden = !editing || isTemplateDeck();
       wrap.classList.toggle("is-editing", editing);

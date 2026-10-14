@@ -15,6 +15,10 @@ html[data-leo-deck] {
   --c3: #5b8def;
   --c4: #c66578;
   --c-mute: #34463f;
+  --c-total: #6f8a80;
+  --s-on-acc: #0c1412;
+  --s-tint: rgba(232, 240, 236, 0.05);
+  --s-acc-soft: rgba(61, 214, 165, 0.12);
   --f-display: "Manrope", "IBM Plex Sans", system-ui, sans-serif;
   --f-body: "IBM Plex Sans", system-ui, sans-serif;
   height: 100%;

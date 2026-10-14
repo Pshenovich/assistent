@@ -15,8 +15,8 @@ C = ("var(--c1)", "var(--c2)", "var(--c3)", "var(--c4)")
 TXT = "var(--s-text)"
 MUT = "var(--s-muted)"
 FAINT = "var(--s-faint)"
-RULE = "rgba(232,240,236,.1)"
-SURF = "#13201c"
+RULE = "var(--s-rule)"
+SURF = "var(--s-el)"
 
 CHART_INTENTS = (
     "compare",
@@ -215,8 +215,8 @@ def area(d: dict[str, Any], W: float, H: float) -> str:
 
     g = (
         '<defs><linearGradient id="lc-ag" x1="0" y1="0" x2="0" y2="1">'
-        '<stop offset="0" stop-color="#3dd6a5" stop-opacity=".35"/>'
-        '<stop offset="1" stop-color="#3dd6a5" stop-opacity="0"/></linearGradient></defs>'
+        '<stop offset="0" stop-color="var(--s-acc)" stop-opacity=".35"/>'
+        '<stop offset="1" stop-color="var(--s-acc)" stop-opacity="0"/></linearGradient></defs>'
     )
     for tv in _ticks(mx):
         g += f'<line x1="{l}" x2="{W - r}" y1="{Y(tv):.1f}" y2="{Y(tv):.1f}" stroke="{RULE}"/>'
@@ -284,7 +284,7 @@ def stacked100(d: dict[str, Any], W: float, H: float) -> str:
             tip = f"{r['label']} · {names[si]}: {nf(pct)}%"
             g += f'<rect x="{x:.1f}" y="{y:.1f}" width="{max(w, 0):.1f}" height="{bh:.1f}" rx="{rx}" fill="{C[si % 4]}">{_tip(tip)}</rect>'
             if pct >= 9:
-                g += _t(x + w / 2, y + bh / 2, nf(pct) + "%", a="middle", db="central", fill="#0c1412", fw=600)
+                g += _t(x + w / 2, y + bh / 2, nf(pct) + "%", a="middle", db="central", fill="var(--s-on-acc)", fw=600)
             x += w + 2
     return _svg(W, H, g)
 
@@ -355,7 +355,7 @@ def waterfall(d: dict[str, Any], W: float, H: float) -> str:
     for i, b in enumerate(bars):
         x = i * band + (band - bw) / 2
         y1, y2 = Y(max(b["a"], b["b"])), Y(min(b["a"], b["b"]))
-        col = "#6f8a80" if b.get("total") else ("var(--c1)" if b['value'] >= 0 else "var(--c4)")
+        col = "var(--c-total)" if b.get("total") else ("var(--c1)" if b['value'] >= 0 else "var(--c4)")
         sign = "" if b.get("total") else ("+" if b['value'] > 0 else "")
         tip = f"{b.get('label', '')}: {sign}{nf(b['value'], dec)} {unit}"
         g += f'<rect x="{x:.1f}" y="{y1:.1f}" width="{bw:.1f}" height="{max(y2 - y1, 2):.1f}" rx="3" fill="{col}">{_tip(tip)}</rect>'
@@ -385,7 +385,7 @@ def funnel(d: dict[str, Any], W: float, H: float) -> str:
         g += _t(lw - 16, y + bh / 2, labels[i], a="end", db="central", fill=TXT, fs=15)
         tip = f"{labels[i]}: {nf(v)}"
         g += f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{bh:.1f}" rx="4" fill="var(--s-acc)" opacity="{max(1 - i * 0.13, 0.3):.2f}">{_tip(tip)}</rect>'
-        g += _t(lw + aw / 2, y + bh / 2, nf(v), a="middle", db="central", fill="#0c1412", fw=700, fs=16)
+        g += _t(lw + aw / 2, y + bh / 2, nf(v), a="middle", db="central", fill="var(--s-on-acc)", fw=700, fs=16)
         if i > 0 and vals[i - 1]:
             c = 100 * v / vals[i - 1]
             col = "var(--s-amber)" if warn and c < warn else TXT
@@ -410,7 +410,7 @@ def bullet(d: dict[str, Any], W: float, H: float) -> str:
         pct = 100 * fact / plan if plan else 0
         ok = pct >= 100
         g += _t(lw - 16, y + bh / 2, r['label'], a="end", db="central", fill=TXT, fs=15)
-        g += f'<rect x="{lw}" y="{y - 6:.1f}" width="{X(mx) - lw:.1f}" height="{bh + 12}" rx="4" fill="rgba(232,240,236,.05)"/>'
+        g += f'<rect x="{lw}" y="{y - 6:.1f}" width="{X(mx) - lw:.1f}" height="{bh + 12}" rx="4" fill="var(--s-tint)"/>'
         tip = f"{r['label']}: факт {nf(fact)} / план {nf(plan)}"
         g += f'<path d="{_r_right(lw, y, X(fact) - lw, bh)}" fill="{"var(--s-acc)" if ok else "var(--c1)"}">{_tip(tip)}</path>'
         g += f'<line x1="{X(plan):.1f}" x2="{X(plan):.1f}" y1="{y - 9:.1f}" y2="{y + bh + 9:.1f}" stroke="{TXT}" stroke-width="2.5"/>'
@@ -439,7 +439,7 @@ def dumbbell(d: dict[str, Any], W: float, H: float) -> str:
         g += _t(lw - 16, y, r['label'], a="end", db="central", fill=TXT, fs=15)
         g += f'<line x1="{X(a):.1f}" x2="{X(b):.1f}" y1="{y:.1f}" y2="{y:.1f}" stroke="var(--c1)" stroke-width="3" opacity=".5"/>'
         tip = f"{r['label']} · {a_name}: {nf(a, dec)}"
-        g += f'<circle cx="{X(a):.1f}" cy="{y:.1f}" r="7" fill="{SURF}" stroke="#6f8a80" stroke-width="2.5">{_tip(tip)}</circle>'
+        g += f'<circle cx="{X(a):.1f}" cy="{y:.1f}" r="7" fill="{SURF}" stroke="var(--c-total)" stroke-width="2.5">{_tip(tip)}</circle>'
         tip = f"{r['label']} · {b_name}: {nf(b, dec)}"
         g += f'<circle cx="{X(b):.1f}" cy="{y:.1f}" r="8" fill="var(--s-acc)" stroke="{SURF}" stroke-width="2">{_tip(tip)}</circle>'
         g += _t(max(X(a), X(b)) + 14, y, f"{nf(a, dec)} → {nf(b, dec)}", db="central", fill=TXT, fw=600, fs=14)
@@ -456,8 +456,8 @@ def heatmap(d: dict[str, Any], W: float, H: float) -> str:
 
     def cell(v: float) -> str:
         a = (v - lo) / span
-        bg = f"rgba(61,214,165,{0.08 + a * 0.62:.2f})"
-        fg = "#0c1412" if a > 0.7 else "var(--s-text)"
+        bg = f"color-mix(in srgb, var(--s-acc) {(0.08 + a * 0.62) * 100:.0f}%, transparent)"
+        fg = "var(--s-on-acc)" if a > 0.7 else "var(--s-text)"
         return f'<td class="hm-cell" style="background:{bg};color:{fg}" title="{escape(nf(v, dec) + unit)}">{nf(v, dec)}{escape(unit)}</td>'
 
     head = "".join(f"<th>{escape(str(c))}</th>" for c in cols)
@@ -488,7 +488,7 @@ def spark(values: list[Any], W: float = 200, H: float = 44) -> str:
     return (
         f'<svg class="spark" viewBox="0 0 {W:.0f} {H:.0f}" width="100%" height="{H:.0f}" '
         f'preserveAspectRatio="none"><path d="M{X(0):.1f},{H:.0f}L{"L".join(pts)}L{X(n - 1):.1f},{H:.0f}Z" '
-        f'fill="rgba(61,214,165,.12)"/><polyline points="{" ".join(pts)}" fill="none" '
+        f'fill="var(--s-acc-soft)"/><polyline points="{" ".join(pts)}" fill="none" '
         f'stroke="var(--s-acc)" stroke-width="2" vector-effect="non-scaling-stroke"/>'
         f'<circle cx="{X(n - 1):.1f}" cy="{Y(vals[-1]):.1f}" r="3.5" fill="var(--s-acc)"/></svg>'
     )

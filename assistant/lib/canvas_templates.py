@@ -239,11 +239,11 @@ def _r_cover_goals(c: Ctx) -> tuple[str, str]:
 
 _reg(Variant(
     "cover.goals", "cover", "Заголовок и тезисы",
-    "eyebrow?: str≤40, title: str≤70, lede?: str≤140, goals: [str≤90] 2–4",
+    "eyebrow?: str≤40, title: str≤70, lede?: str≤140, goals: [str≤90] 1–5",
     _r_cover_goals,
-    lambda s: _need(len(_lst(s.get("goals"))) >= 2, "нужно 2–4 тезиса"),
+    lambda s: _need(len(_lst(s.get("goals"))) >= 1, "нужно 1–5 тезисов"),
     prefer=lambda s: len(_lst(s.get("goals"))) >= 2,
-    groups=[Group("goals", 2, 4, lambda: "Новый тезис")],
+    groups=[Group("goals", 1, 5, lambda: "Новый тезис")],
 ))
 
 
@@ -473,11 +473,11 @@ def _r_metrics_kpi(c: Ctx) -> tuple[str, str]:
 
 _reg(Variant(
     "metrics.kpi", "metrics", "Ряд показателей",
-    "eyebrow?, title, kpis: [{label: str≤40, value: str≤10, unit?: str≤16, delta?: str≤12 (напр. «+9 п.п.», «−38%»), delta_note?: str≤16, delta_good?: up|down, series?: [num]≥4}] 1–5, note?",
+    "eyebrow?, title, kpis: [{label: str≤40, value: str≤10, unit?: str≤16, delta?: str≤12 (напр. «+9 п.п.», «−38%»), delta_note?: str≤16, delta_good?: up|down, series?: [num]≥4}] 1–6, note?",
     _r_metrics_kpi,
     lambda s: _need(len(_dicts(s.get("kpis"))) >= 1, "нет показателей"),
     prefer=lambda s: len(_dicts(s.get("kpis"))) >= 2,
-    groups=[Group("kpis", 1, 5, lambda: {"label": "Показатель", "value": "0"})],
+    groups=[Group("kpis", 1, 6, lambda: {"label": "Показатель", "value": "0"})],
 ))
 
 
@@ -1128,7 +1128,7 @@ def _next_id(deck: dict[str, Any]) -> str:
 def build_deck(action: dict[str, Any]) -> dict[str, Any]:
     deck: dict[str, Any] = {
         "v": DECK_VERSION,
-        "theme": DECK_THEME,
+        "theme": deck_theme({}, _s(action.get("theme")) or None),
         "title": _s(action.get("title")) or "Презентация",
         "footer": _s(action.get("footer")),
         "slides": [],
@@ -1162,24 +1162,49 @@ _MEDIA_IMG_RE = re.compile(
 _CSS_CACHE: dict[str, Any] = {}
 
 
-def templates_css() -> str:
-    path = Path(__file__).resolve().parents[2] / "webapp" / "canvas-kit" / "templates.css"
+def _kit_css(name: str) -> str:
+    path = Path(__file__).resolve().parents[2] / "webapp" / "canvas-kit" / name
     try:
         mtime = path.stat().st_mtime
     except OSError:
         return ""
-    if _CSS_CACHE.get("mtime") != mtime:
-        _CSS_CACHE["css"] = path.read_text(encoding="utf-8")
-        _CSS_CACHE["mtime"] = mtime
-    return str(_CSS_CACHE.get("css") or "")
+    cached = _CSS_CACHE.get(name)
+    if not cached or cached[0] != mtime:
+        cached = (mtime, path.read_text(encoding="utf-8"))
+        _CSS_CACHE[name] = cached
+    return str(cached[1] or "")
 
 
-_FONTS = (
-    '<link rel="preconnect" href="https://fonts.googleapis.com">'
-    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
-    '<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800'
-    '&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">'
-)
+def templates_css() -> str:
+    return _kit_css("templates.css")
+
+
+def themes_css() -> str:
+    """Стили оформления (кроме analytic) — наборы токенов поверх тех же макетов."""
+    return _kit_css("themes.css")
+
+
+def _fonts_link(families: str) -> str:
+    return (
+        '<link rel="preconnect" href="https://fonts.googleapis.com">'
+        '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+        f'<link href="https://fonts.googleapis.com/css2?{families}&display=swap" rel="stylesheet">'
+    )
+
+
+# Стиль оформления → шрифты (Google Fonts, все с кириллицей).
+THEMES: dict[str, dict[str, str]] = {
+    "analytic": {"name": "Аналитика", "fonts": "family=Manrope:wght@500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600"},
+    "mono": {"name": "Монохром", "fonts": "family=Inter+Tight:wght@300;400;500;600&family=Inter:wght@400;500;600"},
+}
+
+_FONTS = _fonts_link(THEMES["analytic"]["fonts"])
+
+
+def deck_theme(deck: dict[str, Any], theme: Optional[str] = None) -> str:
+    t = str(theme or deck.get("theme") or DECK_THEME)
+    return t if t in THEMES else DECK_THEME
+
 
 # Present mode (one slide at a time) + stage scaling. Ignores keys while the
 # editor's review mode is on or focus is in a text field.
@@ -1224,11 +1249,19 @@ def _menu_for(slide: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def render_slide(slide: dict[str, Any], index: int, deck: dict[str, Any], media: dict[str, str]) -> str:
+# Стиль → свои отрисовки макетов (та же модель слотов, другая композиция).
+# Макет без своей отрисовки в стиле рисуется базовой с токенами стиля.
+THEME_RENDERERS: dict[str, dict[str, Callable[[Ctx], tuple[str, str]]]] = {}
+
+
+def render_slide(
+    slide: dict[str, Any], index: int, deck: dict[str, Any], media: dict[str, str], theme: str = DECK_THEME
+) -> str:
     variant = VARIANTS.get(slide.get("variant", "")) or VARIANTS[_FALLBACK_VARIANT.get(slide.get("role", ""), "content.cards")]
     ctx = Ctx(slide, media)
+    render = THEME_RENDERERS.get(theme, {}).get(variant.id) or variant.render
     try:
-        inner, decor = variant.render(ctx)
+        inner, decor = render(ctx)
     except Exception as e:  # noqa: BLE001 — one bad slide must not kill the deck
         print(f"[canvas_templates] render failed slide={slide.get('id')} variant={variant.id} err={e!r}")
         inner, decor = ctx.t("title", "h2", "title", force=True) + '<p class="body">Не удалось отрисовать слайд.</p>', ""
@@ -1252,14 +1285,18 @@ def _deck_json_for_embed(deck: dict[str, Any]) -> str:
     return raw.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
-def render_deck_html(deck: dict[str, Any], media: dict[str, str] | None = None) -> str:
+def render_deck_html(
+    deck: dict[str, Any], media: dict[str, str] | None = None, theme: Optional[str] = None
+) -> str:
     media = media or {}
-    slides_html = "".join(render_slide(s, i, deck, media) for i, s in enumerate(deck.get("slides") or []))
+    th = deck_theme(deck, theme)
+    slides_html = "".join(render_slide(s, i, deck, media, th) for i, s in enumerate(deck.get("slides") or []))
     title = escape(_s(deck.get("title")) or "Презентация")
+    css = templates_css() + ("\n" + themes_css() if th != DECK_THEME else "")
     return (
-        f'<!DOCTYPE html><html data-leo-theme="{DECK_THEME}" data-leo-deck="{DECK_VERSION}"><head>'
-        f'<meta charset="utf-8"><title>{title}</title>{_FONTS}'
-        f'<style id="leo-canvas-tpl">\n{templates_css()}\n</style></head><body>'
+        f'<!DOCTYPE html><html data-leo-theme="{th}" data-leo-deck="{DECK_VERSION}"><head>'
+        f'<meta charset="utf-8"><title>{title}</title>{_fonts_link(THEMES[th]["fonts"])}'
+        f'<style id="leo-canvas-tpl">\n{css}\n</style></head><body>'
         f'<main class="deck">{slides_html}</main>'
         f'<script type="application/json" id="leo-deck">{_deck_json_for_embed(deck)}</script>'
         f"{_DECK_SCRIPT}</body></html>"
@@ -1492,6 +1529,11 @@ def apply_op(deck: dict[str, Any], op: dict[str, Any]) -> dict[str, Any]:
         op_delete_slide(deck, sid)
     elif kind == "move_slide":
         op_move_slide(deck, sid, int(op.get("delta") or 0))
+    elif kind == "theme":
+        want = str(op.get("theme") or "")
+        if want not in THEMES:
+            raise DeckOpError("Неизвестный стиль")
+        deck["theme"] = want  # только оформление: содержимое и правки не меняются
     else:
         raise DeckOpError("Неизвестная операция")
     return deck
@@ -1572,3 +1614,9 @@ def outline_prompt(deck: dict[str, Any]) -> str:
         title = _s(s["slots"].get("title") or s["slots"].get("claim") or s["slots"].get("ask") or s["slots"].get("quote"))
         rows.append(f"{i + 1}. {s['id']} {s['role']}/{s['variant']}: {title[:80]}")
     return "\n".join(rows)
+
+
+# Отрисовки стилей регистрируются после того, как модуль целиком загружен.
+from assistant.lib import canvas_style_mono  # noqa: E402
+
+THEME_RENDERERS["mono"] = canvas_style_mono.RENDERERS

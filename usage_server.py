@@ -2637,6 +2637,7 @@ class _MiniappCanvasOpBody(BaseModel):
     op: str
     slide_id: str = ""
     variant: str = ""
+    theme: str = ""
     group: str = ""
     index: int = 0
     after: Optional[int] = None
@@ -2788,6 +2789,8 @@ class _MiniappGptChatBody(BaseModel):
     agent_id: Optional[str] = None
     canvas_selections: list[_MiniappCanvasSelection] = Field(default_factory=list)
     canvas_sheet_id: Optional[str] = None
+    # Стиль новых презентаций по умолчанию — последний выбранный пользователем.
+    canvas_theme: Optional[str] = None
 
 
 class _MiniappAgentCreate(BaseModel):
@@ -7195,6 +7198,7 @@ async def miniapp_gpt_chat(
                                 note_sheets_mod=note_sheets_store,
                                 selection_sheet_ids=sel_sheet_ids,
                                 open_sheet_id=open_canvas_sheet_id,
+                                default_deck_theme=str(body.canvas_theme or "").strip()[:20] or None,
                             )
                         except Exception as e:
                             print(f"[web_canvas] apply failed err={e!r}")
