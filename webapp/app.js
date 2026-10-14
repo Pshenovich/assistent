@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261014-chats-ux";
+  var WEBAPP_BUILD = "20261014-chats-groups";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261014-chats-ux";
+  const NOTE_EDITOR_ASSET_V = "20261014-chats-groups";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -26410,6 +26410,12 @@
         }
         h.appendChild(txt);
         sec.appendChild(h);
+        // Чаты раздела — отдельной карточкой под заголовком.
+        var group = document.createElement("div");
+        group.className = "note-chats-group";
+        sec.appendChild(group);
+        menu.appendChild(sec);
+        return group;
       }
       menu.appendChild(sec);
       return sec;

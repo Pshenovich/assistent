@@ -7173,7 +7173,35 @@ html.note-editor-open #note-editor-overlay {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  margin: 0 10px 6px;
+  margin: 0 10px 8px;
+}
+
+.note-chats-group {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.note-chats-group > .note-chats-item + .note-chats-item {
+  position: relative;
+}
+
+.note-chats-group > .note-chats-item + .note-chats-item::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 40px;
+  right: 12px;
+  height: 1px;
+  background: var(--border);
+}
+
+.note-chats-group > .note-chats-item.is-active::before,
+.note-chats-group > .note-chats-item.is-active + .note-chats-item::before {
+  display: none;
 }
 
 .note-chats-section-icon {
@@ -7195,7 +7223,7 @@ html.note-editor-open #note-editor-overlay {
 }
 
 .note-chats-empty {
-  margin: 0 10px 0 34px;
+  margin: 8px 12px;
 }
 
 .note-chats-item-icon {
