@@ -143,8 +143,11 @@ def test_build_note_pdf_from_transcription_note(tmp_path, monkeypatch):
     )
     data, fname, caption = jp.build_note_pdf(note)
     assert data[:4] == b"%PDF"
-    assert fname.startswith("samari")
-    assert "Саммари" in caption
+    # Саммари и транскрипция — в одном файле (все листы).
+    assert fname.startswith("transkript")
+    assert "Транскрипция" in caption
+    data_s, fname_s, caption_s = jp.build_note_pdf(note, which="summary")
+    assert fname_s.startswith("samari") and "Саммари" in caption_s
     only = tnotes.create_transcript_only(3, title="Голос", transcript="Сырой текст")
     data2, fname2, caption2 = jp.build_note_pdf(only)
     assert data2[:4] == b"%PDF"
