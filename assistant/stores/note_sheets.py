@@ -141,6 +141,24 @@ def list_extra_sheets(note_id: int) -> list[dict[str, Any]]:
         return [_row_to_dict(r) for r in cur.fetchall()]
 
 
+def list_sheet_versions(note_id: int) -> list[dict[str, Any]]:
+    """Лёгкий список листов без содержимого — для опроса «что изменилось» (collab)."""
+    with _LOCK:
+        cur = _conn().execute(
+            "SELECT id, title, kind, position, revision FROM note_sheets WHERE note_id = ? ORDER BY position ASC, id ASC",
+            (int(note_id),),
+        )
+        return [
+            {
+                "id": int(r["id"]),
+                "title": str(r["title"] or "").strip() or PRIMARY_SHEET_TITLE,
+                "kind": _normalize_kind(r["kind"]),
+                "revision": max(1, int(r["revision"] or 1)),
+            }
+            for r in cur.fetchall()
+        ]
+
+
 def list_sheets(note: dict[str, Any]) -> list[dict[str, Any]]:
     extras = list_extra_sheets(int(note["id"])) if note_allows_sheets(note) else []
     return [primary_sheet(note), *extras]

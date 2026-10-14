@@ -384,6 +384,7 @@
         });
         box._syncSend = syncSend;
         syncSend();
+        if (TPL) buildAddSlide(box, sid, i);
         sec.parentNode.insertBefore(box, sec.nextSibling);
         setTimeout(function () {
           autosize(ta);
@@ -392,6 +393,50 @@
         if (TPL) buildTools(sec, sid, i);
       });
       if (TPL) buildEmptyGroups();
+    }
+
+    // «+ Слайд после этого»: ИИ делает новый слайд по описанию (или продолжает тему).
+    function buildAddSlide(box, sid, i) {
+      var wrap = document.createElement("div");
+      wrap.className = "leo-add-slide";
+      wrap.innerHTML =
+        '<button type="button" class="leo-add-slide-toggle">+ Слайд после этого</button>' +
+        '<div class="leo-add-slide-form" hidden>' +
+        '<div class="leo-review-row"><textarea rows="2" placeholder="Что будет на новом слайде? Можно оставить пустым — ИИ продолжит тему по заметке"></textarea>' +
+        '<button type="button" class="leo-add-slide-go">Добавить</button></div></div>';
+      var toggle = wrap.querySelector(".leo-add-slide-toggle");
+      var form = wrap.querySelector(".leo-add-slide-form");
+      var ta = form.querySelector("textarea");
+      var go = form.querySelector(".leo-add-slide-go");
+      ta.setAttribute("aria-label", "Описание нового слайда после слайда " + (i + 1));
+      toggle.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        form.hidden = !form.hidden;
+        toggle.classList.toggle("is-open", !form.hidden);
+        if (!form.hidden) ta.focus();
+      });
+      function submit() {
+        var st = statuses[sid];
+        if (st && st.state === "busy") return;
+        post("insertSlide", { slideId: sid, text: ta.value });
+      }
+      go.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        submit();
+      });
+      ta.addEventListener("keydown", function (e) {
+        e.stopPropagation();
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          submit();
+        }
+      });
+      ta.addEventListener("input", function () {
+        autosize(ta);
+      });
+      box.appendChild(wrap);
     }
 
     function buildTools(sec, sid, i) {
@@ -631,6 +676,12 @@
     ".leo-review-row textarea{flex:1 1 auto;min-width:0}" +
     ".leo-review-send{appearance:none;flex:0 0 auto;display:inline-grid;place-items:center;width:34px;height:34px;border:0;border-radius:50%;background:#18201d;color:#fff;cursor:pointer}" +
     ".leo-review-send:disabled{opacity:.3;cursor:default}" +
+    ".leo-add-slide{margin-top:8px}" +
+    ".leo-add-slide-toggle{appearance:none;border:0;background:none;padding:4px 0;font:inherit;font-size:13px;font-weight:600;color:#16805f;cursor:pointer}" +
+    ".leo-add-slide-toggle.is-open{color:#4b5a54}" +
+    ".leo-add-slide-form{margin-top:4px}" +
+    ".leo-add-slide-form[hidden]{display:none}" +
+    ".leo-add-slide-go{appearance:none;flex:0 0 auto;height:34px;padding:0 14px;border:0;border-radius:17px;background:#18201d;color:#fff;font:inherit;font-size:13px;font-weight:600;cursor:pointer}" +
     ".leo-review-send:focus-visible{outline:2px solid #3dd6a5;outline-offset:2px}" +
     ".leo-item-tools>button.is-limit{opacity:.45}" +
     ".leo-slide-tools{position:absolute;top:10px;right:10px;z-index:60;display:flex;gap:4px;font:12px/1 ui-sans-serif,system-ui,-apple-system,sans-serif}" +
@@ -989,6 +1040,38 @@
         });
     }
 
+    function runInsert(sid, text) {
+      if (!onRevise || busy) return;
+      setBusy(true);
+      postToFrame({ type: "getScroll" });
+      statuses[sid] = { state: "busy", text: "Добавляю слайд…" };
+      postToFrame({ type: "reviewStatus", statuses: statuses });
+      requestSnapshot()
+        .then(function (html) {
+          return onRevise({ sheetId: sheetId, comments: {}, html: html, insertAfter: sid, insertText: text });
+        })
+        .then(function (res) {
+          var n = ((res && res.newIds) || []).length;
+          if (res && res.html && n) {
+            statuses[sid] = { state: "ok", text: n > 1 ? "Ниже добавлено слайдов: " + n : "Ниже добавлен новый слайд" };
+            setHtml(res.html);
+            onNotify(n > 1 ? "Добавлено слайдов: " + n : "Слайд добавлен");
+          } else {
+            statuses[sid] = { state: "err", text: "Не получилось добавить слайд — уточните, что на нём должно быть" };
+            postToFrame({ type: "reviewStatus", statuses: statuses });
+            onNotify("Слайд не добавлен");
+          }
+        })
+        .catch(function (err) {
+          statuses[sid] = { state: "err", text: (err && err.message) || "Не получилось добавить слайд" };
+          postToFrame({ type: "reviewStatus", statuses: statuses });
+          onNotify((err && err.message) || "Не получилось добавить слайд");
+        })
+        .then(function () {
+          setBusy(false);
+        });
+    }
+
     function postToFrame(msg) {
       try {
         if (frame.contentWindow) {
@@ -1120,6 +1203,16 @@
         runRevise([rsid]);
         return;
       }
+      if (d.type === "insertSlide") {
+        var isid = String(d.slideId || "");
+        if (!isid) return;
+        if (busy) {
+          onNotify("Дождитесь окончания текущей правки");
+          return;
+        }
+        runInsert(isid, String(d.text || ""));
+        return;
+      }
       if (d.type === "notice") {
         onNotify(String(d.text || ""));
         return;
@@ -1181,6 +1274,14 @@
 
     return {
       setHtml: setHtml,
+      // Новая версия от другого участника: сохраняем прокрутку в режиме правок.
+      setHtmlKeepScroll: function (html) {
+        if (busy) return;
+        postToFrame({ type: "getScroll" });
+        setTimeout(function () {
+          setHtml(html);
+        }, 120);
+      },
       getHtml: getHtml,
       setSheetId: function (id) {
         sheetId = String(id || "");

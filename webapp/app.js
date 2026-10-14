@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261014-live-sync2";
+  var WEBAPP_BUILD = "20261014-sheets-live2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261014-live-sync2";
+  const NOTE_EDITOR_ASSET_V = "20261014-sheets-live2";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -17379,11 +17379,17 @@
     await waitSheetPersistIdle(sheetId);
     var res = await apiFetch(path + "/canvas-revise", {
       method: "POST",
-      body: JSON.stringify({ comments: req.comments || {}, html: req.html || null }),
+      body: JSON.stringify({
+        comments: req.comments || {},
+        html: req.html || null,
+        insert_after: req.insertAfter || null,
+        insert_text: req.insertText || null,
+      }),
     });
     return {
       html: acceptWebCanvasItem(res && res.item),
       results: (res && res.results) || {},
+      newIds: (res && res.new_ids) || [],
     };
   }
 
@@ -19031,6 +19037,104 @@
     }
   }
 
+  // ---- Листы, изменённые другими участниками ----
+  // Опрос collab приносит версии листов (без содержимого). Изменённые листы подтягиваем
+  // и показываем на месте, если у нас в этом листе нет несохранённых правок.
+  function sheetHasLocalWork(id) {
+    return !!(noteSheetState.sheetTimers[id] || noteSheetState.sheetPersists[id]);
+  }
+
+  function syncRemoteSheets(noteId, remote) {
+    if (!Array.isArray(remote) || !noteSheetsEnabled()) return;
+    if (String(noteSheetsNoteId()) !== String(noteId) || noteSheetState.remoteSheetsLoading) return;
+    var local = extraNoteSheets();
+    var byId = {};
+    local.forEach(function (l) {
+      byId[String(l.id)] = l;
+    });
+    var structural =
+      remote.length !== local.length ||
+      remote.some(function (r) {
+        return !byId[String(r.id)];
+      });
+    var changed = remote.some(function (r) {
+      var l = byId[String(r.id)];
+      if (!l || sheetHasLocalWork(String(r.id))) return false;
+      return Number(r.revision || 0) > Number(l.revision || 0) || String(r.title || "") !== String(l.title || "");
+    });
+    if (!structural && !changed) return;
+    noteSheetState.remoteSheetsLoading = true;
+    apiFetch("/notes/local/" + encodeURIComponent(noteId) + "/sheets", { method: "GET" })
+      .then(function (data) {
+        if (String(noteSheetsNoteId()) !== String(noteId)) return;
+        applyRemoteSheets(((data && data.sheets) || []).filter(function (x) {
+          return x && !x.is_primary && String(x.id) !== NOTE_SHEET_MAIN;
+        }));
+      })
+      .catch(function () {})
+      .then(function () {
+        noteSheetState.remoteSheetsLoading = false;
+      });
+  }
+
+  function applyRemoteSheets(fresh) {
+    var primary = findNoteSheet(NOTE_SHEET_MAIN);
+    var updated = [];
+    var next = fresh.map(function (r) {
+      var id = String(r.id);
+      var l = findNoteSheet(id);
+      if (l && sheetHasLocalWork(id)) return l; // свои правки ещё сохраняются
+      if (l && Number(r.revision || 0) > Number(l.revision || 0)) updated.push(r);
+      return r;
+    });
+    noteSheetState.sheets = (primary ? [primary] : []).concat(next);
+    updated.forEach(showRemoteSheetBody);
+    var leftGone = !isPrimarySheetId(noteSheetState.leftId) && !findNoteSheet(noteSheetState.leftId);
+    if (leftGone) {
+      switchLeftSheet(NOTE_SHEET_MAIN);
+      showNoteToast("Лист удалён другим участником");
+    }
+    // Не перерисовываем вкладки, пока пользователь переименовывает лист.
+    if (!document.querySelector(".note-sheet-chip-input")) renderNoteSheetChips();
+  }
+
+  function showRemoteSheetBody(sheet) {
+    var id = String(sheet.id);
+    var html = String(sheet.body || sheet.description || "");
+    noteSheetState.applyingRemoteSheet = id;
+    try {
+      if (String(noteSheetState.leftId) === id) {
+        if (isWebSheet(sheet) !== !!noteSheetState.leftWebCanvas) applyLeftSheetHtml(sheet);
+        else if (noteSheetState.leftWebCanvas) {
+          if (noteSheetState.leftWebCanvas.getHtml() !== html) noteSheetState.leftWebCanvas.setHtmlKeepScroll(html);
+        } else {
+          var left = getLeftNoteRichEditor();
+          if (left && typeof left.getHtml === "function" && left.getHtml() !== html) {
+            left.setHtml(html, { preserveCursor: true });
+          }
+        }
+      }
+      if (noteSheetState.rightMode === "sheet" && String(noteSheetState.rightId) === id) {
+        if (noteSheetState.rightWebCanvas) {
+          if (noteSheetState.rightWebCanvas.getHtml() !== html) noteSheetState.rightWebCanvas.setHtmlKeepScroll(html);
+        } else if (noteSheetState.rightEditor && typeof noteSheetState.rightEditor.getHtml === "function") {
+          if (noteSheetState.rightEditor.getHtml() !== html) {
+            noteSheetState.rightEditor.setHtml(html, { preserveCursor: true });
+          }
+        }
+      }
+    } finally {
+      // Изменение от setHtml — не наша правка: не сохраняем его обратно.
+      if (noteSheetState.sheetTimers[id]) {
+        clearTimeout(noteSheetState.sheetTimers[id]);
+        delete noteSheetState.sheetTimers[id];
+      }
+      setTimeout(function () {
+        if (noteSheetState.applyingRemoteSheet === id) noteSheetState.applyingRemoteSheet = "";
+      }, 0);
+    }
+  }
+
   function noteCollabTick() {
     var wrap = document.getElementById("note-editor-more-wrap");
     var id = noteCollabState.noteId;
@@ -19054,6 +19158,7 @@
         wrap._noteMembers = members;
         renderOpenNoteMembers(members, peers);
         paintRemoteCursors(peers);
+        if (data && data.sheets) syncRemoteSheets(String(id), data.sheets);
         if (!item) return;
         var remoteRev = Number(item.revision || 0);
         var localRev = Number(wrap._noteRevision || 0);
@@ -22592,6 +22697,7 @@
   function scheduleExtraSheetPersist(sheetId) {
     var id = String(sheetId || "");
     if (!id || isPrimarySheetId(id)) return;
+    if (noteSheetState.applyingRemoteSheet === id) return; // чужая версия, только что показанная
     previewOpenNoteFromSheets();
     if (noteSheetState.sheetTimers[id]) clearTimeout(noteSheetState.sheetTimers[id]);
     noteSheetState.sheetTimers[id] = setTimeout(function () {
