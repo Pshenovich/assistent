@@ -294,3 +294,38 @@ class EvidenceLayoutTests(unittest.TestCase):
         html = self._html(["+18%", "Документация"])
         self.assertNotIn("grid-template-columns:150px 1fr", html)
         self.assertIn("flex-direction:column", html)
+
+
+class InsertSlideTests(unittest.TestCase):
+    def _html(self):
+        deck = tpl.build_deck(SAMPLE_ACTION)
+        deck["slides"] = deck["slides"][:5]
+        return tpl.render_deck_html(deck, {})
+
+    def test_inserts_after_given_slide_without_touching_others(self):
+        from assistant.lib import canvas_revise
+
+        html = self._html()
+        deck = tpl.extract_deck(html)
+        first = deck["slides"][0]["id"]
+        answer = (
+            '```leo-canvas\n{"action":"update","slides":[{"id":"%s","slots":{"title":"взлом"}}],'
+            '"insert":[{"after":"zzz","role":"insight","variant":"insight.evidence","slots":{"claim":"Новый вывод",'
+            '"evidence":[{"fact":"+18%%","text":"рост"},{"fact":"x2","text":"быстрее"}]}}]}\n```' % first
+        )
+        new_html, new_ids = canvas_revise.insert_slides(html, first, "вывод про рост", ask=lambda s, u: answer)
+        after = tpl.extract_deck(new_html)
+        self.assertEqual(len(new_ids), 1)
+        self.assertEqual(after["slides"][1]["id"], new_ids[0])
+        self.assertEqual(after["slides"][1]["slots"]["claim"], "Новый вывод")
+        self.assertEqual(after["slides"][0], deck["slides"][0])  # соседний слайд не тронут
+
+    def test_full_deck_refuses(self):
+        from assistant.lib import canvas_revise
+
+        deck = tpl.build_deck(SAMPLE_ACTION)
+        while len(deck["slides"]) < tpl.MAX_DECK_SLIDES:
+            deck["slides"].append(dict(copy.deepcopy(deck["slides"][-1]), id=tpl._next_id(deck)))
+        html = tpl.render_deck_html(deck, {})
+        with self.assertRaises(ValueError):
+            canvas_revise.insert_slides(html, deck["slides"][0]["id"], "x", ask=lambda s, u: "")

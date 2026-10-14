@@ -47,6 +47,86 @@ One patch per changed slide; outer_html is the full new <section> with the same 
 """.strip()
 
 
+_INSERT_SYSTEM_TEMPLATE = """
+You add slides to a Leo web-canvas template deck. The user wants a new slide right after slide {after}.
+Content comes only from the note text; never invent numbers. Do not change existing slides.
+Pick the role and layout ("variant") that fit the content best.
+
+Answer with ONE fenced block and nothing else:
+```leo-canvas
+{{"action":"update","insert":[{{"after":"{after}","role":"…","variant":"…","slots":{{…}}}}]}}
+```
+- Usually exactly one slide; at most {max_new} only if the user explicitly asks for several.
+- Respect slot limits and item ranges from the schema.
+
+Slot schema by role:
+{schema}
+""".strip()
+
+MAX_INSERT = 3
+
+
+def insert_slides(
+    html: str,
+    after_id: str,
+    request: str,
+    *,
+    ask: Callable[[str, str], Optional[str]],
+) -> tuple[Optional[str], list[str]]:
+    """Add model-made slides after ``after_id``. Returns (new_html or None, new slide ids)."""
+    deck = canvas_templates.extract_deck(html)
+    if deck is None:
+        return None, []
+    deck = canvas_templates.sync_text_edits(deck, html)
+    ids = [str(s["id"]) for s in deck["slides"]]
+    if after_id not in ids:
+        return None, []
+    room = canvas_templates.MAX_DECK_SLIDES - len(ids)
+    if room <= 0:
+        raise ValueError(f"В презентации уже {canvas_templates.MAX_DECK_SLIDES} слайдов — это максимум")
+    request = re.sub(r"\s+", " ", str(request or "")).strip()[:MAX_COMMENT_LEN]
+    system = _INSERT_SYSTEM_TEMPLATE.format(
+        after=after_id, max_new=min(MAX_INSERT, room), schema=canvas_templates.schema_prompt()
+    )
+    user = (
+        f"Новый слайд после {after_id}. Что на нём должно быть: "
+        + (request or "продолжение темы предыдущего слайда, следующий логичный шаг по заметке")
+        + "\n\nСоседние слайды (JSON):\n"
+        + canvas_templates.deck_prompt_json(deck, only=_neighbours(ids, after_id))
+        + "\n\nВесь дек по порядку:\n"
+        + canvas_templates.outline_prompt(deck)
+    )
+    action = _first_action(ask(system, user) or "")
+    inserts = [
+        dict(s, after=after_id)
+        for s in (action or {}).get("insert") or (action or {}).get("slides") or []
+        if isinstance(s, dict) and isinstance(s.get("slots"), dict)
+    ][: min(MAX_INSERT, room)]
+    if not inserts:
+        return None, []
+    # Несколько слайдов — по порядку: каждый следующий после предыдущего нового.
+    before = set(ids)
+    new_ids: list[str] = []
+    anchor = after_id
+    for raw in inserts:
+        raw = {k: v for k, v in raw.items() if k != "id"}
+        raw["after"] = anchor
+        canvas_templates.apply_slide_updates(deck, {"insert": [raw]})
+        added = [str(s["id"]) for s in deck["slides"] if str(s["id"]) not in before and str(s["id"]) not in new_ids]
+        if not added:
+            break
+        new_ids.append(added[0])
+        anchor = added[0]
+    if not new_ids:
+        return None, []
+    return canvas_templates.render_deck_html(deck, canvas_templates.extract_media(html)), new_ids
+
+
+def _neighbours(ids: list[str], sid: str) -> set[str]:
+    i = ids.index(sid)
+    return set(ids[max(0, i - 1) : i + 2])
+
+
 def clean_comments(raw: Any) -> dict[str, str]:
     out: dict[str, str] = {}
     if not isinstance(raw, dict):

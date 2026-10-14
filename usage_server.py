@@ -2648,6 +2648,9 @@ class _MiniappCanvasOpBody(BaseModel):
 class _MiniappCanvasReviseBody(BaseModel):
     comments: dict[str, str] = Field(default_factory=dict)
     html: Optional[str] = None
+    # Новый слайд после insert_after по описанию insert_text (вместо правок комментариями).
+    insert_after: Optional[str] = None
+    insert_text: Optional[str] = None
 
 
 class _MiniappCanvasSelection(BaseModel):
@@ -8825,11 +8828,17 @@ async def miniapp_note_collab(
             username=username,
         )
         others = [p for p in peers if str(p.get("user_id")) != str(uid)]
+        from assistant.stores import note_sheets as note_sheets_store
+
         return {
             "ok": True,
             "item": note,
             "peers": others,
             "members": note.get("members") or [],
+            # Версии дополнительных листов: клиент подтягивает изменённые другими участниками.
+            "sheets": note_sheets_store.list_sheet_versions(note_id)
+            if note_sheets_store.note_allows_sheets(note)
+            else [],
         }
 
     data = await run_in_threadpool(_run)
@@ -9503,7 +9512,8 @@ async def miniapp_canvas_revise(
 
     uid = int(principal.telegram_user_id)
     comments = canvas_revise.clean_comments(body.comments)
-    if not comments:
+    insert_after = str(body.insert_after or "").strip()[:64]
+    if not comments and not insert_after:
         raise HTTPException(status_code=400, detail="Нет комментариев к слайдам")
     tg_uname: str | None = None
     if isinstance(principal.user, dict) and principal.user.get("username"):
@@ -9530,6 +9540,17 @@ async def miniapp_canvas_revise(
             )
             return str((out or {}).get("answer") or "")
 
+        if insert_after:
+            if not canvas_templates.is_template_html(base):
+                raise HTTPException(status_code=400, detail="Добавлять слайды можно только в презентации из шаблонов")
+            try:
+                new_html, new_ids = canvas_revise.insert_slides(base, insert_after, body.insert_text or "", ask=_ask)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            results = {insert_after: "inserted" if new_html else "failed"}
+            print(f"[web_canvas] insert note={note_id} sheet={sheet_id} after={insert_after} new={new_ids}")
+            item = note_sheets_store.update_sheet(note_id, extra_id, body=new_html, kind="web") if new_html else None
+            return {"item": item, "results": results, "new_ids": new_ids}
         new_html, results = canvas_revise.revise(base, comments, ask=_ask)
         print(f"[web_canvas] revise note={note_id} sheet={sheet_id} results={results}")
         item = None
@@ -9546,7 +9567,12 @@ async def miniapp_canvas_revise(
     except Exception as e:  # noqa: BLE001 — model/network errors
         print(f"[web_canvas] revise failed note={note_id} sheet={sheet_id} err={e!r}")
         raise HTTPException(status_code=502, detail="Модель не ответила, попробуйте ещё раз") from e
-    return {"ok": bool(res.get("item")), "item": res.get("item"), "results": res.get("results") or {}}
+    return {
+        "ok": bool(res.get("item")),
+        "item": res.get("item"),
+        "results": res.get("results") or {},
+        "new_ids": res.get("new_ids") or [],
+    }
 
 
 @miniapp_router.get("/notes/{kind}/{item_id}/discuss-files/{file_id}")

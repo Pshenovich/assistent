@@ -23,7 +23,8 @@ from assistant.lib import canvas_charts
 
 DECK_VERSION = 1
 DECK_THEME = "analytic"
-MAX_SLIDES = 14
+MAX_SLIDES = 14  # при генерации
+MAX_DECK_SLIDES = 30  # при ручном редактировании (добавление слайдов)
 _TEXT_CAP = 600
 
 ROLES: tuple[tuple[str, str], ...] = (
@@ -1538,7 +1539,7 @@ def apply_slide_updates(deck: dict[str, Any], action: dict[str, Any]) -> list[st
     remove = {str(x) for x in _lst(action.get("remove"))}
     if remove and len(deck["slides"]) > len(remove):
         deck["slides"] = [s for s in deck["slides"] if str(s["id"]) not in remove]
-    del deck["slides"][MAX_SLIDES:]
+    del deck["slides"][MAX_DECK_SLIDES:]
     return touched
 
 
