@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261014-chats-drawer";
+  var WEBAPP_BUILD = "20261014-chats-ux";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261014-chats-drawer";
+  const NOTE_EDITOR_ASSET_V = "20261014-chats-ux";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -19876,8 +19876,13 @@
       '<div class="note-paie-plus-page" data-plus-page="root">' +
       '<button type="button" class="note-paie-menu-item" data-plus-action="file">Добавить файл</button>' +
       '<button type="button" class="note-paie-menu-item" data-plus-action="note">Добавить заметку</button>' +
+      '<button type="button" class="note-paie-menu-item" data-plus-action="chat">Добавить чат заметки</button>' +
       '<button type="button" class="note-paie-menu-item" data-plus-action="transcription">Добавить транскрипцию</button>' +
       '<button type="button" class="note-paie-menu-item" data-plus-action="summary">Добавить саммари</button>' +
+      "</div>" +
+      '<div class="note-paie-plus-page hidden" data-plus-page="chats">' +
+      '<button type="button" class="note-paie-plus-back" data-plus-back="chats">← Назад</button>' +
+      '<div class="note-paie-plus-notes" id="note-paie-plus-chats" role="listbox" aria-label="Чаты заметки"></div>' +
       "</div>" +
       '<div class="note-paie-plus-page hidden" data-plus-page="notes">' +
       '<button type="button" class="note-paie-plus-back" id="note-paie-plus-back">← Назад</button>' +
@@ -20672,6 +20677,7 @@
         var id = String(n.id);
         if (!id) return "";
         if (n.kind === "journal") return "journal:" + id;
+        if (n.kind === "chat") return "chat:" + id;
         return id;
       })
       .filter(Boolean);
@@ -20687,7 +20693,7 @@
   function addDiscussContextNote(note, kind) {
     var id = note && note.id != null ? String(note.id) : "";
     if (!id) return;
-    var itemKind = kind === "journal" ? "journal" : "local";
+    var itemKind = kind === "journal" || kind === "chat" ? kind : "local";
     var list = discussPendingContextNotes();
     if (
       list.some(function (n) {
@@ -20703,6 +20709,8 @@
     var title = "";
     if (itemKind === "journal") {
       title = journalCardTitle(note) || "Запись";
+    } else if (itemKind === "chat") {
+      title = String((note && note.title) || "Чат");
     } else {
       title =
         sanitizeNoteTitle((note && (note.title || note.content)) || "") ||
@@ -21012,6 +21020,50 @@
       });
   }
 
+  // «Добавить чат заметки»: переписка другого чата этой заметки уходит ИИ как контекст.
+  function renderPlusChatPicker() {
+    var list = document.getElementById("note-paie-plus-chats");
+    var wrap = discussWrap();
+    if (!list || !wrap) return;
+    list.innerHTML = "";
+    var cur = currentDiscussChatId();
+    var chats = (wrap._noteChats || []).filter(function (c) {
+      return Number(c.id) !== cur && Number(c.message_count) > 0;
+    });
+    if (!chats.length) {
+      var empty = document.createElement("p");
+      empty.className = "note-paie-plus-empty";
+      empty.textContent = "В этой заметке пока нет других чатов с сообщениями";
+      list.appendChild(empty);
+      return;
+    }
+    chats.forEach(function (c) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "note-paie-menu-item note-paie-plus-chat";
+      b.setAttribute("role", "option");
+      var t = document.createElement("span");
+      t.className = "note-paie-plus-chat-title";
+      t.textContent = noteChatTitle(c);
+      var m = document.createElement("span");
+      m.className = "note-paie-plus-chat-meta";
+      m.textContent =
+        (Number(c.id) === COMMENTS_CHAT_ID ? "Общие · " : c.visibility === "private" ? "Личный · " : "Общий · ") +
+        noteChatMeta(c);
+      b.appendChild(t);
+      b.appendChild(m);
+      b.addEventListener("click", function (e) {
+        e.preventDefault();
+        addDiscussContextNote(
+          { id: String(wrap._shareId) + ":" + String(c.id), title: "Чат: " + noteChatTitle(c) },
+          "chat"
+        );
+        closeNoteComposerMenus();
+      });
+      list.appendChild(b);
+    });
+  }
+
   function openPlusPicker(kind) {
     plusPickerKind = kind || "note";
     showPlusMenuPage("notes");
@@ -21033,6 +21085,8 @@
       var open = menu && menu.classList.contains("hidden");
       closeNoteComposerMenus(open ? menu : null);
       if (menu && open) {
+        var chatItem = menu.querySelector('[data-plus-action="chat"]');
+        if (chatItem) chatItem.classList.toggle("hidden", !noteChatsEnabled());
         showPlusMenuPage("root");
         menu.classList.remove("hidden");
         btn.classList.add("is-open");
@@ -21058,6 +21112,25 @@
         noteBtn.addEventListener("click", function (e) {
           e.preventDefault();
           openPlusPicker("note");
+        });
+      }
+      var chatPlusBtn = menu.querySelector('[data-plus-action="chat"]');
+      if (chatPlusBtn) {
+        chatPlusBtn.addEventListener("click", function (e) {
+          e.preventDefault();
+          renderPlusChatPicker();
+          showPlusMenuPage("chats");
+          var w = discussWrap();
+          if (w && w._shareKind && w._shareId) {
+            loadNoteChats(w._shareKind, w._shareId).then(renderPlusChatPicker).catch(function () {});
+          }
+        });
+      }
+      var chatsBack = menu.querySelector('[data-plus-back="chats"]');
+      if (chatsBack) {
+        chatsBack.addEventListener("click", function (e) {
+          e.preventDefault();
+          showPlusMenuPage("root");
         });
       }
       var transcriptionBtn = menu.querySelector('[data-plus-action="transcription"]');
@@ -21365,6 +21438,7 @@
       !form.querySelector("#note-paie-plus-menu") ||
       !form.querySelector('[data-plus-action="transcription"]') ||
       !form.querySelector('[data-plus-action="summary"]') ||
+      !form.querySelector('[data-plus-action="chat"]') ||
       !form.querySelector(".note-paie-kb-wrap") ||
       !form.querySelector("#note-paie-reply-editor") ||
       !form.querySelector('[data-mode="research"]')
@@ -21895,6 +21969,12 @@
     }
     if (label) label.textContent = title;
     if (btn) btn.title = title;
+    if (btn) {
+      var curChat = noteSheetState.rightMode === "discussion" ? currentDiscussChatId() : null;
+      var priv = !!(curChat && curChat > 0 && (noteChatById(curChat) || {}).visibility === "private");
+      btn.classList.toggle("is-private-chat", priv);
+      if (priv) btn.title = title + " — личный чат";
+    }
     var canSwitch = notePaneSwitchEnabled();
     if (btn) {
       btn.disabled = !canSwitch;
@@ -26273,12 +26353,22 @@
     return parts.join(" · ");
   }
 
+  var NOTE_CHAT_ICONS = {
+    shared:
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+    private:
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
+    comments:
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+  };
+
   function renderNoteChatsMenu() {
     var menu = document.getElementById("note-chats-menu");
     var wrap = discussWrap();
     if (!menu || !wrap) return;
     menu.innerHTML = "";
     var cur = currentDiscussChatId();
+    var chats = wrap._noteChats || [];
 
     var head = document.createElement("div");
     head.className = "note-chats-head";
@@ -26300,109 +26390,161 @@
     head.appendChild(closeBtn);
     menu.appendChild(head);
 
-    function section(label) {
-      var sec = document.createElement("div");
+    function section(icon, label, hint) {
+      var sec = document.createElement("section");
       sec.className = "note-chats-section";
       if (label) {
+        var h = document.createElement("div");
+        h.className = "note-chats-section-head";
+        h.innerHTML = icon ? '<span class="note-chats-section-icon">' + icon + "</span>" : "";
+        var txt = document.createElement("div");
         var l = document.createElement("div");
-        l.className = "note-pane-switch-label note-chats-section-label";
+        l.className = "note-chats-section-title";
         l.textContent = label;
-        sec.appendChild(l);
+        txt.appendChild(l);
+        if (hint) {
+          var p = document.createElement("div");
+          p.className = "note-chats-section-hint";
+          p.textContent = hint;
+          txt.appendChild(p);
+        }
+        h.appendChild(txt);
+        sec.appendChild(h);
       }
       menu.appendChild(sec);
       return sec;
     }
-    function row(parent, cls, onClick) {
+    function itemRow(parent, chat, icon) {
+      var active = Number(chat.id) === cur;
       var b = document.createElement("button");
       b.type = "button";
-      b.className = "note-pane-switch-item " + cls;
+      b.className = "note-pane-switch-item note-chats-item" + (active ? " is-active" : "");
       b.setAttribute("role", "menuitem");
-      b.addEventListener("click", function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        onClick();
-      });
-      parent.appendChild(b);
-      return b;
-    }
-    function itemRow(parent, chat, active) {
-      var b = row(parent, "note-chats-item" + (active ? " is-active" : ""), function () {
-        closeNoteChatsMenu();
-        setCurrentDiscussChat(Number(chat.id));
-      });
+      if (active) b.setAttribute("aria-current", "true");
+      b.innerHTML = '<span class="note-chats-item-icon">' + icon + "</span>";
       var text = document.createElement("span");
       text.className = "note-chats-item-text";
       var title = document.createElement("span");
       title.className = "note-chats-item-title";
       title.textContent = noteChatTitle(chat);
-      var meta = document.createElement("span");
-      meta.className = "note-chats-item-meta";
-      meta.textContent = noteChatMeta(chat) || (Number(chat.id) === COMMENTS_CHAT_ID ? "Общие для всех участников" : "");
       text.appendChild(title);
-      if (meta.textContent) text.appendChild(meta);
-      b.appendChild(text);
-      if (Number(chat.id) > 0 && chat.visibility === "private") {
-        var badge = document.createElement("span");
-        badge.className = "note-chats-item-badge";
-        badge.textContent = "Только я";
-        b.appendChild(badge);
+      var metaText = noteChatMeta(chat);
+      if (Number(chat.id) > 0 && chat.visibility === "shared" && !chat.is_mine) {
+        metaText = (metaText ? metaText + " · " : "") + "от участника";
       }
-      if (active) b.setAttribute("aria-current", "true");
+      if (metaText) {
+        var meta = document.createElement("span");
+        meta.className = "note-chats-item-meta";
+        meta.textContent = metaText;
+        text.appendChild(meta);
+      }
+      b.appendChild(text);
+      b.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeNoteChatsMenu();
+        setCurrentDiscussChat(Number(chat.id));
+      });
+      parent.appendChild(b);
     }
 
-    var newSec = section("");
-    var newBtn = row(newSec, "note-chats-new" + (cur === 0 ? " is-active" : ""), function () {
-      closeNoteChatsMenu();
-      setCurrentDiscussChat(0);
-    });
+    var newSec = section("", "", "");
+    var newBtn = document.createElement("button");
+    newBtn.type = "button";
+    newBtn.className = "note-pane-switch-item note-chats-new" + (cur === 0 ? " is-active" : "");
     newBtn.textContent = "+ Новый чат";
+    newBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (cur !== 0) {
+        closeNoteChatsMenu();
+        setCurrentDiscussChat(0);
+      }
+    });
+    newSec.appendChild(newBtn);
 
-    var chats = wrap._noteChats || [];
+    var shared = section(NOTE_CHAT_ICONS.shared, "Общие", "Видят все участники заметки");
     var comments = chats.filter(function (c) {
       return Number(c.id) === COMMENTS_CHAT_ID;
     })[0] || { id: COMMENTS_CHAT_ID, title: "Комментарии" };
-    itemRow(section("Общие"), comments, cur === COMMENTS_CHAT_ID);
-
-    var ai = chats.filter(function (c) {
-      return Number(c.id) > 0;
-    });
-    if (ai.length) {
-      var aiSec = section("Чаты с ИИ");
-      ai.forEach(function (c) {
-        itemRow(aiSec, c, Number(c.id) === cur);
+    itemRow(shared, comments, NOTE_CHAT_ICONS.comments);
+    chats
+      .filter(function (c) {
+        return Number(c.id) > 0 && c.visibility === "shared";
+      })
+      .forEach(function (c) {
+        itemRow(shared, c, NOTE_CHAT_ICONS.shared);
       });
+
+    var mine = section(NOTE_CHAT_ICONS.private, "Личные", "Видите только вы");
+    var privateChats = chats.filter(function (c) {
+      return Number(c.id) > 0 && c.visibility === "private";
+    });
+    if (privateChats.length) {
+      privateChats.forEach(function (c) {
+        itemRow(mine, c, NOTE_CHAT_ICONS.private);
+      });
+    } else {
+      var none = document.createElement("p");
+      none.className = "note-chats-empty";
+      none.textContent = "Личных чатов пока нет";
+      mine.appendChild(none);
     }
 
-    // «Кто видит» — для текущего чата с ИИ (менять может его автор) и для нового чата.
+    // Карточка доступа текущего чата.
     var current = cur > 0 ? noteChatById(cur) : null;
-    if (cur === 0 || current) {
-      var visSec = section(cur === 0 ? "Кто увидит новый чат" : "Кто видит этот чат");
-      visSec.classList.add("note-chats-visibility");
+    if (cur !== 0 && !current) return;
+    var card = document.createElement("section");
+    card.className = "note-chats-access";
+    var cardText = document.createElement("p");
+    cardText.className = "note-chats-access-text";
+    if (cur === 0) {
+      cardText.textContent = "Новый чат будет";
+      card.appendChild(cardText);
       var seg = document.createElement("div");
       seg.className = "note-chats-visibility-seg";
       seg.setAttribute("role", "group");
-      seg.setAttribute("aria-label", cur === 0 ? "Кто увидит новый чат" : "Кто видит этот чат");
-      var vis = cur === 0 ? wrap._newChatVisibility || "private" : current.visibility;
-      var editable = cur === 0 || !!(current && current.can_edit);
+      seg.setAttribute("aria-label", "Доступ к новому чату");
+      var vis = wrap._newChatVisibility || "private";
       [
-        ["private", "Только я"],
-        ["shared", "Все участники"],
+        ["private", "Личным", NOTE_CHAT_ICONS.private],
+        ["shared", "Общим", NOTE_CHAT_ICONS.shared],
       ].forEach(function (opt) {
         var b = document.createElement("button");
         b.type = "button";
-        b.textContent = opt[1];
+        b.innerHTML = opt[2];
+        b.appendChild(document.createTextNode(opt[1]));
         b.setAttribute("aria-pressed", String(vis === opt[0]));
-        b.disabled = !editable;
-        if (!editable) b.title = "Менять может автор чата";
         b.addEventListener("click", function (e) {
           e.preventDefault();
           e.stopPropagation();
-          setNoteChatVisibility(cur, opt[0]);
+          setNoteChatVisibility(0, opt[0]);
         });
         seg.appendChild(b);
       });
-      visSec.appendChild(seg);
+      card.appendChild(seg);
+    } else if (current.can_edit) {
+      var isShared = current.visibility === "shared";
+      cardText.textContent = isShared
+        ? "Этот чат общий — его видят все участники заметки"
+        : "Этот чат личный — его видите только вы";
+      card.appendChild(cardText);
+      var toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "note-chats-access-btn";
+      toggle.innerHTML = isShared ? NOTE_CHAT_ICONS.private : NOTE_CHAT_ICONS.shared;
+      toggle.appendChild(document.createTextNode(isShared ? "Сделать личным" : "Сделать общим"));
+      toggle.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        setNoteChatVisibility(cur, isShared ? "private" : "shared");
+      });
+      card.appendChild(toggle);
+    } else {
+      cardText.textContent = "Общий чат другого участника. Доступ меняет его автор";
+      card.appendChild(cardText);
     }
+    menu.appendChild(card);
   }
 
   async function setNoteChatVisibility(chatId, visibility) {
@@ -26420,9 +26562,13 @@
       });
       var chat = res && res.chat;
       if (chat) {
+        // В ответе нет статистики (число сообщений, первое сообщение) — берём только доступ.
         wrap._noteChats = (wrap._noteChats || []).map(function (c) {
-          return Number(c.id) === Number(chat.id) ? Object.assign({}, c, chat) : c;
+          return Number(c.id) === Number(chat.id)
+            ? Object.assign({}, c, { visibility: chat.visibility, title: chat.title })
+            : c;
         });
+        syncNotePaneHeader();
       }
       renderNoteChatsMenu();
       showNoteToast(visibility === "shared" ? "Чат виден всем участникам заметки" : "Чат виден только вам");

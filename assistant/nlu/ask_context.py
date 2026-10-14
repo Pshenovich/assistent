@@ -73,6 +73,47 @@ def clean_note_ids(raw: list[str] | None, *, limit: int = ATTACHED_NOTE_MAX) -> 
     return out
 
 
+def _note_chat_transcript(user_id: int | str, sid: str) -> tuple[str, str]:
+    """«chat:<note_id>:<chat_id>» → (заголовок, переписка) — только видимый пользователю чат."""
+    from assistant.stores import note_chats
+    from assistant.stores import notes as notes_store
+
+    parts = sid.split(":")
+    if len(parts) != 3:
+        return "", ""
+    try:
+        note_id, chat_id = int(parts[1]), int(parts[2])
+    except (TypeError, ValueError):
+        return "", ""
+    note = notes_store.get_accessible_note(user_id, note_id)
+    if not note:
+        return "", ""
+    owner = str(note.get("owner_user_id") or note.get("user_id") or "")
+    viewer = str(int(user_id))
+    if chat_id == note_chats.COMMENTS_CHAT_ID:
+        title = "Комментарии к заметке «" + str(note.get("title") or "Заметка") + "»"
+    else:
+        chat = note_chats.chat_for_item(chat_id, owner, "local", str(note_id))
+        if not note_chats.can_view(chat, viewer):
+            return "", ""
+        assert chat is not None
+        title = "Чат заметки «" + str(note.get("title") or "Заметка") + "»"
+    rows = [
+        r
+        for r in note_chats.visible_comments(owner, "local", str(note_id), viewer)
+        if r.get("chat_id") == chat_id
+    ]
+    if not rows:
+        return "", ""
+    lines = []
+    for r in rows:
+        who = str(r.get("author_name") or "Участник").strip()
+        text = " ".join(str(r.get("body") or "").split())
+        if text:
+            lines.append(f"{who}: {text}")
+    return title, "\n".join(lines)
+
+
 def pack_attached_notes(
     user_id: int | str,
     note_ids: list[str] | None,
@@ -93,7 +134,11 @@ def pack_attached_notes(
     for sid in ids:
         title = ""
         body = ""
-        if sid.startswith("journal:"):
+        if sid.startswith("chat:"):
+            title, body = _note_chat_transcript(user_id, sid)
+            if not title:
+                continue
+        elif sid.startswith("journal:"):
             raw_id = sid.split(":", 1)[1].strip()
             try:
                 eid = int(raw_id)
