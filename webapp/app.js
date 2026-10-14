@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261014-sheet-tabs";
+  var WEBAPP_BUILD = "20261014-live-sync2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261014-sheet-tabs";
+  const NOTE_EDITOR_ASSET_V = "20261014-live-sync2";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -401,12 +401,25 @@
     } catch (_) {
       body = noteSheetState.primaryBody || "";
     }
+    // Без правок черновик не нужен: он бы блокировал применение чужих изменений.
+    if (!noteDraftHasLocalEdits({ title: title, body: body })) {
+      clearLocalNoteDraftIfUnchanged(wrap._shareId, title, body);
+      return null;
+    }
     return writeLocalNoteDraft(wrap._shareId, {
       title: title,
       body: body,
       baseRevision: wrap._noteRevision,
       baseUpdatedAt: wrap._noteUpdatedAt,
     });
+  }
+
+  // Черновик отличается от последней синхронизированной версии (baseline редактора)?
+  // Нет baseline — считаем, что правки есть (безопаснее не затирать).
+  function noteDraftHasLocalEdits(draft) {
+    var base = noteEditorBaseline();
+    if (!draft || !base) return !!draft;
+    return !notePayloadEquals(base.title, base.description, draft.title, draft.body);
   }
 
   function keepaliveOpenLocalNotePatch() {
@@ -425,6 +438,9 @@
         ? readActiveNoteEditorHtml(getLeftNoteRichEditor())
         : noteSheetState.primaryBody || "";
     } catch (_) {}
+    // Без правок не отправляем: иначе при сворачивании приложения устаревший текст
+    // затирал изменения других участников.
+    if (!noteDraftHasLocalEdits({ title: title, body: body })) return;
     try {
       fetch(API + "/notes/local/" + encodeURIComponent(id), {
         method: "PATCH",
@@ -18947,6 +18963,16 @@
       if (
         draft &&
         api &&
+        !(api.bodiesEqual(draft.title, item.title) && api.bodiesEqual(draft.body, remoteBody)) &&
+        !noteDraftHasLocalEdits(draft)
+      ) {
+        // Черновик без правок (например, сохранён при сворачивании приложения) — устарел.
+        clearLocalNoteDraft(draftId);
+        draft = null;
+      }
+      if (
+        draft &&
+        api &&
         !(api.bodiesEqual(draft.title, item.title) && api.bodiesEqual(draft.body, remoteBody))
       ) {
         var base = noteEditorBaseline();
@@ -18994,6 +19020,11 @@
         typeof left.setHtml === "function"
       ) {
         if (left.getHtml() !== nextBody) left.setHtml(nextBody, { preserveCursor: true });
+      }
+      // Чужая версия — новая точка отсчёта: иначе автосохранение примет её за наши правки.
+      var bodyEl = getNoteEditorBodyEl();
+      if (bodyEl && bodyEl._noteEditor) {
+        bodyEl._noteEditor.baseline = noteEditorSnapshot(item.title, nextBody);
       }
     } finally {
       noteCollabState.applying = false;
@@ -31081,6 +31112,15 @@
         if (snapshot.description) noteSheetState.primaryBody = snapshot.description;
         await flushSheetEditor("left");
         await flushSheetEditor("right");
+        var flushBase = modalBody._noteEditor && modalBody._noteEditor.baseline;
+        if (
+          noteId &&
+          !noteIsCreate &&
+          flushBase &&
+          noteEditorSnapshotsEqual(flushBase, noteEditorSnapshot(snapshot.title, snapshot.description))
+        ) {
+          return; // правок нет — нечего сохранять
+        }
         await persistNoteDraft({
           defaultTitle: "Без названия",
           keepEmpty: true,
