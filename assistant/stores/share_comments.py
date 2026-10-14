@@ -184,6 +184,31 @@ def _ensure_anchor_columns(conn: sqlite3.Connection) -> None:
             )
     if "parent_id" not in cols:
         conn.execute("ALTER TABLE share_comments ADD COLUMN parent_id INTEGER")
+    # Чат заметки (assistant/stores/note_chats.py): NULL — старое сообщение до чатов,
+    # COMMENTS_CHAT_ID — общий чат «Комментарии».
+    if "chat_id" not in cols:
+        conn.execute("ALTER TABLE share_comments ADD COLUMN chat_id INTEGER")
+    # Схема чатов здесь: на неё ссылаются запросы превью (NOT_PRIVATE_SQL).
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS note_chats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_user_id TEXT NOT NULL,
+            item_kind TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            author_user_id TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            visibility TEXT NOT NULL DEFAULT 'private',
+            origin TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_note_chats_item "
+        "ON note_chats(owner_user_id, item_kind, item_id)"
+    )
     conn.commit()
 
 
@@ -227,6 +252,11 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "parent_id": (
             int(row["parent_id"])
             if "parent_id" in keys and row["parent_id"] not in (None, "")
+            else None
+        ),
+        "chat_id": (
+            int(row["chat_id"])
+            if "chat_id" in keys and row["chat_id"] not in (None, "")
             else None
         ),
     }
@@ -299,6 +329,7 @@ def add_comment(
     prefix: str = "",
     suffix: str = "",
     parent_id: int | str | None = None,
+    chat_id: int | None = None,
 ) -> dict[str, Any]:
     kind, iid = _kind_id(item_kind, item_id)
     text = (body or "").strip()
@@ -328,16 +359,24 @@ def add_comment(
     with _LOCK:
         conn = _conn()
         pid = _resolve_parent_id(conn, owner, kind, iid, parent_id)
+        if chat_id is None and pid is not None:
+            # Ответ живёт в чате того сообщения, на которое отвечает.
+            prow = conn.execute("SELECT chat_id FROM share_comments WHERE id = ?", (pid,)).fetchone()
+            if prow is not None and prow["chat_id"] is not None:
+                chat_id = int(prow["chat_id"])
         cur = conn.execute(
             """
             INSERT INTO share_comments (
                 owner_user_id, item_kind, item_id,
                 author_user_id, author_name, author_username,
-                body, created_at, quote, prefix, suffix, parent_id
+                body, created_at, quote, prefix, suffix, parent_id, chat_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (owner, kind, iid, author, name[:120], uname, text, ts, q, pre, suf, pid),
+            (
+                owner, kind, iid, author, name[:120], uname, text, ts, q, pre, suf, pid,
+                int(chat_id) if chat_id is not None else None,
+            ),
         )
         conn.commit()
         cid = int(cur.lastrowid)
@@ -401,6 +440,13 @@ def comments_visible_for_link(link: dict[str, Any] | None) -> bool:
     return bool(link)
 
 
+# Сообщения личных чатов заметки не участвуют в превью, счётчиках и публичных ссылках.
+NOT_PRIVATE_SQL = (
+    "(chat_id IS NULL OR chat_id NOT IN "
+    "(SELECT id FROM note_chats WHERE visibility = 'private'))"
+)
+
+
 def _comment_is_assistant(row: dict[str, Any] | None) -> bool:
     if not row:
         return False
@@ -440,6 +486,7 @@ def latest_briefs(
             WHERE owner_user_id IN ({own_ph})
               AND item_kind IN ({kind_ph})
               AND item_id IN ({id_ph})
+              AND {NOT_PRIVATE_SQL}
             GROUP BY owner_user_id, item_kind, item_id
             """,
             (*owners, *kinds, *item_ids),
@@ -504,6 +551,7 @@ def comment_activity(
             WHERE owner_user_id IN ({own_ph})
               AND item_kind IN ({kind_ph})
               AND item_id IN ({id_ph})
+              AND {NOT_PRIVATE_SQL}
             GROUP BY owner_user_id, item_kind, item_id
             """,
             (*owners, *kinds, *item_ids),

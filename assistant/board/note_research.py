@@ -12,7 +12,7 @@ from typing import Any
 from assistant.lib.llm_json import strip_json_from_markdown
 from assistant.nlu.ask_context import pack_knowledge_brief
 from assistant.nlu import llm as nlu_llm
-from assistant.stores import share_comments
+from assistant.stores import note_chats, share_comments
 from assistant.stores.share_comments import (
     MAX_GPT_BODY_LEN,
     RESEARCH_AUTHOR_NAME,
@@ -130,6 +130,8 @@ def begin_job(
     quote: str = "",
     sheet_ids: list[str] | None = None,
     attached_notes: str = "",
+    chat_id: int | None = None,
+    viewer_uid: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
     key = job_key(user_id, kind, item_id)
     now = time.time()
@@ -149,6 +151,8 @@ def begin_job(
             "started_at": now,
             "reply": reply_text,
             "parent_id": parent_id,
+            "chat_id": chat_id,
+            "viewer_uid": viewer_uid,
             "quote": (quote or "").strip(),
             "use_knowledge": bool(use_knowledge)
             if knowledge_note_ids is None
@@ -400,6 +404,8 @@ def run_note_research(
     sheet_ids: list[str] | None = None,
     attached_notes: str = "",
     on_progress: Any | None = None,
+    chat_id: int | None = None,
+    viewer_uid: str | None = None,
 ) -> dict[str, Any]:
     if sheet_ids is not None:
         sheet_ids = [str(x).strip() for x in sheet_ids if str(x).strip()]
@@ -410,7 +416,7 @@ def run_note_research(
     if knowledge_note_ids is not None:
         knowledge_note_ids = [str(x).strip() for x in knowledge_note_ids if str(x).strip()]
         use_knowledge = bool(knowledge_note_ids)
-    comments = share_comments.list_comments(user_id, kind, item_id)
+    comments = note_chats.chat_context_comments(user_id, kind, item_id, viewer_uid, chat_id)
     kb = ""
     if use_knowledge:
         query = " ".join(p for p in (title, excerpt[:800], reply_text) if p)
@@ -464,6 +470,7 @@ def run_note_research(
         quote="",
         prefix=RESEARCH_PREFIX,
         parent_id=root,
+        chat_id=chat_id,
     )
     return {"comment": comment, "payload": payload}
 
@@ -522,6 +529,8 @@ async def run_note_research_job(
             sheet_ids=sheet_ids,
             attached_notes=attached_notes,
             on_progress=on_progress,
+            chat_id=job.get("chat_id"),
+            viewer_uid=job.get("viewer_uid"),
         )
         comment = result.get("comment") or {}
         _update_job(key, status="done", comment_id=comment.get("id"), error=None)
