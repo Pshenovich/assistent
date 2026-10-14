@@ -398,7 +398,7 @@ def build_journal_pdf(row: dict[str, Any]) -> tuple[bytes, str, str]:
         first = _prepare_body_text(body, op).split("\n", 1)[0].strip()
         first = re.sub(r"^#{1,6}\s+", "", first)
         title = first[:120] or _operation_label(op)
-    label = _operation_label(op)
+    label = str(row.get("label") or "").strip() or _operation_label(op)
 
     ts = str(row.get("ts_utc") or "").strip()
     ts_human = ts[:16].replace("T", " ") if ts else ""
@@ -447,10 +447,39 @@ def journal_pdf_for_user(telegram_user_id: str, event_id: int) -> tuple[bytes, s
     return build_journal_pdf(row)
 
 
+def _note_doc_sections(note: dict[str, Any]) -> list[tuple[str, str]]:
+    """(название, html) всех текстовых листов заметки по порядку вкладок; канвасы пропускаем."""
+    from assistant.services import transcription_notes as tnotes
+    from assistant.stores import note_sheets
+
+    try:
+        rows = note_sheets.list_sheets(note)
+    except Exception:
+        rows = [note_sheets.primary_sheet(note)]
+    out: list[tuple[str, str]] = []
+    for s in rows:
+        if str(s.get("kind") or "doc") == "web":
+            continue
+        body = tnotes._as_html(str(s.get("body") or s.get("description") or ""))
+        if not _html_to_plain(body).strip():
+            continue
+        out.append((str(s.get("title") or "").strip(), body))
+    return out
+
+
 def build_note_pdf(note: dict[str, Any], *, which: str = "auto") -> tuple[bytes, str, str]:
+    from html import escape as _esc
+
     from assistant.services import transcription_notes as tnotes
 
-    if tnotes.is_transcription_note(note):
+    is_trans = tnotes.is_transcription_note(note)
+    sections = _note_doc_sections(note) if (which or "auto") == "auto" else []
+    if len(sections) >= 2:
+        # Все листы: саммари, транскрипция и дополнительные листы — каждый со своим заголовком.
+        body = "".join(f"<h1>{_esc(t or 'Лист')}</h1>{b}" for t, b in sections)
+        op = "note"
+        label = "Транскрипция" if is_trans else ""
+    elif is_trans:
         mode = (which or "auto").strip().lower()
         if mode == "transcript" or (mode == "auto" and not tnotes.has_summary(note)):
             body = tnotes.transcript_html(note)
@@ -461,6 +490,8 @@ def build_note_pdf(note: dict[str, Any], *, which: str = "auto") -> tuple[bytes,
     else:
         body = str(note.get("body") or note.get("description") or "")
         op = "note"
+    if len(sections) < 2:
+        label = ""
     meta = note.get("meta") if isinstance(note.get("meta"), dict) else {}
     raw = json.dumps(
         {
@@ -478,6 +509,7 @@ def build_note_pdf(note: dict[str, Any], *, which: str = "auto") -> tuple[bytes,
         "operation": op,
         "ts_utc": note.get("updated_at") or note.get("created_at") or "",
         "raw_usage_json": raw,
+        "label": label,
     }
     return build_journal_pdf(synthetic)
 

@@ -14795,3 +14795,32 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 .note-web-canvas-theme-text { display: flex; flex-direction: column; min-width: 0; }
 .note-web-canvas-theme-text b { font-size: 14px; font-weight: 600; }
 .note-web-canvas-theme-text small { font-size: 12px; color: var(--text-secondary, #909499); }
+
+/* Правки ИИ в заметке: подсветка и плашка подтверждения. */
+::highlight(leo-ai-edit) {
+  background-color: rgba(167, 139, 250, 0.38);
+  color: inherit;
+}
+.note-ai-edit-bar {
+  position: fixed;
+  left: 50%;
+  top: calc(env(safe-area-inset-top, 0px) + var(--note-editor-chrome-top, 54px) + 8px);
+  transform: translateX(-50%);
+  z-index: 140;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 24px);
+  padding: 6px 6px 6px 12px;
+  border: 1px solid rgba(167, 139, 250, 0.55);
+  border-radius: 999px;
+  background: var(--surface, #19191a);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  font-size: 14px;
+}
+.note-ai-edit-bar.hidden { display: none; }
+.note-ai-edit-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: #a78bfa; }
+.note-ai-edit-bar button { appearance: none; font: inherit; cursor: pointer; border-radius: 999px; }
+.note-ai-edit-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: var(--text); padding: 4px 6px; text-decoration: underline dotted rgba(167, 139, 250, 0.7); text-underline-offset: 3px; }
+.note-ai-edit-undo { flex: none; border: 1px solid var(--border); background: transparent; color: var(--text); padding: 6px 12px; }
+.note-ai-edit-ok { flex: none; border: 0; background: #8b5cf6; color: #fff; font-weight: 600; padding: 6px 16px; }

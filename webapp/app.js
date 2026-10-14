@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261014-deck-styles";
+  var WEBAPP_BUILD = "20261014-ai-edits";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261014-deck-styles";
+  const NOTE_EDITOR_ASSET_V = "20261014-ai-edits";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -17377,6 +17377,381 @@
     return html;
   }
 
+  // ---- Правки ИИ в открытой заметке ----
+  // Модель присылает правки (assistant/lib/note_edits.py), мы применяем их в редакторе,
+  // подсвечиваем изменённое (CSS Highlight API — в саму заметку ничего не пишется)
+  // и показываем плашку «Отменить / Ок». Изменения сразу сохраняются; «Отменить» возвращает прежний текст.
+  var noteAiReview = null;
+
+  function openDocEditorRoot() {
+    var left = findNoteSheet(noteSheetState.leftId);
+    if (isWebSheet(left)) return null;
+    return document.querySelector("#note-editor-overlay .note-editor-pad--body .ProseMirror") ||
+      document.querySelector("#note-editor-overlay .note-editor-pad--body [contenteditable='true']");
+  }
+
+  function aiDocBlocks(root) {
+    return Array.prototype.filter.call(root.children, function (el) {
+      return !/ProseMirror-(widget|gapcursor)|ProseMirror-trailingBreak/.test(el.className || "");
+    });
+  }
+
+  function aiTables(root) {
+    return Array.prototype.slice.call(root.querySelectorAll("table"));
+  }
+
+  // Вид открытого листа для модели: абзацы и таблицы с номерами строк и столбцов.
+  function buildOpenDocView() {
+    var root = openDocEditorRoot();
+    if (!root) return null;
+    var tables = aiTables(root);
+    var lines = [];
+    aiDocBlocks(root).forEach(function (block) {
+      var t = block.tagName === "TABLE" ? block : block.querySelector("table");
+      if (t) {
+        var n = tables.indexOf(t) + 1;
+        var rows = Array.prototype.slice.call(t.rows);
+        var cols = rows.reduce(function (m, r) { return Math.max(m, r.cells.length); }, 0);
+        lines.push("[Таблица " + n + ": строк " + rows.length + ", столбцов " + cols + "]");
+        rows.forEach(function (r, i) {
+          lines.push(i + 1 + ": " + Array.prototype.map.call(r.cells, function (c) {
+            return String(c.innerText || c.textContent || "").replace(/\s+/g, " ").trim();
+          }).join(" | "));
+        });
+        lines.push("[/Таблица " + n + "]");
+        return;
+      }
+      var text = String(block.innerText || block.textContent || "").trim();
+      if (text) lines.push(text);
+    });
+    var view = lines.join("\n");
+    if (!view.trim()) return null;
+    return { sheet_id: String(noteSheetState.leftId || NOTE_SHEET_MAIN), view: view };
+  }
+
+  function parseCellNumber(s) {
+    var t = String(s || "").replace(/[\s  ]/g, "").replace(/[−–]/g, "-");
+    t = t.replace(/[^0-9,.\-]/g, "");
+    if (!t || !/\d/.test(t)) return null;
+    if (t.indexOf(",") >= 0 && t.indexOf(".") >= 0) t = t.replace(/\./g, "").replace(",", ".");
+    else t = t.replace(",", ".");
+    var v = parseFloat(t);
+    return isFinite(v) ? v : null;
+  }
+
+  function formatCellNumber(v, samples) {
+    var dec = 0;
+    var comma = true;
+    samples.forEach(function (s) {
+      var m = /[.,](\d+)\s*\D*$/.exec(String(s || "").trim());
+      if (m) {
+        dec = Math.max(dec, Math.min(2, m[1].length));
+        if (String(s).indexOf(".") >= 0 && String(s).indexOf(",") < 0) comma = false;
+      }
+    });
+    var neg = v < 0;
+    var fixed = Math.abs(v).toFixed(dec);
+    var parts = fixed.split(".");
+    var intPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+    var out = intPart + (parts[1] ? (comma ? "," : ".") + parts[1] : "");
+    return (neg ? "−" : "") + out;
+  }
+
+  function computeCells(fn, values) {
+    var nums = values.filter(function (x) { return x !== null; });
+    if (!nums.length) return null;
+    if (fn === "avg") return nums.reduce(function (a, b) { return a + b; }, 0) / nums.length;
+    if (fn === "min") return Math.min.apply(null, nums);
+    if (fn === "max") return Math.max.apply(null, nums);
+    if (fn === "product") return nums.reduce(function (a, b) { return a * b; }, 1);
+    if (fn === "diff") return nums.slice(1).reduce(function (a, b) { return a - b; }, nums[0]);
+    return nums.reduce(function (a, b) { return a + b; }, 0);
+  }
+
+  // Применение к HTML листа. Возвращает {html, marks:[{block, start, len}], applied, failed}.
+  function applyAiEditsToHtml(html, edits) {
+    var doc = new DOMParser().parseFromString("<div id='leo-ai-root'>" + html + "</div>", "text/html");
+    var root = doc.getElementById("leo-ai-root");
+    var touched = []; // {node, start, len}
+    var applied = 0;
+    var failed = 0;
+
+    function textNodes(scope) {
+      var out = [];
+      var w = doc.createTreeWalker(scope, NodeFilter.SHOW_TEXT, null);
+      var n;
+      while ((n = w.nextNode())) out.push(n);
+      return out;
+    }
+
+    function setCellText(cell, value) {
+      var target = cell.querySelector("p") || cell;
+      target.textContent = String(value);
+      touched.push({ node: target.firstChild, start: 0, len: String(value).length });
+    }
+
+    function cellAt(t, r, c) {
+      var row = t.rows[r - 1];
+      return row ? row.cells[c - 1] || null : null;
+    }
+
+    edits.forEach(function (e) {
+      if (e.op === "replace") {
+        var hits = 0;
+        textNodes(root).some(function (node) {
+          var s = node.nodeValue;
+          if (s.indexOf(e.find) < 0) return false;
+          var out = "";
+          var i = 0;
+          var j;
+          while ((j = s.indexOf(e.find, i)) >= 0) {
+            out += s.slice(i, j);
+            if (e.replace) touched.push({ node: node, start: out.length, len: e.replace.length, pending: true });
+            out += e.replace;
+            i = j + e.find.length;
+            hits++;
+            if (!e.all) break;
+          }
+          out += s.slice(i);
+          node.nodeValue = out;
+          return !e.all;
+        });
+        if (hits) applied += hits;
+        else failed++;
+        return;
+      }
+      var tables = Array.prototype.slice.call(root.querySelectorAll("table"));
+      if (e.op === "set_cell") {
+        var t1 = tables[e.table - 1];
+        var c1 = t1 && cellAt(t1, e.row, e.col);
+        if (c1) {
+          setCellText(c1, e.value);
+          applied++;
+        } else failed++;
+        return;
+      }
+      if (e.op === "compute") {
+        var t = tables[e.table - 1];
+        if (!t) { failed++; return; }
+        var nRows = t.rows.length;
+        var nCols = Array.prototype.reduce.call(t.rows, function (m, r) { return Math.max(m, r.cells.length); }, 0);
+        function range(from, to, skip) {
+          var out = [];
+          for (var k = from; k <= to; k++) if (k !== skip) out.push(k);
+          return out;
+        }
+        var byCol = !!e.target.col;
+        // «all»: строки — все, кроме заголовка и итоговой; столбцы — все, кроме итогового.
+        var rowsAll = range(2, nRows, e.target.row || null);
+        var colsAll = range(1, nCols, e.target.col || null);
+        var rowsSel = e.rows === "all" ? rowsAll : e.rows;
+        var colsSel = e.cols === "all" ? colsAll : e.cols;
+        var outer = byCol ? rowsSel : colsSel;
+        var inner = byCol ? colsSel : rowsSel;
+        outer.forEach(function (o) {
+          var raw = inner.map(function (i) {
+            var cell = byCol ? cellAt(t, o, i) : cellAt(t, i, o);
+            return cell ? String(cell.textContent || "") : "";
+          });
+          var v = computeCells(e.fn, raw.map(parseCellNumber));
+          var target = byCol ? cellAt(t, o, e.target.col) : cellAt(t, e.target.row, o);
+          if (v === null || !target) return;
+          setCellText(target, formatCellNumber(v, raw));
+          applied++;
+        });
+        return;
+      }
+      if (e.op === "insert_after") {
+        var blocks = Array.prototype.slice.call(root.children);
+        var anchor = null;
+        if (e.anchor) {
+          anchor = blocks.filter(function (b) { return String(b.textContent || "").indexOf(e.anchor) >= 0; })[0] || null;
+          if (!anchor) { failed++; return; }
+        }
+        var ref = anchor ? anchor.nextSibling : null;
+        String(e.text).split(/\n+/).forEach(function (line) {
+          if (!line.trim()) return;
+          var p = doc.createElement("p");
+          p.textContent = line;
+          root.insertBefore(p, ref);
+          touched.push({ node: p.firstChild, start: 0, len: line.length });
+        });
+        applied++;
+      }
+    });
+
+    // Позиции изменений: номер блока верхнего уровня и смещение в его тексте.
+    var blocks = Array.prototype.slice.call(root.children);
+    var marks = [];
+    touched.forEach(function (m) {
+      if (!m.node || !m.len) return;
+      var block = m.node.parentNode;
+      while (block && block.parentNode !== root) block = block.parentNode;
+      var bi = blocks.indexOf(block);
+      if (bi < 0) return;
+      var off = 0;
+      var nodes = textNodes(block);
+      for (var k = 0; k < nodes.length && nodes[k] !== m.node; k++) off += nodes[k].nodeValue.length;
+      marks.push({ block: bi, start: off + m.start, len: m.len, text: m.node.nodeValue.slice(m.start, m.start + m.len) });
+    });
+    return { html: root.innerHTML, marks: marks, applied: applied, failed: failed };
+  }
+
+  function rangeForMark(root, mark) {
+    var blocks = aiDocBlocks(root);
+    var block = blocks[mark.block];
+    function inBlock(b, start) {
+      var w = document.createTreeWalker(b, NodeFilter.SHOW_TEXT, null);
+      var n;
+      var pos = 0;
+      var r = document.createRange();
+      var started = false;
+      var end = start + mark.len;
+      while ((n = w.nextNode())) {
+        var len = n.nodeValue.length;
+        if (!started && start <= pos + len) {
+          r.setStart(n, Math.max(0, start - pos));
+          started = true;
+        }
+        if (started && end <= pos + len) {
+          r.setEnd(n, end - pos);
+          return r;
+        }
+        pos += len;
+      }
+      return null;
+    }
+    var r = block ? inBlock(block, mark.start) : null;
+    if (r && r.toString() === mark.text) return r;
+    // Разметка редактора отличается — ищем текст в том же блоке.
+    if (block && mark.text) {
+      var idx = String(block.textContent || "").indexOf(mark.text);
+      if (idx >= 0) {
+        r = inBlock(block, idx);
+        if (r) return r;
+      }
+    }
+    return null;
+  }
+
+  function paintAiHighlights() {
+    if (!noteAiReview || typeof CSS === "undefined" || !CSS.highlights || typeof Highlight === "undefined") return;
+    var root = openDocEditorRoot();
+    if (!root) return;
+    var ranges = noteAiReview.marks.map(function (m) { return rangeForMark(root, m); }).filter(Boolean);
+    noteAiReview.ranges = ranges;
+    var hl = new Highlight();
+    ranges.forEach(function (r) {
+      hl.add(r);
+    });
+    CSS.highlights.set("leo-ai-edit", hl);
+  }
+
+  function clearAiHighlights() {
+    try {
+      if (typeof CSS !== "undefined" && CSS.highlights) CSS.highlights.delete("leo-ai-edit");
+    } catch (_) {}
+  }
+
+  function scheduleOpenDocSave(sheetId) {
+    if (isPrimarySheetId(sheetId)) {
+      var body = getNoteEditorBodyEl();
+      if (body && typeof body._noteEditorSchedule === "function") body._noteEditorSchedule();
+    } else {
+      scheduleExtraSheetPersist(sheetId);
+    }
+  }
+
+  function aiEditBar() {
+    var bar = document.getElementById("note-ai-edit-bar");
+    if (bar) return bar;
+    bar = document.createElement("div");
+    bar.id = "note-ai-edit-bar";
+    bar.className = "note-ai-edit-bar hidden";
+    bar.setAttribute("role", "status");
+    bar.innerHTML =
+      '<span class="note-ai-edit-dot" aria-hidden="true"></span>' +
+      '<button type="button" class="note-ai-edit-text" data-ai="next" title="Показать следующее изменение"></button>' +
+      '<button type="button" class="note-ai-edit-undo" data-ai="undo">Отменить</button>' +
+      '<button type="button" class="note-ai-edit-ok" data-ai="ok">Ок</button>';
+    bar.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-ai]");
+      if (!b) return;
+      e.preventDefault();
+      var act = b.getAttribute("data-ai");
+      if (act === "ok") finishAiReview(true);
+      else if (act === "undo") finishAiReview(false);
+      else scrollToNextAiChange();
+    });
+    var ov = document.getElementById("note-editor-overlay");
+    (ov || document.body).appendChild(bar);
+    return bar;
+  }
+
+  function scrollToNextAiChange() {
+    if (!noteAiReview || !noteAiReview.ranges || !noteAiReview.ranges.length) return;
+    noteAiReview.cursor = ((noteAiReview.cursor || 0) + 1) % noteAiReview.ranges.length;
+    var r = noteAiReview.ranges[noteAiReview.cursor];
+    var el = r.startContainer.parentElement;
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+
+  function finishAiReview(keep) {
+    var review = noteAiReview;
+    noteAiReview = null;
+    clearAiHighlights();
+    var bar = document.getElementById("note-ai-edit-bar");
+    if (bar) bar.classList.add("hidden");
+    if (!review || keep) return;
+    var left = getLeftNoteRichEditor();
+    if (left && String(noteSheetState.leftId || NOTE_SHEET_MAIN) === review.sheetId && typeof left.setHtml === "function") {
+      left.setHtml(review.before);
+      if (isPrimarySheetId(review.sheetId)) noteSheetState.primaryBody = review.before;
+      scheduleOpenDocSave(review.sheetId);
+      showNoteToast("Изменения ИИ отменены");
+    }
+  }
+
+  function ruChanges(n) {
+    var m10 = n % 10;
+    var m100 = n % 100;
+    var w = m10 === 1 && m100 !== 11 ? "изменение" : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "изменения" : "изменений";
+    return n + " " + w;
+  }
+
+  function applyNoteAiEdits(payload) {
+    var edits = (payload && payload.edits) || [];
+    if (!edits.length) return;
+    var sheetId = String(payload.sheet_id || NOTE_SHEET_MAIN);
+    var left = getLeftNoteRichEditor();
+    if (!left || typeof left.getHtml !== "function" || String(noteSheetState.leftId || NOTE_SHEET_MAIN) !== sheetId || !openDocEditorRoot()) {
+      showNoteToast("ИИ подготовил правки, но лист уже закрыт — откройте его и повторите запрос");
+      return;
+    }
+    if (noteAiReview) finishAiReview(true);
+    var before = left.getHtml();
+    var res = applyAiEditsToHtml(before, edits);
+    if (!res.applied) {
+      showNoteToast("ИИ не нашёл, что поменять в заметке — уточните запрос");
+      return;
+    }
+    left.setHtml(res.html, { preserveCursor: true });
+    if (isPrimarySheetId(sheetId)) noteSheetState.primaryBody = res.html;
+    scheduleOpenDocSave(sheetId);
+    noteAiReview = { sheetId: sheetId, before: before, marks: res.marks, ranges: [], cursor: -1 };
+    var bar = aiEditBar();
+    bar.querySelector(".note-ai-edit-text").textContent =
+      "ИИ внёс " + ruChanges(res.applied) + (res.failed ? " · не нашёл: " + res.failed : "");
+    bar.classList.remove("hidden");
+    requestAnimationFrame(function () {
+      paintAiHighlights();
+      scrollToNextAiChange();
+    });
+    if (isMobileNoteLayout() && isNoteDiscussionOpen()) {
+      showNoteToast("ИИ изменил заметку — закройте обсуждение, чтобы проверить подсвеченное", { duration: 5000 });
+    }
+  }
+
   // Последний выбранный стиль презентаций — новые презентации из чата строятся в нём.
   function rememberDeckTheme(theme) {
     try {
@@ -22949,6 +23324,7 @@
   async function switchLeftSheet(sheetId) {
     var next = findNoteSheet(sheetId);
     if (!next) return;
+    if (noteAiReview && String(next.id) !== noteAiReview.sheetId) finishAiReview(true);
     var prevId = String(noteSheetState.leftId || NOTE_SHEET_MAIN);
     if (String(next.id) === prevId) {
       setNoteSheetFocus("left");
@@ -27267,6 +27643,7 @@
         activeWebCanvasSheetId() ||
         (canvasSelections[0] && canvasSelections[0].sheet_id) ||
         "";
+      var docView = kind === "local" && isDiscussionTargetActive(kind, itemId) ? buildOpenDocView() : null;
       var res = await apiFetch("/gpt/chat", {
         method: "POST",
         body: JSON.stringify({
@@ -27288,8 +27665,18 @@
           canvas_selections: canvasSelections.length ? canvasSelections : undefined,
           canvas_sheet_id: openCanvasSheetId || undefined,
           canvas_theme: preferredDeckTheme() || undefined,
+          doc_view: docView ? docView.view : undefined,
+          doc_sheet_id: docView ? docView.sheet_id : undefined,
         }),
       });
+      if (res && res.note_edits && isDiscussionTargetActive(kind, itemId)) {
+        try {
+          applyNoteAiEdits(res.note_edits);
+        } catch (err) {
+          console.warn("applyNoteAiEdits", err);
+          showNoteToast("Не удалось применить правки ИИ");
+        }
+      }
       if (res && res.canvas && res.canvas.length) {
         await applyCanvasChatResult(res.canvas);
       } else if (res && res.canvas_error) {
@@ -29229,6 +29616,7 @@
   var noteEditorCloseSeq = 0;
 
   function closeNoteEditorModal() {
+    if (noteAiReview) finishAiReview(true);
     stopTranscriptionSummaryPoll();
     var ov = document.getElementById("note-editor-overlay");
     var body = getNoteEditorBodyEl();

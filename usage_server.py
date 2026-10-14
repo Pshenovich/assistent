@@ -2789,6 +2789,10 @@ class _MiniappGptChatBody(BaseModel):
     agent_id: Optional[str] = None
     canvas_selections: list[_MiniappCanvasSelection] = Field(default_factory=list)
     canvas_sheet_id: Optional[str] = None
+    # Открытый текстовый лист: вид для модели (текст + пронумерованные таблицы) и его id —
+    # модель может прислать правки (assistant/lib/note_edits.py), клиент их подсветит.
+    doc_view: Optional[str] = None
+    doc_sheet_id: Optional[str] = None
     # Стиль новых презентаций по умолчанию — последний выбранный пользователем.
     canvas_theme: Optional[str] = None
 
@@ -7109,6 +7113,13 @@ async def miniapp_gpt_chat(
                 if hint:
                     system_text = (system_text.rstrip() + "\n\n" + hint).strip() if system_text else hint
         canvas_enabled = kind == "local" and bool(iid)
+        doc_view = str(body.doc_view or "").strip()
+        note_edit_enabled = kind == "local" and bool(iid) and bool(doc_view)
+        if note_edit_enabled:
+            from assistant.lib import note_edits as note_edits_lib
+
+            system_text = (system_text.rstrip() + "\n\n" + note_edits_lib.system_addon()).strip()
+            prompt = (prompt.rstrip() + "\n\n" + note_edits_lib.prompt_block(doc_view)).strip()
         open_canvas_sheet_id = str(body.canvas_sheet_id or "").strip()
         canvas_sel_dumps = [s.model_dump() for s in (body.canvas_selections or [])]
         if canvas_enabled:
@@ -7161,10 +7172,19 @@ async def miniapp_gpt_chat(
                 system=system_text,
                 temperature=agent.get("temperature"),
                 web=bool(agent.get("web_search")),
-                max_tokens=16384 if canvas_enabled else None,
+                max_tokens=16384 if (canvas_enabled or note_edit_enabled) else None,
             )
             if out is None:
                 return None
+            if note_edit_enabled:
+                # До разбора канваса: его парсер принимает и «голый» JSON.
+                clean_answer, edits = note_edits_lib.parse_blocks(str(out.get("answer") or ""))
+                if edits:
+                    out["answer"] = clean_answer or "Внёс изменения в заметку — проверьте подсвеченное."
+                    out["note_edits"] = {"sheet_id": str(body.doc_sheet_id or ""), "edits": edits}
+                    print(f"[note_edits] note={iid} sheet={body.doc_sheet_id} edits={len(edits)}")
+                elif "```leo-note" in str(out.get("answer") or "").lower():
+                    out["answer"] = clean_answer or "Не получилось подготовить правки — попробуйте сформулировать иначе."
             if canvas_enabled:
                 from assistant.lib import web_canvas as web_canvas_lib
                 from assistant.stores import note_sheets as note_sheets_store
@@ -7267,6 +7287,8 @@ async def miniapp_gpt_chat(
         "kb_version": str(out.get("kb_version") or ""),
         "files": files,
         "canvas": canvas,
+        "canvas_error": str(out.get("canvas_error") or "") or None,
+        "note_edits": out.get("note_edits") if isinstance(out.get("note_edits"), dict) else None,
         "model": used_model,
         "model_label": gpt_display_label(used_model),
     }
