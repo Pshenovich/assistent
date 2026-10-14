@@ -151,6 +151,9 @@ echo "==> Синхронизация кода (без .env, .venv, пользо�
   --exclude 'calendar_pending.json' \
   --exclude 'usage.sqlite' \
   --exclude 'notes.sqlite' \
+  --exclude '*.sqlite-journal' \
+  --exclude '*.sqlite-wal' \
+  --exclude '*.sqlite-shm' \
   --exclude 'allowed_telegram_access.json' \
   --exclude 'allowed_telegram_access_donatello.json' \
   --exclude 'access_requests.json' \
