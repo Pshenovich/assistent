@@ -14604,3 +14604,61 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 .day-timeline-item--task-done .item-title {
   text-decoration: line-through;
 }
+
+/* Число непрочитанных в чатах заметки: на кнопке меню и у пунктов списка. */
+#note-discussion-new-ctx {
+  position: relative;
+}
+
+.note-chats-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 9px;
+  background: var(--vkui--color_text_accent, #529ef4);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  pointer-events: none;
+}
+
+#note-discussion-new-ctx .note-chats-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  box-shadow: 0 0 0 2px var(--vkui--color_background_content, var(--bg, #fff));
+}
+
+.note-chats-item-badge {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/* «Комментарии»: без выбора режима нижняя строка пустая — «+», поле и отправка в одну строку. */
+.note-paie-reply-form.is-comments-chat {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  column-gap: 8px;
+}
+
+.note-paie-reply-form.is-comments-chat > * {
+  flex: 0 0 100%;
+}
+
+.note-paie-reply-form.is-comments-chat > .note-paie-composer-row {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-bottom: 0;
+}
+
+.note-paie-reply-form.is-comments-chat > .note-paie-composer-bar {
+  flex: 0 0 auto;
+}
+
+.note-paie-reply-form.is-comments-chat .note-paie-composer-left {
+  display: none;
+}

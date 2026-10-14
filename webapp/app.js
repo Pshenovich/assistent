@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261014-slide-edits";
+  var WEBAPP_BUILD = "20261014-chat-badge";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261014-slide-edits";
+  const NOTE_EDITOR_ASSET_V = "20261014-chat-badge";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -25424,6 +25424,8 @@
       if (at !== bt) return at - bt;
       return Number(a.id || 0) - Number(b.id || 0);
     });
+    if (chatNow && isNoteDiscussionOpen()) markNoteChatSeen(chatNow, rows);
+    syncNoteChatsButton();
     var gptBusy = !!(wrap && wrap._gptBusy);
     var researchRunning = !!(wrap && wrap._researchRunning);
     var fp =
@@ -26283,8 +26285,82 @@
     var on = noteChatsEnabled();
     btn.classList.toggle("is-chats", on);
     var label = on ? "Чаты" : "Новый контекст GPT";
+    var unread = on ? noteChatsUnreadTotal() : 0;
+    var badge = btn.querySelector(".note-chats-badge");
+    if (unread && !badge) {
+      badge = document.createElement("span");
+      badge.className = "note-chats-badge";
+      badge.setAttribute("aria-hidden", "true");
+      btn.appendChild(badge);
+    }
+    if (badge) {
+      badge.textContent = unread > 99 ? "99+" : String(unread);
+      badge.classList.toggle("hidden", !unread);
+    }
+    if (unread) label += ": непрочитанных " + unread;
     btn.setAttribute("aria-label", label);
     btn.title = label;
+  }
+
+  // ---- Непрочитанные по чатам ----
+  // Для каждого чата храним id последнего увиденного сообщения. Первая точка отсчёта —
+  // прежняя отметка «обсуждение просмотрено», чтобы старые сообщения не стали новыми.
+  function noteChatsSeenBase() {
+    var key = "leo_chat_seen_base:" + noteChatKey();
+    try {
+      var v = localStorage.getItem(key);
+      if (v != null) return parseInt(v, 10) || 0;
+      var wrap = discussWrap();
+      var panel = document.getElementById("note-editor-comments");
+      var base =
+        getDiscussSeenId(wrap._shareKind, wrap._shareId) ||
+        maxCommentId((panel && panel._allComments) || []);
+      // Сообщения ещё не загружены — точку отсчёта не фиксируем.
+      if (!base) return Infinity;
+      localStorage.setItem(key, String(base));
+      return base;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  function noteChatSeenId(chatId) {
+    var own = 0;
+    try {
+      own = parseInt(localStorage.getItem("leo_chat_seen:" + noteChatKey() + ":" + chatId) || "0", 10) || 0;
+    } catch (_) {}
+    return Math.max(own, noteChatsSeenBase());
+  }
+
+  function markNoteChatSeen(chatId, rows) {
+    var max = maxCommentId(rows || []);
+    if (!max || max <= noteChatSeenId(chatId)) return;
+    try {
+      localStorage.setItem("leo_chat_seen:" + noteChatKey() + ":" + chatId, String(max));
+    } catch (_) {}
+  }
+
+  // {chatId: число новых сообщений от других участников и ИИ}
+  function noteChatsUnread() {
+    var out = {};
+    if (!noteChatsEnabled()) return out;
+    var panel = document.getElementById("note-editor-comments");
+    discussionComments((panel && panel._allComments) || []).forEach(function (c) {
+      var chat = Number(c.chat_id);
+      if (!chat || isMineDiscussionComment(c)) return;
+      if (Number(c.id) > noteChatSeenId(chat)) out[chat] = (out[chat] || 0) + 1;
+    });
+    return out;
+  }
+
+  function noteChatsUnreadTotal() {
+    var map = noteChatsUnread();
+    var cur = currentDiscussChatId();
+    var total = 0;
+    Object.keys(map).forEach(function (id) {
+      if (Number(id) !== cur || !isNoteDiscussionOpen()) total += map[id];
+    });
+    return total;
   }
 
   // Чаты заметки + выбор текущего. Сброс контекста GPT из браузера (до чатов)
@@ -26398,6 +26474,7 @@
     menu.innerHTML = "";
     var cur = currentDiscussChatId();
     var chats = wrap._noteChats || [];
+    var unread = noteChatsUnread();
 
     var head = document.createElement("div");
     head.className = "note-chats-head";
@@ -26474,6 +26551,14 @@
         text.appendChild(meta);
       }
       b.appendChild(text);
+      var unreadN = active ? 0 : unread[Number(chat.id)] || 0;
+      if (unreadN) {
+        var n = document.createElement("span");
+        n.className = "note-chats-badge note-chats-item-badge";
+        n.textContent = unreadN > 99 ? "99+" : String(unreadN);
+        n.setAttribute("aria-label", "Новых сообщений: " + unreadN);
+        b.appendChild(n);
+      }
       b.addEventListener("click", function (e) {
         e.preventDefault();
         e.stopPropagation();
