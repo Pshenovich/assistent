@@ -1,5 +1,6 @@
 import copy
 import os
+import re
 import tempfile
 import unittest
 
@@ -413,3 +414,136 @@ class GalleryTests(unittest.TestCase):
         html = tpl.render_deck_html(tpl.build_deck(SAMPLE_ACTION_3), theme="mono")
         self.assertEqual(html.count('data-leo-img="pending"'), 4)
         self.assertIn("m-gsolo", html)
+
+
+class CustomLayoutTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["NOTES_DB_PATH"] = os.path.join(self._tmp.name, "notes.sqlite")
+        notes_store._CONN = None  # type: ignore[attr-defined]
+
+    def tearDown(self):
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        self._tmp.cleanup()
+
+    def _custom_slots(self):
+        return {"title": "Пилот", "surface": "dark", "rows": [
+            {"blocks": [{"type": "number", "span": 5, "value": "60", "label": "клиентов"},
+                        {"type": "card", "span": 7, "title": "Итог", "text": "Раскатываем", "tone": "dark"}]},
+            {"blocks": [{"type": "image", "span": 12, "caption": "Фото", "image_prompt": "office"}]}]}
+
+    def test_custom_grid_renders_in_both_styles_with_edit_attrs(self):
+        deck = {"v": tpl.DECK_VERSION, "title": "T", "slides": [{"id": "s1", "role": "custom", "variant": "custom.grid", "slots": self._custom_slots()}]}
+        for th in ("analytic", "mono"):
+            html = tpl.render_deck_html(deck, {}, theme=th)
+            self.assertNotIn("Не удалось отрисовать", html)
+            self.assertIn('data-slot="rows.0.blocks.1.title"', html)
+            self.assertIn('data-group="rows.0.blocks"', html)
+            self.assertIn('data-leo-img="pending"', html)
+        self.assertIn("m-black", tpl.render_deck_html(deck, {}, theme="mono"))
+
+    def test_saved_layout_keeps_structure_and_insert_fills_it(self):
+        from assistant.lib import canvas_revise
+        from assistant.stores import canvas_layouts
+
+        saved = canvas_layouts.create_layout(77, "Цифра и карточка", self._custom_slots())
+        st = saved["structure"]
+        self.assertEqual([[b["type"] for b in r["blocks"]] for r in st["rows"]], [["number", "card"], ["image"]])
+        self.assertEqual(st["rows"][0]["blocks"][1]["tone"], "dark")
+        self.assertEqual([x["id"] for x in canvas_layouts.list_layouts(77)], [saved["id"]])
+        self.assertEqual(canvas_layouts.list_layouts(78), [])
+
+        deck = tpl.build_deck(SAMPLE_ACTION)
+        deck["slides"] = deck["slides"][:3]
+        html = tpl.render_deck_html(deck)
+        # Модель «перепутала» типы и доли — раскладка всё равно будет как сохранена.
+        answer = ('```leo-canvas\n{"action":"update","insert":[{"after":"s1","role":"content","slots":{"title":"Новый",'
+                  '"rows":[{"blocks":[{"type":"text","span":2,"value":"412","label":"клиентов"},{"type":"text","span":3,"title":"Вывод","text":"Да"}]}]}}]}\n```')
+        new_html, ids = canvas_revise.insert_slides(html, "s1", "про пилот", ask=lambda a, b: answer, structure=st)
+        slide = [x for x in tpl.extract_deck(new_html)["slides"] if x["id"] == ids[0]][0]
+        self.assertEqual(slide["variant"], "custom.grid")
+        rows = slide["slots"]["rows"]
+        self.assertEqual([[b["type"] for b in r["blocks"]] for r in rows], [["number", "card"], ["image"]])
+        self.assertEqual(rows[0]["blocks"][0]["value"], "412")
+        self.assertEqual(slide["slots"]["surface"], "dark")
+        self.assertTrue(canvas_layouts.delete_layout(77, saved["id"]))
+
+    def test_cards_3d_visual_can_be_replaced_with_image(self):
+        slots = {"title": "Три шага", "items": [{"title": "A", "text": "a"}, {"title": "B", "text": "b"}]}
+        deck = {"v": tpl.DECK_VERSION, "title": "T", "slides": [{"id": "s1", "role": "content", "variant": "content.cards", "slots": slots}]}
+        html = tpl.render_deck_html(deck, {})
+        stored = tpl.extract_deck(html)["slides"][0]["slots"]["items"]
+        mid = "s1-v-" + stored[0]["key"]
+        self.assertIn(f'data-media="{mid}"', html)
+        self.assertIn('data-a3="', html)
+        self.assertNotIn('class="media-img"', html)
+        # Картинка, вставленная в редакторе, переживает перерисовку и привязана к своей карточке.
+        edited = html.replace(f'data-media="{mid}" data-leo-id="{mid}"', f'data-media="{mid}" data-leo-id="{mid}"', 1)
+        edited = re.sub(r'(data-media="%s"[^>]*>)<div class="a3-[a-z]+">[^<]*(?:<i></i>)*</div>' % re.escape(mid),
+                        r'\1<img class="media-img" alt="" src="data:image/png;base64,AAAA"/>', edited, count=1)
+        media = tpl.extract_media(edited)
+        self.assertEqual(list(media), [mid])
+        again = tpl.render_deck_html(tpl.extract_deck(edited), media)
+        self.assertIn('class="a3 a3-photo"', again)
+        self.assertEqual(again.count('class="media-img"'), 1)
+
+    def test_custom_insert_plans_layout_first_then_fills_it(self):
+        from assistant.lib import canvas_revise
+
+        deck = tpl.build_deck(SAMPLE_ACTION)
+        deck["slides"] = deck["slides"][:3]
+        html = tpl.render_deck_html(deck)
+        plan = ('{"title":true,"rows":[{"blocks":[{"type":"number","span":3},{"type":"card","span":3},'
+                '{"type":"card","span":3},{"type":"card","span":3}]},{"blocks":[{"type":"text","span":12}]}]}')
+        # Модель на шаге 2 снова сложила всё в столбик и вернула флаг вместо заголовка — раскладка из шага 1 побеждает.
+        fill = ('```leo-canvas\n{"action":"update","insert":[{"after":"s1","slots":{"title":true,"rows":['
+                '{"blocks":[{"type":"number","span":6,"value":"4,2 млн","label":"бюджет"}]},'
+                '{"blocks":[{"type":"card","title":"A"},{"type":"card","title":"B"},{"type":"card","title":"C"}]},'
+                '{"blocks":[{"type":"text","text":"Вывод"}]}]}}]}\n```')
+        calls = []
+
+        def ask(system, user):
+            calls.append(system)
+            return plan if len(calls) == 1 else fill
+
+        new_html, ids = canvas_revise.insert_slides(html, "s1", "слева цифра, справа три карточки, внизу вывод", ask=ask, layout="custom")
+        self.assertEqual(len(calls), 2)
+        slide = [x for x in tpl.extract_deck(new_html)["slides"] if x["id"] == ids[0]][0]
+        rows = slide["slots"]["rows"]
+        self.assertEqual([[b["type"] for b in r["blocks"]] for r in rows], [["number", "card", "card", "card"], ["text"]])
+        self.assertEqual(rows[0]["blocks"][0]["value"], "4,2 млн")
+        self.assertNotIn("title", slide["slots"])
+
+    def test_layout_auto_name_and_pending_media_only_for_given_slides(self):
+        from assistant.stores import canvas_layouts
+
+        st = canvas_layouts.structure_of(self._custom_slots())
+        self.assertEqual(canvas_layouts.auto_name(st), "Цифра + Карточка / Фото")
+        self.assertEqual(canvas_layouts.create_layout(77, "", self._custom_slots())["name"], "Цифра + Карточка / Фото")
+        deck = {"v": tpl.DECK_VERSION, "title": "T", "slides": [
+            {"id": "s1", "role": "custom", "variant": "custom.grid", "slots": self._custom_slots()},
+            {"id": "s2", "role": "custom", "variant": "custom.grid", "slots": self._custom_slots()}]}
+        html = tpl.render_deck_html(deck, {})
+        got = tpl.pending_media(html, ["s2"])
+        self.assertEqual(len(got), 1)
+        self.assertTrue(got[0][0].startswith("s2-m-"))
+        self.assertEqual(got[0][1], "office")
+
+    def test_oversized_image_is_shrunk_not_dropped(self):
+        import base64
+        import io
+
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow не установлен")
+        from assistant.lib import web_canvas
+
+        im = Image.frombytes("RGB", (1024, 1024), os.urandom(1024 * 1024 * 3))
+        buf = io.BytesIO()
+        im.save(buf, "PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        self.assertGreater(len(b64), web_canvas.MAX_IMAGE_B64)
+        urls = web_canvas.image_dicts_to_data_urls([{"mime": "image/png", "b64": b64}])
+        self.assertEqual(len(urls), 1)
+        self.assertTrue(urls[0].startswith("data:image/jpeg;base64,"))

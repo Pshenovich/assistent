@@ -166,5 +166,8 @@ SAMPLE_ACTION_3 = {
             {"caption": "Доступы запрашиваем вместе с договором", "image_prompt": "signing contract"},
             {"caption": "Интеграция на первом созвоне", "image_prompt": "video call screen"},
             {"caption": "Алерт, если данных нет на 3-й день", "image_prompt": "notification on phone"}]}},
+        {"role": "custom", "variant": "custom.grid", "slots": {"title": "Пилот в цифрах", "rows": [
+            {"blocks": [{"type": "number", "span": 4, "value": "60", "label": "клиентов"},
+                        {"type": "card", "span": 8, "title": "Решение", "text": "Раскатываем, если активация +10 п.п.", "tone": "accent"}]}]}},
     ],
 }

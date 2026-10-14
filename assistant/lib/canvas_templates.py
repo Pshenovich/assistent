@@ -14,10 +14,10 @@ import copy
 import json
 import re
 from dataclasses import dataclass, field
-from html import escape
+from html import escape, unescape
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from assistant.lib import canvas_charts
 
@@ -38,6 +38,7 @@ ROLES: tuple[tuple[str, str], ...] = (
     ("plan", "План"),
     ("closing", "Финал"),
     ("appendix", "Приложение"),
+    ("custom", "Свой макет"),
 )
 ROLE_IDS = tuple(r for r, _ in ROLES)
 _ROLE_ALIASES = {
@@ -756,10 +757,18 @@ def _r_cards(c: Ctx) -> tuple[str, str]:
         if vis not in _VISUALS or vis in used:
             vis = next((v for v in _VISUALS if v not in used), _VISUALS[i % len(_VISUALS)])
         used.append(vis)
-        inner_vis = "<i></i><i></i><i></i>" if vis == "cube" else ""
+        if not _s(it.get("key")):
+            it["key"] = _new_media_key()  # визуал можно заменить своей картинкой — привязка к карточке
+        mid = f"{c.sid}-v-{_s(it.get('key'))}"
+        src = c.media.get(mid, "")
+        if src:
+            vis_html = f'<img class="media-img" alt="" src="{escape(src)}"/>'
+        else:
+            vis_html = f'<div class="a3-{vis}">{"<i></i><i></i><i></i>" if vis == "cube" else ""}</div>'
+        a3_cls = "a3" + (" is-small" if small else "") + (" a3-photo" if src else "")
         cards += (
             f'<div class="card" style="padding:0;overflow:hidden;display:flex;flex-direction:column" {c.item_attrs("items", i)}>'
-            f'<div class="a3{" is-small" if small else ""}"><div class="a3-{vis}">{inner_vis}</div></div>'
+            f'<div class="{a3_cls}" data-media="{mid}" data-leo-id="{mid}" data-a3="{vis}">{vis_html}</div>'
             f'<div style="padding:{"16px 20px 18px" if small else "20px 24px 24px"}">'
             f'{c.t(f"items.{i}.title", "p", "h-card clamp2", "font-size:20px" if small else "", force=True)}'
             f'{c.t(f"items.{i}.text", "p", "body clamp4", "font-size:16px" if small else "font-size:17px", force=True)}</div></div>'
@@ -1086,6 +1095,7 @@ _FALLBACK_VARIANT = {
     "plan": "plan.steps",
     "closing": "closing.next-steps",
     "appendix": "appendix.notes",
+    "custom": "custom.grid",
 }
 
 
@@ -1388,6 +1398,21 @@ def extract_deck(html: str) -> Optional[dict[str, Any]]:
     return data
 
 
+_PENDING_MID_RE = re.compile(r'data-media="([^"]+)"[^>]*\bdata-leo-img-prompt="([^"]+)"')
+
+
+def pending_media(html: str, slide_ids: Iterable[str]) -> list[tuple[str, str]]:
+    """(media id, prompt) пустых слотов с промптом — только на указанных слайдах (новых)."""
+    prefixes = tuple(f"{sid}-" for sid in slide_ids)
+    if not prefixes:
+        return []
+    return [
+        (m.group(1), unescape(m.group(2)))
+        for m in _PENDING_MID_RE.finditer(html or "")
+        if m.group(1).startswith(prefixes)
+    ]
+
+
 def extract_media(html: str) -> dict[str, str]:
     out: dict[str, str] = {}
     for m in _MEDIA_IMG_RE.finditer(html or ""):
@@ -1675,7 +1700,8 @@ def outline_prompt(deck: dict[str, Any]) -> str:
     return "\n".join(rows)
 
 
-# Отрисовки стилей регистрируются после того, как модуль целиком загружен.
+# «Свой макет» и отрисовки стилей регистрируются после того, как модуль целиком загружен.
+from assistant.lib import canvas_blocks  # noqa: E402,F401
 from assistant.lib import canvas_style_mono  # noqa: E402
 
 THEME_RENDERERS["mono"] = canvas_style_mono.RENDERERS

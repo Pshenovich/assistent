@@ -483,6 +483,13 @@ def _gallery(c: Ctx) -> tuple[str, str]:
     return _slide("white", head + grid), ""
 
 
+def _custom(c: Ctx) -> tuple[str, str]:
+    from assistant.lib import canvas_blocks
+
+    surf = {"light": "white", "dark": "black", "ice": "ice"}[canvas_blocks.surface(c)]
+    return _slide(surf, canvas_blocks.render_grid(c), "m-custom"), ""
+
+
 # ================================================================== plan
 
 
@@ -611,6 +618,7 @@ RENDERERS: dict[str, Callable[[Ctx], tuple[str, str]]] = {
     "content.profile": _profile,
     "content.text-media": _text_media,
     "content.gallery": _gallery,
+    "custom.grid": _custom,
     "plan.timeline": _timeline,
     "plan.steps": _steps,
     "closing.next-steps": _next_steps,
