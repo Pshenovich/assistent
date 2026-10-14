@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261015-custom-slides2";
+  var WEBAPP_BUILD = "20261015-notes-filter";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261015-custom-slides2";
+  const NOTE_EDITOR_ASSET_V = "20261015-notes-filter";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -3827,6 +3827,7 @@
   function getActiveModalSheet() {
     var ids = [
       "note-editor-overlay",
+      "notes-filter-overlay",
       "tags-manage-overlay",
       "contacts-form-overlay",
       "teams-manage-overlay",
@@ -5625,6 +5626,7 @@
     var transcriptionUpload = document.getElementById("transcription-upload-overlay");
     var noteUnsaved = document.getElementById("note-unsaved-overlay");
     var tagsSheet = document.getElementById("tags-manage-overlay");
+    var notesFilterSheet = document.getElementById("notes-filter-overlay");
     var contactsForm = document.getElementById("contacts-form-overlay");
     var teamsManage = document.getElementById("teams-manage-overlay");
     var chatsSplit =
@@ -5644,6 +5646,7 @@
       (transcriptionUpload && !transcriptionUpload.classList.contains("hidden")) ||
       (noteUnsaved && !noteUnsaved.classList.contains("hidden")) ||
       (tagsSheet && !tagsSheet.classList.contains("hidden")) ||
+      (notesFilterSheet && !notesFilterSheet.classList.contains("hidden")) ||
       (contactsForm && !contactsForm.classList.contains("hidden")) ||
       (teamsManage && !teamsManage.classList.contains("hidden"));
     app.classList.toggle("app--immersive", !!immersive);
@@ -15979,7 +15982,217 @@
     return { text: text.replace(/\s+/g, " ").trim().toLowerCase(), hashtags: hashtags };
   }
 
+  // ---- Фильтр заметок: владелец / доступ / дата создания (хранится в браузере) ----
+  var NOTES_FILTER_KEY = "leo_notes_filter";
+  var NOTES_FILTER_DEFAULT = { owner: "all", access: "all", created: "all", from: "", to: "" };
+  var notesFilter = loadNotesFilter();
+
+  function loadNotesFilter() {
+    var f = Object.assign({}, NOTES_FILTER_DEFAULT);
+    try {
+      var raw = JSON.parse(localStorage.getItem(NOTES_FILTER_KEY) || "null");
+      if (raw && typeof raw === "object") {
+        Object.keys(NOTES_FILTER_DEFAULT).forEach(function (k) {
+          if (typeof raw[k] === "string") f[k] = raw[k];
+        });
+      }
+    } catch (e) {}
+    return f;
+  }
+
+  function saveNotesFilter() {
+    try {
+      localStorage.setItem(NOTES_FILTER_KEY, JSON.stringify(notesFilter));
+    } catch (e) {}
+  }
+
+  function notesFilterActiveCount(f) {
+    f = f || notesFilter;
+    var n = 0;
+    if (f.owner !== "all") n++;
+    if (f.access !== "all") n++;
+    if (f.created !== "all" && (f.created !== "custom" || f.from || f.to)) n++;
+    return n;
+  }
+
+  function noteIsPublic(item) {
+    if (item && item.shared) return true;
+    var members = (item && item.members) || [];
+    return members.length > 1;
+  }
+
+  function localDayStart(d) {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  }
+
+  function noteMatchesNotesFilter(item, f) {
+    f = f || notesFilter;
+    if (f.owner === "mine" && item.is_owner === false) return false;
+    if (f.owner === "shared" && item.is_owner !== false) return false;
+    if (f.access === "private" && noteIsPublic(item)) return false;
+    if (f.access === "public" && !noteIsPublic(item)) return false;
+    if (f.created !== "all") {
+      var t = Date.parse(String(item.created_at || ""));
+      if (!isFinite(t)) return false;
+      var now = new Date();
+      if (f.created === "today" && t < localDayStart(now)) return false;
+      if (f.created === "7" && t < localDayStart(now) - 6 * 864e5) return false;
+      if (f.created === "30" && t < localDayStart(now) - 29 * 864e5) return false;
+      if (f.created === "custom") {
+        if (f.from) {
+          var from = Date.parse(f.from + "T00:00:00");
+          if (isFinite(from) && t < from) return false;
+        }
+        if (f.to) {
+          var to = Date.parse(f.to + "T00:00:00");
+          if (isFinite(to) && t >= to + 864e5) return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  function syncNotesFilterBtn() {
+    var btn = document.getElementById("notes-filter-btn");
+    var badge = document.getElementById("notes-filter-badge");
+    var n = notesFilterActiveCount();
+    if (btn) {
+      btn.classList.toggle("is-active", n > 0);
+      btn.setAttribute("aria-label", n ? "Фильтр заметок, активно: " + n : "Фильтр заметок");
+    }
+    if (badge) {
+      badge.textContent = n ? String(n) : "";
+      badge.classList.toggle("hidden", !n);
+    }
+  }
+
+  // Черновик фильтра в шторке: применяется кнопкой «Показать».
+  var notesFilterDraft = null;
+
+  function notesFilterPreviewCount(f) {
+    var data = notesDataCache || {};
+    var transIds = {};
+    ((data && data.transcriptions) || []).forEach(function (n) {
+      var tid = localNoteIdFrom(n);
+      if (tid != null) transIds[String(tid)] = true;
+    });
+    var saved = notesFilter;
+    notesFilter = f;
+    try {
+      return ((data && data.local_notes) || []).filter(function (n) {
+        var nid = localNoteIdFrom(n);
+        if (nid != null && transIds[String(nid)]) return false;
+        if (looksLikeTranscriptionNote(n)) return false;
+        return noteItemMatchesFilter(n, "local");
+      }).length;
+    } finally {
+      notesFilter = saved;
+    }
+  }
+
+  function renderNotesFilterSheet() {
+    var f = notesFilterDraft || notesFilter;
+    document.querySelectorAll("#notes-filter-overlay .notes-filter-seg").forEach(function (seg) {
+      var key = seg.getAttribute("data-key");
+      seg.querySelectorAll("button[data-v]").forEach(function (b) {
+        b.setAttribute("aria-pressed", String(b.getAttribute("data-v") === f[key]));
+      });
+    });
+    var range = document.getElementById("notes-filter-range");
+    if (range) range.classList.toggle("hidden", f.created !== "custom");
+    var from = document.getElementById("notes-filter-from");
+    var to = document.getElementById("notes-filter-to");
+    if (from && from.value !== f.from) from.value = f.from;
+    if (to && to.value !== f.to) to.value = f.to;
+    var reset = document.getElementById("notes-filter-reset");
+    if (reset) reset.disabled = !notesFilterActiveCount(f);
+    var apply = document.getElementById("notes-filter-apply");
+    if (apply) {
+      var n = notesFilterPreviewCount(f);
+      apply.textContent = n ? "Показать " + n + " " + pluralRu(n, "заметку", "заметки", "заметок") : "Ничего не найдено";
+      apply.disabled = !n;
+    }
+  }
+
+  function openNotesFilterSheet() {
+    var ov = document.getElementById("notes-filter-overlay");
+    if (!ov) return;
+    notesFilterDraft = Object.assign({}, notesFilter);
+    renderNotesFilterSheet();
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
+  }
+
+  function closeNotesFilterSheet() {
+    var ov = document.getElementById("notes-filter-overlay");
+    if (!ov) return;
+    notesFilterDraft = null;
+    ov.classList.add("hidden");
+    ov.setAttribute("aria-hidden", "true");
+    onModalSheetClose();
+    syncAppOverlay();
+  }
+
+  function applyNotesFilter(f) {
+    notesFilter = Object.assign({}, NOTES_FILTER_DEFAULT, f);
+    if (notesFilter.created !== "custom") {
+      notesFilter.from = "";
+      notesFilter.to = "";
+    }
+    saveNotesFilter();
+    syncNotesFilterBtn();
+    if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+  }
+
+  function bindNotesFilterUi() {
+    var btn = document.getElementById("notes-filter-btn");
+    if (btn) btn.addEventListener("click", openNotesFilterSheet);
+    var close = document.getElementById("notes-filter-close");
+    if (close) close.addEventListener("click", closeNotesFilterSheet);
+    var ov = document.getElementById("notes-filter-overlay");
+    if (ov) {
+      ov.addEventListener("click", function (e) {
+        if (e.target === ov) closeNotesFilterSheet();
+      });
+      ov.querySelectorAll(".notes-filter-seg").forEach(function (seg) {
+        seg.addEventListener("click", function (e) {
+          var b = e.target && e.target.closest ? e.target.closest("button[data-v]") : null;
+          if (!b || !notesFilterDraft) return;
+          notesFilterDraft[seg.getAttribute("data-key")] = b.getAttribute("data-v");
+          renderNotesFilterSheet();
+        });
+      });
+    }
+    ["notes-filter-from", "notes-filter-to"].forEach(function (id) {
+      var inp = document.getElementById(id);
+      if (!inp) return;
+      inp.addEventListener("change", function () {
+        if (!notesFilterDraft) return;
+        notesFilterDraft[id === "notes-filter-from" ? "from" : "to"] = inp.value || "";
+        renderNotesFilterSheet();
+      });
+    });
+    var reset = document.getElementById("notes-filter-reset");
+    if (reset) {
+      reset.addEventListener("click", function () {
+        notesFilterDraft = Object.assign({}, NOTES_FILTER_DEFAULT);
+        renderNotesFilterSheet();
+      });
+    }
+    var apply = document.getElementById("notes-filter-apply");
+    if (apply) {
+      apply.addEventListener("click", function () {
+        if (notesFilterDraft) applyNotesFilter(notesFilterDraft);
+        closeNotesFilterSheet();
+      });
+    }
+    syncNotesFilterBtn();
+  }
+
   function noteItemMatchesFilter(item, kind) {
+    if (!noteMatchesNotesFilter(item)) return false;
     var project = noteProjectOf(item);
     if (notesActiveProjectId) {
       if (!project || Number(project.id) !== Number(notesActiveProjectId)) return false;
@@ -30725,8 +30938,8 @@
       pn.querySelector(".error").textContent = errParts.join(" · ");
     } else if (!local.length) {
       pn.innerHTML =
-        localAll.length && (notesSearchQuery.trim() || notesActiveProjectId)
-          ? '<p class="muted empty-hint">Ничего не найдено. Измените поиск, проект или #хэштег.</p>'
+        localAll.length && (notesSearchQuery.trim() || notesActiveProjectId || notesFilterActiveCount())
+          ? '<p class="muted empty-hint">Ничего не найдено. Измените поиск, проект, #хэштег или фильтр.</p>'
           : '<p class="muted empty-hint">Заметок пока нет. Нажмите «+» справа от переключателя или создайте заметку в чате с ботом.</p>';
     } else {
       function appendNoteCard(n, opts) {
@@ -30828,7 +31041,7 @@
         '<p class="muted empty-hint">Транскрипций пока нет. Нажмите «+», чтобы загрузить файл.</p>';
     } else if (!trans.length) {
       pt.innerHTML =
-        '<p class="muted empty-hint">Ничего не найдено. Измените поиск, проект или #хэштег.</p>';
+        '<p class="muted empty-hint">Ничего не найдено. Измените поиск, проект, #хэштег или фильтр.</p>';
     } else {
       trans.forEach(appendTranscriptionCard);
     }
@@ -33189,6 +33402,7 @@
 
     var tagsManageClose = document.getElementById("tags-manage-close");
     if (tagsManageClose) tagsManageClose.addEventListener("click", closeTagsManageSheet);
+    bindNotesFilterUi();
     var tagsManageOverlay = document.getElementById("tags-manage-overlay");
     if (tagsManageOverlay) {
       tagsManageOverlay.addEventListener("click", function (e) {
