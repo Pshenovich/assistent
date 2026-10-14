@@ -453,7 +453,8 @@ def comments_allowed_for_link(link: dict[str, Any] | None) -> bool:
 
 
 def comments_visible_for_link(link: dict[str, Any] | None) -> bool:
-    return bool(link)
+    """Комментарии видны только по ссылке «с комментариями»; «только просмотр» — без них."""
+    return comments_allowed_for_link(link)
 
 
 # Сообщения личных чатов заметки не участвуют в превью, счётчиках и публичных ссылках.

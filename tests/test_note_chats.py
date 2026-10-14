@@ -174,3 +174,12 @@ def test_read_marks_are_per_user_and_shared_across_devices(env):
     secret = _new_chat(env, env["owner"])
     r = env["c"].post(env["base"] + f"/chats/{secret['id']}/read", headers=_headers(env["member"]), json={"last_id": 1})
     assert r.status_code == 404
+
+
+def test_view_only_link_hides_comments(env):
+    _post(env, env["owner"], body="общее", chat_id=note_chats.COMMENTS_CHAT_ID)
+    link = share_links.create_or_get_share(str(env["owner"]), "local", str(env["note"]["id"]), "view", None)
+    r = env["c"].get(f"/api/public/share/{link['token']}/comments")
+    assert r.status_code == 403
+    page = env["c"].get(f"/api/public/share/{link['token']}").json()
+    assert "общее" not in json.dumps(page, ensure_ascii=False)

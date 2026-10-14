@@ -1149,7 +1149,11 @@
       paieBox.addEventListener("pointerup", onChairSelect);
     }
     if (!canComment) {
-      loadComments();
+      // Ссылка «только просмотр»: комментарии и обсуждение не показываем вовсе.
+      var rail = document.getElementById("share-comments");
+      if (rail) rail.classList.add("hidden");
+      if (wrap) wrap.classList.remove("has-comments");
+      if (paieBox) paieBox.classList.add("hidden");
       return;
     }
     var pendingAuth = parseTgAuthResultFromHash();
