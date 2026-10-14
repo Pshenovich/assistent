@@ -195,3 +195,16 @@ html[data-leo-deck].leo-review .leo-present-ui { display: none; }
 @media (prefers-reduced-motion: reduce) {
   html[data-leo-deck] .slide.tpl { transition: none; }
 }
+
+/* ---- изображения с подписями (content.gallery) ---- */
+.tpl-stage .g-grid { flex: 1; min-height: 0; display: grid; gap: 22px; margin-top: 8px; }
+.tpl-stage .g-n1 { grid-template-columns: minmax(0, 1fr); }
+.tpl-stage .g-n2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.tpl-stage .g-n3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.tpl-stage .g-fig { margin: 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.tpl-stage .g-fig .g-media { flex: 1; min-height: 0; height: auto; border-radius: 16px; }
+.tpl-stage .g-cap { font-size: 17px; line-height: 1.4; color: var(--s-muted); }
+.tpl-stage .g-n1 .g-cap { font-size: 19px; max-width: 80ch; }
+/* Удалённая подпись не занимает места; в режиме правок пустое поле видно, чтобы вернуть текст. */
+html[data-leo-deck]:not(.leo-review) .tpl-stage .g-cap:empty { display: none; }
+html[data-leo-deck].leo-review .tpl-stage .g-cap:empty { min-height: 1.4em; border: 1px dashed var(--s-rule); border-radius: 6px; }

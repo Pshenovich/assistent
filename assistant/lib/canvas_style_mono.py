@@ -459,6 +459,30 @@ def _text_media(c: Ctx) -> tuple[str, str]:
     return _slide("white", '<div class="m-split m-split-50">' + left + media + "</div>"), ""
 
 
+def _gallery(c: Ctx) -> tuple[str, str]:
+    items = ct.gallery_items(c)
+    n = max(1, len(items))
+    figs = "".join(
+        f'<figure class="m-gfig" {c.item_attrs("images", i)}>'
+        + ct.media_slot_html(c, f"{c.sid}-m-{_s(it.get('key'))}", _s(it.get("image_prompt")), "m-gmedia")
+        + c.t(f"images.{i}.caption", "p", "g-cap m-gcap", force=True)
+        + "</figure>"
+        for i, it in enumerate(items)
+    )
+    grid = c.group("images", figs, f"m-ggrid g-n{n}")
+    if n == 1:
+        # Одно изображение почти на весь слайд: заголовок и подпись поверх.
+        head = '<div class="m-gover">' + c.t("eyebrow", "p", "m-pill m-pill-light") + c.t("title", "h2", "m-gtitle") + "</div>"
+        return _slide("white", grid + head, "m-gsolo"), ""
+    head = (
+        '<div class="m-head"><div class="m-head-l">'
+        + c.t("eyebrow", "p", "m-pill")
+        + c.t("title", "h2", "m-display m-display-md")
+        + "</div>" + _ARROW + "</div>"
+    )
+    return _slide("white", head + grid), ""
+
+
 # ================================================================== plan
 
 
@@ -586,6 +610,7 @@ RENDERERS: dict[str, Callable[[Ctx], tuple[str, str]]] = {
     "content.cards": _content_cards,
     "content.profile": _profile,
     "content.text-media": _text_media,
+    "content.gallery": _gallery,
     "plan.timeline": _timeline,
     "plan.steps": _steps,
     "closing.next-steps": _next_steps,

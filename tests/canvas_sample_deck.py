@@ -154,3 +154,17 @@ SAMPLE_ACTION_2: dict[str, Any] = {
         {"role": "appendix", "slots": {"caveats": ["Отток — 14 дней без активности"], "sources": [{"name": "CRM", "detail": "выгрузка 1 октября"}]}},
     ],
 }
+
+# Слайды с изображениями (1–3 картинки с подписями).
+SAMPLE_ACTION_3 = {
+    "action": "create",
+    "title": "Часть 3",
+    "slides": [
+        {"role": "content", "variant": "content.gallery", "slots": {"title": "Как выглядит первый созвон", "images": [
+            {"caption": "Инженер подключает CRM вместе с IT клиента", "image_prompt": "engineer and client at laptop, office"}]}},
+        {"role": "content", "variant": "content.gallery", "slots": {"title": "Три шага подключения", "images": [
+            {"caption": "Доступы запрашиваем вместе с договором", "image_prompt": "signing contract"},
+            {"caption": "Интеграция на первом созвоне", "image_prompt": "video call screen"},
+            {"caption": "Алерт, если данных нет на 3-й день", "image_prompt": "notification on phone"}]}},
+    ],
+}

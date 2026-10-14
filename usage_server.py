@@ -3047,17 +3047,23 @@ def _materialize_canvas_sheet_images(
     ]
     prompts = web_canvas_lib.extract_canvas_img_prompts(html)
     if prompts and not images:
-        for prompt in prompts[:2]:
+        # До 4 картинок за раз (слайд «Изображения с подписями» — до 3), параллельно и по порядку слотов.
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _gen(prompt: str) -> list[dict[str, Any]]:
             try:
-                generated = openrouter_generate_images(prompt, n=1, timeout=180)
+                return openrouter_generate_images(prompt, n=1, timeout=180) or []
             except Exception as e:
                 print(f"[web_canvas] img_prompt_generate failed err={e!r}")
-                generated = []
-            for g in generated or []:
-                if isinstance(g, dict) and str(g.get("b64") or "").strip():
-                    images.append(g)
-            if len(images) >= 2:
-                break
+                return []
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(_gen, prompts[:4]))
+        for generated in results:
+            got = [g for g in generated if isinstance(g, dict) and str(g.get("b64") or "").strip()]
+            if not got:
+                break  # слоты заполняются по порядку — пропуск сдвинул бы картинки
+            images.append(got[0])
     data_urls = web_canvas_lib.image_dicts_to_data_urls(images)
     if not data_urls:
         return sheet
