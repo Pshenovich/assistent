@@ -141,3 +141,16 @@ def test_legacy_messages_are_sorted_into_chats(env):
     assert by_id[late["id"]] == new_chat["id"] and by_id[q["id"]] == legacy
     again = env["c"].post(env["base"] + f"/chats/{legacy}/split", headers=_headers(env["owner"]), json={"after_id": q["id"]})
     assert again.json()["chat"] is None
+
+
+def test_attached_chat_context_respects_visibility(env):
+    from assistant.nlu.ask_context import pack_attached_notes
+
+    chat = _new_chat(env, env["member"])
+    _post(env, env["member"], body="секретный план", chat_id=chat["id"])
+    _post(env, env["owner"], body="общий комментарий", chat_id=note_chats.COMMENTS_CHAT_ID)
+    nid = env["note"]["id"]
+    assert "секретный план" in pack_attached_notes(env["member"], [f"chat:{nid}:{chat['id']}"])
+    assert pack_attached_notes(env["owner"], [f"chat:{nid}:{chat['id']}"]) == ""
+    assert "общий комментарий" in pack_attached_notes(env["owner"], [f"chat:{nid}:-1"])
+    assert pack_attached_notes(next(_ids), [f"chat:{nid}:-1"]) == ""  # не участник заметки

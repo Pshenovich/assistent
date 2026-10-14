@@ -5740,14 +5740,34 @@ html.note-editor-open #note-editor-overlay {
   padding: 0;
   border: none;
   border-radius: 100px;
-  color: var(--note-composer-muted);
+  color: var(--note-composer-ink); /* как у «GPT ⌃» рядом */
   background: var(--note-composer-border);
   cursor: pointer;
 }
 
 .note-paie-attach:hover,
-.note-paie-attach:focus-visible {
+.note-paie-attach:focus-visible,
+.note-paie-attach.is-open {
   color: var(--note-composer-ink);
+  filter: brightness(1.12);
+}
+
+.note-paie-plus-chat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.note-paie-plus-chat-meta {
+  font-size: 12px;
+  color: var(--text-secondary, #9aa0a6);
+}
+
+.note-paie-plus-empty {
+  margin: 8px 12px;
+  font-size: 14px;
+  color: var(--text-secondary, #9aa0a6);
 }
 
 .note-paie-attach:disabled {
@@ -7149,8 +7169,78 @@ html.note-editor-open #note-editor-overlay {
   gap: 4px;
 }
 
-.note-chats-section .note-chats-section-label {
-  margin: 0 10px 4px;
+.note-chats-section-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 10px 6px;
+}
+
+.note-chats-section-icon {
+  display: inline-flex;
+  margin-top: 2px;
+  color: var(--text-secondary, #9aa0a6);
+}
+
+.note-chats-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.note-chats-section-hint,
+.note-chats-empty {
+  font-size: 12px;
+  color: var(--text-secondary, #9aa0a6);
+}
+
+.note-chats-empty {
+  margin: 0 10px 0 34px;
+}
+
+.note-chats-item-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-secondary, #9aa0a6);
+}
+
+.note-chats-item.is-active .note-chats-item-icon {
+  color: var(--accent);
+}
+
+.note-chats-access {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.note-chats-access-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.note-chats-access-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.note-chats-access-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .note-chats-new {
@@ -7182,14 +7272,15 @@ html.note-editor-open #note-editor-overlay {
   color: var(--text-secondary, #9aa0a6);
 }
 
-.note-chats-item-badge {
-  flex: 0 0 auto;
-  font-size: 12px;
-  color: var(--text-secondary, #9aa0a6);
-}
-
-.note-chats-visibility .note-chats-visibility-seg {
-  margin: 0 6px;
+#note-discussion-title.is-private-chat::before {
+  content: "";
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  opacity: 0.75;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Crect x='4' y='11' width='16' height='10' rx='2'/%3E%3Cpath d='M8 11V7a4 4 0 0 1 8 0v4'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Crect x='4' y='11' width='16' height='10' rx='2'/%3E%3Cpath d='M8 11V7a4 4 0 0 1 8 0v4'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 .note-chats-visibility-seg {
@@ -7202,6 +7293,10 @@ html.note-editor-open #note-editor-overlay {
 }
 
 .note-chats-visibility-seg button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   appearance: none;
   padding: 6px 8px;
   border: none;
