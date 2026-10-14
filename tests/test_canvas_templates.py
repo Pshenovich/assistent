@@ -1,5 +1,6 @@
 import copy
 import os
+import re
 import tempfile
 import unittest
 
@@ -466,6 +467,25 @@ class CustomLayoutTests(unittest.TestCase):
         self.assertEqual(rows[0]["blocks"][0]["value"], "412")
         self.assertEqual(slide["slots"]["surface"], "dark")
         self.assertTrue(canvas_layouts.delete_layout(77, saved["id"]))
+
+    def test_cards_3d_visual_can_be_replaced_with_image(self):
+        slots = {"title": "Три шага", "items": [{"title": "A", "text": "a"}, {"title": "B", "text": "b"}]}
+        deck = {"v": tpl.DECK_VERSION, "title": "T", "slides": [{"id": "s1", "role": "content", "variant": "content.cards", "slots": slots}]}
+        html = tpl.render_deck_html(deck, {})
+        stored = tpl.extract_deck(html)["slides"][0]["slots"]["items"]
+        mid = "s1-v-" + stored[0]["key"]
+        self.assertIn(f'data-media="{mid}"', html)
+        self.assertIn('data-a3="', html)
+        self.assertNotIn('class="media-img"', html)
+        # Картинка, вставленная в редакторе, переживает перерисовку и привязана к своей карточке.
+        edited = html.replace(f'data-media="{mid}" data-leo-id="{mid}"', f'data-media="{mid}" data-leo-id="{mid}"', 1)
+        edited = re.sub(r'(data-media="%s"[^>]*>)<div class="a3-[a-z]+">[^<]*(?:<i></i>)*</div>' % re.escape(mid),
+                        r'\1<img class="media-img" alt="" src="data:image/png;base64,AAAA"/>', edited, count=1)
+        media = tpl.extract_media(edited)
+        self.assertEqual(list(media), [mid])
+        again = tpl.render_deck_html(tpl.extract_deck(edited), media)
+        self.assertIn('class="a3 a3-photo"', again)
+        self.assertEqual(again.count('class="media-img"'), 1)
 
     def test_custom_insert_plans_layout_first_then_fills_it(self):
         from assistant.lib import canvas_revise

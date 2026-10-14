@@ -757,10 +757,18 @@ def _r_cards(c: Ctx) -> tuple[str, str]:
         if vis not in _VISUALS or vis in used:
             vis = next((v for v in _VISUALS if v not in used), _VISUALS[i % len(_VISUALS)])
         used.append(vis)
-        inner_vis = "<i></i><i></i><i></i>" if vis == "cube" else ""
+        if not _s(it.get("key")):
+            it["key"] = _new_media_key()  # визуал можно заменить своей картинкой — привязка к карточке
+        mid = f"{c.sid}-v-{_s(it.get('key'))}"
+        src = c.media.get(mid, "")
+        if src:
+            vis_html = f'<img class="media-img" alt="" src="{escape(src)}"/>'
+        else:
+            vis_html = f'<div class="a3-{vis}">{"<i></i><i></i><i></i>" if vis == "cube" else ""}</div>'
+        a3_cls = "a3" + (" is-small" if small else "") + (" a3-photo" if src else "")
         cards += (
             f'<div class="card" style="padding:0;overflow:hidden;display:flex;flex-direction:column" {c.item_attrs("items", i)}>'
-            f'<div class="a3{" is-small" if small else ""}"><div class="a3-{vis}">{inner_vis}</div></div>'
+            f'<div class="{a3_cls}" data-media="{mid}" data-leo-id="{mid}" data-a3="{vis}">{vis_html}</div>'
             f'<div style="padding:{"16px 20px 18px" if small else "20px 24px 24px"}">'
             f'{c.t(f"items.{i}.title", "p", "h-card clamp2", "font-size:20px" if small else "", force=True)}'
             f'{c.t(f"items.{i}.text", "p", "body clamp4", "font-size:16px" if small else "font-size:17px", force=True)}</div></div>'

@@ -113,11 +113,58 @@ def _block(c: Ctx, r: int, i: int, b: dict[str, Any]) -> str:
         except Exception:  # noqa: BLE001 — кривые данные не должны ронять слайд
             svg = '<p class="cb-text">Нет данных для графика</p>'
         inner = f'<div class="cb-chart">{svg}</div>'
-    return f'<div class="cb cb-is-{t}" {attrs}>{inner}</div>'
+    extra = " cb-sym" if t == "pill" and _is_symbol(_s(b.get("text"))) else ""
+    return f'<div class="cb cb-is-{t}{extra}" {attrs}>{inner}</div>'
+
+
+def _is_symbol(text: str) -> bool:
+    """«→», «=», «+» между блоками — центрируем в своей колонке, а не прижимаем влево как метку."""
+    t = text.strip()
+    return 0 < len(t) <= 3 and not any(ch.isalnum() for ch in t)
+
+
+def _split_side(rows: list[dict[str, Any]], c: Ctx) -> str:
+    """«Фото и текст»: одна строка, фото с краю, есть заголовок → заголовок уходит в колонку текста,
+    фото на всю высоту слайда. Возвращает "left"/"right" (где фото) или ""."""
+    if len(rows) != 1 or not (_s(c.slots.get("title")) or _s(c.slots.get("eyebrow"))):
+        return ""
+    blocks = rows[0]["blocks"]
+    if len(blocks) < 2:
+        return ""
+    types = [_block_type(b) for b in blocks]
+    if types.count("image") != 1:
+        return ""
+    if types[0] == "image":
+        return "left"
+    if types[-1] == "image":
+        return "right"
+    return ""
+
+
+def _render_split(c: Ctx, rows: list[dict[str, Any]], side: str) -> str:
+    blocks = rows[0]["blocks"]
+    img_i = 0 if side == "left" else len(blocks) - 1
+    img_html = _block(c, 0, img_i, blocks[img_i])
+    rest = "".join(_block(c, 0, i, b) for i, b in enumerate(blocks) if i != img_i)
+    rest_span = sum(_span(b) for i, b in enumerate(blocks) if i != img_i)
+    head = c.t("eyebrow", "p", "eyebrow") + c.t("title", "h2", "title")
+    col = f'<div class="cb-col">{head}{rest}</div>'
+    img_fr, col_fr = f"minmax(0, {_span(blocks[img_i])}fr)", f"minmax(0, {rest_span}fr)"
+    cols = f"{img_fr} {col_fr}" if side == "left" else f"{col_fr} {img_fr}"
+    inner = img_html + col if side == "left" else col + img_html
+    row = (
+        f'<div class="cb-row" {c.item_attrs("rows", 0)}>'
+        + c.group("rows.0.blocks", inner, "cb-blocks cb-split", f"grid-template-columns:{cols}")
+        + "</div>"
+    )
+    return c.group("rows", row, "cb-rows cb-n1 cb-rows-split")
 
 
 def render_grid(c: Ctx) -> str:
     rows = rows_of(c)
+    side = _split_side(rows, c)
+    if side:
+        return _render_split(c, rows, side)
     rows_html = ""
     for r, row in enumerate(rows):
         blocks = row["blocks"]

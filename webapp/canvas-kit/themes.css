@@ -394,6 +394,8 @@ html[data-leo-deck]:not(.leo-review) .tpl-stage .m-gtitle:empty { display: none;
 .m-custom .cb-who { color: inherit; opacity: 0.7; }
 .m-custom .cb-pill { border: 1.5px solid currentColor; color: inherit; text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 16px; }
 .m-custom .cb-media { border-radius: 28px; }
+.m-custom .cb-sym .cb-pill { border: 0; font-size: 56px; font-weight: 300; }
+.m-custom .cb-col .title { max-width: none; }
 .tpl-stage .m-custom .cb-media.tpl-media-empty { border: 0; background: var(--m-ice); color: var(--m-black); }
 .m-custom .cb-chart { background: var(--m-ice); border-radius: 26px; padding: 16px 18px; --s-text: #0d0d0e; --s-muted: #4d5560; --s-faint: #7d8590; --s-rule: rgba(13, 13, 14, 0.12); --s-el: #dceaf6; }
 .m-ice.m-custom .cb-card.cb-tone-plain,
