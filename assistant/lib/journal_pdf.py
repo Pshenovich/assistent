@@ -151,7 +151,9 @@ def _operation_label(op: str) -> str:
 
 def _filename_for_row(row: dict[str, Any], *, title: str) -> str:
     op = str(row.get("operation") or "")
-    if op == "summarize":
+    if row.get("file_base"):
+        base = str(row["file_base"])
+    elif op == "summarize":
         base = "samari"
     elif op == "note":
         base = "zametka"
@@ -510,6 +512,7 @@ def build_note_pdf(note: dict[str, Any], *, which: str = "auto") -> tuple[bytes,
         "ts_utc": note.get("updated_at") or note.get("created_at") or "",
         "raw_usage_json": raw,
         "label": label,
+        "file_base": "transkript" if (label and is_trans) else "",
     }
     return build_journal_pdf(synthetic)
 
