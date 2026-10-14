@@ -547,3 +547,27 @@ class CustomLayoutTests(unittest.TestCase):
         urls = web_canvas.image_dicts_to_data_urls([{"mime": "image/png", "b64": b64}])
         self.assertEqual(len(urls), 1)
         self.assertTrue(urls[0].startswith("data:image/jpeg;base64,"))
+
+
+class TableFactsTests(unittest.TestCase):
+    def test_totals_by_row_column_and_grand_skip_total_column(self):
+        from assistant.lib import table_facts
+
+        html = ("<p>Бюджет</p><table><tr><th>Статья</th><th>Q1</th><th>Q2</th><th>Итого</th></tr>"
+                "<tr><td>Маркетинг</td><td>120 000</td><td>95 500</td><td>999</td></tr>"
+                "<tr><td>Зарплаты</td><td>1 200 000</td><td>1 250 000</td><td></td></tr>"
+                "<tr><td>Итого</td><td>1</td><td>1</td><td></td></tr></table>")
+        out = table_facts.facts_from_html(html)
+        self.assertIn("Маркетинг: сумма 215 500", out)
+        self.assertIn("Зарплаты: сумма 2 450 000", out)
+        self.assertIn("Q1: сумма 1 320 000", out)
+        self.assertIn("Всего по таблице: 2 665 500", out)
+        self.assertEqual(table_facts.facts_from_html("<p>без таблиц</p>"), "")
+        self.assertEqual(table_facts.parse_number("−3,1"), -3.1)
+        self.assertIsNone(table_facts.parse_number("Q1"))
+
+    def test_big_numbers_get_digit_groups(self):
+        self.assertEqual(tpl.group_digits("4231530"), "4\u00a0231\u00a0530")
+        self.assertEqual(tpl.group_digits("358750 ₽"), "358\u00a0750 ₽")
+        self.assertEqual(tpl.group_digits("2024"), "2024")
+        self.assertEqual(tpl.group_digits("12 000"), "12 000")

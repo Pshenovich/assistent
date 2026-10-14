@@ -138,6 +138,8 @@ class Ctx:
         v = self.val(path)
         if not v and not force:
             return ""
+        if path.rsplit(".", 1)[-1] in _NUMBER_SLOTS:
+            v = group_digits(v)
         c = f' class="{cls}"' if cls else ""
         st = f' style="{style}"' if style else ""
         return (
@@ -154,6 +156,18 @@ class Ctx:
 
     def item_attrs(self, path: str, i: int) -> str:
         return f'data-item="{escape(path)}.{i}"'
+
+
+_NUMBER_SLOTS = {"value", "big", "num", "total", "before_value", "after_value"}
+_BARE_NUMBER_RE = re.compile(r"^([+\-−]?)(\d{5,})([.,]\d+)?(\s?(?:%|₽|\$|€|руб\.?|р\.))?$")
+
+
+def group_digits(v: str) -> str:
+    """«4231530» → «4 231 530» (модель часто пишет крупные числа без разрядов). Годы и короткие числа не трогаем."""
+    m = _BARE_NUMBER_RE.match(str(v or "").strip())
+    if not m:
+        return v
+    return m.group(1) + f"{int(m.group(2)):,}".replace(",", "\u00a0") + (m.group(3) or "") + (m.group(4) or "")
 
 
 def _cols(n: int, long_text: bool = False, max_cols: int = 4) -> int:
