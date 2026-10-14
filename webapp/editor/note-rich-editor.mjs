@@ -596,12 +596,64 @@ function repairOrphanTaskText(root) {
   });
 }
 
+const PLAIN_URL_RE = /(https?:\/\/[^\s<>"]+|www\.[^\s<>"]+)/gi;
+
+function safeLinkHref(raw) {
+  let s = String(raw || "").trim().replace(/[),.;:!?'"»]+$/g, "");
+  if (/^www\./i.test(s)) s = "https://" + s;
+  try {
+    const u = new URL(s);
+    return u.protocol === "http:" || u.protocol === "https:" ? u.href : "";
+  } catch (_) {
+    return "";
+  }
+}
+
+// Адреса, сохранённые простым текстом (например, ботом), превращаем в ссылки.
+function linkifyPlainUrls(root) {
+  const doc = root.ownerDocument;
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: function (node) {
+      const p = node.parentElement;
+      if (!p || p.closest("a, code, pre, [data-leo-task-id], [contenteditable='false']")) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      PLAIN_URL_RE.lastIndex = 0;
+      return PLAIN_URL_RE.test(node.nodeValue || "") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach(function (node) {
+    const text = node.nodeValue || "";
+    const frag = doc.createDocumentFragment();
+    let last = 0;
+    text.replace(PLAIN_URL_RE, function (match, _g, offset) {
+      const href = safeLinkHref(match);
+      if (!href) return match;
+      const tail = (match.match(/[),.;:!?'"»]+$/) || [""])[0];
+      const shown = tail ? match.slice(0, -tail.length) : match;
+      if (offset > last) frag.appendChild(doc.createTextNode(text.slice(last, offset)));
+      const a = doc.createElement("a");
+      a.setAttribute("href", href);
+      a.textContent = shown;
+      frag.appendChild(a);
+      last = offset + shown.length;
+      return match;
+    });
+    if (last === 0) return;
+    if (last < text.length) frag.appendChild(doc.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  });
+}
+
 function prepareHtmlForEditor(raw) {
   let html = stripEditorArtifacts(raw, { keepTaskListClass: true, keepTaskTypes: true });
   const doc = new DOMParser().parseFromString("<div>" + html + "</div>", "text/html");
   const root = doc.body.firstChild;
   if (root) {
     repairOrphanTaskText(root);
+    linkifyPlainUrls(root);
     html = root.innerHTML;
   }
   return html.trim();
@@ -2385,6 +2437,18 @@ function mount(container, options) {
       },
       handleTripleClick: function (view, pos) {
         return selectAllTextInTableCell(view, pos);
+      },
+      // Нажатие на ссылку открывает её (через Telegram в мини-приложении).
+      handleClick: function (view, pos, event) {
+        const a = event && event.target && event.target.closest && event.target.closest("a[href]");
+        if (!a || !view.dom.contains(a)) return false;
+        if (event.shiftKey || event.altKey) return false;
+        const href = safeLinkHref(a.getAttribute("href"));
+        if (!href) return false;
+        event.preventDefault();
+        if (typeof options.onOpenLink === "function") options.onOpenLink(href);
+        else window.open(href, "_blank", "noopener");
+        return true;
       },
       handleDOMEvents: {
         copy: function (view, event) {
