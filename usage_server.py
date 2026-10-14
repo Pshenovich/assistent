@@ -2714,6 +2714,22 @@ class _MiniappShareCommentCreate(BaseModel):
     as_role: Optional[str] = None
     model: Optional[str] = None
     file_ids: list[int] = Field(default_factory=list)
+    # Чат заметки: id чата с ИИ, -1 — «Комментарии», None — как раньше (до чатов).
+    chat_id: Optional[int] = None
+
+
+class _MiniappNoteChatCreate(BaseModel):
+    title: str = ""
+    visibility: str = "private"
+
+
+class _MiniappNoteChatPatch(BaseModel):
+    title: Optional[str] = None
+    visibility: Optional[str] = None
+
+
+class _MiniappNoteChatSplit(BaseModel):
+    after_id: int
 
 
 class _MiniappChatCreate(BaseModel):
@@ -2734,6 +2750,7 @@ class _MiniappNotePaeiStart(BaseModel):
     knowledge_note_ids: Optional[list[str]] = None
     sheet_ids: Optional[list[str]] = None
     context_note_ids: Optional[list[str]] = None
+    chat_id: Optional[int] = None
 
 
 class _MiniappNoteResearchStart(_MiniappNotePaeiStart):
@@ -3045,6 +3062,37 @@ def _materialize_canvas_sheet_images(
     return updated or {**sheet, "body": filled, "description": filled}
 
 
+def _resolve_post_chat(
+    owner: str, kind: str, item_id: str, uid: str, chat_id: Optional[int], parent_id: Optional[int] = None
+) -> Optional[int]:
+    """Чат для нового сообщения (видимый автору) или 404. None — без чата (старые клиенты)."""
+    from assistant.stores import note_chats
+    from assistant.stores import share_comments as share_comments_store
+
+    if parent_id not in (None, 0):
+        parent = share_comments_store.get_comment(int(parent_id))
+        if not parent or not note_chats.comment_visible(parent, uid):
+            raise HTTPException(status_code=404, detail="Комментарий для ответа не найден")
+    if not note_chats.supports_chats(kind) or chat_id is None:
+        return None
+    if int(chat_id) == note_chats.COMMENTS_CHAT_ID:
+        return note_chats.COMMENTS_CHAT_ID
+    chat = note_chats.chat_for_item(chat_id, owner, kind, item_id)
+    if not note_chats.can_view(chat, uid):
+        raise HTTPException(status_code=404, detail="Чат не найден")
+    return int(chat_id)
+
+
+def _comment_file_visible(item: dict[str, Any], uid: str) -> bool:
+    from assistant.stores import note_chats
+    from assistant.stores import share_comments as share_comments_store
+
+    cid = item.get("comment_id")
+    if cid in (None, ""):
+        return True
+    return note_chats.comment_visible(share_comments_store.get_comment(int(cid)), uid)
+
+
 def _comment_api(row: dict[str, Any], *, viewer_uid: str | None = None) -> dict[str, Any]:
     owner = str(row.get("owner_user_id") or "")
     author = str(row.get("author_user_id") or "")
@@ -3078,6 +3126,7 @@ def _comment_api(row: dict[str, Any], *, viewer_uid: str | None = None) -> dict[
         "author_username": row.get("author_username"),
         "body": str(row.get("body") or ""),
         "created_at": row.get("created_at"),
+        "chat_id": row.get("chat_id"),
         "quote": str(row.get("quote") or ""),
         "prefix": str(row.get("prefix") or ""),
         "suffix": str(row.get("suffix") or ""),
@@ -6814,6 +6863,8 @@ async def miniapp_gpt_chat(
                 continue
             if item["author_user_id"] != uid and item["owner_user_id"] != uid:
                 continue
+            if not _comment_file_visible(item, uid):
+                continue
             label = str(item.get("filename") or "file")
             if str(item.get("kind") or "") == "image":
                 path = comment_files.disk_path(fid)
@@ -6996,12 +7047,17 @@ async def miniapp_gpt_chat(
                 if owner:
                     import base64 as _b64
 
-                    for item in _cf.list_recent_images(
-                        owner_user_id=owner,
-                        item_kind=kind,
-                        item_id=iid,
-                        limit=2,
-                    ):
+                    recent = [
+                        it
+                        for it in _cf.list_recent_images(
+                            owner_user_id=owner,
+                            item_kind=kind,
+                            item_id=iid,
+                            limit=8,
+                        )
+                        if _comment_file_visible(it, str(uid))
+                    ][:2]
+                    for item in recent:
                         path = _cf.disk_path(int(item["id"]))
                         if not path.is_file():
                             continue
@@ -8942,7 +8998,9 @@ async def miniapp_share_comments_list(
     owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
     if not owner:
         raise HTTPException(status_code=404, detail="Запись не найдена")
-    rows = await run_in_threadpool(share_comments_store.list_comments, owner, kind, item_id)
+    from assistant.stores import note_chats
+
+    rows = await run_in_threadpool(note_chats.visible_comments, owner, kind, item_id, uid)
     return {"comments": [_comment_api(r, viewer_uid=uid) for r in rows]}
 
 
@@ -8985,20 +9043,26 @@ async def miniapp_share_comments_create(
             text = "📎"
         else:
             raise HTTPException(status_code=400, detail="Введите текст комментария")
+    chat_id = await run_in_threadpool(
+        _resolve_post_chat, owner, kind, str(item_id), uid, body.chat_id, body.parent_id
+    )
     try:
         row = await run_in_threadpool(
-            share_comments_store.add_comment,
-            owner,
-            kind,
-            item_id,
-            author_user_id=author_id,
-            author_name=author_name,
-            author_username=author_username,
-            body=text,
-            quote=body.quote,
-            prefix=prefix,
-            suffix=body.suffix,
-            parent_id=body.parent_id,
+            partial(
+                share_comments_store.add_comment,
+                owner,
+                kind,
+                item_id,
+                author_user_id=author_id,
+                author_name=author_name,
+                author_username=author_username,
+                body=text,
+                quote=body.quote,
+                prefix=prefix,
+                suffix=body.suffix,
+                parent_id=body.parent_id,
+                chat_id=chat_id,
+            )
         )
         if file_ids:
             from assistant.stores import comment_files
@@ -9040,6 +9104,11 @@ async def miniapp_share_comments_create(
         or share_comments_store.is_research_comment(row)
         or share_comments_store.is_agent_turn(row)
     )
+    from assistant.stores import note_chats
+
+    if not note_chats.comment_visible(row, None):
+        # Личный чат: участникам заметки ничего не рассылаем.
+        return out
     try:
         await run_in_threadpool(
             partial(
@@ -9123,12 +9192,137 @@ async def miniapp_share_comments_delete(
         or str(row.get("item_id") or "") != str(item_id)
     ):
         raise HTTPException(status_code=404, detail="Комментарий не найден")
+    from assistant.stores import note_chats
+
+    if not note_chats.comment_visible(row, uid):
+        raise HTTPException(status_code=404, detail="Комментарий не найден")
     deleted = await run_in_threadpool(
         share_comments_store.delete_comment, comment_id, requester_user_id=uid
     )
     if not deleted:
         raise HTTPException(status_code=403, detail="Нельзя удалить этот комментарий")
     return {"ok": True}
+
+
+def _note_chat_api(chat: dict[str, Any], uid: str) -> dict[str, Any]:
+    if chat.get("is_comments"):
+        return {**chat, "is_mine": False, "can_edit": False}
+    return {
+        "id": int(chat["id"]),
+        "title": str(chat.get("title") or ""),
+        "visibility": chat.get("visibility"),
+        "author_user_id": chat.get("author_user_id"),
+        "is_mine": chat.get("author_user_id") == uid,
+        "can_edit": chat.get("author_user_id") == uid,
+        "created_at": chat.get("created_at"),
+        "last_at": chat.get("last_at") or chat.get("created_at"),
+        "message_count": int(chat.get("message_count") or 0),
+        "first_message": str(chat.get("first_message") or ""),
+        "legacy": chat.get("origin") == "legacy",
+    }
+
+
+def _note_chat_owner_or_404(uid: str, kind: str, item_id: str) -> str:
+    from assistant.stores import note_chats
+
+    if not note_chats.supports_chats(kind):
+        raise HTTPException(status_code=404, detail="Чаты есть только у заметок")
+    owner = _resolve_item_owner(uid, kind, item_id)
+    if not owner:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    return owner
+
+
+@miniapp_router.get("/notes/{kind}/{item_id}/chats")
+async def miniapp_note_chats_list(
+    kind: str,
+    item_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Чаты обсуждения заметки, видимые пользователю, + общий чат «Комментарии» (id -1)."""
+    from assistant.stores import note_chats
+
+    uid = str(int(principal.telegram_user_id))
+
+    def _run() -> list[dict[str, Any]]:
+        owner = _note_chat_owner_or_404(uid, kind, item_id)
+        return note_chats.list_chats(owner, kind, str(item_id), uid)
+
+    chats = await run_in_threadpool(_run)
+    return {"chats": [_note_chat_api(c, uid) for c in chats]}
+
+
+@miniapp_router.post("/notes/{kind}/{item_id}/chats")
+async def miniapp_note_chats_create(
+    kind: str,
+    item_id: str,
+    body: _MiniappNoteChatCreate,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import note_chats
+
+    uid = str(int(principal.telegram_user_id))
+
+    def _run() -> dict[str, Any]:
+        owner = _note_chat_owner_or_404(uid, kind, item_id)
+        return note_chats.create_chat(
+            owner, kind, str(item_id), author=uid, title=body.title, visibility=body.visibility
+        )
+
+    chat = await run_in_threadpool(_run)
+    return {"ok": True, "chat": _note_chat_api(chat, uid)}
+
+
+@miniapp_router.patch("/notes/{kind}/{item_id}/chats/{chat_id}")
+async def miniapp_note_chats_patch(
+    kind: str,
+    item_id: str,
+    chat_id: int,
+    body: _MiniappNoteChatPatch,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Название и видимость («Только я» / «Все участники») меняет только автор чата."""
+    from assistant.stores import note_chats
+
+    uid = str(int(principal.telegram_user_id))
+
+    def _run() -> dict[str, Any]:
+        owner = _note_chat_owner_or_404(uid, kind, item_id)
+        chat = note_chats.chat_for_item(chat_id, owner, kind, str(item_id))
+        if not note_chats.can_view(chat, uid):
+            raise HTTPException(status_code=404, detail="Чат не найден")
+        assert chat is not None
+        if chat["author_user_id"] != uid:
+            raise HTTPException(status_code=403, detail="Настройки чата меняет его автор")
+        return note_chats.update_chat(chat, title=body.title, visibility=body.visibility)
+
+    chat = await run_in_threadpool(_run)
+    return {"ok": True, "chat": _note_chat_api(chat, uid)}
+
+
+@miniapp_router.post("/notes/{kind}/{item_id}/chats/{chat_id}/split")
+async def miniapp_note_chats_split(
+    kind: str,
+    item_id: str,
+    chat_id: int,
+    body: _MiniappNoteChatSplit,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Сброс контекста GPT, сохранённый в браузере до чатов → отдельный чат (один раз)."""
+    from assistant.stores import note_chats
+
+    uid = str(int(principal.telegram_user_id))
+
+    def _run() -> Optional[dict[str, Any]]:
+        owner = _note_chat_owner_or_404(uid, kind, item_id)
+        chat = note_chats.chat_for_item(chat_id, owner, kind, str(item_id))
+        if not note_chats.can_view(chat, uid):
+            raise HTTPException(status_code=404, detail="Чат не найден")
+        assert chat is not None
+        return note_chats.split_legacy(chat, int(body.after_id), requester=uid)
+
+    chat = await run_in_threadpool(_run)
+    return {"ok": True, "chat": _note_chat_api(chat, uid) if chat else None}
 
 
 @miniapp_router.post("/notes/{kind}/{item_id}/discuss-files")
@@ -9343,6 +9537,7 @@ async def miniapp_discuss_file_get(
         or str(row.get("owner_user_id") or "") != owner
         or str(row.get("item_kind") or "") != kind
         or str(row.get("item_id") or "") != str(item_id)
+        or not _comment_file_visible(row, uid)
     ):
         raise HTTPException(status_code=404, detail="Файл не найден")
     path = comment_files.disk_path(file_id)
@@ -9388,9 +9583,14 @@ async def miniapp_note_paei_start(
     from assistant.nlu.ask_context import pack_attached_notes
 
     attached_notes = pack_attached_notes(int(principal.telegram_user_id), ctx_ids)
+    from assistant.stores import note_chats
+
+    chat_id = await run_in_threadpool(
+        _resolve_post_chat, owner, kind, str(item_id), uid, payload.chat_id, parent_id
+    )
     if reply_text:
         comments = await run_in_threadpool(
-            share_comments_store.list_comments, owner, kind, item_id
+            note_chats.chat_context_comments, owner, kind, str(item_id), uid, chat_id
         )
         root_id = parent_id or share_comments_store.paie_thread_root_id(comments)
         if not root_id:
@@ -9425,6 +9625,7 @@ async def miniapp_note_paei_start(
                 body=reply_text,
                 quote=quote_text,
                 parent_id=user_parent,
+                chat_id=chat_id,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -9432,6 +9633,8 @@ async def miniapp_note_paei_start(
             owner,
             kind,
             item_id,
+            chat_id=chat_id,
+            viewer_uid=uid,
             reply=reply_text,
             parent_id=int(root_id),
             use_knowledge=use_knowledge,
@@ -9447,6 +9650,8 @@ async def miniapp_note_paei_start(
             owner,
             kind,
             item_id,
+            chat_id=chat_id,
+            viewer_uid=uid,
             use_knowledge=use_knowledge,
             knowledge_note_ids=kb_ids,
             sheet_ids=sheet_ids,
@@ -9540,9 +9745,14 @@ async def miniapp_note_research_start(
     if running and str(running.get("status") or "") == "running":
         raise HTTPException(status_code=409, detail="Дождитесь ответа Research")
     thread_parent = parent_id
+    from assistant.stores import note_chats
+
+    chat_id = await run_in_threadpool(
+        _resolve_post_chat, owner, kind, str(item_id), uid, payload.chat_id, parent_id
+    )
     if reply_text:
         comments = await run_in_threadpool(
-            share_comments_store.list_comments, owner, kind, item_id
+            note_chats.chat_context_comments, owner, kind, str(item_id), uid, chat_id
         )
         reply_to_id = None
         raw_reply_to = payload.reply_to_id
@@ -9570,6 +9780,7 @@ async def miniapp_note_research_start(
                 quote=quote_text,
                 prefix=share_comments_store.RESEARCH_PREFIX,
                 parent_id=user_parent,
+                chat_id=chat_id,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -9579,6 +9790,8 @@ async def miniapp_note_research_start(
         owner,
         kind,
         item_id,
+        chat_id=chat_id,
+        viewer_uid=uid,
         reply=reply_text,
         parent_id=thread_parent,
         use_knowledge=use_knowledge,
@@ -10335,11 +10548,14 @@ async def public_share_comments_list(token: str, request: Request) -> dict[str, 
     link = await _resolve_public_share_or_404(token)
     if not share_comments_store.comments_visible_for_link(link):
         raise HTTPException(status_code=403, detail="Комментарии недоступны")
+    from assistant.stores import note_chats
+
     rows = await run_in_threadpool(
-        share_comments_store.list_comments,
-        link["user_id"],
-        link["item_kind"],
-        link["item_id"],
+        note_chats.visible_comments,
+        str(link["user_id"]),
+        str(link["item_kind"]),
+        str(link["item_id"]),
+        None,
     )
     viewer = _optional_share_viewer(request)
     viewer_uid = str(int(viewer.telegram_user_id)) if viewer else None
@@ -10368,20 +10584,32 @@ async def public_share_comments_create(
     if not share_comments_store.comments_allowed_for_link(link):
         raise HTTPException(status_code=403, detail="Комментарии недоступны")
     author_id, author_name, author_username = _comment_author_from_principal(principal)
+    from assistant.stores import note_chats
+
+    if body.parent_id not in (None, 0):
+        parent = await run_in_threadpool(share_comments_store.get_comment, int(body.parent_id))
+        if not note_chats.comment_visible(parent, None):
+            raise HTTPException(status_code=404, detail="Комментарий для ответа не найден")
+    pub_chat = (
+        note_chats.COMMENTS_CHAT_ID if note_chats.supports_chats(str(link["item_kind"])) else None
+    )
     try:
         row = await run_in_threadpool(
-            share_comments_store.add_comment,
-            link["user_id"],
-            link["item_kind"],
-            link["item_id"],
-            author_user_id=author_id,
-            author_name=author_name,
-            author_username=author_username,
-            body=body.body,
-            quote=body.quote,
-            prefix=body.prefix,
-            suffix=body.suffix,
-            parent_id=body.parent_id,
+            partial(
+                share_comments_store.add_comment,
+                link["user_id"],
+                link["item_kind"],
+                link["item_id"],
+                author_user_id=author_id,
+                author_name=author_name,
+                author_username=author_username,
+                body=body.body,
+                quote=body.quote,
+                prefix=body.prefix,
+                suffix=body.suffix,
+                parent_id=body.parent_id,
+                chat_id=pub_chat if body.parent_id in (None, 0) else None,
+            )
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -10406,6 +10634,10 @@ async def public_share_comments_delete(
         or str(row.get("item_kind") or "") != str(link.get("item_kind") or "")
         or str(row.get("item_id") or "") != str(link.get("item_id") or "")
     ):
+        raise HTTPException(status_code=404, detail="Комментарий не найден")
+    from assistant.stores import note_chats
+
+    if not note_chats.comment_visible(row, None):
         raise HTTPException(status_code=404, detail="Комментарий не найден")
     uid = str(int(principal.telegram_user_id))
     deleted = await run_in_threadpool(

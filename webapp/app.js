@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261014-canvas-timeout";
+  var WEBAPP_BUILD = "20261014-note-chats";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261014-canvas-timeout";
+  const NOTE_EDITOR_ASSET_V = "20261014-note-chats";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -19333,6 +19333,8 @@
         : "Исследуйте тему заметки в вебе";
     }
     if (mode === "comment") {
+      var chatNow = currentDiscussChatId();
+      if (chatNow !== null && chatNow !== COMMENTS_CHAT_ID) return "Сообщение в чат без ответа ИИ";
       return quoted ? "Комментарий к выделенному тексту" : "Напишите комментарий";
     }
     return quoted
@@ -21882,7 +21884,7 @@
       syncChatDiscussionTitle(chatTitle);
       return;
     }
-    var title = "Обсуждение";
+    var title = (noteSheetState.rightMode === "discussion" && currentDiscussChatTitle()) || "Обсуждение";
     if (noteSheetState.rightMode === "sheet") {
       var sheet = findNoteSheet(noteSheetState.rightId);
       title = (sheet && sheet.title) || "Лист";
@@ -23325,11 +23327,24 @@
       newCtxBtn.addEventListener("click", function (e) {
         e.preventDefault();
         e.stopPropagation();
-        clearGptDiscussionContext();
+        if (noteChatsEnabled()) toggleNoteChatsMenu();
+        else clearGptDiscussionContext();
+      });
+      document.addEventListener("click", function (e) {
+        var menu = document.getElementById("note-chats-menu");
+        if (!menu || menu.classList.contains("hidden")) return;
+        if (menu.contains(e.target) || newCtxBtn.contains(e.target)) return;
+        closeNoteChatsMenu();
       });
     }
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && isNoteDiscussionOpen()) {
+        var chatsMenu = document.getElementById("note-chats-menu");
+        if (chatsMenu && !chatsMenu.classList.contains("hidden")) {
+          closeNoteChatsMenu();
+          e.preventDefault();
+          return;
+        }
         if (document.getElementById("discuss-media-viewer")) {
           closeDiscussMediaViewer();
           e.preventDefault();
@@ -23605,6 +23620,17 @@
     var mode = opts.mode;
     if (draftQuote && !mode) {
       mode = noteAskUsesChips(noteAskMode()) ? noteAskMode() : "gpt";
+    }
+    syncNoteChatsButton();
+    if (currentDiscussChatId() !== null && mode) {
+      // Комментарий к тексту — в общие «Комментарии», вопрос ИИ — в чат с ИИ.
+      if (mode === "comment" && opts.draft) setCurrentDiscussChat(COMMENTS_CHAT_ID, { keepAsk: true });
+      else if (mode !== "comment" && isCommentsChatActive()) {
+        var lastAi = ((wrap._noteChats || []).filter(function (c) {
+          return Number(c.id) > 0;
+        })[0] || { id: 0 }).id;
+        setCurrentDiscussChat(Number(lastAi), { keepAsk: true });
+      }
     }
     if (mode) setNoteAskMode(mode);
     else if (!opts.fromDesktopSync && !opts.draft) setNoteAskMode(noteAskMode() || "gpt");
@@ -24571,6 +24597,7 @@
           prefix: "",
           suffix: "",
           as_role: "gpt",
+          chat_id: COMMENTS_CHAT_ID,
         }),
       });
       closeNoteLinkPicker();
@@ -25274,7 +25301,8 @@
     var form = document.getElementById("note-paie-reply-form");
     var status = document.getElementById("note-editor-paei-status");
     var statusOn = !!(status && !status.classList.contains("hidden"));
-    var rows = discussionComments(comments).slice().sort(function (a, b) {
+    var chatNow = currentDiscussChatId();
+    var rows = discussionComments(comments).filter(inCurrentDiscussChat).slice().sort(function (a, b) {
       var at = Date.parse(a && a.created_at) || 0;
       var bt = Date.parse(b && b.created_at) || 0;
       if (at !== bt) return at - bt;
@@ -25283,6 +25311,9 @@
     var gptBusy = !!(wrap && wrap._gptBusy);
     var researchRunning = !!(wrap && wrap._researchRunning);
     var fp =
+      "chat:" +
+      String(chatNow) +
+      "|" +
       String(kind || "") +
       ":" +
       String(itemId || "") +
@@ -25343,7 +25374,12 @@
       ) {
         var empty = document.createElement("p");
         empty.className = "note-discussion-empty";
-        empty.textContent = "Задайте вопрос или оставьте комментарий";
+        empty.textContent =
+          chatNow === COMMENTS_CHAT_ID
+            ? "Комментариев пока нет. Их видят все участники заметки"
+            : chatNow === null
+              ? "Задайте вопрос или оставьте комментарий"
+              : "Задайте вопрос ИИ или напишите сообщение";
         list.appendChild(empty);
       } else {
         var cut = gptContextCutId();
@@ -25819,6 +25855,8 @@
         : isCustomAskMode(mode)
           ? mode
           : "gpt";
+    // В «Комментариях» пишут только текст.
+    if (isCommentsChatActive()) next = "comment";
     var modeChanged = next !== prev;
     if (wrap) wrap._askMode = next;
     // Не сбрасывать выбранную модель при каждом ensureNotePaieThread —
@@ -25979,6 +26017,381 @@
   var GPT_COMMENT_BODY_MAX = 24000;
   var GPT_HISTORY_MAX_TURNS = 16;
   var GPT_HISTORY_MAX_CHARS = 18000;
+
+  // ---- Чаты обсуждения заметки ----
+  // У заметки несколько чатов с ИИ (видимость «Только я» / «Все участники») и общий
+  // чат «Комментарии» (id -1). wrap._chatId: >0 — чат с ИИ, -1 — «Комментарии»,
+  // 0 — новый чат, который создаётся на сервере при первом сообщении.
+  var COMMENTS_CHAT_ID = -1;
+
+  function discussWrap() {
+    return document.getElementById("note-editor-more-wrap");
+  }
+
+  function noteChatsEnabled() {
+    var wrap = discussWrap();
+    return !!(
+      wrap &&
+      wrap._shareKind === "local" &&
+      wrap._shareId &&
+      String(wrap._shareId).indexOf("tmp_") !== 0
+    );
+  }
+
+  function noteChatsBase() {
+    var wrap = discussWrap();
+    return "/notes/" + encodeURIComponent(wrap._shareKind) + "/" + encodeURIComponent(wrap._shareId) + "/chats";
+  }
+
+  function noteChatKey() {
+    var wrap = discussWrap();
+    return wrap ? String(wrap._shareKind || "") + ":" + String(wrap._shareId || "") : "";
+  }
+
+  function currentDiscussChatId() {
+    var wrap = discussWrap();
+    if (!noteChatsEnabled() || wrap._chatsFor !== noteChatKey()) return null;
+    var id = Number(wrap._chatId);
+    return isFinite(id) ? id : 0;
+  }
+
+  function isCommentsChatActive() {
+    return currentDiscussChatId() === COMMENTS_CHAT_ID;
+  }
+
+  // Поля запроса, привязывающие сообщение к текущему чату.
+  function discussChatFields() {
+    var id = currentDiscussChatId();
+    return id === COMMENTS_CHAT_ID || id > 0 ? { chat_id: id } : {};
+  }
+
+  // Сообщение в новый чат: сначала создаём чат на сервере.
+  async function ensureDiscussChat() {
+    var wrap = discussWrap();
+    var id = currentDiscussChatId();
+    if (id === null || id === COMMENTS_CHAT_ID || id > 0) return id;
+    var res = await apiFetch(noteChatsBase(), {
+      method: "POST",
+      body: JSON.stringify({ visibility: wrap._newChatVisibility || "private" }),
+    });
+    var chat = res && res.chat;
+    if (!chat || !chat.id) throw new Error("Не удалось создать чат");
+    wrap._noteChats = [chat].concat(wrap._noteChats || []);
+    wrap._newChatVisibility = "";
+    // Без перерисовки: в ленте уже стоит отправляемое сообщение.
+    setCurrentDiscussChat(Number(chat.id), { keepAsk: true, noRender: true });
+    return Number(chat.id);
+  }
+
+  function inCurrentDiscussChat(c) {
+    var id = currentDiscussChatId();
+    if (id === null) return true;
+    if (!id) return false;
+    return Number(c && c.chat_id) === id;
+  }
+
+  function noteChatById(id) {
+    var wrap = discussWrap();
+    var list = (wrap && wrap._noteChats) || [];
+    for (var i = 0; i < list.length; i++) {
+      if (Number(list[i].id) === Number(id)) return list[i];
+    }
+    return null;
+  }
+
+  function noteChatTitle(chat) {
+    if (!chat) return "Новый чат";
+    if (Number(chat.id) === COMMENTS_CHAT_ID) return "Комментарии";
+    var t = String(chat.title || "").trim() || String(chat.first_message || "").trim();
+    if (!t) return "Новый чат";
+    return t.length > 48 ? t.slice(0, 47) + "…" : t;
+  }
+
+  function currentDiscussChatTitle() {
+    var id = currentDiscussChatId();
+    if (id === null) return "";
+    if (id === 0) return "Новый чат";
+    return noteChatTitle(noteChatById(id));
+  }
+
+  function rememberDiscussChat(id) {
+    try {
+      localStorage.setItem("leo_note_chat:" + noteChatKey(), String(id));
+    } catch (_) {}
+  }
+
+  function rememberedDiscussChat() {
+    try {
+      var n = parseInt(localStorage.getItem("leo_note_chat:" + noteChatKey()) || "", 10);
+      return isFinite(n) ? n : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function rerenderDiscussionFeed() {
+    var wrap = discussWrap();
+    var panel = document.getElementById("note-editor-comments");
+    if (!wrap || !wrap._shareKind || !wrap._shareId) return;
+    renderNotePaieThread((panel && panel._allComments) || [], wrap._shareKind, wrap._shareId);
+  }
+
+  function setCurrentDiscussChat(id, opts) {
+    opts = opts || {};
+    var wrap = discussWrap();
+    if (!wrap || !noteChatsEnabled()) return;
+    var prev = currentDiscussChatId();
+    wrap._chatsFor = noteChatKey();
+    wrap._chatId = Number(id) || 0;
+    if (wrap._chatId) rememberDiscussChat(wrap._chatId);
+    var form = document.getElementById("note-paie-reply-form");
+    if (form) form.classList.toggle("is-comments-chat", wrap._chatId === COMMENTS_CHAT_ID);
+    if (!opts.keepAsk) {
+      if (wrap._chatId === COMMENTS_CHAT_ID) setNoteAskMode("comment");
+      else if (prev === COMMENTS_CHAT_ID && noteAskMode() === "comment") setNoteAskMode("gpt");
+    }
+    syncNotePaneHeader();
+    syncNoteChatsButton();
+    if (opts.noRender) return;
+    if (prev !== wrap._chatId) {
+      var list = document.getElementById("note-discussion-messages");
+      if (list) list._renderFp = "";
+      if (wrap) wrap._forceDiscussScrollBottom = true;
+    }
+    rerenderDiscussionFeed();
+  }
+
+  function syncNoteChatsButton() {
+    var btn = document.getElementById("note-discussion-new-ctx");
+    if (!btn) return;
+    var on = noteChatsEnabled();
+    btn.classList.toggle("is-chats", on);
+    var label = on ? "Чаты" : "Новый контекст GPT";
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+  }
+
+  // Чаты заметки + выбор текущего. Сброс контекста GPT из браузера (до чатов)
+  // один раз превращается в отдельный чат.
+  async function loadNoteChats(kind, itemId) {
+    var wrap = discussWrap();
+    if (!wrap || String(kind) !== "local") return;
+    var key = String(kind) + ":" + String(itemId);
+    var data = await apiFetch(
+      "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/chats",
+      { method: "GET" }
+    );
+    var live = discussWrap();
+    if (!live || noteChatKey() !== key) return false;
+    var chats = (data && data.chats) || [];
+    var cut = gptContextCutId();
+    if (cut > 0) {
+      setGptContextCutId(0);
+      var legacy = chats.filter(function (c) {
+        return c && c.legacy;
+      })[0];
+      if (legacy) {
+        try {
+          var split = await apiFetch(
+            "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/chats/" + legacy.id + "/split",
+            { method: "POST", body: JSON.stringify({ after_id: cut }) }
+          );
+          if (split && split.chat) return loadNoteChats(kind, itemId);
+        } catch (_) {}
+      }
+    }
+    live._noteChats = chats;
+    var first = live._chatsFor !== key;
+    if (first) {
+      var want = rememberedDiscussChat();
+      var ok =
+        want === COMMENTS_CHAT_ID ||
+        chats.some(function (c) {
+          return Number(c.id) === want;
+        });
+      var aiChats = chats.filter(function (c) {
+        return Number(c.id) > 0;
+      });
+      var pick = ok ? want : aiChats.length ? Number(aiChats[0].id) : 0;
+      setCurrentDiscussChat(pick);
+    } else {
+      syncNotePaneHeader();
+    }
+    return true;
+  }
+
+  function closeNoteChatsMenu() {
+    var menu = document.getElementById("note-chats-menu");
+    var btn = document.getElementById("note-discussion-new-ctx");
+    if (menu) menu.classList.add("hidden");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+
+  function noteChatMeta(chat) {
+    var parts = [];
+    var n = Number(chat.message_count) || 0;
+    if (n) parts.push(n + " " + (n % 10 === 1 && n % 100 !== 11 ? "сообщение" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "сообщения" : "сообщений"));
+    var t = Date.parse(chat.last_at || "");
+    if (t) {
+      parts.push(
+        new Date(t).toLocaleDateString("ru-RU", { day: "numeric", month: "short" })
+      );
+    }
+    return parts.join(" · ");
+  }
+
+  function renderNoteChatsMenu() {
+    var menu = document.getElementById("note-chats-menu");
+    var wrap = discussWrap();
+    if (!menu || !wrap) return;
+    menu.innerHTML = "";
+    var cur = currentDiscussChatId();
+    function row(cls, onClick) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "note-pane-switch-item " + cls;
+      b.setAttribute("role", "menuitem");
+      b.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        onClick();
+      });
+      menu.appendChild(b);
+      return b;
+    }
+    function itemRow(chat, active) {
+      var b = row("note-chats-item" + (active ? " is-active" : ""), function () {
+        closeNoteChatsMenu();
+        setCurrentDiscussChat(Number(chat.id));
+      });
+      var text = document.createElement("span");
+      text.className = "note-chats-item-text";
+      var title = document.createElement("span");
+      title.className = "note-chats-item-title";
+      title.textContent = noteChatTitle(chat);
+      var meta = document.createElement("span");
+      meta.className = "note-chats-item-meta";
+      meta.textContent = noteChatMeta(chat) || (Number(chat.id) === COMMENTS_CHAT_ID ? "Общие для всех участников" : "");
+      text.appendChild(title);
+      if (meta.textContent) text.appendChild(meta);
+      b.appendChild(text);
+      if (Number(chat.id) > 0 && chat.visibility === "private") {
+        var badge = document.createElement("span");
+        badge.className = "note-chats-item-badge";
+        badge.textContent = "Только я";
+        b.appendChild(badge);
+      }
+      if (active) b.setAttribute("aria-current", "true");
+    }
+    var newBtn = row("note-chats-new" + (cur === 0 ? " is-active" : ""), function () {
+      closeNoteChatsMenu();
+      setCurrentDiscussChat(0);
+    });
+    newBtn.textContent = "+ Новый чат";
+    var chats = wrap._noteChats || [];
+    var comments = chats.filter(function (c) {
+      return Number(c.id) === COMMENTS_CHAT_ID;
+    })[0] || { id: COMMENTS_CHAT_ID, title: "Комментарии" };
+    itemRow(comments, cur === COMMENTS_CHAT_ID);
+    var ai = chats.filter(function (c) {
+      return Number(c.id) > 0;
+    });
+    if (ai.length) {
+      var sep = document.createElement("div");
+      sep.className = "note-pane-switch-sep";
+      menu.appendChild(sep);
+      ai.forEach(function (c) {
+        itemRow(c, Number(c.id) === cur);
+      });
+    }
+    // «Кто видит» — для текущего чата с ИИ (менять может его автор) и для нового чата.
+    var current = cur > 0 ? noteChatById(cur) : null;
+    if (cur === 0 || current) {
+      var sep2 = document.createElement("div");
+      sep2.className = "note-pane-switch-sep";
+      menu.appendChild(sep2);
+      var box = document.createElement("div");
+      box.className = "note-chats-visibility";
+      var label = document.createElement("span");
+      label.className = "note-chats-visibility-label";
+      label.textContent = cur === 0 ? "Кто увидит новый чат" : "Кто видит этот чат";
+      var seg = document.createElement("div");
+      seg.className = "note-chats-visibility-seg";
+      seg.setAttribute("role", "group");
+      seg.setAttribute("aria-label", label.textContent);
+      var vis = cur === 0 ? wrap._newChatVisibility || "private" : current.visibility;
+      var editable = cur === 0 || !!(current && current.can_edit);
+      [
+        ["private", "Только я"],
+        ["shared", "Все участники"],
+      ].forEach(function (opt) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.textContent = opt[1];
+        b.setAttribute("aria-pressed", String(vis === opt[0]));
+        b.disabled = !editable;
+        if (!editable) b.title = "Менять может автор чата";
+        b.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          setNoteChatVisibility(cur, opt[0]);
+        });
+        seg.appendChild(b);
+      });
+      box.appendChild(label);
+      box.appendChild(seg);
+      menu.appendChild(box);
+    }
+  }
+
+  async function setNoteChatVisibility(chatId, visibility) {
+    var wrap = discussWrap();
+    if (!wrap) return;
+    if (!chatId) {
+      wrap._newChatVisibility = visibility;
+      renderNoteChatsMenu();
+      return;
+    }
+    try {
+      var res = await apiFetch(noteChatsBase() + "/" + encodeURIComponent(String(chatId)), {
+        method: "PATCH",
+        body: JSON.stringify({ visibility: visibility }),
+      });
+      var chat = res && res.chat;
+      if (chat) {
+        wrap._noteChats = (wrap._noteChats || []).map(function (c) {
+          return Number(c.id) === Number(chat.id) ? Object.assign({}, c, chat) : c;
+        });
+      }
+      renderNoteChatsMenu();
+      showNoteToast(visibility === "shared" ? "Чат виден всем участникам заметки" : "Чат виден только вам");
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось изменить доступ");
+    }
+  }
+
+  function toggleNoteChatsMenu() {
+    var menu = document.getElementById("note-chats-menu");
+    var btn = document.getElementById("note-discussion-new-ctx");
+    if (!menu) return;
+    var open = menu.classList.contains("hidden");
+    closeNotePaneSwitchMenu();
+    if (!open) {
+      closeNoteChatsMenu();
+      return;
+    }
+    renderNoteChatsMenu();
+    menu.classList.remove("hidden");
+    if (btn) btn.setAttribute("aria-expanded", "true");
+    var wrap = discussWrap();
+    if (wrap && wrap._shareKind && wrap._shareId) {
+      loadNoteChats(wrap._shareKind, wrap._shareId)
+        .then(function () {
+          if (!menu.classList.contains("hidden")) renderNoteChatsMenu();
+        })
+        .catch(function () {});
+    }
+  }
 
   function gptContextCutKey() {
     var wrap = document.getElementById("note-editor-more-wrap");
@@ -26149,7 +26562,10 @@
     var customId = agentId && agentId !== "gpt" ? String(agentId) : "";
     var prior = discussionComments(comments || [])
       .filter(function (c) {
-        if (!c || Number(c.id) <= cut) return false;
+        if (!c) return false;
+        if (currentDiscussChatId() !== null) {
+          if (!inCurrentDiscussChat(c)) return false;
+        } else if (Number(c.id) <= cut) return false;
         if (customId) {
           return api && api.agentIdOf ? api.agentIdOf(c) === customId : String(c.prefix || "") === "__agent__:" + customId;
         }
@@ -26296,6 +26712,7 @@
     wrap._commentReplyWho = null;
     setGptDiscussPhase("sending");
     try {
+      await ensureDiscussChat();
       var fileIds = await uploadDiscussPendingFiles(kind, itemId);
       clearDiscussPendingFiles();
       clearDiscussPendingContextNotes();
@@ -26303,14 +26720,19 @@
         "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
         {
           method: "POST",
-          body: JSON.stringify({
-            body: body,
-            quote: quote,
-            prefix: agentPrefix,
-            suffix: "",
-            parent_id: replyToId || null,
-            file_ids: fileIds,
-          }),
+          body: JSON.stringify(
+            Object.assign(
+              {
+                body: body,
+                quote: quote,
+                prefix: agentPrefix,
+                suffix: "",
+                parent_id: replyToId || null,
+                file_ids: fileIds,
+              },
+              discussChatFields()
+            )
+          ),
         }
       );
       if (saved && saved.thread) upsertChatThreadCache(saved.thread);
@@ -26410,6 +26832,7 @@
             as_role: agentId === "gpt" ? "gpt" : "agent:" + agentId,
             model: agentId === "gpt" ? String((res && res.model) || selectedGptModelId() || "") : undefined,
             file_ids: gptFileIds,
+            chat_id: discussChatFields().chat_id,
           }),
         }
       );
@@ -26464,6 +26887,7 @@
     var input = document.getElementById("note-paie-reply-input");
     appendOptimisticUserMessage(body, quote);
     try {
+      await ensureDiscussChat();
       var fileIds = await uploadDiscussPendingFiles(wrap._shareKind, wrap._shareId);
       clearDiscussPendingContextNotes();
       var footSaved = await apiFetch(
@@ -26474,14 +26898,19 @@
           "/comments",
         {
           method: "POST",
-          body: JSON.stringify({
-            body: body,
-            quote: quote,
-            prefix: (draft && draft.prefix) || "",
-            suffix: (draft && draft.suffix) || "",
-            parent_id: chairId || null,
-            file_ids: fileIds,
-          }),
+          body: JSON.stringify(
+            Object.assign(
+              {
+                body: body,
+                quote: quote,
+                prefix: (draft && draft.prefix) || "",
+                suffix: (draft && draft.suffix) || "",
+                parent_id: chairId || null,
+                file_ids: fileIds,
+              },
+              discussChatFields()
+            )
+          ),
         }
       );
       if (footSaved && footSaved.thread) upsertChatThreadCache(footSaved.thread);
@@ -26513,6 +26942,7 @@
             prefix: (draft && draft.prefix) || "",
             suffix: (draft && draft.suffix) || "",
             parent_id: chairId,
+            chat_id: discussChatFields().chat_id,
           }),
         }
       );
@@ -26752,10 +27182,11 @@
     openNoteDiscussion({ mode: "paie" });
     setNotePaeiStatus("Анализ заметки…", { label: "Анализ заметки…", pct: 10 });
     ensureDiscussionKnowledgeNotes()
+      .then(ensureDiscussChat)
       .then(function () {
         return apiFetch(path, {
           method: "POST",
-          body: JSON.stringify(discussionKnowledgeFields()),
+          body: JSON.stringify(Object.assign(discussionKnowledgeFields(), discussChatFields())),
         });
       })
       .then(function (data) {
@@ -26844,6 +27275,7 @@
       submit.setAttribute("aria-label", "CHAIR отвечает…");
     }
     ensureDiscussionKnowledgeNotes()
+      .then(ensureDiscussChat)
       .then(function () {
         return apiFetch(path, {
           method: "POST",
@@ -26855,7 +27287,8 @@
                 reply_to_id: replyToId,
                 quote: (draft && draft.quote) || "",
               },
-              discussionKnowledgeFields()
+              discussionKnowledgeFields(),
+              discussChatFields()
             )
           ),
         });
@@ -27080,6 +27513,7 @@
       submit.setAttribute("aria-label", "Research ищет…");
     }
     ensureDiscussionKnowledgeNotes()
+      .then(ensureDiscussChat)
       .then(function () {
         return apiFetch(path, {
           method: "POST",
@@ -27089,7 +27523,8 @@
                 reply: body,
                 quote: quote,
               },
-              discussionKnowledgeFields()
+              discussionKnowledgeFields(),
+              discussChatFields()
             )
           ),
         });
@@ -27942,10 +28377,17 @@
     var wantKind = String(kind || "");
     var wantId = String(itemId || "");
     try {
+      var chatsLoad =
+        wantKind === "local" && wantId.indexOf("tmp_") !== 0
+          ? loadNoteChats(wantKind, wantId).catch(function (e) {
+              console.warn("loadNoteChats", e);
+            })
+          : null;
       var data = await apiFetch(
         "/notes/" + encodeURIComponent(wantKind) + "/" + encodeURIComponent(wantId) + "/comments",
         { method: "GET" }
       );
+      if (chatsLoad) await chatsLoad;
       // Устаревший ответ после смены чата/заметки — не трогаем текущую ленту.
       if (!isDiscussionTargetActive(wantKind, wantId)) {
         return;

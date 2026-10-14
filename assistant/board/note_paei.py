@@ -14,7 +14,7 @@ from assistant.board import store
 from assistant.board.meeting import MeetingService
 from assistant.board.orchestrator import max_rounds
 from assistant.board.share_source import share_body_to_text
-from assistant.stores import share_comments
+from assistant.stores import note_chats, share_comments
 
 CHAIR_AUTHOR_ID = 0
 CHAIR_AUTHOR_NAME = "CHAIR"
@@ -223,6 +223,8 @@ def begin_job(
     reply_to_id: int | None = None,
     sheet_ids: list[str] | None = None,
     attached_notes: str = "",
+    chat_id: int | None = None,
+    viewer_uid: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
     key = job_key(user_id, kind, item_id)
     now = time.time()
@@ -243,6 +245,8 @@ def begin_job(
             "started_at": now,
             "reply": reply_text,
             "parent_id": parent_id,
+            "chat_id": chat_id,
+            "viewer_uid": viewer_uid,
             "quote": (quote or "").strip(),
             "reply_to_id": reply_to_id,
             "use_knowledge": bool(use_knowledge)
@@ -498,6 +502,8 @@ async def run_note_paei(
     reply_to_id: int | None = None,
     sheet_ids: list[str] | None = None,
     attached_notes: str = "",
+    chat_id: int | None = None,
+    viewer_uid: str | None = None,
 ) -> dict[str, Any]:
     store.init_db()
     if sheet_ids is not None:
@@ -509,7 +515,7 @@ async def run_note_paei(
     if knowledge_note_ids is not None:
         knowledge_note_ids = [str(x).strip() for x in knowledge_note_ids if str(x).strip()]
         use_knowledge = bool(knowledge_note_ids)
-    comments = share_comments.list_comments(user_id, kind, item_id)
+    comments = note_chats.chat_context_comments(user_id, kind, item_id, viewer_uid, chat_id)
     root_id = parent_id or share_comments.paie_thread_root_id(comments)
     reanalyze = not reply_text or is_note_reanalyze_request(reply_text)
     if reply_text and not reanalyze:
@@ -614,6 +620,7 @@ async def run_note_paei(
         body=text,
         quote="",
         parent_id=root_id,
+        chat_id=chat_id,
     )
     return {
         "meeting_id": str(meeting["id"]),
@@ -693,6 +700,8 @@ async def run_note_paei_job(
             reply_to_id=target_id,
             sheet_ids=sheet_ids,
             attached_notes=attached_notes,
+            chat_id=job.get("chat_id"),
+            viewer_uid=job.get("viewer_uid"),
         )
         comment = result.get("comment") or {}
         _update_job(
