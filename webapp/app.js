@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261013-canvas-templates";
+  var WEBAPP_BUILD = "20261014-canvas-templates";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261013-canvas-templates";
+  const NOTE_EDITOR_ASSET_V = "20261014-canvas-templates";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -27828,7 +27828,20 @@
     if (!api || !api.paintOverlay || !overlay) return;
     var panel = document.getElementById("note-editor-comments");
     var all = comments || (panel && panel._allComments) || [];
-    api.paintOverlay(root, overlay, all, activeId);
+    // Цитату подсвечиваем только у темы, открытой из «Обсуждения», а не у всех комментариев.
+    var shown = activeId
+      ? all.filter(function (c) {
+          return c && String(c.id) === String(activeId);
+        })
+      : [];
+    api.paintOverlay(root, overlay, shown, activeId);
+  }
+
+  function clearEditorCommentHighlight() {
+    var panel = document.getElementById("note-editor-comments");
+    if (!panel || !panel._activeCommentId) return;
+    panel._activeCommentId = null;
+    paintEditorCommentOverlay(panel._allComments || []);
   }
 
   function onEditorHighlightClick(id, comments) {
@@ -28088,8 +28101,14 @@
       var comments = (live && live._allComments) || [];
       if (!api.commentAtPoint) return;
       var hit = api.commentAtPoint(root, comments, e.clientX, e.clientY);
-      if (!hit) return;
-      revealNoteDiscussionTopic(hit, { fromNote: true });
+      var activeId = live && live._activeCommentId;
+      var hitRoot = hit && api.topicRoot ? api.topicRoot(comments, hit.id) || hit : hit;
+      // Невидимые цитаты не перехватывают тап — иначе нельзя просто поставить курсор.
+      if (hitRoot && activeId && String(hitRoot.id) === String(activeId)) {
+        revealNoteDiscussionTopic(hit, { fromNote: true });
+        return;
+      }
+      clearEditorCommentHighlight();
     }
     var scrollParent = document.querySelector("#note-editor-overlay .note-editor-modal-body");
     document.addEventListener("mouseup", onSelect);
