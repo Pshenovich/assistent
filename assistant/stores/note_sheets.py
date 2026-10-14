@@ -64,6 +64,10 @@ def _conn() -> sqlite3.Connection:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_note_sheets_note ON note_sheets(note_id, position)"
     )
+    # Место «Основной» среди вкладок (доп. листы упорядочены своим position).
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS note_sheet_prefs (note_id INTEGER PRIMARY KEY, primary_pos INTEGER NOT NULL DEFAULT 0)"
+    )
     return conn
 
 
@@ -159,9 +163,44 @@ def list_sheet_versions(note_id: int) -> list[dict[str, Any]]:
         ]
 
 
+def primary_position(note_id: int) -> int:
+    with _LOCK:
+        row = _conn().execute("SELECT primary_pos FROM note_sheet_prefs WHERE note_id = ?", (int(note_id),)).fetchone()
+    return max(0, int(row["primary_pos"])) if row else 0
+
+
 def list_sheets(note: dict[str, Any]) -> list[dict[str, Any]]:
-    extras = list_extra_sheets(int(note["id"])) if note_allows_sheets(note) else []
-    return [primary_sheet(note), *extras]
+    if not note_allows_sheets(note):
+        return [primary_sheet(note)]
+    extras = list_extra_sheets(int(note["id"]))
+    pos = min(primary_position(int(note["id"])), len(extras))
+    return [*extras[:pos], primary_sheet(note), *extras[pos:]]
+
+
+def sheet_order_ids(note: dict[str, Any]) -> list[str]:
+    """Порядок вкладок (id листов, «Основная» = PRIMARY_SHEET_ID)."""
+    return [str(s["id"]) for s in list_sheets(note)]
+
+
+def set_sheet_order(note: dict[str, Any], order: list[Any]) -> list[dict[str, Any]]:
+    """Новый порядок вкладок. order — все id листов заметки (включая «Основную»)."""
+    note_id = int(note["id"])
+    current = sheet_order_ids(note)
+    want = [str(x).strip() for x in order or []]
+    if sorted(want) != sorted(current) or len(set(want)) != len(want):
+        raise SheetError("Порядок листов устарел — обновите заметку")
+    extras = [x for x in want if x != str(PRIMARY_SHEET_ID)]
+    with _LOCK:
+        conn = _conn()
+        for i, sid in enumerate(extras):
+            conn.execute("UPDATE note_sheets SET position = ? WHERE note_id = ? AND id = ?", (i, note_id, int(sid)))
+        conn.execute(
+            "INSERT INTO note_sheet_prefs (note_id, primary_pos) VALUES (?, ?) "
+            "ON CONFLICT(note_id) DO UPDATE SET primary_pos = excluded.primary_pos",
+            (note_id, want.index(str(PRIMARY_SHEET_ID))),
+        )
+        conn.commit()
+    return list_sheets(note)
 
 
 def _selected_share_rows(

@@ -87,6 +87,8 @@ def _conn() -> sqlite3.Connection:
     )
     _ensure_access_column(conn)
     _ensure_sheet_ids_column(conn)
+    if "views" not in {str(r[1]) for r in conn.execute("PRAGMA table_info(share_links)")}:
+        conn.execute("ALTER TABLE share_links ADD COLUMN views INTEGER NOT NULL DEFAULT 0")
     conn.commit()
     return conn
 
@@ -111,6 +113,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "revoked_at": row["revoked_at"],
         "access": access,
         "sheet_ids": normalize_sheet_ids(row["sheet_ids"] if "sheet_ids" in keys else None),
+        "views": int(row["views"] or 0) if "views" in keys else 0,
     }
 
 
@@ -353,3 +356,10 @@ def revoke_share(
 
 def revoke_all_for_item(user_id: int | str, item_kind: str, item_id: str | int) -> int:
     return 1 if revoke_share(user_id, item_kind, item_id) else 0
+
+
+def count_view(token: str) -> None:
+    """+1 просмотр ссылки (открытие публичной страницы не владельцем)."""
+    with _LOCK:
+        _conn().execute("UPDATE share_links SET views = views + 1 WHERE token = ? AND revoked_at IS NULL", (str(token),))
+        _conn().commit()

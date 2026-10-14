@@ -14835,3 +14835,78 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 .note-share-link-text small { font-size: 12px; color: var(--text-secondary, #909499); }
 .note-share-link-copy, .note-share-link-off { flex: none; font-size: 13px; padding: 4px 6px; }
 .note-share-link-off { color: var(--danger, #e5484d); }
+
+/* Вкладки: иконка шеринга и перетаскивание. */
+.note-sheet-chip { touch-action: pan-x; -webkit-user-select: none; user-select: none; }
+.note-sheet-chip.is-shared { display: inline-flex; align-items: center; gap: 6px; }
+.note-sheet-chip-share {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: -4px -4px -4px 0;
+  border-radius: 6px;
+  color: var(--vkui--color_text_accent, #529ef4);
+  cursor: pointer;
+}
+.note-sheet-chip-share:hover { background: rgba(82, 158, 244, 0.14); }
+.note-editor-sheets.is-reordering { cursor: grabbing; }
+.note-sheet-chip.is-dragging {
+  z-index: 2;
+  color: var(--text);
+  background: var(--surface-muted, rgba(255, 255, 255, 0.08));
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  transform: translateY(-2px) scale(1.04);
+  transition: transform 0.12s ease;
+}
+.note-sheet-chip.is-dragging::after { display: none; }
+.note-sheet-share-menu { min-width: 15.5rem; }
+.note-sheet-share-menu .is-danger .note-sheet-kind-menu-title { color: var(--danger, #e5484d); }
+.note-sheet-share-foot {
+  margin: 4px 0 0;
+  padding: 8px 10px 6px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary, #909499);
+}
+
+/* ---- Окно «Поделиться» (v2): вкладки «Ссылка / Участники», чипы листов, сегмент доступа ---- */
+.note-share-sheet.is-v2 { display: flex; flex-direction: column; gap: 14px; max-height: min(86vh, 640px); overflow: auto; }
+.note-share-sheet.is-v2 .ns-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.note-share-sheet.is-v2 .note-share-sheet-title { margin: 0; font-size: 19px; }
+.note-share-sheet.is-v2 .ns-close { display: inline-grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 50%; background: var(--surface-muted, rgba(255, 255, 255, 0.08)); color: var(--text-secondary, #909499); cursor: pointer; }
+.note-share-sheet.is-v2 .ns-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; border-radius: 10px; background: var(--surface-muted, rgba(255, 255, 255, 0.06)); }
+.note-share-sheet.is-v2 .ns-tabs.hidden { display: none; }
+.note-share-sheet.is-v2 .ns-tab { appearance: none; border: 0; border-radius: 8px; padding: 7px 10px; background: transparent; color: var(--text-secondary, #909499); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.note-share-sheet.is-v2 .ns-tab.is-active { background: var(--surface, #2a2a2c); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
+.note-share-sheet.is-v2 .ns-count { font-weight: 500; opacity: 0.7; }
+.note-share-sheet.is-v2 .ns-pane { display: flex; flex-direction: column; gap: 10px; }
+.note-share-sheet.is-v2 .ns-pane.hidden { display: none; }
+.note-share-sheet.is-v2 .ns-label { margin: 4px 0 0; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-secondary, #909499); }
+.note-share-sheet.is-v2 .ns-hint { margin: 0; font-size: 13px; color: var(--text-secondary, #909499); }
+.note-share-sheet.is-v2 .note-share-sheets-block { display: flex; flex-direction: column; gap: 8px; }
+.note-share-sheet.is-v2 .note-share-sheets-block.hidden { display: none; }
+.note-share-sheet.is-v2 .ns-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.note-share-sheet.is-v2 .ns-chip { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; font-size: 14px; cursor: pointer; }
+.note-share-sheet.is-v2 .ns-chip input { position: absolute; opacity: 0; pointer-events: none; }
+.note-share-sheet.is-v2 .ns-chip.is-web span::before { content: "▣ "; opacity: 0.7; }
+.note-share-sheet.is-v2 .ns-chip:has(input:checked) { border-color: var(--accent); background: var(--accent-muted, rgba(82, 158, 244, 0.16)); color: var(--text); }
+.note-share-sheet.is-v2 .ns-chip:has(input:checked)::before { content: "✓"; font-size: 12px; color: var(--accent); }
+.note-share-sheet.is-v2 .ns-chip:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.note-share-sheet.is-v2 .ns-seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; border-radius: 10px; background: var(--surface-muted, rgba(255, 255, 255, 0.06)); }
+.note-share-sheet.is-v2 .ns-seg label { position: relative; cursor: pointer; }
+.note-share-sheet.is-v2 .ns-seg input { position: absolute; opacity: 0; pointer-events: none; }
+.note-share-sheet.is-v2 .ns-seg span { display: block; padding: 7px 10px; border-radius: 8px; text-align: center; font-size: 14px; font-weight: 600; color: var(--text-secondary, #909499); }
+.note-share-sheet.is-v2 .ns-seg input:checked + span { background: var(--surface, #2a2a2c); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
+.note-share-sheet.is-v2 .ns-seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+.note-share-sheet.is-v2 .ns-primary { width: 100%; margin-top: 2px; }
+.note-share-sheet.is-v2 .note-share-links-block { display: flex; flex-direction: column; gap: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
+.note-share-sheet.is-v2 .note-share-links-block.hidden { display: none; }
+.note-share-sheet.is-v2 .note-share-link-row { padding: 8px 6px 8px 12px; }
+.note-share-sheet.is-v2 .note-share-link-copy,
+.note-share-sheet.is-v2 .note-share-link-off { display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--text-secondary, #909499); cursor: pointer; }
+.note-share-sheet.is-v2 .note-share-link-copy:hover { color: var(--accent); background: var(--accent-muted, rgba(82, 158, 244, 0.12)); }
+.note-share-sheet.is-v2 .note-share-link-off:hover { color: var(--danger, #e5484d); background: rgba(229, 72, 77, 0.12); }
+.note-share-sheet.is-v2 .note-share-members-block { display: flex; flex-direction: column; gap: 10px; }
+.note-share-sheet.is-v2 .ns-primary { background: var(--accent, #529ef4); border-color: var(--accent, #529ef4); color: #fff; font-weight: 600; }

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261014-share-sheets4";
+  var WEBAPP_BUILD = "20261015-tabs-share2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261014-share-sheets4";
+  const NOTE_EDITOR_ASSET_V = "20261015-tabs-share2";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -19437,9 +19437,19 @@
     return !!(noteSheetState.sheetTimers[id] || noteSheetState.sheetPersists[id]);
   }
 
-  function syncRemoteSheets(noteId, remote) {
+  function syncRemoteSheets(noteId, remote, remoteOrder) {
     if (!Array.isArray(remote) || !noteSheetsEnabled()) return;
     if (String(noteSheetsNoteId()) !== String(noteId) || noteSheetState.remoteSheetsLoading) return;
+    // Другой участник переставил вкладки — просто переупорядочиваем у себя.
+    if (Array.isArray(remoteOrder) && remoteOrder.length === noteSheetState.sheets.length && !document.querySelector(".note-editor-sheets.is-reordering")) {
+      var localOrder = noteSheetState.sheets.map(function (x) { return String(x.id); });
+      if (remoteOrder.join("|") !== localOrder.join("|") && remoteOrder.slice().sort().join("|") === localOrder.slice().sort().join("|")) {
+        var byId = {};
+        noteSheetState.sheets.forEach(function (x) { byId[String(x.id)] = x; });
+        noteSheetState.sheets = remoteOrder.map(function (rid) { return byId[String(rid)]; });
+        if (!document.querySelector(".note-sheet-chip-input")) renderNoteSheetChips();
+      }
+    }
     var local = extraNoteSheets();
     var byId = {};
     local.forEach(function (l) {
@@ -19460,9 +19470,7 @@
     apiFetch("/notes/local/" + encodeURIComponent(noteId) + "/sheets", { method: "GET" })
       .then(function (data) {
         if (String(noteSheetsNoteId()) !== String(noteId)) return;
-        applyRemoteSheets(((data && data.sheets) || []).filter(function (x) {
-          return x && !x.is_primary && String(x.id) !== NOTE_SHEET_MAIN;
-        }));
+        applyRemoteSheets(((data && data.sheets) || []).filter(Boolean));
       })
       .catch(function () {})
       .then(function () {
@@ -19473,14 +19481,16 @@
   function applyRemoteSheets(fresh) {
     var primary = findNoteSheet(NOTE_SHEET_MAIN);
     var updated = [];
+    // fresh — все листы в порядке вкладок; «Основную» берём свою (её текст синхронизирует collab).
     var next = fresh.map(function (r) {
       var id = String(r.id);
+      if (r.is_primary || isPrimarySheetId(id)) return primary || r;
       var l = findNoteSheet(id);
       if (l && sheetHasLocalWork(id)) return l; // свои правки ещё сохраняются
       if (l && Number(r.revision || 0) > Number(l.revision || 0)) updated.push(r);
       return r;
     });
-    noteSheetState.sheets = (primary ? [primary] : []).concat(next);
+    noteSheetState.sheets = next;
     updated.forEach(showRemoteSheetBody);
     var leftGone = !isPrimarySheetId(noteSheetState.leftId) && !findNoteSheet(noteSheetState.leftId);
     if (leftGone) {
@@ -19551,7 +19561,7 @@
         wrap._noteMembers = members;
         renderOpenNoteMembers(members, peers);
         paintRemoteCursors(peers);
-        if (data && data.sheets) syncRemoteSheets(String(id), data.sheets);
+        if (data && data.sheets) syncRemoteSheets(String(id), data.sheets, data.sheet_order);
         if (!item) return;
         var remoteRev = Number(item.revision || 0);
         var localRev = Number(wrap._noteRevision || 0);
@@ -23384,6 +23394,219 @@
     });
   }
 
+  // ---- Вкладки листов: перетаскивание и иконка шеринга ----
+  var SHARE_TAB_ICON =
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M10 14a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1 1"/><path d="M14 10a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1-1"/></svg>';
+
+  // Ссылка, открывающая лист: сначала ссылка только на него, иначе последняя, где он есть.
+  function shareLinkForSheet(sheetId) {
+    var wrap = discussWrap();
+    var links = (wrap && Array.isArray(wrap._shareLinks) && wrap._shareLinksFor === String(wrap._shareId)) ? wrap._shareLinks : [];
+    var id = String(sheetId);
+    var has = links.filter(function (l) {
+      var ids = (l.sheet_ids || []).map(String);
+      return ids.length ? ids.indexOf(id) >= 0 : isPrimarySheetId(id);
+    });
+    var exact = has.filter(function (l) { return (l.sheet_ids || []).length === 1; })[0];
+    return exact || has[0] || null;
+  }
+
+  function loadNoteShareLinks() {
+    var wrap = discussWrap();
+    if (!wrap || wrap._shareKind !== "local" || !wrap._shareId || String(wrap._shareId).indexOf("tmp_") === 0) return;
+    var id = String(wrap._shareId);
+    apiFetch("/notes/local/" + encodeURIComponent(id) + "/share", { method: "GET" })
+      .then(function (data) {
+        var live = discussWrap();
+        if (!live || String(live._shareId) !== id) return;
+        applyShareState(live, data);
+        renderNoteSheetChips();
+      })
+      .catch(function () {});
+  }
+
+  function closeSheetShareMenu() {
+    var m = document.getElementById("note-sheet-share-menu");
+    if (m && m.parentNode) m.parentNode.removeChild(m);
+  }
+
+  function openSheetShareMenu(anchor, sheet) {
+    closeSheetShareMenu();
+    var link = shareLinkForSheet(sheet.id);
+    if (!link) return;
+    var menu = document.createElement("div");
+    menu.id = "note-sheet-share-menu";
+    menu.className = "note-sheet-kind-menu note-sheet-share-menu";
+    menu.setAttribute("role", "menu");
+    function item(label, fn, danger) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "note-sheet-kind-menu-item" + (danger ? " is-danger" : "");
+      b.setAttribute("role", "menuitem");
+      var t = document.createElement("span");
+      t.className = "note-sheet-kind-menu-title";
+      t.textContent = label;
+      b.appendChild(t);
+      b.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeSheetShareMenu();
+        fn();
+      });
+      menu.appendChild(b);
+    }
+    item("Скопировать ссылку", function () {
+      copyShareUrl(link.url).then(function () {
+        shareHaptic();
+        showNoteToast("Ссылка скопирована");
+      }).catch(function (e) {
+        alert(e.message || String(e));
+      });
+    });
+    var toComment = link.access !== "comment";
+    item(toComment ? "Изменить права: разрешить комментарии" : "Изменить права: только просмотр", function () {
+      setShareLinkAccess(link, toComment ? "comment" : "view");
+    });
+    item("Закрыть доступ", function () {
+      revokeOneShareLink(link);
+    }, true);
+    var foot = document.createElement("p");
+    foot.className = "note-sheet-share-foot";
+    var shared = (link.sheet_ids || []).length > 1 ? " · ссылка на " + (link.sheet_ids || []).length + " листа" : "";
+    foot.textContent = (link.access === "comment" ? "Комментарии" : "Просмотр") + " · " + ruViews(link.views || 0) + shared;
+    menu.appendChild(foot);
+    document.body.appendChild(menu);
+    var r = anchor.getBoundingClientRect();
+    var left = Math.min(Math.max(8, r.left - 8), window.innerWidth - menu.offsetWidth - 8);
+    menu.style.left = left + "px";
+    menu.style.top = r.bottom + 6 + "px";
+    setTimeout(function () {
+      document.addEventListener("click", closeSheetShareMenu, { once: true });
+    }, 0);
+  }
+
+  function ruViews(n) {
+    var m10 = n % 10;
+    var m100 = n % 100;
+    var w = m10 === 1 && m100 !== 11 ? "просмотр" : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "просмотра" : "просмотров";
+    return n + " " + w;
+  }
+
+  async function setShareLinkAccess(link, access) {
+    var wrap = getShareCtx() || discussWrap();
+    if (!wrap || !wrap._shareId) return;
+    try {
+      var data = await apiFetch(
+        "/notes/" + encodeURIComponent(wrap._shareKind) + "/" + encodeURIComponent(wrap._shareId) + "/share",
+        { method: "POST", body: JSON.stringify({ access: access, sheet_ids: link.sheet_ids || [] }) }
+      );
+      applyShareState(wrap, Object.assign({}, data, { views: link.views }));
+      renderNoteSheetChips();
+      if (typeof syncShareSelectionState === "function") syncShareSelectionState();
+      showNoteToast(access === "comment" ? "По ссылке можно комментировать" : "Ссылка только для просмотра");
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
+  // Перетаскивание вкладок: мышью — сразу при сдвиге, пальцем — после удержания.
+  function attachSheetTabsDrag(host) {
+    if (host._dragBound) return;
+    host._dragBound = true;
+    var drag = null;
+    function chips() {
+      return Array.prototype.slice.call(host.querySelectorAll(".note-sheet-chip[data-sheet-id]"));
+    }
+    function begin() {
+      drag.on = true;
+      drag.chip.classList.add("is-dragging");
+      host.classList.add("is-reordering");
+      try {
+        var tg = window.Telegram && window.Telegram.WebApp;
+        if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
+      } catch (_) {}
+    }
+    host.addEventListener("pointerdown", function (e) {
+      var chip = e.target.closest && e.target.closest(".note-sheet-chip[data-sheet-id]");
+      if (!chip || chip.querySelector(".note-sheet-chip-input") || e.target.closest(".note-sheet-chip-share")) return;
+      if (e.button !== undefined && e.button !== 0) return;
+      drag = { chip: chip, x: e.clientX, y: e.clientY, id: e.pointerId, touch: e.pointerType !== "mouse", on: false, before: chips().map(function (c) { return c.getAttribute("data-sheet-id"); }) };
+      if (drag.touch) {
+        drag.timer = setTimeout(function () {
+          if (drag && !drag.on) begin();
+        }, 380);
+      }
+    });
+    host.addEventListener("pointermove", function (e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      var dx = e.clientX - drag.x;
+      var dy = e.clientY - drag.y;
+      if (!drag.on) {
+        if (drag.touch) {
+          if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+            clearTimeout(drag.timer);
+            drag = null; // это прокрутка вкладок
+          }
+          return;
+        }
+        if (Math.abs(dx) < 6) return;
+        begin();
+      }
+      e.preventDefault();
+      // Меняем местами с соседом, когда палец/курсор прошёл его середину.
+      chips().forEach(function (other) {
+        if (other === drag.chip) return;
+        var r = other.getBoundingClientRect();
+        var mid = r.left + r.width / 2;
+        var me = drag.chip.getBoundingClientRect();
+        if (me.left < r.left && e.clientX > mid) host.insertBefore(drag.chip, other.nextSibling);
+        else if (me.left > r.left && e.clientX < mid) host.insertBefore(drag.chip, other);
+      });
+    });
+    host.addEventListener("touchmove", function (e) {
+      if (drag && drag.on) e.preventDefault(); // во время перетаскивания не прокручиваем
+    }, { passive: false });
+    function end() {
+      if (!drag) return;
+      clearTimeout(drag.timer);
+      var was = drag;
+      drag = null;
+      if (!was.on) return;
+      was.chip.classList.remove("is-dragging");
+      host.classList.remove("is-reordering");
+      host._suppressClickUntil = Date.now() + 400;
+      var order = chips().map(function (c) { return c.getAttribute("data-sheet-id"); });
+      if (order.join("|") !== was.before.join("|")) saveSheetOrder(order);
+    }
+    host.addEventListener("pointerup", end);
+    host.addEventListener("pointercancel", end);
+    host.addEventListener("click", function (e) {
+      if (host._suppressClickUntil && Date.now() < host._suppressClickUntil) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }, true);
+  }
+
+  function saveSheetOrder(order) {
+    var noteId = noteSheetsNoteId();
+    if (!noteId) return;
+    var byId = {};
+    noteSheetState.sheets.forEach(function (s) { byId[String(s.id)] = s; });
+    var prev = noteSheetState.sheets.slice();
+    noteSheetState.sheets = order.map(function (id) { return byId[id]; }).filter(Boolean);
+    renderNoteSheetChips();
+    apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/sheets/order", {
+      method: "PUT",
+      body: JSON.stringify({ order: order }),
+    }).catch(function (e) {
+      noteSheetState.sheets = prev;
+      renderNoteSheetChips();
+      showNoteToast((e && e.message) || "Не удалось изменить порядок листов");
+    });
+  }
+
   function renderNoteSheetChips() {
     var host = document.getElementById("note-editor-sheets");
     if (!host) return;
@@ -23453,10 +23676,26 @@
         "note-sheet-chip" +
         (isWebSheet(s) ? " is-web" : "") +
         (String(s.id) === String(noteSheetState.leftId) ? " is-active" : "");
+      chip.setAttribute("data-sheet-id", String(s.id));
       var label = document.createElement("span");
       label.className = "note-sheet-chip-label";
       label.textContent = s.title || "Лист";
       chip.appendChild(label);
+      if (shareLinkForSheet(s.id)) {
+        var shareIco = document.createElement("span");
+        shareIco.className = "note-sheet-chip-share";
+        shareIco.setAttribute("role", "button");
+        shareIco.setAttribute("aria-label", "Лист опубликован по ссылке");
+        shareIco.title = "Опубликован по ссылке";
+        shareIco.innerHTML = SHARE_TAB_ICON;
+        shareIco.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          openSheetShareMenu(shareIco, s);
+        });
+        chip.appendChild(shareIco);
+        chip.classList.add("is-shared");
+      }
       chip.addEventListener("click", function (e) {
         e.preventDefault();
         if (String(s.id) === String(noteSheetState.leftId) && !s.is_primary) {
@@ -23467,6 +23706,7 @@
       });
       host.appendChild(chip);
     });
+    attachSheetTabsDrag(host);
     var add = document.createElement("button");
     add.type = "button";
     add.className = "note-sheet-chip note-sheet-chip--add";
@@ -23941,6 +24181,7 @@
         var pending = String(noteSheetState.pendingOpenSheetId || "");
         noteSheetState.pendingOpenSheetId = "";
         if (pending && findNoteSheet(pending)) switchLeftSheet(pending);
+        loadNoteShareLinks(); // иконки шеринга на вкладках
       })
       .catch(function () {
         noteSheetState.pendingOpenSheetId = "";
@@ -28560,6 +28801,7 @@
       ? data.sheet_ids.map(function (id) { return String(id); })
       : [];
     // Все ссылки записи (у заметки — своя на каждый набор листов). POST отдаёт одну — список не трогаем.
+    wrap._shareLinksFor = String(wrap._shareId || "");
     if (data && Array.isArray(data.links)) wrap._shareLinks = data.links.slice();
     else if (!wrap._shareShared) wrap._shareLinks = [];
     else if (data && data.token) {
@@ -28620,38 +28862,42 @@
       ov.id = "note-share-sheet-overlay";
       ov.className = "note-share-sheet-overlay hidden";
       ov.innerHTML =
-        '<div class="note-share-sheet" role="dialog" aria-labelledby="note-share-sheet-title">' +
-        '<h3 id="note-share-sheet-title" class="note-share-sheet-title">Совместный доступ</h3>' +
-        '<div class="note-share-members-block">' +
-        '<p class="note-share-section-label">Участники</p>' +
-        '<div id="note-share-members-list" class="note-share-members-list"></div>' +
-        '<div class="note-share-member-add">' +
-        '<input id="note-share-member-input" type="text" class="field-input" placeholder="Контакт из записной книжки" autocomplete="off" />' +
-        '<div id="note-share-member-suggest" class="meeting-attendee-suggest hidden" role="listbox"></div>' +
+        '<div class="note-share-sheet is-v2" role="dialog" aria-labelledby="note-share-sheet-title">' +
+        '<div class="ns-head"><h3 id="note-share-sheet-title" class="note-share-sheet-title">Поделиться</h3>' +
+        '<button type="button" class="ns-close" id="note-share-sheet-cancel" aria-label="Закрыть">' +
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>' +
+        "</button></div>" +
+        '<div class="ns-tabs" role="tablist">' +
+        '<button type="button" role="tab" class="ns-tab is-active" data-pane="link" aria-selected="true">Ссылка</button>' +
+        '<button type="button" role="tab" class="ns-tab" data-pane="people" aria-selected="false">Участники<span class="ns-count" id="ns-people-count"></span></button>' +
         "</div>" +
-        '<p id="note-share-members-hint" class="note-share-members-hint muted small">Добавьте человека из контактов — заметка появится у него в списке с правом редактировать.</p>' +
-        "</div>" +
+        '<section class="ns-pane" data-pane="link">' +
         '<div id="note-share-sheets-block" class="note-share-sheets-block hidden">' +
-        '<p class="note-share-section-label">Листы</p>' +
-        '<div id="note-share-sheets-list" class="note-share-sheets-list"></div>' +
+        '<p class="ns-label">Что открыть по ссылке</p>' +
+        '<div id="note-share-sheets-list" class="ns-chips"></div>' +
         "</div>" +
-        '<p class="note-share-section-label">Ссылка</p>' +
-        '<label class="note-share-option">' +
-        '<input type="radio" name="note-share-access" value="view" />' +
-        "<span><strong>Просмотр</strong><small>Любой со ссылкой сможет читать</small></span>" +
-        "</label>" +
-        '<label class="note-share-option">' +
-        '<input type="radio" name="note-share-access" value="comment" />' +
-        "<span><strong>Комментарии</strong><small>Можно читать и оставлять комментарии после входа</small></span>" +
-        "</label>" +
+        '<p class="ns-label">Доступ по ссылке</p>' +
+        '<div class="ns-seg" role="radiogroup" aria-label="Доступ по ссылке">' +
+        '<label><input type="radio" name="note-share-access" value="view" /><span>Просмотр</span></label>' +
+        '<label><input type="radio" name="note-share-access" value="comment" /><span>Комментарии</span></label>' +
+        "</div>" +
+        '<p class="ns-hint" id="ns-access-hint">Любой со ссылкой сможет читать</p>' +
+        '<button type="button" class="btn ns-primary" id="note-share-sheet-copy">Скопировать ссылку</button>' +
         '<div id="note-share-links-block" class="note-share-links-block hidden">' +
-        '<p class="note-share-section-label">Ссылки на эту заметку</p>' +
+        '<p class="ns-label">Ссылки на эту заметку</p>' +
         '<div id="note-share-links-list" class="note-share-links-list"></div>' +
         "</div>" +
-        '<div class="note-share-sheet-actions">' +
-        '<button type="button" class="btn" id="note-share-sheet-copy">Скопировать ссылку</button>' +
-        '<button type="button" class="btn-text" id="note-share-sheet-cancel">Закрыть</button>' +
+        "</section>" +
+        '<section class="ns-pane hidden" data-pane="people">' +
+        '<div class="note-share-members-block">' +
+        '<div id="note-share-members-list" class="note-share-members-list"></div>' +
+        '<div class="note-share-member-add">' +
+        '<input id="note-share-member-input" type="text" class="field-input" placeholder="Добавить из контактов" autocomplete="off" />' +
+        '<div id="note-share-member-suggest" class="meeting-attendee-suggest hidden" role="listbox"></div>' +
         "</div>" +
+        '<p id="note-share-members-hint" class="ns-hint">Участники видят заметку у себя в списке и могут её редактировать.</p>' +
+        "</div>" +
+        "</section>" +
         "</div>";
       ov.addEventListener("click", function (e) {
         if (e.target === ov) closeShareAccessSheet();
@@ -28665,6 +28911,14 @@
         });
       }
       if (cancelBtn) cancelBtn.addEventListener("click", closeShareAccessSheet);
+      ov.querySelectorAll(".ns-tab").forEach(function (tab) {
+        tab.addEventListener("click", function () {
+          setSharePane(tab.getAttribute("data-pane"));
+        });
+      });
+      ov.querySelectorAll('input[name="note-share-access"]').forEach(function (radio) {
+        radio.addEventListener("change", syncShareAccessHint);
+      });
       bindShareMemberPicker();
     }
     var access = wrap._shareShared && wrap._shareAccess === "comment" ? "comment" : "view";
@@ -28681,11 +28935,19 @@
     if (membersBlock) {
       membersBlock.classList.toggle("hidden", !supportsMembers);
     }
+    var tabs = ov.querySelector(".ns-tabs");
+    if (tabs) tabs.classList.toggle("hidden", !supportsMembers);
+    setSharePane("link");
+    var peopleCount = document.getElementById("ns-people-count");
+    if (peopleCount) {
+      var nMembers = (wrap._noteMembers || []).length;
+      peopleCount.textContent = nMembers ? " · " + nMembers : "";
+    }
     if (membersHint) {
       membersHint.textContent =
         wrap._shareKind === "chat"
-          ? "Добавьте человека из контактов — чат появится у него во вкладке «Чаты»."
-          : "Добавьте человека из контактов — заметка появится у него в списке с правом редактировать.";
+          ? "Участники видят чат во вкладке «Чаты»."
+          : "Участники видят заметку у себя в списке и могут её редактировать.";
     }
     paintShareMembersList();
     paintShareSheetPicker();
@@ -28695,6 +28957,29 @@
     }
     if (wrap._shareKind === "local") {
       refreshShareSheetsState();
+    }
+  }
+
+  function setSharePane(name) {
+    var ov = document.getElementById("note-share-sheet-overlay");
+    if (!ov) return;
+    ov.querySelectorAll(".ns-tab").forEach(function (t) {
+      var on = t.getAttribute("data-pane") === name;
+      t.classList.toggle("is-active", on);
+      t.setAttribute("aria-selected", String(on));
+    });
+    ov.querySelectorAll(".ns-pane").forEach(function (p) {
+      p.classList.toggle("hidden", p.getAttribute("data-pane") !== name);
+    });
+  }
+
+  function syncShareAccessHint() {
+    var hint = document.getElementById("ns-access-hint");
+    if (hint) {
+      hint.textContent =
+        selectedShareAccess() === "comment"
+          ? "Можно читать и оставлять комментарии после входа через Telegram"
+          : "Любой со ссылкой сможет только читать";
     }
   }
 
@@ -28765,16 +29050,14 @@
     sheets.forEach(function (s) {
       var id = String(s.id);
       var label = document.createElement("label");
-      label.className = "note-share-option";
+      label.className = "ns-chip" + (isWebSheet(s) ? " is-web" : "");
       var input = document.createElement("input");
       input.type = "checkbox";
       input.name = "note-share-sheet";
       input.value = id;
       input.checked = hasChecked ? !!known[id] : isPrimarySheetId(id);
       var span = document.createElement("span");
-      var strong = document.createElement("strong");
-      strong.textContent = s.title || (isPrimarySheetId(id) ? "Основная" : "Лист");
-      span.appendChild(strong);
+      span.textContent = s.title || (isPrimarySheetId(id) ? "Основная" : "Лист");
       input.addEventListener("change", syncShareSelectionState);
       label.appendChild(input);
       label.appendChild(span);
@@ -28808,7 +29091,8 @@
       radio.checked = radio.value === access;
     });
     var copy = document.getElementById("note-share-sheet-copy");
-    if (copy) copy.textContent = link ? "Сохранить и скопировать" : "Скопировать ссылку";
+    if (copy) copy.textContent = link ? "Скопировать ссылку" : "Создать и скопировать ссылку";
+    syncShareAccessHint();
     paintShareLinksList();
   }
 
@@ -28839,13 +29123,15 @@
       var name = document.createElement("strong");
       name.textContent = shareLinkSheetsLabel(link);
       var meta = document.createElement("small");
-      meta.textContent = link.access === "comment" ? "Комментарии" : "Просмотр";
+      meta.textContent = (link.access === "comment" ? "Комментарии" : "Просмотр") + " · " + ruViews(link.views || 0);
       text.appendChild(name);
       text.appendChild(meta);
       var copy = document.createElement("button");
       copy.type = "button";
-      copy.className = "btn-text note-share-link-copy";
-      copy.textContent = "Копировать";
+      copy.className = "note-share-link-copy";
+      copy.setAttribute("aria-label", "Скопировать ссылку");
+      copy.title = "Скопировать ссылку";
+      copy.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
       copy.addEventListener("click", function () {
         copyShareUrl(link.url).then(shareHaptic).catch(function (e) {
           alert(e.message || String(e));
@@ -28853,8 +29139,10 @@
       });
       var off = document.createElement("button");
       off.type = "button";
-      off.className = "btn-text note-share-link-off";
-      off.textContent = "Отключить";
+      off.className = "note-share-link-off";
+      off.setAttribute("aria-label", "Отключить ссылку");
+      off.title = "Отключить ссылку";
+      off.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
       off.addEventListener("click", function () {
         revokeOneShareLink(link);
       });
@@ -28880,6 +29168,7 @@
       applyShareState(wrap, left.length ? Object.assign({}, left[0], { shared: true, links: left }) : { shared: false, links: [] });
       if (!left.length) hideNoteCommentsPanel();
       syncShareSelectionState();
+      renderNoteSheetChips();
       showNoteToast("Ссылка отключена");
     } catch (e) {
       alert(e.message || String(e));
@@ -29190,6 +29479,7 @@
         { method: "POST", body: JSON.stringify(payload) }
       );
       applyShareState(wrap, data);
+      renderNoteSheetChips();
       await copyShareUrl(wrap._shareUrl);
       closeNoteMoreMenu();
       closeShareAccessSheet();
@@ -29236,6 +29526,8 @@
       wrap._shareUrl = "";
       wrap._shareAccess = "view";
       wrap._shareSheetIds = [];
+      wrap._shareLinks = [];
+      renderNoteSheetChips();
       patchLocalShareInCache(itemId, {
         shared: false,
         share_url: null,

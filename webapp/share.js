@@ -908,10 +908,15 @@
     }
     var viewer = (data && data.viewer) || {};
     var loggedIn = !!viewer.logged_in;
-    var canCopy = viewer.can_copy !== false;
-    var canRequest = !!viewer.can_request_edit;
+    // Ссылка только на презентации: «Добавить в свои заметки» и «Запросить редактирование» не показываем.
+    var onlyCanvases =
+      !String((data && data.body) || "").replace(/<[^>]+>/g, "").trim() &&
+      Array.isArray(data && data.canvases) &&
+      data.canvases.length > 0;
+    var canCopy = viewer.can_copy !== false && !onlyCanvases;
+    var canRequest = !!viewer.can_request_edit && !onlyCanvases;
     var isMember = !!viewer.is_member && !viewer.is_owner;
-    if (!canCopy && !canRequest && !isMember && viewer.is_owner) {
+    if (!canCopy && !canRequest && !isMember) {
       box.classList.add("hidden");
       return;
     }
