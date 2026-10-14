@@ -7130,6 +7130,14 @@ async def miniapp_gpt_chat(
                 if hint:
                     system_text = (system_text.rstrip() + "\n\n" + hint).strip() if system_text else hint
         canvas_enabled = kind == "local" and bool(iid)
+        note_text_for_model = (body.note_text or "").strip()
+        if kind == "local" and iid:
+            try:
+                facts = _note_table_facts(_notes_store_mod().get_accessible_note(uid, int(iid)))
+            except (TypeError, ValueError):
+                facts = ""
+            if facts:
+                note_text_for_model = (note_text_for_model + "\n\n" + facts).strip()
         doc_view = str(body.doc_view or "").strip()
         note_edit_enabled = kind == "local" and bool(iid) and bool(doc_view)
         if note_edit_enabled:
@@ -7178,7 +7186,7 @@ async def miniapp_gpt_chat(
                 history=hist or None,
                 model=run_model,
                 note_title=(body.note_title or "").strip(),
-                note_text=(body.note_text or "").strip(),
+                note_text=note_text_for_model,
                 quote=(body.quote or "").strip(),
                 quotes=[str(x).strip() for x in (body.quotes or []) if str(x).strip()],
                 knowledge_brief=kb_brief,
@@ -9529,6 +9537,30 @@ async def miniapp_canvas_image_generate(
     return {"ok": True, "data_url": f"data:{mime};base64,{b64}", "mime": mime}
 
 
+def _notes_store_mod():
+    from assistant.stores import notes as notes_store
+
+    return notes_store
+
+
+def _note_table_facts(note: Optional[dict[str, Any]]) -> str:
+    """Итоги таблиц заметки и её текстовых листов, посчитанные кодом (для промпта модели)."""
+    from assistant.lib import table_facts
+    from assistant.lib import web_canvas as web_canvas_lib
+    from assistant.stores import note_sheets as note_sheets_store
+
+    if not note:
+        return ""
+    html = str(note.get("body") or "")
+    try:
+        for sh in note_sheets_store.list_extra_sheets(int(note["id"])):
+            if web_canvas_lib.normalize_kind(sh.get("kind")) != web_canvas_lib.SHEET_KIND_WEB:
+                html += str(sh.get("body") or "")
+    except Exception as e:  # noqa: BLE001 — без итогов ответ всё равно будет
+        print(f"[table_facts] sheets failed err={e!r}")
+    return table_facts.facts_from_html(html)
+
+
 def _load_web_sheet_for_edit(uid: int, note_id: int, sheet_id: str) -> tuple[dict[str, Any], int, dict[str, Any]]:
     """Note + extra web sheet the user may edit, or HTTPException."""
     from assistant.lib import web_canvas as web_canvas_lib
@@ -9670,6 +9702,9 @@ async def miniapp_canvas_revise(
             base = body.html
         note_text = re.sub(r"<[^>]+>", " ", str(note.get("body") or ""))
         note_text = re.sub(r"\s+", " ", note_text).strip()[:40000]
+        facts = _note_table_facts(note)
+        if facts:
+            note_text = facts + "\n\n" + note_text
         set_openrouter_usage_telegram_user(telegram_user_id=uid, telegram_username=tg_uname)
 
         def _ask(system: str, user_msg: str) -> str | None:
