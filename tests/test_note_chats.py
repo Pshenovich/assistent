@@ -183,3 +183,15 @@ def test_view_only_link_hides_comments(env):
     assert r.status_code == 403
     page = env["c"].get(f"/api/public/share/{link['token']}").json()
     assert "общее" not in json.dumps(page, ensure_ascii=False)
+
+
+def test_link_to_deleted_sheet_does_not_show_main_sheet(env):
+    from assistant.stores import note_sheets
+
+    sheet = note_sheets.create_sheet(env["note"], title="Слайды", body="<p>секретная презентация</p>")
+    link = share_links.create_or_get_share(str(env["owner"]), "local", str(env["note"]["id"]), "view", [str(sheet["id"])])
+    ok = env["c"].get(f"/api/public/share/{link['token']}").json()
+    assert "секретная презентация" in json.dumps(ok, ensure_ascii=False)
+    note_sheets.delete_sheet(int(env["note"]["id"]), int(sheet["id"]))
+    r = env["c"].get(f"/api/public/share/{link['token']}")
+    assert r.status_code == 404  # не подменяем удалённый лист основным
