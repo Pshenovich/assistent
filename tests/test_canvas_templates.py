@@ -279,3 +279,18 @@ class PartialSlotsTests(unittest.TestCase):
         self.assertEqual(len(deck["slides"][0]["slots"]["periods"][0]["items"]), 5)
         with self.assertRaises(tpl.DeckOpError):
             tpl.apply_op(deck, {"op": "add_item", "slide_id": "s1", "group": "periods.0.items"})
+
+
+class EvidenceLayoutTests(unittest.TestCase):
+    def _html(self, facts):
+        deck = {"title": "T", "slides": [{"id": "s1", "role": "insight", "variant": "insight.evidence", "slots": {
+            "claim": "Вывод", "evidence": [{"fact": f, "text": "пояснение"} for f in facts]}}]}
+        return tpl.render_deck_html(deck, {})
+
+    def test_short_numbers_stay_inline(self):
+        self.assertIn("grid-template-columns:150px 1fr", self._html(["+18%", "×2,5"]))
+
+    def test_word_facts_go_above_text(self):
+        html = self._html(["+18%", "Документация"])
+        self.assertNotIn("grid-template-columns:150px 1fr", html)
+        self.assertIn("flex-direction:column", html)

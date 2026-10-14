@@ -393,11 +393,22 @@ _reg(Variant(
 ))
 
 
+EVIDENCE_FACT_INLINE_MAX = 6
+
+
 def _r_ins_evidence(c: Ctx) -> tuple[str, str]:
     ev = _dicts(c.slots.get("evidence"))
+    # Короткий факт («+18%») — слева крупно; если модель написала слово, ставим его над текстом.
+    stacked = any(len(_s(e.get("fact"))) > EVIDENCE_FACT_INLINE_MAX for e in ev)
+    if stacked:
+        card_css = "display:flex;flex-direction:column;gap:6px"
+        fact_css = "font-size:26px;line-height:1.15;overflow-wrap:anywhere"
+    else:
+        card_css = "display:grid;grid-template-columns:150px 1fr;gap:18px;align-items:center"
+        fact_css = "font-size:40px"
     items = "".join(
-        f'<div class="card" style="display:grid;grid-template-columns:150px 1fr;gap:18px;align-items:center" {c.item_attrs("evidence", i)}>'
-        f'{c.t(f"evidence.{i}.fact", "p", "big acc", "font-size:40px", force=True)}'
+        f'<div class="card" style="{card_css}" {c.item_attrs("evidence", i)}>'
+        f'{c.t(f"evidence.{i}.fact", "p", "big acc", fact_css, force=True)}'
         f'{c.t(f"evidence.{i}.text", "p", "clamp3", force=True)}</div>'
         for i in range(len(ev))
     )
