@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-contacts1";
+  var WEBAPP_BUILD = "20261016-calcards2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-contacts1";
+  const NOTE_EDITOR_ASSET_V = "20261016-calcards2";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -18934,7 +18934,109 @@
     event_delete: ["trash", "Встреча", "Удалить встречу"],
     task_delete: ["trash", "Задача", "Удалить задачу"],
     reminder_delete: ["trash", "Напоминание", "Удалить напоминание"],
+    slot: ["cal", "Встреча", "Создана встреча"],
   };
+
+  // Открыть встречу/задачу/напоминание из карточки в ответе ИИ.
+  async function openCalendarRef(ref) {
+    if (!ref || !ref.id) return;
+    try {
+      if (ref.type === "task") {
+        openTaskFromChip(String(ref.id).replace(/^task-/, ""));
+        return;
+      }
+      if (ref.type === "reminder") {
+        var rdata = await apiFetch("/reminders", { method: "GET" });
+        var rem = ((rdata && rdata.items) || []).find(function (x) {
+          return String(x.id) === String(ref.id);
+        });
+        if (rem) openReminderModal(rem);
+        else showNoteToast("Напоминание не найдено — возможно, уже удалено");
+        return;
+      }
+      var day = await fetchCalendarDay(ref.date || "");
+      var ev = ((day && day.events) || []).find(function (x) {
+        return String(x.id) === String(ref.id);
+      });
+      if (ev) openEventModal(ev);
+      else showNoteToast("Встреча не найдена — возможно, её перенесли или удалили");
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось открыть");
+    }
+  }
+
+  function renderCalInfoCard(a) {
+    var ui = { show_event: "cal", show_task: "taskBox", show_reminder: "bell" }[a.kind] || "cal";
+    var card = document.createElement("button");
+    card.type = "button";
+    card.className = "note-cal-card";
+    card.innerHTML = '<span class="note-cal-card-ico">' + DISCUSS_ICONS[ui] + "</span>";
+    var copy = document.createElement("span");
+    copy.className = "note-cal-card-copy";
+    var t = document.createElement("b");
+    t.textContent = a.title || "";
+    var sub = document.createElement("small");
+    sub.textContent = [a.when, a.detail].filter(Boolean).join(" · ");
+    copy.appendChild(t);
+    copy.appendChild(sub);
+    card.appendChild(copy);
+    var chev = document.createElement("span");
+    chev.className = "note-cal-card-chev";
+    chev.innerHTML = DISCUSS_ICONS.right;
+    card.appendChild(chev);
+    card.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      openCalendarRef(a.open);
+    });
+    return card;
+  }
+
+  function renderCalSlotCard(a) {
+    var card = document.createElement("div");
+    card.className = "note-cal-slot";
+    var copy = document.createElement("div");
+    copy.className = "note-cal-card-copy";
+    var t = document.createElement("b");
+    t.textContent = a.when || "";
+    var sub = document.createElement("small");
+    sub.textContent = [a.title, a.detail].filter(Boolean).join(" · ");
+    copy.appendChild(t);
+    copy.appendChild(sub);
+    card.appendChild(copy);
+    if (a.mine) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "note-discuss-edits-btn is-primary";
+      b.textContent = "Поставить встречу";
+      b.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        b.disabled = true;
+        b.textContent = "Ставлю…";
+        apiFetch("/gpt/calendar-actions/" + encodeURIComponent(a.id) + "/apply", { method: "POST" })
+          .then(function (res) {
+            // Остальные варианты этой подборки скрываются — перечитаем их статусы.
+            Object.keys(calActionsCache).forEach(function (k) {
+              if (calActionsCache[k] && calActionsCache[k].kind === "slot") delete calActionsCache[k];
+            });
+            if (res && res.action) calActionsCache[a.id] = res.action;
+            refreshDiscussFeedNow();
+            showNoteToast("Встреча создана");
+            try {
+              if (typeof loadActual === "function") loadActual({ silent: true });
+            } catch (_) {}
+          })
+          .catch(function (err) {
+            b.disabled = false;
+            b.textContent = "Поставить встречу";
+            showNoteToast((err && err.message) || "Не получилось");
+          });
+      });
+      card.appendChild(b);
+    }
+    return card;
+  }
 
   function calActionLine(a) {
     var ui = CAL_KIND_UI[a.kind] || ["cal", "", ""];
@@ -18973,9 +19075,26 @@
     if (missing.length) fetchCalendarActionsSoon(missing);
     var box = document.createElement("div");
     box.className = "note-discuss-cal";
+    var slotHead = false;
     ids.forEach(function (id) {
       var a = calActionsCache[id];
       if (!a || a.missing) return;
+      if (a.kind === "show_event" || a.kind === "show_task" || a.kind === "show_reminder") {
+        box.appendChild(renderCalInfoCard(a));
+        return;
+      }
+      if (a.kind === "slot" && a.status === "dismissed") return;
+      if (a.kind === "slot" && a.status === "proposed") {
+        if (!slotHead) {
+          slotHead = true;
+          var lbl = document.createElement("p");
+          lbl.className = "note-cal-slots-label";
+          lbl.textContent = "Выберите время — встреча создастся сразу";
+          box.appendChild(lbl);
+        }
+        box.appendChild(renderCalSlotCard(a));
+        return;
+      }
       var line = calActionLine(a);
       var row = document.createElement("div");
       var faded = a.status === "undone" || a.status === "applied" || a.status === "dismissed";
@@ -19004,7 +19123,10 @@
           acts.appendChild(b);
         }
         if (a.status === "done") {
-          if (a.link) btn("Открыть", "", function () {
+          if (a.open) btn("Открыть", "", function () {
+            openCalendarRef(a.open);
+          });
+          else if (a.link) btn("Открыть", "", function () {
             openExternal(a.link);
           });
           btn("Отменить", "", function () {
@@ -27697,6 +27819,22 @@
   function stripCalMarker(text) {
     return String(text || "").replace(CAL_MARKER_RE, "");
   }
+  // Для истории модели: вместо маркера — что уже сделано, чтобы ИИ не повторял действия.
+  function calMarkerForHistory(text) {
+    var ids = calMarkerIds(text);
+    var clean = stripCalMarker(text);
+    if (!ids.length) return clean;
+    var done = ids
+      .map(function (id) {
+        var a = calActionsCache[id];
+        if (!a || a.missing || String(a.kind || "").indexOf("show_") === 0) return "";
+        var st = a.status === "undone" ? " (отменено)" : a.status === "proposed" ? " (предложено)" : "";
+        return (a.title || a.kind) + (a.when ? " — " + a.when : "") + st;
+      })
+      .filter(Boolean);
+    return clean + "\n[Уже выполнено, не повторять: " + (done.length ? done.join("; ") : "действия с календарём из этого ответа") + "]";
+  }
+
   function calMarkerIds(text) {
     var m = String(text || "").match(CAL_MARKER_RE);
     return m ? m[1].split(",").filter(Boolean) : [];
@@ -29898,7 +30036,7 @@
       });
     var history = [];
     prior.forEach(function (c) {
-      var content = stripCalMarker(String((c && c.body) || "")).trim();
+      var content = calMarkerForHistory(String((c && c.body) || "")).trim();
       var names = ((c && c.attachments) || [])
         .map(function (a) {
           return a && a.name;

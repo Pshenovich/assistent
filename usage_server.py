@@ -7485,8 +7485,28 @@ async def miniapp_gpt_calendar_action_op(
         elif op == "apply":
             if status != "proposed":
                 return {"action": gcal_tools.public_action(a, viewer_uid=uid)}
-            res = await run_in_threadpool(gcal_tools.apply_delete, a)
-            await run_in_threadpool(partial(gcal_tools.set_action_status, action_id, "applied", result=res))
+            if a.get("kind") == "slot":
+                # Выбран вариант времени → встреча; остальные варианты этой подборки скрываем.
+                res = await run_in_threadpool(
+                    partial(gcal_tools.apply_slot, a, telegram_username=_miniapp_tg_username(principal))
+                )
+                created = res.pop("_created", None)
+                await run_in_threadpool(partial(gcal_tools.set_action_status, action_id, "done", result=res))
+                await run_in_threadpool(gcal_tools.dismiss_slot_siblings, a)
+                if created and created.get("attendee_emails"):
+                    try:
+                        from assistant.services import meeting_invites as inv
+
+                        await inv.notify_invitees_for_miniapp(
+                            organizer_uid=uid,
+                            organizer_user=principal.user if isinstance(principal.user, dict) else {},
+                            result=created,
+                        )
+                    except Exception as e:
+                        print(f"[gpt_calendar] slot invite err={e!r}")
+            else:
+                res = await run_in_threadpool(gcal_tools.apply_delete, a)
+                await run_in_threadpool(partial(gcal_tools.set_action_status, action_id, "applied", result=res))
         elif op == "dismiss":
             if status == "proposed":
                 await run_in_threadpool(gcal_tools.set_action_status, action_id, "dismissed")

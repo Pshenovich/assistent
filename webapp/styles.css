@@ -15576,3 +15576,16 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 .contacts-bulk-row.is-warn small { color: #f0c36a; }
 .contacts-bulk-row.is-err small { color: #ff8a80; }
 .modal-header-spacer { display: inline-block; width: 36px; height: 36px; }
+
+/* Карточки встреч/задач/напоминаний и варианты времени в ответе ИИ */
+.note-cal-card { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0; border-radius: 12px; background: rgba(255, 255, 255, 0.06); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.note-cal-card:hover { background: rgba(255, 255, 255, 0.1); }
+.note-cal-card-ico { flex: none; width: 30px; height: 30px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; background: rgba(139, 92, 246, 0.16); color: #c4b5fd; }
+.note-cal-card-copy { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.note-cal-card-copy b { font-weight: 600; font-size: 0.875rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-cal-card-copy small { font-size: 0.75rem; color: var(--text-secondary, #909499); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-cal-card-chev { flex: none; display: inline-flex; color: var(--text-secondary, #909499); }
+.note-cal-slots-label { margin: 0; font-size: 0.75rem; color: #ddd6fe; }
+.note-cal-slot { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); }
+.note-cal-slot .note-discuss-edits-btn { flex: none; }
+.note-discuss-cal:has(.note-cal-card, .note-cal-slot) { gap: 6px; }
