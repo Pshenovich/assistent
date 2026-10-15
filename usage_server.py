@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import html as html_lib
+from html.parser import HTMLParser
 import ipaddress
 import json
 import os
@@ -7651,10 +7652,53 @@ def note_body_list_preview(
     return cleaned, truncated
 
 
+class _NoteBadgeParser(HTMLParser):
+    """Считает пункты чек-листа и таблицы во всём теле заметки (до усечения)."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.lists: list[bool] = []
+        self.total = 0
+        self.done = 0
+        self.has_table = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        a = {k: (v or "") for k, v in attrs}
+        if tag in ("ul", "ol"):
+            cls = a.get("class", "")
+            self.lists.append("note-task-list" in cls.split() or a.get("data-type") == "taskList")
+        elif tag == "li" and self.lists and self.lists[-1]:
+            self.total += 1
+            if "checked" in a or a.get("data-checked") == "true":
+                self.done += 1
+        elif tag == "table":
+            self.has_table = True
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("ul", "ol") and self.lists:
+            self.lists.pop()
+
+
+def note_list_badges(body: str) -> dict[str, Any]:
+    raw = _DATA_URI_RE.sub("", str(body or ""))
+    out: dict[str, Any] = {"checklist_total": 0, "checklist_done": 0, "has_table": False}
+    if not raw or ("<li" not in raw and "<table" not in raw):
+        return out
+    p = _NoteBadgeParser()
+    try:
+        p.feed(raw)
+        p.close()
+    except Exception:
+        return out
+    out.update(checklist_total=p.total, checklist_done=p.done, has_table=p.has_table)
+    return out
+
+
 def minify_note_for_list(item: dict[str, Any]) -> dict[str, Any]:
     """Оставляет в list-payload только превью body/description."""
     if not isinstance(item, dict):
         return item
+    item.update(note_list_badges(str(item.get("body") or item.get("description") or "")))
     touched = False
     for key in ("body", "description"):
         if key not in item or item.get(key) is None:

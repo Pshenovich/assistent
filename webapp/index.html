@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261016-notes4">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261016-notes6">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -87,7 +87,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261016-notes4" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261016-notes6" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -1489,6 +1489,14 @@
               <label>По <input type="date" id="notes-filter-to" class="field-input" /></label>
             </div>
           </fieldset>
+          <fieldset class="notes-filter-group">
+            <legend>Сортировка</legend>
+            <div class="notes-filter-seg" data-key="sort">
+              <button type="button" data-v="updated">По изменению</button>
+              <button type="button" data-v="created">По созданию</button>
+              <button type="button" data-v="title">По названию</button>
+            </div>
+          </fieldset>
           <button type="button" class="btn primary notes-filter-apply" id="notes-filter-apply">Показать</button>
         </div>
       </div>
@@ -1849,7 +1857,7 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261016-notes4" defer></script>
-  <script src="/webapp/app.js?v=20261016-notes4" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261016-notes6" defer></script>
+  <script src="/webapp/app.js?v=20261016-notes6" defer></script>
 </body>
 </html>
