@@ -69,7 +69,21 @@ def _uid(user_id: int | str) -> str:
 
 
 def _norm_email(email: str | None) -> str:
-    return str(email or "").strip().lower()
+    """Ключ участника: email или «tg:<ник>» для контактов без почты."""
+    from assistant.stores.contacts_store import normalize_contact_key
+
+    return normalize_contact_key(email)
+
+
+def _contacts_by_key(owner: str) -> dict[str, dict[str, Any]]:
+    from assistant.stores import contacts_store
+
+    out: dict[str, dict[str, Any]] = {}
+    for c in contacts_store.load_contacts(telegram_user_id=int(owner)) or []:
+        k = contacts_store.contact_key(c)
+        if k:
+            out[k] = dict(c)
+    return out
 
 
 def _team_row(row: sqlite3.Row, *, member_count: int = 0) -> dict[str, Any]:
@@ -153,11 +167,7 @@ def list_teams_detailed(owner_user_id: int | str) -> list[dict[str, Any]]:
     teams = list_teams(owner)
     if not teams:
         return []
-    contacts = {
-        _norm_email(c.get("email")): c
-        for c in (contacts_store.load_contacts(telegram_user_id=int(owner)) or [])
-        if _norm_email(c.get("email"))
-    }
+    contacts = _contacts_by_key(owner)
     with _LOCK:
         member_rows = _conn().execute(
             """
@@ -340,11 +350,22 @@ def list_contact_team_ids(owner_user_id: int | str, email: str) -> list[int]:
 
 def _try_resolve_member_id(owner_user_id: int | str, email: str) -> Optional[str]:
     from assistant.stores import note_members
+    from assistant.stores.contacts_store import TG_KEY_PREFIX
 
+    key = _norm_email(email)
     try:
-        uid, _ = note_members.resolve_contact_telegram_id(
-            owner_user_id=owner_user_id, email=email
-        )
+        if key.startswith(TG_KEY_PREFIX):
+            contact = _owner_contact_by_email(owner_user_id, key) or {}
+            uid, _ = note_members.resolve_contact_telegram_id(
+                owner_user_id=owner_user_id,
+                email=None,
+                telegram_user_id=contact.get("telegram_user_id"),
+                telegram_username=key[len(TG_KEY_PREFIX):],
+            )
+        else:
+            uid, _ = note_members.resolve_contact_telegram_id(
+                owner_user_id=owner_user_id, email=key
+            )
         return _uid(uid)
     except ValueError:
         return None
@@ -372,7 +393,7 @@ def _owner_contact_by_email(owner_user_id: int | str, email: str) -> dict[str, A
     if not key:
         return None
     for row in contacts_store.load_contacts(telegram_user_id=int(owner_user_id)) or []:
-        if _norm_email(row.get("email")) == key:
+        if contacts_store.contact_key(row) == key:
             return dict(row)
     return None
 
@@ -391,11 +412,7 @@ def _team_peer_contacts(
     exclude = _norm_email(exclude_email)
     if not team_ids:
         return []
-    owner_contacts = {
-        _norm_email(c.get("email")): dict(c)
-        for c in (contacts_store.load_contacts(telegram_user_id=int(owner)) or [])
-        if _norm_email(c.get("email"))
-    }
+    owner_contacts = _contacts_by_key(owner)
     with _LOCK:
         placeholders = ",".join("?" * len(team_ids))
         rows = _conn().execute(
@@ -416,7 +433,11 @@ def _team_peer_contacts(
         seen.add(email)
         src = owner_contacts.get(email) or {}
         name = str(src.get("name") or email).strip() or email
-        peer: dict[str, Any] = {"name": name, "email": email}
+        peer: dict[str, Any] = {"name": name, "email": str(src.get("email") or "") if src else (
+            "" if email.startswith("tg:") else email
+        )}
+        if email.startswith("tg:") and not src.get("telegram_username"):
+            peer["telegram_username"] = email[3:]
         tg = str(src.get("telegram_username") or src.get("tg_username") or "").strip()
         if tg:
             peer["telegram_username"] = tg
@@ -428,32 +449,38 @@ def _team_peer_contacts(
             pass
         peers.append(peer)
 
-    # Владелец команды — если у него в книге есть запись о себе или профиль с email нет:
-    # ищем контакт с telegram_user_id владельца.
+    # Владелец команды — тоже участник: имя и ник из профиля, почта Google, если подключал календарь.
     owner_email = ""
     owner_name = ""
     owner_tg = ""
-    for email, src in owner_contacts.items():
+    for key, src in owner_contacts.items():
         try:
             if int(src.get("telegram_user_id") or 0) == int(owner):
-                owner_email = email
+                owner_email = str(src.get("email") or "").strip().lower()
                 owner_name = str(src.get("name") or "").strip()
-                owner_tg = str(
-                    src.get("telegram_username") or src.get("tg_username") or ""
-                ).strip()
+                owner_tg = str(src.get("telegram_username") or src.get("tg_username") or "").strip()
                 break
         except (TypeError, ValueError):
             continue
-    if owner_email and owner_email != exclude and owner_email not in seen:
-        profile = note_members.get_profile(owner) or {}
+    profile = note_members.get_profile(owner) or {}
+    if not owner_email:
+        try:
+            from assistant.lib.calendar_user_lookup import account_email_for_user
+
+            owner_email = str(account_email_for_user(int(owner)) or "").strip().lower()
+        except Exception:
+            owner_email = ""
+    owner_tg = owner_tg or str(profile.get("username") or "").strip()
+    owner_name = owner_name or note_members.profile_display_name(profile, fallback="") or (
+        "@" + owner_tg if owner_tg else ""
+    )
+    owner_key = owner_email or (("tg:" + owner_tg.lower().lstrip("@")) if owner_tg else "")
+    if owner_key and owner_name and owner_key != exclude and owner_key not in seen:
         peers.append(
             {
-                "name": owner_name
-                or note_members.profile_display_name(profile, fallback=owner_email)
-                or owner_email,
+                "name": owner_name,
                 "email": owner_email,
-                "telegram_username": owner_tg
-                or str(profile.get("username") or "").strip(),
+                "telegram_username": owner_tg,
                 "telegram_user_id": int(owner),
             }
         )
@@ -479,10 +506,11 @@ def sync_team_peer_contacts(
         return {"added_for_member": 0, "added_for_peers": 0}
 
     member_uid = _try_resolve_member_id(owner, key)
-    member_contact = _owner_contact_by_email(owner, key) or {
-        "name": key,
-        "email": key,
-    }
+    member_contact = _owner_contact_by_email(owner, key) or (
+        {"name": "@" + key[3:], "email": "", "telegram_username": key[3:]}
+        if key.startswith("tg:")
+        else {"name": key, "email": key}
+    )
     peers = _team_peer_contacts(owner, team_ids, exclude_email=key)
     added_for_member = 0
     added_for_peers = 0
@@ -517,7 +545,7 @@ def sync_team_peer_contacts(
         st = contacts_store.ensure_contact_for_user_if_missing(
             telegram_user_id=peer_uid,
             name=new_name,
-            email=key,
+            email=str(member_contact.get("email") or ""),
             telegram_username_contact=new_tg,
             peer_telegram_user_id=member_uid,
         )
@@ -536,7 +564,7 @@ def set_contact_teams(
     owner = _uid(owner_user_id)
     key = _norm_email(email)
     if not key:
-        raise ValueError("Некорректный email")
+        raise ValueError("Некорректный контакт")
     wanted = []
     seen: set[int] = set()
     for raw in team_ids or []:

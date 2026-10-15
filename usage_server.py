@@ -5753,8 +5753,9 @@ async def miniapp_contacts_list(
         items = enrich_contacts_calendar_flags(list(items or []))
         teams_map = teams_store.teams_by_contact_email(int(principal.telegram_user_id))
         for row in items:
-            email = str(row.get("email") or "").strip().lower()
-            row["teams"] = list(teams_map.get(email) or [])
+            key = contacts_store.contact_key(row)
+            row["key"] = key
+            row["teams"] = list(teams_map.get(key) or [])
         return items
 
     return {"items": await run_in_threadpool(_load)}
@@ -5779,10 +5780,56 @@ async def miniapp_contacts_create(
         )
     )
     if status == "invalid":
-        raise HTTPException(status_code=400, detail="Укажите имя и корректный email")
+        raise HTTPException(status_code=400, detail="Укажите имя и email или ник в Telegram")
     if item is None:
         raise HTTPException(status_code=400, detail="Не удалось сохранить контакт")
+    item = {**item, "key": contacts_store.contact_key(item)}
     return {"item": item, "status": status}
+
+
+class _MiniappContactsBulk(BaseModel):
+    text: str = ""
+
+
+@miniapp_router.post("/contacts/bulk-telegram")
+async def miniapp_contacts_bulk_telegram(
+    body: _MiniappContactsBulk,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Добавить контакты списком ников: имя из профиля Leo, почта Google — если человек подключал календарь."""
+    from assistant.stores import contacts_store, note_members, telegram_registry
+
+    def _resolve(nick: str) -> tuple[Optional[int], str, str]:
+        uid = telegram_registry.lookup_user_id(nick) or note_members._lookup_profile_by_username(nick)
+        if not uid:
+            return None, "", ""
+        profile = note_members.get_profile(uid) or {}
+        name = note_members.profile_display_name(profile, fallback="")
+        if name.startswith("@") or name == "Участник":
+            name = ""
+        email = ""
+        try:
+            from assistant.integrations.google_calendar_oauth import user_token_path
+            from assistant.lib.calendar_user_lookup import account_email_for_user
+
+            if user_token_path(int(uid)).is_file():
+                email = str(account_email_for_user(int(uid)) or "")
+        except Exception as e:
+            print(f"[contacts_bulk] email nick={nick!r} err={e!r}")
+        return int(uid), name, email
+
+    def _run() -> list[dict[str, Any]]:
+        return contacts_store.bulk_add_by_telegram(
+            telegram_user_id=int(principal.telegram_user_id),
+            telegram_username=_miniapp_tg_username(principal),
+            text=body.text,
+            resolve=_resolve,
+        )
+
+    results = await run_in_threadpool(_run)
+    if not results:
+        raise HTTPException(status_code=400, detail="Не нашёл ников — пример: @ivan, @maria")
+    return {"results": results}
 
 
 @miniapp_router.put("/contacts/{email}")
@@ -5811,22 +5858,23 @@ async def miniapp_contacts_update(
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Контакт не найден")
-    new_email = str(item.get("email") or old_email).strip().lower()
     from assistant.stores import teams_store
 
-    if new_email and new_email != old_email.lower():
+    old_key = contacts_store.normalize_contact_key(old_email)
+    new_key = contacts_store.contact_key(item) or old_key
+    if new_key and new_key != old_key:
         await run_in_threadpool(
             teams_store.rename_contact_email,
             int(principal.telegram_user_id),
-            old_email.lower(),
-            new_email,
+            old_key,
+            new_key,
         )
     await run_in_threadpool(
         teams_store.refresh_contact_telegram,
         int(principal.telegram_user_id),
-        new_email or old_email.lower(),
+        new_key,
     )
-    return {"item": item}
+    return {"item": {**item, "key": new_key}}
 
 
 @miniapp_router.delete("/contacts/{email}")
@@ -5935,7 +5983,8 @@ def _contact_exists_for_principal(principal: _MiniappPrincipal, email: str) -> b
         telegram_user_id=int(principal.telegram_user_id),
         telegram_username=_miniapp_tg_username(principal),
     )
-    return any(str(c.get("email") or "").strip().lower() == key for c in items or [])
+    norm = contacts_store.normalize_contact_key(key)
+    return any(contacts_store.contact_key(c) == norm for c in items or [])
 
 
 @miniapp_router.get("/contacts/{email}/teams")
@@ -5994,6 +6043,7 @@ async def miniapp_contact_teams_put(
     return {
         "ok": True,
         "team_ids": result.get("team_ids") or [],
+        "contacts_synced": result.get("contacts_synced") or {},
         "teams": await run_in_threadpool(
             teams_store.list_teams, int(principal.telegram_user_id)
         ),

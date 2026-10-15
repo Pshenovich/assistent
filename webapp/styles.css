@@ -15562,3 +15562,17 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 .note-discuss-cal-item.is-proposed .note-discuss-cal-info { color: #fecaca; }
 .note-discuss-cal-item.is-faded .note-discuss-cal-info { color: var(--text-secondary, #909499); }
 .note-discuss-edits-btn.is-danger { background: #e5484d; }
+
+/* Контакты списком ников */
+.contacts-bulk-input { min-height: 84px; resize: vertical; font: inherit; }
+.contacts-bulk-save { width: 100%; margin-top: 4px; }
+.contacts-bulk-results { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; }
+.contacts-bulk-results.hidden { display: none; }
+.contacts-bulk-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 8px 10px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); font-size: 0.875rem; }
+.contacts-bulk-row b { font-weight: 600; }
+.contacts-bulk-row .contacts-bulk-name { color: var(--text); }
+.contacts-bulk-row small { flex-basis: 100%; color: var(--text-secondary, #909499); font-size: 0.75rem; }
+.contacts-bulk-row.is-ok small { color: #6fcfae; }
+.contacts-bulk-row.is-warn small { color: #f0c36a; }
+.contacts-bulk-row.is-err small { color: #ff8a80; }
+.modal-header-spacer { display: inline-block; width: 36px; height: 36px; }

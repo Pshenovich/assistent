@@ -147,10 +147,10 @@ def _rows_from_payload(data: Any) -> list[dict[str, Any]]:
         row = _normalize_row(x)
         if not row:
             continue
-        email = str(row.get("email") or "")
-        if email in seen:
+        key = contact_key(row)
+        if not key or key in seen:
             continue
-        seen.add(email)
+        seen.add(key)
         items.append(row)
     return items
 
@@ -297,6 +297,45 @@ def restore_all_contacts_from_legacy() -> list[int]:
     return restored
 
 
+TG_KEY_PREFIX = "tg:"
+
+
+def contact_key(c: dict[str, Any] | None) -> str:
+    """Ключ контакта: email, а если его нет — «tg:<ник>» (контакт только с Telegram)."""
+    if not isinstance(c, dict):
+        return ""
+    em = str(c.get("email") or "").strip().lower()
+    if em:
+        return em
+    tg = normalize_telegram_username(str(c.get("telegram_username") or c.get("tg_username") or ""))
+    return TG_KEY_PREFIX + tg if tg else ""
+
+
+def normalize_contact_key(key: str | None) -> str:
+    k = str(key or "").strip().lower()
+    if k.startswith(TG_KEY_PREFIX):
+        tg = normalize_telegram_username(k[len(TG_KEY_PREFIX):])
+        return TG_KEY_PREFIX + tg if tg else ""
+    if k.startswith("@"):
+        tg = normalize_telegram_username(k)
+        return TG_KEY_PREFIX + tg if tg else ""
+    return k
+
+
+def _same_person(c: dict[str, Any], *, email: str = "", tg: str = "", tgid: int = 0) -> bool:
+    if email and str(c.get("email") or "").strip().lower() == email:
+        return True
+    ctg = normalize_telegram_username(str(c.get("telegram_username") or c.get("tg_username") or ""))
+    if tg and ctg and ctg == tg:
+        return True
+    try:
+        if tgid and int(c.get("telegram_user_id") or 0) == int(tgid):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return False
+
+
 def contact_display_name(c: dict[str, Any]) -> str:
     fn = str(c.get("first_name") or "").strip()
     ln = str(c.get("last_name") or "").strip()
@@ -312,7 +351,9 @@ def _normalize_row(x: dict[str, Any]) -> dict[str, Any] | None:
     if not name and (fn or ln):
         name = " ".join(p for p in (fn, ln) if p).strip()
     email = str(x.get("email") or "").strip().lower()
-    if not name or not email:
+    tg_probe = normalize_telegram_username(str(x.get("telegram_username") or x.get("tg_username") or ""))
+    # Без email можно, если есть Telegram (контакт добавлен по нику).
+    if not name or (not email and not tg_probe):
         return None
     aliases_raw = x.get("aliases") or []
     aliases = (
@@ -443,16 +484,23 @@ def ensure_contact_if_missing(
     telegram_username: str | None = None,
     telegram_user_id: int | str | None = None,
 ) -> Literal["added", "existing", "invalid"]:
-    """Добавить контакт только если email ещё нет. Существующие не меняет."""
+    """Добавить контакт, только если такого человека ещё нет (по email, нику или Telegram id).
+    Email необязателен, если есть ник. Существующие не меняет."""
     name_clean = (name or "").strip()
     email_clean = (email or "").strip().lower()
-    if not name_clean or not email_clean or not EMAIL_RE.fullmatch(email_clean):
+    tg_clean = normalize_telegram_username(telegram_username or "") or None
+    if email_clean and not EMAIL_RE.fullmatch(email_clean):
         return "invalid"
+    if not name_clean or (not email_clean and not tg_clean):
+        return "invalid"
+    try:
+        tgid_probe = int(telegram_user_id or 0)
+    except (TypeError, ValueError):
+        tgid_probe = 0
     for c in contacts:
-        if str(c.get("email", "")).strip().lower() == email_clean:
+        if _same_person(c, email=email_clean, tg=tg_clean or "", tgid=tgid_probe):
             return "existing"
     row: dict[str, Any] = {"name": name_clean, "email": email_clean, "aliases": []}
-    tg_clean = normalize_telegram_username(telegram_username or "") or None
     if tg_clean:
         row["telegram_username"] = tg_clean
     try:
@@ -503,13 +551,11 @@ def ensure_contact_for_user_if_missing(
 def delete_contact_by_email(
     contacts: list[dict[str, Any]], email: str
 ) -> bool:
-    email_clean = (email or "").strip().lower()
-    if not email_clean:
+    key = normalize_contact_key(email)
+    if not key:
         return False
     before = len(contacts)
-    contacts[:] = [
-        c for c in contacts if str(c.get("email", "")).strip().lower() != email_clean
-    ]
+    contacts[:] = [c for c in contacts if contact_key(c) != key]
     return len(contacts) < before
 
 
@@ -523,22 +569,23 @@ def update_contact_by_email(
     aliases: list[str] | None = None,
     clear_telegram: bool = False,
 ) -> dict[str, Any] | None:
-    old_clean = (old_email or "").strip().lower()
+    old_clean = normalize_contact_key(old_email)
     if not old_clean:
         return None
     idx = None
     for i, c in enumerate(contacts):
-        if str(c.get("email", "")).strip().lower() == old_clean:
+        if contact_key(c) == old_clean:
             idx = i
             break
     if idx is None:
         return None
     row = dict(contacts[idx])
-    new_email = (email or row.get("email") or "").strip().lower()
+    new_email = (row.get("email") if email is None else email) or ""
+    new_email = str(new_email).strip().lower()
     new_name = (name if name is not None else row.get("name") or "").strip()
-    if not new_name or not new_email or not EMAIL_RE.fullmatch(new_email):
+    if not new_name or (new_email and not EMAIL_RE.fullmatch(new_email)):
         return None
-    if new_email != old_clean:
+    if new_email and new_email != str(row.get("email") or "").strip().lower():
         for c in contacts:
             if (
                 str(c.get("email", "")).strip().lower() == new_email
@@ -559,9 +606,11 @@ def update_contact_by_email(
         else:
             row.pop("telegram_username", None)
             row.pop("tg_username", None)
+    if not contact_key(row):
+        return None  # без email и без Telegram контакт не сохранить
     contacts[idx] = row
-    if new_email != old_clean:
-        contacts.sort(key=lambda x: str(x.get("email") or ""))
+    if contact_key(row) != old_clean:
+        contacts.sort(key=lambda x: contact_key(x))
     return dict(row)
 
 
@@ -579,6 +628,18 @@ def create_contact_for_user(
         telegram_user_id=telegram_user_id, telegram_username=telegram_username
     )
     email_clean = (email or "").strip().lower()
+    if not email_clean:
+        # Контакт только с Telegram.
+        tg = normalize_telegram_username(telegram_username_contact or "")
+        st = ensure_contact_if_missing(items, name, "", telegram_username=tg or None)
+        if st == "invalid":
+            return None, "invalid"
+        if st == "added":
+            save_contacts(items, telegram_user_id=telegram_user_id, telegram_username=telegram_username)
+        for c in items:
+            if contact_key(c) == TG_KEY_PREFIX + tg:
+                return dict(c), st
+        return None, st
     if not EMAIL_RE.fullmatch(email_clean):
         return None, "invalid"
     st = add_or_update_contact(
@@ -655,3 +716,85 @@ def update_contact_for_user(
         telegram_username=telegram_username,
     )
     return row
+
+
+_NICK_SPLIT_RE = re.compile(r"[\s,;]+")
+
+
+def parse_telegram_nicks(text: str, *, limit: int = 50) -> list[str]:
+    """«@ivan, maria; t.me/petr» → ['ivan', 'maria', 'petr'] (без дублей, по порядку)."""
+    out: list[str] = []
+    for part in _NICK_SPLIT_RE.split(str(text or "")):
+        p = part.strip()
+        if not p:
+            continue
+        if "/" in p:  # t.me/username, https://t.me/username
+            p = p.rstrip("/").rsplit("/", 1)[-1]
+        tg = normalize_telegram_username(p.lstrip("@"))
+        if len(tg) < 3 or tg in out:
+            continue
+        out.append(tg)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def bulk_add_by_telegram(
+    *,
+    telegram_user_id: int,
+    telegram_username: str | None,
+    text: str,
+    resolve: Any,
+) -> list[dict[str, Any]]:
+    """Добавить контакты по списку ников. resolve(nick) -> (uid|None, name, email).
+
+    Статусы: added (с почтой), added_no_email, not_in_leo (только ник), existing,
+    email_added (у существующего контакта появилась почта), self.
+    """
+    owner_nick = normalize_telegram_username(telegram_username or "")
+    items = load_contacts(telegram_user_id=telegram_user_id, telegram_username=telegram_username)
+    results: list[dict[str, Any]] = []
+    changed = False
+    for nick in parse_telegram_nicks(text):
+        if owner_nick and nick == owner_nick:
+            results.append({"username": nick, "status": "self"})
+            continue
+        uid, name, email = None, "", ""
+        try:
+            uid, name, email = resolve(nick)
+        except Exception as e:  # noqa: BLE001 — один ник не должен ломать весь список
+            print(f"[contacts_bulk] resolve nick={nick!r} err={e!r}")
+        if uid and int(uid) == int(telegram_user_id):
+            results.append({"username": nick, "status": "self"})
+            continue
+        email = str(email or "").strip().lower()
+        if email and not EMAIL_RE.fullmatch(email):
+            email = ""
+        name = str(name or "").strip() or "@" + nick
+        existing = next(
+            (c for c in items if _same_person(c, email=email, tg=nick, tgid=int(uid or 0))), None
+        )
+        if existing is not None:
+            status = "existing"
+            if email and not str(existing.get("email") or "").strip():
+                existing["email"] = email
+                status = "email_added"
+                changed = True
+            if not existing.get("telegram_username"):
+                existing["telegram_username"] = nick
+                changed = True
+            if uid and not existing.get("telegram_user_id"):
+                existing["telegram_user_id"] = int(uid)
+                changed = True
+            results.append({"username": nick, "status": status, "name": existing.get("name"), "key": contact_key(existing)})
+            continue
+        st = ensure_contact_if_missing(items, name, email, telegram_username=nick, telegram_user_id=uid)
+        if st != "added":
+            results.append({"username": nick, "status": "invalid"})
+            continue
+        changed = True
+        status = "added" if email else ("added_no_email" if uid else "not_in_leo")
+        results.append({"username": nick, "status": status, "name": name, "key": email or TG_KEY_PREFIX + nick})
+    if changed:
+        save_contacts(items, telegram_user_id=telegram_user_id, telegram_username=telegram_username)
+    return results

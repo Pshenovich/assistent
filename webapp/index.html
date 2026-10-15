@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261016-gcal1">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261016-contacts1">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -87,7 +87,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261016-gcal1" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261016-contacts1" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -778,6 +778,7 @@
           </button>
           <div id="contacts-create-menu" class="actual-create-menu contacts-create-menu hidden" role="menu" aria-label="Добавить">
             <button type="button" class="actual-create-menu-btn" data-contacts-action="contact" role="menuitem">Добавить контакт</button>
+            <button type="button" class="actual-create-menu-btn" data-contacts-action="bulk" role="menuitem">Добавить по нику в Telegram</button>
             <button type="button" class="actual-create-menu-btn" data-contacts-action="teams" role="menuitem">Управление командами</button>
           </div>
         </div>
@@ -1524,7 +1525,7 @@
             <input type="text" id="contacts-f-name" class="field-input" autocomplete="name" />
           </label>
           <label class="field">
-            <span class="field-label">Email</span>
+            <span class="field-label">Email (можно без него, если указан Telegram)</span>
             <input type="email" id="contacts-f-email" class="field-input" autocomplete="email" />
           </label>
           <label class="field">
@@ -1543,6 +1544,32 @@
           </div>
           <p id="contacts-form-msg" class="billing-msg muted small hidden"></p>
           <p id="contacts-form-err" class="error hidden"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="contacts-bulk-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal--sheet contacts-form-sheet" role="dialog" aria-modal="true" aria-labelledby="contacts-bulk-title">
+      <div class="modal-form">
+        <div class="modal-header">
+          <button type="button" class="modal-header-btn modal-header-btn--close" id="contacts-bulk-close" aria-label="Закрыть" title="Закрыть">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+          <h2 id="contacts-bulk-title" class="modal-title">Контакты по нику</h2>
+          <span class="modal-header-spacer" aria-hidden="true"></span>
+        </div>
+        <div class="modal-body contacts-form-body">
+          <label class="field">
+            <span class="field-label">Ники в Telegram через запятую</span>
+            <textarea id="contacts-bulk-input" class="field-input contacts-bulk-input" rows="3" autocomplete="off" placeholder="@ivan, @maria, petr"></textarea>
+          </label>
+          <p class="muted small">Имя подтянется из профиля, почта — если человек подключал Google Календарь в Leo. Кого нет в Leo — добавим по нику.</p>
+          <button type="button" class="btn primary contacts-bulk-save" id="contacts-bulk-save">Добавить</button>
+          <ul id="contacts-bulk-results" class="contacts-bulk-results hidden"></ul>
+          <p id="contacts-bulk-err" class="error hidden"></p>
         </div>
       </div>
     </div>
@@ -1799,7 +1826,7 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261016-gcal1" defer></script>
-  <script src="/webapp/app.js?v=20261016-gcal1" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261016-contacts1" defer></script>
+  <script src="/webapp/app.js?v=20261016-contacts1" defer></script>
 </body>
 </html>

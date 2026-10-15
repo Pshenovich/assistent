@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-gcal1";
+  var WEBAPP_BUILD = "20261016-contacts1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-gcal1";
+  const NOTE_EDITOR_ASSET_V = "20261016-contacts1";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -3832,6 +3832,7 @@
       "note-ai-overlay",
       "tags-manage-overlay",
       "contacts-form-overlay",
+      "contacts-bulk-overlay",
       "teams-manage-overlay",
       "modal-overlay",
       "voice-overlay",
@@ -5634,6 +5635,7 @@
     var canvasImageSheet = document.getElementById("canvas-image-overlay");
     var noteAiSheet = document.getElementById("note-ai-overlay");
     var contactsForm = document.getElementById("contacts-form-overlay");
+    var contactsBulk = document.getElementById("contacts-bulk-overlay");
     var teamsManage = document.getElementById("teams-manage-overlay");
     var chatsSplit =
       document.documentElement.classList.contains("chats-split-open") &&
@@ -5656,6 +5658,7 @@
       (canvasImageSheet && !canvasImageSheet.classList.contains("hidden")) ||
       (noteAiSheet && !noteAiSheet.classList.contains("hidden")) ||
       (contactsForm && !contactsForm.classList.contains("hidden")) ||
+      (contactsBulk && !contactsBulk.classList.contains("hidden")) ||
       (teamsManage && !teamsManage.classList.contains("hidden"));
     app.classList.toggle("app--immersive", !!immersive);
   }
@@ -8667,6 +8670,97 @@
     syncAppOverlay();
   }
 
+  // Контакты списком ников: «@ivan, @maria, petr» — имя и почта подтягиваются из Leo.
+  function openContactsBulkModal() {
+    var ov = document.getElementById("contacts-bulk-overlay");
+    if (!ov) return;
+    var input = document.getElementById("contacts-bulk-input");
+    var res = document.getElementById("contacts-bulk-results");
+    if (input) input.value = "";
+    if (res) {
+      res.innerHTML = "";
+      setHidden(res, true);
+    }
+    setHidden(document.getElementById("contacts-bulk-err"), true);
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    syncAppOverlay();
+    setTimeout(function () {
+      try {
+        if (input) input.focus();
+      } catch (_) {}
+    }, 50);
+  }
+
+  function closeContactsBulkModal() {
+    var ov = document.getElementById("contacts-bulk-overlay");
+    if (!ov) return;
+    ov.classList.add("hidden");
+    ov.setAttribute("aria-hidden", "true");
+    syncAppOverlay();
+  }
+
+  var CONTACTS_BULK_STATUS = {
+    added: ["ok", "добавлен"],
+    added_no_email: ["warn", "добавлен без почты — не подключал Google Календарь"],
+    not_in_leo: ["warn", "добавлен по нику — ещё не пользуется Leo"],
+    existing: ["muted", "уже в контактах"],
+    email_added: ["ok", "уже был — добавлена почта"],
+    self: ["muted", "это вы"],
+    invalid: ["err", "не получилось добавить"],
+  };
+
+  async function contactsBulkSubmit() {
+    var input = document.getElementById("contacts-bulk-input");
+    var btn = document.getElementById("contacts-bulk-save");
+    var res = document.getElementById("contacts-bulk-results");
+    var err = document.getElementById("contacts-bulk-err");
+    var text = String((input && input.value) || "").trim();
+    setHidden(err, true);
+    if (!text) {
+      if (err) {
+        err.textContent = "Введите ники через запятую, например: @ivan, @maria";
+        setHidden(err, false);
+      }
+      return;
+    }
+    if (btn) btn.disabled = true;
+    try {
+      var data = await apiFetch("/contacts/bulk-telegram", { method: "POST", body: JSON.stringify({ text: text }) });
+      var rows = (data && data.results) || [];
+      if (res) {
+        res.innerHTML = "";
+        rows.forEach(function (r) {
+          var st = CONTACTS_BULK_STATUS[r.status] || ["muted", r.status];
+          var li = document.createElement("li");
+          li.className = "contacts-bulk-row is-" + st[0];
+          var nick = document.createElement("b");
+          nick.textContent = "@" + r.username;
+          var who = document.createElement("span");
+          who.className = "contacts-bulk-name";
+          who.textContent = r.name && r.name !== "@" + r.username ? r.name : "";
+          var note = document.createElement("small");
+          note.textContent = st[1];
+          li.appendChild(nick);
+          if (who.textContent) li.appendChild(who);
+          li.appendChild(note);
+          res.appendChild(li);
+        });
+        setHidden(res, !rows.length);
+      }
+      if (input) input.value = "";
+      await loadContacts();
+      await refreshProfileContactsCount();
+    } catch (e) {
+      if (err) {
+        err.textContent = (e && e.message) || "Не удалось добавить";
+        setHidden(err, false);
+      }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   async function openNewContactModal() {
     contactsResetForm();
     await loadContactsFormTeams([]);
@@ -8674,7 +8768,7 @@
   }
 
   async function contactsFillForm(c) {
-    contactsEditingEmail = (c && c.email) || null;
+    contactsEditingEmail = (c && (c.key || c.email)) || null;
     var hid = document.getElementById("contacts-edit-email");
     if (hid) hid.value = contactsEditingEmail || "";
     var t = document.getElementById("contacts-form-title");
@@ -8770,8 +8864,8 @@
     delBtn.addEventListener("click", async function () {
       if (!confirm("Удалить контакт «" + (c.name || c.email) + "»?")) return;
       try {
-        await apiFetch("/contacts/" + encodeURIComponent(c.email), { method: "DELETE" });
-        if (contactsEditingEmail === c.email) closeContactsFormModal();
+        await apiFetch("/contacts/" + encodeURIComponent(c.key || c.email), { method: "DELETE" });
+        if (contactsEditingEmail === (c.key || c.email)) closeContactsFormModal();
         await loadContacts();
         await refreshProfileContactsCount();
       } catch (err) {
@@ -9064,7 +9158,7 @@
     var title = ov.querySelector("#team-picker-title");
     if (title) title.textContent = "Участник команды";
     teamPickerState.mode = "contact";
-    teamPickerState.email = String(contact.email);
+    teamPickerState.email = String(contact.key || contact.email);
     teamPickerState.noteId = "";
     teamPickerState.hasTelegram = contactHasTelegram(contact);
     teamPickerState.selected = {};
@@ -9086,7 +9180,7 @@
     }
     try {
       var data = await apiFetch(
-        "/contacts/" + encodeURIComponent(contact.email) + "/teams",
+        "/contacts/" + encodeURIComponent(contact.key || contact.email) + "/teams",
         { method: "GET" }
       );
       if (
@@ -9367,11 +9461,12 @@
     });
     sel.innerHTML = '<option value="">Добавить контакт…</option>';
     (teamsManageState.contacts || []).forEach(function (c) {
-      var email = String((c && c.email) || "").toLowerCase();
+      var email = String((c && (c.key || c.email)) || "").toLowerCase();
       if (!email || memberEmails[email]) return;
       var opt = document.createElement("option");
       opt.value = email;
-      opt.textContent = (c.name || email) + (c.name ? " · " + email : "");
+      var sub = c.email || (c.telegram_username ? "@" + c.telegram_username : "");
+      opt.textContent = (c.name || sub) + (c.name && sub ? " · " + sub : "");
       sel.appendChild(opt);
     });
   }
@@ -9554,10 +9649,29 @@
   }
 
   async function setContactTeamsForEmail(email, teamIds) {
-    await apiFetch("/contacts/" + encodeURIComponent(email) + "/teams", {
+    var res = await apiFetch("/contacts/" + encodeURIComponent(email) + "/teams", {
       method: "PUT",
       body: JSON.stringify({ team_ids: teamIds }),
     });
+    toastTeamContactsSynced(res && res.contacts_synced);
+    return res;
+  }
+
+  function ruPeople(n) {
+    var m10 = n % 10;
+    var m100 = n % 100;
+    return n + " " + (m10 === 1 && m100 !== 11 ? "участника" : "участников");
+  }
+
+  function toastTeamContactsSynced(sync) {
+    if (!sync) return;
+    var forMember = Number(sync.added_for_member) || 0;
+    var forPeers = Number(sync.added_for_peers) || 0;
+    if (!forMember && !forPeers) return;
+    var parts = [];
+    if (forMember) parts.push("новому участнику добавлены в контакты " + ruPeople(forMember) + " команды");
+    if (forPeers) parts.push("он сам — в контакты ещё у " + forPeers);
+    showNoteToast(parts.join(", "));
   }
 
   async function setNoteTeamShares(noteId, teamIds) {
@@ -10283,14 +10397,14 @@
     var aliases = contactsParseAliases(
       document.getElementById("contacts-f-aliases").value || ""
     );
-    if (!name || !email) {
-      contactsShowFormMsg("", "Укажите имя и email");
+    if (!name || (!email && !tg)) {
+      contactsShowFormMsg("", "Укажите имя и email или ник в Telegram");
       return;
     }
     contactsShowFormMsg("", "");
     var teamIds = selectedContactFormTeamIds();
     try {
-      var savedEmail = email.toLowerCase();
+      var savedEmail = email ? email.toLowerCase() : "tg:" + tg.toLowerCase();
       if (contactsEditingEmail) {
         var updated = await apiFetch(
           "/contacts/" + encodeURIComponent(contactsEditingEmail),
@@ -10305,8 +10419,8 @@
             }),
           }
         );
-        if (updated && updated.item && updated.item.email) {
-          savedEmail = String(updated.item.email).toLowerCase();
+        if (updated && updated.item && (updated.item.key || updated.item.email)) {
+          savedEmail = String(updated.item.key || updated.item.email).toLowerCase();
         }
       } else {
         var created = await apiFetch("/contacts", {
@@ -10318,14 +10432,11 @@
             aliases: aliases.length ? aliases : null,
           }),
         });
-        if (created && created.item && created.item.email) {
-          savedEmail = String(created.item.email).toLowerCase();
+        if (created && created.item && (created.item.key || created.item.email)) {
+          savedEmail = String(created.item.key || created.item.email).toLowerCase();
         }
       }
-      await apiFetch("/contacts/" + encodeURIComponent(savedEmail) + "/teams", {
-        method: "PUT",
-        body: JSON.stringify({ team_ids: teamIds }),
-      });
+      await setContactTeamsForEmail(savedEmail, teamIds);
       closeContactsFormModal();
       await loadContacts();
       await refreshProfileContactsCount();
@@ -35632,6 +35743,7 @@
         var action = btn.getAttribute("data-contacts-action");
         closeContactsCreateMenu();
         if (action === "contact") openNewContactModal();
+        if (action === "bulk") openContactsBulkModal();
         if (action === "teams") openTeamsManageModal();
       });
     });
@@ -35641,6 +35753,20 @@
       if (!menu || menu.classList.contains("hidden")) return;
       if (menu.contains(e.target) || (btn && btn.contains(e.target))) return;
       closeContactsCreateMenu();
+    });
+    var bulkClose = document.getElementById("contacts-bulk-close");
+    if (bulkClose) bulkClose.addEventListener("click", function (e) {
+      e.preventDefault();
+      closeContactsBulkModal();
+    });
+    var bulkSave = document.getElementById("contacts-bulk-save");
+    if (bulkSave) bulkSave.addEventListener("click", function (e) {
+      e.preventDefault();
+      contactsBulkSubmit();
+    });
+    var bulkOverlay = document.getElementById("contacts-bulk-overlay");
+    if (bulkOverlay) bulkOverlay.addEventListener("click", function (e) {
+      if (e.target === bulkOverlay) closeContactsBulkModal();
     });
     var teamsManageClose = document.getElementById("teams-manage-close");
     if (teamsManageClose) {
