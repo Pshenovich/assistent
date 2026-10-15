@@ -281,7 +281,11 @@ def resolve_attendee_names(
             missing.append(name)
             continue
         em = str(hit.get("email") or "").strip().lower()
-        if not em or em in seen_emails:
+        if not em:
+            # Контакт добавлен по нику без почты — пригласить в календарь нельзя.
+            missing.append(name)
+            continue
+        if em in seen_emails:
             continue
         seen_emails.add(em)
         emails.append({"email": em})
