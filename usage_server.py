@@ -2631,6 +2631,8 @@ class _MiniappNoteSheetPatch(BaseModel):
 
 class _MiniappCanvasImageBody(BaseModel):
     prompt: str = ""
+    # Лист презентации — чтобы взять её стиль для арт-дирекшена картинки.
+    sheet_id: Optional[str] = None
 
 
 class _MiniappCanvasOpBody(BaseModel):
@@ -3054,6 +3056,11 @@ def _materialize_canvas_sheet_images(
         img for img in (chat_images or []) if isinstance(img, dict) and str(img.get("b64") or "").strip()
     ]
     prompts = web_canvas_lib.extract_canvas_img_prompts(html)
+    if prompts:
+        from assistant.lib import image_style
+
+        theme = image_style.deck_theme_of_html(html)
+        prompts = [image_style.styled_prompt(p, theme) for p in prompts]
     if prompts and not images:
         # До 4 картинок за раз (слайд «Изображения с подписями» — до 3), параллельно и по порядку слотов.
         from concurrent.futures import ThreadPoolExecutor
@@ -9515,7 +9522,15 @@ async def miniapp_canvas_image_generate(
         raise HTTPException(status_code=404, detail="Заметка не найдена")
 
     def _gen() -> list[dict[str, str]]:
-        return openrouter_generate_images(prompt, n=1, timeout=180)
+        from assistant.lib import image_style
+        from assistant.stores import note_sheets as note_sheets_store
+
+        theme = None
+        sid = str(body.sheet_id or "").strip()
+        if sid.isdigit():
+            sheet = note_sheets_store.get_extra_sheet(int(note_id), int(sid))
+            theme = image_style.deck_theme_of_html(str((sheet or {}).get("body") or ""))
+        return openrouter_generate_images(image_style.styled_prompt(prompt, theme), n=1, timeout=180)
 
     try:
         images = await run_in_threadpool(_gen)
@@ -9741,8 +9756,11 @@ async def miniapp_canvas_revise(
                 urls = web_canvas_lib.image_dicts_to_data_urls([g for g in got if isinstance(g, dict)])
                 return urls[0] if urls else ""
 
+            from assistant.lib import image_style
+
+            theme = image_style.deck_theme_of_html(html)
             with ThreadPoolExecutor(max_workers=4) as pool:
-                urls = list(pool.map(_gen, [p for _mid, p in todo]))
+                urls = list(pool.map(_gen, [image_style.styled_prompt(p, theme) for _mid, p in todo]))
             media = canvas_templates.extract_media(html)
             media.update({mid: u for (mid, _p), u in zip(todo, urls) if u})
             deck = canvas_templates.extract_deck(html)

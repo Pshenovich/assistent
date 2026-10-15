@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261015-notes-filter";
+  var WEBAPP_BUILD = "20261015-image-sheet2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261015-notes-filter";
+  const NOTE_EDITOR_ASSET_V = "20261015-image-sheet2";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -3828,6 +3828,7 @@
     var ids = [
       "note-editor-overlay",
       "notes-filter-overlay",
+      "canvas-image-overlay",
       "tags-manage-overlay",
       "contacts-form-overlay",
       "teams-manage-overlay",
@@ -5627,6 +5628,7 @@
     var noteUnsaved = document.getElementById("note-unsaved-overlay");
     var tagsSheet = document.getElementById("tags-manage-overlay");
     var notesFilterSheet = document.getElementById("notes-filter-overlay");
+    var canvasImageSheet = document.getElementById("canvas-image-overlay");
     var contactsForm = document.getElementById("contacts-form-overlay");
     var teamsManage = document.getElementById("teams-manage-overlay");
     var chatsSplit =
@@ -5647,6 +5649,7 @@
       (noteUnsaved && !noteUnsaved.classList.contains("hidden")) ||
       (tagsSheet && !tagsSheet.classList.contains("hidden")) ||
       (notesFilterSheet && !notesFilterSheet.classList.contains("hidden")) ||
+      (canvasImageSheet && !canvasImageSheet.classList.contains("hidden")) ||
       (contactsForm && !contactsForm.classList.contains("hidden")) ||
       (teamsManage && !teamsManage.classList.contains("hidden"));
     app.classList.toggle("app--immersive", !!immersive);
@@ -17530,7 +17533,7 @@
     return dataUrl;
   }
 
-  async function generateCanvasImageDataUrl(prompt) {
+  async function generateCanvasImageDataUrl(prompt, sheetId) {
     var noteId = noteSheetsNoteId();
     var text = String(prompt || "").trim();
     if (!noteId) throw new Error("Нет заметки");
@@ -17539,7 +17542,7 @@
       "/notes/local/" + encodeURIComponent(String(noteId)) + "/canvas-image",
       {
         method: "POST",
-        body: JSON.stringify({ prompt: text }),
+        body: JSON.stringify({ prompt: text, sheet_id: sheetId ? String(sheetId) : null }),
         timeout: 240000,
       }
     );
@@ -18044,9 +18047,76 @@
     };
   }
 
+  // Шторка «Изображение»: крупные кнопки вместо мелкой панели внутри уменьшенного слайда
+  // и своё описание для генерации (window.prompt в Telegram на телефоне часто не открывается).
+  var canvasImageReq = null;
+
+  function openCanvasImageSheet(sheetId, req) {
+    var ov = document.getElementById("canvas-image-overlay");
+    if (!ov) return;
+    canvasImageReq = { sheetId: String(sheetId || ""), req: req };
+    var ta = document.getElementById("canvas-image-prompt");
+    if (ta) ta.value = String(req.prompt || "");
+    var clear = document.getElementById("canvas-image-clear");
+    if (clear) {
+      clear.classList.toggle("hidden", !req.hasImg);
+      clear.textContent = req.isVisual ? "Вернуть 3D-визуал" : "Убрать";
+    }
+    syncCanvasImageGenerateBtn();
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
+  }
+
+  function closeCanvasImageSheet() {
+    var ov = document.getElementById("canvas-image-overlay");
+    if (!ov) return;
+    canvasImageReq = null;
+    ov.classList.add("hidden");
+    ov.setAttribute("aria-hidden", "true");
+    onModalSheetClose();
+    syncAppOverlay();
+  }
+
+  function syncCanvasImageGenerateBtn() {
+    var ta = document.getElementById("canvas-image-prompt");
+    var btn = document.getElementById("canvas-image-generate");
+    if (btn) btn.disabled = !(ta && ta.value.trim());
+  }
+
+  function bindCanvasImageSheet() {
+    var ov = document.getElementById("canvas-image-overlay");
+    if (!ov) return;
+    ov.addEventListener("click", function (e) {
+      if (e.target === ov) closeCanvasImageSheet();
+    });
+    var close = document.getElementById("canvas-image-close");
+    if (close) close.addEventListener("click", closeCanvasImageSheet);
+    var ta = document.getElementById("canvas-image-prompt");
+    if (ta) ta.addEventListener("input", syncCanvasImageGenerateBtn);
+    function run(action) {
+      var cur = canvasImageReq;
+      if (!cur) return;
+      var prompt = ta ? ta.value.trim() : "";
+      closeCanvasImageSheet();
+      handleWebCanvasMedia(cur.sheetId, Object.assign({}, cur.req, { action: action, prompt: prompt }));
+    }
+    var gen = document.getElementById("canvas-image-generate");
+    if (gen) gen.addEventListener("click", function () { run("generate"); });
+    var up = document.getElementById("canvas-image-upload");
+    if (up) up.addEventListener("click", function () { run("upload"); });
+    var clear = document.getElementById("canvas-image-clear");
+    if (clear) clear.addEventListener("click", function () { run("clear"); });
+  }
+
   async function handleWebCanvasMedia(sheetId, req) {
     if (!req) return;
     var action = String(req.action || "");
+    if (action === "menu") {
+      openCanvasImageSheet(sheetId, req);
+      return;
+    }
     var setBusy = typeof req.setBusy === "function" ? req.setBusy : null;
     try {
       if (action === "clear") {
@@ -18069,16 +18139,17 @@
         return;
       }
       if (action === "generate") {
-        var prompt = window.prompt(
-          "Опишите картинку для слайда",
-          "abstract geometric composition, soft ice blue and black, minimal"
-        );
-        if (prompt == null) return;
+        var prompt = String(req.prompt || "").trim();
+        if (!prompt) {
+          // Старые фреймы (без шторки) — спрашиваем описание через шторку.
+          openCanvasImageSheet(sheetId, Object.assign({}, req, { action: "menu" }));
+          return;
+        }
         if (setBusy) setBusy(true, "Генерация…");
-        showNoteToast("Генерирую…");
+        showNoteToast("Генерирую… это займёт до 30 секунд");
         try {
-          var generated = await generateCanvasImageDataUrl(prompt);
-          if (req.applyImg) req.applyImg(generated);
+          var generated = await generateCanvasImageDataUrl(prompt, sheetId);
+          if (req.applyImg) req.applyImg(generated, prompt);
           showNoteToast("Картинка сгенерирована");
         } finally {
           if (setBusy) setBusy(false);
@@ -33403,6 +33474,7 @@
     var tagsManageClose = document.getElementById("tags-manage-close");
     if (tagsManageClose) tagsManageClose.addEventListener("click", closeTagsManageSheet);
     bindNotesFilterUi();
+    bindCanvasImageSheet();
     var tagsManageOverlay = document.getElementById("tags-manage-overlay");
     if (tagsManageOverlay) {
       tagsManageOverlay.addEventListener("click", function (e) {
