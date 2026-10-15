@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261015-discuss4";
+  var WEBAPP_BUILD = "20261015-discuss5";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261015-discuss4";
+  const NOTE_EDITOR_ASSET_V = "20261015-discuss5";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -23814,6 +23814,8 @@
       btn.classList.remove("is-open");
       btn.setAttribute("aria-expanded", "false");
     }
+    var rightBtn = document.getElementById("note-discussion-new-ctx");
+    if (rightBtn) rightBtn.classList.remove("is-open");
   }
 
   function syncNotePaneHeader() {
@@ -24150,10 +24152,14 @@
     if (open) {
       closeNoteChatsMenu();
       renderNotePaneSwitchMenu();
-      menu.classList.toggle("is-from-right", !!(opts && opts.fromRight));
+      var fromRight = !!(opts && opts.fromRight);
+      menu.classList.toggle("is-from-right", fromRight);
       menu.classList.remove("hidden");
-      btn.classList.add("is-open");
-      btn.setAttribute("aria-expanded", "true");
+      var opener = fromRight ? document.getElementById("note-discussion-new-ctx") : btn;
+      if (opener) {
+        opener.classList.add("is-open");
+        opener.setAttribute("aria-expanded", "true");
+      }
     } else {
       closeNotePaneSwitchMenu();
     }
@@ -27379,6 +27385,25 @@
     return best;
   }
 
+  // Мигнуть конкретным фрагментом дважды (CSS Highlight API; без него — подсветка блока).
+  function flashTextRange(range, fallbackEl) {
+    var hasHL = typeof Highlight !== "undefined" && window.CSS && CSS.highlights;
+    var steps = [true, false, true, false];
+    var i = 0;
+    clearTimeout(flashTextRange._t);
+    function tick() {
+      var on = steps[i++];
+      if (hasHL && range) {
+        if (on) CSS.highlights.set("leo-flash", new Highlight(range));
+        else CSS.highlights.delete("leo-flash");
+      } else if (fallbackEl) {
+        fallbackEl.classList.toggle("is-flash", !!on);
+      }
+      if (i < steps.length) flashTextRange._t = setTimeout(tick, on ? 420 : 260);
+    }
+    tick();
+  }
+
   function jumpToDiscussReplyTarget(replyToId, quote) {
     var id = Number(replyToId) || 0;
     if (!id) return false;
@@ -27399,9 +27424,40 @@
           if (el && el.scrollIntoView) {
             el.scrollIntoView({ block: "center", behavior: "smooth" });
           }
+          setTimeout(function () {
+            flashTextRange(range, bubble);
+          }, 250);
+          return true;
         }
       } catch (_) {}
     }
+    setTimeout(function () {
+      flashTextRange(null, bubble);
+    }, 250);
+    return true;
+  }
+
+  // Реплай на фрагмент заметки: прокрутить заметку к нему и мигнуть выделением.
+  function jumpToNoteQuote(comment, quote) {
+    var api = window.NoteComments;
+    var root = noteEditorCommentRoot();
+    var q = String(quote || "").trim();
+    if (!api || !api.rangeForAnchor || !root || !q) return false;
+    var range = null;
+    try {
+      range = api.rangeForAnchor(root, q, (comment && comment.prefix) || "", (comment && comment.suffix) || "");
+    } catch (_) {}
+    if (!range) {
+      showNoteToast("Этого фрагмента в заметке уже нет");
+      return false;
+    }
+    if (isMobileNoteLayout() && isNoteDiscussionOpen()) closeNoteDiscussion();
+    var node = range.startContainer;
+    var el = node && (node.nodeType === 1 ? node : node.parentElement);
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: "center", behavior: "smooth" });
+    setTimeout(function () {
+      flashTextRange(range, el);
+    }, 350);
     return true;
   }
 
@@ -27500,12 +27556,28 @@
     if (!assistant) {
       appendDiscussCanvasChips(bubble, quoteSplit.canvas);
       if (quoteText) {
+        var replyTarget = findDiscussReplyTargetId(c);
         appendDiscussReplyQuote(
           bubble,
           quoteText,
           discussReplyWhoLabel(c),
-          findDiscussReplyTargetId(c)
+          replyTarget
         );
+        // Цитата из заметки (не из сообщения): клик ведёт к фрагменту в заметке.
+        if (!replyTarget) {
+          var noteReply = bubble.lastElementChild;
+          if (noteReply && noteReply.classList.contains("note-discuss-reply")) {
+            noteReply.classList.add("is-nav");
+            noteReply.setAttribute("role", "button");
+            noteReply.setAttribute("tabindex", "0");
+            noteReply.title = "Показать в заметке";
+            noteReply.addEventListener("click", function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              jumpToNoteQuote(c, quoteText);
+            });
+          }
+        }
       }
     }
     if (assistant && bodyText.trim() && !hideClipBody) {
@@ -29057,10 +29129,12 @@
     var pop = document.createElement("div");
     pop.className = "note-chats-actions";
     pop.setAttribute("role", "menu");
-    [
-      ["rename", "Переименовать"],
-      ["delete", "Удалить"],
-    ].forEach(function (it) {
+    var acts = [["rename", "Переименовать"]];
+    if (chat && chat.can_edit !== false) {
+      acts.push(["visibility", chat.visibility === "private" ? "Сделать общим" : "Сделать личным"]);
+    }
+    acts.push(["delete", "Удалить"]);
+    acts.forEach(function (it) {
       var b = document.createElement("button");
       b.type = "button";
       b.setAttribute("role", "menuitem");
@@ -29071,11 +29145,28 @@
         e.stopPropagation();
         closeNoteChatActions();
         if (it[0] === "rename") startNoteChatRename(row, chat);
-        else deleteNoteChat(chat);
+        else if (it[0] === "visibility") {
+          setNoteChatVisibility(chat.id, chat.visibility === "private" ? "shared" : "private");
+        } else deleteNoteChat(chat);
       });
       pop.appendChild(b);
     });
     row.appendChild(pop);
+    // В выпадающем списке чатов — fixed, чтобы не обрезалось прокруткой списка.
+    var moreBtn = row.querySelector(".note-chats-more");
+    if (moreBtn) {
+      var br = moreBtn.getBoundingClientRect();
+      pop.style.position = "fixed";
+      pop.style.zIndex = "420";
+      pop.style.right = Math.max(8, Math.round(window.innerWidth - br.right)) + "px";
+      pop.style.left = "auto";
+      var below = br.bottom + 4;
+      pop.style.top = Math.round(below) + "px";
+      requestAnimationFrame(function () {
+        var h = pop.offsetHeight;
+        if (below + h > window.innerHeight - 8) pop.style.top = Math.max(8, Math.round(br.top - h - 4)) + "px";
+      });
+    }
     setTimeout(function () {
       document.addEventListener(
         "click",
