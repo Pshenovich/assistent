@@ -7341,15 +7341,11 @@ async def miniapp_gpt_chat(
     }
 
 
-# «SPEAKER_1:», «Speaker_0», «[Спикер 2]:» — в начале строки или посреди текста.
-_SPEAKER_LABEL_RE = re.compile(r"(^|(?<=\s))[\[(]?(?:speaker|спикер)[ _-]?\d+[\])]?\s*[:：.\-—]?[ \t]*", re.IGNORECASE | re.MULTILINE)
-
-
 def _strip_speaker_labels(text: str) -> str:
     """Диктовка — один говорящий: «SPEAKER_1: …» / «Спикер 1:\n…» → просто текст."""
-    t = _SPEAKER_LABEL_RE.sub(r"\1", str(text or ""))
-    t = re.sub(r"[ \t]+\n", "\n", t)
-    return re.sub(r"\n{3,}", "\n\n", t).strip()
+    from assistant.integrations.transcribe import strip_speaker_labels
+
+    return strip_speaker_labels(text)
 
 
 @miniapp_router.post("/voice/transcribe")

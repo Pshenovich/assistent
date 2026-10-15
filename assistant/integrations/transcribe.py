@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -10,6 +11,25 @@ from typing import Any
 import requests
 
 from assistant.config import OBUCHAT_TRANSCRIBE_BASE
+
+
+# «SPEAKER_1:», «Speaker_0», «[Спикер 2]:» — метки говорящего от транскрайбера.
+_SPEAKER_LABEL_RE = re.compile(
+    r"(^|(?<=\s))[\[(]?(?:speaker|спикер)[ _-]?(\d+)[\])]?\s*[:：.\-—]?[ \t]*",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_speaker_labels(text: str) -> str:
+    """Текст без меток говорящего (для команд боту, диктовки, напоминаний)."""
+    t = _SPEAKER_LABEL_RE.sub(r"\1", str(text or ""))
+    t = re.sub(r"[ \t]+\n", "\n", t)
+    return re.sub(r"\n{3,}", "\n\n", t).strip()
+
+
+def _single_speaker(text: str) -> bool:
+    ids = {m.group(2) for m in _SPEAKER_LABEL_RE.finditer(str(text or ""))}
+    return len(ids) <= 1
 
 
 @dataclass(frozen=True)
@@ -81,6 +101,11 @@ def _result_from_body(body: dict[str, Any], *, job_id: str | None = None) -> Tra
         return None
     if not plain:
         plain = formatted
+    # Obuchat стал отдавать «SPEAKER_1: …» и в «чистом» тексте: убираем метки,
+    # а в размеченном — только если говорящий один (иначе метки нужны).
+    plain = strip_speaker_labels(plain)
+    if formatted and _single_speaker(formatted):
+        formatted = strip_speaker_labels(formatted)
     return TranscribeResult(
         plain_text=plain,
         formatted_text=formatted or plain,

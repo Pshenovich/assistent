@@ -272,3 +272,24 @@ def test_task_webapp_url():
     html = task_title_link_html("Hi", 42)
     assert "task=42" in html
     assert "Hi" in html
+
+
+@pytest.mark.parametrize(
+    "text,title",
+    [
+        ("поставь себе задачу купить молоко", "купить молоко"),
+        ("поставь задачу себе на завтра позвонить в банк", "позвонить в банк"),
+        ("поставь задачу на себя проверить отчёт", "проверить отчёт"),
+        ("создай мне задачу найти сценарии для ботов", "найти сценарии для ботов"),
+    ],
+)
+def test_parse_self_task(text, title):
+    assert is_assign_task_request(text)
+    parsed = parse_assign_task_request(text)
+    assert parsed["assignee_name"] == "__self__"
+    assert parsed["title"] == title
+
+
+def test_parse_named_task_unchanged():
+    parsed = parse_assign_task_request("поставь задачу Ульяне сделать презентацию")
+    assert parsed["assignee_name"] == "Ульяне"
