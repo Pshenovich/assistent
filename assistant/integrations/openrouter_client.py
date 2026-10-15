@@ -273,7 +273,7 @@ _MAX_FETCH_IMAGE_BYTES = 5 * 1024 * 1024
 
 
 def default_image_model() -> str:
-    return os.getenv("OPENROUTER_MODEL_IMAGE", "").strip() or "google/gemini-2.5-flash-image"
+    return os.getenv("OPENROUTER_MODEL_IMAGE", "").strip() or "google/gemini-3.1-flash-image"
 
 
 def model_emits_images(model: str | None) -> bool:

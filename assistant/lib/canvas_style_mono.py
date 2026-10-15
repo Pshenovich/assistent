@@ -439,7 +439,8 @@ def _text_media(c: Ctx) -> tuple[str, str]:
     mid = f"{c.sid}-media"
     src = c.media.get(mid, "")
     if src:
-        media = f'<div class="media-slot tpl-media m-media" data-media="{mid}" data-leo-id="{mid}"><img class="media-img" alt="" src="{escape(src)}"/></div>'
+        meta = ct.media_meta_attrs(c.media, mid, c.val("image_prompt"))
+        media = f'<div class="media-slot tpl-media m-media" data-media="{mid}" data-leo-id="{mid}"{meta}><img class="media-img" alt="" src="{escape(src)}"/></div>'
     else:
         prompt = c.val("image_prompt")
         pending = f' data-leo-img="pending" data-leo-img-prompt="{escape(prompt)}"' if prompt else ""

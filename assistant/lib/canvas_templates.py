@@ -782,7 +782,7 @@ def _r_cards(c: Ctx) -> tuple[str, str]:
         a3_cls = "a3" + (" is-small" if small else "") + (" a3-photo" if src else "")
         cards += (
             f'<div class="card" style="padding:0;overflow:hidden;display:flex;flex-direction:column" {c.item_attrs("items", i)}>'
-            f'<div class="{a3_cls}" data-media="{mid}" data-leo-id="{mid}" data-a3="{vis}">{vis_html}</div>'
+            f'<div class="{a3_cls}" data-media="{mid}" data-leo-id="{mid}" data-a3="{vis}"{media_meta_attrs(c.media, mid) if src else ""}>{vis_html}</div>'
             f'<div style="padding:{"16px 20px 18px" if small else "20px 24px 24px"}">'
             f'{c.t(f"items.{i}.title", "p", "h-card clamp2", "font-size:20px" if small else "", force=True)}'
             f'{c.t(f"items.{i}.text", "p", "body clamp4", "font-size:16px" if small else "font-size:17px", force=True)}</div></div>'
@@ -839,7 +839,8 @@ def _r_text_media(c: Ctx) -> tuple[str, str]:
     mid = f"{c.sid}-media"
     src = c.media.get(mid, "")
     if src:
-        media = f'<div class="media-slot tpl-media" data-media="{mid}" data-leo-id="{mid}"><img class="media-img" alt="" src="{escape(src)}"/></div>'
+        meta = media_meta_attrs(c.media, mid, c.val("image_prompt"))
+        media = f'<div class="media-slot tpl-media" data-media="{mid}" data-leo-id="{mid}"{meta}><img class="media-img" alt="" src="{escape(src)}"/></div>'
     else:
         prompt = c.val("image_prompt")
         pending = f' data-leo-img="pending" data-leo-img-prompt="{escape(prompt)}"' if prompt else ""
@@ -885,12 +886,24 @@ def gallery_items(c: Ctx) -> list[dict[str, Any]]:
     return items
 
 
+PROMPT_SUFFIX = "#prompt"  # media[mid + PROMPT_SUFFIX] — описание, по которому картинку сгенерировали
+OWN_SUFFIX = "#own"  # media[mid + OWN_SUFFIX] = "1" — картинку загрузил пользователь; при перерисовке не трогаем
+
+
+def media_meta_attrs(media: dict[str, str], mid: str, prompt: str = "") -> str:
+    """Атрибуты заполненного слота: описание картинки и отметка «своя» — переживают перерисовку деки."""
+    if media.get(mid + OWN_SUFFIX):
+        return ' data-img-own="1"'
+    p = media.get(mid + PROMPT_SUFFIX) or prompt
+    return f' data-img-prompt="{escape(p)}"' if p else ""
+
+
 def media_slot_html(c: Ctx, mid: str, prompt: str, cls: str = "") -> str:
     """Слот изображения: картинка, или заглушка «загрузите / сгенерируйте» (с промптом — ждёт генерации)."""
     src = c.media.get(mid, "")
     extra = f" {cls}" if cls else ""
     if src:
-        keep = f' data-img-prompt="{escape(prompt)}"' if prompt else ""
+        keep = media_meta_attrs(c.media, mid, prompt)
         return (
             f'<div class="media-slot tpl-media{extra}" data-media="{mid}" data-leo-id="{mid}"{keep}>'
             f'<img class="media-img" alt="" src="{escape(src)}"/></div>'
@@ -1428,13 +1441,69 @@ def pending_media(html: str, slide_ids: Iterable[str]) -> list[tuple[str, str]]:
     ]
 
 
+_MEDIA_TAG_RE = re.compile(r"""<(?:div|figure)\b([^>]*\bdata-media=["']([^"']+)["'][^>]*)>""", re.IGNORECASE)
+_IMG_PROMPT_ATTR_RE = re.compile(r'\bdata-img-prompt="([^"]*)"')
+
+
 def extract_media(html: str) -> dict[str, str]:
+    """mid → src картинки; плюс mid#prompt (описание) и mid#own (загружена пользователем)."""
     out: dict[str, str] = {}
     for m in _MEDIA_IMG_RE.finditer(html or ""):
         src = m.group(2)
         if src.startswith("data:image/") or src.startswith("/") or src.startswith("https://"):
             out[m.group(1)] = src
+    for m in _MEDIA_TAG_RE.finditer(html or ""):
+        attrs, mid = m.group(1), m.group(2)
+        if mid not in out:
+            continue
+        if 'data-img-own="1"' in attrs:
+            out[mid + OWN_SUFFIX] = "1"
+            continue
+        pm = _IMG_PROMPT_ATTR_RE.search(attrs)
+        if pm and pm.group(1).strip():
+            out[mid + PROMPT_SUFFIX] = unescape(pm.group(1))
     return out
+
+
+_LEO_IMG_PROMPT_ATTR_RE = re.compile(r'\bdata-leo-img-prompt="([^"]*)"')
+MAX_RESTYLE = 20
+
+
+def restyle_targets(html: str) -> list[tuple[str, str]]:
+    """(mid, описание) картинок, которые можно перерисовать: созданные ИИ и пустые слоты с описанием.
+    Загруженные пользователем (data-img-own) и 3D-визуалы без картинки не трогаем."""
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for m in _MEDIA_TAG_RE.finditer(html or ""):
+        attrs, mid = m.group(1), m.group(2)
+        if mid in seen or 'data-img-own="1"' in attrs:
+            continue
+        pm = _IMG_PROMPT_ATTR_RE.search(attrs) or _LEO_IMG_PROMPT_ATTR_RE.search(attrs)
+        prompt = unescape(pm.group(1)).strip() if pm else ""
+        if prompt:
+            seen.add(mid)
+            out.append((mid, prompt))
+    return out[:MAX_RESTYLE]
+
+
+def data_url_digest(src: str) -> Optional[tuple[int, str]]:
+    """(размер, sha256) байтов картинки из data:-URL — для сверки с загруженными файлами."""
+    import base64
+    import hashlib
+
+    m = re.match(r"data:image/[a-z0-9.+-]+;base64,(.*)$", str(src or ""), re.IGNORECASE | re.DOTALL)
+    if not m:
+        return None
+    try:
+        data = base64.b64decode(m.group(1), validate=False)
+    except (ValueError, TypeError):
+        return None
+    return len(data), hashlib.sha256(data).hexdigest()
+
+
+def media_images(media: dict[str, str]) -> dict[str, str]:
+    """Только картинки (без служебных ключей #prompt/#own)."""
+    return {k: v for k, v in media.items() if "#" not in k}
 
 
 class _SlotTextParser(HTMLParser):

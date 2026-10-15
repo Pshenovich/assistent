@@ -232,13 +232,15 @@
     "else if(n.hasAttribute('data-a3')){n.innerHTML='';n.classList.add('a3-photo');n.appendChild(img);}" +
     "else{n.innerHTML='';n.classList.add('media-slot');n.appendChild(img);}" +
     "if(n.tagName.toLowerCase()!=='img'){n.removeAttribute('data-leo-img');n.removeAttribute('data-leo-img-prompt');n.classList.remove('tpl-media-empty');" +
-    "if(prompt)n.setAttribute('data-img-prompt',String(prompt).slice(0,600));else n.removeAttribute('data-img-prompt');}" +
+    "if(prompt){n.setAttribute('data-img-prompt',String(prompt).slice(0,600));n.removeAttribute('data-img-own');}" +
+    "else{n.removeAttribute('data-img-prompt');n.setAttribute('data-img-own','1');}}" +
     "selectNode(n.tagName.toLowerCase()==='img'?n:n);" +
     "snapshotHtml();" +
     "}" +
     "function clearMedia(leoId){" +
     "var n=leoId&&document.querySelector('[data-leo-id=\"'+String(leoId).replace(/\"/g,'')+'\"]');" +
     "if(!n)return;" +
+    "n.removeAttribute('data-img-prompt');n.removeAttribute('data-img-own');" +
     "if(n.hasAttribute('data-a3')){var v=n.getAttribute('data-a3')||'orb';n.classList.remove('a3-photo');" +
     "n.innerHTML='<div class=\"a3-'+v.replace(/[^a-z]/g,'')+'\">'+(v==='cube'?'<i></i><i></i><i></i>':'')+'</div>';selectNode(n);snapshotHtml();return;}" +
     "if(n.tagName&&n.tagName.toLowerCase()==='img'){" +
@@ -1062,21 +1064,47 @@
     }
 
     function runOp(req) {
-      if (!onOp || busy) return;
+      if (!onOp || busy) return Promise.resolve(false);
       setBusy(true);
-      requestSnapshot()
+      return requestSnapshot()
         .then(function (html) {
           return onOp(Object.assign({ sheetId: sheetId, html: html }, req));
         })
         .then(function (html) {
           if (html) setHtml(html);
+          return !!html;
         })
         .catch(function (err) {
           onNotify((err && err.message) || "Не удалось изменить слайд");
+          return false;
+        })
+        .then(function (ok) {
+          setBusy(false);
+          return ok;
+        });
+    }
+
+    // Перерисовать картинки презентации в текущем стиле (подтверждение и запрос — на стороне приложения).
+    function runRestyleImages() {
+      if (!opts.onRestyleImages || busy) return;
+      setBusy(true);
+      requestSnapshot()
+        .then(function (html) {
+          return opts.onRestyleImages({ sheetId: sheetId, html: html });
+        })
+        .then(function (html) {
+          if (html) setHtml(html);
+        })
+        .catch(function (err) {
+          onNotify((err && err.message) || "Не удалось перерисовать картинки");
         })
         .then(function () {
           setBusy(false);
         });
+    }
+
+    function deckHasRestylableImages() {
+      return /data-img-prompt="[^"]+"|data-leo-img-prompt="[^"]+"/.test(htmlDoc);
     }
 
     // onlyIds — правка одного слайда кнопкой под ним; без аргумента — все комментарии.
@@ -1243,10 +1271,43 @@
           closeThemeMenu();
           if (opts.onTheme) opts.onTheme(t.id);
           if (t.id === currentDeckTheme()) return;
-          runOp({ op: "theme", theme: t.id });
+          runOp({ op: "theme", theme: t.id }).then(function (ok) {
+            if (ok && opts.onRestyleImages && deckHasRestylableImages()) {
+              onNotify("Стиль изменён. Картинки под новый стиль: «Стиль ▾» → «Перерисовать картинки»");
+            }
+          });
         });
         themeMenu.appendChild(b);
       });
+      if (opts.onRestyleImages) {
+        var sep = document.createElement("div");
+        sep.className = "note-web-canvas-theme-sep";
+        sep.setAttribute("role", "separator");
+        themeMenu.appendChild(sep);
+        var rb = document.createElement("button");
+        rb.type = "button";
+        rb.className = "note-web-canvas-theme-item note-web-canvas-theme-restyle";
+        rb.setAttribute("role", "menuitem");
+        var rt = document.createElement("span");
+        rt.className = "note-web-canvas-theme-text";
+        var rn = document.createElement("b");
+        rn.textContent = "Перерисовать картинки";
+        var rh = document.createElement("small");
+        rh.textContent = deckHasRestylableImages()
+          ? "Созданные ИИ — заново в этом стиле; ваши загруженные не трогаем"
+          : "В презентации нет картинок, созданных ИИ";
+        rt.appendChild(rn);
+        rt.appendChild(rh);
+        rb.appendChild(rt);
+        rb.disabled = !deckHasRestylableImages();
+        rb.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          closeThemeMenu();
+          runRestyleImages();
+        });
+        themeMenu.appendChild(rb);
+      }
     }
 
     themeBtn.addEventListener("click", function (e) {

@@ -589,3 +589,58 @@ class ImageStyleTests(unittest.TestCase):
 
     def test_schema_asks_for_concrete_image_subjects(self):
         self.assertIn("не «abstract shapes»", tpl.schema_prompt())
+
+
+class RestyleImagesTests(unittest.TestCase):
+    def _deck(self):
+        return {"v": tpl.DECK_VERSION, "title": "T", "slides": [
+            {"id": "s1", "role": "content", "variant": "content.gallery", "slots": {"title": "Фото", "images": [
+                {"caption": "a", "image_prompt": "team at a whiteboard", "key": "k1"},
+                {"caption": "b", "image_prompt": "laptop with charts", "key": "k2"},
+                {"caption": "c", "image_prompt": "", "key": "k3"}]}},
+            {"id": "s2", "role": "content", "variant": "content.cards", "slots": {"title": "К", "items": [
+                {"title": "A", "text": "a", "key": "v1"}, {"title": "B", "text": "b", "key": "v2"}]}}]}
+
+    def test_prompt_and_own_flags_survive_rerender_and_own_is_skipped(self):
+        img = "data:image/png;base64,AAAA"
+        media = {"s1-m-k1": img, "s1-m-k2": img, "s1-m-k2#own": "1", "s2-v-v1": img, "s2-v-v1#prompt": "rocket icon"}
+        for th in ("analytic", "mono"):
+            html = tpl.render_deck_html(self._deck(), media, theme=th)
+            back = tpl.extract_media(html)
+            self.assertEqual(back.get("s1-m-k1#prompt"), "team at a whiteboard")
+            self.assertEqual(back.get("s1-m-k2#own"), "1")
+            self.assertNotIn("s1-m-k2#prompt", back)
+            again = tpl.render_deck_html(tpl.extract_deck(html), back, theme=th)
+            self.assertEqual(tpl.extract_media(again), back)
+            targets = dict(tpl.restyle_targets(html))
+            self.assertEqual(targets.get("s1-m-k1"), "team at a whiteboard")
+            self.assertNotIn("s1-m-k2", targets)  # своя картинка
+            self.assertNotIn("s1-m-k3", targets)  # пустой слот без описания
+            if th == "analytic":
+                self.assertEqual(targets.get("s2-v-v1"), "rocket icon")  # 3D-визуал, заменённый генерацией
+                self.assertNotIn("s2-v-v2", targets)  # 3D-фигура без картинки
+        self.assertEqual(set(tpl.media_images(media)), {"s1-m-k1", "s1-m-k2", "s2-v-v1"})
+
+    def test_legacy_uploaded_image_is_recognised_by_file_digest(self):
+        import base64
+        import io
+
+        from PIL import Image
+
+        from assistant.stores import comment_files
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        os.environ["NOTES_DB_PATH"] = os.path.join(tmp.name, "notes.sqlite")
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        self.addCleanup(lambda: setattr(notes_store, "_CONN", None))
+        buf = io.BytesIO()
+        Image.new("RGB", (8, 8), (10, 200, 120)).save(buf, "PNG")
+        data = buf.getvalue()
+        comment_files.save_bytes(owner_user_id=5, item_kind="local", item_id="7", author_user_id=5,
+                                 filename="photo.png", mime="image/png", data=data)
+        digests = comment_files.image_digests_for_item(owner_user_id=5, item_kind="local", item_id="7")
+        url = "data:image/png;base64," + base64.b64encode(data).decode()
+        self.assertIn(tpl.data_url_digest(url), digests)
+        self.assertNotIn(tpl.data_url_digest("data:image/png;base64,AAAA"), digests)
+        self.assertIsNone(tpl.data_url_digest("/files/1.png"))
