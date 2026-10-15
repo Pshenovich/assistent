@@ -15545,3 +15545,7 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 .tag-picker-menu .tag-picker-menu-item--create { color: #5b9fff; }
 .tag-picker-menu .tag-picker-menu-item--create .tag-picker-menu-ico { color: #5b9fff; background: rgba(91, 159, 255, 0.12); }
 .tag-picker-menu .tag-picker-menu-empty { margin: 6px 10px; color: var(--text-secondary, #909499); font-size: 0.8125rem; }
+
+/* Слои: меню поля ввода обсуждения — над «···» сообщений; меню проекта — над кнопкой оглавления */
+#note-paie-thread.note-discussion-compose { position: relative; z-index: 50; }
+#note-editor-overlay .note-editor-meta .tag-picker-add-wrap { z-index: 140; }
