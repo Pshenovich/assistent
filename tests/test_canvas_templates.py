@@ -692,3 +692,17 @@ class DecorImageTests(unittest.TestCase):
         self.assertIn('class="dec dec-orb"', tpl.render_deck_html(tpl.extract_deck(plain), tpl.extract_media(plain)))
         only = tpl.with_default_decor(deck, {}, only=["s2"])
         self.assertEqual([k for k in only if "#" not in k], ["s2-dec"])
+
+
+class KitVersionTests(unittest.TestCase):
+    def test_old_decks_are_stale_and_refinalize_upgrades_them(self):
+        deck = tpl.build_deck(SAMPLE_ACTION)
+        html = tpl.render_deck_html(deck)
+        self.assertFalse(tpl.is_stale(html))
+        old = re.sub(r' data-leo-kit="[0-9a-f]+"', "", html)
+        old = old.replace(".tpl-stage [data-slot] { zoom: var(--fit, 1); }", "")
+        self.assertTrue(tpl.is_stale(old))
+        fresh = tpl.refinalize(old)
+        self.assertFalse(tpl.is_stale(fresh))
+        self.assertIn("zoom: var(--fit, 1)", fresh)
+        self.assertFalse(tpl.is_stale("<html><body>не дека</body></html>"))

@@ -1314,6 +1314,24 @@ _DECK_SCRIPT = (
     "var ro=window.ResizeObserver?new ResizeObserver(function(es){es.forEach(function(e){fit(e.target);});}):null;"
     "slides.forEach(function(s){if(ro)ro.observe(s);fit(s);});"
     "window.addEventListener('resize',function(){slides.forEach(fit);});"
+    # Текст занимает всё место в своём блоке; если слайд перестаёт помещаться — уменьшаем шрифт
+    # текстов слайда (zoom, до 70%). Не влезло и так — в режиме правок подсвечиваем слайд.
+    "function over(s){var st=s.querySelector('.tpl-stage');if(!st)return false;"
+    "var ft=s.querySelector('.tpl-foot');var fr=ft&&ft.getBoundingClientRect();"
+    "var maxB=fr&&fr.height?fr.top:st.getBoundingClientRect().bottom;"
+    "var els=s.querySelectorAll('[data-slot]');for(var j=0;j<els.length;j++){var el=els[j];var r=el.getBoundingClientRect();"
+    "if(!r.height)continue;if(r.bottom>maxB+2)return true;"
+    "if(el.clientHeight&&getComputedStyle(el).overflow!=='visible'&&el.scrollHeight>el.clientHeight+2)return true;"
+    "for(var a=el.parentElement;a&&a!==st;a=a.parentElement){if(getComputedStyle(a).overflow!=='visible'){"
+    "if(r.bottom>a.getBoundingClientRect().bottom+2)return true;break;}}}return false;}"
+    "function fitText(s){var f=1;s.style.setProperty('--fit','1');"
+    "while(f>0.7&&over(s)){f=Math.round((f-0.05)*100)/100;s.style.setProperty('--fit',String(f));}"
+    "s.classList.toggle('leo-overflow',over(s));}"
+    "function fitAll(){slides.forEach(fitText);}"
+    "if(document.fonts&&document.fonts.ready)document.fonts.ready.then(fitAll);"
+    "setTimeout(fitAll,0);var ft0=null;"
+    "document.addEventListener('input',function(e){var s=e.target&&e.target.closest&&e.target.closest('.slide');"
+    "if(!s)return;clearTimeout(ft0);ft0=setTimeout(function(){fitText(s);},120);},true);"
     "if(slides.length<2){if(slides[0])slides[0].classList.add('is-active');return;}"
     "var i=0,bar,cnt;"
     "function sync(){slides.forEach(function(s,n){s.classList.toggle('is-active',n===i);});"
@@ -1413,7 +1431,7 @@ def render_deck_html(
     title = escape(_s(deck.get("title")) or "Презентация")
     css = templates_css() + ("\n" + themes_css() if th != DECK_THEME else "")
     return (
-        f'<!DOCTYPE html><html data-leo-theme="{th}" data-leo-deck="{DECK_VERSION}"><head>'
+        f'<!DOCTYPE html><html data-leo-theme="{th}" data-leo-deck="{DECK_VERSION}" data-leo-kit="{kit_version()}"><head>'
         f'<meta charset="utf-8"><title>{title}</title>{_fonts_link(THEMES[th]["fonts"])}'
         f'<style id="leo-canvas-tpl">\n{css}\n</style></head><body>'
         f'<main class="deck">{slides_html}</main>{_kept_media_html(deck, media, slides_html)}'
@@ -1687,6 +1705,28 @@ def _ensure_path(slots: dict[str, Any], path: str) -> None:
             cur = cur[int(part)]
         else:
             return
+
+
+_KIT_VERSION: Optional[str] = None
+_KIT_RE = re.compile(r'<html\b[^>]*\bdata-leo-kit="([0-9a-f]+)"')
+
+
+def kit_version() -> str:
+    """Отпечаток оформления деки (CSS стилей + скрипт). Деки хранят CSS и скрипт внутри себя —
+    по отпечатку видно, что дека сделана старой версией и её стоит перерисовать."""
+    global _KIT_VERSION
+    if _KIT_VERSION is None:
+        import hashlib
+
+        _KIT_VERSION = hashlib.sha1((templates_css() + themes_css() + _DECK_SCRIPT).encode("utf-8")).hexdigest()[:10]
+    return _KIT_VERSION
+
+
+def is_stale(html: str) -> bool:
+    if not is_template_html(html):
+        return False
+    m = _KIT_RE.search(html or "")
+    return not m or m.group(1) != kit_version()
 
 
 def refinalize(html: str) -> Optional[str]:

@@ -8400,6 +8400,31 @@ async def miniapp_local_note_get(
     return {"ok": True, "item": item}
 
 
+def _upgrade_stale_deck(note: dict[str, Any], sheet: dict[str, Any]) -> dict[str, Any]:
+    """Презентация, сделанная старой версией оформления (CSS и скрипт зашиты в её HTML), —
+    перерисовать при открытии, чтобы исправления шаблонов доходили и до старых презентаций."""
+    from assistant.lib import canvas_templates
+    from assistant.lib import web_canvas as web_canvas_lib
+    from assistant.stores import note_sheets as note_sheets_store
+
+    body = str(sheet.get("body") or "")
+    if web_canvas_lib.normalize_kind(sheet.get("kind")) != web_canvas_lib.SHEET_KIND_WEB or not canvas_templates.is_stale(body):
+        return sheet
+    try:
+        sid = int(sheet.get("id"))
+    except (TypeError, ValueError):
+        return sheet  # основной лист — не презентация
+    try:
+        fresh = canvas_templates.refinalize(body)
+        if not fresh:
+            return sheet
+        updated = note_sheets_store.update_sheet(int(note["id"]), sid, body=fresh, kind=web_canvas_lib.SHEET_KIND_WEB)
+        return updated or sheet
+    except Exception as e:  # noqa: BLE001 — не мешаем открыть заметку
+        print(f"[web_canvas] upgrade_stale_deck failed note={note.get('id')} sheet={sheet.get('id')} err={e!r}")
+        return sheet
+
+
 @miniapp_router.get("/notes/local/{note_id}/sheets")
 async def miniapp_note_sheets_list(
     note_id: int,
@@ -8414,7 +8439,8 @@ async def miniapp_note_sheets_list(
         note = notes_store.get_accessible_note(uid, note_id)
         if not note:
             return None
-        return note_sheets_store.list_sheets(note)
+        sheets = note_sheets_store.list_sheets(note)
+        return [_upgrade_stale_deck(note, sh) for sh in sheets]
 
     sheets = await run_in_threadpool(_run)
     if sheets is None:
