@@ -1013,6 +1013,72 @@ function svgIcon(name) {
   return "<svg " + common + ">" + (paths[name] || "") + "</svg>";
 }
 
+
+// Backspace в начале пункта списка/задачи: сначала убираем маркер и отступ (строка остаётся на месте),
+// а не приклеиваем её к предыдущему пункту вторым абзацем — иначе текст «застревает» с отступом.
+const ListBackspace = Extension.create({
+  name: "leoListBackspace",
+  priority: 1000,
+  addKeyboardShortcuts() {
+    return {
+      Backspace: ({ editor }) => {
+        const sel = editor.state.selection;
+        if (!sel.empty) return false;
+        const $from = sel.$from;
+        if ($from.parentOffset !== 0 || $from.depth < 2) return false;
+        if (!$from.parent.isTextblock) return false;
+        const item = $from.node(-1);
+        const name = item && item.type && item.type.name;
+        if (name !== "listItem" && name !== "taskItem") return false;
+        if ($from.index(-1) === 0) return editor.commands.liftListItem(name);
+        return editor.commands.lift(name);
+      },
+    };
+  },
+});
+
+// Второй Backspace: строка сразу после списка склеивается с концом последнего пункта
+// (а не превращается обратно в пункт списка).
+const ListJoinBackspace = Extension.create({
+  name: "leoListJoinBackspace",
+  priority: 999,
+  addKeyboardShortcuts() {
+    return {
+      Backspace: ({ editor }) => {
+        const state = editor.state;
+        const sel = state.selection;
+        if (!sel.empty) return false;
+        const $from = sel.$from;
+        if ($from.depth !== 1 || $from.parentOffset !== 0 || !$from.parent.isTextblock) return false;
+        if ($from.parent.type.name !== "paragraph") return false;
+        const idx = $from.index(0);
+        if (idx === 0) return false;
+        const prev = state.doc.child(idx - 1);
+        const listNames = ["bulletList", "orderedList", "taskList"];
+        if (listNames.indexOf(prev.type.name) < 0) return false;
+        const paraStart = $from.before(1);
+        const prevStart = paraStart - prev.nodeSize;
+        let lastPos = -1;
+        let lastNode = null;
+        prev.descendants(function (node, pos) {
+          if (node.isTextblock) {
+            lastPos = prevStart + 1 + pos;
+            lastNode = node;
+          }
+        });
+        if (lastPos < 0 || !lastNode) return false;
+        const end = lastPos + 1 + lastNode.content.size;
+        const para = $from.parent;
+        const tr = state.tr.delete(paraStart, paraStart + para.nodeSize);
+        if (para.content.size) tr.insert(end, para.content);
+        tr.setSelection(state.selection.constructor.near(tr.doc.resolve(end)));
+        editor.view.dispatch(tr.scrollIntoView());
+        return true;
+      },
+    };
+  },
+});
+
 var NoteHighlight = Mark.create({
   name: "highlight",
   parseHTML: function () {
@@ -2458,6 +2524,8 @@ function mount(container, options) {
       }),
       Underline,
       NoteHighlight,
+      ListBackspace,
+      ListJoinBackspace,
       Link.configure({ openOnClick: false, autolink: true, linkOnPaste: true }),
       ResizableImage.configure({
         inline: false,
