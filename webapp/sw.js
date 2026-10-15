@@ -1,6 +1,6 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261015-aibar";
+var CACHE_VERSION = "miniapp-v1-20261015-tableux3";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 var CANONICAL_ORIGIN = "https://assistent.networ.ru";
 var OBSOLETE_HOSTS = {
@@ -11,9 +11,9 @@ var OBSOLETE_HOSTS = {
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261015-aibar",
-  "./app.js?v=20261015-aibar",
-  "./web-canvas.js?v=20261015-aibar",
+  "./styles.css?v=20261015-tableux3",
+  "./app.js?v=20261015-tableux3",
+  "./web-canvas.js?v=20261015-tableux3",
   "./note-drafts.js?v=20261005-heading-pdf",
   "./icons/arrow-up-right.svg?v=20261003-month-instances",
   "./icons/chevron-up-muted.svg?v=20261003-month-instances",

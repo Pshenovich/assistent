@@ -1,14 +1,19 @@
 import Table from "@tiptap/extension-table";
 import TableRow from "@tiptap/extension-table-row";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import {
+  CellSelection,
   TableMap,
   addColumnAfter,
+  addColumnBefore,
   addRowAfter,
+  addRowBefore,
   deleteColumn,
   deleteRow,
+  deleteTable,
   moveTableColumn,
   moveTableRow,
+  toggleHeaderRow,
 } from "@tiptap/pm/tables";
 
 var tableManageKey = new PluginKey("tableManage");
@@ -18,6 +23,24 @@ var DRAG_THRESHOLD = 8;
 var HANDLE = 22;
 var activeView = null;
 var confirmCloser = null;
+// Все таблицы редактора: активной становится та, где стоит курсор.
+var allViews = new Set();
+
+var ICON_MORE =
+  '<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">' +
+  '<circle cx="4" cy="10" r="1.8" fill="currentColor"/>' +
+  '<circle cx="10" cy="10" r="1.8" fill="currentColor"/>' +
+  '<circle cx="16" cy="10" r="1.8" fill="currentColor"/>' +
+  "</svg>";
+
+function arrowIcon(dir) {
+  var d = { left: "M12 4 6 10l6 6", right: "M8 4l6 6-6 6", up: "M4 12l6-6 6 6", down: "M4 8l6 6 6-6" }[dir];
+  return (
+    '<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="' +
+    d +
+    '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+  );
+}
 
 var ICON_DOTS =
   '<svg viewBox="0 0 12 20" width="10" height="16" aria-hidden="true">' +
@@ -283,12 +306,106 @@ function applyPreviewWidths(colgroup, table, widths, minWidth) {
   table.style.minWidth = "";
 }
 
-function exitManageMode() {
-  closeConfirm(false);
-  if (activeView) {
-    activeView.setManaging(false);
-    activeView = null;
+
+// ---- Управление таблицей без отдельного режима ----
+// Курсор в ячейке → панель над таблицей («+ строка», «+ столбец», «⋯»), «+» по правому и нижнему краю,
+// ручки только у текущего столбца и строки. Нажатие на ручку выделяет столбец/строку целиком —
+// панель переключается на «← →» / «↑ ↓», «+», «Удалить». На десктопе ручку можно перетаскивать.
+
+function closeAllMenus() {
+  allViews.forEach(function (v) {
+    v.closeMenu();
+  });
+}
+
+function cellStartPos(table, tablePos, row, col) {
+  var map = TableMap.get(table);
+  var r = Math.max(0, Math.min(row, map.height - 1));
+  var c = Math.max(0, Math.min(col, map.width - 1));
+  return tablePos + 1 + map.positionAt(r, c, table);
+}
+
+function focusCell(editor, tablePos, row, col) {
+  var table = editor.state.doc.nodeAt(tablePos);
+  if (!table) return;
+  var pos = cellStartPos(table, tablePos, row, col);
+  var sel = TextSelection.near(editor.state.doc.resolve(pos + 1));
+  editor.view.dispatch(editor.state.tr.setSelection(sel));
+  editor.view.focus();
+}
+
+function selectLine(editor, tablePos, kind, index) {
+  var table = editor.state.doc.nodeAt(tablePos);
+  if (!table) return;
+  var map = TableMap.get(table);
+  var a;
+  var b;
+  if (kind === "col") {
+    a = cellStartPos(table, tablePos, 0, index);
+    b = cellStartPos(table, tablePos, map.height - 1, index);
+  } else {
+    a = cellStartPos(table, tablePos, index, 0);
+    b = cellStartPos(table, tablePos, index, map.width - 1);
   }
+  var doc = editor.state.doc;
+  editor.view.dispatch(editor.state.tr.setSelection(new CellSelection(doc.resolve(a), doc.resolve(b))));
+  editor.view.focus();
+}
+
+// Где курсор: таблица (pos) и ячейка (row/col); «col»/«row», если выделен столбец/строка целиком.
+function selectionCell(state) {
+  var sel = state.selection;
+  var $pos = sel.$headCell || sel.$from;
+  for (var d = $pos.depth; d > 0; d -= 1) {
+    var node = $pos.node(d);
+    if (node.type.spec.tableRole !== "table") continue;
+    var tablePos = $pos.before(d);
+    var map = TableMap.get(node);
+    var cellPos = null;
+    if (sel.$headCell) {
+      cellPos = sel.$headCell.pos - tablePos - 1;
+    } else {
+      for (var k = $pos.depth; k > d; k -= 1) {
+        var role = $pos.node(k).type.spec.tableRole;
+        if (role === "cell" || role === "header_cell") {
+          cellPos = $pos.before(k) - tablePos - 1;
+          break;
+        }
+      }
+    }
+    if (cellPos == null) return null;
+    var rect;
+    try {
+      rect = map.findCell(cellPos);
+    } catch (_) {
+      return null;
+    }
+    var mode = "cell";
+    if (sel instanceof CellSelection) {
+      if (sel.isColSelection() && !sel.isRowSelection()) mode = "col";
+      else if (sel.isRowSelection() && !sel.isColSelection()) mode = "row";
+    }
+    return { tablePos: tablePos, row: rect.top, col: rect.left, mode: mode };
+  }
+  return null;
+}
+
+function syncActiveTable(view) {
+  var info = selectionCell(view.state);
+  var focused = view.hasFocus() || allViewsHaveInteraction();
+  allViews.forEach(function (v) {
+    var mine = info && focused && v.tablePos() === info.tablePos ? info : null;
+    v.setActive(mine);
+  });
+}
+
+function allViewsHaveInteraction() {
+  var now = Date.now();
+  var busy = false;
+  allViews.forEach(function (v) {
+    if (v.interactUntil > now || v.drag || v.menuOpen) busy = true;
+  });
+  return busy;
 }
 
 function TableManageView(props, cellMinWidth) {
@@ -296,24 +413,35 @@ function TableManageView(props, cellMinWidth) {
   this.getPos = props.getPos;
   this.node = props.node;
   this.cellMinWidth = cellMinWidth || MIN_COL;
-  this.managing = false;
+  this.active = null;
   this.drag = null;
-  this.flyout = null;
+  this.menuOpen = false;
+  this.interactUntil = 0;
   this.ro = null;
 
   this.dom = document.createElement("div");
   this.dom.className = "note-table-manage-wrap";
 
-  this.toggle = makeButton(
-    "note-table-manage-toggle",
-    "Управление таблицей",
-    ICON_DOTS
-  );
+  this.bar = document.createElement("div");
+  this.bar.className = "note-table-bar";
+  this.bar.contentEditable = "false";
+  this.bar.hidden = true;
+  this.menu = document.createElement("div");
+  this.menu.className = "note-table-menu";
+  this.menu.contentEditable = "false";
+  this.menu.setAttribute("role", "menu");
+  this.menu.hidden = true;
+
   this.scroll = document.createElement("div");
   this.scroll.className = "note-table-manage-scroll";
   this.overlay = document.createElement("div");
   this.overlay.className = "note-table-manage-overlay";
   this.overlay.hidden = true;
+
+  this.addColBtn = makeButton("note-table-edge note-table-edge--col", "Добавить столбец в конец", ICON_PLUS);
+  this.addRowBtn = makeButton("note-table-edge note-table-edge--row", "Добавить строку в конец", ICON_PLUS);
+  this.addColBtn.dataset.act = "edge-col";
+  this.addRowBtn.dataset.act = "edge-row";
 
   this.table = document.createElement("table");
   var attrs = props.HTMLAttributes || {};
@@ -331,12 +459,16 @@ function TableManageView(props, cellMinWidth) {
   this.table.appendChild(this.contentDOM);
 
   this.scroll.appendChild(this.table);
-  this.dom.appendChild(this.toggle);
+  this.dom.appendChild(this.bar);
+  this.dom.appendChild(this.menu);
   this.dom.appendChild(this.overlay);
   this.dom.appendChild(this.scroll);
+  this.dom.appendChild(this.addColBtn);
+  this.dom.appendChild(this.addRowBtn);
 
   updateColumns(this.node, this.colgroup, this.table, this.cellMinWidth);
   this.bind();
+  allViews.add(this);
 }
 
 TableManageView.prototype.tablePos = function () {
@@ -349,19 +481,28 @@ TableManageView.prototype.tablePos = function () {
 
 TableManageView.prototype.bind = function () {
   var self = this;
-  this.onTogglePointer = function (e) {
-    if (e.button != null && e.button !== 0) return;
+  // Нажатия по панели/меню/«+» не должны уводить фокус из редактора (иначе пропадёт курсор).
+  this.onUiMouseDown = function (e) {
+    self.interactUntil = Date.now() + 800;
+    e.preventDefault();
+  };
+  this.onUiClick = function (e) {
+    var b = e.target.closest && e.target.closest("button[data-act]");
+    if (!b || b.disabled) return;
     e.preventDefault();
     e.stopPropagation();
-    self.toggleManaging();
+    self.interactUntil = Date.now() + 800;
+    self.runAction(b.dataset.act);
   };
-  this.toggle.addEventListener("pointerdown", this.onTogglePointer);
+  [this.bar, this.menu, this.addColBtn, this.addRowBtn].forEach(function (el) {
+    el.addEventListener("mousedown", self.onUiMouseDown);
+    el.addEventListener("click", self.onUiClick);
+  });
 
   this.onOverlayPointerDown = function (e) {
     self.handleOverlayPointerDown(e);
   };
   this.overlay.addEventListener("pointerdown", this.onOverlayPointerDown);
-
   this.onPointerMove = function (e) {
     self.handlePointerMove(e);
   };
@@ -384,7 +525,11 @@ TableManageView.prototype.bind = function () {
 };
 
 TableManageView.prototype.unbind = function () {
-  this.toggle.removeEventListener("pointerdown", this.onTogglePointer);
+  var self = this;
+  [this.bar, this.menu, this.addColBtn, this.addRowBtn].forEach(function (el) {
+    el.removeEventListener("mousedown", self.onUiMouseDown);
+    el.removeEventListener("click", self.onUiClick);
+  });
   this.overlay.removeEventListener("pointerdown", this.onOverlayPointerDown);
   this.scroll.removeEventListener("scroll", this.onScroll);
   this.releaseDragListeners();
@@ -400,36 +545,6 @@ TableManageView.prototype.releaseDragListeners = function () {
   document.removeEventListener("pointercancel", this.onPointerUp);
 };
 
-TableManageView.prototype.toggleManaging = function () {
-  if (this.managing) {
-    this.setManaging(false);
-    if (activeView === this) activeView = null;
-    return;
-  }
-  if (activeView && activeView !== this) activeView.setManaging(false);
-  this.setManaging(true);
-  activeView = this;
-};
-
-TableManageView.prototype.setManaging = function (on) {
-  this.managing = !!on;
-  this.flyout = null;
-  this.dom.classList.toggle("is-managing", this.managing);
-  this.toggle.classList.toggle("is-active", this.managing);
-  this.toggle.setAttribute("aria-pressed", this.managing ? "true" : "false");
-  if (this.managing) this.renderOverlay();
-  else {
-    this.overlay.innerHTML = "";
-    this.overlay.hidden = true;
-  }
-};
-
-TableManageView.prototype.clearFlyout = function () {
-  if (!this.flyout) return;
-  this.flyout = null;
-  this.renderOverlay();
-};
-
 TableManageView.prototype.colCount = function () {
   var row = this.table.rows[0];
   return row ? row.cells.length : 0;
@@ -437,6 +552,216 @@ TableManageView.prototype.colCount = function () {
 
 TableManageView.prototype.rowCount = function () {
   return this.table.rows.length;
+};
+
+TableManageView.prototype.isFinePointer = function () {
+  return !!(window.matchMedia && window.matchMedia("(pointer: fine)").matches);
+};
+
+TableManageView.prototype.setActive = function (info) {
+  var prev = this.active;
+  this.active = info;
+  var on = !!info;
+  this.dom.classList.toggle("is-active", on);
+  if (!on) {
+    this.bar.hidden = true;
+    this.closeMenu();
+    this.overlay.hidden = true;
+    this.overlay.innerHTML = "";
+    return;
+  }
+  activeView = this;
+  var same =
+    prev && prev.mode === info.mode && prev.row === info.row && prev.col === info.col && !this.bar.hidden;
+  if (!same) {
+    this.renderBar();
+    this.renderOverlay();
+  } else {
+    this.layoutHandles();
+  }
+};
+
+function barButton(act, label, html, extraClass) {
+  var b = makeButton("note-table-bar-btn" + (extraClass ? " " + extraClass : ""), label, html);
+  b.dataset.act = act;
+  b.title = label;
+  return b;
+}
+
+TableManageView.prototype.renderBar = function () {
+  var a = this.active;
+  this.bar.innerHTML = "";
+  this.closeMenu();
+  if (!a) {
+    this.bar.hidden = true;
+    return;
+  }
+  var nCol = this.colCount();
+  var nRow = this.rowCount();
+  var add = function (el) {
+    this.bar.appendChild(el);
+    return el;
+  }.bind(this);
+  if (a.mode === "col") {
+    add(barButton("col-left", "Переместить столбец влево", arrowIcon("left"))).disabled = a.col <= 0;
+    add(barButton("col-right", "Переместить столбец вправо", arrowIcon("right"))).disabled = a.col >= nCol - 1;
+    add(barButton("col-add-right", "Добавить столбец справа", ICON_PLUS + "<span>столбец</span>"));
+    add(barButton("col-del", "Удалить столбец", ICON_TRASH + "<span>Удалить</span>", "is-danger")).disabled = nCol <= 1;
+  } else if (a.mode === "row") {
+    add(barButton("row-up", "Переместить строку выше", arrowIcon("up"))).disabled = a.row <= 0;
+    add(barButton("row-down", "Переместить строку ниже", arrowIcon("down"))).disabled = a.row >= nRow - 1;
+    add(barButton("row-add-below", "Добавить строку ниже", ICON_PLUS + "<span>строка</span>"));
+    add(barButton("row-del", "Удалить строку", ICON_TRASH + "<span>Удалить</span>", "is-danger")).disabled = nRow <= 1;
+  } else {
+    add(barButton("row-add-below", "Добавить строку ниже", ICON_PLUS + "<span>строка</span>"));
+    add(barButton("col-add-right", "Добавить столбец справа", ICON_PLUS + "<span>столбец</span>"));
+    var more = add(barButton("more", "Ещё действия с таблицей", ICON_MORE));
+    more.setAttribute("aria-haspopup", "menu");
+    more.setAttribute("aria-expanded", "false");
+  }
+  this.bar.hidden = false;
+};
+
+TableManageView.prototype.openMenu = function () {
+  var a = this.active;
+  if (!a) return;
+  var nCol = this.colCount();
+  var nRow = this.rowCount();
+  var items = [
+    ["row-add-above", "Строка выше"],
+    ["row-add-below", "Строка ниже"],
+    ["col-add-left", "Столбец слева"],
+    ["col-add-right", "Столбец справа"],
+    null,
+    ["toggle-header", "Первая строка — заголовок"],
+    null,
+    ["row-del", "Удалить строку", nRow <= 1],
+    ["col-del", "Удалить столбец", nCol <= 1],
+    ["table-del", "Удалить таблицу"],
+  ];
+  this.menu.innerHTML = "";
+  items.forEach(function (it) {
+    if (!it) {
+      var sep = document.createElement("div");
+      sep.className = "note-table-menu-sep";
+      this.menu.appendChild(sep);
+      return;
+    }
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "note-table-menu-item" + (/del/.test(it[0]) ? " is-danger" : "");
+    b.setAttribute("role", "menuitem");
+    b.dataset.act = it[0];
+    b.textContent = it[1];
+    b.disabled = !!it[2];
+    this.menu.appendChild(b);
+  }, this);
+  this.menu.hidden = false;
+  this.menuOpen = true;
+  var more = this.bar.querySelector('[data-act="more"]');
+  if (more) more.setAttribute("aria-expanded", "true");
+};
+
+TableManageView.prototype.closeMenu = function () {
+  if (!this.menuOpen && this.menu.hidden) return;
+  this.menu.hidden = true;
+  this.menu.innerHTML = "";
+  this.menuOpen = false;
+  var more = this.bar.querySelector('[data-act="more"]');
+  if (more) more.setAttribute("aria-expanded", "false");
+};
+
+TableManageView.prototype.addColumn = function (index, before) {
+  var pos = this.tablePos();
+  if (pos == null) return;
+  var widths = this.measureColWidths();
+  var hasFixed = this.node.firstChild && this.node.firstChild.child(0).attrs.colwidth;
+  runTableCommand(this.editor, pos, 0, index, before ? addColumnBefore : addColumnAfter);
+  var after = this.tablePos();
+  if (after != null && hasFixed) {
+    widths.splice(before ? index : index + 1, 0, widths[index] || this.cellMinWidth);
+    setAllColWidths(this.editor, after, widths);
+  }
+  var row = this.active ? this.active.row : 0;
+  if (after != null) focusCell(this.editor, after, row, before ? index : index + 1);
+};
+
+TableManageView.prototype.addRow = function (index, before) {
+  var pos = this.tablePos();
+  if (pos == null) return;
+  runTableCommand(this.editor, pos, index, 0, before ? addRowBefore : addRowAfter);
+  var after = this.tablePos();
+  var col = this.active ? this.active.col : 0;
+  if (after != null) focusCell(this.editor, after, before ? index : index + 1, col);
+};
+
+TableManageView.prototype.moveLine = function (kind, from, to) {
+  var pos = this.tablePos();
+  if (pos == null) return;
+  var cmd = kind === "col" ? moveTableColumn : moveTableRow;
+  var editor = this.editor;
+  cmd({ from: from, to: to, select: true, pos: pos + 1 })(editor.state, function (tr) {
+    editor.view.dispatch(tr);
+  });
+  editor.view.focus();
+};
+
+TableManageView.prototype.runAction = function (act) {
+  var a = this.active;
+  var pos = this.tablePos();
+  var editor = this.editor;
+  var self = this;
+  if (act === "more") {
+    if (this.menuOpen) this.closeMenu();
+    else this.openMenu();
+    return;
+  }
+  this.closeMenu();
+  if (pos == null) return;
+  if (act === "edge-col") {
+    this.addColumn(this.colCount() - 1, false);
+    return;
+  }
+  if (act === "edge-row") {
+    this.active = this.active || { row: 0, col: 0, mode: "cell" };
+    this.addRow(this.rowCount() - 1, false);
+    return;
+  }
+  if (!a) return;
+  if (act === "row-add-below") return this.addRow(a.row, false);
+  if (act === "row-add-above") return this.addRow(a.row, true);
+  if (act === "col-add-right") return this.addColumn(a.col, false);
+  if (act === "col-add-left") return this.addColumn(a.col, true);
+  if (act === "col-left") return this.moveLine("col", a.col, a.col - 1);
+  if (act === "col-right") return this.moveLine("col", a.col, a.col + 1);
+  if (act === "row-up") return this.moveLine("row", a.row, a.row - 1);
+  if (act === "row-down") return this.moveLine("row", a.row, a.row + 1);
+  if (act === "toggle-header") {
+    runTableCommand(editor, pos, a.row, a.col, toggleHeaderRow);
+    focusCell(editor, this.tablePos(), a.row, a.col);
+    return;
+  }
+  if (act === "col-del" || act === "row-del" || act === "table-del") {
+    var msg = act === "col-del" ? "Удалить столбец?" : act === "row-del" ? "Удалить строку?" : "Удалить всю таблицу?";
+    confirmTableDelete(msg).then(function (ok) {
+      if (!ok) return;
+      var p = self.tablePos();
+      if (p == null) return;
+      var cmd = act === "col-del" ? deleteColumn : act === "row-del" ? deleteRow : deleteTable;
+      runTableCommand(editor, p, a.row, a.col, cmd);
+      if (act !== "table-del") {
+        var after = self.tablePos();
+        if (after != null) {
+          focusCell(
+            editor,
+            after,
+            act === "row-del" ? Math.max(0, a.row - 1) : a.row,
+            act === "col-del" ? Math.max(0, a.col - 1) : a.col
+          );
+        }
+      }
+    });
+  }
 };
 
 TableManageView.prototype.measureColWidths = function () {
@@ -464,213 +789,96 @@ TableManageView.prototype.wrapPoint = function (rect, edge) {
   };
 };
 
+// Ручки только у текущего столбца и строки; ширина/высота — только мышью (на телефоне — нет).
 TableManageView.prototype.renderOverlay = function () {
-  if (!this.managing) {
+  var a = this.active;
+  this.overlay.innerHTML = "";
+  if (!a) {
     this.overlay.hidden = true;
-    this.overlay.innerHTML = "";
     return;
   }
   this.overlay.hidden = false;
-  this.overlay.innerHTML = "";
-  var nCol = this.colCount();
-  var nRow = this.rowCount();
-  var c;
-  var r;
-  for (c = 0; c < nCol; c += 1) {
-    var grip = makeButton(
-      "note-table-handle note-table-handle--grip",
-      "Переместить колонку",
-      ICON_GRIP
-    );
-    grip.dataset.role = "move-col";
-    grip.dataset.index = String(c);
-    this.overlay.appendChild(grip);
-
-    var rz = makeButton(
-      "note-table-handle note-table-handle--resize",
-      "Ширина колонки",
-      ICON_RESIZE
-    );
+  // Выделен столбец — ручка строки не нужна (и наоборот).
+  var showCol = a.mode !== "row";
+  var showRow = a.mode !== "col";
+  var colGrip = makeButton(
+    "note-table-handle note-table-handle--grip note-table-handle--col" + (a.mode === "col" ? " is-selected" : ""),
+    "Выделить столбец (перетащите, чтобы переместить)",
+    ICON_GRIP
+  );
+  colGrip.dataset.role = "move-col";
+  colGrip.dataset.index = String(a.col);
+  if (showCol) this.overlay.appendChild(colGrip);
+  var rowGrip = makeButton(
+    "note-table-handle note-table-handle--grip note-table-handle--row" + (a.mode === "row" ? " is-selected" : ""),
+    "Выделить строку (перетащите, чтобы переместить)",
+    ICON_GRIP
+  );
+  rowGrip.dataset.role = "move-row";
+  rowGrip.dataset.index = String(a.row);
+  if (showRow) this.overlay.appendChild(rowGrip);
+  if (this.isFinePointer() && a.mode === "cell") {
+    var rz = makeButton("note-table-handle note-table-handle--resize", "Ширина столбца", ICON_RESIZE);
     rz.dataset.role = "resize-col";
-    rz.dataset.index = String(c);
+    rz.dataset.index = String(a.col);
     this.overlay.appendChild(rz);
-  }
-  for (r = 0; r < nRow; r += 1) {
-    var rowGrip = makeButton(
-      "note-table-handle note-table-handle--grip",
-      "Переместить строку",
-      ICON_GRIP
-    );
-    rowGrip.dataset.role = "move-row";
-    rowGrip.dataset.index = String(r);
-    this.overlay.appendChild(rowGrip);
-
-    var rowRz = makeButton(
-      "note-table-handle note-table-handle--resize note-table-handle--resize-row",
-      "Высота строки",
-      ICON_RESIZE
-    );
-    rowRz.dataset.role = "resize-row";
-    rowRz.dataset.index = String(r);
-    this.overlay.appendChild(rowRz);
-  }
-
-  if (this.flyout) {
-    var extra;
-    if (this.flyout.kind === "add-col") {
-      extra = makeButton(
-        "note-table-handle note-table-handle--add",
-        "Добавить колонку справа",
-        ICON_PLUS
-      );
-    } else if (this.flyout.kind === "add-row") {
-      extra = makeButton(
-        "note-table-handle note-table-handle--add",
-        "Добавить строку ниже",
-        ICON_PLUS
-      );
-    } else if (this.flyout.kind === "del-col" && nCol > 1) {
-      extra = makeButton(
-        "note-table-handle note-table-handle--trash",
-        "Удалить колонку",
-        ICON_TRASH
-      );
-    } else if (this.flyout.kind === "del-row" && nRow > 1) {
-      extra = makeButton(
-        "note-table-handle note-table-handle--trash",
-        "Удалить строку",
-        ICON_TRASH
-      );
-    }
-    if (extra) {
-      extra.dataset.role = this.flyout.kind;
-      extra.dataset.index = String(this.flyout.index);
-      this.overlay.appendChild(extra);
-    } else {
-      this.flyout = null;
-    }
   }
   this.layoutHandles();
 };
 
 TableManageView.prototype.layoutHandles = function () {
-  if (!this.managing || this.overlay.hidden) return;
+  var a = this.active;
   var rows = this.table.rows;
-  if (!rows.length) return;
+  var box = this.dom.getBoundingClientRect();
+  var sb = this.scroll.getBoundingClientRect();
+  var tb = this.table.getBoundingClientRect();
+  // «+» справа — у правого края видимой части таблицы, «+» снизу — под таблицей.
+  var right = Math.min(tb.right, sb.right) - box.left;
+  this.addColBtn.style.left = right + 4 + "px";
+  this.addColBtn.style.top = tb.top - box.top + "px";
+  this.addColBtn.style.height = tb.height + "px";
+  this.addRowBtn.style.left = Math.max(tb.left, sb.left) - box.left + "px";
+  this.addRowBtn.style.width = Math.min(tb.right, sb.right) - Math.max(tb.left, sb.left) + "px";
+  this.addRowBtn.style.top = tb.bottom - box.top + 4 + "px";
+  if (!a || this.overlay.hidden || !rows.length) return;
+  var colIdx = this.drag && this.drag.kind === "move-col" ? this.drag.index : a.col;
+  var rowIdx = this.drag && this.drag.kind === "move-row" ? this.drag.index : a.row;
   var first = rows[0];
-  var nCol = first.cells.length;
-  var nRow = rows.length;
-  var c;
-  var r;
+  var cell = first.cells[colIdx];
   var btn;
-
-  for (c = 0; c < nCol; c += 1) {
-    var cell = first.cells[c];
-    if (!cell) continue;
-    var p = this.wrapPoint(cell.getBoundingClientRect());
-    var visible = cell.getBoundingClientRect().right > this.scroll.getBoundingClientRect().left &&
-      cell.getBoundingClientRect().left < this.scroll.getBoundingClientRect().right;
-    btn = this.overlay.querySelector('[data-role="move-col"][data-index="' + c + '"]');
+  if (cell) {
+    var cr = cell.getBoundingClientRect();
+    var p = this.wrapPoint(cr);
+    var visible = cr.right > sb.left && cr.left < sb.right;
+    btn = this.overlay.querySelector('[data-role="move-col"]');
     if (btn) {
       btn.style.left = p.x + p.w / 2 + "px";
-      btn.style.top = p.y - 6 + "px";
+      btn.style.top = p.y - 4 + "px";
       btn.style.transform = "translate(-50%, -100%)";
       btn.style.visibility = visible ? "visible" : "hidden";
+      btn.dataset.index = String(colIdx);
     }
-    btn = this.overlay.querySelector('[data-role="resize-col"][data-index="' + c + '"]');
+    btn = this.overlay.querySelector('[data-role="resize-col"]');
     if (btn) {
       btn.style.left = p.x + p.w + "px";
-      btn.style.top = p.y - 6 + "px";
+      btn.style.top = p.y - 4 + "px";
       btn.style.transform = "translate(-50%, -100%)";
       btn.style.visibility = visible ? "visible" : "hidden";
+      btn.dataset.index = String(colIdx);
     }
   }
-
-  for (r = 0; r < nRow; r += 1) {
-    var rowEl = rows[r];
-    var leftCell = rowEl.cells[0];
-    if (!leftCell) continue;
+  var rowEl = rows[rowIdx];
+  if (rowEl && rowEl.cells[0]) {
     var rp = this.wrapPoint(rowEl.getBoundingClientRect());
-    var lp = this.wrapPoint(leftCell.getBoundingClientRect());
-    var rowH = rp.h;
-    if (
-      this.drag &&
-      this.drag.kind === "resize-row" &&
-      this.drag.index === r &&
-      this.drag.currentHeight
-    ) {
-      rowH = this.drag.currentHeight;
-    }
-    // Ручки строк — по центру левой границы таблицы.
-    btn = this.overlay.querySelector('[data-role="move-row"][data-index="' + r + '"]');
+    var lp = this.wrapPoint(rowEl.cells[0].getBoundingClientRect());
+    btn = this.overlay.querySelector('[data-role="move-row"]');
     if (btn) {
-      btn.style.left = lp.x + "px";
-      btn.style.top = rp.y + rowH / 2 + "px";
+      btn.style.left = Math.max(lp.x, sb.left - box.left) + "px";
+      btn.style.top = rp.y + rp.h / 2 + "px";
       btn.style.transform = "translate(-50%, -50%)";
-    }
-    btn = this.overlay.querySelector('[data-role="resize-row"][data-index="' + r + '"]');
-    if (btn) {
-      btn.style.left = lp.x + "px";
-      btn.style.top = rp.y + rowH + "px";
-      btn.style.transform = "translate(-50%, -50%)";
+      btn.dataset.index = String(rowIdx);
     }
   }
-
-  if (this.flyout) {
-    var fly = this.overlay.querySelector('[data-role="' + this.flyout.kind + '"]');
-    if (!fly) return;
-    var kind = this.flyout.kind;
-    var idx = this.flyout.index;
-    var anchor;
-    if (kind === "add-col") {
-      anchor = this.overlay.querySelector(
-        '[data-role="resize-col"][data-index="' + idx + '"]'
-      );
-      if (anchor) {
-        fly.style.left = parseFloat(anchor.style.left) + HANDLE + 4 + "px";
-        fly.style.top = anchor.style.top;
-        fly.style.transform = anchor.style.transform;
-      }
-    } else if (kind === "add-row") {
-      anchor = this.overlay.querySelector(
-        '[data-role="resize-row"][data-index="' + idx + '"]'
-      );
-      if (anchor) {
-        fly.style.left = anchor.style.left;
-        fly.style.top = parseFloat(anchor.style.top) + HANDLE + 4 + "px";
-        fly.style.transform = anchor.style.transform;
-      }
-    } else if (kind === "del-col") {
-      anchor = this.overlay.querySelector(
-        '[data-role="move-col"][data-index="' + idx + '"]'
-      );
-      if (anchor) {
-        fly.style.left = parseFloat(anchor.style.left) + HANDLE + 4 + "px";
-        fly.style.top = anchor.style.top;
-        fly.style.transform = anchor.style.transform;
-      }
-    } else if (kind === "del-row") {
-      anchor = this.overlay.querySelector(
-        '[data-role="move-row"][data-index="' + idx + '"]'
-      );
-      if (anchor) {
-        fly.style.left = anchor.style.left;
-        fly.style.top = parseFloat(anchor.style.top) + HANDLE + 4 + "px";
-        fly.style.transform = anchor.style.transform;
-      }
-    }
-  }
-};
-
-TableManageView.prototype.swapHandleIndex = function (role, from, to) {
-  var a = this.overlay.querySelector(
-    '[data-role="' + role + '"][data-index="' + from + '"]'
-  );
-  var b = this.overlay.querySelector(
-    '[data-role="' + role + '"][data-index="' + to + '"]'
-  );
-  if (a) a.dataset.index = String(to);
-  if (b) b.dataset.index = String(from);
 };
 
 TableManageView.prototype.handleOverlayPointerDown = function (e) {
@@ -679,22 +887,16 @@ TableManageView.prototype.handleOverlayPointerDown = function (e) {
   if (!btn || !this.overlay.contains(btn)) return;
   e.preventDefault();
   e.stopPropagation();
+  this.interactUntil = Date.now() + 800;
   var role = btn.dataset.role;
   var index = parseInt(btn.dataset.index, 10);
   if (!role || !isFinite(index)) return;
-
-  if (role === "add-col" || role === "add-row" || role === "del-col" || role === "del-row") {
-    this.onFlyoutAction(role, index);
-    return;
-  }
-
   this.drag = {
     kind: role,
     index: index,
     startX: e.clientX,
     startY: e.clientY,
     startWidths: role === "resize-col" ? this.measureColWidths() : null,
-    startHeight: role === "resize-row" ? this.measureRowHeight(index) : 0,
     moved: false,
     pointerId: e.pointerId,
     target: btn,
@@ -712,26 +914,18 @@ TableManageView.prototype.handlePointerMove = function (e) {
   if (this.drag.pointerId != null && e.pointerId !== this.drag.pointerId) return;
   var d = dist(e.clientX, e.clientY, this.drag.startX, this.drag.startY);
   if (!this.drag.moved) {
-    if (d < DRAG_THRESHOLD) return;
+    // Перетаскивание строк/столбцов — только мышью; на телефоне ручка лишь выделяет.
+    if (d < DRAG_THRESHOLD || (this.drag.kind !== "resize-col" && e.pointerType === "touch")) return;
     this.drag.moved = true;
-    this.flyout = null;
-    var extra = this.overlay.querySelector(
-      '[data-role="add-col"], [data-role="add-row"], [data-role="del-col"], [data-role="del-row"]'
-    );
-    if (extra) extra.remove();
+    this.closeMenu();
     this.drag.target.classList.add("is-dragging");
     if (this.drag.kind === "resize-col" && this.drag.startWidths) {
-      applyPreviewWidths(
-        this.colgroup,
-        this.table,
-        this.drag.startWidths.slice(),
-        this.cellMinWidth
-      );
+      applyPreviewWidths(this.colgroup, this.table, this.drag.startWidths.slice(), this.cellMinWidth);
     }
   }
+  this.interactUntil = Date.now() + 800;
   var kind = this.drag.kind;
   if (kind === "resize-col") this.dragResizeCol(e);
-  else if (kind === "resize-row") this.dragResizeRow(e);
   else if (kind === "move-col") this.dragMoveCol(e);
   else if (kind === "move-row") this.dragMoveRow(e);
 };
@@ -739,42 +933,9 @@ TableManageView.prototype.handlePointerMove = function (e) {
 TableManageView.prototype.dragResizeCol = function (e) {
   var widths = this.drag.startWidths.slice();
   var dx = e.clientX - this.drag.startX;
-  widths[this.drag.index] = Math.max(
-    this.cellMinWidth,
-    this.drag.startWidths[this.drag.index] + dx
-  );
+  widths[this.drag.index] = Math.max(this.cellMinWidth, this.drag.startWidths[this.drag.index] + dx);
   this.drag.currentWidths = widths;
   applyPreviewWidths(this.colgroup, this.table, widths, this.cellMinWidth);
-  this.layoutHandles();
-};
-
-TableManageView.prototype.applyPreviewRowHeight = function (index, h) {
-  if (!this.previewStyle) {
-    this.previewStyle = document.createElement("style");
-    this.dom.appendChild(this.previewStyle);
-  }
-  var n = index + 1;
-  this.previewStyle.textContent =
-    ".note-table-manage-wrap.is-managing .note-editor-table tr:nth-child(" +
-    n +
-    ") > th,.note-table-manage-wrap.is-managing .note-editor-table tr:nth-child(" +
-    n +
-    ") > td{height:" +
-    h +
-    "px !important;min-height:" +
-    h +
-    "px !important;box-sizing:border-box;}";
-};
-
-TableManageView.prototype.clearPreviewRowHeight = function () {
-  if (this.previewStyle) this.previewStyle.textContent = "";
-};
-
-TableManageView.prototype.dragResizeRow = function (e) {
-  var dy = e.clientY - this.drag.startY;
-  var h = Math.max(MIN_ROW, this.drag.startHeight + dy);
-  this.drag.currentHeight = h;
-  this.applyPreviewRowHeight(this.drag.index, h);
   this.layoutHandles();
 };
 
@@ -797,36 +958,17 @@ TableManageView.prototype.dragMoveCol = function (e) {
   if (pos == null) return;
   var i = this.drag.index;
   var n = this.colCount();
-  if (e.clientX > this.colMidX(i) && i < n - 1 && e.clientX > this.colMidX(i + 1)) {
-    var ok = moveTableColumn({
-      from: i,
-      to: i + 1,
-      select: false,
-      pos: pos + 1,
-    })(this.editor.state, function (tr) {
-      this.editor.view.dispatch(tr);
-    }.bind(this));
-    if (ok) {
-      this.swapHandleIndex("move-col", i, i + 1);
-      this.swapHandleIndex("resize-col", i, i + 1);
-      this.drag.index = i + 1;
-      this.layoutHandles();
-    }
-  } else if (e.clientX < this.colMidX(i) && i > 0 && e.clientX < this.colMidX(i - 1)) {
-    var okL = moveTableColumn({
-      from: i,
-      to: i - 1,
-      select: false,
-      pos: pos + 1,
-    })(this.editor.state, function (tr) {
-      this.editor.view.dispatch(tr);
-    }.bind(this));
-    if (okL) {
-      this.swapHandleIndex("move-col", i, i - 1);
-      this.swapHandleIndex("resize-col", i, i - 1);
-      this.drag.index = i - 1;
-      this.layoutHandles();
-    }
+  var to = null;
+  if (i < n - 1 && e.clientX > this.colMidX(i + 1)) to = i + 1;
+  else if (i > 0 && e.clientX < this.colMidX(i - 1)) to = i - 1;
+  if (to == null) return;
+  var editor = this.editor;
+  var ok = moveTableColumn({ from: i, to: to, select: false, pos: pos + 1 })(editor.state, function (tr) {
+    editor.view.dispatch(tr);
+  });
+  if (ok) {
+    this.drag.index = to;
+    this.layoutHandles();
   }
 };
 
@@ -835,36 +977,17 @@ TableManageView.prototype.dragMoveRow = function (e) {
   if (pos == null) return;
   var i = this.drag.index;
   var n = this.rowCount();
-  if (e.clientY > this.rowMidY(i) && i < n - 1 && e.clientY > this.rowMidY(i + 1)) {
-    var ok = moveTableRow({
-      from: i,
-      to: i + 1,
-      select: false,
-      pos: pos + 1,
-    })(this.editor.state, function (tr) {
-      this.editor.view.dispatch(tr);
-    }.bind(this));
-    if (ok) {
-      this.swapHandleIndex("move-row", i, i + 1);
-      this.swapHandleIndex("resize-row", i, i + 1);
-      this.drag.index = i + 1;
-      this.layoutHandles();
-    }
-  } else if (e.clientY < this.rowMidY(i) && i > 0 && e.clientY < this.rowMidY(i - 1)) {
-    var okU = moveTableRow({
-      from: i,
-      to: i - 1,
-      select: false,
-      pos: pos + 1,
-    })(this.editor.state, function (tr) {
-      this.editor.view.dispatch(tr);
-    }.bind(this));
-    if (okU) {
-      this.swapHandleIndex("move-row", i, i - 1);
-      this.swapHandleIndex("resize-row", i, i - 1);
-      this.drag.index = i - 1;
-      this.layoutHandles();
-    }
+  var to = null;
+  if (i < n - 1 && e.clientY > this.rowMidY(i + 1)) to = i + 1;
+  else if (i > 0 && e.clientY < this.rowMidY(i - 1)) to = i - 1;
+  if (to == null) return;
+  var editor = this.editor;
+  var ok = moveTableRow({ from: i, to: to, select: false, pos: pos + 1 })(editor.state, function (tr) {
+    editor.view.dispatch(tr);
+  });
+  if (ok) {
+    this.drag.index = to;
+    this.layoutHandles();
   }
 };
 
@@ -880,122 +1003,58 @@ TableManageView.prototype.handlePointerUp = function (e) {
       drag.target.releasePointerCapture(drag.pointerId);
     } catch (_) {}
   }
-
   var pos = this.tablePos();
-  if (drag.moved) {
-    if (drag.kind === "resize-col" && drag.currentWidths && pos != null) {
-      setAllColWidths(this.editor, pos, drag.currentWidths);
-    } else if (drag.kind === "resize-row" && drag.currentHeight && pos != null) {
-      setRowHeight(this.editor, pos, drag.index, drag.currentHeight);
-    }
-    this.clearPreviewRowHeight();
-    this.flyout = null;
-    this.renderOverlay();
-    return;
-  }
-  this.clearPreviewRowHeight();
-
-  if (drag.kind === "resize-col") this.flyout = { kind: "add-col", index: drag.index };
-  else if (drag.kind === "resize-row") this.flyout = { kind: "add-row", index: drag.index };
-  else if (drag.kind === "move-col") this.flyout = { kind: "del-col", index: drag.index };
-  else if (drag.kind === "move-row") this.flyout = { kind: "del-row", index: drag.index };
-  this.renderOverlay();
-};
-
-TableManageView.prototype.onFlyoutAction = function (role, index) {
-  var pos = this.tablePos();
-  var self = this;
   if (pos == null) return;
-  if (role === "add-col") {
-    var widths = this.measureColWidths();
-    var neighborW = widths[index] || this.cellMinWidth;
-    runTableCommand(this.editor, pos, 0, index, addColumnAfter);
-    var afterPos = this.tablePos();
-    if (afterPos != null) {
-      widths.splice(index + 1, 0, neighborW);
-      setAllColWidths(this.editor, afterPos, widths);
+  if (drag.moved) {
+    if (drag.kind === "resize-col" && drag.currentWidths) {
+      setAllColWidths(this.editor, pos, drag.currentWidths);
+      this.editor.view.focus();
+    } else if (drag.kind === "move-col") {
+      selectLine(this.editor, pos, "col", drag.index);
+    } else if (drag.kind === "move-row") {
+      selectLine(this.editor, pos, "row", drag.index);
     }
-    this.flyout = null;
     return;
   }
-  if (role === "add-row") {
-    var rowNode = this.node.child(index);
-    var neighborH =
-      (rowNode && rowNode.attrs && rowNode.attrs.height) ||
-      this.measureRowHeight(index);
-    runTableCommand(this.editor, pos, index, 0, addRowAfter);
-    var rowPos = this.tablePos();
-    if (rowPos != null) setRowHeight(this.editor, rowPos, index + 1, neighborH);
-    this.flyout = null;
-    return;
-  }
-  if (role === "del-col") {
-    if (this.colCount() <= 1) return;
-    confirmTableDelete("Удалить колонку?").then(function (ok) {
-      if (!ok) return;
-      var p = self.tablePos();
-      if (p == null) return;
-      runTableCommand(self.editor, p, 0, index, deleteColumn);
-      self.flyout = null;
-    });
-    return;
-  }
-  if (role === "del-row") {
-    if (this.rowCount() <= 1) return;
-    confirmTableDelete("Удалить строку?").then(function (ok) {
-      if (!ok) return;
-      var p = self.tablePos();
-      if (p == null) return;
-      runTableCommand(self.editor, p, index, 0, deleteRow);
-      self.flyout = null;
-    });
+  // Нажатие без перетаскивания: выделить столбец/строку (повторное — снять выделение).
+  if (drag.kind === "move-col" || drag.kind === "move-row") {
+    var kind = drag.kind === "move-col" ? "col" : "row";
+    if (this.active && this.active.mode === kind) focusCell(this.editor, pos, this.active.row, this.active.col);
+    else selectLine(this.editor, pos, kind, drag.index);
   }
 };
 
 TableManageView.prototype.update = function (node) {
   if (node.type !== this.node.type) return false;
-  var oldRows = this.node.childCount;
-  var oldCols = this.node.firstChild ? this.node.firstChild.childCount : 0;
-  var newRows = node.childCount;
-  var newCols = node.firstChild ? node.firstChild.childCount : 0;
-  var structureChanged = oldRows !== newRows || oldCols !== newCols;
   this.node = node;
   if (!this.drag || this.drag.kind !== "resize-col") {
     updateColumns(node, this.colgroup, this.table, this.cellMinWidth);
   }
-  if (this.drag && (this.drag.kind === "move-col" || this.drag.kind === "move-row")) {
-    this.layoutHandles();
-  } else if (this.managing && !this.drag) {
-    var self = this;
-    requestAnimationFrame(function () {
-      if (!self.managing || self.drag) return;
-      if (structureChanged) self.renderOverlay();
-      else self.layoutHandles();
-    });
-  }
+  var self = this;
+  requestAnimationFrame(function () {
+    self.layoutHandles();
+  });
   return true;
 };
 
 TableManageView.prototype.ignoreMutation = function (mutation) {
   if (!mutation || !mutation.target) return false;
-  if (mutation.target === this.dom || mutation.target === this.scroll) return true;
-  if (this.previewStyle && (mutation.target === this.previewStyle || this.previewStyle.contains(mutation.target))) {
-    return true;
-  }
-  if (this.overlay.contains(mutation.target) || this.toggle.contains(mutation.target)) {
+  var t = mutation.target;
+  if (t === this.dom || t === this.scroll) return true;
+  if (
+    this.overlay.contains(t) ||
+    this.bar.contains(t) ||
+    this.menu.contains(t) ||
+    this.addColBtn.contains(t) ||
+    this.addRowBtn.contains(t)
+  ) {
     return true;
   }
   if (mutation.type === "attributes") {
-    if (mutation.target === this.table || mutation.target === this.dom || mutation.target === this.scroll) return true;
-    if (this.previewStyle && (mutation.target === this.previewStyle || this.previewStyle.contains(mutation.target))) return true;
-    if (this.colgroup.contains(mutation.target)) return true;
-    if (mutation.target.nodeName === "TR" || mutation.target.nodeName === "COL") return true;
-    if (
-      (mutation.target.nodeName === "TD" || mutation.target.nodeName === "TH") &&
-      mutation.attributeName === "style"
-    ) {
-      return true;
-    }
+    if (t === this.table) return true;
+    if (this.colgroup.contains(t)) return true;
+    if (t.nodeName === "TR" || t.nodeName === "COL") return true;
+    if ((t.nodeName === "TD" || t.nodeName === "TH") && mutation.attributeName === "style") return true;
   }
   return false;
 };
@@ -1003,10 +1062,11 @@ TableManageView.prototype.ignoreMutation = function (mutation) {
 TableManageView.prototype.stopEvent = function (event) {
   var t = event.target;
   if (!t || !t.closest) return false;
-  return !!t.closest(".note-table-manage-toggle, .note-table-manage-overlay, .note-table-handle");
+  return !!t.closest(".note-table-bar, .note-table-menu, .note-table-manage-overlay, .note-table-handle, .note-table-edge");
 };
 
 TableManageView.prototype.destroy = function () {
+  allViews.delete(this);
   if (activeView === this) {
     activeView = null;
     closeConfirm(false);
@@ -1014,17 +1074,11 @@ TableManageView.prototype.destroy = function () {
   this.unbind();
 };
 
-function isInsideManageUi(target) {
-  if (!target || !target.closest) return false;
-  return !!target.closest(
-    ".note-table-manage-wrap, .note-table-confirm-overlay, .note-table-handle"
-  );
-}
-
 function createTableManagePlugin() {
   return new Plugin({
     key: tableManageKey,
-    view: function () {
+    view: function (editorView) {
+      var blurTimer = null;
       function onKey(e) {
         if (e.key !== "Escape") return;
         if (confirmCloser) {
@@ -1032,38 +1086,46 @@ function createTableManagePlugin() {
           closeConfirm(false);
           return;
         }
-        if (activeView && activeView.flyout) {
+        if (activeView && activeView.menuOpen) {
           e.preventDefault();
-          activeView.clearFlyout();
-          return;
-        }
-        if (activeView) {
-          e.preventDefault();
-          exitManageMode();
+          activeView.closeMenu();
         }
       }
       function onPointerDown(e) {
         if (confirmCloser) return;
-        if (!activeView) return;
-        if (activeView.drag) return;
-        if (isInsideManageUi(e.target)) {
-          if (
-            activeView.dom.contains(e.target) &&
-            !e.target.closest(".note-table-handle, .note-table-manage-toggle")
-          ) {
-            activeView.clearFlyout();
-          }
-          return;
-        }
-        exitManageMode();
+        var t = e.target;
+        if (t && t.closest && t.closest(".note-table-menu, [data-act='more']")) return;
+        closeAllMenus();
+      }
+      function onFocus() {
+        clearTimeout(blurTimer);
+        syncActiveTable(editorView);
+      }
+      function onBlur() {
+        clearTimeout(blurTimer);
+        blurTimer = setTimeout(function () {
+          syncActiveTable(editorView);
+        }, 200);
       }
       document.addEventListener("keydown", onKey, true);
       document.addEventListener("pointerdown", onPointerDown, true);
+      editorView.dom.addEventListener("focus", onFocus);
+      editorView.dom.addEventListener("blur", onBlur);
+      setTimeout(function () {
+        syncActiveTable(editorView);
+      }, 0);
       return {
+        update: function (view) {
+          syncActiveTable(view);
+        },
         destroy: function () {
+          clearTimeout(blurTimer);
           document.removeEventListener("keydown", onKey, true);
           document.removeEventListener("pointerdown", onPointerDown, true);
-          exitManageMode();
+          editorView.dom.removeEventListener("focus", onFocus);
+          editorView.dom.removeEventListener("blur", onBlur);
+          closeConfirm(false);
+          activeView = null;
         },
       };
     },
