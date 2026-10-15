@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261015-subtabs2";
+  var WEBAPP_BUILD = "20261015-subtabs3";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261015-subtabs2";
+  const NOTE_EDITOR_ASSET_V = "20261015-subtabs3";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -20198,8 +20198,22 @@
         spacer = null;
       }
     }
+    // Смена вкладки: список другой высоты — начинаем с верха, вкладки на своём месте.
+    row._resetReveal = function () {
+      setFloating(false);
+      row._suppressUntil = Date.now() + 450;
+      try {
+        window.scrollTo(0, 0);
+      } catch (_) {}
+      if (scroller) scroller.scrollTop = 0;
+      lastY = 0;
+    };
     function onScroll() {
       void ticking;
+      if (row._suppressUntil && Date.now() < row._suppressUntil) {
+        lastY = scrollY();
+        return;
+      }
       (function () {
         var panel = document.getElementById("panel-notes");
         if (!panel || panel.classList.contains("hidden")) {
@@ -20227,6 +20241,8 @@
   function setNotesSubTab(name) {
     var next = name || "notes";
     if (next === "summaries") next = "transcriptions";
+    var subRow = document.querySelector("#panel-notes .notes-subtabs-row");
+    if (subRow && typeof subRow._resetReveal === "function" && next !== notesSubTab) subRow._resetReveal();
     if (notesSubTab === "chats" && next !== "chats") {
       leaveChatThreadsMode();
     }
