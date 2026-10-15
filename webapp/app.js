@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261015-tabledata2";
+  var WEBAPP_BUILD = "20261015-editor2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261015-tabledata2";
+  const NOTE_EDITOR_ASSET_V = "20261015-editor2";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -3829,6 +3829,7 @@
       "note-editor-overlay",
       "notes-filter-overlay",
       "canvas-image-overlay",
+      "note-ai-overlay",
       "tags-manage-overlay",
       "contacts-form-overlay",
       "teams-manage-overlay",
@@ -5292,6 +5293,7 @@
   }
 
   function setNoteEditorSaveHint(msg) {
+    setNoteSaveState(msg ? "error" : "saved");
     var el = document.getElementById("note-editor-save-hint");
     var title = document.getElementById("note-editor-title-input");
     if (!el && title && title.parentNode) {
@@ -5630,6 +5632,7 @@
     var tagsSheet = document.getElementById("tags-manage-overlay");
     var notesFilterSheet = document.getElementById("notes-filter-overlay");
     var canvasImageSheet = document.getElementById("canvas-image-overlay");
+    var noteAiSheet = document.getElementById("note-ai-overlay");
     var contactsForm = document.getElementById("contacts-form-overlay");
     var teamsManage = document.getElementById("teams-manage-overlay");
     var chatsSplit =
@@ -5651,6 +5654,7 @@
       (tagsSheet && !tagsSheet.classList.contains("hidden")) ||
       (notesFilterSheet && !notesFilterSheet.classList.contains("hidden")) ||
       (canvasImageSheet && !canvasImageSheet.classList.contains("hidden")) ||
+      (noteAiSheet && !noteAiSheet.classList.contains("hidden")) ||
       (contactsForm && !contactsForm.classList.contains("hidden")) ||
       (teamsManage && !teamsManage.classList.contains("hidden"));
     app.classList.toggle("app--immersive", !!immersive);
@@ -11389,7 +11393,37 @@
       setHidden(btn, !show);
     }
     if (wrap) wrap.classList.toggle("has-gpt-btn", !!show);
+    var disc = document.getElementById("note-editor-discuss-btn");
+    if (disc) setHidden(disc, !show);
+    syncNoteDiscussBadge();
     syncNoteEditorEndPad();
+  }
+
+  // Бейдж на кнопке «Обсуждение» (вместо карточки в конце текста): число непрочитанных, иначе точка.
+  function syncNoteDiscussBadge() {
+    var badge = document.getElementById("note-editor-discuss-badge");
+    if (!badge) return;
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var n = 0;
+    var flag = false;
+    try {
+      n = typeof noteChatsUnreadTotal === "function" ? noteChatsUnreadTotal() : 0;
+      flag = !!(wrap && noteHasDiscussUnread(wrap._shareKind, wrap._shareId));
+    } catch (_) {}
+    var show = !isNoteDiscussionOpen() && (n > 0 || flag);
+    badge.textContent = n > 0 ? (n > 99 ? "99+" : String(n)) : "";
+    badge.classList.toggle("is-dot", show && !(n > 0));
+    badge.classList.toggle("hidden", !show);
+  }
+
+  function openNoteDiscussionFromToolbar() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap && wrap._shareKind && wrap._shareId) {
+      openNoteDiscussion();
+      return;
+    }
+    var body = getNoteEditorBodyEl();
+    if (body && typeof body._openNoteGpt === "function") body._openNoteGpt();
   }
 
   function bindNoteGptToolbarButton() {
@@ -11401,6 +11435,10 @@
         e.preventDefault();
         e.stopPropagation();
       }
+      if (canUseNoteAiSheet()) {
+        openNoteAiSheet({});
+        return;
+      }
       var body = getNoteEditorBodyEl();
       if (body && typeof body._openNoteGpt === "function") {
         body._openNoteGpt();
@@ -11411,6 +11449,15 @@
       e.preventDefault();
       openGpt(e);
     });
+    var disc = document.getElementById("note-editor-discuss-btn");
+    if (disc && !disc._bound) {
+      disc._bound = true;
+      disc.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openNoteDiscussionFromToolbar();
+      });
+    }
   }
 
   function noteEditorVisibleHeightPx() {
@@ -17039,6 +17086,61 @@
     setNoteEditorTocOpen(page, true);
   }
 
+  // Проект — в строке свойств под названием (раньше — пунктирной плашкой по центру шапки).
+  // Пикер монтируется в шапку как раньше (там его состояние и обработчики), а элемент переносим.
+  function moveProjectPickerToMeta(page) {
+    var slot = page && page.querySelector("#note-editor-meta-project");
+    var tw = document.getElementById("note-editor-tags-wrap");
+    if (!slot || !tw) return;
+    Array.prototype.slice.call(tw.children).forEach(function (c) {
+      if (c.id !== "note-editor-more-wrap") slot.appendChild(c);
+    });
+    slot.classList.add("tag-picker", "tag-picker--dropdown");
+  }
+
+  // Название по содержанию: для «Новый чат» / «Без названия» ИИ один раз предлагает своё — сам не переименовывает.
+  var NOTE_DEFAULT_TITLES = /^(новый чат|без названия|\(без названия\)|новая заметка|заметка|)$/i;
+  function maybeSuggestNoteTitle(noteId) {
+    var input = document.getElementById("note-editor-title-input");
+    var btn = document.getElementById("note-editor-title-suggest");
+    if (!noteId || !input || !btn) return;
+    if (!NOTE_DEFAULT_TITLES.test(String(input.value || "").trim())) return;
+    var key = "leo_title_suggest_" + noteId;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, "1");
+    } catch (_) {}
+    apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/suggest-title", { method: "POST", timeout: 30000 })
+      .then(function (res) {
+        var title = String((res && res.title) || "").trim();
+        if (!title || document.getElementById("note-editor-title-suggest") !== btn) return;
+        if (!NOTE_DEFAULT_TITLES.test(String(input.value || "").trim())) return;
+        btn.textContent = "Назвать «" + title + "»?";
+        btn.classList.remove("hidden");
+        btn.onclick = function (e) {
+          e.preventDefault();
+          input.value = title;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          btn.classList.add("hidden");
+          showNoteToast("Название обновлено");
+        };
+      })
+      .catch(function () {});
+  }
+
+  // «Сохраняю… / Сохранено» в строке свойств; ошибки по-прежнему — красной подсказкой.
+  var noteSaveStateTimer = null;
+  function setNoteSaveState(state) {
+    var el = document.getElementById("note-editor-save-state");
+    if (!el) return;
+    clearTimeout(noteSaveStateTimer);
+    el.classList.toggle("is-error", state === "error");
+    if (state === "saving") el.textContent = "Сохраняю…";
+    else if (state === "saved") el.textContent = "Сохранено";
+    else if (state === "error") el.textContent = "Не сохранено";
+    else el.textContent = "";
+  }
+
   function noteEditorPageInnerHtml(titleLabel) {
     var titleAria = escapeHtml(titleLabel || "Заголовок");
     var mobileToc = isMobileNoteLayout();
@@ -17070,7 +17172,12 @@
       'placeholder="Заголовок" aria-label="' +
       titleAria +
       '" maxlength="500" rows="1" autocapitalize="sentences" spellcheck="true"></textarea>' +
+      '<div class="note-editor-meta" id="note-editor-meta">' +
+      '<div id="note-editor-meta-project" class="note-editor-meta-project"></div>' +
       '<div id="note-editor-members" class="note-editor-members hidden"></div>' +
+      '<span id="note-editor-save-state" class="note-editor-save-state" aria-live="polite"></span>' +
+      '<button type="button" id="note-editor-title-suggest" class="note-editor-title-suggest hidden"></button>' +
+      "</div>" +
       '<div class="note-editor-sheets-bar">' +
       tocInSheetsBar +
       '<div id="note-editor-sheets" class="note-editor-sheets hidden"></div>' +
@@ -17648,6 +17755,123 @@
         : "Готово: " + done + " " + pluralRu(done, "картинка", "картинки", "картинок") + " в новом стиле"
     );
     return html;
+  }
+
+  // ---- Окно ИИ «Что сделать с текстом?» (кнопка ✨ в панели и в плашке выделения) ----
+  // Правки применяются как у ИИ из обсуждения (applyNoteAiEdits: подсветка + «Отменить / Ок»), в чат не пишутся.
+  var noteAiSheetState = null;
+
+  function canUseNoteAiSheet() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var local = !wrap || !wrap._shareKind || wrap._shareKind === "local";
+    return !!(local && noteSheetsNoteId() && buildOpenDocView());
+  }
+
+  function openNoteAiSheet(opts) {
+    opts = opts || {};
+    var ov = document.getElementById("note-ai-overlay");
+    if (!ov) return;
+    noteAiSheetState = { selection: String(opts.selection || "").trim() };
+    var scope = document.getElementById("note-ai-scope");
+    if (scope) scope.textContent = noteAiSheetState.selection ? "Выделенное" : "Весь лист";
+    var ta = document.getElementById("note-ai-input");
+    if (ta) ta.value = "";
+    ov.querySelectorAll(".note-ai-chips button").forEach(function (b) {
+      b.setAttribute("aria-pressed", "false");
+    });
+    syncNoteAiGo();
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
+    setTimeout(function () {
+      if (ta) ta.focus();
+    }, 60);
+  }
+
+  function closeNoteAiSheet() {
+    var ov = document.getElementById("note-ai-overlay");
+    if (!ov) return;
+    noteAiSheetState = null;
+    ov.classList.add("hidden");
+    ov.setAttribute("aria-hidden", "true");
+    onModalSheetClose();
+    syncAppOverlay();
+  }
+
+  function syncNoteAiGo() {
+    var ta = document.getElementById("note-ai-input");
+    var go = document.getElementById("note-ai-go");
+    if (go) go.disabled = !(ta && ta.value.trim());
+  }
+
+  async function runNoteAiSheet() {
+    var ta = document.getElementById("note-ai-input");
+    var go = document.getElementById("note-ai-go");
+    var instruction = ta ? ta.value.trim() : "";
+    var state = noteAiSheetState || {};
+    var view = buildOpenDocView();
+    var noteId = noteSheetsNoteId();
+    if (!instruction || !view || !noteId) return;
+    if (go) {
+      go.classList.add("is-busy");
+      go.textContent = "Думаю…";
+    }
+    try {
+      var res = await apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/ai-edit", {
+        method: "POST",
+        timeout: 180000,
+        body: JSON.stringify({
+          instruction: instruction,
+          doc_view: view.view,
+          sheet_id: view.sheet_id,
+          selection: state.selection || null,
+          note_title: getNoteEditorTitle ? getNoteEditorTitle() : "",
+        }),
+      });
+      closeNoteAiSheet();
+      applyNoteAiEdits({ sheet_id: (res && res.sheet_id) || view.sheet_id, edits: (res && res.edits) || [] });
+    } catch (e) {
+      showNoteToast((e && e.message) || "ИИ не ответил, попробуйте ещё раз");
+    } finally {
+      if (go) {
+        go.classList.remove("is-busy");
+        go.textContent = "Сделать";
+      }
+    }
+  }
+
+  function bindNoteAiSheet() {
+    var ov = document.getElementById("note-ai-overlay");
+    if (!ov || ov._bound) return;
+    ov._bound = true;
+    ov.addEventListener("click", function (e) {
+      if (e.target === ov) closeNoteAiSheet();
+    });
+    var close = document.getElementById("note-ai-close");
+    if (close) close.addEventListener("click", closeNoteAiSheet);
+    var ta = document.getElementById("note-ai-input");
+    if (ta) {
+      ta.addEventListener("input", syncNoteAiGo);
+      ta.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          runNoteAiSheet();
+        }
+      });
+    }
+    ov.querySelectorAll(".note-ai-chips button").forEach(function (b) {
+      b.addEventListener("click", function () {
+        if (ta) ta.value = b.getAttribute("data-p") || b.textContent;
+        ov.querySelectorAll(".note-ai-chips button").forEach(function (x) {
+          x.setAttribute("aria-pressed", String(x === b));
+        });
+        syncNoteAiGo();
+        if (ta) ta.focus();
+      });
+    });
+    var go = document.getElementById("note-ai-go");
+    if (go) go.addEventListener("click", runNoteAiSheet);
   }
 
   // ---- Правки ИИ в открытой заметке ----
@@ -20195,7 +20419,7 @@
 
     var mobileTocMenu =
       !window.matchMedia || window.matchMedia("(max-width: 959px)").matches;
-    if (mobileTocMenu && getActiveNoteEditorPage()) {
+    if (false && mobileTocMenu && getActiveNoteEditorPage()) {
       addItem("Оглавление", function () {
         closeNoteMoreMenu();
         openActiveNoteEditorToc();
@@ -20231,17 +20455,8 @@
       });
     }
 
-    if (shareKind === "local") {
-      // У заметки своя ссылка на каждый лист: всё — в окне «Поделиться».
-      addItem(shared ? "Поделиться · ссылки" : "Поделиться", function () {
-        closeNoteMoreMenu();
-        openShareAccessSheet();
-      });
-      if (shared) {
-        addItem("Отключить все ссылки", function () {
-          revokeShareLink();
-        });
-      }
+    if (shareKind === "local" || shareKind === "journal") {
+      // «Поделиться» — иконкой в шапке; там же «Отключить все ссылки».
     } else if (!shared) {
       addItem("Поделиться", function () {
         closeNoteMoreMenu();
@@ -24769,6 +24984,7 @@
     var open = isNoteDiscussionOpen();
     document.documentElement.classList.toggle("note-discussion-open", open);
     requestAnimationFrame(positionAiEditBar);
+    syncNoteDiscussBadge();
     var sheet = document.querySelector("#note-discussion-overlay .note-discussion-sheet");
     if (sheet) {
       sheet.setAttribute("aria-modal", open && isDesktopLayout() ? "false" : "true");
@@ -24932,6 +25148,7 @@
   }
 
   function renderNoteDiscussionCard(comments) {
+    syncNoteDiscussBadge();
     var col = document.querySelector("#note-editor-modal-body .note-editor-main-column");
     var card = document.getElementById("note-discussion-card");
     var rows = discussionComments(comments);
@@ -24964,6 +25181,7 @@
   }
 
   function updateNoteDiscussionCardUnread() {
+    syncNoteDiscussBadge();
     var card = document.getElementById("note-discussion-card");
     if (!card) return;
     var wrap = document.getElementById("note-editor-more-wrap");
@@ -30437,6 +30655,12 @@
           openNoteDiscussion({ mode: mode, draft: sel, focus: true });
         },
         {
+          onAi:
+            kind === "local" && canUseNoteAiSheet()
+              ? function () {
+                  openNoteAiSheet({ selection: sel.quote });
+                }
+              : null,
           onTask: function () {
             var ed = getActiveNoteRichEditor && getActiveNoteRichEditor();
             var range = ed && ed.getSelectionRange ? ed.getSelectionRange() : null;
@@ -30611,6 +30835,23 @@
       '<circle cx="12" cy="19" r="1.7"/>' +
       "</svg>";
     btn.addEventListener("click", toggleNoteMoreMenu);
+    // «Поделиться» — отдельной иконкой в шапке (раньше было в «⋮» рядом с удалением).
+    var shareBtn = document.createElement("button");
+    shareBtn.type = "button";
+    shareBtn.id = "note-editor-share-head-btn";
+    shareBtn.className = "note-more-btn note-share-head-btn";
+    shareBtn.setAttribute("aria-label", "Поделиться");
+    shareBtn.title = "Поделиться";
+    shareBtn.innerHTML =
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>';
+    shareBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeNoteMoreMenu();
+      openShareAccessSheet();
+    });
+    if (kind === "local" || kind === "journal") wrap.appendChild(shareBtn);
     var menu = document.createElement("div");
     menu.id = "note-editor-more-menu";
     menu.className = "note-more-menu hidden";
@@ -32195,6 +32436,7 @@
           ? "Заголовок"
           : "Заголовок заметки"
     );
+    moveProjectPickerToMeta(wrap);
     var tocControls = bindNoteEditorTocControls(wrap);
     var editorPad = wrap.querySelector(".note-editor-pad--body");
     var titleInput = wrap.querySelector("#note-editor-title-input");
@@ -32609,6 +32851,7 @@
         });
       }
       if (saveTimer) clearTimeout(saveTimer);
+      setNoteSaveState("saving");
       saveTimer = setTimeout(function () {
         persistNoteDraft()
           .then(function () {
@@ -32680,6 +32923,7 @@
         });
       };
       modalBody._noteEditorSchedule = schedulePatch;
+      if (noteId) setTimeout(function () { maybeSuggestNoteTitle(noteId); }, 1200);
       modalBody._noteEditor = {
         ready: false,
         baseline: noteEditorSnapshot(cleanTitle, editorBody),
@@ -32811,6 +33055,7 @@
       mountShareControls("journal", journalId);
     }
     wrap.innerHTML = noteEditorPageInnerHtml("Заголовок");
+    moveProjectPickerToMeta(wrap);
     syncNoteGptToolbarButton(true);
     bindNoteGptToolbarButton();
     var tocControls = bindNoteEditorTocControls(wrap);
@@ -33772,6 +34017,7 @@
     if (tagsManageClose) tagsManageClose.addEventListener("click", closeTagsManageSheet);
     bindNotesFilterUi();
     bindCanvasImageSheet();
+    bindNoteAiSheet();
     // «Попросить ИИ…» в меню таблицы: открываем обсуждение в режиме ИИ с началом запроса про таблицу.
     window.addEventListener("leo-table-ask-ai", function (e) {
       var d = (e && e.detail) || {};

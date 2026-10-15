@@ -263,12 +263,12 @@
   function isCommentBubbleEvent(e) {
     var t = e && e.target;
     if (!t) return false;
-    if (t.id === "note-comment-bubble" || t.id === "note-task-bubble" || t.id === "note-comment-bubble-wrap") {
+    if (t.id === "note-comment-bubble" || t.id === "note-task-bubble" || t.id === "note-ai-bubble" || t.id === "note-comment-bubble-wrap") {
       return true;
     }
     return !!(
       t.closest &&
-      t.closest("#note-comment-bubble-wrap, #note-comment-bubble, #note-task-bubble")
+      t.closest("#note-comment-bubble-wrap, #note-comment-bubble, #note-task-bubble, #note-ai-bubble")
     );
   }
 
@@ -281,14 +281,16 @@
     }
   }
 
+  // Плашка над выделением (если сверху нет места — под ним), по левому краю выделения.
   function placeBubble(wrap, rect) {
     var vw = window.innerWidth;
     var vh = window.innerHeight;
     var width = wrap.offsetWidth || BUBBLE_SIZE;
     var height = wrap.offsetHeight || BUBBLE_SIZE;
-    var left = rect.right + BUBBLE_GAP;
-    var top = rect.top + (rect.height - height) / 2;
-    if (left + width > vw - 8) left = rect.left - width - BUBBLE_GAP;
+    var left = rect.left;
+    var top = rect.top - height - BUBBLE_GAP - 2;
+    if (top < 8) top = rect.bottom + BUBBLE_GAP + 2;
+    if (left + width > vw - 8) left = vw - width - 8;
     if (left < 8) left = 8;
     if (top < 8) top = 8;
     if (top + height > vh - 8) top = vh - height - 8;
@@ -303,7 +305,7 @@
     btn.className = "note-comment-bubble" + (extraClass ? " " + extraClass : "");
     btn.setAttribute("aria-label", label);
     btn.setAttribute("title", label);
-    btn.innerHTML = svg;
+    btn.innerHTML = svg + "<span>" + label + "</span>";
     return btn;
   }
 
@@ -318,19 +320,27 @@
       wrap = document.createElement("div");
       wrap.id = "note-comment-bubble-wrap";
       wrap.className = "note-comment-bubble-wrap";
+      var ai = makeBubbleBtn(
+        "note-ai-bubble",
+        "ИИ",
+        "note-comment-bubble--ai",
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+          '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>' +
+          "</svg>"
+      );
       var discuss = makeBubbleBtn(
         "note-comment-bubble",
         "Обсудить",
         "",
-        '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
-          '<path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z"/>' +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true">' +
+          '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>' +
           "</svg>"
       );
       var task = makeBubbleBtn(
         "note-task-bubble",
         "Задача",
         "note-comment-bubble--task",
-        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
           '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' +
           "</svg>"
       );
@@ -346,7 +356,7 @@
         if (!btn || !wrap.contains(btn)) return;
         wrap._fired = true;
         var fn =
-          btn.id === "note-task-bubble" ? wrap._onTask : wrap._onComment;
+          btn.id === "note-task-bubble" ? wrap._onTask : btn.id === "note-ai-bubble" ? wrap._onAi : wrap._onComment;
         hideBubble();
         if (typeof fn === "function") fn();
       }
@@ -355,17 +365,21 @@
       wrap.addEventListener("touchstart", stopSel, { passive: false });
       wrap.addEventListener("pointerup", activate);
       wrap.addEventListener("click", activate);
+      wrap.appendChild(ai);
       wrap.appendChild(discuss);
       wrap.appendChild(task);
       document.body.appendChild(wrap);
     }
     wrap._onComment = onClick;
     wrap._onTask = extras.onTask;
+    wrap._onAi = extras.onAi;
     wrap._fired = false;
     var discussBtn = document.getElementById("note-comment-bubble");
     if (discussBtn) discussBtn.classList.toggle("hidden", typeof onClick !== "function");
     var taskBtn = document.getElementById("note-task-bubble");
     if (taskBtn) taskBtn.classList.toggle("hidden", typeof extras.onTask !== "function");
+    var aiBtn = document.getElementById("note-ai-bubble");
+    if (aiBtn) aiBtn.classList.toggle("hidden", typeof extras.onAi !== "function");
     placeBubble(wrap, rect);
     window.requestAnimationFrame(function () {
       if (document.getElementById("note-comment-bubble-wrap") === wrap) placeBubble(wrap, rect);

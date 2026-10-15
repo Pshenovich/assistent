@@ -15167,3 +15167,85 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 .note-chats-rename { flex: 1 1 auto; display: flex; gap: 6px; align-items: center; padding: 6px; }
 .note-chats-rename-input { flex: 1 1 auto; min-width: 0; font-size: 16px; }
 .note-chats-rename-ok { flex: none; appearance: none; border: 0; border-radius: 10px; padding: 8px 12px; background: var(--accent); color: var(--on-accent, #fff); font: inherit; font-weight: 600; cursor: pointer; }
+
+/* ---- Нижняя панель редактора v2: ИИ, отменить/повторить, вставить, стиль (страницы), списки, чек-лист, обсуждение ---- */
+.note-tg-capsule--history { flex-shrink: 0; }
+.note-tg-capsule--history .note-tg-btn--undo { background: transparent; }
+.note-tg-sep { flex: none; width: 1px; height: 20px; margin: 0 3px; background: rgba(255, 255, 255, 0.14); }
+.note-tg-menu-label { margin: 4px 14px 2px; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(255, 255, 255, 0.5); }
+.note-tg-menu[data-menu-panel="style"] { left: auto; right: 12px; }
+.note-tg-menu-page > svg:last-child { margin-left: auto; opacity: 0.6; }
+.note-tg-menu-page.note-tg-menu-item--active::after { display: none; }
+.note-tg-menu-back { color: rgba(255, 255, 255, 0.6); padding-top: 8px; padding-bottom: 8px; }
+.note-tg-page.hidden { display: none; }
+.note-tg-h { font-weight: 700; }
+.note-tg-h2 { font-size: 1.2rem; }
+.note-tg-h3 { font-size: 1.05rem; }
+.note-tg-h4 { font-size: 0.95rem; font-weight: 600; }
+.note-rich-editor-body mark.note-highlight,
+mark.note-highlight { background: rgba(250, 204, 21, 0.32); color: inherit; border-radius: 3px; padding: 0 1px; }
+/* Кнопка ИИ (бывшая GPT) и обсуждение с бейджем — по краям строки. */
+.note-tg-btn--ai { flex-shrink: 0; color: #c4b5fd; background: rgba(139, 92, 246, 0.16); box-shadow: inset 0 0 0 1px rgba(139, 92, 246, 0.45); }
+.note-tg-btn--ai:hover { background: rgba(139, 92, 246, 0.26); }
+.note-tg-btn--discuss { position: relative; flex-shrink: 0; background: rgba(255, 255, 255, 0.08); }
+.note-tg-btn--discuss .note-tg-badge { position: absolute; top: -3px; right: -3px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #5b9fff; color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.note-tg-btn--discuss .note-tg-badge.hidden { display: none; }
+.note-editor-toolbar-row.is-selection .note-tg-btn--ai,
+.note-editor-toolbar-row.is-selection .note-tg-btn--discuss { display: none; }
+@media (max-width: 420px) {
+  .note-editor-toolbar-row, .note-tg-toolbar { gap: 6px; }
+  .note-tg-btn { width: 36px; height: 36px; }
+}
+
+/* ---- Окно ИИ «Что сделать с текстом?» ---- */
+#note-ai-overlay { z-index: 260; }
+.note-ai-scope { font-size: 0.75rem; font-weight: 600; color: #c4b5fd; background: rgba(139, 92, 246, 0.16); padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+.note-ai-body { display: flex; flex-direction: column; gap: var(--space-3, 12px); }
+.note-ai-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.note-ai-chips button { appearance: none; border: 1px solid var(--border); border-radius: 999px; padding: 7px 12px; background: var(--surface); color: var(--text); font: inherit; font-size: 0.875rem; cursor: pointer; }
+.note-ai-chips button:hover, .note-ai-chips button[aria-pressed="true"] { border-color: rgba(139, 92, 246, 0.6); background: rgba(139, 92, 246, 0.14); }
+.note-ai-input { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertical; font-size: 16px; line-height: 1.4; border-color: rgba(139, 92, 246, 0.5); }
+.note-ai-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.note-ai-hint { font-size: 0.75rem; color: var(--text-secondary); }
+.note-ai-go { flex: none; min-height: 42px; padding: 0 20px; border: 0; border-radius: 999px; background: #8b5cf6; color: #fff; font-weight: 600; }
+.note-ai-go:disabled { opacity: 0.45; }
+.note-ai-go.is-busy { opacity: 0.7; pointer-events: none; }
+
+/* ---- Плашка над выделением: ✨ ИИ · Обсудить · Задача (вместо двух цветных кругов) ---- */
+.note-comment-bubble-wrap { gap: 2px; padding: 3px; border-radius: 12px; background: var(--surface, #1f1f21); border: 1px solid var(--border, #363738); box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45); }
+.note-comment-bubble-wrap .note-comment-bubble {
+  width: auto; height: 32px; min-width: 0; min-height: 32px; padding: 0 10px; gap: 6px;
+  border-radius: 9px; background: transparent; color: var(--text, #e6e7ea); box-shadow: none;
+  font: 600 0.8125rem/1 inherit; font-family: inherit;
+}
+.note-comment-bubble-wrap .note-comment-bubble:hover { background: var(--surface-muted, rgba(255, 255, 255, 0.08)); }
+.note-comment-bubble-wrap .note-comment-bubble.hidden { display: none; }
+.note-comment-bubble-wrap .note-comment-bubble span { pointer-events: none; }
+.note-comment-bubble-wrap .note-comment-bubble--task { background: transparent; }
+.note-comment-bubble-wrap .note-comment-bubble--ai { color: #c4b5fd; background: rgba(139, 92, 246, 0.16); }
+/* Обсуждение — кнопкой в нижней панели; карточка в конце текста больше не показывается. */
+#note-discussion-card { display: none !important; }
+.note-tg-btn--discuss .note-tg-badge.is-dot { min-width: 10px; width: 10px; height: 10px; padding: 0; top: 2px; right: 2px; }
+
+/* ---- Шапка заметки v2: «Поделиться» иконкой рядом с «⋮»; строка свойств под названием ---- */
+#note-editor-overlay .note-editor-web-back-bar .note-more-wrap { display: flex; align-items: center; gap: 2px; }
+.note-share-head-btn svg { display: block; }
+.note-editor-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 6px 0 2px; min-height: 26px; font-size: 0.8125rem; color: var(--text-secondary, #909499); }
+.note-editor-meta-project:empty { display: none; }
+.note-editor-meta-project.tag-picker { display: inline-flex; margin: 0; padding: 0; border: 0; background: transparent; }
+.note-editor-meta .tag-picker-add-btn { height: 26px; min-height: 26px; padding: 0 10px; font-size: 0.8125rem; border-radius: 999px; }
+.note-editor-meta .note-editor-members { flex-direction: row; align-items: center; margin: 0; gap: 8px; }
+.note-editor-meta .note-editor-members-people { flex-wrap: nowrap; gap: 0; }
+.note-editor-meta .note-editor-member-chip { font-size: 0; gap: 0; margin-left: -6px; }
+.note-editor-meta .note-editor-member-chip:first-child { margin-left: 0; }
+.note-editor-meta .note-editor-member-chip .note-member-avatar { box-shadow: 0 0 0 2px var(--bg, #0a0a0a); }
+.note-editor-meta .note-editor-members-live { font-size: 0.75rem; }
+.note-editor-save-state:empty { display: none; }
+.note-editor-save-state::before { content: "·"; margin-right: 8px; opacity: 0.6; }
+.note-editor-meta-project:empty + .note-editor-members.hidden + .note-editor-save-state::before { content: none; margin: 0; }
+.note-editor-save-state.is-error { color: var(--danger, #e5484d); }
+.note-editor-title-suggest { appearance: none; border: 1px dashed rgba(139, 92, 246, 0.6); border-radius: 999px; padding: 3px 10px; background: rgba(139, 92, 246, 0.12); color: #c4b5fd; font: inherit; font-size: 0.8125rem; cursor: pointer; }
+.note-editor-title-suggest.hidden { display: none; }
+/* Иконки ссылок у вкладок — серые и мельче: важно, что лист открыт, но не кричать об этом. */
+.note-sheet-chip-share { color: var(--text-secondary, #909499); width: 18px; height: 18px; opacity: 0.8; }
+.note-sheet-chip-share svg { width: 12px; height: 12px; }
