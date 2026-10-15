@@ -15512,3 +15512,13 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 #note-pane-switch-menu .note-pane-switch-item.is-active .note-pane-ico { background: rgba(91, 159, 255, 0.18); color: #9cc3ff; }
 #note-pane-switch-menu .note-pane-switch-sep { height: 1px; margin: 8px 6px; background: rgba(255, 255, 255, 0.08); }
 #note-pane-switch-menu .note-pane-switch-label { margin: 6px 10px 4px; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(255, 255, 255, 0.5); }
+
+/* Список чатов: подложка под меню, а не над ним (иначе клики уходили в неё) */
+#note-chats-backdrop.is-dropdown { z-index: 399 !important; }
+#note-chats-menu.is-dropdown { z-index: 401 !important; }
+.note-chats-actions[style*="fixed"] { background: #2c2c2e; border: 0; border-radius: 12px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08); }
+#note-discussion-new-ctx.is-open { background: rgba(255, 255, 255, 0.16); }
+/* Реплай: мигаем цитируемым фрагментом */
+::highlight(leo-flash) { background-color: rgba(250, 204, 21, 0.45); color: inherit; }
+.note-discuss-bubble.is-flash, .is-flash { box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.7); border-radius: 8px; }
+.note-discuss-reply.is-nav { cursor: pointer; }
