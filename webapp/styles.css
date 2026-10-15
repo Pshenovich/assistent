@@ -15549,3 +15549,7 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 /* Слои: меню поля ввода обсуждения — над «···» сообщений; меню проекта — над кнопкой оглавления */
 #note-paie-thread.note-discussion-compose { position: relative; z-index: 50; }
 #note-editor-overlay .note-editor-meta .tag-picker-add-wrap { z-index: 140; }
+
+/* Подсказка в пустом поле — на той же строке, что и текст (отступ поля стал 6px) */
+#note-paie-reply-form .note-paie-composer-editor.is-empty::before,
+#note-paie-reply-form .note-paie-composer-editor.is-empty.is-multiline::before { top: 6px; left: 2px; right: 2px; }
