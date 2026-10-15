@@ -15613,3 +15613,29 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
   /* Ассистент открыт на «Актуальном» — экран сжимается, календарь не уходит под панель */
   html.actual-assistant-open .main-scroll { padding-right: calc(var(--discuss-w, 420px) + var(--page-x, 16px)); }
 }
+
+/* «+» в «Заметках»: меню Заметка / Надиктовать в общем стиле */
+#notes-create-menu.actual-create-menu { gap: 2px; width: min(17rem, calc(100vw - 2rem)); padding: 6px; border: 0; border-radius: 16px; background: #2c2c2e; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08); backdrop-filter: none; }
+#notes-create-menu .actual-create-menu-btn { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: transparent; font-weight: 500; }
+#notes-create-menu .actual-create-menu-btn:hover,
+#notes-create-menu .actual-create-menu-btn:active { background: rgba(255, 255, 255, 0.08); transform: none; }
+
+/* ——— Список заметок: новая карточка, группы по времени ——— */
+.notes-list-group { grid-column: 1 / -1; margin: 6px 4px -4px; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary, #909499); }
+.notes-pane--stack > .notes-list-group:first-child { margin-top: 0; }
+.note-card.nl-card { padding: 12px 14px; border-radius: 14px; }
+.note-card.nl-card .nl-inner { padding: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.nl-head { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 28px; }
+.nl-title { flex: 1; min-width: 0; font-weight: 600; font-size: 0.9375rem; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.nl-date { flex: none; font-size: 0.75rem; color: var(--text-secondary, #909499); font-variant-numeric: tabular-nums; }
+.nl-head .note-card-actions { position: static; flex: none; max-width: none; margin: -4px -8px -4px -4px; }
+.nl-preview { margin: 0; font-size: 0.8125rem; line-height: 1.4; color: var(--text-secondary, #9b9ea3); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.nl-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; font-size: 0.75rem; color: var(--text-secondary, #909499); min-width: 0; }
+.nl-foot > * { margin: 0 !important; }
+.nl-foot .note-card-tags, .nl-foot .tag-chips-row { display: contents; }
+.nl-badge { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border-radius: 7px; background: rgba(255, 255, 255, 0.06); }
+.nl-shared { margin-left: auto !important; display: inline-flex; align-items: center; gap: 6px; }
+.nl-shared .note-card-avatars { padding: 0; }
+.notes-project-chip-count { margin-left: 5px; font-weight: 500; opacity: 0.6; font-variant-numeric: tabular-nums; }
+.notes-skeleton-card { height: 92px; border-radius: 14px; background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.08), rgba(255,255,255,0.04)); background-size: 200% 100%; animation: notesSkel 1.2s ease-in-out infinite; }
+@keyframes notesSkel { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
