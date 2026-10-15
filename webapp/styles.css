@@ -14992,3 +14992,6 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 .note-web-canvas-pick-btn[hidden] {
   display: none !important;
 }
+
+.note-web-canvas-theme-sep { height: 1px; margin: 4px 6px; background: var(--border); }
+.note-web-canvas-theme-restyle:disabled { opacity: 0.5; cursor: default; }

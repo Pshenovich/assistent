@@ -2658,6 +2658,12 @@ class _MiniappCanvasReviseBody(BaseModel):
     insert_layout: Optional[str] = None
 
 
+class _MiniappCanvasRestyleImages(BaseModel):
+    html: Optional[str] = None
+    # Только посчитать картинки (для подтверждения), ничего не генерировать.
+    dry_run: bool = False
+
+
 class _MiniappCanvasLayoutSave(BaseModel):
     slide_id: str
     name: Optional[str] = None
@@ -9642,6 +9648,92 @@ async def miniapp_canvas_layouts_list(
 
     items = await run_in_threadpool(canvas_layouts.list_layouts, int(principal.telegram_user_id))
     return {"layouts": items}
+
+
+@miniapp_router.post("/notes/local/{note_id}/sheets/{sheet_id}/canvas-restyle-images")
+async def miniapp_canvas_restyle_images(
+    note_id: int,
+    sheet_id: str,
+    body: _MiniappCanvasRestyleImages,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Перерисовать картинки презентации в её текущем стиле (по их описаниям); свои картинки пользователя не трогаем."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from assistant.integrations.openrouter_client import (
+        openrouter_generate_images,
+        set_openrouter_usage_telegram_user,
+    )
+    from assistant.lib import canvas_templates, image_style
+    from assistant.lib import web_canvas as web_canvas_lib
+    from assistant.stores import note_sheets as note_sheets_store
+
+    uid = int(principal.telegram_user_id)
+    tg_uname: str | None = None
+    if isinstance(principal.user, dict) and principal.user.get("username"):
+        tg_uname = str(principal.user.get("username")).strip() or None
+
+    def _run() -> dict[str, Any]:
+        _note, extra_id, sheet = _load_web_sheet_for_edit(uid, note_id, sheet_id)
+        stored = str(sheet.get("body") or "")
+        html = body.html if body.html and canvas_templates.is_template_html(body.html) else stored
+        if not canvas_templates.is_template_html(html):
+            raise HTTPException(status_code=400, detail="Перерисовать картинки можно только в презентации из шаблонов")
+        targets = canvas_templates.restyle_targets(html)
+        if targets:
+            # Картинки, загруженные до появления отметки «своя», узнаём по совпадению с файлами заметки.
+            from assistant.stores import comment_files
+
+            owner = _resolve_item_owner(str(uid), "local", str(note_id)) or str(uid)
+            uploaded = comment_files.image_digests_for_item(
+                owner_user_id=owner, item_kind="local", item_id=str(note_id)
+            )
+            if uploaded:
+                media_now = canvas_templates.extract_media(html)
+                targets = [
+                    (mid, p) for mid, p in targets
+                    if canvas_templates.data_url_digest(media_now.get(mid, "")) not in uploaded
+                ]
+        if body.dry_run or not targets:
+            return {"count": len(targets), "item": None, "done": 0}
+        theme = image_style.deck_theme_of_html(html)
+        set_openrouter_usage_telegram_user(telegram_user_id=uid, telegram_username=tg_uname)
+
+        def _gen(prompt: str) -> str:
+            try:
+                got = openrouter_generate_images(image_style.styled_prompt(prompt, theme), n=1, timeout=180) or []
+            except Exception as e:  # noqa: BLE001 — одна неудачная картинка не должна ронять остальные
+                print(f"[web_canvas] restyle img failed err={e!r}")
+                return ""
+            urls = web_canvas_lib.image_dicts_to_data_urls([g for g in got if isinstance(g, dict)])
+            return urls[0] if urls else ""
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            urls = list(pool.map(_gen, [p for _mid, p in targets]))
+        deck = canvas_templates.extract_deck(html)
+        if not deck:
+            raise HTTPException(status_code=400, detail="Не удалось прочитать презентацию")
+        deck = canvas_templates.sync_text_edits(deck, html)
+        media = canvas_templates.extract_media(html)
+        done = 0
+        for (mid, prompt), url in zip(targets, urls):
+            if url:
+                media[mid] = url
+                media[mid + canvas_templates.PROMPT_SUFFIX] = prompt
+                done += 1
+        item = None
+        if done:
+            item = note_sheets_store.update_sheet(
+                note_id, extra_id, body=canvas_templates.render_deck_html(deck, media), kind="web"
+            )
+        print(f"[web_canvas] restyle note={note_id} sheet={sheet_id} theme={theme} done={done}/{len(targets)}")
+        return {"count": len(targets), "item": item, "done": done}
+
+    try:
+        res = await run_in_threadpool(_run)
+    except note_sheets_store.SheetError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, **res}
 
 
 @miniapp_router.post("/notes/local/{note_id}/sheets/{sheet_id}/canvas-layouts")

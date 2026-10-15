@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261015-image-sheet2";
+  var WEBAPP_BUILD = "20261015-restyle";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261015-image-sheet2";
+  const NOTE_EDITOR_ASSET_V = "20261015-restyle";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -5383,6 +5383,7 @@
     // Правки слайдов по комментариям ждут ответ модели — дольше общего лимита.
     if (p.indexOf("/canvas-revise") >= 0) return 240000;
     if (p.indexOf("/canvas-op") >= 0) return 30000;
+    if (p.indexOf("/canvas-restyle-images") >= 0) return 300000;
     if (p.indexOf("/voice/transcribe") >= 0) return 300000;
     if (p.indexOf("/notes/transcriptions/upload") >= 0) return 900000;
     if (p.indexOf("/calendar/today") >= 0) return 20000;
@@ -17417,6 +17418,9 @@
       onOp: function (req) {
         return runWebCanvasOp(String(sheet.id), req);
       },
+      onRestyleImages: function (req) {
+        return restyleWebCanvasImages(String(sheet.id), req);
+      },
       onRevise: function (req) {
         return reviseWebCanvas(String(sheet.id), req);
       },
@@ -17458,6 +17462,9 @@
       },
       onOp: function (req) {
         return runWebCanvasOp(String(sheet.id), req);
+      },
+      onRestyleImages: function (req) {
+        return restyleWebCanvasImages(String(sheet.id), req);
       },
       onRevise: function (req) {
         return reviseWebCanvas(String(sheet.id), req);
@@ -17606,6 +17613,40 @@
     });
     var html = acceptWebCanvasItem(res && res.item);
     if (!html) throw new Error("Не удалось изменить слайд");
+    return html;
+  }
+
+  // Перерисовать картинки презентации в её текущем стиле: сначала считаем (dry_run), спрашиваем, потом генерируем.
+  async function restyleWebCanvasImages(sheetId, req) {
+    var path = webCanvasSheetPath(sheetId);
+    await waitSheetPersistIdle(sheetId);
+    var probe = await apiFetch(path + "/canvas-restyle-images", {
+      method: "POST",
+      body: JSON.stringify({ html: req.html || null, dry_run: true }),
+    });
+    var n = Number((probe && probe.count) || 0);
+    if (!n) {
+      showNoteToast("В презентации нет картинок, созданных ИИ");
+      return "";
+    }
+    var ok = await confirmDialog(
+      "Перерисовать " + n + " " + pluralRu(n, "картинку", "картинки", "картинок") +
+        " в текущем стиле презентации? Картинки, которые вы загрузили сами, не изменятся. Займёт до минуты."
+    );
+    if (!ok) return "";
+    showNoteToast("Перерисовываю картинки… до минуты");
+    var res = await apiFetch(path + "/canvas-restyle-images", {
+      method: "POST",
+      body: JSON.stringify({ html: req.html || null }),
+    });
+    var html = acceptWebCanvasItem(res && res.item);
+    var done = Number((res && res.done) || 0);
+    if (!html || !done) throw new Error("Не удалось перерисовать картинки — попробуйте ещё раз");
+    showNoteToast(
+      done < n
+        ? "Перерисовано " + done + " из " + n + ". Остальные можно повторить"
+        : "Готово: " + done + " " + pluralRu(done, "картинка", "картинки", "картинок") + " в новом стиле"
+    );
     return html;
   }
 

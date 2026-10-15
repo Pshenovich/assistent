@@ -338,6 +338,37 @@ def list_recent_images(
         return [_row_to_dict(r) for r in cur.fetchall()]
 
 
+def image_digests_for_item(
+    *,
+    owner_user_id: int | str,
+    item_kind: str,
+    item_id: str | int,
+    limit: int = 300,
+) -> set[tuple[int, str]]:
+    """(размер, sha256) картинок, загруженных к заметке, — чтобы узнать их в презентации и не перерисовывать."""
+    import hashlib
+
+    owner = _uid(owner_user_id)
+    with _LOCK:
+        rows = _conn().execute(
+            """
+            SELECT id, size FROM share_comment_files
+            WHERE owner_user_id = ? AND item_kind = ? AND item_id = ? AND kind = 'image'
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (owner, str(item_kind), str(item_id), max(1, min(int(limit), 1000))),
+        ).fetchall()
+    out: set[tuple[int, str]] = set()
+    for r in rows:
+        try:
+            data = disk_path(int(r["id"])).read_bytes()
+        except OSError:
+            continue
+        out.add((len(data), hashlib.sha256(data).hexdigest()))
+    return out
+
+
 def list_for_comments(comment_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
     ids = [int(x) for x in comment_ids if int(x) > 0]
     if not ids:
