@@ -1,4 +1,4 @@
-import { Editor, Extension, Node } from "@tiptap/core";
+import { Editor, Extension, Mark, Node } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
@@ -984,6 +984,12 @@ function svgIcon(name) {
     'stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
   var paths = {
     undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H13"/>',
+    redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H11"/>',
+    highlight: '<path d="m9 15 6.5-6.5a2.1 2.1 0 0 0-3-3L6 12l-1 4z"/><path d="M4 20h8" stroke="#facc15" stroke-width="2.6"/>',
+    divider: '<path d="M4 12h16"/><path d="M8 7h8M8 17h8" opacity=".35"/>',
+    noteref: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M12 10v6"/>',
+    chevronRight: '<path d="m9 6 6 6-6 6"/>',
+    chevronLeft: '<path d="m15 6-6 6 6 6"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     list: '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1" fill="currentColor" stroke="none"/>',
     table:
@@ -1006,6 +1012,26 @@ function svgIcon(name) {
   };
   return "<svg " + common + ">" + (paths[name] || "") + "</svg>";
 }
+
+var NoteHighlight = Mark.create({
+  name: "highlight",
+  parseHTML: function () {
+    return [{ tag: "mark" }];
+  },
+  renderHTML: function () {
+    return ["mark", { class: "note-highlight" }, 0];
+  },
+  addCommands: function () {
+    var name = this.name;
+    return {
+      toggleHighlight: function () {
+        return function (props) {
+          return props.commands.toggleMark(name);
+        };
+      },
+    };
+  },
+});
 
 function clearToParagraph(editor) {
   return editor.chain().focus().clearNodes().setParagraph().run();
@@ -1160,106 +1186,78 @@ function mountToolbar(toolbarEl, editor) {
   fileInput.tabIndex = -1;
 
   toolbarEl.className = "note-rich-editor-toolbar note-tg-toolbar";
+  function btn(cls, attr, title, icon) {
+    return (
+      '<button type="button" class="note-tg-btn' + (cls ? " " + cls : "") + '" ' + attr +
+      ' title="' + title + '" aria-label="' + title + '">' + svgIcon(icon) + "</button>"
+    );
+  }
+  function item(cmd, check, icon, label, extra) {
+    return (
+      '<button type="button" class="note-tg-menu-item' + (extra ? " " + extra : "") + '" data-cmd="' + cmd + '"' +
+      (check ? ' data-check="' + check + '"' : "") + ">" + (icon ? svgIcon(icon) : "") + "<span>" + label + "</span></button>"
+    );
+  }
+  function listItems(plainLabel) {
+    return (
+      item("paragraph", "plain", "none", plainLabel) +
+      item("bullet", "bulletList", "list", "Булет лист") +
+      item("ordered", "orderedList", "numbered", "Нумерованный список") +
+      item("task", "taskList", "checklist", "Чек-лист")
+    );
+  }
+  // Стиль текста: страница «Заголовок ›» открывается внутри того же меню, «‹ Назад» возвращает.
+  var styleMenu =
+    '<div class="note-tg-menu note-tg-menu--paged hidden" data-menu-panel="style" role="menu">' +
+    '<div class="note-tg-page" data-page="main">' +
+    '<p class="note-tg-menu-label">Стиль текста</p>' +
+    item("paragraph", "plain", "text", "Обычный текст") +
+    '<button type="button" class="note-tg-menu-item note-tg-menu-page" data-go="heading" data-check="heading">' +
+    svgIcon("heading") + "<span>Заголовок</span>" + svgIcon("chevronRight") + "</button>" +
+    item("quote", "blockquote", "quote", "Цитата") +
+    "</div>" +
+    '<div class="note-tg-page hidden" data-page="heading">' +
+    '<button type="button" class="note-tg-menu-item note-tg-menu-page note-tg-menu-back" data-go="main">' +
+    svgIcon("chevronLeft") + "<span>Назад</span></button>" +
+    '<p class="note-tg-menu-label">Заголовок</p>' +
+    item("heading-2", "heading-2", "", "Заголовок 2", "note-tg-h note-tg-h2") +
+    item("heading-3", "heading-3", "", "Заголовок 3", "note-tg-h note-tg-h3") +
+    item("heading-4", "heading-4", "", "Заголовок 4", "note-tg-h note-tg-h4") +
+    "</div></div>";
+
+  toolbarEl.className = "note-rich-editor-toolbar note-tg-toolbar";
   toolbarEl.innerHTML =
-    '<button type="button" class="note-tg-btn note-tg-btn--undo" data-action="undo" title="Отменить" aria-label="Отменить">' +
-    svgIcon("undo") +
-    "</button>" +
+    '<div class="note-tg-capsule note-tg-capsule--history">' +
+    btn("note-tg-btn--undo", 'data-action="undo"', "Отменить", "undo") +
+    btn("note-tg-btn--redo", 'data-action="redo"', "Повторить", "redo") +
+    "</div>" +
     '<div class="note-tg-capsule note-tg-capsule--default" data-mode="default">' +
-    '<button type="button" class="note-tg-btn" data-menu="plus" title="Блок" aria-label="Блок">' +
-    svgIcon("plus") +
-    "</button>" +
-    '<button type="button" class="note-tg-btn" data-menu="heading" title="Заголовок" aria-label="Заголовок">' +
-    svgIcon("heading") +
-    "</button>" +
-    '<button type="button" class="note-tg-btn" data-menu="list" title="Список" aria-label="Список">' +
-    svgIcon("list") +
-    "</button>" +
-    '<button type="button" class="note-tg-btn" data-action="table" title="Таблица" aria-label="Таблица">' +
-    svgIcon("table") +
-    "</button>" +
-    '<button type="button" class="note-tg-btn" data-action="attach" title="Вложение" aria-label="Вложение">' +
-    svgIcon("paperclip") +
-    "</button>" +
+    btn("", 'data-menu="insert"', "Вставить", "plus") +
+    btn("", 'data-menu="style"', "Стиль текста", "heading") +
+    btn("", 'data-menu="list"', "Список", "list") +
+    btn("", 'data-action="task"', "Чек-лист", "check") +
     "</div>" +
     '<div class="note-tg-capsule note-tg-capsule--selection hidden" data-mode="selection">' +
-    '<button type="button" class="note-tg-btn" data-action="bold" title="Жирный" aria-label="Жирный">' +
-    svgIcon("bold") +
-    "</button>" +
-    '<button type="button" class="note-tg-btn" data-action="italic" title="Курсив" aria-label="Курсив">' +
-    svgIcon("italic") +
-    "</button>" +
-    '<button type="button" class="note-tg-btn" data-action="strike" title="Зачёркнутый" aria-label="Зачёркнутый">' +
-    svgIcon("strike") +
-    "</button>" +
-    '<button type="button" class="note-tg-btn" data-action="underline" title="Подчёркнутый" aria-label="Подчёркнутый">' +
-    svgIcon("underline") +
-    "</button>" +
-    '<button type="button" class="note-tg-btn" data-action="link" title="Ссылка" aria-label="Ссылка">' +
-    svgIcon("link") +
-    "</button>" +
-    '<button type="button" class="note-tg-btn" data-menu="heading" title="Заголовок" aria-label="Заголовок">' +
-    svgIcon("heading") +
-    "</button>" +
-    '<button type="button" class="note-tg-btn" data-menu="list-sel" title="Список" aria-label="Список">' +
-    svgIcon("list") +
-    "</button>" +
-    '<button type="button" class="note-tg-btn" data-action="quote" title="Цитата" aria-label="Цитата">' +
-    svgIcon("quote") +
-    "</button>" +
+    btn("", 'data-action="bold"', "Жирный", "bold") +
+    btn("", 'data-action="italic"', "Курсив", "italic") +
+    btn("", 'data-action="strike"', "Зачёркнутый", "strike") +
+    btn("", 'data-action="underline"', "Подчёркнутый", "underline") +
+    btn("", 'data-action="highlight"', "Маркер", "highlight") +
+    btn("", 'data-action="link"', "Ссылка", "link") +
+    '<span class="note-tg-sep" aria-hidden="true"></span>' +
+    btn("", 'data-menu="style"', "Стиль текста", "heading") +
+    btn("", 'data-menu="list-sel"', "Список", "list") +
     "</div>" +
-    '<div class="note-tg-menu hidden" data-menu-panel="heading" role="menu">' +
-    '<button type="button" class="note-tg-menu-item" data-cmd="heading-2" data-check="heading-2">' +
-    svgIcon("heading") +
-    "<span>Заголовок 2</span></button>" +
-    '<button type="button" class="note-tg-menu-item" data-cmd="heading-3" data-check="heading-3">' +
-    svgIcon("heading") +
-    "<span>Заголовок 3</span></button>" +
-    '<button type="button" class="note-tg-menu-item" data-cmd="heading-4" data-check="heading-4">' +
-    svgIcon("heading") +
-    "<span>Заголовок 4</span></button>" +
-    '<button type="button" class="note-tg-menu-item" data-cmd="paragraph" data-check="plain">' +
-    svgIcon("text") +
-    "<span>Обычный текст</span></button>" +
+    '<div class="note-tg-menu hidden" data-menu-panel="insert" role="menu">' +
+    '<p class="note-tg-menu-label">Вставить</p>' +
+    item("table", "", "table", "Таблица") +
+    item("attach", "", "paperclip", "Файл или фото") +
+    item("divider", "", "divider", "Разделитель") +
+    item("noteref", "", "noteref", "Ссылка на заметку") +
     "</div>" +
-    '<div class="note-tg-menu hidden" data-menu-panel="plus" role="menu">' +
-    '<button type="button" class="note-tg-menu-item" data-cmd="paragraph">' +
-    svgIcon("text") +
-    "<span>Обычный текст</span></button>" +
-    '<button type="button" class="note-tg-menu-item" data-cmd="quote">' +
-    svgIcon("quote") +
-    "<span>Цитата</span></button>" +
-    '<button type="button" class="note-tg-menu-item" data-cmd="task">' +
-    svgIcon("check") +
-    "<span>Чек-бокс</span></button>" +
-    "</div>" +
-    '<div class="note-tg-menu hidden" data-menu-panel="list" role="menu">' +
-    '<button type="button" class="note-tg-menu-item" data-cmd="paragraph" data-check="plain">' +
-    svgIcon("none") +
-    "<span>Обычный текст</span></button>" +
-    '<button type="button" class="note-tg-menu-item" data-cmd="bullet" data-check="bulletList">' +
-    svgIcon("list") +
-    "<span>Булет лист</span></button>" +
-    '<button type="button" class="note-tg-menu-item" data-cmd="ordered" data-check="orderedList">' +
-    svgIcon("numbered") +
-    "<span>Нумерованный список</span></button>" +
-    '<button type="button" class="note-tg-menu-item" data-cmd="task" data-check="taskList">' +
-    svgIcon("checklist") +
-    "<span>Чек-лист</span></button>" +
-    "</div>" +
-    '<div class="note-tg-menu hidden" data-menu-panel="list-sel" role="menu">' +
-    '<button type="button" class="note-tg-menu-item" data-cmd="paragraph" data-check="plain">' +
-    svgIcon("none") +
-    "<span>Ничего</span></button>" +
-    '<button type="button" class="note-tg-menu-item" data-cmd="bullet" data-check="bulletList">' +
-    svgIcon("list") +
-    "<span>Булет лист</span></button>" +
-    '<button type="button" class="note-tg-menu-item" data-cmd="ordered" data-check="orderedList">' +
-    svgIcon("numbered") +
-    "<span>Нумерованный список</span></button>" +
-    '<button type="button" class="note-tg-menu-item" data-cmd="task" data-check="taskList">' +
-    svgIcon("checklist") +
-    "<span>Чек-лист</span></button>" +
-    "</div>";
+    styleMenu +
+    '<div class="note-tg-menu hidden" data-menu-panel="list" role="menu">' + listItems("Обычный текст") + "</div>" +
+    '<div class="note-tg-menu hidden" data-menu-panel="list-sel" role="menu">' + listItems("Ничего") + "</div>";
 
   toolbarEl.appendChild(fileInput);
 
@@ -1288,14 +1286,38 @@ function mountToolbar(toolbarEl, editor) {
       editor.chain().focus().toggleBulletList().run();
     } else if (cmd === "ordered") {
       editor.chain().focus().toggleOrderedList().run();
+    } else if (cmd === "table") {
+      editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+    } else if (cmd === "attach") {
+      pickImage();
+    } else if (cmd === "divider") {
+      editor.chain().focus().setHorizontalRule().run();
+    } else if (cmd === "noteref") {
+      // «+» в начале слова открывает поиск заметок (ссылка-чип).
+      var st = editor.state;
+      var before = st.selection.$from.parentOffset > 0
+        ? st.doc.textBetween(st.selection.from - 1, st.selection.from, "\n", "\uFFFC")
+        : "";
+      editor.chain().focus().insertContent(before && !/\s/.test(before) ? " +" : "+").run();
     }
     refreshFn();
   }
 
   var lastMenuCmdAt = 0;
 
+  function showMenuPage(panel, page) {
+    panel.querySelectorAll(".note-tg-page").forEach(function (p) {
+      p.classList.toggle("hidden", p.getAttribute("data-page") !== page);
+    });
+  }
+
   function onMenuItem(item) {
     if (!item) return;
+    var go = item.getAttribute("data-go");
+    if (go) {
+      showMenuPage(item.closest(".note-tg-menu"), go);
+      return;
+    }
     var now = Date.now();
     if (now - lastMenuCmdAt < 400) return;
     lastMenuCmdAt = now;
@@ -1310,6 +1332,7 @@ function mountToolbar(toolbarEl, editor) {
     closeTgMenus(toolbarEl);
     closeLinkPopover();
     if (wasOpen) return;
+    if (panel.classList.contains("note-tg-menu--paged")) showMenuPage(panel, "main");
     panel.classList.remove("hidden");
     if (triggerBtn) triggerBtn.classList.add("note-tg-btn--menu-open");
   }
@@ -1363,7 +1386,9 @@ function mountToolbar(toolbarEl, editor) {
       if (e.button != null && e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
+      var paging = item.hasAttribute("data-go");
       onMenuItem(item);
+      if (!paging) closeTgMenus(toolbarEl);
     },
     true
   );
@@ -1373,7 +1398,7 @@ function mountToolbar(toolbarEl, editor) {
     if (item && toolbarEl.contains(item)) {
       e.preventDefault();
       e.stopPropagation();
-      onMenuItem(item);
+      if (!item.hasAttribute("data-go")) onMenuItem(item);
       return;
     }
     var btn = e.target.closest(".note-tg-btn");
@@ -1387,6 +1412,12 @@ function mountToolbar(toolbarEl, editor) {
     var action = btn.getAttribute("data-action");
     if (action === "undo") {
       if (editor.can().chain().focus().undo().run()) editor.chain().focus().undo().run();
+    } else if (action === "redo") {
+      if (editor.can().chain().focus().redo().run()) editor.chain().focus().redo().run();
+    } else if (action === "task") {
+      editor.chain().focus().toggleTaskList().run();
+    } else if (action === "highlight") {
+      editor.chain().focus().toggleHighlight().run();
     } else if (action === "table") {
       editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
     } else if (action === "attach") {
@@ -1422,17 +1453,23 @@ function mountToolbar(toolbarEl, editor) {
     var selCap = toolbarEl.querySelector(".note-tg-capsule--selection");
     if (defCap) defCap.classList.toggle("hidden", hasSelection);
     if (selCap) selCap.classList.toggle("hidden", !hasSelection);
+    // При выделении — только форматирование (ИИ, история и обсуждение прячутся, как на макете).
+    var histCap = toolbarEl.querySelector(".note-tg-capsule--history");
+    if (histCap) histCap.classList.toggle("hidden", hasSelection);
+    var row = toolbarEl.closest(".note-editor-toolbar-row");
+    if (row) row.classList.toggle("is-selection", hasSelection);
     // Only close when leaving selection mode — never while caret is empty
     // (that race hid the «+» menu before the item click fired).
-    if (hadTextSelection && !hasSelection) closeTgMenus(toolbarEl);
+    if (hadTextSelection !== hasSelection && (hadTextSelection || hasSelection)) closeTgMenus(toolbarEl);
     hadTextSelection = hasSelection;
 
-    var undoBtn = toolbarEl.querySelector('[data-action="undo"]');
-    if (undoBtn) {
-      var canUndo = editor.can().chain().focus().undo().run();
-      undoBtn.disabled = !canUndo;
-      undoBtn.classList.toggle("note-tg-btn--disabled", !canUndo);
-    }
+    ["undo", "redo"].forEach(function (act) {
+      var hb = toolbarEl.querySelector('[data-action="' + act + '"]');
+      if (!hb) return;
+      var can = act === "undo" ? editor.can().chain().focus().undo().run() : editor.can().chain().focus().redo().run();
+      hb.disabled = !can;
+      hb.classList.toggle("note-tg-btn--disabled", !can);
+    });
 
     var markMap = {
       bold: "bold",
@@ -1441,14 +1478,16 @@ function mountToolbar(toolbarEl, editor) {
       underline: "underline",
       link: "link",
       quote: "blockquote",
+      highlight: "highlight",
+      task: "taskList",
     };
     Object.keys(markMap).forEach(function (action) {
       toolbarEl.querySelectorAll('[data-action="' + action + '"]').forEach(function (btn) {
         btn.classList.toggle("note-tg-btn--active", editor.isActive(markMap[action]));
       });
     });
-    toolbarEl.querySelectorAll('[data-menu="heading"]').forEach(function (btn) {
-      btn.classList.toggle("note-tg-btn--active", editor.isActive("heading"));
+    toolbarEl.querySelectorAll('[data-menu="style"]').forEach(function (btn) {
+      btn.classList.toggle("note-tg-btn--active", editor.isActive("heading") || editor.isActive("blockquote"));
     });
 
     toolbarEl.querySelectorAll(".note-tg-menu-item[data-check]").forEach(function (item) {
@@ -1465,6 +1504,8 @@ function mountToolbar(toolbarEl, editor) {
             )
           : headingMatch
           ? editor.isActive("heading", { level: parseInt(headingMatch[1], 10) })
+          : check === "heading"
+          ? editor.isActive("heading")
           : editor.isActive(check);
       item.classList.toggle("note-tg-menu-item--active", on);
     });
@@ -2398,6 +2439,7 @@ function mount(container, options) {
         heading: { levels: [1, 2, 3, 4, 5, 6] },
       }),
       Underline,
+      NoteHighlight,
       Link.configure({ openOnClick: false, autolink: true, linkOnPaste: true }),
       ResizableImage.configure({
         inline: false,

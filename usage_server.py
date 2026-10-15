@@ -2629,6 +2629,15 @@ class _MiniappNoteSheetPatch(BaseModel):
     expected_revision: Optional[int] = None
 
 
+class _MiniappNoteAiEdit(BaseModel):
+    # Окно ИИ в редакторе: «что сделать с текстом» → правки открытого листа (как у ИИ в обсуждении).
+    instruction: str
+    doc_view: str
+    sheet_id: Optional[str] = None
+    selection: Optional[str] = None
+    note_title: Optional[str] = None
+
+
 class _MiniappCanvasImageBody(BaseModel):
     prompt: str = ""
     # Лист презентации — чтобы взять её стиль для арт-дирекшена картинки.
@@ -9556,6 +9565,119 @@ async def miniapp_discuss_file_upload(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return {"ok": True, "file": _comment_file_api(row)}
+
+
+@miniapp_router.post("/notes/local/{note_id}/ai-edit")
+async def miniapp_note_ai_edit(
+    note_id: int,
+    body: _MiniappNoteAiEdit,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Окно ИИ: правки открытого листа по просьбе пользователя. В обсуждение не пишется."""
+    from assistant.lib import note_edits as note_edits_lib
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    tg_uname: str | None = None
+    if isinstance(principal.user, dict) and principal.user.get("username"):
+        tg_uname = str(principal.user.get("username")).strip() or None
+    instruction = re.sub(r"\s+", " ", str(body.instruction or "")).strip()[:1500]
+    view = str(body.doc_view or "").strip()
+    if not instruction or not view:
+        raise HTTPException(status_code=400, detail="Напишите, что сделать с текстом")
+    selection = str(body.selection or "").strip()[:4000]
+
+    def _run() -> dict[str, Any]:
+        from assistant.compat.miniapp_shims import gpt_openrouter_answer_with_context
+        from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
+
+        note = notes_store.get_accessible_note(uid, note_id)
+        if not note:
+            raise HTTPException(status_code=404, detail="Заметка не найдена")
+        set_openrouter_usage_telegram_user(telegram_user_id=uid, telegram_username=tg_uname)
+        scope = (
+            "Change ONLY the selected fragment below (and nothing else in the note); keep everything around it as is. "
+            "Edit the whole sentence/paragraph that contains it, so punctuation right after the fragment is not duplicated. "
+            "If the fragment is already correct, return it unchanged.\n"
+            f"<selected>\n{selection}\n</selected>"
+            if selection
+            else "The request applies to the whole open note."
+        )
+        system = (
+            note_edits_lib.system_addon()
+            + "\n\nThis request comes from the editor's AI button: the user wants the note CHANGED. "
+            "ALWAYS answer with one leo-note block of edits (then one short Russian sentence). "
+            "Prefer replace edits of whole sentences/paragraphs; keep the note's language unless asked to translate."
+        )
+        facts = _note_table_facts(note)
+        prompt = (
+            f"Просьба пользователя: {instruction}\n{scope}\n\n"
+            + note_edits_lib.prompt_block(view)
+            + (f"\n\n{facts}" if facts else "")
+        )
+        out = gpt_openrouter_answer_with_context(
+            prompt, "", note_title=str(body.note_title or note.get("title") or ""), note_text="",
+            system=system, max_tokens=16384,
+        )
+        answer = str((out or {}).get("answer") or "")
+        clean, edits = note_edits_lib.parse_blocks(answer)
+        print(f"[note_ai_edit] note={note_id} sheet={body.sheet_id} sel={bool(selection)} edits={len(edits)}")
+        return {"edits": edits, "message": clean.strip()[:500]}
+
+    try:
+        res = await run_in_threadpool(_run)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001 — сеть/модель
+        print(f"[note_ai_edit] failed note={note_id} err={e!r}")
+        raise HTTPException(status_code=502, detail="ИИ не ответил, попробуйте ещё раз") from e
+    if not res["edits"]:
+        raise HTTPException(status_code=422, detail=res["message"] or "ИИ не нашёл, что поменять — уточните просьбу")
+    return {"ok": True, "sheet_id": str(body.sheet_id or ""), **res}
+
+
+@miniapp_router.post("/notes/local/{note_id}/suggest-title")
+async def miniapp_note_suggest_title(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Название заметки по содержанию (для «Новый чат» и пустых названий). Сам ничего не переименовывает."""
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> str:
+        from assistant.compat.miniapp_shims import gpt_openrouter_answer_with_context
+        from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
+
+        note = notes_store.get_accessible_note(uid, note_id)
+        if not note:
+            raise HTTPException(status_code=404, detail="Заметка не найдена")
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", str(note.get("body") or ""))).strip()
+        if len(text) < 40:
+            return ""
+        set_openrouter_usage_telegram_user(telegram_user_id=uid, telegram_username=None)
+        out = gpt_openrouter_answer_with_context(
+            "Придумай короткое название этой заметки: 2–5 слов, по-русски, по сути содержания, "
+            "без кавычек, без точки в конце, без слов «заметка» и «встреча», если они не несут смысла. "
+            "Ответь только названием.",
+            "",
+            note_title="",
+            note_text=text[:6000],
+            system="Ты называешь заметки коротко и по делу.",
+            max_tokens=40,
+        )
+        title = str((out or {}).get("answer") or "").strip().splitlines()[0] if out else ""
+        return re.sub(r'^[«"\'\s]+|[»"\'\s.]+$', "", title)[:60]
+
+    try:
+        title = await run_in_threadpool(_run)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        print(f"[note_title] failed note={note_id} err={e!r}")
+        title = ""
+    return {"ok": True, "title": title}
 
 
 @miniapp_router.post("/notes/local/{note_id}/canvas-image")
