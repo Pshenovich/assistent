@@ -129,6 +129,30 @@ def update_chat(chat: dict[str, Any], *, title: Optional[str] = None, visibility
     return get_chat(int(chat["id"])) or chat
 
 
+def delete_chat(chat: dict[str, Any]) -> int:
+    """Удалить чат с ИИ целиком: сообщения, их файлы и отметки прочтения. Возвращает число сообщений."""
+    cid = int(chat["id"])
+    if cid <= 0:
+        raise ValueError("Этот чат удалить нельзя")
+    with _LOCK:
+        conn = _conn()
+        ids = [
+            int(r["id"])
+            for r in conn.execute("SELECT id FROM share_comments WHERE chat_id = ?", (cid,)).fetchall()
+        ]
+    from assistant.stores import comment_files
+
+    for comment_id in ids:  # файлы — вне блокировки (у хранилища файлов своя)
+        comment_files.delete_for_comment(comment_id)
+    with _LOCK:
+        conn = _conn()
+        conn.execute("DELETE FROM share_comments WHERE chat_id = ?", (cid,))
+        conn.execute("DELETE FROM note_chat_reads WHERE chat_id = ?", (cid,))
+        conn.execute("DELETE FROM note_chats WHERE id = ?", (cid,))
+        conn.commit()
+    return len(ids)
+
+
 def _is_assistant_side(row: dict[str, Any]) -> bool:
     return bool(sc.is_gpt_turn(row) or sc.is_research_turn(row) or sc.is_agent_turn(row) or sc.is_paie_comment(row))
 

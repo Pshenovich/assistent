@@ -217,3 +217,27 @@ def test_sheet_order_and_share_views(env):
     env["c"].get(f"/api/public/share/{link['token']}", headers=_headers(env["owner"]))  # владелец не считается
     links = env["c"].get(env["base"] + "/share", headers=_headers(env["owner"])).json()["links"]
     assert [x["views"] for x in links if x["token"] == link["token"]] == [2]
+
+
+def test_author_renames_and_deletes_chat_others_cannot(env):
+    chat = _new_chat(env, env["member"], visibility="shared")
+    msg = _post(env, env["member"], body="вопрос ИИ", chat_id=chat["id"])
+    keep = _post(env, env["owner"], body="комментарий", chat_id=note_chats.COMMENTS_CHAT_ID)
+    url = env["base"] + f"/chats/{chat['id']}"
+
+    # Чужой общий чат: видно, но ни переименовать, ни удалить.
+    assert env["c"].patch(url, headers=_headers(env["owner"]), json={"title": "x"}).status_code == 403
+    assert env["c"].delete(url, headers=_headers(env["owner"])).status_code == 403
+
+    r = env["c"].patch(url, headers=_headers(env["member"]), json={"title": "Бюджет Q3"})
+    assert r.status_code == 200 and r.json()["chat"]["title"] == "Бюджет Q3"
+
+    r = env["c"].delete(url, headers=_headers(env["member"]))
+    assert r.status_code == 200 and r.json()["removed_messages"] == 1
+    ids = {c["id"] for c in _feed(env, env["member"])}
+    assert msg["id"] not in ids and keep["id"] in ids
+    chats = env["c"].get(env["base"] + "/chats", headers=_headers(env["member"])).json()["chats"]
+    assert chat["id"] not in {c["id"] for c in chats}
+    assert env["c"].delete(url, headers=_headers(env["member"])).status_code == 404
+    # «Комментарии» не удаляются.
+    assert env["c"].delete(env["base"] + f"/chats/{note_chats.COMMENTS_CHAT_ID}", headers=_headers(env["owner"])).status_code in (400, 403, 404)

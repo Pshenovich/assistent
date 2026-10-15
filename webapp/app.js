@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261015-tableux3";
+  var WEBAPP_BUILD = "20261015-tabledata2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261015-tableux3";
+  const NOTE_EDITOR_ASSET_V = "20261015-tabledata2";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -27822,6 +27822,27 @@
         closeNoteChatsMenu();
         setCurrentDiscussChat(Number(chat.id));
       });
+      // «…» — переименовать / удалить (только свои чаты с ИИ; «Комментарии» не трогаем).
+      if (Number(chat.id) > 0 && chat.is_mine) {
+        var row = document.createElement("div");
+        row.className = "note-chats-row";
+        row.appendChild(b);
+        var more = document.createElement("button");
+        more.type = "button";
+        more.className = "note-chats-more";
+        more.setAttribute("aria-label", "Действия с чатом");
+        more.setAttribute("aria-haspopup", "menu");
+        more.innerHTML =
+          '<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><circle cx="4" cy="10" r="1.7" fill="currentColor"/><circle cx="10" cy="10" r="1.7" fill="currentColor"/><circle cx="16" cy="10" r="1.7" fill="currentColor"/></svg>';
+        more.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          openNoteChatActions(row, chat);
+        });
+        row.appendChild(more);
+        parent.appendChild(row);
+        return;
+      }
       parent.appendChild(b);
     }
 
@@ -27922,6 +27943,140 @@
       card.appendChild(cardText);
     }
     menu.appendChild(card);
+  }
+
+  function closeNoteChatActions() {
+    document.querySelectorAll(".note-chats-actions").forEach(function (m) {
+      m.remove();
+    });
+  }
+
+  function openNoteChatActions(row, chat) {
+    var open = row.querySelector(".note-chats-actions");
+    closeNoteChatActions();
+    if (open) return;
+    var pop = document.createElement("div");
+    pop.className = "note-chats-actions";
+    pop.setAttribute("role", "menu");
+    [
+      ["rename", "Переименовать"],
+      ["delete", "Удалить"],
+    ].forEach(function (it) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.setAttribute("role", "menuitem");
+      b.className = "note-chats-actions-item" + (it[0] === "delete" ? " is-danger" : "");
+      b.textContent = it[1];
+      b.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeNoteChatActions();
+        if (it[0] === "rename") startNoteChatRename(row, chat);
+        else deleteNoteChat(chat);
+      });
+      pop.appendChild(b);
+    });
+    row.appendChild(pop);
+    setTimeout(function () {
+      document.addEventListener(
+        "click",
+        function onDoc(ev) {
+          if (!pop.contains(ev.target)) closeNoteChatActions();
+          document.removeEventListener("click", onDoc, true);
+        },
+        true
+      );
+    }, 0);
+  }
+
+  // Переименование прямо в строке списка (window.prompt в Telegram на телефоне ненадёжен).
+  function startNoteChatRename(row, chat) {
+    var form = document.createElement("form");
+    form.className = "note-chats-rename";
+    var input = document.createElement("input");
+    input.type = "text";
+    input.className = "field-input note-chats-rename-input";
+    input.maxLength = 80;
+    input.value = String(chat.title || "").trim() || noteChatTitle(chat);
+    input.setAttribute("aria-label", "Название чата");
+    var ok = document.createElement("button");
+    ok.type = "submit";
+    ok.className = "note-chats-rename-ok";
+    ok.textContent = "Готово";
+    form.appendChild(input);
+    form.appendChild(ok);
+    var done = false;
+    function finish(save) {
+      if (done) return;
+      done = true;
+      var title = input.value.trim();
+      if (save && title && title !== String(chat.title || "").trim()) renameNoteChat(chat, title);
+      else renderNoteChatsMenu();
+    }
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      finish(true);
+    });
+    form.addEventListener("click", function (e) {
+      e.stopPropagation();
+    });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(false);
+      }
+    });
+    input.addEventListener("blur", function () {
+      setTimeout(function () {
+        if (!form.contains(document.activeElement)) finish(true);
+      }, 150);
+    });
+    row.innerHTML = "";
+    row.appendChild(form);
+    input.focus();
+    input.select();
+  }
+
+  async function renameNoteChat(chat, title) {
+    var wrap = discussWrap();
+    try {
+      var res = await apiFetch(noteChatsBase() + "/" + encodeURIComponent(String(chat.id)), {
+        method: "PATCH",
+        body: JSON.stringify({ title: title }),
+      });
+      var saved = res && res.chat;
+      if (wrap && saved) {
+        wrap._noteChats = (wrap._noteChats || []).map(function (c) {
+          return Number(c.id) === Number(saved.id) ? Object.assign({}, c, { title: saved.title }) : c;
+        });
+        syncNotePaneHeader();
+      }
+      showNoteToast("Чат переименован");
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось переименовать чат");
+    }
+    renderNoteChatsMenu();
+  }
+
+  async function deleteNoteChat(chat) {
+    var wrap = discussWrap();
+    var ok = await confirmDialog("Удалить чат «" + noteChatTitle(chat) + "» со всеми сообщениями? Это нельзя отменить.");
+    if (!ok) return;
+    try {
+      await apiFetch(noteChatsBase() + "/" + encodeURIComponent(String(chat.id)), { method: "DELETE" });
+      if (wrap) {
+        wrap._noteChats = (wrap._noteChats || []).filter(function (c) {
+          return Number(c.id) !== Number(chat.id);
+        });
+      }
+      if (currentDiscussChatId() === Number(chat.id)) setCurrentDiscussChat(0);
+      syncNotePaneHeader();
+      showNoteToast("Чат удалён");
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось удалить чат");
+    }
+    renderNoteChatsMenu();
   }
 
   async function setNoteChatVisibility(chatId, visibility) {
@@ -33617,6 +33772,31 @@
     if (tagsManageClose) tagsManageClose.addEventListener("click", closeTagsManageSheet);
     bindNotesFilterUi();
     bindCanvasImageSheet();
+    // «Попросить ИИ…» в меню таблицы: открываем обсуждение в режиме ИИ с началом запроса про таблицу.
+    window.addEventListener("leo-table-ask-ai", function (e) {
+      var d = (e && e.detail) || {};
+      var cols = (d.headers || []).join(", ");
+      var text =
+        "В таблице" + (d.index > 1 ? " " + d.index : "") + (cols ? " (" + cols + ")" : "") +
+        (d.column ? ", столбец «" + d.column + "»: " : ": ");
+      openNoteDiscussion({ mode: "gpt" });
+      setTimeout(function () {
+        var ed = document.getElementById("note-paie-reply-editor");
+        if (!ed) return;
+        ed.textContent = text;
+        ed.classList.remove("is-empty");
+        ed.dispatchEvent(new Event("input", { bubbles: true }));
+        ed.focus();
+        try {
+          var r = document.createRange();
+          r.selectNodeContents(ed);
+          r.collapse(false);
+          var sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(r);
+        } catch (_) {}
+      }, 250);
+    });
     var tagsManageOverlay = document.getElementById("tags-manage-overlay");
     if (tagsManageOverlay) {
       tagsManageOverlay.addEventListener("click", function (e) {

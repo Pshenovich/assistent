@@ -312,6 +312,90 @@ function applyPreviewWidths(colgroup, table, widths, minWidth) {
 // ручки только у текущего столбца и строки. Нажатие на ручку выделяет столбец/строку целиком —
 // панель переключается на «← →» / «↑ ↓», «+», «Удалить». На десктопе ручку можно перетаскивать.
 
+// ---- Данные таблицы: итоги и сортировка (считает код, без ИИ) ----
+// \b в JS не понимает кириллицу — границу слова проверяем сами.
+var TOTAL_RE = /^\s*(итого|всего|сумма|total|sum)(?![a-zа-яё0-9])/i;
+
+function parseNum(text) {
+  var t = String(text || "").trim().replace(/[−–]/g, "-").replace(/[\s  ]/g, "");
+  t = t.replace(/(%|₽|руб\.?|р\.|\$|€)$/i, "");
+  if (!/^[+-]?\d+(?:[.,]\d+)?$/.test(t)) return null;
+  return { value: parseFloat(t.replace(",", ".")), decimals: (t.split(/[.,]/)[1] || "").length, comma: t.indexOf(",") >= 0 };
+}
+
+function fmtNum(n, decimals, comma) {
+  var neg = n < 0;
+  var fixed = Math.abs(n).toFixed(decimals);
+  var parts = fixed.split(".");
+  var int = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  var out = int + (parts[1] ? (comma ? "," : ".") + parts[1] : "");
+  return (neg ? "−" : "") + out;
+}
+
+// Строки таблицы: первая — шапка, если в ней заголовки (th) или нет чисел; строки «Итого» — отдельно.
+function tableShape(table) {
+  var map = TableMap.get(table);
+  var cellText = function (r, c) {
+    var node = table.nodeAt(map.positionAt(r, c, table));
+    return node ? node.textContent : "";
+  };
+  var first = table.firstChild;
+  var allTh = true;
+  first.forEach(function (cell) {
+    if (cell.type.spec.tableRole !== "header_cell") allTh = false;
+  });
+  var firstHasNum = false;
+  for (var c = 0; c < map.width; c += 1) if (parseNum(cellText(0, c))) firstHasNum = true;
+  var header = allTh || (!firstHasNum && map.height > 1) ? 1 : 0;
+  var totalRows = [];
+  var dataRows = [];
+  for (var r = header; r < map.height; r += 1) {
+    if (TOTAL_RE.test(cellText(r, 0))) totalRows.push(r);
+    else dataRows.push(r);
+  }
+  var totalCol = -1;
+  if (header) for (var k = 1; k < map.width; k += 1) if (TOTAL_RE.test(cellText(0, k))) totalCol = k;
+  return { map: map, text: cellText, header: header, dataRows: dataRows, totalRows: totalRows, totalCol: totalCol };
+}
+
+function setCellTexts(editor, tablePos, edits) {
+  // edits: [{row, col, text}] — заменяем содержимое ячеек одной транзакцией, с конца документа к началу.
+  var state = editor.state;
+  var table = state.doc.nodeAt(tablePos);
+  if (!table) return;
+  var map = TableMap.get(table);
+  var schema = state.schema;
+  var tr = state.tr;
+  edits
+    .map(function (e) {
+      var rel = map.positionAt(e.row, e.col, table);
+      return { pos: tablePos + 1 + rel, cell: table.nodeAt(rel), text: e.text };
+    })
+    .sort(function (a, b) {
+      return b.pos - a.pos;
+    })
+    .forEach(function (e) {
+      if (!e.cell) return;
+      var para = schema.nodes.paragraph.create(null, e.text ? schema.text(e.text) : null);
+      tr.replaceWith(e.pos + 1, e.pos + e.cell.nodeSize - 1, para);
+    });
+  if (tr.docChanged) editor.view.dispatch(tr);
+}
+
+function sumOf(values) {
+  var nums = values.filter(Boolean);
+  if (!nums.length) return "";
+  var total = 0;
+  var dec = 0;
+  var comma = false;
+  nums.forEach(function (n) {
+    total += n.value;
+    dec = Math.max(dec, n.decimals);
+    comma = comma || n.comma;
+  });
+  return fmtNum(total, Math.min(dec, 4), comma);
+}
+
 function closeAllMenus() {
   allViews.forEach(function (v) {
     v.closeMenu();
@@ -635,6 +719,12 @@ TableManageView.prototype.openMenu = function () {
     null,
     ["toggle-header", "Первая строка — заголовок"],
     null,
+    ["sum-rows", "Σ Итого по строкам (столбец «Итого»)"],
+    ["sum-cols", "Σ Итого по столбцам (строка «Итого»)"],
+    ["sort-asc", "Сортировать по этому столбцу ↑"],
+    ["sort-desc", "Сортировать по этому столбцу ↓"],
+    ["ask-ai", "Попросить ИИ…"],
+    null,
     ["row-del", "Удалить строку", nRow <= 1],
     ["col-del", "Удалить столбец", nCol <= 1],
     ["table-del", "Удалить таблицу"],
@@ -736,6 +826,10 @@ TableManageView.prototype.runAction = function (act) {
   if (act === "col-right") return this.moveLine("col", a.col, a.col + 1);
   if (act === "row-up") return this.moveLine("row", a.row, a.row - 1);
   if (act === "row-down") return this.moveLine("row", a.row, a.row + 1);
+  if (act === "sum-rows") return this.sumRows();
+  if (act === "sum-cols") return this.sumCols();
+  if (act === "sort-asc" || act === "sort-desc") return this.sortBy(a.col, act === "sort-desc");
+  if (act === "ask-ai") return this.askAi();
   if (act === "toggle-header") {
     runTableCommand(editor, pos, a.row, a.col, toggleHeaderRow);
     focusCell(editor, this.tablePos(), a.row, a.col);
@@ -762,6 +856,125 @@ TableManageView.prototype.runAction = function (act) {
       }
     });
   }
+};
+
+// Столбец «Итого»: заполняем существующий (заголовок «Итого»/«Всего») или добавляем справа.
+TableManageView.prototype.sumRows = function () {
+  var pos = this.tablePos();
+  if (pos == null) return;
+  var back = this.active ? { row: this.active.row, col: this.active.col } : { row: 0, col: 0 };
+  var table = this.editor.state.doc.nodeAt(pos);
+  var shape = tableShape(table);
+  var col = shape.totalCol;
+  if (col < 0) {
+    runTableCommand(this.editor, pos, 0, shape.map.width - 1, addColumnAfter);
+    pos = this.tablePos();
+    table = this.editor.state.doc.nodeAt(pos);
+    shape = tableShape(table);
+    col = shape.map.width - 1;
+  }
+  var edits = [];
+  if (shape.header) edits.push({ row: 0, col: col, text: "Итого" });
+  shape.dataRows.concat(shape.totalRows).forEach(function (r) {
+    var vals = [];
+    for (var c = 1; c < shape.map.width; c += 1) if (c !== col) vals.push(parseNum(shape.text(r, c)));
+    edits.push({ row: r, col: col, text: sumOf(vals) });
+  });
+  setCellTexts(this.editor, pos, edits);
+  focusCell(this.editor, pos, back.row, back.col);
+};
+
+// Строка «Итого»: заполняем существующую (первая ячейка «Итого»/«Всего») или добавляем снизу.
+TableManageView.prototype.sumCols = function () {
+  var pos = this.tablePos();
+  if (pos == null) return;
+  var back = this.active ? { row: this.active.row, col: this.active.col } : { row: 0, col: 0 };
+  var table = this.editor.state.doc.nodeAt(pos);
+  var shape = tableShape(table);
+  var row = shape.totalRows.length ? shape.totalRows[shape.totalRows.length - 1] : -1;
+  if (row < 0) {
+    runTableCommand(this.editor, pos, shape.map.height - 1, 0, addRowAfter);
+    pos = this.tablePos();
+    table = this.editor.state.doc.nodeAt(pos);
+    row = TableMap.get(table).height - 1;
+    shape = tableShape(table);
+    shape.dataRows = shape.dataRows.filter(function (r) {
+      return r !== row;
+    });
+  }
+  var edits = [{ row: row, col: 0, text: "Итого" }];
+  for (var c = 1; c < shape.map.width; c += 1) {
+    var vals = shape.dataRows.map(function (r) {
+      return parseNum(shape.text(r, c));
+    });
+    edits.push({ row: row, col: c, text: sumOf(vals) });
+  }
+  setCellTexts(this.editor, pos, edits);
+  focusCell(this.editor, pos, back.row, back.col);
+};
+
+// Сортировка строк данных по столбцу; шапка остаётся сверху, строки «Итого» — снизу.
+TableManageView.prototype.sortBy = function (col, desc) {
+  var pos = this.tablePos();
+  if (pos == null) return;
+  var state = this.editor.state;
+  var table = state.doc.nodeAt(pos);
+  var shape = tableShape(table);
+  var rows = [];
+  table.forEach(function (row) {
+    rows.push(row);
+  });
+  var numeric = shape.dataRows.every(function (r) {
+    var t = shape.text(r, col).trim();
+    return !t || parseNum(t);
+  });
+  var keyed = shape.dataRows.map(function (r) {
+    var t = shape.text(r, col).trim();
+    return { row: rows[r], t: t, n: parseNum(t) };
+  });
+  keyed.sort(function (a, b) {
+    // Пустые — всегда в конце.
+    if (!a.t && !b.t) return 0;
+    if (!a.t) return 1;
+    if (!b.t) return -1;
+    var d = numeric ? a.n.value - b.n.value : a.t.localeCompare(b.t, "ru", { numeric: true, sensitivity: "base" });
+    return desc ? -d : d;
+  });
+  var next = rows.slice(0, shape.header).concat(
+    keyed.map(function (k) {
+      return k.row;
+    }),
+    shape.totalRows.map(function (r) {
+      return rows[r];
+    })
+  );
+  var newTable = table.type.create(table.attrs, next, table.marks);
+  this.editor.view.dispatch(state.tr.replaceWith(pos, pos + table.nodeSize, newTable));
+  var a = this.active;
+  focusCell(this.editor, pos, shape.header, a ? a.col : col);
+};
+
+// «Попросить ИИ»: приложение откроет обсуждение с контекстом таблицы (событие ловит app.js).
+TableManageView.prototype.askAi = function () {
+  var pos = this.tablePos();
+  if (pos == null) return;
+  var table = this.editor.state.doc.nodeAt(pos);
+  var shape = tableShape(table);
+  var heads = [];
+  for (var c = 0; c < shape.map.width; c += 1) heads.push(shape.text(0, c).trim());
+  var n = 0;
+  var idx = 0;
+  this.editor.state.doc.descendants(function (node, p) {
+    if (node.type.spec.tableRole === "table") {
+      n += 1;
+      if (p === pos) idx = n;
+    }
+  });
+  window.dispatchEvent(
+    new CustomEvent("leo-table-ask-ai", {
+      detail: { index: idx, headers: heads.filter(Boolean).slice(0, 8), column: this.active ? heads[this.active.col] || "" : "" },
+    })
+  );
 };
 
 TableManageView.prototype.measureColWidths = function () {

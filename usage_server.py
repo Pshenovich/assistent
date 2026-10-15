@@ -9447,6 +9447,35 @@ async def miniapp_note_chats_patch(
     return {"ok": True, "chat": _note_chat_api(chat, uid)}
 
 
+@miniapp_router.delete("/notes/{kind}/{item_id}/chats/{chat_id}")
+async def miniapp_note_chats_delete(
+    kind: str,
+    item_id: str,
+    chat_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Удалить чат с ИИ вместе с сообщениями — только автор чата."""
+    from assistant.stores import note_chats
+
+    uid = str(int(principal.telegram_user_id))
+
+    def _run() -> int:
+        owner = _note_chat_owner_or_404(uid, kind, item_id)
+        chat = note_chats.chat_for_item(chat_id, owner, kind, str(item_id))
+        if not note_chats.can_view(chat, uid):
+            raise HTTPException(status_code=404, detail="Чат не найден")
+        assert chat is not None
+        if chat["author_user_id"] != uid:
+            raise HTTPException(status_code=403, detail="Удалить чат может только его автор")
+        try:
+            return note_chats.delete_chat(chat)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    removed = await run_in_threadpool(_run)
+    return {"ok": True, "removed_messages": removed}
+
+
 @miniapp_router.post("/notes/{kind}/{item_id}/chats/{chat_id}/read")
 async def miniapp_note_chats_read(
     kind: str,

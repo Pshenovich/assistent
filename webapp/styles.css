@@ -15125,3 +15125,45 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 /* Выделенные ячейки (столбец/строка целиком). */
 .note-rich-editor-body .note-editor-table .selectedCell { position: relative; background: var(--accent-subtle, rgba(82, 128, 232, 0.16)); }
 .note-rich-editor-body .note-editor-table .selectedCell::after { content: ""; position: absolute; inset: 0; border: 1.5px solid var(--accent); pointer-events: none; }
+
+
+/* ---- Список чатов обсуждения: «…» у своих чатов (переименовать / удалить) ---- */
+.note-chats-row { position: relative; display: flex; align-items: stretch; }
+.note-chats-row > .note-chats-item { flex: 1 1 auto; min-width: 0; padding-right: 44px; }
+.note-chats-more {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.note-chats-more:hover, .note-chats-more:focus-visible { background: var(--surface-muted, rgba(255, 255, 255, 0.08)); color: var(--text); }
+.note-chats-actions {
+  position: absolute;
+  right: 6px;
+  top: calc(100% - 4px);
+  z-index: 5;
+  min-width: 180px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface, #1f1f21);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.note-chats-actions-item { appearance: none; text-align: left; padding: 10px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 0.9375rem; cursor: pointer; }
+.note-chats-actions-item:hover { background: var(--surface-muted, rgba(255, 255, 255, 0.08)); }
+.note-chats-actions-item.is-danger { color: var(--danger, #e5484d); }
+.note-chats-rename { flex: 1 1 auto; display: flex; gap: 6px; align-items: center; padding: 6px; }
+.note-chats-rename-input { flex: 1 1 auto; min-width: 0; font-size: 16px; }
+.note-chats-rename-ok { flex: none; appearance: none; border: 0; border-radius: 10px; padding: 8px 12px; background: var(--accent); color: var(--on-accent, #fff); font: inherit; font-weight: 600; cursor: pointer; }
