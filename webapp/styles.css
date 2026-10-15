@@ -12237,12 +12237,14 @@ html.modal-sheet-open body {
     white-space: normal;
   }
 
+  /* Телефон: таблица не сжимается в ширину экрана (слова рвались посередине, дальние столбцы
+     и их ручки были недоступны) — она шире экрана и прокручивается вбок в .note-table-manage-scroll. */
   .note-rich-editor-body .note-table-manage-wrap .note-editor-table {
     display: table;
-    width: 100%;
-    min-width: 0;
+    width: max-content;
+    min-width: 100% !important;
     overflow: visible;
-    table-layout: fixed;
+    table-layout: auto;
     white-space: normal;
   }
 
@@ -12254,7 +12256,11 @@ html.modal-sheet-open body {
 
   .note-rich-editor-body .note-table-manage-wrap .note-editor-table th,
   .note-rich-editor-body .note-table-manage-wrap .note-editor-table td {
-    min-width: 2.5rem;
+    min-width: 5.5rem;
+    max-width: 16rem;
+    word-break: normal;
+    overflow-wrap: normal;
+    hyphens: manual;
   }
 
   #note-discussion-overlay .note-discuss-bubble {
@@ -14819,6 +14825,13 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   font-size: 14px;
 }
 .note-ai-edit-bar.hidden { display: none; }
+/* Плашка лежит в body поверх обсуждения (220), ниже тоста и модалок; без открытого редактора не видна. */
+.note-ai-edit-bar { z-index: 235; }
+#note-editor-overlay.hidden ~ .note-ai-edit-bar { display: none; }
+@media (max-width: 959px) {
+  /* Обсуждение на весь экран: плашка внизу над полем ввода, не закрывает шапку. */
+  html.note-discussion-open .note-ai-edit-bar { top: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 96px); }
+}
 .note-ai-edit-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: #a78bfa; }
 .note-ai-edit-bar button { appearance: none; font: inherit; cursor: pointer; border-radius: 999px; }
 .note-ai-edit-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: var(--text); padding: 4px 6px; text-decoration: underline dotted rgba(167, 139, 250, 0.7); text-underline-offset: 3px; }
