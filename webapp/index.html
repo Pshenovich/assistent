@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261016-calcards2">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261016-asst2">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -87,7 +87,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261016-calcards2" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261016-asst2" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -210,10 +210,23 @@
           </svg>
         </button>
         <div id="actual-create-menu" class="actual-create-menu hidden" role="menu" aria-label="Добавить">
-          <button type="button" class="actual-create-menu-btn" data-actual-action="voice" role="menuitem">Голосовое</button>
-          <button type="button" class="actual-create-menu-btn" data-actual-action="reminder" role="menuitem">Напоминание</button>
-          <button type="button" class="actual-create-menu-btn" data-actual-action="meeting" role="menuitem">Встреча</button>
-          <button type="button" class="actual-create-menu-btn" data-actual-action="task" role="menuitem">Задача</button>
+          <button type="button" class="actual-create-menu-btn is-ai" data-actual-action="assistant" role="menuitem">
+            <span class="actual-create-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></span>
+            <span class="actual-create-copy"><b>Ассистент</b><small>Спросить или поручить ИИ</small></span>
+          </button>
+          <div class="actual-create-sep" aria-hidden="true"></div>
+          <button type="button" class="actual-create-menu-btn" data-actual-action="meeting" role="menuitem">
+            <span class="actual-create-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/></svg></span>
+            <span class="actual-create-copy"><b>Встреча</b></span>
+          </button>
+          <button type="button" class="actual-create-menu-btn" data-actual-action="task" role="menuitem">
+            <span class="actual-create-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg></span>
+            <span class="actual-create-copy"><b>Задача</b></span>
+          </button>
+          <button type="button" class="actual-create-menu-btn" data-actual-action="reminder" role="menuitem">
+            <span class="actual-create-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20h4"/></svg></span>
+            <span class="actual-create-copy"><b>Напоминание</b></span>
+          </button>
         </div>
       </section>
 
@@ -1826,7 +1839,7 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261016-calcards2" defer></script>
-  <script src="/webapp/app.js?v=20261016-calcards2" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261016-asst2" defer></script>
+  <script src="/webapp/app.js?v=20261016-asst2" defer></script>
 </body>
 </html>

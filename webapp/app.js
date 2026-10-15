@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-calcards2";
+  var WEBAPP_BUILD = "20261016-asst2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-calcards2";
+  const NOTE_EDITOR_ASSET_V = "20261016-asst2";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -6122,6 +6122,11 @@
   }
 
   function setTab(name, options) {
+    if (name !== "actual" && document.documentElement.classList.contains("actual-assistant-open")) {
+      try {
+        closeNoteDiscussion(true);
+      } catch (_) {}
+    }
     options = options || {};
     if (name === "digest" && !digestTabEnabled) name = "actual";
     if (TAB_ORDER.indexOf(name) < 0) name = "actual";
@@ -26201,7 +26206,36 @@
         if (empty) setHidden(empty, false);
       }
     }
+    if (document.documentElement.classList.contains("actual-assistant-open")) {
+      // Чат с Ассистентом с экрана «Актуальное»: закрыли — освобождаем панель.
+      document.documentElement.classList.remove("actual-assistant-open");
+      activeChatThreadId = "";
+      clearChatShareWrap();
+      pruneEmptyChatDrafts("");
+    }
     syncChatDiscussionChrome();
+  }
+
+  // «+» на «Актуальном» → «Ассистент»: чат с ИИ в панели справа (на телефоне — на весь экран).
+  async function openActualAssistant() {
+    document.documentElement.classList.add("actual-assistant-open");
+    try {
+      await createAndOpenChatThread();
+    } catch (e) {
+      document.documentElement.classList.remove("actual-assistant-open");
+      showNoteToast((e && e.message) || "Не удалось открыть Ассистента");
+      return;
+    }
+    if (!isNoteDiscussionOpen()) {
+      document.documentElement.classList.remove("actual-assistant-open");
+      return;
+    }
+    var ed = noteGptEditor();
+    if (ed && !isMobileNoteLayout()) {
+      try {
+        ed.focus();
+      } catch (_) {}
+    }
   }
 
   function highlightDiscussionMessage(id) {
@@ -28246,6 +28280,45 @@
     }
     box.innerHTML = '<span class="note-discuss-empty-ico">' + DISCUSS_ICONS.spark + "</span>";
     var title = document.createElement("h4");
+    var wrapKind = document.getElementById("note-editor-more-wrap");
+    var isChatThread = !!(wrapKind && wrapKind._shareKind === "chat");
+    if (isChatThread) {
+      // Отдельный чат с Ассистентом (из «Сохранённое → Чаты» или «+» на «Актуальном»).
+      title.textContent = "Чем помочь?";
+      var hintChat = document.createElement("p");
+      hintChat.textContent = "Ассистент видит ваш календарь, задачи и контакты — может найти время, поставить встречу или задачу.";
+      box.appendChild(title);
+      box.appendChild(hintChat);
+      var chatChips = document.createElement("div");
+      chatChips.className = "note-discuss-sugg";
+      ["Что у меня сегодня?", "Найди время для встречи", "Поставь задачу", "На что ушло время на этой неделе?"].forEach(function (t) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.textContent = t;
+        b.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var ed = noteGptEditor();
+          if (!ed) return;
+          ed.textContent = /^(Найди время|Поставь задачу)/.test(t) ? t + " " : t;
+          try {
+            syncGptEditorEmpty(ed);
+            autosizeNoteComposer(ed);
+            ed.focus();
+            var sel = window.getSelection();
+            var range = document.createRange();
+            range.selectNodeContents(ed);
+            range.collapse(false);
+            sel.removeAllRanges();
+            sel.addRange(range);
+          } catch (_) {}
+          syncNotePaieReplyForm();
+        });
+        chatChips.appendChild(b);
+      });
+      box.appendChild(chatChips);
+      return box;
+    }
     title.textContent = "Спросите про эту заметку";
     var hint = document.createElement("p");
     var wrap = document.getElementById("note-editor-more-wrap");
@@ -35431,6 +35504,7 @@
         e.stopPropagation();
         var action = btn.getAttribute("data-actual-action");
         closeActualCreateMenu();
+        if (action === "assistant") openActualAssistant();
         if (action === "voice") openVoiceModal();
         if (action === "reminder") openReminderModal({});
         if (action === "meeting") openEventModal({});
