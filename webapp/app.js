@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261015-subtabs3";
+  var WEBAPP_BUILD = "20261015-projmenu1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261015-subtabs3";
+  const NOTE_EDITOR_ASSET_V = "20261015-projmenu1";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -17075,9 +17075,20 @@
       updateTrigger();
     }
 
+    var TAG_ICO =
+      '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>';
+    var TAG_CHECK =
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+    var TAG_PLUS =
+      '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+
     function fillMenu() {
       if (!menuEl) return;
       menuEl.innerHTML = "";
+      var head = document.createElement("p");
+      head.className = "note-menu-label tag-picker-menu-head";
+      head.textContent = "Проект";
+      menuEl.appendChild(head);
       var selected = selectedIdMap();
       var allTags = getUserTagsFromCache().slice();
       if (!allTags.length) {
@@ -17094,13 +17105,17 @@
             "tag-picker-menu-item" + (selected[tid] ? " tag-picker-menu-item--selected" : "");
           btn.setAttribute("role", "option");
           btn.setAttribute("aria-selected", selected[tid] ? "true" : "false");
+          var ico = document.createElement("span");
+          ico.className = "tag-picker-menu-ico";
+          ico.innerHTML = TAG_ICO;
           var name = document.createElement("span");
           name.className = "tag-picker-menu-label";
           name.textContent = String(t.name || "");
           var check = document.createElement("span");
           check.className = "tag-picker-menu-check";
-          check.textContent = selected[tid] ? "✓" : "";
+          check.innerHTML = selected[tid] ? TAG_CHECK : "";
           check.setAttribute("aria-hidden", "true");
+          btn.appendChild(ico);
           btn.appendChild(name);
           btn.appendChild(check);
           btn.addEventListener("click", function (e) {
@@ -17117,10 +17132,13 @@
           menuEl.appendChild(btn);
         });
       }
+      var sep = document.createElement("div");
+      sep.className = "note-menu-hr tag-picker-menu-sep";
+      menuEl.appendChild(sep);
       var createBtn = document.createElement("button");
       createBtn.type = "button";
       createBtn.className = "tag-picker-menu-item tag-picker-menu-item--create";
-      createBtn.textContent = "Создать новый…";
+      createBtn.innerHTML = '<span class="tag-picker-menu-ico">' + TAG_PLUS + "</span><span>Новый проект…</span>";
       createBtn.addEventListener("click", async function (e) {
         e.stopPropagation();
         closeMenu();

@@ -45,6 +45,12 @@ _NAME_LEAD_RE = re.compile(
     r"(?:\s+(?:в\s+задаче|задачу|надо|нужно))?\s*"
     r"(?P<title>.+)$"
 )
+# «поставь себе задачу …», «поставь задачу на себя …», «поставь мне …» — исполнитель сам автор.
+_SELF_LEAD_RE = re.compile(
+    r"(?is)^(?:самому\s+себе|самой\s+себе|сам[ао]?\s+себе|для\s+себя|на\s+себя|себе|"
+    r"для\s+меня|на\s+меня|мне)(?=[\s,.:—-]|$)[\s,.:—-]*"
+)
+SELF_ASSIGNEE = "__self__"
 _STRIP_FILLER_RE = re.compile(
     r"(?i)^\s*(?:в\s+задаче|задачу|надо|нужно|чтобы|"
     r"на\s+(?:сегодня|завтра|послезавтра)|сегодня|завтра|послезавтра)\s+"
@@ -68,6 +74,12 @@ def _prep_assign_text(text: str) -> str:
     raw = (text or "").strip()
     raw = _ASR_PREFIX_RE.sub("", raw).strip()
     raw = re.sub(r"\s+", " ", raw)
+    # «создай мне задачу …» → «создай задачу себе …»
+    raw = re.sub(
+        r"(?i)\b(поставь|создай|назначь|закинь)(те)?\s+(?:мне|себе)\s+задачу\b",
+        r"\1\2 задачу себе",
+        raw,
+    )
     return raw
 
 
@@ -201,6 +213,16 @@ def parse_assign_task_request(text: str) -> dict[str, str] | None:
         return None
     body = str(m.group("body") or "").strip()
     body = re.sub(r"(?i)^задачу\s+", "", body).strip()
+    sm = _SELF_LEAD_RE.match(body)
+    if sm:
+        title = body[sm.end():].strip()
+        title = re.sub(r"(?i)^\s*задачу\s+", "", title).strip()
+        title = _STRIP_FILLER_RE.sub("", title).strip()
+        title = re.sub(r"(?i)^\s*задачу\s+", "", title).strip()
+        title = _STRIP_FILLER_RE.sub("", title).strip()
+        if not title or title.lower() in {"задачу", "задача", "на сегодня", "сегодня"}:
+            title = "Задача"
+        return {"assignee_name": SELF_ASSIGNEE, "title": title}
     nm = _NAME_LEAD_RE.match(body)
     if not nm:
         return None
@@ -332,10 +354,12 @@ def urgency_keyboard(task_id: int | str) -> InlineKeyboardMarkup:
     )
 
 
-def _confirm_html(row: dict, *, tz: ZoneInfo, now: datetime) -> str:
+def _confirm_html(row: dict, *, tz: ZoneInfo, now: datetime, self_task: bool = False) -> str:
     who = html.escape(str(row.get("assignee_name") or "исполнителя"))
     link = task_title_link_html(str(row.get("title") or "Задача"), row["id"])
     when = html.escape(_when_phrase(row, tz=tz, now=now))
+    if self_task:
+        return f"Поставил задачу себе — {link}\nКогда: {when}."
     return f"Поставил задачу на {who} — {link}\nКогда: {when}."
 
 
@@ -365,6 +389,18 @@ async def handle(
         return
 
     owner_uname = _owner_username(update)
+    if parsed["assignee_name"] == SELF_ASSIGNEE:
+        await _create_and_confirm(
+            msg,
+            uid=uid,
+            raw=raw,
+            title=parsed["title"],
+            assignee_uid=uid,
+            email="",
+            assignee_name=(user.full_name or user.first_name or "Я").strip(),
+            assigner=None,
+        )
+        return
     contact = find_contact_by_name(
         uid, parsed["assignee_name"], telegram_username=owner_uname
     )
@@ -392,16 +428,37 @@ async def handle(
         )
         return
 
-    if int(assignee_uid) == uid:
-        await msg.reply_text("Это была бы задача себе — укажите другого исполнителя.")
-        return
+    self_task = int(assignee_uid) == uid
+    await _create_and_confirm(
+        msg,
+        uid=uid,
+        raw=raw,
+        title=parsed["title"],
+        assignee_uid=int(assignee_uid),
+        email="" if self_task else email,
+        assignee_name=(user.full_name or user.first_name or "Я").strip() if self_task else contact_display_name(contact),
+        assigner=None if self_task else (user.full_name or user.first_name or "Участник").strip(),
+    )
 
+
+async def _create_and_confirm(
+    msg,
+    *,
+    uid: int,
+    raw: str,
+    title: str,
+    assignee_uid: int,
+    email: str,
+    assignee_name: str,
+    assigner: str | None,
+) -> None:
+    """Создать задачу; уведомить исполнителя, только если это не сам автор."""
     tz = _tz()
     now = datetime.now(tz)
     start, all_day = resolve_assign_start(raw, now=now, tz=tz)
-    title = parsed["title"]
     title = _strip_when_from_title(title)
     title, description = resolve_title_and_description(title)
+    self_task = int(assignee_uid) == int(uid)
 
     row = calendar_tasks_store.create_task(
         uid,
@@ -411,26 +468,26 @@ async def handle(
         end_at=None,
         assignee_user_id=assignee_uid,
         assignee_email=email,
-        assignee_name=contact_display_name(contact),
+        assignee_name=assignee_name,
         all_day=all_day,
         tz=tz,
     )
 
-    assigner = (user.full_name or user.first_name or "Участник").strip()
-    notify_task_assignee(
-        assignee_user_id=assignee_uid,
-        task=row,
-        assigner_name=assigner,
-    )
+    if not self_task:
+        notify_task_assignee(
+            assignee_user_id=assignee_uid,
+            task=row,
+            assigner_name=assigner or "Участник",
+        )
 
     await msg.reply_text(
-        _confirm_html(row, tz=tz, now=now),
+        _confirm_html(row, tz=tz, now=now, self_task=self_task),
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
         reply_markup=urgency_keyboard(row["id"]),
     )
     print(
-        f"[assign] ok uid={uid} tid={row.get('id')} "
+        f"[assign] ok uid={uid} tid={row.get('id')} self={self_task} "
         f"all_day={all_day} start={start.isoformat()} "
         f"title={title[:80]!r}",
         flush=True,
