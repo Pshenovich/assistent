@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261015-editor4">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261015-dictate1">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -87,7 +87,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261015-editor4" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261015-dictate1" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -1648,6 +1648,21 @@
           <div id="note-editor-modal-body" class="note-editor-modal-content"></div>
         </div>
         <div id="note-editor-toolbar-wrap" class="note-editor-toolbar-wrap note-editor-toolbar-wrap--bottom hidden">
+          <div id="note-dictation-bar" class="note-dictation-bar hidden" role="status" aria-live="polite" data-state="rec">
+            <button type="button" class="note-dict-btn note-dict-cancel" id="note-dict-cancel" aria-label="Отменить диктовку" title="Отменить">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
+            <div class="note-dict-mid">
+              <span class="note-dict-dot" aria-hidden="true"></span>
+              <span class="note-dict-time" id="note-dict-time">0:00</span>
+              <canvas class="note-dict-wave" id="note-dict-wave" width="240" height="56" aria-hidden="true"></canvas>
+              <span class="note-dict-spin" aria-hidden="true"></span>
+              <span class="note-dict-label" id="note-dict-label">Расшифровываю…</span>
+            </div>
+            <button type="button" class="note-dict-btn note-dict-stop" id="note-dict-stop" aria-label="Готово — вставить текст" title="Готово">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+            </button>
+          </div>
           <div class="note-editor-toolbar-row">
             <button type="button" id="note-editor-gpt-btn" class="note-tg-btn note-tg-btn--ai hidden" aria-label="ИИ: что сделать с текстом" title="ИИ">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -1655,6 +1670,11 @@
               </svg>
             </button>
             <div id="note-editor-format-toolbar-host" class="note-editor-format-toolbar-host"></div>
+            <button type="button" id="note-editor-mic-btn" class="note-tg-btn note-tg-btn--mic hidden" aria-label="Диктовать текст" title="Диктовка">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>
+              </svg>
+            </button>
             <button type="button" id="note-editor-discuss-btn" class="note-tg-btn note-tg-btn--discuss hidden" aria-label="Обсуждение" title="Обсуждение">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true">
                 <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>
@@ -1776,7 +1796,7 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261015-editor4" defer></script>
-  <script src="/webapp/app.js?v=20261015-editor4" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261015-dictate1" defer></script>
+  <script src="/webapp/app.js?v=20261015-dictate1" defer></script>
 </body>
 </html>

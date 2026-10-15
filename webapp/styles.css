@@ -15252,3 +15252,39 @@ mark.note-highlight { background: rgba(250, 204, 21, 0.32); color: inherit; bord
 
 /* Меню проекта в строке свойств: обёртка с z-index 1 прятала его под текстом заметки */
 #note-editor-overlay .note-editor-meta .tag-picker-add-wrap { position: relative; z-index: 130; }
+/* Меню проекта — как остальные меню редактора: приподнятая плашка, а не цвет фона страницы */
+#note-editor-overlay .note-editor-meta .tag-picker-menu {
+  background: #2c2c2e;
+  border: 0;
+  border-radius: 14px;
+  padding: 6px;
+  min-width: 200px;
+  max-height: 18rem;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+}
+#note-editor-overlay .note-editor-meta .tag-picker-menu-item { border-radius: 10px; }
+#note-editor-overlay .note-editor-meta .tag-picker-menu-item:hover { background: rgba(255, 255, 255, 0.08); }
+
+/* Диктовка: кнопка микрофона и панель записи вместо тулбара */
+.note-tg-btn--mic { flex-shrink: 0; }
+.note-editor-toolbar-row.is-selection .note-tg-btn--mic { display: none; }
+.note-dictation-bar { display: none; align-items: center; gap: 10px; min-height: 44px; }
+.note-editor-toolbar-wrap.is-dictating .note-dictation-bar { display: flex; }
+.note-editor-toolbar-wrap.is-dictating .note-editor-toolbar-row { display: none !important; }
+.note-dict-btn { flex-shrink: 0; width: 44px; height: 44px; border: 0; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.note-dict-cancel { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.75); }
+.note-dict-stop { background: #ff453a; color: #fff; box-shadow: 0 0 0 4px rgba(255, 69, 58, 0.18); }
+.note-dict-mid { flex: 1; min-width: 0; height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); }
+.note-dict-dot { width: 10px; height: 10px; border-radius: 50%; background: #ff453a; flex-shrink: 0; animation: note-dict-pulse 1.2s ease-in-out infinite; }
+.note-dict-time { font-variant-numeric: tabular-nums; font-size: 0.9375rem; font-weight: 600; color: #fff; flex-shrink: 0; min-width: 2.6em; }
+.note-dict-wave { flex: 1; min-width: 0; height: 28px; width: 100%; }
+.note-dict-spin, .note-dict-label { display: none; }
+.note-dictation-bar[data-state="busy"] .note-dict-dot,
+.note-dictation-bar[data-state="busy"] .note-dict-time,
+.note-dictation-bar[data-state="busy"] .note-dict-wave,
+.note-dictation-bar[data-state="busy"] .note-dict-stop { display: none; }
+.note-dictation-bar[data-state="busy"] .note-dict-spin { display: inline-block; width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.25); border-top-color: #fff; animation: note-dict-rot 0.8s linear infinite; flex-shrink: 0; }
+.note-dictation-bar[data-state="busy"] .note-dict-label { display: inline; color: rgba(255, 255, 255, 0.85); font-size: 0.9375rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@keyframes note-dict-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
+@keyframes note-dict-rot { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .note-dict-dot, .note-dictation-bar[data-state="busy"] .note-dict-spin { animation: none; } }

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261015-editor4";
+  var WEBAPP_BUILD = "20261015-dictate1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261015-editor4";
+  const NOTE_EDITOR_ASSET_V = "20261015-dictate1";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -11426,7 +11426,266 @@
     if (body && typeof body._openNoteGpt === "function") body._openNoteGpt();
   }
 
+  // Диктовка в заметку: запись в браузере → Obuchat transcribe → текст на месте курсора.
+  var NOTE_DICT_MAX_SEC = 10 * 60;
+  var noteDict = null;
+
+  function noteDictSupported() {
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+  }
+
+  function noteDictSetUi(state) {
+    var wrap = document.getElementById("note-editor-toolbar-wrap");
+    var bar = document.getElementById("note-dictation-bar");
+    if (!wrap || !bar) return;
+    var on = state === "rec" || state === "busy";
+    wrap.classList.toggle("is-dictating", on);
+    bar.classList.toggle("hidden", !on);
+    if (on) bar.setAttribute("data-state", state);
+    syncNoteEditorEndPad();
+  }
+
+  function noteDictFmt(sec) {
+    var s = Math.max(0, Math.floor(sec));
+    return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+  }
+
+  function noteDictCleanup(d) {
+    if (!d) return;
+    if (d.timer) clearInterval(d.timer);
+    if (d.raf) cancelAnimationFrame(d.raf);
+    try {
+      if (d.stream) d.stream.getTracks().forEach(function (t) { t.stop(); });
+    } catch (_) {}
+    try {
+      if (d.ctx) d.ctx.close();
+    } catch (_) {}
+    d.timer = d.raf = d.stream = d.ctx = null;
+  }
+
+  function noteDictDrawWave(d) {
+    var cv = document.getElementById("note-dict-wave");
+    if (!cv || !d.analyser) return;
+    var g = cv.getContext("2d");
+    var buf = new Uint8Array(d.analyser.fftSize);
+    var bars = 32;
+    var hist = [];
+    for (var i = 0; i < bars; i++) hist.push(0);
+    var last = 0;
+    function frame(ts) {
+      if (noteDict !== d || d.state !== "rec") return;
+      d.raf = requestAnimationFrame(frame);
+      if (ts - last < 60) return;
+      last = ts;
+      d.analyser.getByteTimeDomainData(buf);
+      var sum = 0;
+      for (var j = 0; j < buf.length; j++) {
+        var v = (buf[j] - 128) / 128;
+        sum += v * v;
+      }
+      var level = Math.min(1, Math.sqrt(sum / buf.length) * 4);
+      hist.push(level);
+      hist.shift();
+      var w = cv.width;
+      var h = cv.height;
+      g.clearRect(0, 0, w, h);
+      var step = w / bars;
+      var bw = Math.max(2, step * 0.5);
+      g.fillStyle = "rgba(255,255,255,0.85)";
+      for (var k = 0; k < bars; k++) {
+        var bh = Math.max(4, hist[k] * h);
+        var x = k * step + (step - bw) / 2;
+        var y = (h - bh) / 2;
+        if (g.roundRect) {
+          g.beginPath();
+          g.roundRect(x, y, bw, bh, bw / 2);
+          g.fill();
+        } else {
+          g.fillRect(x, y, bw, bh);
+        }
+      }
+    }
+    d.raf = requestAnimationFrame(frame);
+  }
+
+  async function startNoteDictation(atEnd) {
+    if (noteDict) return;
+    var ed = getLeftNoteRichEditor();
+    if (!ed || typeof ed.beginDictation !== "function") return;
+    if (!noteDictSupported()) {
+      showNoteToast("Запись звука не поддерживается в этом браузере");
+      return;
+    }
+    var d = { state: "starting", editor: ed, mark: null, chunks: [], started: 0 };
+    noteDict = d;
+    try {
+      d.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      noteDict = null;
+      showNoteToast("Нет доступа к микрофону — разрешите его в настройках браузера");
+      return;
+    }
+    if (noteDict !== d) {
+      noteDictCleanup(d);
+      return;
+    }
+    d.mark = ed.beginDictation(!!atEnd);
+    var mime = preferredVoiceMimeType();
+    try {
+      try {
+        d.rec = mime ? new MediaRecorder(d.stream, { mimeType: mime }) : new MediaRecorder(d.stream);
+      } catch (_) {
+        d.rec = new MediaRecorder(d.stream);
+      }
+    } catch (err) {
+      noteDict = null;
+      if (ed.cancelDictation) ed.cancelDictation(d.mark);
+      noteDictCleanup(d);
+      showNoteToast("Запись звука недоступна в этом браузере");
+      return;
+    }
+    d.rec.addEventListener("dataavailable", function (e) {
+      if (e.data && e.data.size) d.chunks.push(e.data);
+    });
+    d.rec.addEventListener("stop", function () {
+      var type = (d.rec && d.rec.mimeType) || mime || "audio/webm";
+      var blob = new Blob(d.chunks, { type: type });
+      noteDictCleanup(d);
+      if (d.state === "cancel") return;
+      uploadNoteDictation(d, blob, type);
+    });
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) {
+        d.ctx = new AC();
+        var src = d.ctx.createMediaStreamSource(d.stream);
+        d.analyser = d.ctx.createAnalyser();
+        d.analyser.fftSize = 1024;
+        src.connect(d.analyser);
+      }
+    } catch (_) {}
+    try {
+      d.rec.start(1000);
+    } catch (err) {
+      noteDict = null;
+      if (ed.cancelDictation) ed.cancelDictation(d.mark);
+      noteDictCleanup(d);
+      showNoteToast("Не удалось начать запись — попробуйте ещё раз");
+      return;
+    }
+    d.state = "rec";
+    d.started = Date.now();
+    var timeEl = document.getElementById("note-dict-time");
+    if (timeEl) timeEl.textContent = "0:00";
+    d.timer = setInterval(function () {
+      var sec = (Date.now() - d.started) / 1000;
+      if (timeEl) timeEl.textContent = noteDictFmt(sec);
+      if (sec >= NOTE_DICT_MAX_SEC) stopNoteDictation();
+    }, 250);
+    noteDictSetUi("rec");
+    noteDictDrawWave(d);
+    try {
+      if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
+        Telegram.WebApp.HapticFeedback.impactOccurred("light");
+      }
+    } catch (_) {}
+  }
+
+  function stopNoteDictation() {
+    var d = noteDict;
+    if (!d || d.state !== "rec") return;
+    d.state = "busy";
+    noteDictSetUi("busy");
+    var label = document.getElementById("note-dict-label");
+    if (label) label.textContent = "Расшифровываю…";
+    try {
+      d.rec.stop();
+    } catch (_) {
+      noteDictCleanup(d);
+    }
+  }
+
+  function cancelNoteDictation() {
+    var d = noteDict;
+    if (!d) return;
+    var wasRec = d.state === "rec";
+    d.state = "cancel";
+    noteDict = null;
+    if (d.editor && d.mark && typeof d.editor.cancelDictation === "function") d.editor.cancelDictation(d.mark);
+    if (wasRec) {
+      try {
+        d.rec.stop();
+      } catch (_) {}
+    }
+    noteDictCleanup(d);
+    noteDictSetUi("off");
+  }
+
+  async function uploadNoteDictation(d, blob, type) {
+    if (noteDict !== d) return;
+    if (!blob || blob.size < 512) {
+      noteDict = null;
+      noteDictSetUi("off");
+      showNoteToast("Запись получилась пустой — проверьте микрофон");
+      return;
+    }
+    var fd = new FormData();
+    fd.append("file", blob, "dictation." + voiceExtFromMime(type));
+    fd.append("purpose", "note");
+    var text = "";
+    var err = "";
+    try {
+      var res = await apiFetch("/voice/transcribe", { method: "POST", body: fd });
+      text = String((res && (res.plain_text || res.text)) || "").trim();
+    } catch (e) {
+      err = (e && e.message) || "Не удалось расшифровать";
+    }
+    if (noteDict !== d) return; // отменили, пока расшифровывали
+    noteDict = null;
+    noteDictSetUi("off");
+    if (err || !text) {
+      showNoteToast(err ? "Диктовка: " + err : "Не расслышал — попробуйте ещё раз");
+      return;
+    }
+    if (getLeftNoteRichEditor() !== d.editor || !d.editor.insertDictation(d.mark, text)) {
+      try {
+        if (navigator.clipboard) navigator.clipboard.writeText(text);
+      } catch (_) {}
+      showNoteToast("Заметка закрыта — текст диктовки скопирован в буфер");
+    }
+  }
+
+  function bindNoteDictation() {
+    var btn = document.getElementById("note-editor-mic-btn");
+    if (!btn || btn._bound) return;
+    btn._bound = true;
+    setHidden(btn, !noteDictSupported());
+    var editorFocused = false;
+    // Курсор в тексте → вставим туда; иначе — в конец заметки.
+    btn.addEventListener("pointerdown", function () {
+      var a = document.activeElement;
+      editorFocused = !!(a && a.closest && a.closest(".ProseMirror"));
+    });
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      startNoteDictation(!editorFocused);
+      editorFocused = false;
+    });
+    var stop = document.getElementById("note-dict-stop");
+    if (stop) stop.addEventListener("click", function (e) {
+      e.preventDefault();
+      stopNoteDictation();
+    });
+    var cancel = document.getElementById("note-dict-cancel");
+    if (cancel) cancel.addEventListener("click", function (e) {
+      e.preventDefault();
+      cancelNoteDictation();
+    });
+  }
+
   function bindNoteGptToolbarButton() {
+    bindNoteDictation();
     var btn = document.getElementById("note-editor-gpt-btn");
     if (!btn || btn._bound) return;
     btn._bound = true;
@@ -30900,6 +31159,7 @@
   var noteEditorCloseSeq = 0;
 
   function closeNoteEditorModal() {
+    if (noteDict && noteDict.state === "rec") cancelNoteDictation();
     if (noteAiReview) finishAiReview(true);
     stopTranscriptionSummaryPoll();
     var ov = document.getElementById("note-editor-overlay");

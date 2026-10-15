@@ -263,6 +263,7 @@ OPERATION_LABELS_RU: dict[str, str] = {
     "format_note": "Оформление заметки",
     "ask": "Вопрос к GPT",
     "obuchat_transcribe": "Транскрипция",
+    "obuchat_dictation": "Диктовка в заметку",
     "summarize": "Саммари",
     "summarize_llm": "Саммари (LLM)",
     "chat_digest": "Дайджест чатов",
