@@ -2623,7 +2623,58 @@ function mount(container, options) {
     );
   }
 
+  // Диктовка: запоминаем место курсора при старте записи и сдвигаем его вместе с правками,
+  // пока идёт расшифровка, — текст встанет туда, где пользователь начал говорить.
+  var dictationMarks = {};
+  var dictationSeq = 0;
+  editor.on("transaction", function (ev) {
+    var tr = ev && ev.transaction;
+    if (!tr || !tr.docChanged) return;
+    Object.keys(dictationMarks).forEach(function (k) {
+      dictationMarks[k] = tr.mapping.map(dictationMarks[k]);
+    });
+  });
+
   return {
+    beginDictation: function (atEnd) {
+      var id = "d" + ++dictationSeq;
+      dictationMarks[id] = atEnd ? editor.state.doc.content.size : editor.state.selection.to;
+      return id;
+    },
+    cancelDictation: function (id) {
+      delete dictationMarks[id];
+    },
+    insertDictation: function (id, text) {
+      var pos = dictationMarks[id];
+      delete dictationMarks[id];
+      var t = String(text || "").replace(/\r/g, "").trim();
+      if (!t) return false;
+      var size = editor.state.doc.content.size;
+      if (typeof pos !== "number") pos = editor.state.selection.to;
+      pos = Math.max(0, Math.min(pos, size));
+      var $pos = editor.state.doc.resolve(pos);
+      var parts = t.split(/\n{2,}/).map(function (x) { return x.replace(/\n/g, " ").trim(); }).filter(Boolean);
+      if (!$pos.parent.isTextblock) {
+        // Конец документа / между блоками — отдельными абзацами.
+        editor.chain().focus().insertContentAt(pos, parts.map(function (x) {
+          return { type: "paragraph", content: [{ type: "text", text: x }] };
+        })).run();
+        editor.commands.scrollIntoView();
+        return true;
+      }
+      var before = $pos.parent.textBetween(0, $pos.parentOffset, " ", " ");
+      var first = parts.shift() || "";
+      if (before && !/\s$/.test(before)) first = " " + first;
+      var chain = editor.chain().focus().insertContentAt(pos, { type: "text", text: first });
+      chain.run();
+      if (parts.length) {
+        editor.chain().focus().insertContent(parts.map(function (x) {
+          return { type: "paragraph", content: [{ type: "text", text: x }] };
+        })).run();
+      }
+      editor.commands.scrollIntoView();
+      return true;
+    },
     getHtml: function () {
       return exportBody(editor);
     },

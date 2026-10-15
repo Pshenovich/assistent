@@ -7341,9 +7341,20 @@ async def miniapp_gpt_chat(
     }
 
 
+_SPEAKER_LABEL_RE = re.compile(r"^\s*(?:SPEAKER[_ ]?\d+|Спикер\s*\d+|speaker[_ ]?\d+)\s*:\s*", re.IGNORECASE | re.MULTILINE)
+
+
+def _strip_speaker_labels(text: str) -> str:
+    """Диктовка — один говорящий: «SPEAKER_1: …» / «Спикер 1:\n…» → просто текст."""
+    t = _SPEAKER_LABEL_RE.sub("", str(text or ""))
+    t = re.sub(r"[ \t]+\n", "\n", t)
+    return re.sub(r"\n{3,}", "\n\n", t).strip()
+
+
 @miniapp_router.post("/voice/transcribe")
 async def miniapp_voice_transcribe(
     file: UploadFile = File(...),
+    purpose: str = Form(""),
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     from assistant.integrations import transcribe as obu
@@ -7379,16 +7390,21 @@ async def miniapp_voice_transcribe(
 
     def _run() -> dict[str, Any]:
         result = obu.transcribe_bytes(data, filename)
-        transcript = (result.formatted_text or result.plain_text or "").strip()
+        # Диктовка в заметку: один говорящий — без «Спикер 1:»; в журнал транскрипций не попадает.
+        dictation = str(purpose or "").strip().lower() == "note"
+        if dictation:
+            transcript = _strip_speaker_labels(result.plain_text or result.formatted_text or "")
+        else:
+            transcript = (result.formatted_text or result.plain_text or "").strip()
         if not transcript:
             raise RuntimeError("(пустая транскрипция)")
         event_id = insert_usage_event(
-            operation="obuchat_transcribe",
+            operation="obuchat_dictation" if dictation else "obuchat_transcribe",
             model=None,
             generation_id=result.job_id,
             usage={
                 "text": transcript,
-                "source": "miniapp_voice",
+                "source": "note_dictation" if dictation else "miniapp_voice",
                 "filename": filename,
             },
             telegram_user_id=str(int(principal.telegram_user_id)),
