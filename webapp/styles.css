@@ -15288,3 +15288,193 @@ mark.note-highlight { background: rgba(250, 204, 21, 0.32); color: inherit; bord
 @keyframes note-dict-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
 @keyframes note-dict-rot { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .note-dict-dot, .note-dictation-bar[data-state="busy"] .note-dict-spin { animation: none; } }
+
+/* ================= Обсуждение v2 (2026-10-15) ================= */
+/* Поверхность как у редактора, а не почти чёрная */
+.note-discussion-overlay,
+.note-discussion-overlay .note-discussion-sheet,
+html.note-discussion-open .note-discussion-overlay { background: var(--surface, #19191a); }
+@media (max-width: 959px) {
+  .note-discussion-overlay, .note-discussion-sheet { background: var(--surface, #19191a) !important; }
+}
+.note-discussion-header { background: var(--surface, #19191a); }
+#note-discussion-close,
+#note-discussion-new-ctx { width: 36px; height: 36px; border-radius: 50%; background: rgba(255, 255, 255, 0.08); }
+#note-discussion-new-ctx.is-chats .note-chats-badge { display: none; }
+
+/* Шапка: название ⌄ + подпись */
+#note-discussion-title { display: inline-flex; flex-direction: column; align-items: center; gap: 1px; max-width: 100%; min-width: 0; line-height: 1.2; }
+.note-discussion-title-line { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; }
+#note-discussion-title-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-discussion-subtitle { font-size: 0.71875rem; font-weight: 500; letter-spacing: 0; color: var(--text-secondary, #909499); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.note-discussion-subtitle.hidden { display: none; }
+.note-title-unread { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #5b9fff; color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.note-title-unread.hidden { display: none; }
+.note-pane-switch-menu.is-from-right { left: auto !important; right: -52px !important; transform: none !important; }
+
+/* Меню (листы, чаты, композер) — одна приподнятая плашка */
+#note-pane-switch-menu,
+#note-chats-menu.is-dropdown,
+#note-paie-reply-form .note-paie-menu,
+#note-paie-reply-form .note-paie-plus-menu,
+.note-discuss-menu {
+  background: #2c2c2e;
+  border: 0;
+  border-radius: 14px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+}
+.note-menu-label { margin: 6px 10px 4px; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(255, 255, 255, 0.5); }
+.note-menu-hint { margin: 6px 10px 2px; font-size: 0.75rem; color: rgba(255, 255, 255, 0.55); }
+.note-menu-hr { height: 1px; margin: 4px 6px; background: rgba(255, 255, 255, 0.08); }
+
+/* Чаты — выпадающим меню под названием */
+#note-chats-menu.is-dropdown { position: fixed; right: auto; bottom: auto; height: auto; transform: none !important; opacity: 0; transition: opacity 0.14s ease; overflow-y: auto; padding: 6px; z-index: 400; }
+#note-chats-menu.is-dropdown.is-open { opacity: 1; }
+#note-chats-menu.is-dropdown .note-chats-head { display: none; }
+#note-chats-backdrop.is-dropdown { background: transparent !important; }
+
+/* ---------- Лента ---------- */
+.note-discussion-messages { gap: 4px; }
+.note-discuss-day { align-self: center; margin: 14px 0 6px; padding: 2px 10px; border-radius: 999px; background: rgba(255, 255, 255, 0.06); color: var(--text-secondary, #909499); font-size: 0.75rem; }
+.note-discuss-msg { position: relative; margin-top: 12px; max-width: 88%; }
+.note-discuss-msg.is-cont { margin-top: 2px; }
+.note-discuss-msg.is-cont .note-discuss-role,
+.note-discuss-msg.is-cont .note-discuss-av { display: none; }
+.note-discuss-msg.is-assistant,
+.note-discuss-msg.is-other { padding-left: 34px; }
+.note-discuss-av { position: absolute; left: 0; top: 18px; width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-size: 0.6875rem; font-weight: 700; }
+.note-discuss-av.is-ai { background: rgba(139, 92, 246, 0.16); border: 1px solid rgba(139, 92, 246, 0.45); color: #c4b5fd; box-sizing: border-box; }
+.note-discuss-role { margin: 0 2px 4px; font-weight: 500; }
+.note-discuss-role em { font-style: normal; color: #c4b5fd; font-weight: 600; }
+.note-discuss-msg.is-assistant .note-discuss-bubble { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(139, 92, 246, 0.4); }
+.note-discuss-msg.is-other .note-discuss-bubble { background: rgba(255, 255, 255, 0.07); border: 0; }
+.note-discuss-time { margin: 3px 6px 0; font-size: 0.6875rem; color: var(--text-secondary, #909499); font-variant-numeric: tabular-nums; }
+.note-discuss-msg.is-pressed .note-discuss-bubble { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25); }
+
+/* Действия: при наведении (десктоп), на телефоне — долгое нажатие */
+.note-discuss-actions { position: absolute; top: -6px; right: -4px; margin: 0; display: none; gap: 2px; padding: 2px; border-radius: 10px; background: #2c2c2e; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(255, 255, 255, 0.08); z-index: 5; }
+.note-discuss-msg.is-user .note-discuss-actions { right: auto; left: -4px; }
+.note-discuss-quick,
+.note-discuss-actions .note-discuss-more { width: 28px; height: 26px; border-radius: 7px; border: 0; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; color: var(--text, #e6e7ea); cursor: pointer; }
+.note-discuss-quick:hover,
+.note-discuss-actions .note-discuss-more:hover,
+.note-discuss-actions .note-discuss-more[aria-expanded="true"] { background: rgba(255, 255, 255, 0.1); }
+.note-discuss-quick svg { width: 16px; height: 16px; }
+@media (hover: hover) and (pointer: fine) {
+  .note-discuss-msg:not(.is-pending):not(.is-optimistic):hover .note-discuss-actions,
+  .note-discuss-actions:has(.note-discuss-more[aria-expanded="true"]) { display: flex; }
+}
+.note-discuss-menu.is-sheet { position: fixed !important; left: 8px !important; right: 8px !important; top: auto !important; bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important; min-width: 0; padding: 6px; z-index: 400; border-radius: 16px; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45), 0 14px 40px rgba(0, 0, 0, 0.5); }
+.note-discuss-menu.is-sheet .note-discuss-menu-item { padding: 12px; font-size: 0.9375rem; }
+
+/* Правки ИИ — внутри ответа, под разделителем */
+.note-discuss-edits { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(139, 92, 246, 0.4); display: grid; gap: 8px; white-space: normal; }
+.note-discuss-edits-info { display: flex; align-items: center; gap: 6px; font-size: 0.8125rem; color: #ddd6fe; }
+.note-discuss-edits-info svg { flex: none; }
+.note-discuss-edits.is-undone { border-top-color: rgba(255, 255, 255, 0.12); }
+.note-discuss-edits.is-undone .note-discuss-edits-info { color: var(--text-secondary, #909499); }
+.note-discuss-edits-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.note-discuss-edits-btn { flex: none; height: 30px; padding: 0 12px; border: 0; border-radius: 999px; background: rgba(255, 255, 255, 0.1); color: #fff; font: inherit; font-size: 0.8125rem; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.note-discuss-edits-btn.is-primary { background: #8b5cf6; }
+.note-discuss-edits-btn:hover { filter: brightness(1.12); }
+
+/* Пустой чат */
+.note-discuss-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: auto 0; padding: 32px 12px; text-align: center; }
+.note-discuss-empty h4 { margin: 4px 0 0; font-size: 1rem; color: var(--text); }
+.note-discuss-empty p { margin: 0; max-width: 30ch; font-size: 0.8125rem; color: var(--text-secondary, #909499); }
+.note-discuss-empty-ico { width: 48px; height: 48px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: rgba(139, 92, 246, 0.16); border: 1px solid rgba(139, 92, 246, 0.45); color: #c4b5fd; }
+.note-discuss-empty-ico.is-people { background: rgba(91, 159, 255, 0.14); border-color: rgba(91, 159, 255, 0.4); color: #bcd6ff; }
+.note-discuss-empty-ico svg { width: 22px; height: 22px; }
+.note-discuss-sugg { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 6px; }
+.note-discuss-sugg button { padding: 7px 12px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 0.8125rem; cursor: pointer; }
+.note-discuss-sugg button:hover { background: rgba(255, 255, 255, 0.1); }
+
+/* ---------- Поле ввода ---------- */
+#note-paie-reply-form { gap: 6px; padding: 8px 8px 8px 12px; border-radius: 22px; border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.05); box-shadow: none; }
+#note-discussion-overlay #note-paie-reply-form { margin-left: 0; margin-right: 0; padding: 8px 8px 8px 12px; }
+.note-discussion-compose.note-paie-thread { padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px)) !important; }
+.note-paie-toprow { display: flex; align-items: center; gap: 6px; min-width: 0; position: relative; }
+#note-paie-reply-form .note-paie-composer-bar { display: none; }
+#note-paie-reply-form .note-paie-attach { width: 30px; height: 30px; background: rgba(255, 255, 255, 0.1); color: var(--text); }
+#note-paie-reply-form .note-paie-attach svg { width: 16px; height: 16px; }
+#note-paie-reply-form .note-paie-composer-left { flex: 0 1 auto; gap: 0; position: static; }
+#note-paie-reply-form .note-paie-mode-switch,
+#note-paie-reply-form .note-paie-model-btn { display: none !important; }
+#note-paie-reply-form .note-paie-mode-compact { display: inline-flex !important; align-items: center; gap: 5px; height: 30px; padding: 0 10px; border-radius: 999px; font-size: 0.8125rem; line-height: 1; color: #ddd6fe; background: rgba(139, 92, 246, 0.16); border: 1px solid rgba(139, 92, 246, 0.45); min-width: 0; }
+#note-paie-reply-form .note-paie-mode-compact-label { max-width: none !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#note-paie-reply-form .note-paie-mode-compact-ico,
+#note-paie-reply-form .note-paie-mode-compact-chev { display: inline-flex; flex: none; }
+#note-paie-reply-form .note-paie-mode-compact.is-open .note-paie-mode-compact-chev { transform: rotate(180deg); }
+#note-paie-reply-form .note-paie-kb-wrap { position: static; flex: none; }
+#note-paie-reply-form .note-paie-kb-toggle { display: inline-flex; align-items: center; gap: 5px; width: auto; height: 30px; padding: 0 10px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.14); background: transparent; color: var(--text-secondary, #909499); font: inherit; font-size: 0.8125rem; white-space: nowrap; cursor: pointer; }
+#note-paie-reply-form .note-paie-kb-toggle.is-on { color: var(--text); border-color: rgba(255, 255, 255, 0.3); }
+#note-paie-reply-form .note-paie-kb-toggle svg { flex: none; width: 15px; height: 15px; }
+#note-paie-reply-form .note-paie-composer-row { align-items: flex-end; gap: 6px; padding: 0 !important; }
+#note-paie-reply-form .note-paie-composer-input { padding: 6px 2px !important; min-height: 32px; }
+.note-paie-mic { flex: none; width: 34px; height: 34px; border: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.08); color: var(--text); cursor: pointer; }
+.note-paie-mic.hidden { display: none; }
+#note-paie-reply-form .note-paie-send { width: 34px; height: 34px; background: rgba(255, 255, 255, 0.12); color: rgba(255, 255, 255, 0.45); opacity: 1; }
+#note-paie-reply-form .note-paie-send.is-ready:not(:disabled) { background: #8b5cf6; color: #fff; }
+#note-paie-reply-form.is-comment-mode .note-paie-send.is-ready:not(:disabled) { background: #5b9fff; }
+#note-paie-reply-form .note-paie-send.is-stop { background: #fff; color: #111; }
+#note-paie-reply-form .note-paie-send-up,
+#note-paie-reply-form .note-paie-send-stop { display: inline-flex; }
+#note-paie-reply-form .note-paie-send-stop,
+#note-paie-reply-form .note-paie-send.is-stop .note-paie-send-up { display: none; }
+#note-paie-reply-form .note-paie-send.is-stop .note-paie-send-stop { display: inline-flex; }
+
+/* Комментарии (без ИИ): одна строка — «+», текст, микрофон, отправка */
+#note-paie-reply-form.is-comments-chat .note-paie-composer-left,
+#note-paie-reply-form.is-comment-mode .note-paie-kb-wrap { display: none !important; }
+#note-paie-reply-form.is-comments-chat { flex-direction: row; flex-wrap: wrap; align-items: flex-end; }
+#note-paie-reply-form.is-comments-chat .note-paie-toprow { flex: none; padding-bottom: 2px; }
+#note-paie-reply-form.is-comments-chat .note-paie-composer-row { flex: 1 1 0; min-width: 0; }
+#note-paie-reply-form.is-comments-chat .note-paie-reply-target,
+#note-paie-reply-form.is-comments-chat .note-paie-attach-preview { flex-basis: 100%; }
+
+/* Меню композера открываются над полем ввода */
+#note-paie-reply-form .note-paie-menu,
+#note-paie-reply-form .note-paie-plus-menu { position: absolute; left: 0; right: auto; bottom: calc(100% + 8px); top: auto; z-index: 30; width: min(320px, calc(100vw - 32px)); max-width: none; max-height: min(60vh, 420px); overflow-y: auto; padding: 6px; }
+#note-paie-reply-form .note-paie-plus-menu.hidden,
+#note-paie-reply-form .note-paie-menu.hidden { display: none; }
+#note-paie-reply-form .note-paie-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0; border-radius: 9px; background: transparent; color: var(--text); font: inherit; font-size: 0.875rem; text-align: left; cursor: pointer; }
+#note-paie-reply-form .note-paie-menu-item:hover { background: rgba(255, 255, 255, 0.08); }
+.note-plus-ico,
+.note-ask-ico { flex: none; width: 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.07); color: var(--text-secondary, #b4b7bb); }
+.note-ask-ico.is-spark { background: rgba(139, 92, 246, 0.16); color: #c4b5fd; }
+.note-ask-copy { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.note-ask-copy b { font-weight: 600; font-size: 0.875rem; }
+.note-ask-copy small { font-size: 0.75rem; color: var(--text-secondary, #909499); line-height: 1.3; }
+.note-ask-check { flex: none; color: #5b9fff; visibility: hidden; display: inline-flex; }
+.note-ask-item.is-active .note-ask-check { visibility: visible; }
+#note-paie-reply-form .note-ask-item.is-active { background: rgba(255, 255, 255, 0.06); }
+.note-ask-model .note-ask-model-val { margin-left: auto; color: var(--text-secondary, #909499); }
+.note-ask-model-chev { display: inline-flex; color: var(--text-secondary, #909499); }
+#note-paie-reply-form:not(.is-gpt-mode) .note-ask-model,
+#note-paie-reply-form:not(.is-gpt-mode) .note-ask-model-hr { display: none; }
+#note-paie-reply-form .note-paie-plus-back { margin: 2px 2px 4px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: rgba(255, 255, 255, 0.65); font: inherit; font-size: 0.8125rem; cursor: pointer; }
+#note-paie-reply-form .note-paie-plus-back:hover { background: rgba(255, 255, 255, 0.08); }
+#note-paie-reply-form .note-paie-model-search,
+#note-paie-reply-form .note-paie-plus-search { margin: 2px 4px 6px; padding: 8px 10px; border-radius: 9px; border: 0; background: rgba(0, 0, 0, 0.25); color: var(--text); font: inherit; font-size: 0.875rem; }
+#note-paie-reply-form .note-paie-menu-section { margin: 8px 10px 4px; font-size: 0.6875rem; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.5); }
+#note-paie-reply-form .note-paie-kb-check { border-radius: 5px; border-color: rgba(255, 255, 255, 0.35); }
+#note-paie-reply-form .note-paie-kb-check.is-on,
+#note-paie-reply-form .note-paie-kb-check.is-mixed { border-color: #5b9fff; background: #5b9fff; }
+
+/* Диктовка в поле обсуждения */
+#note-paie-reply-form.is-dictating .note-paie-toprow,
+#note-paie-reply-form.is-dictating .note-paie-composer-row { display: none !important; }
+#note-paie-reply-form.is-dictating .note-dictation-bar { display: flex; flex-basis: 100%; }
+#note-paie-reply-form .note-dictation-bar .note-dict-btn { width: 38px; height: 38px; }
+#note-paie-reply-form .note-dictation-bar .note-dict-mid { height: 38px; }
+
+/* Мелочь из ревью: кнопка микрофона в тулбаре редактора — с кругом, как ✨ и 💬 */
+.note-tg-btn--mic { background: rgba(255, 255, 255, 0.08); }
+.note-discuss-msg.is-user .note-discuss-role { display: none; }
+/* Телефон: обсуждение на весь экран — плашка правок ИИ появится, когда вернётесь к заметке */
+@media (max-width: 959px) {
+  html.note-discussion-open #note-ai-edit-bar { display: none !important; }
+}
+.note-discuss-actions { top: -16px; }
+.note-discuss-msg.is-assistant:not(.is-cont) .note-discuss-actions,
+.note-discuss-msg.is-other:not(.is-cont) .note-discuss-actions { top: -4px; }

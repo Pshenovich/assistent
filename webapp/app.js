@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261015-dictate1";
+  var WEBAPP_BUILD = "20261015-discuss3";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261015-dictate1";
+  const NOTE_EDITOR_ASSET_V = "20261015-discuss3";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -11434,9 +11434,12 @@
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
   }
 
-  function noteDictSetUi(state) {
-    var wrap = document.getElementById("note-editor-toolbar-wrap");
-    var bar = document.getElementById("note-dictation-bar");
+  function noteDictSetUi(state, d) {
+    var composer = !!(d && d.target === "composer");
+    var wrap = composer ? document.getElementById("note-paie-reply-form") : document.getElementById("note-editor-toolbar-wrap");
+    var bar = composer
+      ? wrap && wrap.querySelector(".note-dictation-bar")
+      : document.getElementById("note-dictation-bar");
     if (!wrap || !bar) return;
     var on = state === "rec" || state === "busy";
     wrap.classList.toggle("is-dictating", on);
@@ -11464,7 +11467,7 @@
   }
 
   function noteDictDrawWave(d) {
-    var cv = document.getElementById("note-dict-wave");
+    var cv = d.bar && d.bar.querySelector(".note-dict-wave");
     if (!cv || !d.analyser) return;
     var g = cv.getContext("2d");
     var buf = new Uint8Array(d.analyser.fftSize);
@@ -11508,15 +11511,19 @@
     d.raf = requestAnimationFrame(frame);
   }
 
-  async function startNoteDictation(atEnd) {
+  async function startNoteDictation(atEnd, target) {
     if (noteDict) return;
-    var ed = getLeftNoteRichEditor();
-    if (!ed || typeof ed.beginDictation !== "function") return;
+    var composer = target === "composer";
+    var ed = composer ? noteGptEditor() : getLeftNoteRichEditor();
+    if (!ed || (!composer && typeof ed.beginDictation !== "function")) return;
     if (!noteDictSupported()) {
       showNoteToast("Запись звука не поддерживается в этом браузере");
       return;
     }
-    var d = { state: "starting", editor: ed, mark: null, chunks: [], started: 0 };
+    var d = { state: "starting", editor: ed, mark: null, chunks: [], started: 0, target: composer ? "composer" : "editor" };
+    d.bar = composer
+      ? (document.getElementById("note-paie-reply-form") || document).querySelector(".note-dictation-bar")
+      : document.getElementById("note-dictation-bar");
     noteDict = d;
     try {
       d.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -11529,7 +11536,7 @@
       noteDictCleanup(d);
       return;
     }
-    d.mark = ed.beginDictation(!!atEnd);
+    d.mark = composer ? null : ed.beginDictation(!!atEnd);
     var mime = preferredVoiceMimeType();
     try {
       try {
@@ -11539,7 +11546,7 @@
       }
     } catch (err) {
       noteDict = null;
-      if (ed.cancelDictation) ed.cancelDictation(d.mark);
+      if (d.mark && ed.cancelDictation) ed.cancelDictation(d.mark);
       noteDictCleanup(d);
       showNoteToast("Запись звука недоступна в этом браузере");
       return;
@@ -11568,21 +11575,21 @@
       d.rec.start(1000);
     } catch (err) {
       noteDict = null;
-      if (ed.cancelDictation) ed.cancelDictation(d.mark);
+      if (d.mark && ed.cancelDictation) ed.cancelDictation(d.mark);
       noteDictCleanup(d);
       showNoteToast("Не удалось начать запись — попробуйте ещё раз");
       return;
     }
     d.state = "rec";
     d.started = Date.now();
-    var timeEl = document.getElementById("note-dict-time");
+    var timeEl = d.bar && d.bar.querySelector(".note-dict-time");
     if (timeEl) timeEl.textContent = "0:00";
     d.timer = setInterval(function () {
       var sec = (Date.now() - d.started) / 1000;
       if (timeEl) timeEl.textContent = noteDictFmt(sec);
       if (sec >= NOTE_DICT_MAX_SEC) stopNoteDictation();
     }, 250);
-    noteDictSetUi("rec");
+    noteDictSetUi("rec", d);
     noteDictDrawWave(d);
     try {
       if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
@@ -11595,8 +11602,8 @@
     var d = noteDict;
     if (!d || d.state !== "rec") return;
     d.state = "busy";
-    noteDictSetUi("busy");
-    var label = document.getElementById("note-dict-label");
+    noteDictSetUi("busy", d);
+    var label = d.bar && d.bar.querySelector(".note-dict-label");
     if (label) label.textContent = "Расшифровываю…";
     try {
       d.rec.stop();
@@ -11618,14 +11625,14 @@
       } catch (_) {}
     }
     noteDictCleanup(d);
-    noteDictSetUi("off");
+    noteDictSetUi("off", d);
   }
 
   async function uploadNoteDictation(d, blob, type) {
     if (noteDict !== d) return;
     if (!blob || blob.size < 512) {
       noteDict = null;
-      noteDictSetUi("off");
+      noteDictSetUi("off", d);
       showNoteToast("Запись получилась пустой — проверьте микрофон");
       return;
     }
@@ -11642,9 +11649,13 @@
     }
     if (noteDict !== d) return; // отменили, пока расшифровывали
     noteDict = null;
-    noteDictSetUi("off");
+    noteDictSetUi("off", d);
     if (err || !text) {
       showNoteToast(err ? "Диктовка: " + err : "Не расслышал — попробуйте ещё раз");
+      return;
+    }
+    if (d.target === "composer") {
+      insertDictationIntoComposer(d.editor, text);
       return;
     }
     if (getLeftNoteRichEditor() !== d.editor || !d.editor.insertDictation(d.mark, text)) {
@@ -11653,6 +11664,57 @@
       } catch (_) {}
       showNoteToast("Заметка закрыта — текст диктовки скопирован в буфер");
     }
+  }
+
+  // Диктовка в поле обсуждения: текст — в конец сообщения, курсор после него.
+  function insertDictationIntoComposer(editor, text) {
+    if (!editor || !document.body.contains(editor)) {
+      try {
+        if (navigator.clipboard) navigator.clipboard.writeText(text);
+      } catch (_) {}
+      showNoteToast("Обсуждение закрыто — текст диктовки скопирован в буфер");
+      return;
+    }
+    var cur = String(editor.textContent || "");
+    var piece = (cur && !/\s$/.test(cur) ? " " : "") + text;
+    editor.appendChild(document.createTextNode(piece));
+    try {
+      editor.focus();
+      var sel = window.getSelection();
+      var range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch (_) {}
+    try {
+      syncGptEditorEmpty(editor);
+      autosizeNoteComposer(editor);
+    } catch (_) {}
+    syncNotePaieReplyForm();
+  }
+
+  function bindComposerDictation(form) {
+    var mic = form && form.querySelector("#note-paie-mic");
+    if (!mic || mic._bound) return;
+    mic._bound = true;
+    setHidden(mic, !noteDictSupported());
+    mic.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeNoteComposerMenus();
+      startNoteDictation(true, "composer");
+    });
+    var bar = form.querySelector(".note-dictation-bar");
+    if (!bar) return;
+    bar.querySelector(".note-dict-stop").addEventListener("click", function (e) {
+      e.preventDefault();
+      stopNoteDictation();
+    });
+    bar.querySelector(".note-dict-cancel").addEventListener("click", function (e) {
+      e.preventDefault();
+      cancelNoteDictation();
+    });
   }
 
   function bindNoteDictation() {
@@ -18499,6 +18561,10 @@
       if (isPrimarySheetId(review.sheetId)) noteSheetState.primaryBody = review.before;
       scheduleOpenDocSave(review.sheetId);
       showNoteToast("Изменения ИИ отменены");
+      if (review.rec) {
+        review.rec.undone = true;
+        refreshDiscussFeedNow();
+      }
     }
   }
 
@@ -18528,7 +18594,8 @@
     left.setHtml(res.html, { preserveCursor: true });
     if (isPrimarySheetId(sheetId)) noteSheetState.primaryBody = res.html;
     scheduleOpenDocSave(sheetId);
-    noteAiReview = { sheetId: sheetId, before: before, marks: res.marks, ranges: [], cursor: -1 };
+    var rec = { sheetId: sheetId, before: before, after: left.getHtml(), marks: res.marks, count: res.applied, undone: false };
+    noteAiReview = { sheetId: sheetId, before: before, marks: res.marks, ranges: [], cursor: -1, rec: rec };
     var bar = aiEditBar();
     bar.querySelector(".note-ai-edit-text").textContent =
       "ИИ внёс " + ruChanges(res.applied) + (res.failed ? " · не нашёл: " + res.failed : "");
@@ -18538,6 +18605,162 @@
       paintAiHighlights();
       scrollToNextAiChange();
     });
+    return rec;
+  }
+
+  // Правки ИИ в ответе обсуждения: «Изменено N мест · Показать в заметке · Отменить».
+  // Снимки «до/после» живут в памяти сессии; после перезагрузки остаётся только строка-сводка.
+  var aiEditRecords = {};
+  var AI_EDITS_LS = "leo_ai_edits_v1";
+
+  function aiEditSummaries() {
+    try {
+      return JSON.parse(localStorage.getItem(AI_EDITS_LS) || "{}") || {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function rememberAiEditRecord(commentId, rec) {
+    if (!rec || !commentId) return;
+    var id = String(commentId);
+    var sheet = findNoteSheet(rec.sheetId);
+    rec.sheetTitle = (sheet && sheet.title) || "Основная";
+    aiEditRecords[id] = rec;
+    var all = aiEditSummaries();
+    all[id] = { n: rec.count, s: rec.sheetTitle };
+    var keys = Object.keys(all);
+    if (keys.length > 300) {
+      keys.slice(0, keys.length - 300).forEach(function (k) {
+        delete all[k];
+      });
+    }
+    try {
+      localStorage.setItem(AI_EDITS_LS, JSON.stringify(all));
+    } catch (_) {}
+  }
+
+  function ruPlaces(n) {
+    var m10 = n % 10;
+    var m100 = n % 100;
+    var w = m10 === 1 && m100 !== 11 ? "место" : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "места" : "мест";
+    return n + " " + w;
+  }
+
+  function aiHtmlKey(html) {
+    return String(html || "").replace(/\s+/g, " ").trim();
+  }
+
+  function refreshDiscussFeedNow() {
+    var list = document.getElementById("note-discussion-messages");
+    if (list) list._renderFp = null;
+    rerenderDiscussionFeed();
+  }
+
+  async function aiEditLeftEditor(rec) {
+    if (String(noteSheetState.leftId || NOTE_SHEET_MAIN) !== rec.sheetId) {
+      try {
+        await switchLeftSheet(rec.sheetId);
+      } catch (_) {}
+    }
+    var left = getLeftNoteRichEditor();
+    if (!left || typeof left.getHtml !== "function" || String(noteSheetState.leftId || NOTE_SHEET_MAIN) !== rec.sheetId) {
+      showNoteToast("Лист с правками сейчас не открыт");
+      return null;
+    }
+    return left;
+  }
+
+  async function showAiEditRecord(rec) {
+    var left = await aiEditLeftEditor(rec);
+    if (!left) return;
+    if (aiHtmlKey(left.getHtml()) !== aiHtmlKey(rec.after)) {
+      showNoteToast("Заметку уже меняли после этой правки — подсветить не получится");
+      return;
+    }
+    if (isMobileNoteLayout() && isNoteDiscussionOpen()) closeNoteDiscussion();
+    if (noteAiReview) finishAiReview(true);
+    noteAiReview = { sheetId: rec.sheetId, before: rec.before, marks: rec.marks, ranges: [], cursor: -1, rec: rec };
+    var bar = aiEditBar();
+    bar.querySelector(".note-ai-edit-text").textContent = "ИИ внёс " + ruChanges(rec.count);
+    bar.classList.remove("hidden");
+    positionAiEditBar();
+    requestAnimationFrame(function () {
+      paintAiHighlights();
+      scrollToNextAiChange();
+    });
+  }
+
+  async function setAiEditRecordUndone(rec, undone) {
+    var left = await aiEditLeftEditor(rec);
+    if (!left) return;
+    var expect = undone ? rec.after : rec.before;
+    if (aiHtmlKey(left.getHtml()) !== aiHtmlKey(expect)) {
+      showNoteToast("Заметку уже меняли после этой правки — поправьте вручную");
+      return;
+    }
+    if (noteAiReview && noteAiReview.rec === rec) {
+      noteAiReview = null;
+      clearAiHighlights();
+      var bar = document.getElementById("note-ai-edit-bar");
+      if (bar) bar.classList.add("hidden");
+    }
+    var html = undone ? rec.before : rec.after;
+    left.setHtml(html);
+    if (isPrimarySheetId(rec.sheetId)) noteSheetState.primaryBody = html;
+    scheduleOpenDocSave(rec.sheetId);
+    rec.undone = undone;
+    showNoteToast(undone ? "Правки ИИ отменены" : "Правки ИИ возвращены");
+    refreshDiscussFeedNow();
+  }
+
+  function appendAiEditsInfo(bubble, commentId) {
+    var id = String(commentId);
+    var rec = aiEditRecords[id];
+    var sum = rec ? { n: rec.count, s: rec.sheetTitle } : aiEditSummaries()[id];
+    if (!sum || !sum.n) return;
+    var box = document.createElement("div");
+    box.className = "note-discuss-edits" + (rec && rec.undone ? " is-undone" : "");
+    var info = document.createElement("div");
+    info.className = "note-discuss-edits-info";
+    info.innerHTML = rec && rec.undone ? DISCUSS_ICONS.undo : DISCUSS_ICONS.pen;
+    var txt = document.createElement("span");
+    txt.textContent =
+      rec && rec.undone
+        ? "Правки отменены · " + ruPlaces(sum.n)
+        : "Изменено " + ruPlaces(sum.n) + " на листе «" + (sum.s || "Основная") + "»";
+    info.appendChild(txt);
+    box.appendChild(info);
+    if (rec) {
+      var row = document.createElement("div");
+      row.className = "note-discuss-edits-actions";
+      function btn(label, cls, fn) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "note-discuss-edits-btn" + (cls ? " " + cls : "");
+        b.textContent = label;
+        b.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          fn();
+        });
+        row.appendChild(b);
+      }
+      if (rec.undone) {
+        btn("Вернуть правки", "", function () {
+          setAiEditRecordUndone(rec, false);
+        });
+      } else {
+        btn("Показать в заметке", "is-primary", function () {
+          showAiEditRecord(rec);
+        });
+        btn("Отменить", "", function () {
+          setAiEditRecordUndone(rec, true);
+        });
+      }
+      box.appendChild(row);
+    }
+    bubble.appendChild(box);
   }
 
   // «Мои макеты» (свои раскладки слайдов) — общие для всех презентаций пользователя.
@@ -20792,10 +21015,10 @@
   }
 
   function noteAskModeLabel(mode) {
-    if (mode === "gpt") return "GPT";
-    if (mode === "research") return "Research";
-    if (mode === "comment") return "Текст";
-    if (mode === "paie") return "PAIE";
+    if (mode === "gpt") return "Ассистент";
+    if (mode === "research") return "Исследование";
+    if (mode === "comment") return "Комментарий";
+    if (mode === "paie") return "Совет PAIE";
     var agent = findUserAgent(mode);
     return (agent && agent.title) || "Агент";
   }
@@ -20817,23 +21040,20 @@
     var quoted = !!(wrap && wrap._commentDraft && String(wrap._commentDraft.quote || "").trim());
     var isChatThread = !!(wrap && wrap._shareKind === "chat");
     if (isChatAskMode(mode)) {
-      var name = noteAskModeLabel(mode);
       if (gptComposerChipCount(noteGptEditor())) {
-        return "Спросите " + name + " про выделенный текст";
+        return "Спросите про выделенный текст…";
       }
-      return isChatThread
-        ? "Задайте вопрос " + name
-        : "Свободный запрос к " + name + " по заметке";
+      return isChatThread ? "Задайте вопрос…" : "Спросите или попросите изменить заметку…";
     }
     if (mode === "research") {
       return gptComposerChipCount(noteGptEditor())
-        ? "Спросите Research про выделенный текст"
-        : "Исследуйте тему заметки в вебе";
+        ? "Что исследовать по выделенному?"
+        : "Что исследовать? Например: цены конкурентов";
     }
     if (mode === "comment") {
       var chatNow = currentDiscussChatId();
       if (chatNow !== null && chatNow !== COMMENTS_CHAT_ID) return "Сообщение в чат без ответа ИИ";
-      return quoted ? "Комментарий к выделенному тексту" : "Напишите комментарий";
+      return quoted ? "Комментарий к выделенному тексту" : "Комментарий для участников…";
     }
     return quoted
       ? "Уточнение по выделенному тексту"
@@ -21384,10 +21604,37 @@
     );
   }
 
+  var DISCUSS_ICONS = {
+    plus: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+    spark: '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>',
+    globe: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.8 2.5 14.2 0 17M12 3.5c-2.5 2.8-2.5 14.2 0 17"/></svg>',
+    people: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="9" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M15.5 6.2a3 3 0 0 1 0 5.6M17 14.2a5 5 0 0 1 3.5 4.8"/></svg>',
+    bot: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="3.5"/><path d="M12 4.5V8M9.5 13h.01M14.5 13h.01"/></svg>',
+    down: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>',
+    right: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 7l5 5-5 5"/></svg>',
+    check: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+    up: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
+    stop: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="3"/></svg>',
+    mic: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>',
+    book: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h10a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3zM5 17a3 3 0 0 1 3-3h10"/></svg>',
+    file: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5l-7.8 7.8a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg>',
+    note: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6"/></svg>',
+    chat: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>',
+    wave: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></svg>',
+    sum: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 6h14M5 12h10M5 18h7"/></svg>',
+    pen: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>',
+    undo: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 8L5 12l5 4M5 12h9a5 5 0 0 1 5 5v1"/></svg>',
+    dots: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="6" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18" cy="12" r="1.7"/></svg>',
+  };
+
+  function notePlusItem(action, icon, label) {
+    return (
+      '<button type="button" class="note-paie-menu-item note-plus-item" data-plus-action="' + action + '">' +
+      '<span class="note-plus-ico">' + DISCUSS_ICONS[icon] + "</span><span>" + label + "</span></button>"
+    );
+  }
+
   function notePaieReplyFormHtml() {
-    var arrow = noteComposerAsset("arrow-up-right");
-    var chevronFill = noteComposerAsset("chevron-up-on-fill");
-    var chevronMuted = noteComposerAsset("chevron-up-muted");
     return (
       '<form id="note-paie-reply-form" class="note-paie-reply-form is-gpt-mode">' +
       '<div class="note-paie-reply-target hidden">' +
@@ -21400,77 +21647,84 @@
       "</div>" +
       '<div id="note-paie-plus-menu" class="note-paie-plus-menu hidden">' +
       '<div class="note-paie-plus-page" data-plus-page="root">' +
-      '<button type="button" class="note-paie-menu-item" data-plus-action="file">Добавить файл</button>' +
-      '<button type="button" class="note-paie-menu-item" data-plus-action="note">Добавить заметку</button>' +
-      '<button type="button" class="note-paie-menu-item" data-plus-action="chat">Добавить чат заметки</button>' +
-      '<button type="button" class="note-paie-menu-item" data-plus-action="transcription">Добавить транскрипцию</button>' +
-      '<button type="button" class="note-paie-menu-item" data-plus-action="summary">Добавить саммари</button>' +
+      '<p class="note-menu-label">Добавить к сообщению</p>' +
+      notePlusItem("file", "file", "Файл или фото") +
+      notePlusItem("note", "note", "Заметку") +
+      notePlusItem("chat", "chat", "Чат этой заметки") +
+      notePlusItem("transcription", "wave", "Транскрипцию") +
+      notePlusItem("summary", "sum", "Саммари") +
       "</div>" +
       '<div class="note-paie-plus-page hidden" data-plus-page="chats">' +
-      '<button type="button" class="note-paie-plus-back" data-plus-back="chats">← Назад</button>' +
+      '<button type="button" class="note-paie-plus-back" data-plus-back="chats">‹ Назад</button>' +
       '<div class="note-paie-plus-notes" id="note-paie-plus-chats" role="listbox" aria-label="Чаты заметки"></div>' +
       "</div>" +
       '<div class="note-paie-plus-page hidden" data-plus-page="notes">' +
-      '<button type="button" class="note-paie-plus-back" id="note-paie-plus-back">← Назад</button>' +
+      '<button type="button" class="note-paie-plus-back" id="note-paie-plus-back">‹ Назад</button>' +
       '<input type="search" class="note-paie-plus-search" id="note-paie-plus-search" placeholder="Поиск" autocomplete="off" />' +
       '<div class="note-paie-plus-project-chips notes-project-chips hidden" id="note-paie-plus-project-chips" role="listbox" aria-label="Проекты"></div>' +
       '<div class="note-paie-plus-notes" id="note-paie-plus-notes"></div>' +
       "</div></div>" +
       '<div id="note-paie-attach-preview" class="note-paie-attach-preview hidden"></div>' +
-      '<div class="note-paie-composer-row">' +
+      // Верхняя строка: «+», кто отвечает, контекст — не сдвигают микрофон и отправку.
+      '<div class="note-paie-toprow">' +
       '<button type="button" class="note-paie-attach" id="note-paie-attach" aria-label="Добавить" title="Добавить" aria-haspopup="true" aria-expanded="false">' +
-      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">' +
-      '<path d="M12 5v14M5 12h14"/>' +
-      "</svg></button>" +
+      DISCUSS_ICONS.plus +
+      "</button>" +
+      '<div class="note-paie-composer-left">' +
+      '<div class="note-paie-mode-switch" role="tablist" aria-label="Режим">' +
+      '<button type="button" class="note-paie-mode" data-mode="paie">Совет PAIE</button>' +
+      '<button type="button" class="note-paie-mode is-active" data-mode="gpt">Ассистент</button>' +
+      '<button type="button" class="note-paie-mode" data-mode="research">Исследование</button>' +
+      "</div>" +
+      '<button type="button" class="note-paie-mode-compact" aria-haspopup="listbox" aria-expanded="false">' +
+      '<span class="note-paie-mode-compact-ico">' + DISCUSS_ICONS.spark + "</span>" +
+      '<span class="note-paie-mode-compact-label">Ассистент</span>' +
+      '<span class="note-paie-mode-compact-chev">' + DISCUSS_ICONS.down + "</span>" +
+      "</button>" +
+      '<div class="note-paie-menu note-paie-mode-menu hidden" role="listbox">' +
+      '<button type="button" class="note-paie-menu-item" data-mode="paie">Совет PAIE</button>' +
+      '<button type="button" class="note-paie-menu-item is-active" data-mode="gpt">Ассистент</button>' +
+      '<button type="button" class="note-paie-menu-item" data-mode="research">Исследование</button>' +
+      "</div>" +
+      '<button type="button" class="note-paie-model-btn" aria-haspopup="listbox" aria-expanded="false">' +
+      '<span class="note-paie-model-label">GPT-4.1</span>' +
+      "</button>" +
+      '<div class="note-paie-menu note-paie-menu--models hidden">' +
+      '<button type="button" class="note-paie-plus-back note-model-back">‹ Кто отвечает</button>' +
+      '<input type="search" class="note-paie-model-search" placeholder="Поиск модели" autocomplete="off">' +
+      '<div class="note-paie-menu-list"></div>' +
+      "</div></div>" +
+      '<div class="note-paie-kb-wrap">' +
+      '<button type="button" class="note-paie-kb-toggle" aria-haspopup="true" aria-expanded="false" aria-pressed="false" title="Листы и база знаний">' +
+      DISCUSS_ICONS.book +
+      '<span class="note-paie-kb-label">Листы и база</span>' +
+      "</button>" +
+      '<div class="note-paie-menu note-paie-menu--kb hidden" role="menu">' +
+      '<p class="note-menu-hint">ИИ учитывает отмеченное при ответе</p>' +
+      '<div class="note-paie-menu-list"></div>' +
+      "</div></div>" +
+      "</div>" +
+      '<div class="note-paie-composer-row">' +
       '<input type="file" id="note-paie-attach-input" class="hidden" multiple accept="image/*,.pdf,.txt,.md,.csv,.json,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip">' +
       '<textarea id="note-paie-reply-input" class="note-paie-composer-input" rows="1" maxlength="4000" placeholder="' +
       noteAskPlaceholder("paie") +
       '"></textarea>' +
       '<div id="note-paie-reply-editor" class="note-paie-composer-input note-paie-composer-editor is-empty" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="' +
       noteAskPlaceholder("gpt") +
-      '"></div></div>' +
-      '<div class="note-paie-composer-bar">' +
-      '<div class="note-paie-composer-left">' +
-      '<div class="note-paie-mode-switch" role="tablist" aria-label="Режим">' +
-      '<button type="button" class="note-paie-mode" data-mode="paie">PAIE</button>' +
-      '<button type="button" class="note-paie-mode is-active" data-mode="gpt">GPT</button>' +
-      '<button type="button" class="note-paie-mode" data-mode="research">Research</button>' +
-      '<button type="button" class="note-paie-mode" data-mode="comment">Текст</button>' +
-      "</div>" +
-      '<button type="button" class="note-paie-mode-compact" aria-haspopup="listbox" aria-expanded="false">' +
-      '<span class="note-paie-mode-compact-label">GPT</span>' +
-      '<img class="note-paie-chevron" src="' +
-      chevronFill +
-      '" alt="" width="24" height="24">' +
+      '"></div>' +
+      '<button type="button" class="note-paie-mic" id="note-paie-mic" aria-label="Диктовать сообщение" title="Диктовка">' +
+      DISCUSS_ICONS.mic +
       "</button>" +
-      '<div class="note-paie-menu note-paie-mode-menu hidden" role="listbox">' +
-      '<button type="button" class="note-paie-menu-item" data-mode="paie">PAIE</button>' +
-      '<button type="button" class="note-paie-menu-item is-active" data-mode="gpt">GPT</button>' +
-      '<button type="button" class="note-paie-menu-item" data-mode="research">Research</button>' +
-      '<button type="button" class="note-paie-menu-item" data-mode="comment">Текст</button>' +
-      "</div>" +
-      '<button type="button" class="note-paie-model-btn" aria-haspopup="listbox" aria-expanded="false">' +
-      '<span class="note-paie-model-label">GPT-4.1</span>' +
-      '<img class="note-paie-chevron" src="' +
-      chevronMuted +
-      '" alt="" width="24" height="24">' +
-      "</button>" +
-      '<div class="note-paie-menu note-paie-menu--models hidden">' +
-      '<input type="search" class="note-paie-model-search" placeholder="Поиск модели" autocomplete="off">' +
-      '<div class="note-paie-menu-list"></div>' +
-      "</div></div>" +
-      '<div class="note-paie-kb-wrap">' +
-      '<button type="button" class="note-paie-kb-toggle" aria-haspopup="true" aria-expanded="false" aria-pressed="false" title="База знаний">' +
-      noteKnowledgeIconHtml() +
-      "</button>" +
-      '<div class="note-paie-menu note-paie-menu--kb hidden" role="menu">' +
-      '<div class="note-paie-menu-list"></div>' +
-      "</div></div>" +
       '<button type="submit" class="note-paie-send" id="note-paie-reply-submit" disabled aria-label="Отправить">' +
-      '<img class="note-paie-send-icon" src="' +
-      arrow +
-      '" alt="" width="24" height="24">' +
-      "</button></div></form>"
+      '<span class="note-paie-send-up">' + DISCUSS_ICONS.up + "</span>" +
+      '<span class="note-paie-send-stop">' + DISCUSS_ICONS.stop + "</span>" +
+      "</button></div>" +
+      '<div class="note-dictation-bar hidden" data-state="rec">' +
+      '<button type="button" class="note-dict-btn note-dict-cancel" aria-label="Отменить диктовку" title="Отменить"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>' +
+      '<div class="note-dict-mid"><span class="note-dict-dot" aria-hidden="true"></span><span class="note-dict-time">0:00</span>' +
+      '<canvas class="note-dict-wave" width="240" height="56" aria-hidden="true"></canvas><span class="note-dict-spin" aria-hidden="true"></span><span class="note-dict-label">Расшифровываю…</span></div>' +
+      '<button type="button" class="note-dict-btn note-dict-stop" aria-label="Готово — вставить текст" title="Готово"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>' +
+      "</div></form>"
     );
   }
 
@@ -21579,6 +21833,7 @@
     var form = document.getElementById("note-paie-reply-form");
     var label = form && form.querySelector(".note-paie-model-label");
     if (label) label.textContent = gptModelShortName(selectedGptModelId());
+    syncComposerModeChip();
   }
 
   async function loadGptModels() {
@@ -21682,17 +21937,42 @@
       if (wrap) wrap._askMode = "gpt";
       current = "gpt";
     }
+    // «Текст» (без ИИ) убран там, где есть чаты: людям пишут в чате «Комментарии».
     var items = (userAgentsState.agents || []).slice();
-    if (!isChatThread) {
-      items.push({ id: "comment", title: "Текст", kind: "comment" });
+    if (!isChatThread && !noteChatsEnabled()) {
+      items.push({ id: "comment", title: "Комментарий без ИИ", kind: "comment" });
     }
+    items.sort(function (a, b) {
+      var order = { gpt: 0, research: 1, paie: 2 };
+      var ao = order[a.id] != null ? order[a.id] : 3;
+      var bo = order[b.id] != null ? order[b.id] : 3;
+      return ao - bo;
+    });
+    var MODE_META = {
+      gpt: ["spark", "Отвечает и правит заметку"],
+      research: ["globe", "Ищет в интернете, отчёт с источниками"],
+      paie: ["people", "Четыре роли обсуждают и дают решение"],
+      comment: ["people", "Сообщение участникам, ИИ не отвечает"],
+    };
     function makeBtn(agent, cls) {
       var btn = document.createElement("button");
       btn.type = "button";
       btn.className = cls + (String(agent.id) === current ? " is-active" : "");
       btn.setAttribute("data-mode", agent.id);
       btn.setAttribute("role", cls.indexOf("menu-item") >= 0 ? "option" : "tab");
-      btn.textContent = agent.title || agent.id;
+      var builtinTitle = MODE_META[agent.id] && agent.id !== "comment" ? noteAskModeLabel(agent.id) : "";
+      if (cls.indexOf("menu-item") >= 0) {
+        var meta = MODE_META[agent.id] || ["bot", "Ваш агент"];
+        btn.classList.add("note-ask-item");
+        btn.innerHTML =
+          '<span class="note-ask-ico is-' + meta[0] + '">' + DISCUSS_ICONS[meta[0]] + "</span>" +
+          '<span class="note-ask-copy"><b></b><small></small></span>' +
+          '<span class="note-ask-check">' + DISCUSS_ICONS.check + "</span>";
+        btn.querySelector("b").textContent = builtinTitle || agent.title || agent.id;
+        btn.querySelector("small").textContent = meta[1];
+      } else {
+        btn.textContent = builtinTitle || agent.title || agent.id;
+      }
       btn.addEventListener("click", function () {
         setNoteAskMode(agent.id);
         closeNoteComposerMenus();
@@ -21701,12 +21981,51 @@
     }
     switchEl.innerHTML = "";
     menu.innerHTML = "";
+    var label = document.createElement("p");
+    label.className = "note-menu-label";
+    label.textContent = "Кто отвечает";
+    menu.appendChild(label);
     items.forEach(function (agent) {
       switchEl.appendChild(makeBtn(agent, "note-paie-mode"));
       menu.appendChild(makeBtn(agent, "note-paie-menu-item"));
     });
-    var compactLabel = form.querySelector(".note-paie-mode-compact-label");
-    if (compactLabel) compactLabel.textContent = noteAskModeLabel(current);
+    var hr = document.createElement("div");
+    hr.className = "note-menu-hr note-ask-model-hr";
+    menu.appendChild(hr);
+    var modelItem = document.createElement("button");
+    modelItem.type = "button";
+    modelItem.className = "note-paie-menu-item note-ask-model";
+    modelItem.innerHTML =
+      '<span>Модель</span><span class="note-ask-model-val"></span><span class="note-ask-model-chev">' +
+      DISCUSS_ICONS.right + "</span>";
+    modelItem.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var mb = form.querySelector(".note-paie-model-btn");
+      if (mb) mb.click();
+    });
+    menu.appendChild(modelItem);
+    syncComposerModeChip();
+  }
+
+  // Чип «✨ Ассистент · GPT-4.1»: режим и модель одной кнопкой.
+  function syncComposerModeChip() {
+    var form = document.getElementById("note-paie-reply-form");
+    if (!form) return;
+    var mode = noteAskMode();
+    var lbl = form.querySelector(".note-paie-mode-compact-label");
+    var model = gptModelShortName(selectedGptModelId());
+    if (lbl) lbl.textContent = noteAskModeLabel(mode) + (isChatAskMode(mode) ? " · " + model : "");
+    var ico = form.querySelector(".note-paie-mode-compact-ico");
+    if (ico) {
+      var key = mode === "research" ? "globe" : mode === "paie" ? "people" : isCustomAskMode(mode) ? "bot" : "spark";
+      if (ico._key !== key) {
+        ico._key = key;
+        ico.innerHTML = DISCUSS_ICONS[key];
+      }
+    }
+    var mv = form.querySelector(".note-ask-model-val");
+    if (mv) mv.textContent = model;
   }
 
   function profileAgentsMsg(ok, err) {
@@ -22950,7 +23269,7 @@
   function ensureAttachPreviewAboveComposer(form) {
     if (!form) return;
     var preview = form.querySelector("#note-paie-attach-preview");
-    var row = form.querySelector(".note-paie-composer-row");
+    var row = form.querySelector(".note-paie-toprow") || form.querySelector(".note-paie-composer-row");
     if (!preview || !row || !row.parentNode) return;
     if (preview.nextElementSibling === row) return;
     row.parentNode.insertBefore(preview, row);
@@ -22967,7 +23286,8 @@
       !form.querySelector('[data-plus-action="chat"]') ||
       !form.querySelector(".note-paie-kb-wrap") ||
       !form.querySelector("#note-paie-reply-editor") ||
-      !form.querySelector('[data-mode="research"]')
+      !form.querySelector('[data-mode="research"]') ||
+      !form.querySelector(".note-paie-toprow")
     ) {
       var html = notePaieReplyFormHtml();
       if (form) form.outerHTML = html;
@@ -22976,6 +23296,7 @@
     }
     if (!form) return;
     ensureAttachPreviewAboveComposer(form);
+    bindComposerDictation(form);
     bindNoteKnowledgeToggle(form);
     bindDiscussAttachOnce(form);
     if (form._bound) return;
@@ -22990,6 +23311,11 @@
     form.addEventListener("submit", function (e) {
       e.preventDefault();
       closeNoteComposerMenus();
+      var busyWrap = document.getElementById("note-editor-more-wrap");
+      if (busyWrap && busyWrap._gptBusy) {
+        stopNoteGptAnswer();
+        return;
+      }
       if (isChatAskMode(noteAskMode())) {
         var packed = serializeGptComposer(editor);
         submitNoteGptQuestion(packed.text);
@@ -23060,6 +23386,14 @@
           }
         }
         syncNoteFormatToolbarForComposer();
+      });
+    }
+    var modelBack = form.querySelector(".note-model-back");
+    if (modelBack && compact) {
+      modelBack.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        compact.click();
       });
     }
     if (modelSearch) {
@@ -23462,6 +23796,7 @@
     if (menu) {
       menu.classList.add("hidden");
       menu.classList.remove("note-pane-switch-menu--picker");
+      menu.classList.remove("is-from-right");
     }
     if (btn) {
       btn.classList.remove("is-open");
@@ -23501,10 +23836,27 @@
       btn.classList.toggle("is-private-chat", priv);
       if (priv) btn.title = title + " — личный чат";
     }
-    var canSwitch = notePaneSwitchEnabled();
+    var canSwitch = notePaneSwitchEnabled() || (noteSheetState.rightMode === "discussion" && noteChatsEnabled());
     if (btn) {
       btn.disabled = !canSwitch;
       btn.classList.toggle("note-pane-switch--plain", !canSwitch);
+    }
+    var sub = document.getElementById("note-discussion-subtitle");
+    if (sub) {
+      var subText = "";
+      if (noteSheetState.rightMode === "discussion" && noteChatsEnabled()) {
+        var cur = currentDiscussChatId();
+        var chatObj = cur && cur > 0 ? noteChatById(cur) || {} : {};
+        var members = ((wrap && wrap._noteMembers) || []).length;
+        if (cur === COMMENTS_CHAT_ID) subText = "Участники заметки · без ИИ";
+        else if (chatObj.visibility === "private" || (cur === 0 && wrap && wrap._newChatVisibility === "private")) {
+          subText = "Личный · видите только вы";
+        } else {
+          subText = "Общий чат" + (members > 1 ? " · " + members + " " + (members % 10 >= 2 && members % 10 <= 4 && (members % 100 < 12 || members % 100 > 14) ? "участника" : members % 10 === 1 && members % 100 !== 11 ? "участник" : "участников") : "");
+        }
+      }
+      sub.textContent = subText;
+      sub.classList.toggle("hidden", !subText);
     }
     syncNotePaneModeClass();
   }
@@ -23769,14 +24121,16 @@
     });
   }
 
-  function toggleNotePaneSwitchMenu() {
+  function toggleNotePaneSwitchMenu(opts) {
     if (!notePaneSwitchEnabled()) return;
     var menu = document.getElementById("note-pane-switch-menu");
     var btn = document.getElementById("note-discussion-title");
     if (!menu || !btn) return;
     var open = menu.classList.contains("hidden");
     if (open) {
+      closeNoteChatsMenu();
       renderNotePaneSwitchMenu();
+      menu.classList.toggle("is-from-right", !!(opts && opts.fromRight));
       menu.classList.remove("hidden");
       btn.classList.add("is-open");
       btn.setAttribute("aria-expanded", "true");
@@ -25143,7 +25497,9 @@
     btn.addEventListener("click", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      toggleNotePaneSwitchMenu();
+      // В обсуждении стрелка у названия — список чатов; на листе — переключатель листов.
+      if (noteSheetState.rightMode === "discussion" && noteChatsEnabled()) toggleNoteChatsMenu();
+      else toggleNotePaneSwitchMenu();
     });
     document.addEventListener("click", function (e) {
       var wrap = document.querySelector(".note-pane-switch-wrap");
@@ -25171,7 +25527,7 @@
       newCtxBtn.addEventListener("click", function (e) {
         e.preventDefault();
         e.stopPropagation();
-        if (noteChatsEnabled()) toggleNoteChatsMenu();
+        if (noteChatsEnabled()) toggleNotePaneSwitchMenu({ fromRight: true });
         else clearGptDiscussionContext();
       });
       document.addEventListener("click", function (e) {
@@ -25197,6 +25553,28 @@
         }
         if (document.getElementById("note-link-overlay") &&
             !document.getElementById("note-link-overlay").classList.contains("hidden")) {
+          return;
+        }
+        // Esc закрывает открытое меню, а не всё обсуждение.
+        var paneMenu = document.getElementById("note-pane-switch-menu");
+        if (paneMenu && !paneMenu.classList.contains("hidden")) {
+          closeNotePaneSwitchMenu();
+          e.preventDefault();
+          return;
+        }
+        if (document.querySelector("#note-paie-reply-form .note-paie-menu:not(.hidden), #note-paie-plus-menu:not(.hidden)")) {
+          closeNoteComposerMenus();
+          e.preventDefault();
+          return;
+        }
+        if (document.querySelector(".note-discuss-menu:not(.hidden)")) {
+          closeNoteAnswerMenu();
+          e.preventDefault();
+          return;
+        }
+        if (noteDict && noteDict.target === "composer") {
+          cancelNoteDictation();
+          e.preventDefault();
           return;
         }
         closeNoteDiscussion();
@@ -25786,9 +26164,13 @@
   }
 
   function closeNoteAnswerMenu() {
+    document.querySelectorAll(".note-discuss-msg.is-pressed").forEach(function (m) {
+      m.classList.remove("is-pressed");
+    });
     document.querySelectorAll(".note-discuss-menu").forEach(function (menu) {
       menu.classList.add("hidden");
       menu.classList.remove("is-placed");
+      menu.classList.remove("is-sheet");
       menu.style.top = "";
       menu.style.left = "";
       menu.style.right = "";
@@ -27059,8 +27441,34 @@
     item.setAttribute("data-comment-id", String(c.id));
     var role = document.createElement("p");
     role.className = "note-discuss-role";
-    role.textContent = discussionAuthorLabel(c);
+    var authorLabel = discussionAuthorLabel(c);
+    if (isGpt) {
+      var em = document.createElement("em");
+      em.textContent = "Ассистент";
+      role.appendChild(em);
+      if (authorLabel && !/^gpt$/i.test(authorLabel)) role.appendChild(document.createTextNode(" · " + authorLabel));
+    } else if (isResearch) {
+      var emR = document.createElement("em");
+      emR.textContent = "Исследование";
+      role.appendChild(emR);
+    } else {
+      role.textContent = authorLabel;
+    }
     item.appendChild(role);
+    // Аватар: у ИИ — фиолетовый ✨, у коллег — буква имени.
+    if (assistant || !mine) {
+      var av = document.createElement("span");
+      av.className = "note-discuss-av" + (assistant ? " is-ai" : "");
+      if (assistant) av.innerHTML = DISCUSS_ICONS.spark;
+      else {
+        var nm = String(authorLabel || "?").replace(/^@/, "");
+        av.textContent = (nm.charAt(0) || "?").toUpperCase();
+        var hue = 0;
+        for (var hi = 0; hi < nm.length; hi++) hue = (hue * 31 + nm.charCodeAt(hi)) % 360;
+        av.style.background = "hsl(" + hue + " 55% 42%)";
+      }
+      item.appendChild(av);
+    }
     var quoteSplit = splitDiscussQuote((c && c.quote) || "");
     var quoteText = String(quoteSplit.text || "").trim();
     var bodyText = discussDisplayBody(String((c && c.body) || ""), quoteText);
@@ -27093,16 +27501,42 @@
       bubble.appendChild(textBody);
     }
     renderDiscussAttachments(bubble, attachments);
+    if (assistant && c && c.id) appendAiEditsInfo(bubble, c.id);
     if (bubble.childNodes.length) item.appendChild(bubble);
+    var ts = Date.parse((c && c.created_at) || "");
+    if (ts) {
+      var time = document.createElement("span");
+      time.className = "note-discuss-time";
+      time.textContent = new Date(ts).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+      item.appendChild(time);
+    }
     if (String((c && c.body) || "").trim() || attachments.length) {
       var actions = document.createElement("div");
       actions.className = "note-discuss-actions";
+      // Быстрые действия при наведении (десктоп); на телефоне — долгое нажатие.
+      [["reply", "reply", "Ответить"], ["into-note", "note", "В заметку"], ["task", "task", "Создать задачу"]].forEach(function (q) {
+        var qb = document.createElement("button");
+        qb.type = "button";
+        qb.className = "note-discuss-quick";
+        qb.setAttribute("data-quick", q[0]);
+        qb.setAttribute("aria-label", q[2]);
+        qb.title = q[2];
+        qb.innerHTML = discussMenuIcon(q[1]);
+        qb.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var target = menu.querySelector('[data-answer-action="' + q[0] + '"]');
+          if (target) target.click();
+        });
+        actions.appendChild(qb);
+      });
       var more = document.createElement("button");
       more.type = "button";
       more.className = "note-discuss-more";
-      more.setAttribute("aria-label", "Действия");
+      more.setAttribute("aria-label", "Ещё");
+      more.title = "Ещё";
       more.setAttribute("aria-expanded", "false");
-      more.textContent = "···";
+      more.innerHTML = DISCUSS_ICONS.dots;
       var menu = document.createElement("div");
       menu.className = "note-discuss-menu hidden";
       menu.innerHTML =
@@ -27117,6 +27551,7 @@
       actions.appendChild(menu);
       bindNoteAnswerMenu(more, menu, c);
       item.appendChild(actions);
+      bindDiscussLongPress(item, more, menu);
     }
     item.addEventListener("click", function (e) {
       var link = e.target && e.target.closest && e.target.closest("a[href]");
@@ -27141,6 +27576,153 @@
       revealNoteDiscussionTopic(c, { fromDiscussion: true });
     });
     return item;
+  }
+
+  // Телефон: долгое нажатие на сообщение — шторка с действиями.
+  function bindDiscussLongPress(item, more, menu) {
+    var timer = null;
+    var sx = 0;
+    var sy = 0;
+    item.addEventListener(
+      "touchstart",
+      function (e) {
+        if (e.touches.length !== 1) return;
+        if (e.target.closest && e.target.closest("a, button, .note-discuss-edits")) return;
+        sx = e.touches[0].clientX;
+        sy = e.touches[0].clientY;
+        clearTimeout(timer);
+        timer = setTimeout(function () {
+          timer = null;
+          item._longPressed = true;
+          try {
+            if (navigator.vibrate) navigator.vibrate(10);
+            if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
+              Telegram.WebApp.HapticFeedback.impactOccurred("medium");
+            }
+          } catch (_) {}
+          closeNoteAnswerMenu();
+          menu.classList.add("is-sheet");
+          menu.classList.remove("hidden");
+          more.setAttribute("aria-expanded", "true");
+          item.classList.add("is-pressed");
+        }, 450);
+      },
+      { passive: true }
+    );
+    function cancel(e) {
+      if (!timer) return;
+      if (e && e.touches && e.touches[0]) {
+        var dx = Math.abs(e.touches[0].clientX - sx);
+        var dy = Math.abs(e.touches[0].clientY - sy);
+        if (dx < 8 && dy < 8) return;
+      }
+      clearTimeout(timer);
+      timer = null;
+    }
+    item.addEventListener("touchmove", cancel, { passive: true });
+    item.addEventListener("touchend", function () {
+      cancel();
+    });
+    item.addEventListener("contextmenu", function (e) {
+      if (item._longPressed) e.preventDefault();
+    });
+    item.addEventListener(
+      "click",
+      function (e) {
+        if (!item._longPressed) return;
+        item._longPressed = false;
+        e.preventDefault();
+        e.stopPropagation();
+      },
+      true
+    );
+  }
+
+  function discussDayLabel(ts) {
+    var d = new Date(ts);
+    var today = new Date();
+    var y = new Date();
+    y.setDate(today.getDate() - 1);
+    if (d.toDateString() === today.toDateString()) return "Сегодня";
+    if (d.toDateString() === y.toDateString()) return "Вчера";
+    return d.toLocaleDateString("ru-RU", d.getFullYear() === today.getFullYear()
+      ? { day: "numeric", month: "long" }
+      : { day: "numeric", month: "long", year: "numeric" });
+  }
+
+  function discussAuthorKey(c) {
+    if (isAssistantComment(c)) return "ai:" + String((c && c.author_name) || "") + ":" + String((c && c.prefix) || "");
+    if (isMineDiscussionComment(c)) return "me";
+    return "u:" + String((c && (c.author_user_id || c.author_username || c.author_name)) || "?");
+  }
+
+  // Пустой чат: подсказки по заметке — нажатие подставляет запрос в поле.
+  function renderDiscussEmptyState(chatNow) {
+    var box = document.createElement("div");
+    box.className = "note-discussion-empty note-discuss-empty";
+    if (chatNow === COMMENTS_CHAT_ID) {
+      box.innerHTML = '<span class="note-discuss-empty-ico is-people">' + DISCUSS_ICONS.people + "</span>";
+      var h = document.createElement("h4");
+      h.textContent = "Комментариев пока нет";
+      var p = document.createElement("p");
+      p.textContent = "Их видят все участники заметки. ИИ здесь не отвечает.";
+      box.appendChild(h);
+      box.appendChild(p);
+      return box;
+    }
+    box.innerHTML = '<span class="note-discuss-empty-ico">' + DISCUSS_ICONS.spark + "</span>";
+    var title = document.createElement("h4");
+    title.textContent = "Спросите про эту заметку";
+    var hint = document.createElement("p");
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var shared =
+      chatNow === 0
+        ? !(wrap && wrap._newChatVisibility === "private")
+        : chatNow !== null && (noteChatById(chatNow) || {}).visibility !== "private";
+    hint.textContent =
+      "ИИ видит текст и таблицы заметки и может их править." + (shared ? " Чат видят все участники." : "");
+    box.appendChild(title);
+    box.appendChild(hint);
+    var html = "";
+    try {
+      var left = getLeftNoteRichEditor();
+      html = left && typeof left.getHtml === "function" ? left.getHtml() : "";
+    } catch (_) {}
+    var sugg = ["Сделай саммари", "Найди задачи и сроки", "Что упущено?"];
+    if (/<table/i.test(html)) sugg.push("Проверь цифры в таблице");
+    else sugg.push("Предложи следующие шаги");
+    var chips = document.createElement("div");
+    chips.className = "note-discuss-sugg";
+    sugg.forEach(function (t) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = t;
+      b.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var ed = noteGptEditor();
+        if (!ed) return;
+        ed.textContent = t;
+        try {
+          syncGptEditorEmpty(ed);
+          autosizeNoteComposer(ed);
+        } catch (_) {}
+        try {
+          ed.focus();
+          var sel = window.getSelection();
+          var range = document.createRange();
+          range.selectNodeContents(ed);
+          range.collapse(false);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        } catch (_) {}
+        syncNotePaieReplyForm();
+      });
+      chips.appendChild(b);
+    });
+    box.appendChild(chips);
+    void wrap;
+    return box;
   }
 
   function renderNotePaieThread(comments, kind, itemId) {
@@ -27224,19 +27806,31 @@
         !gptBusy &&
         !researchRunning
       ) {
-        var empty = document.createElement("p");
-        empty.className = "note-discussion-empty";
-        empty.textContent =
-          chatNow === COMMENTS_CHAT_ID
-            ? "Комментариев пока нет. Их видят все участники заметки"
-            : chatNow === null
-              ? "Задайте вопрос или оставьте комментарий"
-              : "Задайте вопрос ИИ или напишите сообщение";
-        list.appendChild(empty);
+        list.appendChild(renderDiscussEmptyState(chatNow));
       } else {
         var cut = gptContextCutId();
+        var prevDay = "";
+        var prevRow = null;
         rows.forEach(function (c, idx) {
+          var ts = Date.parse((c && c.created_at) || "") || 0;
+          if (ts) {
+            var dayKey = new Date(ts).toDateString();
+            if (dayKey !== prevDay) {
+              var day = document.createElement("div");
+              day.className = "note-discuss-day";
+              day.textContent = discussDayLabel(ts);
+              list.appendChild(day);
+              prevDay = dayKey;
+              prevRow = null;
+            }
+          }
           var msg = renderDiscussionMessage(c);
+          // Подряд от одного автора (в пределах 10 минут) — без повторного имени и аватара.
+          if (prevRow && discussAuthorKey(prevRow) === discussAuthorKey(c)) {
+            var pts = Date.parse((prevRow && prevRow.created_at) || "") || 0;
+            if (!ts || !pts || ts - pts < 10 * 60 * 1000) msg.classList.add("is-cont");
+          }
+          prevRow = c;
           if (cut && Number(c.id) <= cut) msg.classList.add("is-ctx-stale");
           list.appendChild(msg);
           var next = rows[idx + 1];
@@ -27707,8 +28301,9 @@
         : isCustomAskMode(mode)
           ? mode
           : "gpt";
-    // В «Комментариях» пишут только текст.
+    // В «Комментариях» пишут только текст; в чатах с ИИ режима «без ИИ» больше нет.
     if (isCommentsChatActive()) next = "comment";
+    else if (next === "comment" && noteChatsEnabled()) next = "gpt";
     var modeChanged = next !== prev;
     if (wrap) wrap._askMode = next;
     // Не сбрасывать выбранную модель при каждом ensureNotePaieThread —
@@ -27739,8 +28334,7 @@
       form.classList.toggle("is-gpt-mode", isChatAskMode(current));
       form.classList.toggle("is-research-mode", current === "research");
       form.classList.toggle("is-comment-mode", current === "comment");
-      var compactLabel = form.querySelector(".note-paie-mode-compact-label");
-      if (compactLabel) compactLabel.textContent = noteAskModeLabel(current);
+      syncComposerModeChip();
       if (current === "comment") showPlusMenuPage("root");
     }
     var input = document.getElementById("note-paie-reply-input");
@@ -28018,20 +28612,26 @@
     if (!btn) return;
     var on = noteChatsEnabled();
     btn.classList.toggle("is-chats", on);
-    var label = on ? "Чаты" : "Новый контекст GPT";
+    // Чаты открываются из названия; кнопка справа — листы заметки.
+    var label = on ? "Листы заметки" : "Новый контекст GPT";
     var unread = on ? noteChatsUnreadTotal() : 0;
     var badge = btn.querySelector(".note-chats-badge");
-    if (unread && !badge) {
-      badge = document.createElement("span");
-      badge.className = "note-chats-badge";
-      badge.setAttribute("aria-hidden", "true");
-      btn.appendChild(badge);
+    if (badge) badge.classList.add("hidden");
+    var title = document.getElementById("note-discussion-title");
+    var titleBadge = title && title.querySelector(".note-title-unread");
+    if (title && unread && !titleBadge) {
+      titleBadge = document.createElement("span");
+      titleBadge.className = "note-title-unread";
+      titleBadge.setAttribute("aria-hidden", "true");
+      var chev = title.querySelector(".note-pane-switch-chevron");
+      if (chev && chev.parentNode) chev.parentNode.insertBefore(titleBadge, chev);
+      else title.appendChild(titleBadge);
     }
-    if (badge) {
-      badge.textContent = unread > 99 ? "99+" : String(unread);
-      badge.classList.toggle("hidden", !unread);
+    if (titleBadge) {
+      titleBadge.textContent = unread > 99 ? "99+" : String(unread);
+      titleBadge.classList.toggle("hidden", !unread || noteSheetState.rightMode !== "discussion");
     }
-    if (unread) label += ": непрочитанных " + unread;
+    if (title) title.setAttribute("aria-label", unread ? "Чаты: непрочитанных " + unread : "Чаты");
     btn.setAttribute("aria-label", label);
     btn.title = label;
   }
@@ -28173,6 +28773,11 @@
     var backdrop = document.getElementById("note-chats-backdrop");
     var btn = document.getElementById("note-discussion-new-ctx");
     if (btn) btn.setAttribute("aria-expanded", "false");
+    var titleBtn = document.getElementById("note-discussion-title");
+    if (titleBtn && noteSheetState.rightMode === "discussion") {
+      titleBtn.classList.remove("is-open");
+      titleBtn.setAttribute("aria-expanded", "false");
+    }
     if (!menu || menu.classList.contains("hidden")) return;
     menu.classList.remove("is-open");
     if (backdrop) backdrop.classList.remove("is-open");
@@ -28590,6 +29195,26 @@
     }
   }
 
+  // Список чатов — выпадающим меню под названием, в пределах панели обсуждения.
+  function placeNoteChatsDropdown(menu) {
+    var title = document.getElementById("note-discussion-title");
+    var sheet = document.querySelector("#note-discussion-overlay .note-discussion-sheet");
+    var head = document.querySelector("#note-discussion-overlay .note-discussion-header");
+    if (!menu || !title || !sheet) return;
+    var sr = sheet.getBoundingClientRect();
+    var tr = title.getBoundingClientRect();
+    var hr = head ? head.getBoundingClientRect() : tr;
+    var w = Math.min(340, sr.width - 16);
+    var left = tr.left + tr.width / 2 - w / 2;
+    left = Math.max(sr.left + 8, Math.min(left, sr.right - w - 8));
+    menu.style.width = Math.round(w) + "px";
+    menu.style.left = Math.round(left) + "px";
+    menu.style.top = Math.round(hr.bottom + 6) + "px";
+    menu.style.maxHeight = Math.max(200, Math.round(window.innerHeight - hr.bottom - 24)) + "px";
+    title.classList.add("is-open");
+    title.setAttribute("aria-expanded", "true");
+  }
+
   function toggleNoteChatsMenu() {
     var els = noteChatsDrawerEls();
     var menu = els.menu;
@@ -28603,8 +29228,11 @@
     }
     clearTimeout(menu._hideTimer);
     renderNoteChatsMenu();
+    menu.classList.add("is-dropdown");
+    els.backdrop.classList.add("is-dropdown");
     menu.classList.remove("hidden");
     els.backdrop.classList.remove("hidden");
+    placeNoteChatsDropdown(menu);
     // Следующий кадр — чтобы сработал переход выезда.
     requestAnimationFrame(function () {
       menu.classList.add("is-open");
@@ -28930,6 +29558,17 @@
     var kbEarly = discussionKnowledgeFields();
     wrap._gptBusy = true;
     wrap._gptPhase = "sending";
+    var gptReq = { stopped: false };
+    wrap._gptReq = gptReq;
+    function releaseGptBusy() {
+      var lw = document.getElementById("note-editor-more-wrap");
+      if (lw && String(lw._shareId) === String(itemId) && lw._gptReq === gptReq) {
+        lw._gptBusy = false;
+        lw._gptPhase = "";
+        lw._gptReq = null;
+      }
+    }
+    var editRec = null;
     wrap._discussionPinId = null;
     beginNoteAgentSession(kind, itemId, agentId === "gpt" ? "gpt" : agentId, sessionTitle);
     syncNotePaieReplyForm(true);
@@ -29028,9 +29667,14 @@
           doc_sheet_id: docView ? docView.sheet_id : undefined,
         }),
       });
+      if (gptReq.stopped) {
+        var stopErr = new Error("stopped");
+        stopErr.leoStopped = true;
+        throw stopErr;
+      }
       if (res && res.note_edits && isDiscussionTargetActive(kind, itemId)) {
         try {
-          applyNoteAiEdits(res.note_edits);
+          editRec = applyNoteAiEdits(res.note_edits);
         } catch (err) {
           console.warn("applyNoteAiEdits", err);
           showNoteToast("Не удалось применить правки ИИ");
@@ -29077,20 +29721,20 @@
         }
       );
       if (gptSaved && gptSaved.thread) upsertChatThreadCache(gptSaved.thread);
-      var liveWrap = document.getElementById("note-editor-more-wrap");
-      if (liveWrap && String(liveWrap._shareId) === String(itemId)) {
-        liveWrap._gptBusy = false;
-        liveWrap._gptPhase = "";
+      if (editRec && gptSaved && gptSaved.comment && gptSaved.comment.id) {
+        rememberAiEditRecord(gptSaved.comment.id, editRec);
       }
+      releaseGptBusy();
       notifyAgentReplyArrived(kind, itemId, agentId === "gpt" ? "gpt" : agentId, sessionTitle);
       clearNoteComposerCommentTarget();
       if (isViewingNoteDiscussion(kind, itemId)) await refreshNoteCommentsList();
     } catch (e) {
       endNoteAgentSession(kind, itemId);
       var liveErr = document.getElementById("note-editor-more-wrap");
-      if (liveErr && String(liveErr._shareId) === String(itemId)) {
-        liveErr._gptBusy = false;
-        liveErr._gptPhase = "";
+      releaseGptBusy();
+      if (e && e.leoStopped) {
+        if (isViewingNoteDiscussion(kind, itemId)) await refreshNoteCommentsList();
+        return;
       }
       if (isViewingNoteDiscussion(kind, itemId) || (liveErr && String(liveErr._shareId) === String(itemId))) {
         alert(e.message || String(e));
@@ -29100,14 +29744,30 @@
       }
     } finally {
       var liveFinally = document.getElementById("note-editor-more-wrap");
-      if (liveFinally && String(liveFinally._shareId) === String(itemId)) {
-        liveFinally._gptBusy = false;
-        liveFinally._gptPhase = "";
+      var mine = !!(liveFinally && liveFinally._gptReq === gptReq);
+      releaseGptBusy();
+      if (mine || !(liveFinally && liveFinally._gptBusy)) {
+        var leftover = document.getElementById("note-discuss-pending");
+        if (leftover && leftover.parentNode) leftover.parentNode.removeChild(leftover);
       }
-      var leftover = document.getElementById("note-discuss-pending");
-      if (leftover && leftover.parentNode) leftover.parentNode.removeChild(leftover);
       syncNotePaieReplyForm();
     }
+  }
+
+  // «■»: ответ ИИ больше не ждём — правки не применяются, ответ не сохраняется.
+  function stopNoteGptAnswer() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || !wrap._gptBusy) return;
+    if (wrap._gptReq) wrap._gptReq.stopped = true;
+    wrap._gptBusy = false;
+    wrap._gptPhase = "";
+    wrap._gptReq = null;
+    var pend = document.getElementById("note-discuss-pending");
+    if (pend && pend.parentNode) pend.parentNode.removeChild(pend);
+    var list = document.getElementById("note-discussion-messages");
+    if (list) list._renderFp = null;
+    syncNotePaieReplyForm();
+    showNoteToast("Ответ остановлен");
   }
 
   async function submitNoteFooterComment(text) {
@@ -29242,10 +29902,12 @@
       var canLaunchResearch = noteAskMode() === "research";
       var ready =
         !busy && (hasText || hasFiles || hasCanvasSel || canLaunchPaie || canLaunchResearch);
-      submit.disabled = !ready;
+      // Пока ИИ отвечает — кнопка «■» останавливает ответ.
+      submit.disabled = !ready && !gptBusy;
       submit.classList.toggle("is-ready", ready);
+      submit.classList.toggle("is-stop", gptBusy);
       var label = "Отправить";
-      if (gptBusy) label = "GPT отвечает…";
+      if (gptBusy) label = "Остановить ответ";
       else if (paieRunning) label = "CHAIR отвечает…";
       else if (researchRunning) label = "Research ищет…";
       else if (isChatAskMode(noteAskMode())) label = "Спросить " + noteAskModeLabel(noteAskMode());
