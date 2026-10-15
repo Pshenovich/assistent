@@ -88,3 +88,30 @@ def test_show_cards_for_task(monkeypatch):
     pub = g.public_action(g.get_action(ctx.actions[0]), viewer_uid=88)
     assert pub["kind"] == "show_task" and pub["open"] == {"type": "task", "id": str(t["id"]), "date": "2026-10-16", "calendar_id": None}
     assert "10:00" in pub["when"]
+
+
+def test_auto_cards_when_model_skips_card_tools(monkeypatch):
+    from zoneinfo import ZoneInfo
+
+    import assistant.services.calendar as cal
+
+    tz = ZoneInfo("Europe/Moscow")
+    monkeypatch.setattr(cal, "_tz_for", lambda uid: tz)
+    ctx = g.GptCalendarContext(uid=99)
+    starts = [f"2026-10-19T{h:02d}:{m:02d}:00+03:00" for h in range(10, 18) for m in (0, 30)]
+    ctx.slot_offers.append({"date": "2026-10-19", "duration_min": 45, "people": ["Ульяна", "Артём"], "starts": starts})
+    g.finalize_auto_cards(ctx, "Свободно: 11:00–11:45, 14:30–15:15 и 16:00–16:45.")
+    pubs = [g.public_action(g.get_action(i)) for i in ctx.actions]
+    assert [p["kind"] for p in pubs] == ["slot", "slot", "slot"]
+    assert pubs[0]["when"].startswith("пн 19 окт, 11:00") and "Ульяна" in pubs[0]["detail"]
+
+    ctx2 = g.GptCalendarContext(uid=99)
+    monkeypatch.setattr(g, "_card_for", lambda c, it: ("show_event", it["id"], {"when": "", "detail": "", "target_id": it["id"], "date": ""}))
+    ctx2.seen_items += [{"type": "event", "id": "e1", "title": "Планёрка"}, {"type": "event", "id": "e2", "title": "1:1 с Анной"}]
+    g.finalize_auto_cards(ctx2, "Завтра у вас Планёрка в 10:00.")
+    assert [g.get_action(i)["title"] for i in ctx2.actions] == ["e1"]
+
+    ctx3 = g.GptCalendarContext(uid=99, wrote=True)
+    ctx3.seen_items.append({"type": "event", "id": "e1", "title": "Планёрка"})
+    g.finalize_auto_cards(ctx3, "Создал встречу, Планёрка не мешает.")
+    assert ctx3.actions == []
