@@ -15522,3 +15522,12 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 ::highlight(leo-flash) { background-color: rgba(250, 204, 21, 0.45); color: inherit; }
 .note-discuss-bubble.is-flash, .is-flash { box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.7); border-radius: 8px; }
 .note-discuss-reply.is-nav { cursor: pointer; }
+
+/* Вкладки «Заметки / Чаты / Транскрипции» всплывают при прокрутке вверх */
+#panel-notes .notes-subtabs-row.is-floating { position: fixed; top: 0; z-index: 60; margin: 0; padding-top: calc(var(--safe-top, 0px) + 8px); padding-bottom: 8px; background: var(--bg, #0a0a0a); box-sizing: border-box; transform: translateY(-110%); transition: transform 0.22s ease; pointer-events: none; }
+#panel-notes .notes-subtabs-row.is-floating.is-shown { transform: none; pointer-events: auto; box-shadow: 0 10px 18px -12px rgba(0, 0, 0, 0.6); }
+@media (prefers-reduced-motion: reduce) { #panel-notes .notes-subtabs-row.is-floating { transition: none; } }
+
+/* Цитата в поле ввода переносится, а не уходит за правый край */
+#note-paie-reply-form .note-gpt-quote-chip { display: inline; white-space: normal; overflow-wrap: anywhere; max-width: none; border-radius: 8px; padding: 1px 6px; line-height: 22px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+#note-paie-reply-form .note-paie-reply-target-quote { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
