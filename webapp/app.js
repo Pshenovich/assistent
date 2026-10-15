@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261015-ph1";
+  var WEBAPP_BUILD = "20261016-gcal1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261015-ph1";
+  const NOTE_EDITOR_ASSET_V = "20261016-gcal1";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -18781,6 +18781,139 @@
     bubble.appendChild(box);
   }
 
+  // Действия ИИ с календарём: карточки под ответом (создано · Отменить; удалить? · Удалить / Оставить).
+  var calActionsCache = {};
+  var calActionsPending = {};
+  var calActionsTimer = null;
+
+  function rememberCalendarActions(list) {
+    (list || []).forEach(function (a) {
+      if (a && a.id) calActionsCache[a.id] = a;
+    });
+  }
+
+  function fetchCalendarActionsSoon(ids) {
+    ids.forEach(function (id) {
+      calActionsPending[id] = true;
+    });
+    clearTimeout(calActionsTimer);
+    calActionsTimer = setTimeout(function () {
+      var want = Object.keys(calActionsPending).filter(function (id) {
+        return !calActionsCache[id];
+      });
+      calActionsPending = {};
+      if (!want.length) return;
+      apiFetch("/gpt/calendar-actions/status", { method: "POST", body: JSON.stringify({ ids: want }) })
+        .then(function (res) {
+          rememberCalendarActions((res && res.actions) || []);
+          want.forEach(function (id) {
+            if (!calActionsCache[id]) calActionsCache[id] = { id: id, missing: true };
+          });
+          refreshDiscussFeedNow();
+        })
+        .catch(function () {});
+    }, 120);
+  }
+
+  var CAL_KIND_UI = {
+    event_create: ["cal", "Встреча", "Создана встреча"],
+    event_update: ["clock", "Встреча", "Изменена встреча"],
+    task_create: ["taskBox", "Задача", "Задача"],
+    reminder_create: ["bell", "Напоминание", "Напоминание"],
+    event_delete: ["trash", "Встреча", "Удалить встречу"],
+    task_delete: ["trash", "Задача", "Удалить задачу"],
+    reminder_delete: ["trash", "Напоминание", "Удалить напоминание"],
+  };
+
+  function calActionLine(a) {
+    var ui = CAL_KIND_UI[a.kind] || ["cal", "", ""];
+    var st = a.status;
+    var head = ui[2];
+    if (st === "undone") head = "Отменено";
+    else if (st === "applied") head = "Удалено";
+    else if (st === "dismissed") head = "Оставлено";
+    var parts = [head + " «" + (a.title || ui[1]) + "»"];
+    if (a.when) parts.push(a.when);
+    if (a.detail && st !== "undone" && st !== "applied" && st !== "dismissed" && a.detail !== "удалить?") parts.push(a.detail);
+    return { icon: st === "proposed" ? "trash" : ui[0], text: parts.join(" · ") + (st === "proposed" ? "?" : "") };
+  }
+
+  function calActionOp(a, op) {
+    return apiFetch("/gpt/calendar-actions/" + encodeURIComponent(a.id) + "/" + op, { method: "POST" })
+      .then(function (res) {
+        if (res && res.action) calActionsCache[a.id] = res.action;
+        refreshDiscussFeedNow();
+        try {
+          if (typeof loadActual === "function") loadActual({ silent: true });
+        } catch (_) {}
+        if (op === "undo") showNoteToast("Отменено");
+        else if (op === "apply") showNoteToast("Удалено");
+      })
+      .catch(function (e) {
+        showNoteToast((e && e.message) || "Не получилось");
+      });
+  }
+
+  function appendCalendarActions(bubble, ids) {
+    if (!ids || !ids.length) return;
+    var missing = ids.filter(function (id) {
+      return !calActionsCache[id];
+    });
+    if (missing.length) fetchCalendarActionsSoon(missing);
+    var box = document.createElement("div");
+    box.className = "note-discuss-cal";
+    ids.forEach(function (id) {
+      var a = calActionsCache[id];
+      if (!a || a.missing) return;
+      var line = calActionLine(a);
+      var row = document.createElement("div");
+      var faded = a.status === "undone" || a.status === "applied" || a.status === "dismissed";
+      row.className = "note-discuss-cal-item" + (faded ? " is-faded" : "") + (a.status === "proposed" ? " is-proposed" : "");
+      var info = document.createElement("div");
+      info.className = "note-discuss-cal-info";
+      info.innerHTML = DISCUSS_ICONS[line.icon] || DISCUSS_ICONS.cal;
+      var t = document.createElement("span");
+      t.textContent = line.text;
+      info.appendChild(t);
+      row.appendChild(info);
+      if (a.mine) {
+        var acts = document.createElement("div");
+        acts.className = "note-discuss-edits-actions";
+        function btn(label, cls, fn) {
+          var b = document.createElement("button");
+          b.type = "button";
+          b.className = "note-discuss-edits-btn" + (cls ? " " + cls : "");
+          b.textContent = label;
+          b.addEventListener("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            b.disabled = true;
+            fn();
+          });
+          acts.appendChild(b);
+        }
+        if (a.status === "done") {
+          if (a.link) btn("Открыть", "", function () {
+            openExternal(a.link);
+          });
+          btn("Отменить", "", function () {
+            calActionOp(a, "undo");
+          });
+        } else if (a.status === "proposed") {
+          btn("Удалить", "is-danger", function () {
+            calActionOp(a, "apply");
+          });
+          btn("Оставить", "", function () {
+            calActionOp(a, "dismiss");
+          });
+        }
+        if (acts.childNodes.length) row.appendChild(acts);
+      }
+      box.appendChild(row);
+    });
+    if (box.childNodes.length) bubble.appendChild(box);
+  }
+
   // «Мои макеты» (свои раскладки слайдов) — общие для всех презентаций пользователя.
   var canvasLayoutsCache = null;
 
@@ -21724,6 +21857,11 @@
     dots: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="6" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18" cy="12" r="1.7"/></svg>',
     grid: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></svg>',
     search: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>',
+    cal: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>',
+    clock: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
+    bell: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20h4"/></svg>',
+    taskBox: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>',
+    trash: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13"/></svg>',
     notePlus: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3H7v18h12V9zM13 3v6h6M13 13v6M10 16h6"/></svg>',
   };
 
@@ -27093,7 +27231,7 @@
 
   function bindNoteAnswerMenu(btn, menu, comment) {
     if (!btn || !menu) return;
-    var text = String((comment && comment.body) || "");
+    var text = stripCalMarker(String((comment && comment.body) || ""));
     var commentId = comment && comment.id;
     btn.addEventListener("click", function (e) {
       e.preventDefault();
@@ -27443,8 +27581,18 @@
     document.addEventListener("pointerdown", onDismiss, true);
   }
 
+  // Ответ ИИ, который действовал в календаре, хранит id действий: «[[leo-cal:id,id]]».
+  var CAL_MARKER_RE = /\n*\[\[leo-cal:([a-z0-9,]+)\]\]\s*$/i;
+  function stripCalMarker(text) {
+    return String(text || "").replace(CAL_MARKER_RE, "");
+  }
+  function calMarkerIds(text) {
+    var m = String(text || "").match(CAL_MARKER_RE);
+    return m ? m[1].split(",").filter(Boolean) : [];
+  }
+
   function discussDisplayBody(body, quote) {
-    var text = String(body || "");
+    var text = stripCalMarker(String(body || ""));
     var q = String(quote || "").trim();
     if (!q || !text) return text;
     // Старые сообщения клали «цитату» прямо в body — убираем из бабла.
@@ -27691,6 +27839,7 @@
     }
     renderDiscussAttachments(bubble, attachments);
     if (assistant && c && c.id) appendAiEditsInfo(bubble, c.id);
+    if (assistant) appendCalendarActions(bubble, calMarkerIds(c && c.body));
     if (bubble.childNodes.length) item.appendChild(bubble);
     // Строка под сообщением: время и «···» напротив него.
     var meta = document.createElement("div");
@@ -29638,7 +29787,7 @@
       });
     var history = [];
     prior.forEach(function (c) {
-      var content = String((c && c.body) || "").trim();
+      var content = stripCalMarker(String((c && c.body) || "")).trim();
       var names = ((c && c.attachments) || [])
         .map(function (a) {
           return a && a.name;
@@ -29903,13 +30052,22 @@
         })
         .filter(Boolean);
       if (!ans) ans = gptFileIds.length ? "📎" : "—";
+      var calActs = (res && res.calendar_actions) || [];
+      if (calActs.length) {
+        rememberCalendarActions(calActs);
+        var calMarker = "\n\n[[leo-cal:" + calActs.map(function (a) { return a.id; }).join(",") + "]]";
+        ans = clipGptCommentBody(ans).slice(0, GPT_COMMENT_BODY_MAX - calMarker.length - 2).replace(/\s+$/, "") + calMarker;
+        try {
+          if (typeof loadActual === "function") loadActual({ silent: true });
+        } catch (_) {}
+      }
       setGptDiscussPhase("saving");
       var gptSaved = await apiFetch(
         "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
         {
           method: "POST",
           body: JSON.stringify({
-            body: clipGptCommentBody(ans),
+            body: calActs.length ? ans : clipGptCommentBody(ans),
             quote: quote,
             prefix: agentPrefix,
             suffix: "",

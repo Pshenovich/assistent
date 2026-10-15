@@ -7068,6 +7068,16 @@ async def miniapp_gpt_chat(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if agent["kind"] not in ("gpt", user_agents.CUSTOM_KIND):
         raise HTTPException(status_code=400, detail="Этот агент запускается из своего режима")
+    # Календарь для ИИ: инструменты работают с календарём спрашивающего (не владельца заметки).
+    from assistant.services import gpt_calendar_tools as gcal_tools
+
+    gcal_ctx = gcal_tools.GptCalendarContext(
+        uid=uid,
+        telegram_username=str(tg_uname or "").strip() or None,
+        display_name=_principal_display_name(principal),
+        sync_task_google=_sync_task_google,
+        notify_task_assignee=_notify_task_assignee,
+    )
     run_model = model or sanitize_openrouter_model_id(str(agent.get("model") or ""))
     if (
         model
@@ -7197,6 +7207,22 @@ async def miniapp_gpt_chat(
             sel_block = web_canvas_lib.selections_prompt_block(canvas_sel_dumps)
             if sel_block:
                 prompt = (prompt.rstrip() + "\n\n" + sel_block).strip()
+        from assistant.integrations.openrouter_client import model_emits_images as _emits_images
+
+        calendar_tools_on = not _emits_images(run_model or "")
+        if calendar_tools_on:
+            cal_addon = gcal_tools.now_prompt_line(uid) + "\n" + gcal_tools.SYSTEM_ADDON
+            if not gcal_tools.has_google_calendar(uid):
+                cal_addon += (
+                    "\nGoogle Календарь у пользователя не подключён: встречи не видны, доступны задачи "
+                    "и напоминания Leo. Если спрашивают про встречи — предложи подключить календарь в Профиле."
+                )
+            system_text = (system_text.rstrip() + "\n\n" + cal_addon).strip() if system_text else cal_addon
+        tool_kwargs: dict[str, Any] = (
+            {"tools": gcal_tools.TOOLS, "tool_runner": gcal_tools.make_runner(gcal_ctx)}
+            if calendar_tools_on
+            else {}
+        )
         try:
             set_openrouter_usage_telegram_user(
                 telegram_user_id=uid,
@@ -7220,9 +7246,15 @@ async def miniapp_gpt_chat(
                 temperature=agent.get("temperature"),
                 web=bool(agent.get("web_search")),
                 max_tokens=16384 if (canvas_enabled or note_edit_enabled) else None,
+                **tool_kwargs,
             )
             if out is None:
                 return None
+            if gcal_ctx.actions:
+                out["calendar_actions"] = [
+                    gcal_tools.public_action(a, viewer_uid=uid)
+                    for a in gcal_tools.actions_by_ids(gcal_ctx.actions)
+                ]
             if note_edit_enabled:
                 # До разбора канваса: его парсер принимает и «голый» JSON.
                 clean_answer, edits = note_edits_lib.parse_blocks(str(out.get("answer") or ""))
@@ -7328,8 +7360,30 @@ async def miniapp_gpt_chat(
     files = out.get("files") if isinstance(out.get("files"), list) else []
     used_model = str(out.get("model") or run_model or "").strip()
     canvas = out.get("canvas") if isinstance(out.get("canvas"), list) else []
+    # Приглашения участникам встреч, которые ИИ создал/изменил (как при создании из календаря).
+    if gcal_ctx.created_events or gcal_ctx.updated_events:
+        try:
+            from assistant.services import meeting_invites as inv
+
+            organizer = principal.user if isinstance(principal.user, dict) else {}
+            for created in gcal_ctx.created_events:
+                await inv.notify_invitees_for_miniapp(
+                    organizer_uid=uid, organizer_user=organizer, result=created
+                )
+            for ev in gcal_ctx.updated_events:
+                prev = {str(e).lower() for e in (ev.get("previous_attendee_emails") or [])}
+                added = [e for e in (ev.get("attendee_emails") or []) if str(e).lower() not in prev]
+                if added:
+                    await inv.notify_invitees_for_miniapp(
+                        organizer_uid=uid, organizer_user=organizer, result=ev, only_emails=added
+                    )
+        except Exception as e:
+            print(f"[gpt_calendar] invite_notify err={e!r}")
     return {
         "answer": str(out.get("answer") or ""),
+        "calendar_actions": (
+            out.get("calendar_actions") if isinstance(out.get("calendar_actions"), list) else []
+        ),
         "bullets": out.get("bullets") if isinstance(out.get("bullets"), list) else [],
         "kb_version": str(out.get("kb_version") or ""),
         "files": files,
@@ -7339,6 +7393,62 @@ async def miniapp_gpt_chat(
         "model": used_model,
         "model_label": gpt_display_label(used_model),
     }
+
+
+class _MiniappCalActionIds(BaseModel):
+    ids: list[str] = []
+
+
+@miniapp_router.post("/gpt/calendar-actions/status")
+async def miniapp_gpt_calendar_actions_status(
+    body: _MiniappCalActionIds,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Карточки действий ИИ с календарём для ответов в обсуждении (видны всем, менять — только автору)."""
+    from assistant.services import gpt_calendar_tools as gcal_tools
+
+    ids = [str(i).strip()[:32] for i in (body.ids or []) if str(i).strip()][:50]
+    rows = await run_in_threadpool(gcal_tools.actions_by_ids, ids)
+    uid = int(principal.telegram_user_id)
+    return {"actions": [gcal_tools.public_action(a, viewer_uid=uid) for a in rows]}
+
+
+@miniapp_router.post("/gpt/calendar-actions/{action_id}/{op}")
+async def miniapp_gpt_calendar_action_op(
+    action_id: str,
+    op: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.services import gpt_calendar_tools as gcal_tools
+
+    uid = int(principal.telegram_user_id)
+    a = await run_in_threadpool(gcal_tools.get_action, action_id)
+    if not a or int(a.get("owner_uid") or 0) != uid:
+        raise HTTPException(status_code=404, detail="Действие не найдено")
+    status = str(a.get("status") or "")
+    try:
+        if op == "undo":
+            if status != "done":
+                return {"action": gcal_tools.public_action(a, viewer_uid=uid)}
+            res = await run_in_threadpool(gcal_tools.undo_action, a)
+            await run_in_threadpool(partial(gcal_tools.set_action_status, action_id, "undone", result=res))
+        elif op == "apply":
+            if status != "proposed":
+                return {"action": gcal_tools.public_action(a, viewer_uid=uid)}
+            res = await run_in_threadpool(gcal_tools.apply_delete, a)
+            await run_in_threadpool(partial(gcal_tools.set_action_status, action_id, "applied", result=res))
+        elif op == "dismiss":
+            if status == "proposed":
+                await run_in_threadpool(gcal_tools.set_action_status, action_id, "dismissed")
+        else:
+            raise HTTPException(status_code=400, detail="Неизвестная операция")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[gpt_calendar] op={op} id={action_id} err={e!r}")
+        raise HTTPException(status_code=502, detail=f"Не получилось: {e}") from e
+    fresh = await run_in_threadpool(gcal_tools.get_action, action_id)
+    return {"action": gcal_tools.public_action(fresh or a, viewer_uid=uid)}
 
 
 def _strip_speaker_labels(text: str) -> str:

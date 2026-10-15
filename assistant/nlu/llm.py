@@ -271,6 +271,9 @@ def _chat_result(
     images: list[dict[str, str]] | None = None,
     files: list[dict[str, str]] | None = None,
     web: bool = False,
+    tools: list[dict[str, Any]] | None = None,
+    tool_runner: Any = None,
+    max_tool_steps: int = 6,
 ) -> tuple[str, list[dict[str, str]], str]:
     from assistant.integrations.openrouter_client import extract_chat_message_media
 
@@ -311,7 +314,10 @@ def _chat_result(
         plugins.append({"id": "web"})
     if plugins:
         payload["plugins"] = plugins
-    data = openrouter_chat_completion(payload, operation=operation, timeout=timeout)
+    if tools and tool_runner is not None:
+        data = _run_tool_loop(payload, tools, tool_runner, operation=operation, timeout=timeout, max_steps=max_tool_steps)
+    else:
+        data = openrouter_chat_completion(payload, operation=operation, timeout=timeout)
     text, out_images = extract_chat_message_media(data)
     if not text and not out_images:
         text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
@@ -321,6 +327,67 @@ def _chat_result(
         sanitize_openrouter_model_id(str((data or {}).get("model") or "")) or run_model
     )
     return text, out_images, used_model
+
+
+def _run_tool_loop(
+    payload: dict[str, Any],
+    tools: list[dict[str, Any]],
+    tool_runner: Any,
+    *,
+    operation: str,
+    timeout: float,
+    max_steps: int = 6,
+) -> dict[str, Any]:
+    """Цикл function calling: модель зовёт инструменты, мы исполняем и возвращаем результат,
+    пока не придёт обычный ответ. Последний шаг — без инструментов, чтобы ответ был всегда."""
+    import json as _json
+
+    messages = list(payload.get("messages") or [])
+    data: dict[str, Any] = {}
+    for step in range(max(1, int(max_steps)) + 1):
+        req = dict(payload)
+        req["messages"] = messages
+        if step < max_steps:
+            req["tools"] = tools
+            req["tool_choice"] = "auto"
+        try:
+            data = openrouter_chat_completion(req, operation=operation, timeout=timeout)
+        except Exception as e:
+            # Модель без поддержки инструментов — отвечаем как раньше, без них.
+            if step == 0:
+                print(f"[tool_loop] tools rejected, retry without err={e!r}")
+                return openrouter_chat_completion(payload, operation=operation, timeout=timeout)
+            raise
+        choice = (data.get("choices") or [{}])[0]
+        message = choice.get("message") if isinstance(choice, dict) else None
+        calls = (message or {}).get("tool_calls") if isinstance(message, dict) else None
+        if not calls:
+            return data
+        messages.append(
+            {
+                "role": "assistant",
+                "content": (message or {}).get("content") or "",
+                "tool_calls": calls,
+            }
+        )
+        for tc in calls:
+            if not isinstance(tc, dict):
+                continue
+            fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+            name = str(fn.get("name") or "").strip()
+            raw_args = fn.get("arguments") or "{}"
+            try:
+                args = _json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
+            except (ValueError, TypeError):
+                args = {}
+            try:
+                result = tool_runner(name, args if isinstance(args, dict) else {})
+            except Exception as e:  # noqa: BLE001
+                result = _json.dumps({"error": str(e)}, ensure_ascii=False)
+            messages.append(
+                {"role": "tool", "tool_call_id": str(tc.get("id") or ""), "content": str(result)}
+            )
+    return data
 
 
 def research_with_web(
@@ -612,6 +679,8 @@ def answer_with_context_result(
     temperature: float | None = None,
     web: bool = False,
     max_tokens: int | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_runner: Any = None,
 ) -> dict[str, Any]:
     from assistant.nlu.ask_context import assemble_ask_messages
 
@@ -645,6 +714,8 @@ def answer_with_context_result(
         files=files,
         web=web,
         max_tokens=max_tokens,
+        tools=tools,
+        tool_runner=tool_runner,
     )
     text = chat_out[0]
     out_images = chat_out[1] if len(chat_out) > 1 else []
