@@ -467,3 +467,27 @@ def copy_sheets(src_note_id: int, dest_note_id: int) -> list[dict[str, Any]]:
         if row:
             copied.append(row)
     return copied
+
+
+def extra_sheet_counts(note_ids: list[Any]) -> dict[int, int]:
+    """Число доп. листов по заметкам (для бейджа на карточке списка)."""
+    ids = []
+    for x in note_ids or []:
+        try:
+            ids.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    if not ids:
+        return {}
+    out: dict[int, int] = {}
+    with _LOCK:
+        conn = _conn()
+        for i in range(0, len(ids), 500):
+            chunk = ids[i : i + 500]
+            q = ",".join("?" * len(chunk))
+            for row in conn.execute(
+                f"SELECT note_id, COUNT(*) AS c FROM note_sheets WHERE note_id IN ({q}) GROUP BY note_id",
+                chunk,
+            ):
+                out[int(row["note_id"])] = int(row["c"])
+    return out

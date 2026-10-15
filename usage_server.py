@@ -8034,6 +8034,23 @@ async def miniapp_notes_bundle(
         for n in local_notes + transcriptions:
             n.setdefault("shared", False)
 
+    def _attach_sheet_counts() -> None:
+        from assistant.stores import note_sheets as note_sheets_store
+
+        counts = note_sheets_store.extra_sheet_counts(
+            [n.get("id") for n in local_notes + transcriptions]
+        )
+        for n in local_notes + transcriptions:
+            try:
+                n["sheets_count"] = 1 + counts.get(int(n.get("id")), 0)
+            except (TypeError, ValueError):
+                n["sheets_count"] = 1
+
+    try:
+        await run_in_threadpool(_attach_sheet_counts)
+    except Exception as e:
+        print(f"[miniapp_notes] sheet_counts_fail err={e!r}")
+
     def _attach_discuss_latest() -> None:
         from assistant.stores import share_comments as share_comments_store
 
