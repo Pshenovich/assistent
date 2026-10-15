@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-notes8";
+  var WEBAPP_BUILD = "20261016-notes11";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-notes8";
+  const NOTE_EDITOR_ASSET_V = "20261016-notes11";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -6143,6 +6143,9 @@
 
   function setTab(name, options) {
     if (name !== "notes" && notesSelect.on) exitNotesSelectMode();
+    if (name !== "notes" && notesSplitCurrentId && isNoteEditorModalOpen()) closeNoteEditorModal();
+    if (name === "notes" && currentTab !== "notes") notesSplitAutoOpened = false;
+    window.setTimeout(syncNotesSplitLayout, 0);
     if (name !== "actual" && document.documentElement.classList.contains("actual-assistant-open")) {
       try {
         closeNoteDiscussion(true);
@@ -16937,6 +16940,16 @@
       addChip(String(tag.name || ""), counts.byId[String(tag.id)] || 0, Number(tag.id));
     });
     if (tags.length && counts.none) addChip("Без проекта", counts.none, "none");
+    var pLabel = document.getElementById("notes-project-btn-label");
+    if (pLabel) {
+      var at = activeNotesProjectTag();
+      pLabel.textContent = notesActiveProjectId === "none" ? "Без проекта" : at ? String(at.name || "") : "Все проекты";
+      var pbtn = document.getElementById("notes-project-btn");
+      if (pbtn) {
+        pbtn.classList.toggle("is-active", !!notesActiveProjectId);
+        pbtn.title = pLabel.textContent;
+      }
+    }
     var manage = document.createElement("button");
     manage.type = "button";
     manage.className = "notes-project-manage";
@@ -19866,7 +19879,7 @@
       !notesPanel.classList.contains("hidden") &&
       (!notesDetail || notesDetail.classList.contains("hidden")) &&
       (!notesRoot || !notesRoot.classList.contains("hidden")) &&
-      !isNoteEditorModalOpen();
+      (!isNoteEditorModalOpen() || document.documentElement.classList.contains("notes-split"));
     setHidden(createBtn, !show);
     if (notesSubTab === "chats") {
       createBtn.setAttribute("aria-label", "Создать чат");
@@ -20688,6 +20701,11 @@
     if (next === "summaries") next = "transcriptions";
     if (next !== notesSubTab && notesSelect.on) exitNotesSelectMode();
     if (next !== notesSubTab) window.setTimeout(scheduleNotesServerSearch, 0);
+    if (next !== notesSubTab && notesSplitCurrentId && isNoteEditorModalOpen()) closeNoteEditorModal();
+    if (next !== notesSubTab) {
+      notesSplitAutoOpened = false;
+      window.setTimeout(syncNotesSplitLayout, 0);
+    }
     var subRow = document.querySelector("#panel-notes .notes-subtabs-row");
     if (subRow && typeof subRow._resetReveal === "function" && next !== notesSubTab) subRow._resetReveal();
     if (notesSubTab === "chats" && next !== "chats") {
@@ -26180,6 +26198,10 @@
 
   function syncNoteDiscussionOpenClass() {
     var open = isNoteDiscussionOpen();
+    if (open && document.documentElement.classList.contains("notes-split")) {
+      setNotesSplitMode("full");
+      syncNotesSplitLayout();
+    }
     document.documentElement.classList.toggle("note-discussion-open", open);
     requestAnimationFrame(positionAiEditBar);
     syncNoteDiscussBadge();
@@ -26195,6 +26217,7 @@
     return (
       isDesktopLayout() &&
       isNoteEditorModalOpen() &&
+      !document.documentElement.classList.contains("notes-split") &&
       wrap &&
       wrap._shareKind &&
       wrap._shareId &&
@@ -26422,6 +26445,8 @@
 
   function openNoteDiscussion(opts) {
     opts = opts || {};
+    // Список + заметка: обсуждение само не открываем — только по «💬» (тогда заметка разворачивается).
+    if (opts.fromDesktopSync && document.documentElement.classList.contains("notes-split")) return;
     bindNoteDiscussionOverlayOnce();
     var wrap = document.getElementById("note-editor-more-wrap");
     if (!wrap || !wrap._shareKind || !wrap._shareId) return;
@@ -32577,10 +32602,12 @@
     }
     onModalSheetClose();
     listShareCtx = null;
+    notesSplitCurrentId = "";
     applyTelegramSafeAreaInsets();
     syncTelegramNativeBack();
     syncAppOverlay();
     syncNotesCreateFab();
+    syncNotesSplitLayout();
     if (notesDataCache) renderNotesPanesFromData(notesDataCache);
     if (knowledgeDataCache) renderKnowledgePaneFromData(knowledgeDataCache);
 
@@ -33269,6 +33296,7 @@
       return noteItemMatchesFilter(n, "local", { skipText: !!transHits });
     });
     if (!searchQ) sortNotesForList(trans);
+    window.setTimeout(syncNotesSplitLayout, 0);
     if (!transAll.length) {
       pt.innerHTML =
         '<p class="muted empty-hint">Транскрипций пока нет. Нажмите «+», чтобы загрузить файл.</p>';
@@ -33665,7 +33693,13 @@
         if (id) toggleNotesSelected(id);
         return;
       }
-      openNoteDetail(n, { isLocal: opts.isLocal !== false });
+      openNoteFromList(n);
+    });
+    card.addEventListener("dblclick", function () {
+      if (notesSelect.on || !notesSplitCapable()) return;
+      setNotesSplitMode("full");
+      syncNotesSplitLayout();
+      window.setTimeout(syncDesktopNoteDiscussion, 300);
     });
     bindNotesCardLongPress(card, n);
     return card;
@@ -33792,11 +33826,11 @@
     }
   }
 
-  function openNotesActionSheet(title, items) {
+  function openNotesActionSheet(title, items, anchor) {
     closeNotesActionSheet();
     var ov = document.createElement("div");
     ov.id = "nl-sheet-overlay";
-    ov.className = "nl-sheet-overlay";
+    ov.className = "nl-sheet-overlay" + (anchor && isDesktopLayout() ? " is-anchored" : "");
     var sheet = document.createElement("div");
     sheet.className = "nl-sheet";
     sheet.setAttribute("role", "menu");
@@ -33840,6 +33874,13 @@
       sheet.appendChild(b);
     });
     ov.appendChild(sheet);
+    if (anchor && isDesktopLayout()) {
+      var ar = anchor.getBoundingClientRect();
+      sheet.style.position = "fixed";
+      sheet.style.top = Math.round(ar.bottom + 6) + "px";
+      sheet.style.left = Math.round(Math.max(8, Math.min(ar.right - 280, window.innerWidth - 288))) + "px";
+      sheet.style.width = "280px";
+    }
     ov.addEventListener("click", function (e) {
       if (e.target === ov) closeNotesActionSheet();
     });
@@ -34019,6 +34060,180 @@
       true
     );
   }
+
+  // ——— Десктоп: список слева, заметка справа; «⤢» — режим как раньше (заметка + обсуждение) ———
+
+  var NOTES_SPLIT_MIN_W = 1100;
+  var NOTES_SPLIT_MODE_LS = "leo_notes_open_mode";
+  var NOTES_SPLIT_LAST_LS = "leo_notes_last_open";
+  var notesSplitCurrentId = "";
+  var notesSplitAutoOpened = false;
+
+  function notesSplitMode() {
+    try {
+      return localStorage.getItem(NOTES_SPLIT_MODE_LS) === "full" ? "full" : "split";
+    } catch (_) {
+      return "split";
+    }
+  }
+
+  function setNotesSplitMode(mode) {
+    try {
+      localStorage.setItem(NOTES_SPLIT_MODE_LS, mode === "full" ? "full" : "split");
+    } catch (_) {}
+  }
+
+  function notesSplitCapable() {
+    return (
+      isDesktopLayout() &&
+      window.innerWidth >= NOTES_SPLIT_MIN_W &&
+      currentTab === "notes" &&
+      (notesSubTab === "notes" || notesSubTab === "transcriptions")
+    );
+  }
+
+  async function openNoteFromList(n) {
+    var id = String(localNoteIdFrom(n) || "");
+    if (!notesSplitCapable() || !id) {
+      openNoteDetail(n, { isLocal: true });
+      return;
+    }
+    if (isNoteEditorModalOpen()) {
+      if (notesSplitCurrentId === id) return;
+      var ok = await handleNoteEditorModalClose();
+      if (!ok) return;
+    }
+    notesSplitCurrentId = id;
+    try {
+      localStorage.setItem(NOTES_SPLIT_LAST_LS, id);
+    } catch (_) {}
+    syncNotesSplitLayout();
+    openNoteDetail(n, { isLocal: true });
+    window.setTimeout(syncNotesSplitLayout, 0);
+  }
+
+  // «‹ К списку» / «⤡» / Esc в развёрнутом виде — обратно к списку с той же заметкой.
+  function notesSplitCollapse() {
+    if (!notesSplitCurrentId || !isNoteEditorModalOpen() || !notesSplitCapable()) return false;
+    if (document.documentElement.classList.contains("notes-split")) return false;
+    if (isNoteDiscussionOpen()) closeNoteDiscussion(true);
+    setNotesSplitMode("split");
+    syncNotesSplitLayout();
+    return true;
+  }
+
+  function notesSplitExpand() {
+    if (!notesSplitCurrentId || !isNoteEditorModalOpen()) return;
+    setNotesSplitMode("full");
+    syncNotesSplitLayout();
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) wrap._discussionDismissed = false;
+    syncDesktopNoteDiscussion();
+  }
+
+  function notesListItemsInOrder() {
+    var host = document.getElementById(notesSubTab === "transcriptions" ? "notes-pane-transcriptions" : "notes-pane-notes");
+    return host ? Array.prototype.slice.call(host.querySelectorAll(".nl-card[data-note-id]")) : [];
+  }
+
+  function notesItemById(id) {
+    var all = [];
+    if (notesDataCache) all = (notesDataCache.local_notes || []).concat(notesDataCache.transcriptions || []);
+    if (notesServerSearch.items) all = all.concat(notesServerSearch.items);
+    for (var i = 0; i < all.length; i++) {
+      if (String(localNoteIdFrom(all[i])) === String(id)) return all[i];
+    }
+    return null;
+  }
+
+  function syncNotesSplitLayout() {
+    var root = document.documentElement;
+    var capable = notesSplitCapable();
+    var open = isNoteEditorModalOpen();
+    var fromList = !!notesSplitCurrentId && open;
+    var split = capable && (!fromList || notesSplitMode() === "split");
+    if (open && !fromList) split = false;
+    var wasSplit = root.classList.contains("notes-split");
+    root.classList.toggle("notes-split", split);
+    root.classList.toggle("notes-split-empty", split && !open);
+    if (wasSplit !== split) syncNotesCreateFab();
+    if (split) {
+      var notesRoot = document.getElementById("notes-root");
+      if (notesRoot) {
+        var rect = notesRoot.getBoundingClientRect();
+        if (rect.width) root.style.setProperty("--notes-split-left", Math.round(rect.right + 12) + "px");
+      }
+      setNotesSearchExpanded(true);
+    }
+    var exp = document.getElementById("note-editor-expand-btn");
+    var moreWrap = document.getElementById("note-editor-more-wrap");
+    if (exp && moreWrap && exp.parentNode !== moreWrap) moreWrap.insertBefore(exp, moreWrap.firstChild);
+    if (exp) {
+      var showExp = fromList && capable;
+      exp.classList.toggle("hidden", !showExp);
+      var expanded = showExp && !split;
+      exp.setAttribute("aria-label", expanded ? "Свернуть к списку" : "Развернуть");
+      exp.title = expanded ? "Свернуть к списку (Esc)" : "Развернуть";
+      exp.innerHTML = expanded
+        ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>'
+        : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
+    }
+    var back = document.getElementById("note-editor-web-back");
+    if (back) back.textContent = fromList && capable && !split ? "‹ К списку" : "← Назад";
+    document.querySelectorAll(".nl-card.is-current").forEach(function (c) {
+      c.classList.remove("is-current");
+    });
+    if (fromList && split) {
+      document.querySelectorAll('.nl-card[data-note-id="' + notesSplitCurrentId + '"]').forEach(function (c) {
+        c.classList.add("is-current");
+      });
+    }
+    // Справа сразу последняя открытая заметка (один раз за заход на вкладку).
+    if (split && !open && !notesSplitAutoOpened && notesDataCache) {
+      notesSplitAutoOpened = true;
+      var last = "";
+      try {
+        last = localStorage.getItem(NOTES_SPLIT_LAST_LS) || "";
+      } catch (_) {}
+      var item = last && notesItemById(last);
+      if (item && document.querySelector('.nl-card[data-note-id="' + last + '"]')) openNoteFromList(item);
+    }
+  }
+
+  window.addEventListener("resize", function () {
+    if (currentTab === "notes") syncNotesSplitLayout();
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (!notesSplitCurrentId || !isNoteEditorModalOpen()) return;
+    var t = e.target;
+    var editable = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+    if (e.key === "Escape" && !editable && !isNoteDiscussionOpen() && !document.getElementById("nl-sheet-overlay")) {
+      if (notesSplitCollapse()) {
+        e.preventDefault();
+        return;
+      }
+      if (document.documentElement.classList.contains("notes-split")) {
+        e.preventDefault();
+        handleNoteEditorModalClose();
+      }
+      return;
+    }
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !editable && document.documentElement.classList.contains("notes-split")) {
+      var cards = notesListItemsInOrder();
+      var idx = cards.findIndex(function (c) {
+        return c.getAttribute("data-note-id") === notesSplitCurrentId;
+      });
+      var next = cards[idx + (e.key === "ArrowDown" ? 1 : -1)];
+      if (!next) return;
+      e.preventDefault();
+      var item = notesItemById(next.getAttribute("data-note-id"));
+      if (item) {
+        next.scrollIntoView({ block: "nearest" });
+        openNoteFromList(item);
+      }
+    }
+  });
 
   // ——— Режим выбора нескольких заметок ———
 
@@ -34842,6 +35057,10 @@
   function openNewTodoistNote(opts) {
     opts = opts || {};
     var project = activeNotesProjectTag();
+    if (notesSplitCapable()) {
+      if (isNoteEditorModalOpen()) closeNoteEditorModal();
+      notesSplitCurrentId = "__new__";
+    }
     openNoteDetail(
       {
         id: "",
@@ -36396,6 +36615,7 @@
     var noteEditorWebBack = document.getElementById("note-editor-web-back");
     if (noteEditorWebBack) {
       noteEditorWebBack.addEventListener("click", function () {
+        if (notesSplitCollapse()) return;
         handleNoteEditorModalClose();
       });
     }
@@ -36409,6 +36629,39 @@
           e.stopPropagation();
           toggleNotesCreateMenu();
         }
+      });
+    }
+    var expandBtn = document.getElementById("note-editor-expand-btn");
+    if (expandBtn) {
+      expandBtn.addEventListener("click", function () {
+        if (document.documentElement.classList.contains("notes-split")) notesSplitExpand();
+        else notesSplitCollapse();
+      });
+    }
+    var projectBtn = document.getElementById("notes-project-btn");
+    if (projectBtn) {
+      projectBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var counts = notesProjectCounts();
+        function pick(v) {
+          notesActiveProjectId = v;
+          renderNotesTagFilterBar();
+          renderSidebarTrees();
+          if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+        }
+        var items = [
+          { label: "Все заметки", hint: String(counts.all || ""), icon: !notesActiveProjectId ? "check" : "folder", active: !notesActiveProjectId, onClick: function () { pick(0); } },
+        ];
+        getUserTagsFromCache().forEach(function (t) {
+          var on = notesActiveProjectId !== "none" && Number(notesActiveProjectId) === Number(t.id);
+          items.push({ label: String(t.name || ""), hint: String(counts.byId[String(t.id)] || ""), icon: on ? "check" : "folder", active: on, onClick: function () { pick(Number(t.id)); } });
+        });
+        if (counts.none) {
+          items.push({ label: "Без проекта", hint: String(counts.none), icon: notesActiveProjectId === "none" ? "check" : "folder", active: notesActiveProjectId === "none", onClick: function () { pick("none"); } });
+        }
+        items.push("-");
+        items.push({ label: "Управление проектами", icon: "folder", onClick: function () { openTagsManageSheet(); } });
+        openNotesActionSheet("", items, projectBtn);
       });
     }
     document.querySelectorAll("#notes-create-menu [data-notes-create]").forEach(function (b) {

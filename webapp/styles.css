@@ -15693,3 +15693,33 @@ html.notes-select-on #notes-create-btn, html.notes-select-on #notes-create-menu 
 html.notes-select-on .notes-pane--stack { padding-bottom: 96px; }
 .nl-card mark { background: rgba(250, 204, 21, 0.28); color: inherit; border-radius: 3px; padding: 0 1px; }
 .notes-load-more { grid-column: 1 / -1; }
+
+/* ——— Десктоп: список слева, заметка справа ——— */
+.notes-project-btn { display: none; }
+.notes-split-placeholder { display: none; }
+.note-editor-expand-btn { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; margin-left: 0; padding: 0; border: 0; border-radius: 10px; background: transparent; color: var(--text-secondary, #909499); cursor: pointer; flex: none; }
+.note-editor-expand-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--text); }
+.note-editor-expand-btn.hidden { display: none; }
+@media (min-width: 960px) {
+  html.notes-split #panel-notes { max-width: none; }
+  html.notes-split #notes-root { width: 380px; max-width: 380px; margin-left: 0; margin-right: 0; }
+  html.notes-split .notes-pane--stack { grid-template-columns: minmax(0, 1fr) !important; gap: 8px; }
+  html.notes-split #notes-project-chips { display: none; }
+  html.notes-split .notes-filter-bar { flex-wrap: nowrap; gap: 8px; }
+  html.notes-split .notes-search-wrap { flex: 1 1 auto; min-width: 0; }
+  html.notes-split .notes-project-btn { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; max-width: 150px; height: 2.5rem; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-md, 12px); background: var(--surface); color: var(--text); font: inherit; font-size: 0.875rem; font-weight: 600; cursor: pointer; }
+  html.notes-split .notes-project-btn.is-active { border-color: var(--accent-border, rgba(91, 159, 255, 0.5)); color: #bcd6ff; }
+  .notes-project-btn-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .notes-project-btn svg { flex: none; }
+  html.notes-split #note-editor-overlay { left: var(--notes-split-left, 660px) !important; right: 0 !important; width: auto !important; border-left: 1px solid var(--border); box-shadow: none; }
+  html.notes-split #note-editor-overlay .note-pane-resizer { display: none !important; }
+  html.notes-split #note-editor-web-back { display: none; }
+  html.notes-split.modal-sheet-open, html.notes-split.modal-sheet-open body { overflow: auto; }
+  html.notes-split .notes-fab, html.notes-split #notes-create-menu.actual-create-menu { right: calc(100vw - var(--notes-split-left, 660px) + 28px) !important; }
+  html.notes-split-empty .notes-split-placeholder { display: flex; position: fixed; top: 0; bottom: 0; right: 0; left: var(--notes-split-left, 660px); z-index: 4; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border-left: 1px solid var(--border); color: var(--text-secondary, #909499); text-align: center; pointer-events: none; }
+  .notes-split-placeholder p { margin: 8px 0 0; font-size: 1rem; color: var(--text); }
+  .notes-split-placeholder small { font-size: 0.8125rem; }
+  html.notes-split .nl-card.is-current { box-shadow: inset 0 0 0 1.5px rgba(91, 159, 255, 0.6); background: rgba(91, 159, 255, 0.09); }
+  .nl-sheet-overlay.is-anchored { background: transparent !important; align-items: flex-start; justify-content: flex-start; padding: 0; }
+  .nl-sheet-overlay.is-anchored .nl-sheet { transform: none; max-width: none; }
+}
