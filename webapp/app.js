@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-notes6";
+  var WEBAPP_BUILD = "20261016-notes8";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-notes6";
+  const NOTE_EDITOR_ASSET_V = "20261016-notes8";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -16700,7 +16700,7 @@
     syncNotesFilterBtn();
   }
 
-  function noteItemMatchesFilter(item, kind) {
+  function noteItemMatchesFilter(item, kind, opts) {
     if (!noteMatchesNotesFilter(item)) return false;
     var project = noteProjectOf(item);
     if (notesActiveProjectId === "none") {
@@ -16718,7 +16718,7 @@
       }
     }
     var q = parsed.text;
-    if (!q) return true;
+    if (!q || (opts && opts.skipText)) return true;
     var title = "";
     var preview = "";
     if (kind === "local") {
@@ -20687,6 +20687,7 @@
     var next = name || "notes";
     if (next === "summaries") next = "transcriptions";
     if (next !== notesSubTab && notesSelect.on) exitNotesSelectMode();
+    if (next !== notesSubTab) window.setTimeout(scheduleNotesServerSearch, 0);
     var subRow = document.querySelector("#panel-notes .notes-subtabs-row");
     if (subRow && typeof subRow._resetReveal === "function" && next !== notesSubTab) subRow._resetReveal();
     if (notesSubTab === "chats" && next !== "chats") {
@@ -32727,11 +32728,17 @@
         }
         return;
       }
+      var prevNotesCache = notesDataCache;
+      var serverLocalCount = ((data && data.local_notes) || []).length;
       notesDataCache = splitTranscriptionsOutOfLocalNotes(data);
       if (notesDataCache && Array.isArray(notesDataCache.tags)) {
         notesDataCache._tagsLoaded = true;
       }
       writeMiniappCache("notes", data);
+      if (notesDataCache) {
+        notesDataCache.local_server_count = serverLocalCount;
+        keepLoadedNotesPages(prevNotesCache, notesDataCache);
+      }
       applyDraftsToNotesList(notesDataCache);
       if (data.journal_error && err) {
         err.textContent = data.journal_error;
@@ -33226,36 +33233,42 @@
       var tid = localNoteIdFrom(n);
       if (tid != null) transIds[String(tid)] = true;
     });
-    const local = localAll.filter(function (n) {
+    var searchQ = notesSearchText();
+    var serverHits = notesServerSearchHits("notes", searchQ);
+    const local = (serverHits || localAll).filter(function (n) {
       var nid = localNoteIdFrom(n);
       if (nid != null && notesPendingDelete[String(nid)]) return false;
       if (nid != null && transIds[String(nid)]) return false;
       if (looksLikeTranscriptionNote(n)) return false;
-      return noteItemMatchesFilter(n, "local");
+      return noteItemMatchesFilter(n, "local", { skipText: !!serverHits });
     });
-    sortNotesForList(local);
+    if (!searchQ) sortNotesForList(local);
     var errParts = [];
     if (data.local_error) errParts.push(String(data.local_error));
     if (errParts.length && !local.length) {
       pn.innerHTML = '<p class="error"></p>';
       pn.querySelector(".error").textContent = errParts.join(" · ");
     } else if (!local.length) {
-      pn.innerHTML =
-        localAll.length && (notesSearchQuery.trim() || notesActiveProjectId || notesFilterActiveCount())
+      pn.innerHTML = searchQ && notesServerSearch.loading
+        ? '<p class="muted empty-hint">Ищем во всём тексте заметок…</p>'
+        : localAll.length && (notesSearchQuery.trim() || notesActiveProjectId || notesFilterActiveCount())
           ? '<p class="muted empty-hint">Ничего не найдено. Измените поиск, проект, #хэштег или фильтр.</p>'
           : '<p class="muted empty-hint">Заметок пока нет — нажмите «+», чтобы написать или надиктовать первую. Ещё заметку можно создать в чате с ботом.</p>';
     } else {
       appendNotesListGrouped(pn, local, function (n) {
         var id = String(localNoteIdFrom(n) || "");
-        return wrapNotesListCard(n, buildNotesListCard(n, { isLocal: true }), id, false);
-      });
+        return wrapNotesListCard(n, buildNotesListCard(n, { isLocal: true, highlight: searchQ }), id, false);
+      }, searchQ);
+      if (!searchQ && notesDataCache && notesDataCache.local_has_more) appendNotesLoadMore(pn);
     }
 
     var transAll = (data && data.transcriptions) || [];
-    var trans = sortNotesForList(transAll.filter(function (n) {
+    var transHits = notesServerSearchHits("transcriptions", searchQ);
+    var trans = (transHits || transAll).filter(function (n) {
       if (notesPendingDelete[String(localNoteIdFrom(n))]) return false;
-      return noteItemMatchesFilter(n, "local");
-    }));
+      return noteItemMatchesFilter(n, "local", { skipText: !!transHits });
+    });
+    if (!searchQ) sortNotesForList(trans);
     if (!transAll.length) {
       pt.innerHTML =
         '<p class="muted empty-hint">Транскрипций пока нет. Нажмите «+», чтобы загрузить файл.</p>';
@@ -33265,8 +33278,8 @@
     } else {
       appendNotesListGrouped(pt, trans, function (n) {
         var id = String(localNoteIdFrom(n) || "");
-        return wrapNotesListCard(n, buildNotesListCard(n, { isLocal: true }), id, true);
-      });
+        return wrapNotesListCard(n, buildNotesListCard(n, { isLocal: true, highlight: searchQ }), id, true);
+      }, searchQ);
     }
   }
 
@@ -33294,6 +33307,179 @@
       return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }).replace(".", "");
     }
     return d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "2-digit" });
+  }
+
+  // ——— Поиск по всему тексту (сервер) и подгрузка страниц ———
+
+  var notesServerSearch = { key: "", items: null, loading: false, seq: 0, timer: 0 };
+
+  function notesSearchText() {
+    var t = parseNotesSearchQuery(notesSearchQuery).text;
+    return t.length >= 2 ? t : "";
+  }
+
+  function notesServerSearchHits(kind, q) {
+    if (!q) return null;
+    return notesServerSearch.key === kind + "|" + q ? notesServerSearch.items : null;
+  }
+
+  function scheduleNotesServerSearch() {
+    window.clearTimeout(notesServerSearch.timer);
+    var q = notesSearchText();
+    var kind = notesSubTab === "transcriptions" ? "transcriptions" : "notes";
+    if (!q || notesSubTab === "chats") {
+      notesServerSearch.key = "";
+      notesServerSearch.items = null;
+      notesServerSearch.loading = false;
+      return;
+    }
+    if (notesServerSearch.key === kind + "|" + q && notesServerSearch.items) return;
+    notesServerSearch.loading = true;
+    notesServerSearch.timer = window.setTimeout(function () {
+      var seq = ++notesServerSearch.seq;
+      apiFetch("/notes/search?kind=" + kind + "&q=" + encodeURIComponent(q), { method: "GET" })
+        .then(function (res) {
+          if (seq !== notesServerSearch.seq) return;
+          notesServerSearch.key = kind + "|" + q;
+          notesServerSearch.items = (res && res.items) || [];
+          notesServerSearch.loading = false;
+          if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+        })
+        .catch(function () {
+          if (seq !== notesServerSearch.seq) return;
+          notesServerSearch.loading = false;
+          if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+        });
+    }, 280);
+  }
+
+  function notesHighlightTerms(q) {
+    var words = String(q || "")
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(function (w) {
+        return w.length >= 2;
+      });
+    var terms = [String(q || "").toLowerCase()];
+    words.forEach(function (w) {
+      terms.push(w.length >= 5 ? w.slice(0, Math.max(4, w.length - 2)) : w);
+    });
+    return terms
+      .filter(function (t, i) {
+        return t && terms.indexOf(t) === i;
+      })
+      .sort(function (a, b) {
+        return b.length - a.length;
+      });
+  }
+
+  function notesHighlightHtml(text, q) {
+    var src = String(text || "");
+    var terms = notesHighlightTerms(q);
+    if (!terms.length) return escapeHtml(src);
+    var re = new RegExp(
+      "(" +
+        terms
+          .map(function (t) {
+            return t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          })
+          .join("|") +
+        ")[0-9a-zа-яё]*",
+      "gi"
+    );
+    var out = "";
+    var last = 0;
+    src.replace(re, function (m, _g, idx) {
+      out += escapeHtml(src.slice(last, idx)) + "<mark>" + escapeHtml(m) + "</mark>";
+      last = idx + m.length;
+      return m;
+    });
+    return out + escapeHtml(src.slice(last));
+  }
+
+  function notesSearchSnippet(n, q) {
+    if (n.search_snippet) {
+      return String(n.search_snippet).replace(/\b(?:SPEAKER|Speaker|speaker)[_ ]?\d+\s*:\s*/g, "");
+    }
+    var text = notePlainExcerpt(n.preview || n.description || n.body || "", 600)
+      .replace(/\b(?:SPEAKER|Speaker|speaker)[_ ]?\d+\s*:\s*/g, "");
+    var low = text.toLowerCase();
+    var terms = notesHighlightTerms(q);
+    var pos = -1;
+    for (var i = 0; i < terms.length && pos < 0; i++) pos = low.indexOf(terms[i]);
+    if (pos <= 60) return text.slice(0, 220);
+    var start = text.lastIndexOf(" ", pos - 50);
+    start = start < 0 ? pos - 50 : start + 1;
+    return "…" + text.slice(start, start + 220);
+  }
+
+  var notesPageLoading = false;
+
+  // Обновление первой страницы не должно «съедать» уже подгруженные старые заметки.
+  function keepLoadedNotesPages(prev, next) {
+    if (!prev || !next || !prev.local_server_count || prev.local_server_count <= (next.local_server_count || 0)) return;
+    var list = next.local_notes || [];
+    var have = {};
+    var oldest = "";
+    list.forEach(function (n) {
+      have[String(n.id)] = true;
+      var u = String(n.updated_at || "");
+      if (!oldest || u < oldest) oldest = u;
+    });
+    var extra = (prev.local_notes || []).filter(function (n) {
+      return !have[String(n.id)] && String(n.updated_at || "") <= oldest;
+    });
+    if (!extra.length) return;
+    next.local_notes = list.concat(extra);
+    next.local_server_count = prev.local_server_count;
+    next.local_has_more = prev.local_has_more;
+  }
+
+  function appendNotesLoadMore(host) {
+    var more = document.createElement("div");
+    more.className = "notes-load-more";
+    more.innerHTML = '<div class="notes-skeleton-card" aria-hidden="true"></div>';
+    host.appendChild(more);
+    if (!("IntersectionObserver" in window)) {
+      loadMoreNotesPage();
+      return;
+    }
+    var io = new IntersectionObserver(
+      function (entries) {
+        if (entries.some(function (e) { return e.isIntersecting; })) {
+          io.disconnect();
+          loadMoreNotesPage();
+        }
+      },
+      { rootMargin: "600px 0px" }
+    );
+    io.observe(more);
+  }
+
+  function loadMoreNotesPage() {
+    if (notesPageLoading || !notesDataCache || !notesDataCache.local_has_more) return;
+    notesPageLoading = true;
+    var offset = Number(notesDataCache.local_server_count || (notesDataCache.local_notes || []).length);
+    apiFetch("/notes/page?offset=" + offset + "&limit=120", { method: "GET" })
+      .then(function (res) {
+        var items = (res && res.local_notes) || [];
+        var have = {};
+        (notesDataCache.local_notes || []).forEach(function (n) {
+          have[String(n.id)] = true;
+        });
+        items.forEach(function (n) {
+          if (!have[String(n.id)]) notesDataCache.local_notes.push(n);
+        });
+        notesDataCache.local_server_count = offset + items.length;
+        notesDataCache.local_has_more = !!(res && res.has_more) && items.length > 0;
+      })
+      .catch(function () {
+        notesDataCache.local_has_more = false;
+      })
+      .then(function () {
+        notesPageLoading = false;
+        renderNotesPanesFromData(notesDataCache);
+      });
   }
 
   function notesSortKey() {
@@ -33332,7 +33518,17 @@
     return list;
   }
 
-  function appendNotesListGrouped(host, items, makeNode) {
+  function appendNotesListGrouped(host, items, makeNode, searchQ) {
+    if (searchQ) {
+      var sh = document.createElement("div");
+      sh.className = "notes-list-group";
+      sh.textContent = "Найдено " + items.length + (notesServerSearch.loading ? " · ищем во всём тексте…" : "");
+      host.appendChild(sh);
+      items.forEach(function (n) {
+        host.appendChild(makeNode(n));
+      });
+      return;
+    }
     var last = null;
     items.forEach(function (n) {
       var g = notesListGroupOf(n);
@@ -33412,13 +33608,15 @@
     head.appendChild(t);
     head.appendChild(date);
     inner.appendChild(head);
-    var preview = notesCardPreviewText(n);
+    var hl = opts.highlight || "";
+    var preview = hl ? notesSearchSnippet(n, hl) : notesCardPreviewText(n);
     if (preview) {
       var p = document.createElement("p");
       p.className = "nl-preview";
-      p.innerHTML = linkifyEscaped(escapeHtml(preview));
+      p.innerHTML = hl ? notesHighlightHtml(preview, hl) : linkifyEscaped(escapeHtml(preview));
       inner.appendChild(p);
     }
+    if (hl) t.innerHTML = notesHighlightHtml(title, hl);
     var foot = document.createElement("div");
     foot.className = "nl-foot";
     appendItemLabelChips(foot, n);
@@ -36331,6 +36529,7 @@
         if (notesTagFilterMenuIsOpen()) fillNotesTagFilterMenu();
         // Небольшая пауза: на сотнях заметок список не дёргается на каждую букву.
         window.clearTimeout(notesSearchTimer);
+        scheduleNotesServerSearch();
         notesSearchTimer = window.setTimeout(function () {
           if (notesDataCache) renderNotesPanesFromData(notesDataCache);
         }, 160);

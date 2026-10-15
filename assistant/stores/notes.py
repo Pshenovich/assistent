@@ -250,6 +250,82 @@ def search_notes(
     return [n for _, _, n in scored[:lim]]
 
 
+def _search_snippet(plain: str, query: str, words: list[str]) -> str:
+    text = " ".join((plain or "").split())
+    if not text:
+        return ""
+    low = text.lower()
+    pos = low.find((query or "").strip().lower())
+    if pos < 0:
+        from assistant.lib.kb_search import normalize_ru_word
+
+        for w in words:
+            stem = normalize_ru_word(w)
+            key = stem if len(stem) >= 3 else w
+            pos = low.find(key)
+            if pos >= 0:
+                break
+    if pos < 0:
+        return text[:200]
+    start = max(0, pos - 60)
+    # Не режем слово посередине.
+    if start > 0:
+        sp = text.rfind(" ", 0, start + 1)
+        start = sp + 1 if sp >= 0 and pos - sp < 90 else start
+    end = min(len(text), pos + 160)
+    out = text[start:end].strip()
+    return ("…" if start > 0 else "") + out + ("…" if end < len(text) else "")
+
+
+def search_notes_for_list(
+    user_id: int | str,
+    query: str,
+    *,
+    limit: int = 60,
+    include_transcription: bool = False,
+    only_transcription: bool = False,
+) -> list[dict[str, Any]]:
+    """Поиск для списка заметок: подстрока или морфология, по всему тексту; со сниппетом."""
+    from assistant.lib.kb_search import note_query_content_words, score_note_against_query
+    from assistant.lib.telegram_html import html_to_plain
+
+    q = " ".join((query or "").split())
+    if len(q) < 2:
+        return []
+    ql = q.lower()
+    words = note_query_content_words(q)
+    lim = max(1, min(int(limit), 200))
+    scored: list[tuple[float, str, dict[str, Any]]] = []
+    for note in list_notes(
+        user_id, limit=5000, include_transcription=include_transcription or only_transcription
+    ):
+        if only_transcription and not note.get("is_transcription"):
+            continue
+        title = str(note.get("title") or "")
+        body_raw = str(note.get("body") or note.get("description") or "")
+        body = body_raw
+        if "<" in body_raw and ">" in body_raw:
+            spaced = re.sub(r"</(?:p|div|li|h[1-6]|tr|td|th|blockquote)>|<br\s*/?>", " ", body_raw, flags=re.I)
+            try:
+                body = html_to_plain(spaced)
+            except Exception:
+                body = re.sub(r"<[^>]+>", " ", body_raw)
+        if ql in title.lower():
+            score = 1000.0
+        elif ql in body.lower():
+            score = 500.0
+        else:
+            score = score_note_against_query(q, title, body)
+        if score <= 0:
+            continue
+        item = dict(note)
+        item["search_snippet"] = _search_snippet(body, q, words)
+        scored.append((score, str(note.get("updated_at") or ""), item))
+    scored.sort(key=lambda x: x[1], reverse=True)
+    scored.sort(key=lambda x: -x[0])
+    return [n for _, _, n in scored[:lim]]
+
+
 def _excluded_list_roles(
     *, include_knowledge: bool, include_transcription: bool
 ) -> list[str]:
@@ -269,7 +345,7 @@ def list_notes(
     include_transcription: bool = False,
 ) -> list[dict[str, Any]]:
     uid = str(int(user_id))
-    lim = max(1, min(int(limit), 500))
+    lim = max(1, min(int(limit), 5000))
     excluded = _excluded_list_roles(
         include_knowledge=include_knowledge,
         include_transcription=include_transcription,

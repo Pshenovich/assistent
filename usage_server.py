@@ -8117,6 +8117,7 @@ async def miniapp_notes_bundle(
         "summaries": summaries,
         "journal_error": journal_err,
         "local_notes": local_notes,
+        "local_has_more": len(local_notes) >= lim,
         "local_error": local_err,
         "tags": all_tags,
         "tags_error": tags_err,
@@ -8124,6 +8125,105 @@ async def miniapp_notes_bundle(
         "todoist_notes": [],
         "todoist_error": None,
     }
+
+
+def _decorate_notes_for_list(uid: int, notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Поля карточки списка (проект, #теги, ссылки, листы, обсуждение) + усечение тела."""
+    from assistant.stores import hashtags as hashtags_store
+    from assistant.stores import note_sheets as note_sheets_store
+    from assistant.stores import share_comments as share_comments_store
+    from assistant.stores import share_links as share_links_store
+    from assistant.stores import tags as tags_store
+
+    keys = [("local", str(n.get("id"))) for n in notes if n.get("id") is not None]
+    try:
+        mapping = tags_store.tags_by_items(uid, keys)
+        hash_mapping = hashtags_store.hashtags_by_items(uid, keys)
+    except Exception as e:
+        print(f"[miniapp_notes_list] tags_fail err={e!r}")
+        mapping, hash_mapping = {}, {}
+    for n in notes:
+        key = ("local", str(n.get("id")))
+        _apply_project_fields(n, mapping.get(key, []))
+        n["hashtags"] = hash_mapping.get(key, [])
+    try:
+        shares = share_links_store.list_active_by_item_ids("local", [k[1] for k in keys])
+    except Exception as e:
+        print(f"[miniapp_notes_list] share_fail err={e!r}")
+        shares = {}
+    for n in notes:
+        owner = str(n.get("owner_user_id") or n.get("user_id") or "")
+        link = shares.get((owner, str(n.get("id") or "")))
+        if link and link.get("token"):
+            n["shared"] = True
+            n["share_url"] = _public_share_url(str(link.get("token") or ""))
+            n["share_access"] = link.get("access") or "view"
+        else:
+            n["shared"] = False
+            n["share_url"] = None
+            n["share_access"] = None
+    try:
+        counts = note_sheets_store.extra_sheet_counts([n.get("id") for n in notes])
+    except Exception:
+        counts = {}
+    for n in notes:
+        try:
+            n["sheets_count"] = 1 + counts.get(int(n.get("id")), 0)
+        except (TypeError, ValueError):
+            n["sheets_count"] = 1
+    try:
+        share_comments_store.attach_discuss_latest(notes, kind="local")
+    except Exception:
+        for n in notes:
+            n.setdefault("discuss_latest", None)
+    return [minify_note_for_list(n) for n in notes]
+
+
+@miniapp_router.get("/notes/page")
+async def miniapp_notes_page(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    offset: int = 0,
+    limit: int = 120,
+) -> dict[str, Any]:
+    """Следующая страница заметок (после первых 120 из /notes)."""
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    off = max(0, int(offset))
+    lim = min(max(int(limit), 1), 300)
+
+    def _run() -> tuple[list[dict[str, Any]], bool]:
+        rows = notes_store.list_notes(uid, limit=off + lim + 1)
+        page = rows[off : off + lim]
+        return _decorate_notes_for_list(uid, page), len(rows) > off + lim
+
+    items, has_more = await run_in_threadpool(_run)
+    return {"local_notes": items, "has_more": has_more, "offset": off}
+
+
+@miniapp_router.get("/notes/search")
+async def miniapp_notes_search(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    q: str = "",
+    kind: str = "notes",
+    limit: int = 60,
+) -> dict[str, Any]:
+    """Поиск по всему тексту заметок (или транскрипций) со сниппетом вокруг найденного."""
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    query = " ".join(str(q or "").split())[:200]
+    if len(query) < 2:
+        return {"items": [], "query": query}
+
+    def _run() -> list[dict[str, Any]]:
+        found = notes_store.search_notes_for_list(
+            uid, query, limit=limit, only_transcription=(kind == "transcriptions")
+        )
+        return _decorate_notes_for_list(uid, found)
+
+    items = await run_in_threadpool(_run)
+    return {"items": items, "query": query}
 
 
 @miniapp_router.get("/tags")
