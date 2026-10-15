@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261015-textfit";
+  var WEBAPP_BUILD = "20261015-aibar";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261015-textfit";
+  const NOTE_EDITOR_ASSET_V = "20261015-aibar";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -17954,11 +17954,41 @@
       var act = b.getAttribute("data-ai");
       if (act === "ok") finishAiReview(true);
       else if (act === "undo") finishAiReview(false);
-      else scrollToNextAiChange();
+      else if (isMobileNoteLayout() && isNoteDiscussionOpen()) {
+        // На телефоне обсуждение закрывает заметку — сначала показываем саму правку.
+        closeNoteDiscussion();
+        setTimeout(scrollToNextAiChange, 250);
+      } else scrollToNextAiChange();
     });
-    var ov = document.getElementById("note-editor-overlay");
-    (ov || document.body).appendChild(bar);
+    // На уровне страницы (а не внутри редактора): иначе панель/окно обсуждения перекрывает плашку.
+    document.body.appendChild(bar);
+    var pane = document.querySelector("#note-editor-overlay .note-editor-modal-body");
+    if (pane && typeof ResizeObserver !== "undefined") new ResizeObserver(positionAiEditBar).observe(pane);
+    window.addEventListener("resize", positionAiEditBar);
     return bar;
+  }
+
+  // Десктоп: обсуждение — панель рядом с заметкой (слева или справа), центруем плашку по области заметки.
+  function positionAiEditBar() {
+    var bar = document.getElementById("note-ai-edit-bar");
+    if (!bar) return;
+    var pane = document.querySelector("#note-editor-overlay .note-editor-modal-body");
+    var r = pane && !isMobileNoteLayout() ? pane.getBoundingClientRect() : null;
+    var left = r ? r.left : 0;
+    var right = r ? r.right : 0;
+    var sheet = isNoteDiscussionOpen() && document.querySelector("#note-discussion-overlay .note-discussion-sheet");
+    if (r && sheet) {
+      var d = sheet.getBoundingClientRect();
+      if (d.width && d.left <= left + 8) left = Math.max(left, d.right);
+      else if (d.width) right = Math.min(right, d.left);
+    }
+    if (r && right - left > 200) {
+      bar.style.left = Math.round((left + right) / 2) + "px";
+      bar.style.maxWidth = Math.round(right - left - 24) + "px";
+    } else {
+      bar.style.left = "";
+      bar.style.maxWidth = "";
+    }
   }
 
   function scrollToNextAiChange() {
@@ -18016,13 +18046,11 @@
     bar.querySelector(".note-ai-edit-text").textContent =
       "ИИ внёс " + ruChanges(res.applied) + (res.failed ? " · не нашёл: " + res.failed : "");
     bar.classList.remove("hidden");
+    positionAiEditBar();
     requestAnimationFrame(function () {
       paintAiHighlights();
       scrollToNextAiChange();
     });
-    if (isMobileNoteLayout() && isNoteDiscussionOpen()) {
-      showNoteToast("ИИ изменил заметку — закройте обсуждение, чтобы проверить подсвеченное", { duration: 5000 });
-    }
   }
 
   // «Мои макеты» (свои раскладки слайдов) — общие для всех презентаций пользователя.
@@ -24740,6 +24768,7 @@
   function syncNoteDiscussionOpenClass() {
     var open = isNoteDiscussionOpen();
     document.documentElement.classList.toggle("note-discussion-open", open);
+    requestAnimationFrame(positionAiEditBar);
     var sheet = document.querySelector("#note-discussion-overlay .note-discussion-sheet");
     if (sheet) {
       sheet.setAttribute("aria-modal", open && isDesktopLayout() ? "false" : "true");
