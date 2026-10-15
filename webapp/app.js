@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-notes4";
+  var WEBAPP_BUILD = "20261016-notes6";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-notes4";
+  const NOTE_EDITOR_ASSET_V = "20261016-notes6";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -5684,6 +5684,15 @@
     var panel = document.createElement("div");
     panel.className = "swipe-row__panel";
     panel.appendChild(innerRoot);
+    var onPin = typeof opts.onPin === "function" ? opts.onPin : null;
+    var pinBtn = null;
+    if (onPin) {
+      pinBtn = document.createElement("div");
+      pinBtn.className = "swipe-row__pin";
+      pinBtn.setAttribute("aria-hidden", "true");
+      pinBtn.textContent = opts.pinned ? "Открепить" : "Закрепить";
+      stack.appendChild(pinBtn);
+    }
 
     stack.appendChild(delBtn);
     stack.appendChild(panel);
@@ -5697,16 +5706,24 @@
     var moved = false;
 
     function applyX(nx) {
-      x = Math.min(20, Math.max(-SWIPE_REVEAL - 30, nx));
+      x = Math.min(onPin ? SWIPE_REVEAL + 30 : 20, Math.max(-SWIPE_REVEAL - 30, nx));
       panel.style.transform = "translateX(" + x + "px)";
       stack.classList.toggle("swipe-row--revealed", x < -8);
+      stack.classList.toggle("swipe-row--pin", x > 8);
+      if (pinBtn) pinBtn.classList.toggle("is-armed", x > SWIPE_REVEAL - 10);
     }
 
     function finish() {
       if (!dragging) return;
       dragging = false;
       if (locked === "x") {
-        applyX(x < -SWIPE_THRESHOLD ? -SWIPE_REVEAL : 0);
+        if (onPin && x > 0) {
+          var fire = x > SWIPE_REVEAL - 10;
+          applyX(0);
+          if (fire) onPin();
+        } else {
+          applyX(x < -SWIPE_THRESHOLD ? -SWIPE_REVEAL : 0);
+        }
       }
       locked = null;
     }
@@ -5750,12 +5767,15 @@
         e.stopPropagation();
         return;
       }
-      if (x < -8) {
+      if (x < -8 || x > 8) {
         e.preventDefault();
         e.stopPropagation();
         applyX(0);
       }
     });
+    stack._swipeReset = function () {
+      applyX(0);
+    };
 
     delBtn.addEventListener("click", function (e) {
       e.stopPropagation();
@@ -6122,6 +6142,7 @@
   }
 
   function setTab(name, options) {
+    if (name !== "notes" && notesSelect.on) exitNotesSelectMode();
     if (name !== "actual" && document.documentElement.classList.contains("actual-assistant-open")) {
       try {
         closeNoteDiscussion(true);
@@ -16472,7 +16493,7 @@
 
   // ---- Фильтр заметок: владелец / доступ / дата создания (хранится в браузере) ----
   var NOTES_FILTER_KEY = "leo_notes_filter";
-  var NOTES_FILTER_DEFAULT = { owner: "all", access: "all", created: "all", from: "", to: "" };
+  var NOTES_FILTER_DEFAULT = { owner: "all", access: "all", created: "all", from: "", to: "", sort: "updated" };
   var notesFilter = loadNotesFilter();
 
   function loadNotesFilter() {
@@ -20665,6 +20686,7 @@
   function setNotesSubTab(name) {
     var next = name || "notes";
     if (next === "summaries") next = "transcriptions";
+    if (next !== notesSubTab && notesSelect.on) exitNotesSelectMode();
     var subRow = document.querySelector("#panel-notes .notes-subtabs-row");
     if (subRow && typeof subRow._resetReveal === "function" && next !== notesSubTab) subRow._resetReveal();
     if (notesSubTab === "chats" && next !== "chats") {
@@ -33043,8 +33065,18 @@
     addMoreItem("Копировать", function () {
       duplicateLocalNote(id);
     });
-    addMoreItem("Удалить", function () {
-      deleteLocalNoteFromCard(n, id);
+    if (isListCard) {
+      addMoreItem("Перенести в проект", function () {
+        openNotesProjectSheet([n]);
+      });
+      addMoreItem("Выбрать", function () {
+        enterNotesSelectMode();
+        toggleNotesSelected(id, true);
+      });
+    }
+    addMoreItem(isListCard && !isOwner ? "Убрать из списка" : "Удалить", function () {
+      if (isListCard) scheduleNotesDelete([n], isTranscriptionNoteItem(n));
+      else deleteLocalNoteFromCard(n, id);
     }, true);
     moreBtn.addEventListener("click", function (e) {
       e.preventDefault();
@@ -33196,16 +33228,12 @@
     });
     const local = localAll.filter(function (n) {
       var nid = localNoteIdFrom(n);
+      if (nid != null && notesPendingDelete[String(nid)]) return false;
       if (nid != null && transIds[String(nid)]) return false;
       if (looksLikeTranscriptionNote(n)) return false;
       return noteItemMatchesFilter(n, "local");
     });
-    local.sort(function (a, b) {
-      return String(b.updated_at || "").localeCompare(String(a.updated_at || ""));
-    });
-    local.sort(function (a, b) {
-      return (a.pinned ? 0 : 1) - (b.pinned ? 0 : 1);
-    });
+    sortNotesForList(local);
     var errParts = [];
     if (data.local_error) errParts.push(String(data.local_error));
     if (errParts.length && !local.length) {
@@ -33219,20 +33247,15 @@
     } else {
       appendNotesListGrouped(pn, local, function (n) {
         var id = String(localNoteIdFrom(n) || "");
-        return wrapWithSwipeDelete(
-          buildNotesListCard(n, { isLocal: true }),
-          async function () {
-            await deleteLocalNoteById(id);
-          },
-          { removeStack: true, confirmMessage: n.is_owner === false ? "Убрать заметку из списка?" : "Удалить заметку?" }
-        );
+        return wrapNotesListCard(n, buildNotesListCard(n, { isLocal: true }), id, false);
       });
     }
 
     var transAll = (data && data.transcriptions) || [];
-    var trans = transAll.filter(function (n) {
+    var trans = sortNotesForList(transAll.filter(function (n) {
+      if (notesPendingDelete[String(localNoteIdFrom(n))]) return false;
       return noteItemMatchesFilter(n, "local");
-    });
+    }));
     if (!transAll.length) {
       pt.innerHTML =
         '<p class="muted empty-hint">Транскрипций пока нет. Нажмите «+», чтобы загрузить файл.</p>';
@@ -33242,15 +33265,7 @@
     } else {
       appendNotesListGrouped(pt, trans, function (n) {
         var id = String(localNoteIdFrom(n) || "");
-        return wrapWithSwipeDelete(
-          buildNotesListCard(n, { isLocal: true }),
-          async function () {
-            await deleteLocalNoteById(id);
-            removeTranscriptionFromCache(id);
-            if (notesDataCache) renderNotesPanesFromData(notesDataCache);
-          },
-          { removeStack: true, confirmMessage: "Удалить транскрипцию?" }
-        );
+        return wrapNotesListCard(n, buildNotesListCard(n, { isLocal: true }), id, true);
       });
     }
   }
@@ -33281,29 +33296,53 @@
     return d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "2-digit" });
   }
 
+  function notesSortKey() {
+    var v = notesFilter && notesFilter.sort;
+    return v === "created" || v === "title" ? v : "updated";
+  }
+
+  function notesListDateOf(n) {
+    return notesSortKey() === "created" ? n.created_at || n.updated_at : n.updated_at || n.created_at;
+  }
+
   function notesListGroupOf(n) {
     if (n.pinned) return "Закреплённые";
-    var d = notesListParseDate(n.updated_at || n.created_at);
-    if (!d) return "Ранее";
+    if (notesSortKey() === "title") return "Все заметки";
+    var d = notesListParseDate(notesListDateOf(n));
+    if (!d) return "Раньше";
     var diff = Math.round((notesListDayStart(new Date()) - notesListDayStart(d)) / 86400000);
     if (diff <= 0) return "Сегодня";
-    if (diff === 1) return "Вчера";
     if (diff < 7) return "На этой неделе";
-    if (diff < 31) return "В этом месяце";
-    return "Ранее";
+    return "Раньше";
+  }
+
+  function sortNotesForList(list) {
+    var key = notesSortKey();
+    list.sort(function (a, b) {
+      if (key === "title") {
+        return String(a.title || a.content || "").localeCompare(String(b.title || b.content || ""), "ru", { sensitivity: "base" });
+      }
+      var fa = key === "created" ? a.created_at || a.updated_at : a.updated_at;
+      var fb = key === "created" ? b.created_at || b.updated_at : b.updated_at;
+      return String(fb || "").localeCompare(String(fa || ""));
+    });
+    list.sort(function (a, b) {
+      return (a.pinned ? 0 : 1) - (b.pinned ? 0 : 1);
+    });
+    return list;
   }
 
   function appendNotesListGrouped(host, items, makeNode) {
     var last = null;
     items.forEach(function (n) {
       var g = notesListGroupOf(n);
-      if (g !== last) {
+      if (g !== last && !(g === "Все заметки" && last === null)) {
         var h = document.createElement("div");
         h.className = "notes-list-group";
         h.textContent = g;
         host.appendChild(h);
-        last = g;
       }
+      last = g;
       host.appendChild(makeNode(n));
     });
   }
@@ -33325,7 +33364,11 @@
       var w = sheets % 10 === 1 && sheets % 100 !== 11 ? "лист" : sheets % 10 >= 2 && sheets % 10 <= 4 && (sheets % 100 < 10 || sheets % 100 >= 20) ? "листа" : "листов";
       out.push({ icon: "sheets", text: sheets + " " + w });
     }
-    if (/note-task-list|taskList|data-checked/.test(body)) {
+    if (n.checklist_total != null) {
+      if (Number(n.checklist_total) > 0) {
+        out.push({ icon: "check", text: Number(n.checklist_done || 0) + "/" + Number(n.checklist_total) });
+      }
+    } else if (/note-task-list|taskList|data-checked/.test(body)) {
       var total = 0;
       var done = 0;
       try {
@@ -33337,7 +33380,7 @@
       } catch (_) {}
       if (total) out.push({ icon: "check", text: done + "/" + total });
     }
-    if (/<table[\s>]/i.test(body)) out.push({ icon: "table", text: "" });
+    if (n.has_table || (n.has_table == null && /<table[\s>]/i.test(body))) out.push({ icon: "table", text: "" });
     return out;
   }
 
@@ -33365,7 +33408,7 @@
     t.textContent = title;
     var date = document.createElement("span");
     date.className = "nl-date";
-    date.textContent = formatNotesCardDate(n.updated_at || n.created_at);
+    date.textContent = formatNotesCardDate(notesListDateOf(n));
     head.appendChild(t);
     head.appendChild(date);
     inner.appendChild(head);
@@ -33404,11 +33447,522 @@
     }
     if (foot.childNodes.length) inner.appendChild(foot);
     mountNoteCardActions(card, inner, n);
+    var check = document.createElement("button");
+    check.type = "button";
+    check.className = "nl-check";
+    check.setAttribute("aria-label", "Выбрать");
+    check.innerHTML =
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+    check.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!notesSelect.on) enterNotesSelectMode();
+      toggleNotesSelected(id);
+    });
+    card.appendChild(check);
     card.appendChild(inner);
+    if (id && notesSelect.ids[id]) card.classList.add("is-selected");
     card.addEventListener("click", function () {
+      if (notesSelect.on) {
+        if (id) toggleNotesSelected(id);
+        return;
+      }
       openNoteDetail(n, { isLocal: opts.isLocal !== false });
     });
+    bindNotesCardLongPress(card, n);
     return card;
+  }
+
+  // ——— Действия со списком: удаление с отменой, закрепление свайпом, шторка, выбор ———
+
+  var notesPendingDelete = {};
+  var NOTES_UNDO_MS = 5000;
+
+  function wrapNotesListCard(n, card, id, isTranscription) {
+    return wrapWithSwipeDelete(
+      card,
+      async function () {
+        scheduleNotesDelete([n], isTranscription);
+      },
+      {
+        onPin: id ? function () { toggleNotePin(id, !n.pinned); } : null,
+        pinned: !!n.pinned,
+      }
+    );
+  }
+
+  function flushNotesPendingDelete() {
+    Object.keys(notesPendingDelete).forEach(function (id) {
+      var job = notesPendingDelete[id];
+      if (job && job.run) job.run();
+    });
+  }
+
+  // Удаляем не сразу: 5 секунд на «Отменить» (без диалога), потом — на сервер.
+  function scheduleNotesDelete(items, isTranscription) {
+    var ids = [];
+    (items || []).forEach(function (n) {
+      var id = String(localNoteIdFrom(n) || "");
+      if (!id || notesPendingDelete[id]) return;
+      ids.push(id);
+      var job = { done: false };
+      job.run = function () {
+        if (job.done) return;
+        job.done = true;
+        window.clearTimeout(job.timer);
+        delete notesPendingDelete[id];
+        deleteLocalNoteById(id)
+          .then(function () {
+            if (isTranscription || isTranscriptionNoteItem(n)) removeTranscriptionFromCache(id);
+            if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+          })
+          .catch(function (err) {
+            if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+            alert((err && err.message) || String(err));
+          });
+      };
+      job.timer = window.setTimeout(job.run, NOTES_UNDO_MS);
+      notesPendingDelete[id] = job;
+    });
+    if (!ids.length) return;
+    if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+    var shared = items.length === 1 && items[0].is_owner === false;
+    var label =
+      ids.length > 1
+        ? "Удалено: " + ids.length
+        : shared
+          ? "Убрано из списка"
+          : isTranscription
+            ? "Транскрипция удалена"
+            : "Заметка удалена";
+    var node = document.createElement("span");
+    node.className = "note-toast-copy";
+    node.appendChild(document.createTextNode(label + " · "));
+    var undo = document.createElement("button");
+    undo.type = "button";
+    undo.className = "note-toast-link";
+    undo.textContent = "Отменить";
+    undo.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      ids.forEach(function (id) {
+        var job = notesPendingDelete[id];
+        if (!job) return;
+        job.done = true;
+        window.clearTimeout(job.timer);
+        delete notesPendingDelete[id];
+      });
+      var el = document.getElementById("note-toast");
+      if (el) {
+        el.classList.add("hidden");
+        if (el._timer) window.clearTimeout(el._timer);
+      }
+      if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+    });
+    node.appendChild(undo);
+    showNoteToast("", { node: node, actionable: true, duration: NOTES_UNDO_MS });
+    try {
+      var tw = window.Telegram && window.Telegram.WebApp;
+      if (tw && tw.HapticFeedback) tw.HapticFeedback.notificationOccurred("success");
+    } catch (_) {}
+  }
+
+  window.addEventListener("pagehide", flushNotesPendingDelete);
+
+  var NOTES_SHEET_ICONS = {
+    pin: '<path d="M9 4h6l-1 6 4 4H6l4-4zM12 14v6" />',
+    folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />',
+    share: '<circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />',
+    pdf: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14" />',
+    select: '<rect x="4" y="4" width="16" height="16" rx="5" /><path d="M8.5 12.5l2.5 2.5 4.5-5" />',
+    copy: '<rect x="8" y="8" width="12" height="12" rx="3" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />',
+    trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5" />',
+  };
+
+  function closeNotesActionSheet() {
+    var ov = document.getElementById("nl-sheet-overlay");
+    if (!ov) return;
+    ov.remove();
+    document.removeEventListener("keydown", notesSheetKeydown, true);
+  }
+
+  function notesSheetKeydown(e) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeNotesActionSheet();
+    }
+  }
+
+  function openNotesActionSheet(title, items) {
+    closeNotesActionSheet();
+    var ov = document.createElement("div");
+    ov.id = "nl-sheet-overlay";
+    ov.className = "nl-sheet-overlay";
+    var sheet = document.createElement("div");
+    sheet.className = "nl-sheet";
+    sheet.setAttribute("role", "menu");
+    if (title) {
+      var h = document.createElement("div");
+      h.className = "nl-sheet-title";
+      h.textContent = title;
+      sheet.appendChild(h);
+    }
+    items.forEach(function (it) {
+      if (it === "-") {
+        var sep = document.createElement("div");
+        sep.className = "nl-sheet-sep";
+        sheet.appendChild(sep);
+        return;
+      }
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "nl-sheet-item" + (it.danger ? " is-danger" : "") + (it.active ? " is-active" : "");
+      b.setAttribute("role", "menuitem");
+      b.innerHTML =
+        '<span class="nl-sheet-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        (NOTES_SHEET_ICONS[it.icon] || "") +
+        "</svg></span>";
+      var lbl = document.createElement("span");
+      lbl.className = "nl-sheet-label";
+      lbl.textContent = it.label;
+      b.appendChild(lbl);
+      if (it.hint) {
+        var hint = document.createElement("span");
+        hint.className = "nl-sheet-hint";
+        hint.textContent = it.hint;
+        b.appendChild(hint);
+      }
+      b.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeNotesActionSheet();
+        it.onClick();
+      });
+      sheet.appendChild(b);
+    });
+    ov.appendChild(sheet);
+    ov.addEventListener("click", function (e) {
+      if (e.target === ov) closeNotesActionSheet();
+    });
+    document.body.appendChild(ov);
+    document.addEventListener("keydown", notesSheetKeydown, true);
+    requestAnimationFrame(function () {
+      ov.classList.add("is-open");
+    });
+  }
+
+  function openNotesProjectSheet(items) {
+    var ids = items
+      .map(function (n) {
+        return String(localNoteIdFrom(n) || "");
+      })
+      .filter(Boolean);
+    if (!ids.length) return;
+    var current = items.length === 1 ? noteProjectOf(items[0]) : null;
+    var tags = getUserTagsFromCache();
+    function move(tagIds, label) {
+      Promise.all(
+        ids.map(function (id) {
+          return saveItemTags("local", id, tagIds);
+        })
+      )
+        .then(function () {
+          showNoteToast(ids.length > 1 ? "Перенесено: " + ids.length + " → " + label : "Перенесено в «" + label + "»");
+        })
+        .catch(function (err) {
+          alert((err && err.message) || String(err));
+        });
+    }
+    var list = tags.map(function (t) {
+      return {
+        label: String(t.name || ""),
+        icon: current && Number(current.id) === Number(t.id) ? "check" : "folder",
+        active: !!(current && Number(current.id) === Number(t.id)),
+        onClick: function () {
+          move([Number(t.id)], String(t.name || ""));
+        },
+      };
+    });
+    list.push("-");
+    list.push({
+      label: "Без проекта",
+      icon: current ? "folder" : items.length === 1 ? "check" : "folder",
+      active: items.length === 1 && !current,
+      onClick: function () {
+        move([], "Без проекта");
+      },
+    });
+    openNotesActionSheet(ids.length > 1 ? "Перенести " + ids.length + " в проект" : "Перенести в проект", list);
+  }
+
+  function openNotesCardSheet(n) {
+    var id = String(localNoteIdFrom(n) || "");
+    if (!id) return;
+    var isOwner = n.is_owner !== false;
+    var title = sanitizeNoteTitle(n.title || n.content || "") || "Без названия";
+    var items = [
+      {
+        label: n.pinned ? "Открепить" : "Закрепить",
+        icon: "pin",
+        onClick: function () {
+          toggleNotePin(id, !n.pinned);
+        },
+      },
+      {
+        label: "Перенести в проект",
+        icon: "folder",
+        hint: (noteProjectOf(n) && noteProjectOf(n).name) || "",
+        onClick: function () {
+          openNotesProjectSheet([n]);
+        },
+      },
+      {
+        label: "Поделиться",
+        icon: "share",
+        onClick: function () {
+          listShareCtx = noteCardShareCtx(n);
+          openShareAccessSheet();
+        },
+      },
+      {
+        label: "Скачать PDF",
+        icon: "pdf",
+        onClick: function () {
+          requestNotePdf("local", id).catch(function (err) {
+            alert(err.message || String(err));
+          });
+        },
+      },
+      {
+        label: "Копировать",
+        icon: "copy",
+        onClick: function () {
+          duplicateLocalNote(id);
+        },
+      },
+      {
+        label: "Выбрать",
+        icon: "select",
+        onClick: function () {
+          enterNotesSelectMode();
+          toggleNotesSelected(id, true);
+        },
+      },
+      "-",
+      {
+        label: isOwner ? "Удалить" : "Убрать из списка",
+        icon: "trash",
+        danger: true,
+        onClick: function () {
+          scheduleNotesDelete([n], isTranscriptionNoteItem(n));
+        },
+      },
+    ];
+    openNotesActionSheet(title, items);
+  }
+
+  function bindNotesCardLongPress(card, n) {
+    var timer = null;
+    var sx = 0;
+    var sy = 0;
+    card.addEventListener(
+      "touchstart",
+      function (e) {
+        if (notesSelect.on || !e.touches || e.touches.length !== 1) return;
+        sx = e.touches[0].clientX;
+        sy = e.touches[0].clientY;
+        card._longPressed = false;
+        clearTimeout(timer);
+        timer = setTimeout(function () {
+          timer = null;
+          card._longPressed = true;
+          try {
+            if (navigator.vibrate) navigator.vibrate(10);
+            var tw = window.Telegram && window.Telegram.WebApp;
+            if (tw && tw.HapticFeedback) tw.HapticFeedback.impactOccurred("medium");
+          } catch (_) {}
+          var row = card.closest(".swipe-row");
+          if (row && row._swipeReset) row._swipeReset();
+          openNotesCardSheet(n);
+        }, 450);
+      },
+      { passive: true }
+    );
+    function cancel(e) {
+      if (!timer) return;
+      if (e && e.touches && e.touches[0]) {
+        if (Math.abs(e.touches[0].clientX - sx) < 8 && Math.abs(e.touches[0].clientY - sy) < 8) return;
+      }
+      clearTimeout(timer);
+      timer = null;
+    }
+    card.addEventListener("touchmove", cancel, { passive: true });
+    card.addEventListener("touchend", function () {
+      cancel();
+    });
+    card.addEventListener("touchcancel", function () {
+      cancel();
+    });
+    card.addEventListener("contextmenu", function (e) {
+      if (e.target && e.target.closest && e.target.closest("a, .note-card-menu")) return;
+      e.preventDefault();
+      if (card._longPressed) return;
+      if (!notesSelect.on) openNotesCardSheet(n);
+    });
+    card.addEventListener(
+      "click",
+      function (e) {
+        if (!card._longPressed) return;
+        card._longPressed = false;
+        e.preventDefault();
+        e.stopPropagation();
+      },
+      true
+    );
+  }
+
+  // ——— Режим выбора нескольких заметок ———
+
+  var notesSelect = { on: false, ids: {} };
+
+  function notesSelectedItems() {
+    var all = [];
+    if (notesDataCache) all = (notesDataCache.local_notes || []).concat(notesDataCache.transcriptions || []);
+    return all.filter(function (n) {
+      return notesSelect.ids[String(localNoteIdFrom(n))];
+    });
+  }
+
+  function notesSelectedCount() {
+    return Object.keys(notesSelect.ids).length;
+  }
+
+  function enterNotesSelectMode() {
+    if (notesSelect.on) return;
+    notesSelect.on = true;
+    notesSelect.ids = {};
+    document.documentElement.classList.add("notes-select-on");
+    ensureNotesSelectBars();
+    syncNotesSelectUi();
+  }
+
+  function exitNotesSelectMode() {
+    notesSelect.on = false;
+    notesSelect.ids = {};
+    document.documentElement.classList.remove("notes-select-on");
+    document.querySelectorAll(".nl-card.is-selected").forEach(function (c) {
+      c.classList.remove("is-selected");
+    });
+    syncNotesSelectUi();
+  }
+
+  function toggleNotesSelected(id, force) {
+    id = String(id || "");
+    if (!id) return;
+    var on = force != null ? !!force : !notesSelect.ids[id];
+    if (on) notesSelect.ids[id] = true;
+    else delete notesSelect.ids[id];
+    document.querySelectorAll('.nl-card[data-note-id="' + id + '"]').forEach(function (c) {
+      c.classList.toggle("is-selected", on);
+    });
+    syncNotesSelectUi();
+  }
+
+  function ensureNotesSelectBars() {
+    if (document.getElementById("notes-select-top")) return;
+    var top = document.createElement("div");
+    top.id = "notes-select-top";
+    top.className = "notes-select-top hidden";
+    top.innerHTML =
+      '<span class="notes-select-count" id="notes-select-count"></span>' +
+      '<button type="button" class="notes-select-all" id="notes-select-all">Выбрать все</button>' +
+      '<button type="button" class="notes-select-done" id="notes-select-done">Готово</button>';
+    var bar = document.createElement("div");
+    bar.id = "notes-select-bar";
+    bar.className = "notes-select-bar hidden";
+    function btn(action, label, icon, danger) {
+      return (
+        '<button type="button" class="notes-select-act' + (danger ? " is-danger" : "") + '" data-select-act="' + action + '">' +
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        NOTES_SHEET_ICONS[icon] +
+        "</svg><span>" + label + "</span></button>"
+      );
+    }
+    bar.innerHTML =
+      btn("project", "В проект", "folder") +
+      btn("pin", "Закрепить", "pin") +
+      btn("pdf", "Скачать", "pdf") +
+      btn("delete", "Удалить", "trash", true);
+    document.body.appendChild(top);
+    document.body.appendChild(bar);
+    top.querySelector("#notes-select-done").addEventListener("click", exitNotesSelectMode);
+    top.querySelector("#notes-select-all").addEventListener("click", function () {
+      var cards = document.querySelectorAll(
+        (notesSubTab === "transcriptions" ? "#notes-pane-transcriptions" : "#notes-pane-notes") + " .nl-card[data-note-id]"
+      );
+      var allOn = cards.length && Array.prototype.every.call(cards, function (c) {
+        return notesSelect.ids[c.getAttribute("data-note-id")];
+      });
+      cards.forEach(function (c) {
+        toggleNotesSelected(c.getAttribute("data-note-id"), !allOn);
+      });
+    });
+    bar.addEventListener("click", function (e) {
+      var b = e.target && e.target.closest ? e.target.closest("[data-select-act]") : null;
+      if (!b) return;
+      var items = notesSelectedItems();
+      if (!items.length) return;
+      var act = b.getAttribute("data-select-act");
+      if (act === "project") {
+        openNotesProjectSheet(items);
+        exitNotesSelectMode();
+      } else if (act === "pin") {
+        var pin = items.some(function (n) {
+          return !n.pinned;
+        });
+        items.forEach(function (n) {
+          if (!!n.pinned !== pin) toggleNotePin(String(localNoteIdFrom(n)), pin);
+        });
+        exitNotesSelectMode();
+      } else if (act === "pdf") {
+        var queue = items.slice();
+        (function next() {
+          var n = queue.shift();
+          if (!n) return;
+          requestNotePdf("local", String(localNoteIdFrom(n)))
+            .catch(function () {})
+            .then(function () {
+              window.setTimeout(next, 400);
+            });
+        })();
+        exitNotesSelectMode();
+      } else if (act === "delete") {
+        scheduleNotesDelete(items, notesSubTab === "transcriptions");
+        exitNotesSelectMode();
+      }
+    });
+  }
+
+  function syncNotesSelectUi() {
+    var top = document.getElementById("notes-select-top");
+    var bar = document.getElementById("notes-select-bar");
+    var on = notesSelect.on;
+    if (top) top.classList.toggle("hidden", !on);
+    if (bar) bar.classList.toggle("hidden", !on);
+    var n = notesSelectedCount();
+    var count = document.getElementById("notes-select-count");
+    if (count) count.textContent = n ? "Выбрано " + n : "Выберите заметки";
+    if (bar) {
+      bar.querySelectorAll("[data-select-act]").forEach(function (b) {
+        b.disabled = !n;
+      });
+      var pinBtn = bar.querySelector('[data-select-act="pin"] span');
+      if (pinBtn) {
+        var items = notesSelectedItems();
+        pinBtn.textContent = items.length && items.every(function (x) { return x.pinned; }) ? "Открепить" : "Закрепить";
+      }
+    }
   }
 
   function formatJournalListTime(iso) {
