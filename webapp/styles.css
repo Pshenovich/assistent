@@ -15249,3 +15249,6 @@ mark.note-highlight { background: rgba(250, 204, 21, 0.32); color: inherit; bord
 /* Иконки ссылок у вкладок — серые и мельче: важно, что лист открыт, но не кричать об этом. */
 .note-sheet-chip-share { color: var(--text-secondary, #909499); width: 18px; height: 18px; opacity: 0.8; }
 .note-sheet-chip-share svg { width: 12px; height: 12px; }
+
+/* Меню проекта в строке свойств: обёртка с z-index 1 прятала его под текстом заметки */
+#note-editor-overlay .note-editor-meta .tag-picker-add-wrap { position: relative; z-index: 130; }
