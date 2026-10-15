@@ -15589,3 +15589,27 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 .note-cal-slot { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); }
 .note-cal-slot .note-discuss-edits-btn { flex: none; }
 .note-discuss-cal:has(.note-cal-card, .note-cal-slot) { gap: 6px; }
+
+/* «+» на «Актуальном»: меню в общем стиле, первым — Ассистент */
+#actual-create-menu.actual-create-menu { gap: 2px; width: min(16rem, calc(100vw - 2rem)); padding: 6px; border: 0; border-radius: 16px; background: #2c2c2e; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08); backdrop-filter: none; }
+#actual-create-menu .actual-create-menu-btn { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: transparent; font-weight: 500; }
+#actual-create-menu .actual-create-menu-btn:hover,
+#actual-create-menu .actual-create-menu-btn:active { background: rgba(255, 255, 255, 0.08); transform: none; }
+.actual-create-ico { flex: none; width: 30px; height: 30px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.07); color: var(--text-secondary, #b4b7bb); }
+.actual-create-copy { display: grid; gap: 1px; min-width: 0; }
+.actual-create-copy b { font-weight: 600; font-size: 0.9375rem; }
+.actual-create-copy small { font-size: 0.75rem; color: var(--text-secondary, #909499); font-weight: 400; }
+#actual-create-menu .actual-create-menu-btn.is-ai .actual-create-ico { background: rgba(139, 92, 246, 0.18); color: #c4b5fd; }
+#actual-create-menu .actual-create-menu-btn.is-ai .actual-create-copy b { color: #ddd6fe; }
+.actual-create-sep { height: 1px; margin: 4px 6px; background: rgba(255, 255, 255, 0.08); }
+
+/* Ассистент открыт справа — «+» и его меню сдвигаются левее панели */
+@media (min-width: 960px) {
+  html.actual-assistant-open .actual-fab,
+  html.actual-assistant-open #actual-create-menu.actual-create-menu { right: calc(var(--discuss-w, 420px) + 24px) !important; }
+  html.actual-assistant-open .actual-fab { transition: right 0.2s ease; }
+}
+@media (min-width: 960px) {
+  /* Ассистент открыт на «Актуальном» — экран сжимается, календарь не уходит под панель */
+  html.actual-assistant-open .main-scroll { padding-right: calc(var(--discuss-w, 420px) + var(--page-x, 16px)); }
+}
