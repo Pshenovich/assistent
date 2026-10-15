@@ -1315,7 +1315,9 @@ function mountToolbar(toolbarEl, editor) {
     if (!item) return;
     var go = item.getAttribute("data-go");
     if (go) {
-      showMenuPage(item.closest(".note-tg-menu"), go);
+      var pnl = item.closest(".note-tg-menu");
+      showMenuPage(pnl, go);
+      placeMenu(pnl, toolbarEl.querySelector(".note-tg-btn--menu-open"));
       return;
     }
     var now = Date.now();
@@ -1335,6 +1337,22 @@ function mountToolbar(toolbarEl, editor) {
     if (panel.classList.contains("note-tg-menu--paged")) showMenuPage(panel, "main");
     panel.classList.remove("hidden");
     if (triggerBtn) triggerBtn.classList.add("note-tg-btn--menu-open");
+    placeMenu(panel, triggerBtn);
+  }
+
+  // Меню открываем над своей кнопкой (по центру), не вылезая за края тулбара.
+  function placeMenu(panel, triggerBtn) {
+    var host = panel.offsetParent;
+    if (!triggerBtn || !host) return;
+    var hr = host.getBoundingClientRect();
+    var br = triggerBtn.getBoundingClientRect();
+    var w = panel.offsetWidth;
+    var left = br.left + br.width / 2 - w / 2 - hr.left;
+    var minL = Math.max(8, -hr.left + 8);
+    var maxL = Math.min(hr.width, window.innerWidth - hr.left) - w - 8;
+    left = Math.max(minL, Math.min(left, maxL));
+    panel.style.left = Math.round(left) + "px";
+    panel.style.right = "auto";
   }
 
   function pickImage() {

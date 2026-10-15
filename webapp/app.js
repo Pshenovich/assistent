@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261015-editor2";
+  var WEBAPP_BUILD = "20261015-editor4";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261015-editor2";
+  const NOTE_EDITOR_ASSET_V = "20261015-editor4";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -16647,9 +16647,13 @@
       if (!useFixedMenu || !menuEl || menuEl.classList.contains("hidden") || !addBtnEl) return;
       var rect = addBtnEl.getBoundingClientRect();
       menuEl.style.position = "fixed";
-      menuEl.style.left = rect.left + rect.width / 2 + "px";
+      // По центру кнопки, но не за краем экрана (кнопка «Проект» теперь слева).
+      var w = menuEl.offsetWidth || 160;
+      var left = rect.left + rect.width / 2 - w / 2;
+      left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+      menuEl.style.left = Math.round(left) + "px";
       menuEl.style.top = rect.bottom + 6 + "px";
-      menuEl.style.transform = "translateX(-50%)";
+      menuEl.style.transform = "none";
       menuEl.style.zIndex = "120";
     }
 
