@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261015-restyle";
+  var WEBAPP_BUILD = "20261015-abstracts2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261015-restyle";
+  const NOTE_EDITOR_ASSET_V = "20261015-abstracts2";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -18092,6 +18092,77 @@
   // и своё описание для генерации (window.prompt в Telegram на телефоне часто не открывается).
   var canvasImageReq = null;
 
+  // Библиотека абстракций: сгенерированы один раз (assistant/lib/image_style.py, Gemini 3.1 Flash),
+  // лежат в webapp/canvas-kit/abstracts — выбор мгновенный и бесплатный. Только для стилей с фигурами (Аналитика).
+  var CANVAS_ABSTRACTS = {
+    analytic: [
+      { file: "analytic-1.jpg", thumb: "analytic-1-thumb.jpg", name: "Лента из изумрудного стекла" },
+      { file: "analytic-2.jpg", thumb: "analytic-2-thumb.jpg", name: "Стеклянный тор" },
+      { file: "analytic-3.jpg", thumb: "analytic-3-thumb.jpg", name: "Стеклянные ступени" },
+      { file: "analytic-4.jpg", thumb: "analytic-4-thumb.jpg", name: "Шар с золотой орбитой" },
+      { file: "analytic-5.jpg", thumb: "analytic-5-thumb.jpg", name: "Волна светящихся линий" },
+      { file: "analytic-6.jpg", thumb: "analytic-6-thumb.jpg", name: "Призма и лучи" },
+      { file: "analytic-7.jpg", thumb: "analytic-7-thumb.jpg", name: "Арка-портал" },
+      { file: "analytic-8.jpg", thumb: "analytic-8-thumb.jpg", name: "Парящие стеклянные кубы" },
+      { file: "analytic-9.jpg", thumb: "analytic-9-thumb.jpg", name: "Капля жидкого хрома" },
+      { file: "analytic-10.jpg", thumb: "analytic-10-thumb.jpg", name: "Стеклянный рельеф" }
+    ],
+  };
+
+  function canvasAbstractUrl(file) {
+    return "/webapp/canvas-kit/abstracts/" + file + "?v=" + encodeURIComponent(WEBAPP_BUILD);
+  }
+
+  async function urlToDataUrl(url) {
+    var res = await fetch(url, { cache: "force-cache" });
+    if (!res.ok) throw new Error("Не удалось загрузить картинку");
+    var blob = await res.blob();
+    return await new Promise(function (resolve, reject) {
+      var r = new FileReader();
+      r.onload = function () { resolve(String(r.result || "")); };
+      r.onerror = function () { reject(new Error("Не удалось прочитать картинку")); };
+      r.readAsDataURL(blob);
+    });
+  }
+
+  function renderCanvasImageLibrary(req) {
+    var box = document.getElementById("canvas-image-lib");
+    var grid = document.getElementById("canvas-image-lib-grid");
+    if (!box || !grid) return;
+    var list = req.isDecor ? CANVAS_ABSTRACTS[String(req.theme || "analytic")] || [] : [];
+    box.classList.toggle("hidden", !list.length);
+    grid.innerHTML = "";
+    list.forEach(function (a) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.setAttribute("role", "listitem");
+      b.setAttribute("aria-label", a.name);
+      b.title = a.name;
+      var img = document.createElement("img");
+      img.alt = "";
+      img.loading = "lazy";
+      img.src = canvasAbstractUrl(a.thumb || a.file);
+      b.appendChild(img);
+      b.addEventListener("click", async function () {
+        var cur = canvasImageReq;
+        if (!cur || b.getAttribute("aria-busy") === "true") return;
+        b.setAttribute("aria-busy", "true");
+        try {
+          var dataUrl = await urlToDataUrl(canvasAbstractUrl(a.file));
+          closeCanvasImageSheet();
+          // Без описания — помечается как «своя»: «Перерисовать картинки» её не трогает.
+          if (cur.req.applyImg) cur.req.applyImg(dataUrl, "");
+          showNoteToast("Абстракция поставлена");
+        } catch (e) {
+          showNoteToast((e && e.message) || "Не удалось поставить картинку");
+        } finally {
+          b.removeAttribute("aria-busy");
+        }
+      });
+      grid.appendChild(b);
+    });
+  }
+
   function openCanvasImageSheet(sheetId, req) {
     var ov = document.getElementById("canvas-image-overlay");
     if (!ov) return;
@@ -18101,8 +18172,9 @@
     var clear = document.getElementById("canvas-image-clear");
     if (clear) {
       clear.classList.toggle("hidden", !req.hasImg);
-      clear.textContent = req.isVisual ? "Вернуть 3D-визуал" : "Убрать";
+      clear.textContent = req.isDecor ? "Вернуть фигуру" : req.isVisual ? "Вернуть 3D-визуал" : "Убрать";
     }
+    renderCanvasImageLibrary(req);
     syncCanvasImageGenerateBtn();
     ov.classList.remove("hidden");
     ov.setAttribute("aria-hidden", "false");

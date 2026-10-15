@@ -160,6 +160,14 @@ html[data-leo-deck]:not(.leo-deck-js) .slide.tpl:first-child {
 
 /* ---- decor & 3D abstractions ---- */
 .tpl-stage .dec { position: absolute; z-index: 0; pointer-events: none; }
+/* Картинка вместо фигуры: справа на всю высоту, плавно уходит в фон слева — текст читается. */
+.tpl-stage .dec.dec-photo { top: 0; right: 0; bottom: 0; left: auto; width: 64%; height: auto; border: 0; border-radius: 0; box-shadow: none; background: none; transform: none; opacity: 1;
+  -webkit-mask-image: linear-gradient(to left, #000 45%, transparent 100%); mask-image: linear-gradient(to left, #000 45%, transparent 100%); }
+/* «Следующие шаги»: список справа — картинка зеркально слева, под заголовком, приглушена. */
+.tpl-stage .dec.dec-photo.is-low { right: auto; left: 0; width: 52%; opacity: 0.55;
+  -webkit-mask-image: linear-gradient(to right, #000 35%, transparent 100%); mask-image: linear-gradient(to right, #000 35%, transparent 100%); }
+.tpl-stage .dec.dec-photo.is-low > .media-img { transform: scaleX(-1); }
+.tpl-stage .dec.dec-photo > .media-img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 0; min-height: 0; }
 .tpl-stage .dec-torus { right: 90px; top: 110px; width: 220px; height: 220px; border-radius: 50%; border: 24px solid rgba(61, 214, 165, 0.3); box-shadow: inset 0 0 30px rgba(61, 214, 165, 0.15), 0 0 40px rgba(61, 214, 165, 0.12); transform: rotateX(62deg) rotateZ(20deg); }
 .tpl-stage .dec-torus.is-low { top: auto; bottom: 70px; right: auto; left: -60px; opacity: 0.5; }
 .tpl-stage .dec-ring { right: 70px; bottom: 60px; width: 240px; height: 240px; border-radius: 50%; border: 2px solid rgba(232, 184, 109, 0.35); box-shadow: inset 0 0 0 30px rgba(232, 184, 109, 0.06); transform: rotateX(70deg); }

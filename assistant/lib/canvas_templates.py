@@ -1351,6 +1351,27 @@ def _menu_for(slide: dict[str, Any]) -> list[dict[str, Any]]:
 THEME_RENDERERS: dict[str, dict[str, Callable[[Ctx], tuple[str, str]]]] = {}
 
 
+_DECOR_RE = re.compile(r'^<div class="dec (dec-[a-z]+)((?: is-[a-z]+)*)"></div>$')
+
+
+def _decor_slot(decor: str, mid: str, media: dict[str, str]) -> tuple[str, str]:
+    """Фигура оформления (тор, шар, кольцо) — заменяемая картинка: из библиотеки абстракций, своя или сгенерированная.
+    Без картинки остаётся фигура; data-dec на слайде — чтобы в режиме правок показать кнопку «Картинка»."""
+    m = _DECOR_RE.match(decor or "")
+    if not m:
+        return decor, ""
+    shape = m.group(1) + m.group(2)
+    attr = f' data-dec="{escape(mid)}"'
+    src = media.get(mid, "")
+    if src:
+        return (
+            f'<div class="dec dec-photo{m.group(2)}" data-media="{escape(mid)}" data-leo-id="{escape(mid)}" data-dec-shape="{shape}"'
+            f'{media_meta_attrs(media, mid)}><img class="media-img" alt="" src="{escape(src)}"/></div>',
+            attr,
+        )
+    return f'<div class="dec {shape}" data-media="{escape(mid)}" data-leo-id="{escape(mid)}" data-dec-shape="{shape}"></div>', attr
+
+
 def render_slide(
     slide: dict[str, Any], index: int, deck: dict[str, Any], media: dict[str, str], theme: str = DECK_THEME
 ) -> str:
@@ -1364,9 +1385,10 @@ def render_slide(
         inner, decor = ctx.t("title", "h2", "title", force=True) + '<p class="body">Не удалось отрисовать слайд.</p>', ""
     footer = escape(_s(deck.get("footer")) or _s(deck.get("title")))
     sid = escape(str(slide["id"]))
+    decor, dec_attr = _decor_slot(decor, f"{slide['id']}-dec", media)
     return (
         f'<section class="slide tpl" data-leo-id="{sid}" data-slide-id="{sid}" '
-        f'data-role="{escape(slide["role"])}" data-variant="{escape(variant.id)}">'
+        f'data-role="{escape(slide["role"])}" data-variant="{escape(variant.id)}"{dec_attr}>'
         f'<div class="tpl-stage">{decor}<div class="tpl-in">{inner}</div>'
         f'<div class="tpl-foot"><span>{footer}</span><span>{index + 1:02d}</span></div></div></section>'
     )
@@ -1394,10 +1416,80 @@ def render_deck_html(
         f'<!DOCTYPE html><html data-leo-theme="{th}" data-leo-deck="{DECK_VERSION}"><head>'
         f'<meta charset="utf-8"><title>{title}</title>{_fonts_link(THEMES[th]["fonts"])}'
         f'<style id="leo-canvas-tpl">\n{css}\n</style></head><body>'
-        f'<main class="deck">{slides_html}</main>'
+        f'<main class="deck">{slides_html}</main>{_kept_media_html(deck, media, slides_html)}'
         f'<script type="application/json" id="leo-deck">{_deck_json_for_embed(deck)}</script>'
         f"{_DECK_SCRIPT}</body></html>"
     )
+
+
+DECOR_VARIANTS = ("cover.goals", "cover.minimal", "insight.callout", "closing.next-steps")
+ABSTRACTS_DIR = Path(__file__).resolve().parents[2] / "webapp" / "canvas-kit" / "abstracts"
+ABSTRACTS_COUNT = 10  # analytic-1..10.jpg — библиотека абстракций (утверждена 2026-10-15)
+_ABSTRACT_CACHE: dict[int, str] = {}
+
+
+def _abstract_data_url(n: int) -> str:
+    if n not in _ABSTRACT_CACHE:
+        import base64
+
+        try:
+            raw = (ABSTRACTS_DIR / f"analytic-{n}.jpg").read_bytes()
+        except OSError:
+            return ""
+        _ABSTRACT_CACHE[n] = "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")
+    return _ABSTRACT_CACHE[n]
+
+
+def with_default_decor(deck: dict[str, Any], media: Optional[dict[str, str]] = None, only: Optional[Iterable[str]] = None) -> dict[str, str]:
+    """Новым слайдам с фигурой оформления (обложки, вывод, следующие шаги) — абстракция из библиотеки:
+    разные на разных слайдах, стартовая — от названия деки. Только при создании/добавлении слайдов:
+    если пользователь вернул фигуру, при перерисовке абстракция не вернётся. Помечаем «своей» —
+    «Перерисовать картинки» их не трогает."""
+    out = dict(media or {})
+    ids = set(only) if only is not None else None
+    used = {v for k, v in out.items() if k.endswith("-dec") and "#" not in k}
+    start = sum(map(ord, _s(deck.get("title")))) % ABSTRACTS_COUNT
+    n = 0
+    for sl in deck.get("slides") or []:
+        sid = str(sl.get("id"))
+        if sl.get("variant") not in DECOR_VARIANTS or (ids is not None and sid not in ids):
+            continue
+        mid = f"{sid}-dec"
+        if mid in out:
+            continue
+        for _ in range(ABSTRACTS_COUNT):
+            url = _abstract_data_url(1 + (start + n) % ABSTRACTS_COUNT)
+            n += 1
+            if url and url not in used:
+                out[mid] = url
+                out[mid + OWN_SUFFIX] = "1"
+                used.add(url)
+                break
+    return out
+
+
+def _kept_media_html(deck: dict[str, Any], media: dict[str, str], slides_html: str) -> str:
+    """Картинки, которым нет места в текущем стиле (фон-абстракция в «Монохроме»), храним скрыто —
+    чтобы при возврате стиля они вернулись. Картинки удалённых слайдов не тащим."""
+    slides = {str(s.get("id")): s for s in deck.get("slides") or []}
+    keep = []
+    for mid, src in media.items():
+        if "#" in mid or f'data-media="{mid}"' in slides_html:
+            continue
+        sid, _, rest = mid.partition("-")
+        slide = slides.get(sid)
+        if slide is None:
+            continue
+        if rest == "dec":
+            pass
+        elif rest.startswith("v-") and f'"key": "{rest[2:]}"' in json.dumps(slide.get("slots") or {}, ensure_ascii=False):
+            pass  # визуал карточки, которой в этом стиле нет картинки (в «Монохроме» у карточек нет визуалов)
+        else:
+            continue  # удалённый элемент — картинку не храним
+        keep.append(
+            f'<div data-media="{escape(mid)}"{media_meta_attrs(media, mid)}><img alt="" src="{escape(src)}"/></div>'
+        )
+    return f'<div class="leo-media-keep" hidden>{"".join(keep)}</div>' if keep else ""
 
 
 def is_template_html(html: str) -> bool:
@@ -1474,7 +1566,8 @@ def restyle_targets(html: str) -> list[tuple[str, str]]:
     Загруженные пользователем (data-img-own) и 3D-визуалы без картинки не трогаем."""
     out: list[tuple[str, str]] = []
     seen: set[str] = set()
-    for m in _MEDIA_TAG_RE.finditer(html or ""):
+    html = (html or "").split('<div class="leo-media-keep"', 1)[0]  # скрытые картинки другого стиля не трогаем
+    for m in _MEDIA_TAG_RE.finditer(html):
         attrs, mid = m.group(1), m.group(2)
         if mid in seen or 'data-img-own="1"' in attrs:
             continue

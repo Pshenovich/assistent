@@ -872,7 +872,7 @@ def apply_canvas_action(
                 int(note["id"]),
                 sid,
                 title=title if action.get("title") else None,
-                body=canvas_templates.render_deck_html(deck),
+                body=canvas_templates.render_deck_html(deck, canvas_templates.with_default_decor(deck)),
                 kind=SHEET_KIND_WEB,
             )
         # Targeted patches must run on the live sheet. Full html rewrite only when
@@ -908,7 +908,7 @@ def apply_canvas_action(
         return note_sheets_mod.create_sheet(
             note,
             title=title,
-            body=canvas_templates.render_deck_html(deck),
+            body=canvas_templates.render_deck_html(deck, canvas_templates.with_default_decor(deck)),
             kind=SHEET_KIND_WEB,
         )
 
@@ -961,6 +961,7 @@ def _update_template_sheet(
     deck = canvas_templates.extract_deck(existing_html)
     if deck is None:
         return None
+    ids_before = {str(x.get("id")) for x in deck.get("slides") or []}
     touched: list[str] = []
     # «Сделай в монохроме» — меняем только стиль, содержимое остаётся.
     want_theme = str(action.get("theme") or "")
@@ -980,7 +981,9 @@ def _update_template_sheet(
         deck["title"] = new_title[:120]
     if not touched and not (new_title and not surgical):
         return None
-    html = canvas_templates.render_deck_html(deck, canvas_templates.extract_media(existing_html))
+    new_ids = [str(x.get("id")) for x in deck.get("slides") or [] if str(x.get("id")) not in ids_before]
+    media = canvas_templates.with_default_decor(deck, canvas_templates.extract_media(existing_html), only=new_ids)
+    html = canvas_templates.render_deck_html(deck, media)
     return note_sheets_mod.update_sheet(
         int(note["id"]),
         sid,
