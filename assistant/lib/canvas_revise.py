@@ -207,7 +207,8 @@ def insert_slides(
         anchor = added[0]
     if not new_ids:
         return None, []
-    return canvas_templates.render_deck_html(deck, canvas_templates.extract_media(html)), new_ids
+    media = canvas_templates.with_default_decor(deck, canvas_templates.extract_media(html), only=new_ids)
+    return canvas_templates.render_deck_html(deck, media), new_ids
 
 
 def _neighbours(ids: list[str], sid: str) -> set[str]:

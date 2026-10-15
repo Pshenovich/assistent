@@ -229,6 +229,7 @@
     "img.alt='';" +
     "img.src=dataUrl;" +
     "if(n.tagName&&n.tagName.toLowerCase()==='img'){n.src=dataUrl;n.classList.add('media-img');}" +
+    "else if(n.hasAttribute('data-dec-shape')){n.innerHTML='';n.className='dec dec-photo'+(/is-low/.test(n.getAttribute('data-dec-shape'))?' is-low':'');n.appendChild(img);}" +
     "else if(n.hasAttribute('data-a3')){n.innerHTML='';n.classList.add('a3-photo');n.appendChild(img);}" +
     "else{n.innerHTML='';n.classList.add('media-slot');n.appendChild(img);}" +
     "if(n.tagName.toLowerCase()!=='img'){n.removeAttribute('data-leo-img');n.removeAttribute('data-leo-img-prompt');n.classList.remove('tpl-media-empty');" +
@@ -241,6 +242,7 @@
     "var n=leoId&&document.querySelector('[data-leo-id=\"'+String(leoId).replace(/\"/g,'')+'\"]');" +
     "if(!n)return;" +
     "n.removeAttribute('data-img-prompt');n.removeAttribute('data-img-own');" +
+    "if(n.hasAttribute('data-dec-shape')){n.innerHTML='';n.className='dec '+n.getAttribute('data-dec-shape');snapshotHtml();return;}" +
     "if(n.hasAttribute('data-a3')){var v=n.getAttribute('data-a3')||'orb';n.classList.remove('a3-photo');" +
     "n.innerHTML='<div class=\"a3-'+v.replace(/[^a-z]/g,'')+'\">'+(v==='cube'?'<i></i><i></i><i></i>':'')+'</div>';selectNode(n);snapshotHtml();return;}" +
     "if(n.tagName&&n.tagName.toLowerCase()==='img'){" +
@@ -516,6 +518,14 @@
         '<button type="button" data-act="up" title="Переместить выше" aria-label="Переместить слайд выше">↑</button>' +
         '<button type="button" data-act="down" title="Переместить ниже" aria-label="Переместить слайд ниже">↓</button>' +
         '<button type="button" data-act="delslide" title="Удалить слайд" aria-label="Удалить слайд">✕</button>';
+      var decId = sec.getAttribute("data-dec");
+      if (decId) {
+        tools.insertAdjacentHTML(
+          "afterbegin",
+          '<button type="button" data-act="decor" title="Картинка на фоне слайда: готовые абстракции, своя или сгенерировать" aria-label="Картинка слайда">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg></button>'
+        );
+      }
       if (cur === "custom.grid") {
         tools.insertAdjacentHTML(
           "afterbegin",
@@ -540,6 +550,18 @@
           else openMenu(tools, sid, cur, list);
         } else if (act === "savelayout") {
           post("saveLayout", { slideId: sid });
+        } else if (act === "decor") {
+          var dec = sec.querySelector("[data-dec-shape]");
+          var t = sec.querySelector(".title,.display,h1,h2");
+          post("media", {
+            action: "menu",
+            leoId: decId,
+            prompt: (dec && dec.getAttribute("data-img-prompt")) || "",
+            hasImg: !!(dec && dec.querySelector("img.media-img")),
+            isDecor: true,
+            theme: root.getAttribute("data-leo-theme") || "",
+            slideTitle: t ? String(t.textContent || "").trim().slice(0, 120) : "",
+          });
         } else if (act === "up" || act === "down") {
           post("op", { op: "move_slide", slideId: sid, delta: act === "up" ? -1 : 1 });
         } else if (act === "delslide") {
@@ -1535,6 +1557,8 @@
           prompt: String(d.prompt || ""),
           hasImg: !!d.hasImg,
           isVisual: !!d.isVisual,
+          isDecor: !!d.isDecor,
+          theme: String(d.theme || ""),
           slideTitle: String(d.slideTitle || ""),
           applyImg: function (dataUrl, prompt) {
             postToFrame({ type: "setImg", leoId: String(d.leoId || ""), dataUrl: dataUrl, prompt: prompt || "" });

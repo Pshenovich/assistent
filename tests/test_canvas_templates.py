@@ -644,3 +644,51 @@ class RestyleImagesTests(unittest.TestCase):
         self.assertIn(tpl.data_url_digest(url), digests)
         self.assertNotIn(tpl.data_url_digest("data:image/png;base64,AAAA"), digests)
         self.assertIsNone(tpl.data_url_digest("/files/1.png"))
+
+
+class DecorImageTests(unittest.TestCase):
+    def _deck(self):
+        return {"v": tpl.DECK_VERSION, "title": "T", "slides": [
+            {"id": "s1", "role": "cover", "variant": "cover.minimal", "slots": {"title": "Итоги Q3"}},
+            {"id": "s2", "role": "closing", "variant": "closing.next-steps",
+             "slots": {"title": "Дальше", "actions": [{"text": "Запустить пилот", "due": "3 ноября"}]}}]}
+
+    def test_shape_by_default_image_when_chosen_and_back(self):
+        html = tpl.render_deck_html(self._deck(), {}, theme="analytic")
+        self.assertIn('data-dec="s1-dec"', html)
+        self.assertIn('class="dec dec-orb" data-media="s1-dec"', html)
+        self.assertIn('class="dec dec-torus is-low" data-media="s2-dec"', html)
+        img = "data:image/jpeg;base64,AAAA"
+        media = {"s1-dec": img, "s1-dec#own": "1", "s2-dec": img, "s2-dec#prompt": "glass ribbon"}
+        html = tpl.render_deck_html(self._deck(), media, theme="analytic")
+        self.assertIn('class="dec dec-photo" data-media="s1-dec"', html)
+        self.assertIn('class="dec dec-photo is-low" data-media="s2-dec"', html)
+        self.assertEqual(tpl.extract_media(html), media)
+        self.assertEqual(dict(tpl.restyle_targets(html)), {"s2-dec": "glass ribbon"})  # своя (из библиотеки) — не трогаем
+        mono = tpl.render_deck_html(self._deck(), media, theme="mono")
+        self.assertNotIn("data-dec=", mono)  # в «Монохроме» фигур нет — картинка ждёт возврата в «Аналитику»
+        self.assertEqual(tpl.extract_media(mono), media)
+        self.assertEqual(tpl.restyle_targets(mono), [])  # скрытые не перерисовываем
+        back = tpl.render_deck_html(tpl.extract_deck(mono), tpl.extract_media(mono), theme="analytic")
+        self.assertIn('class="dec dec-photo" data-media="s1-dec"', back)
+        self.assertNotIn("leo-media-keep", back)
+        gone = dict(self._deck(), slides=self._deck()["slides"][:1])
+        self.assertNotIn("s2-dec", tpl.extract_media(tpl.render_deck_html(gone, media, theme="mono")))
+
+    def test_new_decks_get_distinct_library_abstractions_and_figure_stays_after_reset(self):
+        deck = {"v": tpl.DECK_VERSION, "title": "Q3", "slides": [
+            {"id": "s1", "role": "cover", "variant": "cover.minimal", "slots": {"title": "Итоги"}},
+            {"id": "s2", "role": "insight", "variant": "insight.callout", "slots": {"claim": "Вывод"}},
+            {"id": "s3", "role": "content", "variant": "content.cards", "slots": {"title": "К", "items": [{"title": "A", "text": "a"}]}}]}
+        media = tpl.with_default_decor(deck)
+        self.assertEqual(sorted(k for k in media if "#" not in k), ["s1-dec", "s2-dec"])
+        self.assertNotEqual(media["s1-dec"], media["s2-dec"])
+        self.assertTrue(media["s1-dec"].startswith("data:image/jpeg;base64,"))
+        self.assertEqual(media["s1-dec#own"], "1")
+        html = tpl.render_deck_html(deck, media, theme="analytic")
+        self.assertEqual(tpl.restyle_targets(html), [])
+        # Вернули фигуру (картинки нет в html) — обычная перерисовка её не возвращает.
+        plain = tpl.render_deck_html(deck, {}, theme="analytic")
+        self.assertIn('class="dec dec-orb"', tpl.render_deck_html(tpl.extract_deck(plain), tpl.extract_media(plain)))
+        only = tpl.with_default_decor(deck, {}, only=["s2"])
+        self.assertEqual([k for k in only if "#" not in k], ["s2-dec"])
