@@ -571,3 +571,21 @@ class TableFactsTests(unittest.TestCase):
         self.assertEqual(tpl.group_digits("358750 ₽"), "358\u00a0750 ₽")
         self.assertEqual(tpl.group_digits("2024"), "2024")
         self.assertEqual(tpl.group_digits("12 000"), "12 000")
+
+
+class ImageStyleTests(unittest.TestCase):
+    def test_styled_prompt_adds_deck_art_direction_once(self):
+        from assistant.lib import image_style
+
+        p = image_style.styled_prompt("инженер подключает CRM", "mono")
+        self.assertTrue(p.startswith("инженер подключает CRM. Art direction:"))
+        self.assertIn("black-and-white", p)
+        self.assertIn("No text", p)
+        self.assertNotIn("#", p)  # коды цветов модели печатают на картинке
+        self.assertEqual(image_style.styled_prompt(p, "analytic"), p)
+        self.assertIn("dark-green", image_style.styled_prompt("office", None))
+        self.assertEqual(image_style.styled_prompt("  ", "mono"), "")
+        self.assertEqual(image_style.deck_theme_of_html('<html data-leo-theme="mono" data-leo-deck="1">'), "mono")
+
+    def test_schema_asks_for_concrete_image_subjects(self):
+        self.assertIn("не «abstract shapes»", tpl.schema_prompt())

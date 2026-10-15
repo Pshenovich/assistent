@@ -14975,3 +14975,20 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 .notes-filter-reset, .notes-filter-reset:hover { width: auto; padding: 0 0.5rem; background: transparent; border: 0; font-size: 0.875rem; font-weight: 600; color: var(--accent); }
 .notes-filter-reset:disabled { color: var(--text-secondary); opacity: 0.5; }
 .notes-filter-apply { width: 100%; }
+
+
+/* ---- шторка «Изображение» слайда: генерация по описанию / загрузка / убрать ---- */
+/* Поверх редактора заметки (100) и обсуждения (220), ниже тоста (320) и системных модалок (280). */
+#canvas-image-overlay { z-index: 260; }
+.canvas-image-body { display: flex; flex-direction: column; gap: var(--space-2); }
+.canvas-image-label { font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary); }
+.canvas-image-prompt { width: 100%; box-sizing: border-box; min-height: 6.5rem; resize: vertical; font-size: 16px; line-height: 1.4; }
+.canvas-image-hint { margin: 0 0 var(--space-2); font-size: 0.75rem; color: var(--text-secondary); }
+.canvas-image-generate { width: 100%; min-height: 2.875rem; }
+.canvas-image-actions { display: flex; gap: var(--space-2); }
+.canvas-image-actions .btn { flex: 1 1 0; min-height: 2.75rem; }
+.canvas-image-clear { color: var(--danger, #e5484d); }
+
+.note-web-canvas-pick-btn[hidden] {
+  display: none !important;
+}

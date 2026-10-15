@@ -890,8 +890,9 @@ def media_slot_html(c: Ctx, mid: str, prompt: str, cls: str = "") -> str:
     src = c.media.get(mid, "")
     extra = f" {cls}" if cls else ""
     if src:
+        keep = f' data-img-prompt="{escape(prompt)}"' if prompt else ""
         return (
-            f'<div class="media-slot tpl-media{extra}" data-media="{mid}" data-leo-id="{mid}">'
+            f'<div class="media-slot tpl-media{extra}" data-media="{mid}" data-leo-id="{mid}"{keep}>'
             f'<img class="media-img" alt="" src="{escape(src)}"/></div>'
         )
     pending = f' data-leo-img="pending" data-leo-img-prompt="{escape(prompt)}"' if prompt else ""
@@ -1694,7 +1695,15 @@ def schema_prompt() -> str:
             continue
         for v in variants_for_role(role):
             lines.append(f"- {role} · {v.id} ({v.name}): {v.schema}")
+    lines.append(IMAGE_PROMPT_RULE)
     return "\n".join(lines)
+
+
+IMAGE_PROMPT_RULE = (
+    "image_prompt (везде): 1–2 предложения на английском — конкретный сюжет или визуальная метафора по смыслу слайда "
+    "(кто/что в кадре, действие, обстановка, ракурс), а не «abstract shapes». Стиль, цвета и свет не пиши — "
+    "их добавит оформление презентации. Без текста и цифр на картинке."
+)
 
 
 def deck_prompt_json(deck: dict[str, Any], only: Optional[set[str]] = None) -> str:

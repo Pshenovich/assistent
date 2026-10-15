@@ -42,6 +42,7 @@
     "function showEditChrome(node){" +
     "document.querySelectorAll('.leo-edit-chrome:not(.leo-review-ui)').forEach(function(n){n.remove();});" +
     "if(!node||!edit)return;" +
+    "if(TPL&&isMediaNode(node))return;" +
     "var bar=document.createElement('div');" +
     "bar.className='leo-edit-chrome';" +
     "var html='<button type=\"button\" data-act=\"drag\" class=\"leo-drag-handle\" title=\"Перетащить\">⠿</button>';" +
@@ -201,7 +202,7 @@
     "if(dragState)return;" +
     "if(e.target&&e.target.closest&&e.target.closest('.leo-edit-chrome'))return;" +
     "var el=e.target;if(!el||el===document.documentElement||el===document.body)return;" +
-    "if(edit&&TPL){var media=el.closest('[data-media]');if(!media)return;e.preventDefault();e.stopPropagation();selectNode(media);return;}" +
+    "if(edit&&TPL){var media=el.closest('[data-media]');if(!media)return;e.preventDefault();e.stopPropagation();selectNode(media);openMediaMenu(media);return;}" +
     "e.preventDefault();e.stopPropagation();" +
     "var node=el.closest('[data-leo-id]')||el;" +
     "if(pick){" +
@@ -211,8 +212,15 @@
     "}" +
     "if(edit)selectNode(node);" +
     "}" +
+    "function openMediaMenu(m){" +
+    "var sl=m.closest('[data-slide-id]');var t=sl&&sl.querySelector('.title,.display,h1,h2');" +
+    "post('media',{action:'menu',leoId:ensureLeoId(m)," +
+    "prompt:m.getAttribute('data-leo-img-prompt')||m.getAttribute('data-img-prompt')||''," +
+    "hasImg:!!m.querySelector('img.media-img'),isVisual:m.hasAttribute('data-a3')," +
+    "slideTitle:t?String(t.textContent||'').trim().slice(0,120):''});" +
+    "}" +
     "function onInput(){if(edit)post('dirty',{});}" +
-    "function applyImg(leoId,dataUrl){" +
+    "function applyImg(leoId,dataUrl,prompt){" +
     "var n=leoId&&document.querySelector('[data-leo-id=\"'+String(leoId).replace(/\"/g,'')+'\"]');" +
     "if(!n||!dataUrl)return;" +
     "var img=document.createElement('img');" +
@@ -223,6 +231,8 @@
     "if(n.tagName&&n.tagName.toLowerCase()==='img'){n.src=dataUrl;n.classList.add('media-img');}" +
     "else if(n.hasAttribute('data-a3')){n.innerHTML='';n.classList.add('a3-photo');n.appendChild(img);}" +
     "else{n.innerHTML='';n.classList.add('media-slot');n.appendChild(img);}" +
+    "if(n.tagName.toLowerCase()!=='img'){n.removeAttribute('data-leo-img');n.removeAttribute('data-leo-img-prompt');n.classList.remove('tpl-media-empty');" +
+    "if(prompt)n.setAttribute('data-img-prompt',String(prompt).slice(0,600));else n.removeAttribute('data-img-prompt');}" +
     "selectNode(n.tagName.toLowerCase()==='img'?n:n);" +
     "snapshotHtml();" +
     "}" +
@@ -251,7 +261,7 @@
     "if(d.type==='highlight'){clearSel();var n=d.leoId&&document.querySelector('[data-leo-id=\"'+String(d.leoId).replace(/\"/g,'')+'\"]');if(n){selected=n;n.classList.add(edit?'leo-edit-selected':'leo-selected');if(edit)showEditChrome(n);}}" +
     "if(d.type==='clear'){clearSel();}" +
     "if(d.type==='getHtml'){snapshotHtml();}" +
-    "if(d.type==='setImg'){applyImg(d.leoId,d.dataUrl);}" +
+    "if(d.type==='setImg'){applyImg(d.leoId,d.dataUrl,d.prompt||'');}" +
     "if(d.type==='clearMedia'){clearMedia(d.leoId);}" +
     "if(d.type==='insert'){insertBlock(String(d.kind||'text'));}" +
     "if(d.type==='deleteSelected'){if(selected)deleteNode(selected);}" +
@@ -1267,6 +1277,11 @@
 
     function syncInsertBar() {
       syncThemeBtn();
+      // «Выделить» (элемент → контекст для ИИ в чате) нужен свободным листам; у презентаций из шаблонов
+      // для этого есть «Что поправить» у каждого слайда в «Редактировать».
+      var tplDeck = isTemplateDeck();
+      pickBtn.hidden = tplDeck;
+      if (tplDeck && picking) setPick(false);
       // Template decks are edited through slots, comments and the layout menu.
       insertBar.hidden = !editing || isTemplateDeck();
       wrap.classList.toggle("is-editing", editing);
@@ -1456,8 +1471,12 @@
           sheetId: sheetId,
           action: String(d.action || ""),
           leoId: String(d.leoId || ""),
-          applyImg: function (dataUrl) {
-            postToFrame({ type: "setImg", leoId: String(d.leoId || ""), dataUrl: dataUrl });
+          prompt: String(d.prompt || ""),
+          hasImg: !!d.hasImg,
+          isVisual: !!d.isVisual,
+          slideTitle: String(d.slideTitle || ""),
+          applyImg: function (dataUrl, prompt) {
+            postToFrame({ type: "setImg", leoId: String(d.leoId || ""), dataUrl: dataUrl, prompt: prompt || "" });
           },
           clearMedia: function () {
             postToFrame({ type: "clearMedia", leoId: String(d.leoId || "") });

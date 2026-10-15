@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261015-notes-filter">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261015-image-sheet2">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -87,7 +87,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261015-notes-filter" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261015-image-sheet2" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -1351,6 +1351,38 @@
     </div>
   </div>
 
+  <div id="canvas-image-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal--sheet canvas-image-sheet" role="dialog" aria-modal="true" aria-labelledby="canvas-image-title">
+      <div class="modal-form">
+        <div class="modal-header">
+          <button type="button" class="modal-header-btn modal-header-btn--close" id="canvas-image-close" aria-label="Закрыть" title="Закрыть">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+          <h2 id="canvas-image-title" class="modal-title">Изображение</h2>
+          <span class="modal-header-btn modal-header-btn--placeholder" aria-hidden="true"></span>
+        </div>
+        <div class="modal-body canvas-image-body">
+          <label class="canvas-image-label" for="canvas-image-prompt">Что должно быть на картинке</label>
+          <textarea
+            id="canvas-image-prompt"
+            class="field-input canvas-image-prompt"
+            rows="4"
+            maxlength="1000"
+            placeholder="Например: инженер и клиент подключают CRM на ноутбуке в переговорной"
+          ></textarea>
+          <p class="canvas-image-hint">Можно по-русски. Стиль, цвета и свет подстроим под оформление презентации.</p>
+          <button type="button" class="btn primary canvas-image-generate" id="canvas-image-generate">Сгенерировать</button>
+          <div class="canvas-image-actions">
+            <button type="button" class="btn canvas-image-upload" id="canvas-image-upload">Загрузить своё</button>
+            <button type="button" class="btn canvas-image-clear" id="canvas-image-clear">Убрать</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="notes-filter-overlay" class="modal-overlay hidden" aria-hidden="true">
     <div class="modal modal--sheet notes-filter-sheet" role="dialog" aria-modal="true" aria-labelledby="notes-filter-title">
       <div class="modal-form">
@@ -1700,7 +1732,7 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261015-notes-filter" defer></script>
-  <script src="/webapp/app.js?v=20261015-notes-filter" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261015-image-sheet2" defer></script>
+  <script src="/webapp/app.js?v=20261015-image-sheet2" defer></script>
 </body>
 </html>
