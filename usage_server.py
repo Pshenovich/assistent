@@ -7269,7 +7269,12 @@ async def miniapp_gpt_chat(
                 )
             system_text = (system_text.rstrip() + "\n\n" + cal_addon).strip() if system_text else cal_addon
         tool_kwargs: dict[str, Any] = (
-            {"tools": gcal_tools.TOOLS, "tool_runner": gcal_tools.make_runner(gcal_ctx)}
+            {
+                "tools": gcal_tools.TOOLS,
+                "tool_runner": gcal_tools.make_runner(gcal_ctx),
+                # Вопрос про календарь — модель обязана сначала посмотреть данные.
+                "tool_choice_first": "required" if gcal_tools.looks_like_calendar_question(q) else "auto",
+            }
             if calendar_tools_on
             else {}
         )
@@ -7300,6 +7305,10 @@ async def miniapp_gpt_chat(
             )
             if out is None:
                 return None
+            try:
+                gcal_tools.finalize_auto_cards(gcal_ctx, str(out.get("answer") or ""))
+            except Exception as e:
+                print(f"[gpt_calendar] auto_cards err={e!r}")
             if gcal_ctx.actions:
                 out["calendar_actions"] = [
                     gcal_tools.public_action(a, viewer_uid=uid)

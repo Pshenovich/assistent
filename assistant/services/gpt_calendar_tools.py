@@ -165,6 +165,30 @@ class GptCalendarContext:
     actions: list[str] = field(default_factory=list)
     created_events: list[dict[str, Any]] = field(default_factory=list)
     updated_events: list[dict[str, Any]] = field(default_factory=list)
+    # Что модель смотрела — для автоматических карточек, если она сама их не показала.
+    seen_items: list[dict[str, Any]] = field(default_factory=list)
+    slot_offers: list[dict[str, Any]] = field(default_factory=list)
+    cards_shown: bool = False
+    slots_offered: bool = False
+    wrote: bool = False
+
+
+_CAL_INTENT_RE = None
+
+
+def looks_like_calendar_question(text: str) -> bool:
+    """Вопрос про встречи/задачи/напоминания/время — тогда первый шаг модели обязан вызвать инструмент."""
+    import re
+
+    global _CAL_INTENT_RE
+    if _CAL_INTENT_RE is None:
+        _CAL_INTENT_RE = re.compile(
+            r"(?i)(встреч|созвон|календар|задач|напомин|слот|свобод|занят|расписан|планёрк|планерк|"
+            r"\bмитинг|сегодня|завтра|послезавтра|понедельник|вторник|сред[аеуы]\b|четверг|пятниц|суббот|"
+            r"воскресен|на неделе|недел[юи]|в \d{1,2}[:.]\d{2}|во сколько|когда у меня|с кем|сколько времени|"
+            r"запланир|перенеси встреч)"
+        )
+    return bool(_CAL_INTENT_RE.search(str(text or "")))
 
 
 def has_google_calendar(uid: int) -> bool:
@@ -447,6 +471,7 @@ def tool_calendar_events(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
             if raw.get("location"):
                 item["location"] = str(raw.get("location"))[:120]
             out.append(item)
+            ctx.seen_items.append({"type": "event", "id": item["id"], "calendar_id": item["calendar_id"], "title": item["title"]})
     try:
         from assistant.stores import calendar_tasks
 
@@ -461,6 +486,7 @@ def tool_calendar_events(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
                     "assignee": t.get("assignee_name") or "",
                 }
             )
+            ctx.seen_items.append({"type": "task", "id": str(t.get("id")), "title": t.get("title")})
     except Exception as e:
         print(f"[gpt_calendar] tasks_list err={e!r}")
     out.sort(key=lambda x: str(x.get("start") or ""))
@@ -480,6 +506,11 @@ def tool_calendar_free_slots(ctx: GptCalendarContext, args: dict[str, Any]) -> s
     emails, missing = _resolve_people(ctx, args.get("with_people") or [])
     dur = int(args.get("duration_min") or 30)
     slots = cal.joint_free_slots_day(ctx.uid, day, emails, duration_min=dur)
+    if slots:
+        ctx.slot_offers.append(
+            {"date": day, "duration_min": dur, "people": [str(p).strip() for p in args.get("with_people") or [] if str(p).strip()],
+             "starts": [s0.get("start") for s0 in slots if s0.get("start")]}
+        )
     res: dict[str, Any] = {"date": day, "duration_min": dur, "slots": slots[:24]}
     if missing:
         res["not_found_in_contacts"] = missing
@@ -626,6 +657,7 @@ def _attach_online(ctx: GptCalendarContext, created: dict[str, Any], online: str
 
 
 def tool_calendar_create_event(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    ctx.wrote = True
     from assistant.services import calendar as cal
 
     if not has_google_calendar(ctx.uid):
@@ -704,6 +736,7 @@ def _event_snapshot(ctx: GptCalendarContext, event_id: str, calendar_id: str | N
 
 
 def tool_calendar_update_event(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    ctx.wrote = True
     from assistant.lib import zoom_gcal
     from assistant.services import calendar as cal
 
@@ -798,6 +831,7 @@ def _resolve_assignee(ctx: GptCalendarContext, name: str) -> tuple[int, str, str
 
 
 def tool_task_create(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    ctx.wrote = True
     from assistant.stores import calendar_tasks
 
     title = str(args.get("title") or "").strip()
@@ -847,6 +881,7 @@ def tool_task_create(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
 
 
 def tool_reminder_create(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    ctx.wrote = True
     from assistant.stores import reminders_store
 
     text = str(args.get("text") or "").strip()
@@ -897,6 +932,7 @@ def _find_target_by_title(ctx: GptCalendarContext, kind: str, title: str) -> tup
 
 
 def tool_propose_delete(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    ctx.wrote = True
     kind = str(args.get("kind") or "").strip()
     oid = str(args.get("id") or "").strip()
     if kind not in ("event", "task", "reminder"):
@@ -1011,6 +1047,7 @@ def _card_for(ctx: GptCalendarContext, item: dict[str, Any]) -> tuple[str, str, 
 
 
 def tool_show_calendar_cards(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    ctx.cards_shown = True
     shown = 0
     for item in (args.get("items") or [])[:12]:
         if not isinstance(item, dict):
@@ -1029,6 +1066,7 @@ def tool_show_calendar_cards(ctx: GptCalendarContext, args: dict[str, Any]) -> s
 
 
 def tool_offer_slots(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    ctx.slots_offered = True
     people = [str(p).strip() for p in (args.get("attendees") or []) if str(p).strip()]
     dur = max(15, min(8 * 60, int(args.get("duration_min") or 30)))
     title = str(args.get("title") or "").strip() or ("Встреча с " + ", ".join(people) if people else "Встреча")
@@ -1050,6 +1088,54 @@ def tool_offer_slots(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     if not offered:
         return _err("Нужны варианты в формате YYYY-MM-DDTHH:MM.")
     return _ok({"offered": offered, "note": "Пользователь выберет вариант карточкой — встреча создастся сама."})
+
+
+def _pick_slots(ctx: GptCalendarContext, starts: list[str], answer: str, limit: int = 6) -> list[str]:
+    """Слоты для карточек: сначала те, что модель назвала в ответе (по «ЧЧ:ММ»), иначе — равномерно по дню."""
+    tz = _tz(ctx.uid)
+    parsed: list[tuple[datetime, str]] = []
+    for raw in starts:
+        try:
+            dt = datetime.fromisoformat(str(raw))
+        except ValueError:
+            continue
+        parsed.append((dt.astimezone(tz) if dt.tzinfo else dt.replace(tzinfo=tz), str(raw)))
+    if not parsed:
+        return []
+    text = str(answer or "")
+    mentioned = [raw for dt, raw in parsed if dt.strftime("%H:%M") in text or dt.strftime("%-H:%M") in text]
+    if mentioned:
+        return mentioned[:limit]
+    if len(parsed) <= limit:
+        return [raw for _, raw in parsed]
+    step = len(parsed) / float(limit)
+    return [parsed[int(i * step)][1] for i in range(limit)]
+
+
+def finalize_auto_cards(ctx: GptCalendarContext, answer: str) -> None:
+    """Если модель посмотрела календарь/слоты, но не показала карточки — показать их самим."""
+    text = str(answer or "")
+    low = text.lower()
+    if ctx.slot_offers and not ctx.slots_offered and not ctx.created_events:
+        offer = ctx.slot_offers[-1]
+        picked = _pick_slots(ctx, offer.get("starts") or [], text)
+        if picked:
+            tool_offer_slots(
+                ctx,
+                {"slots": picked, "duration_min": offer.get("duration_min"), "attendees": offer.get("people") or []},
+            )
+    if ctx.seen_items and not ctx.cards_shown and not ctx.wrote:
+        seen: dict[str, dict[str, Any]] = {}
+        for it in ctx.seen_items:
+            seen.setdefault(f"{it.get('type')}:{it.get('id')}", it)
+        items = list(seen.values())
+        named = [it for it in items if str(it.get("title") or "").strip() and str(it.get("title")).strip().lower() in low]
+        chosen = named or (items if len(items) <= 10 else [])
+        if chosen:
+            tool_show_calendar_cards(
+                ctx,
+                {"items": [{"type": it["type"], "id": it["id"], "calendar_id": it.get("calendar_id")} for it in chosen[:10]]},
+            )
 
 
 def apply_slot(a: dict[str, Any], *, telegram_username: str | None = None) -> dict[str, Any]:

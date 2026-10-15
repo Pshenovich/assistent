@@ -65,6 +65,7 @@ def gpt_openrouter_answer_with_context(
     max_tokens: int | None = None,
     tools: list | None = None,
     tool_runner=None,
+    tool_choice_first: str = "auto",
 ) -> dict:
     out = nlu_llm.answer_with_context_result(
         question,
@@ -86,6 +87,7 @@ def gpt_openrouter_answer_with_context(
         max_tokens=max_tokens,
         tools=tools,
         tool_runner=tool_runner,
+        tool_choice_first=tool_choice_first,
     )
     return {
         "answer": str(out.get("answer") or ""),

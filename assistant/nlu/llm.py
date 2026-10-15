@@ -274,6 +274,7 @@ def _chat_result(
     tools: list[dict[str, Any]] | None = None,
     tool_runner: Any = None,
     max_tool_steps: int = 6,
+    tool_choice_first: str = "auto",
 ) -> tuple[str, list[dict[str, str]], str]:
     from assistant.integrations.openrouter_client import extract_chat_message_media
 
@@ -315,7 +316,10 @@ def _chat_result(
     if plugins:
         payload["plugins"] = plugins
     if tools and tool_runner is not None:
-        data = _run_tool_loop(payload, tools, tool_runner, operation=operation, timeout=timeout, max_steps=max_tool_steps)
+        data = _run_tool_loop(
+            payload, tools, tool_runner, operation=operation, timeout=timeout,
+            max_steps=max_tool_steps, tool_choice_first=tool_choice_first,
+        )
     else:
         data = openrouter_chat_completion(payload, operation=operation, timeout=timeout)
     text, out_images = extract_chat_message_media(data)
@@ -337,6 +341,7 @@ def _run_tool_loop(
     operation: str,
     timeout: float,
     max_steps: int = 6,
+    tool_choice_first: str = "auto",
 ) -> dict[str, Any]:
     """Цикл function calling: модель зовёт инструменты, мы исполняем и возвращаем результат,
     пока не придёт обычный ответ. Последний шаг — без инструментов, чтобы ответ был всегда."""
@@ -349,7 +354,8 @@ def _run_tool_loop(
         req["messages"] = messages
         if step < max_steps:
             req["tools"] = tools
-            req["tool_choice"] = "auto"
+            # Вопрос про календарь — первый шаг обязан посмотреть данные, а не отвечать наугад.
+            req["tool_choice"] = tool_choice_first if step == 0 else "auto"
         try:
             data = openrouter_chat_completion(req, operation=operation, timeout=timeout)
         except Exception as e:
@@ -681,6 +687,7 @@ def answer_with_context_result(
     max_tokens: int | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_runner: Any = None,
+    tool_choice_first: str = "auto",
 ) -> dict[str, Any]:
     from assistant.nlu.ask_context import assemble_ask_messages
 
@@ -716,6 +723,7 @@ def answer_with_context_result(
         max_tokens=max_tokens,
         tools=tools,
         tool_runner=tool_runner,
+        tool_choice_first=tool_choice_first,
     )
     text = chat_out[0]
     out_images = chat_out[1] if len(chat_out) > 1 else []
