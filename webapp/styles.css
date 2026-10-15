@@ -15478,3 +15478,37 @@ html.note-discussion-open .note-discussion-overlay { background: var(--surface, 
 .note-discuss-actions { top: -16px; }
 .note-discuss-msg.is-assistant:not(.is-cont) .note-discuss-actions,
 .note-discuss-msg.is-other:not(.is-cont) .note-discuss-actions { top: -4px; }
+
+/* ===== Обсуждение: правки после ревью (2026-10-15) ===== */
+/* 1. Поле ввода не прижато к краям экрана */
+#note-paie-thread.note-discussion-compose { padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px)) !important; }
+#note-discussion-overlay #note-paie-thread.note-discussion-compose { padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px)) !important; }
+
+/* 4. Кнопка листов видна и на открытом листе/заметке; название там — без меню */
+html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: visible !important; }
+#note-discussion-title.note-pane-switch--plain .note-pane-switch-chevron { display: none; }
+
+/* 5. «···» — в строке со временем, в углу напротив него */
+.note-discuss-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; align-self: stretch; min-height: 24px; margin-top: 2px; }
+.note-discuss-msg.is-user .note-discuss-meta { flex-direction: row-reverse; }
+.note-discuss-meta .note-discuss-time { margin: 0 4px; }
+.note-discuss-meta .note-discuss-actions { position: relative !important; top: auto !important; left: auto !important; right: auto !important; display: inline-flex !important; margin: 0; padding: 0; background: transparent; box-shadow: none; border-radius: 0; }
+.note-discuss-meta .note-discuss-more { width: 28px; height: 24px; border-radius: 8px; color: var(--text-secondary, #909499); }
+.note-discuss-meta .note-discuss-more:hover,
+.note-discuss-meta .note-discuss-more[aria-expanded="true"] { color: var(--text); background: rgba(255, 255, 255, 0.1); }
+.note-discuss-msg.is-cont .note-discuss-meta { margin-top: 1px; }
+
+/* 6. Кнопки над выделенным текстом ответа — та же тёмная плашка с иконками */
+.note-discuss-selection { height: 32px; padding: 2px; gap: 2px; border-radius: 10px; background: #2c2c2e; color: var(--text, #e6e7ea); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45), 0 0 0 0.5px rgba(255, 255, 255, 0.08); }
+.note-discuss-selection-btn { width: 30px; height: 28px; border-radius: 7px; color: var(--text, #e6e7ea); }
+.note-discuss-selection-btn:hover,
+.note-discuss-selection-btn:active { background: rgba(255, 255, 255, 0.1); }
+.note-discuss-selection .note-discuss-menu-icon { color: currentColor; }
+
+/* 7. Меню «Обсуждение / листы / новый лист / открыть заметку»: иконки и воздух между группами */
+#note-pane-switch-menu { padding: 6px; min-width: 240px; }
+#note-pane-switch-menu .note-pane-switch-item.has-ico { display: flex; align-items: center; gap: 10px; text-align: left; }
+.note-pane-ico { flex: none; width: 26px; height: 26px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.07); color: var(--text-secondary, #b4b7bb); }
+#note-pane-switch-menu .note-pane-switch-item.is-active .note-pane-ico { background: rgba(91, 159, 255, 0.18); color: #9cc3ff; }
+#note-pane-switch-menu .note-pane-switch-sep { height: 1px; margin: 8px 6px; background: rgba(255, 255, 255, 0.08); }
+#note-pane-switch-menu .note-pane-switch-label { margin: 6px 10px 4px; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(255, 255, 255, 0.5); }

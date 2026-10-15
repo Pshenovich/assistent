@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261015-discuss3";
+  var WEBAPP_BUILD = "20261015-discuss4";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261015-discuss3";
+  const NOTE_EDITOR_ASSET_V = "20261015-discuss4";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -11643,7 +11643,7 @@
     var err = "";
     try {
       var res = await apiFetch("/voice/transcribe", { method: "POST", body: fd });
-      text = String((res && (res.plain_text || res.text)) || "").trim();
+      text = stripSpeakerLabels((res && (res.plain_text || res.text)) || "");
     } catch (e) {
       err = (e && e.message) || "Не удалось расшифровать";
     }
@@ -21625,7 +21625,19 @@
     pen: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>',
     undo: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 8L5 12l5 4M5 12h9a5 5 0 0 1 5 5v1"/></svg>',
     dots: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="6" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18" cy="12" r="1.7"/></svg>',
+    grid: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></svg>',
+    search: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>',
+    notePlus: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3H7v18h12V9zM13 3v6h6M13 13v6M10 16h6"/></svg>',
   };
+
+  // Метки говорящего от транскрайбера («SPEAKER_1:», «Speaker_0», «Спикер 2:») в диктовке не нужны.
+  function stripSpeakerLabels(text) {
+    return String(text || "")
+      .replace(/(^|\s)[[(]?(?:speaker|спикер)[ _-]?\d+[\])]?\s*[:：.\-—]?\s*/gi, "$1")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
 
   function notePlusItem(action, icon, label) {
     return (
@@ -23837,6 +23849,8 @@
       if (priv) btn.title = title + " — личный чат";
     }
     var canSwitch = notePaneSwitchEnabled() || (noteSheetState.rightMode === "discussion" && noteChatsEnabled());
+    // С чатами переключение листов — кнопкой справа; на листе название без меню.
+    if (noteChatsEnabled() && noteSheetState.rightMode !== "discussion") canSwitch = false;
     if (btn) {
       btn.disabled = !canSwitch;
       btn.classList.toggle("note-pane-switch--plain", !canSwitch);
@@ -24040,12 +24054,17 @@
     if (!menu) return;
     menu.classList.remove("note-pane-switch-menu--picker");
     menu.innerHTML = "";
-    function addItem(label, active, onClick) {
+    function addItem(label, active, onClick, icon) {
       var row = document.createElement("button");
       row.type = "button";
-      row.className = "note-pane-switch-item" + (active ? " is-active" : "");
+      row.className = "note-pane-switch-item" + (active ? " is-active" : "") + (icon ? " has-ico" : "");
       row.setAttribute("role", "menuitem");
-      row.textContent = label;
+      if (icon) {
+        row.innerHTML = '<span class="note-pane-ico">' + DISCUSS_ICONS[icon] + "</span><span></span>";
+        row.lastChild.textContent = label;
+      } else {
+        row.textContent = label;
+      }
       row.addEventListener("click", function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -24056,7 +24075,7 @@
     addItem("Обсуждение", noteSheetState.rightMode === "discussion", function () {
       closeNotePaneSwitchMenu();
       setRightPaneMode("discussion");
-    });
+    }, "chat");
     var discussSep = document.createElement("div");
     discussSep.className = "note-pane-switch-sep";
     menu.appendChild(discussSep);
@@ -24077,7 +24096,8 @@
         function () {
           closeNotePaneSwitchMenu();
           setRightPaneMode("sheet", s.id);
-        }
+        },
+        isWebSheet(s) ? "grid" : "note"
       );
     });
     if (noteSheetsEnabled()) {
@@ -24086,14 +24106,14 @@
         newSep.className = "note-pane-switch-sep";
         menu.appendChild(newSep);
       }
-      addItem("+ Новый лист", false, function () {
+      addItem("Новый лист", false, function () {
         closeNotePaneSwitchMenu();
         createNoteSheet({ openOn: "right", kind: "doc" });
-      });
-      addItem("+ Новый канвас", false, function () {
+      }, "notePlus");
+      addItem("Новый канвас", false, function () {
         closeNotePaneSwitchMenu();
         createNoteSheet({ openOn: "right", kind: "web" });
-      });
+      }, "grid");
     }
     if (noteSheetState.rightMode === "note" && noteSheetState.rightNote) {
       var openTitle =
@@ -24101,12 +24121,12 @@
         String(noteSheetState.rightNote.title || "Заметка");
       addItem(openTitle, true, function () {
         closeNotePaneSwitchMenu();
-      });
+      }, "note");
     }
     var sep = document.createElement("div");
     sep.className = "note-pane-switch-sep";
     menu.appendChild(sep);
-    addItem("Открыть заметку", false, function () {
+    addItem("Открыть другую заметку", false, function () {
       renderNotePaneOpenNotePicker("", { resetProjectFilter: true });
       ensurePaneOpenNoteCandidates().then(function () {
         ensureUserTagsLoaded().finally(function () {
@@ -24118,7 +24138,7 @@
           }
         });
       });
-    });
+    }, "search");
   }
 
   function toggleNotePaneSwitchMenu(opts) {
@@ -27503,33 +27523,20 @@
     renderDiscussAttachments(bubble, attachments);
     if (assistant && c && c.id) appendAiEditsInfo(bubble, c.id);
     if (bubble.childNodes.length) item.appendChild(bubble);
+    // Строка под сообщением: время и «···» напротив него.
+    var meta = document.createElement("div");
+    meta.className = "note-discuss-meta";
     var ts = Date.parse((c && c.created_at) || "");
     if (ts) {
       var time = document.createElement("span");
       time.className = "note-discuss-time";
       time.textContent = new Date(ts).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-      item.appendChild(time);
+      meta.appendChild(time);
     }
+    item.appendChild(meta);
     if (String((c && c.body) || "").trim() || attachments.length) {
       var actions = document.createElement("div");
       actions.className = "note-discuss-actions";
-      // Быстрые действия при наведении (десктоп); на телефоне — долгое нажатие.
-      [["reply", "reply", "Ответить"], ["into-note", "note", "В заметку"], ["task", "task", "Создать задачу"]].forEach(function (q) {
-        var qb = document.createElement("button");
-        qb.type = "button";
-        qb.className = "note-discuss-quick";
-        qb.setAttribute("data-quick", q[0]);
-        qb.setAttribute("aria-label", q[2]);
-        qb.title = q[2];
-        qb.innerHTML = discussMenuIcon(q[1]);
-        qb.addEventListener("click", function (e) {
-          e.preventDefault();
-          e.stopPropagation();
-          var target = menu.querySelector('[data-answer-action="' + q[0] + '"]');
-          if (target) target.click();
-        });
-        actions.appendChild(qb);
-      });
       var more = document.createElement("button");
       more.type = "button";
       more.className = "note-discuss-more";
@@ -27550,7 +27557,7 @@
       actions.appendChild(more);
       actions.appendChild(menu);
       bindNoteAnswerMenu(more, menu, c);
-      item.appendChild(actions);
+      meta.appendChild(actions);
       bindDiscussLongPress(item, more, menu);
     }
     item.addEventListener("click", function (e) {
@@ -28940,10 +28947,16 @@
     newBtn.addEventListener("click", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      if (cur !== 0) {
-        closeNoteChatsMenu();
-        setCurrentDiscussChat(0);
+      closeNoteChatsMenu();
+      if (cur !== 0) setCurrentDiscussChat(0);
+      // Уже в новом (пустом) чате — просто ставим курсор в поле ввода.
+      var ed = noteGptEditor();
+      if (ed && !isMobileNoteLayout()) {
+        try {
+          ed.focus();
+        } catch (_) {}
       }
+      if (cur === 0) showNoteToast("Это новый чат — напишите первое сообщение");
     });
     newSec.appendChild(newBtn);
 
