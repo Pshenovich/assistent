@@ -15691,3 +15691,5 @@ html.notes-select-on #notes-create-btn, html.notes-select-on #notes-create-menu 
   .notes-select-bar { left: calc(var(--sidebar-w, 244px) + 24px); right: auto; bottom: 24px; width: 420px; }
 }
 html.notes-select-on .notes-pane--stack { padding-bottom: 96px; }
+.nl-card mark { background: rgba(250, 204, 21, 0.28); color: inherit; border-radius: 3px; padding: 0 1px; }
+.notes-load-more { grid-column: 1 / -1; }
