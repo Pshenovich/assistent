@@ -131,14 +131,24 @@ def set_action_status(action_id: str, status: str, *, result: dict[str, Any] | N
 def public_action(a: dict[str, Any], *, viewer_uid: int | None = None) -> dict[str, Any]:
     """Карточка для клиента — без снимков «до»."""
     res = a.get("result") or {}
+    p = a.get("payload") or {}
+    kind = a["kind"]
+    open_ref: dict[str, Any] = {}
+    if kind in ("show_event", "show_task", "show_reminder"):
+        open_ref = {"type": kind[5:], "id": p.get("target_id"), "date": p.get("date"), "calendar_id": p.get("calendar_id")}
+    elif res.get("event_id") and a.get("status") == "done":
+        open_ref = {"type": "event", "id": res.get("event_id"), "date": res.get("date"), "calendar_id": res.get("calendar_id")}
+    elif res.get("task_id") and a.get("status") == "done":
+        open_ref = {"type": "task", "id": res.get("task_id")}
     return {
         "id": a["id"],
-        "kind": a["kind"],
+        "kind": kind,
         "status": a["status"],
         "title": a.get("title") or "",
-        "when": res.get("when") or (a.get("payload") or {}).get("when") or "",
-        "detail": res.get("detail") or (a.get("payload") or {}).get("detail") or "",
+        "when": res.get("when") or p.get("when") or "",
+        "detail": res.get("detail") or p.get("detail") or "",
         "link": res.get("html_link") or "",
+        "open": open_ref or None,
         "mine": viewer_uid is not None and int(a.get("owner_uid") or 0) == int(viewer_uid),
     }
 
@@ -176,18 +186,35 @@ def now_prompt_line(uid: int) -> str:
     tz = _tz(uid)
     now = datetime.now(tz)
     days = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+    short = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+    ahead = ", ".join(
+        f"{short[d.weekday()]} {d.strftime('%Y-%m-%d')}"
+        for d in (now.date() + timedelta(days=i) for i in range(0, 14))
+    )
+    acc = ["понедельник", "вторник", "среду", "четверг", "пятницу", "субботу", "воскресенье"]
+    nearest = "; ".join(
+        f"«в {acc[d.weekday()]}» = {d.strftime('%Y-%m-%d')}"
+        for d in (now.date() + timedelta(days=i) for i in range(1, 8))
+    )
     return (
         f"Сейчас {now.strftime('%Y-%m-%d %H:%M')} ({days[now.weekday()]}), "
-        f"часовой пояс пользователя {getattr(tz, 'key', str(tz))}."
+        f"часовой пояс пользователя {getattr(tz, 'key', str(tz))}.\n"
+        f"Ближайшие дни недели (бери отсюда, не считай сам): {nearest}. «Сегодня» = {now.strftime('%Y-%m-%d')}, "
+        f"«завтра» = {(now.date() + timedelta(days=1)).strftime('%Y-%m-%d')}. "
+        f"«Следующий/на следующей неделе» — на 7 дней позже ближайшего.\n"
+        f"Даты на две недели вперёд: {ahead}."
     )
 
 
 SYSTEM_ADDON = """У тебя есть доступ к календарю пользователя через инструменты (calendar_*, task_create, reminder_create, contacts_find, propose_delete).
 - На вопросы про встречи, задачи, напоминания, занятость, свободное время, «с кем», «на что уходит время» — сначала посмотри данные инструментами, не выдумывай.
 - Встречу/перенос/задачу/напоминание создавай сразу инструментом, если просьба понятна (время, участники). Если инструмент вернул конфликт или «контакт не найден» — не повторяй вслепую: предложи пользователю варианты времени из ответа или попроси уточнить.
+- Действия из прошлых сообщений уже выполнены (в истории они помечены «Уже выполнено»). Не повторяй их: создавай/меняй только то, о чём просит последнее сообщение. На вопросы «какие у меня…» ничего не создавай — смотри calendar_events.
 - Удаление никогда не выполняй сам: вызови propose_delete — пользователь подтвердит кнопкой. id бери из calendar_events/reminders_list; если не знаешь id — передай title (название), найду сам.
 - id встреч для изменения бери из calendar_events, не придумывай.
 - Участников указывай именами из контактов; если не уверен — contacts_find.
+- Когда перечисляешь встречи/задачи/напоминания — вызови show_calendar_cards с их id (до 10): под ответом появятся карточки, которые можно открыть. Текстом дай короткий итог, без длинного списка.
+- Когда подбираешь время встречи — найди окна (calendar_free_slots) и вызови offer_slots с 3–6 лучшими вариантами (и участниками): пользователь выберет карточку, встреча создастся сама.
 - После действий коротко напиши, что сделал (время в формате «чт 16 окт, 15:00–15:30»). Кнопки «Отменить»/«Удалить» пользователь увидит сам под ответом."""
 
 
@@ -241,6 +268,16 @@ TOOLS: list[dict[str, Any]] = [
         ["title", "start"]),
     _fn("reminder_create", "Создать напоминание в Telegram — сразу.",
         {"text": {"type": "string"}, "when": _DT}, ["text", "when"]),
+    _fn("show_calendar_cards", "Показать пользователю карточки встреч/задач/напоминаний под ответом (их можно открыть). Вызывай, когда перечисляешь их.",
+        {"items": {"type": "array", "items": {"type": "object", "properties": {
+            "type": {"type": "string", "enum": ["event", "task", "reminder"]},
+            "id": {"type": "string"}, "calendar_id": {"type": "string"}}, "required": ["type", "id"]}}},
+        ["items"]),
+    _fn("offer_slots", "Показать варианты времени встречи карточками — пользователь выберет и встреча создастся. Вызывай, когда предлагаешь время.",
+        {"slots": {"type": "array", "items": _DT, "description": "3–6 вариантов начала"},
+         "duration_min": {"type": "integer", "default": 30}, "attendees": _PEOPLE,
+         "title": {"type": "string", "description": "Название будущей встречи"}},
+        ["slots"]),
     _fn("propose_delete", "Предложить удалить встречу/задачу/напоминание. НЕ удаляет — пользователь подтвердит кнопкой.",
         {"kind": {"type": "string", "enum": ["event", "task", "reminder"]}, "id": {"type": "string"},
          "title": {"type": "string", "description": "Название, если id неизвестен"},
@@ -300,8 +337,14 @@ def _contacts(ctx: GptCalendarContext) -> list[dict[str, Any]]:
     try:
         from assistant.stores import contacts_store
 
-        return list(contacts_store.load_contacts(ctx.uid, ctx.telegram_username) or [])
-    except Exception:
+        return list(
+            contacts_store.load_contacts(
+                telegram_user_id=int(ctx.uid), telegram_username=ctx.telegram_username
+            )
+            or []
+        )
+    except Exception as e:
+        print(f"[gpt_calendar] contacts_load uid={ctx.uid} err={e!r}")
         return []
 
 
@@ -314,6 +357,28 @@ def _email_names(ctx: GptCalendarContext) -> dict[str, str]:
     return out
 
 
+def _leo_email_for_contact(ctx: GptCalendarContext, name: str) -> str:
+    """Контакт без почты, но человек в Leo с Google Календарём — берём почту его аккаунта."""
+    try:
+        from assistant.lib.calendar_attendees import find_contact_by_name
+        from assistant.stores import telegram_registry
+
+        c = find_contact_by_name(ctx.uid, name, telegram_username=ctx.telegram_username)
+        if not c:
+            return ""
+        uid = int(c.get("telegram_user_id") or 0) or telegram_registry.lookup_user_id(
+            str(c.get("telegram_username") or "")
+        )
+        if not uid or not has_google_calendar(int(uid)):
+            return ""
+        from assistant.lib.calendar_user_lookup import account_email_for_user
+
+        return str(account_email_for_user(int(uid)) or "").strip().lower()
+    except Exception as e:
+        print(f"[gpt_calendar] leo_email name={name!r} err={e!r}")
+        return ""
+
+
 def _resolve_people(ctx: GptCalendarContext, names: list[str]) -> tuple[list[str], list[str]]:
     from assistant.lib.calendar_attendees import resolve_attendee_names
 
@@ -321,7 +386,15 @@ def _resolve_people(ctx: GptCalendarContext, names: list[str]) -> tuple[list[str
     if not clean:
         return [], []
     att, missing = resolve_attendee_names(ctx.uid, clean, telegram_username=ctx.telegram_username)
-    return [a["email"] for a in att if a.get("email")], missing
+    emails = [a["email"] for a in att if a.get("email")]
+    still: list[str] = []
+    for n in missing:
+        em = _leo_email_for_contact(ctx, n)
+        if em and em not in emails:
+            emails.append(em)
+        elif not em:
+            still.append(n)
+    return emails, still
 
 
 def _parse_start(ctx: GptCalendarContext, raw: Any) -> datetime:
@@ -473,14 +546,33 @@ def tool_calendar_time_stats(ctx: GptCalendarContext, args: dict[str, Any]) -> s
     return _ok(res)
 
 
+def _yo(s: str) -> str:
+    return str(s or "").lower().replace("ё", "е")
+
+
 def tool_contacts_find(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
-    q = str(args.get("query") or "").strip().lower().lstrip("@")
+    q = _yo(str(args.get("query") or "").strip().lstrip("@"))
+    stem = q[:-1] if len(q) > 4 else q  # «Ульяну» → «ульян», «Артема» → «артем»
+    fuzzy = None
+    if q:
+        try:
+            from assistant.lib.calendar_attendees import find_contact_by_name
+
+            fuzzy = find_contact_by_name(ctx.uid, q, telegram_username=ctx.telegram_username)
+        except Exception:
+            fuzzy = None
     rows = []
     for c in _contacts(ctx):
-        hay = " ".join(
-            [str(c.get("name") or ""), str(c.get("telegram_username") or ""), " ".join(c.get("aliases") or [])]
-        ).lower()
-        if q and q not in hay:
+        hay = _yo(
+            " ".join(
+                [str(c.get("name") or ""), str(c.get("telegram_username") or ""), " ".join(c.get("aliases") or [])]
+            )
+        )
+        is_fuzzy = fuzzy is not None and (
+            str(c.get("email") or "") == str(fuzzy.get("email") or "")
+            and str(c.get("name") or "") == str(fuzzy.get("name") or "")
+        )
+        if q and stem not in hay and not is_fuzzy:
             continue
         rows.append(
             {
@@ -866,6 +958,146 @@ def _task_exists(ctx: GptCalendarContext, oid: str) -> bool:
         return False
 
 
+def _card_for(ctx: GptCalendarContext, item: dict[str, Any]) -> tuple[str, str, dict[str, Any]] | None:
+    """(kind, title, payload) для карточки «открыть»."""
+    typ = str(item.get("type") or "").strip()
+    oid = str(item.get("id") or "").strip()
+    if not oid:
+        return None
+    if typ == "event":
+        from assistant.services import calendar as cal
+
+        cal_id = str(item.get("calendar_id") or "").strip() or None
+        ev = cal.get_event(ctx.uid, oid, calendar_id=cal_id)
+        st = _iso_local(ctx.uid, (ev.get("start") or {}).get("dateTime") or (ev.get("start") or {}).get("date"))
+        en = _iso_local(ctx.uid, (ev.get("end") or {}).get("dateTime") or "")
+        names = _email_names(ctx)
+        who = [
+            names.get(str(a.get("email") or "").lower()) or str(a.get("displayName") or a.get("email") or "")
+            for a in ev.get("attendees") or []
+            if isinstance(a, dict) and not a.get("self")
+        ]
+        detail = ("с " + ", ".join(w for w in who if w)[:120]) if who else ""
+        return "show_event", str(ev.get("summary") or "Встреча"), {
+            "when": human_when(st, en, ctx.uid), "detail": detail, "target_id": oid,
+            "calendar_id": cal_id,
+            "date": st.date().isoformat() if st else "",
+        }
+    if typ == "task":
+        from assistant.stores import calendar_tasks
+
+        t = calendar_tasks.get_task_for_user(ctx.uid, oid)
+        if not t:
+            return None
+        st = _iso_local(ctx.uid, t.get("start_at"))
+        who = str(t.get("assignee_name") or "")
+        detail = ("✓ выполнена" if t.get("done") else "") or (("для " + who) if who and int(t.get("assignee_user_id") or 0) != ctx.uid else "")
+        return "show_task", str(t.get("title") or "Задача"), {
+            "when": human_when(st, None, ctx.uid), "detail": detail, "target_id": oid,
+            "date": st.date().isoformat() if st else "",
+        }
+    if typ == "reminder":
+        from assistant.stores import reminders_store
+
+        rm = reminders_store.get_reminder_by_id(oid)
+        if not rm or int(rm.get("user_id") or 0) != ctx.uid:
+            return None
+        st = _iso_local(ctx.uid, rm.get("when_iso"))
+        return "show_reminder", str(rm.get("task") or "Напоминание"), {
+            "when": human_when(st, None, ctx.uid), "detail": "", "target_id": oid,
+            "date": st.date().isoformat() if st else "",
+        }
+    return None
+
+
+def tool_show_calendar_cards(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    shown = 0
+    for item in (args.get("items") or [])[:12]:
+        if not isinstance(item, dict):
+            continue
+        try:
+            card = _card_for(ctx, item)
+        except Exception as e:
+            print(f"[gpt_calendar] card err={e!r}")
+            card = None
+        if not card:
+            continue
+        kind, title, payload = card
+        ctx.actions.append(record_action(ctx.uid, kind, "info", title=title, payload=payload))
+        shown += 1
+    return _ok({"shown": shown, "note": "Карточки показаны под ответом — не повторяй подробный список текстом."})
+
+
+def tool_offer_slots(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    people = [str(p).strip() for p in (args.get("attendees") or []) if str(p).strip()]
+    dur = max(15, min(8 * 60, int(args.get("duration_min") or 30)))
+    title = str(args.get("title") or "").strip() or ("Встреча с " + ", ".join(people) if people else "Встреча")
+    group = uuid.uuid4().hex[:10]
+    offered = 0
+    for raw in (args.get("slots") or [])[:6]:
+        try:
+            st = _parse_start(ctx, raw)
+        except (TypeError, ValueError):
+            continue
+        payload = {
+            "start": st.isoformat(), "duration_min": dur, "attendees": people, "group": group,
+            "when": human_when(st, st + timedelta(minutes=dur), ctx.uid),
+            "detail": ("с " + ", ".join(people)) if people else "",
+            "date": st.date().isoformat(),
+        }
+        ctx.actions.append(record_action(ctx.uid, "slot", "proposed", title=title, payload=payload))
+        offered += 1
+    if not offered:
+        return _err("Нужны варианты в формате YYYY-MM-DDTHH:MM.")
+    return _ok({"offered": offered, "note": "Пользователь выберет вариант карточкой — встреча создастся сама."})
+
+
+def apply_slot(a: dict[str, Any], *, telegram_username: str | None = None) -> dict[str, Any]:
+    """Выбранный слот → встреча (участникам уйдут приглашения)."""
+    from assistant.services import calendar as cal
+
+    uid = int(a["owner_uid"])
+    p = a.get("payload") or {}
+    ctx = GptCalendarContext(uid=uid, telegram_username=telegram_username)
+    emails, missing = _resolve_people(ctx, p.get("attendees") or [])
+    parsed: dict[str, Any] = {
+        "title": a.get("title") or "Встреча",
+        "start": p.get("start"),
+        "duration_min": int(p.get("duration_min") or 30),
+        "attendees": emails,
+    }
+    created = cal.create_event(uid, parsed, telegram_username=telegram_username)
+    _attach_online(ctx, created, "auto")
+    when = human_when(created.get("start"), created.get("end"), uid)
+    st = created.get("start")
+    return {
+        "event_id": created.get("event_id"),
+        "calendar_id": created.get("calendar_id"),
+        "html_link": created.get("html_link"),
+        "when": when,
+        "detail": (p.get("detail") or "") + (" · без " + ", ".join(missing) if missing else ""),
+        "date": st.date().isoformat() if isinstance(st, datetime) else "",
+        "_created": created,
+    }
+
+
+def dismiss_slot_siblings(a: dict[str, Any]) -> None:
+    group = (a.get("payload") or {}).get("group")
+    if not group:
+        return
+    with _lock():
+        rows = _conn().execute(
+            "SELECT id, payload_json FROM gpt_calendar_actions WHERE owner_uid = ? AND kind = 'slot' AND status = 'proposed'",
+            (int(a["owner_uid"]),),
+        ).fetchall()
+    for rid, pj in rows:
+        try:
+            if json.loads(pj or "{}").get("group") == group and rid != a["id"]:
+                set_action_status(rid, "dismissed")
+        except (TypeError, ValueError):
+            continue
+
+
 EXECUTORS: dict[str, Callable[[GptCalendarContext, dict[str, Any]], str]] = {
     "calendar_events": tool_calendar_events,
     "calendar_free_slots": tool_calendar_free_slots,
@@ -878,6 +1110,8 @@ EXECUTORS: dict[str, Callable[[GptCalendarContext, dict[str, Any]], str]] = {
     "task_create": tool_task_create,
     "reminder_create": tool_reminder_create,
     "propose_delete": tool_propose_delete,
+    "show_calendar_cards": tool_show_calendar_cards,
+    "offer_slots": tool_offer_slots,
 }
 
 
@@ -906,7 +1140,7 @@ def undo_action(a: dict[str, Any]) -> dict[str, Any]:
     uid = int(a["owner_uid"])
     res = a.get("result") or {}
     kind = a["kind"]
-    if kind == "event_create":
+    if kind in ("event_create", "slot"):
         cal.delete_event(uid, str(res.get("event_id")), calendar_id=res.get("calendar_id"))
     elif kind == "event_update":
         b = a.get("before") or {}
