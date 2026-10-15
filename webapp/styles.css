@@ -15553,3 +15553,12 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 /* Подсказка в пустом поле — на той же строке, что и текст (отступ поля стал 6px) */
 #note-paie-reply-form .note-paie-composer-editor.is-empty::before,
 #note-paie-reply-form .note-paie-composer-editor.is-empty.is-multiline::before { top: 6px; left: 2px; right: 2px; }
+
+/* Действия ИИ с календарём — внутри ответа, под разделителем */
+.note-discuss-cal { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(139, 92, 246, 0.4); display: grid; gap: 10px; white-space: normal; }
+.note-discuss-cal-item { display: grid; gap: 8px; }
+.note-discuss-cal-info { display: flex; align-items: flex-start; gap: 7px; font-size: 0.8125rem; line-height: 1.35; color: #ddd6fe; }
+.note-discuss-cal-info svg { flex: none; margin-top: 1px; }
+.note-discuss-cal-item.is-proposed .note-discuss-cal-info { color: #fecaca; }
+.note-discuss-cal-item.is-faded .note-discuss-cal-info { color: var(--text-secondary, #909499); }
+.note-discuss-edits-btn.is-danger { background: #e5484d; }

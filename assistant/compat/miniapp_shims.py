@@ -63,6 +63,8 @@ def gpt_openrouter_answer_with_context(
     temperature: float | None = None,
     web: bool = False,
     max_tokens: int | None = None,
+    tools: list | None = None,
+    tool_runner=None,
 ) -> dict:
     out = nlu_llm.answer_with_context_result(
         question,
@@ -82,6 +84,8 @@ def gpt_openrouter_answer_with_context(
         temperature=temperature,
         web=web,
         max_tokens=max_tokens,
+        tools=tools,
+        tool_runner=tool_runner,
     )
     return {
         "answer": str(out.get("answer") or ""),
