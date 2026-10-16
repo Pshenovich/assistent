@@ -414,6 +414,8 @@ def update_sheet(
         or new_body != (existing["body"] or "")
         or new_kind != (existing.get("kind") or SHEET_KIND_DOC)
     )
+    if changed:
+        _record_sheet_version(existing, new_body=new_body)
     with _LOCK:
         _conn().execute(
             """
@@ -433,7 +435,36 @@ def update_sheet(
     return out
 
 
+def _record_sheet_version(sheet: dict[str, Any], *, new_body: Optional[str] = None, reason: str = "edit", force: bool = False) -> None:
+    """История версий листа (прежнее состояние / перед удалением)."""
+    try:
+        from assistant.stores import note_versions
+
+        nid = int(sheet.get("note_id"))
+        with _LOCK:
+            row = _conn().execute("SELECT user_id, title FROM local_notes WHERE id = ?", (nid,)).fetchone()
+        note_versions.record(
+            owner_user_id=(row["user_id"] if row else ""),
+            note_id=nid,
+            title=str((row["title"] if row else "") or ""),
+            body=str(sheet.get("body") or ""),
+            revision=sheet.get("revision") or 0,
+            state_at=str(sheet.get("updated_at") or ""),
+            sheet_id=int(sheet.get("id")),
+            sheet_title=str(sheet.get("title") or ""),
+            sheet_kind=str(sheet.get("kind") or ""),
+            reason=reason,
+            new_body=new_body,
+            force=force,
+        )
+    except Exception as e:
+        print(f"[note_sheets] version failed sheet={sheet.get('id')} err={e!r}")
+
+
 def delete_sheet(note_id: int, sheet_id: int) -> bool:
+    existing = get_extra_sheet(note_id, sheet_id)
+    if existing:
+        _record_sheet_version(existing, reason="sheet_deleted", force=True)
     with _LOCK:
         cur = _conn().execute(
             "DELETE FROM note_sheets WHERE note_id = ? AND id = ?",
@@ -444,6 +475,11 @@ def delete_sheet(note_id: int, sheet_id: int) -> bool:
 
 
 def delete_all_for_note(note_id: int) -> None:
+    try:
+        for sh in list_extra_sheets(int(note_id)):
+            _record_sheet_version(sh, reason="note_deleted", force=True)
+    except Exception as e:
+        print(f"[note_sheets] versions before delete-all failed note={note_id} err={e!r}")
     with _LOCK:
         _conn().execute("DELETE FROM note_sheets WHERE note_id = ?", (int(note_id),))
         _conn().commit()
