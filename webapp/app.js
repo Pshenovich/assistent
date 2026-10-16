@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-history5";
+  var WEBAPP_BUILD = "20261016-paie-ru";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-history5";
+  const NOTE_EDITOR_ASSET_V = "20261016-paie-ru";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -22742,7 +22742,10 @@
 
   var GPT_MODEL_LS = "leo_gpt_model";
   var GPT_MODEL_DEFAULT = "openai/gpt-4.1";
+  var PAIE_MODEL_LS = "leo_paie_model";
+  var PAIE_MODEL_DEFAULT = "google/gemini-2.5-flash";
   var gptModelsState = { loaded: false, loading: false, models: [], defaultId: GPT_MODEL_DEFAULT };
+  var paieModelsState = { loaded: false, loading: false, models: [], defaultId: PAIE_MODEL_DEFAULT };
   var userAgentsState = { loaded: false, loading: false, agents: [] };
   var composerAgentModel = "";
 
@@ -23550,9 +23553,11 @@
     var form = document.getElementById("note-paie-reply-form");
     var list = form && form.querySelector(".note-paie-menu--models .note-paie-menu-list");
     if (!list) return;
+    var paie = noteAskMode() === "paie";
+    var state = paie ? paieModelsState : gptModelsState;
     var q = String(query || "").trim().toLowerCase();
-    var selected = selectedGptModelId();
-    var rows = gptModelsState.models.filter(function (m) {
+    var selected = paie ? selectedPaieModelId() : selectedGptModelId();
+    var rows = state.models.filter(function (m) {
       if (!q) return true;
       return (
         String(m.name || "").toLowerCase().indexOf(q) >= 0 ||
@@ -23563,7 +23568,7 @@
     if (!rows.length) {
       var empty = document.createElement("p");
       empty.className = "note-paie-menu-empty";
-      empty.textContent = gptModelsState.loading ? "Загрузка…" : "Нет моделей";
+      empty.textContent = state.loading ? "Загрузка…" : "Нет моделей";
       list.appendChild(empty);
       return;
     }
@@ -23572,20 +23577,67 @@
       btn.type = "button";
       btn.className = "note-paie-menu-item" + (m.id === selected ? " is-active" : "");
       btn.setAttribute("data-model-id", m.id);
-      btn.textContent = m.name || m.id;
+      btn.textContent = (m.name || m.id) + (m.reasoning ? " · рассуждение" : "");
       btn.title = m.id;
       btn.addEventListener("click", function () {
-        setSelectedGptModelId(m.id);
+        if (paie) applyPaieModel(m.id, true);
+        else setSelectedGptModelId(m.id);
         closeNoteComposerMenus();
       });
       list.appendChild(btn);
     });
   }
 
+  function selectedPaieModelId() {
+    if (noteAskMode() === "paie" && composerAgentModel) return composerAgentModel;
+    try {
+      var stored = String(localStorage.getItem(PAIE_MODEL_LS) || "").trim();
+      if (stored) return stored;
+    } catch (_) {}
+    var agent = findUserAgent("paie");
+    if (agent && agent.model) return agent.model;
+    return paieModelsState.defaultId || PAIE_MODEL_DEFAULT;
+  }
+
+  function paieModelShortName(id) {
+    var found = paieModelsState.models.find(function (m) {
+      return m.id === id;
+    });
+    if (found && found.name) return found.name;
+    var raw = String(id || "");
+    return raw.split("/").pop() || "PAIE";
+  }
+
+  function applyPaieModel(id, persist) {
+    var next = String(id || "").trim();
+    if (!next) return;
+    composerAgentModel = next;
+    var agent = findUserAgent("paie");
+    if (agent) agent.model = next;
+    try {
+      localStorage.setItem(PAIE_MODEL_LS, next);
+    } catch (_) {}
+    syncGptModelButton();
+    if (!persist) return;
+    apiFetch("/agents/paie", {
+      method: "PATCH",
+      body: JSON.stringify({ model: next }),
+    })
+      .then(function () {
+        return loadUserAgents();
+      })
+      .catch(function () {});
+  }
+
   function syncGptModelButton() {
     var form = document.getElementById("note-paie-reply-form");
     var label = form && form.querySelector(".note-paie-model-label");
-    if (label) label.textContent = gptModelShortName(selectedGptModelId());
+    if (label) {
+      label.textContent =
+        noteAskMode() === "paie"
+          ? paieModelShortName(selectedPaieModelId())
+          : gptModelShortName(selectedGptModelId());
+    }
     syncComposerModeChip();
   }
 
@@ -23630,6 +23682,50 @@
       if (!selectedGptModelId()) setSelectedGptModelId(GPT_MODEL_DEFAULT);
     } finally {
       gptModelsState.loading = false;
+      syncGptModelButton();
+      renderGptModelMenu();
+    }
+  }
+
+  async function loadPaieModels() {
+    if (paieModelsState.loaded || paieModelsState.loading) {
+      syncGptModelButton();
+      renderGptModelMenu();
+      return;
+    }
+    paieModelsState.loading = true;
+    renderGptModelMenu();
+    try {
+      var res = await apiFetch("/paie/models");
+      paieModelsState.models = Array.isArray(res && res.models) ? res.models : [];
+      paieModelsState.defaultId = String((res && res.default) || "").trim() || PAIE_MODEL_DEFAULT;
+      paieModelsState.loaded = true;
+      var allowed = {};
+      paieModelsState.models.forEach(function (m) {
+        if (m && m.id) allowed[m.id] = true;
+      });
+      var current = selectedPaieModelId();
+      if (current && !allowed[current]) {
+        paieModelsState.models.unshift({
+          id: current,
+          name: current.split("/").pop(),
+          reasoning: false,
+        });
+      }
+    } catch (_) {
+      paieModelsState.models = [
+        { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+        { id: "openai/gpt-5.4", name: "GPT-5.4" },
+        { id: "openai/gpt-4.1", name: "GPT-4.1" },
+        { id: "openai/o3", name: "o3", reasoning: true },
+        { id: "openai/o4-mini", name: "o4-mini", reasoning: true },
+        { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro", reasoning: true },
+        { id: "deepseek/deepseek-r1", name: "DeepSeek R1", reasoning: true },
+      ];
+      paieModelsState.defaultId = PAIE_MODEL_DEFAULT;
+      paieModelsState.loaded = true;
+    } finally {
+      paieModelsState.loading = false;
       syncGptModelButton();
       renderGptModelMenu();
     }
@@ -23794,10 +23890,10 @@
     }
   }
 
-  function fillAgentModelSelect(selected) {
+  function fillAgentModelSelect(selected, models) {
     var sel = document.getElementById("agents-f-model");
     if (!sel) return;
-    var models = (gptModelsState.models || []).slice();
+    models = (models || gptModelsState.models || []).slice();
     if (!models.length) {
       models = [
         { id: "openai/gpt-4.1", name: "GPT-4.1" },
@@ -23930,7 +24026,22 @@
     if (roundsEl) {
       roundsEl.value = agent && agent.max_rounds != null ? String(agent.max_rounds) : "4";
     }
-    fillAgentModelSelect(agent && agent.model ? agent.model : GPT_MODEL_DEFAULT);
+    var modelForForm =
+      kind === "paie"
+        ? (agent && agent.model) || PAIE_MODEL_DEFAULT
+        : (agent && agent.model) || GPT_MODEL_DEFAULT;
+    fillAgentModelSelect(
+      modelForForm,
+      kind === "paie" ? paieModelsState.models : gptModelsState.models
+    );
+    var reloadModels = kind === "paie" ? loadPaieModels() : loadGptModels();
+    Promise.resolve(reloadModels).then(function () {
+      if (!document.getElementById("agents-f-model")) return;
+      fillAgentModelSelect(
+        modelForForm,
+        kind === "paie" ? paieModelsState.models : gptModelsState.models
+      );
+    });
     if (resetBtn) {
       resetBtn.classList.toggle("hidden", isNew || !agent.builtin);
       resetBtn.addEventListener("click", function () {
@@ -25128,7 +25239,8 @@
         var open = modelMenu && modelMenu.classList.contains("hidden");
         closeNoteComposerMenus(open ? modelMenu : null);
         if (modelMenu && open) {
-          loadGptModels();
+          if (noteAskMode() === "paie") loadPaieModels();
+          else loadGptModels();
           modelMenu.classList.remove("hidden");
           modelBtn.classList.add("is-open");
           modelBtn.setAttribute("aria-expanded", "true");
@@ -30429,6 +30541,16 @@
         } catch (_) {
           composerAgentModel = composerAgentModel || "";
         }
+      } else if (next === "paie") {
+        var paieAgent = findUserAgent("paie");
+        try {
+          composerAgentModel =
+            String(localStorage.getItem(PAIE_MODEL_LS) || "").trim() ||
+            (paieAgent && paieAgent.model) ||
+            "";
+        } catch (_) {
+          composerAgentModel = (paieAgent && paieAgent.model) || "";
+        }
       } else {
         composerAgentModel = "";
       }
@@ -30443,6 +30565,7 @@
     }
     if (form) {
       form.classList.toggle("is-gpt-mode", isChatAskMode(current));
+      form.classList.toggle("is-paie-mode", current === "paie");
       form.classList.toggle("is-research-mode", current === "research");
       form.classList.toggle("is-comment-mode", current === "comment");
       syncComposerModeChip();
@@ -30461,7 +30584,9 @@
     }
     syncNoteComposerCommentTarget();
     if (isChatAskMode(current)) loadGptModels();
+    else if (current === "paie") loadPaieModels();
     else closeNoteComposerMenus();
+    syncGptModelButton();
     syncNotePaieReplyForm();
   }
 
@@ -32233,7 +32358,13 @@
       .then(function () {
         return apiFetch(path, {
           method: "POST",
-          body: JSON.stringify(Object.assign(discussionKnowledgeFields(), discussChatFields())),
+          body: JSON.stringify(
+            Object.assign(
+              { model: selectedPaieModelId() },
+              discussionKnowledgeFields(),
+              discussChatFields()
+            )
+          ),
         });
       })
       .then(function (data) {
@@ -32333,6 +32464,7 @@
                 parent_id: rootId,
                 reply_to_id: replyToId,
                 quote: (draft && draft.quote) || "",
+                model: selectedPaieModelId(),
               },
               discussionKnowledgeFields(),
               discussChatFields()

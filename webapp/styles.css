@@ -6280,7 +6280,8 @@ html.note-editor-open #note-editor-overlay {
   background: transparent;
 }
 
-.note-paie-reply-form.is-gpt-mode .note-paie-model-btn {
+.note-paie-reply-form.is-gpt-mode .note-paie-model-btn,
+.note-paie-reply-form.is-paie-mode .note-paie-model-btn {
   display: inline-flex;
 }
 

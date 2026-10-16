@@ -2796,6 +2796,7 @@ class _MiniappNotePaeiStart(BaseModel):
     sheet_ids: Optional[list[str]] = None
     context_note_ids: Optional[list[str]] = None
     chat_id: Optional[int] = None
+    model: Optional[str] = None
 
 
 class _MiniappNoteResearchStart(_MiniappNotePaeiStart):
@@ -6935,6 +6936,19 @@ async def miniapp_gpt_models(
     return await run_in_threadpool(_run)
 
 
+@miniapp_router.get("/paie/models")
+async def miniapp_paie_models(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    del principal
+    from assistant.integrations.openrouter_client import list_paie_picker_models
+
+    def _run() -> dict[str, Any]:
+        return list_paie_picker_models()
+
+    return await run_in_threadpool(_run)
+
+
 @miniapp_router.post("/gpt/chat")
 async def miniapp_gpt_chat(
     body: _MiniappGptChatBody,
@@ -10804,7 +10818,15 @@ async def miniapp_note_paei_start(
 
     attached_notes = pack_attached_notes(int(principal.telegram_user_id), ctx_ids)
     from assistant.stores import note_chats
+    from assistant.stores import user_agents as user_agents_store
 
+    requested_model = ""
+    raw_model = str(payload.model or "").strip()
+    if raw_model:
+        try:
+            requested_model = user_agents_store.sanitize_model(raw_model, kind="paie")
+        except user_agents_store.AgentError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
     chat_id = await run_in_threadpool(
         _resolve_post_chat, owner, kind, str(item_id), uid, payload.chat_id, parent_id
     )
@@ -10863,6 +10885,7 @@ async def miniapp_note_paei_start(
             reply_to_id=reply_to_id,
             sheet_ids=sheet_ids,
             attached_notes=attached_notes,
+            model=requested_model,
         )
         followup_parent = int(root_id)
     else:
@@ -10876,6 +10899,7 @@ async def miniapp_note_paei_start(
             knowledge_note_ids=kb_ids,
             sheet_ids=sheet_ids,
             attached_notes=attached_notes,
+            model=requested_model,
         )
         followup_parent = None
     if started:
@@ -10890,6 +10914,7 @@ async def miniapp_note_paei_start(
                 knowledge_note_ids=kb_ids,
                 sheet_ids=sheet_ids,
                 attached_notes=attached_notes,
+                model=requested_model,
             )
         )
     return {

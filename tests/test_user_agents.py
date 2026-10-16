@@ -70,6 +70,16 @@ class UserAgentsStoreTests(unittest.TestCase):
         self.assertFalse(reset["web_search"])
         self.assertEqual(reset["prompt"], agents.builtin_prompt("gpt"))
 
+    def test_paie_accepts_reasoning_model(self) -> None:
+        patched = agents.patch_agent(5, "paie", {"model": "openai/o3"})
+        self.assertEqual(patched["model"], "openai/o3")
+        flash = agents.patch_agent(5, "paie", {"model": "google/gemini-2.5-flash"})
+        self.assertEqual(flash["model"], "google/gemini-2.5-flash")
+        with self.assertRaises(agents.AgentError):
+            agents.patch_agent(5, "gpt", {"model": "openai/o3"})
+        with self.assertRaises(agents.AgentError):
+            agents.patch_agent(5, "paie", {"model": "openai/gpt-3.5-turbo"})
+
     def test_research_keeps_web(self) -> None:
         agents.patch_agent(5, "research", {"web_search": False, "model": "openai/gpt-4o-mini"})
         cfg = agents.runtime_config(5, "research")

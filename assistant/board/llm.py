@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from assistant.integrations.openrouter_client import (
     is_llm_configured,
+    is_paie_reasoning_model,
     openrouter_chat_completion,
 )
 from assistant.lib.llm_json import strip_json_from_markdown
@@ -99,6 +100,33 @@ def _cached_text_block(text: str, *, cache: bool) -> dict[str, Any]:
     return block
 
 
+_RUSSIAN_OUTPUT_RULE = (
+    "Все текстовые значения пиши на русском языке. Ключи JSON не переводи."
+)
+
+
+def with_russian_output(system: str) -> str:
+    text = (system or "").rstrip()
+    if _RUSSIAN_OUTPUT_RULE in text:
+        return text
+    return f"{text}\n\n{_RUSSIAN_OUTPUT_RULE}" if text else _RUSSIAN_OUTPUT_RULE
+
+
+def reasoning_request_fields(model: str, max_tokens: int | None) -> dict[str, Any]:
+    """OpenRouter reasoning для моделей, которые думают отдельно от ответа.
+
+    effort=medium забирает около половины max_tokens на рассуждение,
+    поэтому потолок ответа поднимается, а само рассуждение в текст не попадает.
+    """
+    if not is_paie_reasoning_model(model):
+        return {}
+    cap = int(max_tokens or 0)
+    return {
+        "reasoning": {"effort": "medium", "exclude": True},
+        "max_tokens": max(cap * 2, 8000) if cap else 8000,
+    }
+
+
 def _messages_payload(
     *,
     model: str,
@@ -159,12 +187,13 @@ class OpenRouterProvider:
         models = [primary, *_fallback_models(primary)]
         last_err: BaseException | None = None
         data: dict[str, Any] | None = None
+        system_text = with_russian_output(system)
         for model_id in models:
             payload: dict[str, Any] = {
                 "model": model_id,
                 "messages": _messages_payload(
                     model=model_id,
-                    system=system,
+                    system=system_text,
                     user=user,
                     cache_prefix=cache_prefix,
                 ),
@@ -173,9 +202,12 @@ class OpenRouterProvider:
             }
             if max_tokens is not None:
                 payload["max_tokens"] = int(max_tokens)
+            payload.update(reasoning_request_fields(model_id, payload.get("max_tokens")))
             try:
                 data = openrouter_chat_completion(
-                    payload, operation=operation, timeout=_timeout()
+                    payload,
+                    operation=operation,
+                    timeout=max(_timeout(), 180.0) if is_paie_reasoning_model(model_id) else _timeout(),
                 )
                 if model_id != models[0]:
                     print(f"[board.llm] fallback_model={model_id} op={operation}")
@@ -192,7 +224,11 @@ class OpenRouterProvider:
                 payload.pop("response_format", None)
                 try:
                     data = openrouter_chat_completion(
-                        payload, operation=operation, timeout=_timeout()
+                        payload,
+                        operation=operation,
+                        timeout=max(_timeout(), 180.0)
+                        if is_paie_reasoning_model(model_id)
+                        else _timeout(),
                     )
                     break
                 except Exception as e2:

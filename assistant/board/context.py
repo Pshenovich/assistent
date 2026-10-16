@@ -236,9 +236,9 @@ def build_agent_context(
     company_text = stored_brief or _fmt_company(company, query=query).strip()
 
     default_task = (
-        "Assume the current consensus may be wrong. Find the strongest reason not to implement it."
+        "Считай текущий консенсус ошибочным. Найди самую сильную причину его не внедрять."
         if mode == "CHALLENGE"
-        else "Respond to the strongest unresolved argument. Do not repeat your first position."
+        else "Ответь на самый сильный нерешённый аргумент. Не повторяй свою первую позицию."
     )
     your_task = task or default_task
 
@@ -280,6 +280,10 @@ def build_agent_context(
         _block("UNRESOLVED", unresolved_text),
         _block("MODE", mode),
         _block("YOUR TASK", your_task),
+        _block(
+            "LANGUAGE",
+            "Все текстовые поля ответа пиши на русском языке. Ключи JSON не переводи.",
+        ),
     ]
     stable = "\n\n".join(p for p in stable_parts if p)
     volatile = "\n\n".join(p for p in volatile_parts if p)

@@ -72,6 +72,19 @@ GPT_PICKER_MODELS: tuple[tuple[str, str], ...] = (
     ("openai/gpt-4o-mini", "GPT-4o mini"),
 )
 
+# Модель совета по умолчанию остаётся в списке, даже если env указывает другую.
+PAIE_BASE_MODELS: tuple[tuple[str, str], ...] = (
+    ("google/gemini-2.5-flash", "Gemini 2.5 Flash"),
+)
+
+# Отдельный список для PAIE: эти модели думают до ответа (OpenRouter reasoning).
+PAIE_REASONING_MODELS: tuple[tuple[str, str], ...] = (
+    ("openai/o3", "o3"),
+    ("openai/o4-mini", "o4-mini"),
+    ("google/gemini-2.5-pro", "Gemini 2.5 Pro"),
+    ("deepseek/deepseek-r1", "DeepSeek R1"),
+)
+
 
 def gpt_display_label(model_id: str | None) -> str:
     """Короткий ярлык для пузыря ответа: GPT-4.1, GPT-4o mini, …"""
@@ -729,6 +742,89 @@ def build_gpt_picker_models(
         default = preferred
     models.sort(key=lambda row: (0 if row["id"] == default else 1, row["name"].lower()))
     return {"models": models, "default": default}
+
+
+def paie_static_model_ids() -> set[str]:
+    return (
+        {mid for mid, _name in PAIE_BASE_MODELS}
+        | {mid for mid, _name in GPT_PICKER_MODELS}
+        | {mid for mid, _name in PAIE_REASONING_MODELS}
+    )
+
+
+def is_paie_reasoning_model(model_id: str | None) -> bool:
+    mid = sanitize_openrouter_model_id(model_id) or ""
+    return mid in {row[0] for row in PAIE_REASONING_MODELS}
+
+
+def build_paie_picker_models(
+    catalog_ids: set[str],
+    *,
+    default: str,
+    names: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Модели PAIE: текущая модель совета, те же GPT, что у ассистента, и reasoning."""
+    catalog_ids = set(catalog_ids or [])
+    labels = dict(names or {})
+    catalog_has_openai = any(mid.startswith("openai/") for mid in catalog_ids)
+    catalog_has_google = any(mid.startswith("google/") for mid in catalog_ids)
+    catalog_has_deepseek = any(mid.startswith("deepseek/") for mid in catalog_ids)
+    default_id = sanitize_openrouter_model_id(default) or "google/gemini-2.5-flash"
+
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add(mid: str, name: str, *, reasoning: bool) -> None:
+        clean = sanitize_openrouter_model_id(mid)
+        if not clean or clean in seen:
+            return
+        vendor = clean.split("/", 1)[0]
+        in_catalog = clean in catalog_ids
+        if catalog_ids and not in_catalog:
+            if vendor == "openai" and catalog_has_openai:
+                return
+            if vendor == "google" and catalog_has_google and clean != default_id:
+                return
+            if vendor == "deepseek" and catalog_has_deepseek:
+                return
+        seen.add(clean)
+        rows.append(
+            {
+                "id": clean,
+                "name": labels.get(clean) or name,
+                "reasoning": bool(reasoning),
+            }
+        )
+
+    add(
+        default_id,
+        labels.get(default_id) or default_id.split("/")[-1],
+        reasoning=is_paie_reasoning_model(default_id),
+    )
+    for mid, name in PAIE_BASE_MODELS:
+        add(mid, name, reasoning=False)
+    for mid, name in GPT_PICKER_MODELS:
+        add(mid, name, reasoning=False)
+    for mid, name in PAIE_REASONING_MODELS:
+        add(mid, name, reasoning=True)
+    rows.sort(
+        key=lambda row: (
+            0 if row["id"] == default_id else 1,
+            1 if row["reasoning"] else 0,
+            str(row["name"]).lower(),
+        )
+    )
+    return {"models": rows, "default": default_id}
+
+
+def list_paie_picker_models(*, force: bool = False) -> dict[str, Any]:
+    from assistant.board.llm import board_model
+
+    catalog = list_openrouter_models(force=force)
+    models = catalog.get("models") or []
+    available = {m["id"] for m in models}
+    names = {m["id"]: m["name"] for m in models}
+    return build_paie_picker_models(available, default=board_model(), names=names)
 
 
 def list_gpt_picker_models(*, force: bool = False) -> dict[str, Any]:

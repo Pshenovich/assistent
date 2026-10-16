@@ -223,6 +223,7 @@ def begin_job(
     reply_to_id: int | None = None,
     sheet_ids: list[str] | None = None,
     attached_notes: str = "",
+    model: str = "",
     chat_id: int | None = None,
     viewer_uid: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
@@ -263,6 +264,7 @@ def begin_job(
                 else None
             ),
             "attached_notes": str(attached_notes or "").strip(),
+            "model": str(model or "").strip(),
             "progress": _progress_view(
                 {
                     "phase": "ANALYZING",
@@ -352,7 +354,7 @@ def format_chair_comment(payload: dict[str, Any], *, heading: str | None = None)
         try:
             pct = int(round(float(conf) * 100))
             lines.append("")
-            lines.append(f"Confidence: {pct}%")
+            lines.append(f"Уверенность: {pct}%")
         except (TypeError, ValueError):
             pass
     text = "\n".join(lines).strip()
@@ -502,6 +504,7 @@ async def run_note_paei(
     reply_to_id: int | None = None,
     sheet_ids: list[str] | None = None,
     attached_notes: str = "",
+    model: str = "",
     chat_id: int | None = None,
     viewer_uid: str | None = None,
 ) -> dict[str, Any]:
@@ -575,9 +578,13 @@ async def run_note_paei(
     chair_prompt = str(cfg.get("prompt") or "").strip()
     if chair_prompt and chair_prompt != str(cfg.get("prompt_default") or "").strip():
         extra += "\n[chair_prompt]\n" + chair_prompt + "\n[/chair_prompt]"
-    board_model = str(cfg.get("model") or "").strip()
-    if board_model and board_model != str(cfg.get("model_default") or "").strip():
-        provider = _ForcedModelProvider(board_model, provider)
+    forced_model = str(model or "").strip()
+    if not forced_model:
+        board_model = str(cfg.get("model") or "").strip()
+        if board_model and board_model != str(cfg.get("model_default") or "").strip():
+            forced_model = board_model
+    if forced_model:
+        provider = _ForcedModelProvider(forced_model, provider)
     rounds = cfg.get("max_rounds")
     try:
         rounds = int(rounds) if rounds is not None else None
@@ -642,6 +649,7 @@ async def run_note_paei_job(
     reply_to_id: int | None = None,
     sheet_ids: list[str] | None = None,
     attached_notes: str = "",
+    model: str = "",
 ) -> None:
     key = job_key(user_id, kind, item_id)
     job = get_job(user_id, kind, item_id) or {}
@@ -668,6 +676,8 @@ async def run_note_paei_job(
         use_knowledge = bool(job.get("use_knowledge"))
     if not attached_notes:
         attached_notes = str(job.get("attached_notes") or "")
+    if not model:
+        model = str(job.get("model") or "")
     try:
         thread_parent = (
             int(thread_parent) if thread_parent not in (None, "", 0, "0") else None
@@ -700,6 +710,7 @@ async def run_note_paei_job(
             reply_to_id=target_id,
             sheet_ids=sheet_ids,
             attached_notes=attached_notes,
+            model=model,
             chat_id=job.get("chat_id"),
             viewer_uid=job.get("viewer_uid"),
         )
