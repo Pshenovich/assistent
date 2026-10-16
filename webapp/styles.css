@@ -15826,3 +15826,28 @@ html.notes-chats-tab .notes-project-btn { display: none; }
   #note-editor-toolbar-wrap .note-tg-toolbar { min-width: 0; }
   #note-editor-toolbar-wrap .note-tg-capsule--default { min-width: 0; overflow-x: auto; scrollbar-width: none; }
 }
+
+/* Поиск: крестик «очистить», когда есть текст */
+.notes-search-clear { position: absolute; top: 50%; right: 2.4rem; transform: translateY(-50%); z-index: 2; width: 1.5rem; height: 1.5rem; padding: 0; border: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.12); color: var(--text, #e6e7ea); cursor: pointer; }
+.notes-search-clear:hover { background: rgba(255, 255, 255, 0.2); }
+.notes-search-clear.hidden { display: none; }
+.notes-search-wrap.has-value .notes-search-input { padding-right: 4.4rem; }
+@media (min-width: 960px) {
+  #notes-search-field .notes-search-clear { right: 4.5rem; }
+  html.notes-col .notes-search-wrap.has-value .notes-search-input { padding-right: 6.5rem; }
+  /* Поле поиска в фокусе или с текстом — кнопка проекта сжимается до иконки */
+  html.notes-col .notes-search-wrap:focus-within ~ #notes-project-btn .notes-project-btn-label,
+  html.notes-col .notes-search-wrap:focus-within ~ #notes-project-btn svg:last-child,
+  html.notes-col .notes-search-wrap.has-value ~ #notes-project-btn .notes-project-btn-label,
+  html.notes-col .notes-search-wrap.has-value ~ #notes-project-btn svg:last-child { display: none; }
+  html.notes-col .notes-search-wrap:focus-within ~ #notes-project-btn,
+  html.notes-col .notes-search-wrap.has-value ~ #notes-project-btn { padding: 0; width: 2.5rem; justify-content: center; }
+}
+
+/* Проект в заметке — в общем стиле кнопок (как «📁 Проект ▾» в списке), без пунктира */
+.note-editor-meta .tag-picker-add-btn { height: 28px; min-height: 28px; padding: 0 10px; border: 1px solid var(--border, rgba(255,255,255,0.12)); border-radius: 9px; background: var(--surface, #1c1c1e); color: var(--text-secondary, #a2a6a9); font-size: 0.8125rem; font-weight: 600; }
+.note-editor-meta .tag-picker-add-btn:hover { color: var(--text); border-color: rgba(255, 255, 255, 0.22); }
+.note-editor-meta .tag-picker-add-btn.tag-picker-trigger--selected { color: #bcd6ff; border-color: var(--accent-border, rgba(91, 159, 255, 0.5)); background: rgba(91, 159, 255, 0.1); }
+.note-editor-meta .tag-picker-add-btn-inner { gap: 6px; }
+.note-editor-meta .tag-picker-add-btn-icon { width: 14px; height: 14px; }
+#note-editor-overlay.note-editor-overlay--fullscreen .note-editor-meta .tag-picker-add-btn { font-size: 0.8125rem; line-height: 1; font-weight: 600; }

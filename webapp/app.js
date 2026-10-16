@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-notes26";
+  var WEBAPP_BUILD = "20261016-notes28";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-notes26";
+  const NOTE_EDITOR_ASSET_V = "20261016-notes28";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -6148,6 +6148,7 @@
   }
 
   function postTabSwitch(name, prev) {
+    if (name === "actual") window.setTimeout(restoreActualAssistant, 0);
     if (name === "profile") {
       if (!tabInited.profile) {
         tabInited.profile = true;
@@ -6207,7 +6208,7 @@
       } catch (_) {}
       actualAssistantSuspending = false;
     }
-    if (name === "actual") window.setTimeout(restoreActualAssistant, 0);
+
     options = options || {};
     if (name === "digest" && !digestTabEnabled) name = "actual";
     if (TAB_ORDER.indexOf(name) < 0) name = "actual";
@@ -17178,9 +17179,8 @@
   }
 
   var TAG_PICKER_ICON_SVG =
-    '<svg class="tag-picker-add-btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' +
-    '<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>' +
-    '<circle cx="7" cy="7" r="1.5" fill="currentColor" stroke="none"/>' +
+    '<svg class="tag-picker-add-btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>' +
     "</svg>";
   var TAG_PICKER_CHEVRON_SVG =
     '<svg class="tag-picker-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">' +
@@ -17270,6 +17270,7 @@
         inner.appendChild(emptyLabel);
       } else {
         addBtnEl.classList.add("tag-picker-trigger--selected");
+        inner.insertAdjacentHTML("afterbegin", TAG_PICKER_ICON_SVG);
         var label = document.createElement("span");
         label.className = "tag-picker-trigger-label";
         label.textContent = String(stateTags[0].name || "");
@@ -26455,7 +26456,10 @@
             restoreActualAssistant(attempt + 1);
           }, 600);
         } else {
+          // Был открыт пустой черновик (его убрали при уходе с экрана) — открываем новый чат.
           rememberActualAssistantChat("");
+          actualAssistantRestoring = false;
+          await openActualAssistant();
         }
         return;
       }
@@ -33968,6 +33972,8 @@
     card.appendChild(check);
     card.appendChild(inner);
     if (id && notesSelect.ids[id]) card.classList.add("is-selected");
+    // Открытая справа заметка подсвечена сразу при отрисовке — иначе при обновлении списка мигает.
+    if (id && notesSplitCurrentId === id && isNoteEditorModalOpen()) card.classList.add("is-current");
     card.addEventListener("click", function () {
       if (notesSelect.on) {
         if (id) toggleNotesSelected(id);
@@ -34495,11 +34501,11 @@
     var back = document.getElementById("note-editor-web-back");
     if (back) back.textContent = fromList && capable && !split ? "‹ К списку" : "← Назад";
     document.querySelectorAll(".nl-card.is-current").forEach(function (c) {
-      c.classList.remove("is-current");
+      if (!(fromList && split && c.getAttribute("data-note-id") === notesSplitCurrentId)) c.classList.remove("is-current");
     });
     if (fromList && split) {
       document.querySelectorAll('.nl-card[data-note-id="' + notesSplitCurrentId + '"]').forEach(function (c) {
-        c.classList.add("is-current");
+        if (!c.classList.contains("is-current")) c.classList.add("is-current");
       });
     }
     // Справа сразу последняя открытая заметка (один раз за заход на вкладку).
@@ -37095,6 +37101,33 @@
     var notesSearchInput = document.getElementById("notes-search-input");
     if (notesSearchInput) {
       var notesSearchTimer = 0;
+      var notesSearchField = document.getElementById("notes-search-field");
+      var notesSearchClear = document.createElement("button");
+      notesSearchClear.type = "button";
+      notesSearchClear.id = "notes-search-clear";
+      notesSearchClear.className = "notes-search-clear hidden";
+      notesSearchClear.setAttribute("aria-label", "Очистить поиск");
+      notesSearchClear.title = "Очистить";
+      notesSearchClear.innerHTML =
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+      if (notesSearchField) notesSearchField.insertBefore(notesSearchClear, notesSearchInput.nextSibling);
+      function syncNotesSearchClear() {
+        var has = !!String(notesSearchInput.value || "").length;
+        notesSearchClear.classList.toggle("hidden", !has);
+        var wrapEl = document.getElementById("notes-search-wrap");
+        if (wrapEl) wrapEl.classList.toggle("has-value", has);
+      }
+      notesSearchClear.addEventListener("pointerdown", function (e) {
+        e.preventDefault(); // не терять фокус поля
+      });
+      notesSearchClear.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        notesSearchInput.value = "";
+        notesSearchInput.dispatchEvent(new Event("input", { bubbles: true }));
+        notesSearchInput.focus();
+      });
+      notesSearchInput.addEventListener("input", syncNotesSearchClear);
       notesSearchInput.addEventListener("input", function () {
         notesSearchQuery = notesSearchInput.value || "";
         setNotesSearchExpanded(true);
