@@ -7713,14 +7713,17 @@ def looks_like_list_preview_overwrite(new_body: str | None, old_body: str | None
         t = html_lib.unescape(t).replace("\xa0", " ")
         return " ".join(t.split())
 
-    new_plain = _plain(str(new_body))
-    if "…" not in new_plain[-24:]:
+    new_raw = str(new_body)
+    # Превью — не длиннее 600 симв. (+ редактор закрывает теги). Длинный новый текст — обычная правка.
+    if len(new_raw) > _NOTE_LIST_BODY_MAX + 160:
         return False
+    new_plain = _plain(new_raw)
     head = new_plain.rstrip(" …").rstrip("…").strip()
     old_plain = _plain(old_raw)
-    if len(head) < 20 or len(old_plain) < len(head) + 40:
+    if len(head) < 20 or len(old_plain) < len(head) + 120:
         return False
-    return old_plain.startswith(head[: max(20, len(head) - 8)])
+    # Обрезка могла прийтись на середину слова/тега — сравниваем без последних символов.
+    return old_plain.startswith(head[: max(20, len(head) - 12)])
 
 
 def minify_note_for_list(item: dict[str, Any]) -> dict[str, Any]:
