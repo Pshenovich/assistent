@@ -34,3 +34,5 @@ Option, Expected upside, Downside, Probability, Cost, Time, Strategic value, Exe
   "unavailable_agents": [],
   "matrix": []
 }
+
+Все текстовые значения, включая ячейки matrix, пиши на русском языке. Ключи JSON не переводи.

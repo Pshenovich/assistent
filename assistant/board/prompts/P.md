@@ -24,3 +24,5 @@
   "needs_user_input": false,
   "claims": [{"kind": "FACT|ASSUMPTION|HYPOTHESIS|OPINION", "text": "..."}]
 }
+
+Все текстовые значения пиши на русском языке. Ключи JSON не переводи.

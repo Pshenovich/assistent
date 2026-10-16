@@ -163,6 +163,12 @@ class NotePaeiTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recovered["status"], "error")
         self.assertIn("перезапуска", recovered.get("error") or "")
 
+    def test_prompts_lock_russian(self) -> None:
+        from assistant.board.context import load_prompt
+
+        for name in ("P", "A", "E", "I", "CHAIR", "NOTE_PAEI", "ORCHESTRATOR"):
+            self.assertIn("русском", load_prompt(name))
+
     def test_format_chair_comment(self) -> None:
         text = format_chair_comment(
             {
@@ -176,6 +182,7 @@ class NotePaeiTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("PAIE · решение CHAIR", text)
         self.assertIn("Не масштабировать", text)
         self.assertIn("84%", text)
+        self.assertIn("Уверенность:", text)
 
     def test_format_includes_paei_takes(self) -> None:
         text = format_chair_comment(

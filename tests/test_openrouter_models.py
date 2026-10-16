@@ -1,10 +1,13 @@
 import unittest
 
+from assistant.board.llm import reasoning_request_fields, with_russian_output
 from assistant.integrations.openrouter_client import (
     _payload_for_comet,
     build_gpt_picker_models,
+    build_paie_picker_models,
     extract_chat_message_media,
     gpt_display_label,
+    is_paie_reasoning_model,
     model_emits_images,
     normalize_openrouter_models,
     sanitize_openrouter_model_id,
@@ -133,6 +136,32 @@ class OpenRouterModelsTests(unittest.TestCase):
         ids = [m["id"] for m in out["models"]]
         self.assertEqual(out["default"], "openai/gpt-4o")
         self.assertEqual(set(ids), {"openai/gpt-5.4", "openai/gpt-4o"})
+
+    def test_paie_picker_keeps_default_gpt_and_reasoning(self) -> None:
+        out = build_paie_picker_models(
+            {"openai/gpt-4.1", "openai/o3", "google/gemini-2.5-flash"},
+            default="google/gemini-2.5-flash",
+        )
+        ids = [m["id"] for m in out["models"]]
+        self.assertEqual(ids[0], "google/gemini-2.5-flash")
+        self.assertIn("openai/gpt-4.1", ids)
+        self.assertIn("openai/o3", ids)
+        flags = {m["id"]: m["reasoning"] for m in out["models"]}
+        self.assertTrue(flags["openai/o3"])
+        self.assertFalse(flags["openai/gpt-4.1"])
+        self.assertTrue(is_paie_reasoning_model("openai/o4-mini"))
+        self.assertFalse(is_paie_reasoning_model("openai/gpt-4.1"))
+
+    def test_reasoning_request_raises_token_budget(self) -> None:
+        plain = reasoning_request_fields("openai/gpt-4.1", 1200)
+        self.assertEqual(plain, {})
+        reasoned = reasoning_request_fields("openai/o3", 1200)
+        self.assertEqual(reasoned["reasoning"]["effort"], "medium")
+        self.assertTrue(reasoned["reasoning"]["exclude"])
+        self.assertGreaterEqual(reasoned["max_tokens"], 8000)
+        text = with_russian_output("Ты CHAIR.")
+        self.assertIn("русском", text)
+        self.assertEqual(with_russian_output(text), text)
 
 
 if __name__ == "__main__":

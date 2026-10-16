@@ -161,13 +161,20 @@ def allowed_model_ids() -> set[str]:
     return {mid for mid, _name in GPT_PICKER_MODELS}
 
 
-def sanitize_model(raw: str | None) -> str:
+def paie_allowed_model_ids() -> set[str]:
+    from assistant.board.llm import board_model
+    from assistant.integrations.openrouter_client import paie_static_model_ids
+
+    return paie_static_model_ids() | {board_model()}
+
+
+def sanitize_model(raw: str | None, *, kind: str = "") -> str:
     from assistant.integrations.openrouter_client import sanitize_openrouter_model_id
 
     mid = sanitize_openrouter_model_id(raw) or ""
     if not mid:
         return ""
-    allowed = allowed_model_ids()
+    allowed = paie_allowed_model_ids() if kind == "paie" else allowed_model_ids()
     if allowed and mid not in allowed:
         raise AgentError("Модель недоступна в списке")
     return mid
@@ -455,7 +462,7 @@ def patch_agent(user_id: int, agent_id: str, fields: dict[str, Any]) -> dict[str
     model = current["model"] if current["model"] != current.get("model_default") else ""
     if "model" in fields:
         raw_model = str(fields.get("model") or "").strip()
-        model = sanitize_model(raw_model) if raw_model else ""
+        model = sanitize_model(raw_model, kind=kind) if raw_model else ""
         if kind == CUSTOM_KIND and not model:
             raise AgentError("Укажите модель")
     web_search = bool(current.get("web_search"))
