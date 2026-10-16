@@ -409,6 +409,11 @@ def update_sheet(
         new_kind = _normalize_kind(kind)
     ts = _now_iso()
     new_rev = int(existing.get("revision") or 1) + 1
+    changed = (
+        new_title != existing["title"]
+        or new_body != (existing["body"] or "")
+        or new_kind != (existing.get("kind") or SHEET_KIND_DOC)
+    )
     with _LOCK:
         _conn().execute(
             """
@@ -418,6 +423,10 @@ def update_sheet(
             """,
             (new_title, new_body, new_kind, ts, new_rev, int(note_id), int(sheet_id)),
         )
+        if changed:
+            # Правка любого листа — заметка «недавно изменена» и поднимается в списке.
+            # Ревизию заметки не трогаем: она защищает от конфликтов правок основной вкладки.
+            _conn().execute("UPDATE local_notes SET updated_at = ? WHERE id = ?", (ts, int(note_id)))
         _conn().commit()
     out = get_extra_sheet(note_id, sheet_id)
     assert out is not None

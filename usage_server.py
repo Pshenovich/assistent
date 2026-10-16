@@ -9100,7 +9100,15 @@ async def miniapp_note_sheet_patch(
         raise HTTPException(status_code=400, detail=str(e)) from e
     if item is None:
         raise HTTPException(status_code=404, detail="Заметка не найдена")
-    return {"ok": True, "item": item}
+    note_updated_at = None
+    try:
+        fresh = await run_in_threadpool(
+            partial(notes_store.get_accessible_note, uid, note_id, with_sharing=False)
+        )
+        note_updated_at = (fresh or {}).get("updated_at")
+    except Exception:
+        note_updated_at = None
+    return {"ok": True, "item": item, "note_updated_at": note_updated_at}
 
 
 @miniapp_router.delete("/notes/local/{note_id}/sheets/{sheet_id}")

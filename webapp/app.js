@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-notes17";
+  var WEBAPP_BUILD = "20261016-notes19";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-notes17";
+  const NOTE_EDITOR_ASSET_V = "20261016-notes19";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -4425,6 +4425,23 @@
       sec.parentNode.removeChild(sec);
     }
     return true;
+  }
+
+  // Правка доп. листа: заметка становится «недавно изменённой» и поднимается в списке.
+  function bumpNoteUpdatedInList(noteId, updatedAt) {
+    if (!notesDataCache || !updatedAt) return;
+    var hit = false;
+    ["local_notes", "transcriptions"].forEach(function (k) {
+      (notesDataCache[k] || []).forEach(function (n) {
+        if (String(n.id) === String(noteId) && String(n.updated_at || "") !== String(updatedAt)) {
+          n.updated_at = updatedAt;
+          hit = true;
+        }
+      });
+    });
+    if (!hit) return;
+    persistNotesCacheToDisk();
+    renderNotesPanesFromData(notesDataCache);
   }
 
   function syncLocalNoteInList(item) {
@@ -20434,7 +20451,15 @@
     var notesRoot = document.getElementById("notes-root");
     if (!notesRoot) return;
     var rect = notesRoot.getBoundingClientRect();
-    if (rect.width) document.documentElement.style.setProperty("--notes-split-left", Math.round(rect.right + 12) + "px");
+    if (rect.width) document.documentElement.style.setProperty("--notes-split-left", Math.round(rect.right + notesColGap(rect)) + "px");
+  }
+
+  // Отступ справа от колонки = отступу слева (от бокового меню) — колонка по центру своего места.
+  function notesColGap(rootRect) {
+    var side = document.querySelector(".app-sidebar") || document.querySelector(".tabbar");
+    var sr = side && side.getBoundingClientRect();
+    if (!sr || !sr.width || sr.right > rootRect.left) return 16;
+    return Math.max(8, Math.round(rootRect.left - sr.right));
   }
 
   async function renameChatThread(thread) {
@@ -25144,6 +25169,7 @@
           encodeURIComponent(id),
         { method: "PATCH", body: JSON.stringify(body) }
       );
+      if (res && res.note_updated_at) bumpNoteUpdatedInList(noteId, res.note_updated_at);
       if (res && res.item) {
         var saved = res.item;
         saved.body = html;
@@ -34226,10 +34252,19 @@
 
   function syncNotesColLayout(tabName) {
     var tab = tabName || currentTab;
-    document.documentElement.classList.toggle(
-      "notes-col",
-      isDesktopLayout() && window.innerWidth >= NOTES_SPLIT_MIN_W && tab === "notes"
-    );
+    var on = isDesktopLayout() && window.innerWidth >= NOTES_SPLIT_MIN_W && tab === "notes";
+    document.documentElement.classList.toggle("notes-col", on);
+    // Десктоп: кнопка фильтра — внутри поля поиска, рядом с «#»; на телефоне — отдельной кнопкой.
+    var fbtn = document.getElementById("notes-filter-btn");
+    var field = document.getElementById("notes-search-field");
+    var wrap = document.getElementById("notes-search-wrap");
+    if (fbtn && field && wrap) {
+      if (isDesktopLayout()) {
+        if (fbtn.parentNode !== field) field.appendChild(fbtn);
+      } else if (fbtn.parentNode === field) {
+        wrap.parentNode.insertBefore(fbtn, wrap.nextSibling);
+      }
+    }
   }
 
   function syncNotesSplitLayout() {
@@ -34248,7 +34283,7 @@
       var notesRoot = document.getElementById("notes-root");
       if (notesRoot) {
         var rect = notesRoot.getBoundingClientRect();
-        if (rect.width) root.style.setProperty("--notes-split-left", Math.round(rect.right + 12) + "px");
+        if (rect.width) root.style.setProperty("--notes-split-left", Math.round(rect.right + notesColGap(rect)) + "px");
       }
       setNotesSearchExpanded(true);
     }
