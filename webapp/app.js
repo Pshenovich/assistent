@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-meet4";
+  var WEBAPP_BUILD = "20261016-contact1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-meet4";
+  const NOTE_EDITOR_ASSET_V = "20261016-contact1";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -8928,6 +8928,11 @@
     body.appendChild(meta);
     head.appendChild(body);
     card.appendChild(head);
+    // Карточка контакта: встречи с человеком и материалы — по нажатию.
+    head.classList.add("contact-card-head--link");
+    head.addEventListener("click", function () {
+      openContactDetail(c);
+    });
     var teams = Array.isArray(c.teams) ? c.teams : [];
     if (teams.length) {
       var teamsEl = document.createElement("p");
@@ -8965,6 +8970,14 @@
         alert(err.message || String(err));
       }
     });
+    var meetBtn = document.createElement("button");
+    meetBtn.type = "button";
+    meetBtn.className = "btn ghost btn-sm";
+    meetBtn.textContent = "Встречи";
+    meetBtn.addEventListener("click", function () {
+      openContactDetail(c);
+    });
+    actions.appendChild(meetBtn);
     actions.appendChild(editBtn);
     actions.appendChild(delBtn);
     card.appendChild(actions);
@@ -15515,6 +15528,197 @@
     }
   }
 
+
+  // ---- Карточка контакта: встречи с человеком и их материалы ----
+  async function openContactDetail(c) {
+    var key = String((c && (c.key || c.email)) || "");
+    if (!key) return;
+    var ov = document.getElementById("contact-detail-overlay");
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = "contact-detail-overlay";
+      ov.className = "modal-overlay contact-detail-overlay hidden";
+      ov.innerHTML =
+        '<div class="modal modal--sheet contact-detail-sheet" role="dialog" aria-modal="true" aria-label="Контакт">' +
+        '<div class="modal-header"><button type="button" class="modal-header-btn modal-header-btn--close" data-cd="close" aria-label="Закрыть">' +
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>' +
+        '<h2 class="modal-title">Контакт</h2><button type="button" class="modal-header-btn contact-detail-edit" data-cd="edit">Изменить</button></div>' +
+        '<div class="modal-body contact-detail-body"></div></div>';
+      document.body.appendChild(ov);
+      ov.addEventListener("click", function (e) {
+        if (e.target === ov || e.target.closest('[data-cd="close"]')) closeContactDetail();
+        else if (e.target.closest('[data-cd="edit"]') && ov._contact) {
+          var cc = ov._contact;
+          closeContactDetail();
+          contactsFillForm(cc);
+        }
+      });
+    }
+    ov._contact = c;
+    var body = ov.querySelector(".contact-detail-body");
+    body.innerHTML = "";
+    body.appendChild(contactDetailHead(c));
+    var loading = document.createElement("p");
+    loading.className = "ev-materials-empty";
+    loading.textContent = c.email ? "Ищу встречи в календаре…" : "Ищу материалы…";
+    body.appendChild(loading);
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
+    var data;
+    try {
+      data = await apiFetch("/contacts/" + encodeURIComponent(key) + "/meetings", { method: "GET" });
+    } catch (e) {
+      loading.textContent = (e && e.message) || "Не удалось загрузить встречи";
+      return;
+    }
+    if (ov._contact !== c) return;
+    loading.remove();
+    renderContactDetail(body, c, data || {});
+  }
+
+  function closeContactDetail() {
+    var ov = document.getElementById("contact-detail-overlay");
+    if (!ov || ov.classList.contains("hidden")) return;
+    ov.classList.add("hidden");
+    ov.setAttribute("aria-hidden", "true");
+    ov._contact = null;
+    onModalSheetClose();
+    syncAppOverlay();
+  }
+
+  function contactDetailHead(c) {
+    var head = document.createElement("div");
+    head.className = "contact-detail-head";
+    head.appendChild(
+      meetingAttendeeAvatarNode({
+        email: c.email,
+        name: c.name,
+        telegram_user_id: c.telegram_user_id,
+        telegram_username: c.telegram_username,
+      })
+    );
+    var col = document.createElement("div");
+    var n = document.createElement("div");
+    n.className = "contact-detail-name";
+    n.textContent = c.name || c.email || "(без имени)";
+    var meta = document.createElement("div");
+    meta.className = "contact-detail-meta";
+    var bits = [c.email || "", c.telegram_username ? "@" + c.telegram_username : ""];
+    var teams = (c.teams || []).map(function (t) { return t.name; }).filter(Boolean);
+    if (teams.length) bits.push("команда «" + teams.join("», «") + "»");
+    meta.textContent = bits.filter(Boolean).join(" · ");
+    col.appendChild(n);
+    col.appendChild(meta);
+    head.appendChild(col);
+    return head;
+  }
+
+  function renderContactDetail(body, c, data) {
+    function sect(text) {
+      var h = document.createElement("div");
+      h.className = "meeting-pick-sect";
+      h.textContent = text;
+      body.appendChild(h);
+    }
+    function note(text) {
+      var p = document.createElement("p");
+      p.className = "ev-materials-empty";
+      p.textContent = text;
+      body.appendChild(p);
+    }
+    if (!c.email) note("У контакта нет почты — встречи из календаря не найти. Ниже — материалы, куда он добавлен вручную.");
+    else if (data.connected === false) note("Календарь не подключён — подключите Google Календарь в Профиле, чтобы видеть встречи.");
+    else if (data.error) note(data.error);
+    var up = data.upcoming || [];
+    var past = data.past || [];
+    if (up.length) {
+      sect("Ближайшие");
+      up.slice(0, 5).forEach(function (ev) { body.appendChild(contactMeetingRow(ev, false)); });
+    }
+    if (c.email && data.connected !== false) {
+      sect("Прошедшие · " + (data.past_total || 0) + " за 90 дней");
+      if (!past.length) note("За последние 90 дней встреч с этим человеком не было.");
+      past.forEach(function (ev) { body.appendChild(contactMeetingRow(ev, true)); });
+    }
+    var manual = data.manual || [];
+    if (manual.length) {
+      sect("Добавлен вручную");
+      manual.forEach(function (m) {
+        var row = document.createElement("div");
+        row.className = "contact-meet-row";
+        var d = meetingTimeOf(m.start_iso || m.created_at);
+        row.innerHTML = '<span class="cm-date"></span><span class="cm-title"></span><span class="cm-acts"></span><span class="cm-meta"></span>';
+        row.querySelector(".cm-date").textContent = d ? d.getDate() + " " + RU_MON[d.getMonth()] : "";
+        row.querySelector(".cm-title").textContent = m.summary || m.title || "Без названия";
+        row.querySelector(".cm-meta").textContent = m.summary ? m.title : (m.kind === "transcription" ? "транскрипция" : "заметка");
+        row.querySelector(".cm-acts").appendChild(contactMaterialBtn({ note_id: m.note_id, kind: m.kind, title: m.title }));
+        body.appendChild(row);
+      });
+    }
+    if (!up.length && !past.length && !manual.length && c.email && data.connected !== false && !data.error) {
+      // Уже сказали выше про 90 дней.
+    }
+  }
+
+  function contactMaterialBtn(m) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "cm-btn cm-btn--" + (m.kind === "transcription" ? "tr" : "note");
+    b.innerHTML = (m.kind === "transcription" ? WAVE_ICON : NOTE_ICON) + "<span>" + (m.kind === "transcription" ? "Саммари" : "Заметка") + "</span>";
+    b.title = m.title || "";
+    b.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeContactDetail();
+      openMeetingMaterial({ id: m.note_id, kind: m.kind, title: m.title });
+    });
+    return b;
+  }
+
+  function contactMeetingRow(ev, past) {
+    var row = document.createElement("div");
+    row.className = "contact-meet-row" + (past ? "" : " is-upcoming");
+    var s = meetingTimeOf(ev.start);
+    var date = document.createElement("span");
+    date.className = "cm-date";
+    date.innerHTML = s ? "<b>" + RU_WD[s.getDay()] + ", " + s.getDate() + " " + RU_MON[s.getMonth()] + "</b>" + (ev.start && ev.start.dateTime ? meetingHm(s) : "") : "";
+    var title = document.createElement("span");
+    title.className = "cm-title";
+    title.textContent = meetingDisplayTitle(ev, { blank: true }) || "Без названия";
+    var acts = document.createElement("span");
+    acts.className = "cm-acts";
+    var mats = ev.materials || [];
+    mats.slice(0, 3).forEach(function (m) { acts.appendChild(contactMaterialBtn(m)); });
+    if (past && !mats.length) {
+      var add = document.createElement("button");
+      add.type = "button";
+      add.className = "cm-btn cm-btn--add";
+      add.textContent = "+ итоги";
+      add.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeContactDetail();
+        openEventModal(ev);
+      });
+      acts.appendChild(add);
+    }
+    var meta = document.createElement("span");
+    meta.className = "cm-meta";
+    var others = (ev.attendees || []).length;
+    meta.textContent = [others > 1 ? others + " " + pluralRu(others, "участник", "участника", "участников") : "", ev.meet_url ? "онлайн" : "", past && !mats.length ? "без материалов" : ""].filter(Boolean).join(" · ");
+    row.appendChild(date);
+    row.appendChild(title);
+    row.appendChild(acts);
+    row.appendChild(meta);
+    row.addEventListener("click", function () {
+      closeContactDetail();
+      openEventModal(ev);
+    });
+    return row;
+  }
+
   /* ——— Actual ——— */
   function renderReminderCard(r) {
     const wrap = document.createElement("div");
@@ -16573,6 +16777,11 @@
     }
     if (isNoteHistoryOpen()) {
       noteHistoryBack();
+      return true;
+    }
+    var contactDetail = document.getElementById("contact-detail-overlay");
+    if (contactDetail && !contactDetail.classList.contains("hidden")) {
+      closeContactDetail();
       return true;
     }
     var meetPick = document.getElementById("meeting-pick-overlay");

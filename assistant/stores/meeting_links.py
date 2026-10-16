@@ -291,3 +291,60 @@ def forget_note(note_id: Any) -> None:
         conn.execute("DELETE FROM meeting_links WHERE note_id = ?", (int(note_id),))
         conn.execute("DELETE FROM note_people WHERE note_id = ?", (int(note_id),))
         conn.commit()
+
+
+def materials_for_events(owner_user_id: Any, keys: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """Материалы по встречам: {event_key: [{note_id, kind, title}]} — для карточки контакта."""
+    keys = [str(k) for k in keys if k][:600]
+    if not keys:
+        return {}
+    out: dict[str, list[dict[str, Any]]] = {}
+    with _LOCK:
+        conn = _conn()
+        for i in range(0, len(keys), 300):
+            part = keys[i : i + 300]
+            rows = conn.execute(
+                """
+                SELECT l.event_key, l.note_id, n.title, n.role
+                FROM meeting_links l JOIN local_notes n ON n.id = l.note_id
+                WHERE l.owner_user_id = ? AND l.event_key IN (%s)
+                ORDER BY l.created_at
+                """ % ",".join("?" * len(part)),
+                [str(owner_user_id), *part],
+            ).fetchall()
+            for r in rows:
+                out.setdefault(str(r["event_key"]), []).append(
+                    {
+                        "note_id": int(r["note_id"]),
+                        "title": str(r["title"] or ""),
+                        "kind": "transcription" if str(r["role"] or "") == "transcription" else "note",
+                    }
+                )
+    return out
+
+
+def notes_for_person(owner_user_id: Any, person_keys: list[str]) -> list[dict[str, Any]]:
+    """Заметки/транскрипции, куда человек добавлен вручную (+ встреча, если привязана)."""
+    keys = sorted({str(k).strip().lower() for k in person_keys if str(k or "").strip()})
+    if not keys:
+        return []
+    with _LOCK:
+        rows = _conn().execute(
+            """
+            SELECT DISTINCT p.note_id, n.title, n.role, n.created_at, n.updated_at,
+                   l.event_id, l.calendar_id, l.summary, l.start_iso, l.end_iso
+            FROM note_people p
+            JOIN local_notes n ON n.id = p.note_id
+            LEFT JOIN meeting_links l ON l.owner_user_id = p.owner_user_id AND l.note_id = p.note_id
+            WHERE p.owner_user_id = ? AND (p.person_key IN (%s) OR lower(p.email) IN (%s))
+            ORDER BY COALESCE(NULLIF(l.start_iso, ''), n.created_at) DESC
+            LIMIT 100
+            """ % (",".join("?" * len(keys)), ",".join("?" * len(keys))),
+            [str(owner_user_id), *keys, *keys],
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["kind"] = "transcription" if str(d.pop("role") or "") == "transcription" else "note"
+        out.append(d)
+    return out

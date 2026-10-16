@@ -9,6 +9,7 @@ import ipaddress
 import json
 import os
 import re
+import time
 from functools import partial
 from pathlib import Path
 from datetime import date, datetime, timedelta, timezone
@@ -5790,6 +5791,120 @@ async def miniapp_contacts_list(
     return {"items": await run_in_threadpool(_load)}
 
 
+_CONTACT_MEETINGS_CACHE: dict[tuple[int, str], tuple[float, list[dict[str, Any]], bool]] = {}
+
+
+def _contact_calendar_events(uid: int, email: str) -> tuple[list[dict[str, Any]], bool]:
+    """Встречи пользователя с участником email за −90…+30 дней (кеш 2 минуты)."""
+    from assistant.integrations import google_calendar_oauth
+    from assistant.services import calendar_sources as cal_sources
+    from assistant.services.calendar import _tz_for
+
+    key = (int(uid), email)
+    hit = _CONTACT_MEETINGS_CACHE.get(key)
+    if hit and time.time() - hit[0] < 120:
+        return hit[1], hit[2]
+    tz = _tz_for(uid)
+    today = datetime.now(tz).date()
+    start_d, end_d = today - timedelta(days=90), today + timedelta(days=30)
+    win_start = datetime.combine(start_d, datetime.min.time(), tzinfo=tz)
+    win_end = datetime.combine(end_d + timedelta(days=1), datetime.min.time(), tzinfo=tz)
+    connected = google_calendar_oauth.user_token_path(uid).is_file()
+    events: list[dict[str, Any]] = []
+    if connected:
+        collected = []
+        for norm in cal_sources.list_events_in_window(uid, win_start, win_end, query=email):
+            raw = dict(norm.get("raw") or {})
+            raw["_calendarId"] = str(norm.get("calendar_id") or raw.get("_calendarId") or "primary")
+            collected.append(raw)
+        events = _serialize_gcal_events(uid, collected, 1500)
+    elif _miniapp_dev_mode_on():
+        connected = True
+        events = _local_dev_events_range(uid, start_d, end_d, str(tz))
+    want = email.lower()
+    mine = [
+        e for e in events
+        if e.get("entry_type") != "task"
+        and any(str(a.get("email") or "").lower() == want for a in (e.get("attendees") or []))
+    ]
+    _CONTACT_MEETINGS_CACHE[key] = (time.time(), mine, connected)
+    return mine, connected
+
+
+@miniapp_router.get("/contacts/{key:path}/meetings")
+async def miniapp_contact_meetings(
+    key: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Карточка контакта: встречи с ним (по почте в приглашениях) и их материалы,
+    плюс заметки/транскрипции, куда он добавлен вручную."""
+    from assistant.stores import contacts_store
+    from assistant.stores import meeting_links
+
+    uid = int(principal.telegram_user_id)
+    want = contacts_store.normalize_contact_key(key)
+
+    def _run() -> dict[str, Any] | None:
+        contact = None
+        for row in contacts_store.load_contacts(telegram_user_id=uid, telegram_username=_miniapp_tg_username(principal)):
+            if contacts_store.contact_key(row) == want or str(row.get("email") or "").lower() == want:
+                contact = dict(row)
+                break
+        if contact is None:
+            return None
+        contact["key"] = contacts_store.contact_key(contact)
+        email = str(contact.get("email") or "").strip().lower()
+        events: list[dict[str, Any]] = []
+        connected = True
+        error = ""
+        if email:
+            try:
+                events, connected = _contact_calendar_events(uid, email)
+            except Exception as e:
+                print(f"[contact_meetings] calendar failed uid={uid} err={e!r}")
+                error = "Не удалось загрузить календарь"
+        keys = [meeting_links.event_key(e.get("calendar_id"), e.get("id")) for e in events]
+        mats = meeting_links.materials_for_events(uid, keys)
+        now = datetime.now(timezone.utc)
+        upcoming: list[dict[str, Any]] = []
+        past: list[dict[str, Any]] = []
+        seen_keys: set[str] = set()
+        for e, k in zip(events, keys):
+            item = dict(e)
+            item["materials"] = mats.get(k, [])
+            seen_keys.add(k)
+            st = (e.get("start") or {}).get("dateTime") or (e.get("start") or {}).get("date") or ""
+            try:
+                sd = datetime.fromisoformat(str(st).replace("Z", "+00:00"))
+                if sd.tzinfo is None:
+                    sd = sd.replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+            (upcoming if sd > now else past).append(item)
+        upcoming.sort(key=lambda x: str((x.get("start") or {}).get("dateTime") or (x.get("start") or {}).get("date") or ""))
+        past.sort(key=lambda x: str((x.get("start") or {}).get("dateTime") or (x.get("start") or {}).get("date") or ""), reverse=True)
+        person_keys = [contact["key"], email, str(contact.get("name") or "").strip().lower()]
+        manual = []
+        for row in meeting_links.notes_for_person(uid, person_keys):
+            if row.get("event_id") and meeting_links.event_key(row.get("calendar_id"), row.get("event_id")) in seen_keys:
+                continue  # уже есть в списке встреч
+            manual.append(row)
+        return {
+            "contact": contact,
+            "connected": connected,
+            "error": error,
+            "upcoming": upcoming[:10],
+            "past": past[:60],
+            "past_total": len(past),
+            "manual": manual,
+        }
+
+    res = await run_in_threadpool(_run)
+    if res is None:
+        raise HTTPException(status_code=404, detail="Контакт не найден")
+    return {"ok": True, **res}
+
+
 @miniapp_router.post("/contacts")
 async def miniapp_contacts_create(
     body: _MiniappContactBody,
@@ -7310,6 +7425,9 @@ async def miniapp_gpt_chat(
                     "и напоминания Leo. Если спрашивают про встречи — предложи подключить календарь в Профиле."
                 )
             system_text = (system_text.rstrip() + "\n\n" + cal_addon).strip() if system_text else cal_addon
+        meeting_line = _note_meeting_prompt_line(uid, kind, iid)
+        if meeting_line:
+            system_text = (str(system_text or "").rstrip() + "\n\n" + meeting_line).strip()
         tool_kwargs: dict[str, Any] = (
             {
                 "tools": gcal_tools.TOOLS,
@@ -8423,6 +8541,36 @@ async def miniapp_note_version_restore(
     if res is None:
         raise HTTPException(status_code=404, detail="Версия не найдена")
     return {"ok": True, **res}
+
+
+def _note_meeting_prompt_line(uid: int, kind: str, iid: str) -> str:
+    """Обсуждение заметки встречи: ИИ знает, что это за встреча и кто на ней был."""
+    if kind != "local" or not str(iid or "").isdigit():
+        return ""
+    try:
+        from assistant.services.gpt_calendar_tools import human_when, _iso_local
+        from assistant.stores import meeting_links
+
+        link = meeting_links.get_for_note(uid, int(iid))
+        people = meeting_links.people_for_note(uid, int(iid))
+        if not link and not people:
+            return ""
+        names = [str(a.get("name") or a.get("email") or "") for a in ((link or {}).get("attendees") or [])]
+        names += [str(p.get("name") or p.get("email") or "") for p in people]
+        names = [n for i, n in enumerate(names) if n and n not in names[:i]]
+        if link:
+            when = human_when(_iso_local(uid, link.get("start_iso")), _iso_local(uid, link.get("end_iso")), uid)
+            line = f"Эта заметка — материалы встречи «{link.get('summary') or 'Встреча'}» ({when})"
+            if link.get("event_id"):
+                line += f", event_id={link.get('event_id')}, calendar_id={link.get('calendar_id')}"
+        else:
+            line = "Эта заметка — материалы созвона вне календаря"
+        if names:
+            line += ". Участники: " + ", ".join(names[:20])
+        return line + "."
+    except Exception as e:
+        print(f"[gpt_chat] meeting line failed note={iid} err={e!r}")
+        return ""
 
 
 class _MiniappMeetingLinkBody(BaseModel):
