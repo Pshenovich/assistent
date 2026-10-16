@@ -302,6 +302,13 @@ def _chat_result(
     }
     if max_tokens is not None:
         payload["max_tokens"] = int(max_tokens)
+    from assistant.board.llm import reasoning_request_fields
+
+    reason = reasoning_request_fields(run_model, payload.get("max_tokens"))
+    if reason:
+        payload.pop("temperature", None)
+        payload.update(reason)
+        timeout = max(float(timeout), 180.0)
     if model_emits_images(run_model):
         payload["modalities"] = ["image", "text"]
     plugins: list[dict[str, Any]] = []

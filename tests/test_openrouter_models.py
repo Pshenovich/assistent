@@ -135,7 +135,14 @@ class OpenRouterModelsTests(unittest.TestCase):
         )
         ids = [m["id"] for m in out["models"]]
         self.assertEqual(out["default"], "openai/gpt-4o")
-        self.assertEqual(set(ids), {"openai/gpt-5.4", "openai/gpt-4o"})
+        self.assertIn("openai/gpt-5.4", ids)
+        self.assertIn("openai/gpt-4o", ids)
+        self.assertNotIn("openai/gpt-3.5-turbo", ids)
+        self.assertNotIn("openai/gpt-4.1", ids)
+        self.assertIn("openai/o3", ids)
+        flags = {m["id"]: m.get("reasoning") for m in out["models"]}
+        self.assertTrue(flags["openai/o3"])
+        self.assertFalse(flags["openai/gpt-4o"])
 
     def test_paie_picker_keeps_default_gpt_and_reasoning(self) -> None:
         out = build_paie_picker_models(

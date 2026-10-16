@@ -77,7 +77,7 @@ PAIE_BASE_MODELS: tuple[tuple[str, str], ...] = (
     ("google/gemini-2.5-flash", "Gemini 2.5 Flash"),
 )
 
-# Отдельный список для PAIE: эти модели думают до ответа (OpenRouter reasoning).
+# Модели, которые думают до ответа. Доступны ассистенту, исследованию и PAIE.
 PAIE_REASONING_MODELS: tuple[tuple[str, str], ...] = (
     ("openai/o3", "o3"),
     ("openai/o4-mini", "o4-mini"),
@@ -728,19 +728,31 @@ def build_gpt_picker_models(
     ask: str | None = None,
 ) -> dict[str, Any]:
     catalog_has_openai = any(mid.startswith("openai/") for mid in catalog_ids)
-    models: list[dict[str, str]] = []
+    models: list[dict[str, Any]] = []
     for mid, name in GPT_PICKER_MODELS:
         if catalog_has_openai and mid not in catalog_ids:
             continue
-        models.append({"id": mid, "name": name})
-    if not models:
-        models = [{"id": mid, "name": name} for mid, name in GPT_PICKER_MODELS]
+        models.append({"id": mid, "name": name, "reasoning": False})
+    if not any(not row.get("reasoning") for row in models):
+        models = [
+            {"id": mid, "name": name, "reasoning": False} for mid, name in GPT_PICKER_MODELS
+        ]
+    for mid, name in PAIE_REASONING_MODELS:
+        if any(row["id"] == mid for row in models):
+            continue
+        models.append({"id": mid, "name": name, "reasoning": True})
     ask_id = sanitize_openrouter_model_id(ask)
     preferred = ask_id or "openai/gpt-4.1"
     default = models[0]["id"]
     if any(row["id"] == preferred for row in models):
         default = preferred
-    models.sort(key=lambda row: (0 if row["id"] == default else 1, row["name"].lower()))
+    models.sort(
+        key=lambda row: (
+            0 if row["id"] == default else 1,
+            1 if row.get("reasoning") else 0,
+            str(row["name"]).lower(),
+        )
+    )
     return {"models": models, "default": default}
 
 

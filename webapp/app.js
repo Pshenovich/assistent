@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-paie-models";
+  var WEBAPP_BUILD = "20261016-reason-all";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-paie-models";
+  const NOTE_EDITOR_ASSET_V = "20261016-reason-all";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -22742,6 +22742,7 @@
 
   var GPT_MODEL_LS = "leo_gpt_model";
   var GPT_MODEL_DEFAULT = "openai/gpt-4.1";
+  var RESEARCH_MODEL_LS = "leo_research_model";
   var PAIE_MODEL_LS = "leo_paie_model";
   var PAIE_MODEL_DEFAULT = "google/gemini-2.5-flash";
   var gptModelsState = { loaded: false, loading: false, models: [], defaultId: GPT_MODEL_DEFAULT };
@@ -23527,7 +23528,7 @@
     var short = raw.split("/").pop() || raw;
     if (/^gpt-/i.test(short)) return "GPT-" + short.slice(4);
     if (/^gpt/i.test(short)) return "GPT-" + short.slice(3).replace(/^[-_\s]+/, "");
-    return "GPT-" + short;
+    return short;
   }
 
   function closeNoteComposerMenus(except) {
@@ -23553,10 +23554,16 @@
     var form = document.getElementById("note-paie-reply-form");
     var list = form && form.querySelector(".note-paie-menu--models .note-paie-menu-list");
     if (!list) return;
-    var paie = noteAskMode() === "paie";
+    var mode = noteAskMode();
+    var paie = mode === "paie";
+    var research = mode === "research";
     var state = paie ? paieModelsState : gptModelsState;
     var q = String(query || "").trim().toLowerCase();
-    var selected = paie ? selectedPaieModelId() : selectedGptModelId();
+    var selected = paie
+      ? selectedPaieModelId()
+      : research
+        ? selectedResearchModelId()
+        : selectedGptModelId();
     var rows = state.models.filter(function (m) {
       if (!q) return true;
       return (
@@ -23581,6 +23588,7 @@
       btn.title = m.id;
       btn.addEventListener("click", function () {
         if (paie) applyPaieModel(m.id, true);
+        else if (research) applyResearchModel(m.id, true);
         else setSelectedGptModelId(m.id);
         closeNoteComposerMenus();
       });
@@ -23606,6 +23614,38 @@
     if (found && found.name) return found.name;
     var raw = String(id || "");
     return raw.split("/").pop() || "PAIE";
+  }
+
+  function selectedResearchModelId() {
+    if (noteAskMode() === "research" && composerAgentModel) return composerAgentModel;
+    try {
+      var stored = String(localStorage.getItem(RESEARCH_MODEL_LS) || "").trim();
+      if (stored) return stored;
+    } catch (_) {}
+    var agent = findUserAgent("research");
+    if (agent && agent.model) return agent.model;
+    return gptModelsState.defaultId || GPT_MODEL_DEFAULT;
+  }
+
+  function applyResearchModel(id, persist) {
+    var next = String(id || "").trim();
+    if (!next) return;
+    composerAgentModel = next;
+    var agent = findUserAgent("research");
+    if (agent) agent.model = next;
+    try {
+      localStorage.setItem(RESEARCH_MODEL_LS, next);
+    } catch (_) {}
+    syncGptModelButton();
+    if (!persist) return;
+    apiFetch("/agents/research", {
+      method: "PATCH",
+      body: JSON.stringify({ model: next }),
+    })
+      .then(function () {
+        return loadUserAgents();
+      })
+      .catch(function () {});
   }
 
   function applyPaieModel(id, persist) {
@@ -23658,8 +23698,9 @@
       gptModelsState.models.forEach(function (m) {
         if (m && m.id) allowed[m.id] = true;
       });
-      var current = selectedGptModelId();
-      if (!current || !allowed[current]) {
+      var pickingGpt = noteAskMode() !== "research" && noteAskMode() !== "paie";
+      var current = pickingGpt ? selectedGptModelId() : "";
+      if (pickingGpt && (!current || !allowed[current])) {
         setSelectedGptModelId(
           (allowed[GPT_MODEL_DEFAULT] && GPT_MODEL_DEFAULT) ||
             gptModelsState.defaultId ||
@@ -23676,6 +23717,10 @@
         { id: "openai/gpt-4.1", name: "GPT-4.1" },
         { id: "openai/gpt-4o", name: "GPT-4o" },
         { id: "openai/gpt-4o-mini", name: "GPT-4o mini" },
+        { id: "openai/o3", name: "o3", reasoning: true },
+        { id: "openai/o4-mini", name: "o4-mini", reasoning: true },
+        { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro", reasoning: true },
+        { id: "deepseek/deepseek-r1", name: "DeepSeek R1", reasoning: true },
       ];
       gptModelsState.defaultId = GPT_MODEL_DEFAULT;
       gptModelsState.loaded = true;
@@ -23863,9 +23908,15 @@
     if (!form) return;
     var mode = noteAskMode();
     var paie = mode === "paie";
+    var research = mode === "research";
     var lbl = form.querySelector(".note-paie-mode-compact-label");
-    var model = paie ? paieModelShortName(selectedPaieModelId()) : gptModelShortName(selectedGptModelId());
-    if (lbl) lbl.textContent = noteAskModeLabel(mode) + (isChatAskMode(mode) || paie ? " · " + model : "");
+    var model = paie
+      ? paieModelShortName(selectedPaieModelId())
+      : gptModelShortName(research ? selectedResearchModelId() : selectedGptModelId());
+    if (lbl) {
+      lbl.textContent =
+        noteAskModeLabel(mode) + (isChatAskMode(mode) || paie || research ? " · " + model : "");
+    }
     var ico = form.querySelector(".note-paie-mode-compact-ico");
     if (ico) {
       var key = mode === "research" ? "globe" : mode === "paie" ? "people" : isCustomAskMode(mode) ? "bot" : "spark";
@@ -23909,7 +23960,7 @@
     models.forEach(function (m) {
       var opt = document.createElement("option");
       opt.value = m.id;
-      opt.textContent = m.name || m.id;
+      opt.textContent = (m.name || m.id) + (m.reasoning ? " · рассуждение" : "");
       if (m.id === selected) opt.selected = true;
       sel.appendChild(opt);
     });
@@ -30542,6 +30593,16 @@
         } catch (_) {
           composerAgentModel = composerAgentModel || "";
         }
+      } else if (next === "research") {
+        var researchAgent = findUserAgent("research");
+        try {
+          composerAgentModel =
+            String(localStorage.getItem(RESEARCH_MODEL_LS) || "").trim() ||
+            (researchAgent && researchAgent.model) ||
+            "";
+        } catch (_) {
+          composerAgentModel = (researchAgent && researchAgent.model) || "";
+        }
       } else if (next === "paie") {
         var paieAgent = findUserAgent("paie");
         try {
@@ -30584,7 +30645,7 @@
       autosizeNoteComposer(editor);
     }
     syncNoteComposerCommentTarget();
-    if (isChatAskMode(current)) loadGptModels();
+    if (isChatAskMode(current) || current === "research") loadGptModels();
     else if (current === "paie") loadPaieModels();
     else closeNoteComposerMenus();
     syncGptModelButton();
@@ -32702,6 +32763,7 @@
               {
                 reply: body,
                 quote: quote,
+                model: selectedResearchModelId(),
               },
               discussionKnowledgeFields(),
               discussChatFields()

@@ -130,6 +130,7 @@ def begin_job(
     quote: str = "",
     sheet_ids: list[str] | None = None,
     attached_notes: str = "",
+    model: str = "",
     chat_id: int | None = None,
     viewer_uid: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
@@ -168,6 +169,7 @@ def begin_job(
                 else None
             ),
             "attached_notes": str(attached_notes or "").strip(),
+            "model": str(model or "").strip(),
             "progress": _progress_view({"phase": "SEARCH", "pct": 14}),
         }
         _jobs[key] = row
@@ -403,6 +405,7 @@ def run_note_research(
     quote: str = "",
     sheet_ids: list[str] | None = None,
     attached_notes: str = "",
+    model: str = "",
     on_progress: Any | None = None,
     chat_id: int | None = None,
     viewer_uid: str | None = None,
@@ -442,10 +445,11 @@ def run_note_research(
 
     cfg = user_agents.runtime_config(int(user_id), "research")
     system = str(cfg.get("system") or "").strip() or research_system_prompt()
+    chosen = str(model or "").strip() or str(cfg.get("model") or "").strip() or None
     raw = nlu_llm.research_with_web(
         system,
         user_prompt,
-        model=str(cfg.get("model") or "").strip() or None,
+        model=chosen,
         temperature=cfg.get("temperature"),
     )
     if callable(on_progress):
@@ -487,6 +491,7 @@ async def run_note_research_job(
     quote: str = "",
     sheet_ids: list[str] | None = None,
     attached_notes: str = "",
+    model: str = "",
 ) -> None:
     key = job_key(user_id, kind, item_id)
     job = get_job(user_id, kind, item_id) or {}
@@ -512,6 +517,8 @@ async def run_note_research_job(
         use_knowledge = bool(job.get("use_knowledge"))
     if not attached_notes:
         attached_notes = str(job.get("attached_notes") or "")
+    if not model:
+        model = str(job.get("model") or "")
 
     def on_progress(payload: dict[str, Any]) -> None:
         _update_job(key, progress=payload)
@@ -528,6 +535,7 @@ async def run_note_research_job(
             quote=quote_text,
             sheet_ids=sheet_ids,
             attached_notes=attached_notes,
+            model=model,
             on_progress=on_progress,
             chat_id=job.get("chat_id"),
             viewer_uid=job.get("viewer_uid"),

@@ -75,8 +75,10 @@ class UserAgentsStoreTests(unittest.TestCase):
         self.assertEqual(patched["model"], "openai/o3")
         flash = agents.patch_agent(5, "paie", {"model": "google/gemini-2.5-flash"})
         self.assertEqual(flash["model"], "google/gemini-2.5-flash")
-        with self.assertRaises(agents.AgentError):
-            agents.patch_agent(5, "gpt", {"model": "openai/o3"})
+        gpt = agents.patch_agent(5, "gpt", {"model": "openai/o3"})
+        self.assertEqual(gpt["model"], "openai/o3")
+        research = agents.patch_agent(5, "research", {"model": "google/gemini-2.5-pro"})
+        self.assertEqual(research["model"], "google/gemini-2.5-pro")
         with self.assertRaises(agents.AgentError):
             agents.patch_agent(5, "paie", {"model": "openai/gpt-3.5-turbo"})
 
