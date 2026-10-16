@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-notes22";
+  var WEBAPP_BUILD = "20261016-notes24";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-notes22";
+  const NOTE_EDITOR_ASSET_V = "20261016-notes24";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -6201,10 +6201,13 @@
     syncNotesColLayout(name);
     window.setTimeout(syncNotesSplitLayout, 0);
     if (name !== "actual" && document.documentElement.classList.contains("actual-assistant-open")) {
+      actualAssistantSuspending = true;
       try {
         closeNoteDiscussion(true);
       } catch (_) {}
+      actualAssistantSuspending = false;
     }
+    if (name === "actual") window.setTimeout(restoreActualAssistant, 0);
     options = options || {};
     if (name === "digest" && !digestTabEnabled) name = "actual";
     if (TAB_ORDER.indexOf(name) < 0) name = "actual";
@@ -15538,6 +15541,7 @@
   }
 
   async function loadActual(opts) {
+    window.setTimeout(restoreActualAssistant, 400);
     opts = opts || {};
     const errP = document.getElementById("posted-tasks-error");
     const errM = document.getElementById("meetings-error");
@@ -20191,9 +20195,11 @@
     if (label) label.textContent = t;
     var btn = document.getElementById("note-discussion-title");
     if (btn) {
-      btn.disabled = true;
-      btn.classList.add("note-pane-switch--plain");
-      btn.title = t;
+      // На «Актуальном» название — кнопка со списком прошлых чатов с Ассистентом.
+      var actual = document.documentElement.classList.contains("actual-assistant-open");
+      btn.disabled = !actual;
+      btn.classList.toggle("note-pane-switch--plain", !actual);
+      btn.title = actual ? "Чаты с Ассистентом" : t;
       btn.setAttribute("aria-expanded", "false");
     }
   }
@@ -26167,7 +26173,8 @@
       e.preventDefault();
       e.stopPropagation();
       // В обсуждении стрелка у названия — список чатов; на листе — переключатель листов.
-      if (noteSheetState.rightMode === "discussion" && noteChatsEnabled()) toggleNoteChatsMenu();
+      if (document.documentElement.classList.contains("actual-assistant-open")) toggleActualChatsMenu();
+      else if (noteSheetState.rightMode === "discussion" && noteChatsEnabled()) toggleNoteChatsMenu();
       else toggleNotePaneSwitchMenu();
     });
     document.addEventListener("click", function (e) {
@@ -26383,6 +26390,8 @@
     }
     if (document.documentElement.classList.contains("actual-assistant-open")) {
       // Чат с Ассистентом с экрана «Актуальное»: закрыли — освобождаем панель.
+      // Закрыл сам пользователь — забываем; ушли на другую вкладку — откроем снова при возврате.
+      if (!actualAssistantSuspending) rememberActualAssistantChat("");
       document.documentElement.classList.remove("actual-assistant-open");
       activeChatThreadId = "";
       clearChatShareWrap();
@@ -26392,10 +26401,169 @@
   }
 
   // «+» на «Актуальном» → «Ассистент»: чат с ИИ в панели справа (на телефоне — на весь экран).
-  async function openActualAssistant() {
+  var ACTUAL_ASSISTANT_LS = "leo_actual_assistant_chat";
+  var actualAssistantSuspending = false;
+  var actualAssistantRestoring = false;
+
+  function rememberActualAssistantChat(id) {
+    try {
+      if (id) localStorage.setItem(ACTUAL_ASSISTANT_LS, String(id));
+      else localStorage.removeItem(ACTUAL_ASSISTANT_LS);
+    } catch (_) {}
+  }
+
+  function rememberedActualAssistantChat() {
+    try {
+      return localStorage.getItem(ACTUAL_ASSISTANT_LS) || "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  // Открытый (и не закрытый) чат с Ассистентом снова на месте при возврате на «Актуальное».
+  async function restoreActualAssistant(attempt) {
+    attempt = attempt || 0;
+    if (currentTab !== "actual" || actualAssistantRestoring) return;
+    if (document.documentElement.classList.contains("actual-assistant-open") && isNoteDiscussionOpen()) return;
+    if (isNoteEditorModalOpen()) return;
+    var id = rememberedActualAssistantChat();
+    if (!id) return;
+    actualAssistantRestoring = true;
+    try {
+      if (!(chatThreadsCache || []).length) await loadChatThreads();
+      var thread = (chatThreadsCache || []).filter(function (t) {
+        return String(t.id) === String(id);
+      })[0];
+      if (!thread) {
+        // Список чатов ещё грузится (или сеть) — пробуем позже; забываем, только если чата точно нет.
+        if ((chatThreadsLoading || !(chatThreadsCache || []).length) && attempt < 8) {
+          window.setTimeout(function () {
+            restoreActualAssistant(attempt + 1);
+          }, 600);
+        } else {
+          rememberActualAssistantChat("");
+        }
+        return;
+      }
+      await openActualAssistant(thread);
+    } finally {
+      actualAssistantRestoring = false;
+    }
+  }
+
+  function closeActualChatsMenu() {
+    closeNoteChatsMenu();
+  }
+
+  function toggleActualChatsMenu() {
+    var els = noteChatsDrawerEls();
+    var menu = els.menu;
+    if (!menu) return;
+    if (menu.classList.contains("is-open")) {
+      closeNoteChatsMenu();
+      return;
+    }
+    clearTimeout(menu._hideTimer);
+    renderActualChatsMenu();
+    menu.classList.add("is-dropdown");
+    els.backdrop.classList.add("is-dropdown");
+    menu.classList.remove("hidden");
+    els.backdrop.classList.remove("hidden");
+    placeNoteChatsDropdown(menu);
+    requestAnimationFrame(function () {
+      menu.classList.add("is-open");
+      els.backdrop.classList.add("is-open");
+    });
+    var titleBtn = document.getElementById("note-discussion-title");
+    if (titleBtn) {
+      titleBtn.classList.add("is-open");
+      titleBtn.setAttribute("aria-expanded", "true");
+    }
+    loadChatThreads()
+      .then(function () {
+        if (!menu.classList.contains("hidden")) renderActualChatsMenu();
+      })
+      .catch(function () {});
+  }
+
+  function renderActualChatsMenu() {
+    var menu = document.getElementById("note-chats-menu");
+    if (!menu) return;
+    menu.innerHTML = "";
+    var head = document.createElement("div");
+    head.className = "note-chats-head";
+    var headTitle = document.createElement("h2");
+    headTitle.className = "note-chats-head-title";
+    headTitle.textContent = "Чаты с Ассистентом";
+    var closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "modal-header-btn note-chats-close";
+    closeBtn.setAttribute("aria-label", "Закрыть");
+    closeBtn.innerHTML =
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+    closeBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeNoteChatsMenu();
+    });
+    head.appendChild(headTitle);
+    head.appendChild(closeBtn);
+    menu.appendChild(head);
+    var group = document.createElement("div");
+    group.className = "note-chats-group";
+    var sec = document.createElement("section");
+    sec.className = "note-chats-section";
+    sec.appendChild(group);
+    menu.appendChild(sec);
+    function row(label, meta, icon, active, onClick) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "note-pane-switch-item note-chats-item" + (active ? " is-active" : "");
+      b.setAttribute("role", "menuitem");
+      if (active) b.setAttribute("aria-current", "true");
+      b.innerHTML = '<span class="note-chats-item-icon">' + icon + "</span>";
+      var text = document.createElement("span");
+      text.className = "note-chats-item-text";
+      var title = document.createElement("span");
+      title.className = "note-chats-item-title";
+      title.textContent = label;
+      text.appendChild(title);
+      if (meta) {
+        var m = document.createElement("span");
+        m.className = "note-chats-item-meta";
+        m.textContent = meta;
+        text.appendChild(m);
+      }
+      b.appendChild(text);
+      b.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeNoteChatsMenu();
+        onClick();
+      });
+      group.appendChild(b);
+    }
+    row("Новый чат", "", DISCUSS_ICONS.plus, false, function () {
+      openActualAssistant();
+    });
+    visibleChatThreads()
+      .filter(function (t) {
+        return chatThreadHasMessages(t);
+      })
+      .slice(0, 30)
+      .forEach(function (t) {
+        var meta = formatNotesCardDate(t.updated_at || t.created_at);
+        row(String(t.title || "Новый чат"), meta, DISCUSS_ICONS.spark, String(t.id) === String(activeChatThreadId), function () {
+          openActualAssistant(t);
+        });
+      });
+  }
+
+  async function openActualAssistant(thread) {
     document.documentElement.classList.add("actual-assistant-open");
     try {
-      await createAndOpenChatThread();
+      if (thread && thread.id != null) await openChatThread(thread);
+      else await createAndOpenChatThread();
     } catch (e) {
       document.documentElement.classList.remove("actual-assistant-open");
       showNoteToast((e && e.message) || "Не удалось открыть Ассистента");
@@ -26405,6 +26573,8 @@
       document.documentElement.classList.remove("actual-assistant-open");
       return;
     }
+    rememberActualAssistantChat(activeChatThreadId);
+    syncChatDiscussionTitle((document.getElementById("note-discussion-title-label") || {}).textContent || "Чат");
     var ed = noteGptEditor();
     if (ed && !isMobileNoteLayout()) {
       try {
