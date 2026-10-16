@@ -1046,8 +1046,12 @@ TableManageView.prototype.layoutHandles = function () {
   var sb = this.scroll.getBoundingClientRect();
   var tb = this.table.getBoundingClientRect();
   // «+» справа — у правого края видимой части таблицы, «+» снизу — под таблицей.
+  // Таблица во всю ширину (или шире, с прокруткой) — «+» внутри у правого края,
+  // чтобы под кнопку не резервировать место и таблица шла до края текста.
   var right = Math.min(tb.right, sb.right) - box.left;
-  this.addColBtn.style.left = right + 4 + "px";
+  var fills = tb.right >= sb.right - 28;
+  this.addColBtn.style.left = (fills ? right - 24 : right + 4) + "px";
+  this.addColBtn.classList.toggle("is-inside", fills);
   this.addColBtn.style.top = tb.top - box.top + "px";
   this.addColBtn.style.height = tb.height + "px";
   this.addRowBtn.style.left = Math.max(tb.left, sb.left) - box.left + "px";

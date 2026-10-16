@@ -15018,7 +15018,8 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 .canvas-image-or { margin: var(--space-2) 0 0; font-size: 0.75rem; color: var(--text-secondary); text-align: center; }
 
 /* ---- Таблица: панель действий над таблицей, «+» по краям, ручки текущей строки/столбца ---- */
-.note-table-manage-wrap { padding-right: 26px; }
+.note-table-manage-wrap { padding-right: 0; }
+.note-table-edge--col.is-inside { background: var(--surface, #1c1c1e); }
 .note-table-manage-wrap.is-active { padding-bottom: 26px; }
 .note-table-bar {
   position: absolute;
@@ -15817,4 +15818,11 @@ html.notes-chats-tab .notes-project-btn { display: none; }
 @media (min-width: 960px) {
   /* Окно заметки: без нижнего отступа общего .modal — под тулбаром не остаётся полосы фона */
   #note-editor-overlay .modal.note-editor-sheet { padding-bottom: 0 !important; }
+}
+@media (min-width: 960px) {
+  /* Узкая заметка (рядом обсуждение): кнопки не сжимаются, средняя группа листается вбок */
+  #note-editor-toolbar-wrap .note-tg-btn { flex: 0 0 auto; }
+  #note-editor-toolbar-wrap .note-editor-format-toolbar-host,
+  #note-editor-toolbar-wrap .note-tg-toolbar { min-width: 0; }
+  #note-editor-toolbar-wrap .note-tg-capsule--default { min-width: 0; overflow-x: auto; scrollbar-width: none; }
 }
