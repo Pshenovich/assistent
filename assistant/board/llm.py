@@ -202,7 +202,10 @@ class OpenRouterProvider:
             }
             if max_tokens is not None:
                 payload["max_tokens"] = int(max_tokens)
-            payload.update(reasoning_request_fields(model_id, payload.get("max_tokens")))
+            reason = reasoning_request_fields(model_id, payload.get("max_tokens"))
+            if reason:
+                payload.pop("temperature", None)
+            payload.update(reason)
             try:
                 data = openrouter_chat_completion(
                     payload,
