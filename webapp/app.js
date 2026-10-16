@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-notes11";
+  var WEBAPP_BUILD = "20261016-notes12";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-notes11";
+  const NOTE_EDITOR_ASSET_V = "20261016-notes12";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -16746,7 +16746,8 @@
     var toggle = document.getElementById("notes-search-toggle");
     var input = document.getElementById("notes-search-input");
     if (!wrap) return;
-    var shouldOpen = !!open || !!(input && String(input.value || "").trim());
+    // На десктопе поле поиска видно всегда (не сворачивается после выхода из него).
+    var shouldOpen = !!open || isDesktopLayout() || !!(input && String(input.value || "").trim());
     wrap.classList.toggle("notes-search-wrap--open", shouldOpen);
     if (toggle) toggle.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
     if (!shouldOpen) closeNotesTagFilterMenu();
@@ -20276,36 +20277,56 @@
     bindChatThreadMenuDocClickOnce();
     closeChatThreadMenus();
     list.innerHTML = "";
-    var rows = visibleChatThreads();
+    var all = visibleChatThreads();
+    var q = notesSubTab === "chats" ? notesSearchText() : "";
+    var rows = q
+      ? all.filter(function (t) {
+          return (String(t.title || "") + " " + String(t.last_preview || "")).toLowerCase().indexOf(q) >= 0;
+        })
+      : all;
     if (!rows.length) {
-      list.innerHTML =
-        '<p class="muted empty-hint">Чатов пока нет. Нажмите «+», чтобы начать диалог с GPT.</p>';
+      list.innerHTML = all.length
+        ? '<p class="muted empty-hint">Ничего не найдено. Измените поиск.</p>'
+        : '<p class="muted empty-hint">Чатов пока нет. Нажмите «+», чтобы начать диалог с ИИ.</p>';
       return;
     }
-    rows.forEach(function (thread) {
+    // Те же карточки и группы по времени, что в «Заметках».
+    appendNotesListGrouped(list, rows, function (thread) {
       var id = String(thread.id);
       var row = document.createElement("div");
-      row.className = "chat-thread-row";
+      row.className = "note-card nl-card chat-thread-row";
       row.setAttribute("role", "listitem");
       row.setAttribute("data-chat-id", id);
-      if (String(activeChatThreadId) === id) row.classList.add("is-active");
+      if (String(activeChatThreadId) === id) row.classList.add("is-active", "is-current");
       var main = document.createElement("div");
-      main.className = "chat-thread-row-main";
-      var title = document.createElement("p");
-      title.className = "chat-thread-row-title";
+      main.className = "note-card-inner nl-inner";
+      var head = document.createElement("div");
+      head.className = "nl-head";
+      var title = document.createElement("span");
+      title.className = "nl-title";
+      title.textContent = String(thread.title || "Новый чат");
+      if (q) title.innerHTML = notesHighlightHtml(String(thread.title || "Новый чат"), q);
+      var date = document.createElement("span");
+      date.className = "nl-date";
+      date.textContent = formatNotesCardDate(thread.updated_at || thread.created_at);
+      head.appendChild(title);
+      head.appendChild(date);
       if (thread.pinned) {
         var pin = document.createElement("span");
-        pin.className = "chat-thread-pin";
-        pin.setAttribute("aria-hidden", "true");
-        pin.textContent = "📌";
-        title.appendChild(pin);
+        pin.className = "note-card-pin";
+        pin.setAttribute("aria-label", "Закреплён");
+        pin.innerHTML =
+          '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.2v6h1.6v-6H18v-2c-1.66 0-3-1.34-3-3z"/></svg>';
+        head.appendChild(pin);
       }
-      title.appendChild(document.createTextNode(String(thread.title || "Новый чат")));
-      var preview = document.createElement("p");
-      preview.className = "chat-thread-row-preview";
-      preview.textContent = String(thread.last_preview || "");
-      main.appendChild(title);
-      main.appendChild(preview);
+      main.appendChild(head);
+      var prevText = String(thread.last_preview || "").replace(/\b(?:SPEAKER|Speaker|speaker)[_ ]?\d+\s*:\s*/g, "");
+      if (prevText) {
+        var preview = document.createElement("p");
+        preview.className = "nl-preview";
+        preview.innerHTML = q ? notesHighlightHtml(prevText, q) : escapeHtml(prevText);
+        main.appendChild(preview);
+      }
       row.appendChild(main);
 
       var moreWrap = document.createElement("div");
@@ -20372,13 +20393,22 @@
       });
       moreWrap.appendChild(moreBtn);
       moreWrap.appendChild(menu);
-      row.appendChild(moreWrap);
+      head.appendChild(moreWrap);
 
       row.addEventListener("click", function () {
         openChatThread(thread);
       });
-      list.appendChild(row);
-    });
+      return row;
+    }, q);
+    syncChatsSplitLeft();
+  }
+
+  function syncChatsSplitLeft() {
+    if (notesSubTab !== "chats") return;
+    var notesRoot = document.getElementById("notes-root");
+    if (!notesRoot) return;
+    var rect = notesRoot.getBoundingClientRect();
+    if (rect.width) document.documentElement.style.setProperty("--notes-split-left", Math.round(rect.right + 12) + "px");
   }
 
   async function renameChatThread(thread) {
@@ -20719,7 +20749,7 @@
     setHidden(document.getElementById("notes-pane-chats"), next !== "chats");
     setHidden(document.getElementById("notes-pane-transcriptions"), next !== "transcriptions");
     var filterBar = document.querySelector("#panel-notes .notes-filter-bar");
-    setHidden(filterBar, next === "chats");
+    setHidden(filterBar, false);
     syncChatDiscussionChrome();
     if (next === "chats") {
       var openWrap = document.getElementById("note-editor-more-wrap");
@@ -34122,6 +34152,22 @@
     return true;
   }
 
+  function ensureNoteExpandBtn() {
+    var exp = document.getElementById("note-editor-expand-btn");
+    if (exp) return exp;
+    exp = document.createElement("button");
+    exp.type = "button";
+    exp.id = "note-editor-expand-btn";
+    exp.className = "note-editor-expand-btn hidden";
+    exp.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (document.documentElement.classList.contains("notes-split")) notesSplitExpand();
+      else notesSplitCollapse();
+    });
+    return exp;
+  }
+
   function notesSplitExpand() {
     if (!notesSplitCurrentId || !isNoteEditorModalOpen()) return;
     setNotesSplitMode("full");
@@ -34165,7 +34211,7 @@
       }
       setNotesSearchExpanded(true);
     }
-    var exp = document.getElementById("note-editor-expand-btn");
+    var exp = ensureNoteExpandBtn();
     var moreWrap = document.getElementById("note-editor-more-wrap");
     if (exp && moreWrap && exp.parentNode !== moreWrap) moreWrap.insertBefore(exp, moreWrap.firstChild);
     if (exp) {
@@ -35187,6 +35233,7 @@
       }
       if (noteId) {
         mountShareControls("local", noteId);
+        window.setTimeout(syncNotesSplitLayout, 0);
         var shareWrap = document.getElementById("note-editor-more-wrap");
         if (shareWrap && n) {
           shareWrap._isKnowledge = !!isKnowledge;
@@ -36631,13 +36678,6 @@
         }
       });
     }
-    var expandBtn = document.getElementById("note-editor-expand-btn");
-    if (expandBtn) {
-      expandBtn.addEventListener("click", function () {
-        if (document.documentElement.classList.contains("notes-split")) notesSplitExpand();
-        else notesSplitCollapse();
-      });
-    }
     var projectBtn = document.getElementById("notes-project-btn");
     if (projectBtn) {
       projectBtn.addEventListener("click", function (e) {
@@ -36784,7 +36824,8 @@
         window.clearTimeout(notesSearchTimer);
         scheduleNotesServerSearch();
         notesSearchTimer = window.setTimeout(function () {
-          if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+          if (notesSubTab === "chats") renderChatThreadsList();
+          else if (notesDataCache) renderNotesPanesFromData(notesDataCache);
         }, 160);
       });
       notesSearchInput.addEventListener("keydown", function (e) {
