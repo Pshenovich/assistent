@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-versions1";
+  var WEBAPP_BUILD = "20261016-history5";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-versions1";
+  const NOTE_EDITOR_ASSET_V = "20261016-history5";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -5440,6 +5440,8 @@
 
   async function apiFetchOnce(path, o) {
     const headers = Object.assign({}, authHeaders(), o.headers || {});
+    var editSource = aiEditSourceHeader(path, o.method);
+    if (editSource) headers["X-Leo-Edit-Source"] = editSource;
     if (
       o.body &&
       typeof o.body === "string" &&
@@ -15841,6 +15843,10 @@
       setPostedTasksScreen(false);
       return true;
     }
+    if (isNoteHistoryOpen()) {
+      noteHistoryBack();
+      return true;
+    }
     if (isNoteDiscussionOpen() && !isDesktopLayout()) {
       closeNoteDiscussion();
       return true;
@@ -16775,7 +16781,121 @@
     if (notesDataCache) renderNotesPanesFromData(notesDataCache);
   }
 
+  // «Недавно удалённые»: заметки за 30 дней из снимков истории версий, «Вернуть» — новой заметкой.
+  async function openNotesTrashSheet() {
+    var ov = document.getElementById("notes-trash-overlay");
+    var list = document.getElementById("notes-trash-list");
+    if (!ov || !list) return;
+    list.innerHTML = '<p class="notes-filter-hint">Загружаю…</p>';
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
+    try {
+      var data = await apiFetch("/notes/trash", { method: "GET" });
+      renderNotesTrash((data && data.items) || []);
+    } catch (e) {
+      list.innerHTML = "";
+      var err = document.createElement("p");
+      err.className = "notes-filter-hint";
+      err.textContent = (e && e.message) || "Не удалось загрузить";
+      list.appendChild(err);
+    }
+  }
+
+  function closeNotesTrashSheet() {
+    var ov = document.getElementById("notes-trash-overlay");
+    if (!ov || ov.classList.contains("hidden")) return;
+    ov.classList.add("hidden");
+    ov.setAttribute("aria-hidden", "true");
+    onModalSheetClose();
+    syncAppOverlay();
+  }
+
+  function renderNotesTrash(items) {
+    var list = document.getElementById("notes-trash-list");
+    if (!list) return;
+    list.innerHTML = "";
+    if (!items.length) {
+      var empty = document.createElement("p");
+      empty.className = "nh-empty";
+      empty.textContent = "За последние 30 дней ничего не удаляли.";
+      list.appendChild(empty);
+      return;
+    }
+    items.forEach(function (it) {
+      var row = document.createElement("div");
+      row.className = "notes-trash-row";
+      var mid = document.createElement("div");
+      mid.className = "notes-trash-mid";
+      var t = document.createElement("div");
+      t.className = "notes-trash-title";
+      t.textContent = String(it.title || "(без названия)");
+      var meta = document.createElement("div");
+      meta.className = "notes-trash-meta";
+      var d = new Date(String(it.saved_at || ""));
+      meta.textContent =
+        "удалена " + (isNaN(d.getTime()) ? "" : nhStamp(d)) +
+        (it.sheets ? " · ещё " + it.sheets + " " + pluralRu(it.sheets, "лист", "листа", "листов") : "");
+      var pv = document.createElement("div");
+      pv.className = "notes-trash-preview";
+      pv.textContent = String(it.preview || "");
+      mid.appendChild(t);
+      mid.appendChild(meta);
+      if (it.preview) mid.appendChild(pv);
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn secondary notes-trash-restore";
+      btn.textContent = "Вернуть";
+      btn.addEventListener("click", function () {
+        if (it._restoredId) {
+          closeNotesTrashSheet();
+          // Без текста: откроется только после загрузки полной версии с сервера.
+          openLocalNoteDetail({ id: it._restoredId, title: it.title, body_preview_only: true });
+          return;
+        }
+        restoreTrashedNote(it, btn, row);
+      });
+      row.appendChild(mid);
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
+  }
+
+  async function restoreTrashedNote(it, btn, row) {
+    btn.disabled = true;
+    btn.textContent = "Возвращаю…";
+    try {
+      var res = await apiFetch("/notes/trash/" + encodeURIComponent(String(it.note_id)) + "/restore", { method: "POST", body: "{}" });
+      it._restoredId = res.note_id;
+      row.classList.add("is-restored");
+      btn.textContent = "Открыть";
+      btn.disabled = false;
+      showNoteToast("Заметка «" + String(it.title || "") + "» возвращена");
+      loadNotes().catch(function () {});
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = "Вернуть";
+      showNoteToast((e && e.message) || "Не удалось вернуть заметку");
+    }
+  }
+
   function bindNotesFilterUi() {
+    var trashBtn = document.getElementById("notes-filter-trash");
+    if (trashBtn) {
+      trashBtn.addEventListener("click", function () {
+        closeNotesFilterSheet();
+        openNotesTrashSheet();
+      });
+    }
+    var trashClose = document.getElementById("notes-trash-close");
+    if (trashClose) trashClose.addEventListener("click", closeNotesTrashSheet);
+    var trashOv = document.getElementById("notes-trash-overlay");
+    if (trashOv) {
+      trashOv.addEventListener("click", function (e) {
+        if (e.target === trashOv) closeNotesTrashSheet();
+      });
+    }
     var btn = document.getElementById("notes-filter-btn");
     if (btn) btn.addEventListener("click", openNotesFilterSheet);
     var close = document.getElementById("notes-filter-close");
@@ -18923,6 +19043,7 @@
     }
     left.setHtml(res.html, { preserveCursor: true });
     if (isPrimarySheetId(sheetId)) noteSheetState.primaryBody = res.html;
+    markNextSaveAsAi(sheetId);
     scheduleOpenDocSave(sheetId);
     var rec = { sheetId: sheetId, before: before, after: left.getHtml(), marks: res.marks, count: res.applied, undone: false };
     noteAiReview = { sheetId: sheetId, before: before, marks: res.marks, ranges: [], cursor: -1, rec: rec };
@@ -21641,6 +21762,850 @@
     if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
   }
 
+  // ---- История версий заметки ----
+  // Десктоп: список версий справа (на месте обсуждения), выбранная версия — слева вместо текста,
+  // только для чтения. Телефон: список — отдельный экран, версия — следующий экран.
+  var noteHistory = null;
+  // Правка ИИ: следующее сохранение этого листа уходит с пометкой (для «правка ИИ» в истории).
+  var noteAiSaveMarks = {};
+
+  function markNextSaveAsAi(sheetId) {
+    noteAiSaveMarks[String(sheetId || NOTE_SHEET_MAIN)] = Date.now();
+  }
+
+  function aiEditSourceHeader(path, method) {
+    if (String(method || "").toUpperCase() !== "PATCH") return "";
+    var m = /^\/notes\/local\/[^/?]+(?:\/sheets\/([^/?]+))?(?:\?|$)/.exec(String(path || ""));
+    if (!m) return "";
+    var key = m[1] ? decodeURIComponent(m[1]) : NOTE_SHEET_MAIN;
+    var at = noteAiSaveMarks[key];
+    if (!at) return "";
+    delete noteAiSaveMarks[key];
+    return Date.now() - at < 120000 ? "ai" : "";
+  }
+
+  function isNoteHistoryOpen() {
+    return !!noteHistory;
+  }
+
+  var RU_MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+  var RU_MONTHS_SHORT = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+
+  function nhDate(v) {
+    var d = new Date(String((v && (v.state_at || v.saved_at)) || ""));
+    return isNaN(d.getTime()) ? new Date() : d;
+  }
+
+  function nhTime(d) {
+    return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+  }
+
+  function nhDayLabel(d) {
+    var today = new Date();
+    var y = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+    if (d.toDateString() === today.toDateString()) return "Сегодня";
+    if (d.toDateString() === y.toDateString()) return "Вчера";
+    return d.getDate() + " " + RU_MONTHS_GEN[d.getMonth()] + (d.getFullYear() !== today.getFullYear() ? " " + d.getFullYear() : "");
+  }
+
+  function nhStamp(d) {
+    return d.getDate() + " " + RU_MONTHS_SHORT[d.getMonth()] + ", " + nhTime(d);
+  }
+
+  function nhSheetKey(v) {
+    var sid = Number((v && v.sheet_id) || 0);
+    return sid ? String(sid) : NOTE_SHEET_MAIN;
+  }
+
+  function nhSheetLabel(v) {
+    if (nhSheetKey(v) === NOTE_SHEET_MAIN) return "Основная";
+    var live = findNoteSheet(nhSheetKey(v));
+    return "лист «" + String((live && live.title) || v.sheet_title || "Лист") + "»";
+  }
+
+  function nhAuthor(v) {
+    if (String(v.source || "") === "ai") return { name: "Ассистент", ai: true };
+    var a = (noteHistory && noteHistory.authors && noteHistory.authors[String(v.author_user_id || "")]) || null;
+    return { name: a ? a.name : "", photo: a ? a.photo_url : null };
+  }
+
+  function nhNum(n) {
+    return String(Math.abs(n)).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  }
+
+  // Чистим сохранённый HTML для показа «только чтение»: без скриптов, iframe и обработчиков.
+  function nhSafeFragment(html) {
+    var doc = new DOMParser().parseFromString("<body>" + String(html || "") + "</body>", "text/html");
+    doc.body.querySelectorAll("script,style,iframe,object,embed,link,meta,form,base").forEach(function (el) {
+      el.remove();
+    });
+    doc.body.querySelectorAll("*").forEach(function (el) {
+      Array.prototype.slice.call(el.attributes).forEach(function (a) {
+        var n = a.name.toLowerCase();
+        var val = String(a.value || "").trim().toLowerCase();
+        if (n.indexOf("on") === 0 || n === "contenteditable" || ((n === "href" || n === "src" || n === "xlink:href") && val.indexOf("javascript:") === 0)) {
+          el.removeAttribute(a.name);
+        }
+      });
+      if (el.tagName === "INPUT") el.setAttribute("disabled", "");
+    });
+    var frag = document.createDocumentFragment();
+    while (doc.body.firstChild) frag.appendChild(document.adoptNode(doc.body.firstChild));
+    return frag;
+  }
+
+  // Текст по абзацам: строки для сравнения версий.
+  function nhBlocks(html) {
+    var doc = new DOMParser().parseFromString("<body>" + String(html || "") + "</body>", "text/html");
+    doc.body.querySelectorAll("script,style").forEach(function (el) {
+      el.remove();
+    });
+    var out = [];
+    var BLOCK = /^(P|LI|H[1-6]|PRE|BLOCKQUOTE|TR|DIV|SECTION|ARTICLE|FIGURE|DT|DD)$/;
+    function walk(node) {
+      for (var c = node.firstChild; c; c = c.nextSibling) {
+        if (c.nodeType !== 1) continue;
+        var hasBlockChild = Array.prototype.some.call(c.children, function (k) {
+          return BLOCK.test(k.tagName) || k.tagName === "UL" || k.tagName === "OL" || k.tagName === "TABLE" || k.tagName === "TBODY";
+        });
+        if (c.tagName === "IMG") out.push("[картинка]");
+        else if (BLOCK.test(c.tagName) && !hasBlockChild) {
+          var t = c.tagName === "TR"
+            ? Array.prototype.map.call(c.children, function (td) { return td.textContent.trim(); }).join(" | ")
+            : c.textContent.replace(/\s+/g, " ").trim();
+          if (!t && c.querySelector("img")) t = "[картинка]";
+          if (t) out.push(t);
+        } else walk(c);
+      }
+    }
+    walk(doc.body);
+    if (!out.length) {
+      var all = doc.body.textContent.replace(/\s+/g, " ").trim();
+      if (all) out.push(all);
+    }
+    return out;
+  }
+
+  // Наибольшая общая подпоследовательность: пары [тип, a, b] (= / - / +).
+  function nhDiffSeq(a, b, eq) {
+    eq = eq || function (x, y) { return x === y; };
+    var pre = 0;
+    while (pre < a.length && pre < b.length && eq(a[pre], b[pre])) pre++;
+    var suf = 0;
+    while (suf < a.length - pre && suf < b.length - pre && eq(a[a.length - 1 - suf], b[b.length - 1 - suf])) suf++;
+    var A = a.slice(pre, a.length - suf);
+    var B = b.slice(pre, b.length - suf);
+    var mid = [];
+    var n = A.length;
+    var m = B.length;
+    if (n * m > 4000000) {
+      A.forEach(function (x) { mid.push(["-", x]); });
+      B.forEach(function (y) { mid.push(["+", y]); });
+    } else {
+      var w = m + 1;
+      var L = new Uint32Array((n + 1) * w);
+      for (var i = n - 1; i >= 0; i--) {
+        for (var j = m - 1; j >= 0; j--) {
+          L[i * w + j] = eq(A[i], B[j]) ? L[(i + 1) * w + j + 1] + 1 : Math.max(L[(i + 1) * w + j], L[i * w + j + 1]);
+        }
+      }
+      var x = 0;
+      var y = 0;
+      while (x < n && y < m) {
+        if (eq(A[x], B[y])) {
+          mid.push(["=", A[x]]);
+          x++;
+          y++;
+        } else if (L[(x + 1) * w + y] >= L[x * w + y + 1]) mid.push(["-", A[x++]]);
+        else mid.push(["+", B[y++]]);
+      }
+      while (x < n) mid.push(["-", A[x++]]);
+      while (y < m) mid.push(["+", B[y++]]);
+    }
+    var out = [];
+    a.slice(0, pre).forEach(function (t) { out.push(["=", t]); });
+    out = out.concat(mid);
+    a.slice(a.length - suf).forEach(function (t) { out.push(["=", t]); });
+    return out;
+  }
+
+  // Пробел между двумя удалёнными (или добавленными) словами — часть одного фрагмента.
+  function nhMergeWordOps(ops) {
+    var out = [];
+    for (var i = 0; i < ops.length; i++) {
+      var op = ops[i];
+      var prev = out[out.length - 1];
+      var nxt = ops[i + 1];
+      if (op[0] === "=" && !op[1].trim() && prev && nxt && prev[0] !== "=" && prev[0] === nxt[0]) op = [prev[0], op[1]];
+      if (prev && prev[0] === op[0]) prev[1] += op[1];
+      else out.push([op[0], op[1]]);
+    }
+    return out;
+  }
+
+  // Сравнение версии (old) с текущим текстом (cur): добавленное — зелёным, удалённое — красным.
+  function nhRenderDiff(host, oldHtml, curHtml) {
+    var lines = nhDiffSeq(nhBlocks(oldHtml), nhBlocks(curHtml));
+    var changed = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var op = lines[i];
+      var p = document.createElement("p");
+      if (op[0] === "=") {
+        p.textContent = op[1];
+        host.appendChild(p);
+        continue;
+      }
+      changed++;
+      // Пара «удалено + добавлено» подряд — правка абзаца: сравниваем по словам.
+      var next = lines[i + 1];
+      if (op[0] === "-" && next && next[0] === "+" && op[1].length < 6000 && next[1].length < 6000) {
+        var words = nhMergeWordOps(nhDiffSeq(op[1].split(/(\s+)/), next[1].split(/(\s+)/)));
+        var same = 0;
+        words.forEach(function (wd) {
+          if (wd[0] === "=") same += wd[1].split(/\s+/).filter(Boolean).length;
+        });
+        if (same >= 2) {
+          words.forEach(function (wd) {
+            if (wd[0] === "=") p.appendChild(document.createTextNode(wd[1]));
+            else {
+              var el = document.createElement(wd[0] === "+" ? "ins" : "del");
+              el.textContent = wd[1];
+              p.appendChild(el);
+            }
+          });
+          p.className = "nh-diff-mod";
+          host.appendChild(p);
+          i++;
+          continue;
+        }
+      }
+      var mark = document.createElement(op[0] === "+" ? "ins" : "del");
+      mark.textContent = op[1];
+      p.appendChild(mark);
+      p.className = op[0] === "+" ? "nh-diff-add" : "nh-diff-del";
+      host.appendChild(p);
+    }
+    if (!changed) {
+      var none = document.createElement("p");
+      none.className = "nh-diff-none";
+      none.textContent = "Текст не отличается от текущего (могло измениться только оформление).";
+      host.insertBefore(none, host.firstChild);
+    }
+  }
+
+  function nhCurrentHtml(key) {
+    if (key === NOTE_SHEET_MAIN) {
+      var left = getLeftNoteRichEditor();
+      if (isPrimarySheetId(noteSheetState.leftId) && left && typeof left.getHtml === "function") return left.getHtml();
+      return String(noteSheetState.primaryBody || "");
+    }
+    if (String(noteSheetState.leftId) === key) {
+      try {
+        return readSheetEditorHtml("left");
+      } catch (_) {}
+    }
+    var sh = findNoteSheet(key);
+    return sh ? String(sh.body || sh.description || "") : "";
+  }
+
+  function nhEnsureOverlay() {
+    var ov = document.getElementById("note-history-overlay");
+    if (ov) return ov;
+    ov = document.createElement("div");
+    ov.id = "note-history-overlay";
+    ov.className = "note-history-overlay hidden";
+    ov.setAttribute("aria-hidden", "true");
+    ov.innerHTML =
+      '<div class="nh-sheet" role="dialog" aria-label="История версий">' +
+      '<div class="nh-screen nh-screen--list">' +
+      '<div class="nh-head">' +
+      '<button type="button" class="nh-back" data-nh="close-m">‹ Назад</button>' +
+      '<div class="nh-title">История версий</div>' +
+      '<button type="button" class="nh-close" data-nh="close" aria-label="Закрыть" title="Закрыть">' +
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>' +
+      "</button></div>" +
+      '<div class="nh-filter" role="tablist"></div>' +
+      '<div class="nh-list"></div>' +
+      "</div>" +
+      '<div class="nh-screen nh-screen--view hidden">' +
+      '<div class="nh-head">' +
+      '<button type="button" class="nh-back" data-nh="list">‹ История</button>' +
+      '<div class="nh-title nh-view-title"></div><span></span></div>' +
+      '<div class="nh-seg" role="tablist">' +
+      '<button type="button" data-nh="mode-version" class="is-on">Версия</button>' +
+      '<button type="button" data-nh="mode-diff">Изменения</button></div>' +
+      '<div class="note-rich-editor-body nh-view-body nh-doc"></div>' +
+      '<div class="nh-view-foot"><button type="button" class="btn primary nh-restore-big" data-nh="restore">Восстановить эту версию</button></div>' +
+      "</div></div>";
+    ov.addEventListener("click", onNoteHistoryClick);
+    document.body.appendChild(ov);
+    return ov;
+  }
+
+  function nhEnsurePreview() {
+    // Под названием и вкладками листов — на месте текста заметки.
+    var col = document.querySelector("#note-editor-modal-body .note-editor-main-column");
+    var bodyPad = col && col.querySelector(".note-editor-pad--body");
+    if (!col || !bodyPad) return null;
+    var pv = document.getElementById("note-history-preview");
+    if (pv && pv.parentNode === col) return pv;
+    if (pv && pv.parentNode) pv.parentNode.removeChild(pv);
+    pv = document.createElement("div");
+    pv.id = "note-history-preview";
+    pv.className = "note-editor-pad nh-preview hidden";
+    pv.innerHTML =
+      '<div class="nh-banner">' +
+      '<div class="nh-banner-text"><b class="nh-banner-title"></b> <span class="nh-banner-sub"></span></div>' +
+      '<button type="button" class="btn-text nh-banner-diff" data-nh="toggle-diff">Показать изменения</button>' +
+      '<button type="button" class="btn primary nh-banner-restore" data-nh="restore">Восстановить</button>' +
+      "</div>" +
+      '<div class="nh-preview-scroll"><div class="note-rich-editor-body nh-doc nh-preview-body"></div></div>';
+    pv.addEventListener("click", onNoteHistoryClick);
+    col.insertBefore(pv, bodyPad);
+    return pv;
+  }
+
+  async function openNoteHistory() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var noteId = currentOpenNoteId();
+    if (!wrap || wrap._shareKind !== "local" || !noteId) return;
+    if (String(noteId).indexOf("tmp_") === 0) {
+      showNoteToast("Заметка ещё сохраняется — попробуйте через пару секунд");
+      return;
+    }
+    if (noteHistory) closeNoteHistory();
+    var root = document.documentElement;
+    var hadDiscussion = isNoteDiscussionOpen();
+    var wasSplit = root.classList.contains("notes-split");
+    noteHistory = {
+      noteId: String(noteId),
+      versions: [],
+      current: {},
+      authors: {},
+      filter: "all",
+      selId: "",
+      mode: "version",
+      bodies: {},
+      hadDiscussion: hadDiscussion && isDesktopLayout(),
+      wasSplit: wasSplit,
+      loading: true,
+    };
+    if (hadDiscussion) closeNoteDiscussion(true);
+    if (wasSplit) {
+      setNotesSplitMode("full");
+      syncNotesSplitLayout();
+    }
+    var ov = nhEnsureOverlay();
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    nhShowScreen("list");
+    root.classList.add("note-history-open");
+    applyNotePaneWidths();
+    renderNoteHistory();
+    syncTelegramNativeBack();
+    try {
+      await flushOpenNoteForShare();
+    } catch (_) {}
+    await loadNoteHistory();
+  }
+
+  async function loadNoteHistory() {
+    var h = noteHistory;
+    if (!h) return;
+    try {
+      var data = await apiFetch("/notes/local/" + encodeURIComponent(h.noteId) + "/versions", { method: "GET" });
+      if (noteHistory !== h) return;
+      h.versions = (data && data.versions) || [];
+      h.current = (data && data.current) || {};
+      h.authors = (data && data.authors) || {};
+      h.error = "";
+    } catch (e) {
+      if (noteHistory !== h) return;
+      h.error = (e && e.message) || "Не удалось загрузить историю";
+    }
+    h.loading = false;
+    renderNoteHistory();
+  }
+
+  function closeNoteHistory() {
+    var h = noteHistory;
+    if (!h) return;
+    noteHistory = null;
+    nhHidePreview();
+    var ov = document.getElementById("note-history-overlay");
+    if (ov) {
+      ov.classList.add("hidden");
+      ov.setAttribute("aria-hidden", "true");
+    }
+    document.documentElement.classList.remove("note-history-open");
+    applyNotePaneWidths();
+    if (h.wasSplit && isNoteEditorModalOpen()) {
+      setNotesSplitMode("split");
+      syncNotesSplitLayout();
+    }
+    if (h.hadDiscussion && isNoteEditorModalOpen()) {
+      var wrap = document.getElementById("note-editor-more-wrap");
+      if (wrap) wrap._discussionDismissed = false;
+      syncDesktopNoteDiscussion();
+    }
+    syncTelegramNativeBack();
+  }
+
+  // «Назад» телефона / Telegram: из версии — к списку, из списка — в заметку.
+  function noteHistoryBack() {
+    if (!noteHistory) return false;
+    if (noteHistory.selId && !isDesktopLayout()) {
+      noteHistory.selId = "";
+      nhShowScreen("list");
+      renderNoteHistory();
+      return true;
+    }
+    closeNoteHistory();
+    return true;
+  }
+
+  function nhShowScreen(name) {
+    var ov = document.getElementById("note-history-overlay");
+    if (!ov) return;
+    ov.querySelector(".nh-screen--list").classList.toggle("hidden", name !== "list");
+    ov.querySelector(".nh-screen--view").classList.toggle("hidden", name !== "view");
+  }
+
+  function nhSheetsForFilter() {
+    var h = noteHistory;
+    var seen = {};
+    var out = [{ key: NOTE_SHEET_MAIN, title: "Основная" }];
+    seen[NOTE_SHEET_MAIN] = true;
+    noteSheetState.sheets.forEach(function (s) {
+      var k = isPrimarySheetId(s.id) || s.is_primary ? NOTE_SHEET_MAIN : String(s.id);
+      if (seen[k]) return;
+      seen[k] = true;
+      out.push({ key: k, title: String(s.title || "Лист") });
+    });
+    (h ? h.versions : []).forEach(function (v) {
+      var k = nhSheetKey(v);
+      if (seen[k]) return;
+      seen[k] = true;
+      out.push({ key: k, title: String(v.sheet_title || "Лист") + " (удалён)" });
+    });
+    return out;
+  }
+
+  function nhVersionRows() {
+    var h = noteHistory;
+    var rows = h.versions.filter(function (v) {
+      return h.filter === "all" || nhSheetKey(v) === h.filter;
+    });
+    // Изменение размера — относительно предыдущей (более старой) версии того же листа.
+    var bySheet = {};
+    h.versions
+      .slice()
+      .sort(function (a, b) { return Number(a.id) - Number(b.id); })
+      .forEach(function (v) {
+        var k = nhSheetKey(v);
+        v._delta = bySheet[k] == null ? null : Number(v.size || 0) - bySheet[k];
+        bySheet[k] = Number(v.size || 0);
+      });
+    return rows;
+  }
+
+  function renderNoteHistory() {
+    var h = noteHistory;
+    var ov = document.getElementById("note-history-overlay");
+    if (!h || !ov) return;
+    var filterEl = ov.querySelector(".nh-filter");
+    var sheets = nhSheetsForFilter();
+    filterEl.innerHTML = "";
+    var opts = [{ key: "all", title: "Вся заметка" }].concat(sheets);
+    if (opts.length <= 2) opts = [{ key: "all", title: "Вся заметка" }];
+    opts.forEach(function (o) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "nh-chip" + (h.filter === o.key ? " is-on" : "");
+      b.setAttribute("data-nh", "filter");
+      b.setAttribute("data-key", o.key);
+      b.textContent = o.title;
+      filterEl.appendChild(b);
+    });
+    filterEl.classList.toggle("hidden", opts.length < 2);
+    var list = ov.querySelector(".nh-list");
+    list.innerHTML = "";
+    if (h.loading) {
+      list.innerHTML = '<div class="nh-empty">Загружаю историю…</div>';
+      return;
+    }
+    if (h.error) {
+      var err = document.createElement("div");
+      err.className = "nh-empty";
+      err.textContent = h.error;
+      list.appendChild(err);
+      return;
+    }
+    list.appendChild(nhNowRow());
+    var rows = nhVersionRows();
+    if (!rows.length) {
+      var empty = document.createElement("div");
+      empty.className = "nh-empty";
+      empty.textContent = "Прошлых версий пока нет. Они появятся после правок — не чаще раза в 10 минут, и всегда при крупном изменении или удалении листа.";
+      list.appendChild(empty);
+      return;
+    }
+    var lastDay = nhDayLabel(new Date());
+    rows.forEach(function (v) {
+      var d = nhDate(v);
+      var day = nhDayLabel(d);
+      if (day !== lastDay) {
+        var hd = document.createElement("div");
+        hd.className = "nh-day";
+        hd.textContent = day;
+        list.appendChild(hd);
+        lastDay = day;
+      }
+      list.appendChild(nhRow(v, d));
+    });
+  }
+
+  function nhAvatar(author) {
+    var av = document.createElement("span");
+    av.className = "nh-av" + (author.ai ? " nh-av--ai" : "");
+    if (author.ai) av.textContent = "✦";
+    else if (author.photo) {
+      var img = document.createElement("img");
+      img.src = author.photo;
+      img.alt = "";
+      img.referrerPolicy = "no-referrer";
+      av.appendChild(img);
+    } else av.textContent = (author.name || "·").replace(/^@/, "").charAt(0).toUpperCase() || "·";
+    return av;
+  }
+
+  function nhNowRow() {
+    var h = noteHistory;
+    var cur = h.filter === "all" ? null : h.current[h.filter === NOTE_SHEET_MAIN ? "0" : h.filter];
+    if (!cur && h.filter === "all") {
+      Object.keys(h.current).forEach(function (k) {
+        var c = h.current[k];
+        if (!cur || String(c.at || "") > String(cur.at || "")) cur = Object.assign({ sheet_id: Number(k) }, c);
+      });
+    }
+    var row = document.createElement("button");
+    row.type = "button";
+    row.className = "nh-row nh-row--now" + (!h.selId ? " is-sel" : "");
+    row.setAttribute("data-nh", "now");
+    var author = cur ? nhAuthor(cur) : { name: "" };
+    row.appendChild(nhAvatar(author));
+    var mid = document.createElement("span");
+    mid.className = "nh-row-mid";
+    var top = document.createElement("span");
+    top.className = "nh-row-top";
+    top.innerHTML = "<b>Сейчас</b>";
+    var sub = document.createElement("span");
+    sub.className = "nh-row-sub";
+    sub.textContent = "текущий текст" + (author.name ? " · " + author.name : "");
+    mid.appendChild(top);
+    mid.appendChild(sub);
+    row.appendChild(mid);
+    return row;
+  }
+
+  function nhRow(v, d) {
+    var h = noteHistory;
+    var row = document.createElement("button");
+    row.type = "button";
+    row.className = "nh-row" + (String(h.selId) === String(v.id) ? " is-sel" : "");
+    row.setAttribute("data-nh", "pick");
+    row.setAttribute("data-id", String(v.id));
+    var author = nhAuthor(v);
+    row.appendChild(nhAvatar(author));
+    var mid = document.createElement("span");
+    mid.className = "nh-row-mid";
+    var top = document.createElement("span");
+    top.className = "nh-row-top";
+    var t = document.createElement("b");
+    t.textContent = nhTime(d);
+    top.appendChild(t);
+    if (v._delta != null && v._delta !== 0) {
+      var dl = document.createElement("span");
+      dl.className = "nh-delta " + (v._delta > 0 ? "is-plus" : "is-minus");
+      dl.textContent = (v._delta > 0 ? "+" : "−") + nhNum(v._delta);
+      top.appendChild(dl);
+    }
+    var sub = document.createElement("span");
+    sub.className = "nh-row-sub";
+    sub.textContent = [author.name, nhSheetLabel(v)].filter(Boolean).join(" · ");
+    mid.appendChild(top);
+    mid.appendChild(sub);
+    var tags = [];
+    if (author.ai) tags.push(["правка ИИ", "ai"]);
+    if (v.reason === "sheet_deleted") tags.push(["лист удалён", "del"]);
+    if (v.reason === "note_deleted") tags.push(["перед удалением", "del"]);
+    if (v.reason === "before_restore") tags.push(["до восстановления", ""]);
+    if (tags.length) {
+      var tg = document.createElement("span");
+      tg.className = "nh-tags";
+      tags.forEach(function (x) {
+        var s = document.createElement("span");
+        s.className = "nh-tag" + (x[1] ? " nh-tag--" + x[1] : "");
+        s.textContent = x[0];
+        tg.appendChild(s);
+      });
+      mid.appendChild(tg);
+    }
+    row.appendChild(mid);
+    return row;
+  }
+
+  function nhFindVersion(id) {
+    var h = noteHistory;
+    if (!h) return null;
+    for (var i = 0; i < h.versions.length; i++) if (String(h.versions[i].id) === String(id)) return h.versions[i];
+    return null;
+  }
+
+  async function nhLoadBody(v) {
+    var h = noteHistory;
+    if (h.bodies[v.id] != null) return h.bodies[v.id];
+    var data = await apiFetch(
+      "/notes/local/" + encodeURIComponent(h.noteId) + "/versions/" + encodeURIComponent(String(v.id)),
+      { method: "GET" }
+    );
+    var body = String((data && data.version && data.version.body) || "");
+    if (noteHistory === h) h.bodies[v.id] = body;
+    return body;
+  }
+
+  async function nhPick(id) {
+    var h = noteHistory;
+    var v = nhFindVersion(id);
+    if (!h || !v) return;
+    h.selId = String(v.id);
+    renderNoteHistory();
+    var desktop = isDesktopLayout();
+    if (!desktop) {
+      nhShowScreen("view");
+      var ov = document.getElementById("note-history-overlay");
+      ov.querySelector(".nh-view-title").textContent = nhStamp(nhDate(v));
+      ov.querySelector(".nh-view-body").innerHTML = '<p class="nh-empty">Загружаю…</p>';
+    } else {
+      var pv = nhEnsurePreview();
+      if (pv) {
+        pv.querySelector(".nh-preview-body").innerHTML = '<p class="nh-empty">Загружаю…</p>';
+        pv.classList.remove("hidden");
+        document.getElementById("note-editor-overlay").classList.add("nh-previewing");
+      }
+    }
+    try {
+      await nhLoadBody(v);
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось открыть версию");
+      return;
+    }
+    if (noteHistory !== h || h.selId !== String(v.id)) return;
+    nhPaintSelected();
+  }
+
+  function nhPaintSelected() {
+    var h = noteHistory;
+    var v = h && nhFindVersion(h.selId);
+    if (!v) return;
+    var body = h.bodies[v.id];
+    if (body == null) return;
+    var key = nhSheetKey(v);
+    var isWeb = String(v.sheet_kind || "").toLowerCase() === "web";
+    var host;
+    if (isDesktopLayout()) {
+      var pv = nhEnsurePreview();
+      if (!pv) return;
+      var author = nhAuthor(v);
+      pv.querySelector(".nh-banner-title").textContent =
+        h.mode === "diff" ? "Изменения" : "Версия от " + nhStamp(nhDate(v));
+      pv.querySelector(".nh-banner-sub").textContent =
+        h.mode === "diff"
+          ? "с версии " + nhTime(nhDate(v)) + " до текущей · зелёным — добавлено, красным — удалено"
+          : [author.name, nhSheetLabel(v), "только просмотр"].filter(Boolean).join(" · ");
+      var diffBtn = pv.querySelector(".nh-banner-diff");
+      diffBtn.textContent = h.mode === "diff" ? "Скрыть изменения" : "Показать изменения";
+      diffBtn.classList.toggle("hidden", isWeb);
+      host = pv.querySelector(".nh-preview-body");
+    } else {
+      var ov = document.getElementById("note-history-overlay");
+      ov.querySelectorAll(".nh-seg button").forEach(function (b) {
+        b.classList.toggle("is-on", b.getAttribute("data-nh") === "mode-" + h.mode);
+      });
+      ov.querySelector(".nh-seg").classList.toggle("hidden", isWeb);
+      host = ov.querySelector(".nh-view-body");
+    }
+    host.innerHTML = "";
+    host.classList.toggle("nh-doc--diff", h.mode === "diff");
+    if (h.mode === "diff" && !isWeb) {
+      var gone = v.reason === "sheet_deleted" && !findNoteSheet(key);
+      nhRenderDiff(host, body, gone ? "" : nhCurrentHtml(key));
+    } else if (isWeb) {
+      var fr = document.createElement("iframe");
+      fr.className = "nh-web-frame";
+      fr.setAttribute("sandbox", "");
+      fr.srcdoc = body;
+      host.appendChild(fr);
+    } else {
+      if (!body.trim()) host.innerHTML = '<p class="nh-empty">Пустой текст</p>';
+      else host.appendChild(nhSafeFragment(body));
+    }
+    var scroller = isDesktopLayout() ? document.querySelector("#note-editor-overlay .note-editor-modal-body") : host;
+    if (scroller) scroller.scrollTop = 0;
+  }
+
+  function nhHidePreview() {
+    var pv = document.getElementById("note-history-preview");
+    if (pv) {
+      pv.classList.add("hidden");
+      var b = pv.querySelector(".nh-preview-body");
+      if (b) b.innerHTML = "";
+    }
+    var ov = document.getElementById("note-editor-overlay");
+    if (ov) ov.classList.remove("nh-previewing");
+  }
+
+  function nhBackToNow() {
+    var h = noteHistory;
+    if (!h) return;
+    h.selId = "";
+    h.mode = "version";
+    nhHidePreview();
+    renderNoteHistory();
+  }
+
+  async function nhRestoreSelected() {
+    var h = noteHistory;
+    var v = h && nhFindVersion(h.selId);
+    if (!v || h.restoring) return;
+    var key = nhSheetKey(v);
+    var live = key === NOTE_SHEET_MAIN ? true : !!findNoteSheet(key);
+    var what = key === NOTE_SHEET_MAIN ? "«Основной»" : "листа «" + String(v.sheet_title || "Лист") + "»";
+    var msg = live
+      ? "Восстановить версию от " + nhStamp(nhDate(v)) + "?\n\nТекст " + what + " станет как в этой версии. Текущий текст не пропадёт — он сохранится в истории, и восстановление можно отменить."
+      : "Вернуть удалённый лист «" + String(v.sheet_title || "Лист") + "»?\n\nОн появится в заметке новым листом.";
+    if (!(await confirmDialog(msg))) return;
+    if (noteHistory !== h) return;
+    h.restoring = true;
+    try {
+      await flushOpenNoteForShare();
+      var res = await apiFetch(
+        "/notes/local/" + encodeURIComponent(h.noteId) + "/versions/" + encodeURIComponent(String(v.id)) + "/restore",
+        { method: "POST", body: "{}" }
+      );
+      nhApplyRestore(res);
+      closeNoteHistory();
+      nhRestoredToast(v, res, h.noteId);
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось восстановить версию");
+    } finally {
+      h.restoring = false;
+    }
+  }
+
+  function nhApplyRestore(res) {
+    if (!res) return;
+    if (res.kind === "note" && res.item) {
+      clearLocalNoteDraft(res.item.id);
+      applyRemoteSharedNote(res.item, true);
+      return;
+    }
+    if (res.kind === "sheet" && res.sheet) {
+      upsertNoteSheet(res.sheet);
+      if (!res.recreated) showRemoteSheetBody(res.sheet);
+      renderNoteSheetChips();
+    }
+  }
+
+  function nhRestoredToast(v, res, noteId) {
+    var node = document.createElement("span");
+    node.className = "note-toast-copy";
+    var t = document.createElement("span");
+    t.textContent = res && res.recreated ? "Лист возвращён" : "Версия от " + nhTime(nhDate(v)) + " восстановлена";
+    node.appendChild(t);
+    var canUndo = res && (res.recreated ? res.sheet : res.undo_version_id);
+    if (canUndo) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "note-toast-link";
+      b.textContent = "Отменить";
+      b.addEventListener("click", function () {
+        var el = document.getElementById("note-toast");
+        if (el) el.classList.add("hidden");
+        nhUndoRestore(res, noteId);
+      });
+      node.appendChild(b);
+    }
+    showNoteToast("", { node: node, actionable: true, duration: 5600 });
+  }
+
+  async function nhUndoRestore(res, noteId) {
+    if (String(currentOpenNoteId()) !== String(noteId)) return;
+    try {
+      if (res.recreated && res.sheet) {
+        await apiFetch(
+          "/notes/local/" + encodeURIComponent(noteId) + "/sheets/" + encodeURIComponent(String(res.sheet.id)),
+          { method: "DELETE" }
+        );
+        noteSheetState.sheets = noteSheetState.sheets.filter(function (s) {
+          return String(s.id) !== String(res.sheet.id);
+        });
+        if (String(noteSheetState.leftId) === String(res.sheet.id)) switchLeftSheet(NOTE_SHEET_MAIN);
+        renderNoteSheetChips();
+      } else {
+        await flushOpenNoteForShare();
+        var back = await apiFetch(
+          "/notes/local/" + encodeURIComponent(noteId) + "/versions/" + encodeURIComponent(String(res.undo_version_id)) + "/restore",
+          { method: "POST", body: "{}" }
+        );
+        nhApplyRestore(back);
+      }
+      showNoteToast("Восстановление отменено");
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось отменить");
+    }
+  }
+
+  function onNoteHistoryClick(e) {
+    var b = e.target.closest("[data-nh]");
+    if (!b || !noteHistory) return;
+    e.preventDefault();
+    var act = b.getAttribute("data-nh");
+    if (act === "close" || act === "close-m") closeNoteHistory();
+    else if (act === "list") noteHistoryBack();
+    else if (act === "filter") {
+      noteHistory.filter = b.getAttribute("data-key") || "all";
+      renderNoteHistory();
+    } else if (act === "now") nhBackToNow();
+    else if (act === "pick") nhPick(b.getAttribute("data-id"));
+    else if (act === "toggle-diff") {
+      noteHistory.mode = noteHistory.mode === "diff" ? "version" : "diff";
+      nhPaintSelected();
+    } else if (act === "mode-version" || act === "mode-diff") {
+      noteHistory.mode = act === "mode-diff" ? "diff" : "version";
+      nhPaintSelected();
+    } else if (act === "restore") nhRestoreSelected();
+  }
+
+  window.addEventListener("resize", function () {
+    if (!noteHistory) return;
+    // Перешли между телефоном и десктопом — показываем выбранную версию в нужном месте.
+    var desktop = isDesktopLayout();
+    if (desktop) nhShowScreen("list");
+    else nhHidePreview();
+    if (noteHistory.selId) {
+      if (!desktop) nhShowScreen("view");
+      else {
+        var pv = nhEnsurePreview();
+        if (pv) {
+          pv.classList.remove("hidden");
+          document.getElementById("note-editor-overlay").classList.add("nh-previewing");
+        }
+      }
+      nhPaintSelected();
+    }
+  });
+
   function fillNoteMoreMenu() {
     var menu = document.getElementById("note-editor-more-menu");
     var wrap = document.getElementById("note-editor-more-wrap");
@@ -21727,6 +22692,13 @@
       });
       addItem("Закрыть доступ", function () {
         revokeShareLink();
+      });
+    }
+
+    if (shareId && shareKind === "local" && String(shareId).indexOf("tmp_") !== 0) {
+      addItem("История версий", function () {
+        closeNoteMoreMenu();
+        openNoteHistory();
       });
     }
 
@@ -26455,6 +27427,7 @@
   function shouldKeepNoteDiscussionOpen() {
     var wrap = document.getElementById("note-editor-more-wrap");
     return (
+      !noteHistory &&
       isDesktopLayout() &&
       isNoteEditorModalOpen() &&
       !document.documentElement.classList.contains("notes-split") &&
@@ -26848,6 +27821,11 @@
 
   function openNoteDiscussion(opts) {
     opts = opts || {};
+    if (noteHistory) {
+      if (opts.fromDesktopSync) return;
+      noteHistory.hadDiscussion = false;
+      closeNoteHistory();
+    }
     // Список + заметка: обсуждение само не открываем — только по «💬» (тогда заметка разворачивается).
     if (opts.fromDesktopSync && document.documentElement.classList.contains("notes-split")) return;
     bindNoteDiscussionOverlayOnce();
@@ -32900,6 +33878,10 @@
     var wrap = document.createElement("div");
     wrap.id = "note-editor-more-wrap";
     wrap.className = "note-more-wrap";
+    if (noteHistory && noteHistory.noteId !== String(itemId)) {
+      noteHistory.hadDiscussion = false;
+      closeNoteHistory();
+    }
     wrap._shareKind = kind;
     wrap._shareId = String(itemId);
     wrap._shareShared = false;
@@ -32988,6 +33970,10 @@
   var noteEditorCloseSeq = 0;
 
   function closeNoteEditorModal() {
+    if (noteHistory) {
+      noteHistory.hadDiscussion = false;
+      closeNoteHistory();
+    }
     if (noteDict && noteDict.state === "rec") cancelNoteDictation();
     if (noteAiReview) finishAiReview(true);
     stopTranscriptionSummaryPoll();

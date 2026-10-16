@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261016-versions1">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261016-history5">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -89,7 +89,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261016-versions1" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261016-history5" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -1510,6 +1510,27 @@
             </div>
           </fieldset>
           <button type="button" class="btn primary notes-filter-apply" id="notes-filter-apply">Показать</button>
+          <button type="button" class="btn-text notes-filter-trash" id="notes-filter-trash">Недавно удалённые</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="notes-trash-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal--sheet notes-trash-sheet" role="dialog" aria-modal="true" aria-labelledby="notes-trash-title">
+      <div class="modal-form">
+        <div class="modal-header">
+          <button type="button" class="modal-header-btn modal-header-btn--close" id="notes-trash-close" aria-label="Закрыть" title="Закрыть">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+          <h2 id="notes-trash-title" class="modal-title">Недавно удалённые</h2>
+          <span></span>
+        </div>
+        <div class="modal-body notes-trash-body">
+          <p class="notes-filter-hint">Удалённые заметки хранятся 30 дней — вместе с листами и проектом.</p>
+          <div id="notes-trash-list" class="notes-trash-list"></div>
         </div>
       </div>
     </div>
@@ -1869,7 +1890,7 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261016-versions1" defer></script>
-  <script src="/webapp/app.js?v=20261016-versions1" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261016-history5" defer></script>
+  <script src="/webapp/app.js?v=20261016-history5" defer></script>
 </body>
 </html>

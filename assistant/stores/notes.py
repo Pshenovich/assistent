@@ -497,6 +497,12 @@ def create_note(
         )
         _conn().commit()
         nid = int(cur.lastrowid)
+    try:
+        from assistant.stores import note_versions
+
+        note_versions.mark_current(nid)
+    except Exception:
+        pass
     out = get_note(uid, nid)
     assert out is not None
     return out
@@ -846,6 +852,17 @@ def delete_note(user_id: int | str, note_id: int) -> bool:
         if before:
             from assistant.stores import note_versions
 
+            extra: dict[str, Any] = {"role": before.get("role") or "", "meta": before.get("meta") or {}}
+            try:
+                from assistant.stores import tags as tags_store
+
+                mapping = tags_store.tags_by_items(uid, [("local", str(int(note_id)))])
+                extra["tag_ids"] = [
+                    int(t["id"]) for t in mapping.get(("local", str(int(note_id))), []) if t.get("id") is not None
+                ]
+            except Exception:
+                pass
+
             note_versions.record(
                 owner_user_id=uid,
                 note_id=note_id,
@@ -856,6 +873,7 @@ def delete_note(user_id: int | str, note_id: int) -> bool:
                 sheet_title=str(before.get("primary_sheet_title") or ""),
                 reason="note_deleted",
                 force=True,
+                extra=extra,
             )
     except Exception as e:
         print(f"[notes] version before delete failed note={note_id} err={e!r}")
