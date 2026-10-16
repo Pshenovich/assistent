@@ -146,6 +146,8 @@ class OpenRouterModelsTests(unittest.TestCase):
         self.assertEqual(ids[0], "google/gemini-2.5-flash")
         self.assertIn("openai/gpt-4.1", ids)
         self.assertIn("openai/o3", ids)
+        self.assertIn("google/gemini-2.5-pro", ids)
+        self.assertIn("deepseek/deepseek-r1", ids)
         flags = {m["id"]: m["reasoning"] for m in out["models"]}
         self.assertTrue(flags["openai/o3"])
         self.assertFalse(flags["openai/gpt-4.1"])

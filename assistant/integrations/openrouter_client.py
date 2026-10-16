@@ -780,7 +780,9 @@ def build_paie_picker_models(
             return
         vendor = clean.split("/", 1)[0]
         in_catalog = clean in catalog_ids
-        if catalog_ids and not in_catalog:
+        # Курируемые reasoning-модели показываем всегда: каталог часто содержит
+        # только текущую модель совета и иначе прячет Gemini 2.5 Pro.
+        if catalog_ids and not in_catalog and not reasoning:
             if vendor == "openai" and catalog_has_openai:
                 return
             if vendor == "google" and catalog_has_google and clean != default_id:
