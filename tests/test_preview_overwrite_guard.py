@@ -16,6 +16,12 @@ class PreviewOverwriteGuardTests(unittest.TestCase):
         edited = preview + "</p>"
         self.assertTrue(usage_server.looks_like_list_preview_overwrite(edited, full))
 
+    def test_blocks_preview_cut_inside_tag_without_ellipsis(self) -> None:
+        full = "<ol>" + "".join("<li><p>Пункт номер %d про интеграции календарей</p></li>" % i for i in range(80)) + "</ol>"
+        cut = full[:560]
+        cut = cut[: cut.rfind("</p>") + 4] + "</li></ol>"  # редактор выкинул оборванный тег вместе с «…»
+        self.assertTrue(usage_server.looks_like_list_preview_overwrite(cut, full))
+
     def test_allows_normal_edits(self) -> None:
         full = "<p>" + "Текст. " * 200 + "</p>"
         self.assertFalse(usage_server.looks_like_list_preview_overwrite(full + "<p>Новая строка</p>", full))
