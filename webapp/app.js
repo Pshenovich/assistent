@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-contact1";
+  var WEBAPP_BUILD = "20261016-fixes8";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-contact1";
+  const NOTE_EDITOR_ASSET_V = "20261016-fixes8";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -6221,6 +6221,18 @@
       btn.setAttribute("aria-selected", on ? "true" : "false");
     });
     if (prev === name) {
+      var notesDetailEl = document.getElementById("notes-detail");
+      var digestDetailEl = document.getElementById("digest-detail");
+      var somethingOpen =
+        isNoteEditorModalOpen() ||
+        (name === "profile" && currentProfileScreen !== "main") ||
+        (notesDetailEl && !notesDetailEl.classList.contains("hidden")) ||
+        (name === "digest" && digestDetailEl && !digestDetailEl.classList.contains("hidden"));
+      if (options && options.fromTabbar && !somethingOpen) {
+        // Повторный тап по открытому пункту таббара — к началу списка.
+        var scroller = document.querySelector("main.main-scroll.panels-stage");
+        if (scroller) scroller.scrollTo({ top: 0, behavior: "smooth" });
+      }
       if (name === "profile" && currentProfileScreen !== "main") {
         profileScreen("main");
       }
@@ -7106,15 +7118,36 @@
       if (detailBodyMount) detailBodyMount._noteRichEditor = editor;
       if (detailBodyMount && detailBodyMount._noteEditor) {
         detailBodyMount._noteEditor.ready = true;
-        detailBodyMount._noteEditor.baseline = noteEditorSnapshot(
-          getNoteEditorTitle(),
-          readActiveNoteEditorHtml()
-        );
+        // Точка отсчёта «без изменений» — по левому редактору (не по открытому справа обсуждению)
+        // и ещё раз, когда редактор допишет свою разметку (таблицы, ссылки): иначе при закрытии
+        // без правок спрашивало «сохранить изменения?».
+        var rebase = function () {
+          if (digestUserTouched || !detailBodyMount._noteEditor) return;
+          detailBodyMount._noteEditor.baseline = noteEditorSnapshot(
+            getNoteEditorTitle(),
+            readActiveNoteEditorHtml(getLeftNoteRichEditor())
+          );
+        };
+        rebase();
+        requestAnimationFrame(rebase);
+        setTimeout(rebase, 400);
+        setTimeout(rebase, 1200);
       }
       refreshNoteCommentAnchors();
     });
+    var digestUserTouched = false;
+    ["keydown", "beforeinput", "paste", "drop"].forEach(function (ev) {
+      editorPad.addEventListener(ev, function () {
+        digestUserTouched = true;
+      }, true);
+    });
     bindNoteTitleAutoresize(titleInput);
-    if (titleInput) titleInput.addEventListener("input", schedulePatch);
+    if (titleInput) {
+      titleInput.addEventListener("input", schedulePatch);
+      titleInput.addEventListener("keydown", function () {
+        digestUserTouched = true;
+      });
+    }
     consumePendingDiscussOpen("digest", itemId);
   }
 
@@ -12241,6 +12274,9 @@
     document.documentElement.classList.remove("modal-sheet-open");
     unlockNoteEditorBackground();
     document.querySelectorAll(".modal--sheet").forEach(resetModalSheetViewportStyles);
+    // Закрыли окно поверх открытой заметки (ИИ, фильтр, выбор встречи…): заметка — тоже лист.
+    // Без этого на телефоне пропадали тулбар над клавиатурой и прокрутка за курсором.
+    if (isNoteEditorModalOpen()) onModalSheetOpen();
   }
 
   function setModalSheetActions(opts) {
@@ -21054,7 +21090,75 @@
     return lines.join("\n");
   }
 
+  function bindChatsNewBtnOnce() {
+    var b = document.getElementById("chats-new-btn");
+    if (!b || b._bound) return;
+    b._bound = true;
+    b.addEventListener("click", function (e) {
+      e.preventDefault();
+      createAndOpenChatThread();
+    });
+    window.addEventListener("resize", syncNotesCreateFab);
+  }
+
+  // ---- Кнопка «вниз» в ленте обсуждения/чата: появляется, когда ушли вверх от последних сообщений ----
+  function ensureDiscussScrollDownBtn() {
+    var sheet = document.querySelector("#note-discussion-overlay .note-discussion-sheet");
+    var scroll = sheet && sheet.querySelector(".note-discussion-scroll");
+    if (!sheet || !scroll) return;
+    var btn = sheet.querySelector(".discuss-scroll-down");
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "discuss-scroll-down hidden";
+      btn.setAttribute("aria-label", "К последним сообщениям");
+      btn.title = "К последним сообщениям";
+      btn.innerHTML =
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>';
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        scrollDiscussionToEnd();
+        btn.classList.add("hidden");
+      });
+      if (getComputedStyle(sheet).position === "static") sheet.style.position = "relative";
+      sheet.appendChild(btn);
+    }
+    if (!scroll._downBtnBound) {
+      scroll._downBtnBound = true;
+      var tick = 0;
+      scroll.addEventListener(
+        "scroll",
+        function () {
+          if (tick) return;
+          tick = setTimeout(function () {
+            tick = 0;
+            syncDiscussScrollDownBtn();
+          }, 80);
+        },
+        { passive: true }
+      );
+    }
+    syncDiscussScrollDownBtn();
+  }
+
+  function syncDiscussScrollDownBtn() {
+    var sheet = document.querySelector("#note-discussion-overlay .note-discussion-sheet");
+    var btn = sheet && sheet.querySelector(".discuss-scroll-down");
+    var scroll = sheet && sheet.querySelector(".note-discussion-scroll");
+    if (!btn || !scroll) return;
+    var far = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight > 320;
+    if (far) {
+      // Над полем ввода: его высота меняется (вложения, многострочный текст).
+      var compose = sheet.querySelector(".note-discussion-compose");
+      var sr = sheet.getBoundingClientRect();
+      var bottom = compose && !compose.classList.contains("hidden") ? sr.bottom - compose.getBoundingClientRect().top : 0;
+      btn.style.bottom = Math.max(12, Math.round(bottom) + 12) + "px";
+    }
+    btn.classList.toggle("hidden", !far);
+  }
+
   function syncNotesCreateFab() {
+    bindChatsNewBtnOnce();
     var createBtn = document.getElementById("notes-create-btn");
     if (!createBtn) return;
     var notesPanel = document.getElementById("panel-notes");
@@ -21070,7 +21174,11 @@
       (!notesDetail || notesDetail.classList.contains("hidden")) &&
       (!notesRoot || !notesRoot.classList.contains("hidden")) &&
       (!isNoteEditorModalOpen() || document.documentElement.classList.contains("notes-split"));
-    setHidden(createBtn, !show);
+    // Чаты на десктопе: «Новый чат» — в шапке списка, плавающий «+» перекрывал отправку сообщения.
+    var chatsHeaderNew = show && notesSubTab === "chats" && isDesktopLayout();
+    var chatsNewBtn = document.getElementById("chats-new-btn");
+    if (chatsNewBtn) setHidden(chatsNewBtn, !chatsHeaderNew);
+    setHidden(createBtn, !show || chatsHeaderNew);
     if (notesSubTab === "chats") {
       createBtn.setAttribute("aria-label", "Создать чат");
       createBtn.setAttribute("title", "Новый чат");
@@ -28368,6 +28476,7 @@
     syncNotePaneHeader();
     var noteId = note && note.id;
     if (!noteSheetsEnabled() || !noteId || String(noteId).indexOf("tmp_") === 0) return;
+    var hydratedAt = Date.now();
     apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/sheets", {
       method: "GET",
     })
@@ -28383,6 +28492,16 @@
         var pending = String(noteSheetState.pendingOpenSheetId || "");
         noteSheetState.pendingOpenSheetId = "";
         if (pending && findNoteSheet(pending)) switchLeftSheet(pending);
+        else if (
+          rows.length &&
+          !isPrimarySheetId(rows[0].id) &&
+          !rows[0].is_primary &&
+          isPrimarySheetId(noteSheetState.leftId) &&
+          !(noteCollabState.lastTypedAt > hydratedAt)
+        ) {
+          // Вкладки переставлены — открываем ту, что пользователь поставил первой.
+          switchLeftSheet(String(rows[0].id));
+        }
         loadNoteShareLinks(); // иконки шеринга на вкладках
       })
       .catch(function () {
@@ -31080,6 +31199,7 @@
       if (pinId && !gptBusy) scrollDiscussionToComment(pinId);
       else if (stickBottom) scrollDiscussionToEnd();
       else if (scroll) scroll.scrollTop = prevTop;
+      ensureDiscussScrollDownBtn();
     }
     void kind;
     void itemId;
@@ -38571,7 +38691,7 @@
         detailBodyMount._noteEditor.ready = true;
         detailBodyMount._noteEditor.baseline = noteEditorSnapshot(
           getNoteEditorTitle(),
-          readActiveNoteEditorHtml()
+          readActiveNoteEditorHtml(getLeftNoteRichEditor())
         );
       }
       refreshNoteCommentAnchors();
@@ -39211,7 +39331,7 @@
     document.querySelectorAll(".tabbar-btn").forEach(function (btn) {
       btn.addEventListener("click", function (e) {
         if (e.target && e.target.closest && e.target.closest("[data-sidebar-toggle]")) return;
-        setTab(btn.getAttribute("data-tab"));
+        setTab(btn.getAttribute("data-tab"), { fromTabbar: true });
       });
     });
 
