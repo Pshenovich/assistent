@@ -142,3 +142,15 @@ def test_chat_members(threads_db, monkeypatch):
     assert len(acc["members"]) >= 2
     assert store.remove_member(10, row["id"], 20) is True
     assert store.get_accessible_thread(20, row["id"]) is None
+
+
+def test_origin_actual(threads_db):
+    store = threads_db
+    a = store.create_thread(42, origin="actual")
+    b = store.create_thread(42)
+    c = store.create_thread(42, origin="weird")
+    assert a["origin"] == "actual"
+    assert b["origin"] == ""
+    assert c["origin"] == ""
+    by = {r["id"]: r["origin"] for r in store.list_threads(42)}
+    assert by[a["id"]] == "actual" and by[b["id"]] == ""

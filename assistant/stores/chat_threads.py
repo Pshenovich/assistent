@@ -59,6 +59,9 @@ def _conn() -> sqlite3.Connection:
         _CONN.execute(
             "ALTER TABLE chat_threads ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"
         )
+    if "origin" not in cols:
+        # Где создан чат: '' — вкладка «Чаты», 'actual' — Ассистент на «Актуальном».
+        _CONN.execute("ALTER TABLE chat_threads ADD COLUMN origin TEXT NOT NULL DEFAULT ''")
     _CONN.execute(
         "CREATE INDEX IF NOT EXISTS idx_chat_threads_owner_updated "
         "ON chat_threads(owner_user_id, updated_at DESC)"
@@ -106,7 +109,11 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "last_preview": str(row["last_preview"] or ""),
+        "origin": str(row["origin"] or "") if "origin" in keys else "",
     }
+
+
+CHAT_ORIGINS = ("", "actual")
 
 
 def _attach_message_stats(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -207,20 +214,23 @@ def get_accessible_thread(
 
 
 def create_thread(
-    owner_user_id: int | str, *, title: str | None = None
+    owner_user_id: int | str, *, title: str | None = None, origin: str | None = None
 ) -> dict[str, Any]:
     uid = _uid(owner_user_id)
     now = _now_iso()
     title_s = _clip(title, MAX_TITLE_LEN) or DEFAULT_TITLE
     locked = 1 if title and _clip(title, MAX_TITLE_LEN) else 0
+    origin_s = str(origin or "").strip().lower()
+    if origin_s not in CHAT_ORIGINS:
+        origin_s = ""
     with _LOCK:
         cur = _conn().execute(
             """
             INSERT INTO chat_threads (
-                owner_user_id, title, title_locked, created_at, updated_at, last_preview
-            ) VALUES (?, ?, ?, ?, ?, '')
+                owner_user_id, title, title_locked, created_at, updated_at, last_preview, origin
+            ) VALUES (?, ?, ?, ?, ?, '', ?)
             """,
-            (uid, title_s, locked, now, now),
+            (uid, title_s, locked, now, now, origin_s),
         )
         _conn().commit()
         tid = int(cur.lastrowid)

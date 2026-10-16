@@ -2768,6 +2768,7 @@ class _MiniappNoteChatSplit(BaseModel):
 
 class _MiniappChatCreate(BaseModel):
     title: Optional[str] = None
+    origin: Optional[str] = None
 
 
 class _MiniappChatPatch(BaseModel):
@@ -7790,7 +7791,7 @@ async def miniapp_chats_create(
     uid = int(principal.telegram_user_id)
     body = body or _MiniappChatCreate()
     row = await run_in_threadpool(
-        partial(chat_threads_store.create_thread, uid, title=body.title)
+        partial(chat_threads_store.create_thread, uid, title=body.title, origin=body.origin)
     )
     return {"ok": True, "chat": row}
 

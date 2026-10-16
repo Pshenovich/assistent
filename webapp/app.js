@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-notes24";
+  var WEBAPP_BUILD = "20261016-notes26";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-notes24";
+  const NOTE_EDITOR_ASSET_V = "20261016-notes26";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -20227,15 +20227,28 @@
     return title === "Новый чат";
   }
 
+  // Чаты с Ассистентом с «Актуального» живут только там (как чаты заметки — в заметке).
+  function chatThreadOrigin(t) {
+    return String((t && t.origin) || "");
+  }
+
   function visibleChatThreads() {
     return (chatThreadsCache || []).filter(function (t) {
+      if (chatThreadOrigin(t) === "actual") return false;
       return chatThreadHasMessages(t) || !isEmptyChatDraft(t);
     });
   }
 
-  function findEmptyChatDraft(exceptId) {
+  function actualChatThreads() {
+    return (chatThreadsCache || []).filter(function (t) {
+      return chatThreadOrigin(t) === "actual" && chatThreadHasMessages(t);
+    });
+  }
+
+  function findEmptyChatDraft(exceptId, origin) {
     for (var i = 0; i < (chatThreadsCache || []).length; i++) {
       var t = chatThreadsCache[i];
+      if (chatThreadOrigin(t) !== String(origin || "")) continue;
       if (isEmptyChatDraft(t) && String(t.id) !== String(exceptId || "")) {
         return t;
       }
@@ -20669,9 +20682,10 @@
     });
   }
 
-  async function createAndOpenChatThread() {
+  async function createAndOpenChatThread(opts) {
+    var origin = String((opts && opts.origin) || "");
     try {
-      var blank = findEmptyChatDraft(activeChatThreadId);
+      var blank = findEmptyChatDraft(activeChatThreadId, origin);
       if (blank) {
         await openChatThread(blank);
         return;
@@ -20684,7 +20698,7 @@
             break;
           }
         }
-        if (current && !chatThreadHasMessages(current)) {
+        if (current && !chatThreadHasMessages(current) && chatThreadOrigin(current) === origin) {
           await openChatThread(current);
           return;
         }
@@ -20692,7 +20706,7 @@
       await pruneEmptyChatDrafts("");
       var data = await apiFetch("/chats", {
         method: "POST",
-        body: JSON.stringify({}),
+        body: JSON.stringify(origin ? { origin: origin } : {}),
       });
       var thread = data && data.chat;
       if (!thread) throw new Error("Не удалось создать чат");
@@ -26546,10 +26560,7 @@
     row("Новый чат", "", DISCUSS_ICONS.plus, false, function () {
       openActualAssistant();
     });
-    visibleChatThreads()
-      .filter(function (t) {
-        return chatThreadHasMessages(t);
-      })
+    actualChatThreads()
       .slice(0, 30)
       .forEach(function (t) {
         var meta = formatNotesCardDate(t.updated_at || t.created_at);
@@ -26563,7 +26574,7 @@
     document.documentElement.classList.add("actual-assistant-open");
     try {
       if (thread && thread.id != null) await openChatThread(thread);
-      else await createAndOpenChatThread();
+      else await createAndOpenChatThread({ origin: "actual" });
     } catch (e) {
       document.documentElement.classList.remove("actual-assistant-open");
       showNoteToast((e && e.message) || "Не удалось открыть Ассистента");
