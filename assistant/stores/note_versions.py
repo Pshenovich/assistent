@@ -35,12 +35,17 @@ def _db_path() -> Path:
 
             p = ROOT / p
         return p
-    notes_raw = (os.getenv("NOTES_DB_PATH") or "").strip()
-    if notes_raw:
-        # Тесты и нестандартные установки: рядом с базой заметок.
-        return Path(notes_raw).with_name("note_versions.sqlite")
     from assistant.config import ROOT
 
+    notes_raw = (os.getenv("NOTES_DB_PATH") or "").strip()
+    if notes_raw:
+        notes_path = Path(notes_raw)
+        if not notes_path.is_absolute():
+            notes_path = ROOT / notes_path
+        # Тесты (база заметок во временной папке) — рядом с ней; в установке — всегда data/
+        # (data/*.sqlite деплой не трогает и не затирает).
+        if notes_path.resolve().parent != ROOT.resolve():
+            return notes_path.with_name("note_versions.sqlite")
     return ROOT / "data" / "note_versions.sqlite"
 
 

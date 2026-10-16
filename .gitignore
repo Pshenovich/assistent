@@ -33,3 +33,5 @@ webapp/node_modules/
 *.sqlite-wal
 *.sqlite-shm
 .edge-sync/
+note_versions.sqlite
+*.sqlite.gz
