@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-notes19";
+  var WEBAPP_BUILD = "20261016-notes22";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-notes19";
+  const NOTE_EDITOR_ASSET_V = "20261016-notes22";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -5903,6 +5903,17 @@
     } catch (_) {}
     syncSidebarToggleUi();
     if (isDesktopLayout()) applyNotePaneWidths();
+    // Колонка списка заметок/чатов: пересчитать отступы под новую ширину меню (после анимации).
+    if (currentTab === "notes") {
+      var resync = function () {
+        syncNotesSplitLayout();
+        syncChatsSplitLeft();
+      };
+      resync();
+      [200, 450, 800].forEach(function (ms) {
+        window.setTimeout(resync, ms);
+      });
+    }
     if (!collapsed) {
       sidebarTreeState.notesOpen = true;
       if (digestTabEnabled) sidebarTreeState.digestOpen = true;
@@ -20456,7 +20467,7 @@
 
   // Отступ справа от колонки = отступу слева (от бокового меню) — колонка по центру своего места.
   function notesColGap(rootRect) {
-    var side = document.querySelector(".app-sidebar") || document.querySelector(".tabbar");
+    var side = document.getElementById("app-sidebar") || document.querySelector(".tabbar");
     var sr = side && side.getBoundingClientRect();
     if (!sr || !sr.width || sr.right > rootRect.left) return 16;
     return Math.max(8, Math.round(rootRect.left - sr.right));
@@ -34324,6 +34335,12 @@
 
   window.addEventListener("resize", function () {
     if (currentTab === "notes") syncNotesSplitLayout();
+  });
+  document.addEventListener("transitionend", function (e) {
+    var t = e.target;
+    if (currentTab !== "notes" || !t || (t.id !== "app-sidebar" && !(t.classList && t.classList.contains("main-scroll")))) return;
+    syncNotesSplitLayout();
+    syncChatsSplitLeft();
   });
 
   document.addEventListener("keydown", function (e) {

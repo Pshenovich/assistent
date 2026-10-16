@@ -15792,7 +15792,7 @@ html.notes-chats-tab .notes-project-btn { display: none; }
 
 @media (min-width: 960px) {
   /* Колонка списка по центру своего места и на уровне кнопки сворачивания меню */
-  html.notes-col .main-scroll { padding-left: 2px; padding-top: 18px; }
+  html.notes-col .main-scroll { padding-left: 16px; padding-top: 18px; }
   /* Фильтр — внутри поля поиска, рядом с «#» */
   #notes-search-field > #notes-filter-btn { position: absolute; right: 2.4rem; top: 50%; transform: translateY(-50%); width: 2rem; height: 2rem; padding: 0; border: 0; border-radius: var(--radius-sm, 8px); background: transparent; color: var(--text-secondary, #909499); z-index: 1; }
   #notes-search-field > #notes-filter-btn:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
@@ -15812,4 +15812,9 @@ html.notes-chats-tab .notes-project-btn { display: none; }
   html.notes-chats-tab #note-discussion-title .note-discussion-subtitle { grid-column: 2; }
   html.notes-chats-tab #note-discussion-title:not(.is-private-chat) .note-discussion-title-line,
   html.notes-chats-tab #note-discussion-title:not(.is-private-chat) .note-discussion-subtitle { grid-column: 1 / -1; }
+}
+
+@media (min-width: 960px) {
+  /* Окно заметки: без нижнего отступа общего .modal — под тулбаром не остаётся полосы фона */
+  #note-editor-overlay .modal.note-editor-sheet { padding-bottom: 0 !important; }
 }
