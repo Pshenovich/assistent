@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-paie-models";
+  var WEBAPP_BUILD = "20261016-meet2-models";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-paie-models";
+  const NOTE_EDITOR_ASSET_V = "20261016-meet2-models";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -12249,6 +12249,8 @@
 
   function closeModal() {
     const ov = document.getElementById("modal-overlay");
+    var evModal = ov.querySelector(".modal");
+    if (evModal) evModal.classList.remove("modal--ev-materials");
     ov.classList.add("hidden");
     ov.setAttribute("aria-hidden", "true");
     setModalSheetActions({ showDelete: false, showDone: false, showArchive: false });
@@ -14086,6 +14088,8 @@
       openTaskModal(ev);
       return;
     }
+    var evModal = document.querySelector("#modal-overlay .modal");
+    if (evModal) evModal.classList.remove("modal--ev-materials");
     document.getElementById("modal-title").textContent = ev.id ? "Встреча" : "Новое";
     document.getElementById("modal-kind").value = "event";
     document.getElementById("modal-reminder-id").value = "";
@@ -14376,6 +14380,7 @@
         fields.appendChild(joinBtn);
       }
     }
+    mountEventMaterials(ev);
     setModalSheetActions({ showDelete: !!ev.id, showDone: false });
     document.getElementById("modal-overlay").classList.remove("hidden");
     document.getElementById("modal-overlay").setAttribute("aria-hidden", "false");
@@ -14799,6 +14804,714 @@
     }
   }
 
+  /* ——— Встречи ↔ транскрипции и заметки («материалы встречи») ——— */
+  // В окне встречи — блок «Материалы встречи» (транскрипции, заметки, три действия).
+  // В заметке/транскрипции — плашка встречи с участниками; «⋮ → Добавить ко встрече».
+  var MEET_ICON =
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>';
+  var WAVE_ICON =
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true">' +
+    '<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10v4"/></svg>';
+  var NOTE_ICON =
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg>';
+  var MIC_ICON =
+    '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
+  var UPLOAD_ICON =
+    '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>';
+  var RU_WD = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+  var RU_MON = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+  var eventUploadsPending = {};
+  var noteMeetingState = { noteId: "", meeting: null, people: [], loading: false };
+  var meetingContactsCache = null;
+
+  function meetingTimeOf(v) {
+    if (!v) return null;
+    var s = typeof v === "object" ? v.dateTime || v.date || "" : String(v);
+    if (!s) return null;
+    var d = new Date(s.length === 10 ? s + "T00:00:00" : s);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function meetingHm(d) {
+    return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+  }
+
+  // «чт, 16 окт, 11:00–11:30»
+  function meetingWhenText(start, end) {
+    var s = meetingTimeOf(start);
+    if (!s) return "";
+    var e = meetingTimeOf(end);
+    var out = RU_WD[s.getDay()] + ", " + s.getDate() + " " + RU_MON[s.getMonth()];
+    if (typeof start === "object" ? start.dateTime : String(start).length > 10) {
+      out += ", " + meetingHm(s) + (e ? "–" + meetingHm(e) : "");
+    }
+    return out;
+  }
+
+  function meetingEventPayload(ev) {
+    return {
+      id: String(ev.id || ev.event_id || ""),
+      calendar_id: String(ev.calendar_id || "primary"),
+      summary: meetingDisplayTitle(ev, { blank: true }) || String(ev.summary || ""),
+      start: ev.start || ev.start_iso || "",
+      end: ev.end || ev.end_iso || "",
+      meet_url: String(ev.meet_url || ""),
+      attendees: (ev.attendees || []).map(function (a) {
+        return { email: String(a.email || ""), name: String(a.name || a.display_name || a.email || "") };
+      }),
+    };
+  }
+
+  function eventIsPast(ev) {
+    var s = meetingTimeOf(ev.start);
+    return !!(s && s.getTime() < Date.now());
+  }
+
+  function eventSupportsMaterials(ev) {
+    return !!(ev && ev.id && String(ev.id).indexOf("task-") !== 0 && !calendarEntryIsTask(ev));
+  }
+
+  function meetingEventKey(ev) {
+    return String(ev.calendar_id || "primary") + ":" + String(ev.id || "");
+  }
+
+  // Вызывается в конце openEventModal: блок «Материалы встречи» внутри окна встречи.
+  function mountEventMaterials(ev) {
+    var modal = document.querySelector("#modal-overlay .modal");
+    var sheet = document.querySelector("#modal-fields .event-sheet");
+    if (!modal || !sheet || !eventSupportsMaterials(ev)) return;
+    var box = document.createElement("div");
+    box.className = "ev-materials";
+    box.innerHTML = '<div class="ev-materials-head">Материалы встречи</div><div class="ev-materials-list"><p class="ev-materials-empty">Загружаю…</p></div>';
+    var acts = document.createElement("div");
+    acts.className = "ev-materials-acts";
+    [
+      ["upload", UPLOAD_ICON, "Добавить запись"],
+      ["dictate", MIC_ICON, "Надиктовать"],
+      ["note", NOTE_ICON.replace('width="15" height="15"', 'width="20" height="20"'), "Создать заметку"],
+    ].forEach(function (a) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "ev-materials-act";
+      b.setAttribute("data-act", a[0]);
+      b.innerHTML = a[1] + "<span>" + a[2] + "</span>";
+      acts.appendChild(b);
+    });
+    box.appendChild(acts);
+    var file = document.createElement("input");
+    file.type = "file";
+    file.accept = "audio/*,video/*,.mp3,.m4a,.wav,.ogg,.oga,.webm,.mp4,.mov,.aac,.flac";
+    file.className = "hidden";
+    box.appendChild(file);
+    acts.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-act]");
+      if (!b) return;
+      e.preventDefault();
+      var act = b.getAttribute("data-act");
+      if (act === "upload") file.click();
+      else eventCreateNote(ev, act === "dictate");
+    });
+    file.addEventListener("change", function () {
+      var f = file.files && file.files[0];
+      file.value = "";
+      if (f) eventUploadRecording(ev, f, box);
+    });
+    // Прошедшая встреча — материалы сразу после времени; будущая — в конце.
+    // На десктопе блок стоит отдельной колонкой справа (CSS), порядок там не важен.
+    var startPill = sheet.querySelector("#m-ev-start-date");
+    var timeGroup = startPill ? startPill.closest(".event-sheet-group") : null;
+    if (eventIsPast(ev) && timeGroup && timeGroup.nextSibling) sheet.insertBefore(box, timeGroup.nextSibling);
+    else sheet.appendChild(box);
+    sheet.classList.add("event-sheet--materials");
+    modal.classList.add("modal--ev-materials");
+    box._ev = ev;
+    loadEventMaterials(ev, box);
+  }
+
+  async function loadEventMaterials(ev, box) {
+    var items = [];
+    try {
+      var data = await apiFetch(
+        "/calendar/events/" + encodeURIComponent(String(ev.id)) + "/materials?calendar_id=" + encodeURIComponent(String(ev.calendar_id || "primary")),
+        { method: "GET" }
+      );
+      items = (data && data.items) || [];
+    } catch (_) {}
+    renderEventMaterials(box, ev, items);
+  }
+
+  function renderEventMaterials(box, ev, items) {
+    var list = box.querySelector(".ev-materials-list");
+    if (!list) return;
+    list.innerHTML = "";
+    var pending = eventUploadsPending[meetingEventKey(ev)];
+    if (pending) {
+      var p = document.createElement("div");
+      p.className = "ev-mat ev-mat--pending";
+      p.innerHTML = '<div class="ev-mat-head">' + WAVE_ICON + '<span class="ev-mat-title"></span></div>' +
+        '<div class="ev-mat-prog"><i></i></div><div class="ev-mat-text">Можно закрыть окно — транскрипция появится здесь и во вкладке «Транскрипции».</div>';
+      p.querySelector(".ev-mat-title").textContent = pending.name + " · расшифровывается…";
+      list.appendChild(p);
+    }
+    items.forEach(function (it) {
+      var card = document.createElement("div");
+      card.className = "ev-mat";
+      var head = document.createElement("div");
+      head.className = "ev-mat-head";
+      head.innerHTML = it.kind === "transcription" ? WAVE_ICON : NOTE_ICON;
+      var t = document.createElement("span");
+      t.className = "ev-mat-title";
+      t.textContent = (it.kind === "transcription" ? "Транскрипция" : "Заметка") + " · " + (it.title || "Без названия");
+      head.appendChild(t);
+      var open = document.createElement("button");
+      open.type = "button";
+      open.className = "ev-mat-open";
+      open.textContent = "Открыть";
+      open.addEventListener("click", function (e) {
+        e.preventDefault();
+        openMeetingMaterial(it);
+      });
+      head.appendChild(open);
+      card.appendChild(head);
+      if (it.summary_generating) {
+        var g = document.createElement("div");
+        g.className = "ev-mat-text";
+        g.textContent = "Готовлю саммари…";
+        card.appendChild(g);
+      } else if (it.preview) {
+        var pv = document.createElement("div");
+        pv.className = "ev-mat-text";
+        pv.textContent = it.preview;
+        card.appendChild(pv);
+      }
+      var lines = (it.decisions || []).slice(0, 2).map(function (d) { return "Решено: " + d; })
+        .concat((it.tasks || []).slice(0, 3));
+      if (lines.length) {
+        var ul = document.createElement("ul");
+        ul.className = "ev-mat-list";
+        lines.forEach(function (l) {
+          var li = document.createElement("li");
+          li.textContent = l;
+          ul.appendChild(li);
+        });
+        card.appendChild(ul);
+      }
+      list.appendChild(card);
+    });
+    if (!pending && !items.length) {
+      var empty = document.createElement("p");
+      empty.className = "ev-materials-empty";
+      empty.textContent = eventIsPast(ev)
+        ? "Пока ничего нет. Добавьте запись встречи, надиктуйте или запишите итоги."
+        : "Встреча ещё не прошла. Можно заранее создать заметку — например, повестку; после встречи сюда добавятся запись и итоги.";
+      list.appendChild(empty);
+    }
+  }
+
+  function currentEventMaterialsBox(ev) {
+    var box = document.querySelector("#modal-fields .ev-materials");
+    var ov = document.getElementById("modal-overlay");
+    if (!box || !ov || ov.classList.contains("hidden") || !box._ev) return null;
+    return meetingEventKey(box._ev) === meetingEventKey(ev) ? box : null;
+  }
+
+  async function eventUploadRecording(ev, f, box) {
+    if (f.size > 100 * 1024 * 1024) {
+      showNoteToast("Файл слишком большой (макс. 100 МБ)");
+      return;
+    }
+    var key = meetingEventKey(ev);
+    if (eventUploadsPending[key]) return;
+    eventUploadsPending[key] = { name: f.name || "запись" };
+    renderEventMaterials(box, ev, []);
+    loadEventMaterials(ev, box);
+    var fd = new FormData();
+    fd.append("file", f, f.name || "audio.mp3");
+    fd.append("with_summary", "1");
+    fd.append("meeting", JSON.stringify(meetingEventPayload(ev)));
+    try {
+      var res = await apiFetch("/notes/transcriptions/upload", { method: "POST", body: fd, timeout: 900000 });
+      var item = res && res.item;
+      if (item) {
+        prependTranscriptionInCache(item);
+        if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+        if (transcriptionIsGenerating(item) || res.with_summary) pollTranscriptionSummary(item.id);
+      }
+      delete eventUploadsPending[key];
+      var node = document.createElement("span");
+      var tx = document.createElement("span");
+      tx.className = "note-toast-copy";
+      tx.textContent = "Запись встречи расшифрована";
+      node.appendChild(tx);
+      if (item) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "note-toast-link";
+        b.textContent = "Открыть";
+        b.addEventListener("click", function () {
+          openMeetingMaterial({ id: item.id, kind: "transcription", title: item.title });
+        });
+        node.appendChild(b);
+      }
+      showNoteToast("", { node: node, actionable: true, duration: 6500 });
+      loadActual().catch(function () {});
+    } catch (e) {
+      delete eventUploadsPending[key];
+      showNoteToast((e && e.message) || "Не удалось расшифровать запись");
+    }
+    var live = currentEventMaterialsBox(ev);
+    if (live) loadEventMaterials(ev, live);
+  }
+
+  async function eventCreateNote(ev, dictate) {
+    var data;
+    try {
+      data = await apiFetch("/calendar/events/" + encodeURIComponent(String(ev.id)) + "/note", {
+        method: "POST",
+        body: JSON.stringify({ event: meetingEventPayload(ev) }),
+      });
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось создать заметку");
+      return;
+    }
+    var item = data && data.item;
+    if (!item) return;
+    prependLocalInCache(item);
+    closeModal();
+    openMeetingMaterial({ id: item.id, kind: "note", title: item.title, item: item }, { dictate: !!dictate });
+  }
+
+  function openMeetingMaterial(it, opts) {
+    opts = opts || {};
+    var ov = document.getElementById("modal-overlay");
+    if (ov && !ov.classList.contains("hidden")) closeModal();
+    var isTr = it.kind === "transcription";
+    setTab("notes", { noAnim: true });
+    setNotesSubTab(isTr ? "transcriptions" : "notes");
+    var n = it.item || { id: it.id, title: it.title || "", body_preview_only: true };
+    if (isTr) {
+      n.role = "transcription";
+      n.is_transcription = true;
+    }
+    openNoteDetail(n, { isLocal: true, dictate: !!opts.dictate });
+    if (opts.dictate) startDictationWhenEditorReady(String(it.id));
+  }
+
+  // «Надиктовать»: как только редактор новой заметки готов — включаем диктовку.
+  function startDictationWhenEditorReady(noteId, tries) {
+    tries = tries || 0;
+    if (tries > 60) return;
+    var ed = String(currentOpenNoteId()) === String(noteId) ? getLeftNoteRichEditor() : null;
+    if (ed && typeof ed.beginDictation === "function") {
+      startNoteDictation(true);
+      return;
+    }
+    setTimeout(function () {
+      startDictationWhenEditorReady(noteId, tries + 1);
+    }, 100);
+  }
+
+  // ---- Плашка встречи в заметке / транскрипции ----
+  function loadNoteMeeting(noteId) {
+    var id = String(noteId || "");
+    noteMeetingState = { noteId: id, meeting: null, people: [], loading: true };
+    renderNoteMeetingPlaque();
+    if (!id || id.indexOf("tmp_") === 0) return;
+    apiFetch("/notes/local/" + encodeURIComponent(id) + "/meeting", { method: "GET" })
+      .then(function (data) {
+        if (noteMeetingState.noteId !== id) return;
+        noteMeetingState.meeting = (data && data.meeting) || null;
+        noteMeetingState.people = (data && data.people) || [];
+        noteMeetingState.loading = false;
+        renderNoteMeetingPlaque();
+      })
+      .catch(function () {
+        if (noteMeetingState.noteId === id) noteMeetingState.loading = false;
+      });
+  }
+
+  function noteMeetingPlaqueEl() {
+    var el = document.getElementById("note-editor-meeting");
+    if (el) return el;
+    var meta = document.getElementById("note-editor-meta");
+    if (!meta || !meta.parentNode) return null;
+    el = document.createElement("div");
+    el.id = "note-editor-meeting";
+    el.className = "note-meeting-plaque hidden";
+    meta.parentNode.insertBefore(el, meta.nextSibling);
+    el.addEventListener("click", onNoteMeetingPlaqueClick);
+    return el;
+  }
+
+  function renderNoteMeetingPlaque(tries) {
+    var st = noteMeetingState;
+    var el = noteMeetingPlaqueEl();
+    if (!el) {
+      // Редактор ещё строится — дорисуем, когда появится шапка.
+      if ((tries || 0) < 20 && st.noteId) setTimeout(function () { if (noteMeetingState === st) renderNoteMeetingPlaque((tries || 0) + 1); }, 150);
+      return;
+    }
+    var m = st.meeting;
+    var people = st.people || [];
+    var show = !!(m || people.length || st.showPeople);
+    el.classList.toggle("hidden", !show || String(currentOpenNoteId()) !== st.noteId);
+    if (!show) {
+      el.innerHTML = "";
+      return;
+    }
+    var html = "";
+    if (m) {
+      html +=
+        '<div class="nmp-line">' + MEET_ICON +
+        '<button type="button" class="nmp-when" data-nmp="open">' +
+        "<b>Встреча</b> · " + escapeHtml(meetingWhenText(m.start_iso, m.end_iso)) +
+        "</button>" +
+        '<span class="nmp-sp"></span>' +
+        (m.meet_url ? '<button type="button" class="nmp-link" data-nmp="join">Ссылка</button>' : "") +
+        '<button type="button" class="nmp-link" data-nmp="open">Открыть встречу</button>' +
+        '<button type="button" class="nmp-x" data-nmp="unlink" aria-label="Отвязать от встречи" title="Отвязать от встречи">×</button>' +
+        "</div>";
+    }
+    html += '<div class="nmp-people">';
+    var seen = {};
+    ((m && m.attendees) || []).forEach(function (a) {
+      var k = String(a.email || a.name || "").toLowerCase();
+      if (!k || seen[k]) return;
+      seen[k] = true;
+      html += '<span class="nmp-chip">' + escapeHtml(a.name || a.email) + "</span>";
+    });
+    people.forEach(function (p) {
+      var k = String(p.email || p.name || "").toLowerCase();
+      if (seen[k]) return;
+      seen[k] = true;
+      html +=
+        '<span class="nmp-chip nmp-chip--manual">' + escapeHtml(p.name || p.email) +
+        '<button type="button" data-nmp="rm" data-key="' + escapeHtml(p.person_key) + '" aria-label="Убрать участника">×</button></span>';
+    });
+    html += '<button type="button" class="nmp-chip nmp-add" data-nmp="add">+ участник</button>';
+    html += '<span class="nmp-add-box hidden"><input type="text" class="nmp-input" placeholder="Имя или email" autocomplete="off" /><span class="nmp-suggest hidden"></span></span>';
+    html += "</div>";
+    el.innerHTML = html;
+  }
+
+  function onNoteMeetingPlaqueClick(e) {
+    var b = e.target.closest("[data-nmp]");
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var act = b.getAttribute("data-nmp");
+    var st = noteMeetingState;
+    var m = st.meeting;
+    if (act === "open" && m) openNoteMeetingEvent(m);
+    else if (act === "join" && m && m.meet_url) openExternal(m.meet_url);
+    else if (act === "unlink") unlinkNoteMeeting();
+    else if (act === "add") showNotePersonInput();
+    else if (act === "rm") removeNotePerson(b.getAttribute("data-key"));
+  }
+
+  function openNoteMeetingEvent(m) {
+    var ev = {
+      id: m.event_id,
+      calendar_id: m.calendar_id,
+      summary: m.summary,
+      start: m.start_iso.length > 10 ? { dateTime: m.start_iso } : { date: m.start_iso },
+      end: m.end_iso.length > 10 ? { dateTime: m.end_iso } : { date: m.end_iso },
+      meet_url: m.meet_url,
+      attendees: (m.attendees || []).map(function (a) { return { email: a.email, name: a.name }; }),
+    };
+    // Свежие данные встречи — из уже загруженного календаря, если она там есть.
+    var fresh = findLoadedCalendarEvent(ev.id, ev.calendar_id);
+    openEventModal(fresh || ev);
+  }
+
+  function findLoadedCalendarEvent(id, calId) {
+    var found = null;
+    [lastCalendarPayloadForMaterials].forEach(function (p) {
+      ((p && p.events) || []).forEach(function (e) {
+        if (!found && String(e.id) === String(id) && String(e.calendar_id || "primary") === String(calId || "primary")) found = e;
+      });
+    });
+    return found;
+  }
+  var lastCalendarPayloadForMaterials = null;
+
+  async function unlinkNoteMeeting() {
+    var id = noteMeetingState.noteId;
+    if (!id || !(await confirmDialog("Отвязать заметку от встречи?"))) return;
+    try {
+      await apiFetch("/notes/local/" + encodeURIComponent(id) + "/meeting", { method: "DELETE" });
+      noteMeetingState.meeting = null;
+      renderNoteMeetingPlaque();
+      patchNoteMeetingInCache(id, null);
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось отвязать");
+    }
+  }
+
+  function patchNoteMeetingInCache(noteId, m) {
+    var data = notesDataCache;
+    if (!data) return;
+    (data.local_notes || []).concat(data.transcriptions || []).forEach(function (n) {
+      if (String(localNoteIdFrom(n)) !== String(noteId)) return;
+      if (m) {
+        n.meeting = {
+          event_id: m.event_id,
+          calendar_id: m.calendar_id,
+          summary: m.summary,
+          start_iso: m.start_iso,
+          end_iso: m.end_iso,
+          people: (m.attendees || []).map(function (a) { return a.name || a.email; }).slice(0, 6),
+        };
+      } else delete n.meeting;
+    });
+    renderNotesPanesFromData(data);
+  }
+
+  function loadMeetingContacts() {
+    if (meetingContactsCache) return Promise.resolve(meetingContactsCache);
+    return apiFetch("/contacts", { method: "GET" })
+      .then(function (d) {
+        meetingContactsCache = (d && d.items) || [];
+        return meetingContactsCache;
+      })
+      .catch(function () {
+        return [];
+      });
+  }
+
+  function showNotePersonInput() {
+    var el = document.getElementById("note-editor-meeting");
+    if (!el) return;
+    var box = el.querySelector(".nmp-add-box");
+    var input = el.querySelector(".nmp-input");
+    var sug = el.querySelector(".nmp-suggest");
+    var addBtn = el.querySelector(".nmp-add");
+    if (!box || !input) return;
+    box.classList.remove("hidden");
+    if (addBtn) addBtn.classList.add("hidden");
+    input.focus();
+    var contacts = [];
+    loadMeetingContacts().then(function (c) {
+      contacts = c;
+    });
+    function paint() {
+      var q = input.value.trim().toLowerCase();
+      sug.innerHTML = "";
+      if (!q) {
+        sug.classList.add("hidden");
+        return;
+      }
+      var hits = contacts.filter(function (c) {
+        return (String(c.name || "") + " " + String(c.email || "") + " " + String(c.telegram_username || "")).toLowerCase().indexOf(q) >= 0;
+      }).slice(0, 6);
+      hits.forEach(function (c) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.textContent = (c.name || c.email) + (c.email && c.name ? " · " + c.email : "");
+        b.addEventListener("mousedown", function (ev) {
+          ev.preventDefault();
+          addNotePerson({ name: c.name || "", email: c.email || "", contact_key: c.key || c.email || "" });
+        });
+        sug.appendChild(b);
+      });
+      sug.classList.toggle("hidden", !hits.length);
+    }
+    input.oninput = paint;
+    input.onkeydown = function (ev) {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        var v = input.value.trim();
+        if (!v) return;
+        addNotePerson(/@.+\./.test(v) ? { email: v, name: "" } : { name: v, email: "" });
+      } else if (ev.key === "Escape") {
+        renderNoteMeetingPlaque();
+      }
+    };
+    input.onblur = function () {
+      setTimeout(function () {
+        if (document.activeElement !== input) renderNoteMeetingPlaque();
+      }, 150);
+    };
+  }
+
+  async function addNotePerson(p) {
+    var id = noteMeetingState.noteId;
+    if (!id) return;
+    try {
+      var data = await apiFetch("/notes/local/" + encodeURIComponent(id) + "/people", {
+        method: "POST",
+        body: JSON.stringify(p),
+      });
+      noteMeetingState.people = (data && data.people) || [];
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось добавить участника");
+    }
+    renderNoteMeetingPlaque();
+  }
+
+  async function removeNotePerson(key) {
+    var id = noteMeetingState.noteId;
+    if (!id || !key) return;
+    try {
+      var data = await apiFetch("/notes/local/" + encodeURIComponent(id) + "/people/" + encodeURIComponent(key), { method: "DELETE" });
+      noteMeetingState.people = (data && data.people) || [];
+    } catch (_) {}
+    renderNoteMeetingPlaque();
+  }
+
+  // ---- «Добавить ко встрече» ----
+  async function openNoteMeetingPicker(noteId) {
+    var id = String(noteId || currentOpenNoteId() || "");
+    if (!id) return;
+    var ov = document.getElementById("meeting-pick-overlay");
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = "meeting-pick-overlay";
+      ov.className = "modal-overlay meeting-pick-overlay hidden";
+      ov.innerHTML =
+        '<div class="modal modal--sheet meeting-pick-sheet" role="dialog" aria-modal="true" aria-label="Добавить ко встрече">' +
+        '<div class="modal-header"><button type="button" class="modal-header-btn modal-header-btn--close" data-mp="close" aria-label="Закрыть">' +
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>' +
+        '<h2 class="modal-title">Добавить ко встрече</h2><span></span></div>' +
+        '<div class="modal-body meeting-pick-body">' +
+        '<input type="search" class="field-input meeting-pick-search" placeholder="Найти встречу" autocomplete="off" />' +
+        '<div class="meeting-pick-list"></div></div></div>';
+      document.body.appendChild(ov);
+      ov.addEventListener("click", function (e) {
+        if (e.target === ov || e.target.closest('[data-mp="close"]')) closeNoteMeetingPicker();
+      });
+      ov.querySelector(".meeting-pick-search").addEventListener("input", function () {
+        paintMeetingPicker();
+      });
+    }
+    ov._noteId = id;
+    ov._data = null;
+    ov.querySelector(".meeting-pick-search").value = "";
+    ov.querySelector(".meeting-pick-list").innerHTML = '<p class="ev-materials-empty">Ищу встречи вокруг времени записи…</p>';
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
+    try {
+      ov._data = await apiFetch("/notes/local/" + encodeURIComponent(id) + "/meeting-candidates", { method: "GET" });
+    } catch (e) {
+      ov._data = { error: (e && e.message) || "Не удалось загрузить встречи" };
+    }
+    paintMeetingPicker();
+  }
+
+  function closeNoteMeetingPicker() {
+    var ov = document.getElementById("meeting-pick-overlay");
+    if (!ov || ov.classList.contains("hidden")) return;
+    ov.classList.add("hidden");
+    ov.setAttribute("aria-hidden", "true");
+    onModalSheetClose();
+    syncAppOverlay();
+  }
+
+  function paintMeetingPicker() {
+    var ov = document.getElementById("meeting-pick-overlay");
+    if (!ov || !ov._data) return;
+    var list = ov.querySelector(".meeting-pick-list");
+    var q = ov.querySelector(".meeting-pick-search").value.trim().toLowerCase();
+    var d = ov._data;
+    list.innerHTML = "";
+    if (d.error) {
+      list.innerHTML = '<p class="ev-materials-empty"></p>';
+      list.firstChild.textContent = d.error;
+      return;
+    }
+    function match(ev) {
+      if (!q) return true;
+      var hay = (String(ev.summary || "") + " " + (ev.attendees || []).map(function (a) { return (a.name || "") + " " + (a.email || ""); }).join(" ")).toLowerCase();
+      return hay.indexOf(q) >= 0;
+    }
+    function section(title, evs, best) {
+      evs = evs.filter(match);
+      if (!evs.length) return;
+      var h = document.createElement("div");
+      h.className = "meeting-pick-sect";
+      h.textContent = title;
+      list.appendChild(h);
+      evs.forEach(function (ev) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "meeting-pick-row" + (best ? " is-best" : "");
+        var t = document.createElement("b");
+        t.textContent = meetingDisplayTitle(ev, { blank: true }) || "Без названия";
+        var sub = document.createElement("small");
+        var who = (ev.attendees || []).map(function (a) { return a.name || a.email; }).filter(Boolean).slice(0, 3).join(", ");
+        sub.textContent = meetingWhenText(ev.start, ev.end) + (who ? " · " + who : "");
+        b.appendChild(t);
+        if (best) {
+          var em = document.createElement("em");
+          em.textContent = "совпадает время";
+          b.appendChild(em);
+        }
+        b.appendChild(sub);
+        b.addEventListener("click", function () {
+          linkNoteToMeeting(ov._noteId, ev);
+        });
+        list.appendChild(b);
+      });
+    }
+    if (d.connected === false) {
+      var p = document.createElement("p");
+      p.className = "ev-materials-empty";
+      p.textContent = "Календарь не подключён — подключите Google Календарь в Профиле.";
+      list.appendChild(p);
+    }
+    section("Похоже по времени записи", d.suggested || [], true);
+    section("Другие встречи", d.others || [], false);
+    var none = document.createElement("button");
+    none.type = "button";
+    none.className = "meeting-pick-row";
+    none.innerHTML = "<b>Только участники…</b><small>созвон не из календаря — укажите, с кем он был</small>";
+    none.addEventListener("click", function () {
+      closeNoteMeetingPicker();
+      if (String(currentOpenNoteId()) === String(ov._noteId)) {
+        noteMeetingState.showPeople = true;
+        renderNoteMeetingPlaque();
+        showNotePersonInput();
+      }
+    });
+    var h2 = document.createElement("div");
+    h2.className = "meeting-pick-sect";
+    h2.textContent = "Без встречи";
+    list.appendChild(h2);
+    list.appendChild(none);
+  }
+
+  async function linkNoteToMeeting(noteId, ev) {
+    try {
+      var data = await apiFetch("/notes/local/" + encodeURIComponent(noteId) + "/meeting", {
+        method: "PUT",
+        body: JSON.stringify({ event: meetingEventPayload(ev) }),
+      });
+      closeNoteMeetingPicker();
+      if (String(currentOpenNoteId()) === String(noteId)) {
+        noteMeetingState.meeting = data.meeting || null;
+        noteMeetingState.people = data.people || noteMeetingState.people;
+        renderNoteMeetingPlaque();
+        if (data.title) {
+          var ti = document.getElementById("note-editor-title-input");
+          if (ti && ti.value !== data.title) {
+            ti.value = data.title;
+            ti.dispatchEvent(new Event("input"));
+          }
+        }
+      }
+      patchNoteMeetingInCache(noteId, data.meeting);
+      showNoteToast("Добавлено ко встрече «" + (meetingDisplayTitle(ev, { blank: true }) || "") + "»");
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось привязать");
+    }
+  }
+
   /* ——— Actual ——— */
   function renderReminderCard(r) {
     const wrap = document.createElement("div");
@@ -15047,6 +15760,15 @@
     if (!inlineTime) {
       card.appendChild(meta);
     }
+    var mats = ev.materials || null;
+    if (mats && (mats.transcription || mats.note)) {
+      // Значки материалов встречи: транскрипция / заметка.
+      var mt = document.createElement("span");
+      mt.className = "meeting-card-mats";
+      if (mats.transcription) mt.insertAdjacentHTML("beforeend", '<span title="Есть транскрипция">' + WAVE_ICON + "</span>");
+      if (mats.note) mt.insertAdjacentHTML("beforeend", '<span title="Есть заметка">' + NOTE_ICON + "</span>");
+      meta.appendChild(mt);
+    }
 
     wrap.appendChild(card);
     return wrap;
@@ -15063,6 +15785,9 @@
     }
     if (sig && sig === lastActualPaintSig && document.querySelector("#panel-actual .meeting-row, #panel-actual .meetings-day, #panel-actual [data-event-id]")) return;
     lastActualPaintSig = sig;
+    lastCalendarPayloadForMaterials = {
+      events: [].concat((calData && calData.events) || [], (calDataNext && calDataNext.events) || [], (rangeData && rangeData.events) || []),
+    };
     const hero = document.getElementById("actual-hero");
     const errP = document.getElementById("posted-tasks-error");
     const errM = document.getElementById("meetings-error");
@@ -15845,6 +16570,11 @@
     }
     if (isNoteHistoryOpen()) {
       noteHistoryBack();
+      return true;
+    }
+    var meetPick = document.getElementById("meeting-pick-overlay");
+    if (meetPick && !meetPick.classList.contains("hidden")) {
+      closeNoteMeetingPicker();
       return true;
     }
     if (isNoteDiscussionOpen() && !isDesktopLayout()) {
@@ -22692,6 +23422,14 @@
       });
       addItem("Закрыть доступ", function () {
         revokeShareLink();
+      });
+    }
+
+    if (shareId && shareKind === "local" && String(shareId).indexOf("tmp_") !== 0 && !wrap._isKnowledge) {
+      var hasMeeting = noteMeetingState.noteId === String(shareId) && !!noteMeetingState.meeting;
+      addItem(hasMeeting ? "Другая встреча" : "Добавить ко встрече", function () {
+        closeNoteMoreMenu();
+        openNoteMeetingPicker(shareId);
       });
     }
 
@@ -34018,6 +34756,8 @@
     wrap._shareKind = kind;
     wrap._shareId = String(itemId);
     wrap._shareShared = false;
+    if (kind === "local") loadNoteMeeting(itemId);
+    else noteMeetingState = { noteId: "", meeting: null, people: [] };
     wrap._shareUrl = "";
     wrap._shareAccess = "view";
     wrap._shareSheetIds = [];
@@ -35132,6 +35872,15 @@
       if (total) out.push({ icon: "check", text: done + "/" + total });
     }
     if (n.has_table || (n.has_table == null && /<table[\s>]/i.test(body))) out.push({ icon: "table", text: "" });
+    if (n.meeting) {
+      var ms = meetingTimeOf(n.meeting.start_iso);
+      var who = (n.meeting.people || []).filter(Boolean);
+      out.unshift({
+        icon: "meet",
+        text: "Встреча" + (ms && String(n.meeting.start_iso).length > 10 ? " " + meetingHm(ms) : "") +
+          (who.length ? " · " + (who.length > 1 ? who.length + " " + pluralRu(who.length, "участник", "участника", "участников") : who[0]) : ""),
+      });
+    }
     return out;
   }
 
@@ -35139,6 +35888,7 @@
     sheets: '<path d="M7 3h7l5 5v13H7zM14 3v5h5" /><path d="M4 7v14h11" />',
     check: '<rect x="4" y="4" width="16" height="16" rx="4" /><path d="M8.5 12.5l2.5 2.5 4.5-5" />',
     table: '<rect x="3.5" y="5" width="17" height="14" rx="2" /><path d="M3.5 10h17M10 10v9" />',
+    meet: '<rect x="3.5" y="5" width="17" height="15" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" />',
   };
 
   function buildNotesListCard(n, opts) {
@@ -35197,6 +35947,22 @@
       lbl.textContent = members.length > 1 ? "Общая · " + members.length : "По ссылке";
       sh.appendChild(lbl);
       foot.appendChild(sh);
+    }
+    if (!n.meeting && isTranscriptionNoteItem(n) && id) {
+      var created = Date.parse(String(n.created_at || ""));
+      if (isFinite(created) && Date.now() - created < 14 * 864e5) {
+        // Свежая транскрипция без встречи — предложить привязку прямо в списке.
+        var attach = document.createElement("button");
+        attach.type = "button";
+        attach.className = "nl-badge nl-badge--action";
+        attach.textContent = "+ ко встрече";
+        attach.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          openNoteMeetingPicker(id);
+        });
+        foot.appendChild(attach);
+      }
     }
     if (foot.childNodes.length) inner.appendChild(foot);
     mountNoteCardActions(card, inner, n);

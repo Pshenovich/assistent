@@ -4169,7 +4169,7 @@ def _calendar_today_payload(
     win_end = win_start + timedelta(days=1)
 
     def _finish(payload: dict[str, Any]) -> dict[str, Any]:
-        return _attach_leo_tasks(payload, uid, win_start, win_end, tz)
+        return _attach_meeting_material_kinds(_attach_leo_tasks(payload, uid, win_start, win_end, tz), uid)
 
     if not has_token:
         if _miniapp_dev_mode_on():
@@ -4600,6 +4600,22 @@ def _link_events_to_google_tasks(
         ev["kind"] = "Задача"
 
 
+def _attach_meeting_material_kinds(payload: dict[str, Any], uid: int) -> dict[str, Any]:
+    """Значки «Транскрипция / Заметка» у встреч, к которым пользователь привязал материалы."""
+    try:
+        from assistant.stores import meeting_links
+
+        evs = [e for e in (payload.get("events") or []) if isinstance(e, dict) and e.get("id")]
+        keys = [meeting_links.event_key(e.get("calendar_id"), e.get("id")) for e in evs]
+        kinds = meeting_links.kinds_for_events(uid, keys)
+        for e, k in zip(evs, keys):
+            if k in kinds:
+                e["materials"] = kinds[k]
+    except Exception as e:
+        print(f"[meeting_links] kinds failed uid={uid} err={e!r}")
+    return payload
+
+
 def _attach_leo_tasks(
     payload: dict[str, Any],
     uid: int,
@@ -4805,7 +4821,7 @@ def _calendar_range_payload(
     win_end = datetime.combine(end_d + timedelta(days=1), datetime.min.time(), tzinfo=tz)
 
     def _finish(payload: dict[str, Any]) -> dict[str, Any]:
-        return _attach_leo_tasks(payload, uid, win_start, win_end, tz)
+        return _attach_meeting_material_kinds(_attach_leo_tasks(payload, uid, win_start, win_end, tz), uid)
 
     has_token = google_calendar_oauth.user_token_path(uid).is_file()
     if not has_token:
@@ -7757,6 +7773,31 @@ def looks_like_list_preview_overwrite(new_body: str | None, old_body: str | None
     return old_plain.startswith(head[: max(20, len(head) - 12)])
 
 
+def _attach_note_meetings(uid: int, notes: list[dict[str, Any]]) -> None:
+    """Строчка встречи на карточке: тема, время, участники (своя привязка)."""
+    try:
+        from assistant.stores import meeting_links
+
+        links = meeting_links.for_notes(uid, [n.get("id") for n in notes if isinstance(n, dict)])
+    except Exception as e:
+        print(f"[meeting_links] list attach failed uid={uid} err={e!r}")
+        return
+    for n in notes:
+        try:
+            m = links.get(int(n.get("id")))
+        except (TypeError, ValueError):
+            m = None
+        if m:
+            n["meeting"] = {
+                "event_id": m["event_id"],
+                "calendar_id": m["calendar_id"],
+                "summary": m["summary"],
+                "start_iso": m["start_iso"],
+                "end_iso": m["end_iso"],
+                "people": [a.get("name") or a.get("email") for a in m.get("attendees") or []][:6],
+            }
+
+
 def minify_note_for_list(item: dict[str, Any]) -> dict[str, Any]:
     """Оставляет в list-payload только превью body/description."""
     if not isinstance(item, dict):
@@ -8171,6 +8212,7 @@ async def miniapp_notes_bundle(
         for n in local_notes + transcriptions:
             n.setdefault("discuss_latest", None)
 
+    await run_in_threadpool(_attach_note_meetings, uid, local_notes + transcriptions)
     local_notes = [minify_note_for_list(n) for n in local_notes]
     transcriptions = [minify_note_for_list(n) for n in transcriptions]
 
@@ -8239,6 +8281,7 @@ def _decorate_notes_for_list(uid: int, notes: list[dict[str, Any]]) -> list[dict
     except Exception:
         for n in notes:
             n.setdefault("discuss_latest", None)
+    _attach_note_meetings(uid, notes)
     return [minify_note_for_list(n) for n in notes]
 
 
@@ -8380,6 +8423,260 @@ async def miniapp_note_version_restore(
     if res is None:
         raise HTTPException(status_code=404, detail="Версия не найдена")
     return {"ok": True, **res}
+
+
+class _MiniappMeetingLinkBody(BaseModel):
+    event: dict[str, Any]
+
+
+class _MiniappNotePersonBody(BaseModel):
+    name: str = ""
+    email: str = ""
+    contact_key: str = ""
+
+
+def _meeting_material_item(note: dict[str, Any]) -> dict[str, Any]:
+    from assistant.services import transcription_notes as tnotes
+
+    is_tr = str(note.get("role") or "") == "transcription"
+    item = tnotes.enrich(note) if is_tr else dict(note)
+    meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+    tasks = []
+    for t in meta.get("tasks") or []:
+        if isinstance(t, dict):
+            line = " — ".join(x for x in (str(t.get("assignee") or "").strip(), str(t.get("task") or "").strip()) if x)
+            if line:
+                tasks.append(line[:200])
+    preview = str(item.get("preview") or "") if is_tr else _plain_preview_text(str(note.get("body") or ""))[:280]
+    return {
+        "id": int(note["id"]),
+        "title": str(note.get("title") or ""),
+        "kind": "transcription" if is_tr else "note",
+        "has_summary": bool(item.get("has_summary")),
+        "summary_generating": bool(item.get("summary_generating")),
+        "preview": preview,
+        "tasks": tasks[:5],
+        "decisions": [str(x)[:200] for x in (meta.get("decisions") or []) if str(x).strip()][:4],
+        "updated_at": str(note.get("updated_at") or ""),
+    }
+
+
+@miniapp_router.get("/calendar/events/{event_id}/materials")
+async def miniapp_calendar_event_materials(
+    event_id: str,
+    calendar_id: str = "primary",
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Материалы встречи: привязанные транскрипции и заметки (только свои)."""
+    from assistant.stores import meeting_links
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> list[dict[str, Any]]:
+        out = []
+        for row in meeting_links.notes_for_event(uid, meeting_links.event_key(calendar_id, event_id)):
+            note = notes_store.get_accessible_note(uid, int(row["note_id"]), with_sharing=False)
+            if note:
+                out.append(_meeting_material_item(note))
+        return out
+
+    return {"ok": True, "items": await run_in_threadpool(_run)}
+
+
+@miniapp_router.post("/calendar/events/{event_id}/note")
+async def miniapp_calendar_event_note(
+    event_id: str,
+    body: _MiniappMeetingLinkBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """«Создать заметку» из встречи: название — тема встречи, заметка сразу привязана."""
+    from assistant.stores import meeting_links
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    ev = dict(body.event or {})
+    ev["id"] = event_id
+
+    def _run() -> dict[str, Any]:
+        m = meeting_links.meeting_from_event(ev)
+        note = notes_store.create_note(uid, m.get("summary") or "Встреча", "")
+        meeting_links.link(uid, note["id"], m, source="meeting")
+        return _decorate_notes_for_list(uid, [note])[0] | {"body": note.get("body") or "", "body_preview_only": False}
+
+    item = await run_in_threadpool(_run)
+    return {"ok": True, "item": item}
+
+
+@miniapp_router.get("/notes/local/{note_id}/meeting")
+async def miniapp_note_meeting_get(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import meeting_links
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any] | None:
+        if notes_store.get_accessible_note(uid, note_id, with_sharing=False) is None:
+            return None
+        return {
+            "meeting": meeting_links.get_for_note(uid, note_id),
+            "people": meeting_links.people_for_note(uid, note_id),
+        }
+
+    res = await run_in_threadpool(_run)
+    if res is None:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return {"ok": True, **res}
+
+
+@miniapp_router.put("/notes/local/{note_id}/meeting")
+async def miniapp_note_meeting_put(
+    note_id: int,
+    body: _MiniappMeetingLinkBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """«Добавить ко встрече»: у транскрипции название становится темой встречи."""
+    from assistant.stores import meeting_links
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any] | None:
+        access = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
+        if access is None:
+            return None
+        m = meeting_links.meeting_from_event(dict(body.event or {}))
+        if not m.get("event_id"):
+            raise ValueError("Не выбрана встреча")
+        link = meeting_links.link(uid, note_id, m)
+        item = None
+        if str(access.get("role") or "") == "transcription" and m.get("summary"):
+            owner = str(access.get("owner_user_id") or uid)
+            item = notes_store.update_note(owner, note_id, title=m["summary"], actor_user_id=uid)
+        return {"meeting": link, "people": meeting_links.people_for_note(uid, note_id), "title": (item or {}).get("title")}
+
+    try:
+        res = await run_in_threadpool(_run)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if res is None:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return {"ok": True, **res}
+
+
+@miniapp_router.delete("/notes/local/{note_id}/meeting")
+async def miniapp_note_meeting_delete(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import meeting_links
+
+    uid = int(principal.telegram_user_id)
+    await run_in_threadpool(meeting_links.unlink, uid, note_id)
+    return {"ok": True}
+
+
+@miniapp_router.post("/notes/local/{note_id}/people")
+async def miniapp_note_people_add(
+    note_id: int,
+    body: _MiniappNotePersonBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """«+ участник»: человек, которого не было в приглашении (или созвон вне календаря)."""
+    from assistant.stores import meeting_links
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> list[dict[str, Any]] | None:
+        if notes_store.get_accessible_note(uid, note_id, with_sharing=False) is None:
+            return None
+        return meeting_links.add_person(uid, note_id, name=body.name, email=body.email, contact_key=body.contact_key)
+
+    try:
+        people = await run_in_threadpool(_run)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if people is None:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return {"ok": True, "people": people}
+
+
+@miniapp_router.delete("/notes/local/{note_id}/people/{person_key:path}")
+async def miniapp_note_people_delete(
+    note_id: int,
+    person_key: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import meeting_links
+
+    uid = int(principal.telegram_user_id)
+    people = await run_in_threadpool(meeting_links.remove_person, uid, note_id, person_key)
+    return {"ok": True, "people": people}
+
+
+@miniapp_router.get("/notes/local/{note_id}/meeting-candidates")
+async def miniapp_note_meeting_candidates(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Встречи вокруг времени записи (−3…+1 день); подходящая по времени — первой."""
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any] | None:
+        note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
+        if note is None:
+            return None
+        try:
+            at = datetime.fromisoformat(str(note.get("created_at") or ""))
+        except ValueError:
+            at = datetime.now(timezone.utc)
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        payload = _calendar_range_payload(
+            uid, (at - timedelta(days=3)).date().isoformat(), (at + timedelta(days=1)).date().isoformat()
+        )
+        return {"connected": bool(payload.get("connected", True)), **_rank_meeting_candidates(payload.get("events") or [], at)}
+
+    res = await run_in_threadpool(_run)
+    if res is None:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return {"ok": True, **res}
+
+
+def _rank_meeting_candidates(events: list[dict[str, Any]], at: datetime) -> dict[str, Any]:
+    """Подходящие встречи: запись сделана во время встречи или вскоре после неё (до 3 ч)."""
+    rows = []
+    for ev in events:
+        if not isinstance(ev, dict) or ev.get("entry_type") == "task" or str(ev.get("id") or "").startswith("task-"):
+            continue
+        st = (ev.get("start") or {}).get("dateTime") if isinstance(ev.get("start"), dict) else None
+        en = (ev.get("end") or {}).get("dateTime") if isinstance(ev.get("end"), dict) else None
+        if not st:
+            continue  # события на весь день — не встречи
+        try:
+            s_dt = datetime.fromisoformat(str(st).replace("Z", "+00:00"))
+            e_dt = datetime.fromisoformat(str(en).replace("Z", "+00:00")) if en else s_dt + timedelta(hours=1)
+        except ValueError:
+            continue
+        if s_dt.tzinfo is None:
+            s_dt = s_dt.replace(tzinfo=timezone.utc)
+        if e_dt.tzinfo is None:
+            e_dt = e_dt.replace(tzinfo=timezone.utc)
+        if s_dt > at + timedelta(minutes=30):
+            continue  # встреча после записи
+        match = s_dt - timedelta(minutes=15) <= at <= e_dt + timedelta(hours=3)
+        rows.append((not match, abs((at - e_dt).total_seconds()), ev, match))
+    rows.sort(key=lambda r: (r[0], r[1]))
+    return {
+        "suggested": [r[2] for r in rows if r[3]][:2],
+        "others": [r[2] for r in rows if not r[3]][:40],
+    }
 
 
 @miniapp_router.get("/notes/trash")
@@ -9176,9 +9473,14 @@ async def miniapp_transcription_upload(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     with_summary: str = Form("0"),
+    meeting: str = Form(""),
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
-    """Загрузка аудио/видео из миниаппа → транскрипция (+ опционально саммари)."""
+    """Загрузка аудио/видео из миниаппа → транскрипция (+ опционально саммари).
+
+    meeting — JSON встречи (из окна встречи «Добавить запись»): транскрипция получает
+    её тему и сразу привязывается к встрече.
+    """
     from assistant.integrations import transcribe as obu
     from assistant.lib.usage_store import insert_usage_event
     from assistant.services import transcription_notes as tnotes
@@ -9206,6 +9508,15 @@ async def miniapp_transcription_upload(
 
     stem = Path(source_filename).stem.strip() or "Транскрипция"
     title = stem[:120]
+    meeting_ev: dict[str, Any] = {}
+    if meeting.strip():
+        try:
+            parsed = json.loads(meeting)
+            meeting_ev = parsed if isinstance(parsed, dict) else {}
+        except ValueError:
+            meeting_ev = {}
+    if meeting_ev.get("summary"):
+        title = str(meeting_ev.get("summary") or "").strip()[:120] or title
     username = None
     if isinstance(principal.user, dict) and principal.user.get("username"):
         username = str(principal.user.get("username") or "").strip() or None
@@ -9240,6 +9551,13 @@ async def miniapp_transcription_upload(
             transcript=transcript,
             meta=meta,
         )
+        if meeting_ev.get("id") or meeting_ev.get("event_id"):
+            try:
+                from assistant.stores import meeting_links
+
+                meeting_links.link(uid, note["id"], meeting_ev, source="upload")
+            except Exception as e:
+                print(f"[miniapp_transcription_upload] meeting link failed note={note.get('id')} err={e!r}")
         return note
 
     try:

@@ -15990,3 +15990,82 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
 .nh-close { align-items: center; justify-content: center; width: 32px; height: 32px; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; }
 .nh-close:hover { background: var(--surface-muted, rgba(255, 255, 255, 0.06)); color: var(--text); }
 .note-toast-copy + .note-toast-link { margin-left: 10px; }
+
+/* ---- Материалы встречи (окно встречи) ---- */
+.ev-materials { display: flex; flex-direction: column; gap: 8px; }
+.ev-materials-head { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-tertiary); padding: 2px 2px 0; }
+.ev-materials-list { display: flex; flex-direction: column; gap: 8px; }
+.ev-materials-empty { margin: 0; padding: 4px 2px; font-size: 0.85rem; line-height: 1.45; color: var(--text-secondary); }
+.ev-mat { border-radius: 14px; background: var(--surface-elevated, #2a2a2d); padding: 10px 12px; }
+.ev-mat-head { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 0.9rem; }
+.ev-mat-head svg { flex-shrink: 0; color: var(--accent); }
+.ev-mat-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-mat-open { border: none; background: transparent; color: var(--accent); font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; padding: 2px 0; }
+.ev-mat-text { margin-top: 5px; font-size: 0.85rem; line-height: 1.45; color: var(--text-secondary); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ev-mat-list { margin: 6px 0 0; padding-left: 18px; font-size: 0.85rem; line-height: 1.45; color: var(--text); }
+.ev-mat-prog { height: 4px; margin-top: 8px; border-radius: 2px; background: rgba(255, 255, 255, 0.08); overflow: hidden; position: relative; }
+.ev-mat-prog i { position: absolute; top: 0; bottom: 0; width: 35%; border-radius: 2px; background: var(--accent); animation: ev-mat-prog 1.4s ease-in-out infinite; }
+@keyframes ev-mat-prog { 0% { left: -35%; } 100% { left: 100%; } }
+.ev-materials-acts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.ev-materials-act { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 4px; border: none; border-radius: 14px; background: var(--surface-elevated, #2a2a2d); color: var(--text); font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; text-align: center; }
+.ev-materials-act svg { color: var(--accent); }
+.ev-materials-act:hover { background: var(--accent-subtle); }
+.meeting-card-mats { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: -3px; opacity: 0.85; }
+.meeting-card-mats svg { width: 13px; height: 13px; }
+.nl-badge--action { border: none; cursor: pointer; color: var(--accent); background: var(--accent-subtle); font: inherit; font-size: 0.75rem; }
+
+@media (min-width: 960px) {
+  #modal-overlay .modal.modal--ev-materials {
+    width: min(62rem, 100%);
+    max-width: 62rem;
+    max-height: min(92dvh, 54rem);
+  }
+  .event-sheet.event-sheet--materials {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 20px;
+    row-gap: 0;
+    align-items: start;
+  }
+  .event-sheet.event-sheet--materials > * { grid-column: 1; margin-bottom: 10px; min-width: 0; }
+  .event-sheet.event-sheet--materials > .ev-materials {
+    grid-column: 2;
+    grid-row: 1 / span 40;
+    position: sticky;
+    top: 0;
+    padding: 12px;
+    border-radius: 16px;
+    background: var(--surface-muted, rgba(255, 255, 255, 0.03));
+  }
+}
+
+/* ---- Плашка встречи в заметке ---- */
+.note-meeting-plaque { margin: 4px 0 10px; padding: 9px 12px; border-radius: 12px; background: var(--accent-subtle); box-shadow: inset 0 0 0 1px var(--accent-border); display: flex; flex-direction: column; gap: 7px; font-size: 0.85rem; }
+.note-meeting-plaque.hidden { display: none; }
+.nmp-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.nmp-line svg { flex-shrink: 0; color: var(--accent); }
+.nmp-when { border: none; background: transparent; color: var(--text); font: inherit; padding: 0; cursor: pointer; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.nmp-sp { flex: 1; }
+.nmp-link { border: none; background: transparent; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; padding: 0; white-space: nowrap; }
+.nmp-x { border: none; background: transparent; color: var(--text-tertiary); font-size: 1.1rem; line-height: 1; cursor: pointer; padding: 0 2px; }
+.nmp-people { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; position: relative; }
+.nmp-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 999px; background: var(--surface-elevated, #2a2a2d); font-size: 0.8rem; color: var(--text); }
+.nmp-chip button { border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; padding: 0; font-size: 0.95rem; line-height: 1; }
+.nmp-add { border: none; color: var(--accent); background: transparent; cursor: pointer; font: inherit; font-size: 0.8rem; font-weight: 600; }
+.nmp-add.hidden, .nmp-add-box.hidden, .nmp-suggest.hidden { display: none; }
+.nmp-add-box { position: relative; }
+.nmp-input { width: 200px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--accent-border); background: var(--surface, #19191a); color: var(--text); font: inherit; font-size: 0.8rem; outline: none; }
+.nmp-suggest { position: absolute; left: 0; top: calc(100% + 4px); z-index: 30; min-width: 240px; display: flex; flex-direction: column; padding: 4px; border-radius: 12px; background: var(--surface-elevated, #2a2a2d); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4); }
+.nmp-suggest button { border: none; background: transparent; color: var(--text); font: inherit; font-size: 0.85rem; text-align: left; padding: 7px 9px; border-radius: 8px; cursor: pointer; }
+.nmp-suggest button:hover { background: var(--accent-subtle); }
+
+/* ---- «Добавить ко встрече» ---- */
+.meeting-pick-body { display: flex; flex-direction: column; gap: 8px; }
+.meeting-pick-list { display: flex; flex-direction: column; gap: 6px; }
+.meeting-pick-sect { margin: 8px 2px 0; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-tertiary); }
+.meeting-pick-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 10px 12px; border: none; border-radius: 12px; background: var(--surface-elevated, #2a2a2d); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.meeting-pick-row:hover { background: var(--accent-subtle); }
+.meeting-pick-row.is-best { box-shadow: inset 0 0 0 1px var(--accent-border); background: var(--accent-subtle); }
+.meeting-pick-row b { font-size: 0.92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meeting-pick-row em { font-style: normal; font-size: 0.75rem; color: var(--accent); }
+.meeting-pick-row small { grid-column: 1 / 3; font-size: 0.8rem; color: var(--text-secondary); }

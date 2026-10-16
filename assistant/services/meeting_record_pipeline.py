@@ -191,8 +191,10 @@ def persist_meeting_artifacts_for_user(
     topic: str,
     source_url: str | None,
     filename: str | None,
+    native_meeting_id: str | None = None,
+    start_at: Any = None,
 ) -> dict[str, Any]:
-    """Сохранить транскрипцию и саммари одной заметкой. Возвращает note."""
+    """Сохранить транскрипцию и саммари одной заметкой и привязать к встрече. Возвращает note."""
     del username
     transcript = _format_transcript_display(str(processed.get("transcript") or ""))
     participant_names = list(processed.get("participant_names") or [])
@@ -208,13 +210,24 @@ def persist_meeting_artifacts_for_user(
             _display_participant_name(n) for n in participant_names if str(n).strip()
         ]
     title = (topic or "").strip() or str(meta.get("main_topic") or "").strip() or "Встреча"
-    return tnotes.create_with_summary(
+    note = tnotes.create_with_summary(
         int(user_id),
         title=title,
         transcript=transcript,
         summary=str(processed.get("summary_text") or ""),
         meta=meta,
     )
+    if note and note.get("id") is not None:
+        from assistant.services import meeting_autolink
+
+        meeting_autolink.link_recording_note(
+            int(user_id),
+            int(note["id"]),
+            meeting_url=source_url or "",
+            native_meeting_id=native_meeting_id or "",
+            start_at=start_at,
+        )
+    return note
 
 
 def notify_summary_ready(
@@ -340,6 +353,8 @@ def process_job_recording_async(job_id: int, recording: dict[str, Any]) -> None:
                     topic=topic,
                     source_url=source_url,
                     filename=fname,
+                    native_meeting_id=native_mid,
+                    start_at=job.get("start_at_utc"),
                 )
                 nid = int(note["id"])
                 note_ids[uid] = nid
