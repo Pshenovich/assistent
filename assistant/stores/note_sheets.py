@@ -370,6 +370,12 @@ def create_sheet(
         )
         _conn().commit()
         sid = int(cur.lastrowid)
+    try:
+        from assistant.stores import note_versions
+
+        note_versions.mark_current(note_id, sid)
+    except Exception:
+        pass
     out = get_extra_sheet(note_id, sid)
     assert out is not None
     return out

@@ -2469,7 +2469,17 @@ async def _resolve_miniapp_principal(
 
 
 async def require_miniapp_user(request: Request) -> _MiniappPrincipal:
-    return await _resolve_miniapp_principal(request, enforce_access=True)
+    principal = await _resolve_miniapp_principal(request, enforce_access=True)
+    try:
+        from assistant.stores import note_versions
+
+        # Для истории версий: кто правит и правка ли это ИИ (заголовок ставит клиент).
+        note_versions.set_edit_context(
+            principal.telegram_user_id, request.headers.get("x-leo-edit-source") or ""
+        )
+    except Exception:
+        pass
+    return principal
 
 
 async def require_share_commenter(request: Request) -> _MiniappPrincipal:
@@ -7695,6 +7705,13 @@ def note_list_badges(body: str) -> dict[str, Any]:
     return out
 
 
+def _plain_preview_text(h: str) -> str:
+    t = _DATA_URI_RE.sub(" ", h or "")
+    t = re.sub(r"<[^>]+>", " ", t)
+    t = html_lib.unescape(t).replace("\xa0", " ")
+    return " ".join(t.split())
+
+
 def looks_like_list_preview_overwrite(new_body: str | None, old_body: str | None) -> bool:
     """Новый текст — это обрезанное превью из списка (600 симв. + «…»), а в базе полный текст.
 
@@ -8222,15 +8239,39 @@ async def miniapp_note_versions(
 
     uid = int(principal.telegram_user_id)
 
-    def _run() -> list[dict[str, Any]] | None:
+    def _run() -> dict[str, Any] | None:
         if notes_store.get_accessible_note(uid, note_id, with_sharing=False) is None:
             return None
-        return note_versions.list_versions(note_id)
+        rows = note_versions.list_versions(note_id)
+        current = note_versions.current_states(note_id)
+        ids = {str(r.get("author_user_id") or "") for r in rows}
+        ids |= {str(c.get("author_user_id") or "") for c in current.values()}
+        return {
+            "versions": rows,
+            "current": {str(k): v for k, v in current.items()},
+            "authors": _note_version_authors(ids),
+        }
 
-    rows = await run_in_threadpool(_run)
-    if rows is None:
+    res = await run_in_threadpool(_run)
+    if res is None:
         raise HTTPException(status_code=404, detail="Заметка не найдена")
-    return {"ok": True, "versions": rows}
+    return {"ok": True, **res}
+
+
+def _note_version_authors(ids: set[str]) -> dict[str, dict[str, Any]]:
+    from assistant.stores import note_members
+
+    out: dict[str, dict[str, Any]] = {}
+    for raw in ids:
+        if not raw:
+            continue
+        try:
+            prof = note_members.get_profile(raw)
+        except Exception:
+            prof = None
+        name = note_members.profile_display_name(prof, fallback="Участник")
+        out[raw] = {"name": name, "photo_url": (prof or {}).get("photo_url") or None}
+    return out
 
 
 @miniapp_router.get("/notes/local/{note_id}/versions/{version_id}")
@@ -8277,19 +8318,40 @@ async def miniapp_note_version_restore(
             return None
         owner = str(access.get("owner_user_id") or uid)
         sid = int(v.get("sheet_id") or 0)
+        # Текущее состояние — отдельной версией «до восстановления», чтобы восстановление можно было отменить.
+        undo_id = None
+        if sid == note_versions.PRIMARY_SHEET:
+            cur = notes_store.get_note(owner, note_id) or {}
+            undo_id = note_versions.record(
+                owner_user_id=owner, note_id=note_id, title=str(cur.get("title") or ""),
+                body=str(cur.get("body") or ""), revision=cur.get("revision") or 0,
+                state_at=str(cur.get("updated_at") or ""),
+                sheet_title=str(cur.get("primary_sheet_title") or ""),
+                reason="before_restore", force=True,
+            )
+        else:
+            cur_sh = note_sheets_store.get_extra_sheet(note_id, sid)
+            if cur_sh:
+                undo_id = note_versions.record(
+                    owner_user_id=owner, note_id=note_id, title=str(access.get("title") or ""),
+                    body=str(cur_sh.get("body") or ""), revision=cur_sh.get("revision") or 0,
+                    state_at=str(cur_sh.get("updated_at") or ""), sheet_id=sid,
+                    sheet_title=str(cur_sh.get("title") or ""), sheet_kind=str(cur_sh.get("kind") or ""),
+                    reason="before_restore", force=True,
+                )
         if sid == note_versions.PRIMARY_SHEET:
             item = notes_store.update_note(
                 owner, note_id, title=v.get("title") or None, body=v.get("body") or "",
                 allow_empty_body=True, actor_user_id=uid,
             )
-            return {"kind": "note", "item": item}
+            return {"kind": "note", "item": item, "undo_version_id": undo_id}
         existing = note_sheets_store.get_extra_sheet(note_id, sid)
         if existing:
             sheet = note_sheets_store.update_sheet(
                 note_id, sid, title=v.get("sheet_title") or None, body=v.get("body") or "",
                 kind=v.get("sheet_kind") or None,
             )
-            return {"kind": "sheet", "sheet": sheet, "recreated": False}
+            return {"kind": "sheet", "sheet": sheet, "recreated": False, "undo_version_id": undo_id}
         note = notes_store.get_note(owner, note_id)
         sheet = note_sheets_store.create_sheet(
             note, title=v.get("sheet_title") or "Лист", body=v.get("body") or "",
@@ -8303,6 +8365,80 @@ async def miniapp_note_version_restore(
         raise HTTPException(status_code=400, detail=str(e)) from e
     if res is None:
         raise HTTPException(status_code=404, detail="Версия не найдена")
+    return {"ok": True, **res}
+
+
+@miniapp_router.get("/notes/trash")
+async def miniapp_notes_trash(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Недавно удалённые заметки (30 дней) — из снимков истории версий."""
+    from assistant.stores import note_versions
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> list[dict[str, Any]]:
+        out = []
+        for r in note_versions.list_deleted_notes(uid):
+            if notes_store.get_note(uid, int(r["note_id"])):
+                continue  # заметка с этим id жива (на всякий случай)
+            head = str(r.pop("head", "") or "")
+            r["preview"] = _plain_preview_text(head)[:220]
+            out.append(r)
+        return out
+
+    items = await run_in_threadpool(_run)
+    return {"ok": True, "items": items, "days": note_versions.TRASH_DAYS}
+
+
+@miniapp_router.post("/notes/trash/{note_id}/restore")
+async def miniapp_notes_trash_restore(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Вернуть удалённую заметку: новая заметка с тем же текстом, листами и проектом."""
+    from assistant.stores import note_sheets as note_sheets_store
+    from assistant.stores import note_versions
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any] | None:
+        snap = note_versions.deleted_note_snapshot(uid, note_id)
+        if snap is None:
+            return None
+        extra = snap.get("extra") or {}
+        meta = extra.get("meta") if isinstance(extra.get("meta"), dict) else None
+        note = notes_store.create_note(
+            uid, str(snap.get("title") or ""), str(snap.get("body") or ""),
+            role=str(extra.get("role") or ""), meta=meta,
+            primary_sheet_title=str(snap.get("sheet_title") or ""),
+        )
+        failed = 0
+        for sh in snap.get("sheets") or []:
+            try:
+                note_sheets_store.create_sheet(
+                    note, title=str(sh.get("sheet_title") or ""), body=str(sh.get("body") or ""),
+                    kind=str(sh.get("sheet_kind") or note_sheets_store.SHEET_KIND_DOC),
+                )
+            except Exception as e:
+                failed += 1
+                print(f"[notes_trash] sheet restore failed note={note_id} err={e!r}")
+        tag_ids = [int(t) for t in (extra.get("tag_ids") or []) if str(t).isdigit()]
+        if tag_ids:
+            try:
+                from assistant.stores import tags as tags_store
+
+                tags_store.set_item_tags(uid, "local", note["id"], tag_ids[:1])
+            except Exception as e:
+                print(f"[notes_trash] tags restore failed note={note_id} err={e!r}")
+        note_versions.mark_note_restored(note_id)
+        return {"note_id": int(note["id"]), "sheets_failed": failed}
+
+    res = await run_in_threadpool(_run)
+    if res is None:
+        raise HTTPException(status_code=404, detail="Удалённая заметка не найдена")
     return {"ok": True, **res}
 
 

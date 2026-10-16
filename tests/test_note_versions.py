@@ -66,6 +66,45 @@ class NoteVersionsTests(unittest.TestCase):
         reasons = {v["reason"] for v in note_versions.list_versions(n["id"])}
         self.assertIn("note_deleted", reasons)
 
+    def test_author_is_who_wrote_the_state(self) -> None:
+        note_versions.set_edit_context(1)
+        n = notes_store.create_note(1, title="A", body="<p>от Маши</p>")
+        note_versions.set_edit_context(2, "ai")
+        notes_store.update_note(1, n["id"], body="<p>от ИИ</p>")
+        note_versions.set_edit_context(3)
+        old = note_versions.THROTTLE
+        note_versions.THROTTLE = timedelta(seconds=-1)
+        try:
+            notes_store.update_note(1, n["id"], body="<p>от Пети</p>")
+        finally:
+            note_versions.THROTTLE = old
+            note_versions.set_edit_context("")
+        vs = note_versions.list_versions(n["id"])
+        self.assertEqual([(v["author_user_id"], v["source"]) for v in vs], [("2", "ai"), ("1", "")])
+        cur = note_versions.current_states(n["id"])[0]
+        self.assertEqual((cur["author_user_id"], cur["source"]), ("3", ""))
+
+    def test_deleted_note_snapshot_and_restore_mark(self) -> None:
+        n = notes_store.create_note(1, title="Удаляемая", body="<p>основа</p>", role="")
+        note_sheets.create_sheet(n, title="Бюджет", body="<p>цифры</p>")
+        notes_store.delete_note(1, n["id"])
+        items = note_versions.list_deleted_notes(1)
+        self.assertEqual([i["note_id"] for i in items], [n["id"]])
+        self.assertEqual(items[0]["sheets"], 1)
+        snap = note_versions.deleted_note_snapshot(1, n["id"])
+        self.assertEqual(snap["body"], "<p>основа</p>")
+        self.assertEqual([s["sheet_title"] for s in snap["sheets"]], ["Бюджет"])
+        self.assertIsNone(note_versions.deleted_note_snapshot(2, n["id"]))  # чужая
+        note_versions.mark_note_restored(n["id"])
+        self.assertEqual(note_versions.list_deleted_notes(1), [])
+
+    def test_delete_saved_even_if_same_as_last_version(self) -> None:
+        n = notes_store.create_note(1, title="A", body="<p>один</p>")
+        notes_store.update_note(1, n["id"], body="<p>два</p>")
+        notes_store.update_note(1, n["id"], body="<p>один</p>")  # throttled
+        notes_store.delete_note(1, n["id"])
+        self.assertEqual(len(note_versions.list_deleted_notes(1)), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
