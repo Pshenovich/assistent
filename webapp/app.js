@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-mobile3";
+  var WEBAPP_BUILD = "20261016-guard1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-mobile3";
+  const NOTE_EDITOR_ASSET_V = "20261016-guard1";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -35584,6 +35584,7 @@
           var keptTags = noteTagsOf(n);
           var keptProject = noteProjectOf(n);
           n = Object.assign({}, n, fresh);
+          n.body_preview_only = false;
           if (!noteTagsOf(n).length && keptTags.length) {
             n.tags = keptTags.slice();
             n.project = keptProject || keptTags[0] || null;
@@ -35598,9 +35599,21 @@
             prependLocalInCache(n);
           }
         }
+        if (n && n.body_preview_only && !(fresh && fresh.body != null)) {
+          showNoteToast("Не удалось загрузить заметку полностью — попробуйте ещё раз");
+          return;
+        }
         openLocalNoteDetailReady(n, opts, noteIsCreate, noteId);
       })
       .catch(function () {
+        // В списке только превью (первые 600 символов) — открывать его на редактирование нельзя:
+        // сохранение затёрло бы полный текст. Без сети показываем, что не загрузилось.
+        if (n && n.body_preview_only) {
+          showNoteToast("Нет связи — заметка не загрузилась полностью. Попробуйте ещё раз");
+          if (notesSplitCurrentId === noteId) notesSplitCurrentId = "";
+          syncNotesSplitLayout();
+          return;
+        }
         proceed();
       });
   }
