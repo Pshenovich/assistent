@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from collections import Counter
@@ -186,7 +187,7 @@ def looks_like_calendar_question(text: str) -> bool:
             r"(?i)(встреч|созвон|календар|задач|напомин|слот|свобод|занят|расписан|планёрк|планерк|"
             r"\bмитинг|сегодня|завтра|послезавтра|понедельник|вторник|сред[аеуы]\b|четверг|пятниц|суббот|"
             r"воскресен|на неделе|недел[юи]|в \d{1,2}[:.]\d{2}|во сколько|когда у меня|с кем|сколько времени|"
-            r"запланир|перенеси встреч)"
+            r"запланир|перенеси встреч|что решили|договорил|обещал|итоги встреч|\b1:1\b|транскрипц)"
         )
     return bool(_CAL_INTENT_RE.search(str(text or "")))
 
@@ -237,6 +238,7 @@ SYSTEM_ADDON = """У тебя есть доступ к календарю пол
 - Удаление никогда не выполняй сам: вызови propose_delete — пользователь подтвердит кнопкой. id бери из calendar_events/reminders_list; если не знаешь id — передай title (название), найду сам.
 - id встреч для изменения бери из calendar_events, не придумывай.
 - Участников указывай именами из контактов; если не уверен — contacts_find.
+- У встреч бывают материалы (транскрипции с саммари, заметки) — в calendar_events это поле materials. Что было/решили на встрече — meeting_materials; что решали с человеком, что он обещал/не сделал, подготовка к встрече с ним — person_history. Отвечай по материалам, называй встречу и дату.
 - Когда перечисляешь встречи/задачи/напоминания — вызови show_calendar_cards с их id (до 10): под ответом появятся карточки, которые можно открыть. Текстом дай короткий итог, без длинного списка.
 - Когда подбираешь время встречи — найди окна (calendar_free_slots) и вызови offer_slots с 3–6 лучшими вариантами (и участниками): пользователь выберет карточку, встреча создастся сама.
 - После действий коротко напиши, что сделал (время в формате «чт 16 окт, 15:00–15:30»). Кнопки «Отменить»/«Удалить» пользователь увидит сам под ответом."""
@@ -302,6 +304,14 @@ TOOLS: list[dict[str, Any]] = [
          "duration_min": {"type": "integer", "default": 30}, "attendees": _PEOPLE,
          "title": {"type": "string", "description": "Название будущей встречи"}},
         ["slots"]),
+    _fn("meeting_materials", "Материалы встречи: привязанные транскрипции (саммари, задачи, решения) и заметки. Вызывай, когда спрашивают, что было/решили на встрече.",
+        {"event_id": {"type": "string"}, "calendar_id": {"type": "string"},
+         "title": {"type": "string", "description": "Название встречи, если id неизвестен"},
+         "date": {**_DATE, "description": "Дата встречи (вместе с title)"}}),
+    _fn("person_history", "История с человеком: встречи с ним за период и их материалы (саммари, задачи, решения), заметки с его участием. Для вопросов «что решили с X», «что X не сделал», «подготовь 1:1 с X».",
+        {"person": {"type": "string", "description": "Имя или @ник из контактов"},
+         "start_date": {**_DATE, "description": "По умолчанию — 60 дней назад"}, "end_date": _DATE},
+        ["person"]),
     _fn("propose_delete", "Предложить удалить встречу/задачу/напоминание. НЕ удаляет — пользователь подтвердит кнопкой.",
         {"kind": {"type": "string", "enum": ["event", "task", "reminder"]}, "id": {"type": "string"},
          "title": {"type": "string", "description": "Название, если id неизвестен"},
@@ -449,6 +459,7 @@ def tool_calendar_events(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     t0, t1 = _window(ctx.uid, args.get("start_date"), args.get("end_date"))
     names = _email_names(ctx)
     out: list[dict[str, Any]] = []
+    meeting_keys: list[tuple[dict[str, Any], str]] = []
     if has_google_calendar(ctx.uid):
         for ev in _events_in_window(ctx, t0, t1, str(args.get("query") or "")):
             raw = ev.get("raw") if isinstance(ev.get("raw"), dict) else {}
@@ -471,6 +482,7 @@ def tool_calendar_events(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
             if raw.get("location"):
                 item["location"] = str(raw.get("location"))[:120]
             out.append(item)
+            meeting_keys.append((item, f"{item['calendar_id'] or 'primary'}:{item['id']}"))
             ctx.seen_items.append({"type": "event", "id": item["id"], "calendar_id": item["calendar_id"], "title": item["title"]})
     try:
         from assistant.stores import calendar_tasks
@@ -489,6 +501,7 @@ def tool_calendar_events(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
             ctx.seen_items.append({"type": "task", "id": str(t.get("id")), "title": t.get("title")})
     except Exception as e:
         print(f"[gpt_calendar] tasks_list err={e!r}")
+    _mark_materials(ctx, meeting_keys)
     out.sort(key=lambda x: str(x.get("start") or ""))
     note = None if has_google_calendar(ctx.uid) else "Google Календарь не подключён — показаны только задачи Leo."
     res: dict[str, Any] = {"items": out[:MAX_EVENTS_OUT], "total": len(out)}
@@ -1293,3 +1306,189 @@ def actions_by_ids(ids: list[str]) -> list[dict[str, Any]]:
             out.append(a)
     return out
 
+
+
+# ---------------------------------------------------------------- материалы встреч
+
+def _mark_materials(ctx: GptCalendarContext, pairs: list[tuple[dict[str, Any], str]]) -> None:
+    if not pairs:
+        return
+    try:
+        from assistant.stores import meeting_links
+
+        kinds = meeting_links.kinds_for_events(ctx.uid, [k for _, k in pairs])
+    except Exception as e:
+        print(f"[gpt_calendar] materials mark err={e!r}")
+        return
+    for item, key in pairs:
+        k = kinds.get(key)
+        if k:
+            item["materials"] = {"transcriptions": k.get("transcription", 0), "notes": k.get("note", 0)}
+
+
+def _material_digest(ctx: GptCalendarContext, note_id: int, *, full: bool) -> dict[str, Any] | None:
+    from assistant.lib.telegram_html import html_to_plain
+    from assistant.services import transcription_notes as tnotes
+    from assistant.stores import notes as notes_store
+
+    note = notes_store.get_accessible_note(ctx.uid, int(note_id), with_sharing=False)
+    if not note:
+        return None
+    is_tr = str(note.get("role") or "") == "transcription"
+    meta = note.get("meta") if isinstance(note.get("meta"), dict) else {}
+    out: dict[str, Any] = {"note_id": int(note["id"]), "kind": "transcription" if is_tr else "note", "title": note.get("title")}
+    if is_tr:
+        if meta.get("main_topic"):
+            out["main_topic"] = str(meta.get("main_topic"))[:300]
+        tasks = []
+        for t in meta.get("tasks") or []:
+            if isinstance(t, dict):
+                tasks.append({k: str(t.get(k) or "")[:200] for k in ("assignee", "task", "deadline") if t.get(k)})
+        if tasks:
+            out["tasks"] = tasks[:15]
+        if meta.get("decisions"):
+            out["decisions"] = [str(x)[:300] for x in meta.get("decisions") or []][:12]
+        if meta.get("open_questions"):
+            out["open_questions"] = [str(x)[:300] for x in meta.get("open_questions") or []][:8]
+        summary = tnotes.summary_html(note)
+        text = summary or (tnotes.transcript_html(note) if full else "")
+    else:
+        text = str(note.get("body") or "")
+    try:
+        plain = html_to_plain(text).strip() if text else ""
+    except Exception:
+        plain = re.sub(r"<[^>]+>", " ", text or "")
+    limit = 6000 if full else 1200
+    if plain:
+        out["text"] = plain[:limit] + ("…" if len(plain) > limit else "")
+    return out
+
+
+def _meeting_people(link: dict[str, Any], people: list[dict[str, Any]]) -> list[str]:
+    names = [str(a.get("name") or a.get("email") or "") for a in link.get("attendees") or []]
+    names += [str(p.get("name") or p.get("email") or "") for p in people]
+    seen: list[str] = []
+    for n in names:
+        if n and n not in seen:
+            seen.append(n)
+    return seen[:20]
+
+
+def tool_meeting_materials(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    from assistant.stores import meeting_links
+
+    eid = str(args.get("event_id") or "").strip()
+    cal = str(args.get("calendar_id") or "primary").strip() or "primary"
+    if not eid:
+        title = str(args.get("title") or "").strip().lower()
+        if not title:
+            return _err("Укажи event_id или title встречи")
+        day = args.get("date")
+        t0, t1 = _window(ctx.uid, day or (datetime.now(_tz(ctx.uid)) - timedelta(days=30)).date().isoformat(),
+                         day or datetime.now(_tz(ctx.uid)).date().isoformat())
+        cands = [ev for ev in _events_in_window(ctx, t0, t1) if title in str(ev.get("summary") or "").lower()] if has_google_calendar(ctx.uid) else []
+        if not cands:
+            return _err("Встреча не найдена — уточни дату или посмотри calendar_events")
+        ev = cands[-1]
+        eid, cal = str(ev.get("event_id") or ""), str(ev.get("calendar_id") or "primary")
+    rows = meeting_links.notes_for_event(ctx.uid, meeting_links.event_key(cal, eid))
+    if not rows:
+        return _ok({"event_id": eid, "materials": [], "note": "К этой встрече ничего не привязано (нет записи и заметок)."})
+    mats = []
+    meeting = None
+    for r in rows:
+        d = _material_digest(ctx, int(r["note_id"]), full=len(rows) <= 2)
+        if d:
+            mats.append(d)
+        if meeting is None:
+            link = meeting_links.get_for_note(ctx.uid, int(r["note_id"]))
+            if link:
+                meeting = {
+                    "title": link.get("summary"),
+                    "when": human_when(_iso_local(ctx.uid, link.get("start_iso")), _iso_local(ctx.uid, link.get("end_iso")), ctx.uid),
+                    "people": _meeting_people(link, meeting_links.people_for_note(ctx.uid, int(r["note_id"]))),
+                }
+    return _ok({"meeting": meeting, "materials": mats})
+
+
+def tool_person_history(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    from assistant.stores import contacts_store
+    from assistant.stores import meeting_links
+
+    who = str(args.get("person") or "").strip()
+    if not who:
+        return _err("Укажи человека")
+    emails, missing = _resolve_people(ctx, [who])
+    contact = None
+    q = _yo(who.lstrip("@"))
+    for c in _contacts(ctx):
+        hay = _yo(" ".join([str(c.get("name") or ""), str(c.get("telegram_username") or ""), str(c.get("email") or "")]))
+        if (emails and str(c.get("email") or "").lower() == emails[0].lower()) or (q and q[:-1 if len(q) > 4 else None] in hay):
+            contact = c
+            break
+    email = (emails[0] if emails else str((contact or {}).get("email") or "")).strip().lower()
+    if not email and not contact:
+        return _err(f"Не нашёл «{who}» в контактах — уточни имя (contacts_find)")
+    now = datetime.now(_tz(ctx.uid))
+    t0, t1 = _window(
+        ctx.uid,
+        args.get("start_date") or (now - timedelta(days=60)).date().isoformat(),
+        args.get("end_date") or (now + timedelta(days=14)).date().isoformat(),
+    )
+    meetings: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    if email and has_google_calendar(ctx.uid):
+        evs = []
+        for ev in _events_in_window(ctx, t0, t1, email):
+            raw = ev.get("raw") if isinstance(ev.get("raw"), dict) else {}
+            if not any(str(a.get("email") or "").lower() == email for a in raw.get("attendees") or [] if isinstance(a, dict)):
+                continue
+            evs.append(ev)
+        keys = [meeting_links.event_key(ev.get("calendar_id"), ev.get("event_id")) for ev in evs]
+        mats = meeting_links.materials_for_events(ctx.uid, keys)
+        budget = 6  # полный текст материалов — для последних встреч, остальное кратко
+        for ev, key in sorted(zip(evs, keys), key=lambda p: str(p[0].get("start_iso") or p[0].get("start") or ""), reverse=True):
+            seen_keys.add(key)
+            item: dict[str, Any] = {
+                "id": ev.get("event_id"),
+                "calendar_id": ev.get("calendar_id"),
+                "title": ev.get("summary"),
+                "start": _fmt_dt(ev.get("start"), ctx.uid),
+            }
+            digests = []
+            for m in mats.get(key, []):
+                d = _material_digest(ctx, int(m["note_id"]), full=False) if budget > 0 else {"note_id": m["note_id"], "kind": m["kind"], "title": m["title"]}
+                budget -= 1
+                if d:
+                    digests.append(d)
+            if digests:
+                item["materials"] = digests
+            meetings.append(item)
+            ctx.seen_items.append({"type": "event", "id": item["id"], "calendar_id": item["calendar_id"], "title": item["title"]})
+    keys = [str((contact or {}).get("email") or "").lower(), str((contact or {}).get("name") or "").strip().lower()]
+    if contact:
+        keys.append(contacts_store.contact_key(contact))
+    manual = []
+    for row in meeting_links.notes_for_person(ctx.uid, keys):
+        if row.get("event_id") and meeting_links.event_key(row.get("calendar_id"), row.get("event_id")) in seen_keys:
+            continue
+        d = _material_digest(ctx, int(row["note_id"]), full=False)
+        if d:
+            d["meeting"] = row.get("summary") or ""
+            manual.append(d)
+    res: dict[str, Any] = {
+        "person": (contact or {}).get("name") or who,
+        "meetings": meetings[:25],
+        "meetings_total": len(meetings),
+    }
+    if manual:
+        res["other_materials"] = manual[:10]
+    if not email:
+        res["note"] = "У контакта нет почты — встречи из календаря не найти, показаны только материалы, куда он добавлен вручную."
+    elif not has_google_calendar(ctx.uid):
+        res["note"] = "Google Календарь не подключён."
+    return _ok(res)
+
+
+EXECUTORS["meeting_materials"] = tool_meeting_materials
+EXECUTORS["person_history"] = tool_person_history

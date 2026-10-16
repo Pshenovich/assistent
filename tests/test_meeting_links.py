@@ -135,5 +135,72 @@ class AutolinkTests(unittest.TestCase):
         self.assertEqual(found["summary"], "near")
 
 
+class AssistantToolsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["NOTES_DB_PATH"] = os.path.join(self._tmp.name, "notes.sqlite")
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        meeting_links._CONN = None  # type: ignore[attr-defined]
+
+    def tearDown(self) -> None:
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        meeting_links._CONN = None  # type: ignore[attr-defined]
+        self._tmp.cleanup()
+
+    def _tr_note(self) -> dict:
+        return notes_store.create_note(
+            1, "1:1 с Андреем", "<p>Обсудили тренды и найм.</p>", role="transcription",
+            meta={"main_topic": "Тренды", "tasks": [{"assignee": "Андрей", "task": "Релиз трендов", "deadline": "пт"}],
+                  "decisions": ["Анонимизатор — мини-модель"]},
+            primary_sheet_title="Саммари",
+        )
+
+    def test_meeting_materials(self) -> None:
+        import json as _json
+
+        from assistant.services import gpt_calendar_tools as g
+
+        n = self._tr_note()
+        meeting_links.link(1, n["id"], EV)
+        ctx = g.GptCalendarContext(uid=1)
+        out = _json.loads(g.tool_meeting_materials(ctx, {"event_id": EV["id"], "calendar_id": "primary"}))
+        self.assertEqual(out["meeting"]["title"], "1:1 с Андреем")
+        self.assertIn("Андрей", out["meeting"]["people"])
+        mat = out["materials"][0]
+        self.assertEqual(mat["kind"], "transcription")
+        self.assertEqual(mat["tasks"][0]["task"], "Релиз трендов")
+        self.assertEqual(mat["decisions"], ["Анонимизатор — мини-модель"])
+        self.assertIn("тренды", mat["text"])
+        empty = _json.loads(g.tool_meeting_materials(ctx, {"event_id": "nope"}))
+        self.assertEqual(empty["materials"], [])
+
+    def test_person_history(self) -> None:
+        import json as _json
+
+        from assistant.services import gpt_calendar_tools as g
+
+        n = self._tr_note()
+        meeting_links.link(1, n["id"], EV)
+        other = notes_store.create_note(1, "Созвон в кафе", "<p>Андрей обещал план найма.</p>")
+        meeting_links.add_person(1, other["id"], name="Андрей", email="andrey@x.ru")
+        start = datetime.now(timezone.utc) - timedelta(days=2)
+        evs = [
+            {"event_id": EV["id"], "calendar_id": "primary", "summary": "1:1 с Андреем", "start": start, "end": start,
+             "raw": {"attendees": [{"email": "andrey@x.ru"}]}},
+            {"event_id": "chu", "calendar_id": "primary", "summary": "Без Андрея", "start": start, "end": start,
+             "raw": {"attendees": [{"email": "other@x.ru"}]}},
+        ]
+        ctx = g.GptCalendarContext(uid=1)
+        with mock.patch.object(g, "has_google_calendar", return_value=True), mock.patch.object(
+            g, "_events_in_window", return_value=evs
+        ), mock.patch.object(g, "_contacts", return_value=[{"name": "Андрей", "email": "andrey@x.ru"}]), mock.patch.object(
+            g, "_resolve_people", return_value=(["andrey@x.ru"], [])
+        ):
+            out = _json.loads(g.tool_person_history(ctx, {"person": "Андрей"}))
+        self.assertEqual([m["title"] for m in out["meetings"]], ["1:1 с Андреем"])
+        self.assertEqual(out["meetings"][0]["materials"][0]["decisions"], ["Анонимизатор — мини-модель"])
+        self.assertEqual([m["title"] for m in out["other_materials"]], ["Созвон в кафе"])
+
+
 if __name__ == "__main__":
     unittest.main()
