@@ -15707,7 +15707,8 @@ html.notes-chats-tab .notes-project-btn { display: none; }
 .note-editor-expand-btn.hidden { display: none; }
 @media (min-width: 960px) {
   html.notes-split #panel-notes { max-width: none; }
-  html.notes-split #notes-root { width: clamp(300px, 28vw, 380px); max-width: 380px; margin-left: 0; margin-right: 0; }
+  html.notes-col #panel-notes { max-width: none !important; margin-left: 0 !important; margin-right: 0 !important; }
+  html.notes-col #notes-root { width: clamp(300px, 28vw, 380px) !important; max-width: 380px !important; margin-left: 0 !important; margin-right: 0 !important; }
   html.notes-split .notes-pane--stack { grid-template-columns: minmax(0, 1fr) !important; gap: 8px; }
   html.notes-split #notes-project-chips { display: none; }
   html.notes-split .notes-filter-bar { flex-wrap: nowrap; gap: 8px; }
@@ -15742,7 +15743,6 @@ html.notes-chats-tab .notes-project-btn { display: none; }
 .chat-thread-row.cl-row .chat-thread-row-preview { margin-top: 2px; font-size: 0.8125rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chat-thread-row.cl-row mark { background: rgba(250, 204, 21, 0.28); color: inherit; border-radius: 3px; }
 @media (min-width: 960px) {
-  html.notes-chats-tab #notes-root { width: clamp(300px, 28vw, 380px) !important; max-width: 380px !important; margin-left: 0 !important; margin-right: 0 !important; }
   html.notes-chats-tab #notes-pane-chats.chat-threads-pane,
   #notes-pane-chats.chat-threads-pane:not(.hidden) { border: 0 !important; border-radius: 0 !important; overflow: visible !important; }
   #notes-pane-chats:not(.hidden) #chat-threads-list { width: 100% !important; flex: 1 1 auto !important; overflow: visible !important; height: auto !important; }
@@ -15772,4 +15772,20 @@ html.notes-chats-tab .notes-project-btn { display: none; }
   #note-editor-toolbar-wrap .note-tg-btn--mic { background: transparent; }
   #note-editor-toolbar-wrap .note-tg-btn--active,
   #note-editor-toolbar-wrap .note-tg-btn--menu-open { color: #5b9fff; background: rgba(91, 159, 255, 0.16); }
+}
+
+@media (min-width: 960px) {
+  /* Одна колонка списка для «Заметок», «Транскрипций» и «Чатов» — ширина не прыгает при переключении */
+  html.notes-col .notes-filter-bar { flex-wrap: nowrap; gap: 8px; }
+  html.notes-col .notes-search-wrap { flex: 1 1 auto; min-width: 0; }
+  /* Поле поиска всегда открыто — иконка внутри поля, без отдельной кнопки */
+  html.notes-col #notes-search-toggle { display: none; }
+  html.notes-col .notes-search-wrap .notes-search-field { position: relative; flex: 1 1 auto; margin-left: 0; }
+  html.notes-col .notes-search-wrap .notes-search-input { padding-left: 2.25rem; }
+  html.notes-col .notes-search-wrap .notes-search-field::before { content: ""; position: absolute; left: 0.75rem; top: 50%; width: 16px; height: 16px; transform: translateY(-50%); pointer-events: none; opacity: 0.6; background: currentColor; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E") center / contain no-repeat; color: var(--text-secondary, #909499); z-index: 1; }
+  /* Шторка фильтра — над колонкой списка, а не под открытой заметкой */
+  html.notes-col #notes-filter-overlay.modal-overlay { left: var(--sidebar-w, 244px); right: calc(100vw - var(--notes-split-left, 696px)); z-index: 130; align-items: flex-start; justify-content: stretch; padding: 16px 12px; }
+  html.notes-col #notes-filter-overlay .modal { width: 100%; max-width: none; max-height: calc(100dvh - 32px); }
+  /* Под панелью редактора нет отдельной подложки */
+  #note-editor-toolbar-wrap.note-editor-toolbar-wrap--bottom { background: transparent; border-top: 0; backdrop-filter: none; -webkit-backdrop-filter: none; padding: 8px 16px 16px; }
 }
