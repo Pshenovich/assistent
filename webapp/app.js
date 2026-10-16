@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-mobile2";
+  var WEBAPP_BUILD = "20261016-mobile3";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-mobile2";
+  const NOTE_EDITOR_ASSET_V = "20261016-mobile3";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -34607,7 +34607,8 @@
         var rect = notesRoot.getBoundingClientRect();
         if (rect.width) root.style.setProperty("--notes-split-left", Math.round(rect.right + notesColGap(rect)) + "px");
       }
-      setNotesSearchExpanded(true);
+      // Только раскрыть поле (на десктопе оно и так открыто) — без фокуса, иначе курсор уходит из заметки.
+      setNotesSearchExpanded(false);
     }
     var exp = ensureNoteExpandBtn();
     var moreWrap = document.getElementById("note-editor-more-wrap");
