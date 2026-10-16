@@ -16069,3 +16069,8 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
 .meeting-pick-row b { font-size: 0.92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .meeting-pick-row em { font-style: normal; font-size: 0.75rem; color: var(--accent); }
 .meeting-pick-row small { grid-column: 1 / 3; font-size: 0.8rem; color: var(--text-secondary); }
+#m-ev-avail.ev-avail-past { display: none !important; }
+@media (min-width: 960px) {
+  /* «Удалить» — под колонкой полей, а не на всю ширину широкого окна встречи. */
+  #modal-overlay .modal--ev-materials .modal-sheet-actions { width: calc(50% - 10px); }
+}

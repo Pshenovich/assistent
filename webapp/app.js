@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-meet3";
+  var WEBAPP_BUILD = "20261016-meet4";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-meet3";
+  const NOTE_EDITOR_ASSET_V = "20261016-meet4";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -14928,6 +14928,9 @@
     else sheet.appendChild(box);
     sheet.classList.add("event-sheet--materials");
     modal.classList.add("modal--ev-materials");
+    // Прошедшей встрече «Занятость» (подбор слота) не нужна.
+    var avail = document.getElementById("m-ev-avail");
+    if (avail) avail.classList.toggle("ev-avail-past", eventIsPast(ev));
     box._ev = ev;
     loadEventMaterials(ev, box);
   }
