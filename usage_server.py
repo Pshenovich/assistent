@@ -8211,6 +8211,101 @@ def _decorate_notes_for_list(uid: int, notes: list[dict[str, Any]]) -> list[dict
     return [minify_note_for_list(n) for n in notes]
 
 
+@miniapp_router.get("/notes/local/{note_id}/versions")
+async def miniapp_note_versions(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """История версий заметки и её листов (без текста — только список)."""
+    from assistant.stores import note_versions
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> list[dict[str, Any]] | None:
+        if notes_store.get_accessible_note(uid, note_id, with_sharing=False) is None:
+            return None
+        return note_versions.list_versions(note_id)
+
+    rows = await run_in_threadpool(_run)
+    if rows is None:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return {"ok": True, "versions": rows}
+
+
+@miniapp_router.get("/notes/local/{note_id}/versions/{version_id}")
+async def miniapp_note_version_get(
+    note_id: int,
+    version_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import note_versions
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any] | None:
+        if notes_store.get_accessible_note(uid, note_id, with_sharing=False) is None:
+            return None
+        return note_versions.get_version(note_id, version_id)
+
+    row = await run_in_threadpool(_run)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Версия не найдена")
+    return {"ok": True, "version": row}
+
+
+@miniapp_router.post("/notes/local/{note_id}/versions/{version_id}/restore")
+async def miniapp_note_version_restore(
+    note_id: int,
+    version_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Вернуть версию: текущее состояние само уходит в историю, так что это обратимо."""
+    from assistant.stores import note_sheets as note_sheets_store
+    from assistant.stores import note_versions
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any] | None:
+        access = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
+        if access is None:
+            return None
+        v = note_versions.get_version(note_id, version_id)
+        if v is None:
+            return None
+        owner = str(access.get("owner_user_id") or uid)
+        sid = int(v.get("sheet_id") or 0)
+        if sid == note_versions.PRIMARY_SHEET:
+            item = notes_store.update_note(
+                owner, note_id, title=v.get("title") or None, body=v.get("body") or "",
+                allow_empty_body=True, actor_user_id=uid,
+            )
+            return {"kind": "note", "item": item}
+        existing = note_sheets_store.get_extra_sheet(note_id, sid)
+        if existing:
+            sheet = note_sheets_store.update_sheet(
+                note_id, sid, title=v.get("sheet_title") or None, body=v.get("body") or "",
+                kind=v.get("sheet_kind") or None,
+            )
+            return {"kind": "sheet", "sheet": sheet, "recreated": False}
+        note = notes_store.get_note(owner, note_id)
+        sheet = note_sheets_store.create_sheet(
+            note, title=v.get("sheet_title") or "Лист", body=v.get("body") or "",
+            kind=v.get("sheet_kind") or note_sheets_store.SHEET_KIND_DOC,
+        )
+        return {"kind": "sheet", "sheet": sheet, "recreated": True}
+
+    try:
+        res = await run_in_threadpool(_run)
+    except note_sheets_store.SheetError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if res is None:
+        raise HTTPException(status_code=404, detail="Версия не найдена")
+    return {"ok": True, **res}
+
+
 @miniapp_router.get("/notes/page")
 async def miniapp_notes_page(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),

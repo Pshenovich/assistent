@@ -562,6 +562,21 @@ def update_note(
     )
     ts = _now_iso()
     new_rev = int(existing.get("revision") or 1) + 1
+    if new_body != (existing.get("body") or "") or new_title != (existing.get("title") or ""):
+        # История версий: прежнее состояние — до перезаписи.
+        from assistant.stores import note_versions
+
+        note_versions.record(
+            owner_user_id=uid,
+            note_id=note_id,
+            title=str(existing.get("title") or ""),
+            body=str(existing.get("body") or ""),
+            revision=existing.get("revision") or 0,
+            state_at=str(existing.get("updated_at") or ""),
+            sheet_title=str(existing.get("primary_sheet_title") or ""),
+            author_user_id=actor_user_id or "",
+            new_body=new_body,
+        )
     with _LOCK:
         _conn().execute(
             """
@@ -826,6 +841,24 @@ def duplicate_note(user_id: int | str, note_id: int) -> Optional[dict[str, Any]]
 
 def delete_note(user_id: int | str, note_id: int) -> bool:
     uid = str(int(user_id))
+    try:
+        before = get_note(uid, note_id)
+        if before:
+            from assistant.stores import note_versions
+
+            note_versions.record(
+                owner_user_id=uid,
+                note_id=note_id,
+                title=str(before.get("title") or ""),
+                body=str(before.get("body") or ""),
+                revision=before.get("revision") or 0,
+                state_at=str(before.get("updated_at") or ""),
+                sheet_title=str(before.get("primary_sheet_title") or ""),
+                reason="note_deleted",
+                force=True,
+            )
+    except Exception as e:
+        print(f"[notes] version before delete failed note={note_id} err={e!r}")
     with _LOCK:
         cur = _conn().execute(
             "DELETE FROM local_notes WHERE user_id = ? AND id = ?",

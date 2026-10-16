@@ -125,6 +125,12 @@ systemctl stop assistant-bot assistant-usage executive-board-bot assistant-whats
 systemctl disable assistant-whatsapp-bridge 2>/dev/null || true'
 SERVICES_STOPPED=1
 
+echo "==> Резервная копия баз перед выкаткой (/root/leo-backups/predeploy)"
+_remote_bash 'set -euo pipefail
+if [[ -f /opt/assistant/scripts/backup_dbs.py ]]; then
+  python3 /opt/assistant/scripts/backup_dbs.py predeploy || echo "WARN: backup_dbs predeploy failed"
+fi'
+
 echo "==> Синхронизация кода (без .env, .venv, пользовательских данных)"
 "${RSYNC[@]}" \
   --exclude '.env' \
