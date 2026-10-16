@@ -13718,7 +13718,7 @@ html.modal-sheet-open body {
     max-width: none;
     justify-content: stretch;
     border-left: 1px solid var(--border);
-    box-shadow: -12px 0 32px rgba(0, 0, 0, 0.28);
+    box-shadow: none;
   }
 
   .note-discussion-sheet {
@@ -15671,10 +15671,6 @@ html.notes-select-on .nl-card .nl-inner { padding-left: 32px; }
 html.notes-select-on .nl-card .note-card-actions { display: none; }
 .nl-card.is-selected { box-shadow: inset 0 0 0 1.5px var(--accent, #5b9fff); background: rgba(91, 159, 255, 0.08); }
 .nl-card.is-selected .nl-check { background: var(--accent, #5b9fff); border-color: var(--accent, #5b9fff); color: #fff; }
-@media (hover: hover) and (min-width: 960px) {
-  .nl-card:hover .nl-check { display: inline-flex; }
-  .nl-card:hover .nl-inner { padding-left: 32px; }
-}
 html.notes-select-on #notes-create-btn, html.notes-select-on #notes-create-menu { display: none !important; }
 .notes-select-top { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 8px); left: 8px; right: 8px; z-index: 60; display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 8px 0 16px; border-radius: 16px; background: #2c2c2e; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); }
 .notes-select-count { flex: 1; font-weight: 600; font-size: 0.9375rem; }
@@ -15722,4 +15718,26 @@ html.notes-select-on .notes-pane--stack { padding-bottom: 96px; }
   html.notes-split .nl-card.is-current { box-shadow: inset 0 0 0 1.5px rgba(91, 159, 255, 0.6); background: rgba(91, 159, 255, 0.09); }
   .nl-sheet-overlay.is-anchored { background: transparent !important; align-items: flex-start; justify-content: flex-start; padding: 0; }
   .nl-sheet-overlay.is-anchored .nl-sheet { transform: none; max-width: none; }
+}
+
+/* ——— «Чаты» в том же виде, что «Заметки»: карточки, колонка списка, справа — чат ——— */
+.chat-thread-row.nl-card { display: block; padding: 12px 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: none; }
+.chat-thread-row.nl-card:hover { background: var(--surface); border-color: var(--accent-border); }
+.chat-thread-row.nl-card .nl-head .chat-thread-more-wrap { margin: -4px -8px -4px -4px; }
+#chat-threads-list.chat-threads-list { gap: 8px; }
+@media (min-width: 960px) {
+  html.notes-chats-tab #notes-root { width: 380px !important; max-width: 380px !important; margin-left: 0 !important; margin-right: 0 !important; }
+  html.notes-chats-tab #notes-pane-chats.chat-threads-pane,
+  #notes-pane-chats.chat-threads-pane:not(.hidden) { border: 0 !important; border-radius: 0 !important; overflow: visible !important; }
+  #notes-pane-chats:not(.hidden) #chat-threads-list { width: 100% !important; flex: 1 1 auto !important; overflow: visible !important; height: auto !important; }
+  #notes-pane-chats:not(.hidden) .chat-threads-splitter { display: none !important; }
+  #notes-pane-chats:not(.hidden) #chat-thread-pane { position: fixed !important; top: 0; bottom: 0; right: 0; left: var(--notes-split-left, 696px); height: auto !important; border-left: 1px solid var(--border); z-index: 6; }
+  html.notes-chats-tab .notes-fab { right: calc(100vw - var(--notes-split-left, 696px) + 28px) !important; }
+  html.notes-chats-tab #notes-filter-btn,
+  html.notes-chats-tab #notes-project-btn,
+  html.notes-chats-tab #notes-project-chips,
+  html.notes-chats-tab #notes-search-tag-btn { display: none !important; }
+  html.notes-chats-tab .notes-filter-bar { flex-wrap: nowrap; }
+  html.notes-chats-tab .notes-search-wrap { flex: 1 1 auto; min-width: 0; }
+  #chat-thread-empty.chat-thread-empty { color: var(--text-secondary, #909499); }
 }
