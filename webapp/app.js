@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-notes12";
+  var WEBAPP_BUILD = "20261016-notes15";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-notes12";
+  const NOTE_EDITOR_ASSET_V = "20261016-notes15";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -4377,6 +4377,31 @@
     if (!card) return false;
     var inner = card.querySelector(".note-card-inner");
     if (!inner) return false;
+    if (card.classList.contains("nl-card")) {
+      // Новая карточка списка: обновляем заголовок, дату и превью на месте.
+      var nlTitle = inner.querySelector(".nl-title");
+      if (nlTitle) {
+        nlTitle.textContent =
+          sanitizeNoteTitle(item.title || item.content || "") || item.title || item.content || "Без названия";
+      }
+      var nlDate = inner.querySelector(".nl-date");
+      if (nlDate && item.updated_at) nlDate.textContent = formatNotesCardDate(notesListDateOf(item));
+      var prevText = notesCardPreviewText(item);
+      var nlPrev = inner.querySelector(".nl-preview");
+      if (prevText) {
+        if (!nlPrev) {
+          nlPrev = document.createElement("p");
+          nlPrev.className = "nl-preview";
+          var headEl = inner.querySelector(".nl-head");
+          if (headEl && headEl.nextSibling) inner.insertBefore(nlPrev, headEl.nextSibling);
+          else inner.appendChild(nlPrev);
+        }
+        nlPrev.innerHTML = linkifyEscaped(escapeHtml(prevText));
+      } else if (nlPrev && nlPrev.parentNode) {
+        nlPrev.parentNode.removeChild(nlPrev);
+      }
+      return true;
+    }
     var titleRaw =
       sanitizeNoteTitle(item.title || item.content || "") ||
       (item.title || item.content || "(без названия)");
@@ -5322,11 +5347,11 @@
       if (choice === "discard") {
         var discardBody = getNoteEditorBodyEl();
         if (discardBody) discardBody._noteEditorFlush = null;
-        closeNoteEditorModal();
+        await closeNoteEditorModal();
         return true;
       }
     }
-    closeNoteEditorModal();
+    await closeNoteEditorModal();
     return true;
   }
 
@@ -20290,24 +20315,24 @@
         : '<p class="muted empty-hint">Чатов пока нет. Нажмите «+», чтобы начать диалог с ИИ.</p>';
       return;
     }
-    // Те же карточки и группы по времени, что в «Заметках».
-    appendNotesListGrouped(list, rows, function (thread) {
+    // Обычный список чатов (строки), в стиле нового дизайна.
+    rows.forEach(function (thread) {
       var id = String(thread.id);
       var row = document.createElement("div");
-      row.className = "note-card nl-card chat-thread-row";
+      row.className = "chat-thread-row cl-row";
       row.setAttribute("role", "listitem");
       row.setAttribute("data-chat-id", id);
       if (String(activeChatThreadId) === id) row.classList.add("is-active", "is-current");
       var main = document.createElement("div");
-      main.className = "note-card-inner nl-inner";
+      main.className = "chat-thread-row-main";
       var head = document.createElement("div");
-      head.className = "nl-head";
+      head.className = "cl-head";
       var title = document.createElement("span");
-      title.className = "nl-title";
+      title.className = "cl-title";
       title.textContent = String(thread.title || "Новый чат");
       if (q) title.innerHTML = notesHighlightHtml(String(thread.title || "Новый чат"), q);
       var date = document.createElement("span");
-      date.className = "nl-date";
+      date.className = "cl-date";
       date.textContent = formatNotesCardDate(thread.updated_at || thread.created_at);
       head.appendChild(title);
       head.appendChild(date);
@@ -20323,7 +20348,7 @@
       var prevText = String(thread.last_preview || "").replace(/\b(?:SPEAKER|Speaker|speaker)[_ ]?\d+\s*:\s*/g, "");
       if (prevText) {
         var preview = document.createElement("p");
-        preview.className = "nl-preview";
+        preview.className = "chat-thread-row-preview";
         preview.innerHTML = q ? notesHighlightHtml(prevText, q) : escapeHtml(prevText);
         main.appendChild(preview);
       }
@@ -20393,13 +20418,13 @@
       });
       moreWrap.appendChild(moreBtn);
       moreWrap.appendChild(menu);
-      head.appendChild(moreWrap);
+      row.appendChild(moreWrap);
 
       row.addEventListener("click", function () {
         openChatThread(thread);
       });
-      return row;
-    }, q);
+      list.appendChild(row);
+    });
     syncChatsSplitLeft();
   }
 
@@ -20731,11 +20756,11 @@
     if (next === "summaries") next = "transcriptions";
     if (next !== notesSubTab && notesSelect.on) exitNotesSelectMode();
     if (next !== notesSubTab) window.setTimeout(scheduleNotesServerSearch, 0);
-    if (next !== notesSubTab && notesSplitCurrentId && isNoteEditorModalOpen()) closeNoteEditorModal();
-    if (next !== notesSubTab) {
-      notesSplitAutoOpened = false;
-      window.setTimeout(syncNotesSplitLayout, 0);
+    if (next === "chats" && next !== notesSubTab && notesSplitCurrentId && isNoteEditorModalOpen()) {
+      closeNoteEditorModal();
     }
+    if (notesSubTab === "chats" && next !== "chats") notesSplitAutoOpened = false;
+    if (next !== notesSubTab) window.setTimeout(syncNotesSplitLayout, 0);
     var subRow = document.querySelector("#panel-notes .notes-subtabs-row");
     if (subRow && typeof subRow._resetReveal === "function" && next !== notesSubTab) subRow._resetReveal();
     if (notesSubTab === "chats" && next !== "chats") {
@@ -32658,9 +32683,11 @@
 
     if (!flushFn) {
       teardown();
-      return;
+      return Promise.resolve();
     }
-    Promise.race([
+    // Промис — чтобы следующую заметку открывать только после сохранения этой
+    // (иначе сохранение прочитает поля уже новой заметки).
+    noteEditorPendingFlush = Promise.race([
       Promise.resolve().then(flushFn),
       sleepMs(4000),
     ])
@@ -32671,7 +32698,10 @@
         if (notesDataCache) renderNotesPanesFromData(notesDataCache);
         if (knowledgeDataCache) renderKnowledgePaneFromData(knowledgeDataCache);
       });
+    return noteEditorPendingFlush;
   }
+
+  var noteEditorPendingFlush = null;
 
   function closeNotesDetail() {
     var d = document.getElementById("notes-detail");
@@ -34093,7 +34123,7 @@
 
   // ——— Десктоп: список слева, заметка справа; «⤢» — режим как раньше (заметка + обсуждение) ———
 
-  var NOTES_SPLIT_MIN_W = 1100;
+  var NOTES_SPLIT_MIN_W = 960;
   var NOTES_SPLIT_MODE_LS = "leo_notes_open_mode";
   var NOTES_SPLIT_LAST_LS = "leo_notes_last_open";
   var notesSplitCurrentId = "";
@@ -34130,7 +34160,7 @@
     }
     if (isNoteEditorModalOpen()) {
       if (notesSplitCurrentId === id) return;
-      var ok = await handleNoteEditorModalClose();
+      var ok = await handleNoteEditorModalClose({ skipPrompt: true });
       if (!ok) return;
     }
     notesSplitCurrentId = id;
@@ -35103,10 +35133,15 @@
   function openNewTodoistNote(opts) {
     opts = opts || {};
     var project = activeNotesProjectTag();
-    if (notesSplitCapable()) {
-      if (isNoteEditorModalOpen()) closeNoteEditorModal();
-      notesSplitCurrentId = "__new__";
+    if (notesSplitCapable() && isNoteEditorModalOpen()) {
+      // Сначала сохраняем открытую заметку, потом открываем новую.
+      // Переключение в списке: изменения сохраняем молча, без диалога.
+      handleNoteEditorModalClose({ skipPrompt: true }).then(function (ok) {
+        if (ok) openNewTodoistNote(opts);
+      });
+      return;
     }
+    if (notesSplitCapable()) notesSplitCurrentId = "__new__";
     openNoteDetail(
       {
         id: "",
