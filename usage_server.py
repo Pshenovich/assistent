@@ -11304,6 +11304,15 @@ async def miniapp_note_research_start(
     from assistant.nlu.ask_context import pack_attached_notes
 
     attached_notes = pack_attached_notes(int(principal.telegram_user_id), ctx_ids)
+    from assistant.stores import user_agents as user_agents_store
+
+    requested_model = ""
+    raw_model = str(payload.model or "").strip()
+    if raw_model:
+        try:
+            requested_model = user_agents_store.sanitize_model(raw_model, kind="research")
+        except user_agents_store.AgentError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
     running = get_job(owner, kind, item_id)
     if running and str(running.get("status") or "") == "running":
         raise HTTPException(status_code=409, detail="Дождитесь ответа Research")
@@ -11362,6 +11371,7 @@ async def miniapp_note_research_start(
         quote=quote_text,
         sheet_ids=sheet_ids,
         attached_notes=attached_notes,
+        model=requested_model,
     )
     if started:
         asyncio.create_task(
@@ -11376,6 +11386,7 @@ async def miniapp_note_research_start(
                 quote=quote_text,
                 sheet_ids=sheet_ids,
                 attached_notes=attached_notes,
+                model=requested_model,
             )
         )
     return {

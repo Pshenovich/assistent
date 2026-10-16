@@ -156,9 +156,9 @@ def builtin_max_rounds() -> int:
 
 
 def allowed_model_ids() -> set[str]:
-    from assistant.integrations.openrouter_client import GPT_PICKER_MODELS
+    from assistant.integrations.openrouter_client import GPT_PICKER_MODELS, PAIE_REASONING_MODELS
 
-    return {mid for mid, _name in GPT_PICKER_MODELS}
+    return {mid for mid, _name in GPT_PICKER_MODELS} | {mid for mid, _name in PAIE_REASONING_MODELS}
 
 
 def paie_allowed_model_ids() -> set[str]:
