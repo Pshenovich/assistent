@@ -7695,6 +7695,34 @@ def note_list_badges(body: str) -> dict[str, Any]:
     return out
 
 
+def looks_like_list_preview_overwrite(new_body: str | None, old_body: str | None) -> bool:
+    """Новый текст — это обрезанное превью из списка (600 симв. + «…»), а в базе полный текст.
+
+    Защита от потери данных: если клиент открыл заметку по превью (не дождался полной
+    версии) и сохранил её, не даём затереть полный текст.
+    """
+    if new_body is None or not old_body:
+        return False
+    old_raw = str(old_body)
+    if len(old_raw) <= _NOTE_LIST_BODY_MAX:
+        return False
+
+    def _plain(h: str) -> str:
+        t = _DATA_URI_RE.sub(" ", h or "")
+        t = re.sub(r"<[^>]+>", " ", t)
+        t = html_lib.unescape(t).replace("\xa0", " ")
+        return " ".join(t.split())
+
+    new_plain = _plain(str(new_body))
+    if "…" not in new_plain[-24:]:
+        return False
+    head = new_plain.rstrip(" …").rstrip("…").strip()
+    old_plain = _plain(old_raw)
+    if len(head) < 20 or len(old_plain) < len(head) + 40:
+        return False
+    return old_plain.startswith(head[: max(20, len(head) - 8)])
+
+
 def minify_note_for_list(item: dict[str, Any]) -> dict[str, Any]:
     """Оставляет в list-payload только превью body/description."""
     if not isinstance(item, dict):
@@ -8621,6 +8649,18 @@ async def miniapp_local_note_patch(
         if access is None:
             return None
         owner = str(access.get("owner_user_id") or uid)
+        if body.description is not None:
+            current = notes_store.get_note(owner, note_id) or {}
+            if looks_like_list_preview_overwrite(body.description, current.get("body")):
+                print(f"[note_patch] blocked preview overwrite note={note_id} uid={uid}")
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "Заметка открылась не полностью — откройте её заново, чтобы не потерять текст",
+                        "item": current,
+                        "preview_overwrite": True,
+                    },
+                )
         try:
             item = notes_store.update_note(
                 owner,
