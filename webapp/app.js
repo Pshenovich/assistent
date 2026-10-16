@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-notes15";
+  var WEBAPP_BUILD = "20261016-notes17";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-notes15";
+  const NOTE_EDITOR_ASSET_V = "20261016-notes17";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -6170,6 +6170,7 @@
     if (name !== "notes" && notesSelect.on) exitNotesSelectMode();
     if (name !== "notes" && notesSplitCurrentId && isNoteEditorModalOpen()) closeNoteEditorModal();
     if (name === "notes" && currentTab !== "notes") notesSplitAutoOpened = false;
+    syncNotesColLayout(name);
     window.setTimeout(syncNotesSplitLayout, 0);
     if (name !== "actual" && document.documentElement.classList.contains("actual-assistant-open")) {
       try {
@@ -20760,6 +20761,7 @@
       closeNoteEditorModal();
     }
     if (notesSubTab === "chats" && next !== "chats") notesSplitAutoOpened = false;
+    syncNotesColLayout();
     if (next !== notesSubTab) window.setTimeout(syncNotesSplitLayout, 0);
     var subRow = document.querySelector("#panel-notes .notes-subtabs-row");
     if (subRow && typeof subRow._resetReveal === "function" && next !== notesSubTab) subRow._resetReveal();
@@ -34222,8 +34224,17 @@
     return null;
   }
 
+  function syncNotesColLayout(tabName) {
+    var tab = tabName || currentTab;
+    document.documentElement.classList.toggle(
+      "notes-col",
+      isDesktopLayout() && window.innerWidth >= NOTES_SPLIT_MIN_W && tab === "notes"
+    );
+  }
+
   function syncNotesSplitLayout() {
     var root = document.documentElement;
+    syncNotesColLayout();
     var capable = notesSplitCapable();
     var open = isNoteEditorModalOpen();
     var fromList = !!notesSplitCurrentId && open;
