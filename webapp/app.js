@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-notes28";
+  var WEBAPP_BUILD = "20261016-mobile2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -176,7 +176,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261016-notes28";
+  const NOTE_EDITOR_ASSET_V = "20261016-mobile2";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -6853,6 +6853,10 @@
   function setDigestTabVisible(enabled) {
 
     digestTabEnabled = !!enabled;
+    try {
+      localStorage.setItem("leo_digest_enabled", digestTabEnabled ? "1" : "0");
+    } catch (_) {}
+    document.documentElement.classList.toggle("digest-on", digestTabEnabled);
     var btn = document.querySelector('.tabbar-btn[data-tab="digest"]');
     var group = document.querySelector('.sidebar-nav-group[data-sidebar-group="digest"]');
     if (btn) {
@@ -6883,7 +6887,7 @@
       setDigestTabVisible(!!(data && data.digest_enabled));
       return data;
     } catch (e) {
-      setDigestTabVisible(false);
+      // Сеть/таймаут — не прячем вкладку: оставляем последнее известное состояние.
       return null;
     }
   }
@@ -11516,7 +11520,8 @@
       }
       var margin = isMobileNoteLayout() ? 72 : 20;
       var bottomLimit = bodyRect.bottom - toolbarH - margin;
-      var topLimit = bodyRect.top + margin;
+      // Сверху запас меньше: иначе при наборе у верхнего края текст подпрыгивает.
+      var topLimit = bodyRect.top + 16;
       var bottom = caretRect.bottom != null ? caretRect.bottom : caretRect.top;
       var top = caretRect.top;
       if (bottom > bottomLimit) {
@@ -12170,20 +12175,38 @@
         syncNoteFormatToolbarForComposer();
       }, 80);
     });
+    // Клавиатура/прокрутка видимой области шлют события пачками — пересчитываем раз за кадр.
+    var kbRaf = 0;
+    var kbLastSig = "";
+    function scheduleKeyboardUpdate(force) {
+      if (!(modalSheetOpen || isNoteDiscussionOpen())) return;
+      if (kbRaf) return;
+      kbRaf = requestAnimationFrame(function () {
+        kbRaf = 0;
+        var vvNow = window.visualViewport;
+        var sig = vvNow
+          ? [Math.round(vvNow.height), Math.round(vvNow.offsetTop || 0), window.innerHeight].join(",")
+          : String(window.innerHeight);
+        if (!force && sig === kbLastSig) return;
+        kbLastSig = sig;
+        updateModalSheetForKeyboard();
+      });
+    }
     if (window.visualViewport) {
       window.visualViewport.addEventListener("resize", function () {
-        if (modalSheetOpen || isNoteDiscussionOpen()) updateModalSheetForKeyboard();
+        scheduleKeyboardUpdate(false);
       });
       window.visualViewport.addEventListener("scroll", function () {
-        if (modalSheetOpen || isNoteDiscussionOpen()) updateModalSheetForKeyboard();
+        scheduleKeyboardUpdate(false);
       });
     }
     var tg = window.Telegram && window.Telegram.WebApp;
     if (tg && typeof tg.onEvent === "function" && !tg._leoNoteEditorViewportBound) {
       tg._leoNoteEditorViewportBound = true;
       try {
-        tg.onEvent("viewportChanged", function () {
-          if (modalSheetOpen) updateModalSheetForKeyboard();
+        tg.onEvent("viewportChanged", function (e) {
+          if (e && e.isStateStable === false) return;
+          if (modalSheetOpen) scheduleKeyboardUpdate(true);
         });
       } catch (_) {}
     }
@@ -15027,7 +15050,17 @@
     return wrap;
   }
 
+  var lastActualPaintSig = "";
   function paintActual(remData, calData, calDataNext, rangeData, postedData) {
+    // Те же данные (кэш → ответ сервера) — не перерисовываем: на телефоне это выглядело как «перезагрузка».
+    var sig = "";
+    try {
+      sig = JSON.stringify([remData, calData, calDataNext, rangeData, postedData, meetingsViewMode, meetingsPageDate, isDesktopLayout()]);
+    } catch (_) {
+      sig = "";
+    }
+    if (sig && sig === lastActualPaintSig && document.querySelector("#panel-actual .meeting-row, #panel-actual .meetings-day, #panel-actual [data-event-id]")) return;
+    lastActualPaintSig = sig;
     const hero = document.getElementById("actual-hero");
     const errP = document.getElementById("posted-tasks-error");
     const errM = document.getElementById("meetings-error");
@@ -15744,9 +15777,9 @@
     if (!tg || !tg.onEvent || tg._leoViewportBound) return;
     tg._leoViewportBound = true;
     try {
-      tg.onEvent("viewportChanged", applyTelegramSafeAreaInsets);
-      tg.onEvent("contentSafeAreaInsetChanged", applyTelegramSafeAreaInsets);
-      tg.onEvent("safeAreaChanged", applyTelegramSafeAreaInsets);
+      tg.onEvent("viewportChanged", scheduleTelegramSafeAreaInsets);
+      tg.onEvent("contentSafeAreaInsetChanged", scheduleTelegramSafeAreaInsets);
+      tg.onEvent("safeAreaChanged", scheduleTelegramSafeAreaInsets);
       tg.onEvent("fullscreenChanged", function () {
         applyTelegramSafeAreaInsets();
         syncTelegramNativeBack();
@@ -15758,8 +15791,7 @@
     if (window.visualViewport && !tg._leoVvBound) {
       tg._leoVvBound = true;
       try {
-        window.visualViewport.addEventListener("resize", applyTelegramSafeAreaInsets);
-        window.visualViewport.addEventListener("scroll", applyTelegramSafeAreaInsets);
+        window.visualViewport.addEventListener("resize", scheduleTelegramSafeAreaInsets);
       } catch (_) {}
     }
   }
@@ -16148,13 +16180,34 @@
     }
   }
 
+  var safeAreaRaf = 0;
+  var safeAreaVarCache = {};
+  var safeAreaOverlayKeep = { tg: 0, vv: 0 };
+
+  function setRootVarIfChanged(name, value) {
+    if (safeAreaVarCache[name] === value) return;
+    safeAreaVarCache[name] = value;
+    document.documentElement.style.setProperty(name, value);
+  }
+
+  // Telegram/visualViewport шлют десятки событий (разворачивание окна, клавиатура, прокрутка) —
+  // считаем один раз за кадр и только из «стабильных» значений.
+  function scheduleTelegramSafeAreaInsets(e) {
+    if (e && e.isStateStable === false) return;
+    if (safeAreaRaf) return;
+    safeAreaRaf = requestAnimationFrame(function () {
+      safeAreaRaf = 0;
+      applyTelegramSafeAreaInsets();
+    });
+  }
+
   function applyTelegramSafeAreaInsets() {
     var tg = window.Telegram && window.Telegram.WebApp;
     var root = document.documentElement;
     var standalone = isStandaloneDisplay();
     root.classList.toggle("app-standalone", standalone);
     if (standalone) {
-      root.style.setProperty("--tg-android-nav-inset", "0px");
+      setRootVarIfChanged("--tg-android-nav-inset", "0px");
       root.classList.remove("android-legacy-nav");
     }
     if (!tg) {
@@ -16172,22 +16225,22 @@
       var cBottom = csa.bottom || 0;
       var cLeft = csa.left || 0;
       var cRight = csa.right || 0;
-      root.style.setProperty("--tg-safe-top", top + "px");
-      root.style.setProperty("--tg-safe-bottom", bottom + "px");
-      root.style.setProperty("--tg-safe-left", left + "px");
-      root.style.setProperty("--tg-safe-right", right + "px");
-      root.style.setProperty("--tg-content-safe-top", cTop + "px");
-      root.style.setProperty("--tg-content-safe-bottom", cBottom + "px");
-      root.style.setProperty("--tg-content-safe-left", cLeft + "px");
-      root.style.setProperty("--tg-content-safe-right", cRight + "px");
-      root.style.setProperty("--tg-safe-area-inset-top", top + "px");
-      root.style.setProperty("--tg-safe-area-inset-bottom", bottom + "px");
-      root.style.setProperty("--tg-safe-area-inset-left", left + "px");
-      root.style.setProperty("--tg-safe-area-inset-right", right + "px");
-      root.style.setProperty("--tg-content-safe-area-inset-top", cTop + "px");
-      root.style.setProperty("--tg-content-safe-area-inset-bottom", cBottom + "px");
-      root.style.setProperty("--tg-content-safe-area-inset-left", cLeft + "px");
-      root.style.setProperty("--tg-content-safe-area-inset-right", cRight + "px");
+      setRootVarIfChanged("--tg-safe-top", top + "px");
+      setRootVarIfChanged("--tg-safe-bottom", bottom + "px");
+      setRootVarIfChanged("--tg-safe-left", left + "px");
+      setRootVarIfChanged("--tg-safe-right", right + "px");
+      setRootVarIfChanged("--tg-content-safe-top", cTop + "px");
+      setRootVarIfChanged("--tg-content-safe-bottom", cBottom + "px");
+      setRootVarIfChanged("--tg-content-safe-left", cLeft + "px");
+      setRootVarIfChanged("--tg-content-safe-right", cRight + "px");
+      setRootVarIfChanged("--tg-safe-area-inset-top", top + "px");
+      setRootVarIfChanged("--tg-safe-area-inset-bottom", bottom + "px");
+      setRootVarIfChanged("--tg-safe-area-inset-left", left + "px");
+      setRootVarIfChanged("--tg-safe-area-inset-right", right + "px");
+      setRootVarIfChanged("--tg-content-safe-area-inset-top", cTop + "px");
+      setRootVarIfChanged("--tg-content-safe-area-inset-bottom", cBottom + "px");
+      setRootVarIfChanged("--tg-content-safe-area-inset-left", cLeft + "px");
+      setRootVarIfChanged("--tg-content-safe-area-inset-right", cRight + "px");
 
       // Android can overlay system navigation without safe-area insets.
       // Telegram exposes viewportStableHeight/viewportHeight in such cases.
@@ -16197,7 +16250,10 @@
       if (vh > 0 && vsh > 0) overlay = Math.max(0, vh - vsh);
       // Standalone PWA already has env(safe-area); skip webview overlay heuristics.
       if (standalone) overlay = 0;
-      root.style.setProperty("--tg-viewport-bottom-overlay", overlay + "px");
+      // Больше ~120px — это не системная навигация, а клавиатура/анимация окна: держим прошлое значение.
+      if (overlay > 120) overlay = safeAreaOverlayKeep.tg;
+      safeAreaOverlayKeep.tg = overlay;
+      setRootVarIfChanged("--tg-viewport-bottom-overlay", overlay + "px");
 
       // Final fallback: VisualViewport delta (works in many Android WebViews)
       var vv = window.visualViewport;
@@ -16205,7 +16261,9 @@
       if (!standalone && vv && typeof vv.height === "number") {
         vvOverlay = Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0));
       }
-      root.style.setProperty("--vv-bottom-overlay", Math.round(vvOverlay) + "px");
+      if (vvOverlay > 120) vvOverlay = safeAreaOverlayKeep.vv;
+      safeAreaOverlayKeep.vv = vvOverlay;
+      setRootVarIfChanged("--vv-bottom-overlay", Math.round(vvOverlay) + "px");
 
       // Android (3-button navigation) often reports all insets as 0 while system UI
       // still overlays the bottom of the webview. Add a conservative fallback —
@@ -16223,7 +16281,7 @@
         vvOverlay <= 0
           ? 88
           : 0;
-      root.style.setProperty("--tg-android-nav-inset", inferredInset + "px");
+      setRootVarIfChanged("--tg-android-nav-inset", inferredInset + "px");
       root.classList.toggle("android-legacy-nav", inferredInset > 0);
       root.classList.toggle("tg-android", isAndroid);
     } catch (_) {}
@@ -18775,7 +18833,16 @@
     // На уровне страницы (а не внутри редактора): иначе панель/окно обсуждения перекрывает плашку.
     document.body.appendChild(bar);
     var pane = document.querySelector("#note-editor-overlay .note-editor-modal-body");
-    if (pane && typeof ResizeObserver !== "undefined") new ResizeObserver(positionAiEditBar).observe(pane);
+    if (pane && typeof ResizeObserver !== "undefined") {
+      var aiBarRaf = 0;
+      new ResizeObserver(function () {
+        if (aiBarRaf) return;
+        aiBarRaf = requestAnimationFrame(function () {
+          aiBarRaf = 0;
+          positionAiEditBar();
+        });
+      }).observe(pane);
+    }
     window.addEventListener("resize", positionAiEditBar);
     return bar;
   }
@@ -20741,6 +20808,7 @@
     row._revealBound = true;
     var spacer = null;
     var lastY = 0;
+    var travel = 0;
     var ticking = false;
     function scrollY() {
       if (scroller && scroller.scrollHeight > scroller.clientHeight + 2) return scroller.scrollTop;
@@ -20792,16 +20860,27 @@
           return;
         }
         var y = scrollY();
-        var dy = y - lastY;
+        // Отскок у краёв (iOS) — не реагируем: иначе панель «мигает» туда-сюда.
+        var maxY = scroller && scroller.scrollHeight > scroller.clientHeight + 2
+          ? scroller.scrollHeight - scroller.clientHeight
+          : (document.documentElement.scrollHeight || 0) - window.innerHeight;
+        if (y < 0 || y > maxY + 1) return;
         if (y < 140) {
           setFloating(false);
           lastY = y;
+          travel = 0;
           return;
         }
-        if (Math.abs(dy) < 6) return;
+        var dy = y - lastY;
         lastY = y;
+        if (!dy) return;
+        // Копим путь в одну сторону: показываем после 24px вверх, прячем после 24px вниз.
+        if ((dy < 0) !== (travel < 0)) travel = 0;
+        travel += dy;
+        if (Math.abs(travel) < 24) return;
         setFloating(true);
-        row.classList.toggle("is-shown", dy < 0);
+        var show = travel < 0;
+        if (row.classList.contains("is-shown") !== show) row.classList.toggle("is-shown", show);
       })();
     }
     if (scroller) scroller.addEventListener("scroll", onScroll, { passive: true });
@@ -21082,15 +21161,42 @@
     }
   }
 
+  var noteMembersSeenAt = {};
   function renderOpenNoteMembers(members, peers) {
     var row = document.getElementById("note-editor-members");
     if (!row) return;
     var list = members || [];
-    var online = peers || [];
+    // Присутствие «мигает» между опросами — считаем участника в сети ещё 12 с после последнего сигнала,
+    // и не пересобираем строку, если ничего не поменялось (иначе шапка заметки дёргается).
+    var now = Date.now();
+    var openWrap = document.getElementById("note-editor-more-wrap");
+    var openId = openWrap ? String(openWrap._shareKind || "") + ":" + String(openWrap._shareId || "") : "";
+    if (row._noteKey !== openId) {
+      noteMembersSeenAt = {};
+      row._noteKey = openId;
+      row._sig = null;
+    }
+    (peers || []).forEach(function (p) {
+      if (p && p.user_id != null) noteMembersSeenAt[String(p.user_id)] = { at: now, peer: p };
+    });
+    var online = [];
+    Object.keys(noteMembersSeenAt).forEach(function (k) {
+      var rec = noteMembersSeenAt[k];
+      if (now - rec.at <= 12000) online.push(rec.peer);
+      else delete noteMembersSeenAt[k];
+    });
     var onlineIds = {};
     online.forEach(function (p) {
       onlineIds[String(p.user_id)] = p;
     });
+    var sig = JSON.stringify([
+      list.map(function (m) {
+        return [m.user_id, m.name || m.username || "", !!m.is_owner, m.color || ""];
+      }),
+      Object.keys(onlineIds).sort(),
+    ]);
+    if (row._sig === sig && row.childNodes.length + (row.classList.contains("hidden") ? 1 : 0) > 0) return;
+    row._sig = sig;
     row.innerHTML = "";
     if (list.length <= 1 && !online.length) {
       row.classList.add("hidden");
@@ -24112,8 +24218,17 @@
         syncNotePaieReplyForm();
       });
       if (!input._composerRo && typeof ResizeObserver === "function") {
-        input._composerRo = new ResizeObserver(function () {
-          autosizeNoteComposer(input);
+        // Высоту меняет сам autosize — реагируем только на смену ширины и раз за кадр,
+        // иначе наблюдатель зацикливается и поле ввода дёргается.
+        input._composerRo = new ResizeObserver(function (entries) {
+          var w = entries && entries[0] && entries[0].contentRect ? Math.round(entries[0].contentRect.width) : 0;
+          if (w && w === input._composerRoW) return;
+          input._composerRoW = w;
+          if (input._composerRoRaf) return;
+          input._composerRoRaf = requestAnimationFrame(function () {
+            input._composerRoRaf = 0;
+            autosizeNoteComposer(input);
+          });
         });
         input._composerRo.observe(input);
       }
@@ -24233,8 +24348,17 @@
         }
       });
       if (!editor._composerRo && typeof ResizeObserver === "function") {
-        editor._composerRo = new ResizeObserver(function () {
-          autosizeNoteComposer(editor);
+        // Высоту меняет сам autosize — реагируем только на смену ширины и раз за кадр,
+        // иначе наблюдатель зацикливается и поле ввода дёргается.
+        editor._composerRo = new ResizeObserver(function (entries) {
+          var w = entries && entries[0] && entries[0].contentRect ? Math.round(entries[0].contentRect.width) : 0;
+          if (w && w === editor._composerRoW) return;
+          editor._composerRoW = w;
+          if (editor._composerRoRaf) return;
+          editor._composerRoRaf = requestAnimationFrame(function () {
+            editor._composerRoRaf = 0;
+            autosizeNoteComposer(editor);
+          });
         });
         editor._composerRo.observe(editor);
       }

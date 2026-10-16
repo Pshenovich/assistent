@@ -599,8 +599,14 @@ TableManageView.prototype.bind = function () {
   this.scroll.addEventListener("scroll", this.onScroll, { passive: true });
 
   if (typeof ResizeObserver !== "undefined") {
+    var roRaf = 0;
     this.ro = new ResizeObserver(function () {
-      self.layoutHandles();
+      // Раз за кадр: ручки таблицы двигают разметку, без этого наблюдатель зацикливается.
+      if (roRaf) return;
+      roRaf = requestAnimationFrame(function () {
+        roRaf = 0;
+        self.layoutHandles();
+      });
     });
     this.ro.observe(this.dom);
     this.ro.observe(this.scroll);

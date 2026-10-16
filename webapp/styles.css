@@ -14090,8 +14090,7 @@ html.modal-sheet-open body {
 #notes-list > .note-card,
 .notes-pane--stack .swipe-row,
 .notes-pane--stack .note-card {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 88px;
+  /* content-visibility:auto убрали: карточки разной высоты «прыгали» при прокрутке на телефоне */
 }
 
 /* ——— Сабтаб «Чаты» (AI-треды) ——— */
@@ -15851,3 +15850,11 @@ html.notes-chats-tab .notes-project-btn { display: none; }
 .note-editor-meta .tag-picker-add-btn-inner { gap: 6px; }
 .note-editor-meta .tag-picker-add-btn-icon { width: 14px; height: 14px; }
 #note-editor-overlay.note-editor-overlay--fullscreen .note-editor-meta .tag-picker-add-btn { font-size: 0.8125rem; line-height: 1; font-weight: 600; }
+
+/* Реплай в поле ввода обсуждения — с отступом от «+» и от текста */
+#note-paie-reply-form .note-paie-reply-target { margin: 4px 4px 10px; padding: 0; gap: 10px; }
+#note-paie-reply-form.is-comments-chat .note-paie-reply-target { margin: 4px 4px 8px; }
+
+/* «Дайджест» показываем, только когда известно, что он включён (класс ставится при запуске из памяти) */
+html:not(.digest-on) .tabbar-btn[data-tab="digest"],
+html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: none !important; }
