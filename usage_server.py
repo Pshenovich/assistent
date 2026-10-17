@@ -6381,6 +6381,42 @@ async def miniapp_digest_reports(
     return await run_in_threadpool(_run)
 
 
+def _digest_people(uid: int, principal: Any, people: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Участники чата → контакты пользователя (по Telegram id или нику); себя не показываем."""
+    from assistant.stores import contacts_store
+
+    contacts = contacts_store.load_contacts(telegram_user_id=uid, telegram_username=_miniapp_tg_username(principal))
+    by_id: dict[int, dict[str, Any]] = {}
+    by_nick: dict[str, dict[str, Any]] = {}
+    for c in contacts:
+        try:
+            tid = int(c.get("telegram_user_id") or 0)
+        except (TypeError, ValueError):
+            tid = 0
+        if tid:
+            by_id[tid] = c
+        nick = contacts_store.normalize_telegram_username(str(c.get("telegram_username") or ""))
+        if nick:
+            by_nick[nick] = c
+    out = []
+    for p in people:
+        if int(p.get("telegram_user_id") or 0) == int(uid):
+            continue
+        nick = contacts_store.normalize_telegram_username(str(p.get("username") or ""))
+        c = by_id.get(int(p.get("telegram_user_id") or 0)) or (by_nick.get(nick) if nick else None)
+        item = dict(p)
+        if c:
+            item["contact"] = {
+                "key": contacts_store.contact_key(c),
+                "name": c.get("name") or "",
+                "email": c.get("email") or "",
+                "telegram_username": c.get("telegram_username") or "",
+            }
+            item["name"] = str(c.get("name") or item.get("name") or "")
+        out.append(item)
+    return out
+
+
 @miniapp_router.get("/digest/reports/{report_date}/{chat_id}")
 async def miniapp_digest_report_detail(
     report_date: str,
@@ -6401,6 +6437,11 @@ async def miniapp_digest_report_detail(
         row = digest_store.get_report(report_date, int(chat_id))
         if not row:
             return {"_error": "missing"}
+        try:
+            row = dict(row)
+            row["people"] = _digest_people(uid, principal, digest_store.participants_for_day(int(chat_id), report_date))
+        except Exception as e:
+            print(f"[digest] people failed uid={uid} chat={chat_id} err={e!r}")
         return row
 
     result = await run_in_threadpool(_run)
@@ -8882,6 +8923,61 @@ def _rank_meeting_candidates(events: list[dict[str, Any]], at: datetime) -> dict
         "suggested": [r[2] for r in rows if r[3]][:2],
         "others": [r[2] for r in rows if not r[3]][:40],
     }
+
+
+_FOCUS_CACHE: dict[int, tuple[float, list[dict[str, Any]]]] = {}
+
+
+class _MiniappFocusDismissBody(BaseModel):
+    key: str
+
+
+@miniapp_router.get("/proactive/feed")
+async def miniapp_proactive_feed(
+    fresh: int = 0,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """«Фокус»: подсказки с готовыми действиями (правила по задачам, встречам и саммари)."""
+    from assistant.services import proactive
+    from assistant.services.calendar import _tz_for
+
+    uid = int(principal.telegram_user_id)
+    hit = _FOCUS_CACHE.get(uid)
+    if hit and not fresh and time.time() - hit[0] < 60:
+        return {"ok": True, "items": hit[1]}
+
+    def _run() -> list[dict[str, Any]]:
+        today = datetime.now(_tz_for(uid)).date()
+        try:
+            payload = _calendar_range_payload(uid, (today - timedelta(days=2)).isoformat(), (today + timedelta(days=1)).isoformat())
+            events = payload.get("events") or []
+        except Exception as e:
+            print(f"[proactive] calendar failed uid={uid} err={e!r}")
+            events = []
+        return proactive.build_feed(uid, events)
+
+    items = await run_in_threadpool(_run)
+    _FOCUS_CACHE[uid] = (time.time(), items)
+    return {"ok": True, "items": items}
+
+
+@miniapp_router.post("/proactive/dismiss")
+async def miniapp_proactive_dismiss(
+    body: _MiniappFocusDismissBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """✕ на карточке Фокуса: больше не показывать эту подсказку."""
+    from assistant.services import proactive
+
+    uid = int(principal.telegram_user_id)
+    key = str(body.key or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="Нет подсказки")
+    await run_in_threadpool(proactive.dismiss, uid, key)
+    hit = _FOCUS_CACHE.get(uid)
+    if hit:
+        _FOCUS_CACHE[uid] = (hit[0], [i for i in hit[1] if i.get("key") != key])
+    return {"ok": True}
 
 
 @miniapp_router.get("/notes/trash")

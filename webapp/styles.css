@@ -16127,3 +16127,47 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
 .discuss-scroll-down { position: absolute; left: 50%; transform: translateX(-50%); z-index: 45; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface-elevated, #2a2a2d); color: var(--text); display: flex; align-items: center; justify-content: center; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); cursor: pointer; }
 .discuss-scroll-down:hover { background: var(--accent-subtle); }
 .discuss-scroll-down.hidden { display: none; }
+
+/* ---- «Фокус» на «Актуальном» ---- */
+.actual-focus { margin: 12px 0 4px; }
+.actual-focus.hidden { display: none !important; }
+.focus-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.focus-head b { font-size: 0.95rem; }
+.focus-count { font-size: 0.78rem; color: var(--text-tertiary); }
+.focus-sp { flex: 1; }
+.focus-arrow { width: 28px; height: 28px; border: none; border-radius: 50%; background: var(--surface-elevated, #232326); color: var(--text-secondary); cursor: pointer; font-size: 1rem; line-height: 1; }
+.focus-arrow:hover { color: var(--text); }
+.focus-all { border: none; background: transparent; color: var(--accent); font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; padding: 4px 2px; }
+.focus-row { display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none; padding-bottom: 2px; }
+.focus-row::-webkit-scrollbar { display: none; }
+.focus-card { flex: none; width: 272px; min-height: 140px; scroll-snap-align: start; border-radius: 14px; background: var(--surface, #19191c); border: 1px solid var(--border); padding: 10px 12px; display: flex; flex-direction: column; gap: 5px; }
+.focus-card.is-urgent { border-color: rgba(248, 113, 113, 0.45); }
+.focus-card.is-wide { width: auto; min-height: 0; }
+.focus-card-tag { display: flex; align-items: center; gap: 6px; font-size: 0.68rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-tertiary); }
+.focus-card-kind { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.focus-card-ask { border: none; background: transparent; color: var(--accent); font: inherit; font-size: 0.75rem; font-weight: 600; text-transform: none; letter-spacing: 0; cursor: pointer; padding: 0; }
+.focus-card-x { width: 20px; height: 20px; border: none; border-radius: 6px; background: var(--surface-elevated, #232326); color: var(--text-tertiary); font-size: 0.68rem; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.focus-card-x:hover { color: var(--text); }
+.focus-card-title { font-size: 0.88rem; line-height: 1.32; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.focus-card-src { font-size: 0.75rem; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.focus-card-acts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: auto; padding-top: 4px; }
+.focus-card-btn { border: none; border-radius: 9px; padding: 5px 9px; background: var(--surface-elevated, #2a2a2e); color: var(--text); font: inherit; font-size: 0.75rem; font-weight: 600; cursor: pointer; }
+.focus-card-btn.is-primary { background: var(--accent); color: #fff; }
+.focus-card-btn:disabled { opacity: 0.6; }
+.focus-panel { flex-shrink: 0; max-height: 46%; overflow-y: auto; padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.focus-panel-head { display: flex; align-items: center; gap: 8px; }
+.focus-panel-head b { font-size: 0.95rem; }
+.focus-panel-head .focus-count { flex: 1; }
+.focus-panel-x { border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; font-size: 0.85rem; }
+.focus-panel-list { display: flex; flex-direction: column; gap: 8px; }
+@media (max-width: 959px) {
+  .focus-card { width: 236px; }
+  .focus-arrow { display: none; }
+}
+.digest-people { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 10px; font-size: 0.82rem; }
+.digest-people-label { color: var(--text-tertiary); margin-right: 2px; }
+.digest-person { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; background: var(--surface-elevated, #2a2a2d); }
+.digest-person.is-contact { background: var(--accent-subtle); }
+.digest-person-name { border: none; background: transparent; padding: 0; font: inherit; color: var(--text); }
+.digest-person.is-contact .digest-person-name { color: var(--accent); font-weight: 600; cursor: pointer; }
+.digest-person-add { border: none; background: transparent; padding: 0; font: inherit; font-size: 0.78rem; color: var(--accent); cursor: pointer; }
