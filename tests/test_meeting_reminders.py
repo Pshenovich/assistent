@@ -22,12 +22,15 @@ def test_extract_hangout_link():
     assert "meet.google.com" in (extract_online_meeting_url(ev) or "")
 
 
-def test_format_reminder_with_zoom():
+def test_format_reminder_with_zoom(monkeypatch):
+    monkeypatch.setenv("WEBAPP_PUBLIC_URL", "https://assistent.networ.ru")
     tz = ZoneInfo("Europe/Moscow")
     start = datetime(2026, 6, 4, 17, 0, tzinfo=tz)
     end = start + timedelta(hours=1)
     ev = {
         "summary": "Синк",
+        "event_id": "ev-sync",
+        "calendar_id": "primary",
         "html_link": "https://calendar.google.com/event?eid=1",
         "start": start,
         "end": end,
@@ -38,6 +41,9 @@ def test_format_reminder_with_zoom():
     assert "Синк" in text
     assert "17:00" in text
     assert "zoom.us" in text
+    assert "assistent.networ.ru/webapp/" in text
+    assert "event=ev-sync" in text
+    assert "calendar.google.com" not in text
     assert kb is not None
     assert kb.inline_keyboard[0][0].text == "Подключиться"
 

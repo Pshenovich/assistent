@@ -9,7 +9,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from googleapiclient.discovery import build
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from assistant.config import (
     DEFAULT_EVENT_TITLE,
@@ -222,6 +222,13 @@ def create_event(
     )
     if attendees:
         body["attendees"] = attendees
+    recurrence = parsed.get("recurrence")
+    if isinstance(recurrence, str) and recurrence.strip():
+        body["recurrence"] = [recurrence.strip()]
+    elif isinstance(recurrence, (list, tuple)):
+        lines = [str(x).strip() for x in recurrence if str(x).strip()]
+        if lines:
+            body["recurrence"] = lines
     insert_cal = cal_sources.resolve_calendar_id(
         user_id, (calendar_id or GOOGLE_CALENDAR_ID).strip() or GOOGLE_CALENDAR_ID
     )
@@ -240,6 +247,7 @@ def create_event(
         "start": start,
         "end": end,
         "attendee_emails": [a["email"] for a in attendees],
+        "recurrence": list(body.get("recurrence") or []),
     }
 
 
@@ -1068,11 +1076,27 @@ def patch_event_fields(
     return patched
 
 
+def _webapp_link_for_result(result: dict[str, Any]) -> str:
+    from assistant.lib.webapp_public import webapp_event_url
+
+    ev_id = str(result.get("event_id") or "").strip()
+    if not ev_id:
+        return ""
+    cal_id = str(result.get("calendar_id") or "").strip() or GOOGLE_CALENDAR_ID
+    day = ""
+    st = result.get("start")
+    if isinstance(st, datetime):
+        day = st.date().isoformat()
+    elif isinstance(st, str) and st:
+        day = st[:10]
+    return webapp_event_url(ev_id, calendar_id=cal_id, day=day or None)
+
+
 def format_create_reply_html(result: dict[str, Any], user_id: int) -> str:
     from assistant.lib.telegram_rich import append_footnotes, zoom_meeting_footnote
 
     title = html.escape(str(result.get("summary") or DEFAULT_EVENT_TITLE))
-    link = str(result.get("html_link") or "").strip()
+    link = _webapp_link_for_result(result)
     when = ""
     st = result.get("start")
     en = result.get("end")
@@ -1108,19 +1132,20 @@ def format_events_list(events: list[dict[str, Any]], header: str) -> str:
 def build_created_event_keyboard(
     result: dict[str, Any], *, user_id: int
 ) -> InlineKeyboardMarkup | None:
-    link = str(result.get("html_link") or "").strip()
     ev_id = str(result.get("event_id") or "").strip()
-    if not link and not ev_id:
+    if not ev_id:
         return None
     rows: list[list[InlineKeyboardButton]] = []
+    link = _webapp_link_for_result(result)
     if link:
-        rows.append([InlineKeyboardButton("Редактировать", url=link)])
-    if ev_id:
-        cal_id = str(result.get("calendar_id") or "").strip() or GOOGLE_CALENDAR_ID
-        token = calendar_action_tokens.register(
-            user_id, ev_id, calendar_id=cal_id
+        rows.append(
+            [InlineKeyboardButton("Открыть в Leo", web_app=WebAppInfo(url=link))]
         )
-        rows.append([InlineKeyboardButton("Удалить", callback_data=f"ced:{token}")])
+    cal_id = str(result.get("calendar_id") or "").strip() or GOOGLE_CALENDAR_ID
+    token = calendar_action_tokens.register(
+        user_id, ev_id, calendar_id=cal_id
+    )
+    rows.append([InlineKeyboardButton("Удалить", callback_data=f"ced:{token}")])
     return InlineKeyboardMarkup(rows) if rows else None
 
 

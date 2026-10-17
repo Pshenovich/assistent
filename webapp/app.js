@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261017-focus4";
+  var WEBAPP_BUILD = "20261017-recur1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -14955,6 +14955,7 @@
       var savedCb = taskModalOnSaved;
       closeModal();
       if (savedCb) savedCb(saved);
+      rememberCalCardUi("task", id, { done: true, deleted: false });
       if (isPostedTasksOpen()) await loadPostedTasksList();
       await loadActual({ skipCachePaint: true });
       try {
@@ -15048,6 +15049,7 @@
         closeModal();
         if (deletedCb) deletedCb(id);
         else removePostedTaskFromState(id);
+        rememberCalCardUi("task", id, { deleted: true });
         if (isPostedTasksOpen()) await loadPostedTasksList();
         await loadActual();
       } catch (e) {
@@ -16134,16 +16136,18 @@
     host.appendChild(row);
   }
 
-  // Полный список — сверху в окне ассистента; ниже обычный чат, где можно уточнить.
+  // Полный список — в ленте чата (одна прокрутка с «Чем помочь?»), не отдельным окном сверху.
   function renderFocusPanel() {
     var sheet = document.querySelector("#note-discussion-overlay .note-discussion-sheet");
+    var scroll = sheet && sheet.querySelector(".note-discussion-scroll");
     var old = document.getElementById("focus-in-assistant");
     var show =
       focusPanelOpen &&
       focusItems.length &&
       document.documentElement.classList.contains("actual-assistant-open") &&
+      !document.documentElement.classList.contains("note-discussion-sheet-open") &&
       isNoteDiscussionOpen() &&
-      sheet;
+      scroll;
     if (!show) {
       if (old) old.remove();
       if (!focusItems.length) focusPanelOpen = false;
@@ -16156,10 +16160,12 @@
     var head = document.createElement("div");
     head.className = "focus-panel-head";
     head.innerHTML = '<b>Фокус</b><span class="focus-count"></span><button type="button" class="focus-panel-x" aria-label="Свернуть">✕</button>';
-    head.querySelector(".focus-count").textContent = focusItems.length + " · уточните ниже";
+    head.querySelector(".focus-count").textContent =
+      focusItems.length + " " + pluralRu(focusItems.length, "подсказка", "подсказки", "подсказок");
     head.querySelector(".focus-panel-x").addEventListener("click", function () {
       focusPanelOpen = false;
       renderFocusPanel();
+      refreshDiscussFeedNow();
     });
     box.appendChild(head);
     var list = document.createElement("div");
@@ -16168,9 +16174,8 @@
       list.appendChild(focusCard(it, true));
     });
     box.appendChild(list);
-    if (!old) {
-      var scroll = sheet.querySelector(".note-discussion-scroll");
-      sheet.insertBefore(box, scroll || null);
+    if (box.parentNode !== scroll) {
+      scroll.insertBefore(box, scroll.firstChild);
     }
   }
 
@@ -16196,7 +16201,9 @@
   }
 
   async function focusOpenAssistant() {
-    if (document.documentElement.classList.contains("actual-assistant-open") && isNoteDiscussionOpen()) return true;
+    if (document.documentElement.classList.contains("actual-assistant-open") && isNoteDiscussionOpen()) {
+      return true;
+    }
     var id = rememberedActualAssistantChat();
     var thread = null;
     if (id) {
@@ -16209,7 +16216,8 @@
         return String(t.id) === String(id);
       })[0] || null;
     }
-    await openActualAssistant(thread || undefined);
+    // keepFocusPanel: true только если уже выставили через «Все» / askAboutFocus с панелью.
+    await openActualAssistant(thread || undefined, { keepFocusPanel: !!focusPanelOpen });
     return isNoteDiscussionOpen();
   }
 
@@ -16217,6 +16225,8 @@
     focusPanelOpen = true;
     if (!(await focusOpenAssistant())) return;
     renderFocusPanel();
+    // Убрать «Чем помочь?» / саджесты — карточки Фокуса уже контекст.
+    refreshDiscussFeedNow();
   }
 
   async function askAboutFocus(it) {
@@ -16237,6 +16247,7 @@
     });
     renderFocusRow();
     renderFocusPanel();
+    if (!focusPanelOpen) refreshDiscussFeedNow();
     try {
       await apiFetch("/proactive/dismiss", { method: "POST", body: JSON.stringify({ key: it.key }) });
     } catch (_) {}
@@ -20914,6 +20925,26 @@
     slot: ["cal", "Встреча", "Создана встреча"],
   };
 
+  function matchCalendarEventInList(events, ref) {
+    var want = String((ref && ref.id) || "");
+    var cal = String((ref && ref.calendar_id) || "primary");
+    if (!want) return null;
+    var list = events || [];
+    var exact = list.find(function (x) {
+      return String(x.id) === want && String(x.calendar_id || "primary") === cal;
+    });
+    if (exact) return exact;
+    // Экземпляр серии Google: id = {master}_{timestamp}, recurringEventId = master.
+    return (
+      list.find(function (x) {
+        if (String(x.calendar_id || "primary") !== cal) return false;
+        var rid = String(x.recurringEventId || (x.raw && x.raw.recurringEventId) || "");
+        if (rid && rid === want) return true;
+        return String(x.id || "").indexOf(want + "_") === 0;
+      }) || null
+    );
+  }
+
   // Открыть встречу/задачу/напоминание из карточки в ответе ИИ.
   async function openCalendarRef(ref) {
     if (!ref || !ref.id) return;
@@ -20932,9 +20963,7 @@
         return;
       }
       var day = await fetchCalendarDay(ref.date || "");
-      var ev = ((day && day.events) || []).find(function (x) {
-        return String(x.id) === String(ref.id);
-      });
+      var ev = matchCalendarEventInList((day && day.events) || [], ref);
       if (ev) openEventModal(ev);
       else showNoteToast("Встреча не найдена — возможно, её перенесли или удалили");
     } catch (e) {
@@ -20942,18 +20971,39 @@
     }
   }
 
+  var calCardUiState = {};
+
+  function calCardStateKey(type, id) {
+    return String(type || "") + ":" + String(id || "").replace(/^task-/, "");
+  }
+
+  function rememberCalCardUi(type, id, patch) {
+    var key = calCardStateKey(type, id);
+    if (!key || key === ":") return;
+    calCardUiState[key] = Object.assign({}, calCardUiState[key], patch || {});
+    refreshDiscussFeedNow();
+  }
+
+  function calCardUiFor(open) {
+    if (!open || open.id == null || open.id === "") return null;
+    return calCardUiState[calCardStateKey(open.type, open.id)] || null;
+  }
+
   function renderCalInfoCard(a) {
     var ui = { show_event: "cal", show_task: "taskBox", show_reminder: "bell" }[a.kind] || "cal";
+    var state = calCardUiFor(a.open);
     var card = document.createElement("button");
     card.type = "button";
-    card.className = "note-cal-card";
+    card.className = "note-cal-card" + (state && state.done ? " is-done" : "");
     card.innerHTML = '<span class="note-cal-card-ico">' + DISCUSS_ICONS[ui] + "</span>";
     var copy = document.createElement("span");
     copy.className = "note-cal-card-copy";
     var t = document.createElement("b");
     t.textContent = a.title || "";
     var sub = document.createElement("small");
-    sub.textContent = [a.when, a.detail].filter(Boolean).join(" · ");
+    var detail = a.detail || "";
+    if (state && state.done && !/выполнен/i.test(detail)) detail = "Выполнена";
+    sub.textContent = [a.when, detail].filter(Boolean).join(" · ");
     copy.appendChild(t);
     copy.appendChild(sub);
     card.appendChild(copy);
@@ -21057,6 +21107,8 @@
       var a = calActionsCache[id];
       if (!a || a.missing) return;
       if (a.kind === "show_event" || a.kind === "show_task" || a.kind === "show_reminder") {
+        var cardState = calCardUiFor(a.open);
+        if (cardState && cardState.deleted) return;
         box.appendChild(renderCalInfoCard(a));
         return;
       }
@@ -23415,6 +23467,40 @@
       if (sm) return sm[1];
     }
     return "";
+  }
+
+  function pendingEventFromLocation() {
+    try {
+      var q = new URLSearchParams(location.search || "");
+      var eid = (q.get("event") || q.get("e") || "").trim();
+      if (eid) {
+        return {
+          id: eid,
+          calendar_id: (q.get("cal") || q.get("calendar") || "primary").trim() || "primary",
+          date: (q.get("day") || q.get("date") || "").trim().slice(0, 10),
+        };
+      }
+    } catch (_) {}
+    var hash = String(location.hash || "").replace(/^#/, "");
+    var hm = hash.match(/(?:^|&)event=([^&]+)/) || hash.match(/^event=([^&]+)/);
+    if (hm) {
+      var hp = {};
+      try {
+        hp = Object.fromEntries(new URLSearchParams(hash));
+      } catch (_) {}
+      return {
+        id: decodeURIComponent(hm[1]),
+        calendar_id: String(hp.cal || hp.calendar || "primary"),
+        date: String(hp.day || hp.date || "").slice(0, 10),
+      };
+    }
+    var tg = window.Telegram && window.Telegram.WebApp;
+    var start = tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param;
+    if (start) {
+      var sm = String(start).match(/^event[_-](.+)$/i);
+      if (sm) return { id: sm[1], calendar_id: "primary", date: "" };
+    }
+    return null;
   }
 
   function pendingChatIdFromLocation() {
@@ -29581,7 +29667,10 @@
       });
   }
 
-  async function openActualAssistant(thread) {
+  async function openActualAssistant(thread, opts) {
+    opts = opts || {};
+    // Панель «Фокус» только после кнопки «Все» на Актуальном, не при каждом открытии чата.
+    if (!opts.keepFocusPanel) focusPanelOpen = false;
     document.documentElement.classList.add("actual-assistant-open");
     try {
       if (thread && thread.id != null) await openChatThread(thread);
@@ -31701,8 +31790,12 @@
       hintChat.textContent = "Ассистент видит ваш календарь, задачи и контакты — может найти время, поставить встречу или задачу.";
       box.appendChild(title);
       box.appendChild(hintChat);
-      if (document.documentElement.classList.contains("actual-assistant-open") && focusItems.length) {
-        // Живые подсказки из «Фокуса»: нажатие — вопрос ассистенту с карточкой в контексте.
+      if (
+        document.documentElement.classList.contains("actual-assistant-open") &&
+        focusItems.length &&
+        !focusPanelOpen
+      ) {
+        // Короткие чипы, пока полный список «Фокуса» не раскрыт в этой же ленте.
         var focusChips = document.createElement("div");
         focusChips.className = "note-discuss-sugg note-discuss-sugg--focus";
         focusItems.slice(0, 3).forEach(function (it) {
@@ -31881,7 +31974,9 @@
         !statusOn &&
         !running &&
         !gptBusy &&
-        !researchRunning
+        !researchRunning &&
+        // При «Все» карточки Фокуса уже в ленте — empty-state с саджестами не нужен.
+        !focusPanelOpen
       ) {
         list.appendChild(renderDiscussEmptyState(chatNow));
       } else {
@@ -36177,6 +36272,34 @@
   var noteDeepLinkConsumed = false;
   var chatDeepLinkConsumed = false;
   var taskDeepLinkConsumed = false;
+  var eventDeepLinkConsumed = false;
+
+  async function openPendingEventFromLocation() {
+    if (eventDeepLinkConsumed) return;
+    var pending = pendingEventFromLocation();
+    if (!pending || !pending.id) return;
+    eventDeepLinkConsumed = true;
+    try {
+      setTab("actual");
+      await openCalendarRef({
+        type: "event",
+        id: pending.id,
+        calendar_id: pending.calendar_id || "primary",
+        date: pending.date || "",
+      });
+    } catch (_) {}
+    try {
+      var u = new URL(location.href);
+      u.searchParams.delete("event");
+      u.searchParams.delete("e");
+      u.searchParams.delete("cal");
+      u.searchParams.delete("calendar");
+      u.searchParams.delete("day");
+      u.searchParams.delete("date");
+      if (/event=/.test(u.hash)) u.hash = "";
+      history.replaceState(null, "", u.pathname + u.search + u.hash);
+    } catch (_) {}
+  }
 
   async function openPendingTaskFromLocation() {
     if (taskDeepLinkConsumed) return;
@@ -41035,6 +41158,7 @@
     }
 
     setTab("actual", { noAnim: true });
+    openPendingEventFromLocation();
     openPendingTaskFromLocation();
   }
 

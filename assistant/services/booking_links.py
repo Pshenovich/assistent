@@ -84,8 +84,10 @@ def format_booking_event_html(
     *,
     heading: str = "Создана встреча",
 ) -> str:
+    from assistant.services.calendar import _webapp_link_for_result
+
     title = html.escape(str(result.get("summary") or "Встреча"))
-    link = str(result.get("html_link") or "").strip()
+    link = _webapp_link_for_result(result)
     title_html = f'<a href="{html.escape(link, quote=True)}">{title}</a>' if link else f"<b>{title}</b>"
     parts = [f"<b>{html.escape(heading)}:</b> {title_html}"]
     when = _event_when(result, owner_id)
@@ -107,8 +109,10 @@ def format_booking_owner_notify_html(
     *,
     guests: list[str] | None = None,
 ) -> str:
+    from assistant.services.calendar import _webapp_link_for_result
+
     title = html.escape(str(result.get("summary") or "Встреча"))
-    link = str(result.get("html_link") or "").strip()
+    link = _webapp_link_for_result(result)
     title_html = f'<a href="{html.escape(link, quote=True)}">{title}</a>' if link else f"<b>{title}</b>"
     who = [str(e).strip() for e in (guests or []) if str(e).strip()]
     who_line = html.escape(", ".join(who)) if who else "внешний контакт"

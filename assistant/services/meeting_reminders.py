@@ -56,10 +56,19 @@ def fetch_upcoming_timed_events(user_id: int, *, horizon_min: int = 25) -> list[
 def format_reminder_message(
     event: dict[str, Any], *, user_id: int, minutes_before: int
 ) -> tuple[str, InlineKeyboardMarkup | None]:
+    from assistant.lib.webapp_public import webapp_event_url
+
     title = html.escape(str(event.get("summary") or "Встреча"))
-    link = str(event.get("html_link") or "").strip()
+    ev_id = str(event.get("event_id") or event.get("id") or "").strip()
+    cal_id = str(event.get("calendar_id") or "primary").strip() or "primary"
     start = event.get("start")
     end = event.get("end")
+    day = ""
+    if isinstance(start, datetime):
+        day = start.date().isoformat()
+    link = (
+        webapp_event_url(ev_id, calendar_id=cal_id, day=day or None) if ev_id else ""
+    )
     when = ""
     if isinstance(start, datetime) and isinstance(end, datetime):
         when = format_event_when(start, end, user_id)
