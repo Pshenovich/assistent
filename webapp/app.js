@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261016-fixes8";
+  var WEBAPP_BUILD = "20261017-discuss-push";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -139,7 +139,14 @@
         (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
         window.navigator.standalone === true;
     } catch (_) {}
-    if (!standalone) {
+    var keepForPush = false;
+    try {
+      keepForPush =
+        window.Notification &&
+        Notification.permission === "granted" &&
+        window.PushManager;
+    } catch (_) {}
+    if (!standalone && !keepForPush) {
       navigator.serviceWorker.getRegistrations().then(function (regs) {
         regs.forEach(function (reg) {
           try {
@@ -10003,8 +10010,10 @@
   var meetingRemindersSaveInFlight = false;
   var taskRemindersEnabled = true;
   var taskRemindersSaveInFlight = false;
-  var discussionNotificationsEnabled = true;
-  var discussionNotificationsSaveInFlight = false;
+  var discussionNotifyTelegramEnabled = true;
+  var discussionNotifyWebPushEnabled = true;
+  var discussionNotifyTelegramSaveInFlight = false;
+  var discussionNotifyWebPushSaveInFlight = false;
   var zoomAutoRecordEnabled = false;
   var zoomAutoRecordSaveInFlight = false;
   var zoomAutoRecordAvailable = false;
@@ -10160,55 +10169,191 @@
     });
   }
 
-  function applyDiscussionNotificationsToggleUi(enabled) {
-    var row = document.getElementById("discussion-notifications-setting");
-    var toggle = document.getElementById("discussion-notifications-toggle");
-    if (!row || !toggle) return;
-    discussionNotificationsEnabled = !!enabled;
-    setHidden(row, false);
-    toggle.classList.toggle("svc-toggle--on", discussionNotificationsEnabled);
-    toggle.classList.toggle("svc-toggle--pending", discussionNotificationsSaveInFlight);
-    toggle.setAttribute("aria-pressed", discussionNotificationsEnabled ? "true" : "false");
+  function webPushSupported() {
+    try {
+      if (!window.PushManager || !navigator.serviceWorker || !window.Notification) return false;
+      if (isInsideTelegramClient && isInsideTelegramClient()) return false;
+    } catch (_) {
+      return false;
+    }
+    return true;
   }
 
-  async function saveDiscussionNotificationsEnabled(enabled) {
+  function urlBase64ToUint8Array(base64String) {
+    var padding = "=".repeat((4 - (String(base64String || "").length % 4)) % 4);
+    var base64 = String(base64String || "").replace(/-/g, "+").replace(/_/g, "/");
+    var raw = atob(base64 + padding);
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+
+  async function ensurePushServiceWorker() {
+    if (!("serviceWorker" in navigator)) throw new Error("Нет service worker");
+    var reg = await navigator.serviceWorker.register("./sw.js?v=" + WEBAPP_BUILD, { scope: "./" });
+    return navigator.serviceWorker.ready.then(function () {
+      return reg;
+    });
+  }
+
+  async function subscribeWebPush() {
+    if (!webPushSupported()) {
+      throw new Error("Web Push недоступен в этом приложении");
+    }
+    var perm = await Notification.requestPermission();
+    if (perm !== "granted") throw new Error("Разрешение на уведомления не выдано");
+    var keyRes = await apiFetch("/push/vapid-public-key");
+    var publicKey = String((keyRes && keyRes.public_key) || "").trim();
+    if (!publicKey) throw new Error("Web Push не настроен на сервере");
+    var reg = await ensurePushServiceWorker();
+    var sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    });
+    var json = sub.toJSON ? sub.toJSON() : {};
+    var keys = json.keys || {};
+    await apiFetch("/push/subscribe", {
+      method: "POST",
+      body: JSON.stringify({
+        endpoint: json.endpoint || sub.endpoint,
+        keys: { p256dh: keys.p256dh || "", auth: keys.auth || "" },
+        user_agent: navigator.userAgent || "",
+      }),
+    });
+  }
+
+  async function unsubscribeWebPush() {
+    try {
+      if (!("serviceWorker" in navigator) || !navigator.serviceWorker.getRegistration) return;
+      var reg = await navigator.serviceWorker.getRegistration("./");
+      var sub = reg && reg.pushManager ? await reg.pushManager.getSubscription() : null;
+      if (!sub) return;
+      var json = sub.toJSON ? sub.toJSON() : {};
+      try {
+        await apiFetch("/push/subscribe", {
+          method: "DELETE",
+          body: JSON.stringify({ endpoint: json.endpoint || sub.endpoint }),
+        });
+      } catch (_) {}
+      await sub.unsubscribe();
+    } catch (_) {}
+  }
+
+  async function syncWebPushSubscriptionIfNeeded() {
+    if (!discussionNotifyWebPushEnabled || !webPushSupported()) return;
+    try {
+      if (Notification.permission !== "granted") return;
+      await subscribeWebPush();
+    } catch (_) {}
+  }
+
+  function applyDiscussionNotifyTelegramUi(enabled) {
+    var block = document.getElementById("discussion-notifications-setting");
+    var toggle = document.getElementById("discussion-notify-telegram-toggle");
+    if (block) setHidden(block, false);
+    if (!toggle) return;
+    discussionNotifyTelegramEnabled = !!enabled;
+    toggle.classList.toggle("svc-toggle--on", discussionNotifyTelegramEnabled);
+    toggle.classList.toggle("svc-toggle--pending", discussionNotifyTelegramSaveInFlight);
+    toggle.setAttribute("aria-pressed", discussionNotifyTelegramEnabled ? "true" : "false");
+  }
+
+  function applyDiscussionNotifyWebPushUi(enabled) {
+    var block = document.getElementById("discussion-notifications-setting");
+    var toggle = document.getElementById("discussion-notify-web-push-toggle");
+    var hint = document.getElementById("discussion-notify-web-push-hint");
+    if (block) setHidden(block, false);
+    discussionNotifyWebPushEnabled = !!enabled;
+    if (toggle) {
+      toggle.classList.toggle("svc-toggle--on", discussionNotifyWebPushEnabled);
+      toggle.classList.toggle("svc-toggle--pending", discussionNotifyWebPushSaveInFlight);
+      toggle.setAttribute("aria-pressed", discussionNotifyWebPushEnabled ? "true" : "false");
+    }
+    if (hint) {
+      var unsupported = !webPushSupported();
+      setHidden(hint, !unsupported);
+    }
+  }
+
+  async function saveDiscussionNotifyTelegram(enabled) {
     var errEl = document.getElementById("discussion-notifications-setting-err");
-    var toggle = document.getElementById("discussion-notifications-toggle");
-    discussionNotificationsSaveInFlight = true;
+    var toggle = document.getElementById("discussion-notify-telegram-toggle");
+    discussionNotifyTelegramSaveInFlight = true;
     if (toggle) toggle.classList.add("svc-toggle--pending");
     try {
       var data = await apiFetch("/settings", {
         method: "PATCH",
-        body: JSON.stringify({ discussion_notifications_enabled: !!enabled }),
+        body: JSON.stringify({ discussion_notify_telegram: !!enabled }),
       });
-      applyDiscussionNotificationsToggleUi(
-        !!(data && data.discussion_notifications_enabled)
-      );
+      applyDiscussionNotifyTelegramUi(!!(data && data.discussion_notify_telegram));
+      applyDiscussionNotifyWebPushUi(!!(data && data.discussion_notify_web_push));
       if (errEl) setHidden(errEl, true);
     } catch (e) {
-      applyDiscussionNotificationsToggleUi(!enabled);
+      applyDiscussionNotifyTelegramUi(!enabled);
       if (errEl) {
         errEl.textContent = e.message || String(e);
         setHidden(errEl, false);
       }
     } finally {
-      discussionNotificationsSaveInFlight = false;
+      discussionNotifyTelegramSaveInFlight = false;
+      if (toggle) toggle.classList.remove("svc-toggle--pending");
+    }
+  }
+
+  async function saveDiscussionNotifyWebPush(enabled) {
+    var errEl = document.getElementById("discussion-notifications-setting-err");
+    var toggle = document.getElementById("discussion-notify-web-push-toggle");
+    discussionNotifyWebPushSaveInFlight = true;
+    if (toggle) toggle.classList.add("svc-toggle--pending");
+    try {
+      if (enabled) {
+        await subscribeWebPush();
+      } else {
+        await unsubscribeWebPush();
+      }
+      var data = await apiFetch("/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ discussion_notify_web_push: !!enabled }),
+      });
+      applyDiscussionNotifyWebPushUi(!!(data && data.discussion_notify_web_push));
+      if (errEl) setHidden(errEl, true);
+    } catch (e) {
+      applyDiscussionNotifyWebPushUi(!enabled);
+      if (errEl) {
+        errEl.textContent = e.message || String(e);
+        setHidden(errEl, false);
+      }
+    } finally {
+      discussionNotifyWebPushSaveInFlight = false;
       if (toggle) toggle.classList.remove("svc-toggle--pending");
     }
   }
 
   function initDiscussionNotificationsToggle() {
-    var toggle = document.getElementById("discussion-notifications-toggle");
-    if (!toggle || toggle.getAttribute("data-bound") === "1") return;
-    toggle.setAttribute("data-bound", "1");
-    toggle.addEventListener("click", function (ev) {
-      ev.preventDefault();
-      ev.stopPropagation();
-      if (discussionNotificationsSaveInFlight) return;
-      var next = !discussionNotificationsEnabled;
-      applyDiscussionNotificationsToggleUi(next);
-      saveDiscussionNotificationsEnabled(next);
-    });
+    var tg = document.getElementById("discussion-notify-telegram-toggle");
+    var wp = document.getElementById("discussion-notify-web-push-toggle");
+    if (tg && tg.getAttribute("data-bound") !== "1") {
+      tg.setAttribute("data-bound", "1");
+      tg.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (discussionNotifyTelegramSaveInFlight) return;
+        var next = !discussionNotifyTelegramEnabled;
+        applyDiscussionNotifyTelegramUi(next);
+        saveDiscussionNotifyTelegram(next);
+      });
+    }
+    if (wp && wp.getAttribute("data-bound") !== "1") {
+      wp.setAttribute("data-bound", "1");
+      wp.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (discussionNotifyWebPushSaveInFlight) return;
+        var next = !discussionNotifyWebPushEnabled;
+        applyDiscussionNotifyWebPushUi(next);
+        saveDiscussionNotifyWebPush(next);
+      });
+    }
   }
 
   function findCalendarInCache(calId) {
@@ -10472,9 +10617,9 @@
       }
       applyMeetingRemindersToggleUi(settings.meeting_reminders_enabled !== false);
       applyTaskRemindersToggleUi(settings.task_reminders_enabled !== false);
-      applyDiscussionNotificationsToggleUi(
-        settings.discussion_notifications_enabled !== false
-      );
+      applyDiscussionNotifyTelegramUi(settings.discussion_notify_telegram !== false);
+      applyDiscussionNotifyWebPushUi(settings.discussion_notify_web_push !== false);
+      syncWebPushSubscriptionIfNeeded();
       calendarsCache = data.calendars || [];
       paintCalendarsList();
     } catch (e) {
@@ -29620,6 +29765,7 @@
       return;
     }
     setDiscussUnread(kind, itemId, true);
+    playDiscussNotifySound();
   }
 
   function syncDiscussUnreadFromNoteRow(kind, row) {
@@ -29780,6 +29926,41 @@
     showNoteToast("", { node: node, actionable: true, duration: 6500 });
   }
 
+  var discussNotifySoundAt = 0;
+
+  function playDiscussNotifySound() {
+    var now = Date.now();
+    if (now - discussNotifySoundAt < 1800) return;
+    discussNotifySoundAt = now;
+    try {
+      if (
+        discussionNotifyWebPushEnabled &&
+        window.Notification &&
+        Notification.permission === "granted"
+      ) {
+        return;
+      }
+    } catch (_) {}
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      if (!window._discussAudioCtx) window._discussAudioCtx = new Ctx();
+      var ctx = window._discussAudioCtx;
+      if (ctx.state === "suspended") ctx.resume();
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.2);
+    } catch (_) {}
+  }
+
   function notifyAgentReplyArrived(kind, itemId, mode, title) {
     endNoteAgentSession(kind, itemId);
     shareHaptic();
@@ -29787,6 +29968,7 @@
       refreshNoteCommentsList();
       return;
     }
+    playDiscussNotifySound();
     var label = title || noteTitleForDiscussToast(kind, itemId, "");
     setDiscussUnread(kind, itemId, true);
     refreshDiscussUnreadUi();

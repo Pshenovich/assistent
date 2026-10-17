@@ -119,17 +119,71 @@ def set_task_reminders_enabled(user_id: int, enabled: bool) -> None:
     save_prefs(user_id, prefs)
 
 
-def discussion_notifications_enabled(user_id: int) -> bool:
-    """По умолчанию пуши о новых сообщениях в обсуждениях включены."""
+def _discussion_master_off(prefs: dict[str, Any]) -> bool:
+    return "discussion_notifications_enabled" in prefs and not bool(
+        prefs.get("discussion_notifications_enabled")
+    )
+
+
+def discussion_notify_telegram(user_id: int) -> bool:
+    """Telegram-пуш о новых сообщениях. По умолчанию включён."""
     prefs = load_prefs(user_id)
-    if "discussion_notifications_enabled" not in prefs:
+    if _discussion_master_off(prefs):
+        return False
+    if "discussion_notify_telegram" not in prefs:
         return True
-    return bool(prefs.get("discussion_notifications_enabled"))
+    return bool(prefs.get("discussion_notify_telegram"))
+
+
+def discussion_notify_web_push(user_id: int) -> bool:
+    """Web Push о новых сообщениях. По умолчанию включён."""
+    prefs = load_prefs(user_id)
+    if _discussion_master_off(prefs):
+        return False
+    if "discussion_notify_web_push" not in prefs:
+        return True
+    return bool(prefs.get("discussion_notify_web_push"))
+
+
+def discussion_notifications_enabled(user_id: int) -> bool:
+    """Хотя бы один канал обсуждений включён."""
+    return discussion_notify_telegram(user_id) or discussion_notify_web_push(user_id)
+
+
+def _channel_on(prefs: dict[str, Any], key: str) -> bool:
+    if _discussion_master_off(prefs):
+        return False
+    if key not in prefs:
+        return True
+    return bool(prefs.get(key))
+
+
+def set_discussion_notify_telegram(user_id: int, enabled: bool) -> None:
+    prefs = load_prefs(user_id)
+    prefs["discussion_notify_telegram"] = bool(enabled)
+    if enabled:
+        prefs["discussion_notifications_enabled"] = True
+    elif not _channel_on(prefs, "discussion_notify_web_push"):
+        prefs["discussion_notifications_enabled"] = False
+    save_prefs(user_id, prefs)
+
+
+def set_discussion_notify_web_push(user_id: int, enabled: bool) -> None:
+    prefs = load_prefs(user_id)
+    prefs["discussion_notify_web_push"] = bool(enabled)
+    if enabled:
+        prefs["discussion_notifications_enabled"] = True
+    elif not _channel_on(prefs, "discussion_notify_telegram"):
+        prefs["discussion_notifications_enabled"] = False
+    save_prefs(user_id, prefs)
 
 
 def set_discussion_notifications_enabled(user_id: int, enabled: bool) -> None:
     prefs = load_prefs(user_id)
-    prefs["discussion_notifications_enabled"] = bool(enabled)
+    on = bool(enabled)
+    prefs["discussion_notifications_enabled"] = on
+    prefs["discussion_notify_telegram"] = on
+    prefs["discussion_notify_web_push"] = on
     save_prefs(user_id, prefs)
 
 

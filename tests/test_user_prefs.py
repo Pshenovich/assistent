@@ -57,6 +57,40 @@ def test_discussion_notifications_enabled_can_be_disabled(monkeypatch):
         assert up.discussion_notifications_enabled(7) is True
 
 
+def test_discussion_notify_channels_default_on(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        monkeypatch.setenv("USER_PREFS_DIR", td)
+        assert up.discussion_notify_telegram(7) is True
+        assert up.discussion_notify_web_push(7) is True
+
+
+def test_discussion_notify_legacy_master_off(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        monkeypatch.setenv("USER_PREFS_DIR", td)
+        up.save_prefs(7, {"discussion_notifications_enabled": False})
+        assert up.discussion_notify_telegram(7) is False
+        assert up.discussion_notify_web_push(7) is False
+        assert up.discussion_notifications_enabled(7) is False
+
+
+def test_discussion_notify_telegram_only(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        monkeypatch.setenv("USER_PREFS_DIR", td)
+        up.set_discussion_notify_web_push(7, False)
+        assert up.discussion_notify_telegram(7) is True
+        assert up.discussion_notify_web_push(7) is False
+        assert up.discussion_notifications_enabled(7) is True
+
+
+def test_discussion_notify_web_push_only(monkeypatch):
+    with tempfile.TemporaryDirectory() as td:
+        monkeypatch.setenv("USER_PREFS_DIR", td)
+        up.set_discussion_notify_telegram(7, False)
+        assert up.discussion_notify_telegram(7) is False
+        assert up.discussion_notify_web_push(7) is True
+        assert up.discussion_notifications_enabled(7) is True
+
+
 def test_user_prefs_zoom_auto_record_default_off(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as td:
         monkeypatch.setenv("USER_PREFS_DIR", td)

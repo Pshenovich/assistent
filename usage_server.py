@@ -2575,10 +2575,27 @@ class _MiniappSettingsPatch(BaseModel):
     meeting_reminders_enabled: Optional[bool] = None
     task_reminders_enabled: Optional[bool] = None
     discussion_notifications_enabled: Optional[bool] = None
+    discussion_notify_telegram: Optional[bool] = None
+    discussion_notify_web_push: Optional[bool] = None
     zoom_auto_record_enabled: Optional[bool] = None
     telemost_auto_record_enabled: Optional[bool] = None
     digest_enabled: Optional[bool] = None
     digest_chat_ids: Optional[list[int]] = None
+
+
+class _MiniappPushSubscribeKeys(BaseModel):
+    p256dh: str = ""
+    auth: str = ""
+
+
+class _MiniappPushSubscribeBody(BaseModel):
+    endpoint: str = ""
+    keys: Optional[_MiniappPushSubscribeKeys] = None
+    user_agent: str = ""
+
+
+class _MiniappPushUnsubscribeBody(BaseModel):
+    endpoint: str = ""
 
 
 class _MiniappEntryColorBody(BaseModel):
@@ -3604,42 +3621,18 @@ def _notify_discussion_comment(
     is_assistant: bool,
 ) -> None:
     """Пуш участникам, у которых сейчас не открыто это обсуждение."""
-    from assistant.lib.telegram_notify import send_message
-    from assistant.stores import discussion_presence
-    from assistant.stores import note_members
-    from assistant.stores import user_prefs
-    from html import escape as html_escape
+    from assistant.services.discussion_notify import notify_discussion_comment_safe
 
-    members = _discussion_participants(owner, kind, item_id)
-    if len(members) < 2:
-        return
-    present = discussion_presence.present_user_ids(owner, kind, item_id)
-    skip = set(present)
-    if not is_assistant:
-        skip.add(str(author_user_id))
-    title = _discussion_item_title(owner, kind, item_id)
-    link = _discussion_title_link_html(title, kind, item_id)
-    who = note_members.requester_label(author_username, author_name, str(author_user_id))
-    if is_assistant:
-        who = html_escape(str(author_name or "GPT"))
-    preview = " ".join(str(body or "").split())
-    if len(preview) > 180:
-        preview = preview[:179] + "…"
-    preview = html_escape(preview) if preview else "Новое сообщение"
-    text = f"{who} в обсуждении {link}:\n{preview}"
-    for m in members:
-        mid = str(m.get("user_id") or "").strip()
-        if not mid or mid in skip:
-            continue
-        try:
-            if not user_prefs.discussion_notifications_enabled(int(mid)):
-                continue
-        except Exception:
-            pass
-        try:
-            send_message(int(mid), text)
-        except Exception as e:
-            print(f"[discuss_notify] fail uid={mid} err={e!r}")
+    notify_discussion_comment_safe(
+        owner=owner,
+        kind=kind,
+        item_id=str(item_id),
+        author_user_id=str(author_user_id),
+        author_name=author_name,
+        author_username=author_username,
+        body=body,
+        is_assistant=is_assistant,
+    )
 
 
 def _event_meet_url(ev: dict[str, Any]) -> Optional[str]:
@@ -6214,6 +6207,8 @@ async def miniapp_settings_get(
             "discussion_notifications_enabled": user_prefs.discussion_notifications_enabled(
                 uid
             ),
+            "discussion_notify_telegram": user_prefs.discussion_notify_telegram(uid),
+            "discussion_notify_web_push": user_prefs.discussion_notify_web_push(uid),
             "zoom_auto_record_enabled": user_prefs.zoom_auto_record_enabled(uid),
             "telemost_auto_record_enabled": user_prefs.telemost_auto_record_enabled(uid),
             "meeting_bot_available": mrec.service_available(),
@@ -6250,6 +6245,14 @@ async def miniapp_settings_patch(
             user_prefs.set_discussion_notifications_enabled(
                 uid, bool(body.discussion_notifications_enabled)
             )
+        if body.discussion_notify_telegram is not None:
+            user_prefs.set_discussion_notify_telegram(
+                uid, bool(body.discussion_notify_telegram)
+            )
+        if body.discussion_notify_web_push is not None:
+            user_prefs.set_discussion_notify_web_push(
+                uid, bool(body.discussion_notify_web_push)
+            )
         if body.zoom_auto_record_enabled is not None:
             user_prefs.set_zoom_auto_record_enabled(
                 uid, bool(body.zoom_auto_record_enabled)
@@ -6271,6 +6274,8 @@ async def miniapp_settings_patch(
             "discussion_notifications_enabled": user_prefs.discussion_notifications_enabled(
                 uid
             ),
+            "discussion_notify_telegram": user_prefs.discussion_notify_telegram(uid),
+            "discussion_notify_web_push": user_prefs.discussion_notify_web_push(uid),
             "zoom_auto_record_enabled": user_prefs.zoom_auto_record_enabled(uid),
             "telemost_auto_record_enabled": user_prefs.telemost_auto_record_enabled(uid),
             "meeting_bot_available": mrec.service_available(),
@@ -6279,6 +6284,58 @@ async def miniapp_settings_patch(
         }
 
     return await run_in_threadpool(_run)
+
+
+@miniapp_router.get("/push/vapid-public-key")
+async def miniapp_push_vapid_public_key(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    del principal
+    from assistant.services.discussion_notify import vapid_configured, vapid_public_key
+
+    if not vapid_configured():
+        raise HTTPException(status_code=503, detail="Web Push не настроен")
+    return {"ok": True, "public_key": vapid_public_key()}
+
+
+@miniapp_router.post("/push/subscribe")
+async def miniapp_push_subscribe(
+    body: _MiniappPushSubscribeBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import push_subscriptions
+
+    keys = body.keys or _MiniappPushSubscribeKeys()
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        return push_subscriptions.upsert(
+            uid,
+            endpoint=body.endpoint,
+            p256dh=keys.p256dh,
+            auth=keys.auth,
+            user_agent=body.user_agent,
+        )
+
+    try:
+        row = await run_in_threadpool(_run)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "endpoint": row.get("endpoint")}
+
+
+@miniapp_router.delete("/push/subscribe")
+async def miniapp_push_unsubscribe(
+    body: _MiniappPushUnsubscribeBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import push_subscriptions
+
+    uid = int(principal.telegram_user_id)
+    ok = await run_in_threadpool(
+        push_subscriptions.delete, body.endpoint, user_id=uid
+    )
+    return {"ok": True, "deleted": bool(ok)}
 
 
 @miniapp_router.get("/digest/chats")
@@ -11337,6 +11394,22 @@ async def miniapp_note_paei_start(
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        try:
+            await run_in_threadpool(
+                partial(
+                    _notify_discussion_comment,
+                    owner=owner,
+                    kind=kind,
+                    item_id=str(item_id),
+                    author_user_id=author_id,
+                    author_name=author_name,
+                    author_username=author_username,
+                    body=reply_text,
+                    is_assistant=False,
+                )
+            )
+        except Exception as e:
+            print(f"[discuss_notify] paie_user_fail err={e!r}")
         job, started = begin_job(
             owner,
             kind,
@@ -11504,6 +11577,22 @@ async def miniapp_note_research_start(
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        try:
+            await run_in_threadpool(
+                partial(
+                    _notify_discussion_comment,
+                    owner=owner,
+                    kind=kind,
+                    item_id=str(item_id),
+                    author_user_id=author_id,
+                    author_name=author_name,
+                    author_username=author_username,
+                    body=reply_text,
+                    is_assistant=False,
+                )
+            )
+        except Exception as e:
+            print(f"[discuss_notify] research_user_fail err={e!r}")
         if thread_parent in (None, "", 0, "0"):
             thread_parent = saved.get("id")
     job, started = begin_job(

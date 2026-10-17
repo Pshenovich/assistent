@@ -9522,6 +9522,25 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   background: var(--surface);
 }
 
+.calendars-notify-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: var(--space-3);
+}
+
+.calendars-notify-block > .svc-name {
+  margin: 0;
+}
+
+.calendars-notify-block > .svc-desc {
+  margin: 0 0 4px;
+}
+
+.calendars-notify-block .calendars-setting-row {
+  margin-bottom: 0;
+}
+
 .calendars-row .svc-toggle {
   margin-left: auto;
 }

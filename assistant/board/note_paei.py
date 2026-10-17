@@ -629,6 +629,18 @@ async def run_note_paei(
         parent_id=root_id,
         chat_id=chat_id,
     )
+    from assistant.services.discussion_notify import notify_discussion_comment_safe
+
+    notify_discussion_comment_safe(
+        owner=str(user_id),
+        kind=str(kind),
+        item_id=str(item_id),
+        author_user_id=str(CHAIR_AUTHOR_ID),
+        author_name=CHAIR_AUTHOR_NAME,
+        author_username=CHAIR_AUTHOR_USERNAME,
+        body=text,
+        is_assistant=True,
+    )
     return {
         "meeting_id": str(meeting["id"]),
         "decision_id": saved.get("id"),

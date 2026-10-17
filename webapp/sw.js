@@ -1,6 +1,6 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261016-fixes8";
+var CACHE_VERSION = "miniapp-v1-20261017-discuss-push";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 var CANONICAL_ORIGIN = "https://assistent.networ.ru";
 var OBSOLETE_HOSTS = {
@@ -11,9 +11,9 @@ var OBSOLETE_HOSTS = {
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261016-fixes8",
-  "./app.js?v=20261016-fixes8",
-  "./web-canvas.js?v=20261016-fixes8",
+  "./styles.css?v=20261017-discuss-push",
+  "./app.js?v=20261017-discuss-push",
+  "./web-canvas.js?v=20261017-discuss-push",
   "./note-drafts.js?v=20261005-heading-pdf",
   "./icons/arrow-up-right.svg?v=20261003-month-instances",
   "./icons/chevron-up-muted.svg?v=20261003-month-instances",
@@ -176,6 +176,56 @@ self.addEventListener("activate", function (event) {
         if (!isObsoleteHost()) return null;
         return self.registration.unregister().catch(function () {});
       })
+  );
+});
+
+self.addEventListener("push", function (event) {
+  var payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch (_) {
+    try {
+      payload = { body: event.data ? event.data.text() : "" };
+    } catch (_) {}
+  }
+  var title = String((payload && payload.title) || "Leo");
+  var body = String((payload && payload.body) || "Новое сообщение");
+  var url = String((payload && payload.url) || "./");
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: body,
+      data: { url: url },
+      icon: "./icons/icon-192.png",
+      badge: "./icons/icon-192.png",
+    })
+  );
+});
+
+self.addEventListener("notificationclick", function (event) {
+  event.notification.close();
+  var raw = (event.notification.data && event.notification.data.url) || "./";
+  var url = raw;
+  try {
+    url = new URL(raw, self.location.href).href;
+  } catch (_) {}
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (clientList) {
+      for (var i = 0; i < clientList.length; i++) {
+        var client = clientList[i];
+        var href = "";
+        try {
+          href = client.url || "";
+        } catch (_) {}
+        if (!href || href.indexOf("/webapp") === -1 || !client.focus) continue;
+        if (typeof client.navigate === "function") {
+          return client.navigate(url).then(function (nav) {
+            return nav && nav.focus ? nav.focus() : client.focus();
+          });
+        }
+        return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(url);
+    })
   );
 });
 
