@@ -238,6 +238,33 @@ class NotePaeiTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(comments[0]["quote"], "")
         self.assertIsNone(comments[0]["parent_id"])
 
+    async def test_run_notifies_after_chair_comment(self) -> None:
+        from unittest.mock import patch
+
+        note = notes_store.create_note(3, "Запуск", "Хотим сразу масштабировать отдел продаж.")
+        called: list[dict] = []
+
+        def fake_notify(**kwargs):
+            called.append(kwargs)
+            return []
+
+        with patch(
+            "assistant.services.discussion_notify.notify_discussion_comment_safe",
+            fake_notify,
+        ):
+            await run_note_paei(
+                user_id=3,
+                kind="local",
+                item_id=note["id"],
+                provider=_ScriptedProvider(),
+            )
+        self.assertEqual(len(called), 1)
+        self.assertEqual(called[0]["owner"], "3")
+        self.assertEqual(called[0]["kind"], "local")
+        self.assertEqual(str(called[0]["item_id"]), str(note["id"]))
+        self.assertTrue(called[0]["is_assistant"])
+        self.assertEqual(str(called[0]["author_user_id"]), "0")
+
     async def test_progress_callback_during_run(self) -> None:
         note = notes_store.create_note(4, "Пилот", "Нужен пилот, не масштаб.")
         seen: list[str] = []

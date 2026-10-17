@@ -166,6 +166,55 @@ class ResearchJobTest(unittest.IsolatedAsyncioTestCase):
         listed = share_comments.list_comments(3, "local", note["id"])
         self.assertEqual(share_comments.paie_thread(listed), [])
 
+    def test_run_notifies_after_research_comment(self) -> None:
+        from unittest.mock import patch
+
+        from assistant.nlu import llm as nlu_llm
+
+        note = notes_store.create_note(3, "Конкурент", "Сравниваем с Acme.")
+        original = nlu_llm.research_with_web
+        nlu_llm.research_with_web = lambda *_a, **_k: json.dumps(  # type: ignore[method-assign]
+            {
+                "question": "Acme цена",
+                "findings": [
+                    {
+                        "claim": "Acme берёт 15$",
+                        "source_title": "Acme",
+                        "source_url": "https://acme.test/pricing",
+                        "confidence": 0.7,
+                    }
+                ],
+                "contradictions": [],
+                "unknowns": [],
+                "so_what": "Их вход дешевле.",
+                "next_queries": [],
+                "ready_for_paie": True,
+            }
+        )
+        called: list[dict] = []
+
+        def fake_notify(**kwargs):
+            called.append(kwargs)
+            return []
+
+        try:
+            with patch(
+                "assistant.services.discussion_notify.notify_discussion_comment_safe",
+                fake_notify,
+            ):
+                run_note_research(
+                    user_id=3,
+                    kind="local",
+                    item_id=note["id"],
+                    reply="сколько стоит Acme?",
+                )
+        finally:
+            nlu_llm.research_with_web = original  # type: ignore[method-assign]
+        self.assertEqual(len(called), 1)
+        self.assertEqual(called[0]["owner"], "3")
+        self.assertTrue(called[0]["is_assistant"])
+        self.assertEqual(str(called[0]["author_user_id"]), "0")
+
 
 def test_research_with_web_sends_openrouter_web_plugin(monkeypatch) -> None:
     seen: dict = {}

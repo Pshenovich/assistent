@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261016-fixes8">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261017-discuss-push">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -89,7 +89,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261016-fixes8" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261017-discuss-push" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -910,20 +910,42 @@
               </button>
             </div>
             <p id="task-reminders-setting-err" class="error hidden"></p>
-            <div id="discussion-notifications-setting" class="svc-row calendars-row calendars-setting-row hidden">
-              <div class="svc-text">
-                <p class="svc-name">Уведомления обсуждений</p>
-                <p class="svc-desc muted small" id="discussion-notifications-setting-hint">Новые сообщения в обсуждениях</p>
+            <div id="discussion-notifications-setting" class="calendars-notify-block hidden">
+              <p class="svc-name">Уведомления обсуждений</p>
+              <p class="svc-desc muted small" id="discussion-notifications-setting-hint">Новые сообщения в обсуждениях</p>
+              <div class="svc-row calendars-row calendars-setting-row">
+                <div class="svc-text">
+                  <p class="svc-name">В Telegram</p>
+                  <p class="svc-desc muted small">Пуш от бота на телефон и десктоп</p>
+                </div>
+                <button
+                  type="button"
+                  class="svc-toggle svc-toggle--on"
+                  id="discussion-notify-telegram-toggle"
+                  aria-pressed="true"
+                  aria-label="Уведомления обсуждений в Telegram"
+                >
+                  <span class="svc-toggle-knob"></span>
+                </button>
               </div>
-              <button
-                type="button"
-                class="svc-toggle svc-toggle--on"
-                id="discussion-notifications-toggle"
-                aria-pressed="true"
-                aria-label="Уведомления обсуждений"
-              >
-                <span class="svc-toggle-knob"></span>
-              </button>
+              <div class="svc-row calendars-row calendars-setting-row">
+                <div class="svc-text">
+                  <p class="svc-name">В браузере</p>
+                  <p class="svc-desc muted small" id="discussion-notify-web-push-desc">Web Push, если приложение закрыто</p>
+                </div>
+                <button
+                  type="button"
+                  class="svc-toggle svc-toggle--on"
+                  id="discussion-notify-web-push-toggle"
+                  aria-pressed="true"
+                  aria-label="Уведомления обсуждений в браузере"
+                >
+                  <span class="svc-toggle-knob"></span>
+                </button>
+              </div>
+              <p id="discussion-notify-web-push-hint" class="muted small hidden">
+                В этом приложении пуш недоступен — будет звук, когда веб-приложение открыто
+              </p>
             </div>
             <p id="discussion-notifications-setting-err" class="error hidden"></p>
             <p class="muted small contacts-hint">
@@ -1894,7 +1916,7 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261016-fixes8" defer></script>
-  <script src="/webapp/app.js?v=20261016-fixes8" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261017-discuss-push" defer></script>
+  <script src="/webapp/app.js?v=20261017-discuss-push" defer></script>
 </body>
 </html>

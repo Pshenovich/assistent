@@ -476,6 +476,18 @@ def run_note_research(
         parent_id=root,
         chat_id=chat_id,
     )
+    from assistant.services.discussion_notify import notify_discussion_comment_safe
+
+    notify_discussion_comment_safe(
+        owner=str(user_id),
+        kind=str(kind),
+        item_id=str(item_id),
+        author_user_id=str(RESEARCH_AUTHOR_ID),
+        author_name=RESEARCH_AUTHOR_NAME,
+        author_username=RESEARCH_AUTHOR_USERNAME,
+        body=text,
+        is_assistant=True,
+    )
     return {"comment": comment, "payload": payload}
 
 
