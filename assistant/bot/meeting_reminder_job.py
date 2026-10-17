@@ -57,6 +57,22 @@ async def meeting_reminder_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
                     disable_web_page_preview=True,
                     reply_markup=kb,
                 )
+                # PWA Web Push — клик по системному уведомлению открывает установленное приложение.
+                try:
+                    from assistant.services.discussion_notify import send_web_push
+
+                    payload = mr.web_push_payload_for_event(
+                        ev, user_id=user_id, minutes_before=mins
+                    )
+                    n = await asyncio.to_thread(send_web_push, user_id, payload)
+                    if n:
+                        print(
+                            f"[meeting_reminder] webpush uid={user_id} ev={ev_id} n={n}"
+                        )
+                except Exception as pe:
+                    print(
+                        f"[meeting_reminder] webpush uid={user_id} ev={ev_id} err={pe!r}"
+                    )
                 sent_store.mark_sent(user_id, cal_id, ev_id, start_iso)
                 print(
                     f"[meeting_reminder] sent uid={user_id} cal={cal_id} ev={ev_id}"

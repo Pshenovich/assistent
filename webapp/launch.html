@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <title>Открыть Ассистент</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      font: 16px/1.45 -apple-system, system-ui, "Helvetica Neue", sans-serif;
+      background: #0a0a0a;
+      color: #f4f4f5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 20px calc(24px + env(safe-area-inset-bottom, 0px));
+    }
+    .card {
+      width: min(100%, 22rem);
+      display: grid;
+      gap: 14px;
+      text-align: center;
+    }
+    h1 { margin: 0; font-size: 1.25rem; font-weight: 650; }
+    p { margin: 0; color: #a1a1aa; font-size: 0.9375rem; }
+    .btn {
+      display: block;
+      width: 100%;
+      border: 0;
+      border-radius: 12px;
+      padding: 13px 16px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .btn-primary { background: #529ef4; color: #fff; }
+    .btn-secondary { background: rgba(255, 255, 255, 0.08); color: #f4f4f5; }
+    .hint { font-size: 0.8125rem; color: #71717a; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Ассистент</h1>
+    <p id="status">Открываем приложение…</p>
+    <a class="btn btn-primary" id="open-app" href="#">Открыть в приложении</a>
+    <a class="btn btn-secondary" id="open-web" href="#">Открыть здесь</a>
+    <p class="hint" id="hint">Если установлено на домашний экран — лучше «Открыть в приложении».</p>
+  </div>
+  <script>
+    (function () {
+      var params = new URLSearchParams(location.search || "");
+      var origin = location.origin;
+
+      function safeWebappUrl() {
+        var u = (params.get("u") || params.get("url") || "").trim();
+        if (u) {
+          try {
+            var abs = new URL(u, origin);
+            if (abs.origin === origin && abs.pathname.indexOf("/webapp") === 0) return abs.href;
+          } catch (_) {}
+        }
+        var eventId = (params.get("event") || params.get("e") || "").trim();
+        var cal = (params.get("cal") || params.get("calendar") || "primary").trim() || "primary";
+        var day = (params.get("day") || params.get("date") || "").trim().slice(0, 10);
+        var dest = new URL("/webapp/", origin);
+        if (eventId) {
+          dest.searchParams.set("event", eventId);
+          dest.searchParams.set("cal", cal);
+          if (day) dest.searchParams.set("day", day);
+        }
+        var chat = (params.get("chat") || "").trim();
+        var note = (params.get("note") || "").trim();
+        var task = (params.get("task") || "").trim();
+        if (chat) dest.searchParams.set("chat", chat);
+        if (note) dest.searchParams.set("note", note);
+        if (task) dest.searchParams.set("task", task);
+        return dest.href;
+      }
+
+      function protocolUrl(httpsUrl) {
+        try {
+          var u = new URL(httpsUrl);
+          var q = u.searchParams;
+          var eventId = (q.get("event") || "").trim();
+          if (eventId) {
+            var proto = "web+leo://event/" + encodeURIComponent(eventId);
+            var bits = [];
+            if (q.get("cal")) bits.push("cal=" + encodeURIComponent(q.get("cal")));
+            if (q.get("day")) bits.push("day=" + encodeURIComponent(q.get("day")));
+            if (bits.length) proto += "?" + bits.join("&");
+            return proto;
+          }
+          var path = u.pathname.replace(/^\/webapp\/?/, "/") + u.search + u.hash;
+          return "web+leo://open?p=" + encodeURIComponent(path || "/");
+        } catch (_) {
+          return "web+leo://open";
+        }
+      }
+
+      function chromeIntentUrl(httpsUrl) {
+        try {
+          var u = new URL(httpsUrl);
+          return (
+            "intent://" +
+            u.host +
+            u.pathname +
+            u.search +
+            u.hash +
+            "#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=" +
+            encodeURIComponent(httpsUrl) +
+            ";end"
+          );
+        } catch (_) {
+          return httpsUrl;
+        }
+      }
+
+      var httpsUrl = safeWebappUrl();
+      var proto = protocolUrl(httpsUrl);
+      var isAndroid = /Android/i.test(navigator.userAgent || "");
+      var isTg = !!(window.TelegramWebviewProxy || /Telegram/i.test(navigator.userAgent || ""));
+      var statusEl = document.getElementById("status");
+      var openApp = document.getElementById("open-app");
+      var openWeb = document.getElementById("open-web");
+      var hint = document.getElementById("hint");
+
+      openWeb.href = httpsUrl;
+      openApp.href = proto;
+
+      function tryOpenApp() {
+        var started = Date.now();
+        // Сначала custom protocol (установленный PWA в Chrome).
+        try {
+          location.href = proto;
+        } catch (_) {}
+        // На Android из Telegram WebView — попробовать вынести в Chrome (там PWA).
+        if (isAndroid && isTg) {
+          setTimeout(function () {
+            if (document.hidden || Date.now() - started > 1600) return;
+            try {
+              location.href = chromeIntentUrl(httpsUrl);
+            } catch (_) {}
+          }, 350);
+        }
+      }
+
+      openApp.addEventListener("click", function (e) {
+        e.preventDefault();
+        if (statusEl) statusEl.textContent = "Запускаем приложение…";
+        tryOpenApp();
+      });
+
+      // Автопопытка один раз.
+      tryOpenApp();
+      setTimeout(function () {
+        if (document.hidden) return;
+        if (statusEl) {
+          statusEl.textContent = isTg
+            ? "Telegram открыл страницу внутри себя. Нажмите кнопку — так чаще открывается установленное приложение."
+            : "Если приложение не открылось, нажмите кнопку ниже.";
+        }
+        if (hint && isAndroid && isTg) {
+          hint.textContent = "На Android «Открыть в приложении» сначала пробует PWA, затем Chrome.";
+        }
+      }, 900);
+    })();
+  </script>
+</body>
+</html>

@@ -41,11 +41,36 @@ def test_format_reminder_with_zoom(monkeypatch):
     assert "Синк" in text
     assert "17:00" in text
     assert "zoom.us" in text
-    assert "assistent.networ.ru/webapp/" in text
+    assert "assistent.networ.ru/webapp/launch.html" in text
     assert "event=ev-sync" in text
     assert "calendar.google.com" not in text
     assert kb is not None
-    assert kb.inline_keyboard[0][0].text == "Подключиться"
+    assert kb.inline_keyboard[0][0].text == "Открыть в Leo"
+    assert kb.inline_keyboard[1][0].text == "Подключиться"
+
+
+def test_web_push_payload_for_event(monkeypatch):
+    from assistant.services.meeting_reminders import web_push_payload_for_event
+
+    monkeypatch.setenv("WEBAPP_PUBLIC_URL", "https://assistent.networ.ru")
+    tz = ZoneInfo("Europe/Moscow")
+    start = datetime(2026, 6, 4, 17, 0, tzinfo=tz)
+    end = start + timedelta(hours=1)
+    payload = web_push_payload_for_event(
+        {
+            "summary": "Синк",
+            "event_id": "ev-1",
+            "calendar_id": "primary",
+            "start": start,
+            "end": end,
+        },
+        user_id=1,
+        minutes_before=15,
+    )
+    assert payload["title"] == "Синк"
+    assert "15" in payload["body"]
+    assert "event=ev-1" in payload["url"]
+    assert "launch.html" not in payload["url"]
 
 
 def test_online_link_label():

@@ -109,7 +109,7 @@ def format_invite_message_html(
     organizer: User | None,
     organizer_uid: int,
 ) -> str:
-    from assistant.lib.webapp_public import webapp_event_url
+    from assistant.lib.webapp_public import webapp_launch_url
 
     who = organizer_mention_html(organizer)
     title = html.escape(str(result.get("summary") or "Встреча"))
@@ -121,7 +121,11 @@ def format_invite_message_html(
         day = st.date().isoformat()
     elif isinstance(st, str) and st:
         day = st[:10]
-    link = webapp_event_url(ev_id, calendar_id=cal_id, day=day or None) if ev_id else ""
+    link = (
+        webapp_launch_url(event_id=ev_id, calendar_id=cal_id, day=day or None)
+        if ev_id
+        else ""
+    )
     if link:
         title_block = f'<a href="{html.escape(link)}">{title}</a>'
     else:
@@ -649,7 +653,7 @@ def organizer_label_from_event(event: dict[str, Any] | None) -> str:
 
 
 def format_incoming_invite_html(event: dict[str, Any], *, user_id: int) -> str:
-    from assistant.lib.webapp_public import webapp_event_url
+    from assistant.lib.webapp_public import webapp_launch_url
 
     who = organizer_label_from_event(event)
     title = html.escape(str(event.get("summary") or "Встреча"))
@@ -659,7 +663,11 @@ def format_incoming_invite_html(event: dict[str, Any], *, user_id: int) -> str:
     start = event.get("start")
     if isinstance(start, datetime):
         day = start.date().isoformat()
-    link = webapp_event_url(ev_id, calendar_id=cal_id, day=day or None) if ev_id else ""
+    link = (
+        webapp_launch_url(event_id=ev_id, calendar_id=cal_id, day=day or None)
+        if ev_id
+        else ""
+    )
     if link:
         title_block = f'<a href="{html.escape(link)}">{title}</a>'
     else:
