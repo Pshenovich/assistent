@@ -543,3 +543,28 @@ def _preview_from_summary(summary: dict[str, Any]) -> str:
             return str(first.get("task") or "")[:180]
         return str(first)[:180]
     return ""
+
+
+def participants_for_day(chat_id: int, report_date: str) -> list[dict[str, Any]]:
+    """Кто писал в чате в этот день: Telegram id, ник, имя, число сообщений (для узнавания контактов)."""
+    with _LOCK:
+        rows = _conn().execute(
+            """
+            SELECT user_id, MAX(username) AS username, MAX(display_name) AS display_name, COUNT(*) AS n
+            FROM leo_chat_messages
+            WHERE chat_id = ? AND date_utc = ? AND user_id IS NOT NULL
+            GROUP BY user_id
+            ORDER BY n DESC
+            LIMIT 40
+            """,
+            (int(chat_id), str(report_date or "").strip()),
+        ).fetchall()
+    return [
+        {
+            "telegram_user_id": int(r["user_id"]),
+            "username": str(r["username"] or ""),
+            "name": str(r["display_name"] or r["username"] or ""),
+            "messages": int(r["n"] or 0),
+        }
+        for r in rows
+    ]
