@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261017-pwa-open1";
+  var WEBAPP_BUILD = "20261017-pushfix1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,

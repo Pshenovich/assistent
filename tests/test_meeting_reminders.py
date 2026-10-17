@@ -41,11 +41,13 @@ def test_format_reminder_with_zoom(monkeypatch):
     assert "Синк" in text
     assert "17:00" in text
     assert "zoom.us" in text
-    assert "assistent.networ.ru/webapp/launch.html" in text
-    assert "event=ev-sync" in text
+    assert "launch.html" not in text
     assert "calendar.google.com" not in text
     assert kb is not None
-    assert kb.inline_keyboard[0][0].text == "Открыть в Leo"
+    open_btn = kb.inline_keyboard[0][0]
+    assert open_btn.text == "Открыть встречу"
+    assert open_btn.web_app is not None
+    assert "event=ev-sync" in (open_btn.web_app.url or "")
     assert kb.inline_keyboard[1][0].text == "Подключиться"
 
 
