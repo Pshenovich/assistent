@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Any
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from assistant.integrations import google_calendar_oauth
 from assistant.lib.meeting_links import (
@@ -85,7 +85,7 @@ def web_push_payload_for_event(
 def format_reminder_message(
     event: dict[str, Any], *, user_id: int, minutes_before: int
 ) -> tuple[str, InlineKeyboardMarkup | None]:
-    from assistant.lib.webapp_public import webapp_event_url, webapp_launch_url
+    from assistant.lib.webapp_public import webapp_event_url
 
     title = html.escape(str(event.get("summary") or "Встреча"))
     ev_id = str(event.get("event_id") or event.get("id") or "").strip()
@@ -95,12 +95,7 @@ def format_reminder_message(
     day = ""
     if isinstance(start, datetime):
         day = start.date().isoformat()
-    # Из TG https почти всегда остаётся во встроенном браузере — ведём через launch.html.
-    link = (
-        webapp_launch_url(event_id=ev_id, calendar_id=cal_id, day=day or None)
-        if ev_id
-        else ""
-    )
+    # Кнопка web_app открывает Mini App с диплинком; обычный https из TG — только in-app browser.
     direct = (
         webapp_event_url(ev_id, calendar_id=cal_id, day=day or None) if ev_id else ""
     )
@@ -109,11 +104,8 @@ def format_reminder_message(
         when = format_event_when(start, end, user_id)
     lines = [
         f"Через {minutes_before} минут у вас встреча:",
+        f"<b>{title}</b>",
     ]
-    if link:
-        lines.append(f'<a href="{html.escape(link)}">{title}</a>')
-    else:
-        lines.append(f"<b>{title}</b>")
     if when:
         lines.append(f"Время: {html.escape(when)}")
     raw = event.get("raw") or {}
@@ -125,7 +117,7 @@ def format_reminder_message(
     rows: list[list[InlineKeyboardButton]] = []
     if direct:
         rows.append(
-            [InlineKeyboardButton("Открыть в Leo", url=link or direct)]
+            [InlineKeyboardButton("Открыть встречу", web_app=WebAppInfo(url=direct))]
         )
     if meet_urls:
         if len(meet_urls) == 1:

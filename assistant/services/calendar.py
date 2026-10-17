@@ -1076,7 +1076,7 @@ def patch_event_fields(
     return patched
 
 
-def _webapp_link_for_result(result: dict[str, Any], *, prefer_pwa: bool = True) -> str:
+def _webapp_link_for_result(result: dict[str, Any], *, prefer_pwa: bool = False) -> str:
     from assistant.lib.webapp_public import webapp_event_url, webapp_launch_url
 
     ev_id = str(result.get("event_id") or "").strip()
@@ -1089,6 +1089,7 @@ def _webapp_link_for_result(result: dict[str, Any], *, prefer_pwa: bool = True) 
         day = st.date().isoformat()
     elif isinstance(st, str) and st:
         day = st[:10]
+    # prefer_pwa=False (по умолчанию): прямой URL для кнопки Mini App (web_app=).
     if prefer_pwa:
         return webapp_launch_url(event_id=ev_id, calendar_id=cal_id, day=day or None)
     return webapp_event_url(ev_id, calendar_id=cal_id, day=day or None)
@@ -1098,16 +1099,14 @@ def format_create_reply_html(result: dict[str, Any], user_id: int) -> str:
     from assistant.lib.telegram_rich import append_footnotes, zoom_meeting_footnote
 
     title = html.escape(str(result.get("summary") or DEFAULT_EVENT_TITLE))
-    link = _webapp_link_for_result(result)
     when = ""
     st = result.get("start")
     en = result.get("end")
     if isinstance(st, datetime) and isinstance(en, datetime):
         when = format_event_when(st, en, user_id)
-    if link:
-        head = f"<h2>Создана встреча: <a href=\"{html.escape(link, quote=True)}\">{title}</a></h2>"
-    else:
-        head = f"<h2>Создана встреча: {title}</h2>"
+    # Без https-ссылки в тексте: из TG она открывается во встроенном браузере.
+    # Карточка — кнопкой «Открыть в Leo» (web_app) в клавиатуре.
+    head = f"<h2>Создана встреча: {title}</h2>"
     parts = [head]
     if when:
         parts.append(f"<p>{html.escape(when)}</p>")
@@ -1140,15 +1139,11 @@ def build_created_event_keyboard(
     if not ev_id:
         return None
     rows: list[list[InlineKeyboardButton]] = []
-    # Mini App внутри Telegram + отдельная ссылка, которая пытается открыть PWA.
     direct = _webapp_link_for_result(result, prefer_pwa=False) or webapp_entry_url()
-    launch = _webapp_link_for_result(result, prefer_pwa=True)
     if direct:
         rows.append(
             [InlineKeyboardButton("Открыть в Leo", web_app=WebAppInfo(url=direct))]
         )
-    if launch and launch != direct:
-        rows.append([InlineKeyboardButton("Открыть приложение", url=launch)])
     cal_id = str(result.get("calendar_id") or "").strip() or GOOGLE_CALENDAR_ID
     token = calendar_action_tokens.register(
         user_id, ev_id, calendar_id=cal_id

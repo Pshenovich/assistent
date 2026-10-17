@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 from html import escape as html_escape
@@ -11,13 +12,49 @@ from urllib.parse import quote
 from assistant.stores import discussion_presence
 from assistant.stores import user_prefs
 
+_VAPID_PRIVATE_CACHE: str | None = None
+
 
 def vapid_public_key() -> str:
     return (os.getenv("VAPID_PUBLIC_KEY") or "").strip()
 
 
+def _normalize_pem(raw: str) -> str:
+    """В .env PEM часто лежит с литеральными \\n — pywebpush так не читает."""
+    s = (raw or "").strip().strip('"').strip("'")
+    if "BEGIN" in s and "\n" not in s:
+        s = s.replace("\\n", "\n")
+    return s
+
+
 def vapid_private_key() -> str:
-    return (os.getenv("VAPID_PRIVATE_KEY") or "").strip()
+    """Ключ в формате, который понимает pywebpush (raw urlsafe base64 или PEM с \\n).
+
+    В проде VAPID_PRIVATE_KEY часто = PEM с литеральными \\n. pywebpush/Vapid.from_string
+    тогда падает с Invalid base64 — конвертируем PEM → 32-байтовый raw urlsafe b64.
+    """
+    global _VAPID_PRIVATE_CACHE
+    if _VAPID_PRIVATE_CACHE is not None:
+        return _VAPID_PRIVATE_CACHE
+    raw = (os.getenv("VAPID_PRIVATE_KEY") or "").strip()
+    if not raw:
+        _VAPID_PRIVATE_CACHE = ""
+        return ""
+    pem = _normalize_pem(raw)
+    if "BEGIN" in pem:
+        try:
+            from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+            key = load_pem_private_key(pem.encode("utf-8"), password=None)
+            raw32 = key.private_numbers().private_value.to_bytes(32, "big")
+            _VAPID_PRIVATE_CACHE = base64.urlsafe_b64encode(raw32).decode("ascii").rstrip("=")
+            return _VAPID_PRIVATE_CACHE
+        except Exception as e:
+            print(f"[discuss_notify] vapid_pem_convert_fail err={e!r}")
+            _VAPID_PRIVATE_CACHE = pem
+            return pem
+    _VAPID_PRIVATE_CACHE = pem
+    return pem
 
 
 def vapid_subject() -> str:
@@ -26,6 +63,13 @@ def vapid_subject() -> str:
 
 def vapid_configured() -> bool:
     return bool(vapid_public_key() and vapid_private_key())
+
+
+def _b64_pad(s: str) -> str:
+    t = (s or "").strip()
+    if not t:
+        return t
+    return t + ("=" * ((4 - len(t) % 4) % 4))
 
 
 def discussion_webapp_url(kind: str, item_id: str) -> str:
@@ -119,13 +163,18 @@ def send_web_push(user_id: int | str, payload: dict[str, Any]) -> int:
     data = json.dumps(payload, ensure_ascii=False)
     claims = {"sub": vapid_subject()}
     private = vapid_private_key()
+    if not private:
+        return 0
     sent = 0
     for row in rows:
         try:
             webpush(
                 subscription_info={
                     "endpoint": row["endpoint"],
-                    "keys": {"p256dh": row["p256dh"], "auth": row["auth"]},
+                    "keys": {
+                        "p256dh": _b64_pad(str(row.get("p256dh") or "")),
+                        "auth": _b64_pad(str(row.get("auth") or "")),
+                    },
                 },
                 data=data,
                 vapid_private_key=private,
