@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261017-recur1";
+  var WEBAPP_BUILD = "20261017-pwa-open1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -6204,6 +6204,252 @@
     renderSidebarTrees();
   }
 
+  function mainScrollEl() {
+    return document.querySelector("main.main-scroll.panels-stage");
+  }
+
+  function scrollTabContentToTop() {
+    try {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (_) {
+      try {
+        window.scrollTo(0, 0);
+      } catch (_) {}
+    }
+    var main = mainScrollEl();
+    if (main) {
+      try {
+        main.scrollTo({ top: 0, behavior: "smooth" });
+      } catch (_) {
+        main.scrollTop = 0;
+      }
+    }
+    var panel = document.getElementById("panel-" + currentTab);
+    if (panel) {
+      var nested = panel.querySelectorAll(
+        ".subscreen-body, #chat-threads-list, .nh-list, .nh-view-body, .note-discussion-scroll, .meetings-week-body, .digest-list, .knowledge-list"
+      );
+      nested.forEach(function (el) {
+        if (!el || el.scrollTop <= 0) return;
+        try {
+          el.scrollTo({ top: 0, behavior: "smooth" });
+        } catch (_) {
+          el.scrollTop = 0;
+        }
+      });
+    }
+    var row = document.querySelector("#panel-notes .notes-subtabs-row");
+    if (row && typeof row._resetReveal === "function") {
+      try {
+        row._resetReveal();
+      } catch (_) {}
+    }
+  }
+
+  var ptrState = {
+    tracking: false,
+    pulling: false,
+    refreshing: false,
+    startY: 0,
+    startX: 0,
+    pull: 0,
+    scroller: null,
+    indicator: null,
+  };
+
+  function ensurePtrIndicator() {
+    var main = mainScrollEl();
+    if (!main) return null;
+    var el = document.getElementById("ptr-indicator");
+    if (el) return el;
+    el = document.createElement("div");
+    el.id = "ptr-indicator";
+    el.className = "ptr-indicator";
+    el.setAttribute("aria-hidden", "true");
+    el.innerHTML = '<div class="ptr-spinner" aria-hidden="true"></div>';
+    main.insertBefore(el, main.firstChild);
+    return el;
+  }
+
+  function ptrSetPull(px) {
+    var ind = ptrState.indicator || ensurePtrIndicator();
+    ptrState.indicator = ind;
+    if (!ind) return;
+    var h = Math.max(0, Math.min(72, px));
+    ind.style.height = h ? h + "px" : "";
+    ind.classList.toggle("is-visible", h > 8);
+    ind.classList.toggle("is-armed", h >= 56);
+    ind.classList.toggle("is-refreshing", !!ptrState.refreshing);
+    var spin = ind.querySelector(".ptr-spinner");
+    if (spin) {
+      spin.style.transform = ptrState.refreshing ? "" : "rotate(" + Math.round(h * 4) + "deg)";
+    }
+  }
+
+  function ptrResetUi() {
+    ptrState.pulling = false;
+    ptrState.pull = 0;
+    ptrState.scroller = null;
+    if (ptrState.refreshing) {
+      ptrSetPull(52);
+      return;
+    }
+    ptrSetPull(0);
+  }
+
+  function ptrCanStart(target) {
+    if (ptrState.refreshing) return false;
+    if (isDesktopLayout()) return false;
+    if (document.documentElement.classList.contains("cal-gesture-active")) return false;
+    var app = document.querySelector(".app");
+    if (app && app.classList.contains("app--immersive")) return false;
+    if (isNoteEditorModalOpen()) return false;
+    if (typeof isPanelsStageAnimating === "function" && isPanelsStageAnimating()) return false;
+    var t = target;
+    if (t && t.closest) {
+      if (t.closest("input, textarea, select, [contenteditable='true']")) return false;
+      if (t.closest(".tabbar, .tabbar-wrap, .modal-overlay, .gpt-overlay, .note-discussion-overlay"))
+        return false;
+    }
+    return true;
+  }
+
+  function ptrFindScroller(target) {
+    var node = target && target.nodeType === 1 ? target : null;
+    while (node && node !== document.body) {
+      if (node === mainScrollEl()) return node;
+      try {
+        var st = window.getComputedStyle(node);
+        var oy = st && st.overflowY;
+        if (
+          (oy === "auto" || oy === "scroll" || oy === "overlay") &&
+          node.scrollHeight > node.clientHeight + 2
+        ) {
+          return node;
+        }
+      } catch (_) {}
+      node = node.parentElement;
+    }
+    return mainScrollEl();
+  }
+
+  function ptrScrollerAtTop(scroller) {
+    if (!scroller) return true;
+    return (scroller.scrollTop || 0) <= 0;
+  }
+
+  async function refreshCurrentTab() {
+    var tab = currentTab;
+    if (tab === "actual") {
+      await loadActual({ silent: true, skipCachePaint: true });
+      return;
+    }
+    if (tab === "notes") {
+      await loadNotes();
+      return;
+    }
+    if (tab === "knowledge") {
+      await loadKnowledgeNotes();
+      return;
+    }
+    if (tab === "digest") {
+      if (digestSubTab === "market") await loadMarketDigest({ force: true });
+      else await loadDigestReports();
+      return;
+    }
+    if (tab === "profile") {
+      var screen = currentProfileScreen || "main";
+      if (screen === "main") {
+        await loadProfile();
+        return;
+      }
+      await loadIntegrations();
+      if (screen === "contacts" && typeof loadContacts === "function") await loadContacts();
+      else if (screen === "calendars" && typeof loadCalendarsSources === "function")
+        await loadCalendarsSources();
+      else if (screen === "chats" && typeof loadProfileChatsScreen === "function")
+        await loadProfileChatsScreen();
+      else if (screen === "zoom" && typeof loadZoomScreen === "function") await loadZoomScreen(false);
+      else if (screen === "telemost" && typeof loadTelemostScreen === "function")
+        await loadTelemostScreen(false);
+    }
+  }
+
+  function bindPullToRefresh() {
+    if (bindPullToRefresh._bound) return;
+    bindPullToRefresh._bound = true;
+    ensurePtrIndicator();
+
+    function onStart(e) {
+      if (!e.touches || e.touches.length !== 1) return;
+      if (!ptrCanStart(e.target)) return;
+      var scroller = ptrFindScroller(e.target);
+      if (!ptrScrollerAtTop(scroller)) return;
+      ptrState.tracking = true;
+      ptrState.pulling = false;
+      ptrState.startY = e.touches[0].clientY;
+      ptrState.startX = e.touches[0].clientX;
+      ptrState.pull = 0;
+      ptrState.scroller = scroller;
+    }
+
+    function onMove(e) {
+      if (!ptrState.tracking || ptrState.refreshing) return;
+      if (!e.touches || e.touches.length !== 1) return;
+      var y = e.touches[0].clientY;
+      var x = e.touches[0].clientX;
+      var dy = y - ptrState.startY;
+      var dx = x - ptrState.startX;
+      if (!ptrState.pulling) {
+        if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) {
+          ptrState.tracking = false;
+          ptrResetUi();
+          return;
+        }
+        if (dy < 8) return;
+        if (!ptrScrollerAtTop(ptrState.scroller)) {
+          ptrState.tracking = false;
+          return;
+        }
+        ptrState.pulling = true;
+      }
+      if (dy <= 0) {
+        ptrState.pull = 0;
+        ptrSetPull(0);
+        return;
+      }
+      // Сопротивление: чем дальше, тем тяжелее тянуть.
+      var pull = Math.min(88, dy * 0.55);
+      ptrState.pull = pull;
+      ptrSetPull(pull);
+      if (e.cancelable && pull > 6) e.preventDefault();
+    }
+
+    function onEnd() {
+      if (!ptrState.tracking) return;
+      var shouldRefresh = ptrState.pulling && ptrState.pull >= 56 && !ptrState.refreshing;
+      ptrState.tracking = false;
+      if (!shouldRefresh) {
+        ptrResetUi();
+        return;
+      }
+      ptrState.refreshing = true;
+      ptrSetPull(52);
+      Promise.resolve()
+        .then(refreshCurrentTab)
+        .catch(function () {})
+        .then(function () {
+          ptrState.refreshing = false;
+          ptrResetUi();
+        });
+    }
+
+    document.addEventListener("touchstart", onStart, { passive: true, capture: true });
+    document.addEventListener("touchmove", onMove, { passive: false, capture: true });
+    document.addEventListener("touchend", onEnd, { passive: true, capture: true });
+    document.addEventListener("touchcancel", onEnd, { passive: true, capture: true });
+  }
+
   function setTab(name, options) {
     if (name !== "notes" && notesSelect.on) exitNotesSelectMode();
     if (name !== "notes" && notesSplitCurrentId && isNoteEditorModalOpen()) closeNoteEditorModal();
@@ -6228,18 +6474,6 @@
       btn.setAttribute("aria-selected", on ? "true" : "false");
     });
     if (prev === name) {
-      var notesDetailEl = document.getElementById("notes-detail");
-      var digestDetailEl = document.getElementById("digest-detail");
-      var somethingOpen =
-        isNoteEditorModalOpen() ||
-        (name === "profile" && currentProfileScreen !== "main") ||
-        (notesDetailEl && !notesDetailEl.classList.contains("hidden")) ||
-        (name === "digest" && digestDetailEl && !digestDetailEl.classList.contains("hidden"));
-      if (options && options.fromTabbar && !somethingOpen) {
-        // Повторный тап по открытому пункту таббара — к началу списка.
-        var scroller = document.querySelector("main.main-scroll.panels-stage");
-        if (scroller) scroller.scrollTo({ top: 0, behavior: "smooth" });
-      }
       if (name === "profile" && currentProfileScreen !== "main") {
         profileScreen("main");
       }
@@ -6248,6 +6482,12 @@
         if (isNoteEditorModalOpen()) handleNoteEditorModalClose({ skipPrompt: true });
       }
       if (name === "digest") closeDigestDetail();
+      if (options && options.fromTabbar) {
+        // Повторный тап по открытому пункту таббара — к началу содержимого.
+        window.requestAnimationFrame(function () {
+          scrollTabContentToTop();
+        });
+      }
       postTabSwitch(name, prev);
       return;
     }
@@ -10208,6 +10448,14 @@
     meetingRemindersSaveInFlight = true;
     if (toggle) toggle.classList.add("svc-toggle--pending");
     try {
+      if (enabled && webPushSupported()) {
+        try {
+          await subscribeWebPush();
+        } catch (pushErr) {
+          // Напоминания в TG всё равно включим; пуш — best effort.
+          console.warn("meeting reminders web push", pushErr);
+        }
+      }
       var data = await apiFetch("/settings", {
         method: "PATCH",
         body: JSON.stringify({ meeting_reminders_enabled: !!enabled }),
@@ -10360,7 +10608,9 @@
   }
 
   async function syncWebPushSubscriptionIfNeeded() {
-    if (!discussionNotifyWebPushEnabled || !webPushSupported()) return;
+    if (!webPushSupported()) return;
+    var wantPush = !!discussionNotifyWebPushEnabled || !!meetingRemindersEnabled;
+    if (!wantPush) return;
     try {
       if (Notification.permission !== "granted") return;
       await subscribeWebPush();
@@ -10728,7 +10978,10 @@
       var mins = parseInt(settings.meeting_reminder_minutes_before, 10);
       var hint = document.getElementById("meeting-reminders-setting-hint");
       if (hint && mins > 0) {
-        hint.textContent = "За " + mins + " мин. до начала";
+        hint.textContent =
+          "За " +
+          mins +
+          " мин. в Telegram и в установленном приложении (нужно разрешить уведомления)";
       }
       var taskMins = parseInt(settings.task_reminder_minutes_before, 10);
       var taskHint = document.getElementById("task-reminders-setting-hint");
@@ -23469,7 +23722,49 @@
     return "";
   }
 
+  function applyLeoProtocolSearchParam() {
+    // protocol_handlers: web+leo://… → /webapp/?leo=web%2Bleo%3A%2F%2F…
+    try {
+      var q = new URLSearchParams(location.search || "");
+      var raw = (q.get("leo") || "").trim();
+      if (!raw) return false;
+      var rest = raw.replace(/^web\+leo:\/\//i, "");
+      var path = rest;
+      var protoQuery = "";
+      var qi = rest.indexOf("?");
+      if (qi >= 0) {
+        path = rest.slice(0, qi);
+        protoQuery = rest.slice(qi + 1);
+      }
+      var next = new URL(location.href);
+      next.searchParams.delete("leo");
+      if (path.indexOf("event/") === 0) {
+        var eid = decodeURIComponent(path.slice("event/".length).split("/")[0] || "");
+        if (eid) next.searchParams.set("event", eid);
+        var pq = new URLSearchParams(protoQuery);
+        if (pq.get("cal")) next.searchParams.set("cal", pq.get("cal"));
+        if (pq.get("day")) next.searchParams.set("day", pq.get("day"));
+      } else if (path.indexOf("open") === 0) {
+        var pq2 = new URLSearchParams(protoQuery);
+        var p = (pq2.get("p") || "/").trim() || "/";
+        try {
+          var mapped = new URL(p, location.origin + "/webapp/");
+          if (mapped.origin === location.origin) {
+            mapped.searchParams.forEach(function (v, k) {
+              next.searchParams.set(k, v);
+            });
+          }
+        } catch (_) {}
+      }
+      history.replaceState(null, "", next.pathname + next.search + next.hash);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function pendingEventFromLocation() {
+    applyLeoProtocolSearchParam();
     try {
       var q = new URLSearchParams(location.search || "");
       var eid = (q.get("event") || q.get("e") || "").trim();
@@ -40190,6 +40485,7 @@
         setTab(btn.getAttribute("data-tab"), { fromTabbar: true });
       });
     });
+    bindPullToRefresh();
 
     var sidebarToggle = document.getElementById("sidebar-toggle");
     if (sidebarToggle) {

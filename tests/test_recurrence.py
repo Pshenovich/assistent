@@ -98,6 +98,7 @@ def test_webapp_event_url():
 
 def test_format_create_reply_uses_webapp(monkeypatch):
     from assistant.services import calendar as cal
+    from assistant.lib.webapp_public import webapp_launch_url
 
     monkeypatch.setenv("WEBAPP_PUBLIC_URL", "https://assistent.networ.ru")
     text = cal.format_create_reply_html(
@@ -111,9 +112,11 @@ def test_format_create_reply_uses_webapp(monkeypatch):
         },
         1,
     )
-    assert "assistent.networ.ru/webapp/" in text
+    assert "assistent.networ.ru/webapp/launch.html" in text
     assert "event=e99" in text
     assert "calendar.google.com" not in text
+    launch = webapp_launch_url(event_id="e99", calendar_id="primary", day="2026-10-19")
+    assert "launch.html" in launch and "event=e99" in launch
 
 
 def test_reminder_stores_recurrence(tmp_path, monkeypatch):

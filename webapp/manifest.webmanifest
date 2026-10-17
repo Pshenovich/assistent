@@ -9,6 +9,12 @@
   "background_color": "#0b0b14",
   "theme_color": "#0b0b14",
   "lang": "ru",
+  "protocol_handlers": [
+    {
+      "protocol": "web+leo",
+      "url": "./?leo=%s"
+    }
+  ],
   "icons": [
     {
       "src": "icons/icon-192.png",

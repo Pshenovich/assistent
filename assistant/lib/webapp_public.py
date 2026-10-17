@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import os
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 
 # Меняйте при каждом релизе webapp — Telegram кэширует HTML по URL.
-WEBAPP_BUILD_ID = "20261017-recur1"
+WEBAPP_BUILD_ID = "20261017-pwa-open1"
 
 
 def public_base_url() -> str:
@@ -29,7 +29,7 @@ def webapp_event_url(
     calendar_id: str = "primary",
     day: str | None = None,
 ) -> str:
-    """Deep link на карточку встречи в мини-приложении."""
+    """Deep link на карточку встречи в мини-приложении / PWA."""
     eid = str(event_id or "").strip()
     if not eid:
         return webapp_entry_url()
@@ -41,6 +41,34 @@ def webapp_event_url(
     if d:
         q += f"&day={quote(d, safe='')}"
     return f"{base}{sep}{q}"
+
+
+def webapp_launch_url(
+    *,
+    event_id: str = "",
+    calendar_id: str = "primary",
+    day: str | None = None,
+    target: str | None = None,
+) -> str:
+    """Промежуточная страница: из Telegram пытается открыть установленный PWA.
+
+    Обычный https из TG почти всегда остаётся во встроенном браузере.
+    launch.html пробует protocol handler (web+leo://) и на Android — Chrome intent.
+    """
+    base = f"{public_base_url()}/webapp/launch.html"
+    q: dict[str, str] = {}
+    tgt = str(target or "").strip()
+    if tgt:
+        q["u"] = tgt
+    else:
+        eid = str(event_id or "").strip()
+        if eid:
+            q["event"] = eid
+            q["cal"] = str(calendar_id or "primary").strip() or "primary"
+            d = str(day or "").strip()[:10]
+            if d:
+                q["day"] = d
+    return f"{base}?{urlencode(q)}" if q else base
 
 
 def public_share_url(token: str) -> str:

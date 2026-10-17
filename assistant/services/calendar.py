@@ -1076,8 +1076,8 @@ def patch_event_fields(
     return patched
 
 
-def _webapp_link_for_result(result: dict[str, Any]) -> str:
-    from assistant.lib.webapp_public import webapp_event_url
+def _webapp_link_for_result(result: dict[str, Any], *, prefer_pwa: bool = True) -> str:
+    from assistant.lib.webapp_public import webapp_event_url, webapp_launch_url
 
     ev_id = str(result.get("event_id") or "").strip()
     if not ev_id:
@@ -1089,6 +1089,8 @@ def _webapp_link_for_result(result: dict[str, Any]) -> str:
         day = st.date().isoformat()
     elif isinstance(st, str) and st:
         day = st[:10]
+    if prefer_pwa:
+        return webapp_launch_url(event_id=ev_id, calendar_id=cal_id, day=day or None)
     return webapp_event_url(ev_id, calendar_id=cal_id, day=day or None)
 
 
@@ -1132,15 +1134,21 @@ def format_events_list(events: list[dict[str, Any]], header: str) -> str:
 def build_created_event_keyboard(
     result: dict[str, Any], *, user_id: int
 ) -> InlineKeyboardMarkup | None:
+    from assistant.lib.webapp_public import webapp_entry_url
+
     ev_id = str(result.get("event_id") or "").strip()
     if not ev_id:
         return None
     rows: list[list[InlineKeyboardButton]] = []
-    link = _webapp_link_for_result(result)
-    if link:
+    # Mini App внутри Telegram + отдельная ссылка, которая пытается открыть PWA.
+    direct = _webapp_link_for_result(result, prefer_pwa=False) or webapp_entry_url()
+    launch = _webapp_link_for_result(result, prefer_pwa=True)
+    if direct:
         rows.append(
-            [InlineKeyboardButton("Открыть в Leo", web_app=WebAppInfo(url=link))]
+            [InlineKeyboardButton("Открыть в Leo", web_app=WebAppInfo(url=direct))]
         )
+    if launch and launch != direct:
+        rows.append([InlineKeyboardButton("Открыть приложение", url=launch)])
     cal_id = str(result.get("calendar_id") or "").strip() or GOOGLE_CALENDAR_ID
     token = calendar_action_tokens.register(
         user_id, ev_id, calendar_id=cal_id

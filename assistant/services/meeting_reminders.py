@@ -53,10 +53,39 @@ def fetch_upcoming_timed_events(user_id: int, *, horizon_min: int = 25) -> list[
     return cal_sources.list_events_in_window(user_id, now, end)
 
 
+def web_push_payload_for_event(
+    event: dict[str, Any], *, user_id: int, minutes_before: int
+) -> dict[str, Any]:
+    """Payload для PWA Web Push (клик открывает установленное приложение)."""
+    from assistant.lib.webapp_public import webapp_event_url
+
+    title = str(event.get("summary") or "Встреча").strip() or "Встреча"
+    ev_id = str(event.get("event_id") or event.get("id") or "").strip()
+    cal_id = str(event.get("calendar_id") or "primary").strip() or "primary"
+    start = event.get("start")
+    end = event.get("end")
+    day = ""
+    if isinstance(start, datetime):
+        day = start.date().isoformat()
+    when = ""
+    if isinstance(start, datetime) and isinstance(end, datetime):
+        when = format_event_when(start, end, user_id)
+    body = f"Через {minutes_before} мин"
+    if when:
+        body = f"{body} · {when}"
+    return {
+        "title": title,
+        "body": body,
+        "url": webapp_event_url(ev_id, calendar_id=cal_id, day=day or None)
+        if ev_id
+        else "",
+    }
+
+
 def format_reminder_message(
     event: dict[str, Any], *, user_id: int, minutes_before: int
 ) -> tuple[str, InlineKeyboardMarkup | None]:
-    from assistant.lib.webapp_public import webapp_event_url
+    from assistant.lib.webapp_public import webapp_event_url, webapp_launch_url
 
     title = html.escape(str(event.get("summary") or "Встреча"))
     ev_id = str(event.get("event_id") or event.get("id") or "").strip()
@@ -66,7 +95,13 @@ def format_reminder_message(
     day = ""
     if isinstance(start, datetime):
         day = start.date().isoformat()
+    # Из TG https почти всегда остаётся во встроенном браузере — ведём через launch.html.
     link = (
+        webapp_launch_url(event_id=ev_id, calendar_id=cal_id, day=day or None)
+        if ev_id
+        else ""
+    )
+    direct = (
         webapp_event_url(ev_id, calendar_id=cal_id, day=day or None) if ev_id else ""
     )
     when = ""
@@ -87,7 +122,11 @@ def format_reminder_message(
         if isinstance(raw, dict)
         else []
     )
-    kb = None
+    rows: list[list[InlineKeyboardButton]] = []
+    if direct:
+        rows.append(
+            [InlineKeyboardButton("Открыть в Leo", url=link or direct)]
+        )
     if meet_urls:
         if len(meet_urls) == 1:
             url = meet_urls[0]
@@ -102,7 +141,6 @@ def format_reminder_message(
                 lines.append(
                     f'• <a href="{html.escape(url)}">{html.escape(label)}</a>'
                 )
-        rows: list[list[InlineKeyboardButton]] = []
         total = len(meet_urls)
         for i, url in enumerate(meet_urls, start=1):
             rows.append(
@@ -113,7 +151,7 @@ def format_reminder_message(
                     )
                 ]
             )
-        kb = InlineKeyboardMarkup(rows)
+    kb = InlineKeyboardMarkup(rows) if rows else None
     return "\n".join(lines), kb
 
 
