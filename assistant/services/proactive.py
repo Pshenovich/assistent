@@ -325,7 +325,7 @@ def rule_summary_tasks(notes: list[dict[str, Any]], has_tasks: dict[int, bool], 
                         "primary": True,
                         "payload": {
                             "prompt": (
-                                f"Поставь задачи из встречи «{title}» (транскрипция, note_id={nid}). "
+                                f"Поставь задачи из встречи «{title}». "
                                 "Исполнителей возьми из контактов, сроки — из текста; если исполнитель или срок неясен — "
                                 "поставь мне и скажи, что уточнить.\n" + "\n".join("— " + x for x in lines)
                             )
@@ -352,8 +352,11 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
     from assistant.stores import meeting_links
     from assistant.stores import notes as notes_store
 
+    from assistant.stores import user_prefs
+
     now = now or _now()
     tz = _tz_for(uid)
+    prefs = user_prefs.proactive_prefs(uid)
     items: list[dict[str, Any]] = []
     try:
         tasks = calendar_tasks.list_tasks_in_window(uid, now - timedelta(days=30), now)
@@ -367,15 +370,120 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
     except Exception as e:
         print(f"[proactive] kinds failed uid={uid} err={e!r}")
         kinds = {}
-    items += rule_prep(evs, kinds, now, tz)
-    items += rule_no_results(evs, kinds, now, tz)
+    if prefs.get("before_meetings"):
+        items += rule_prep(evs, kinds, now, tz)
+    if prefs.get("after_meetings"):
+        items += rule_no_results(evs, kinds, now, tz)
     try:
         notes = [
             n for n in notes_store.list_transcription_notes(uid, limit=40)
             if str(n.get("owner_user_id") or n.get("user_id") or uid) == str(uid)
         ]
         has_tasks = {int(n["id"]): bool(calendar_tasks.list_tasks_for_note(uid, n["id"])) for n in notes}
-        items += rule_summary_tasks(notes, has_tasks, now, tz)
+        if prefs.get("after_meetings"):
+            items += rule_summary_tasks(notes, has_tasks, now, tz)
     except Exception as e:
         print(f"[proactive] summary tasks failed uid={uid} err={e!r}")
+    try:
+        from assistant.services import proactive_ai
+
+        window = calendar_tasks.list_tasks_in_window(uid, now - timedelta(days=30), now + timedelta(days=30))
+        cards = proactive_ai.insight_cards(uid, now=now, task_titles=[str(t.get("title") or "") for t in window])
+        if not prefs.get("after_meetings"):
+            cards = [c for c in cards if (c.get("note") or {}).get("kind") != "transcription"]
+        items += cards
+    except Exception as e:
+        print(f"[proactive] insights failed uid={uid} err={e!r}")
     return rank(items, dismissed_keys(uid))
+
+
+# ---------------------------------------------------------------- для бота: события и утренний бриф
+
+def events_for_user(uid: int, t0: datetime, t1: datetime) -> list[dict[str, Any]]:
+    """События календаря в форме, как их видит мини-приложение (без себя в участниках)."""
+    from assistant.lib.meeting_links import extract_online_meeting_url
+    from assistant.services import calendar_sources
+
+    out = []
+    for norm in calendar_sources.list_events_in_window(int(uid), t0, t1):
+        raw = norm.get("raw") or {}
+        if not isinstance(raw, dict):
+            continue
+        status = ""
+        atts = []
+        for a in raw.get("attendees") or []:
+            if not isinstance(a, dict) or a.get("resource"):
+                continue
+            if a.get("self"):
+                status = str(a.get("responseStatus") or "")
+                continue
+            atts.append({"email": str(a.get("email") or ""), "name": str(a.get("displayName") or a.get("email") or "")})
+        out.append(
+            {
+                "id": str(norm.get("event_id") or raw.get("id") or ""),
+                "calendar_id": str(norm.get("calendar_id") or "primary"),
+                "summary": str(raw.get("summary") or ""),
+                "start": raw.get("start") or {},
+                "end": raw.get("end") or {},
+                "attendees": atts,
+                "meet_url": extract_online_meeting_url(raw) or "",
+                "self_response_status": status,
+            }
+        )
+    return out
+
+
+def _brief_conn() -> sqlite3.Connection:
+    conn = _conn()
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS proactive_brief_sent (owner_user_id TEXT NOT NULL, day TEXT NOT NULL, sent_at TEXT NOT NULL, PRIMARY KEY (owner_user_id, day))"
+    )
+    return conn
+
+
+def brief_already_sent(uid: int, day: str) -> bool:
+    with _LOCK:
+        return _brief_conn().execute(
+            "SELECT 1 FROM proactive_brief_sent WHERE owner_user_id = ? AND day = ?", (str(uid), day)
+        ).fetchone() is not None
+
+
+def mark_brief_sent(uid: int, day: str) -> None:
+    with _LOCK:
+        conn = _brief_conn()
+        conn.execute(
+            "INSERT OR IGNORE INTO proactive_brief_sent (owner_user_id, day, sent_at) VALUES (?, ?, ?)",
+            (str(uid), day, _now().isoformat()),
+        )
+        conn.commit()
+
+
+def brief_due(local_now: datetime, brief_time: str) -> bool:
+    """Пора слать бриф: наступило выбранное время, но прошло не больше 3 часов (не шлём вечером)."""
+    try:
+        hh, mm = (int(x) for x in str(brief_time or "08:30").split(":", 1))
+    except ValueError:
+        hh, mm = 8, 30
+    target = local_now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    return target <= local_now < target + timedelta(hours=3)
+
+
+def brief_message(items: list[dict[str, Any]], today_events: list[dict[str, Any]], tz: Any, local_now: datetime) -> str:
+    import html as _h
+
+    wd = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"][local_now.weekday()]
+    lines = [f"<b>Доброе утро! {wd}, {local_now.day} {_RU_MON[local_now.month - 1]}</b>"]
+    meets = [e for e in today_events if not _is_all_day(e) and not _declined(e)]
+    meets.sort(key=lambda e: str((e.get("start") or {}).get("dateTime") or ""))
+    if meets:
+        ws = "встреча" if len(meets) % 10 == 1 and len(meets) % 100 != 11 else ("встречи" if 2 <= len(meets) % 10 <= 4 and not 12 <= len(meets) % 100 <= 14 else "встреч")
+        lines.append(f"Сегодня {len(meets)} {ws}:")
+        for e in meets[:5]:
+            st = _parse(e.get("start"))
+            lines.append(f"• {_hm(st, tz) if st else ''} {_h.escape(str(e.get('summary') or 'встреча'))}")
+    if items:
+        lines.append("")
+        lines.append("<b>Главное:</b>")
+        for it in items[:3]:
+            lines.append(f"• {_h.escape(str(it.get('title') or ''))}")
+    return "\n".join(lines)
