@@ -244,6 +244,13 @@ def run_pending(uid: int) -> int:
                 done += 1
             except Exception as e:
                 print(f"[proactive_ai] note={note.get('id')} uid={uid} err={e!r}")
+        budget = DAILY_CAP - analyzed_today(uid)
+        for cid, day, key, h in digest_candidates(uid)[: max(0, min(PER_RUN, budget))]:
+            try:
+                analyze_digest(uid, cid, day, key, h)
+                done += 1
+            except Exception as e:
+                print(f"[proactive_ai] digest={key} uid={uid} err={e!r}")
     finally:
         with _LOCK:
             _RUNNING.discard(uid)
@@ -259,7 +266,8 @@ def kick(uid: int) -> None:
 # ---------------------------------------------------------------- карточки
 
 def _words(s: str) -> set[str]:
-    return {w for w in re.findall(r"[a-zа-яё0-9]{4,}", str(s or "").lower())}
+    # Основы слов (первые 4 буквы): «пришлю»/«прислать», «доступы»/«доступ» совпадают.
+    return {w[:4] for w in re.findall(r"[a-zа-яё0-9]{4,}", str(s or "").lower().replace("ё", "е"))}
 
 
 def _covered(text: str, task_titles: list[str]) -> bool:
@@ -268,7 +276,7 @@ def _covered(text: str, task_titles: list[str]) -> bool:
         return False
     for t in task_titles:
         b = _words(t)
-        if b and len(a & b) / max(1, min(len(a), len(b))) >= 0.6:
+        if b and len(a & b) / max(1, min(len(a), len(b))) >= 0.5:
             return True
     return False
 
@@ -409,3 +417,210 @@ def card_for(it: dict[str, Any], *, src: str, note: dict[str, Any], today: date,
             ],
         }
     return None
+
+
+# ---------------------------------------------------------------- важное из чатов (дайджест)
+
+CHAT_SYSTEM = """Ты — помощник руководителя. Тебе дают переписку рабочего чата за день; сообщения пользователя помечены «Я».
+Найди только то, что важно именно пользователю:
+- request — просьба или вопрос к пользователю, на который он не ответил;
+- promise — пользователь пообещал что-то сделать;
+- escalation — недовольство, конфликт, жалоба клиента, эскалация;
+- deadline — срок, который касается пользователя или его команды;
+- blocker — работа стоит и ждёт решения/действия.
+Ничего не придумывай, бери только из текста. Ответ строго JSON:
+{"items":[{"kind":"request|promise|escalation|deadline|blocker","text":"коротко, до 120 символов","who":"кто написал/о ком","msg":номер сообщения,"due":"YYYY-MM-DD или ''"}]}
+Не больше 5 пунктов. Если ничего важного — {"items":[]}."""
+
+CHAT_KINDS = ("request", "promise", "escalation", "deadline", "blocker")
+
+
+def _me_identity(uid: int) -> tuple[str, str]:
+    try:
+        from assistant.stores import note_members
+
+        prof = note_members.get_profile(uid) or {}
+        return note_members.profile_display_name(prof, fallback=""), str(prof.get("username") or "")
+    except Exception:
+        return "", ""
+
+
+def chat_transcript_for(uid: int, messages: list[dict[str, Any]]) -> str:
+    lines = []
+    for m in messages:
+        text = str(m.get("text") or "").strip()
+        if not text:
+            continue
+        mine = m.get("user_id") is not None and int(m.get("user_id")) == int(uid)
+        who = "Я" if mine else (str(m.get("display_name") or "").strip() or (f"@{m['username']}" if m.get("username") else "кто-то"))
+        ts = str(m.get("ts_utc") or "")
+        lines.append(f"#{m.get('message_id')} [{ts[11:16]}] {who}: {text[:600]}")
+    return "\n".join(lines)
+
+
+def normalize_chat_items(obj: Any) -> list[dict[str, Any]]:
+    out = []
+    for it in (obj.get("items") if isinstance(obj, dict) else None) or []:
+        if not isinstance(it, dict):
+            continue
+        kind = str(it.get("kind") or "").strip()
+        text = str(it.get("text") or "").strip()
+        if kind not in CHAT_KINDS or not text:
+            continue
+        try:
+            msg = int(it.get("msg") or 0)
+        except (TypeError, ValueError):
+            msg = 0
+        due = str(it.get("due") or "").strip()[:10]
+        if due and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", due):
+            due = ""
+        out.append({"kind": kind, "text": text[:200], "who": str(it.get("who") or "").strip()[:80], "msg": msg, "due": due})
+    return out[:5]
+
+
+def digest_candidates(uid: int) -> list[tuple[int, str, str, str]]:
+    """Отчёты дайджеста по выбранным чатам за 3 дня, ещё не разобранные «для меня» в текущем виде."""
+    from assistant.stores import chat_digest as digest_store
+    from assistant.stores import user_prefs
+
+    if not user_prefs.digest_enabled(uid) or not user_prefs.proactive_prefs(uid).get("chats"):
+        return []
+    chats = [int(c) for c in user_prefs.digest_chat_ids(uid)]
+    if not chats:
+        return []
+    since = (date.today() - timedelta(days=3)).isoformat()
+    with _LOCK:
+        done = {
+            str(r["source_key"]): str(r["content_hash"])
+            for r in _conn().execute(
+                "SELECT source_key, content_hash FROM proactive_insights WHERE owner_user_id = ? AND source_key LIKE 'digest:%'",
+                (str(uid),),
+            ).fetchall()
+        }
+    out = []
+    for rep in digest_store.list_reports_for_chats(chats, limit=60):
+        day = str(rep.get("report_date") or "")
+        if day < since or rep.get("is_demo"):
+            continue
+        cid = int(rep.get("chat_id"))
+        key = f"digest:{cid}:{day}"
+        h = _hash(str(rep.get("generated_at") or ""), str(rep.get("message_count") or ""))
+        if done.get(key) == h:
+            continue
+        out.append((cid, day, key, h))
+    return out
+
+
+def analyze_digest(uid: int, chat_id: int, day: str, key: str, content_hash: str) -> list[dict[str, Any]]:
+    from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
+    from assistant.lib.llm_json import strip_json_from_markdown
+    from assistant.nlu import llm
+    from assistant.stores import chat_digest as digest_store
+
+    set_openrouter_usage_telegram_user(telegram_user_id=uid)
+    messages = digest_store.messages_for_chat_date(chat_id, day)
+    chat = digest_store.get_chat(chat_id) or {}
+    title = str(chat.get("title") or f"Чат {chat_id}")
+    items: list[dict[str, Any]] = []
+    if messages:
+        name, username = _me_identity(uid)
+        payload = {
+            "chat": title,
+            "date": day,
+            "me": {"name": name, "username": username},
+            "messages": chat_transcript_for(uid, messages)[:MAX_TEXT],
+        }
+        raw = llm._chat(
+            CHAT_SYSTEM,
+            json.dumps(payload, ensure_ascii=False),
+            operation="proactive_chat_insights",
+            model=llm._model_chat_digest(),
+            timeout=90,
+            temperature=0.1,
+            max_tokens=900,
+        )
+        try:
+            items = normalize_chat_items(json.loads(strip_json_from_markdown(raw)))
+        except (json.JSONDecodeError, TypeError):
+            items = []
+    save(uid, key, content_hash, title, items)
+    return items
+
+
+def chat_message_url(chat_id: int, msg: int) -> str:
+    s = str(int(chat_id))
+    if s.startswith("-100") and msg:
+        return f"https://t.me/c/{s[4:]}/{int(msg)}"
+    return ""
+
+
+_CHAT_TAGS = {
+    "request": "💬 ждут ответа",
+    "promise": "🤝 вы обещали",
+    "escalation": "🔥 эскалация",
+    "deadline": "⏰ срок",
+    "blocker": "⛔ блокер",
+}
+
+
+def chat_card(it: dict[str, Any], *, chat_id: int, day: str, title: str, today: date, task_titles: list[str]) -> Optional[dict[str, Any]]:
+    kind, text, who = it.get("kind"), str(it.get("text") or ""), str(it.get("who") or "")
+    if kind not in CHAT_KINDS:
+        return None
+    if kind in ("promise", "request") and _covered(text, task_titles):
+        return None
+    key = "chat:%s:%s:%s" % (chat_id, day, _hash(kind or "", text)[:10])
+    try:
+        d = date.fromisoformat(day)
+        day_l = "сегодня" if d == today else ("вчера" if d == today - timedelta(days=1) else f"{d.day} {_RU_MON[d.month - 1]}")
+    except ValueError:
+        day_l = day
+    url = chat_message_url(chat_id, int(it.get("msg") or 0))
+    src = f"чат «{title}» · {day_l}" + (f" · {who}" if who and kind != "promise" else "")
+    acts: list[dict[str, Any]] = []
+    if kind == "promise":
+        acts.append({"label": "Напомнить себе", "act": "assistant", "primary": True,
+                     "payload": {"prompt": f"Поставь мне задачу «{text}»" + (f" на {it.get('due')}" if it.get("due") else "") + f" — обещал в чате «{title}»."}})
+    elif kind == "escalation" and who:
+        acts.append({"label": "Встреча", "act": "assistant", "primary": True,
+                     "payload": {"prompt": f"Найди ближайшее общее свободное время для встречи с {who} по вопросу «{text}» (чат «{title}») и предложи 3 варианта."}})
+    else:
+        acts.append({"label": "Задача себе", "act": "assistant", "primary": True,
+                     "payload": {"prompt": f"Поставь мне задачу: {text} (из чата «{title}», {day_l})" + (f" на {it.get('due')}" if it.get("due") else "") + "."}})
+    if url:
+        acts.append({"label": "Открыть чат", "act": "url", "payload": {"url": url}})
+    return {
+        "key": key,
+        "type": "chat_" + str(kind),
+        "tag": _CHAT_TAGS.get(str(kind), "💬 важное из чатов"),
+        "urgency": 3 if kind in ("request", "escalation", "blocker") else 2,
+        "title": text,
+        "source": src,
+        "ask": f"{text} ({src})",
+        "chat": {"id": chat_id, "date": day, "title": title},
+        "actions": acts,
+    }
+
+
+def chat_cards(uid: int, *, task_titles: Optional[list[str]] = None, chat_id: Optional[int] = None, day: Optional[str] = None) -> list[dict[str, Any]]:
+    from assistant.services.calendar import _tz_for
+
+    today = datetime.now(_tz_for(uid)).date()
+    pattern = f"digest:{chat_id}:{day}" if chat_id is not None and day else "digest:%"
+    with _LOCK:
+        rows = _conn().execute(
+            "SELECT source_key, title, items_json FROM proactive_insights WHERE owner_user_id = ? AND source_key LIKE ? ORDER BY analyzed_at DESC LIMIT 40",
+            (str(uid), pattern),
+        ).fetchall()
+    out = []
+    for r in rows:
+        try:
+            _, cid, d = str(r["source_key"]).split(":", 2)
+            items = json.loads(r["items_json"] or "[]")
+        except ValueError:
+            continue
+        for it in items:
+            c = chat_card(it, chat_id=int(cid), day=d, title=str(r["title"] or ""), today=today, task_titles=task_titles or [])
+            if c:
+                out.append(c)
+    return out

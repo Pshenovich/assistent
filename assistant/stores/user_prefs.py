@@ -381,3 +381,16 @@ def set_proactive_prefs(user_id: int, patch: dict[str, Any]) -> dict[str, Any]:
     prefs["proactive"] = cur
     save_prefs(user_id, prefs)
     return proactive_prefs(user_id)
+
+
+def iter_user_ids_with_digest() -> list[int]:
+    """Пользователи с включённым дайджестом (для автообновления)."""
+    out = []
+    for p in _dir().glob("*.json"):
+        try:
+            uid = int(p.stem)
+        except ValueError:
+            continue
+        if digest_enabled(uid) and digest_chat_ids(uid):
+            out.append(uid)
+    return out

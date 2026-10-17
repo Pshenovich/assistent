@@ -392,6 +392,14 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
         if not prefs.get("after_meetings"):
             cards = [c for c in cards if (c.get("note") or {}).get("kind") != "transcription"]
         items += cards
+        if prefs.get("chats"):
+            items += proactive_ai.chat_cards(uid, task_titles=[str(t.get("title") or "") for t in window])
+        if prefs.get("weekly"):
+            from assistant.services import proactive_reports
+
+            wc = proactive_reports.weekly_card(uid, now=now)
+            if wc:
+                items.append(wc)
     except Exception as e:
         print(f"[proactive] insights failed uid={uid} err={e!r}")
     return rank(items, dismissed_keys(uid))
