@@ -68,6 +68,25 @@ def _collect(uid: int) -> tuple[str, bool] | None:
     return (proactive.brief_message(items, today, tz, local_now), True)
 
 
+def _weekly(uid: int) -> str | None:
+    """Пятница 18:00–23:00 по времени пользователя, включены «Итоги недели», отчёта за неделю ещё нет."""
+    from assistant.services import proactive_reports
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import user_prefs
+
+    prefs = user_prefs.proactive_prefs(uid)
+    if not prefs.get("weekly"):
+        return None
+    local = datetime.now(_tz_for(uid))
+    if local.weekday() != 4 or not (18 <= local.hour < 23):
+        return None
+    monday = (local - timedelta(days=local.weekday())).date().isoformat()
+    if proactive_reports.report_note_id(uid, f"report:week:{monday}"):
+        return None
+    note = proactive_reports.weekly(uid)
+    return str(note.get("title") or "Итоги недели")
+
+
 async def proactive_brief_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not brief_enabled():
         return
@@ -76,6 +95,13 @@ async def proactive_brief_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
     for uid in await asyncio.to_thread(_user_ids):
         if not is_user_allowed(uid, None):
             continue
+        try:
+            title = await asyncio.to_thread(_weekly, uid)
+            if title:
+                kb_w = InlineKeyboardMarkup([[InlineKeyboardButton("Открыть итоги", web_app=WebAppInfo(url=webapp_entry_url()))]])
+                await context.bot.send_message(chat_id=uid, text=f"<b>{title}</b> — готово: встречи, решения, что висит и что на следующую неделю. Заметка в проекте «От ассистента».", parse_mode=ParseMode.HTML, reply_markup=kb_w)
+        except Exception as e:
+            print(f"[weekly] uid={uid} err={e!r}")
         try:
             res = await asyncio.to_thread(_collect, uid)
         except Exception as e:

@@ -16175,3 +16175,14 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
 .proactive-row { display: flex; align-items: center; gap: 10px; }
 .proactive-row .svc-text { flex: 1; min-width: 0; }
 .proactive-time { width: 118px; flex-shrink: 0; padding-left: 10px; padding-right: 8px; }
+.digest-important { margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: rgba(251, 191, 36, 0.06); box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.3); display: flex; flex-direction: column; gap: 8px; }
+.digest-important-head { font-weight: 650; font-size: 0.88rem; }
+.digest-important-row { display: flex; align-items: center; gap: 8px; }
+.digest-important-text { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 0.85rem; }
+.digest-important-text small { color: var(--text-tertiary); font-size: 0.75rem; }
+.digest-important-pill { display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: 7px; background: rgba(251, 191, 36, 0.14); color: #fcd34d; font-size: 0.75rem; font-weight: 600; }
+@media (max-width: 559px) { .digest-important-row { flex-wrap: wrap; } .digest-important-text { flex-basis: 100%; } }
+.focus-plan { border: none; background: transparent; color: var(--text-secondary); font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; padding: 4px 6px; }
+.focus-plan:hover { color: var(--text); }
+.focus-plan:disabled { opacity: 0.6; }
+.note-discuss-sugg--focus button { border-color: var(--accent-border) !important; }

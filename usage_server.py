@@ -6376,6 +6376,22 @@ async def miniapp_digest_reports(
             return {"digest_enabled": False, "reports": []}
         selected = user_prefs.digest_chat_ids(uid)
         reports = digest_store.list_reports_for_chats(selected, limit=limit)
+        try:
+            from assistant.services import proactive, proactive_ai
+
+            hidden = proactive.dismissed_keys(uid)
+            counts: dict[tuple[int, str], int] = {}
+            for c in proactive_ai.chat_cards(uid):
+                if c["key"] in hidden:
+                    continue
+                k = (int(c["chat"]["id"]), str(c["chat"]["date"]))
+                counts[k] = counts.get(k, 0) + 1
+            for r in reports:
+                n = counts.get((int(r.get("chat_id") or 0), str(r.get("report_date") or "")), 0)
+                if n:
+                    r["important_count"] = n
+        except Exception as e:
+            print(f"[digest] important counts failed uid={uid} err={e!r}")
         return {"digest_enabled": True, "reports": reports}
 
     return await run_in_threadpool(_run)
@@ -6440,6 +6456,12 @@ async def miniapp_digest_report_detail(
         try:
             row = dict(row)
             row["people"] = _digest_people(uid, principal, digest_store.participants_for_day(int(chat_id), report_date))
+            from assistant.services import proactive, proactive_ai
+
+            hidden = proactive.dismissed_keys(uid)
+            row["important"] = [
+                c for c in proactive_ai.chat_cards(uid, chat_id=int(chat_id), day=report_date) if c["key"] not in hidden
+            ]
         except Exception as e:
             print(f"[digest] people failed uid={uid} chat={chat_id} err={e!r}")
         return row
@@ -8990,6 +9012,35 @@ async def miniapp_proactive_prefs_patch(
     prefs = await run_in_threadpool(user_prefs.set_proactive_prefs, uid, body or {})
     _FOCUS_CACHE.pop(uid, None)
     return {"ok": True, "prefs": prefs}
+
+
+@miniapp_router.post("/proactive/report/{kind}")
+async def miniapp_proactive_report(
+    kind: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """«План на день» / «Итоги недели» — заметка в проекте «От ассистента» (одна на день/неделю)."""
+    from assistant.services import proactive_reports
+    from assistant.services.calendar import _tz_for
+
+    uid = int(principal.telegram_user_id)
+    if kind not in ("day", "week"):
+        raise HTTPException(status_code=404, detail="Нет такого отчёта")
+
+    def _run() -> dict[str, Any]:
+        today = datetime.now(_tz_for(uid)).date()
+        try:
+            events = _calendar_range_payload(uid, (today - timedelta(days=7)).isoformat(), (today + timedelta(days=1)).isoformat()).get("events") or []
+        except Exception:
+            events = []
+        return proactive_reports.day_plan(uid, events=events) if kind == "day" else proactive_reports.weekly(uid, events=events)
+
+    try:
+        note = await run_in_threadpool(_run)
+    except Exception as e:
+        print(f"[proactive] report {kind} failed uid={uid} err={e!r}")
+        raise HTTPException(status_code=502, detail="Не удалось собрать отчёт, попробуйте ещё раз") from e
+    _FOCUS_CACHE.pop(uid, None)
+    return {"ok": True, "item": {"id": note["id"], "title": note.get("title") or ""}}
 
 
 @miniapp_router.post("/proactive/dismiss")

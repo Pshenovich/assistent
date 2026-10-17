@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261017-focus2";
+  var WEBAPP_BUILD = "20261017-focus4";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -183,7 +183,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261017-focus2";
+  const NOTE_EDITOR_ASSET_V = "20261017-focus4";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -7157,6 +7157,60 @@
     }
     consumePendingDiscussOpen("digest", itemId);
     renderDigestPeople(report && report.people);
+    renderDigestImportant(report && report.important);
+  }
+
+  // «⚠ Важное и риски» в отчёте дайджеста: просьбы без ответа, обещания, эскалации — с кнопками в строке.
+  function renderDigestImportant(items, tries) {
+    items = items || [];
+    if (!items.length) return;
+    var meta = document.getElementById("note-editor-meta");
+    if (!meta || !meta.parentNode) {
+      if ((tries || 0) < 20) setTimeout(function () { renderDigestImportant(items, (tries || 0) + 1); }, 150);
+      return;
+    }
+    var el = document.getElementById("note-editor-digest-important");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "note-editor-digest-important";
+      el.className = "digest-important";
+      var after = document.getElementById("note-editor-digest-people") || meta;
+      after.parentNode.insertBefore(el, after.nextSibling);
+    }
+    el.innerHTML = '<div class="digest-important-head">⚠ Важное и риски</div>';
+    items.forEach(function (it) {
+      var row = document.createElement("div");
+      row.className = "digest-important-row";
+      var tx = document.createElement("span");
+      tx.className = "digest-important-text";
+      tx.innerHTML = "<b></b><small></small>";
+      tx.querySelector("b").textContent = (it.tag ? it.tag.replace(/^\S+\s/, "") + ": " : "") + it.title;
+      tx.querySelector("small").textContent = it.source || "";
+      row.appendChild(tx);
+      (it.actions || []).slice(0, 2).forEach(function (a) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "focus-card-btn" + (a.primary ? " is-primary" : "");
+        b.textContent = a.label;
+        b.addEventListener("click", function () {
+          if (a.act === "assistant") closeNoteEditorModal();
+          runFocusAction(it, a, b);
+        });
+        row.appendChild(b);
+      });
+      var x = document.createElement("button");
+      x.type = "button";
+      x.className = "focus-card-x";
+      x.title = "Скрыть";
+      x.textContent = "✕";
+      x.addEventListener("click", function () {
+        dismissFocus(it, true);
+        row.remove();
+        if (!el.querySelector(".digest-important-row")) el.remove();
+      });
+      row.appendChild(x);
+      el.appendChild(row);
+    });
   }
 
   // Участники чата в отчёте дайджеста: контакты — ссылкой на карточку, незнакомых можно добавить.
@@ -7369,6 +7423,12 @@
         card.appendChild(badge);
       }
       card.appendChild(preview);
+      if (rep.important_count) {
+        var imp = document.createElement("span");
+        imp.className = "digest-important-pill";
+        imp.textContent = "⚠ " + rep.important_count + " " + pluralRu(rep.important_count, "важное", "важных", "важных");
+        card.appendChild(imp);
+      }
       card.addEventListener("click", function () {
         openDigestDetail(rep);
       });
@@ -15349,6 +15409,8 @@
     var isTr = it.kind === "transcription";
     setTab("notes", { noAnim: true });
     setNotesSubTab(isTr ? "transcriptions" : "notes");
+    // Иначе в режиме «список + заметка» поверх откроется первая заметка списка.
+    notesSplitAutoOpened = true;
     var n = it.item || { id: it.id, title: it.title || "", body_preview_only: true };
     if (isTr) {
       n.role = "transcription";
@@ -16050,6 +16112,7 @@
       '<b>Фокус</b><span class="focus-count"></span><span class="focus-sp"></span>' +
       '<button type="button" class="focus-arrow" data-dir="-1" aria-label="Назад">‹</button>' +
       '<button type="button" class="focus-arrow" data-dir="1" aria-label="Дальше">›</button>' +
+      '<button type="button" class="focus-plan">План на день</button>' +
       '<button type="button" class="focus-all"></button>';
     head.querySelector(".focus-count").textContent = focusItems.length + " " + pluralRu(focusItems.length, "подсказка", "подсказки", "подсказок");
     head.querySelector(".focus-all").textContent = "Все (" + focusItems.length + ")";
@@ -16065,6 +16128,7 @@
         return;
       }
       if (e.target.closest(".focus-all")) openFocusAll();
+      if (e.target.closest(".focus-plan")) openFocusReport("day", e.target.closest(".focus-plan"));
     });
     host.appendChild(head);
     host.appendChild(row);
@@ -16107,6 +16171,27 @@
     if (!old) {
       var scroll = sheet.querySelector(".note-discussion-scroll");
       sheet.insertBefore(box, scroll || null);
+    }
+  }
+
+  // «План на день» / «Итоги недели» — заметка в проекте «От ассистента»; открываем её.
+  async function openFocusReport(kind, btn) {
+    var label = btn ? btn.textContent : "";
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Составляю…";
+    }
+    try {
+      var data = await apiFetch("/proactive/report/" + kind, { method: "POST", body: "{}", timeout: 180000 });
+      var item = data && data.item;
+      if (item) openMeetingMaterial({ id: item.id, kind: "note", title: item.title });
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось составить план");
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = label;
+      }
     }
   }
 
@@ -16219,6 +16304,8 @@
         if (it.event) openEventModal(findLoadedCalendarEvent(it.event.id, it.event.calendar_id) || it.event);
       } else if (act === "open_note") {
         if (it.note) openMeetingMaterial({ id: it.note.id, kind: it.note.kind, title: it.note.title });
+      } else if (act === "url") {
+        if (p.url) openExternal(p.url);
       } else if (act === "assistant") {
         if (await focusOpenAssistant()) {
           await submitNoteGptQuestion(String(p.prompt || it.ask || ""));
@@ -31614,6 +31701,24 @@
       hintChat.textContent = "Ассистент видит ваш календарь, задачи и контакты — может найти время, поставить встречу или задачу.";
       box.appendChild(title);
       box.appendChild(hintChat);
+      if (document.documentElement.classList.contains("actual-assistant-open") && focusItems.length) {
+        // Живые подсказки из «Фокуса»: нажатие — вопрос ассистенту с карточкой в контексте.
+        var focusChips = document.createElement("div");
+        focusChips.className = "note-discuss-sugg note-discuss-sugg--focus";
+        focusItems.slice(0, 3).forEach(function (it) {
+          var fb = document.createElement("button");
+          fb.type = "button";
+          var tt = String(it.title || "");
+          fb.textContent = (it.tag ? it.tag.split(" ")[0] + " " : "") + (tt.length > 48 ? tt.slice(0, 47) + "…" : tt);
+          fb.addEventListener("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            askAboutFocus(it);
+          });
+          focusChips.appendChild(fb);
+        });
+        box.appendChild(focusChips);
+      }
       var chatChips = document.createElement("div");
       chatChips.className = "note-discuss-sugg";
       ["Что у меня сегодня?", "Найди время для встречи", "Поставь задачу", "На что ушло время на этой неделе?"].forEach(function (t) {
