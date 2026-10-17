@@ -8947,6 +8947,10 @@ async def miniapp_proactive_feed(
         return {"ok": True, "items": hit[1]}
 
     def _run() -> list[dict[str, Any]]:
+        from assistant.stores import user_prefs
+
+        if not user_prefs.proactive_prefs(uid).get("focus"):
+            return []
         today = datetime.now(_tz_for(uid)).date()
         try:
             payload = _calendar_range_payload(uid, (today - timedelta(days=2)).isoformat(), (today + timedelta(days=1)).isoformat())
@@ -8958,7 +8962,34 @@ async def miniapp_proactive_feed(
 
     items = await run_in_threadpool(_run)
     _FOCUS_CACHE[uid] = (time.time(), items)
+    try:
+        # ИИ разбирает изменившиеся материалы в фоне; новые карточки появятся при следующем обновлении.
+        from assistant.services import proactive_ai
+
+        proactive_ai.kick(uid)
+    except Exception as e:
+        print(f"[proactive] kick failed uid={uid} err={e!r}")
     return {"ok": True, "items": items}
+
+
+@miniapp_router.get("/proactive/prefs")
+async def miniapp_proactive_prefs_get(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.stores import user_prefs
+
+    return {"ok": True, "prefs": await run_in_threadpool(user_prefs.proactive_prefs, int(principal.telegram_user_id))}
+
+
+@miniapp_router.patch("/proactive/prefs")
+async def miniapp_proactive_prefs_patch(
+    body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """Профиль → «Подсказки ассистента»: Фокус, утренний бриф и его время, после встреч и т.д."""
+    from assistant.stores import user_prefs
+
+    uid = int(principal.telegram_user_id)
+    prefs = await run_in_threadpool(user_prefs.set_proactive_prefs, uid, body or {})
+    _FOCUS_CACHE.pop(uid, None)
+    return {"ok": True, "prefs": prefs}
 
 
 @miniapp_router.post("/proactive/dismiss")

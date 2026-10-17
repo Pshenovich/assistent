@@ -16171,3 +16171,7 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
 .digest-person-name { border: none; background: transparent; padding: 0; font: inherit; color: var(--text); }
 .digest-person.is-contact .digest-person-name { color: var(--accent); font-weight: 600; cursor: pointer; }
 .digest-person-add { border: none; background: transparent; padding: 0; font: inherit; font-size: 0.78rem; color: var(--accent); cursor: pointer; }
+.proactive-settings-body { display: flex; flex-direction: column; gap: 8px; }
+.proactive-row { display: flex; align-items: center; gap: 10px; }
+.proactive-row .svc-text { flex: 1; min-width: 0; }
+.proactive-time { width: 118px; flex-shrink: 0; padding-left: 10px; padding-right: 8px; }

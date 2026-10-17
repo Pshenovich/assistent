@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261017-focus1";
+  var WEBAPP_BUILD = "20261017-focus2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -183,7 +183,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261017-focus1";
+  const NOTE_EDITOR_ASSET_V = "20261017-focus2";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -16230,6 +16230,115 @@
     }
   }
 
+
+  // ---- Профиль → «Подсказки ассистента» ----
+  var PROACTIVE_ROWS = [
+    ["focus", "Фокус на «Актуальном»", "подсказки и готовые действия"],
+    ["brief", "Утренний бриф в Telegram", "главное на день и встречи"],
+    ["after_meetings", "После встреч", "задачи и договорённости из записи"],
+    ["before_meetings", "Перед встречами", "за час: материалы и открытые вопросы"],
+    ["chats", "Важное из чатов", "просьбы без ответа, риски, обещания"],
+    ["weekly", "Итоги недели", "заметка по пятницам в 18:00"],
+  ];
+
+  async function openProactiveSettings() {
+    var ov = document.getElementById("proactive-settings-overlay");
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = "proactive-settings-overlay";
+      ov.className = "modal-overlay hidden";
+      ov.innerHTML =
+        '<div class="modal modal--sheet proactive-settings-sheet" role="dialog" aria-modal="true" aria-label="Подсказки ассистента">' +
+        '<div class="modal-header"><button type="button" class="modal-header-btn modal-header-btn--close" data-ps="close" aria-label="Закрыть">' +
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>' +
+        '<h2 class="modal-title">Подсказки ассистента</h2><span></span></div><div class="modal-body proactive-settings-body"></div></div>';
+      document.body.appendChild(ov);
+      ov.addEventListener("click", function (e) {
+        if (e.target === ov || e.target.closest('[data-ps="close"]')) closeProactiveSettings();
+      });
+    }
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
+    var body = ov.querySelector(".proactive-settings-body");
+    body.innerHTML = '<p class="ev-materials-empty">Загружаю…</p>';
+    var prefs = {};
+    try {
+      prefs = ((await apiFetch("/proactive/prefs", { method: "GET" })) || {}).prefs || {};
+    } catch (e) {
+      body.innerHTML = '<p class="error"></p>';
+      body.firstChild.textContent = (e && e.message) || "Не удалось загрузить";
+      return;
+    }
+    paintProactiveSettings(body, prefs);
+  }
+
+  function closeProactiveSettings() {
+    var ov = document.getElementById("proactive-settings-overlay");
+    if (!ov || ov.classList.contains("hidden")) return;
+    ov.classList.add("hidden");
+    ov.setAttribute("aria-hidden", "true");
+    onModalSheetClose();
+    syncAppOverlay();
+  }
+
+  function paintProactiveSettings(body, prefs) {
+    body.innerHTML = "";
+    PROACTIVE_ROWS.forEach(function (r) {
+      var row = document.createElement("div");
+      row.className = "svc-row proactive-row";
+      var txt = document.createElement("div");
+      txt.className = "svc-text";
+      txt.innerHTML = '<p class="svc-name"></p><p class="svc-desc muted small"></p>';
+      txt.querySelector(".svc-name").textContent = r[1];
+      txt.querySelector(".svc-desc").textContent = r[2];
+      row.appendChild(txt);
+      if (r[0] === "brief") {
+        var t = document.createElement("input");
+        t.type = "time";
+        t.className = "field-input proactive-time";
+        t.value = prefs.brief_time || "08:30";
+        t.addEventListener("change", function () {
+          saveProactivePref(body, { brief_time: t.value || "08:30" });
+        });
+        row.appendChild(t);
+      }
+      var on = !!prefs[r[0]];
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "svc-toggle" + (on ? " svc-toggle--on" : "");
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+      b.setAttribute("aria-label", r[1]);
+      b.innerHTML = '<span class="svc-toggle-knob"></span>';
+      b.addEventListener("click", function () {
+        var patch = {};
+        patch[r[0]] = !prefs[r[0]];
+        saveProactivePref(body, patch);
+      });
+      row.appendChild(b);
+      body.appendChild(row);
+    });
+    var note = document.createElement("p");
+    note.className = "notes-filter-hint";
+    note.textContent = "Ассистент ничего не делает без вашего нажатия: подсказки — только предложения.";
+    body.appendChild(note);
+  }
+
+  async function saveProactivePref(body, patch) {
+    try {
+      var data = await apiFetch("/proactive/prefs", { method: "PATCH", body: JSON.stringify(patch) });
+      paintProactiveSettings(body, (data && data.prefs) || {});
+      if ("focus" in patch) {
+        focusItems = [];
+        renderFocusRow();
+        loadFocus(true);
+      }
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось сохранить");
+    }
+  }
+
   /* ——— Actual ——— */
   function renderReminderCard(r) {
     const wrap = document.createElement("div");
@@ -17289,6 +17398,11 @@
     }
     if (isNoteHistoryOpen()) {
       noteHistoryBack();
+      return true;
+    }
+    var proactiveSettings = document.getElementById("proactive-settings-overlay");
+    if (proactiveSettings && !proactiveSettings.classList.contains("hidden")) {
+      closeProactiveSettings();
       return true;
     }
     var contactDetail = document.getElementById("contact-detail-overlay");
@@ -40298,6 +40412,8 @@
         openProfileAgents();
       });
     }
+    var proactiveOpenBtn = document.getElementById("profile-proactive-open");
+    if (proactiveOpenBtn) proactiveOpenBtn.addEventListener("click", openProactiveSettings);
     var chatsOpenBtn = document.getElementById("profile-chats-open");
     if (chatsOpenBtn) {
       chatsOpenBtn.addEventListener("click", function () {

@@ -345,3 +345,39 @@ def set_calendar_entry_color(user_id: int, entry_key: str, color: str | None) ->
     prefs["calendar_entry_colors"] = colors
     save_prefs(user_id, prefs)
     return get_calendar_entry_colors(user_id)
+
+
+PROACTIVE_DEFAULTS: dict[str, Any] = {
+    "focus": True,
+    "brief": True,
+    "brief_time": "08:30",
+    "after_meetings": True,
+    "before_meetings": True,
+    "chats": True,
+    "weekly": False,
+}
+
+
+def proactive_prefs(user_id: int) -> dict[str, Any]:
+    """Настройки «Подсказок ассистента» (Фокус, утренний бриф, итоги недели…)."""
+    raw = load_prefs(user_id).get("proactive")
+    out = dict(PROACTIVE_DEFAULTS)
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            if k in out:
+                out[k] = v
+    t = str(out.get("brief_time") or "08:30")
+    out["brief_time"] = t if len(t) == 5 and t[2] == ":" and t[:2].isdigit() and t[3:].isdigit() else "08:30"
+    return out
+
+
+def set_proactive_prefs(user_id: int, patch: dict[str, Any]) -> dict[str, Any]:
+    prefs = load_prefs(user_id)
+    cur = proactive_prefs(user_id)
+    for k, v in (patch or {}).items():
+        if k not in PROACTIVE_DEFAULTS:
+            continue
+        cur[k] = str(v) if k == "brief_time" else bool(v)
+    prefs["proactive"] = cur
+    save_prefs(user_id, prefs)
+    return proactive_prefs(user_id)

@@ -17,6 +17,7 @@ from assistant.bot.meeting_bot_scheduler_job import register_meeting_bot_schedul
 from assistant.bot.telemost_mail_job import register_telemost_mail_jobs
 from assistant.bot.reminder_job import register_reminder_jobs
 from assistant.bot.knowledge_sync_job import register_knowledge_sync_jobs
+from assistant.bot.proactive_brief_job import register_proactive_brief_jobs
 
 
 def build_application() -> Application:
@@ -53,6 +54,7 @@ def build_application() -> Application:
     register_telemost_mail_jobs(app)
     register_reminder_jobs(app)
     register_knowledge_sync_jobs(app)
+    register_proactive_brief_jobs(app)
     return app
 
 
