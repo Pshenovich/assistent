@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import quote
+
 
 # Меняйте при каждом релизе webapp — Telegram кэширует HTML по URL.
-WEBAPP_BUILD_ID = "20261017-focus4"
+WEBAPP_BUILD_ID = "20261017-recur1"
 
 
 def public_base_url() -> str:
@@ -19,6 +21,26 @@ def public_base_url() -> str:
 def webapp_entry_url() -> str:
     build = (os.getenv("WEBAPP_BUILD_ID") or WEBAPP_BUILD_ID).strip()
     return f"{public_base_url()}/webapp/?b={build}"
+
+
+def webapp_event_url(
+    event_id: str,
+    *,
+    calendar_id: str = "primary",
+    day: str | None = None,
+) -> str:
+    """Deep link на карточку встречи в мини-приложении."""
+    eid = str(event_id or "").strip()
+    if not eid:
+        return webapp_entry_url()
+    base = webapp_entry_url()
+    sep = "&" if "?" in base else "?"
+    cal = str(calendar_id or "primary").strip() or "primary"
+    q = f"event={quote(eid, safe='')}&cal={quote(cal, safe='')}"
+    d = str(day or "").strip()[:10]
+    if d:
+        q += f"&day={quote(d, safe='')}"
+    return f"{base}{sep}{q}"
 
 
 def public_share_url(token: str) -> str:

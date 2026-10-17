@@ -131,6 +131,8 @@ def set_action_status(action_id: str, status: str, *, result: dict[str, Any] | N
 
 def public_action(a: dict[str, Any], *, viewer_uid: int | None = None) -> dict[str, Any]:
     """Карточка для клиента — без снимков «до»."""
+    from assistant.lib.webapp_public import webapp_event_url
+
     res = a.get("result") or {}
     p = a.get("payload") or {}
     kind = a["kind"]
@@ -141,6 +143,14 @@ def public_action(a: dict[str, Any], *, viewer_uid: int | None = None) -> dict[s
         open_ref = {"type": "event", "id": res.get("event_id"), "date": res.get("date"), "calendar_id": res.get("calendar_id")}
     elif res.get("task_id") and a.get("status") == "done":
         open_ref = {"type": "task", "id": res.get("task_id")}
+    link = ""
+    ev_id = str((open_ref or {}).get("id") or res.get("event_id") or "").strip()
+    if (open_ref or {}).get("type") == "event" and ev_id:
+        link = webapp_event_url(
+            ev_id,
+            calendar_id=str((open_ref or {}).get("calendar_id") or res.get("calendar_id") or "primary"),
+            day=str((open_ref or {}).get("date") or res.get("date") or "")[:10] or None,
+        )
     return {
         "id": a["id"],
         "kind": kind,
@@ -148,7 +158,7 @@ def public_action(a: dict[str, Any], *, viewer_uid: int | None = None) -> dict[s
         "title": a.get("title") or "",
         "when": res.get("when") or p.get("when") or "",
         "detail": res.get("detail") or p.get("detail") or "",
-        "link": res.get("html_link") or "",
+        "link": link,
         "open": open_ref or None,
         "mine": viewer_uid is not None and int(a.get("owner_uid") or 0) == int(viewer_uid),
     }
@@ -234,6 +244,7 @@ def now_prompt_line(uid: int) -> str:
 SYSTEM_ADDON = """У тебя есть доступ к календарю пользователя через инструменты (calendar_*, task_create, reminder_create, contacts_find, propose_delete).
 - На вопросы про встречи, задачи, напоминания, занятость, свободное время, «с кем», «на что уходит время» — сначала посмотри данные инструментами, не выдумывай.
 - Встречу/перенос/задачу/напоминание создавай сразу инструментом, если просьба понятна (время, участники). Если инструмент вернул конфликт или «контакт не найден» — не повторяй вслепую: предложи пользователю варианты времени из ответа или попроси уточнить.
+- Повтор (каждый день / по будням / еженедельно / до даты): один вызов с recurrence (freq + byday/until). НЕ создавай серию отдельными вызовами — иначе пользователь не сможет удалить всё сразу.
 - Действия из прошлых сообщений уже выполнены (в истории они помечены «Уже выполнено»). Не повторяй их: создавай/меняй только то, о чём просит последнее сообщение. На вопросы «какие у меня…» ничего не создавай — смотри calendar_events.
 - Удаление никогда не выполняй сам: вызови propose_delete — пользователь подтвердит кнопкой. id бери из calendar_events/reminders_list; если не знаешь id — передай title (название), найду сам.
 - id встреч для изменения бери из calendar_events, не придумывай.
@@ -260,6 +271,28 @@ def _fn(name: str, desc: str, props: dict[str, Any], required: list[str] | None 
 _DATE = {"type": "string", "description": "Дата YYYY-MM-DD"}
 _DT = {"type": "string", "description": "Дата и время начала YYYY-MM-DDTHH:MM (локальное время пользователя)"}
 _PEOPLE = {"type": "array", "items": {"type": "string"}, "description": "Имена или @ники из контактов"}
+_RECURRENCE = {
+    "type": "object",
+    "description": (
+        "Повтор одной серией (не отдельными вызовами). "
+        "Пример: по будням до даты — {freq: weekly, byday: weekdays, until: YYYY-MM-DD}."
+    ),
+    "properties": {
+        "freq": {
+            "type": "string",
+            "enum": ["daily", "weekly", "monthly"],
+            "description": "daily / weekly / monthly",
+        },
+        "interval": {"type": "integer", "description": "Каждые N периодов, по умолчанию 1"},
+        "byday": {
+            "description": "Дни: weekdays / будни, или MO,TU,WE,TH,FR / пн,вт,…",
+            "type": "string",
+        },
+        "until": {**_DATE, "description": "Повторять до этой даты включительно"},
+        "count": {"type": "integer", "description": "Число повторов (если нет until)"},
+        "rrule": {"type": "string", "description": "Готовый RRULE (если удобнее)"},
+    },
+}
 
 TOOLS: list[dict[str, Any]] = [
     _fn("calendar_events", "Встречи и задачи пользователя за период (включительно).",
@@ -274,11 +307,12 @@ TOOLS: list[dict[str, Any]] = [
     _fn("contacts_find", "Найти контакты пользователя по имени/нику (пусто — все).",
         {"query": {"type": "string"}}),
     _fn("reminders_list", "Предстоящие напоминания пользователя.", {}),
-    _fn("calendar_create_event", "Создать встречу в Google Календаре (сразу). Проверяет конфликты.",
+    _fn("calendar_create_event", "Создать встречу в Google Календаре (сразу). Проверяет конфликты. Для серии — один вызов с recurrence.",
         {"title": {"type": "string"}, "start": _DT, "duration_min": {"type": "integer", "default": 30},
          "attendees": _PEOPLE, "description": {"type": "string"}, "location": {"type": "string"},
          "online": {"type": "string", "enum": ["auto", "zoom", "telemost", "none"], "default": "auto"},
-         "force": {"type": "boolean", "description": "true — создать, даже если время занято (только если пользователь явно согласился)"}},
+         "force": {"type": "boolean", "description": "true — создать, даже если время занято (только если пользователь явно согласился)"},
+         "recurrence": _RECURRENCE},
         ["title", "start"]),
     _fn("calendar_update_event", "Изменить встречу (перенос, название, участники) — сразу.",
         {"event_id": {"type": "string"}, "calendar_id": {"type": "string"}, "start": _DT,
@@ -287,13 +321,13 @@ TOOLS: list[dict[str, Any]] = [
          "add_attendees": {**_PEOPLE, "description": "Добавить к текущим"},
          "description": {"type": "string"}, "location": {"type": "string"}},
         ["event_id"]),
-    _fn("task_create", "Поставить задачу (себе или контакту) на дату/время — сразу.",
+    _fn("task_create", "Поставить задачу (себе или контакту) на дату/время — сразу. Серию — с recurrence одним вызовом.",
         {"title": {"type": "string"}, "start": _DT, "duration_min": {"type": "integer", "default": 30},
          "all_day": {"type": "boolean"}, "assignee": {"type": "string", "description": "Имя/ник из контактов; пусто — себе"},
-         "description": {"type": "string"}},
+         "description": {"type": "string"}, "recurrence": _RECURRENCE},
         ["title", "start"]),
-    _fn("reminder_create", "Создать напоминание в Telegram — сразу.",
-        {"text": {"type": "string"}, "when": _DT}, ["text", "when"]),
+    _fn("reminder_create", "Создать напоминание в Telegram — сразу. Серию — с recurrence одним вызовом.",
+        {"text": {"type": "string"}, "when": _DT, "recurrence": _RECURRENCE}, ["text", "when"]),
     _fn("show_calendar_cards", "Показать пользователю карточки встреч/задач/напоминаний под ответом (их можно открыть). Вызывай, когда перечисляешь их.",
         {"items": {"type": "array", "items": {"type": "object", "properties": {
             "type": {"type": "string", "enum": ["event", "task", "reminder"]},
@@ -671,6 +705,7 @@ def _attach_online(ctx: GptCalendarContext, created: dict[str, Any], online: str
 
 def tool_calendar_create_event(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     ctx.wrote = True
+    from assistant.lib import recurrence as recur
     from assistant.services import calendar as cal
 
     if not has_google_calendar(ctx.uid):
@@ -682,12 +717,17 @@ def tool_calendar_create_event(ctx: GptCalendarContext, args: dict[str, Any]) ->
         return _err("Неверное время начала, нужно YYYY-MM-DDTHH:MM.")
     dur = max(15, min(8 * 60, int(args.get("duration_min") or 30)))
     people = [str(p).strip() for p in (args.get("attendees") or []) if str(p).strip()]
+    rrule = recur.build_rrule_from_args(args)
+    if rrule:
+        rrule = recur.ensure_until_or_count(rrule, start=start)
     parsed: dict[str, Any] = {
         "title": title,
         "start": start.isoformat(),
         "duration_min": dur,
         "attendee_names": people,
     }
+    if rrule:
+        parsed["recurrence"] = [rrule]
     if args.get("description"):
         parsed["description"] = str(args["description"])
     if args.get("location"):
@@ -698,7 +738,8 @@ def tool_calendar_create_event(ctx: GptCalendarContext, args: dict[str, Any]) ->
             "Не нашёл почту в контактах для: " + ", ".join(missing)
             + ". Уточни у пользователя или создай без них (уберёт из attendees)."
         )
-    if not args.get("force"):
+    if not args.get("force") and not rrule:
+        # Для серии конфликт первого слота не блокируем жёстко — Google сам разнесёт.
         check = cal.validate_meeting_slot(ctx.uid, parsed, start, telegram_username=ctx.telegram_username)
         if not check.get("ok"):
             alts = [_fmt_dt(a, ctx.uid) for a in (check.get("alt_starts") or [])[:6]]
@@ -716,7 +757,8 @@ def tool_calendar_create_event(ctx: GptCalendarContext, args: dict[str, Any]) ->
     online = _attach_online(ctx, created, str(args.get("online") or "auto"))
     when = human_when(created.get("start"), created.get("end"), ctx.uid)
     who = ", ".join(people)
-    detail = " · ".join(x for x in [("с " + who) if who else "", online] if x)
+    recur_h = recur.human_recurrence(rrule)
+    detail = " · ".join(x for x in [("с " + who) if who else "", online, recur_h] if x)
     aid = record_action(
         ctx.uid, "event_create", "done",
         title=str(created.get("summary") or title),
@@ -727,11 +769,20 @@ def tool_calendar_create_event(ctx: GptCalendarContext, args: dict[str, Any]) ->
             "html_link": created.get("html_link"),
             "when": when,
             "detail": detail,
+            "date": start.date().isoformat(),
+            "recurrence": rrule or "",
         },
     )
     ctx.actions.append(aid)
     ctx.created_events.append(created)
-    return _ok({"created": True, "event_id": created.get("event_id"), "when": when, "attendees": people, "online": online})
+    return _ok({
+        "created": True,
+        "event_id": created.get("event_id"),
+        "when": when,
+        "attendees": people,
+        "online": online,
+        "recurrence": recur_h or None,
+    })
 
 
 def _event_snapshot(ctx: GptCalendarContext, event_id: str, calendar_id: str | None) -> dict[str, Any]:
@@ -845,6 +896,7 @@ def _resolve_assignee(ctx: GptCalendarContext, name: str) -> tuple[int, str, str
 
 def tool_task_create(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     ctx.wrote = True
+    from assistant.lib import recurrence as recur
     from assistant.stores import calendar_tasks
 
     title = str(args.get("title") or "").strip()
@@ -859,6 +911,9 @@ def tool_task_create(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
         return _err(who)
     a_uid, a_email, a_name = who
     dur = max(15, int(args.get("duration_min") or 30))
+    rrule = recur.build_rrule_from_args(args)
+    if rrule:
+        rrule = recur.ensure_until_or_count(rrule, start=start)
     row = calendar_tasks.create_task(
         ctx.uid,
         title=title,
@@ -870,8 +925,10 @@ def tool_task_create(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
         assignee_name=a_name,
         all_day=bool(args.get("all_day")),
         tz=_tz(ctx.uid),
+        recurrence=rrule or "",
     )
-    if ctx.sync_task_google:
+    if ctx.sync_task_google and not rrule:
+        # Серию в Google Tasks не пушим — одна запись в Leo, иначе плодятся отдельные задачи.
         try:
             row = ctx.sync_task_google(ctx.uid, row, "create") or row
         except Exception as e:
@@ -883,18 +940,28 @@ def tool_task_create(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
         except Exception as e:
             print(f"[gpt_calendar] task_notify err={e!r}")
     when = human_when(start, None if args.get("all_day") else start + timedelta(minutes=dur), ctx.uid)
-    detail = ("для " + a_name) if delegated else "себе"
+    recur_h = recur.human_recurrence(rrule)
+    detail = " · ".join(
+        x for x in [(("для " + a_name) if delegated else "себе"), recur_h] if x
+    )
     aid = record_action(
         ctx.uid, "task_create", "done", title=title,
         payload={"when": when, "detail": detail},
-        result={"task_id": row.get("id"), "when": when, "detail": detail},
+        result={"task_id": row.get("id"), "when": when, "detail": detail, "recurrence": rrule or ""},
     )
     ctx.actions.append(aid)
-    return _ok({"created": True, "task_id": row.get("id"), "when": when, "assignee": a_name})
+    return _ok({
+        "created": True,
+        "task_id": row.get("id"),
+        "when": when,
+        "assignee": a_name,
+        "recurrence": recur_h or None,
+    })
 
 
 def tool_reminder_create(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     ctx.wrote = True
+    from assistant.lib import recurrence as recur
     from assistant.stores import reminders_store
 
     text = str(args.get("text") or "").strip()
@@ -904,17 +971,27 @@ def tool_reminder_create(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
         when = _parse_start(ctx, args.get("when"))
     except (TypeError, ValueError):
         return _err("Неверное время, нужно YYYY-MM-DDTHH:MM.")
+    rrule = recur.build_rrule_from_args(args)
+    if rrule:
+        rrule = recur.ensure_until_or_count(rrule, start=when)
     rid = reminders_store.add_reminder(
-        user_id=ctx.uid, chat_id=ctx.uid, task=text, when_iso=when.isoformat(), checklist=None
+        user_id=ctx.uid,
+        chat_id=ctx.uid,
+        task=text,
+        when_iso=when.isoformat(),
+        checklist=None,
+        recurrence=rrule or "",
     )
     hw = human_when(when, None, ctx.uid)
+    recur_h = recur.human_recurrence(rrule)
+    detail = " · ".join(x for x in ["напоминание в Telegram", recur_h] if x)
     aid = record_action(
         ctx.uid, "reminder_create", "done", title=text,
-        payload={"when": hw, "detail": "напоминание в Telegram"},
-        result={"reminder_id": rid, "when": hw, "detail": "напоминание в Telegram"},
+        payload={"when": hw, "detail": detail},
+        result={"reminder_id": rid, "when": hw, "detail": detail, "recurrence": rrule or ""},
     )
     ctx.actions.append(aid)
-    return _ok({"created": True, "when": hw})
+    return _ok({"created": True, "when": hw, "recurrence": recur_h or None})
 
 
 def _find_target_by_title(ctx: GptCalendarContext, kind: str, title: str) -> tuple[str, str | None] | None:

@@ -193,6 +193,7 @@ def add_reminder(
     task: str,
     when_iso: str,
     checklist: list[dict[str, Any]] | None = None,
+    recurrence: str = "",
 ) -> str:
     import uuid
 
@@ -206,12 +207,29 @@ def add_reminder(
         "when_iso": when_iso,
         "done": False,
     }
+    rrule = str(recurrence or "").strip()
+    if rrule:
+        if not rrule.upper().startswith("RRULE:"):
+            rrule = "RRULE:" + rrule
+        row["recurrence"] = rrule
     normalized_checklist = _normalize_checklist(checklist)
     if normalized_checklist:
         row["checklist"] = normalized_checklist
     items.append(row)
     save_reminders(items)
     return rid
+
+
+def clear_reminder_message_id(reminder_id: str) -> None:
+    rid = (reminder_id or "").strip()
+    if not rid:
+        return
+    items = load_reminders()
+    for it in items:
+        if isinstance(it, dict) and str(it.get("id") or "").strip() == rid:
+            it.pop("reminder_message_id", None)
+            save_reminders(items)
+            return
 
 
 def reminders_for_user(telegram_user_id: int) -> list[dict[str, Any]]:

@@ -79,8 +79,17 @@ def _conn() -> sqlite3.Connection:
     _ensure_all_day_column(_CONN)
     _ensure_schedule_log_column(_CONN)
     _ensure_owner_archived_column(_CONN)
+    _ensure_recurrence_column(_CONN)
     _CONN.commit()
     return _CONN
+
+
+def _ensure_recurrence_column(conn: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(calendar_tasks)")}
+    if "recurrence" not in cols:
+        conn.execute(
+            "ALTER TABLE calendar_tasks ADD COLUMN recurrence TEXT NOT NULL DEFAULT ''"
+        )
 
 
 def _ensure_google_event_columns(conn: sqlite3.Connection) -> None:
@@ -279,6 +288,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "owner_archived": bool(int(row["owner_archived"] or 0))
         if "owner_archived" in keys
         else False,
+        "recurrence": str(row["recurrence"] or "") if "recurrence" in keys else "",
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -539,6 +549,7 @@ def create_task(
     note_id: str = "",
     all_day: bool = False,
     tz: ZoneInfo | None = None,
+    recurrence: str = "",
 ) -> dict[str, Any]:
     uid = _uid(owner_user_id)
     start = start_at if isinstance(start_at, datetime) else _parse_dt(start_at, tz)
@@ -557,14 +568,17 @@ def create_task(
     now = _now_iso()
     assignee = _uid(assignee_user_id) if assignee_user_id not in (None, "") else uid
     title_s = _clip(title, MAX_TITLE_LEN) or DEFAULT_TITLE
+    rrule = str(recurrence or "").strip()
+    if rrule and not rrule.upper().startswith("RRULE:"):
+        rrule = "RRULE:" + rrule
     with _LOCK:
         cur = _conn().execute(
             """
             INSERT INTO calendar_tasks (
                 owner_user_id, title, description, start_at, end_at,
                 assignee_user_id, assignee_email, assignee_name,
-                checklist_json, note_id, all_day, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                checklist_json, note_id, all_day, recurrence, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 uid,
@@ -578,6 +592,7 @@ def create_task(
                 json.dumps(_normalize_checklist(checklist), ensure_ascii=False),
                 _clip(note_id, 40),
                 1 if all_day else 0,
+                _clip(rrule, 500),
                 now,
                 now,
             ),
@@ -674,6 +689,45 @@ def list_involved_user_ids() -> list[int]:
     return _int_user_ids(raw)
 
 
+def _expand_recurring_task(
+    task: dict[str, Any], window_start: datetime, window_end: datetime
+) -> list[dict[str, Any]]:
+    """Развернуть серию задачи на окна; одна запись в БД — удаление снимает всю серию."""
+    from assistant.lib.recurrence import next_after
+
+    rrule = str(task.get("recurrence") or "").strip()
+    if not rrule or task.get("done"):
+        return [task]
+    base_start = _parse_dt(task.get("start_at"))
+    base_end = _parse_dt(task.get("end_at"))
+    if base_start is None:
+        return [task]
+    dur = (base_end - base_start) if base_end and base_end > base_start else timedelta(minutes=30)
+    out: list[dict[str, Any]] = []
+    # Первое вхождение ≥ window_start (или сама база, если в окне).
+    cursor = base_start
+    if cursor < window_start:
+        nxt = next_after(base_start, rrule, after=window_start - timedelta(microseconds=1))
+        if nxt is None:
+            return []
+        cursor = nxt
+    guard = 0
+    while cursor < window_end and guard < 400:
+        guard += 1
+        occ_end = cursor + dur
+        if occ_end > window_start and cursor < window_end:
+            row = dict(task)
+            row["start_at"] = _iso(cursor)
+            row["end_at"] = _iso(occ_end)
+            row["occurrence_start"] = cursor.isoformat()
+            out.append(row)
+        nxt = next_after(base_start, rrule, after=cursor)
+        if nxt is None or nxt <= cursor:
+            break
+        cursor = nxt
+    return out
+
+
 def list_tasks_in_window(
     owner_user_id: int | str,
     start: datetime,
@@ -685,14 +739,23 @@ def list_tasks_in_window(
             """
             SELECT * FROM calendar_tasks
             WHERE (owner_user_id = ? OR assignee_user_id = ?)
-              AND start_at < ?
-              AND end_at > ?
+              AND (
+                (IFNULL(recurrence, '') = '' AND start_at < ? AND end_at > ?)
+                OR (IFNULL(recurrence, '') != '' AND start_at < ? AND done = 0)
+              )
             ORDER BY start_at ASC, id ASC
             """,
-            (uid, uid, _iso(end), _iso(start)),
+            (uid, uid, _iso(end), _iso(start), _iso(end)),
         )
         rows = [_row_to_dict(r) for r in cur.fetchall()]
-    return rows
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if str(row.get("recurrence") or "").strip():
+            out.extend(_expand_recurring_task(row, start, end))
+        else:
+            out.append(row)
+    out.sort(key=lambda t: (str(t.get("start_at") or ""), int(t.get("id") or 0)))
+    return out
 
 
 def list_tasks_for_note(

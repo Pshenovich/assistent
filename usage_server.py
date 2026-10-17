@@ -3850,6 +3850,7 @@ def _serialize_calendar_event(
         "start": st,
         "end": en,
         "html_link": str(ev.get("htmlLink") or "").strip(),
+        "recurringEventId": str(ev.get("recurringEventId") or "").strip(),
         "meet_url": _event_meet_url(ev),
         "description": calendar_description_plain(str(ev.get("description") or ""))[:8000],
         "location": str(ev.get("location") or "").strip(),

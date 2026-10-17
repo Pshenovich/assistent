@@ -15601,6 +15601,8 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 /* Карточки встреч/задач/напоминаний и варианты времени в ответе ИИ */
 .note-cal-card { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0; border-radius: 12px; background: rgba(255, 255, 255, 0.06); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .note-cal-card:hover { background: rgba(255, 255, 255, 0.1); }
+.note-cal-card.is-done { opacity: 0.62; }
+.note-cal-card.is-done .note-cal-card-copy b { text-decoration: line-through; }
 .note-cal-card-ico { flex: none; width: 30px; height: 30px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; background: rgba(139, 92, 246, 0.16); color: #c4b5fd; }
 .note-cal-card-copy { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .note-cal-card-copy b { font-weight: 600; font-size: 0.875rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -16154,7 +16156,7 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
 .focus-card-btn { border: none; border-radius: 9px; padding: 5px 9px; background: var(--surface-elevated, #2a2a2e); color: var(--text); font: inherit; font-size: 0.75rem; font-weight: 600; cursor: pointer; }
 .focus-card-btn.is-primary { background: var(--accent); color: #fff; }
 .focus-card-btn:disabled { opacity: 0.6; }
-.focus-panel { flex-shrink: 0; max-height: 46%; overflow-y: auto; padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.focus-panel { flex-shrink: 0; padding: 0 0 14px; display: flex; flex-direction: column; gap: 8px; }
 .focus-panel-head { display: flex; align-items: center; gap: 8px; }
 .focus-panel-head b { font-size: 0.95rem; }
 .focus-panel-head .focus-count { flex: 1; }

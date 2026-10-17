@@ -318,8 +318,36 @@ async def deliver_reminder(
         text=text,
         reply_markup=kb,
     )
-    if rid and sent and sent.message_id:
+    if not rid:
+        return
+    if sent and sent.message_id:
         reminders_store.set_reminder_message_id(rid, int(sent.message_id))
+    # Повторяющееся: сдвинуть на следующее срабатывание и снова поставить job.
+    rrule = str((rec or {}).get("recurrence") or "").strip()
+    if not rrule or not rec:
+        return
+    from assistant.lib.recurrence import next_after
+
+    tz = ZoneInfo(CALENDAR_TZ)
+    now = datetime.now(tz)
+    when = reminders_store.parse_when_iso(rec.get("when_iso"), tz=tz)
+    if when is None:
+        return
+    nxt = next_after(when, rrule, after=when)
+    if nxt is None:
+        reminders_store.patch_reminder(rid, done=True)
+        return
+    reminders_store.update_reminder_when(rid, nxt.isoformat())
+    reminders_store.clear_reminder_message_id(rid)
+    schedule_reminder_job(
+        context,
+        reminder_id=rid,
+        chat_id=int(chat_id),
+        user_id=int(rec.get("user_id") or 0),
+        task=str(rec.get("task") or task or ""),
+        when=nxt,
+        now=now,
+    )
 
 
 async def _fire_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
