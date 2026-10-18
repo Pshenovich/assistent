@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261018-ios-note5";
+  var WEBAPP_BUILD = "20261018-ios-note6";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -183,7 +183,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261018-ios-note5";
+  const NOTE_EDITOR_ASSET_V = "20261018-ios-note6";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -12003,40 +12003,35 @@
       vv && typeof vv.width === "number" && vv.width > 0
         ? Math.round(vv.width)
         : window.innerWidth;
-    var kbGuess = Math.max(0, Math.round(layoutH - visH - offsetTop));
-    if (kbGuess < 40) kbGuess = 0;
-    // iOS PWA: клавиатура часто рисуется поверх, не сжимая vv/innerHeight.
-    // Если поле в фокусе, а «дыры» нет — резервируем типичную высоту клавиатуры.
-    var editing = noteEditorFieldFocused();
-    if (kbGuess < 40 && editing && isIOSDevice()) {
-      kbGuess = Math.round(Math.min(layoutH * 0.42, 360));
-      if (kbGuess < 220) kbGuess = 280;
-    }
     var sheetH = visH > 0 ? visH : layoutH;
-    if (kbGuess >= 40 && layoutH - kbGuess > 120 && sheetH > layoutH - kbGuess) {
-      sheetH = layoutH - kbGuess;
-    }
-    ov.style.top = offsetTop + "px";
-    ov.style.left = offsetLeft + "px";
+    var kbGuess = Math.max(0, Math.round(layoutH - sheetH - offsetTop));
+    if (kbGuess < 40) kbGuess = 0;
+    // Оверлей на весь layout (непрозрачный) — иначе между тулбаром и клавиатурой
+    // «просвечивает» список заметок. Лист по высоте = visualViewport.
+    ov.style.top = "0px";
+    ov.style.left = "0px";
     ov.style.right = "auto";
     ov.style.bottom = "auto";
-    ov.style.width = Math.max(1, visW) + "px";
-    ov.style.height = Math.max(1, sheetH) + "px";
+    ov.style.width = Math.max(window.innerWidth || 0, visW + offsetLeft) + "px";
+    ov.style.height = Math.max(layoutH, sheetH + offsetTop) + "px";
+    var ovTop = Math.round(ov.getBoundingClientRect().top);
+    var sheetShift = ovTop < -8 ? -ovTop : offsetTop > 0 ? offsetTop : 0;
     if (sheet) {
-      sheet.style.height = "100%";
-      sheet.style.maxHeight = "100%";
-      sheet.style.transform = "";
+      sheet.style.height = sheetH + "px";
+      sheet.style.maxHeight = sheetH + "px";
+      sheet.style.transform = sheetShift ? "translateY(" + sheetShift + "px)" : "";
     }
-    var kbOpen = kbGuess > 40;
-    document.documentElement.classList.toggle("note-editor-kb-open", kbOpen);
+    var kbOpen = kbGuess > 40 || noteEditorFieldFocused();
+    document.documentElement.classList.toggle("note-editor-kb-open", kbOpen && kbGuess > 40);
     document.documentElement.style.setProperty("--note-editor-kb-inset", kbGuess + "px");
     var padChanged = syncNoteEditorEndPad();
-    if (editing && (!noteEditorKbWasOpen || padChanged || kbOpen)) {
+    var editing = noteEditorFieldFocused();
+    if (editing && (!noteEditorKbWasOpen || padChanged || kbGuess > 40)) {
       window.setTimeout(function () {
         scrollNoteCaretIntoView(true);
       }, noteEditorKbWasOpen ? 40 : 280);
     }
-    noteEditorKbWasOpen = kbOpen;
+    noteEditorKbWasOpen = kbGuess > 40;
     return kbGuess;
   }
 
@@ -12136,22 +12131,8 @@
         vv && typeof vv.height === "number" && vv.height > 0
           ? Math.round((vv.offsetTop || 0) + vv.height)
           : Math.round(window.innerHeight || bodyRect.bottom);
-      var kbInset = 0;
-      try {
-        kbInset = parseFloat(
-          getComputedStyle(document.documentElement).getPropertyValue("--note-editor-kb-inset")
-        ) || 0;
-      } catch (_) {
-        kbInset = 0;
-      }
-      if (kbInset < 40 && noteEditorFieldFocused() && isIOSDevice()) {
-        kbInset = 280;
-      }
-      // Держим курсор в верхней половине видимой зоны (над клавиатурой/тулбаром).
+      // Держим курсор в верхней половине видимой зоны скролла (над тулбаром).
       var visibleBottom = Math.min(bodyRect.bottom, vvBottom);
-      if (kbInset >= 40) {
-        visibleBottom = Math.min(visibleBottom, vvBottom - Math.min(kbInset, 120));
-      }
       var margin = isMobileNoteLayout()
         ? Math.max(72, Math.round((visibleBottom - bodyRect.top) * 0.38))
         : 20;

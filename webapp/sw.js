@@ -1,6 +1,6 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261018-ios-note5";
+var CACHE_VERSION = "miniapp-v1-20261018-ios-note6";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 var CANONICAL_ORIGIN = "https://assistent.networ.ru";
 var OBSOLETE_HOSTS = {
@@ -11,9 +11,9 @@ var OBSOLETE_HOSTS = {
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261018-ios-note5",
-  "./app.js?v=20261018-ios-note5",
-  "./web-canvas.js?v=20261018-ios-note5",
+  "./styles.css?v=20261018-ios-note6",
+  "./app.js?v=20261018-ios-note6",
+  "./web-canvas.js?v=20261018-ios-note6",
   "./launch.html",
   "./manifest.webmanifest",
   "./note-drafts.js?v=20261005-heading-pdf",
@@ -279,6 +279,28 @@ self.addEventListener("fetch", function (event) {
   }
 
   if (!isShellAsset(path)) return;
+
+  // Ассеты с ?v= — network-first (иначе PWA долго отдаёт старый app/editor JS).
+  var hasVersion = false;
+  try {
+    hasVersion = !!(new URL(url).searchParams.get("v"));
+  } catch (_) {}
+
+  if (hasVersion) {
+    event.respondWith(
+      fetch(request)
+        .then(function (response) {
+          if (response && response.ok) cachePut(SHELL_CACHE, request, response);
+          return response;
+        })
+        .catch(function () {
+          return caches.match(request).then(function (cached) {
+            return cached || Response.error();
+          });
+        })
+    );
+    return;
+  }
 
   event.respondWith(
     caches.match(request).then(function (cached) {
