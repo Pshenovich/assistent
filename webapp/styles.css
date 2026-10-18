@@ -3561,17 +3561,33 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   width: 1px;
   height: 1px;
   opacity: 0;
-  /* pointer-events оставляем: label[for] + iOS gesture; клик ловим на label */
   overflow: hidden;
 }
 
-.note-tg-menu-item[data-cmd="attach"] {
+.note-tg-menu-item--attach {
+  position: relative;
   display: flex;
   box-sizing: border-box;
+  overflow: hidden;
   cursor: pointer;
   -webkit-appearance: none;
   appearance: none;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* Нативный file input на весь пункт — iOS открывает picker только от прямого tap */
+.note-tg-file-input-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  border: 0;
+  cursor: pointer;
+  font-size: 16px;
 }
 
 .note-editor-image-wrap {
