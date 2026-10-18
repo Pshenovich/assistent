@@ -3024,7 +3024,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261018-orbita1",
+  assetVersion: "20261018-orbita2",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,

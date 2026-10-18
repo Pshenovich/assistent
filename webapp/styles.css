@@ -14606,6 +14606,7 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 
 /* Posted tasks on Actual */
 #panel-actual.panel-actual--posted > #actual-hero,
+#panel-actual.panel-actual--posted > #actual-focus,
 #panel-actual.panel-actual--posted > .section,
 #panel-actual.panel-actual--posted > .actual-fab,
 #panel-actual.panel-actual--posted > #actual-create-menu {
