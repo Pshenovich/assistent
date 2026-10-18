@@ -1244,6 +1244,17 @@ function closeTgMenus(toolbarEl) {
 
 function mountToolbar(toolbarEl, editor) {
   var refreshFn = function () {};
+  // input ВНЕ .note-tg-menu: закрытие меню (display:none) на iOS отменяет picker,
+  // если file input был внутри скрытой панели.
+  var fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept =
+    "image/*,image/jpeg,image/png,image/heic,image/heif,image/webp,.jpg,.jpeg,.png,.heic,.webp";
+  fileInput.className = "note-tg-file-input-host";
+  fileInput.id = "note-tg-file-" + Math.random().toString(36).slice(2, 10);
+  fileInput.tabIndex = -1;
+  fileInput.setAttribute("aria-hidden", "true");
+
   toolbarEl.className = "note-rich-editor-toolbar note-tg-toolbar";
   function btn(cls, attr, title, icon) {
     return (
@@ -1252,11 +1263,11 @@ function mountToolbar(toolbarEl, editor) {
     );
   }
   function item(cmd, check, icon, label, extra) {
-    // iOS PWA: input type=file поверх пункта — единственный надёжный gesture (не label+for и не .click()).
     if (cmd === "attach") {
       return (
-        '<label class="note-tg-menu-item note-tg-menu-item--attach" data-cmd="attach">' +
-        '<input type="file" class="note-tg-file-input-hit" accept="image/*,image/jpeg,image/png,image/heic,image/heif,image/webp,.jpg,.jpeg,.png,.heic,.webp" tabindex="-1" />' +
+        '<label class="note-tg-menu-item note-tg-menu-item--attach" data-cmd="attach" for="' +
+        fileInput.id +
+        '">' +
         (icon ? svgIcon(icon) : "") +
         "<span>" +
         label +
@@ -1329,7 +1340,7 @@ function mountToolbar(toolbarEl, editor) {
     '<div class="note-tg-menu hidden" data-menu-panel="list" role="menu">' + listItems("Обычный текст") + "</div>" +
     '<div class="note-tg-menu hidden" data-menu-panel="list-sel" role="menu">' + listItems("Ничего") + "</div>";
 
-  var fileInput = toolbarEl.querySelector(".note-tg-file-input-hit");
+  toolbarEl.appendChild(fileInput);
 
   function runCmd(cmd) {
     // Keep editor focused — menu taps would otherwise blur first and drop the click.
@@ -1426,7 +1437,6 @@ function mountToolbar(toolbarEl, editor) {
   }
 
   function pickImage() {
-    if (!fileInput) return;
     try {
       fileInput.value = "";
     } catch (_) {}
@@ -1435,56 +1445,51 @@ function mountToolbar(toolbarEl, editor) {
     } catch (_) {}
   }
 
-  if (fileInput) {
-    // Закрываем DOM-меню сразу после жеста (picker на iOS уже стартовал).
-    // На pointerdown закрывать нельзя — ломает системный sheet выбора источника.
-    function closeInsertMenuSoon() {
-      window.setTimeout(function () {
-        closeTgMenus(toolbarEl);
-      }, 0);
-    }
-    fileInput.addEventListener("click", closeInsertMenuSoon);
-    fileInput.addEventListener("pointerup", closeInsertMenuSoon);
-    fileInput.addEventListener("change", function () {
-      var file = fileInput.files && fileInput.files[0];
+  function closeInsertMenuSoon() {
+    window.setTimeout(function () {
       closeTgMenus(toolbarEl);
-      if (!file) return;
-      var mime = String(file.type || "");
-      var name = String(file.name || "");
-      var looksImage =
-        /^image\//i.test(mime) || /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(name);
-      if (!looksImage) {
-        window.alert("В заметку можно вставить изображение (JPG, PNG, HEIC…).");
-        return;
-      }
-      if (file.size > 8 * 1024 * 1024) {
-        window.alert("Фото больше 8 МБ. Выберите файл поменьше.");
-        return;
-      }
-      var reader = new FileReader();
-      reader.onload = function () {
-        var src = String(reader.result || "");
-        if (!src) return;
-        editor
-          .chain()
-          .focus()
-          .insertContent([
-            {
-              type: "image",
-              attrs: { src: src, alt: file.name || "Фото" },
-            },
-            { type: "paragraph" },
-          ])
-          .run();
-        refreshFn();
-      };
-      reader.readAsDataURL(file);
-    });
+    }, 0);
   }
+
+  fileInput.addEventListener("change", function () {
+    var file = fileInput.files && fileInput.files[0];
+    closeTgMenus(toolbarEl);
+    if (!file) return;
+    var mime = String(file.type || "");
+    var name = String(file.name || "");
+    var looksImage =
+      /^image\//i.test(mime) || /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(name);
+    if (!looksImage) {
+      window.alert("В заметку можно вставить изображение (JPG, PNG, HEIC…).");
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      window.alert("Фото больше 8 МБ. Выберите файл поменьше.");
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+      var src = String(reader.result || "");
+      if (!src) return;
+      editor
+        .chain()
+        .focus()
+        .insertContent([
+          {
+            type: "image",
+            attrs: { src: src, alt: file.name || "Фото" },
+          },
+          { type: "paragraph" },
+        ])
+        .run();
+      refreshFn();
+    };
+    reader.readAsDataURL(file);
+  });
 
   // Prevent toolbar buttons from stealing focus from the editor (incl. menu items).
   toolbarEl.addEventListener("mousedown", function (e) {
-    if (e.target && e.target.closest && e.target.closest(".note-tg-file-input-hit, .note-tg-menu-item--attach")) {
+    if (e.target && e.target.closest && e.target.closest(".note-tg-menu-item--attach, .note-tg-file-input-host")) {
       return;
     }
     var btn = e.target.closest("button");
@@ -1496,11 +1501,9 @@ function mountToolbar(toolbarEl, editor) {
     function (e) {
       var item = e.target.closest(".note-tg-menu-item");
       if (!item || !toolbarEl.contains(item)) return;
-      // Attach: вообще не трогаем событие — иначе iOS не откроет picker.
-      if (
-        item.getAttribute("data-cmd") === "attach" ||
-        (e.target && e.target.classList && e.target.classList.contains("note-tg-file-input-hit"))
-      ) {
+      // Attach (label[for]): не preventDefault/stopPropagation — нужен нативный gesture.
+      if (item.getAttribute("data-cmd") === "attach") {
+        closeInsertMenuSoon();
         return;
       }
       // Run on pointerdown so the command isn't lost if selectionUpdate
@@ -1518,10 +1521,12 @@ function mountToolbar(toolbarEl, editor) {
   toolbarEl.addEventListener("click", function (e) {
     var item = e.target.closest(".note-tg-menu-item");
     if (item && toolbarEl.contains(item)) {
-      if (
-        item.getAttribute("data-cmd") === "attach" ||
-        (e.target && e.target.classList && e.target.classList.contains("note-tg-file-input-hit"))
-      ) {
+      if (item.getAttribute("data-cmd") === "attach") {
+        // label[for] сам откроет picker; button-фолбэк (старый кэш) — через click().
+        if (item.tagName === "BUTTON") {
+          pickImage();
+          closeInsertMenuSoon();
+        }
         return;
       }
       e.preventDefault();
