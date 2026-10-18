@@ -1,12 +1,13 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261018-ios-note7">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261018-orbita1">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta name="theme-color" content="#0a0a0a" />
-  <title>Ассистент</title>
+  <title>Orbita</title>
+  <meta name="apple-mobile-web-app-title" content="Orbita" />
   <link rel="manifest" href="/webapp/manifest.webmanifest" />
   <link rel="apple-touch-icon" href="/webapp/icons/icon-180.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/webapp/icons/icon-192.png" />
@@ -89,14 +90,14 @@
     })();
   </script>
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261018-ios-note7" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261018-orbita1" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
 <body>
   <div id="gate" class="gate hidden">
     <div class="gate-card">
-      <h1 class="gate-title">Ассистент</h1>
+      <h1 class="gate-title">Orbita</h1>
       <p class="gate-text">Войдите через Telegram, чтобы открыть профиль, календарь и интеграции.</p>
       <div id="gate-telegram-login" class="gate-telegram-login" aria-live="polite"></div>
       <div id="gate-code-login" class="gate-code-login">
@@ -1214,7 +1215,7 @@
     <div class="tabbar-backdrop" aria-hidden="true"></div>
     <div class="tabbar-wrap" id="app-sidebar">
       <div class="sidebar-head">
-        <p class="sidebar-brand">Ассистент</p>
+        <p class="sidebar-brand">Orbita</p>
         <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-controls="app-sidebar" aria-expanded="true" aria-label="Свернуть меню" title="Свернуть меню">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -1645,7 +1646,7 @@
             <p class="field-label">Команды</p>
             <div id="contacts-form-teams-list" class="contacts-form-teams-list"></div>
             <p id="contacts-form-teams-empty" class="muted small">Пока нет команд — создайте в «Управление командами».</p>
-            <p id="contacts-form-teams-hint" class="muted small hidden">У контакта нет Telegram — файл появится в его базе знаний после того, как он откроет Leo.</p>
+            <p id="contacts-form-teams-hint" class="muted small hidden">У контакта нет Telegram — файл появится в его базе знаний после того, как он откроет Orbita.</p>
           </div>
           <p id="contacts-form-msg" class="billing-msg muted small hidden"></p>
           <p id="contacts-form-err" class="error hidden"></p>
@@ -1671,7 +1672,7 @@
             <span class="field-label">Ники в Telegram через запятую</span>
             <textarea id="contacts-bulk-input" class="field-input contacts-bulk-input" rows="3" autocomplete="off" placeholder="@ivan, @maria, petr"></textarea>
           </label>
-          <p class="muted small">Имя подтянется из профиля, почта — если человек подключал Google Календарь в Leo. Кого нет в Leo — добавим по нику.</p>
+          <p class="muted small">Имя подтянется из профиля, почта — если человек подключал Google Календарь в Orbita. Кого нет в Orbita — добавим по нику.</p>
           <button type="button" class="btn primary contacts-bulk-save" id="contacts-bulk-save">Добавить</button>
           <ul id="contacts-bulk-results" class="contacts-bulk-results hidden"></ul>
           <p id="contacts-bulk-err" class="error hidden"></p>
@@ -1931,7 +1932,7 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261018-ios-note7" defer></script>
-  <script src="/webapp/app.js?v=20261018-ios-note7" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261018-orbita1" defer></script>
+  <script src="/webapp/app.js?v=20261018-orbita1" defer></script>
 </body>
 </html>

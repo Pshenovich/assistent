@@ -1479,13 +1479,10 @@ function mountToolbar(toolbarEl, editor) {
     panel.style.right = "auto";
   }
 
-  var attachOpenedAt = 0;
+  // Вызывать только из click/keydown: тач-pointerdown на iOS не даёт user activation,
+  // и input.click() молча игнорируется.
   function pickImage() {
-    var now = Date.now();
-    if (now - attachOpenedAt < 900) return;
-    attachOpenedAt = now;
     var input = ensureFileInput();
-    // Не трогаем value до click — на iOS это срывает user gesture.
     try {
       input.click();
     } catch (_) {}
@@ -1511,11 +1508,9 @@ function mountToolbar(toolbarEl, editor) {
       var item = e.target.closest(".note-tg-menu-item");
       if (!item || !toolbarEl.contains(item)) return;
       if (e.button != null && e.button !== 0) return;
-      // Attach: открываем picker в том же gesture, без preventDefault.
+      // Attach открывается в click; меню не закрываем здесь, иначе click не дойдёт до пункта.
       if (item.getAttribute("data-cmd") === "attach") {
         e.stopPropagation();
-        pickImage();
-        closeInsertMenuSoon();
         return;
       }
       // Run on pointerdown so the command isn't lost if selectionUpdate
@@ -1535,7 +1530,6 @@ function mountToolbar(toolbarEl, editor) {
       if (item.getAttribute("data-cmd") === "attach") {
         e.preventDefault();
         e.stopPropagation();
-        // Фоллбек, если pointerdown не дошёл (desktop / старый WebView).
         pickImage();
         closeInsertMenuSoon();
         return;
@@ -3030,7 +3024,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261018-ios-note7",
+  assetVersion: "20261018-orbita1",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,

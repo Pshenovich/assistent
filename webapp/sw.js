@@ -1,6 +1,6 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261018-ios-note7";
+var CACHE_VERSION = "miniapp-v1-20261018-orbita1";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 var CANONICAL_ORIGIN = "https://assistent.networ.ru";
 var OBSOLETE_HOSTS = {
@@ -11,9 +11,9 @@ var OBSOLETE_HOSTS = {
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261018-ios-note7",
-  "./app.js?v=20261018-ios-note7",
-  "./web-canvas.js?v=20261018-ios-note7",
+  "./styles.css?v=20261018-orbita1",
+  "./app.js?v=20261018-orbita1",
+  "./web-canvas.js?v=20261018-orbita1",
   "./launch.html",
   "./manifest.webmanifest",
   "./note-drafts.js?v=20261005-heading-pdf",
@@ -190,7 +190,7 @@ self.addEventListener("push", function (event) {
       payload = { body: event.data ? event.data.text() : "" };
     } catch (_) {}
   }
-  var title = String((payload && payload.title) || "Leo");
+  var title = String((payload && payload.title) || "Orbita");
   var body = String((payload && payload.body) || "Новое сообщение");
   var url = String((payload && payload.url) || "./");
   event.waitUntil(
@@ -203,6 +203,27 @@ self.addEventListener("push", function (event) {
   );
 });
 
+// Не начинается с "miniapp-", поэтому clearAllMiniappCaches его не трогает.
+var DEEPLINK_CACHE = "leo-deeplink";
+
+function pendingDeepLinkKey() {
+  return new URL("./__pending-deeplink", self.location.href).href;
+}
+
+function savePendingDeepLink(url) {
+  if (!self.caches) return Promise.resolve();
+  return caches
+    .open(DEEPLINK_CACHE)
+    .then(function (cache) {
+      var body = JSON.stringify({ url: url, ts: Date.now() });
+      return cache.put(
+        pendingDeepLinkKey(),
+        new Response(body, { headers: { "Content-Type": "application/json" } })
+      );
+    })
+    .catch(function () {});
+}
+
 self.addEventListener("notificationclick", function (event) {
   event.notification.close();
   var raw = (event.notification.data && event.notification.data.url) || "./";
@@ -210,23 +231,26 @@ self.addEventListener("notificationclick", function (event) {
   try {
     url = new URL(raw, self.location.href).href;
   } catch (_) {}
+  // iOS PWA: нет WindowClient.navigate, а openWindow может открыть start_url —
+  // поэтому ссылку дублируем в Cache Storage, приложение заберёт её при старте/возврате.
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (clientList) {
-      for (var i = 0; i < clientList.length; i++) {
-        var client = clientList[i];
-        var href = "";
-        try {
-          href = client.url || "";
-        } catch (_) {}
-        if (!href || href.indexOf("/webapp") === -1 || !client.focus) continue;
-        if (typeof client.navigate === "function") {
-          return client.navigate(url).then(function (nav) {
-            return nav && nav.focus ? nav.focus() : client.focus();
-          });
+    savePendingDeepLink(url).then(function () {
+      return self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (clientList) {
+        for (var i = 0; i < clientList.length; i++) {
+          var client = clientList[i];
+          var href = "";
+          try {
+            href = client.url || "";
+          } catch (_) {}
+          if (!href || href.indexOf("/webapp") === -1) continue;
+          try {
+            client.postMessage({ type: "leo-open-url", url: url });
+          } catch (_) {}
+          if (client.focus) return client.focus().catch(function () {});
+          return;
         }
-        return client.focus();
-      }
-      if (self.clients.openWindow) return self.clients.openWindow(url);
+        if (self.clients.openWindow) return self.clients.openWindow(url);
+      });
     })
   );
 });

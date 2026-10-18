@@ -1105,7 +1105,7 @@ def format_create_reply_html(result: dict[str, Any], user_id: int) -> str:
     if isinstance(st, datetime) and isinstance(en, datetime):
         when = format_event_when(st, en, user_id)
     # Без https-ссылки в тексте: из TG она открывается во встроенном браузере.
-    # Карточка — кнопкой «Открыть в Leo» (web_app) в клавиатуре.
+    # Карточка — кнопкой «Открыть в Orbita» (web_app) в клавиатуре.
     head = f"<h2>Создана встреча: {title}</h2>"
     parts = [head]
     if when:
@@ -1142,7 +1142,7 @@ def build_created_event_keyboard(
     direct = _webapp_link_for_result(result, prefer_pwa=False) or webapp_entry_url()
     if direct:
         rows.append(
-            [InlineKeyboardButton("Открыть в Leo", web_app=WebAppInfo(url=direct))]
+            [InlineKeyboardButton("Открыть в Orbita", web_app=WebAppInfo(url=direct))]
         )
     cal_id = str(result.get("calendar_id") or "").strip() or GOOGLE_CALENDAR_ID
     token = calendar_action_tokens.register(

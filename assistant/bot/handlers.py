@@ -52,7 +52,7 @@ async def _set_chat_webapp_menu_button(
         await context.bot.set_chat_menu_button(
             chat_id=chat.id,
             menu_button=MenuButtonWebApp(
-                text="Ассистент", web_app=WebAppInfo(url=_webapp_url())
+                text="Orbita", web_app=WebAppInfo(url=_webapp_url())
             ),
         )
     except Exception as e:
@@ -309,7 +309,7 @@ async def cmd_yandex_disk_code(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     await msg.reply_text(
         "Код Яндекс Диска вводится в мини-приложении:\n"
-        "Меню «Ассистент» → Профиль → Яндекс Диск → вставьте код со страницы Яндекса."
+        "Меню «Orbita» → Профиль → Яндекс Диск → вставьте код со страницы Яндекса."
     )
 
 

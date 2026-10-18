@@ -7483,6 +7483,14 @@ async def miniapp_gpt_chat(
             )
         attached_notes = pack_attached_notes(uid, body.context_note_ids)
         system_text = str(agent.get("system") or "")
+        if agent.get("kind") == "gpt":
+            from assistant.nlu.prompts import ASK_SYSTEM, LEO_IDENTITY
+
+            # Сохранённый пользователем промпт GPT мог быть скопирован до появления LEO_IDENTITY.
+            if not system_text.strip():
+                system_text = ASK_SYSTEM
+            elif "Orbita" not in system_text:
+                system_text = LEO_IDENTITY + "\n\n" + system_text
         if kind in ("local", "chat") and iid:
             owner_for_hint = _resolve_item_owner(str(uid), kind, iid)
             if owner_for_hint:

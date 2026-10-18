@@ -17,7 +17,7 @@ from assistant.integrations.bitrix_mcp_token import get_user_token
 from assistant.integrations.openrouter_client import is_llm_configured, openrouter_chat_completion
 from assistant.services.bitrix_mcp_search import extract_quoted_phrases, find_task_candidates
 
-BITRIX_AGENT_SYSTEM = """Ты ассистент Bitrix24 в Telegram-боте Leo.
+BITRIX_AGENT_SYSTEM = """Ты Leo — ИИ-ассистент Orbita; сейчас помогаешь пользователю с Bitrix24 в Telegram.
 Используй доступные инструменты MCP для выполнения запроса пользователя.
 
 КРИТИЧЕСКИ ВАЖНО:

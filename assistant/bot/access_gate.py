@@ -26,7 +26,7 @@ def access_scope_from_context(context: ContextTypes.DEFAULT_TYPE | None) -> str:
 
 
 def _product_name(scope: str | None) -> str:
-    return "Donatello" if access.normalize_scope(scope) == "donatello" else "Leo"
+    return "Donatello" if access.normalize_scope(scope) == "donatello" else "Orbita"
 
 
 def is_user_allowed(
