@@ -1248,6 +1248,7 @@ function mountToolbar(toolbarEl, editor) {
   fileInput.type = "file";
   fileInput.accept = "image/*";
   fileInput.className = "note-tg-file-input";
+  fileInput.id = "note-tg-file-input-" + Math.random().toString(36).slice(2, 10);
   fileInput.setAttribute("aria-hidden", "true");
   fileInput.tabIndex = -1;
 
@@ -1259,6 +1260,18 @@ function mountToolbar(toolbarEl, editor) {
     );
   }
   function item(cmd, check, icon, label, extra) {
+    // iOS PWA: <label for> открывает file picker в том же user gesture; button+click() — нет.
+    if (cmd === "attach") {
+      return (
+        '<label class="note-tg-menu-item" data-cmd="attach" for="' +
+        fileInput.id +
+        '">' +
+        (icon ? svgIcon(icon) : "") +
+        "<span>" +
+        label +
+        "</span></label>"
+      );
+    }
     return (
       '<button type="button" class="note-tg-menu-item' + (extra ? " " + extra : "") + '" data-cmd="' + cmd + '"' +
       (check ? ' data-check="' + check + '"' : "") + ">" + (icon ? svgIcon(icon) : "") + "<span>" + label + "</span></button>"
@@ -1355,7 +1368,7 @@ function mountToolbar(toolbarEl, editor) {
     } else if (cmd === "table") {
       editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
     } else if (cmd === "attach") {
-      pickImage();
+      // Открытие — через <label for> / отдельный gesture-safe путь в pointerdown.
     } else if (cmd === "divider") {
       editor.chain().focus().setHorizontalRule().run();
     } else if (cmd === "noteref") {
@@ -1422,14 +1435,22 @@ function mountToolbar(toolbarEl, editor) {
   }
 
   function pickImage() {
-    fileInput.value = "";
-    fileInput.click();
+    try {
+      fileInput.value = "";
+    } catch (_) {}
+    try {
+      fileInput.click();
+    } catch (_) {}
   }
 
   fileInput.addEventListener("change", function () {
     var file = fileInput.files && fileInput.files[0];
+    closeTgMenus(toolbarEl);
     if (!file) return;
-    if (!/^image\//i.test(file.type || "")) return;
+    if (!/^image\//i.test(file.type || "")) {
+      window.alert("В заметку можно вставить изображение (JPG, PNG, HEIC…).");
+      return;
+    }
     if (file.size > 8 * 1024 * 1024) {
       window.alert("Фото больше 8 МБ. Выберите файл поменьше.");
       return;
@@ -1468,6 +1489,17 @@ function mountToolbar(toolbarEl, editor) {
       // Run on pointerdown so the command isn't lost if selectionUpdate
       // would hide the menu before click (empty caret → closeTgMenus race).
       if (e.button != null && e.button !== 0) return;
+      // Attach: не preventDefault — iOS требует непрерывный gesture для <input type=file>
+      // (и для <label for>, и для программного click()).
+      if (item.getAttribute("data-cmd") === "attach") {
+        e.stopPropagation();
+        lastMenuCmdAt = Date.now();
+        if (item.tagName !== "LABEL") pickImage();
+        window.setTimeout(function () {
+          closeTgMenus(toolbarEl);
+        }, 350);
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       var paging = item.hasAttribute("data-go");
@@ -1480,6 +1512,10 @@ function mountToolbar(toolbarEl, editor) {
   toolbarEl.addEventListener("click", function (e) {
     var item = e.target.closest(".note-tg-menu-item");
     if (item && toolbarEl.contains(item)) {
+      if (item.getAttribute("data-cmd") === "attach") {
+        e.stopPropagation();
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       if (!item.hasAttribute("data-go")) onMenuItem(item);
@@ -2801,6 +2837,39 @@ function mount(container, options) {
     },
     prepareForSave: function () {
       editor.view.dom.blur();
+    },
+    collapseSelection: function () {
+      try {
+        var sel = editor.state.selection;
+        if (sel && !sel.empty) {
+          editor.commands.setTextSelection(sel.to);
+        }
+      } catch (_) {}
+      try {
+        var native = window.getSelection && window.getSelection();
+        if (native) native.removeAllRanges();
+      } catch (_) {}
+    },
+    /** Сбросить выделение и iOS callout/контекстное меню после выхода из редактирования. */
+    dismissSelectionUi: function () {
+      try {
+        if (typeof this.collapseSelection === "function") this.collapseSelection();
+      } catch (_) {}
+      var dom = editor.view && editor.view.dom;
+      if (!dom) return;
+      try {
+        dom.blur();
+      } catch (_) {}
+      // iOS: callout часто остаётся после blur — короткий contenteditable=false его снимает.
+      var prev = dom.getAttribute("contenteditable");
+      try {
+        dom.setAttribute("contenteditable", "false");
+      } catch (_) {}
+      window.requestAnimationFrame(function () {
+        try {
+          dom.setAttribute("contenteditable", prev == null ? "true" : prev);
+        } catch (_) {}
+      });
     },
     focus: function () {
       editor.commands.focus("end");

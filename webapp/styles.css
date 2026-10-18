@@ -3561,7 +3561,17 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   width: 1px;
   height: 1px;
   opacity: 0;
-  pointer-events: none;
+  /* pointer-events оставляем: label[for] + iOS gesture; клик ловим на label */
+  overflow: hidden;
+}
+
+.note-tg-menu-item[data-cmd="attach"] {
+  display: flex;
+  box-sizing: border-box;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .note-editor-image-wrap {
@@ -12176,8 +12186,10 @@ html.modal-sheet-open body {
     height: auto;
   }
 
+  /* Нижний pad задаёт syncNoteEditorEndPad() под высоту тулбара + запас под курсор.
+     Фиксированный 11.5rem избыточен, когда тулбар снова в потоке. */
   #note-editor-overlay .note-editor-modal-body {
-    padding-bottom: calc(4.75rem + 6.75rem);
+    padding-bottom: 2rem;
   }
 
   #note-editor-overlay .note-editor-modal-content {
@@ -12219,6 +12231,8 @@ html.modal-sheet-open body {
     height: 100% !important;
   }
 
+  /* Тулбар в потоке flex (не absolute): на iOS absolute+bottom уезжает под клавиатуру
+     и съедает safe-area («системный» отступ home indicator). */
   #note-editor-overlay.note-editor-overlay--fullscreen .note-editor-toolbar-wrap:not(.hidden),
   #note-editor-overlay.note-editor-overlay--fullscreen
     .note-editor-toolbar-wrap--bottom:not(.hidden),
@@ -12226,11 +12240,22 @@ html.modal-sheet-open body {
   .note-editor-sheet
     > .note-editor-modal-form
     > .note-editor-toolbar-wrap--bottom:not(.hidden) {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 20;
+    position: relative;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    z-index: 30;
+    flex-shrink: 0;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+
+  html.note-editor-kb-open
+    #note-editor-overlay.note-editor-overlay--fullscreen
+    .note-editor-toolbar-wrap--bottom:not(.hidden),
+  html.note-editor-kb-open
+    .note-editor-sheet
+    > .note-editor-modal-form
+    > .note-editor-toolbar-wrap--bottom:not(.hidden) {
     padding-bottom: 10px;
   }
 
