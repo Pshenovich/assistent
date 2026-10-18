@@ -1436,6 +1436,15 @@ function mountToolbar(toolbarEl, editor) {
   }
 
   if (fileInput) {
+    // Закрываем DOM-меню сразу после жеста (picker на iOS уже стартовал).
+    // На pointerdown закрывать нельзя — ломает системный sheet выбора источника.
+    function closeInsertMenuSoon() {
+      window.setTimeout(function () {
+        closeTgMenus(toolbarEl);
+      }, 0);
+    }
+    fileInput.addEventListener("click", closeInsertMenuSoon);
+    fileInput.addEventListener("pointerup", closeInsertMenuSoon);
     fileInput.addEventListener("change", function () {
       var file = fileInput.files && fileInput.files[0];
       closeTgMenus(toolbarEl);
