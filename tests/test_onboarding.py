@@ -15,7 +15,7 @@ class OnboardingMarkdownTests(unittest.TestCase):
         self.assertIn("<details>", body)
         self.assertIn("/calendar_auth", body)
         self.assertIn("/yandex_disk_auth", body)
-        self.assertIn("Мини-app", body)
+        self.assertIn("Приложение «Orbita»", body)
         self.assertIn("Актуальное", body)
         self.assertIn("Мои контакты", body)
         self.assertIn("корпоративный тариф", body)
@@ -121,7 +121,7 @@ class OnboardingAsyncTests(unittest.IsolatedAsyncioTestCase):
                 webapp_url="https://example.com/app",
             )
             msg.reply_text.assert_awaited_once()
-            self.assertIn("Leo — встречи", msg.reply_text.await_args.args[0])
+            self.assertIn("Leo — ИИ-ассистент Orbita", msg.reply_text.await_args.args[0])
 
     async def test_send_start_onboarding_force_when_completed(self) -> None:
         with tempfile.TemporaryDirectory() as td:

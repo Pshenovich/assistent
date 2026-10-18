@@ -38,7 +38,7 @@ def build_application() -> Application:
         try:
             await application.bot.set_chat_menu_button(
                 menu_button=MenuButtonWebApp(
-                    text="Ассистент", web_app=WebAppInfo(url=url)
+                    text="Orbita", web_app=WebAppInfo(url=url)
                 )
             )
             print(f"[bot] menu button → {url}")

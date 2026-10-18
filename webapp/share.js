@@ -882,7 +882,7 @@
       body: "{}",
     })
       .then(function () {
-        setShareActionStatus("Запрос отправлен автору в Leo");
+        setShareActionStatus("Запрос отправлен автору в Orbita");
         var btn = document.getElementById("share-action-request");
         if (btn) {
           btn.disabled = true;
@@ -925,7 +925,7 @@
       box.appendChild(
         makeShareActionLink({
           kind: "open",
-          label: "Открыть в Leo",
+          label: "Открыть в Orbita",
           onClick: function () {
             var nid = data.item_id;
             window.location.href =

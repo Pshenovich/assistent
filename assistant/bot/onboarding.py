@@ -40,8 +40,8 @@ _EXAMPLE_PHRASES = (
 )
 
 _WELCOME_SHORT = (
-    "Leo — встречи, календарь, напоминания в одном чате.\n"
-    "Пишите в свободной форме или откройте «Ассистент» (≡).\n"
+    "Leo — ИИ-ассистент Orbita: встречи, календарь, напоминания в одном чате.\n"
+    "Пишите в свободной форме или откройте приложение «Orbita» (≡).\n"
     "Интеграции: /calendar_auth, /zoom_auth, /telemost_auth, /yandex_disk_auth"
 )
 
@@ -64,7 +64,7 @@ def _bot_mention(bot_username: str | None = None) -> str:
 
 def welcome_card_markdown(*, bot_username: str | None = None) -> str:
     mention = _bot_mention(bot_username)
-    return f"""## Leo — ассистент для встреч и календаря
+    return f"""## Leo — ИИ-ассистент Orbita для встреч и календаря
 
 Пишите **обычными фразами** — без команд.
 
@@ -84,7 +84,7 @@ def welcome_card_markdown(*, bot_username: str | None = None) -> str:
 - [ ] Яндекс Диск — `/yandex_disk_auth` *(записи встреч, транскрипции и саммари)*
 
 <details>
-<summary>Мини-app «Ассистент» (кнопка ≡ слева внизу)</summary>
+<summary>Приложение «Orbita» (кнопка ≡ слева внизу)</summary>
 
 Удобно, когда нужен обзор и настройки без переписки с ботом:
 

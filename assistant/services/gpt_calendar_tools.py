@@ -890,7 +890,7 @@ def _resolve_assignee(ctx: GptCalendarContext, name: str) -> tuple[int, str, str
             owner_username=ctx.telegram_username,
         )
     except ValueError:
-        return f"У контакта «{contact_display_name(contact)}» нет Telegram в Leo — задачу ему не поставить."
+        return f"У контакта «{contact_display_name(contact)}» нет Telegram в Orbita — задачу ему не поставить."
     return int(assignee_uid), str(contact.get("email") or ""), contact_display_name(contact)
 
 

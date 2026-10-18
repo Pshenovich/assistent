@@ -423,7 +423,7 @@ async def handle(
         )
     except ValueError:
         await msg.reply_text(
-            f"У контакта «{contact_display_name(contact)}» нет Telegram в Leo. "
+            f"У контакта «{contact_display_name(contact)}» нет Telegram в Orbita. "
             "Попросите открыть мини-приложение хотя бы раз."
         )
         return

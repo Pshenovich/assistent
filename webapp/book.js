@@ -178,7 +178,7 @@
     var title = String((meta && meta.title) || "").trim();
     var titleEl = $("book-title");
     if (titleEl) titleEl.textContent = title || "Выберите время";
-    document.title = title || "Leo — свободные слоты";
+    document.title = title || "Orbita — свободные слоты";
     var lead = $("book-lead");
     if (lead) {
       var tz = String((meta && meta.timezone) || "").trim();

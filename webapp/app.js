@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261018-ios-note7";
+  var WEBAPP_BUILD = "20261018-orbita1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -173,7 +173,13 @@
   if (navigator.serviceWorker && navigator.serviceWorker.addEventListener) {
     navigator.serviceWorker.addEventListener("message", function (ev) {
       var data = ev && ev.data;
-      if (!data || data.type !== "leo-migrate-origin" || !data.url) return;
+      if (!data || !data.url) return;
+      if (data.type === "leo-open-url") {
+        clearPendingDeepLinkCache();
+        applyIncomingDeepLink(data.url);
+        return;
+      }
+      if (data.type !== "leo-migrate-origin") return;
       location.replace(String(data.url));
     });
   }
@@ -183,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261018-ios-note7";
+  const NOTE_EDITOR_ASSET_V = "20261018-orbita1";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -5510,7 +5516,7 @@
         }
         if (res.status === 401 && hasTelegramWebAppAuth() && !miniappDev) {
           showTelegramAuthError(
-            apiErrorMessage(body, "Ошибка авторизации Telegram. Напишите боту /start и откройте «Ассистент» снова.")
+            apiErrorMessage(body, "Ошибка авторизации Telegram. Напишите боту /start и откройте «Orbita» снова.")
           );
         }
         if (res.status === 401 && !hasTelegramWebAppAuth() && !miniappDev) {
@@ -5664,7 +5670,7 @@
     }
     if (alt) {
       alt.innerHTML =
-        "В чате с ботом нажмите <b>/start</b>, затем кнопку меню <b>«Ассистент»</b> (≡ внизу слева).";
+        "В чате с ботом нажмите <b>/start</b>, затем кнопку меню <b>«Orbita»</b> (≡ внизу слева).";
       alt.classList.remove("hidden");
     }
     if (devHint) devHint.classList.add("hidden");
@@ -36803,6 +36809,95 @@
       .catch(function () {});
   }
 
+  var DEEPLINK_PARAM_KEYS = ["event", "e", "cal", "calendar", "day", "date", "note", "n", "chat", "c", "task", "t"];
+  var DEEPLINK_CACHE_NAME = "leo-deeplink";
+  var DEEPLINK_MAX_AGE_MS = 5 * 60 * 1000;
+  var lastIncomingDeepLink = { href: "", at: 0 };
+
+  function pendingDeepLinkCacheKey() {
+    return new URL("./__pending-deeplink", location.href).href;
+  }
+
+  function clearPendingDeepLinkCache() {
+    if (!window.caches) return Promise.resolve();
+    return caches
+      .open(DEEPLINK_CACHE_NAME)
+      .then(function (cache) {
+        return cache.delete(pendingDeepLinkCacheKey());
+      })
+      .catch(function () {});
+  }
+
+  function locationHasDeepLink() {
+    try {
+      var sp = new URL(location.href).searchParams;
+      return DEEPLINK_PARAM_KEYS.some(function (k) {
+        return !!sp.get(k);
+      });
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /** Открыть ссылку из пуша в уже запущенном приложении (iOS PWA не умеет client.navigate). */
+  function applyIncomingDeepLink(rawUrl) {
+    var incoming;
+    try {
+      incoming = new URL(String(rawUrl || ""), location.href);
+    } catch (_) {
+      return;
+    }
+    if (incoming.origin !== location.origin) return;
+    var now = Date.now();
+    if (lastIncomingDeepLink.href === incoming.href && now - lastIncomingDeepLink.at < 15000) return;
+    var hasKeys = DEEPLINK_PARAM_KEYS.some(function (k) {
+      return !!incoming.searchParams.get(k);
+    });
+    if (!hasKeys) return;
+    lastIncomingDeepLink = { href: incoming.href, at: now };
+    try {
+      var u = new URL(location.href);
+      DEEPLINK_PARAM_KEYS.forEach(function (k) {
+        u.searchParams.delete(k);
+        var v = incoming.searchParams.get(k);
+        if (v) u.searchParams.set(k, v);
+      });
+      history.replaceState(null, "", u.pathname + u.search + u.hash);
+    } catch (_) {
+      return;
+    }
+    if (!bootAppStarted) return;
+    noteDeepLinkConsumed = false;
+    chatDeepLinkConsumed = false;
+    taskDeepLinkConsumed = false;
+    eventDeepLinkConsumed = false;
+    openPendingEventFromLocation();
+    openPendingTaskFromLocation();
+    openPendingSharedNote(notesDataCache || {});
+  }
+
+  function consumePendingDeepLinkFromCache(opts) {
+    if (!window.caches) return Promise.resolve();
+    var skipApply = !!(opts && opts.skipApply);
+    var key = pendingDeepLinkCacheKey();
+    return caches
+      .open(DEEPLINK_CACHE_NAME)
+      .then(function (cache) {
+        return cache.match(key).then(function (res) {
+          if (!res) return null;
+          return cache.delete(key).then(function () {
+            return res.json();
+          });
+        });
+      })
+      .then(function (entry) {
+        if (!entry || !entry.url || skipApply) return;
+        if (Date.now() - Number(entry.ts || 0) > DEEPLINK_MAX_AGE_MS) return;
+        applyIncomingDeepLink(entry.url);
+      })
+      .catch(function () {});
+  }
+
   function closeNoteCardMenus() {
     document.querySelectorAll(".note-card-menu:not(.hidden)").forEach(function (el) {
       if (el.classList.contains("chat-thread-menu")) return;
@@ -41535,6 +41630,7 @@
     document.addEventListener("visibilitychange", function () {
       if (document.visibilityState === "visible" && bootAppStarted) {
         loadIntegrations();
+        consumePendingDeepLinkFromCache();
       }
     });
     var tgBoot = window.Telegram && window.Telegram.WebApp;
@@ -41547,8 +41643,10 @@
     }
 
     setTab("actual", { noAnim: true });
+    var bootHadDeepLink = locationHasDeepLink();
     openPendingEventFromLocation();
     openPendingTaskFromLocation();
+    consumePendingDeepLinkFromCache({ skipApply: bootHadDeepLink });
   }
 
   var bootAppStarted = false;
@@ -41588,7 +41686,7 @@
         }
         if (authTries >= maxAuthTries) {
           showTelegramAuthError(
-            "Telegram не передал данные для входа. Закройте окно, напишите боту /start и откройте «Ассистент» снова."
+            "Telegram не передал данные для входа. Закройте окно, напишите боту /start и откройте «Orbita» снова."
           );
           return;
         }

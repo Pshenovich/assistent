@@ -461,7 +461,7 @@ def resolve_contact_telegram_id(
     if direct <= 0:
         who = f"@{uname}" if uname else "контакта"
         raise ValueError(
-            f"Не удалось найти {who} в Leo. Пусть человек откроет мини-приложение "
+            f"Не удалось найти {who} в Orbita. Пусть человек откроет приложение Orbita "
             "или напишет боту /start — после этого повторите добавление."
         )
     if contact:

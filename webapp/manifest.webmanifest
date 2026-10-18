@@ -1,7 +1,7 @@
 {
-  "name": "Ассистент",
-  "short_name": "Ассистент",
-  "description": "Заметки, напоминания и календарь Telegram-ассистента",
+  "name": "Orbita",
+  "short_name": "Orbita",
+  "description": "Orbita — заметки, встречи и календарь с ИИ-ассистентом Leo",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
