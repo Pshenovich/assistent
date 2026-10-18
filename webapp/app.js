@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261018-orbita2";
+  var WEBAPP_BUILD = "20261018-chipfix";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261018-orbita2";
+  const NOTE_EDITOR_ASSET_V = "20261018-chipfix";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -26738,7 +26738,20 @@
       value = value || " ";
     }
     var valueHasBreak = value.indexOf("\n") >= 0;
-    var valueWraps = valueHasBreak || (!!value && el.scrollHeight > minSingle + 1);
+    // Перенос — это вторая строка, а не лишние пиксели: чип цитаты чуть выше строки текста,
+    // и с порогом «+1px» поле прыгало между одной и двумя строками.
+    var measuredWraps = valueHasBreak || (!!value && el.scrollHeight > minSingle + line * 0.5);
+    // Гистерезис: в две строки поле раскладывается иначе, и текст у края «качался».
+    // Возвращаемся к одной строке, только когда текст стал короче, чем в момент переноса.
+    var len = value.length;
+    var valueWraps = measuredWraps;
+    if (measuredWraps) {
+      if (!el._multiAtLen) el._multiAtLen = len;
+    } else if (el._multiAtLen && len >= el._multiAtLen) {
+      valueWraps = true;
+    } else {
+      el._multiAtLen = 0;
+    }
     var placeholderWraps = composerPlaceholderWraps(el);
     if (!valueWraps) {
       var singleH = Math.max(el.scrollHeight, minSingle);
