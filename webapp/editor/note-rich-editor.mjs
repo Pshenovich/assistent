@@ -1244,14 +1244,6 @@ function closeTgMenus(toolbarEl) {
 
 function mountToolbar(toolbarEl, editor) {
   var refreshFn = function () {};
-  var fileInput = document.createElement("input");
-  fileInput.type = "file";
-  fileInput.accept = "image/*";
-  fileInput.className = "note-tg-file-input";
-  fileInput.id = "note-tg-file-input-" + Math.random().toString(36).slice(2, 10);
-  fileInput.setAttribute("aria-hidden", "true");
-  fileInput.tabIndex = -1;
-
   toolbarEl.className = "note-rich-editor-toolbar note-tg-toolbar";
   function btn(cls, attr, title, icon) {
     return (
@@ -1260,12 +1252,11 @@ function mountToolbar(toolbarEl, editor) {
     );
   }
   function item(cmd, check, icon, label, extra) {
-    // iOS PWA: <label for> открывает file picker в том же user gesture; button+click() — нет.
+    // iOS PWA: input type=file поверх пункта — единственный надёжный gesture (не label+for и не .click()).
     if (cmd === "attach") {
       return (
-        '<label class="note-tg-menu-item" data-cmd="attach" for="' +
-        fileInput.id +
-        '">' +
+        '<label class="note-tg-menu-item note-tg-menu-item--attach" data-cmd="attach">' +
+        '<input type="file" class="note-tg-file-input-hit" accept="image/*,image/jpeg,image/png,image/heic,image/heif,image/webp,.jpg,.jpeg,.png,.heic,.webp" tabindex="-1" />' +
         (icon ? svgIcon(icon) : "") +
         "<span>" +
         label +
@@ -1338,7 +1329,7 @@ function mountToolbar(toolbarEl, editor) {
     '<div class="note-tg-menu hidden" data-menu-panel="list" role="menu">' + listItems("Обычный текст") + "</div>" +
     '<div class="note-tg-menu hidden" data-menu-panel="list-sel" role="menu">' + listItems("Ничего") + "</div>";
 
-  toolbarEl.appendChild(fileInput);
+  var fileInput = toolbarEl.querySelector(".note-tg-file-input-hit");
 
   function runCmd(cmd) {
     // Keep editor focused — menu taps would otherwise blur first and drop the click.
@@ -1368,7 +1359,7 @@ function mountToolbar(toolbarEl, editor) {
     } else if (cmd === "table") {
       editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
     } else if (cmd === "attach") {
-      // Открытие — через <label for> / отдельный gesture-safe путь в pointerdown.
+      // Открытие — нативный tap по .note-tg-file-input-hit внутри пункта меню.
     } else if (cmd === "divider") {
       editor.chain().focus().setHorizontalRule().run();
     } else if (cmd === "noteref") {
@@ -1435,6 +1426,7 @@ function mountToolbar(toolbarEl, editor) {
   }
 
   function pickImage() {
+    if (!fileInput) return;
     try {
       fileInput.value = "";
     } catch (_) {}
@@ -1443,40 +1435,49 @@ function mountToolbar(toolbarEl, editor) {
     } catch (_) {}
   }
 
-  fileInput.addEventListener("change", function () {
-    var file = fileInput.files && fileInput.files[0];
-    closeTgMenus(toolbarEl);
-    if (!file) return;
-    if (!/^image\//i.test(file.type || "")) {
-      window.alert("В заметку можно вставить изображение (JPG, PNG, HEIC…).");
-      return;
-    }
-    if (file.size > 8 * 1024 * 1024) {
-      window.alert("Фото больше 8 МБ. Выберите файл поменьше.");
-      return;
-    }
-    var reader = new FileReader();
-    reader.onload = function () {
-      var src = String(reader.result || "");
-      if (!src) return;
-      editor
-        .chain()
-        .focus()
-        .insertContent([
-          {
-            type: "image",
-            attrs: { src: src, alt: file.name || "Фото" },
-          },
-          { type: "paragraph" },
-        ])
-        .run();
-      refreshFn();
-    };
-    reader.readAsDataURL(file);
-  });
+  if (fileInput) {
+    fileInput.addEventListener("change", function () {
+      var file = fileInput.files && fileInput.files[0];
+      closeTgMenus(toolbarEl);
+      if (!file) return;
+      var mime = String(file.type || "");
+      var name = String(file.name || "");
+      var looksImage =
+        /^image\//i.test(mime) || /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(name);
+      if (!looksImage) {
+        window.alert("В заметку можно вставить изображение (JPG, PNG, HEIC…).");
+        return;
+      }
+      if (file.size > 8 * 1024 * 1024) {
+        window.alert("Фото больше 8 МБ. Выберите файл поменьше.");
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function () {
+        var src = String(reader.result || "");
+        if (!src) return;
+        editor
+          .chain()
+          .focus()
+          .insertContent([
+            {
+              type: "image",
+              attrs: { src: src, alt: file.name || "Фото" },
+            },
+            { type: "paragraph" },
+          ])
+          .run();
+        refreshFn();
+      };
+      reader.readAsDataURL(file);
+    });
+  }
 
   // Prevent toolbar buttons from stealing focus from the editor (incl. menu items).
   toolbarEl.addEventListener("mousedown", function (e) {
+    if (e.target && e.target.closest && e.target.closest(".note-tg-file-input-hit, .note-tg-menu-item--attach")) {
+      return;
+    }
     var btn = e.target.closest("button");
     if (!btn || !toolbarEl.contains(btn)) return;
     e.preventDefault();
@@ -1486,20 +1487,16 @@ function mountToolbar(toolbarEl, editor) {
     function (e) {
       var item = e.target.closest(".note-tg-menu-item");
       if (!item || !toolbarEl.contains(item)) return;
+      // Attach: вообще не трогаем событие — иначе iOS не откроет picker.
+      if (
+        item.getAttribute("data-cmd") === "attach" ||
+        (e.target && e.target.classList && e.target.classList.contains("note-tg-file-input-hit"))
+      ) {
+        return;
+      }
       // Run on pointerdown so the command isn't lost if selectionUpdate
       // would hide the menu before click (empty caret → closeTgMenus race).
       if (e.button != null && e.button !== 0) return;
-      // Attach: не preventDefault — iOS требует непрерывный gesture для <input type=file>
-      // (и для <label for>, и для программного click()).
-      if (item.getAttribute("data-cmd") === "attach") {
-        e.stopPropagation();
-        lastMenuCmdAt = Date.now();
-        if (item.tagName !== "LABEL") pickImage();
-        window.setTimeout(function () {
-          closeTgMenus(toolbarEl);
-        }, 350);
-        return;
-      }
       e.preventDefault();
       e.stopPropagation();
       var paging = item.hasAttribute("data-go");
@@ -1512,8 +1509,10 @@ function mountToolbar(toolbarEl, editor) {
   toolbarEl.addEventListener("click", function (e) {
     var item = e.target.closest(".note-tg-menu-item");
     if (item && toolbarEl.contains(item)) {
-      if (item.getAttribute("data-cmd") === "attach") {
-        e.stopPropagation();
+      if (
+        item.getAttribute("data-cmd") === "attach" ||
+        (e.target && e.target.classList && e.target.classList.contains("note-tg-file-input-hit"))
+      ) {
         return;
       }
       e.preventDefault();
@@ -2819,6 +2818,11 @@ function mount(container, options) {
       } catch (_) {
         return null;
       }
+    },
+    scrollCaretIntoView: function () {
+      try {
+        editor.commands.scrollIntoView();
+      } catch (_) {}
     },
     appendText: function (text) {
       var raw = String(text || "").replace(/\s+$/, "");

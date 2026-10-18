@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261017-pushfix1";
+  var WEBAPP_BUILD = "20261018-ios-note4";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -183,7 +183,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261018-ios-note3";
+  const NOTE_EDITOR_ASSET_V = "20261018-ios-note4";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -11946,6 +11946,13 @@
     return Math.round(lh * 3);
   }
 
+  function noteEditorFieldFocused() {
+    var a = document.activeElement;
+    if (!a) return false;
+    if (a.id === "note-editor-title-input") return true;
+    return isNoteRichEditorField(a);
+  }
+
   function syncNoteEditorEndPad() {
     var scrollEl = getNoteEditorScrollEl();
     var content = document.getElementById("note-editor-modal-body");
@@ -11955,18 +11962,20 @@
       if (scrollEl.style.paddingBottom) scrollEl.style.paddingBottom = "";
       return false;
     }
-    // Тулбар — сосед скролла (в потоке flex), не перекрывает его: нужен только
-    // запас в ~3 строки, чтобы курсор у нижнего края можно было подскроллить.
     var lineRoom = noteEditorLineRoomPx();
     var prevPad = scrollEl.style.paddingBottom;
     scrollEl.style.paddingBottom = "0px";
     var contentH = scrollEl.scrollHeight;
     var viewH = scrollEl.clientHeight;
-    var pad = lineRoom + Math.max(0, viewH - contentH);
+    // Пока фокус в поле: большой pad (~половина экрана), иначе курсор упирается
+    // в низ и некуда скроллить — на iOS клавиатура часто перекрывает без resize.
+    var editing = noteEditorFieldFocused();
+    var editRoom = editing ? Math.max(Math.round(viewH * 0.55), 260) : lineRoom;
+    var pad = editRoom + Math.max(0, viewH - contentH);
     var nextPad = Math.round(pad) + "px";
     scrollEl.style.paddingBottom = nextPad;
     var changed = prevPad !== nextPad;
-    if (changed && document.documentElement.classList.contains("note-editor-kb-open")) {
+    if (changed && editing) {
       window.setTimeout(function () {
         scrollNoteCaretIntoView(true);
       }, 40);
@@ -11994,9 +12003,19 @@
       vv && typeof vv.width === "number" && vv.width > 0
         ? Math.round(vv.width)
         : window.innerWidth;
-    // Привязываем оверлей к visualViewport: иначе на iOS PWA лист/тулбар
-    // остаются на полный layout viewport и уезжают под клавиатуру.
+    var kbGuess = Math.max(0, Math.round(layoutH - visH - offsetTop));
+    if (kbGuess < 40) kbGuess = 0;
+    // iOS PWA: клавиатура часто рисуется поверх, не сжимая vv/innerHeight.
+    // Если поле в фокусе, а «дыры» нет — резервируем типичную высоту клавиатуры.
+    var editing = noteEditorFieldFocused();
+    if (kbGuess < 40 && editing && isIOSDevice()) {
+      kbGuess = Math.round(Math.min(layoutH * 0.42, 360));
+      if (kbGuess < 220) kbGuess = 280;
+    }
     var sheetH = visH > 0 ? visH : layoutH;
+    if (kbGuess >= 40 && layoutH - kbGuess > 120 && sheetH > layoutH - kbGuess) {
+      sheetH = layoutH - kbGuess;
+    }
     ov.style.top = offsetTop + "px";
     ov.style.left = offsetLeft + "px";
     ov.style.right = "auto";
@@ -12008,13 +12027,11 @@
       sheet.style.maxHeight = "100%";
       sheet.style.transform = "";
     }
-    var kbGuess = Math.max(0, Math.round(layoutH - sheetH - offsetTop));
-    if (kbGuess < 40) kbGuess = 0;
     var kbOpen = kbGuess > 40;
     document.documentElement.classList.toggle("note-editor-kb-open", kbOpen);
     document.documentElement.style.setProperty("--note-editor-kb-inset", kbGuess + "px");
     var padChanged = syncNoteEditorEndPad();
-    if (kbOpen && (!noteEditorKbWasOpen || padChanged)) {
+    if (editing && (!noteEditorKbWasOpen || padChanged || kbOpen)) {
       window.setTimeout(function () {
         scrollNoteCaretIntoView(true);
       }, noteEditorKbWasOpen ? 40 : 280);
@@ -12080,12 +12097,17 @@
       var scrollEl = getNoteEditorScrollEl();
       if (!scrollEl) return;
       syncNoteEditorEndPad();
+      var editor = getActiveNoteRichEditor();
+      if (editor && typeof editor.scrollCaretIntoView === "function") {
+        try {
+          editor.scrollCaretIntoView();
+        } catch (_) {}
+      }
       var active = document.activeElement;
       var caretRect = null;
       if (active && active.id === "note-editor-title-input") {
         caretRect = active.getBoundingClientRect();
       } else {
-        var editor = getActiveNoteRichEditor();
         if (editor && typeof editor.coordsAtPos === "function" && typeof editor.getCursor === "function") {
           try {
             caretRect = editor.coordsAtPos(editor.getCursor());
@@ -12114,10 +12136,26 @@
         vv && typeof vv.height === "number" && vv.height > 0
           ? Math.round((vv.offsetTop || 0) + vv.height)
           : Math.round(window.innerHeight || bodyRect.bottom);
-      var margin = isMobileNoteLayout() ? 36 : 20;
-      // Скролл-тело уже заканчивается над тулбаром; ориентир — visualViewport.
-      var bottomLimit = Math.min(bodyRect.bottom, vvBottom) - margin;
-      // Сверху запас меньше: иначе при наборе у верхнего края текст подпрыгивает.
+      var kbInset = 0;
+      try {
+        kbInset = parseFloat(
+          getComputedStyle(document.documentElement).getPropertyValue("--note-editor-kb-inset")
+        ) || 0;
+      } catch (_) {
+        kbInset = 0;
+      }
+      if (kbInset < 40 && noteEditorFieldFocused() && isIOSDevice()) {
+        kbInset = 280;
+      }
+      // Держим курсор в верхней половине видимой зоны (над клавиатурой/тулбаром).
+      var visibleBottom = Math.min(bodyRect.bottom, vvBottom);
+      if (kbInset >= 40) {
+        visibleBottom = Math.min(visibleBottom, vvBottom - Math.min(kbInset, 120));
+      }
+      var margin = isMobileNoteLayout()
+        ? Math.max(72, Math.round((visibleBottom - bodyRect.top) * 0.38))
+        : 20;
+      var bottomLimit = visibleBottom - margin;
       var topLimit = bodyRect.top + 16;
       var bottom = caretRect.bottom != null ? caretRect.bottom : caretRect.top;
       var top = caretRect.top;
@@ -12129,13 +12167,17 @@
     };
     if (immediate) {
       run();
+      window.requestAnimationFrame(run);
       return;
     }
     if (noteCaretScrollTimer) clearTimeout(noteCaretScrollTimer);
     noteCaretScrollTimer = window.setTimeout(function () {
       noteCaretScrollTimer = null;
-      window.requestAnimationFrame(run);
-    }, 60);
+      window.requestAnimationFrame(function () {
+        run();
+        window.requestAnimationFrame(run);
+      });
+    }, 32);
   }
 
   function isMobileNoteLayout() {
