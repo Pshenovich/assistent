@@ -33,6 +33,8 @@ class CardsTests(unittest.TestCase):
         self.assertEqual(c["title"], "Андрей — выкатит правки в тренды")
         self.assertEqual(c["urgency"], 3)
         self.assertIn("исполнителю Андрей", c["actions"][0]["payload"]["prompt"])
+        self.assertEqual(c["actions"][-1]["act"], "mark_done")
+        self.assertEqual(c["items"], [{"id": c["key"], "text": it["text"]}])
         self.assertIsNone(pa.card_for(it, src="", note=NOTE, today=TODAY, task_titles=["Выкатить правки в тренды"]))
         old = dict(it, due="2026-09-01")
         self.assertIsNone(pa.card_for(old, src="", note=NOTE, today=TODAY, task_titles=[]))
@@ -46,6 +48,18 @@ class CardsTests(unittest.TestCase):
         self.assertIn("3 варианта", fu["actions"][0]["payload"]["prompt"])
         q = pa.card_for({"kind": "open_question", "text": "Какой анонимизатор"}, src="s", note=NOTE, today=TODAY, task_titles=[])
         self.assertEqual(q["title"], "Не решено: Какой анонимизатор")
+        self.assertNotIn("mark_done", [a["act"] for a in fu["actions"] + q["actions"]])
+
+    def test_chat_card_mark_done_only_for_tasks(self) -> None:
+        promise = pa.chat_card({"kind": "promise", "text": "Пришлю доступы к стенду", "msg": 3}, chat_id=-100, day="2026-10-17",
+                               title="Бустра", today=TODAY, task_titles=[])
+        self.assertEqual(promise["actions"][-1]["act"], "mark_done")
+        self.assertEqual(promise["items"][0]["id"], promise["key"])
+        esc = pa.chat_card({"kind": "escalation", "text": "Клиент недоволен сроками", "who": "Иван", "msg": 4}, chat_id=-100,
+                           day="2026-10-17", title="Бустра", today=TODAY, task_titles=[])
+        self.assertNotIn("mark_done", [a["act"] for a in esc["actions"]])
+        self.assertIsNone(pa.chat_card({"kind": "promise", "text": "Пришлю доступы к стенду", "msg": 3}, chat_id=-100,
+                                       day="2026-10-17", title="Бустра", today=TODAY, task_titles=["Прислать доступы к стенду"]))
 
 
 class TriggerTests(unittest.TestCase):
@@ -77,6 +91,8 @@ class TriggerTests(unittest.TestCase):
         self.assertEqual(pa.analyzed_today(1), 1)
         cards = pa.insight_cards(1, task_titles=[])
         self.assertEqual(cards[0]["type"], "agreement")
+        proactive.mark_done(1, cards[0]["key"], cards[0]["items"], whole=True)
+        self.assertEqual(pa.insight_cards(1, task_titles=[]), [])  # «Уже есть» — похожее больше не предлагаем
         notes_store.update_note(1, n["id"], body=body + "<p>Мария пришлёт смету.</p>")
         self.assertEqual(len(pa.candidates(1, now=datetime.now(timezone.utc) + timedelta(minutes=11))), 1)
 

@@ -7451,7 +7451,10 @@
       tx.querySelector("b").textContent = (it.tag ? it.tag.replace(/^\S+\s/, "") + ": " : "") + it.title;
       tx.querySelector("small").textContent = it.source || "";
       row.appendChild(tx);
-      (it.actions || []).slice(0, 2).forEach(function (a) {
+      var rowActs = (it.actions || []).filter(function (a) {
+        return a.act !== "mark_done" && a.act !== "mark_done_pick";
+      });
+      rowActs.slice(0, 2).forEach(function (a) {
         var b = document.createElement("button");
         b.type = "button";
         b.className = "focus-card-btn" + (a.primary ? " is-primary" : "");
@@ -16663,6 +16666,20 @@
         if (it.note) openMeetingMaterial({ id: it.note.id, kind: it.note.kind, title: it.note.title });
       } else if (act === "url") {
         if (p.url) openExternal(p.url);
+      } else if (act === "mark_done") {
+        try {
+          await apiFetch("/proactive/done", {
+            method: "POST",
+            body: JSON.stringify({ key: it.key, items: it.items || [], whole: true }),
+          });
+        } catch (e) {
+          showNoteToast((e && e.message) || "Не удалось отметить");
+          return;
+        }
+        dismissFocus(it, true);
+        showNoteToast("Отмечено: уже заведено");
+      } else if (act === "mark_done_pick") {
+        openFocusDonePicker(it);
       } else if (act === "assistant") {
         if (await focusOpenAssistant()) {
           await submitNoteGptQuestion(String(p.prompt || it.ask || ""));
@@ -16672,6 +16689,125 @@
     } finally {
       if (btn) btn.disabled = false;
     }
+  }
+
+  // «✓ Уже есть…» на карточке с несколькими задачами: отметить галочками, что уже заведено в другом сервисе.
+  function openFocusDonePicker(it) {
+    var ov = document.getElementById("focus-done-overlay");
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = "focus-done-overlay";
+      ov.className = "modal-overlay hidden";
+      ov.innerHTML =
+        '<div class="modal modal--sheet focus-done-sheet" role="dialog" aria-modal="true" aria-label="Что уже заведено?">' +
+        '<div class="modal-header"><button type="button" class="modal-header-btn modal-header-btn--close" data-fd="close" aria-label="Закрыть">' +
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>' +
+        '<h2 class="modal-title">Что уже заведено?</h2><span></span></div><div class="modal-body focus-done-body"></div></div>';
+      document.body.appendChild(ov);
+      ov.addEventListener("click", function (e) {
+        if (e.target === ov || e.target.closest('[data-fd="close"]')) closeFocusDonePicker();
+      });
+    }
+    var items = it.items || [];
+    var body = ov.querySelector(".focus-done-body");
+    body.innerHTML = "";
+    var sub = document.createElement("p");
+    sub.className = "focus-done-sub";
+    sub.textContent =
+      ((it.note && it.note.title) ? "«" + it.note.title + "» · " : "") +
+      items.length + " " + pluralRu(items.length, "задача", "задачи", "задач") +
+      ". Отмеченные пропадут из подсказки.";
+    body.appendChild(sub);
+    var list = document.createElement("div");
+    list.className = "focus-done-list";
+    var all = document.createElement("label");
+    all.className = "focus-done-row is-all";
+    all.innerHTML = '<input type="checkbox"><span>Отметить все</span>';
+    list.appendChild(all);
+    var boxes = items.map(function (x) {
+      var row = document.createElement("label");
+      row.className = "focus-done-row";
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      var tx = document.createElement("span");
+      tx.textContent = x.text || "";
+      row.appendChild(cb);
+      row.appendChild(tx);
+      list.appendChild(row);
+      return cb;
+    });
+    body.appendChild(list);
+    var save = document.createElement("button");
+    save.type = "button";
+    save.className = "focus-card-btn is-primary focus-done-save";
+    body.appendChild(save);
+    var allCb = all.querySelector("input");
+    function picked() {
+      return items.filter(function (_, i) {
+        return boxes[i].checked;
+      });
+    }
+    function sync() {
+      var n = picked().length;
+      save.textContent = n ? "Готово · " + n : "Отметьте задачи";
+      save.disabled = !n;
+      allCb.checked = n === items.length && n > 0;
+      allCb.indeterminate = n > 0 && n < items.length;
+    }
+    allCb.addEventListener("change", function () {
+      boxes.forEach(function (cb) {
+        cb.checked = allCb.checked;
+      });
+      sync();
+    });
+    boxes.forEach(function (cb) {
+      cb.addEventListener("change", sync);
+    });
+    save.addEventListener("click", async function () {
+      var chosen = picked();
+      if (!chosen.length) return;
+      var whole = chosen.length === items.length;
+      save.disabled = true;
+      save.textContent = "Сохраняю…";
+      var res;
+      try {
+        res = await apiFetch("/proactive/done", {
+          method: "POST",
+          body: JSON.stringify({ key: it.key, items: chosen, whole: whole }),
+        });
+      } catch (e) {
+        showNoteToast((e && e.message) || "Не удалось отметить");
+        sync();
+        return;
+      }
+      closeFocusDonePicker();
+      var fresh = res && res.item;
+      focusItems = fresh
+        ? focusItems.map(function (x) {
+            return x.key === it.key ? fresh : x;
+          })
+        : focusItems.filter(function (x) {
+            return x.key !== it.key;
+          });
+      renderFocusRow();
+      renderFocusPanel();
+      if (!focusPanelOpen) refreshDiscussFeedNow();
+      showNoteToast("Отмечено как заведённое: " + chosen.length);
+    });
+    sync();
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
+  }
+
+  function closeFocusDonePicker() {
+    var ov = document.getElementById("focus-done-overlay");
+    if (!ov || ov.classList.contains("hidden")) return;
+    ov.classList.add("hidden");
+    ov.setAttribute("aria-hidden", "true");
+    onModalSheetClose();
+    syncAppOverlay();
   }
 
 
@@ -17842,6 +17978,11 @@
     }
     if (isNoteHistoryOpen()) {
       noteHistoryBack();
+      return true;
+    }
+    var focusDone = document.getElementById("focus-done-overlay");
+    if (focusDone && !focusDone.classList.contains("hidden")) {
+      closeFocusDonePicker();
       return true;
     }
     var proactiveSettings = document.getElementById("proactive-settings-overlay");

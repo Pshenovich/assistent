@@ -300,10 +300,22 @@ def _is_me(who: str) -> bool:
     return str(who or "").strip().lower() in ("я", "мне", "вы", "пользователь", "me", "")
 
 
+def _with_done(uid: int, task_titles: Optional[list[str]]) -> list[str]:
+    from assistant.services import proactive
+
+    try:
+        done = proactive.done_titles(uid)
+    except Exception as e:
+        print(f"[proactive_ai] done titles failed uid={uid} err={e!r}")
+        done = []
+    return list(task_titles or []) + done
+
+
 def insight_cards(uid: int, *, now: Optional[datetime] = None, task_titles: Optional[list[str]] = None) -> list[dict[str, Any]]:
     from assistant.services.calendar import _tz_for
     from assistant.stores import notes as notes_store
 
+    task_titles = _with_done(uid, task_titles)
     now = now or _now()
     today = now.astimezone(_tz_for(uid)).date()
     with _LOCK:
@@ -374,7 +386,9 @@ def card_for(it: dict[str, Any], *, src: str, note: dict[str, Any], today: date,
                     },
                 },
                 {"label": "Открыть", "act": "open_note"},
+                {"label": "✓ Уже есть", "act": "mark_done"},
             ],
+            "items": [{"id": key, "text": text}],
         }
     if kind == "followup":
         people = ", ".join(it.get("people") or []) or who
@@ -589,6 +603,8 @@ def chat_card(it: dict[str, Any], *, chat_id: int, day: str, title: str, today: 
                      "payload": {"prompt": f"Поставь мне задачу: {text} (из чата «{title}», {day_l})" + (f" на {it.get('due')}" if it.get("due") else "") + "."}})
     if url:
         acts.append({"label": "Открыть чат", "act": "url", "payload": {"url": url}})
+    if kind in ("promise", "request"):
+        acts.append({"label": "✓ Уже есть", "act": "mark_done"})
     return {
         "key": key,
         "type": "chat_" + str(kind),
@@ -599,12 +615,14 @@ def chat_card(it: dict[str, Any], *, chat_id: int, day: str, title: str, today: 
         "ask": f"{text} ({src})",
         "chat": {"id": chat_id, "date": day, "title": title},
         "actions": acts,
+        "items": [{"id": key, "text": text}],
     }
 
 
 def chat_cards(uid: int, *, task_titles: Optional[list[str]] = None, chat_id: Optional[int] = None, day: Optional[str] = None) -> list[dict[str, Any]]:
     from assistant.services.calendar import _tz_for
 
+    task_titles = _with_done(uid, task_titles)
     today = datetime.now(_tz_for(uid)).date()
     pattern = f"digest:{chat_id}:{day}" if chat_id is not None and day else "digest:%"
     with _LOCK:

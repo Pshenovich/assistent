@@ -8963,35 +8963,46 @@ class _MiniappFocusDismissBody(BaseModel):
     key: str
 
 
+class _MiniappFocusDoneItem(BaseModel):
+    id: str
+    text: str = ""
+
+
+class _MiniappFocusDoneBody(BaseModel):
+    key: str
+    items: list[_MiniappFocusDoneItem] = []
+    whole: bool = False
+
+
+def _focus_feed_items(uid: int) -> list[dict[str, Any]]:
+    from assistant.services import proactive
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import user_prefs
+
+    if not user_prefs.proactive_prefs(uid).get("focus"):
+        return []
+    today = datetime.now(_tz_for(uid)).date()
+    try:
+        payload = _calendar_range_payload(uid, (today - timedelta(days=2)).isoformat(), (today + timedelta(days=1)).isoformat())
+        events = payload.get("events") or []
+    except Exception as e:
+        print(f"[proactive] calendar failed uid={uid} err={e!r}")
+        events = []
+    return proactive.build_feed(uid, events)
+
+
 @miniapp_router.get("/proactive/feed")
 async def miniapp_proactive_feed(
     fresh: int = 0,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     """«Фокус»: подсказки с готовыми действиями (правила по задачам, встречам и саммари)."""
-    from assistant.services import proactive
-    from assistant.services.calendar import _tz_for
-
     uid = int(principal.telegram_user_id)
     hit = _FOCUS_CACHE.get(uid)
     if hit and not fresh and time.time() - hit[0] < 60:
         return {"ok": True, "items": hit[1]}
 
-    def _run() -> list[dict[str, Any]]:
-        from assistant.stores import user_prefs
-
-        if not user_prefs.proactive_prefs(uid).get("focus"):
-            return []
-        today = datetime.now(_tz_for(uid)).date()
-        try:
-            payload = _calendar_range_payload(uid, (today - timedelta(days=2)).isoformat(), (today + timedelta(days=1)).isoformat())
-            events = payload.get("events") or []
-        except Exception as e:
-            print(f"[proactive] calendar failed uid={uid} err={e!r}")
-            events = []
-        return proactive.build_feed(uid, events)
-
-    items = await run_in_threadpool(_run)
+    items = await run_in_threadpool(_focus_feed_items, uid)
     _FOCUS_CACHE[uid] = (time.time(), items)
     try:
         # ИИ разбирает изменившиеся материалы в фоне; новые карточки появятся при следующем обновлении.
@@ -9069,6 +9080,30 @@ async def miniapp_proactive_dismiss(
     if hit:
         _FOCUS_CACHE[uid] = (hit[0], [i for i in hit[1] if i.get("key") != key])
     return {"ok": True}
+
+
+@miniapp_router.post("/proactive/done")
+async def miniapp_proactive_done(
+    body: _MiniappFocusDoneBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """«Уже есть» на карточке Фокуса: задачи заведены в другом сервисе. Возвращает обновлённую карточку или null."""
+    from assistant.services import proactive
+
+    uid = int(principal.telegram_user_id)
+    key = str(body.key or "").strip()
+    items = [{"id": i.id, "text": i.text} for i in body.items if str(i.id or "").strip()]
+    if not key or not items:
+        raise HTTPException(status_code=400, detail="Нечего отмечать")
+    await run_in_threadpool(proactive.mark_done, uid, key, items, whole=bool(body.whole))
+    if body.whole:
+        hit = _FOCUS_CACHE.get(uid)
+        if hit:
+            _FOCUS_CACHE[uid] = (hit[0], [i for i in hit[1] if i.get("key") != key])
+        return {"ok": True, "item": None}
+    feed = await run_in_threadpool(_focus_feed_items, uid)
+    _FOCUS_CACHE[uid] = (time.time(), feed)
+    return {"ok": True, "item": next((i for i in feed if i.get("key") == key), None)}
 
 
 @miniapp_router.get("/notes/trash")

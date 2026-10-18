@@ -36,7 +36,7 @@ class ChatInsightsTests(unittest.TestCase):
         self.assertEqual(req["actions"][1], {"label": "Открыть чат", "act": "url", "payload": {"url": "https://t.me/c/1234567890/2"}})
         prom = pa.chat_card(items[1], chat_id=-555, day="2026-10-17", title="Продукт", today=TODAY, task_titles=[])
         self.assertEqual(prom["tag"], "🤝 вы обещали")
-        self.assertEqual(len(prom["actions"]), 1)  # у обычной группы ссылки на сообщение нет
+        self.assertNotIn("url", [a["act"] for a in prom["actions"]])  # у обычной группы ссылки на сообщение нет
         self.assertIsNone(pa.chat_card(items[1], chat_id=-1, day="2026-10-17", title="П", today=TODAY, task_titles=["Прислать доступы"]))
 
 

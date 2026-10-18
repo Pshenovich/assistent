@@ -73,6 +73,24 @@ class RulesTests(unittest.TestCase):
         self.assertEqual(len(out), 1)
         self.assertIn("Андрей — Релиз — пт", out[0]["actions"][0]["payload"]["prompt"])
         self.assertEqual(proactive.rule_summary_tasks([n], {5: True}, NOW, TZ), [])
+        self.assertEqual(out[0]["actions"][-1]["act"], "mark_done")
+
+    def test_summary_tasks_partly_done(self) -> None:
+        tasks = [{"assignee": "Андрей", "task": f"Задача {i}"} for i in range(9)]
+        n = {"id": 5, "title": "Планёрка", "created_at": (NOW - timedelta(days=1)).isoformat(), "meta": {"tasks": tasks}}
+        full = proactive.rule_summary_tasks([n], {}, NOW, TZ)[0]
+        self.assertEqual(len(full["items"]), 9)
+        self.assertIn("9 задач", full["title"])
+        self.assertEqual(full["actions"][-1]["act"], "mark_done_pick")
+        done = {i["id"] for i in full["items"][:3]}
+        part = proactive.rule_summary_tasks([n], {}, NOW, TZ, done)[0]
+        self.assertEqual(part["key"], full["key"])
+        self.assertIn("6 задач", part["title"])
+        prompt = part["actions"][0]["payload"]["prompt"]
+        self.assertNotIn("Задача 0", prompt)
+        self.assertIn("Задача 8", prompt)
+        every = {i["id"] for i in full["items"]}
+        self.assertEqual(proactive.rule_summary_tasks([n], {}, NOW, TZ, every), [])
 
     def test_rank_limits_and_order(self) -> None:
         items = [{"key": f"k{i}", "urgency": i % 4} for i in range(12)]
@@ -100,6 +118,17 @@ class DismissTests(unittest.TestCase):
         proactive.dismiss(1, "c", until=datetime.now(timezone.utc) + timedelta(hours=1))
         self.assertEqual(proactive.dismissed_keys(1), {"a", "c"})
         self.assertEqual(proactive.dismissed_keys(2), set())
+
+    def test_mark_done(self) -> None:
+        items = [{"id": "sumtask:5:a", "text": "Андрей — Релиз"}, {"id": "sumtask:5:b", "text": "Мария — Смета"}]
+        proactive.mark_done(1, "sumtasks:5", items[:1])
+        self.assertEqual(proactive.done_keys(1), {"sumtask:5:a"})
+        self.assertEqual(proactive.done_titles(1), ["Андрей — Релиз"])
+        self.assertEqual(proactive.dismissed_keys(1), set())  # частично — карточка остаётся
+        proactive.mark_done(1, "sumtasks:5", items, whole=True)
+        self.assertEqual(proactive.done_keys(1), {"sumtask:5:a", "sumtask:5:b"})
+        self.assertEqual(proactive.dismissed_keys(1), {"sumtasks:5"})
+        self.assertEqual(proactive.done_keys(2), set())
 
 
 if __name__ == "__main__":
