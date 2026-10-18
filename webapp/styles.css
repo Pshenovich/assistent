@@ -3558,26 +3558,22 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
 
 .note-tg-file-input,
 .note-tg-file-input-host {
-  position: absolute;
+  position: fixed;
   left: 0;
   top: 0;
   width: 1px;
   height: 1px;
   margin: 0;
   padding: 0;
-  opacity: 0;
+  opacity: 0.01;
   border: 0;
   overflow: hidden;
-  /* Не display:none — iOS не откроет picker из скрытого input */
+  z-index: -1;
+  /* Не display:none / visibility:hidden — iOS тогда не открывает picker */
 }
 
 .note-tg-menu-item--attach {
-  position: relative;
-  display: flex;
-  box-sizing: border-box;
   cursor: pointer;
-  -webkit-appearance: none;
-  appearance: none;
   -webkit-tap-highlight-color: transparent;
 }
 

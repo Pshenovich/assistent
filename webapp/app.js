@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261018-ios-note6";
+  var WEBAPP_BUILD = "20261018-ios-note7";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -183,7 +183,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261018-ios-note6";
+  const NOTE_EDITOR_ASSET_V = "20261018-ios-note7";
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -1110,7 +1110,23 @@
   }
 
   function loadNoteEditorScripts() {
-    if (getNoteRichEditorApi()) return Promise.resolve();
+    var api = getNoteRichEditorApi();
+    // Старый бандл мог остаться в memory/SW — перезагружаем при смене assetVersion.
+    if (api && api.assetVersion === NOTE_EDITOR_ASSET_V) return Promise.resolve();
+    if (api && api.assetVersion !== NOTE_EDITOR_ASSET_V) {
+      try {
+        document
+          .querySelectorAll('script[src*="note-rich-editor.js"],script[src*="note-html.js"],script[src*="note-comments.js"]')
+          .forEach(function (el) {
+            el.parentNode && el.parentNode.removeChild(el);
+          });
+      } catch (_) {}
+      try {
+        window.NoteRichEditor = undefined;
+        if (typeof globalThis !== "undefined") globalThis.NoteRichEditor = undefined;
+      } catch (_) {}
+      noteEditorScriptsPromise = null;
+    }
     if (noteEditorScriptsPromise) return noteEditorScriptsPromise;
     function injectScript(src) {
       return new Promise(function (res, rej) {
@@ -1120,7 +1136,8 @@
           var timer = setInterval(function () {
             waited += 50;
             if (src.indexOf("note-rich-editor.js") !== -1) {
-              if (getNoteRichEditorApi()) {
+              var ready = getNoteRichEditorApi();
+              if (ready && ready.assetVersion === NOTE_EDITOR_ASSET_V) {
                 clearInterval(timer);
                 res();
                 return;
@@ -1157,8 +1174,9 @@
         return injectScript("/webapp/note-rich-editor.js?v=" + NOTE_EDITOR_ASSET_V);
       })
       .then(function () {
-        if (getNoteRichEditorApi()) return;
-        throw new Error("Редактор не инициализировался");
+        var ready = getNoteRichEditorApi();
+        if (ready && ready.assetVersion === NOTE_EDITOR_ASSET_V) return;
+        throw new Error("Редактор не инициализировался (assetVersion)");
       })
       .catch(function (err) {
         noteEditorScriptsPromise = null;
