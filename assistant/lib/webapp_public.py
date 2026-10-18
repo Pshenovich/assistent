@@ -7,7 +7,7 @@ from urllib.parse import quote, urlencode
 
 
 # Меняйте при каждом релизе webapp — Telegram кэширует HTML по URL.
-WEBAPP_BUILD_ID = "20261018-orbita2"
+WEBAPP_BUILD_ID = "20261018-chipfix"
 
 
 def public_base_url() -> str:
