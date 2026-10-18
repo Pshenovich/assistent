@@ -53,6 +53,17 @@ def _conn() -> sqlite3.Connection:
         )
         """
     )
+    _CONN.execute(
+        """
+        CREATE TABLE IF NOT EXISTS proactive_done (
+            owner_user_id TEXT NOT NULL,
+            item_key TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (owner_user_id, item_key)
+        )
+        """
+    )
     _CONN.commit()
     return _CONN
 
@@ -82,6 +93,54 @@ def dismissed_keys(owner_user_id: Any) -> set[str]:
             (str(owner_user_id),),
         ).fetchall()
     return {str(r["item_key"]) for r in rows if not r["until"] or str(r["until"]) > now}
+
+
+# ---------------------------------------------------------------- «Уже есть»: заведено в другом сервисе
+
+DONE_WINDOW = timedelta(days=60)
+MAX_DONE_ITEMS = 50
+
+
+def mark_done(owner_user_id: Any, card_key: str, items: list[dict[str, Any]], *, whole: bool = False) -> int:
+    """Отметить задачи карточки как уже заведённые. whole — скрыть и саму карточку."""
+    now = _now().isoformat()
+    rows = []
+    for it in items[:MAX_DONE_ITEMS]:
+        if not isinstance(it, dict):
+            continue
+        iid = str(it.get("id") or "").strip()[:300]
+        if iid:
+            rows.append((str(owner_user_id), iid, str(it.get("text") or "").strip()[:300], now))
+    with _LOCK:
+        conn = _conn()
+        conn.executemany(
+            """
+            INSERT INTO proactive_done (owner_user_id, item_key, title, created_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT(owner_user_id, item_key) DO UPDATE SET title = excluded.title, created_at = excluded.created_at
+            """,
+            rows,
+        )
+        conn.commit()
+    if whole:
+        dismiss(owner_user_id, card_key)
+    return len(rows)
+
+
+def _done_rows(owner_user_id: Any) -> list[sqlite3.Row]:
+    since = (_now() - DONE_WINDOW).isoformat()
+    with _LOCK:
+        return _conn().execute(
+            "SELECT item_key, title FROM proactive_done WHERE owner_user_id = ? AND created_at >= ?",
+            (str(owner_user_id), since),
+        ).fetchall()
+
+
+def done_keys(owner_user_id: Any) -> set[str]:
+    return {str(r["item_key"]) for r in _done_rows(owner_user_id)}
+
+
+def done_titles(owner_user_id: Any) -> list[str]:
+    return [str(r["title"]) for r in _done_rows(owner_user_id) if str(r["title"] or "").strip()]
 
 
 # ---------------------------------------------------------------- время
@@ -288,7 +347,18 @@ def rule_no_results(events: list[dict[str, Any]], kinds: dict[str, dict[str, int
     return out[:3]
 
 
-def rule_summary_tasks(notes: list[dict[str, Any]], has_tasks: dict[int, bool], now: datetime, tz: Any) -> list[dict[str, Any]]:
+def summary_task_id(note_id: int, line: str) -> str:
+    return _key("sumtask", note_id, hashlib.sha1(line.encode("utf-8")).hexdigest()[:10])
+
+
+def rule_summary_tasks(
+    notes: list[dict[str, Any]],
+    has_tasks: dict[int, bool],
+    now: datetime,
+    tz: Any,
+    done: Optional[set[str]] = None,
+) -> list[dict[str, Any]]:
+    done = done or set()
     out = []
     for n in notes:
         meta = n.get("meta") if isinstance(n.get("meta"), dict) else {}
@@ -301,12 +371,18 @@ def rule_summary_tasks(notes: list[dict[str, Any]], has_tasks: dict[int, bool], 
         nid = int(n["id"])
         if has_tasks.get(nid):
             continue
-        lines = []
-        for t in tasks[:12]:
+        items = []
+        for t in tasks:
             parts = [str(t.get("assignee") or "").strip(), str(t.get("task") or "").strip(), str(t.get("deadline") or "").strip()]
-            lines.append(" — ".join(p for p in parts if p))
+            line = " — ".join(p for p in parts if p)
+            iid = summary_task_id(nid, line)
+            if iid not in done:
+                items.append({"id": iid, "text": line})
+        if not items:
+            continue
+        lines = [i["text"] for i in items[:12]]
         title = str(n.get("title") or "Встреча")
-        cnt = len(tasks)
+        cnt = len(items)
         word = "задача" if cnt % 10 == 1 and cnt % 100 != 11 else ("задачи" if 2 <= cnt % 10 <= 4 and not 12 <= cnt % 100 <= 14 else "задач")
         out.append(
             {
@@ -318,6 +394,7 @@ def rule_summary_tasks(notes: list[dict[str, Any]], has_tasks: dict[int, bool], 
                 "source": f"транскрипция · {_day(created, tz, now)}",
                 "ask": f"Задачи из встречи «{title}»: " + "; ".join(lines),
                 "note": {"id": nid, "kind": "transcription", "title": title},
+                "items": items,
                 "actions": [
                     {
                         "label": "Поставить всё",
@@ -332,6 +409,7 @@ def rule_summary_tasks(notes: list[dict[str, Any]], has_tasks: dict[int, bool], 
                         },
                     },
                     {"label": "Открыть", "act": "open_note"},
+                    {"label": "✓ Уже есть" + ("…" if cnt > 1 else ""), "act": "mark_done_pick" if cnt > 1 else "mark_done"},
                 ],
             }
         )
@@ -381,7 +459,7 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
         ]
         has_tasks = {int(n["id"]): bool(calendar_tasks.list_tasks_for_note(uid, n["id"])) for n in notes}
         if prefs.get("after_meetings"):
-            items += rule_summary_tasks(notes, has_tasks, now, tz)
+            items += rule_summary_tasks(notes, has_tasks, now, tz, done_keys(uid))
     except Exception as e:
         print(f"[proactive] summary tasks failed uid={uid} err={e!r}")
     try:
