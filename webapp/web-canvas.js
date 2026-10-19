@@ -817,19 +817,125 @@
     ".media-img{display:block;width:100%;height:100%;min-height:12rem;object-fit:cover;border-radius:12px}" +
     "</style>";
 
-  // Печать всех слайдов по одному на страницу 16:9 («Сохранить как PDF» в диалоге печати).
-  var DECK_PRINT_TAG =
+  // leo-deck-print:start — одинаковый блок в share.js и web-canvas.js (см. tests/test_deck_print_sync.py).
+  // Печать всех слайдов по одному на страницу 16:9 (из неё — «Сохранить как PDF»).
+  // Сцена при печати стоит в обычном потоке без transform: Chromium смещал и обрезал
+  // абсолютно спозиционированную сцену со scale. Маску-градиент фото печать рисует
+  // плиткой в углу — перед печатью растворение «запекается» в PNG с альфой.
+  var DECK_PRINT_STYLE =
     '<style id="leo-deck-print">@media print{@page{size:1280px 720px;margin:0}' +
     "html,body{height:auto!important;overflow:visible!important}" +
     "html[data-leo-deck] .deck{height:auto!important;overflow:visible!important;display:block!important;padding:0!important}" +
     "html[data-leo-deck] .slide.tpl{position:relative!important;inset:auto!important;width:1280px!important;height:720px!important;" +
     "aspect-ratio:auto!important;opacity:1!important;visibility:visible!important;border-radius:0!important;--k:1!important;" +
-    "transition:none!important;break-after:page;page-break-after:always}" +
+    "overflow:hidden!important;transition:none!important;break-inside:avoid;break-after:page;page-break-after:always}" +
     "html[data-leo-deck] .slide.tpl:last-child{break-after:auto;page-break-after:auto}" +
+    "html[data-leo-deck] .slide.tpl .tpl-stage{position:relative!important;left:0!important;top:0!important;transform:none!important}" +
+    "html[data-leo-deck] .leo-print-baked{-webkit-mask-image:none!important;mask-image:none!important}" +
     ".leo-present-ui,.leo-edit-chrome{display:none!important}" +
-    "*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}}</style>" +
-    "<script id=\"leo-deck-print-js\">window.addEventListener('message',function(e){var d=e&&e.data;" +
-    "if(d&&d.type==='leo-print'){try{window.focus();window.print();}catch(_){}}});</script>";
+    "*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}}</style>";
+
+  function deckPrintMain() {
+    var baked = [];
+    function parseMask(s) {
+      var m = /linear-gradient\(\s*to (left|right|top|bottom)\s*,(.*)\)\s*$/i.exec(String(s || ""));
+      if (!m) return null;
+      var stops = [];
+      var re = /(rgba?\([^)]*\)|#[0-9a-f]{3,8}|transparent|black)\s+(-?\d+(?:\.\d+)?)%/gi;
+      var x;
+      while ((x = re.exec(m[2]))) {
+        var c = x[1].toLowerCase();
+        var a = c === "transparent" ? 0 : 1;
+        var ma = /^rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\s*\)$/.exec(c);
+        if (ma) a = parseFloat(ma[1]);
+        stops.push([Math.max(0, Math.min(1, parseFloat(x[2]) / 100)), a]);
+      }
+      return stops.length ? { dir: m[1].toLowerCase(), stops: stops } : null;
+    }
+    function bake(box) {
+      if (box.classList.contains("leo-print-baked")) return null;
+      var img = box.querySelector("img");
+      if (!img || !img.complete || !img.naturalWidth) return null;
+      var cs = getComputedStyle(box);
+      var mask = parseMask(cs.webkitMaskImage || cs.maskImage);
+      if (!mask) return null;
+      var w = box.offsetWidth;
+      var h = box.offsetHeight;
+      if (!w || !h) return null;
+      var dpr = Math.min(2, 2560 / w);
+      var cw = Math.round(w * dpr);
+      var ch = Math.round(h * dpr);
+      var canvas = document.createElement("canvas");
+      canvas.width = cw;
+      canvas.height = ch;
+      var ctx = canvas.getContext("2d");
+      var iw = img.naturalWidth;
+      var ih = img.naturalHeight;
+      var sw = iw;
+      var sh = ih;
+      if (iw / ih > cw / ch) sw = ih * (cw / ch);
+      else sh = iw / (cw / ch);
+      ctx.drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, 0, 0, cw, ch);
+      // Картинка отражена через CSS (scaleX(-1)) — маска задана для блока, отражаем и её.
+      var dir = mask.dir;
+      if (/^matrix\(-1/.test(getComputedStyle(img).transform || "")) {
+        dir = dir === "left" ? "right" : dir === "right" ? "left" : dir;
+      }
+      var g =
+        dir === "left" ? ctx.createLinearGradient(cw, 0, 0, 0)
+        : dir === "right" ? ctx.createLinearGradient(0, 0, cw, 0)
+        : dir === "top" ? ctx.createLinearGradient(0, ch, 0, 0)
+        : ctx.createLinearGradient(0, 0, 0, ch);
+      mask.stops.forEach(function (st) {
+        g.addColorStop(st[0], "rgba(0,0,0," + st[1] + ")");
+      });
+      ctx.globalCompositeOperation = "destination-in";
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, cw, ch);
+      var url;
+      try {
+        url = canvas.toDataURL("image/png");
+      } catch (_) {
+        return null;
+      }
+      baked.push({ img: img, box: box, src: img.getAttribute("src") });
+      img.setAttribute("src", url);
+      box.classList.add("leo-print-baked");
+      return img.decode ? img.decode().catch(function () {}) : null;
+    }
+    function prepare() {
+      var waits = [];
+      document.querySelectorAll(".dec.dec-photo").forEach(function (box) {
+        try {
+          var p = bake(box);
+          if (p) waits.push(p);
+        } catch (_) {}
+      });
+      return Promise.all(waits);
+    }
+    function restore() {
+      baked.splice(0).forEach(function (b) {
+        b.img.setAttribute("src", b.src);
+        b.box.classList.remove("leo-print-baked");
+      });
+    }
+    window.addEventListener("beforeprint", prepare);
+    window.addEventListener("afterprint", restore);
+    window.addEventListener("message", function (e) {
+      var d = e && e.data;
+      if (!d || d.type !== "leo-print") return;
+      prepare().then(function () {
+        try {
+          window.focus();
+          window.print();
+        } catch (_) {}
+      });
+    });
+  }
+
+  var DECK_PRINT_TAG =
+    DECK_PRINT_STYLE + '<script id="leo-deck-print-js">(' + deckPrintMain.toString() + ")();</script>";
+  // leo-deck-print:end
 
   function injectPicker(html) {
     var raw = String(html || "");
