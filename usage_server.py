@@ -7406,6 +7406,7 @@ async def miniapp_gpt_chat(
         sync_task_google=_sync_task_google,
         notify_task_assignee=_notify_task_assignee,
     )
+    gcal_tools.seed_quoted_tasks(gcal_ctx, [body.quote or "", *(body.quotes or [])])
     run_model = model or sanitize_openrouter_model_id(str(agent.get("model") or ""))
     if (
         model

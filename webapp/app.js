@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261018-chipfix2";
+  var WEBAPP_BUILD = "20261019-focuslist";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -16656,7 +16656,8 @@
         var got = await apiFetch("/calendar/tasks/" + encodeURIComponent(String(p.task_id)), { method: "GET" });
         if (got && got.task && got.task.event) openCalendarEntry(got.task.event);
       } else if (act === "open_tasks") {
-        askAboutFocus(it);
+        if (it.tasks && it.tasks.length) openFocusTaskList(it);
+        else askAboutFocus(it);
       } else if (act === "event_note" || act === "event_dictate") {
         if (it.event) await eventCreateNote(it.event, act === "event_dictate");
         if (act === "event_dictate") dismissFocus(it, true);
@@ -16691,8 +16692,85 @@
     }
   }
 
-  // «✓ Уже есть…» на карточке с несколькими задачами: отметить галочками, что уже заведено в другом сервисе.
-  function openFocusDonePicker(it) {
+  // «Список» на карточке просроченных задач: отметить галочками выполненные.
+  function openFocusTaskList(it) {
+    var ov = focusDoneOverlay("Просроченные задачи");
+    var tasks = it.tasks || [];
+    var body = ov.querySelector(".focus-done-body");
+    body.innerHTML = "";
+    var sub = document.createElement("p");
+    sub.className = "focus-done-sub";
+    sub.textContent =
+      tasks.length + " " + pluralRu(tasks.length, "задача", "задачи", "задач") + ". Отметьте выполненные.";
+    body.appendChild(sub);
+    var list = document.createElement("div");
+    list.className = "focus-done-list";
+    var boxes = tasks.map(function (t) {
+      var row = document.createElement("label");
+      row.className = "focus-done-row";
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      var tx = document.createElement("span");
+      tx.className = "focus-done-text";
+      tx.textContent = t.text || "";
+      if (t.meta) {
+        var meta = document.createElement("small");
+        meta.textContent = t.meta;
+        tx.appendChild(meta);
+      }
+      row.appendChild(cb);
+      row.appendChild(tx);
+      list.appendChild(row);
+      return cb;
+    });
+    body.appendChild(list);
+    var save = document.createElement("button");
+    save.type = "button";
+    save.className = "focus-card-btn is-primary focus-done-save";
+    body.appendChild(save);
+    function picked() {
+      return tasks.filter(function (_, i) {
+        return boxes[i].checked;
+      });
+    }
+    function sync() {
+      var n = picked().length;
+      save.textContent = n ? "Выполнено · " + n : "Отметьте задачи";
+      save.disabled = !n;
+    }
+    boxes.forEach(function (cb) {
+      cb.addEventListener("change", sync);
+    });
+    save.addEventListener("click", async function () {
+      var chosen = picked();
+      if (!chosen.length) return;
+      save.disabled = true;
+      save.textContent = "Сохраняю…";
+      var done = 0;
+      for (var i = 0; i < chosen.length; i++) {
+        try {
+          await apiFetch("/calendar/tasks/" + encodeURIComponent(String(chosen[i].id)), {
+            method: "PATCH",
+            body: JSON.stringify({ done: true }),
+          });
+          done++;
+        } catch (e) {
+          showNoteToast((e && e.message) || "Не удалось отметить задачу");
+        }
+      }
+      closeFocusDonePicker();
+      if (done) {
+        showNoteToast("Выполнено: " + done);
+        await loadFocus(true);
+        if (!focusPanelOpen) refreshDiscussFeedNow();
+        loadActual({ silent: true });
+      }
+    });
+    sync();
+    showFocusDoneOverlay(ov);
+  }
+
+  function focusDoneOverlay(title) {
     var ov = document.getElementById("focus-done-overlay");
     if (!ov) {
       ov = document.createElement("div");
@@ -16708,6 +16786,21 @@
         if (e.target === ov || e.target.closest('[data-fd="close"]')) closeFocusDonePicker();
       });
     }
+    ov.querySelector(".modal-title").textContent = title;
+    ov.querySelector('[role="dialog"]').setAttribute("aria-label", title);
+    return ov;
+  }
+
+  function showFocusDoneOverlay(ov) {
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
+  }
+
+  // «✓ Уже есть…» на карточке с несколькими задачами: отметить галочками, что уже заведено в другом сервисе.
+  function openFocusDonePicker(it) {
+    var ov = focusDoneOverlay("Что уже заведено?");
     var items = it.items || [];
     var body = ov.querySelector(".focus-done-body");
     body.innerHTML = "";
@@ -16795,10 +16888,7 @@
       showNoteToast("Отмечено как заведённое: " + chosen.length);
     });
     sync();
-    ov.classList.remove("hidden");
-    ov.setAttribute("aria-hidden", "false");
-    onModalSheetOpen();
-    syncAppOverlay();
+    showFocusDoneOverlay(ov);
   }
 
   function closeFocusDonePicker() {

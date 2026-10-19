@@ -257,6 +257,16 @@ def rule_overdue(tasks: list[dict[str, Any]], now: datetime, tz: Any, uid: str) 
             {"label": "Перенести на завтра", "act": "postpone", "primary": True, "payload": {"task_ids": ids}},
             {"label": "Список", "act": "open_tasks", "payload": {"task_ids": ids}},
         ]
+    def due(t: dict[str, Any]) -> str:
+        start = _parse(t.get("start_at"))
+        return f"срок {_day(start, tz, now)}" if start else ""
+
+    # Для «Списка» (отметить выполненные) и для ассистента: id и сроки, чтобы он показал карточки всех задач,
+    # а не искал их наугад по названиям.
+    task_rows = [
+        {"id": int(t["id"]), "text": str(t.get("title") or "Задача"), "meta": " · ".join(x for x in (who(t), due(t)) if x)}
+        for t in late
+    ]
     return [
         {
             "key": _key("overdue", ",".join(str(i) for i in ids)),
@@ -265,7 +275,8 @@ def rule_overdue(tasks: list[dict[str, Any]], now: datetime, tz: Any, uid: str) 
             "urgency": 3,
             "title": title,
             "source": src,
-            "ask": title + ". " + "; ".join(f"«{t.get('title')}» — {who(t)}" for t in late[:8]),
+            "ask": title + ". " + "; ".join(f"«{r['text']}» — {r['meta']} (task id {r['id']})" for r in task_rows[:20]),
+            "tasks": task_rows,
             "actions": actions,
         }
     ]

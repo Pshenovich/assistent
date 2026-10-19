@@ -22,6 +22,7 @@ from typing import Any, Callable, Optional
 
 MAX_RANGE_DAYS = 62
 MAX_EVENTS_OUT = 120
+MAX_CARDS = 20
 
 
 # ---------------------------------------------------------------- журнал действий
@@ -250,7 +251,8 @@ SYSTEM_ADDON = """У тебя есть доступ к календарю пол
 - id встреч для изменения бери из calendar_events, не придумывай.
 - Участников указывай именами из контактов; если не уверен — contacts_find.
 - У встреч бывают материалы (транскрипции с саммари, заметки) — в calendar_events это поле materials. Что было/решили на встрече — meeting_materials; что решали с человеком, что он обещал/не сделал, подготовка к встрече с ним — person_history. Отвечай по материалам, называй встречу и дату.
-- Когда перечисляешь встречи/задачи/напоминания — вызови show_calendar_cards с их id (до 10): под ответом появятся карточки, которые можно открыть. Текстом дай короткий итог, без длинного списка.
+- Когда перечисляешь встречи/задачи/напоминания — вызови show_calendar_cards с id ВСЕХ перечисляемых (до 20): под ответом появятся карточки, которые можно открыть. Текстом дай короткий итог, без длинного списка.
+- Если в контексте уже есть id задач («task id N», например из карточки Фокуса) — передай их все в show_calendar_cards, не ищи задачи заново и не ограничивайся одной.
 - Когда подбираешь время встречи — найди окна (calendar_free_slots) и вызови offer_slots с 3–6 лучшими вариантами (и участниками): пользователь выберет карточку, встреча создастся сама.
 - После действий коротко напиши, что сделал (время в формате «чт 16 окт, 15:00–15:30»). Кнопки «Отменить»/«Удалить» пользователь увидит сам под ответом."""
 
@@ -1139,7 +1141,7 @@ def _card_for(ctx: GptCalendarContext, item: dict[str, Any]) -> tuple[str, str, 
 def tool_show_calendar_cards(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     ctx.cards_shown = True
     shown = 0
-    for item in (args.get("items") or [])[:12]:
+    for item in (args.get("items") or [])[:MAX_CARDS]:
         if not isinstance(item, dict):
             continue
         try:
@@ -1202,6 +1204,17 @@ def _pick_slots(ctx: GptCalendarContext, starts: list[str], answer: str, limit: 
     return [parsed[int(i * step)][1] for i in range(limit)]
 
 
+_QUOTED_TASK_RE = re.compile(r"«([^»]+)»[^«;]*?\(task id (\d+)\)")
+
+
+def seed_quoted_tasks(ctx: GptCalendarContext, quotes: list[str]) -> None:
+    """Задачи из цитаты (карточка Фокуса: «Название» … (task id N)) — кандидаты в автокарточки,
+    даже если модель не стала искать их через calendar_events."""
+    for q in quotes:
+        for title, oid in _QUOTED_TASK_RE.findall(str(q or "")):
+            ctx.seen_items.append({"type": "task", "id": oid, "title": title})
+
+
 def finalize_auto_cards(ctx: GptCalendarContext, answer: str) -> None:
     """Если модель посмотрела календарь/слоты, но не показала карточки — показать их самим."""
     text = str(answer or "")
@@ -1220,11 +1233,11 @@ def finalize_auto_cards(ctx: GptCalendarContext, answer: str) -> None:
             seen.setdefault(f"{it.get('type')}:{it.get('id')}", it)
         items = list(seen.values())
         named = [it for it in items if str(it.get("title") or "").strip() and str(it.get("title")).strip().lower() in low]
-        chosen = named or (items if len(items) <= 10 else [])
+        chosen = named or (items if len(items) <= MAX_CARDS else [])
         if chosen:
             tool_show_calendar_cards(
                 ctx,
-                {"items": [{"type": it["type"], "id": it["id"], "calendar_id": it.get("calendar_id")} for it in chosen[:10]]},
+                {"items": [{"type": it["type"], "id": it["id"], "calendar_id": it.get("calendar_id")} for it in chosen[:MAX_CARDS]]},
             )
 
 

@@ -39,6 +39,25 @@ class RulesTests(unittest.TestCase):
         many = proactive.rule_overdue([t1, t2], NOW, TZ, "1")
         self.assertEqual(many[0]["title"], "2 задачи просрочены")
         self.assertIn("Давид", many[0]["source"])
+        # «Список» открывает чек-лист: в карточке все задачи с id, в тексте для ассистента — их id.
+        self.assertEqual([t["id"] for t in many[0]["tasks"]], [2, 1])
+        self.assertIn("Давид", many[0]["tasks"][0]["meta"])
+        self.assertIn("(task id 1)", many[0]["ask"])
+        self.assertIn("(task id 2)", many[0]["ask"])
+
+    def test_quoted_focus_tasks_become_auto_cards(self) -> None:
+        from assistant.services import gpt_calendar_tools as gcal
+
+        late = [
+            {"id": i, "title": f"Задача {i}", "start_at": (NOW - timedelta(days=i)).isoformat(),
+             "end_at": (NOW - timedelta(days=i)).isoformat(), "done": False}
+            for i in range(1, 6)
+        ]
+        card = proactive.rule_overdue(late, NOW, TZ, "1")[0]
+        ctx = gcal.GptCalendarContext(uid=1)
+        gcal.seed_quoted_tasks(ctx, ["Фокус: " + card["ask"]])
+        self.assertEqual(sorted(int(x["id"]) for x in ctx.seen_items), [1, 2, 3, 4, 5])
+        self.assertEqual(ctx.seen_items[0]["title"], "Задача 5")
 
     def test_prep_only_soon_with_people(self) -> None:
         events = [
