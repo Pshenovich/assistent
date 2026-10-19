@@ -93,12 +93,84 @@
       }
       var frame = document.createElement("iframe");
       frame.className = "share-web-canvas-frame";
-      frame.setAttribute("sandbox", "allow-scripts");
+      // allow-modals — чтобы печать (PDF) из презентации работала в песочнице.
+      frame.setAttribute("sandbox", "allow-scripts allow-modals");
+      frame.setAttribute("allow", "fullscreen");
       frame.setAttribute("title", String(c.title || "Презентация " + (i + 1)));
-      frame.srcdoc = String(c.html);
+      frame.srcdoc = withDeckPrint(String(c.html));
       block.appendChild(frame);
+      block.appendChild(makeCanvasTools(block, frame));
       host.appendChild(block);
     });
+  }
+
+  // Печать всех слайдов по одному на страницу 16:9 (из неё — «Сохранить как PDF»).
+  var DECK_PRINT_TAG =
+    '<style id="leo-deck-print">@media print{@page{size:1280px 720px;margin:0}' +
+    "html,body{height:auto!important;overflow:visible!important}" +
+    "html[data-leo-deck] .deck{height:auto!important;overflow:visible!important;display:block!important;padding:0!important}" +
+    "html[data-leo-deck] .slide.tpl{position:relative!important;inset:auto!important;width:1280px!important;height:720px!important;" +
+    "aspect-ratio:auto!important;opacity:1!important;visibility:visible!important;border-radius:0!important;--k:1!important;" +
+    "transition:none!important;break-after:page;page-break-after:always}" +
+    "html[data-leo-deck] .slide.tpl:last-child{break-after:auto;page-break-after:auto}" +
+    ".leo-present-ui,.leo-edit-chrome{display:none!important}" +
+    "*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}}</style>" +
+    "<script id=\"leo-deck-print-js\">window.addEventListener('message',function(e){var d=e&&e.data;" +
+    "if(d&&d.type==='leo-print'){try{window.focus();window.print();}catch(_){}}});</script>";
+
+  function withDeckPrint(html) {
+    if (/id="leo-deck-print"/.test(html)) return html;
+    if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, DECK_PRINT_TAG + "</body>");
+    return html + DECK_PRINT_TAG;
+  }
+
+  function makeCanvasTools(block, frame) {
+    var bar = document.createElement("div");
+    bar.className = "share-web-canvas-tools";
+    function btn(label, onClick) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "share-web-canvas-tool";
+      b.textContent = label;
+      b.addEventListener("click", function (e) {
+        e.preventDefault();
+        onClick(b);
+      });
+      bar.appendChild(b);
+      return b;
+    }
+    var fsBtn = btn("На весь экран", function () {
+      var doc = document;
+      var fsEl = doc.fullscreenElement || doc.webkitFullscreenElement;
+      if (fsEl || block.classList.contains("is-expanded")) {
+        block.classList.remove("is-expanded");
+        if (fsEl) (doc.exitFullscreen || doc.webkitExitFullscreen).call(doc);
+        return;
+      }
+      var req = block.requestFullscreen || block.webkitRequestFullscreen;
+      var p = null;
+      try {
+        p = req ? req.call(block) : null;
+      } catch (_) {}
+      // iPhone не умеет fullscreen для элементов — растягиваем блок на весь вьюпорт.
+      if (!req) block.classList.add("is-expanded");
+      else if (p && p.catch) p.catch(function () { block.classList.add("is-expanded"); });
+    });
+    function syncFs() {
+      var on =
+        (document.fullscreenElement || document.webkitFullscreenElement) === block ||
+        block.classList.contains("is-expanded");
+      fsBtn.textContent = on ? "Свернуть" : "На весь экран";
+    }
+    document.addEventListener("fullscreenchange", syncFs);
+    document.addEventListener("webkitfullscreenchange", syncFs);
+    new MutationObserver(syncFs).observe(block, { attributes: true, attributeFilter: ["class"] });
+    btn("PDF", function () {
+      try {
+        frame.contentWindow.postMessage({ type: "leo-print" }, "*");
+      } catch (_) {}
+    });
+    return bar;
   }
 
   function headingLevel(el) {

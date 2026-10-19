@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261019-focuslist";
+  var WEBAPP_BUILD = "20261019-bugfix9";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261018-orbita2"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261019-bugfix9"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -6358,6 +6358,12 @@
   }
 
   function ptrScrollerAtTop(scroller) {
+    // На телефоне main не ограничен по высоте и крутится окно, а main.scrollTop всегда 0.
+    // Без проверки окна жест «вверх» посреди страницы принимался за pull-to-refresh:
+    // preventDefault гасил прокрутку, а индикатор сверху сдвигал контент — экран дёргался.
+    var se = document.scrollingElement || document.documentElement;
+    var winTop = Math.max(window.scrollY || window.pageYOffset || 0, (se && se.scrollTop) || 0);
+    if (winTop > 0) return false;
     if (!scroller) return true;
     return (scroller.scrollTop || 0) <= 0;
   }
@@ -11840,6 +11846,34 @@
 
   var noteEditorBgLock = null;
   var noteCaretScrollTimer = null;
+  // Клик по чекбоксу пункта меняет документ, но не курсор: автоскролл к курсору (он часто
+  // в начале заметки) уносил открытую транскрипцию/заметку наверх.
+  var noteCheckboxToggleAt = 0;
+  document.addEventListener(
+    "pointerdown",
+    function (e) {
+      var t = e.target;
+      if (!t || !t.closest || !t.closest(".ProseMirror")) return;
+      if (t.closest("li[data-type='taskItem'] > label, input[type='checkbox']")) {
+        noteCheckboxToggleAt = Date.now();
+      }
+    },
+    true
+  );
+  document.addEventListener(
+    "change",
+    function (e) {
+      var t = e.target;
+      if (t && t.type === "checkbox" && t.closest && t.closest(".ProseMirror")) {
+        noteCheckboxToggleAt = Date.now();
+      }
+    },
+    true
+  );
+
+  function noteCheckboxJustToggled() {
+    return Date.now() - noteCheckboxToggleAt < 800;
+  }
   var noteEditorTouchGuardBound = false;
   var noteEditorKbWasOpen = false;
 
@@ -12114,8 +12148,9 @@
     if (noteSheetState && noteSheetState.skipCaretScroll) return;
     if (noteSheetState && noteSheetState.focus === "right") return;
     if (noteEditorHasRangeSelection()) return;
+    if (noteCheckboxJustToggled()) return;
     var run = function () {
-      if (noteEditorHasRangeSelection()) return;
+      if (noteEditorHasRangeSelection() || noteCheckboxJustToggled()) return;
       var scrollEl = getNoteEditorScrollEl();
       if (!scrollEl) return;
       syncNoteEditorEndPad();
@@ -13501,6 +13536,80 @@
     host.appendChild(hint);
   }
 
+  // Подсказки контактов в модалках: карточка модалки (overflow: hidden) и её прокручиваемое тело
+  // обрезали список. Пока список виден — он живёт в body с position: fixed у поля ввода
+  // (вниз, а если места мало — вверх). Поле пропало из DOM (модалку закрыли) — убираем и список.
+  function floatSuggestMenu(menuEl, anchorEl) {
+    if (!menuEl || !anchorEl || menuEl._floatAnchor) return;
+    menuEl._floatAnchor = anchorEl;
+    var raf = 0;
+    function place() {
+      raf = 0;
+      if (!anchorEl.isConnected) {
+        if (menuEl.parentNode) menuEl.parentNode.removeChild(menuEl);
+        return;
+      }
+      if (menuEl.classList.contains("hidden")) return;
+      var r = anchorEl.getBoundingClientRect();
+      if (!r.width && !r.height) {
+        // Модалку скрыли (поле без размеров) — прячем список и останавливаем цикл.
+        menuEl.classList.add("hidden");
+        return;
+      } else {
+        var vv = window.visualViewport;
+        var vh = vv ? vv.height + (vv.offsetTop || 0) : window.innerHeight;
+        var gap = 4;
+        var below = vh - r.bottom - gap - 8;
+        var above = r.top - gap - 8;
+        var want = Math.min(menuEl.scrollHeight || 0, 14 * 16);
+        var up = below < Math.min(want, 160) && above > below;
+        var maxH = Math.max(96, Math.min(14 * 16, up ? above : below));
+        menuEl.style.left = Math.round(r.left) + "px";
+        menuEl.style.width = Math.round(r.width) + "px";
+        menuEl.style.maxHeight = Math.round(maxH) + "px";
+        if (up) {
+          menuEl.style.top = "auto";
+          menuEl.style.bottom = Math.round(window.innerHeight - r.top + gap) + "px";
+        } else {
+          menuEl.style.bottom = "auto";
+          menuEl.style.top = Math.round(r.bottom + gap) + "px";
+        }
+      }
+      raf = requestAnimationFrame(place);
+    }
+    function sync() {
+      if (menuEl.classList.contains("hidden") || !anchorEl.isConnected) {
+        if (!anchorEl.isConnected && menuEl.parentNode) menuEl.parentNode.removeChild(menuEl);
+        return;
+      }
+      if (menuEl.parentNode !== document.body) {
+        if (menuEl.id) {
+          var stale = document.getElementById(menuEl.id);
+          if (stale && stale !== menuEl && stale.parentNode === document.body) stale.remove();
+        }
+        document.body.appendChild(menuEl);
+      }
+      // classList.add всегда переписывает атрибут — без проверки observer зациклится.
+      if (!menuEl.classList.contains("meeting-attendee-suggest--floating")) {
+        menuEl.classList.add("meeting-attendee-suggest--floating");
+      }
+      if (!raf) place();
+    }
+    new MutationObserver(sync).observe(menuEl, {
+      attributes: true,
+      attributeFilter: ["class"],
+      childList: true,
+    });
+    sync();
+  }
+
+  // Ответ участника на приглашение (из Google Календаря: и из Орбиты, и из Telegram «Приду»).
+  var MEETING_RSVP_MARKS = {
+    accepted: { mark: "✓", label: "Придёт", cls: "rsvp-yes" },
+    tentative: { mark: "?", label: "Возможно", cls: "rsvp-maybe" },
+    declined: { mark: "✕", label: "Не придёт", cls: "rsvp-no" },
+  };
+
   function mountMeetingAttendees(host, initial) {
     var items = [];
     var contacts = [];
@@ -13524,6 +13633,7 @@
         },
       };
     }
+    floatSuggestMenu(suggestEl, inputEl);
 
     function emails() {
       return items.map(function (it) {
@@ -13554,6 +13664,15 @@
         text.className = "meeting-attendee-chip-text";
         text.textContent = attendeeChipLabel(it);
         chip.appendChild(text);
+        var rsvp = MEETING_RSVP_MARKS[String(it.response_status || "")];
+        if (rsvp) {
+          var mark = document.createElement("span");
+          mark.className = "meeting-attendee-chip-rsvp " + rsvp.cls;
+          mark.textContent = rsvp.mark;
+          mark.title = rsvp.label;
+          mark.setAttribute("aria-label", rsvp.label);
+          chip.appendChild(mark);
+        }
         var del = document.createElement("button");
         del.type = "button";
         del.className = "meeting-attendee-chip-remove";
@@ -13725,6 +13844,7 @@
           .trim()
           .replace(/^@/, ""),
         telegram_user_id: (raw && raw.telegram_user_id) || null,
+        response_status: String((raw && raw.response_status) || ""),
       });
     });
     paintChips();
@@ -13856,6 +13976,7 @@
     add.appendChild(suggest);
     host.appendChild(chips);
     host.appendChild(add);
+    floatSuggestMenu(suggest, input);
 
     function paint() {
       chips.innerHTML = "";
@@ -15012,12 +15133,14 @@
     });
     if (linkRow) linkRow.appendChild(telemostBtn);
     else fields.appendChild(telemostBtn);
-    if (meetingNeedsRsvp(ev)) {
+    var selfAnswer = meetingSelfAnswer(ev);
+    if (meetingNeedsRsvp(ev) || selfAnswer) {
       var rsvpHost = document.createElement("div");
       rsvpHost.className = "event-sheet-group event-sheet-rsvp-group";
       var rsvpLab = document.createElement("div");
       rsvpLab.className = "event-sheet-row-label";
-      rsvpLab.textContent = "Вы пойдёте?";
+      // Уже ответили (в Орбите или кнопкой в Telegram) — показываем ответ, его можно сменить.
+      rsvpLab.textContent = selfAnswer ? "Ваш ответ: " + selfAnswer.label : "Вы пойдёте?";
       rsvpHost.appendChild(rsvpLab);
       rsvpHost.appendChild(renderMeetingRsvpRow(ev));
       var titleEl = document.getElementById("m-ev-sum");
@@ -17108,6 +17231,13 @@
     return String(ev.self_response_status || "").toLowerCase() === "needsaction";
   }
 
+  function meetingSelfAnswer(ev) {
+    if (!ev || ev.is_organizer !== false) return null;
+    var st = String(ev.self_response_status || "").toLowerCase();
+    var labels = { accepted: "Приду", tentative: "Возможно", declined: "Не приду" };
+    return labels[st] ? { status: st, label: labels[st] } : null;
+  }
+
   function meetingDisplayTitle(ev, opts) {
     var s = String((ev && ev.summary) || "")
       .replace(/^\s*приглашение:\s*/i, "")
@@ -17129,6 +17259,11 @@
       btn.type = "button";
       btn.className = "meeting-rsvp-btn " + act.cls;
       btn.textContent = act.label;
+      var cur = String((ev && ev.self_response_status) || "").toLowerCase();
+      if (cur === act.status) {
+        btn.classList.add("is-current");
+        btn.setAttribute("aria-pressed", "true");
+      }
       btn.addEventListener("click", function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -35878,6 +36013,7 @@
     var suggest = document.getElementById("note-share-member-suggest");
     if (!input || !suggest || input._bound) return;
     input._bound = true;
+    floatSuggestMenu(suggest, input);
     input.addEventListener("input", function () {
       shareMemberSuggestIndex = 0;
       paintShareMemberSuggest();
@@ -39188,14 +39324,31 @@
           });
       }
       if (tag === "span" && cls === "note-task-text") return true;
+      if (tag === "span" && SUMMARY_CHIP_CLASSES[cls]) return true;
       if (tag === "img" && cls === "note-editor-image") return true;
       return false;
     }
+    // Чипы задач и ссылок на заметки: без data-атрибута редактор читает их как обычный текст,
+    // и при открытии транскрипции/саммари чип «Задача» пропадал (а автосохранение закрепляло потерю).
+    var SUMMARY_CHIP_CLASSES = {
+      "note-task-chip": true,
+      "note-task-chip-icon": true,
+      "note-task-chip-label": true,
+      "note-ref-chip": true,
+      "note-ref-chip-icon": true,
+      "note-ref-chip-label": true,
+    };
     function allowedAttr(tag, name, val) {
       if (tag === "input" && name === "type" && val === "checkbox") return true;
       if (tag === "input" && name === "checked") return true;
       if (tag === "input" && name === "aria-label") return true;
       if (tag === "li" && name === "checked") return true;
+      if (tag === "span" && /^data-leo-(task|note|sheet)-id$/.test(name)) {
+        return /^[A-Za-z0-9_-]{1,64}$/.test(String(val || ""));
+      }
+      if (tag === "span" && name === "contenteditable" && val === "false") return true;
+      if (tag === "span" && name === "aria-hidden" && val === "true") return true;
+      if (tag === "ol" && name === "start") return /^\d{1,5}$/.test(String(val || ""));
       if (name === "class" && allowedClass(tag, val)) return true;
       return false;
     }

@@ -176,6 +176,20 @@ class NoteSheetsStoreTests(unittest.TestCase):
         only_web = sheets.list_share_canvases(note, [str(web["id"])])
         self.assertEqual(len(only_web), 1)
 
+    def test_share_canvas_keeps_full_large_deck(self) -> None:
+        # Дека с картинками больше 200k: раньше её обрезали — пропадали слайды и скрипт показа.
+        note = notes_store.create_note(10, "Дека", "")
+        slides = "".join(f'<section class="slide tpl">слайд {i}</section>' for i in range(40))
+        big = "<!DOCTYPE html><html><body><main class=\"deck\">" + slides + "</main>"
+        big += '<img src="data:image/jpeg;base64,' + "A" * 400_000 + '">'
+        big += '<script id="leo-deck-present">x</script></body></html>'
+        web = sheets.create_sheet(note, "Презентация", body=big, kind="web")
+        note = notes_store.get_note(10, note["id"])
+        assert note is not None
+        out = sheets.list_share_canvases(note, [str(web["id"])])
+        self.assertEqual(out[0]["html"], big)
+        self.assertIn("leo-deck-present", out[0]["html"])
+
 
 if __name__ == "__main__":
     unittest.main()

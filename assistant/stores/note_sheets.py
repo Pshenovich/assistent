@@ -252,7 +252,8 @@ def list_share_canvases(
             {
                 "id": str(row.get("id")),
                 "title": str(row.get("title") or "").strip() or "Презентация",
-                "html": html_doc[:200000],
+                # Целиком: обрезка срезала остальные слайды и скрипт показа деки.
+                "html": html_doc,
                 "kind": SHEET_KIND_WEB,
             }
         )

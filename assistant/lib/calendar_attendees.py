@@ -174,7 +174,31 @@ def _contact_name_fields(contact: dict[str, Any]) -> list[str]:
     )
     if tg:
         fields.append(f"@{tg}")
+    fields.extend(_orbita_profile_names(contact, tg))
     return [f for f in fields if str(f).strip()]
+
+
+def _orbita_profile_names(contact: dict[str, Any], tg: str) -> list[str]:
+    """Имя из профиля Орбиты: контакт, добавленный только по нику (@pshenovich), ищется и по имени (Вова)."""
+    try:
+        uid = int(contact.get("telegram_user_id") or 0)
+    except (TypeError, ValueError):
+        uid = 0
+    try:
+        if not uid and tg:
+            uid = int(telegram_registry.lookup_user_id(tg) or 0)
+        if not uid:
+            return []
+        from assistant.stores import note_members
+
+        prof = note_members.get_profile(uid) or {}
+    except Exception as e:  # noqa: BLE001 — профиль лишь подсказка для поиска
+        print(f"[calendar_attendees] profile lookup failed uid={uid} err={e!r}")
+        return []
+    fn = str(prof.get("first_name") or "").strip()
+    ln = str(prof.get("last_name") or "").strip()
+    full = " ".join(x for x in (fn, ln) if x)
+    return [x for x in dict.fromkeys((full, fn)) if x]
 
 
 def _token_match_score(needle: str, candidate: str) -> int:
@@ -260,6 +284,25 @@ def find_contact_by_telegram_user(
     return None
 
 
+def _orbita_account_email(contact: dict[str, Any]) -> str:
+    """Контакт без почты, но он пользователь Орбиты с Google Календарём — почта его аккаунта."""
+    try:
+        uid = int(contact.get("telegram_user_id") or 0)
+        tg = normalize_telegram_username(
+            str(contact.get("telegram_username") or contact.get("tg_username") or "")
+        )
+        if not uid and tg:
+            uid = int(telegram_registry.lookup_user_id(tg) or 0)
+        if not uid:
+            return ""
+        from assistant.lib.calendar_user_lookup import account_email_for_user
+
+        return str(account_email_for_user(uid) or "").strip().lower()
+    except Exception as e:  # noqa: BLE001
+        print(f"[calendar_attendees] account email failed err={e!r}")
+        return ""
+
+
 def resolve_attendee_names(
     user_id: int,
     names: list[str],
@@ -280,9 +323,9 @@ def resolve_attendee_names(
         if not hit:
             missing.append(name)
             continue
-        em = str(hit.get("email") or "").strip().lower()
+        em = str(hit.get("email") or "").strip().lower() or _orbita_account_email(hit)
         if not em:
-            # Контакт добавлен по нику без почты — пригласить в календарь нельзя.
+            # Контакт добавлен по нику без почты и без Google в Орбите — пригласить в календарь нельзя.
             missing.append(name)
             continue
         if em in seen_emails:

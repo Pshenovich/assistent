@@ -95,3 +95,25 @@ def test_attaches_contact_telegram_user_id() -> None:
     assert rows[0]["telegram_user_id"] == 12345
     assert rows[0]["name"] == "Артём"
     assert rows[0]["telegram_username"] == "artyawn"
+
+
+def test_exposes_attendee_response_status() -> None:
+    # «Приду» из Telegram пишет responseStatus в Google — Орбита должна его показать.
+    rows = _serialize_event_attendees(
+        {
+            "organizer": {"email": "ulya@example.com", "displayName": "Ульяна"},
+            "attendees": [
+                {"email": "ulya@example.com", "organizer": True, "responseStatus": "accepted"},
+                {"email": "vova@example.com", "responseStatus": "accepted"},
+                {"email": "olga@example.com", "responseStatus": "needsAction"},
+                {"email": "max@example.com", "responseStatus": "weird"},
+                {"email": "me@example.com", "self": True, "responseStatus": "declined"},
+            ],
+        }
+    )
+    by_email = {r["email"]: r for r in rows}
+    assert by_email["ulya@example.com"]["response_status"] == "accepted"
+    assert by_email["vova@example.com"]["response_status"] == "accepted"
+    assert by_email["olga@example.com"]["response_status"] == "needsAction"
+    assert "response_status" not in by_email["max@example.com"]
+    assert "me@example.com" not in by_email

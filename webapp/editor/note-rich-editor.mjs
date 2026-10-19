@@ -14,6 +14,7 @@ import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { CellSelection, cellAround, isInTable } from "@tiptap/pm/tables";
 import { trailingNode } from "@tiptap/pm/trailing-node";
+import { canJoin } from "@tiptap/pm/transform";
 
 /** Always keep a paragraph after non-paragraph blocks (table, image, …) so typing below works. */
 var TrailingParagraph = Extension.create({
@@ -1030,12 +1031,42 @@ const ListBackspace = Extension.create({
         const item = $from.node(-1);
         const name = item && item.type && item.type.name;
         if (name !== "listItem" && name !== "taskItem") return false;
-        if ($from.index(-1) === 0) return editor.commands.liftListItem(name);
+        if ($from.index(-1) === 0) {
+          // Пункт из середины нумерованного списка: lift режет список надвое, и нижняя часть
+          // начиналась заново с 1. Продолжаем нумерацию — как будто пункт просто убрали.
+          const list = $from.node(-2);
+          const itemIdx = $from.index(-2);
+          const nextStart =
+            list && list.type.name === "orderedList" && itemIdx < list.childCount - 1
+              ? (Number(list.attrs.start) || 1) + itemIdx
+              : 0;
+          if (!editor.commands.liftListItem(name)) return false;
+          if (nextStart > 1) continueOrderedListAfterCursor(editor, nextStart);
+          return true;
+        }
         return editor.commands.lift(name);
       },
     };
   },
 });
+
+function continueOrderedListAfterCursor(editor, start) {
+  const state = editor.state;
+  const $pos = state.selection.$from;
+  for (let d = $pos.depth; d > 0; d--) {
+    const parent = $pos.node(d - 1);
+    const idx = $pos.index(d - 1);
+    if (idx + 1 >= parent.childCount) continue;
+    const next = parent.child(idx + 1);
+    if (next.type.name !== "orderedList") return;
+    if ((Number(next.attrs.start) || 1) !== 1) return;
+    const nextPos = $pos.after(d);
+    editor.view.dispatch(
+      state.tr.setNodeMarkup(nextPos, undefined, Object.assign({}, next.attrs, { start: start }))
+    );
+    return;
+  }
+}
 
 // Второй Backspace: строка сразу после списка склеивается с концом последнего пункта
 // (а не превращается обратно в пункт списка).
@@ -1071,6 +1102,18 @@ const ListJoinBackspace = Extension.create({
         const para = $from.parent;
         const tr = state.tr.delete(paraStart, paraStart + para.nodeSize);
         if (para.content.size) tr.insert(end, para.content);
+        // Строка стояла между двумя одинаковыми списками (остаток от удалённого пункта) —
+        // склеиваем их обратно, иначе нумерация ниже так и останется отдельной (1, 2, 3…).
+        const joinPos = tr.mapping.map(paraStart);
+        const $join = tr.doc.resolve(joinPos);
+        if (
+          $join.nodeBefore &&
+          $join.nodeAfter &&
+          $join.nodeBefore.type === $join.nodeAfter.type &&
+          canJoin(tr.doc, joinPos)
+        ) {
+          tr.join(joinPos);
+        }
         tr.setSelection(state.selection.constructor.near(tr.doc.resolve(end)));
         editor.view.dispatch(tr.scrollIntoView());
         return true;
@@ -3024,7 +3067,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261018-orbita2",
+  assetVersion: "20261019-bugfix9",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,

@@ -1789,6 +1789,10 @@ html.cal-gesture-active .meetings-week-scroll {
   padding: 0.65rem 0.9rem 0.75rem;
 }
 
+.meeting-rsvp-btn.is-current {
+  box-shadow: inset 0 0 0 2px currentColor;
+}
+
 .event-sheet-rsvp-group .event-sheet-row-label {
   display: block;
   margin-bottom: 8px;
@@ -10386,6 +10390,16 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   background: rgba(52, 199, 89, 0.9);
 }
 
+.meeting-attendee-chip-rsvp {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.meeting-attendee-chip-rsvp.rsvp-yes { color: rgba(52, 199, 89, 0.95); }
+.meeting-attendee-chip-rsvp.rsvp-maybe { color: var(--text-secondary, #909499); }
+.meeting-attendee-chip-rsvp.rsvp-no { color: var(--danger); }
+
 .meeting-attendee-chip-remove {
   display: inline-flex;
   align-items: center;
@@ -10426,6 +10440,14 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 
 .meeting-attendee-suggest.hidden {
   display: none;
+}
+
+/* Вынесен в body (floatSuggestMenu) — над модалками, не обрезается карточкой. */
+.meeting-attendee-suggest.meeting-attendee-suggest--floating {
+  position: fixed;
+  z-index: 1000;
+  right: auto;
+  margin: 0;
 }
 
 .meeting-attendee-suggest-item {
@@ -11407,6 +11429,12 @@ textarea.event-sheet-title--area {
 
 #modal-overlay.modal-overlay {
   z-index: 280;
+}
+
+/* «+» на «Транскрипциях» доступен и при открытом листе заметки (notes-split): у обоих оверлеев
+   был общий z-index 100, и лист (ниже в DOM) перекрывал модалку загрузки. */
+#transcription-upload-overlay.modal-overlay {
+  z-index: 270;
 }
 
 #note-unsaved-overlay.modal-overlay {

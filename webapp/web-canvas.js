@@ -26,6 +26,7 @@
     "var clone=document.documentElement.cloneNode(true);" +
     "stripEditChrome(clone);" +
     "var picker=clone.querySelector('#leo-canvas-picker');if(picker)picker.remove();" +
+    "clone.querySelectorAll('#leo-deck-print,#leo-deck-print-js').forEach(function(n){n.remove();});" +
     "var html='<!DOCTYPE html>'+clone.outerHTML;" +
     "post('html',{html:html});" +
     "return html;" +
@@ -816,9 +817,24 @@
     ".media-img{display:block;width:100%;height:100%;min-height:12rem;object-fit:cover;border-radius:12px}" +
     "</style>";
 
+  // Печать всех слайдов по одному на страницу 16:9 («Сохранить как PDF» в диалоге печати).
+  var DECK_PRINT_TAG =
+    '<style id="leo-deck-print">@media print{@page{size:1280px 720px;margin:0}' +
+    "html,body{height:auto!important;overflow:visible!important}" +
+    "html[data-leo-deck] .deck{height:auto!important;overflow:visible!important;display:block!important;padding:0!important}" +
+    "html[data-leo-deck] .slide.tpl{position:relative!important;inset:auto!important;width:1280px!important;height:720px!important;" +
+    "aspect-ratio:auto!important;opacity:1!important;visibility:visible!important;border-radius:0!important;--k:1!important;" +
+    "transition:none!important;break-after:page;page-break-after:always}" +
+    "html[data-leo-deck] .slide.tpl:last-child{break-after:auto;page-break-after:auto}" +
+    ".leo-present-ui,.leo-edit-chrome{display:none!important}" +
+    "*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}}</style>" +
+    "<script id=\"leo-deck-print-js\">window.addEventListener('message',function(e){var d=e&&e.data;" +
+    "if(d&&d.type==='leo-print'){try{window.focus();window.print();}catch(_){}}});</script>";
+
   function injectPicker(html) {
     var raw = String(html || "");
     var tag =
+      DECK_PRINT_TAG +
       EDIT_STYLE +
       REVIEW_STYLE +
       '<script id="leo-canvas-picker">\n' +
@@ -933,6 +949,12 @@
     var editBtn = makeBtn("Редактировать", "note-web-canvas-edit-btn");
     var refreshBtn = makeBtn("Обновить", "note-web-canvas-refresh-btn");
     refreshBtn.title = "Перезагрузить полотно";
+    var pdfBtn = makeBtn("PDF", "note-web-canvas-pdf-btn");
+    pdfBtn.title = "Сохранить презентацию в PDF (все слайды)";
+    pdfBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      postToFrame({ type: "leo-print" });
+    });
     var applyBtn = makeBtn("Применить правки", "note-web-canvas-apply-btn");
     applyBtn.hidden = true;
     applyBtn.title = "Отправить комментарии к слайдам ИИ одним запросом";
@@ -954,6 +976,7 @@
     toolbar.appendChild(themeWrap);
     toolbar.appendChild(applyBtn);
     toolbar.appendChild(refreshBtn);
+    toolbar.appendChild(pdfBtn);
 
     var insertBar = document.createElement("div");
     insertBar.className = "note-web-canvas-insert-bar";
@@ -985,7 +1008,8 @@
 
     var frame = document.createElement("iframe");
     frame.className = "note-web-canvas-frame";
-    frame.setAttribute("sandbox", "allow-scripts");
+    // allow-modals — для печати (PDF) из полотна.
+    frame.setAttribute("sandbox", "allow-scripts allow-modals");
     frame.setAttribute("title", "Web canvas");
     wrap.appendChild(toolbar);
     wrap.appendChild(frame);

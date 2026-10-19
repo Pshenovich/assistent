@@ -3681,13 +3681,27 @@ def _gcal_json_time_fragment(src: Any) -> dict[str, str]:
     return out
 
 
-def _attendee_payload(email: Any, name: Any, *, organizer: bool = False) -> dict[str, Any] | None:
+_ATTENDEE_RESPONSE_STATUSES = {
+    "accepted": "accepted",
+    "tentative": "tentative",
+    "declined": "declined",
+    "needsaction": "needsAction",
+}
+
+
+def _attendee_payload(
+    email: Any, name: Any, *, organizer: bool = False, response_status: Any = None
+) -> dict[str, Any] | None:
     em = str(email or "").strip().lower()
     if not em or "@" not in em:
         return None
     item: dict[str, Any] = {"email": em, "name": str(name or "").strip()}
     if organizer:
         item["organizer"] = True
+    # Ответ участника на приглашение (Приду / Возможно / Не приду) — видно в карточке встречи.
+    st = _ATTENDEE_RESPONSE_STATUSES.get(str(response_status or "").strip().lower())
+    if st:
+        item["response_status"] = st
     return item
 
 
@@ -3703,6 +3717,8 @@ def _merge_serialized_attendee(out: list[dict[str, Any]], seen: set[str], item: 
                 row["name"] = str(item.get("name") or "")
             if item.get("organizer"):
                 row["organizer"] = True
+            if item.get("response_status") and row.get("response_status") in (None, "", "needsAction"):
+                row["response_status"] = item["response_status"]
             break
         return
     seen.add(em)
@@ -3737,6 +3753,7 @@ def _serialize_event_attendees(
                 row.get("email"),
                 row.get("displayName") or row.get("name"),
                 organizer=bool(row.get("organizer")),
+                response_status=row.get("responseStatus"),
             ),
         )
     contacts_by_email = contacts_by_email or {}
