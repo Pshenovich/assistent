@@ -840,7 +840,10 @@ def _r_text_media(c: Ctx) -> tuple[str, str]:
     src = c.media.get(mid, "")
     if src:
         meta = media_meta_attrs(c.media, mid, c.val("image_prompt"))
-        media = f'<div class="media-slot tpl-media" data-media="{mid}" data-leo-id="{mid}"{meta}><img class="media-img" alt="" src="{escape(src)}"/></div>'
+        media = (
+            f'<div class="media-slot tpl-media" data-media="{mid}" data-leo-id="{mid}"{meta}>'
+            f'<img class="media-img" alt="" src="{escape(src)}"{media_img_style(c.media, mid)}/></div>'
+        )
     else:
         prompt = c.val("image_prompt")
         pending = f' data-leo-img="pending" data-leo-img-prompt="{escape(prompt)}"' if prompt else ""
@@ -888,12 +891,42 @@ def gallery_items(c: Ctx) -> list[dict[str, Any]]:
 
 PROMPT_SUFFIX = "#prompt"  # media[mid + PROMPT_SUFFIX] — описание, по которому картинку сгенерировали
 OWN_SUFFIX = "#own"  # media[mid + OWN_SUFFIX] = "1" — картинку загрузил пользователь; при перерисовке не трогаем
+BOX_SUFFIX = "#box"  # media[mid + BOX_SUFFIX] = "left,top,width" — своя картинка сдвинута/растянута в блоке, % блока
+
+
+def _parse_box(raw: str) -> Optional[tuple[float, float, float]]:
+    m = _IMG_BOX_VAL_RE.fullmatch(str(raw or "").strip())
+    if not m:
+        return None
+    left, top, width = (float(x) for x in m.groups())
+    if not (5 <= width <= 1000 and -1000 <= left <= 1000 and -1000 <= top <= 1000):
+        return None
+    return left, top, width
+
+
+def _fmt_pct(v: float) -> str:
+    return f"{v:.2f}".rstrip("0").rstrip(".")
+
+
+def media_box_attrs(media: dict[str, str], mid: str) -> str:
+    """Положение и ширина своей картинки в блоке (двигают и растягивают в режиме правок)."""
+    box = _parse_box(media.get(mid + BOX_SUFFIX, ""))
+    return f' data-img-box="{",".join(_fmt_pct(v) for v in box)}"' if box else ""
+
+
+def media_img_style(media: dict[str, str], mid: str) -> str:
+    """style для <img> в блоке со сдвинутой картинкой; высота — по пропорциям картинки."""
+    box = _parse_box(media.get(mid + BOX_SUFFIX, ""))
+    if not box:
+        return ""
+    left, top, width = (_fmt_pct(v) for v in box)
+    return f' style="left:{left}%;top:{top}%;width:{width}%"'
 
 
 def media_meta_attrs(media: dict[str, str], mid: str, prompt: str = "") -> str:
-    """Атрибуты заполненного слота: описание картинки и отметка «своя» — переживают перерисовку деки."""
+    """Атрибуты заполненного слота: описание картинки, отметка «своя» и её положение — переживают перерисовку деки."""
     if media.get(mid + OWN_SUFFIX):
-        return ' data-img-own="1"'
+        return ' data-img-own="1"' + media_box_attrs(media, mid)
     p = media.get(mid + PROMPT_SUFFIX) or prompt
     return f' data-img-prompt="{escape(p)}"' if p else ""
 
@@ -906,7 +939,7 @@ def media_slot_html(c: Ctx, mid: str, prompt: str, cls: str = "") -> str:
         keep = media_meta_attrs(c.media, mid, prompt)
         return (
             f'<div class="media-slot tpl-media{extra}" data-media="{mid}" data-leo-id="{mid}"{keep}>'
-            f'<img class="media-img" alt="" src="{escape(src)}"/></div>'
+            f'<img class="media-img" alt="" src="{escape(src)}"{media_img_style(c.media, mid)}/></div>'
         )
     pending = f' data-leo-img="pending" data-leo-img-prompt="{escape(prompt)}"' if prompt else ""
     return (
@@ -1553,10 +1586,12 @@ def pending_media(html: str, slide_ids: Iterable[str]) -> list[tuple[str, str]]:
 
 _MEDIA_TAG_RE = re.compile(r"""<(?:div|figure)\b([^>]*\bdata-media=["']([^"']+)["'][^>]*)>""", re.IGNORECASE)
 _IMG_PROMPT_ATTR_RE = re.compile(r'\bdata-img-prompt="([^"]*)"')
+_IMG_BOX_ATTR_RE = re.compile(r'\bdata-img-box="([^"]*)"')
+_IMG_BOX_VAL_RE = re.compile(r"(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?),(\d+(?:\.\d+)?)")
 
 
 def extract_media(html: str) -> dict[str, str]:
-    """mid → src картинки; плюс mid#prompt (описание) и mid#own (загружена пользователем)."""
+    """mid → src картинки; плюс mid#prompt (описание), mid#own (загружена пользователем) и mid#box (её положение в блоке)."""
     out: dict[str, str] = {}
     for m in _MEDIA_IMG_RE.finditer(html or ""):
         src = m.group(2)
@@ -1568,6 +1603,10 @@ def extract_media(html: str) -> dict[str, str]:
             continue
         if 'data-img-own="1"' in attrs:
             out[mid + OWN_SUFFIX] = "1"
+            bm = _IMG_BOX_ATTR_RE.search(attrs)
+            box = _parse_box(bm.group(1)) if bm else None
+            if box:
+                out[mid + BOX_SUFFIX] = ",".join(_fmt_pct(v) for v in box)
             continue
         pm = _IMG_PROMPT_ATTR_RE.search(attrs)
         if pm and pm.group(1).strip():

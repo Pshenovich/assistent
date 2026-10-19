@@ -621,6 +621,25 @@ class RestyleImagesTests(unittest.TestCase):
                 self.assertNotIn("s2-v-v2", targets)  # 3D-фигура без картинки
         self.assertEqual(set(tpl.media_images(media)), {"s1-m-k1", "s1-m-k2", "s2-v-v1"})
 
+    def test_own_image_box_survives_rerender(self):
+        # Свою картинку двигают и растягивают в блоке — положение хранится на слоте и переживает перерисовку.
+        img = "data:image/png;base64,AAAA"
+        media = {"s1-m-k1": img, "s1-m-k1#own": "1", "s1-m-k1#box": "-12.5,3,140",
+                 "s1-m-k2": img, "s1-m-k2#own": "1", "s1-m-k2#box": "0,0,1",  # меньше 5% — мусор
+                 "s1-m-k3": img, "s1-m-k3#box": "1,2,50"}  # не своя (ИИ) — не двигается
+        html = tpl.render_deck_html(self._deck(), media)
+        self.assertRegex(
+            html,
+            r'data-media="s1-m-k1"[^>]*data-img-box="-12.5,3,140"[^>]*><img[^>]*style="left:-12.5%;top:3%;width:140%"',
+        )
+        back = tpl.extract_media(html)
+        self.assertEqual(back.get("s1-m-k1#box"), "-12.5,3,140")
+        self.assertNotIn("s1-m-k2#box", back)
+        self.assertNotIn("s1-m-k3#box", back)
+        again = tpl.render_deck_html(tpl.extract_deck(html), back)
+        self.assertEqual(tpl.extract_media(again), back)
+        self.assertEqual(set(tpl.media_images(back)), {"s1-m-k1", "s1-m-k2", "s1-m-k3"})
+
     def test_legacy_uploaded_image_is_recognised_by_file_digest(self):
         import base64
         import io

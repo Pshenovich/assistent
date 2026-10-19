@@ -9,6 +9,9 @@
   <meta property="og:title" content="{{TITLE}}" />
   <meta property="og:description" content="{{LABEL}}" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" />
   <style>
     :root {
       color-scheme: dark;
@@ -260,6 +263,13 @@
     }
     body.share-canvas-only #share-doc {
       margin: 0;
+    }
+    /* Unbounded — как в Орбите: название и заголовки заметки. */
+    #share-title,
+    #share-body :is(h1, h2, h3, h4) {
+      font-family: "Unbounded", var(--vkui--font_family_base, -apple-system, system-ui, sans-serif);
+      font-weight: 600;
+      letter-spacing: -0.015em;
     }
     #share-body > :first-child { margin-top: 0; }
     #share-body > :last-child { margin-bottom: 0; }

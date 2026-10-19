@@ -19,7 +19,7 @@
     "root=root||document.documentElement;" +
     "root.classList.remove('leo-pick-mode','leo-edit-mode','leo-review');" +
     "root.querySelectorAll('[contenteditable]').forEach(function(n){n.removeAttribute('contenteditable');});" +
-    "root.querySelectorAll('.leo-selected,.leo-edit-selected,.leo-drop-target,.leo-dragging').forEach(function(n){n.classList.remove('leo-selected','leo-edit-selected','leo-drop-target','leo-dragging');});" +
+    "root.querySelectorAll('.leo-selected,.leo-edit-selected,.leo-drop-target,.leo-dragging,.leo-img-selected').forEach(function(n){n.classList.remove('leo-selected','leo-edit-selected','leo-drop-target','leo-dragging','leo-img-selected');});" +
     "root.querySelectorAll('.leo-edit-chrome').forEach(function(n){n.remove();});" +
     "}" +
     "function snapshotHtml(){" +
@@ -233,7 +233,7 @@
     "else if(n.hasAttribute('data-dec-shape')){n.innerHTML='';n.className='dec dec-photo'+(/is-low/.test(n.getAttribute('data-dec-shape'))?' is-low':'');n.appendChild(img);}" +
     "else if(n.hasAttribute('data-a3')){n.innerHTML='';n.classList.add('a3-photo');n.appendChild(img);}" +
     "else{n.innerHTML='';n.classList.add('media-slot');n.appendChild(img);}" +
-    "if(n.tagName.toLowerCase()!=='img'){n.removeAttribute('data-leo-img');n.removeAttribute('data-leo-img-prompt');n.classList.remove('tpl-media-empty');" +
+    "if(n.tagName.toLowerCase()!=='img'){n.removeAttribute('data-leo-img');n.removeAttribute('data-leo-img-prompt');n.removeAttribute('data-img-box');n.classList.remove('tpl-media-empty');" +
     "if(prompt){n.setAttribute('data-img-prompt',String(prompt).slice(0,600));n.removeAttribute('data-img-own');}" +
     "else{n.removeAttribute('data-img-prompt');n.setAttribute('data-img-own','1');}}" +
     "selectNode(n.tagName.toLowerCase()==='img'?n:n);" +
@@ -243,6 +243,7 @@
     "var n=leoId&&document.querySelector('[data-leo-id=\"'+String(leoId).replace(/\"/g,'')+'\"]');" +
     "if(!n)return;" +
     "n.removeAttribute('data-img-prompt');n.removeAttribute('data-img-own');" +
+    "n.removeAttribute('data-img-box');" +
     "if(n.hasAttribute('data-dec-shape')){n.innerHTML='';n.className='dec '+n.getAttribute('data-dec-shape');snapshotHtml();return;}" +
     "if(n.hasAttribute('data-a3')){var v=n.getAttribute('data-a3')||'orb';n.classList.remove('a3-photo');" +
     "n.innerHTML='<div class=\"a3-'+v.replace(/[^a-z]/g,'')+'\">'+(v==='cube'?'<i></i><i></i><i></i>':'')+'</div>';selectNode(n);snapshotHtml();return;}" +
@@ -275,6 +276,266 @@
     "document.addEventListener('input',onInput,true);" +
     "post('ready',{});" +
     "})();";
+
+  /**
+   * Своя (загруженная вручную) картинка в блоке шаблонной деки, режим правок:
+   * тянуть — двигать внутри блока, углы — менять размер (пропорции сохраняются).
+   * Что ушло за рамку блока, обрезается — так задумано. Положение пишется на слот
+   * (data-img-box="left,top,width" в % блока) и в style у <img>; сервер его хранит.
+   * Serialized into srcdoc — must stay self-contained.
+   */
+  function frameImageMain() {
+    var root = document.documentElement;
+    if (!root.hasAttribute("data-leo-deck")) return;
+    var SLOT_SEL = '.media-slot[data-media][data-img-own="1"]';
+    var MIN_W = 10;
+    var MAX_W = 600;
+    var sel = null; // { slot, img }
+    var chrome = null;
+    var gesture = null;
+    var raf = 0;
+
+    function editing() {
+      return root.classList.contains("leo-edit-mode");
+    }
+    function ownSlot(el) {
+      var slot = el && el.closest ? el.closest(SLOT_SEL) : null;
+      if (!slot || slot.closest(".dec,[data-a3]")) return null;
+      var img = slot.querySelector(":scope > img.media-img");
+      return img ? { slot: slot, img: img } : null;
+    }
+    function round(v) {
+      return Math.round(v * 100) / 100;
+    }
+    function readBox(t) {
+      var raw = String(t.slot.getAttribute("data-img-box") || "").split(",");
+      if (raw.length === 3 && raw.every(function (x) { return x !== "" && isFinite(+x); })) {
+        return { l: +raw[0], t: +raw[1], w: +raw[2] };
+      }
+      // Ещё не двигали: стартуем с того, как картинка лежит сейчас (заполняет блок, object-fit: cover).
+      var s = t.slot.getBoundingClientRect();
+      var nw = t.img.naturalWidth || s.width;
+      var nh = t.img.naturalHeight || s.height;
+      if (!s.width || !s.height || !nw || !nh) return { l: 0, t: 0, w: 100 };
+      var ar = nw / nh;
+      if (ar > s.width / s.height) {
+        var w = (s.height * ar) / s.width * 100;
+        return { l: (100 - w) / 2, t: 0, w: w };
+      }
+      var h = (s.width / ar) / s.height * 100;
+      return { l: 0, t: (100 - h) / 2, w: 100 };
+    }
+    function writeBox(t, b) {
+      var w = Math.max(MIN_W, Math.min(MAX_W, b.w));
+      var l = round(b.l);
+      var tp = round(b.t);
+      w = round(w);
+      t.slot.setAttribute("data-img-box", l + "," + tp + "," + w);
+      t.img.style.left = l + "%";
+      t.img.style.top = tp + "%";
+      t.img.style.width = w + "%";
+    }
+    function resetBox(t) {
+      t.slot.removeAttribute("data-img-box");
+      t.img.removeAttribute("style");
+    }
+    function commit() {
+      // FRAME_SCRIPT снимает снимок HTML и шлёт его хосту — тот сохраняет деку.
+      window.postMessage({ source: "leo-web-canvas-host", type: "getHtml" }, "*");
+    }
+    function openMenu(t) {
+      var sl = t.slot.closest("[data-slide-id]");
+      var title = sl && sl.querySelector(".title,.display,h1,h2");
+      try {
+        parent.postMessage(
+          {
+            source: "leo-web-canvas",
+            type: "media",
+            action: "menu",
+            leoId: t.slot.getAttribute("data-leo-id") || t.slot.getAttribute("data-media") || "",
+            prompt: "",
+            hasImg: true,
+            isVisual: false,
+            slideTitle: title ? String(title.textContent || "").trim().slice(0, 120) : "",
+          },
+          "*"
+        );
+      } catch (_) {}
+    }
+
+    function ensureChrome() {
+      if (chrome && chrome.isConnected) return chrome;
+      chrome = document.createElement("div");
+      chrome.className = "leo-edit-chrome leo-img-chrome";
+      chrome.innerHTML =
+        '<div class="leo-img-frame"></div>' +
+        '<i class="leo-img-h" data-h="nw"></i><i class="leo-img-h" data-h="ne"></i>' +
+        '<i class="leo-img-h" data-h="sw"></i><i class="leo-img-h" data-h="se"></i>' +
+        '<div class="leo-img-bar">' +
+        '<button type="button" data-act="replace">Заменить</button>' +
+        '<button type="button" data-act="reset">Как было</button>' +
+        "</div>";
+      document.body.appendChild(chrome);
+      return chrome;
+    }
+    function place() {
+      raf = 0;
+      if (!sel || !editing() || !sel.slot.isConnected) {
+        deselect();
+        return;
+      }
+      var c = ensureChrome();
+      var r = sel.img.getBoundingClientRect();
+      var s = sel.slot.getBoundingClientRect();
+      var fr = c.querySelector(".leo-img-frame");
+      fr.style.left = r.left + "px";
+      fr.style.top = r.top + "px";
+      fr.style.width = r.width + "px";
+      fr.style.height = r.height + "px";
+      c.querySelectorAll(".leo-img-h").forEach(function (h) {
+        var k = h.getAttribute("data-h");
+        h.style.left = (k.charAt(1) === "w" ? r.left : r.right) + "px";
+        h.style.top = (k.charAt(0) === "n" ? r.top : r.bottom) + "px";
+      });
+      // Внизу блока: сверху у слайда своё меню макета и кнопки.
+      var bar = c.querySelector(".leo-img-bar");
+      var vh = window.innerHeight || document.documentElement.clientHeight;
+      bar.style.left = Math.max(4, s.left + 8) + "px";
+      bar.style.top = Math.max(4, Math.min(vh - bar.offsetHeight - 4, s.bottom - bar.offsetHeight - 8)) + "px";
+      raf = requestAnimationFrame(place);
+    }
+    function select(t) {
+      if (sel && sel.slot !== t.slot) sel.slot.classList.remove("leo-img-selected");
+      sel = t;
+      t.slot.classList.add("leo-img-selected");
+      if (!raf) place();
+    }
+    function deselect() {
+      if (sel) sel.slot.classList.remove("leo-img-selected");
+      sel = null;
+      if (chrome && chrome.parentNode) chrome.parentNode.removeChild(chrome);
+      chrome = null;
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+    }
+
+    window.addEventListener(
+      "pointerdown",
+      function (e) {
+        if (!editing()) return;
+        var bar = e.target.closest && e.target.closest(".leo-img-bar");
+        if (bar) {
+          e.stopPropagation();
+          return;
+        }
+        var handle = e.target.closest && e.target.closest(".leo-img-h");
+        var t = handle ? sel : ownSlot(e.target);
+        if (!t) {
+          if (sel && !(e.target.closest && e.target.closest(".leo-img-chrome"))) deselect();
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        select(t);
+        var s = t.slot.getBoundingClientRect();
+        var r = t.img.getBoundingClientRect();
+        gesture = {
+          t: t,
+          mode: handle ? handle.getAttribute("data-h") : "move",
+          x: e.clientX,
+          y: e.clientY,
+          box: readBox(t),
+          sw: s.width,
+          sh: s.height,
+          ratio: r.width ? r.height / r.width : 1,
+          moved: false,
+        };
+      },
+      true
+    );
+    window.addEventListener(
+      "pointermove",
+      function (e) {
+        var g = gesture;
+        if (!g) return;
+        var dx = e.clientX - g.x;
+        var dy = e.clientY - g.y;
+        if (!g.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
+        g.moved = true;
+        e.preventDefault();
+        var b = g.box;
+        if (g.mode === "move") {
+          writeBox(g.t, { l: b.l + (dx / g.sw) * 100, t: b.t + (dy / g.sh) * 100, w: b.w });
+          return;
+        }
+        var w0 = (b.w / 100) * g.sw;
+        var h0 = w0 * g.ratio;
+        var l0 = (b.l / 100) * g.sw;
+        var t0 = (b.t / 100) * g.sh;
+        var sx = g.mode.charAt(1) === "e" ? 1 : -1;
+        var sy = g.mode.charAt(0) === "s" ? 1 : -1;
+        var d1 = sx * dx;
+        var d2 = (sy * dy) / g.ratio;
+        var w = Math.max((MIN_W / 100) * g.sw, w0 + (Math.abs(d1) > Math.abs(d2) ? d1 : d2));
+        var h = w * g.ratio;
+        var l = sx > 0 ? l0 : l0 + (w0 - w);
+        var tp = sy > 0 ? t0 : t0 + (h0 - h);
+        writeBox(g.t, { l: (l / g.sw) * 100, t: (tp / g.sh) * 100, w: (w / g.sw) * 100 });
+      },
+      true
+    );
+    function endGesture() {
+      var g = gesture;
+      gesture = null;
+      if (g && g.moved) commit();
+    }
+    window.addEventListener("pointerup", endGesture, true);
+    window.addEventListener("pointercancel", endGesture, true);
+    // Клик по своей картинке — выделение (а не шторка «Изображение»): заменить можно кнопкой.
+    window.addEventListener(
+      "click",
+      function (e) {
+        if (!editing()) return;
+        var bar = e.target.closest && e.target.closest(".leo-img-bar");
+        if (bar) {
+          e.preventDefault();
+          e.stopPropagation();
+          var b = e.target.closest("button[data-act]");
+          if (!b || !sel) return;
+          if (b.getAttribute("data-act") === "replace") openMenu(sel);
+          if (b.getAttribute("data-act") === "reset") {
+            resetBox(sel);
+            commit();
+          }
+          return;
+        }
+        if (ownSlot(e.target) || (e.target.closest && e.target.closest(".leo-img-chrome"))) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      },
+      true
+    );
+    document.addEventListener("keydown", function (e) {
+      if (!sel || !editing()) return;
+      if (e.key === "Escape") {
+        deselect();
+        return;
+      }
+      var step = e.shiftKey ? 5 : 1;
+      var d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+      if (!d) return;
+      var t = e.target;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      e.preventDefault();
+      var b = readBox(sel);
+      writeBox(sel, { l: b.l + d[0], t: b.t + d[1], w: b.w });
+      commit();
+    });
+    new MutationObserver(function () {
+      if (!editing()) deselect();
+    }).observe(root, { attributes: true, attributeFilter: ["class"] });
+  }
 
   /**
    * Edit-mode review UI inside the frame (serialized into srcdoc).
@@ -813,6 +1074,15 @@
     ".leo-edit-chrome{position:absolute;z-index:40;top:8px;right:8px;display:flex;flex-wrap:wrap;gap:4px;padding:4px;border-radius:8px;background:rgba(255,255,255,.94);box-shadow:0 4px 16px rgba(0,0,0,.14);font-family:ui-sans-serif,system-ui,sans-serif}" +
     ".leo-edit-chrome button{appearance:none;border:1px solid rgba(10,10,10,.14);border-radius:6px;background:#fff;color:#111;font:inherit;font-size:11px;padding:4px 8px;cursor:pointer;white-space:nowrap}" +
     ".leo-edit-chrome .leo-drag-handle{cursor:grab;font-size:14px;line-height:1;padding:4px 6px;user-select:none}" +
+    // Своя картинка в блоке: рамка, ручки по углам и мини-панель (frameImageMain).
+    ".leo-edit-chrome.leo-img-chrome{position:fixed;inset:0;top:0;right:0;z-index:60;display:block;padding:0;border-radius:0;background:none;box-shadow:none;pointer-events:none}" +
+    ".leo-img-frame{position:fixed;box-sizing:border-box;border:2px solid #3b82f6;pointer-events:none}" +
+    ".leo-img-h{position:fixed;width:16px;height:16px;margin:-8px 0 0 -8px;box-sizing:border-box;border-radius:50%;background:#fff;border:2px solid #3b82f6;box-shadow:0 1px 4px rgba(0,0,0,.25);pointer-events:auto;touch-action:none}" +
+    ".leo-img-h[data-h=nw],.leo-img-h[data-h=se]{cursor:nwse-resize}.leo-img-h[data-h=ne],.leo-img-h[data-h=sw]{cursor:nesw-resize}" +
+    ".leo-img-bar{position:fixed;display:flex;gap:4px;padding:4px;border-radius:8px;background:rgba(255,255,255,.94);box-shadow:0 4px 16px rgba(0,0,0,.14);pointer-events:auto;font-family:ui-sans-serif,system-ui,sans-serif}" +
+    ".leo-img-bar button{appearance:none;border:1px solid rgba(10,10,10,.14);border-radius:6px;background:#fff;color:#111;font:inherit;font-size:11px;padding:4px 8px;cursor:pointer;white-space:nowrap}" +
+    "html.leo-edit-mode .media-slot[data-img-own=\"1\"]>img.media-img{cursor:grab;touch-action:none;user-select:none;-webkit-user-drag:none}" +
+    "html.leo-edit-mode .media-slot.leo-img-selected{outline:1px dashed rgba(59,130,246,.7);outline-offset:0}" +
     ".media-slot{position:relative;width:100%;min-height:12rem;overflow:hidden;border-radius:12px}" +
     ".media-img{display:block;width:100%;height:100%;min-height:12rem;object-fit:cover;border-radius:12px}" +
     "</style>";
@@ -947,6 +1217,8 @@
       FRAME_SCRIPT +
       "\n(" +
       frameReviewMain.toString() +
+      ")();\n(" +
+      frameImageMain.toString() +
       ")();\n</script>";
     if (/<\/body>/i.test(raw)) {
       return raw.replace(/<\/body>/i, tag + "</body>");
