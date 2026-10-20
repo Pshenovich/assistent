@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261020-voicecmd1">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261020-actualux1">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -94,7 +94,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261020-voicecmd1" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261020-actualux1" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -163,13 +163,23 @@
         </div>
         <div class="section">
           <div class="meetings-head">
+            <div class="meetings-head-titles">
+              <h2 class="section-head-inline" id="meetings-head-title"></h2>
+              <span class="meetings-head-sub" id="meetings-head-sub"></span>
+              <span id="meetings-badge" class="pill-badge hidden">0</span>
+            </div>
             <div class="meetings-head-tools">
+              <button type="button" class="meetings-today-btn hidden" id="meetings-today">Сегодня</button>
+              <button type="button" class="cal-nav-btn" id="meetings-prev" aria-label="Предыдущий день">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+              </button>
+              <button type="button" class="cal-nav-btn" id="meetings-next" aria-label="Следующий день">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+              </button>
               <div class="meetings-view-wrap">
-                <button type="button" class="cal-nav-btn meetings-view-btn" id="meetings-view-btn" aria-label="Вид" aria-haspopup="menu" aria-expanded="false" title="Вид">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <rect x="3" y="4" width="18" height="18" rx="2" />
-                    <path d="M16 2v4M8 2v4M3 10h18" />
-                  </svg>
+                <button type="button" class="meetings-view-btn" id="meetings-view-btn" aria-label="Вид календаря" aria-haspopup="menu" aria-expanded="false" title="Вид">
+                  <span id="meetings-view-label">День</span>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
                 </button>
                 <div id="meetings-view-menu" class="meetings-view-menu hidden" role="menu" aria-label="Вид календаря">
                   <button type="button" class="meetings-view-menu-item is-active" role="menuitem" data-meetings-view="day">День</button>
@@ -177,15 +187,11 @@
                   <button type="button" class="meetings-view-menu-item" role="menuitem" data-meetings-view="month">Месяц</button>
                 </div>
               </div>
-              <button type="button" class="meetings-today-btn hidden" id="meetings-today">Сегодня</button>
-            </div>
-            <div class="section-head-row section-head-row--meetings">
-              <button type="button" class="cal-nav-btn" id="meetings-prev" aria-label="Предыдущий день">‹</button>
-              <div class="section-head-center">
-                <h2 class="section-head-inline" id="meetings-head-title"></h2>
-                <span id="meetings-badge" class="pill-badge hidden">0</span>
+              <div class="meetings-view-seg" id="meetings-view-seg" role="group" aria-label="Вид календаря">
+                <button type="button" class="meetings-view-seg-btn is-active" data-meetings-view="day" aria-pressed="true">День</button>
+                <button type="button" class="meetings-view-seg-btn" data-meetings-view="week" aria-pressed="false">Неделя</button>
+                <button type="button" class="meetings-view-seg-btn" data-meetings-view="month" aria-pressed="false">Месяц</button>
               </div>
-              <button type="button" class="cal-nav-btn" id="meetings-next" aria-label="Следующий день">›</button>
             </div>
           </div>
           <div id="meetings-board" class="meetings-board">
@@ -216,6 +222,9 @@
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
             <path d="M12 5v14M5 12h14" />
           </svg>
+        </button>
+        <button type="button" id="actual-voice-btn" class="notes-fab actual-fab actual-fab-mic" aria-label="Наговорить" title="Наговорить: задача, встреча или вопрос">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>
         </button>
         <div id="actual-create-menu" class="actual-create-menu hidden" role="menu" aria-label="Добавить">
           <button type="button" class="actual-create-menu-btn is-ai" data-actual-action="assistant" role="menuitem">
@@ -1961,7 +1970,7 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261020-voicecmd1" defer></script>
-  <script src="/webapp/app.js?v=20261020-voicecmd1" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261020-actualux1" defer></script>
+  <script src="/webapp/app.js?v=20261020-actualux1" defer></script>
 </body>
 </html>

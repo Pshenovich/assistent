@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261020-notelink1";
+  var WEBAPP_BUILD = "20261020-actualux1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -1372,7 +1372,9 @@
   function syncMeetingsTodayBtn() {
     var btn = document.getElementById("meetings-today");
     if (!btn) return;
-    setHidden(btn, meetingsPageShowsToday());
+    var onToday = meetingsPageShowsToday();
+    setHidden(btn, onToday && !isDesktopLayout());
+    btn.disabled = onToday;
   }
 
   function syncMeetingsViewSurfaces() {
@@ -1400,6 +1402,16 @@
 
   function syncMeetingsViewMenu() {
     var menu = document.getElementById("meetings-view-menu");
+    var seg = document.getElementById("meetings-view-seg");
+    var label = document.getElementById("meetings-view-label");
+    if (label) label.textContent = { day: "День", week: "Неделя", month: "Месяц" }[meetingsViewMode] || "День";
+    if (seg) {
+      seg.querySelectorAll("[data-meetings-view]").forEach(function (btn) {
+        var on = btn.getAttribute("data-meetings-view") === meetingsViewMode;
+        btn.classList.toggle("is-active", on);
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    }
     if (!menu) return;
     menu.querySelectorAll("[data-meetings-view]").forEach(function (btn) {
       btn.classList.toggle("is-active", btn.getAttribute("data-meetings-view") === meetingsViewMode);
@@ -1548,6 +1560,77 @@
       return "Подключите Google Calendar в боте: /calendar_auth";
     }
     return "Нет встреч на этот день";
+  }
+
+  // Календарь не загрузился: понятный текст и «Повторить» вместо сырого ответа сервера.
+  function renderMeetingsLoadError(calData) {
+    var box = document.createElement("div");
+    box.className = "meetings-load-error";
+    box.setAttribute("role", "alert");
+    box.title = String((calData && calData.load_error) || "");
+    box.innerHTML =
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5M12 16v.01"/></svg>';
+    var txt = document.createElement("div");
+    txt.className = "meetings-load-error-text";
+    var b = document.createElement("b");
+    b.textContent = "Календарь не обновился";
+    var sm = document.createElement("span");
+    sm.textContent = "Проверьте связь и попробуйте ещё раз";
+    txt.appendChild(b);
+    txt.appendChild(sm);
+    box.appendChild(txt);
+    var retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "meetings-load-error-retry";
+    retry.textContent = "Повторить";
+    retry.addEventListener("click", function () {
+      retry.disabled = true;
+      loadActual({ skipCachePaint: true });
+    });
+    box.appendChild(retry);
+    return box;
+  }
+
+  // Пустой день: подсказка с действием над сеткой (сетка с 07:00 остаётся).
+  function renderMeetingsEmptyDay(dateIso) {
+    var box = document.createElement("div");
+    box.className = "meetings-empty-day";
+    var txt = document.createElement("div");
+    txt.className = "meetings-empty-day-text";
+    var b = document.createElement("b");
+    b.textContent = "На этот день ничего нет";
+    var sm = document.createElement("span");
+    sm.textContent = "Нажмите на время в сетке или добавьте сразу";
+    txt.appendChild(b);
+    txt.appendChild(sm);
+    box.appendChild(txt);
+    var acts = document.createElement("div");
+    acts.className = "meetings-empty-day-acts";
+    [
+      ["Встреча", function () { openCreateEventAtMs(meetingsEmptyDaySlotMs(dateIso)); }],
+      ["Задача", function () { openTaskModal({}); }],
+    ].forEach(function (a) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "meetings-empty-day-btn";
+      btn.textContent = a[0];
+      btn.addEventListener("click", a[1]);
+      acts.appendChild(btn);
+    });
+    box.appendChild(acts);
+    return box;
+  }
+
+  // Встреча из пустого дня: сегодня — ближайший целый час, другой день — 10:00.
+  function meetingsEmptyDaySlotMs(dateIso) {
+    var d = new Date(dateIso + "T10:00:00");
+    if (dateIso === todayIsoLocal()) {
+      var now = new Date();
+      now.setMinutes(0, 0, 0);
+      now.setHours(now.getHours() + 1);
+      return now.getTime();
+    }
+    return d.getTime();
   }
 
   function normalizeCachedCalData(cal) {
@@ -2322,7 +2405,7 @@
     function onPointerDown(e, mode) {
       if (e.button != null && e.button !== 0) return;
       if (calendarGestureBusy) return;
-      if (e.target && e.target.closest && e.target.closest(".meeting-card-join-btn")) return;
+      if (e.target && e.target.closest && e.target.closest(".meeting-card-join-btn, .meeting-card-check")) return;
       var needsLongPress = calendarPointerNeedsLongPress(e);
       var pointerId = e.pointerId;
       var originX = e.clientX;
@@ -2951,11 +3034,15 @@
     var disconnected = calData && calData.connected === false;
     var loadFailed = !!(calData && calData.load_error);
     setHidden(emptyM, true);
-    if (disconnected || loadFailed) {
+    if (loadFailed) {
+      listM.appendChild(renderMeetingsLoadError(calData));
+    } else if (disconnected) {
       var banner = document.createElement("p");
       banner.className = "muted empty-hint day-timeline-connect";
       banner.textContent = meetingsEmptyMessage(calData);
       listM.appendChild(banner);
+    } else if (!evs.length && !dayReminders.length && calData && calData.date) {
+      listM.appendChild(renderMeetingsEmptyDay(calDate));
     }
 
     var nowMs = Date.now();
@@ -3114,7 +3201,7 @@
           dayHosts: paintOpts.dayHosts || null,
         });
       } else {
-        slot.appendChild(renderMeetingCard(it.ev, { heightPx: height, skipClick: true }));
+        slot.appendChild(renderMeetingCard(it.ev, { heightPx: height, skipClick: true, taskCheck: true }));
         bindTimedEntryInteractions(slot, it.ev, {
           view: "day",
           dateIso: calDate,
@@ -3262,18 +3349,49 @@
     }
   }
 
+  // Заголовок секции календаря: крупно — «Сегодня» / «Неделя» / месяц, рядом — дата.
+  function meetingsHeadTitles(leftIso, rightIso, dual) {
+    if (meetingsViewMode === "week") {
+      return { title: "Неделя", sub: formatMeetingsWeekHead(leftIso, rightIso || addDaysIso(leftIso, 6)) };
+    }
+    if (meetingsViewMode === "month") {
+      return { title: formatMeetingsMonthHead(leftIso), sub: "" };
+    }
+    if (dual && rightIso) {
+      return { title: "Календарь", sub: formatMeetingsHeadRange(leftIso, rightIso) };
+    }
+    if (!leftIso) return { title: "", sub: "" };
+    var today = todayIsoLocal();
+    var title = "";
+    if (leftIso === today) title = "Сегодня";
+    else if (leftIso === addDaysIso(today, 1)) title = "Завтра";
+    else if (leftIso === addDaysIso(today, -1)) title = "Вчера";
+    var sub = formatMeetingsHead(leftIso);
+    try {
+      var d = new Date(leftIso + "T12:00:00");
+      var wdShort = d.toLocaleDateString("ru-RU", { weekday: "short" });
+      if (title) {
+        sub = wdShort + ", " + sub;
+      } else {
+        var wd = d.toLocaleDateString("ru-RU", { weekday: "long" });
+        title = wd.charAt(0).toUpperCase() + wd.slice(1);
+      }
+    } catch (_) {}
+    return { title: title || sub, sub: title ? sub : "" };
+  }
+
   function syncMeetingsHead(leftIso, rightIso) {
     var dual = isDesktopLayout();
     var head = document.getElementById("meetings-head-title");
+    var sub = document.getElementById("meetings-head-sub");
     var prev = document.getElementById("meetings-prev");
     var next = document.getElementById("meetings-next");
     if (head) {
-      if (meetingsViewMode === "week") {
-        head.textContent = formatMeetingsWeekHead(leftIso, rightIso || addDaysIso(leftIso, 6));
-      } else if (meetingsViewMode === "month") {
-        head.textContent = formatMeetingsMonthHead(leftIso);
-      } else {
-        head.textContent = dual && rightIso ? formatMeetingsHeadRange(leftIso, rightIso) : formatMeetingsHead(leftIso);
+      var t = meetingsHeadTitles(leftIso, rightIso, dual);
+      head.textContent = t.title;
+      if (sub) {
+        sub.textContent = t.sub;
+        setHidden(sub, !t.sub);
       }
     }
     if (prev) {
@@ -16762,26 +16880,29 @@
     acts.className = "focus-card-acts";
     var ask = document.createElement("button");
     ask.type = "button";
-    ask.className = "focus-card-btn is-primary";
     ask.textContent = "Уточнить";
     ask.addEventListener("click", function (e) {
       e.preventDefault();
       askAboutFocus(it, ask);
     });
-    acts.appendChild(ask);
     var shown = openAct ? rest : all.filter(function (a) {
       return a !== doneAct;
     });
-    shown.slice(0, doneAct ? 1 : 2).forEach(function (a) {
+    shown = shown.slice(0, doneAct ? 1 : 2);
+    // Главная кнопка — действие из подсказки; «Уточнить» — вторая (если действий нет — главная она).
+    ask.className = "focus-card-btn " + (shown.length ? "is-quiet" : "is-primary");
+    if (!shown.length) acts.appendChild(ask);
+    shown.forEach(function (a, idx) {
       var b = document.createElement("button");
       b.type = "button";
-      b.className = "focus-card-btn is-soft";
+      b.className = "focus-card-btn " + (idx === 0 ? "is-primary" : "is-quiet");
       b.textContent = FOCUS_SHORT_LABEL[a.label] || a.label;
       b.addEventListener("click", function (e) {
         e.preventDefault();
         runFocusAction(it, a, b);
       });
       acts.appendChild(b);
+      if (idx === 0) acts.appendChild(ask);
     });
     if (doneAct) {
       var d = document.createElement("button");
@@ -16843,29 +16964,46 @@
     var head = document.createElement("div");
     head.className = "focus-head";
     head.innerHTML =
-      '<b>Фокус</b><span class="focus-count"></span><span class="focus-sp"></span>' +
-      '<button type="button" class="focus-arrow" data-dir="-1" aria-label="Назад">‹</button>' +
-      '<button type="button" class="focus-arrow" data-dir="1" aria-label="Дальше">›</button>' +
-      '<button type="button" class="focus-plan">План на день</button>' +
-      '<button type="button" class="focus-all"></button>';
-    head.querySelector(".focus-count").textContent = focusItems.length + " " + pluralRu(focusItems.length, "подсказка", "подсказки", "подсказок");
-    head.querySelector(".focus-all").textContent = "Все (" + focusItems.length + ")";
+      '<h2 class="focus-title">Фокус</h2><span class="focus-count"></span><span class="focus-sp"></span>' +
+      '<button type="button" class="focus-plan">План дня</button>' +
+      '<button type="button" class="focus-all">Все<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>';
+    var fcount = head.querySelector(".focus-count");
+    fcount.textContent = String(focusItems.length);
+    fcount.setAttribute("aria-label", focusItems.length + " " + pluralRu(focusItems.length, "подсказка", "подсказки", "подсказок"));
     var row = document.createElement("div");
     row.className = "focus-row";
     focusItems.forEach(function (it) {
       row.appendChild(focusCard(it, false));
     });
     head.addEventListener("click", function (e) {
-      var arr = e.target.closest(".focus-arrow");
-      if (arr) {
-        row.scrollBy({ left: Number(arr.getAttribute("data-dir")) * 292, behavior: "smooth" });
-        return;
-      }
       if (e.target.closest(".focus-all")) openFocusAll();
       if (e.target.closest(".focus-plan")) openFocusReport("day", e.target.closest(".focus-plan"));
     });
     host.appendChild(head);
     host.appendChild(row);
+    if (focusItems.length > 1) {
+      var dots = document.createElement("div");
+      dots.className = "focus-dots";
+      dots.setAttribute("aria-hidden", "true");
+      focusItems.forEach(function (_, i) {
+        var d = document.createElement("span");
+        if (i === 0) d.className = "is-active";
+        dots.appendChild(d);
+      });
+      host.appendChild(dots);
+      var syncDots = function () {
+        var cards = row.children;
+        if (!cards.length) return;
+        var step = cards.length > 1 ? cards[1].offsetLeft - cards[0].offsetLeft : row.clientWidth;
+        var idx = step > 0 ? Math.round(row.scrollLeft / step) : 0;
+        if (row.scrollLeft + row.clientWidth >= row.scrollWidth - 4) idx = cards.length - 1;
+        Array.prototype.forEach.call(dots.children, function (d, i) {
+          d.classList.toggle("is-active", i === idx);
+        });
+      };
+      row.addEventListener("scroll", syncDots, { passive: true });
+      window.requestAnimationFrame(syncDots);
+    }
     if (prevLeft > 0) {
       row.style.scrollBehavior = "auto";
       row.scrollLeft = Math.min(prevLeft, Math.max(0, row.scrollWidth - row.clientWidth));
@@ -17736,6 +17874,52 @@
     }
   }
 
+  // Задача в сетке дня: отметить выполненной (или вернуть) не открывая карточку.
+  function renderTimelineTaskCheck(ev, card) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "meeting-card-check" + (ev.done ? " is-done" : "");
+    b.setAttribute("aria-pressed", ev.done ? "true" : "false");
+    b.setAttribute("aria-label", ev.done ? "Вернуть в работу" : "Отметить выполненной");
+    b.title = b.getAttribute("aria-label");
+    b.innerHTML =
+      '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+    b.addEventListener("pointerdown", function (e) {
+      e.stopPropagation();
+    });
+    b.addEventListener("click", async function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (b.disabled) return;
+      var tid = calendarTaskId(ev);
+      if (!tid) return;
+      var nextDone = !ev.done;
+      b.disabled = true;
+      b.classList.toggle("is-done", nextDone);
+      if (card) card.classList.toggle("meeting-card--task-done", nextDone);
+      try {
+        await apiFetch("/calendar/tasks/" + encodeURIComponent(tid), {
+          method: "PATCH",
+          body: JSON.stringify({ done: nextDone }),
+        });
+        ev.done = nextDone;
+        rememberCalCardUi("task", tid, { done: nextDone, deleted: false });
+        try {
+          var tg = getTelegramWebApp();
+          if (nextDone && tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
+        } catch (_) {}
+        await loadActual({ skipCachePaint: true });
+      } catch (err) {
+        b.classList.toggle("is-done", !nextDone);
+        if (card) card.classList.toggle("meeting-card--task-done", !nextDone);
+        showCalendarToast((err && err.message) || "Не удалось изменить задачу");
+      } finally {
+        b.disabled = false;
+      }
+    });
+    return b;
+  }
+
   function renderMeetingCard(ev, opts) {
     opts = opts || {};
     var heightPx = Number(opts.heightPx) || 0;
@@ -17774,6 +17958,9 @@
     top.className = "meeting-card-top";
     const topLeft = document.createElement("div");
     topLeft.className = "meeting-card-top-left";
+    if (opts.taskCheck && calendarEntryIsTask(ev) && calendarTaskId(ev)) {
+      top.appendChild(renderTimelineTaskCheck(ev, card));
+    }
     if (!short) appendMeetingAttendeeAvatars(topLeft, ev);
 
     const title = document.createElement("div");
@@ -17833,6 +18020,243 @@
     return wrap;
   }
 
+  /* ——— Шапка «Актуального»: дата, «Дальше» (следующая встреча), чипы ——— */
+  var heroTodayEvents = null; // null — нет данных за сегодня (листают другой день и кэша нет)
+  var heroTodayReminders = [];
+  var heroPostedCount = 0;
+  var heroTimer = null;
+
+  function heroEventOnDay(ev, iso) {
+    var ms = eventStartMs(ev);
+    if (ms == null) return false;
+    return localDateIsoFromMs(ms) === iso;
+  }
+
+  function pickHeroTodayEvents(calData, calDataNext, rangeData) {
+    var today = todayIsoLocal();
+    if (calData && calData.date === today && !calData.load_error) return (calData.events || []).slice();
+    if (calDataNext && calDataNext.date === today) return (calDataNext.events || []).slice();
+    if (rangeData && !rangeData.load_error) {
+      var range = meetingsVisibleRange();
+      if (today >= range.from && today <= range.to) {
+        return (rangeData.events || []).filter(function (ev) {
+          return !eventIsAllDay(ev) && heroEventOnDay(ev, today);
+        });
+      }
+    }
+    // Листают другой день — остаёмся на последних известных данных за сегодня.
+    if (heroTodayEvents && heroTodayEventsDate === today) return heroTodayEvents;
+    return null;
+  }
+  var heroTodayEventsDate = "";
+
+  function heroMeetings(events) {
+    return (events || []).filter(function (ev) {
+      return !meetingIsDeclined(ev) && !calendarEntryIsTask(ev) && !eventIsAllDay(ev) && eventStartMs(ev) != null;
+    }).sort(function (a, b) {
+      return eventStartMs(a) - eventStartMs(b);
+    });
+  }
+
+  function heroOpenTasksCount(events, reminders) {
+    var tasks = (events || []).filter(function (ev) {
+      return calendarEntryIsTask(ev) && !ev.done && !meetingIsDeclined(ev);
+    }).length;
+    return tasks + (reminders || []).length;
+  }
+
+  function heroInLabel(ms) {
+    var min = Math.max(1, Math.round(ms / 60000));
+    if (min < 60) return "Через " + min + " мин";
+    if (min < 180) {
+      var h = Math.floor(min / 60);
+      var m = min % 60;
+      return "Через " + h + " ч" + (m ? " " + m + " мин" : "");
+    }
+    return "Сегодня";
+  }
+
+  function heroMeetingMeta(ev) {
+    var others = (ev.attendees || []).length;
+    var mats = ev.materials || {};
+    return [
+      ev.meet_url ? "онлайн" : String(ev.location || "").trim(),
+      others > 1 ? others + " " + pluralRu(others, "участник", "участника", "участников") : "",
+      mats.note ? "есть заметка" : "",
+    ].filter(Boolean).join(" · ");
+  }
+
+  function heroJoinButton(ev) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "hero-next-join";
+    b.innerHTML =
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="3"/><path d="M16 10l5-3v10l-5-3"/></svg>';
+    b.appendChild(document.createTextNode("Войти"));
+    b.addEventListener("click", function (e) {
+      e.stopPropagation();
+      openExternal(ev.meet_url);
+    });
+    return b;
+  }
+
+  function heroTimeRange(ev) {
+    var a = formatEventTime(ev);
+    var b = formatEventEndTime(ev);
+    return a + (b ? "–" + b : "");
+  }
+
+  function renderHeroNext() {
+    var box = document.createElement("div");
+    if (!heroTodayEvents) return null;
+    var meetings = heroMeetings(heroTodayEvents);
+    var now = Date.now();
+    var current = null;
+    var next = null;
+    meetings.forEach(function (ev) {
+      var a = eventStartMs(ev);
+      var z = eventEndMs(ev);
+      if (z == null || z <= a) z = a + 30 * 60000;
+      if (!current && a <= now && now < z) current = ev;
+      if (!next && a > now) next = ev;
+    });
+    if (!current && !next) {
+      box.className = "hero-next is-muted";
+      box.textContent = meetings.length ? "На сегодня встреч больше нет" : "Сегодня без встреч";
+      return box;
+    }
+    var main = next || current;
+    box.className = "hero-next";
+    box.setAttribute("role", "button");
+    box.tabIndex = 0;
+    box.setAttribute("aria-label", "Открыть: " + meetingDisplayTitle(main));
+    var k = document.createElement("div");
+    k.className = "hero-next-kicker";
+    var dot = document.createElement("span");
+    dot.className = "hero-next-dot" + (next ? "" : " is-live");
+    var when = document.createElement("b");
+    when.textContent = next ? heroInLabel(eventStartMs(next) - now) : "Идёт сейчас";
+    var range = document.createElement("span");
+    range.textContent = "· " + (next ? heroTimeRange(next) : "до " + formatEventEndTime(current));
+    k.appendChild(dot);
+    k.appendChild(when);
+    k.appendChild(range);
+    box.appendChild(k);
+    var row = document.createElement("div");
+    row.className = "hero-next-row";
+    var txt = document.createElement("div");
+    txt.className = "hero-next-text";
+    var t = document.createElement("b");
+    t.className = "hero-next-title";
+    t.textContent = meetingDisplayTitle(main);
+    txt.appendChild(t);
+    var meta = heroMeetingMeta(main);
+    if (meta) {
+      var m = document.createElement("span");
+      m.className = "hero-next-meta";
+      m.textContent = meta;
+      txt.appendChild(m);
+    }
+    row.appendChild(txt);
+    if (main.meet_url) row.appendChild(heroJoinButton(main));
+    box.appendChild(row);
+    if (next && current) {
+      var nowLine = document.createElement("div");
+      nowLine.className = "hero-next-now";
+      var lbl = document.createElement("span");
+      lbl.className = "hero-next-now-label";
+      lbl.textContent = "Сейчас:";
+      var nm = document.createElement("span");
+      nm.className = "hero-next-now-title";
+      nm.textContent = meetingDisplayTitle(current);
+      var till = document.createElement("span");
+      till.textContent = "· до " + formatEventEndTime(current);
+      nowLine.appendChild(lbl);
+      nowLine.appendChild(nm);
+      nowLine.appendChild(till);
+      box.appendChild(nowLine);
+    }
+    box.addEventListener("click", function () {
+      openCalendarEntry(main);
+    });
+    box.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openCalendarEntry(main);
+      }
+    });
+    return box;
+  }
+
+  function heroChip(cls, n, label, onClick, id) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "hero-chip " + cls;
+    if (id) b.id = id;
+    var v = document.createElement("b");
+    v.textContent = String(n);
+    if (id === "posted-tasks-open") v.id = "posted-tasks-count";
+    var l = document.createElement("span");
+    l.textContent = label;
+    b.appendChild(v);
+    b.appendChild(l);
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  function scrollToActualCalendar() {
+    if (!meetingsPageShowsToday()) goMeetingsToday();
+    var sec = document.querySelector("#panel-actual > .section");
+    if (sec && sec.scrollIntoView) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function paintActualHero(hero) {
+    hero = hero || document.getElementById("actual-hero");
+    if (!hero) return;
+    if (heroTodayEvents) heroTodayEventsDate = todayIsoLocal();
+    hero.innerHTML = "";
+    var inner = document.createElement("div");
+    inner.className = "hero-inner";
+    var left = document.createElement("div");
+    left.className = "hero-main";
+    var date = document.createElement("h1");
+    date.className = "hero-date";
+    var dl = String(heroDateLineFor(todayIsoLocal()) || "");
+    date.textContent = dl.charAt(0).toUpperCase() + dl.slice(1);
+    left.appendChild(date);
+    var chips = document.createElement("div");
+    chips.className = "hero-chips";
+    if (heroTodayEvents) {
+      var nm = heroMeetings(heroTodayEvents).length;
+      chips.appendChild(heroChip("hero-chip--meetings", nm, pluralRu(nm, "встреча", "встречи", "встреч"), scrollToActualCalendar));
+      var nt = heroOpenTasksCount(heroTodayEvents, heroTodayReminders);
+      chips.appendChild(heroChip("hero-chip--tasks", nt, pluralRu(nt, "задача", "задачи", "задач"), scrollToActualCalendar));
+    }
+    chips.appendChild(
+      heroChip(
+        "hero-chip--posted",
+        heroPostedCount,
+        "у других",
+        function () {
+          setPostedTasksScreen(true);
+        },
+        "posted-tasks-open"
+      )
+    );
+    chips.lastChild.setAttribute("aria-label", "Поставленные задачи");
+    chips.lastChild.title = "Задачи, которые вы поставили другим";
+    left.appendChild(chips);
+    inner.appendChild(left);
+    var nextBox = renderHeroNext();
+    if (nextBox) inner.appendChild(nextBox);
+    hero.appendChild(inner);
+    if (!heroTimer) {
+      heroTimer = window.setInterval(function () {
+        if (currentTab === "actual" && !document.hidden) paintActualHero();
+      }, 60000);
+    }
+  }
+
   var lastActualPaintSig = "";
   function paintActual(remData, calData, calDataNext, rangeData, postedData) {
     // Те же данные (кэш → ответ сервера) — не перерисовываем: на телефоне это выглядело как «перезагрузка».
@@ -17873,43 +18297,10 @@
         : postedActiveCountFromItems(postedItems);
     lastPostedTasksItems = postedItems;
     lastPostedTasksActiveCount = postedCount;
-    var meetingsCount = 0;
-    if (meetingsViewMode === "week" || meetingsViewMode === "month") {
-      meetingsCount = ((rangeData && rangeData.events) || []).filter(function (ev) {
-        return !meetingIsDeclined(ev);
-      }).length;
-    } else {
-      const evs = ((calData && calData.events) || []).filter(function (ev) {
-        return !meetingIsDeclined(ev);
-      });
-      const nextEvs = ((calDataNext && calDataNext.events) || []).filter(function (ev) {
-        return !meetingIsDeclined(ev);
-      });
-      meetingsCount = isDesktopLayout() ? evs.length + nextEvs.length : evs.length;
-    }
-
-    hero.innerHTML =
-      '<div class="hero-inner">' +
-      '<p class="hero-kicker">' +
-      heroDateLineFor(calDate) +
-      "</p>" +
-      '<h1 class="hero-title">Добрый день 👋</h1>' +
-      '<div class="hero-stats">' +
-      '<button type="button" class="hero-stat hero-stat--posted" id="posted-tasks-open" aria-label="Поставленные задачи">' +
-      '<p class="hero-stat-label">Поставлено</p>' +
-      '<p class="hero-stat-value" id="posted-tasks-count">' +
-      postedCount +
-      "</p></button>" +
-      '<div class="hero-stat hero-stat--meetings"><p class="hero-stat-label">Встреч</p><p class="hero-stat-value">' +
-      meetingsCount +
-      "</p></div></div></div>";
-
-    var postedOpen = document.getElementById("posted-tasks-open");
-    if (postedOpen) {
-      postedOpen.addEventListener("click", function () {
-        setPostedTasksScreen(true);
-      });
-    }
+    heroTodayEvents = pickHeroTodayEvents(calData, calDataNext, rangeData);
+    heroTodayReminders = remindersForDate(active, todayIsoLocal());
+    heroPostedCount = postedCount;
+    paintActualHero(hero);
     if (isPostedTasksOpen() && postedTasksTab === "current") {
       renderPostedTasksList(postedItems);
     }
@@ -23084,6 +23475,7 @@
       !actualPanel.classList.contains("hidden") &&
       !isNoteEditorModalOpen();
     setHidden(createBtn, !show);
+    setHidden(document.getElementById("actual-voice-btn"), !show);
     if (!show) closeActualCreateMenu();
   }
 
@@ -42169,6 +42561,14 @@
         setPostedTasksTab(btn.getAttribute("data-posted-tab") || "current");
       });
     });
+    var actualVoiceBtn = document.getElementById("actual-voice-btn");
+    if (actualVoiceBtn) {
+      actualVoiceBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        closeActualCreateMenu();
+        startNoteDictation(true, "actual");
+      });
+    }
     document.querySelectorAll("#actual-create-menu [data-actual-action]").forEach(function (btn) {
       btn.addEventListener("click", function (e) {
         e.stopPropagation();
@@ -42414,6 +42814,15 @@
         if (!item) return;
         e.preventDefault();
         e.stopPropagation();
+        setMeetingsViewMode(item.getAttribute("data-meetings-view"));
+      });
+    }
+    var viewSeg = document.getElementById("meetings-view-seg");
+    if (viewSeg) {
+      viewSeg.addEventListener("click", function (e) {
+        var item = e.target && e.target.closest && e.target.closest("[data-meetings-view]");
+        if (!item) return;
+        e.preventDefault();
         setMeetingsViewMode(item.getAttribute("data-meetings-view"));
       });
     }
