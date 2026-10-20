@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261020-focus3";
+  var WEBAPP_BUILD = "20261020-notelink1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -38047,8 +38047,11 @@
     apiFetch("/notes/local/" + encodeURIComponent(pending), { method: "GET" })
       .then(function (res) {
         if (res && res.item) {
-          prependLocalInCache(res.item);
-          if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+          // При старте кэша списка ещё нет — не сохраняем на диск «список» из одной заметки.
+          if (notesDataCache) {
+            prependLocalInCache(res.item);
+            renderNotesPanesFromData(notesDataCache);
+          }
           go(res.item);
         }
       })
@@ -42947,6 +42950,9 @@
     var bootHadDeepLink = locationHasDeepLink();
     openPendingEventFromLocation();
     openPendingTaskFromLocation();
+    // ?note= / ?chat= из уведомлений: на телефоне вкладка «Заметки» при старте не грузится,
+    // и ссылка «добавил(а) вас в заметку» иначе открывала просто главный экран.
+    openPendingSharedNote(notesDataCache || {});
     consumePendingDeepLinkFromCache({ skipApply: bootHadDeepLink });
   }
 
