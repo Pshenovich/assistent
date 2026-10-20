@@ -2529,6 +2529,7 @@ class _MiniappCalendarEventUpdate(BaseModel):
 class _MiniappCalendarTaskBody(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    result: Optional[str] = None
     start: Optional[str] = None
     end: Optional[str] = None
     assignee_user_id: Optional[str] = None
@@ -5389,6 +5390,8 @@ def _task_api(task: dict[str, Any], *, tz: Any, viewer_id: int | str | None = No
     item["chip_label"] = item["event"].get("chip_label")
     item["schedule_log"] = list(item["event"].get("schedule_log") or [])
     item["schedule_log_lines"] = list(item["event"].get("schedule_log_lines") or [])
+    if item.get("id"):
+        item["url"] = task_webapp_url(item["id"])
     return item
 
 
@@ -5618,6 +5621,7 @@ async def miniapp_calendar_tasks_create(
                 uid,
                 title=title,
                 description=body.description or "",
+                result=body.result or "",
                 start_at=start_raw,
                 end_at=body.end,
                 assignee_user_id=assignee_uid or uid,
@@ -5682,6 +5686,7 @@ async def miniapp_calendar_tasks_patch(
                 task_id,
                 title=body.title,
                 description=body.description,
+                result=body.result,
                 start_at=start_raw,
                 end_at=end_raw,
                 assignee_user_id=assignee_uid if patch_assignee else None,

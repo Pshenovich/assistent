@@ -14195,8 +14195,7 @@
       (existing
         ? '<div class="event-sheet-group">' +
           '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-task-copy-link">' +
-          '<span class="event-sheet-row-label">Скопировать ссылку</span>' +
-          '<span class="event-sheet-row-value">' + eventSheetChevronHtml() + "</span></button></div>"
+          '<span class="event-sheet-row-label">Скопировать ссылку</span></button></div>'
         : "") +
       "</div>";
     bindCreateKindSwitcher(

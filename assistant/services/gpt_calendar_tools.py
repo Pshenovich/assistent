@@ -258,7 +258,8 @@ SYSTEM_ADDON = """У тебя есть доступ к календарю пол
 - Удаление никогда не выполняй сам: вызови propose_delete — пользователь подтвердит кнопкой. id бери из calendar_events/reminders_list; если не знаешь id — передай title (название), найду сам.
 - id встреч для изменения бери из calendar_events, не придумывай.
 - Участников указывай именами из контактов; если не уверен — contacts_find.
-- У встреч бывают материалы (транскрипции с саммари, заметки) — в calendar_events это поле materials. Что было/решили на встрече — meeting_materials; что решали с человеком, что он обещал/не сделал, подготовка к встрече с ним — person_history. Отвечай по материалам, называй встречу и дату.
+- У встреч бывают материалы (транскрипции с саммари, заметки) — в calendar_events это поле materials. Что было/решили на встрече — meeting_materials; что решали с человеком, что он обещал/не сделал, подготовка к встрече с ним — person_history (там и задачи, поставленные ему, — tasks_given). Отвечай по материалам, называй встречу и дату.
+- Задачи за любое время («ставил X задачу про …, что с ней?», «чем закончилось …») — tasks_search (тема и/или исполнитель; calendar_events видит только окно дат). В ответе — статус, когда поставлена и срок, результат (поле result), если он есть; покажи найденное через show_calendar_cards.
 - Когда перечисляешь встречи/задачи/напоминания — вызови show_calendar_cards с id ВСЕХ перечисляемых (до 20): под ответом появятся карточки, которые можно открыть. Текстом дай короткий итог, без длинного списка.
 - Если в контексте уже есть id задач («task id N», например из карточки Фокуса) — передай их все в show_calendar_cards, не ищи задачи заново и не ограничивайся одной.
 - Когда подбираешь время встречи — найди окна (calendar_free_slots) и вызови offer_slots с 3–6 лучшими вариантами (и участниками): пользователь выберет карточку, встреча создастся сама.
@@ -357,6 +358,10 @@ TOOLS: list[dict[str, Any]] = [
         {"person": {"type": "string", "description": "Имя или @ник из контактов"},
          "start_date": {**_DATE, "description": "По умолчанию — 60 дней назад"}, "end_date": _DATE},
         ["person"]),
+    _fn("tasks_search", "Поиск задач Leo за всё время (поставленные пользователем другим, его собственные и поставленные ему): по теме и/или исполнителю. Возвращает статус, описание, результат, чек-лист. Для вопросов «ставил X задачу про …, что с ней», «какие задачи у X», «чем закончилась задача …».",
+        {"query": {"type": "string", "description": "Ключевые слова темы (например «документы клиент»); пусто — все задачи исполнителя"},
+         "assignee": {"type": "string", "description": "Имя/ник исполнителя или постановщика (необязательно)"},
+         "status": {"type": "string", "enum": ["any", "open", "done"], "default": "any"}}),
     _fn("focus_item_update", "Разбор пункта Фокуса (инсайта): отметить выполненным, связать со ссылкой, отложить, скрыть, сменить тип, поправить поля. key — из истории (focus key).",
         {"key": {"type": "string", "description": "focus key пункта; если не знаешь — передай text"},
          "text": {"type": "string", "description": "Текст пункта, если key неизвестен"},
@@ -552,6 +557,7 @@ def tool_calendar_events(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
                     "start": _fmt_dt(_iso_local(ctx.uid, t.get("start_at")), ctx.uid),
                     "done": bool(t.get("done")),
                     "assignee": t.get("assignee_name") or "",
+                    **({"result": str(t.get("result"))[:300]} if t.get("result") else {}),
                 }
             )
             ctx.seen_items.append({"type": "task", "id": str(t.get("id")), "title": t.get("title")})
@@ -1656,6 +1662,23 @@ def tool_person_history(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     }
     if manual:
         res["other_materials"] = manual[:10]
+    try:
+        from assistant.stores import calendar_tasks
+
+        match_person = _person_matcher(ctx, (contact or {}).get("name") or who)
+        tasks = [
+            _task_brief(ctx, t)
+            for t in calendar_tasks.list_involved_tasks(ctx.uid, limit=1000)
+            if match_person and str(t.get("assignee_user_id") or "") != str(ctx.uid)
+            and match_person(str(t.get("assignee_user_id") or ""), str(t.get("assignee_email") or ""), str(t.get("assignee_name") or ""))
+        ]
+        if tasks:
+            res["tasks_given"] = tasks[:15]
+            res["tasks_given_total"] = len(tasks)
+            for it in tasks[:15]:
+                ctx.seen_items.append({"type": "task", "id": it["id"], "title": it["title"]})
+    except Exception as e:
+        print(f"[gpt_calendar] person_history tasks err={e!r}")
     if not email:
         res["note"] = "У контакта нет почты — встречи из календаря не найти, показаны только материалы, куда он добавлен вручную."
     elif not has_google_calendar(ctx.uid):
@@ -1663,5 +1686,116 @@ def tool_person_history(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     return _ok(res)
 
 
+_STOP_STEMS = {"для", "про", "что", "как", "это", "все", "при", "над", "под", "без", "или", "его", "она", "они", "мне", "мой", "мои", "задач"}
+
+
+def _stems(text: str) -> set[str]:
+    return {w[:5] for w in re.findall(r"[a-zа-я0-9]{3,}", _yo(text))} - _STOP_STEMS
+
+
+def _person_matcher(ctx: GptCalendarContext, who: str) -> Callable[[str, str, str], bool] | None:
+    """Совпадение (user_id, email, имя) с человеком из запроса: контакт + падеж в имени («Ульяне» → «Ульяна»)."""
+    raw = str(who or "").strip().lstrip("@")
+    if not raw:
+        return None
+    ids: set[str] = set()
+    emails: set[str] = set()
+    try:
+        res = _resolve_assignee(ctx, raw)
+        if isinstance(res, tuple):
+            ids.add(str(res[0]))
+            if res[1]:
+                emails.add(res[1].lower())
+    except Exception:
+        pass
+    words = [w for w in re.findall(r"[a-zа-я0-9]+", _yo(raw)) if len(w) >= 3]
+    stems = [w[:-1] if len(w) > 4 else w[: max(3, len(w) - 1)] for w in words]
+
+    def match(uid: str, email: str, name: str) -> bool:
+        if uid and uid in ids:
+            return True
+        if email and email.lower() in emails:
+            return True
+        hay = _yo(name)
+        return bool(stems) and all(st in hay for st in stems)
+
+    return match
+
+
+def _task_brief(ctx: GptCalendarContext, t: dict[str, Any]) -> dict[str, Any]:
+    owner = str(t.get("owner_user_id") or "")
+    assignee = str(t.get("assignee_user_id") or "")
+    mine = str(ctx.uid)
+    item: dict[str, Any] = {
+        "type": "task",
+        "id": str(t.get("id")),
+        "title": t.get("title"),
+        "status": "выполнена" if t.get("done") else "не выполнена",
+        "when": _fmt_dt(_iso_local(ctx.uid, t.get("start_at")), ctx.uid),
+        "created": _fmt_dt(_iso_local(ctx.uid, t.get("created_at")), ctx.uid),
+        "assignee": "я" if assignee in ("", mine) else (t.get("assignee_name") or "контакт"),
+    }
+    if owner != mine:
+        item["set_by_other"] = True
+    if t.get("done"):
+        item["updated"] = _fmt_dt(_iso_local(ctx.uid, t.get("updated_at")), ctx.uid)
+    if t.get("description"):
+        item["description"] = str(t.get("description"))[:400]
+    if t.get("result"):
+        item["result"] = str(t.get("result"))[:800]
+    cl = [c for c in t.get("checklist") or [] if isinstance(c, dict) and str(c.get("text") or "").strip()]
+    if cl:
+        item["checklist"] = [("✓ " if c.get("done") else "· ") + str(c.get("text"))[:120] for c in cl[:12]]
+    if t.get("owner_archived"):
+        item["archived"] = True
+    if t.get("recurrence"):
+        item["recurring"] = True
+    return item
+
+
+def tool_tasks_search(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    from assistant.stores import calendar_tasks
+
+    query = str(args.get("query") or "").strip()
+    status = str(args.get("status") or "any").strip().lower()
+    match_person = _person_matcher(ctx, str(args.get("assignee") or ""))
+    q = _stems(query)
+    hits: list[tuple[float, dict[str, Any]]] = []
+    for t in calendar_tasks.list_involved_tasks(ctx.uid):
+        if status == "open" and t.get("done"):
+            continue
+        if status == "done" and not t.get("done"):
+            continue
+        if match_person is not None:
+            assignee_ok = match_person(str(t.get("assignee_user_id") or ""), str(t.get("assignee_email") or ""), str(t.get("assignee_name") or ""))
+            owner_ok = str(t.get("owner_user_id") or "") != str(ctx.uid) and match_person(str(t.get("owner_user_id") or ""), "", "")
+            if not (assignee_ok or owner_ok):
+                continue
+        score = 1.0
+        if q:
+            hay = _stems(" ".join([
+                str(t.get("title") or ""),
+                str(t.get("description") or ""),
+                str(t.get("result") or ""),
+                " ".join(str(c.get("text") or "") for c in t.get("checklist") or [] if isinstance(c, dict)),
+            ]))
+            title = _stems(str(t.get("title") or ""))
+            found = len(q & hay)
+            if not found:
+                continue
+            score = found / len(q) + 0.25 * len(q & title) / len(q)
+        hits.append((score, t))
+    # list_involved_tasks уже свежие первыми — sort стабилен.
+    hits.sort(key=lambda p: -p[0])
+    out = [_task_brief(ctx, t) for _, t in hits[:15]]
+    for it in out:
+        ctx.seen_items.append({"type": "task", "id": it["id"], "title": it["title"]})
+    res: dict[str, Any] = {"items": out, "total": len(hits)}
+    if not hits:
+        res["note"] = "Ничего не нашёл — попробуй другие слова темы или без темы, только по исполнителю."
+    return _ok(res)
+
+
 EXECUTORS["meeting_materials"] = tool_meeting_materials
 EXECUTORS["person_history"] = tool_person_history
+EXECUTORS["tasks_search"] = tool_tasks_search

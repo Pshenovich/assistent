@@ -824,6 +824,7 @@
         } catch (_) {}
         if (patch.title != null) existing.title = String(patch.title || "").trim() || existing.title;
         if (patch.description != null) existing.description = String(patch.description || "");
+        if (patch.result != null) existing.result = String(patch.result || "");
         if (patch.start) existing.start_at = String(patch.start);
         if (patch.end) existing.end_at = String(patch.end);
         if (patch.checklist) existing.checklist = patch.checklist;

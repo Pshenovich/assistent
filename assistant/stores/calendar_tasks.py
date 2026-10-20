@@ -20,6 +20,7 @@ _CONN: Optional[sqlite3.Connection] = None
 DEFAULT_TITLE = "Задача"
 MAX_TITLE_LEN = 200
 MAX_DESC_LEN = 4000
+MAX_RESULT_LEN = 4000
 DEFAULT_DURATION = timedelta(minutes=30)
 
 
@@ -80,6 +81,7 @@ def _conn() -> sqlite3.Connection:
     _ensure_schedule_log_column(_CONN)
     _ensure_owner_archived_column(_CONN)
     _ensure_recurrence_column(_CONN)
+    _ensure_result_column(_CONN)
     _CONN.commit()
     return _CONN
 
@@ -89,6 +91,14 @@ def _ensure_recurrence_column(conn: sqlite3.Connection) -> None:
     if "recurrence" not in cols:
         conn.execute(
             "ALTER TABLE calendar_tasks ADD COLUMN recurrence TEXT NOT NULL DEFAULT ''"
+        )
+
+
+def _ensure_result_column(conn: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(calendar_tasks)")}
+    if "result" not in cols:
+        conn.execute(
+            "ALTER TABLE calendar_tasks ADD COLUMN result TEXT NOT NULL DEFAULT ''"
         )
 
 
@@ -267,6 +277,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "owner_user_id": str(row["owner_user_id"] or ""),
         "title": str(row["title"] or DEFAULT_TITLE),
         "description": str(row["description"] or ""),
+        "result": str(row["result"] or "") if "result" in keys else "",
         "start_at": str(row["start_at"] or ""),
         "end_at": str(row["end_at"] or ""),
         "assignee_user_id": str(row["assignee_user_id"] or ""),
@@ -496,6 +507,7 @@ def as_calendar_event(
         "html_link": "",
         "meet_url": None,
         "description": str(task.get("description") or ""),
+        "result": str(task.get("result") or ""),
         "location": "",
         "attendees": [],
         "is_organizer": is_owner,
@@ -540,6 +552,7 @@ def create_task(
     *,
     title: str | None = None,
     description: str = "",
+    result: str = "",
     start_at: str | datetime,
     end_at: str | datetime | None = None,
     assignee_user_id: str | int | None = None,
@@ -575,15 +588,16 @@ def create_task(
         cur = _conn().execute(
             """
             INSERT INTO calendar_tasks (
-                owner_user_id, title, description, start_at, end_at,
+                owner_user_id, title, description, result, start_at, end_at,
                 assignee_user_id, assignee_email, assignee_name,
                 checklist_json, note_id, all_day, recurrence, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 uid,
                 title_s,
                 _clip(description, MAX_DESC_LEN),
+                _clip(result, MAX_RESULT_LEN),
                 _iso(start),
                 _iso(end),
                 assignee,
@@ -826,6 +840,23 @@ def count_active_posted_tasks(owner_user_id: int | str) -> int:
         return int(row["n"] if row else 0)
 
 
+def list_involved_tasks(user_id: int | str, *, limit: int = 2000) -> list[dict[str, Any]]:
+    """Все задачи, где пользователь постановщик или исполнитель, — свежие первыми (поиск за всё время)."""
+    uid = _uid(user_id)
+    lim = max(1, min(int(limit or 2000), 5000))
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            SELECT * FROM calendar_tasks
+            WHERE owner_user_id = ? OR assignee_user_id = ?
+            ORDER BY start_at DESC, id DESC
+            LIMIT ?
+            """,
+            (uid, uid, lim),
+        )
+        return [_row_to_dict(r) for r in cur.fetchall()]
+
+
 def list_tasks(owner_user_id: int | str, *, limit: int = 200) -> list[dict[str, Any]]:
     uid = _uid(owner_user_id)
     lim = max(1, min(int(limit or 200), 500))
@@ -848,6 +879,7 @@ def update_task(
     *,
     title: str | None = None,
     description: str | None = None,
+    result: str | None = None,
     start_at: str | datetime | None = None,
     end_at: str | datetime | None = None,
     assignee_user_id: str | int | None = None,
@@ -934,6 +966,9 @@ def update_task(
         "description": _clip(description, MAX_DESC_LEN)
         if description is not None
         else existing["description"],
+        "result": _clip(result, MAX_RESULT_LEN)
+        if result is not None
+        else existing.get("result") or "",
         "start_at": new_start_iso,
         "end_at": new_end_iso,
         "assignee_user_id": _uid(assignee_user_id)
@@ -978,7 +1013,7 @@ def update_task(
         _conn().execute(
             """
             UPDATE calendar_tasks SET
-                title = ?, description = ?, start_at = ?, end_at = ?,
+                title = ?, description = ?, result = ?, start_at = ?, end_at = ?,
                 assignee_user_id = ?, assignee_email = ?, assignee_name = ?,
                 checklist_json = ?, note_id = ?, done = ?, owner_archived = ?,
                 all_day = ?,
@@ -990,6 +1025,7 @@ def update_task(
             (
                 fields["title"],
                 fields["description"],
+                fields["result"],
                 fields["start_at"],
                 fields["end_at"],
                 fields["assignee_user_id"],

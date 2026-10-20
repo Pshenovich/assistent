@@ -77,6 +77,11 @@ def notify_task_owner_done(
     link = task_title_link_html(str(task.get("title") or "Задача"), task.get("id") or 0)
     who = html.escape((completer_name or "").strip() or "Исполнитель")
     text = f"{who} выполнил(а) задачу: {link}."
+    result = str(task.get("result") or "").strip()
+    if result:
+        if len(result) > 600:
+            result = result[:600].rstrip() + "…"
+        text += f"\nРезультат: {html.escape(result)}"
     try:
         send_message(owner, text)
     except Exception as e:
