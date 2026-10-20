@@ -6486,6 +6486,7 @@
     if (name === "notes" && currentTab !== "notes") notesSplitAutoOpened = false;
     syncNotesColLayout(name);
     window.setTimeout(syncNotesSplitLayout, 0);
+    if (name !== "actual" && noteDict && noteDict.target === "actual") cancelNoteDictation();
     if (name !== "actual" && document.documentElement.classList.contains("actual-assistant-open")) {
       actualAssistantSuspending = true;
       try {
@@ -12328,13 +12329,22 @@
   }
 
   function noteDictSetUi(state, d) {
+    var on = state === "rec" || state === "busy";
+    if (d && d.target === "actual") {
+      // «Наговорить» на «Актуальном»: полоска записи на месте кнопки «+».
+      var aw = document.getElementById("actual-voice-wrap");
+      if (!aw) return;
+      setHidden(aw, !on);
+      document.documentElement.classList.toggle("actual-voice-open", on);
+      if (on) aw.querySelector(".note-dictation-bar").setAttribute("data-state", state);
+      return;
+    }
     var composer = !!(d && d.target === "composer");
     var wrap = composer ? document.getElementById("note-paie-reply-form") : document.getElementById("note-editor-toolbar-wrap");
     var bar = composer
       ? wrap && wrap.querySelector(".note-dictation-bar")
       : document.getElementById("note-dictation-bar");
     if (!wrap || !bar) return;
-    var on = state === "rec" || state === "busy";
     wrap.classList.toggle("is-dictating", on);
     bar.classList.toggle("hidden", !on);
     if (on) bar.setAttribute("data-state", state);
@@ -12407,14 +12417,17 @@
   async function startNoteDictation(atEnd, target) {
     if (noteDict) return;
     var composer = target === "composer";
-    var ed = composer ? noteGptEditor() : getLeftNoteRichEditor();
-    if (!ed || (!composer && typeof ed.beginDictation !== "function")) return;
+    var actual = target === "actual";
+    var ed = actual ? null : composer ? noteGptEditor() : getLeftNoteRichEditor();
+    if (!actual && (!ed || (!composer && typeof ed.beginDictation !== "function"))) return;
     if (!noteDictSupported()) {
       showNoteToast("Запись звука не поддерживается в этом браузере");
       return;
     }
-    var d = { state: "starting", editor: ed, mark: null, chunks: [], started: 0, target: composer ? "composer" : "editor" };
-    d.bar = composer
+    var d = { state: "starting", editor: ed, mark: null, chunks: [], started: 0, target: actual ? "actual" : composer ? "composer" : "editor" };
+    d.bar = actual
+      ? document.querySelector("#actual-voice-wrap .note-dictation-bar")
+      : composer
       ? (document.getElementById("note-paie-reply-form") || document).querySelector(".note-dictation-bar")
       : document.getElementById("note-dictation-bar");
     noteDict = d;
@@ -12429,7 +12442,7 @@
       noteDictCleanup(d);
       return;
     }
-    d.mark = composer ? null : ed.beginDictation(!!atEnd);
+    d.mark = composer || actual ? null : ed.beginDictation(!!atEnd);
     var mime = preferredVoiceMimeType();
     try {
       try {
@@ -12541,6 +12554,10 @@
       err = (e && e.message) || "Не удалось расшифровать";
     }
     if (noteDict !== d) return; // отменили, пока расшифровывали
+    if (d.target === "actual" && !err && text) {
+      runActualVoiceCommand(d, text);
+      return;
+    }
     noteDict = null;
     noteDictSetUi("off", d);
     if (err || !text) {
@@ -12557,6 +12574,60 @@
       } catch (_) {}
       showNoteToast("Заметка закрыта — текст диктовки скопирован в буфер");
     }
+  }
+
+  // «Наговорить»: задача / напоминание / встреча — ставим сразу и показываем тост;
+  // вопрос — новый чат с Ассистентом, сообщение уходит Лео сразу.
+  async function runActualVoiceCommand(d, text) {
+    var label = d.bar && d.bar.querySelector(".note-dict-label");
+    if (label) label.textContent = "Разбираю…";
+    var res = null;
+    var err = "";
+    try {
+      res = await apiFetch("/voice/command", { method: "POST", body: JSON.stringify({ text: text }) });
+    } catch (e) {
+      err = (e && e.message) || "Не удалось выполнить";
+    }
+    var kind = (res && res.kind) || "question";
+    if (noteDict !== d) {
+      // Отменили, пока разбирали: вопрос не шлём, но уже поставленное — показываем.
+      if (!err && kind !== "question") showActualVoiceDone(res);
+      return;
+    }
+    noteDict = null;
+    noteDictSetUi("off", d);
+    if (err) {
+      showNoteToast(err);
+      return;
+    }
+    if (kind === "question") {
+      await openActualAssistant();
+      if (isNoteDiscussionOpen()) await submitNoteGptQuestion(text);
+      return;
+    }
+    showActualVoiceDone(res);
+  }
+
+  function showActualVoiceDone(res) {
+    var what = { task: "Задача поставлена", reminder: "Напоминание поставлено", meeting: "Встреча создана" }[res.kind] || "Готово";
+    var when = res.when_label ? " · " + res.when_label : "";
+    showNoteToast("✓ " + what + ": «" + String(res.title || "").slice(0, 60) + "»" + when, { duration: 4000 });
+    shareHaptic();
+    loadActual();
+  }
+
+  function bindActualVoiceBar() {
+    var bar = document.querySelector("#actual-voice-wrap .note-dictation-bar");
+    if (!bar || bar._bound) return;
+    bar._bound = true;
+    bar.querySelector(".note-dict-stop").addEventListener("click", function (e) {
+      e.preventDefault();
+      stopNoteDictation();
+    });
+    bar.querySelector(".note-dict-cancel").addEventListener("click", function (e) {
+      e.preventDefault();
+      cancelNoteDictation();
+    });
   }
 
   // Диктовка в поле обсуждения: текст — в конец сообщения, курсор после него.
@@ -42072,6 +42143,7 @@
       });
     }
 
+    bindActualVoiceBar();
     var actualCreateBtn = document.getElementById("actual-create-btn");
     if (actualCreateBtn) {
       actualCreateBtn.addEventListener("click", function (e) {
@@ -42104,6 +42176,7 @@
         closeActualCreateMenu();
         if (action === "assistant") openActualAssistant();
         if (action === "voice") openVoiceModal();
+        if (action === "voice-command") startNoteDictation(true, "actual");
         if (action === "reminder") openReminderModal({});
         if (action === "meeting") openEventModal({});
         if (action === "task") openTaskModal({});

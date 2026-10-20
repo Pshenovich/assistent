@@ -12,7 +12,7 @@ import re
 import time
 from functools import partial
 from pathlib import Path
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time as dt_time, timedelta, timezone
 from typing import Any, Optional
 from urllib.parse import quote, unquote
 
@@ -7933,6 +7933,142 @@ async def miniapp_voice_transcribe(
             f"bytes={len(data)} err={e!r}"
         )
         raise HTTPException(status_code=502, detail=f"Транскрибация: {e}") from e
+
+
+class _MiniappVoiceCommandBody(BaseModel):
+    text: str = ""
+
+
+_VOICE_RU_MONTHS = (
+    "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+)
+
+
+def _voice_parse_date(raw: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(raw or "").strip()[:10])
+    except ValueError:
+        return None
+
+
+def _voice_parse_time(raw: Any) -> dt_time | None:
+    m = re.match(r"^\s*(\d{1,2})[:.](\d{2})", str(raw or ""))
+    if not m:
+        return None
+    h, mi = int(m.group(1)), int(m.group(2))
+    if h > 23 or mi > 59:
+        return None
+    return dt_time(h, mi)
+
+
+def _voice_when_label(day: date, at: dt_time | None, today: date) -> str:
+    delta = (day - today).days
+    if delta == 0:
+        label = "сегодня"
+    elif delta == 1:
+        label = "завтра"
+    elif delta == 2:
+        label = "послезавтра"
+    else:
+        label = f"{day.day} {_VOICE_RU_MONTHS[day.month - 1]}"
+        if day.year != today.year:
+            label += f" {day.year}"
+    if at is not None:
+        label += f" в {at.hour}:{at.minute:02d}"
+    return label
+
+
+@miniapp_router.post("/voice/command")
+async def miniapp_voice_command(
+    body: _MiniappVoiceCommandBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """«Наговорить» на «Актуальном»: задача / напоминание / встреча — создаём сразу;
+    вопрос и всё неясное — клиент отправляет в чат с Ассистентом."""
+    from assistant.nlu.llm import parse_voice_command
+    from assistant.services.calendar import _tz_for
+
+    text = str(body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Пустой текст")
+    uid = int(principal.telegram_user_id)
+    tz = _tz_for(uid)
+    now = datetime.now(tz).replace(second=0, microsecond=0)
+    today = now.date()
+    try:
+        parsed = await run_in_threadpool(partial(parse_voice_command, text, now=now))
+    except Exception as e:
+        print(f"[miniapp_voice_command] parse_failed uid={uid} err={e!r}")
+        parsed = None
+    parsed = parsed or {}
+    kind = str(parsed.get("kind") or "").strip().lower()
+    title = str(parsed.get("title") or "").strip()
+    question = {"kind": "question", "text": text}
+    if kind not in ("task", "reminder", "meeting") or not title:
+        return question
+    day = _voice_parse_date(parsed.get("date"))
+    at = _voice_parse_time(parsed.get("time"))
+
+    def _at(d: date, t: dt_time) -> datetime:
+        out = datetime.combine(d, t, tzinfo=tz)
+        # «в 10» без дня, а 10:00 уже прошло — значит, завтра.
+        if day is None and out <= now:
+            out += timedelta(days=1)
+        return out
+
+    if kind == "reminder":
+        if at is not None:
+            when = _at(day or today, at)
+        elif day is not None and day > today:
+            when = datetime.combine(day, dt_time(9, 0), tzinfo=tz)
+        else:
+            when = now + timedelta(hours=1)
+        res = await miniapp_reminders_create(
+            _MiniappReminderCreate(task=title, when_iso=when.isoformat()), principal
+        )
+        return {
+            "kind": "reminder",
+            "title": title,
+            "when_label": _voice_when_label(when.date(), when.timetz(), today),
+            "item": res.get("item"),
+        }
+
+    if kind == "task":
+        if at is not None:
+            start = _at(day or today, at)
+            task_body = _MiniappCalendarTaskBody(title=title, start=start.isoformat())
+            label = _voice_when_label(start.date(), start.timetz(), today)
+        else:
+            d = day if day is not None and day >= today else today
+            start = datetime.combine(d, dt_time(0, 0), tzinfo=tz)
+            task_body = _MiniappCalendarTaskBody(title=title, start=start.isoformat(), all_day=True)
+            label = _voice_when_label(d, None, today)
+        res = await miniapp_calendar_tasks_create(task_body, principal)
+        return {"kind": "task", "title": title, "when_label": label, "task": res.get("task")}
+
+    # Встреча без времени — не угадываем: пусть Ассистент уточнит в чате.
+    if at is None:
+        return question
+    start = _at(day or today, at)
+    end_t = _voice_parse_time(parsed.get("end_time"))
+    end = datetime.combine(start.date(), end_t, tzinfo=tz) if end_t is not None else None
+    if end is None or end <= start:
+        try:
+            dur = int(parsed.get("duration_min") or 0)
+        except (TypeError, ValueError):
+            dur = 0
+        end = start + timedelta(minutes=dur if 5 <= dur <= 12 * 60 else 60)
+    res = await miniapp_calendar_event_create(
+        _MiniappCalendarEventUpdate(title=title, start=start.isoformat(), end=end.isoformat()),
+        principal,
+    )
+    return {
+        "kind": "meeting",
+        "title": title,
+        "when_label": _voice_when_label(start.date(), start.timetz(), today),
+        "event": res.get("event"),
+    }
 
 
 def _project_from_tags(tags: list[dict[str, Any]]) -> dict[str, Any] | None:

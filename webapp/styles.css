@@ -16408,3 +16408,23 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
 
 /* Карточка задачи: «Скопировать ссылку» — действие, а не раскрывающаяся строка. */
 #m-task-copy-link .event-sheet-row-label { color: var(--accent); font-weight: 600; }
+
+/* «Наговорить» на «Актуальном»: полоска записи на месте «+» */
+.actual-voice-wrap {
+  position: fixed;
+  left: max(var(--space-4), calc((100vw - var(--max-w)) / 2 + var(--space-4)));
+  right: max(var(--space-4), calc((100vw - var(--max-w)) / 2 + var(--space-4)));
+  bottom: calc(var(--tabbar-stack) + var(--space-4));
+  z-index: 36;
+  padding: 6px;
+  border-radius: 999px;
+  background: #2c2c2e;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+}
+.actual-voice-wrap .note-dictation-bar { display: flex; }
+html.actual-voice-open #actual-create-btn { visibility: hidden; }
+#panel-actual.panel-actual--posted > .actual-voice-wrap { display: none !important; }
+#actual-create-menu .actual-create-menu-btn.is-voice .actual-create-ico { color: #ff6b5e; }
+@media (min-width: 960px) {
+  .actual-voice-wrap { left: auto; right: 2rem; bottom: 2rem; width: 26rem; }
+}
