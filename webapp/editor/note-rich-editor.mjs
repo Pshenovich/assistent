@@ -2082,6 +2082,19 @@ function paragraphTitleBeforeSlash(text) {
     .trim();
 }
 
+function focusMarkTitle(a) {
+  var head = a.mark === "linked" ? "Связано с задачей" : "Выполнено";
+  var when = "";
+  var d = new Date(String(a.at || ""));
+  if (!isNaN(d.getTime())) {
+    when =
+      d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }) +
+      ", " +
+      d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  }
+  return [head, a.by, when, "из «Фокуса»"].filter(Boolean).join(" · ");
+}
+
 function collectLeoTaskIds(doc) {
   var ids = new Set();
   if (!doc) return ids;
@@ -2407,7 +2420,81 @@ function createLeoTaskExtensions(ctx) {
     },
   });
 
-  return [LeoTaskChip, LeoTaskSlash];
+  // Значок разбора пункта из «Фокуса» (✓ выполнено / «Задача» — ссылка) в конце строки.
+  var LeoFocusMark = Node.create({
+    name: "leoFocusMark",
+    group: "inline",
+    inline: true,
+    atom: true,
+    selectable: true,
+    draggable: false,
+    addAttributes: function () {
+      return {
+        mark: { default: "done" },
+        item: { default: "" },
+        by: { default: "" },
+        at: { default: "" },
+        url: { default: "" },
+        task: { default: "" },
+      };
+    },
+    parseHTML: function () {
+      return [
+        {
+          tag: "span.note-focus-mark",
+          getAttrs: function (el) {
+            return {
+              mark: el.getAttribute("data-leo-mark") || "done",
+              item: el.getAttribute("data-leo-mark-item") || "",
+              by: el.getAttribute("data-leo-mark-by") || "",
+              at: el.getAttribute("data-leo-mark-at") || "",
+              url: el.getAttribute("data-leo-mark-url") || "",
+              task: el.getAttribute("data-leo-mark-task") || "",
+            };
+          },
+        },
+      ];
+    },
+    renderHTML: function (_ref) {
+      var a = _ref.node.attrs;
+      var attrs = { class: "note-focus-mark", "data-leo-mark": a.mark, contenteditable: "false" };
+      ["item", "by", "at", "url", "task"].forEach(function (k) {
+        if (a[k]) attrs["data-leo-mark-" + k] = a[k];
+      });
+      return ["span", attrs, a.mark === "linked" ? "Задача" : "✓"];
+    },
+    addNodeView: function () {
+      return function (_ref) {
+        var el = document.createElement("span");
+        function fill(node) {
+          var a = node.attrs;
+          el.className = "note-focus-mark";
+          el.setAttribute("contenteditable", "false");
+          el.setAttribute("data-leo-mark", a.mark);
+          el.textContent = a.mark === "linked" ? "Задача" : "✓";
+          el.title = focusMarkTitle(a);
+        }
+        fill(_ref.node);
+        el.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var a = _ref.node.attrs;
+          if (typeof ctx.onFocusMarkClick === "function") ctx.onFocusMarkClick(Object.assign({ title: focusMarkTitle(a) }, a));
+        });
+        return {
+          dom: el,
+          update: function (updated) {
+            if (!updated || updated.type.name !== "leoFocusMark") return false;
+            _ref.node = updated;
+            fill(updated);
+            return true;
+          },
+        };
+      };
+    },
+  });
+
+  return [LeoTaskChip, LeoTaskSlash, LeoFocusMark];
 }
 
 function createHashtagExtensions(ctx) {
@@ -2606,6 +2693,7 @@ function mount(container, options) {
     onTaskSlash: options.onTaskSlash,
     onTaskChipClick: options.onTaskChipClick,
     onTaskChipRemoved: options.onTaskChipRemoved,
+    onFocusMarkClick: options.onFocusMarkClick,
   };
   var noteRefCtx = {
     editor: null,
@@ -3067,7 +3155,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261019-bugfix9",
+  assetVersion: "20261020-focus1",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,

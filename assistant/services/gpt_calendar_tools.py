@@ -152,7 +152,7 @@ def public_action(a: dict[str, Any], *, viewer_uid: int | None = None) -> dict[s
             calendar_id=str((open_ref or {}).get("calendar_id") or res.get("calendar_id") or "primary"),
             day=str((open_ref or {}).get("date") or res.get("date") or "")[:10] or None,
         )
-    return {
+    out = {
         "id": a["id"],
         "kind": kind,
         "status": a["status"],
@@ -163,6 +163,14 @@ def public_action(a: dict[str, Any], *, viewer_uid: int | None = None) -> dict[s
         "open": open_ref or None,
         "mine": viewer_uid is not None and int(a.get("owner_uid") or 0) == int(viewer_uid),
     }
+    if kind == "focus_item":
+        # Карточка разбора пункта Фокуса: живое состояние пунктов, а не снимок на момент ответа.
+        from assistant.services import focus_items
+
+        rows = [focus_items.get(a.get("owner_uid"), k) for k in p.get("keys") or []]
+        out["focus"] = [focus_items.public(r) for r in rows if r]
+        out["card_key"] = p.get("card_key") or ""
+    return out
 
 
 # ---------------------------------------------------------------- контекст
@@ -254,6 +262,7 @@ SYSTEM_ADDON = """У тебя есть доступ к календарю пол
 - Когда перечисляешь встречи/задачи/напоминания — вызови show_calendar_cards с id ВСЕХ перечисляемых (до 20): под ответом появятся карточки, которые можно открыть. Текстом дай короткий итог, без длинного списка.
 - Если в контексте уже есть id задач («task id N», например из карточки Фокуса) — передай их все в show_calendar_cards, не ищи задачи заново и не ограничивайся одной.
 - Когда подбираешь время встречи — найди окна (calendar_free_slots) и вызови offer_slots с 3–6 лучшими вариантами (и участниками): пользователь выберет карточку, встреча создастся сама.
+- Карточка Фокуса в истории («пункт Фокуса … (focus key: …)») — пользователь разбирает этот пункт. Правки («исполнитель не Иван, а Дима», «срок пятница», «это решение», «напомни завтра», «уже сделано», ссылка на задачу) применяй инструментом focus_item_update с этим key — не создавай новую задачу и не переспрашивай.
 - После действий коротко напиши, что сделал (время в формате «чт 16 окт, 15:00–15:30»). Кнопки «Отменить»/«Удалить» пользователь увидит сам под ответом."""
 
 
@@ -348,6 +357,17 @@ TOOLS: list[dict[str, Any]] = [
         {"person": {"type": "string", "description": "Имя или @ник из контактов"},
          "start_date": {**_DATE, "description": "По умолчанию — 60 дней назад"}, "end_date": _DATE},
         ["person"]),
+    _fn("focus_item_update", "Разбор пункта Фокуса (инсайта): отметить выполненным, связать со ссылкой, отложить, скрыть, сменить тип, поправить поля. key — из истории (focus key).",
+        {"key": {"type": "string", "description": "focus key пункта; если не знаешь — передай text"},
+         "text": {"type": "string", "description": "Текст пункта, если key неизвестен"},
+         "op": {"type": "string", "enum": ["update", "done", "link", "snooze", "dismiss", "retype", "undo"]},
+         "assignee": {"type": "string"}, "task": {"type": "string", "description": "Новая формулировка задачи"},
+         "deadline": _DATE, "comment": {"type": "string"},
+         "url": {"type": "string", "description": "Ссылка на внешнюю задачу (op=link)"},
+         "until": {"type": "string", "description": "До когда отложить / когда напомнить: YYYY-MM-DDTHH:MM (op=snooze или retype=reminder)"},
+         "reason": {"type": "string", "enum": ["not_a_task", "not_relevant", "duplicate", "recognition_error"]},
+         "type": {"type": "string", "enum": ["task", "promise", "decision", "reminder", "thought"]}},
+        ["op"]),
     _fn("propose_delete", "Предложить удалить встречу/задачу/напоминание. НЕ удаляет — пользователь подтвердит кнопкой.",
         {"kind": {"type": "string", "enum": ["event", "task", "reminder"]}, "id": {"type": "string"},
          "title": {"type": "string", "description": "Название, если id неизвестен"},
@@ -1287,7 +1307,60 @@ def dismiss_slot_siblings(a: dict[str, Any]) -> None:
             continue
 
 
+def _focus_row_for(ctx: GptCalendarContext, args: dict[str, Any]) -> dict[str, Any] | None:
+    from assistant.services import focus_items
+
+    key = str(args.get("key") or "").strip()
+    if key:
+        row = focus_items.get(ctx.uid, key)
+        if row:
+            return row
+    rows = sorted(focus_items.rows(ctx.uid), key=lambda r: str(r.get("updated_at") or ""), reverse=True)
+    text = str(args.get("text") or key or "").strip()
+    if text:
+        scored = [(focus_items._score(text, f"{r.get('who') or ''} {r.get('text') or ''}"), r) for r in rows[:60]]
+        scored = [x for x in scored if x[0] >= 0.5]
+        if scored:
+            return max(scored, key=lambda x: x[0])[1]
+    return rows[0] if rows and not text else None
+
+
+def tool_focus_item_update(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    from assistant.services import focus_items
+
+    row = _focus_row_for(ctx, args)
+    if not row:
+        return _err("Пункт Фокуса не найден — попроси пользователя нажать «Уточнить» на карточке")
+    op = str(args.get("op") or "update")
+    kw: dict[str, Any] = {}
+    if op == "update":
+        kw["fields"] = {k: args[k] for k in ("assignee", "task", "deadline", "comment") if str(args.get(k) or "").strip()}
+        if not kw["fields"]:
+            return _err("Нечего менять: передай assignee, task, deadline или comment")
+    elif op == "link":
+        kw["url"] = args.get("url")
+    elif op in ("snooze", "retype"):
+        if args.get("until"):
+            dt = _iso_local(ctx.uid, args.get("until"))
+            kw["until"] = dt.isoformat() if dt else None
+        kw["type"] = args.get("type")
+    elif op == "dismiss":
+        kw["reason"] = args.get("reason") or "not_relevant"
+    try:
+        saved = focus_items.apply(ctx.uid, row["item_key"], op, by=ctx.display_name or "", **kw)
+    except ValueError as e:
+        return _err(str(e))
+    ctx.wrote = True
+    ctx.actions.append(record_action(
+        ctx.uid, "focus_item", "info", title=str(saved.get("text") or "")[:200],
+        payload={"keys": [saved["item_key"]], "card_key": saved.get("card_key") or ""},
+    ))
+    return _ok({"ok": True, "item": focus_items.public(saved),
+                "note": "Карточка с новым состоянием показана под ответом; коротко скажи, что поменял."})
+
+
 EXECUTORS: dict[str, Callable[[GptCalendarContext, dict[str, Any]], str]] = {
+    "focus_item_update": tool_focus_item_update,
     "calendar_events": tool_calendar_events,
     "calendar_free_slots": tool_calendar_free_slots,
     "calendar_availability": tool_calendar_availability,
@@ -1433,7 +1506,14 @@ def _material_digest(ctx: GptCalendarContext, note_id: int, *, full: bool) -> di
         tasks = []
         for t in meta.get("tasks") or []:
             if isinstance(t, dict):
-                tasks.append({k: str(t.get(k) or "")[:200] for k in ("assignee", "task", "deadline") if t.get(k)})
+                row = {k: str(t.get(k) or "")[:200] for k in ("assignee", "task", "deadline", "comment") if t.get(k)}
+                if t.get("completed"):
+                    row["status"] = "выполнена" + (f" ({t.get('completed_by')}, {str(t.get('completed_at') or '')[:10]})" if t.get("completed_by") else "")
+                elif t.get("focus_status") == "linked":
+                    row["status"] = "связана с задачей"
+                if isinstance(t.get("link"), dict) and t["link"].get("url"):
+                    row["link"] = str(t["link"]["url"])[:300]
+                tasks.append(row)
         if tasks:
             out["tasks"] = tasks[:15]
         if meta.get("decisions"):
@@ -1444,6 +1524,9 @@ def _material_digest(ctx: GptCalendarContext, note_id: int, *, full: bool) -> di
         text = summary or (tnotes.transcript_html(note) if full else "")
     else:
         text = str(note.get("body") or "")
+    from assistant.services.focus_items import marks_to_text
+
+    text = marks_to_text(text)
     try:
         plain = html_to_plain(text).strip() if text else ""
     except Exception:

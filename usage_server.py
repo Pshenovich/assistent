@@ -9113,6 +9113,25 @@ async def miniapp_proactive_done(
     items = [{"id": i.id, "text": i.text} for i in body.items if str(i.id or "").strip()]
     if not key or not items:
         raise HTTPException(status_code=400, detail="Нечего отмечать")
+    by = _principal_display_name(principal)
+
+    def _mark_items() -> None:
+        # «✓ Сделано»: статус пункта + значок в исходнике (саммари / заметке).
+        from assistant.services import focus_items
+
+        card = _focus_card_for(uid, key)
+        if not card:
+            return
+        for k in _focus_remember(uid, card, [i["id"] for i in items]):
+            try:
+                focus_items.apply(uid, k, "done", by=by)
+            except ValueError as e:
+                print(f"[proactive] done item={k} err={e!r}")
+
+    try:
+        await run_in_threadpool(_mark_items)
+    except Exception as e:
+        print(f"[proactive] done items failed uid={uid} err={e!r}")
     await run_in_threadpool(proactive.mark_done, uid, key, items, whole=bool(body.whole))
     if body.whole:
         hit = _FOCUS_CACHE.get(uid)
@@ -9122,6 +9141,110 @@ async def miniapp_proactive_done(
     feed = await run_in_threadpool(_focus_feed_items, uid)
     _FOCUS_CACHE[uid] = (time.time(), feed)
     return {"ok": True, "item": next((i for i in feed if i.get("key") == key), None)}
+
+
+class _MiniappFocusRefineBody(BaseModel):
+    key: str
+
+
+class _MiniappFocusItemBody(BaseModel):
+    key: str
+    op: str
+    until: Optional[str] = None
+    reason: Optional[str] = None
+    type: Optional[str] = None
+    url: Optional[str] = None
+    task_id: Optional[int] = None
+    title: Optional[str] = None
+    fields: Optional[dict[str, Any]] = None
+
+
+def _focus_card_for(uid: int, key: str) -> Optional[dict[str, Any]]:
+    """Карточка Фокуса по её ключу или по ключу пункта внутри (задачи из саммари)."""
+    hit = _FOCUS_CACHE.get(uid)
+    feeds = [hit[1]] if hit else []
+    for attempt in range(2):
+        for feed in feeds:
+            for card in feed:
+                if card.get("key") == key or any(str(i.get("id")) == key for i in card.get("items") or []):
+                    return card
+        if attempt == 0:
+            feed = _focus_feed_items(uid)
+            _FOCUS_CACHE[uid] = (time.time(), feed)
+            feeds = [feed]
+    return None
+
+
+def _focus_remember(uid: int, card: dict[str, Any], keys: Optional[list[str]] = None) -> list[str]:
+    from assistant.services import focus_items
+
+    out = []
+    for snap in focus_items.item_from_card(card):
+        if keys and str(snap.get("key")) not in keys:
+            continue
+        focus_items.remember(uid, snap)
+        out.append(str(snap["key"]))
+    return out
+
+
+@miniapp_router.post("/proactive/refine")
+async def miniapp_proactive_refine(
+    body: _MiniappFocusRefineBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """«Уточнить» на карточке Фокуса: карточка разбора пункта для чата с ассистентом."""
+    from assistant.services import gpt_calendar_tools as gcal_tools
+
+    uid = int(principal.telegram_user_id)
+    key = str(body.key or "").strip()
+
+    def _run() -> dict[str, Any]:
+        card = _focus_card_for(uid, key)
+        if not card or not card.get("items"):
+            raise HTTPException(status_code=404, detail="Подсказка уже неактуальна — обновите Фокус")
+        keys = _focus_remember(uid, card)
+        aid = gcal_tools.record_action(
+            uid, "focus_item", "info", title=str(card.get("title") or "")[:200],
+            payload={"keys": keys, "card_key": card.get("key")},
+        )
+        a = gcal_tools.get_action(aid) or {}
+        return {"action": gcal_tools.public_action(a, viewer_uid=uid), "title": card.get("title") or ""}
+
+    return {"ok": True, **(await run_in_threadpool(_run))}
+
+
+@miniapp_router.post("/proactive/item")
+async def miniapp_proactive_item(
+    body: _MiniappFocusItemBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Разбор пункта Фокуса: выполнено, связать, отложить, скрыть с причиной, сменить тип, уточнить поля."""
+    from assistant.services import focus_items
+
+    uid = int(principal.telegram_user_id)
+    key = str(body.key or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="Нет пункта")
+    by = _principal_display_name(principal)
+
+    def _run() -> dict[str, Any]:
+        if not focus_items.get(uid, key):
+            card = _focus_card_for(uid, key)
+            if not card:
+                raise HTTPException(status_code=404, detail="Пункт не найден — обновите Фокус")
+            _focus_remember(uid, card, [key])
+        try:
+            row = focus_items.apply(
+                uid, key, body.op, by=by, until=body.until, reason=body.reason, type=body.type,
+                url=body.url, task_id=body.task_id, title=body.title, fields=body.fields or {},
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return focus_items.public(row)
+
+    item = await run_in_threadpool(_run)
+    _FOCUS_CACHE.pop(uid, None)
+    return {"ok": True, "item": item}
 
 
 @miniapp_router.get("/notes/trash")

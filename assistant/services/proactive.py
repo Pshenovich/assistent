@@ -136,11 +136,16 @@ def _done_rows(owner_user_id: Any) -> list[sqlite3.Row]:
 
 
 def done_keys(owner_user_id: Any) -> set[str]:
-    return {str(r["item_key"]) for r in _done_rows(owner_user_id)}
+    from assistant.services import focus_items
+
+    return {str(r["item_key"]) for r in _done_rows(owner_user_id)} | focus_items.hidden_keys(owner_user_id)
 
 
 def done_titles(owner_user_id: Any) -> list[str]:
-    return [str(r["title"]) for r in _done_rows(owner_user_id) if str(r["title"] or "").strip()]
+    from assistant.services import focus_items
+
+    legacy = [str(r["title"]) for r in _done_rows(owner_user_id) if str(r["title"] or "").strip()]
+    return legacy + focus_items.handled_titles(owner_user_id)
 
 
 # ---------------------------------------------------------------- время
@@ -420,7 +425,7 @@ def rule_summary_tasks(
                         },
                     },
                     {"label": "Открыть", "act": "open_note"},
-                    {"label": "✓ Уже есть" + ("…" if cnt > 1 else ""), "act": "mark_done_pick" if cnt > 1 else "mark_done"},
+                    {"label": "✓ Сделано" + ("…" if cnt > 1 else ""), "act": "mark_done_pick" if cnt > 1 else "mark_done"},
                 ],
             }
         )
@@ -491,6 +496,12 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
                 items.append(wc)
     except Exception as e:
         print(f"[proactive] insights failed uid={uid} err={e!r}")
+    try:
+        from assistant.services import focus_items
+
+        items = focus_items.apply_to_feed(uid, items, now)
+    except Exception as e:
+        print(f"[proactive] focus items failed uid={uid} err={e!r}")
     return rank(items, dismissed_keys(uid))
 
 

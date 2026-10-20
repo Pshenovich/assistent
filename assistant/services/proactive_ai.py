@@ -94,11 +94,14 @@ def _hash(*parts: str) -> str:
 # ---------------------------------------------------------------- что разобрать
 
 def _material_text(note: dict[str, Any]) -> str:
+    # Значки разбора из Фокуса (✓ выполнено, ссылка) — не повод разбирать материал заново.
+    from assistant.services.focus_items import strip_marks
+
     if str(note.get("role") or "") == "transcription":
         from assistant.services import transcription_notes as tnotes
 
-        return _plain(tnotes.summary_html(note))  # только саммари: транскрипция без него слишком сырая
-    return _plain(str(note.get("body") or ""))
+        return _plain(strip_marks(tnotes.summary_html(note)))  # только саммари: транскрипция без него слишком сырая
+    return _plain(strip_marks(str(note.get("body") or "")))
 
 
 def candidates(uid: int, *, now: Optional[datetime] = None) -> list[tuple[dict[str, Any], str, str]]:
@@ -386,9 +389,10 @@ def card_for(it: dict[str, Any], *, src: str, note: dict[str, Any], today: date,
                     },
                 },
                 {"label": "Открыть", "act": "open_note"},
-                {"label": "✓ Уже есть", "act": "mark_done"},
+                {"label": "✓ Сделано", "act": "mark_done"},
             ],
             "items": [{"id": key, "text": text}],
+            "_item": {"text": text, "who": "" if me else who, "due": due},
         }
     if kind == "followup":
         people = ", ".join(it.get("people") or []) or who
@@ -604,7 +608,7 @@ def chat_card(it: dict[str, Any], *, chat_id: int, day: str, title: str, today: 
     if url:
         acts.append({"label": "Открыть чат", "act": "url", "payload": {"url": url}})
     if kind in ("promise", "request"):
-        acts.append({"label": "✓ Уже есть", "act": "mark_done"})
+        acts.append({"label": "✓ Сделано", "act": "mark_done"})
     return {
         "key": key,
         "type": "chat_" + str(kind),
@@ -616,6 +620,7 @@ def chat_card(it: dict[str, Any], *, chat_id: int, day: str, title: str, today: 
         "chat": {"id": chat_id, "date": day, "title": title},
         "actions": acts,
         "items": [{"id": key, "text": text}],
+        "_item": {"text": text, "who": who if kind != "promise" else "", "due": str(it.get("due") or "")},
     }
 
 
