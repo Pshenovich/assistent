@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261020-focusscan1";
+  var WEBAPP_BUILD = "20261020-focustask3";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -33271,57 +33271,145 @@
     return row;
   }
 
-  function focusEditForm(aid, f) {
+  // Срок из разбора («пт», «завтра», «24.10», «2026-10-24») → YYYY-MM-DD для поля даты.
+  function focusDeadlineIso(raw) {
+    var t = String(raw || "").trim().toLowerCase().replace(/ё/g, "е");
+    var today = new Date();
+    function iso(d) {
+      return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+    }
+    if (!t) return "";
+    var m = t.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return m[1] + "-" + m[2] + "-" + m[3];
+    m = t.match(/(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?/);
+    if (m) {
+      var y = m[3] ? Number(m[3].length === 2 ? "20" + m[3] : m[3]) : today.getFullYear();
+      var d0 = new Date(y, Number(m[2]) - 1, Number(m[1]));
+      if (!m[3] && d0 < new Date(today.getFullYear(), today.getMonth(), today.getDate())) d0.setFullYear(y + 1);
+      return isNaN(d0.getTime()) ? "" : iso(d0);
+    }
+    if (/сегодня/.test(t)) return iso(today);
+    if (/послезавтра/.test(t)) return iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2));
+    if (/завтра/.test(t)) return iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1));
+    var days = [/^вс|воскр/, /^пн|понед/, /^вт|вторн/, /^ср|сред/, /^чт|четв/, /^пт|пятн/, /^сб|субб/];
+    for (var i = 0; i < days.length; i++) {
+      if (days[i].test(t.replace(/^(до|к|в|во)\s+/, ""))) {
+        var add = (i + 7 - today.getDay()) % 7 || 7;
+        return iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() + add));
+      }
+    }
+    return "";
+  }
+
+  // Исполнитель из разбора («Мария») → контакт, если нашёлся; иначе — я.
+  function focusAssigneeContact(name) {
+    var q = String(name || "").trim().toLowerCase();
+    if (!q || q === "я") return null;
+    var first = q.split(/\s+/)[0];
+    var hit = null;
+    Object.keys(calendarContactsByEmail).forEach(function (k) {
+      var c = calendarContactsByEmail[k];
+      if (!c || hit) return;
+      var hay = [c.name, c.telegram_username, (c.aliases || []).join(" ")].join(" ").toLowerCase();
+      if (first.length >= 3 && hay.indexOf(first.slice(0, Math.max(3, first.length - 2))) >= 0) hit = c;
+    });
+    return hit;
+  }
+
+  // «В задачу»: те же поля, что у задачи, — исполнитель из контактов, срок, комментарий; «Поставить / Отмена».
+  function focusTaskForm(aid, f) {
     var ui = focusUiFor(aid);
     var d = ui.draft;
+    var wrap = focusEl("div", "focus-chat-edit focus-chat-task");
     var grid = focusEl("div", "focus-chat-fields");
-    function field(label, name, value, opts) {
-      grid.appendChild(focusEl("label", "focus-chat-field-label", label));
-      var inp;
-      if (opts && opts.select) {
-        inp = document.createElement("select");
-        Object.keys(opts.select).forEach(function (k) {
-          var o = document.createElement("option");
-          o.value = k;
-          o.textContent = opts.select[k];
-          inp.appendChild(o);
-        });
-      } else {
-        inp = document.createElement("input");
-        inp.type = "text";
-        if (opts && opts.placeholder) inp.placeholder = opts.placeholder;
-      }
-      inp.value = d[name] != null ? d[name] : value || "";
-      inp.addEventListener("input", function () {
-        d[name] = inp.value;
-      });
-      inp.addEventListener("change", function () {
-        d[name] = inp.value;
-      });
-      grid.appendChild(inp);
+    function label(text) {
+      grid.appendChild(focusEl("label", "focus-chat-field-label", text));
     }
-    field("Исполнитель", "assignee", f.assignee, { placeholder: "Имя" });
-    field("Задача", "task", f.text);
-    field("Дедлайн", "deadline", f.deadline, { placeholder: "2026-10-24 или «пятница»" });
-    field("Статус", "state", f.state || "open", { select: { open: "Открыта", in_progress: "В работе", done: "Выполнена" } });
-    field("Ссылка", "link", (f.link && f.link.url) || "", { placeholder: "https://…" });
-    field("Комментарий", "comment", f.comment, { placeholder: "Ждём доступы" });
-    var wrap = focusEl("div", "focus-chat-edit");
+    label("Задача");
+    var title = document.createElement("input");
+    title.type = "text";
+    title.value = d.title != null ? d.title : f.text || "";
+    title.addEventListener("input", function () {
+      d.title = title.value;
+    });
+    grid.appendChild(title);
+    label("Исполнитель");
+    var assHost = focusEl("div", "focus-chat-assignee");
+    grid.appendChild(assHost);
+    var contact = d.assignee || focusAssigneeContact(f.assignee);
+    var assApi = mountTaskAssignee(
+      assHost,
+      contact
+        ? { user_id: contact.user_id || contact.telegram_user_id || "", email: contact.email || "", name: contact.name || "" }
+        : null
+    );
+    label("Срок");
+    var due = document.createElement("input");
+    due.type = "date";
+    due.value = d.due != null ? d.due : focusDeadlineIso(f.deadline) || focusDeadlineIso("завтра");
+    due.addEventListener("input", function () {
+      d.due = due.value;
+    });
+    due.addEventListener("change", function () {
+      d.due = due.value;
+    });
+    grid.appendChild(due);
+    label("Комментарий");
+    var comment = document.createElement("input");
+    comment.type = "text";
+    comment.placeholder = "Необязательно";
+    comment.value = d.comment != null ? d.comment : f.comment || "";
+    comment.addEventListener("input", function () {
+      d.comment = comment.value;
+    });
+    grid.appendChild(comment);
     wrap.appendChild(grid);
-    wrap.appendChild(focusEl("p", "focus-chat-hint", "Можно написать в чат: «исполнитель Дима, срок пятница»."));
+    if (f.assignee && !contact) {
+      wrap.appendChild(focusEl("p", "focus-chat-hint", "«" + f.assignee + "» нет в контактах — выберите исполнителя или оставьте себе."));
+    }
     var acts = focusEl("div", "focus-chat-acts");
     acts.appendChild(
-      focusBtn("Применить", "is-primary", function (b) {
-        var fields = {};
-        ["assignee", "task", "deadline", "state", "link", "comment"].forEach(function (k) {
-          if (d[k] != null) fields[k] = d[k];
-        });
-        if (fields.link && !/^https?:\/\//i.test(fields.link)) {
-          showNoteToast("Ссылка должна начинаться с https://");
+      focusBtn("Поставить", "is-primary", function (b) {
+        var text = String(title.value || "").trim();
+        if (!text) {
+          showNoteToast("Укажите, что сделать");
           return;
         }
+        if (!due.value) {
+          showNoteToast("Укажите срок");
+          return;
+        }
+        var who = assApi.getAssignee() || {};
+        d.assignee = who;
+        var src = f.source || {};
+        var desc = [String(comment.value || "").trim(), src.title ? "Из «" + src.title + "»" : ""].filter(Boolean).join("\n");
         b.disabled = true;
-        focusRunOp(aid, f, { op: "update", fields: fields }, "Сохранено — в карточке и в источнике");
+        apiFetch("/calendar/tasks", {
+          method: "POST",
+          body: JSON.stringify({
+            title: text,
+            description: desc,
+            start: due.value + "T12:00:00",
+            end: due.value + "T13:00:00",
+            all_day: true,
+            assignee_user_id: who.user_id || "",
+            assignee_email: who.email || "",
+            assignee_name: who.name || "",
+            note_id: src.kind === "note" && src.id ? String(src.id) : "",
+          }),
+        })
+          .then(function (r) {
+            var task = r && r.task;
+            if (!task || task.id == null) throw new Error("Не удалось поставить задачу");
+            rememberTaskTip(task);
+            loadActual({ skipCachePaint: true, silent: true });
+            var whoName = who.name && who.user_id !== defaultTaskAssignee().user_id ? " — " + who.name : "";
+            return focusRunOp(aid, f, { op: "converted", task_id: task.id }, "Задача поставлена" + whoName);
+          })
+          .catch(function (e) {
+            b.disabled = false;
+            showNoteToast((e && e.message) || "Не удалось поставить задачу");
+          });
       })
     );
     acts.appendChild(focusBtn("Отмена", "is-ghost", function () {
@@ -33549,7 +33637,7 @@
         ])
       );
     }
-    if (opts.mine && ui.mode === "edit") card.appendChild(focusEditForm(aid, f));
+    if (opts.mine && ui.mode === "task") card.appendChild(focusTaskForm(aid, f));
     else if (opts.mine && ui.mode === "link") card.appendChild(focusLinkForm(aid, f));
     else if (opts.mine && (ui.mode === "snooze_date" || ui.mode === "remind_date")) card.appendChild(focusDatePicker(aid, f, ui.mode === "remind_date" ? "remind" : "snooze"));
     else if (opts.mine) {
@@ -33558,27 +33646,26 @@
         b.disabled = true;
         focusRunOp(aid, f, { op: "done" }, "Отмечено выполненным");
       }, "check"));
-      acts.appendChild(focusCardBtn("Изменить", "is-soft", function () {
-        focusSetUi(aid, { mode: "edit", menu: "", draft: {} });
-      }));
-      acts.appendChild(focusCardBtn("Связать", "is-soft", function () {
-        focusSetUi(aid, { mode: "link", menu: "", draft: {} });
-      }));
+      // «В задачу» — форма постановки; шеврон — «Отложить» (завтра, понедельник, через неделю, дата).
       var split = focusEl("span", "focus-card-split");
-      split.appendChild(focusCardBtn("Отложить", "is-soft", function (b) {
-        b.disabled = true;
-        focusRunOp(aid, f, { op: "snooze", until: focusAt(1, 9).toISOString() }, "Вернётся в Фокус завтра в 9:00");
+      split.appendChild(focusCardBtn("В задачу", "is-soft", function () {
+        focusSetUi(aid, { mode: "task", menu: "", draft: {} });
       }));
       var chev = focusCardBtn("", "is-soft focus-card-chev" + (ui.menu === "snooze" ? " is-open" : ""), function () {
         focusSetUi(aid, { menu: ui.menu === "snooze" ? "" : "snooze" });
       }, "down");
-      chev.setAttribute("aria-label", "Когда напомнить");
+      chev.setAttribute("aria-label", "Отложить");
+      chev.title = "Отложить";
       split.appendChild(chev);
       acts.appendChild(split);
+      acts.appendChild(focusCardBtn("Связать", "is-soft", function () {
+        focusSetUi(aid, { mode: "link", menu: "", draft: {} });
+      }));
       card.appendChild(acts);
       if (ui.menu === "snooze") {
         card.appendChild(
           focusMenu([
+            { head: "Отложить" },
             { label: "Завтра, 9:00", fn: function () { focusRunOp(aid, f, { op: "snooze", until: focusAt(1, 9).toISOString() }, "Вернётся завтра в 9:00"); } },
             { label: "В понедельник, 9:00", fn: function () { focusRunOp(aid, f, { op: "snooze", until: focusAt(0, 9, 1).toISOString() }, "Вернётся в понедельник"); } },
             { label: "Через неделю", fn: function () { focusRunOp(aid, f, { op: "snooze", until: focusAt(7, 9).toISOString() }, "Вернётся через неделю"); } },
@@ -33948,8 +34035,21 @@
       ) {
         return;
       }
+      // Поля и кнопки карточек под ответом (Фокус: «В задачу», «Связать»…) — не «показать тему»:
+      // на телефоне это закрывало чат при касании поля.
+      if (
+        e.target &&
+        e.target.closest &&
+        e.target.closest("input, textarea, select, button, label, .focus-chat, .meeting-attendee-suggest")
+      ) {
+        return;
+      }
       var sel = window.getSelection && window.getSelection();
       if (sel && !sel.isCollapsed) return;
+      // Отдельный чат (Ассистент на «Актуальном» и т.п.) — показывать в заметке нечего; на телефоне
+      // тап по сообщению закрывал чат.
+      var dw = discussWrap();
+      if (dw && dw._shareKind === "chat") return;
       revealNoteDiscussionTopic(c, { fromDiscussion: true });
     });
     return item;
@@ -33964,7 +34064,7 @@
       "touchstart",
       function (e) {
         if (e.touches.length !== 1) return;
-        if (e.target.closest && e.target.closest("a, button, .note-discuss-edits")) return;
+        if (e.target.closest && e.target.closest("a, button, input, textarea, select, label, .note-discuss-edits, .focus-chat")) return;
         sx = e.touches[0].clientX;
         sy = e.touches[0].clientY;
         clearTimeout(timer);
@@ -34223,6 +34323,41 @@
     if (kind && itemId && wrap && !isDiscussionTargetActive(kind, itemId)) {
       return;
     }
+    // Пользователь печатает в поле карточки (форма «В задачу») — не пересоздаём ленту под ним:
+    // на телефоне поле теряло фокус, клавиатура пряталась, и ввод сбрасывался. Дорисуем после.
+    var activeEl = document.activeElement;
+    if (
+      list &&
+      activeEl &&
+      activeEl !== document.body &&
+      list.contains(activeEl) &&
+      /^(INPUT|TEXTAREA|SELECT)$/.test(activeEl.tagName)
+    ) {
+      if (!list._deferredRender) {
+        list._deferredRender = true;
+        activeEl.addEventListener(
+          "blur",
+          function () {
+            setTimeout(function () {
+              list._deferredRender = false;
+              var nowActive = document.activeElement;
+              if (nowActive && list.contains(nowActive) && /^(INPUT|TEXTAREA|SELECT)$/.test(nowActive.tagName)) {
+                list._deferredRender = true;
+                nowActive.addEventListener("blur", function () {
+                  list._deferredRender = false;
+                  refreshDiscussFeedNow();
+                }, { once: true });
+                return;
+              }
+              refreshDiscussFeedNow();
+            }, 350); // после blur — дать дойти клику по кнопке формы («Поставить»), не пересоздать её раньше
+          },
+          { once: true }
+        );
+      }
+      list._renderFp = null;
+      return;
+    }
     var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
     var stickBottom = true;
     var prevTop = 0;
@@ -34293,7 +34428,7 @@
     if (isNoteDiscussionOpen()) {
       var pinId = wrap && wrap._discussionPinId;
       if (pinId && !gptBusy) scrollDiscussionToComment(pinId);
-      else if (stickBottom) scrollDiscussionToEnd();
+      else if (stickBottom) scrollDiscussionToEnd(true);
       else if (scroll) scroll.scrollTop = prevTop;
       ensureDiscussScrollDownBtn();
     }
@@ -35807,9 +35942,11 @@
     return el;
   }
 
-  function scrollDiscussionToEnd() {
+  // fromRender: вызов из самой перерисовки — флаг «вниз при следующей» не взводим, иначе он
+  // становится вечным и любая перерисовка (кнопка в карточке) уводит ленту в конец.
+  function scrollDiscussionToEnd(fromRender) {
     var wrap = document.getElementById("note-editor-more-wrap");
-    if (wrap) wrap._forceDiscussScrollBottom = true;
+    if (wrap && fromRender !== true) wrap._forceDiscussScrollBottom = true;
     function go() {
       var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
       if (!scroll) return;

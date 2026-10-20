@@ -16859,3 +16859,20 @@ html.actual-voice-open #actual-voice-btn { visibility: hidden; }
 }
 .focus-empty-text { font-size: 0.875rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #panel-actual .focus-head--empty { margin-bottom: 0; }
+
+/* Фокус в чате: форма «В задачу» и мобильные поля */
+.focus-chat-assignee { min-width: 0; display: grid; gap: 6px; }
+.focus-chat-assignee .meeting-attendee-chips:empty { display: none; }
+.focus-chat-assignee .field-input { min-width: 0; width: 100%; box-sizing: border-box; height: 32px; padding: 0 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-elevated, #2a2a2e); color: var(--text); font: inherit; font-size: 0.82rem; }
+.focus-card-split .focus-card-chev { border-left: 1px solid rgba(255, 255, 255, 0.08); }
+@media (max-width: 959px) {
+  /* 16px — иначе iOS зумит страницу при касании поля, и форма «уезжает». */
+  .focus-chat-fields { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .focus-chat-field-label { margin-top: 6px; }
+  .focus-chat-fields input,
+  .focus-chat-fields select,
+  .focus-chat-assignee .field-input,
+  .focus-chat-search,
+  .focus-chat-date input { height: 40px; font-size: 16px; }
+  .focus-chat-acts .focus-chat-btn { min-height: 40px; }
+}
