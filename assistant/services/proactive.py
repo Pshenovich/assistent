@@ -432,8 +432,40 @@ def rule_summary_tasks(
     return out
 
 
+def _similar(a: set[str], b: set[str]) -> bool:
+    common = len(a & b)
+    return common >= 2 and common / max(1, min(len(a), len(b))) >= 0.7
+
+
+def dedupe(items: list[dict[str, Any]], dismissed: set[str]) -> list[dict[str, Any]]:
+    """Один и тот же пункт из разных дней чата / разных материалов — одна карточка.
+
+    Остаётся самая срочная и свежая; если любую из копий скрыли — скрыты все.
+    """
+    from assistant.services.proactive_ai import _words
+
+    groups: list[tuple[set[str], list[dict[str, Any]]]] = []
+    for c in items:
+        if not c.get("items") or c.get("type") == "summary_tasks":
+            groups.append((set(), [c]))
+            continue
+        w = _words(str((c.get("_item") or {}).get("text") or c.get("title") or ""))
+        for gw, g in groups:
+            if gw and _similar(w, gw):
+                g.append(c)
+                break
+        else:
+            groups.append((w, [c]))
+    out = []
+    for _, g in groups:
+        if len(g) > 1 and any(x["key"] in dismissed for x in g):
+            continue
+        out.append(max(g, key=lambda x: (int(x.get("urgency") or 0), str((x.get("chat") or {}).get("date") or ""))))
+    return out
+
+
 def rank(items: list[dict[str, Any]], dismissed: set[str]) -> list[dict[str, Any]]:
-    out = [i for i in items if i["key"] not in dismissed]
+    out = [i for i in dedupe(items, dismissed) if i["key"] not in dismissed]
     out.sort(key=lambda i: -int(i.get("urgency") or 0))
     return out[:MAX_ITEMS]
 

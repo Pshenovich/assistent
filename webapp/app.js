@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261020-tasks1";
+  var WEBAPP_BUILD = "20261020-focus3";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -12933,6 +12933,11 @@
     var del = document.getElementById("modal-delete");
     var done = document.getElementById("modal-done");
     var archive = document.getElementById("modal-archive");
+    var link = document.getElementById("modal-copy-link");
+    if (link) {
+      link.classList.toggle("hidden", !opts.copyLinkUrl);
+      link.setAttribute("data-url", opts.copyLinkUrl || "");
+    }
     if (del) del.classList.toggle("hidden", !opts.showDelete);
     if (done) done.classList.toggle("hidden", !opts.showDone);
     if (archive) {
@@ -12942,6 +12947,25 @@
       }
     }
   }
+
+  // «Ссылка» в окне задачи: копирует ссылку на карточку (?task=ID).
+  (function () {
+    var link = document.getElementById("modal-copy-link");
+    if (!link) return;
+    link.addEventListener("click", function (e) {
+      e.preventDefault();
+      var url = link.getAttribute("data-url") || "";
+      if (!url) return;
+      copyShareUrl(url)
+        .then(function () {
+          shareHaptic();
+          showCalendarToast("Ссылка на задачу скопирована");
+        })
+        .catch(function (err) {
+          showCalendarToast((err && err.message) || "Не удалось скопировать");
+        });
+    });
+  })();
 
   var pendingSheetConvert = null;
 
@@ -14192,11 +14216,6 @@
       '<div id="m-task-assignee-editor" class="event-sheet-attendees hidden">' +
       '<div id="m-task-assignee-host"></div>' +
       "</div></div>" +
-      (existing
-        ? '<div class="event-sheet-group">' +
-          '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-task-copy-link">' +
-          '<span class="event-sheet-row-label">Скопировать ссылку</span></button></div>'
-        : "") +
       "</div>";
     bindCreateKindSwitcher(
       "task",
@@ -14207,19 +14226,6 @@
     document.getElementById("m-task-desc").value = ev.description || "";
     var resultEl = document.getElementById("m-task-result");
     if (resultEl) resultEl.value = ev.result || (ev.event && ev.event.result) || "";
-    var copyLinkBtn = document.getElementById("m-task-copy-link");
-    if (copyLinkBtn) {
-      copyLinkBtn.addEventListener("click", function () {
-        copyShareUrl(ev.url || taskShareUrl(taskId))
-          .then(function () {
-            shareHaptic();
-            showCalendarToast("Ссылка на задачу скопирована");
-          })
-          .catch(function (e) {
-            showCalendarToast((e && e.message) || "Не удалось скопировать");
-          });
-      });
-    }
     document.getElementById("m-ev-start").value = startLocal;
     document.getElementById("m-ev-end").value = endLocal;
     document.getElementById("modal-task-note-id").value = ev.note_id || currentOpenNoteId() || "";
@@ -14307,6 +14313,7 @@
     setModalSheetActions({
       showDelete: existing,
       showDone: existing && !ev.done,
+      copyLinkUrl: existing ? ev.url || taskShareUrl(taskId) : "",
       showArchive: existing && isTaskOwner && isDelegated,
       archiveLabel: isOwnerArchived ? "Вернуть из архива" : "В архив",
     });
@@ -16747,6 +16754,8 @@
         });
       }
       card.appendChild(f);
+    } else {
+      card.classList.add("no-foot");
     }
     return card;
   }
@@ -16754,6 +16763,9 @@
   function renderFocusRow() {
     var host = document.getElementById("actual-focus");
     if (!host) return;
+    // Перерисовка (скрыли карточку, обновилась лента) не должна сбрасывать прокрутку к первой карточке.
+    var prevRow = host.querySelector(".focus-row");
+    var prevLeft = prevRow ? prevRow.scrollLeft : 0;
     host.innerHTML = "";
     host.classList.toggle("hidden", !focusItems.length);
     if (!focusItems.length) return;
@@ -16783,6 +16795,11 @@
     });
     host.appendChild(head);
     host.appendChild(row);
+    if (prevLeft > 0) {
+      row.style.scrollBehavior = "auto";
+      row.scrollLeft = Math.min(prevLeft, Math.max(0, row.scrollWidth - row.clientWidth));
+      row.style.scrollBehavior = "";
+    }
   }
 
   // Полный список — в ленте чата (одна прокрутка с «Чем помочь?»), не отдельным окном сверху.
@@ -17012,7 +17029,11 @@
     var wrap = document.getElementById("note-editor-more-wrap");
     if (!wrap || !wrap._shareKind || !wrap._shareId) return;
     var n = (a.focus || []).length;
-    var lead = n > 1 ? "Разберём задачи: " + (it.title || "") : "Разберём: " + (it.title || "");
+    var src = ((a.focus || [])[0] || {}).source || {};
+    var where = src.title ? (src.kind === "chat" ? " из чата «" + src.title + "»" : " со встречи «" + src.title + "»") : "";
+    var lead =
+      (n > 1 ? "Разберём " + n + " " + pluralRu(n, "задачу", "задачи", "задач") + where + "." : "Разберём: " + (it.title || "") + ".") +
+      " Отметьте, что сделано, или напишите правки — например, «срок пятница».";
     try {
       var saved = await apiFetch(
         "/notes/" + encodeURIComponent(wrap._shareKind) + "/" + encodeURIComponent(wrap._shareId) + "/comments",
@@ -22154,10 +22175,7 @@
     ids.forEach(function (id) {
       var a = calActionsCache[id];
       if (!a || a.missing) return;
-      if (a.kind === "focus_item") {
-        box.appendChild(renderFocusChatCard(a));
-        return;
-      }
+      if (a.kind === "focus_item") return; // карточки разбора — под пузырём, см. appendFocusChatCards
       if (a.kind === "show_event" || a.kind === "show_task" || a.kind === "show_reminder") {
         var cardState = calCardUiFor(a.open);
         if (cardState && cardState.deleted) return;
@@ -32821,111 +32839,101 @@
     return wrap;
   }
 
+  var FOCUS_CHAT_TYPE_ICON = { task: ["taskBox", "blue"], promise: ["people", "blue"], reminder: ["bell", "amber"], decision: ["check", "violet"], thought: ["spark", "violet"] };
+  var FOCUS_STATUS_TONE = { completed: ["check", "green"], converted: ["taskBox", "green"], linked: ["link", "blue"], snoozed: ["clock", "amber"], dismissed: ["x", "gray"], retyped: ["spark", "violet"] };
+
+  function focusChatHead(ico, tone, label, sub, extra) {
+    var head = focusEl("div", "focus-card-head");
+    var tile = focusEl("span", "focus-card-ico is-" + tone);
+    tile.innerHTML = DISCUSS_ICONS[ico] || DISCUSS_ICONS.spark;
+    head.appendChild(tile);
+    var kind = focusEl("span", "focus-card-kind");
+    kind.appendChild(focusEl("span", "focus-card-kind-label", label));
+    if (sub) kind.appendChild(focusEl("span", "focus-card-kind-due", sub));
+    head.appendChild(kind);
+    if (extra) head.appendChild(extra);
+    return head;
+  }
+
+  function focusChatFoot(f) {
+    var src = f.source || {};
+    var text = src.title || src.label || "";
+    if (!text) return null;
+    var isNote = src.kind === "note" && src.id;
+    var foot = focusEl(isNote ? "button" : "div", "focus-card-foot" + (isNote ? " is-link" : ""));
+    var ic = focusEl("span", "focus-card-foot-ico");
+    ic.innerHTML = DISCUSS_ICONS[src.kind === "chat" ? "chat" : src.note_kind === "transcription" ? "mic" : "note"] || "";
+    foot.appendChild(ic);
+    foot.appendChild(focusEl("span", "focus-card-foot-text", text));
+    if (isNote) {
+      foot.type = "button";
+      var chev = focusEl("span", "focus-card-foot-chev");
+      chev.innerHTML = DISCUSS_ICONS.right;
+      foot.appendChild(chev);
+      foot.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        focusOpenSource(src);
+      });
+    }
+    return foot;
+  }
+
+  function focusCardBtn(label, cls, fn, icon) {
+    var b = focusBtn(label, "", fn, icon);
+    b.className = "focus-card-btn" + (cls ? " " + cls : "");
+    return b;
+  }
+
+  // Пункт разбора — тот же компонент, что карточка в «Фокусе»: плитка, тип, заголовок, кнопки, футер-источник.
   function focusItemCard(aid, f, opts) {
+    opts = opts || {};
     var ui = focusUiFor(aid);
-    var card = focusEl("div", "focus-chat-card");
-    var head = focusEl("div", "focus-chat-head");
-    var tui = FOCUS_TYPE_UI[f.type] || FOCUS_TYPE_UI.task;
-    var tag = focusEl("span", "focus-chat-tag");
-    tag.innerHTML = DISCUSS_ICONS[tui[0]] || "";
-    tag.appendChild(focusEl("span", "", tui[1]));
-    head.appendChild(tag);
-    if (f.source && (f.source.title || f.source.label)) {
-      var src = focusEl(f.source.kind === "note" ? "button" : "span", "focus-chat-src", f.source.title || f.source.label);
-      if (f.source.kind === "note") {
-        src.type = "button";
-        src.addEventListener("click", function (e) {
-          e.preventDefault();
-          e.stopPropagation();
-          focusOpenSource(f.source);
-        });
-      }
-      head.appendChild(src);
-    }
+    var card = focusEl("div", "focus-card is-wide focus-chat-card");
+    var who = [f.assignee, f.deadline ? "до " + f.deadline : ""].filter(Boolean).join(" · ");
     var line = focusStatusLine(f);
-    if (!line && opts && opts.mine) {
-      var more = focusBtn("", "focus-chat-more" + (ui.menu === "more" ? " is-open" : ""), function () {
-        focusSetUi(aid, { menu: ui.menu === "more" ? "" : "more" });
-      }, "dots");
-      more.setAttribute("aria-label", "Ещё");
-      head.appendChild(more);
-    }
-    card.appendChild(head);
     if (line) {
+      var tone = FOCUS_STATUS_TONE[f.status] || ["check", "green"];
       card.classList.add("is-closed");
-      var st = focusEl("div", "focus-chat-status");
-      st.innerHTML = DISCUSS_ICONS[line[0]] || "";
-      var tx = focusEl("span", "", line[1]);
-      st.appendChild(tx);
-      if (f.status === "linked" && f.link && f.link.url) {
-        st.appendChild(focusBtn("Открыть", "is-ghost", function () {
-          openExternal(f.link.url);
-        }));
-      }
-      if (opts && opts.mine) {
-        st.appendChild(focusBtn("Отменить", "is-ghost", function (b) {
+      card.appendChild(focusChatHead(tone[0], tone[1], line[1], (opts.num ? opts.num + " · " : "") + who));
+      card.appendChild(focusEl("b", "focus-card-title is-muted", f.text));
+      if (opts.mine) {
+        var cacts = focusEl("div", "focus-card-acts");
+        if (f.status === "linked" && f.link && f.link.url) {
+          cacts.appendChild(focusCardBtn("Открыть", "is-soft", function () {
+            openExternal(f.link.url);
+          }, "link"));
+        }
+        cacts.appendChild(focusCardBtn("Отменить", "", function (b) {
           b.disabled = true;
           focusRunOp(aid, f, { op: "undo" }, "Отменено");
-        }));
+        }, "undo"));
+        card.appendChild(cacts);
       }
-      card.appendChild(focusEl("div", "focus-chat-title is-muted", f.text));
-      card.appendChild(st);
+      var cfoot = focusChatFoot(f);
+      if (cfoot) card.appendChild(cfoot);
+      else card.classList.add("no-foot");
       return card;
     }
-    card.appendChild(focusEl("div", "focus-chat-title", f.text));
-    var chips = focusEl("div", "focus-chat-chips");
-    if (f.assignee) chips.appendChild(focusEl("span", "focus-chat-chip", "👤 " + f.assignee));
-    if (f.deadline) chips.appendChild(focusEl("span", "focus-chat-chip", "📅 " + f.deadline));
-    if (f.state && f.state !== "open") chips.appendChild(focusEl("span", "focus-chat-chip", FOCUS_STATE_LABEL[f.state] || f.state));
-    if (f.comment) chips.appendChild(focusEl("span", "focus-chat-chip", "💬 " + f.comment));
-    if (chips.childNodes.length) card.appendChild(chips);
-    if (!(opts && opts.mine)) return card;
-    if (ui.mode === "edit") {
-      card.appendChild(focusEditForm(aid, f));
-      return card;
+    var tui = FOCUS_TYPE_UI[f.type] || FOCUS_TYPE_UI.task;
+    var ticon = FOCUS_CHAT_TYPE_ICON[f.type] || FOCUS_CHAT_TYPE_ICON.task;
+    var more = null;
+    if (opts.mine) {
+      more = focusBtn("", "", function () {
+        focusSetUi(aid, { menu: ui.menu === "more" ? "" : "more" });
+      }, "dots");
+      more.className = "focus-card-x focus-card-more" + (ui.menu === "more" ? " is-open" : "");
+      more.setAttribute("aria-label", "Ещё");
+      more.title = "Ещё";
     }
-    if (ui.mode === "link") {
-      card.appendChild(focusLinkForm(aid, f));
-      return card;
-    }
-    if (ui.mode === "snooze_date" || ui.mode === "remind_date") {
-      card.appendChild(focusDatePicker(aid, f, ui.mode === "remind_date" ? "remind" : "snooze"));
-      return card;
-    }
-    var acts = focusEl("div", "focus-chat-acts");
-    acts.appendChild(focusBtn("Выполнено", "is-primary", function (b) {
-      b.disabled = true;
-      focusRunOp(aid, f, { op: "done" }, "Отмечено выполненным");
-    }, "check"));
-    acts.appendChild(focusBtn("Уточнить детали", "", function () {
-      focusSetUi(aid, { mode: "edit", menu: "", draft: {} });
-    }));
-    acts.appendChild(focusBtn("Связать", "", function () {
-      focusSetUi(aid, { mode: "link", menu: "", draft: {} });
-    }, "link"));
-    var split = focusEl("span", "focus-chat-split");
-    split.appendChild(focusBtn("Отложить", "", function (b) {
-      b.disabled = true;
-      focusRunOp(aid, f, { op: "snooze", until: focusAt(1, 9).toISOString() }, "Вернётся в Фокус завтра в 9:00");
-    }));
-    var chev = focusBtn("", "focus-chat-chev" + (ui.menu === "snooze" ? " is-open" : ""), function () {
-      focusSetUi(aid, { menu: ui.menu === "snooze" ? "" : "snooze" });
-    }, "down");
-    chev.setAttribute("aria-label", "Когда напомнить");
-    split.appendChild(chev);
-    acts.appendChild(split);
-    card.appendChild(acts);
-    if (ui.menu === "snooze") {
+    card.appendChild(focusChatHead(ticon[0], ticon[1], tui[1] + (opts.num ? " " + opts.num : ""), who, more));
+    card.appendChild(focusEl("b", "focus-card-title", f.text));
+    if (f.comment || (f.state && f.state !== "open")) {
       card.appendChild(
-        focusMenu([
-          { label: "Завтра, 9:00", fn: function () { focusRunOp(aid, f, { op: "snooze", until: focusAt(1, 9).toISOString() }, "Вернётся завтра в 9:00"); } },
-          { label: "В понедельник, 9:00", fn: function () { focusRunOp(aid, f, { op: "snooze", until: focusAt(0, 9, 1).toISOString() }, "Вернётся в понедельник"); } },
-          { label: "Через неделю", fn: function () { focusRunOp(aid, f, { op: "snooze", until: focusAt(7, 9).toISOString() }, "Вернётся через неделю"); } },
-          { label: "Выбрать дату…", fn: function () { focusSetUi(aid, { mode: "snooze_date", menu: "" }); } },
-        ])
+        focusEl("div", "focus-card-note", [FOCUS_STATE_LABEL[f.state] && f.state !== "open" ? FOCUS_STATE_LABEL[f.state] : "", f.comment].filter(Boolean).join(" · "))
       );
     }
-    if (ui.menu === "more") {
+    if (opts.mine && ui.menu === "more") {
       var retype = function (t, label) {
         return { label: label, fn: function () { focusRunOp(aid, f, { op: "retype", type: t }, "Тип изменён: " + label.toLowerCase()); } };
       };
@@ -32947,9 +32955,51 @@
         ])
       );
     }
+    if (opts.mine && ui.mode === "edit") card.appendChild(focusEditForm(aid, f));
+    else if (opts.mine && ui.mode === "link") card.appendChild(focusLinkForm(aid, f));
+    else if (opts.mine && (ui.mode === "snooze_date" || ui.mode === "remind_date")) card.appendChild(focusDatePicker(aid, f, ui.mode === "remind_date" ? "remind" : "snooze"));
+    else if (opts.mine) {
+      var acts = focusEl("div", "focus-card-acts");
+      acts.appendChild(focusCardBtn("Выполнено", "is-primary", function (b) {
+        b.disabled = true;
+        focusRunOp(aid, f, { op: "done" }, "Отмечено выполненным");
+      }, "check"));
+      acts.appendChild(focusCardBtn("Изменить", "is-soft", function () {
+        focusSetUi(aid, { mode: "edit", menu: "", draft: {} });
+      }));
+      acts.appendChild(focusCardBtn("Связать", "is-soft", function () {
+        focusSetUi(aid, { mode: "link", menu: "", draft: {} });
+      }));
+      var split = focusEl("span", "focus-card-split");
+      split.appendChild(focusCardBtn("Отложить", "is-soft", function (b) {
+        b.disabled = true;
+        focusRunOp(aid, f, { op: "snooze", until: focusAt(1, 9).toISOString() }, "Вернётся в Фокус завтра в 9:00");
+      }));
+      var chev = focusCardBtn("", "is-soft focus-card-chev" + (ui.menu === "snooze" ? " is-open" : ""), function () {
+        focusSetUi(aid, { menu: ui.menu === "snooze" ? "" : "snooze" });
+      }, "down");
+      chev.setAttribute("aria-label", "Когда напомнить");
+      split.appendChild(chev);
+      acts.appendChild(split);
+      card.appendChild(acts);
+      if (ui.menu === "snooze") {
+        card.appendChild(
+          focusMenu([
+            { label: "Завтра, 9:00", fn: function () { focusRunOp(aid, f, { op: "snooze", until: focusAt(1, 9).toISOString() }, "Вернётся завтра в 9:00"); } },
+            { label: "В понедельник, 9:00", fn: function () { focusRunOp(aid, f, { op: "snooze", until: focusAt(0, 9, 1).toISOString() }, "Вернётся в понедельник"); } },
+            { label: "Через неделю", fn: function () { focusRunOp(aid, f, { op: "snooze", until: focusAt(7, 9).toISOString() }, "Вернётся через неделю"); } },
+            { label: "Выбрать дату…", fn: function () { focusSetUi(aid, { mode: "snooze_date", menu: "" }); } },
+          ])
+        );
+      }
+    }
+    var foot = focusChatFoot(f);
+    if (foot) card.appendChild(foot);
+    else card.classList.add("no-foot");
     return card;
   }
 
+  // Под пузырём ответа: каждый пункт — отдельная карточка, сразу с действиями.
   function renderFocusChatCard(a) {
     var items = a.focus || [];
     var box = focusEl("div", "focus-chat");
@@ -32957,65 +33007,16 @@
       box.appendChild(focusEl("div", "focus-chat-hint", "Пункт уже неактуален"));
       return box;
     }
-    if (items.length === 1) {
-      box.appendChild(focusItemCard(a.id, items[0], { mine: a.mine }));
-      return box;
-    }
-    // Групповой инсайт: список пунктов, «Разобрать» раскрывает карточку пункта.
-    var ui = focusUiFor(a.id);
-    var group = focusEl("div", "focus-chat-card is-group");
-    var head = focusEl("div", "focus-chat-head");
-    var left = items.filter(function (f) {
-      return f.status === "new";
-    }).length;
-    head.appendChild(focusEl("span", "focus-chat-tag", items.length + " " + pluralRu(items.length, "задача", "задачи", "задач") + (left ? " · осталось " + left : " · всё разобрано")));
-    var src = items[0].source || {};
-    if (src.title) {
-      var sb = focusEl("button", "focus-chat-src", src.title);
-      sb.type = "button";
-      sb.addEventListener("click", function (e) {
-        e.preventDefault();
-        focusOpenSource(src);
-      });
-      head.appendChild(sb);
-    }
-    group.appendChild(head);
-    items.forEach(function (f) {
-      var sub = a.id + "|" + f.key;
-      if (ui.open === f.key) {
-        var inner = focusItemCard(sub, f, { mine: a.mine });
-        inner.classList.add("is-nested");
-        group.appendChild(inner);
-        group.appendChild(focusBtn("Свернуть", "is-ghost focus-chat-collapse", function () {
-          focusSetUi(a.id, { open: "" });
-        }));
-        return;
-      }
-      var row = focusEl("div", "focus-chat-row" + (f.status !== "new" ? " is-closed" : ""));
-      var line = focusStatusLine(f);
-      var ico = focusEl("span", "focus-chat-row-ico");
-      ico.innerHTML = DISCUSS_ICONS[line ? line[0] : "taskBox"] || "";
-      row.appendChild(ico);
-      row.appendChild(focusEl("span", "focus-chat-row-text", (f.assignee ? f.assignee + " — " : "") + f.text));
-      if (a.mine && f.status === "new") {
-        row.appendChild(focusBtn("Разобрать", "", function () {
-          focusSetUi(a.id, { open: f.key });
-        }));
-      } else if (a.mine && line) {
-        row.appendChild(focusBtn("Отменить", "is-ghost", function (b) {
-          b.disabled = true;
-          focusRunOp(a.id, f, { op: "undo" }, "Отменено");
-        }));
-      }
-      group.appendChild(row);
+    items.forEach(function (f, i) {
+      var aid = items.length > 1 ? a.id + "|" + f.key : a.id;
+      box.appendChild(focusItemCard(aid, f, { mine: a.mine, num: items.length > 1 ? i + 1 + " из " + items.length : "" }));
     });
-    if (a.mine && left > 1) {
-      var acts = focusEl("div", "focus-chat-acts");
-      acts.appendChild(focusBtn("Все выполнены", "is-ghost", function (b) {
+    var open = items.filter(function (f) {
+      return f.status === "new";
+    });
+    if (a.mine && open.length > 1) {
+      var all = focusCardBtn("Отметить все выполненными", "focus-chat-all", function (b) {
         b.disabled = true;
-        var open = items.filter(function (f) {
-          return f.status === "new";
-        });
         Promise.all(
           open.map(function (f) {
             return focusItemOp(f.key, { op: "done" }).then(function (res) {
@@ -33029,11 +33030,17 @@
           .catch(function (e) {
             showNoteToast((e && e.message) || "Не получилось");
           });
-      }, "check"));
-      group.appendChild(acts);
+      }, "check");
+      box.appendChild(all);
     }
-    box.appendChild(group);
     return box;
+  }
+
+  function appendFocusChatCards(item, ids) {
+    (ids || []).forEach(function (id) {
+      var a = calActionsCache[id];
+      if (a && !a.missing && a.kind === "focus_item") item.appendChild(renderFocusChatCard(a));
+    });
   }
 
   function calMarkerIds(text) {
@@ -33291,6 +33298,7 @@
     if (assistant && c && c.id) appendAiEditsInfo(bubble, c.id);
     if (assistant) appendCalendarActions(bubble, calMarkerIds(c && c.body));
     if (bubble.childNodes.length) item.appendChild(bubble);
+    if (assistant) appendFocusChatCards(item, calMarkerIds(c && c.body));
     // Строка под сообщением: время и «···» напротив него.
     var meta = document.createElement("div");
     meta.className = "note-discuss-meta";

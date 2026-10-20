@@ -303,22 +303,24 @@ def _is_me(who: str) -> bool:
     return str(who or "").strip().lower() in ("я", "мне", "вы", "пользователь", "me", "")
 
 
-def _with_done(uid: int, task_titles: Optional[list[str]]) -> list[str]:
+def _handled(uid: int) -> list[str]:
+    """Тексты разобранных пунктов («Сделано», ✕, связано, отложено…) — их не поднимаем снова."""
     from assistant.services import proactive
 
     try:
-        done = proactive.done_titles(uid)
+        return proactive.done_titles(uid)
     except Exception as e:
         print(f"[proactive_ai] done titles failed uid={uid} err={e!r}")
-        done = []
-    return list(task_titles or []) + done
+        return []
+
 
 
 def insight_cards(uid: int, *, now: Optional[datetime] = None, task_titles: Optional[list[str]] = None) -> list[dict[str, Any]]:
     from assistant.services.calendar import _tz_for
     from assistant.stores import notes as notes_store
 
-    task_titles = _with_done(uid, task_titles)
+    handled = _handled(uid)
+    task_titles = list(task_titles or []) + handled
     now = now or _now()
     today = now.astimezone(_tz_for(uid)).date()
     with _LOCK:
@@ -345,14 +347,22 @@ def insight_cards(uid: int, *, now: Optional[datetime] = None, task_titles: Opti
         for it in items:
             if has_summary_tasks and it.get("kind") == "agreement":
                 continue  # задачи из саммари уже предложены отдельной карточкой
-            card = card_for(it, src=src, note={"id": nid, "kind": kind_note, "title": title}, today=today, task_titles=task_titles or [])
+            card = card_for(
+                it, src=src, note={"id": nid, "kind": kind_note, "title": title}, today=today,
+                task_titles=task_titles or [], handled_titles=handled,
+            )
             if card:
                 cards.append(card)
     return cards
 
 
-def card_for(it: dict[str, Any], *, src: str, note: dict[str, Any], today: date, task_titles: list[str]) -> Optional[dict[str, Any]]:
+def card_for(
+    it: dict[str, Any], *, src: str, note: dict[str, Any], today: date, task_titles: list[str],
+    handled_titles: Optional[list[str]] = None,
+) -> Optional[dict[str, Any]]:
     kind, text, who, due = it.get("kind"), str(it.get("text") or ""), str(it.get("who") or ""), str(it.get("due") or "")
+    if handled_titles and _covered(text, handled_titles):
+        return None  # уже разобран (выполнен, скрыт, связан…) — в любой формулировке
     key = "ins:%s:%s" % (note["id"], _hash(kind or "", text)[:10])
     due_l = _due_label(due, today) if due else ""
     if due:
@@ -581,9 +591,14 @@ _CHAT_TAGS = {
 }
 
 
-def chat_card(it: dict[str, Any], *, chat_id: int, day: str, title: str, today: date, task_titles: list[str]) -> Optional[dict[str, Any]]:
+def chat_card(
+    it: dict[str, Any], *, chat_id: int, day: str, title: str, today: date, task_titles: list[str],
+    handled_titles: Optional[list[str]] = None,
+) -> Optional[dict[str, Any]]:
     kind, text, who = it.get("kind"), str(it.get("text") or ""), str(it.get("who") or "")
     if kind not in CHAT_KINDS:
+        return None
+    if handled_titles and _covered(text, handled_titles):
         return None
     if kind in ("promise", "request") and _covered(text, task_titles):
         return None
@@ -627,7 +642,8 @@ def chat_card(it: dict[str, Any], *, chat_id: int, day: str, title: str, today: 
 def chat_cards(uid: int, *, task_titles: Optional[list[str]] = None, chat_id: Optional[int] = None, day: Optional[str] = None) -> list[dict[str, Any]]:
     from assistant.services.calendar import _tz_for
 
-    task_titles = _with_done(uid, task_titles)
+    handled = _handled(uid)
+    task_titles = list(task_titles or []) + handled
     today = datetime.now(_tz_for(uid)).date()
     pattern = f"digest:{chat_id}:{day}" if chat_id is not None and day else "digest:%"
     with _LOCK:
@@ -643,7 +659,10 @@ def chat_cards(uid: int, *, task_titles: Optional[list[str]] = None, chat_id: Op
         except ValueError:
             continue
         for it in items:
-            c = chat_card(it, chat_id=int(cid), day=d, title=str(r["title"] or ""), today=today, task_titles=task_titles or [])
+            c = chat_card(
+                it, chat_id=int(cid), day=d, title=str(r["title"] or ""), today=today,
+                task_titles=task_titles or [], handled_titles=handled,
+            )
             if c:
                 out.append(c)
     return out

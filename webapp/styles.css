@@ -12593,6 +12593,7 @@ html.modal-sheet-open body {
 }
 
 .modal-sheet-actions .modal-done-btn,
+.modal-sheet-actions .modal-link-btn,
 .modal-sheet-actions .modal-archive-btn,
 .modal-sheet-actions .modal-delete-btn {
   display: flex;
@@ -12620,6 +12621,16 @@ html.modal-sheet-open body {
   color: var(--text-secondary, #aeaeb2);
 }
 
+.modal-sheet-actions .modal-link-btn {
+  flex: 0 0 auto;
+  gap: 6px;
+  color: var(--accent);
+}
+
+.modal-link-btn.hidden {
+  display: none !important;
+}
+
 .modal-delete-btn,
 .modal-sheet-actions .modal-delete-btn.btn-text-danger {
   color: var(--vkui--color_text_negative, var(--danger));
@@ -12627,6 +12638,7 @@ html.modal-sheet-open body {
 }
 
 .modal-done-btn:active,
+.modal-link-btn:active,
 .modal-archive-btn:active,
 .modal-sheet-actions .modal-delete-btn:active {
   opacity: 0.75;
@@ -16310,38 +16322,31 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
   .focus-arrow { display: none; }
 }
 /* Фокус: карточка разбора пункта в чате ассистента */
-.focus-chat { display: grid; gap: 8px; }
-.focus-chat-card { position: relative; display: flex; flex-direction: column; gap: 8px; max-width: 460px; padding: 11px 13px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface, #19191c); color: var(--text); font-size: 0.875rem; }
-.focus-chat-card.is-nested { border-color: var(--accent); }
-.focus-chat-head { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; color: var(--text-tertiary); min-width: 0; }
-.focus-chat-tag { display: inline-flex; align-items: center; gap: 5px; text-transform: uppercase; letter-spacing: 0.04em; flex: none; }
-.focus-chat-tag svg { width: 14px; height: 14px; }
-.focus-chat-src { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: none; background: transparent; padding: 0; font: inherit; text-align: left; color: var(--accent); cursor: pointer; }
-span.focus-chat-src { color: var(--text-tertiary); cursor: default; }
-.focus-chat-more { margin-left: auto; width: 26px; height: 26px; padding: 0; justify-content: center; }
-.focus-chat-more.is-open { background: var(--accent-subtle, rgba(99, 102, 241, 0.2)); color: var(--accent); }
-.focus-chat-title { font-size: 0.95rem; font-weight: 600; line-height: 1.35; }
-.focus-chat-title.is-muted { font-weight: 500; color: var(--text-secondary); }
-.focus-chat-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.focus-chat-chip { padding: 3px 9px; border-radius: 999px; background: var(--surface-elevated, #2a2a2e); color: var(--text-secondary); font-size: 0.75rem; }
+.focus-chat { display: grid; gap: 8px; margin-top: 8px; max-width: 460px; }
+.focus-chat .focus-card { width: auto; min-height: 0; }
+.focus-card.no-foot { padding-bottom: 12px; }
+.focus-card-title.is-muted { font-weight: 500; color: var(--text-secondary); text-decoration: line-through; text-decoration-color: var(--text-tertiary); }
+.focus-card-note { font-size: 0.78rem; color: var(--text-secondary); }
+.focus-card-more.is-open { background: var(--accent-subtle); color: var(--accent); }
+.focus-card-more svg { width: 15px; height: 15px; }
+.focus-card-btn svg { width: 14px; height: 14px; flex: none; }
+.focus-card-split { display: inline-flex; border-radius: 10px; overflow: hidden; }
+.focus-card-split .focus-card-btn { border-radius: 0; }
+.focus-card-split .focus-card-chev { padding: 7px 7px; border-left: 1px solid var(--accent-muted); }
+.focus-card-chev.is-open svg { transform: rotate(180deg); }
+.focus-card .focus-chat-menu, .focus-card .focus-chat-edit, .focus-card .focus-chat-link, .focus-card .focus-chat-date { margin-top: 2px; }
+.focus-chat-all { justify-self: start; background: transparent; color: var(--text-secondary); }
+.focus-chat-all:hover { color: var(--emerald-text); }
 .focus-chat-acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .focus-chat-btn { display: inline-flex; align-items: center; gap: 5px; border: none; border-radius: 9px; padding: 6px 10px; background: var(--surface-elevated, #2a2a2e); color: var(--text); font: inherit; font-size: 0.78rem; font-weight: 600; cursor: pointer; }
 .focus-chat-btn svg { width: 14px; height: 14px; flex: none; }
 .focus-chat-btn.is-primary { background: var(--accent); color: #fff; }
 .focus-chat-btn.is-ghost { background: transparent; color: var(--text-secondary); }
 .focus-chat-btn:disabled { opacity: 0.6; }
-.focus-chat-split { display: inline-flex; border-radius: 9px; overflow: hidden; }
-.focus-chat-split .focus-chat-btn { border-radius: 0; }
-.focus-chat-chev { padding: 6px 7px; border-left: 1px solid var(--border) !important; }
-.focus-chat-chev.is-open svg { transform: rotate(180deg); }
 .focus-chat-menu { display: grid; gap: 1px; padding: 5px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-elevated, #232326); }
 .focus-chat-menu-head { padding: 6px 8px 2px; font-size: 0.7rem; color: var(--text-tertiary); }
 .focus-chat-menu-item, .focus-chat-result { justify-content: flex-start; width: 100%; background: transparent; font-weight: 500; text-align: left; }
 .focus-chat-menu-item:hover, .focus-chat-result:hover { background: var(--surface, #19191c); }
-.focus-chat-status { display: flex; align-items: center; gap: 7px; font-size: 0.8rem; color: var(--text-secondary); }
-.focus-chat-status > svg { width: 16px; height: 16px; color: var(--accent); flex: none; }
-.focus-chat-status > span { flex: 1; min-width: 0; }
-.focus-chat-card.is-closed { gap: 4px; }
 .focus-chat-fields { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 10px; align-items: center; }
 .focus-chat-field-label { font-size: 0.75rem; color: var(--text-secondary); }
 .focus-chat-fields input, .focus-chat-fields select, .focus-chat-search, .focus-chat-date input { min-width: 0; width: 100%; box-sizing: border-box; height: 32px; padding: 0 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-elevated, #2a2a2e); color: var(--text); font: inherit; font-size: 0.82rem; }
@@ -16350,12 +16355,6 @@ span.focus-chat-src { color: var(--text-tertiary); cursor: default; }
 .focus-chat-hint { margin: 0; font-size: 0.72rem; color: var(--text-tertiary); }
 .focus-chat-date { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .focus-chat-date input { flex: 1 1 180px; width: auto; }
-.focus-chat-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid var(--border); font-size: 0.84rem; }
-.focus-chat-row-ico svg { width: 15px; height: 15px; color: var(--text-tertiary); }
-.focus-chat-row-text { flex: 1; min-width: 0; }
-.focus-chat-row.is-closed .focus-chat-row-text { color: var(--text-tertiary); text-decoration: line-through; }
-.focus-chat-row.is-closed .focus-chat-row-ico svg { color: var(--accent); }
-.focus-chat-collapse { justify-self: start; align-self: flex-start; }
 /* Значок разбора в исходнике: в конце строки задачи из Фокуса */
 .note-focus-mark { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; margin-left: 6px; padding: 0 5px; border-radius: 999px; background: rgba(34, 197, 94, 0.18); color: #22c55e; font-size: 0.72rem; font-weight: 700; line-height: 1; vertical-align: 1px; cursor: default; user-select: none; }
 .note-focus-mark[data-leo-mark="linked"] { background: var(--accent-subtle, rgba(99, 102, 241, 0.2)); color: var(--accent); cursor: pointer; font-weight: 600; }

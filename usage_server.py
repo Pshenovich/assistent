@@ -9099,6 +9099,22 @@ async def miniapp_proactive_dismiss(
     if not key:
         raise HTTPException(status_code=400, detail="Нет подсказки")
     await run_in_threadpool(proactive.dismiss, uid, key)
+
+    def _mark_dismissed() -> None:
+        # ✕ на пункте (договорённость, важное из чата): похожие формулировки тоже не поднимаем.
+        from assistant.services import focus_items
+
+        hit = _FOCUS_CACHE.get(uid)
+        card = next((c for c in (hit[1] if hit else []) if c.get("key") == key), None)
+        if not card or not card.get("items") or card.get("type") == "summary_tasks":
+            return
+        for k in _focus_remember(uid, card):
+            focus_items.apply(uid, k, "dismiss", by=_principal_display_name(principal), reason="not_relevant")
+
+    try:
+        await run_in_threadpool(_mark_dismissed)
+    except Exception as e:
+        print(f"[proactive] dismiss item failed uid={uid} key={key} err={e!r}")
     hit = _FOCUS_CACHE.get(uid)
     if hit:
         _FOCUS_CACHE[uid] = (hit[0], [i for i in hit[1] if i.get("key") != key])

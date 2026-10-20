@@ -140,6 +140,27 @@ class FocusItemsTests(unittest.TestCase):
         self.assertEqual(fi.get(1, "ins:1:abc")["status"], "completed")
         self.assertIn("error", gcal.tool_focus_item_update(ctx, {"key": "ins:1:abc", "op": "update"}))
 
+    def test_same_chat_item_on_two_days_is_one_card(self) -> None:
+        text = "Минус у клиента Целевые Финансы, Вергиз, 32практика, BoostraKC, 369support"
+        pa.save(1, "digest:-1001:2026-10-18", "h1", "Obuchat AI", [{"kind": "escalation", "text": text, "who": "Уведомления", "msg": 3, "due": ""}])
+        pa.save(1, "digest:-1001:2026-10-20", "h2", "Obuchat AI", [{"kind": "request", "text": text, "who": "Уведомления", "msg": 9, "due": ""}])
+        cards = pa.chat_cards(1)
+        self.assertEqual(len(cards), 2)
+        out = proactive.rank(cards, set())
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["chat"]["date"], "2026-10-20")  # свежая копия
+        # Скрыли одну копию — не всплывает и вторая.
+        self.assertEqual(proactive.rank(cards, {cards[0]["key"]}), [])
+        # Разобрали пункт — похожие пункты любого типа больше не поднимаются.
+        fi.remember(1, {"key": out[0]["key"], "kind": "chat_request", "text": text, "source": {"kind": "chat"}})
+        fi.apply(1, out[0]["key"], "dismiss", reason="duplicate")
+        self.assertEqual(pa.chat_cards(1), [])
+
+    def test_different_items_are_not_merged(self) -> None:
+        a = {"key": "a", "type": "chat_request", "urgency": 3, "title": "Согласовать смету по проекту", "items": [{"id": "a"}]}
+        b = {"key": "b", "type": "chat_request", "urgency": 3, "title": "Прислать доступы к серверу", "items": [{"id": "b"}]}
+        self.assertEqual(len(proactive.rank([a, b], set())), 2)
+
     def test_link_needs_http(self) -> None:
         self._remember()
         with self.assertRaises(ValueError):
