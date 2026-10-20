@@ -96,6 +96,38 @@ class TriggerTests(unittest.TestCase):
         notes_store.update_note(1, n["id"], body=body + "<p>Мария пришлёт смету.</p>")
         self.assertEqual(len(pa.candidates(1, now=datetime.now(timezone.utc) + timedelta(minutes=11))), 1)
 
+    def test_ready_note_skips_idle_wait(self) -> None:
+        body = "<p>" + "Итоги: Мария пришлёт смету до среды. " * 10 + "</p>"
+        n = notes_store.create_note(1, "Итоги встречи", body)
+        self.assertEqual(pa.candidates(1), [])  # обычная правка — ждём тишины
+        self.assertEqual([c[0]["id"] for c in pa.candidates(1, ready_ids={int(n["id"])})], [n["id"]])
+
+    def test_note_changed_debounces_and_respects_autostart(self) -> None:
+        with mock.patch.dict(os.environ, {"PROACTIVE_AI_AUTOSTART": "0"}):
+            pa.note_changed(1, 77)
+            self.assertNotIn((1, 77), pa._TIMERS)
+        with mock.patch.dict(os.environ, {"PROACTIVE_AI_AUTOSTART": "1"}), mock.patch.object(pa, "kick") as kick:
+            pa.note_changed(1, 77)
+            first = pa._TIMERS[(1, 77)]
+            pa.note_changed(1, 77)  # повторная правка переносит разбор
+            self.assertFalse(first.is_alive() and pa._TIMERS[(1, 77)] is first)
+            pa.note_changed(1, 77, ready=True)  # саммари готово — разбор сразу
+            self.assertTrue(pa.busy(1))
+            pa.note_changed(1, 77)  # правка не откладывает немедленный разбор
+            self.assertTrue(getattr(pa._TIMERS[(1, 77)], "_leo_ready", False))
+            pa._TIMERS[(1, 77)].join(3)
+            kick.assert_called_once_with(1, {77})
+        self.assertNotIn((1, 77), pa._TIMERS)
+
+    def test_kick_marks_busy_and_records_last_analyzed(self) -> None:
+        with mock.patch.object(pa, "candidates", return_value=[({"id": 9}, "t", "h")]), mock.patch.object(
+            pa, "analyze_note"
+        ), mock.patch.object(pa, "digest_candidates", return_value=[]):
+            before = pa.last_analyzed_at(5)
+            self.assertEqual(pa.run_pending(5), 1)
+            self.assertGreater(pa.last_analyzed_at(5), before)
+        self.assertFalse(pa.busy(5))
+
 
 class BriefTests(unittest.TestCase):
     def test_brief_due_window(self) -> None:

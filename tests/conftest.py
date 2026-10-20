@@ -79,6 +79,9 @@ for _key, _rel in _DIR_ENV.items():
     _path.mkdir(parents=True, exist_ok=True)
     _SANDBOX_ENV[_key] = str(_path)
 
+# Фоновый ИИ-разбор заметок (Фокус) в тестах не стартует сам: тесты зовут его явно.
+_SANDBOX_ENV["PROACTIVE_AI_AUTOSTART"] = "0"
+
 os.environ.update(_SANDBOX_ENV)
 
 

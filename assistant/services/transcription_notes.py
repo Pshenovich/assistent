@@ -109,6 +109,16 @@ def list_for_user(user_id: int | str, *, limit: int = 120) -> list[dict[str, Any
     return [enrich(n) for n in notes_store.list_transcription_notes(user_id, limit=limit)]
 
 
+def _focus_summary_ready(owner: int | str, note_id: int) -> None:
+    """Саммари готово — Фокус разбирает его сразу (задачи и договорённости из встречи)."""
+    try:
+        from assistant.services import proactive_ai
+
+        proactive_ai.note_changed(owner, note_id, ready=True)
+    except Exception as e:
+        print(f"[proactive] summary_ready failed note={note_id} err={e!r}")
+
+
 def create_transcript_only(
     user_id: int | str,
     *,
@@ -147,6 +157,7 @@ def create_with_summary(
         note, TRANSCRIPT_SHEET_TITLE, body=_as_html(transcript)
     )
     fresh = notes_store.get_note(user_id, int(note["id"])) or note
+    _focus_summary_ready(user_id, int(note["id"]))
     return enrich(fresh)
 
 
@@ -226,6 +237,7 @@ def finish_make_summary(
     )
     if not updated:
         raise TranscriptionNoteError("Не удалось сохранить саммари")
+    _focus_summary_ready(owner, int(note["id"]))
     return enrich(updated)
 
 

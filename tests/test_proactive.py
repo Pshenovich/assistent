@@ -111,6 +111,15 @@ class RulesTests(unittest.TestCase):
         every = {i["id"] for i in full["items"]}
         self.assertEqual(proactive.rule_summary_tasks([n], {}, NOW, TZ, every), [])
 
+    def test_summary_tasks_hide_only_posted(self) -> None:
+        tasks = [{"assignee": "Андрей", "task": "Подготовить релиз"}, {"assignee": "Мария", "task": "Прислать смету"}]
+        n = {"id": 5, "title": "Планёрка", "created_at": (NOW - timedelta(days=1)).isoformat(), "meta": {"tasks": tasks}}
+        out = proactive.rule_summary_tasks([n], {5: ["Подготовить релиз к пятнице"]}, NOW, TZ)
+        self.assertEqual([i["text"] for i in out[0]["items"]], ["Мария — Прислать смету"])
+        self.assertIn("1 задача", out[0]["title"])
+        both = ["Подготовить релиз", "Прислать смету Марии"]
+        self.assertEqual(proactive.rule_summary_tasks([n], {5: both}, NOW, TZ), [])
+
     def test_rank_limits_and_order(self) -> None:
         items = [{"key": f"k{i}", "urgency": i % 4} for i in range(12)]
         out = proactive.rank(items, {"k3"})

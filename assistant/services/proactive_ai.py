@@ -1,7 +1,8 @@
 """«Фокус», этап 2: ИИ разбирает новые и изменённые материалы — по событию, не по расписанию.
 
-Событие = материал изменился: новая транскрипция (её саммари), изменённая заметка (через
-10 минут тишины после правок), материал встречи. Один и тот же текст повторно не
+Событие = материал изменился: новая транскрипция (её саммари — сразу), изменённая заметка (через
+2 минуты тишины после правок), материал встречи. Разбор запускается сам (note_changed), не ждёт
+открытия ленты; лента узнаёт о свежем разборе через last_analyzed_at и busy. Один и тот же текст повторно не
 разбирается (хеш). Лимит разборов на пользователя в день. Из ответа ИИ — договорённости
 (кто что сделает и к какому сроку), следующие встречи и открытые вопросы; из них — карточки.
 """
@@ -10,13 +11,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
-IDLE = timedelta(minutes=10)
+IDLE = timedelta(minutes=2)
 LOOKBACK = timedelta(days=14)
 DAILY_CAP = 20
 PER_RUN = 3
@@ -27,6 +30,9 @@ _LOCK = threading.RLock()
 _CONN: Optional[sqlite3.Connection] = None
 _CONN_PATH: Optional[str] = None
 _RUNNING: set[int] = set()
+_AGAIN: dict[int, set[int]] = {}  # пока шёл разбор, пришли новые события (id заметок, готовых сразу)
+_TIMERS: dict[tuple[int, int], threading.Timer] = {}
+_LAST_ANALYZED: dict[int, float] = {}
 
 SYSTEM = """Ты — помощник руководителя. Тебе дают заметку или итоги встречи пользователя.
 Выдели только конкретное и проверяемое по тексту, ничего не придумывай:
@@ -104,8 +110,14 @@ def _material_text(note: dict[str, Any]) -> str:
     return _plain(strip_marks(str(note.get("body") or "")))
 
 
-def candidates(uid: int, *, now: Optional[datetime] = None) -> list[tuple[dict[str, Any], str, str]]:
-    """Изменённые и «остывшие» материалы, которые ещё не разобраны в текущем виде."""
+def candidates(
+    uid: int, *, now: Optional[datetime] = None, ready_ids: Optional[set[int]] = None
+) -> list[tuple[dict[str, Any], str, str]]:
+    """Изменённые и «остывшие» материалы, которые ещё не разобраны в текущем виде.
+
+    ready_ids — материалы, готовые сразу (саммари только что сделано): без ожидания тишины.
+    """
+    ready_ids = ready_ids or set()
     from assistant.stores import notes as notes_store
 
     now = now or _now()
@@ -123,7 +135,9 @@ def candidates(uid: int, *, now: Optional[datetime] = None) -> list[tuple[dict[s
         if str(n.get("role") or "") == "knowledge":
             continue
         upd = _parse(n.get("updated_at"))
-        if not upd or upd < now - LOOKBACK or upd > now - IDLE:
+        if not upd or upd < now - LOOKBACK:
+            continue
+        if upd > now - IDLE and int(n["id"]) not in ready_ids:
             continue
         text = _material_text(n)
         if len(text) < MIN_TEXT:
@@ -133,7 +147,7 @@ def candidates(uid: int, *, now: Optional[datetime] = None) -> list[tuple[dict[s
         if done.get(key) == h:
             continue
         out.append((n, text, h))
-    out.sort(key=lambda x: str(x[0].get("updated_at") or ""), reverse=True)
+    out.sort(key=lambda x: (int(x[0]["id"]) in ready_ids, str(x[0].get("updated_at") or "")), reverse=True)
     return out
 
 
@@ -231,17 +245,18 @@ def save(uid: int, source_key: str, content_hash: str, title: str, items: list[d
         conn.commit()
 
 
-def run_pending(uid: int) -> int:
+def run_pending(uid: int, ready_ids: Optional[set[int]] = None, *, _claimed: bool = False) -> int:
     """Разобрать до PER_RUN новых материалов (в фоне, один поток на пользователя)."""
     uid = int(uid)
     with _LOCK:
-        if uid in _RUNNING:
+        if uid in _RUNNING and not _claimed:
+            _AGAIN.setdefault(uid, set()).update(ready_ids or set())
             return 0
         _RUNNING.add(uid)
     done = 0
     try:
         budget = DAILY_CAP - analyzed_today(uid)
-        for note, text, h in candidates(uid)[: max(0, min(PER_RUN, budget))]:
+        for note, text, h in candidates(uid, ready_ids=ready_ids)[: max(0, min(PER_RUN, budget))]:
             try:
                 analyze_note(uid, note, text, h)
                 done += 1
@@ -256,14 +271,79 @@ def run_pending(uid: int) -> int:
                 print(f"[proactive_ai] digest={key} uid={uid} err={e!r}")
     finally:
         with _LOCK:
-            _RUNNING.discard(uid)
+            again = _AGAIN.pop(uid, None)
+            if again is None:
+                _RUNNING.discard(uid)
     if done:
+        _LAST_ANALYZED[uid] = time.time()
         print(f"[proactive_ai] uid={uid} analyzed={done}")
+    if again is not None:
+        # События, пришедшие во время разбора, — тем же потоком, не теряя их.
+        done += run_pending(uid, again, _claimed=True)
     return done
 
 
-def kick(uid: int) -> None:
-    threading.Thread(target=run_pending, args=(int(uid),), daemon=True).start()
+def kick(uid: int, ready_ids: Optional[set[int]] = None) -> None:
+    uid = int(uid)
+    with _LOCK:
+        if uid in _RUNNING:
+            _AGAIN.setdefault(uid, set()).update(ready_ids or set())
+            return
+        _RUNNING.add(uid)  # сразу: лента видит «идёт разбор» (busy) ещё до старта потока
+    threading.Thread(target=run_pending, args=(uid, ready_ids), kwargs={"_claimed": True}, daemon=True).start()
+
+
+def busy(uid: int) -> bool:
+    """Идёт разбор или он запланирован в ближайшие секунды (саммари готово) — клиент перезапросит ленту."""
+    uid = int(uid)
+    with _LOCK:
+        if uid in _RUNNING:
+            return True
+        return any(k[0] == uid and getattr(t, "_leo_ready", False) for k, t in _TIMERS.items())
+
+
+def last_analyzed_at(uid: int) -> float:
+    return _LAST_ANALYZED.get(int(uid), 0.0)
+
+
+def _autostart() -> bool:
+    return (os.getenv("PROACTIVE_AI_AUTOSTART") or "1").strip() != "0"
+
+
+def note_changed(uid: Any, note_id: Any, *, ready: bool = False) -> None:
+    """Материал изменился. ready=True — готов сразу (саммари); иначе — разбор после IDLE тишины.
+
+    Повторная правка той же заметки переносит разбор (debounce), открытие ленты не нужно.
+    """
+    if not _autostart():
+        return
+    try:
+        uid_i, nid = int(uid), int(note_id)
+    except (TypeError, ValueError):
+        return
+    key = (uid_i, nid)
+    delay = 1.0 if ready else IDLE.total_seconds() + 5
+
+    def fire() -> None:
+        with _LOCK:
+            if _TIMERS.get(key) is timer:
+                _TIMERS.pop(key, None)
+        try:
+            kick(uid_i, {nid} if ready else None)
+        except Exception as e:
+            print(f"[proactive_ai] note_changed kick failed uid={uid_i} note={nid} err={e!r}")
+
+    timer = threading.Timer(delay, fire)
+    timer.daemon = True
+    timer._leo_ready = ready  # type: ignore[attr-defined]
+    with _LOCK:
+        old = _TIMERS.get(key)
+        if old is not None:
+            if getattr(old, "_leo_ready", False) and not ready:
+                return  # уже стоит немедленный разбор — правка его не откладывает
+            old.cancel()
+        _TIMERS[key] = timer
+    timer.start()
 
 
 # ---------------------------------------------------------------- карточки

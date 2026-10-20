@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261020-actualux1";
+  var WEBAPP_BUILD = "20261020-focusfresh1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -16738,12 +16738,38 @@
   var focusPanelOpen = false;
   var focusLoading = false;
 
-  async function loadFocus(fresh) {
+  // Пока сервер разбирает новые материалы (analyzing) — перезапрашиваем ленту, чтобы
+  // задачи из только что готовых итогов встречи появились без переоткрытия экрана.
+  var focusPollTimer = null;
+  var focusPollLeft = 0;
+  var focusLoadedAt = 0;
+  var FOCUS_POLL_MS = 8000;
+  var FOCUS_POLL_MAX = 12;
+
+  function scheduleFocusPoll(analyzing) {
+    if (focusPollTimer) {
+      window.clearTimeout(focusPollTimer);
+      focusPollTimer = null;
+    }
+    if (!analyzing || focusPollLeft <= 0) return;
+    focusPollLeft -= 1;
+    focusPollTimer = window.setTimeout(function () {
+      focusPollTimer = null;
+      if (document.hidden || currentTab !== "actual") return;
+      loadFocus(false, { poll: true });
+    }, FOCUS_POLL_MS);
+  }
+
+  async function loadFocus(fresh, opts) {
+    opts = opts || {};
     if (focusLoading) return;
+    if (!opts.poll) focusPollLeft = FOCUS_POLL_MAX;
     focusLoading = true;
+    var data = null;
     try {
-      var data = await apiFetch("/proactive/feed" + (fresh ? "?fresh=1" : ""), { method: "GET" });
+      data = await apiFetch("/proactive/feed" + (fresh ? "?fresh=1" : ""), { method: "GET" });
       focusItems = (data && data.items) || [];
+      focusLoadedAt = Date.now();
     } catch (_) {
       return;
     } finally {
@@ -16751,7 +16777,15 @@
     }
     renderFocusRow();
     renderFocusPanel();
+    scheduleFocusPoll(!!(data && data.analyzing));
   }
+
+  // Вернулись в приложение на «Актуальном» — лента могла обновиться (итоги встречи из бота и т.п.).
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState !== "visible" || currentTab !== "actual") return;
+    if (Date.now() - focusLoadedAt < 30000) return;
+    loadFocus(false);
+  });
 
   var FOCUS_OPEN_ACTS = { open_note: 1, open_event: 1, open_task: 1, open_tasks: 1, url: 1 };
 

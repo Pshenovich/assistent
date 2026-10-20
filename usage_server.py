@@ -9133,6 +9133,16 @@ class _MiniappFocusDoneBody(BaseModel):
     whole: bool = False
 
 
+def _focus_note_changed(owner: Any, note_id: Any) -> None:
+    """Заметку правили — Фокус разберёт её сам после короткой тишины (не ждёт открытия ленты)."""
+    try:
+        from assistant.services import proactive_ai
+
+        proactive_ai.note_changed(owner, note_id)
+    except Exception as e:
+        print(f"[proactive] note_changed failed note={note_id} err={e!r}")
+
+
 def _focus_feed_items(uid: int) -> list[dict[str, Any]]:
     from assistant.services import proactive
     from assistant.services.calendar import _tz_for
@@ -9156,21 +9166,22 @@ async def miniapp_proactive_feed(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     """«Фокус»: подсказки с готовыми действиями (правила по задачам, встречам и саммари)."""
+    from assistant.services import proactive_ai
+
     uid = int(principal.telegram_user_id)
     hit = _FOCUS_CACHE.get(uid)
-    if hit and not fresh and time.time() - hit[0] < 60:
-        return {"ok": True, "items": hit[1]}
+    # Кэш минуту — но не дольше свежего ИИ-разбора: новые карточки видны сразу после него.
+    if hit and not fresh and time.time() - hit[0] < 60 and hit[0] >= proactive_ai.last_analyzed_at(uid):
+        return {"ok": True, "items": hit[1], "analyzing": proactive_ai.busy(uid)}
 
     items = await run_in_threadpool(_focus_feed_items, uid)
     _FOCUS_CACHE[uid] = (time.time(), items)
     try:
-        # ИИ разбирает изменившиеся материалы в фоне; новые карточки появятся при следующем обновлении.
-        from assistant.services import proactive_ai
-
+        # ИИ разбирает изменившиеся материалы в фоне; клиент перезапросит ленту, пока analyzing.
         proactive_ai.kick(uid)
     except Exception as e:
         print(f"[proactive] kick failed uid={uid} err={e!r}")
-    return {"ok": True, "items": items}
+    return {"ok": True, "items": items, "analyzing": proactive_ai.busy(uid)}
 
 
 @miniapp_router.get("/proactive/prefs")
@@ -9891,6 +9902,7 @@ async def miniapp_local_note_create(
 
     def _local() -> dict[str, Any]:
         created = notes_store.create_note(uid, title, desc)
+        _focus_note_changed(uid, created["id"])
         return _sync_local_note_hashtags(uid, created)
 
     item = await run_in_threadpool(_local)
@@ -9955,6 +9967,7 @@ async def miniapp_local_note_patch(
             item = tnotes.enrich(item)
         if body.description is not None or body.title is not None:
             item = _sync_local_note_hashtags(owner, item)
+            _focus_note_changed(owner, note_id)
         else:
             item = _enrich_item_labels(owner, "local", item)
         if body.sync_todoist and item.get("todoist_id"):

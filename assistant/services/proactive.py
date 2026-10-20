@@ -369,11 +369,15 @@ def summary_task_id(note_id: int, line: str) -> str:
 
 def rule_summary_tasks(
     notes: list[dict[str, Any]],
-    has_tasks: dict[int, bool],
+    has_tasks: dict[int, Any],
     now: datetime,
     tz: Any,
     done: Optional[set[str]] = None,
 ) -> list[dict[str, Any]]:
+    """has_tasks[note_id]: названия задач, уже поставленных из этой встречи, — их пункты прячем,
+    остальные предлагаем; True — встреча разобрана целиком (старый вызов)."""
+    from assistant.services.proactive_ai import _covered
+
     done = done or set()
     out = []
     for n in notes:
@@ -385,15 +389,20 @@ def rule_summary_tasks(
         if not created or created < now - SUMMARY_TASKS_WINDOW:
             continue
         nid = int(n["id"])
-        if has_tasks.get(nid):
+        posted = has_tasks.get(nid)
+        if posted is True:
             continue
+        posted_titles = [str(x) for x in posted] if isinstance(posted, (list, tuple, set)) else []
         items = []
         for t in tasks:
             parts = [str(t.get("assignee") or "").strip(), str(t.get("task") or "").strip(), str(t.get("deadline") or "").strip()]
             line = " — ".join(p for p in parts if p)
             iid = summary_task_id(nid, line)
-            if iid not in done:
-                items.append({"id": iid, "text": line})
+            if iid in done:
+                continue
+            if posted_titles and _covered(str(t.get("task") or ""), posted_titles):
+                continue  # эту задачу из встречи уже поставили
+            items.append({"id": iid, "text": line})
         if not items:
             continue
         lines = [i["text"] for i in items[:12]]
@@ -505,7 +514,10 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
             n for n in notes_store.list_transcription_notes(uid, limit=40)
             if str(n.get("owner_user_id") or n.get("user_id") or uid) == str(uid)
         ]
-        has_tasks = {int(n["id"]): bool(calendar_tasks.list_tasks_for_note(uid, n["id"])) for n in notes}
+        has_tasks = {
+            int(n["id"]): [str(t.get("title") or "") for t in calendar_tasks.list_tasks_for_note(uid, n["id"])]
+            for n in notes
+        }
         if prefs.get("after_meetings"):
             items += rule_summary_tasks(notes, has_tasks, now, tz, done_keys(uid))
     except Exception as e:
