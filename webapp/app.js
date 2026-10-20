@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261020-focus1";
+  var WEBAPP_BUILD = "20261020-tasks1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -14103,6 +14103,8 @@
       checklist: reminderChecklistApi ? reminderChecklistApi.getItems() : [],
       note_id: noteEl ? String(noteEl.value || "") : "",
     };
+    var resultEl = document.getElementById("m-task-result");
+    if (resultEl) body.result = String(resultEl.value || "");
     // Исполнитель чужой задачи не должен переназначать её через форму.
     if (!opts.skipAssignee) {
       var assignee = taskAssigneeApi ? taskAssigneeApi.getAssignee() : defaultTaskAssignee();
@@ -14111,6 +14113,12 @@
       body.assignee_name = assignee.name || "";
     }
     return body;
+  }
+
+  // Ссылка на карточку задачи: открывает её у постановщика и исполнителя (?task=ID).
+  function taskShareUrl(taskId) {
+    var base = location.origin + location.pathname.replace(/[^/]*$/, "");
+    return base + "?task=" + encodeURIComponent(String(taskId || ""));
   }
 
   function openTaskModal(ev, opts) {
@@ -14150,6 +14158,12 @@
       '<div class="event-sheet-group event-sheet-checklist-group">' +
       '<div id="m-task-checklist-host" class="rem-checklist-host"></div>' +
       "</div>" +
+      (existing
+        ? '<div class="event-sheet-group">' +
+          '<div class="event-sheet-row"><span class="event-sheet-row-label">Результат</span></div>' +
+          '<textarea id="m-task-result" class="field-textarea event-sheet-desc" rows="2" placeholder="Что получилось (необязательно)"></textarea>' +
+          "</div>"
+        : "") +
       '<div class="event-sheet-group">' +
       '<div class="event-sheet-row">' +
       '<span class="event-sheet-row-label">Начало</span>' +
@@ -14177,7 +14191,14 @@
       "</span></button>" +
       '<div id="m-task-assignee-editor" class="event-sheet-attendees hidden">' +
       '<div id="m-task-assignee-host"></div>' +
-      "</div></div></div>";
+      "</div></div>" +
+      (existing
+        ? '<div class="event-sheet-group">' +
+          '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-task-copy-link">' +
+          '<span class="event-sheet-row-label">Скопировать ссылку</span>' +
+          '<span class="event-sheet-row-value">' + eventSheetChevronHtml() + "</span></button></div>"
+        : "") +
+      "</div>";
     bindCreateKindSwitcher(
       "task",
       existing ? { source: { kind: "task", id: String(taskId), calendarId: "leo-tasks" } } : {}
@@ -14185,6 +14206,21 @@
     document.getElementById("m-ev-sum").value =
       ev.summary || ev.title || (opts.quote ? String(opts.quote) : "") || "";
     document.getElementById("m-task-desc").value = ev.description || "";
+    var resultEl = document.getElementById("m-task-result");
+    if (resultEl) resultEl.value = ev.result || (ev.event && ev.event.result) || "";
+    var copyLinkBtn = document.getElementById("m-task-copy-link");
+    if (copyLinkBtn) {
+      copyLinkBtn.addEventListener("click", function () {
+        copyShareUrl(ev.url || taskShareUrl(taskId))
+          .then(function () {
+            shareHaptic();
+            showCalendarToast("Ссылка на задачу скопирована");
+          })
+          .catch(function (e) {
+            showCalendarToast((e && e.message) || "Не удалось скопировать");
+          });
+      });
+    }
     document.getElementById("m-ev-start").value = startLocal;
     document.getElementById("m-ev-end").value = endLocal;
     document.getElementById("modal-task-note-id").value = ev.note_id || currentOpenNoteId() || "";
@@ -15299,6 +15335,7 @@
           body: JSON.stringify(body),
         });
         var saved = r && r.task;
+        rememberTaskTip(saved);
         var colorId = id || (saved && (saved.id || (saved.task_id != null ? saved.task_id : "")));
         if (colorId || taskColor) {
           try {
@@ -15418,12 +15455,16 @@
     if (kind !== "task") return;
     var id = document.getElementById("modal-event-id").value;
     if (!id) return;
+    var donePatch = { done: true };
+    var resultEl = document.getElementById("m-task-result");
+    if (resultEl) donePatch.result = String(resultEl.value || "");
     try {
       var r = await apiFetch("/calendar/tasks/" + encodeURIComponent(id), {
         method: "PATCH",
-        body: JSON.stringify({ done: true }),
+        body: JSON.stringify(donePatch),
       });
       var saved = r && r.task;
+      rememberTaskTip(saved);
       var savedCb = taskModalOnSaved;
       closeModal();
       if (savedCb) savedCb(saved);
@@ -16517,61 +16558,129 @@
     renderFocusPanel();
   }
 
-  var FOCUS_OPEN_ACTS = { open_note: 1, open_event: 1, open_task: 1, url: 1 };
+  var FOCUS_OPEN_ACTS = { open_note: 1, open_event: 1, open_task: 1, open_tasks: 1, url: 1 };
 
   // Карточки с пунктами (договорённости, задачи из саммари, важное из чатов) разбираются в чате.
   function focusHasItems(it) {
     return !!(it && it.items && it.items.length);
   }
 
+  // Иконка и тон плитки по типу карточки (как плитки в блоках «Актуального»).
+  var FOCUS_KIND_UI = {
+    agreement: ["people", "blue"],
+    followup: ["cal", "violet"],
+    open_question: ["chat", "violet"],
+    chat_request: ["chat", "red"],
+    chat_promise: ["people", "blue"],
+    chat_escalation: ["flame", "red"],
+    chat_deadline: ["clock", "amber"],
+    chat_blocker: ["alert", "red"],
+    overdue: ["alert", "amber"],
+    prep: ["note", "blue"],
+    no_results: ["mic", "violet"],
+    summary_tasks: ["taskBox", "green"],
+    weekly: ["sum", "violet"],
+  };
+
+  var FOCUS_SHORT_LABEL = {
+    "Поставить задачу": "В задачу",
+    "Задача себе": "В задачу",
+    "Напомнить себе": "В задачу",
+    "Перенести на завтра": "На завтра",
+    "Поставить всё": "В задачи",
+    "Открыть встречу": "Встреча",
+  };
+
+  function focusKindLabel(tag) {
+    var s = String(tag || "").replace(/^[^0-9A-Za-zА-Яа-яЁё]+/, "").trim();
+    return s ? s.charAt(0).toUpperCase() + s.slice(1) : "";
+  }
+
+  function focusCardIcon(it) {
+    var tag = String(it.tag || "");
+    if (/обещан/i.test(tag)) return ["people", "blue"];
+    if (/напомин/i.test(tag)) return ["bell", "amber"];
+    return FOCUS_KIND_UI[it.type] || ["spark", "blue"];
+  }
+
+  function focusSourceIcon(it) {
+    if (it.chat) return "chat";
+    if (it.note) return it.note.kind === "transcription" ? "mic" : "note";
+    if (it.event) return "cal";
+    if (it.tasks) return "taskBox";
+    return "";
+  }
+
+  // «из «Синк» · срок 24 окт» → срок под типом, источник — в футер.
+  function focusSplitSource(src) {
+    var parts = String(src || "").split(" · ");
+    var due = "";
+    var rest = parts.filter(function (p) {
+      if (/^срок /.test(p)) {
+        due = p;
+        return false;
+      }
+      return true;
+    });
+    var text = rest.join(" · ").replace(/^из «([^»]+)»/, "$1");
+    return { due: due, text: text };
+  }
+
   function focusCard(it, inPanel) {
     var card = document.createElement("div");
     card.className = "focus-card" + (it.urgency >= 3 ? " is-urgent" : "") + (inPanel ? " is-wide" : "");
-    var tag = document.createElement("div");
-    tag.className = "focus-card-tag";
-    var tg = document.createElement("span");
-    tg.className = "focus-card-kind";
-    tg.textContent = it.tag || "";
-    tag.appendChild(tg);
+    var all = it.actions || [];
+    // «Открыть» — футер-источник, «Сделано» — галочка, остальное — кнопки.
+    var openAct = all.filter(function (a) {
+      return FOCUS_OPEN_ACTS[a.act];
+    })[0];
+    var doneAct = all.filter(function (a) {
+      return a.act === "mark_done" || a.act === "mark_done_pick";
+    })[0];
+    var rest = all.filter(function (a) {
+      return !FOCUS_OPEN_ACTS[a.act] && a !== doneAct;
+    });
+    if (!rest.length && !doneAct) openAct = null;
+    var src = focusSplitSource(it.source);
+
+    var head = document.createElement("div");
+    head.className = "focus-card-head";
+    var ui = focusCardIcon(it);
+    var ico = document.createElement("span");
+    ico.className = "focus-card-ico is-" + ui[1];
+    ico.innerHTML = DISCUSS_ICONS[ui[0]] || DISCUSS_ICONS.spark;
+    head.appendChild(ico);
+    var kind = document.createElement("span");
+    kind.className = "focus-card-kind";
+    var kl = document.createElement("span");
+    kl.className = "focus-card-kind-label";
+    kl.textContent = focusKindLabel(it.tag);
+    kind.appendChild(kl);
+    if (src.due) {
+      var kd = document.createElement("span");
+      kd.className = "focus-card-kind-due";
+      kd.textContent = src.due;
+      kind.appendChild(kd);
+    }
+    head.appendChild(kind);
     var x = document.createElement("button");
     x.type = "button";
     x.className = "focus-card-x";
     x.setAttribute("aria-label", "Скрыть");
     x.title = "Скрыть";
-    x.textContent = "✕";
+    x.innerHTML = DISCUSS_ICONS.x;
     x.addEventListener("click", function (e) {
       e.preventDefault();
       dismissFocus(it);
     });
-    tag.appendChild(x);
-    card.appendChild(tag);
+    head.appendChild(x);
+    card.appendChild(head);
+
     var t = document.createElement("b");
     t.className = "focus-card-title";
     t.textContent = it.title || "";
     card.appendChild(t);
-    var all = it.actions || [];
-    // «Открыть» — тап по источнику, если на карточке есть другие действия.
-    var openAct = all.filter(function (a) {
-      return FOCUS_OPEN_ACTS[a.act];
-    })[0];
-    var rest = all.filter(function (a) {
-      return !FOCUS_OPEN_ACTS[a.act];
-    });
-    if (!rest.length) openAct = null;
-    if (it.source) {
-      var s = document.createElement(openAct ? "button" : "small");
-      s.className = "focus-card-src" + (openAct ? " is-link" : "");
-      s.textContent = it.source;
-      if (openAct) {
-        s.type = "button";
-        s.title = openAct.label || "Открыть";
-        s.addEventListener("click", function (e) {
-          e.preventDefault();
-          runFocusAction(it, openAct, s);
-        });
-      }
-      card.appendChild(s);
-    }
+
     var acts = document.createElement("div");
     acts.className = "focus-card-acts";
     var ask = document.createElement("button");
@@ -16583,18 +16692,63 @@
       askAboutFocus(it, ask);
     });
     acts.appendChild(ask);
-    (openAct ? rest : all).slice(0, 2).forEach(function (a) {
+    var shown = openAct ? rest : all.filter(function (a) {
+      return a !== doneAct;
+    });
+    shown.slice(0, doneAct ? 1 : 2).forEach(function (a) {
       var b = document.createElement("button");
       b.type = "button";
-      b.className = "focus-card-btn";
-      b.textContent = a.label;
+      b.className = "focus-card-btn is-soft";
+      b.textContent = FOCUS_SHORT_LABEL[a.label] || a.label;
       b.addEventListener("click", function (e) {
         e.preventDefault();
         runFocusAction(it, a, b);
       });
       acts.appendChild(b);
     });
+    if (doneAct) {
+      var d = document.createElement("button");
+      d.type = "button";
+      d.className = "focus-card-btn is-icon";
+      d.title = doneAct.label.replace(/^✓\s*/, "");
+      d.setAttribute("aria-label", d.title);
+      d.innerHTML = DISCUSS_ICONS.check;
+      d.addEventListener("click", function (e) {
+        e.preventDefault();
+        runFocusAction(it, doneAct, d);
+      });
+      acts.appendChild(d);
+    }
     card.appendChild(acts);
+
+    if (src.text) {
+      var f = document.createElement(openAct ? "button" : "div");
+      f.className = "focus-card-foot" + (openAct ? " is-link" : "");
+      var sic = focusSourceIcon(it);
+      if (sic && DISCUSS_ICONS[sic]) {
+        var fi = document.createElement("span");
+        fi.className = "focus-card-foot-ico";
+        fi.innerHTML = DISCUSS_ICONS[sic];
+        f.appendChild(fi);
+      }
+      var ft = document.createElement("span");
+      ft.className = "focus-card-foot-text";
+      ft.textContent = src.text;
+      f.appendChild(ft);
+      if (openAct) {
+        f.type = "button";
+        f.title = openAct.label || "Открыть";
+        var chev = document.createElement("span");
+        chev.className = "focus-card-foot-chev";
+        chev.innerHTML = DISCUSS_ICONS.right;
+        f.appendChild(chev);
+        f.addEventListener("click", function (e) {
+          e.preventDefault();
+          runFocusAction(it, openAct, f);
+        });
+      }
+      card.appendChild(f);
+    }
     return card;
   }
 
@@ -16771,6 +16925,60 @@
     a.title = [a.mark === "linked" ? "Связано с задачей" : "Выполнено", a.by, when, "из «Фокуса»"].filter(Boolean).join(" · ");
     return a;
   }
+
+  // Тултип чипа задачи / значка «Задача» в заметке: статус и «Результат» (подгружаем при наведении).
+  var taskTipCache = {};
+  var TASK_TIP_TTL_MS = 60000;
+
+  function rememberTaskTip(task) {
+    if (task && task.id != null) taskTipCache[String(task.id)] = { at: Date.now(), task: task };
+  }
+
+  function taskTipLines(task) {
+    var lines = [];
+    var head = String(task.title || "Задача");
+    lines.push(task.done ? head + " · выполнена" : head);
+    var who = String(task.assignee_name || "").trim();
+    if (who && String(task.assignee_user_id || "") !== String(task.owner_user_id || "")) lines.push("Исполнитель: " + who);
+    var res = String(task.result || "").trim();
+    if (res) lines.push("Результат: " + (res.length > 400 ? res.slice(0, 400) + "…" : res));
+    return lines;
+  }
+
+  function applyTaskTip(el, taskId) {
+    var hit = taskTipCache[taskId];
+    var isMark = el.classList.contains("note-focus-mark");
+    function paint(task) {
+      if (!task) return;
+      var lines = taskTipLines(task);
+      el.title = isMark ? [focusMarkAttrs(el).title].concat(lines).join("\n") : lines.join("\n");
+    }
+    if (hit && Date.now() - hit.at < TASK_TIP_TTL_MS) {
+      paint(hit.task);
+      return;
+    }
+    if (hit && hit.pending) return;
+    taskTipCache[taskId] = Object.assign({}, hit, { pending: true });
+    apiFetch("/calendar/tasks/" + encodeURIComponent(taskId), { method: "GET" })
+      .then(function (r) {
+        var task = r && r.task;
+        if (task) {
+          rememberTaskTip(task);
+          paint(task);
+        } else delete taskTipCache[taskId];
+      })
+      .catch(function () {
+        taskTipCache[taskId] = { at: Date.now(), task: null };
+      });
+  }
+
+  document.addEventListener("mouseover", function (e) {
+    var el =
+      e.target && e.target.closest && e.target.closest(".note-task-chip[data-leo-task-id], .note-focus-mark[data-leo-mark-task]");
+    if (!el) return;
+    var taskId = el.getAttribute("data-leo-task-id") || el.getAttribute("data-leo-mark-task") || "";
+    if (/^\d+$/.test(taskId)) applyTaskTip(el, taskId);
+  });
 
   // Значки вне редактора (просмотр саммари, предпросмотр): тултип по наведению, действие по тапу.
   document.addEventListener("mouseover", function (e) {
@@ -26083,6 +26291,8 @@
     notePlus: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3H7v18h12V9zM13 3v6h6M13 13v6M10 16h6"/></svg>',
     link: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/></svg>',
     x: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    alert: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9L2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>',
+    flame: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21c3.9 0 7-2.9 7-6.8 0-3.4-2.3-5.6-4-7.7-.6 1.9-1.6 3-3 3.5.3-2.6-.4-5.4-3-7-.3 3.2-2.2 5-3.5 6.8A7 7 0 0 0 5 14.2C5 18.1 8.1 21 12 21z"/></svg>',
   };
 
   // Метки говорящего от транскрайбера («SPEAKER_1:», «Speaker_0», «Спикер 2:») в диктовке не нужны.

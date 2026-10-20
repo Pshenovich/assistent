@@ -16260,20 +16260,42 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
 .focus-all { border: none; background: transparent; color: var(--accent); font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; padding: 4px 2px; }
 .focus-row { display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none; padding-bottom: 2px; }
 .focus-row::-webkit-scrollbar { display: none; }
-.focus-card { flex: none; width: 272px; min-height: 140px; scroll-snap-align: start; border-radius: 14px; background: var(--surface, #19191c); border: 1px solid var(--border); padding: 10px 12px; display: flex; flex-direction: column; gap: 5px; }
-.focus-card.is-urgent { border-color: rgba(248, 113, 113, 0.45); }
+.focus-card { flex: none; width: 272px; min-height: 176px; box-sizing: border-box; scroll-snap-align: start; border-radius: 14px; background: var(--surface, #19191c); border: 1px solid var(--border); padding: 12px 12px 0; display: flex; flex-direction: column; gap: 9px; }
 .focus-card.is-wide { width: auto; min-height: 0; }
-.focus-card-tag { display: flex; align-items: center; gap: 6px; font-size: 0.68rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-tertiary); }
-.focus-card-kind { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.focus-card-ask { border: none; background: transparent; color: var(--accent); font: inherit; font-size: 0.75rem; font-weight: 600; text-transform: none; letter-spacing: 0; cursor: pointer; padding: 0; }
-.focus-card-x { width: 20px; height: 20px; border: none; border-radius: 6px; background: var(--surface-elevated, #232326); color: var(--text-tertiary); font-size: 0.68rem; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
-.focus-card-x:hover { color: var(--text); }
-.focus-card-title { font-size: 0.88rem; line-height: 1.32; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.focus-card-src { font-size: 0.75rem; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.focus-card-acts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: auto; padding-top: 4px; }
-.focus-card-btn { border: none; border-radius: 9px; padding: 5px 9px; background: var(--surface-elevated, #2a2a2e); color: var(--text); font: inherit; font-size: 0.75rem; font-weight: 600; cursor: pointer; }
-.focus-card-btn.is-primary { background: var(--accent); color: #fff; }
+.focus-card-head { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.focus-card-ico { flex: none; width: 30px; height: 30px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; background: var(--accent-subtle); color: var(--accent); }
+.focus-card-ico svg { width: 17px; height: 17px; }
+.focus-card-ico.is-blue { background: var(--accent-subtle); color: var(--accent); }
+.focus-card-ico.is-red { background: rgba(239, 68, 68, 0.14); color: #f87171; }
+.focus-card-ico.is-amber { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+.focus-card-ico.is-violet { background: var(--violet-muted); color: var(--violet-text); }
+.focus-card-ico.is-green { background: var(--emerald-muted); color: var(--emerald-text); }
+.focus-card-kind { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; line-height: 1.25; }
+.focus-card-kind-label { font-size: 0.78rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.focus-card-kind-due { font-size: 0.7rem; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.focus-card.is-urgent .focus-card-kind-due { color: #f87171; }
+.focus-card-x { flex: none; align-self: flex-start; width: 24px; height: 24px; border: none; border-radius: 8px; background: transparent; color: var(--text-tertiary); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.focus-card-x svg { width: 13px; height: 13px; }
+.focus-card-x:hover { color: var(--text); background: var(--surface-elevated, #232326); }
+.focus-card-title { font-size: 0.9rem; font-weight: 600; line-height: 1.34; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+/* Кнопки и футер прижаты к низу: в ряду карточек стоят на одной линии при любой длине текста. */
+.focus-card-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+.focus-card-btn { border: none; border-radius: 10px; padding: 7px 11px; background: var(--surface-elevated, #2a2a2e); color: var(--text); font: inherit; font-size: 0.78rem; font-weight: 600; line-height: 1.2; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.focus-card-btn.is-primary { background: var(--accent); color: var(--on-accent, #fff); }
+.focus-card-btn.is-soft { background: var(--accent-subtle); color: var(--accent); }
+.focus-card-btn.is-soft:hover { background: var(--accent-muted); }
+.focus-card-btn.is-icon { width: 32px; padding: 7px 0; color: var(--text-secondary); }
+.focus-card-btn.is-icon:hover { color: var(--emerald-text); background: var(--emerald-muted); }
+.focus-card-btn.is-icon svg { width: 15px; height: 15px; }
 .focus-card-btn:disabled { opacity: 0.6; }
+.focus-card-foot { display: flex; align-items: center; gap: 7px; min-width: 0; margin: 0 -12px; padding: 9px 12px 10px; border: none; border-top: 1px solid var(--border); border-radius: 0 0 14px 14px; background: transparent; color: var(--text-tertiary); font: inherit; font-size: 0.75rem; text-align: left; }
+.focus-card-foot.is-link { cursor: pointer; color: var(--text-secondary); }
+.focus-card-foot.is-link:hover { background: var(--surface-muted, rgba(255, 255, 255, 0.04)); }
+.focus-card-foot-ico, .focus-card-foot-chev { flex: none; display: inline-flex; color: var(--text-tertiary); }
+.focus-card-foot-ico svg { width: 14px; height: 14px; }
+.focus-card-foot-chev { margin-left: auto; }
+.focus-card-foot-chev svg { width: 14px; height: 14px; }
+.focus-card-foot-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .focus-panel { flex-shrink: 0; padding: 0 0 14px; display: flex; flex-direction: column; gap: 8px; }
 .focus-panel-head { display: flex; align-items: center; gap: 8px; }
 .focus-panel-head b { font-size: 0.95rem; }
@@ -16281,10 +16303,12 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
 .focus-panel-x { border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; font-size: 0.85rem; }
 .focus-panel-list { display: flex; flex-direction: column; gap: 8px; }
 @media (max-width: 959px) {
-  .focus-card { width: 236px; }
+  .focus-card { width: 248px; }
+  .focus-card-acts { gap: 5px; }
+  .focus-card-btn { padding: 7px 9px; font-size: 0.75rem; }
+  .focus-card-btn.is-icon { width: 30px; padding: 7px 0; }
   .focus-arrow { display: none; }
 }
-.focus-card-src.is-link { border: none; background: transparent; padding: 0; font: inherit; font-size: 0.75rem; text-align: left; color: var(--accent); cursor: pointer; }
 /* Фокус: карточка разбора пункта в чате ассистента */
 .focus-chat { display: grid; gap: 8px; }
 .focus-chat-card { position: relative; display: flex; flex-direction: column; gap: 8px; max-width: 460px; padding: 11px 13px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface, #19191c); color: var(--text); font-size: 0.875rem; }
