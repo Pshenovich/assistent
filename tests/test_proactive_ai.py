@@ -128,6 +128,23 @@ class TriggerTests(unittest.TestCase):
             self.assertGreater(pa.last_analyzed_at(5), before)
         self.assertFalse(pa.busy(5))
 
+    def test_analyze_now_takes_fresh_notes_and_reports(self) -> None:
+        body = "<p>" + "Итоги: Мария пришлёт смету до среды. " * 10 + "</p>"
+        n = notes_store.create_note(1, "Итоги встречи", body)
+        with mock.patch.object(pa, "kick") as kick, mock.patch.object(pa, "digest_candidates", return_value=[]):
+            res = pa.analyze_now(1)
+        self.assertEqual(res, {"queued": 1, "pending": 1, "capped": False})
+        kick.assert_called_once_with(1, {int(n["id"])}, limit=pa.PER_RUN_MANUAL)
+        with mock.patch.object(pa, "kick") as kick, mock.patch.object(pa, "digest_candidates", return_value=[]), \
+                mock.patch.object(pa, "analyzed_today", return_value=pa.DAILY_CAP):
+            self.assertEqual(pa.analyze_now(1), {"queued": 0, "pending": 1, "capped": True})
+            kick.assert_not_called()
+
+    def test_analyze_now_nothing_new(self) -> None:
+        with mock.patch.object(pa, "kick") as kick, mock.patch.object(pa, "digest_candidates", return_value=[]):
+            self.assertEqual(pa.analyze_now(1), {"queued": 0, "pending": 0, "capped": False})
+            kick.assert_not_called()
+
 
 class BriefTests(unittest.TestCase):
     def test_brief_due_window(self) -> None:

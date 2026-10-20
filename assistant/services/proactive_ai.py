@@ -23,6 +23,7 @@ IDLE = timedelta(minutes=2)
 LOOKBACK = timedelta(days=14)
 DAILY_CAP = 20
 PER_RUN = 3
+PER_RUN_MANUAL = 6  # кнопка «Найти инсайты»: пользователь ждёт — разбираем больше за раз
 MIN_TEXT = 160
 MAX_TEXT = 12000
 
@@ -111,11 +112,12 @@ def _material_text(note: dict[str, Any]) -> str:
 
 
 def candidates(
-    uid: int, *, now: Optional[datetime] = None, ready_ids: Optional[set[int]] = None
+    uid: int, *, now: Optional[datetime] = None, ready_ids: Optional[set[int]] = None, skip_idle: bool = False
 ) -> list[tuple[dict[str, Any], str, str]]:
     """Изменённые и «остывшие» материалы, которые ещё не разобраны в текущем виде.
 
     ready_ids — материалы, готовые сразу (саммари только что сделано): без ожидания тишины.
+    skip_idle — все изменённые, даже правленные только что (ручной запуск).
     """
     ready_ids = ready_ids or set()
     from assistant.stores import notes as notes_store
@@ -137,7 +139,7 @@ def candidates(
         upd = _parse(n.get("updated_at"))
         if not upd or upd < now - LOOKBACK:
             continue
-        if upd > now - IDLE and int(n["id"]) not in ready_ids:
+        if upd > now - IDLE and int(n["id"]) not in ready_ids and not skip_idle:
             continue
         text = _material_text(n)
         if len(text) < MIN_TEXT:
@@ -245,7 +247,9 @@ def save(uid: int, source_key: str, content_hash: str, title: str, items: list[d
         conn.commit()
 
 
-def run_pending(uid: int, ready_ids: Optional[set[int]] = None, *, _claimed: bool = False) -> int:
+def run_pending(
+    uid: int, ready_ids: Optional[set[int]] = None, *, _claimed: bool = False, limit: int = PER_RUN
+) -> int:
     """Разобрать до PER_RUN новых материалов (в фоне, один поток на пользователя)."""
     uid = int(uid)
     with _LOCK:
@@ -256,14 +260,14 @@ def run_pending(uid: int, ready_ids: Optional[set[int]] = None, *, _claimed: boo
     done = 0
     try:
         budget = DAILY_CAP - analyzed_today(uid)
-        for note, text, h in candidates(uid, ready_ids=ready_ids)[: max(0, min(PER_RUN, budget))]:
+        for note, text, h in candidates(uid, ready_ids=ready_ids)[: max(0, min(limit, budget))]:
             try:
                 analyze_note(uid, note, text, h)
                 done += 1
             except Exception as e:
                 print(f"[proactive_ai] note={note.get('id')} uid={uid} err={e!r}")
         budget = DAILY_CAP - analyzed_today(uid)
-        for cid, day, key, h in digest_candidates(uid)[: max(0, min(PER_RUN, budget))]:
+        for cid, day, key, h in digest_candidates(uid)[: max(0, min(limit, budget))]:
             try:
                 analyze_digest(uid, cid, day, key, h)
                 done += 1
@@ -283,14 +287,32 @@ def run_pending(uid: int, ready_ids: Optional[set[int]] = None, *, _claimed: boo
     return done
 
 
-def kick(uid: int, ready_ids: Optional[set[int]] = None) -> None:
+def kick(uid: int, ready_ids: Optional[set[int]] = None, *, limit: int = PER_RUN) -> None:
     uid = int(uid)
     with _LOCK:
         if uid in _RUNNING:
             _AGAIN.setdefault(uid, set()).update(ready_ids or set())
             return
         _RUNNING.add(uid)  # сразу: лента видит «идёт разбор» (busy) ещё до старта потока
-    threading.Thread(target=run_pending, args=(uid, ready_ids), kwargs={"_claimed": True}, daemon=True).start()
+    threading.Thread(
+        target=run_pending, args=(uid, ready_ids), kwargs={"_claimed": True, "limit": limit}, daemon=True
+    ).start()
+
+
+def analyze_now(uid: int) -> dict[str, Any]:
+    """Кнопка «Найти инсайты»: разобрать все изменённые материалы сейчас, без ожидания тишины.
+
+    Возвращает, сколько материалов ушло в разбор (queued), и упёрлись ли в дневной лимит (capped).
+    """
+    uid = int(uid)
+    budget = max(0, DAILY_CAP - analyzed_today(uid))
+    notes = candidates(uid, skip_idle=True)
+    chats = digest_candidates(uid)
+    pending = len(notes) + len(chats)
+    queued = min(pending, budget, PER_RUN_MANUAL * 2)
+    if queued:
+        kick(uid, {int(n["id"]) for n, _t, _h in notes[:PER_RUN_MANUAL]}, limit=PER_RUN_MANUAL)
+    return {"queued": queued, "pending": pending, "capped": bool(pending and not budget)}
 
 
 def busy(uid: int) -> bool:

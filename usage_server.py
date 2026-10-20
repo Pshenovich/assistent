@@ -9143,6 +9143,15 @@ def _focus_note_changed(owner: Any, note_id: Any) -> None:
         print(f"[proactive] note_changed failed note={note_id} err={e!r}")
 
 
+def _focus_enabled(uid: int) -> bool:
+    try:
+        from assistant.stores import user_prefs
+
+        return bool(user_prefs.proactive_prefs(uid).get("focus"))
+    except Exception:
+        return True
+
+
 def _focus_feed_items(uid: int) -> list[dict[str, Any]]:
     from assistant.services import proactive
     from assistant.services.calendar import _tz_for
@@ -9172,7 +9181,7 @@ async def miniapp_proactive_feed(
     hit = _FOCUS_CACHE.get(uid)
     # Кэш минуту — но не дольше свежего ИИ-разбора: новые карточки видны сразу после него.
     if hit and not fresh and time.time() - hit[0] < 60 and hit[0] >= proactive_ai.last_analyzed_at(uid):
-        return {"ok": True, "items": hit[1], "analyzing": proactive_ai.busy(uid)}
+        return {"ok": True, "items": hit[1], "analyzing": proactive_ai.busy(uid), "enabled": _focus_enabled(uid)}
 
     items = await run_in_threadpool(_focus_feed_items, uid)
     _FOCUS_CACHE[uid] = (time.time(), items)
@@ -9181,7 +9190,18 @@ async def miniapp_proactive_feed(
         proactive_ai.kick(uid)
     except Exception as e:
         print(f"[proactive] kick failed uid={uid} err={e!r}")
-    return {"ok": True, "items": items, "analyzing": proactive_ai.busy(uid)}
+    return {"ok": True, "items": items, "analyzing": proactive_ai.busy(uid), "enabled": _focus_enabled(uid)}
+
+
+@miniapp_router.post("/proactive/analyze")
+async def miniapp_proactive_analyze(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Кнопка «Найти инсайты» в Фокусе: разобрать изменённые материалы сейчас, без ожидания тишины."""
+    from assistant.services import proactive_ai
+
+    uid = int(principal.telegram_user_id)
+    res = await run_in_threadpool(proactive_ai.analyze_now, uid)
+    _FOCUS_CACHE.pop(uid, None)
+    return {"ok": True, **res, "analyzing": proactive_ai.busy(uid)}
 
 
 @miniapp_router.get("/proactive/prefs")

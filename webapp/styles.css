@@ -16834,3 +16834,28 @@ html.actual-voice-open #actual-voice-btn { visibility: hidden; }
   .notes-fab.actual-fab-mic { right: calc(2rem + 3.25rem + 10px); bottom: calc(2rem + 0.25rem); }
   html.actual-assistant-open .notes-fab.actual-fab-mic { right: calc(var(--discuss-w, 420px) + 24px + 3.25rem + 10px) !important; }
 }
+
+/* Фокус: кнопка «Найти инсайты» и пустое состояние */
+.focus-analyze {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.focus-analyze:hover { background: var(--accent-subtle); }
+.focus-analyze:disabled { cursor: default; }
+.focus-analyze.is-busy svg { animation: focus-analyze-spin 1s linear infinite; }
+@keyframes focus-analyze-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .focus-analyze.is-busy svg { animation: none; opacity: 0.55; }
+}
+.focus-empty-text { font-size: 0.875rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#panel-actual .focus-head--empty { margin-bottom: 0; }

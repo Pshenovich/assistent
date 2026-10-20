@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261020-focusfresh1";
+  var WEBAPP_BUILD = "20261020-focusscan1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -16751,6 +16751,10 @@
       window.clearTimeout(focusPollTimer);
       focusPollTimer = null;
     }
+    if (analyzing && focusPollLeft <= 0 && focusAnalyzing) {
+      setFocusAnalyzing(false);
+      showNoteToast("Разбор ещё идёт — новые подсказки появятся чуть позже");
+    }
     if (!analyzing || focusPollLeft <= 0) return;
     focusPollLeft -= 1;
     focusPollTimer = window.setTimeout(function () {
@@ -16758,6 +16762,84 @@
       if (document.hidden || currentTab !== "actual") return;
       loadFocus(false, { poll: true });
     }, FOCUS_POLL_MS);
+  }
+
+  var focusEnabled = false;
+  var focusAnalyzing = false;
+  var FOCUS_ANALYZE_ICON =
+    '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 4v5h-5"/><path d="M12 8.5l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1z" fill="currentColor" stroke="none"/></svg>';
+
+  // Кнопка «Найти инсайты»: разобрать изменённые заметки и итоги встреч сейчас, без ожидания.
+  function focusAnalyzeButton() {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "focus-analyze" + (focusAnalyzing ? " is-busy" : "");
+    b.title = focusAnalyzing ? "Ищу новые подсказки…" : "Найти новые подсказки в заметках и итогах встреч";
+    b.setAttribute("aria-label", b.title);
+    b.disabled = focusAnalyzing;
+    b.innerHTML = FOCUS_ANALYZE_ICON;
+    b.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      runFocusAnalyze();
+    });
+    return b;
+  }
+
+  function setFocusAnalyzing(on) {
+    focusAnalyzing = !!on;
+    document.querySelectorAll("#actual-focus .focus-analyze").forEach(function (b) {
+      b.classList.toggle("is-busy", focusAnalyzing);
+      b.disabled = focusAnalyzing;
+      b.title = focusAnalyzing ? "Ищу новые подсказки…" : "Найти новые подсказки в заметках и итогах встреч";
+      b.setAttribute("aria-label", b.title);
+    });
+  }
+
+  var focusAnalyzeBaseline = null;
+
+  function reportFocusAnalyzeDone() {
+    var base = focusAnalyzeBaseline || {};
+    focusAnalyzeBaseline = null;
+    var fresh = focusItems.filter(function (it) {
+      return it && it.key && !base[it.key];
+    }).length;
+    showNoteToast(
+      fresh
+        ? "Готово: " + fresh + " " + pluralRu(fresh, "новая подсказка", "новые подсказки", "новых подсказок")
+        : "Готово — новых подсказок не нашлось"
+    );
+  }
+
+  async function runFocusAnalyze() {
+    if (focusAnalyzing) return;
+    setFocusAnalyzing(true);
+    var res = null;
+    try {
+      res = await apiFetch("/proactive/analyze", { method: "POST", body: "{}" });
+    } catch (err) {
+      setFocusAnalyzing(false);
+      showNoteToast((err && err.message) || "Не удалось запустить поиск подсказок");
+      return;
+    }
+    if (!res || !res.queued) {
+      setFocusAnalyzing(false);
+      showNoteToast(
+        res && res.capped
+          ? "Лимит разборов на сегодня исчерпан — продолжу завтра"
+          : "Новых материалов нет — всё уже разобрано"
+      );
+      return;
+    }
+    focusAnalyzeBaseline = {};
+    focusItems.forEach(function (it) {
+      if (it && it.key) focusAnalyzeBaseline[it.key] = 1;
+    });
+    showNoteToast(
+      "Ищу подсказки в " + res.queued + " " + pluralRu(res.queued, "материале", "материалах", "материалах") + "…"
+    );
+    focusPollLeft = FOCUS_POLL_MAX;
+    scheduleFocusPoll(true);
   }
 
   async function loadFocus(fresh, opts) {
@@ -16769,12 +16851,16 @@
     try {
       data = await apiFetch("/proactive/feed" + (fresh ? "?fresh=1" : ""), { method: "GET" });
       focusItems = (data && data.items) || [];
+      focusEnabled = !!(data && data.enabled !== false);
       focusLoadedAt = Date.now();
     } catch (_) {
       return;
     } finally {
       focusLoading = false;
     }
+    var wasManual = focusAnalyzing;
+    focusAnalyzing = !!(data && data.analyzing) && focusAnalyzing;
+    if (wasManual && !focusAnalyzing) reportFocusAnalyzeDone();
     renderFocusRow();
     renderFocusPanel();
     scheduleFocusPoll(!!(data && data.analyzing));
@@ -16993,14 +17079,25 @@
     var prevRow = host.querySelector(".focus-row");
     var prevLeft = prevRow ? prevRow.scrollLeft : 0;
     host.innerHTML = "";
-    host.classList.toggle("hidden", !focusItems.length);
-    if (!focusItems.length) return;
+    // Пусто, но Фокус включён — компактная строка с кнопкой «Найти инсайты».
+    host.classList.toggle("hidden", !focusItems.length && !focusEnabled);
+    if (!focusItems.length) {
+      if (!focusEnabled) return;
+      var emptyHead = document.createElement("div");
+      emptyHead.className = "focus-head focus-head--empty";
+      emptyHead.innerHTML =
+        '<h2 class="focus-title">Фокус</h2><span class="focus-empty-text">Подсказок пока нет</span><span class="focus-sp"></span>';
+      emptyHead.appendChild(focusAnalyzeButton());
+      host.appendChild(emptyHead);
+      return;
+    }
     var head = document.createElement("div");
     head.className = "focus-head";
     head.innerHTML =
       '<h2 class="focus-title">Фокус</h2><span class="focus-count"></span><span class="focus-sp"></span>' +
       '<button type="button" class="focus-plan">План дня</button>' +
       '<button type="button" class="focus-all">Все<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>';
+    head.insertBefore(focusAnalyzeButton(), head.querySelector(".focus-plan"));
     var fcount = head.querySelector(".focus-count");
     fcount.textContent = String(focusItems.length);
     fcount.setAttribute("aria-label", focusItems.length + " " + pluralRu(focusItems.length, "подсказка", "подсказки", "подсказок"));
