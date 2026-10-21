@@ -218,22 +218,38 @@ def due_label(deadline: str, due_iso: str) -> str:
 _TASK_KEYS = ("task", "assignee", "assignee_basis", "speaker", "deadline", "due_iso", "completed", "quote")
 
 
+_EMPTY_VALUES = {"", "none", "null", "nil", "n/a", "na", "-", "—", "нет", "не указан", "не указано", "неизвестно"}
+
+
+def _val(v: Any) -> str:
+    s = str(v or "").strip()
+    return "" if s.lower() in _EMPTY_VALUES else s
+
+
 def raw_task(item: Any) -> Optional[dict[str, Any]]:
     if not isinstance(item, dict):
         return None
     task = str(item.get("task") or "").strip()
     if not task:
         return None
+    assignee = _val(item.get("assignee"))
+    speaker = norm_speaker_label(_val(item.get("speaker")))
     basis = str(item.get("assignee_basis") or "").strip().lower()
+    if norm_speaker_label(assignee).startswith("Спикер "):
+        # исполнитель — метка спикера: это самоназначение, имя возьмём из карты спикеров
+        speaker = speaker or norm_speaker_label(assignee)
+        assignee, basis = "", "self"
     if basis not in ("named", "self", "none"):
-        basis = "named" if str(item.get("assignee") or "").strip() else "none"
+        basis = "named" if assignee else ("self" if speaker else "none")
+    if basis == "named" and not assignee:
+        basis = "none"
     return {
         "task": task,
-        "assignee": str(item.get("assignee") or "").strip(),
+        "assignee": assignee,
         "assignee_basis": basis,
-        "speaker": norm_speaker_label(str(item.get("speaker") or "")),
-        "deadline": str(item.get("deadline") or "").strip(),
-        "due_iso": str(item.get("due_iso") or "").strip(),
+        "speaker": speaker,
+        "deadline": _val(item.get("deadline")),
+        "due_iso": _val(item.get("due_iso")),
         "completed": bool(item.get("completed")),
         "quote": str(item.get("quote") or "").strip()[:300],
     }
@@ -282,22 +298,55 @@ def resolve_task(
     return out
 
 
-def merge_raw_tasks(primary: list[dict[str, Any]], secondary: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Склейка задач двух вызовов: дубликат — по тексту задачи или по одной цитате."""
-    out: list[dict[str, Any]] = []
+_STOP = {
+    "и", "в", "во", "на", "с", "со", "к", "ко", "по", "о", "об", "от", "до", "для", "за", "из", "у", "над", "под",
+    "после", "перед", "при", "про", "не", "что", "как", "это", "его", "ее", "их", "ним", "ней", "них", "все", "всё",
+    "его", "этот", "эту", "эти", "том", "тот", "там", "тут", "уже", "еще", "ещё", "также", "или", "а", "но",
+}
 
-    def _dup(a: dict[str, Any], b: dict[str, Any]) -> bool:
-        ta, tb = _norm(a["task"]), _norm(b["task"])
-        if ta == tb:
-            return True
-        qa, qb = _norm(a.get("quote") or ""), _norm(b.get("quote") or "")
-        if qa and qb and (qa in qb or qb in qa) and SequenceMatcher(None, ta, tb).ratio() >= 0.5:
-            return True
+
+def _task_tokens(text: str) -> set[str]:
+    out: set[str] = set()
+    for w in _norm(text).split():
+        if w in _STOP or len(w) < 3:
+            continue
+        out.add(_base(w)[:6])  # «файлом»/«файликом» → «файл…»: короткая основа ловит перефразы
+    return out
+
+
+def _same_assignee(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    wa, wb = str(a.get("assignee") or ""), str(b.get("assignee") or "")
+    if wa and wb:
+        return _canon_first(_norm(wa).split()[0]) == _canon_first(_norm(wb).split()[0])
+    sa, sb = str(a.get("speaker") or ""), str(b.get("speaker") or "")
+    if not wa and not wb and sa and sb and a.get("assignee_basis") == b.get("assignee_basis") == "self":
+        return sa == sb
+    return True
+
+
+def tasks_duplicate(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Одна и та же задача, сформулированная по-разному (модели часто повторяют пункт)."""
+    if not _same_assignee(a, b):
+        return False
+    ta, tb = _norm(a["task"]), _norm(b["task"])
+    if ta == tb:
+        return True
+    qa, qb = _norm(a.get("quote") or ""), _norm(b.get("quote") or "")
+    if qa and qb and (qa in qb or qb in qa):
+        return True
+    ka, kb = _task_tokens(ta), _task_tokens(tb)
+    common = ka & kb
+    if len(common) < 2:
         return SequenceMatcher(None, ta, tb).ratio() >= 0.85
+    return len(common) / min(len(ka), len(kb)) >= 0.7
 
+
+def merge_raw_tasks(primary: list[dict[str, Any]], secondary: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Склейка задач двух вызовов (и дублей внутри каждого)."""
+    out: list[dict[str, Any]] = []
     for src in (primary, secondary):
         for t in src:
-            cur = next((x for x in out if _dup(x, t)), None)
+            cur = next((x for x in out if tasks_duplicate(x, t)), None)
             if cur is None:
                 out.append(dict(t))
                 continue
@@ -310,8 +359,6 @@ def merge_raw_tasks(primary: list[dict[str, Any]], secondary: list[dict[str, Any
                     cur["assignee"] = t["assignee"]
             if t.get("completed"):
                 cur["completed"] = True
-            if len(t["task"]) > len(cur["task"]):
-                cur["task"] = t["task"]
     return out
 
 

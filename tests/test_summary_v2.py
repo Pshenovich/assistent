@@ -200,3 +200,22 @@ def test_confirm_speaker_keeps_edited_body(tmp_path, monkeypatch):
     assert "Моя правка" in out["body"]
     assert out["meta"]["tasks"][0]["assignee"] == "Александр Смирнов"
     notes_store._CONN = None
+
+
+def test_raw_task_cleans_placeholder_values_and_speaker_assignee():
+    t = sn.raw_task({"task": "x", "assignee": "none", "deadline": "null"})
+    assert t["assignee"] == "" and t["deadline"] == "" and t["assignee_basis"] == "none"
+    t = sn.raw_task({"task": "x", "assignee": "SPEAKER_3"})
+    assert t["assignee"] == "" and t["assignee_basis"] == "self" and t["speaker"] == "Спикер 3"
+
+
+def test_tasks_duplicate_paraphrases():
+    d = lambda a, b, **kw: sn.tasks_duplicate(sn.raw_task({"task": a, **kw}), sn.raw_task({"task": b}))
+    assert d("Поделиться файлом с правилами кодирования после завершения работы.",
+             "Поделиться файликом после завершения работы над ним.")
+    assert not d("Сделать мердж-реквест по редизайну", "Отдать мердж-реквест на ревью")
+    assert not d("Обсудить с Артёмом проблему с запросом номера договора на лайках.",
+                 "Обсудить с Настей, что не так на лайках и как можно это улучшить.")
+    a = sn.raw_task({"task": "Подготовить отчёт по продажам", "assignee": "Оксана"})
+    b = sn.raw_task({"task": "Подготовить отчёт по продажам за месяц", "assignee": "Рафис"})
+    assert not sn.tasks_duplicate(a, b)
