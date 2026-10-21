@@ -17,6 +17,10 @@
 
     .venv/bin/python scripts/eval_summaries.py --export-from-notes USER_ID --limit 15
 
+Эталон от независимой сильной модели (не участвует в v1/v2) — вместо черновика из текущих саммари:
+
+    .venv/bin/python scripts/eval_summaries.py --annotate openai/gpt-5.5
+
 Прогон (ходит в OpenRouter, нужен .env):
 
     .venv/bin/python scripts/eval_summaries.py --pipelines v1,v2
@@ -185,6 +189,43 @@ def export_from_notes(user_id: int, limit: int, out_dir: Path) -> None:
     print(f"exported {n} cases → {out_dir}")
 
 
+ANNOTATE_SYSTEM = """Ты — аккуратный аннотатор эталона для оценки саммари встреч. По транскрипту составь
+ПОЛНЫЙ и ТОЧНЫЙ список поручений (action items) и принятых решений. Верни ТОЛЬКО JSON:
+{"tasks":[{"task":"","assignee":"","due_iso":""}],"decisions":[""]}
+
+- Задача — конкретное действие, о котором договорились или которое поручили (не идея, не обсуждение, не «было бы хорошо»).
+  Включай каждое отдельное поручение, не объединяй разные.
+- task — коротко, в инфинитиве.
+- assignee — кто делает: имя, если исполнителя назвали или он себя назвал и это однозначно видно из текста;
+  если человек взял задачу на себя, а его имя неизвестно — метка спикера («Спикер 2»); если не ясно — "".
+- due_iso — дата YYYY-MM-DD, только если срок прозвучал и однозначно считается от meeting_at; иначе "".
+- decisions — только принятые решения."""
+
+
+def annotate(model: str, cases_dir: Path, limit: int) -> None:
+    from assistant.nlu import llm
+
+    for f in sorted(cases_dir.glob("*.json"))[:limit]:
+        case = json.loads(f.read_text())
+        ctx = case.get("context") or {}
+        payload = json.dumps(
+            {"meeting_at": ctx.get("meeting_at", ""), "attendees": ctx.get("attendees") or [],
+             "transcript": case["transcript"][:120000]},
+            ensure_ascii=False,
+        )
+        raw = llm._chat(ANNOTATE_SYSTEM, payload, operation="eval_annotate", model=model,
+                        timeout=600, temperature=0.0, max_tokens=8000)
+        obj = llm._json_obj(raw) or {}
+        tasks = [
+            {"task": str(t.get("task") or ""), "assignee": str(t.get("assignee") or ""), "due_iso": str(t.get("due_iso") or "")}
+            for t in obj.get("tasks") or [] if isinstance(t, dict) and str(t.get("task") or "").strip()
+        ]
+        case["expected"] = {"tasks": tasks, "decisions": [str(d) for d in obj.get("decisions") or []],
+                            "_annotated_by": model}
+        f.write_text(json.dumps(case, ensure_ascii=False, indent=2))
+        print(f"{f.name}: {len(tasks)} tasks")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dir", type=Path, default=DEFAULT_DIR)
@@ -192,6 +233,7 @@ def main() -> int:
     ap.add_argument("--export-from-notes", type=int, metavar="USER_ID")
     ap.add_argument("--limit", type=int, default=15)
     ap.add_argument("--json", action="store_true", help="печать сырых метрик по кейсам")
+    ap.add_argument("--annotate", metavar="MODEL", help="переписать expected эталоном от этой модели")
     args = ap.parse_args()
 
     if args.export_from_notes:
@@ -201,6 +243,9 @@ def main() -> int:
     from dotenv import load_dotenv
 
     load_dotenv(ROOT / ".env")
+    if args.annotate:
+        annotate(args.annotate, args.dir, args.limit)
+        return 0
     files = sorted(args.dir.glob("*.json"))
     if not files:
         print(f"нет кейсов в {args.dir}", file=sys.stderr)
