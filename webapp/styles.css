@@ -3023,11 +3023,186 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
   box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.2));
 }
 
-.note-ref-suggest-item {
+/* «+» в заметке: поле поиска с чипом типа + пункты (типы, затем найденное). */
+.note-ref-plus-suggest {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  width: min(20rem, calc(100vw - 16px));
+  max-width: none;
+  max-height: min(20rem, 50dvh);
+  overflow: hidden;
+  padding: 0;
+}
+
+.note-ref-plus-suggest.hidden {
+  display: none;
+}
+
+.note-ref-suggest-search {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  min-height: 2.5rem;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.875rem;
+}
+
+.note-ref-suggest-search-icon,
+.note-ref-suggest-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-secondary, #909499);
+}
+
+.note-ref-suggest-search-icon svg,
+.note-ref-suggest-icon svg,
+.note-ref-suggest-kind-chip svg {
+  display: block;
+  width: 1rem;
+  height: 1rem;
+}
+
+.note-ref-suggest-kind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  padding: 0.15rem 0.4rem 0.15rem 0.45rem;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.note-ref-suggest-kind-chip svg:last-child {
+  width: 0.8rem;
+  height: 0.8rem;
+  opacity: 0.7;
+}
+
+.note-ref-suggest-query {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.note-ref-suggest-query.is-placeholder {
+  color: var(--text-secondary, #909499);
+}
+
+.note-ref-suggest-list {
+  overflow: auto;
+  padding: var(--space-1);
+}
+
+.note-ref-suggest-empty {
+  padding: 0.75rem 0.85rem;
+  font-size: 0.875rem;
+  color: var(--text-secondary, #909499);
+}
+
+.note-ref-suggest-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 0.875rem;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+}
+
+.note-ref-suggest-item.is-active,
+.note-ref-suggest-item:hover {
+  background: var(--accent-subtle);
+}
+
+.note-ref-suggest-item.is-active .note-ref-suggest-icon,
+.note-ref-suggest-item:hover .note-ref-suggest-icon {
+  color: var(--accent);
+}
+
+.note-ref-suggest-copy {
+  display: flex;
+  flex-direction: column;
   gap: 0.1rem;
+  min-width: 0;
+}
+
+/* Строка «Заметки» в карточке задачи / напоминания / контакта. */
+.event-sheet-row.note-backlinks-row {
+  align-items: flex-start;
+}
+
+.note-backlinks-row .event-sheet-row-label {
+  flex-shrink: 0;
+  padding-top: 0.2rem;
+}
+
+.note-backlinks-row.hidden {
+  display: none;
+}
+
+.note-backlinks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.contact-detail-backlinks {
+  display: flex;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.contact-detail-backlinks .note-backlinks {
+  justify-content: flex-start;
+}
+
+.contact-detail-backlinks .event-sheet-row-label {
+  display: none;
+}
+
+.note-backlink-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: 100%;
+  padding: 0.2rem 0.6rem 0.2rem 0.45rem;
+  border: none;
+  border-radius: 999px;
+  background: rgba(82, 158, 244, 0.14);
+  color: var(--vkui--color_text_accent, var(--accent));
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.note-backlink-chip svg {
+  flex-shrink: 0;
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.note-backlink-chip span {
+  min-width: 0;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .note-ref-suggest-label {
@@ -10884,7 +11059,8 @@ textarea.event-sheet-title--area {
 .event-sheet-row + .event-sheet-row,
 .event-sheet-row + .event-sheet-attendees,
 .event-sheet-row + .event-sheet-desc,
-.event-sheet-row + .event-sheet-meet-link-input {
+.event-sheet-row + .event-sheet-meet-link-input,
+.event-sheet-attendees + .note-backlinks-row {
   border-top: 0.5px solid var(--border);
 }
 

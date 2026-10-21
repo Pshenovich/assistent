@@ -890,6 +890,14 @@
         });
       } catch (_) {}
       var list = mockTasks.slice();
+      var taskQuery = /[?&]q=/.test(String(path || ""))
+        ? decodeURIComponent((String(path).match(/[?&]q=([^&]*)/) || [])[1] || "").toLowerCase()
+        : null;
+      if (taskQuery !== null) {
+        list = list.filter(function (t) {
+          return !taskQuery || String(t.title || "").toLowerCase().indexOf(taskQuery) >= 0;
+        });
+      }
       if (noteFilter) {
         list = list.filter(function (t) {
           return String(t.note_id || "") === noteFilter;
@@ -1189,6 +1197,21 @@
         return String(a.name || "").localeCompare(String(b.name || ""), "ru");
       });
       return { ok: true, tag: tagSnapshot(created) };
+    }
+
+    if (basePath === "/contacts" && method === "GET") {
+      return {
+        items: [
+          { key: "uliana@example.com", email: "uliana@example.com", name: "Ульяна", teams: [] },
+          { key: "tg:petrov", email: "", telegram_username: "petrov", name: "Пётр Петров", teams: [] },
+        ],
+      };
+    }
+    if (basePath === "/notes/backlinks" && method === "GET") {
+      return {
+        ok: true,
+        items: [{ note_id: -1, sheet_id: "", title: "Планёрка", sheet_title: "", is_transcription: false }],
+      };
     }
 
     var result = await realFetch(path, opts);

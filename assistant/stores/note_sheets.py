@@ -543,3 +543,85 @@ def extra_sheet_counts(note_ids: list[Any]) -> dict[int, int]:
             ):
                 out[int(row["note_id"])] = int(row["c"])
     return out
+
+
+_REF_KINDS = ("task", "reminder", "person")
+
+
+def ref_attr(kind: str, ref_id: Any) -> str:
+    """Значение data-leo-ref у чипа «+» в заметке: «task:123», «person:a@b.c»."""
+    return f"{kind}:{ref_id}"
+
+
+def find_ref_backlinks(
+    user_id: int | str,
+    kind: str,
+    ref_id: Any,
+    *,
+    origin_note_ids: list[Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Доступные заметки и листы, где стоит чип «+» на задачу/напоминание/человека.
+
+    origin_note_ids — заметки, связанные с сущностью иначе (задача создана из заметки):
+    попадают в ответ без чипа в тексте, если пользователю доступны.
+    """
+    kind = str(kind or "").strip().lower()
+    rid = str(ref_id or "").strip()
+    if kind not in _REF_KINDS or not rid or any(ch in rid for ch in "\"'<>"):
+        return []
+    uid = str(int(user_id))
+    needle = html.escape(ref_attr(kind, rid), quote=True)
+    escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = f'%data-leo-ref="{escaped}"%'
+    origin: set[int] = set()
+    for raw in origin_note_ids or []:
+        try:
+            origin.add(int(str(raw).strip()))
+        except (TypeError, ValueError):
+            continue
+    from assistant.stores import note_members
+
+    shared = sorted({nid for _owner, nid in note_members.list_note_ids_for_member(uid)})
+    where = "user_id = ?"
+    params: list[Any] = [pattern, uid]
+    if shared:
+        where += " OR id IN (%s)" % ",".join("?" for _ in shared)
+        params.extend(shared)
+    out: list[dict[str, Any]] = []
+    with _LOCK:
+        conn = _conn()
+        notes = {
+            int(r["id"]): r
+            for r in conn.execute(
+                "SELECT id, title, role, updated_at, body LIKE ? ESCAPE '\\' AS hit "
+                f"FROM local_notes WHERE {where}",
+                params,
+            ).fetchall()
+        }
+        sheets = (
+            conn.execute(
+                "SELECT id, note_id, title FROM note_sheets "
+                "WHERE body LIKE ? ESCAPE '\\' AND note_id IN (%s)" % ",".join("?" for _ in notes),
+                (pattern, *notes),
+            ).fetchall()
+            if notes
+            else []
+        )
+
+    def _item(r: sqlite3.Row, sheet_id: str = "", sheet_title: str = "") -> dict[str, Any]:
+        return {
+            "note_id": int(r["id"]),
+            "sheet_id": sheet_id,
+            "title": str(r["title"] or "").strip() or "Без названия",
+            "sheet_title": sheet_title,
+            "is_transcription": str(r["role"] or "") == notes_store.TRANSCRIPTION_ROLE,
+            "updated_at": str(r["updated_at"] or ""),
+        }
+
+    for nid, r in notes.items():
+        if r["hit"] or nid in origin:
+            out.append(_item(r))
+    for s in sheets:
+        out.append(_item(notes[int(s["note_id"])], str(s["id"]), str(s["title"] or "").strip() or "Лист"))
+    out.sort(key=lambda x: x["updated_at"], reverse=True)
+    return out[:30]

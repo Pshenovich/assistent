@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261021-focusopen1";
+  var WEBAPP_BUILD = "20261021-plusrefs";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261020-focus1"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261021-plusrefs"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -14404,7 +14404,9 @@
       "</span></button>" +
       '<div id="m-task-assignee-editor" class="event-sheet-attendees hidden">' +
       '<div id="m-task-assignee-host"></div>' +
-      "</div></div>" +
+      "</div>" +
+      '<div id="m-task-backlinks" class="event-sheet-row note-backlinks-row hidden"></div>' +
+      "</div>" +
       "</div>";
     bindCreateKindSwitcher(
       "task",
@@ -14418,6 +14420,7 @@
     document.getElementById("m-ev-start").value = startLocal;
     document.getElementById("m-ev-end").value = endLocal;
     document.getElementById("modal-task-note-id").value = ev.note_id || currentOpenNoteId() || "";
+    if (existing) mountNoteBacklinks(document.getElementById("m-task-backlinks"), "task", taskId, closeModal);
     var logLines =
       (ev.schedule_log_lines && ev.schedule_log_lines.length
         ? ev.schedule_log_lines
@@ -14685,7 +14688,9 @@
       '<span class="event-sheet-pills">' +
       '<input id="m-rem-when-date" type="date" class="event-sheet-pill" />' +
       '<input id="m-rem-when-time" type="time" class="event-sheet-pill" />' +
-      "</span></div></div>" +
+      "</span></div>" +
+      '<div id="m-rem-backlinks" class="event-sheet-row note-backlinks-row hidden"></div>' +
+      "</div>" +
       '<div class="event-sheet-group event-sheet-checklist-group">' +
       '<div id="m-rem-checklist-host" class="rem-checklist-host"></div>' +
       "</div></div>";
@@ -14703,6 +14708,9 @@
       r.when_iso || defaultDatetimeLocalValue(60)
     );
     bindReminderWhenPills();
+    if (remExisting && String(r.id).indexOf("tmp_") !== 0) {
+      mountNoteBacklinks(document.getElementById("m-rem-backlinks"), "reminder", r.id, closeModal);
+    }
     reminderChecklistApi = mountReminderChecklist(
       document.getElementById("m-rem-checklist-host"),
       r.checklist
@@ -16571,6 +16579,10 @@
     var body = ov.querySelector(".contact-detail-body");
     body.innerHTML = "";
     body.appendChild(contactDetailHead(c));
+    var backlinks = document.createElement("div");
+    backlinks.className = "note-backlinks-row contact-detail-backlinks hidden";
+    body.appendChild(backlinks);
+    mountNoteBacklinks(backlinks, "person", key, closeContactDetail);
     var loading = document.createElement("p");
     loading.className = "ev-materials-empty";
     loading.textContent = c.email ? "Ищу встречи в календаре…" : "Ищу материалы…";
@@ -21337,6 +21349,7 @@
             onFocusMarkClick: onFocusMarkClick,
             onSearchNoteRefs: searchNoteRefItems,
             onNoteRefChipClick: openNoteRefFromChip,
+            onEntityRefChipClick: openEntityRefFromChip,
           });
           if (editor && typeof editor.bindTapFocus === "function" && !isIOSDevice()) {
             editor.bindTapFocus(container);
@@ -23250,6 +23263,8 @@
       if (q && title.toLowerCase().indexOf(q) < 0) return;
       pushItem({
         kind: "chat",
+        refKind: "chat",
+        refId: id,
         chatId: id,
         noteId: "",
         sheetId: "",
@@ -23261,11 +23276,11 @@
     return items.slice(0, 12);
   }
 
-  function searchNoteRefItems(query, done) {
+  function searchNoteLikeRefItems(query, done) {
     if (typeof done !== "function") return;
-    var gen = (searchNoteRefItems._gen = (searchNoteRefItems._gen || 0) + 1);
+    var gen = (searchNoteLikeRefItems._gen = (searchNoteLikeRefItems._gen || 0) + 1);
     function finish(items) {
-      if (gen !== searchNoteRefItems._gen) return;
+      if (gen !== searchNoteLikeRefItems._gen) return;
       done(items || []);
     }
     function enrichWithForeignSheets(baseItems) {
@@ -23300,7 +23315,7 @@
             });
         })
       ).then(function (rows) {
-        if (gen !== searchNoteRefItems._gen) return;
+        if (gen !== searchNoteLikeRefItems._gen) return;
         var seen = {};
         var merged = [];
         function push(item) {
@@ -23348,7 +23363,7 @@
       tasks.push(
         apiFetch("/notes?limit=120", { method: "GET" })
           .then(function (data) {
-            if (gen !== searchNoteRefItems._gen) return;
+            if (gen !== searchNoteLikeRefItems._gen) return;
             notesDataCache = data || notesDataCache;
             if (data) {
               splitTranscriptionsOutOfLocalNotes(notesDataCache);
@@ -23366,9 +23381,250 @@
       return;
     }
     Promise.all(tasks).then(function () {
-      if (gen !== searchNoteRefItems._gen) return;
+      if (gen !== searchNoteLikeRefItems._gen) return;
       run();
     });
+  }
+
+  // «+» в заметке: задачи, напоминания и люди (заметки/листы — searchNoteLikeRefItems).
+  var noteRefDataCache = {};
+
+  function cachedRefList(key, path, pick) {
+    var hit = noteRefDataCache[key];
+    if (hit && Date.now() - hit.at < 60000) return Promise.resolve(hit.items);
+    return apiFetch(path, { method: "GET" })
+      .then(function (data) {
+        var items = pick(data) || [];
+        noteRefDataCache[key] = { at: Date.now(), items: items };
+        return items;
+      })
+      .catch(function () {
+        return (hit && hit.items) || [];
+      });
+  }
+
+  function noteRefShortDate(iso) {
+    var d = iso ? new Date(iso) : null;
+    if (!d || isNaN(d.getTime())) return "";
+    return d.getDate() + " " + RU_MON[d.getMonth()];
+  }
+
+  function searchTaskRefItems(query) {
+    return apiFetch("/calendar/tasks?q=" + encodeURIComponent(String(query || "").trim()), { method: "GET" })
+      .then(function (r) {
+        return ((r && r.tasks) || []).map(function (t) {
+          var when = noteRefShortDate(t.start_at || (t.event && t.event.start && t.event.start.dateTime));
+          return {
+            refKind: "task",
+            refId: String(t.id),
+            label: String(t.title || "").trim() || "Задача",
+            hint: ["Задача", t.done ? "выполнена" : when].filter(Boolean).join(" · "),
+          };
+        });
+      })
+      .catch(function () {
+        return [];
+      });
+  }
+
+  function searchReminderRefItems(query) {
+    var q = String(query || "").trim().toLowerCase();
+    return cachedRefList("reminders", "/reminders", function (d) {
+      return d && d.items;
+    }).then(function (items) {
+      var now = Date.now();
+      return items
+        .filter(function (r) {
+          if (!r || !r.id || String(r.id).indexOf("tmp_") === 0) return false;
+          return !q || String(r.task || "").toLowerCase().indexOf(q) >= 0;
+        })
+        .sort(function (a, b) {
+          // Предстоящие — первыми, ближайшие сверху; прошедшие — в конце, свежие сверху.
+          var ta = new Date(a.when_iso).getTime() || 0;
+          var tb = new Date(b.when_iso).getTime() || 0;
+          var pa = a.done || ta < now;
+          var pb = b.done || tb < now;
+          if (pa !== pb) return pa ? 1 : -1;
+          return pa ? tb - ta : ta - tb;
+        })
+        .slice(0, 15)
+        .map(function (r) {
+          return {
+            refKind: "reminder",
+            refId: String(r.id),
+            label: String(r.task || "").trim() || "Напоминание",
+            hint: ["Напоминание", noteRefShortDate(r.when_iso)].filter(Boolean).join(" · "),
+          };
+        });
+    });
+  }
+
+  function searchPersonRefItems(query) {
+    var q = String(query || "").trim().toLowerCase().replace(/^@/, "");
+    return cachedRefList("contacts", "/contacts", function (d) {
+      return d && d.items;
+    }).then(function (items) {
+      return items
+        .filter(function (c) {
+          if (!c || !c.key) return false;
+          if (!q) return true;
+          var hay = [c.name, c.email, c.telegram_username, (c.aliases || []).join(" ")].join(" ").toLowerCase();
+          return hay.indexOf(q) >= 0;
+        })
+        .slice(0, 15)
+        .map(function (c) {
+          var sub = c.email || (c.telegram_username ? "@" + c.telegram_username : "");
+          return {
+            refKind: "person",
+            refId: String(c.key),
+            label: String(c.name || "").trim() || sub || "Человек",
+            hint: ["Человек", c.name ? sub : ""].filter(Boolean).join(" · "),
+          };
+        });
+    });
+  }
+
+  function searchNoteRefItems(query, done, kind) {
+    if (typeof done !== "function") return;
+    var gen = (searchNoteRefItems._gen = (searchNoteRefItems._gen || 0) + 1);
+    function finish(items) {
+      if (gen !== searchNoteRefItems._gen) return;
+      done(items || []);
+    }
+    if (kind === "note") {
+      searchNoteLikeRefItems(query, finish);
+      return;
+    }
+    if (kind === "task") {
+      searchTaskRefItems(query).then(finish);
+      return;
+    }
+    if (kind === "reminder") {
+      searchReminderRefItems(query).then(finish);
+      return;
+    }
+    if (kind === "person") {
+      searchPersonRefItems(query).then(finish);
+      return;
+    }
+    // Без фильтра — понемногу из каждого типа, заметки отдаём сразу, остальное догружаем.
+    var parts = { note: [], task: [], person: [], reminder: [] };
+    function emit() {
+      finish(
+        [].concat(
+          parts.task.slice(0, 4),
+          parts.note.slice(0, 5),
+          parts.person.slice(0, 4),
+          parts.reminder.slice(0, 3)
+        )
+      );
+    }
+    searchNoteLikeRefItems(query, function (items) {
+      parts.note = items || [];
+      emit();
+    });
+    Promise.all([
+      searchTaskRefItems(query).then(function (x) {
+        parts.task = x;
+      }),
+      searchPersonRefItems(query).then(function (x) {
+        parts.person = x;
+      }),
+      searchReminderRefItems(query).then(function (x) {
+        parts.reminder = x;
+      }),
+    ]).then(emit);
+  }
+
+  function openEntityRefFromChip(kind, id, label) {
+    var rid = String(id || "").trim();
+    if (!rid) return;
+    if (kind === "task") {
+      apiFetch("/calendar/tasks/" + encodeURIComponent(rid), { method: "GET" })
+        .then(function (r) {
+          var task = r && r.task;
+          if (!task) throw { status: 404 };
+          openTaskModal(
+            Object.assign({}, task.event || {}, task, { id: "task-" + task.id, task_id: task.id })
+          );
+        })
+        .catch(function (e) {
+          alert(e && e.status === 404 ? "Задача «" + (label || "") + "» удалена или недоступна" : (e && e.message) || "Не удалось открыть задачу");
+        });
+      return;
+    }
+    if (kind === "reminder") {
+      delete noteRefDataCache.reminders;
+      cachedRefList("reminders", "/reminders", function (d) {
+        return d && d.items;
+      }).then(function (items) {
+        var r = items.filter(function (x) {
+          return x && String(x.id) === rid;
+        })[0];
+        if (r) openReminderModal(r);
+        else alert("Напоминание «" + (label || "") + "» удалено");
+      });
+      return;
+    }
+    if (kind === "person") {
+      cachedRefList("contacts", "/contacts", function (d) {
+        return d && d.items;
+      }).then(function (items) {
+        var c = items.filter(function (x) {
+          return x && String(x.key || "").toLowerCase() === rid.toLowerCase();
+        })[0];
+        if (c) openContactDetail(c);
+        else alert("Контакт «" + (label || "") + "» не найден");
+      });
+    }
+  }
+
+  // Строка «Заметки» в карточке задачи/напоминания/контакта: где сущность упомянута через «+».
+  function mountNoteBacklinks(host, kind, id, closeCard) {
+    if (!host || !id) return;
+    var token = (host._backlinksToken = {});
+    flushOpenNoteForShare()
+      .catch(function () {})
+      .then(function () {
+        return apiFetch(
+          "/notes/backlinks?kind=" + encodeURIComponent(kind) + "&id=" + encodeURIComponent(String(id)),
+          { method: "GET" }
+        );
+      })
+      .then(function (r) {
+        if (host._backlinksToken !== token || !host.isConnected) return;
+        var items = (r && r.items) || [];
+        host.innerHTML = "";
+        host.classList.toggle("hidden", !items.length);
+        if (!items.length) return;
+        var label = document.createElement("span");
+        label.className = "event-sheet-row-label";
+        label.textContent = items.length > 1 ? "Заметки" : "Заметка";
+        host.appendChild(label);
+        var chips = document.createElement("span");
+        chips.className = "note-backlinks";
+        items.forEach(function (it) {
+          var b = document.createElement("button");
+          b.type = "button";
+          b.className = "note-backlink-chip";
+          b.innerHTML = it.is_transcription ? WAVE_ICON : NOTE_ICON;
+          var t = document.createElement("span");
+          t.textContent = it.sheet_id ? it.title + " · " + it.sheet_title : it.title;
+          b.appendChild(t);
+          b.title = t.textContent;
+          b.addEventListener("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof closeCard === "function") closeCard();
+            openNoteRefFromChip(String(it.note_id), it.sheet_id || "");
+          });
+          chips.appendChild(b);
+        });
+        host.appendChild(chips);
+      })
+      .catch(function () {
+        if (host._backlinksToken === token) host.classList.add("hidden");
+      });
   }
 
   function openNoteRefFromChip(noteId, sheetId, chatId) {
@@ -40995,6 +41251,9 @@
       if (tag === "li" && name === "checked") return true;
       if (tag === "span" && /^data-leo-(task|note|sheet)-id$/.test(name)) {
         return /^[A-Za-z0-9_-]{1,64}$/.test(String(val || ""));
+      }
+      if (tag === "span" && name === "data-leo-ref") {
+        return /^(task|reminder|person|chat):[^\s"'<>]{1,160}$/.test(String(val || ""));
       }
       if (tag === "span" && /^data-leo-mark(-(item|by|at|task))?$/.test(name)) return String(val || "").length <= 120;
       if (tag === "span" && name === "data-leo-mark-url") return /^https?:\/\/[^\s"<>]{1,1000}$/i.test(String(val || ""));

@@ -5489,12 +5489,31 @@ async def miniapp_calendar_tasks_list(
     start: Optional[str] = Query(None),
     end: Optional[str] = Query(None),
     note_id: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
 ) -> dict[str, Any]:
     from assistant.services.calendar import _tz_for
     from assistant.stores import calendar_tasks as calendar_tasks_store
 
     uid = int(principal.telegram_user_id)
     tz = _tz_for(uid)
+    if q is not None:
+        # «+» в заметке: поиск задачи за всё время, открытые — первыми.
+        needle = " ".join(str(q).split()).casefold()[:200]
+
+        def _search() -> list[dict[str, Any]]:
+            rows = calendar_tasks_store.list_involved_tasks(uid, limit=1000)
+            if needle:
+                rows = [
+                    r
+                    for r in rows
+                    if needle in str(r.get("title") or "").casefold()
+                    or needle in str(r.get("description") or "").casefold()
+                ]
+            rows.sort(key=lambda r: bool(r.get("done")))
+            return rows[:15]
+
+        rows = await run_in_threadpool(_search)
+        return {"ok": True, "tasks": [_task_api(r, tz=tz, viewer_id=uid) for r in rows]}
     nid = str(note_id or "").strip()
     if nid:
         rows = await run_in_threadpool(calendar_tasks_store.list_tasks_for_note, uid, nid)
@@ -9529,6 +9548,39 @@ async def miniapp_notes_page(
 
     items, has_more = await run_in_threadpool(_run)
     return {"local_notes": items, "has_more": has_more, "offset": off}
+
+
+@miniapp_router.get("/notes/backlinks")
+async def miniapp_notes_backlinks(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    kind: str = "",
+    id: str = "",
+) -> dict[str, Any]:
+    """Где упомянута сущность чипом «+»: для строки «Заметки» в карточке задачи, напоминания, контакта."""
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+    from assistant.stores import note_sheets as note_sheets_store
+
+    uid = int(principal.telegram_user_id)
+    k = str(kind or "").strip().lower()
+    rid = str(id or "").strip()[:200]
+    if k not in ("task", "reminder", "person") or not rid:
+        raise HTTPException(status_code=400, detail="Укажите kind и id")
+
+    def _run() -> list[dict[str, Any]]:
+        origin: list[Any] = []
+        ref_id = rid
+        if k == "task":
+            task = calendar_tasks_store.get_task_for_user(uid, rid)
+            if not task:
+                return []
+            origin = [task.get("note_id")]
+        elif k == "person":
+            from assistant.stores import contacts_store
+
+            ref_id = contacts_store.normalize_contact_key(rid)
+        return note_sheets_store.find_ref_backlinks(uid, k, ref_id, origin_note_ids=origin)
+
+    return {"ok": True, "items": await run_in_threadpool(_run)}
 
 
 @miniapp_router.get("/notes/search")

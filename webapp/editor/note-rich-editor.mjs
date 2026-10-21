@@ -1708,35 +1708,81 @@ function mountToolbar(toolbarEl, editor) {
 
 var HASHTAG_QUERY_RE = /(?:^|\s)(#([A-Za-zА-Яа-яЁё0-9_]{0,40}))$/;
 var HASHTAG_INLINE_RE = /#([A-Za-zА-Яа-яЁё0-9_]{1,40})/g;
-/** «+» mention: link to a note or sheet (chip). After start/whitespace only. */
-var NOTE_REF_QUERY_RE = /(?:^|[\s\uFFFC])(\+([^\n]*))$/;
+/** «+» mention: link to a note, sheet, task, reminder or person (chip). After start/whitespace only. */
+var NOTE_REF_QUERY_RE = /(?:^|[\s￼])(\+([^\n]*))$/;
 
-var NOTE_REF_CHIP_ICON_SVG =
-  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/>' +
-  "</svg>";
+function refSvg(paths) {
+  return (
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    paths +
+    "</svg>"
+  );
+}
 
-function normalizeNoteRefLabel(label) {
-  return String(label || "").replace(/\s+/g, " ").trim() || "Заметка";
+var NOTE_REF_CHIP_ICON_SVG = refSvg(
+  '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/>'
+);
+
+/** Типы сущностей в «+»: порядок — как в меню. */
+var NOTE_REF_KINDS = [
+  { kind: "task", label: "Задача", icon: refSvg('<rect x="3" y="3" width="18" height="18" rx="4"/><path d="m8 12 3 3 5-6"/>') },
+  { kind: "note", label: "Заметка", icon: NOTE_REF_CHIP_ICON_SVG },
+  { kind: "person", label: "Человек", icon: refSvg('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>') },
+  { kind: "reminder", label: "Напоминание", icon: refSvg('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>') },
+];
+var NOTE_REF_CHAT_ICON_SVG = refSvg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>');
+var NOTE_REF_SEARCH_ICON_SVG = refSvg('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>');
+/** Сущности, которые хранятся в чипе как data-leo-ref="kind:id" (не заметки/листы). */
+var NOTE_REF_ENTITY_RE = /^(task|reminder|person|chat):(.{1,160})$/;
+
+function noteRefKindMeta(kind) {
+  for (var i = 0; i < NOTE_REF_KINDS.length; i++) {
+    if (NOTE_REF_KINDS[i].kind === kind) return NOTE_REF_KINDS[i];
+  }
+  return null;
+}
+
+function noteRefIconFor(refKind) {
+  if (refKind === "chat") return NOTE_REF_CHAT_ICON_SVG;
+  var meta = refKind ? noteRefKindMeta(refKind) : null;
+  return meta ? meta.icon : NOTE_REF_CHIP_ICON_SVG;
+}
+
+function normalizeNoteRefLabel(label, refKind) {
+  var fallback = refKind && noteRefKindMeta(refKind) ? noteRefKindMeta(refKind).label : "Заметка";
+  return String(label || "").replace(/\s+/g, " ").trim() || fallback;
 }
 
 function noteRefLabelFromEl(el) {
   if (!el) return "";
   var named = el.querySelector && el.querySelector(".note-ref-chip-label");
-  return normalizeNoteRefLabel(named ? named.textContent : el.textContent);
+  return String((named ? named.textContent : el.textContent) || "").replace(/\s+/g, " ").trim();
 }
 
-function fillNoteRefChipEl(el, noteId, sheetId, label) {
-  el.className = "note-ref-chip";
-  el.setAttribute("data-leo-note-id", noteId || "");
-  if (sheetId) el.setAttribute("data-leo-sheet-id", sheetId);
-  else el.removeAttribute("data-leo-sheet-id");
+function parseEntityRef(raw) {
+  var m = String(raw || "").match(NOTE_REF_ENTITY_RE);
+  return m ? { refKind: m[1], refId: m[2] } : null;
+}
+
+function fillNoteRefChipEl(el, attrs) {
+  var refKind = String(attrs.refKind || "");
+  el.className = "note-ref-chip" + (refKind ? " note-ref-chip--" + refKind : "");
+  if (refKind) {
+    el.setAttribute("data-leo-ref", refKind + ":" + String(attrs.refId || ""));
+    el.removeAttribute("data-leo-note-id");
+    el.removeAttribute("data-leo-sheet-id");
+  } else {
+    el.removeAttribute("data-leo-ref");
+    el.setAttribute("data-leo-note-id", attrs.noteId || "");
+    if (attrs.sheetId) el.setAttribute("data-leo-sheet-id", attrs.sheetId);
+    else el.removeAttribute("data-leo-sheet-id");
+  }
   el.setAttribute("contenteditable", "false");
   el.innerHTML =
     '<span class="note-ref-chip-icon" aria-hidden="true">' +
-    NOTE_REF_CHIP_ICON_SVG +
+    noteRefIconFor(refKind) +
     '</span><span class="note-ref-chip-label"></span>';
-  el.querySelector(".note-ref-chip-label").textContent = normalizeNoteRefLabel(label);
+  el.querySelector(".note-ref-chip-label").textContent = normalizeNoteRefLabel(attrs.label, refKind);
 }
 
 function createNoteRefExtensions(ctx) {
@@ -1751,17 +1797,35 @@ function createNoteRefExtensions(ctx) {
       return {
         noteId: { default: "" },
         sheetId: { default: "" },
+        refKind: { default: "" },
+        refId: { default: "" },
         label: { default: "" },
       };
     },
     parseHTML: function () {
       return [
         {
+          tag: "span[data-leo-ref]",
+          getAttrs: function (el) {
+            var ref = parseEntityRef(el.getAttribute("data-leo-ref"));
+            if (!ref) return false;
+            return {
+              noteId: "",
+              sheetId: "",
+              refKind: ref.refKind,
+              refId: ref.refId,
+              label: noteRefLabelFromEl(el),
+            };
+          },
+        },
+        {
           tag: "span[data-leo-note-id]",
           getAttrs: function (el) {
             return {
               noteId: el.getAttribute("data-leo-note-id") || "",
               sheetId: el.getAttribute("data-leo-sheet-id") || "",
+              refKind: "",
+              refId: "",
               label: noteRefLabelFromEl(el),
             };
           },
@@ -1770,27 +1834,40 @@ function createNoteRefExtensions(ctx) {
     },
     renderHTML: function (_ref) {
       var HTMLAttributes = _ref.HTMLAttributes;
-      var attrs = {
-        "data-leo-note-id": HTMLAttributes.noteId,
-        class: "note-ref-chip",
-        contenteditable: "false",
-      };
-      if (HTMLAttributes.sheetId) attrs["data-leo-sheet-id"] = HTMLAttributes.sheetId;
+      var refKind = String(HTMLAttributes.refKind || "");
+      var attrs = { contenteditable: "false" };
+      if (refKind) {
+        attrs["data-leo-ref"] = refKind + ":" + String(HTMLAttributes.refId || "");
+        attrs.class = "note-ref-chip note-ref-chip--" + refKind;
+      } else {
+        attrs["data-leo-note-id"] = HTMLAttributes.noteId;
+        attrs.class = "note-ref-chip";
+        if (HTMLAttributes.sheetId) attrs["data-leo-sheet-id"] = HTMLAttributes.sheetId;
+      }
       return [
         "span",
         attrs,
         ["span", { class: "note-ref-chip-icon", "aria-hidden": "true" }],
-        ["span", { class: "note-ref-chip-label" }, normalizeNoteRefLabel(HTMLAttributes.label)],
+        ["span", { class: "note-ref-chip-label" }, normalizeNoteRefLabel(HTMLAttributes.label, refKind)],
       ];
     },
     addNodeView: function () {
       return function (_ref) {
         var node = _ref.node;
         var el = document.createElement("span");
-        fillNoteRefChipEl(el, node.attrs.noteId, node.attrs.sheetId, node.attrs.label);
+        fillNoteRefChipEl(el, node.attrs);
         el.addEventListener("click", function (e) {
           e.preventDefault();
           e.stopPropagation();
+          var ref = parseEntityRef(el.getAttribute("data-leo-ref"));
+          if (ref) {
+            if (ref.refKind === "chat") {
+              if (typeof ctx.onNoteRefChipClick === "function") ctx.onNoteRefChipClick("", "", ref.refId);
+            } else if (typeof ctx.onEntityRefChipClick === "function") {
+              ctx.onEntityRefChipClick(ref.refKind, ref.refId, noteRefLabelFromEl(el));
+            }
+            return;
+          }
           var nid = el.getAttribute("data-leo-note-id") || "";
           var sid = el.getAttribute("data-leo-sheet-id") || "";
           if (nid && typeof ctx.onNoteRefChipClick === "function") {
@@ -1801,12 +1878,7 @@ function createNoteRefExtensions(ctx) {
           dom: el,
           update: function (updated) {
             if (!updated || updated.type.name !== "leoNoteRefChip") return false;
-            fillNoteRefChipEl(
-              el,
-              updated.attrs.noteId,
-              updated.attrs.sheetId,
-              updated.attrs.label
-            );
+            fillNoteRefChipEl(el, updated.attrs);
             return true;
           },
         };
@@ -1822,24 +1894,32 @@ function createNoteRefExtensions(ctx) {
           key: new PluginKey("leoNoteRefPlus"),
           view: function () {
             var el = document.createElement("div");
-            el.className = "note-ref-plus-suggest note-hashtag-suggest hidden";
+            el.className = "note-ref-plus-suggest hidden";
             document.body.appendChild(el);
             ctx.refSuggestEl = el;
+            ctx.refKind = "";
+            ctx.refQuery = "";
             var searchGen = 0;
 
             function hideSuggest() {
+              searchGen += 1;
               el.classList.add("hidden");
               el.innerHTML = "";
               ctx.refItems = [];
               ctx.refIndex = 0;
               ctx.refFrom = null;
               ctx.refTo = null;
+              ctx.refKind = "";
+              ctx.refQuery = "";
+              ctx.refLoading = false;
+              ctx.refItemsKind = null;
             }
             ctx.hideNoteRefSuggest = hideSuggest;
 
             function insertChip(item) {
               var view = ctx.editor && ctx.editor.view;
-              if (!view || !item || !item.noteId) {
+              var isEntity = !!(item && item.refKind && item.refId);
+              if (!view || !item || (!isEntity && !item.noteId)) {
                 hideSuggest();
                 return;
               }
@@ -1851,100 +1931,213 @@ function createNoteRefExtensions(ctx) {
               }
               hideSuggest();
               view.dispatch(view.state.tr.delete(from, to));
+              var attrs = isEntity
+                ? {
+                    noteId: "",
+                    sheetId: "",
+                    refKind: String(item.refKind),
+                    refId: String(item.refId),
+                    label: normalizeNoteRefLabel(item.label, item.refKind),
+                  }
+                : {
+                    noteId: String(item.noteId || ""),
+                    sheetId: String(item.sheetId || ""),
+                    refKind: "",
+                    refId: "",
+                    label: normalizeNoteRefLabel(item.label),
+                  };
               ctx.editor
                 .chain()
                 .focus()
                 .insertContent([
-                  {
-                    type: "leoNoteRefChip",
-                    attrs: {
-                      noteId: String(item.noteId || ""),
-                      sheetId: String(item.sheetId || ""),
-                      label: normalizeNoteRefLabel(item.label),
-                    },
-                  },
+                  { type: "leoNoteRefChip", attrs: attrs },
                   { type: "text", text: " " },
                 ])
                 .run();
             }
-            ctx.pickNoteRef = insertChip;
+
+            function setKind(kind) {
+              ctx.refKind = kind || "";
+              ctx.refIndex = 0;
+              var view = ctx.editor && ctx.editor.view;
+              if (view) runSearch(view);
+            }
+
+            function pick(row) {
+              if (!row) return;
+              if (row.pickKind) setKind(row.pickKind);
+              else insertChip(row);
+            }
+            ctx.pickNoteRef = pick;
+            ctx.setNoteRefKind = setKind;
+
+            function rowButton(row, i) {
+              var btn = document.createElement("button");
+              btn.type = "button";
+              btn.className =
+                "note-ref-suggest-item" +
+                (row.pickKind ? " note-ref-suggest-item--kind" : "") +
+                (i === ctx.refIndex ? " is-active" : "");
+              var icon = document.createElement("span");
+              icon.className = "note-ref-suggest-icon";
+              icon.innerHTML = noteRefIconFor(row.pickKind || row.refKind || (row.chatId ? "chat" : ""));
+              btn.appendChild(icon);
+              var copy = document.createElement("span");
+              copy.className = "note-ref-suggest-copy";
+              var title = document.createElement("span");
+              title.className = "note-ref-suggest-label";
+              title.textContent = row.label || "Заметка";
+              copy.appendChild(title);
+              if (row.hint) {
+                var hint = document.createElement("span");
+                hint.className = "note-ref-suggest-hint";
+                hint.textContent = row.hint;
+                copy.appendChild(hint);
+              }
+              btn.appendChild(copy);
+              btn.addEventListener("mousedown", function (e) {
+                e.preventDefault();
+                pick(row);
+              });
+              return btn;
+            }
 
             function render() {
               el.innerHTML = "";
-              (ctx.refItems || []).forEach(function (item, i) {
-                var btn = document.createElement("button");
-                btn.type = "button";
-                btn.className =
-                  "note-hashtag-suggest-item note-ref-suggest-item" +
-                  (i === ctx.refIndex ? " is-active" : "");
-                var title = document.createElement("span");
-                title.className = "note-ref-suggest-label";
-                title.textContent = item.label || "Заметка";
-                btn.appendChild(title);
-                if (item.hint) {
-                  var hint = document.createElement("span");
-                  hint.className = "note-ref-suggest-hint";
-                  hint.textContent = item.hint;
-                  btn.appendChild(hint);
-                }
-                btn.addEventListener("mousedown", function (e) {
+              var head = document.createElement("div");
+              head.className = "note-ref-suggest-search";
+              var sIcon = document.createElement("span");
+              sIcon.className = "note-ref-suggest-search-icon";
+              sIcon.innerHTML = NOTE_REF_SEARCH_ICON_SVG;
+              head.appendChild(sIcon);
+              var meta = ctx.refKind ? noteRefKindMeta(ctx.refKind) : null;
+              if (meta) {
+                var chip = document.createElement("button");
+                chip.type = "button";
+                chip.className = "note-ref-suggest-kind-chip";
+                chip.setAttribute("aria-label", "Убрать фильтр «" + meta.label + "»");
+                chip.innerHTML = meta.icon + "<span></span>" + refSvg('<path d="M18 6 6 18M6 6l12 12"/>');
+                chip.querySelector("span").textContent = meta.label;
+                chip.addEventListener("mousedown", function (e) {
                   e.preventDefault();
-                  insertChip(item);
+                  setKind("");
                 });
-                el.appendChild(btn);
+                head.appendChild(chip);
+              }
+              var q = document.createElement("span");
+              q.className = "note-ref-suggest-query" + (ctx.refQuery ? "" : " is-placeholder");
+              q.textContent = ctx.refQuery || (meta ? "Поиск" : "Поиск: задача, заметка, человек…");
+              head.appendChild(q);
+              el.appendChild(head);
+
+              var rows = ctx.refItems || [];
+              if (!rows.length) {
+                var empty = document.createElement("div");
+                empty.className = "note-ref-suggest-empty";
+                empty.textContent = ctx.refLoading ? "Ищу…" : "Ничего не найдено";
+                el.appendChild(empty);
+                return;
+              }
+              var list = document.createElement("div");
+              list.className = "note-ref-suggest-list";
+              rows.forEach(function (row, i) {
+                list.appendChild(rowButton(row, i));
               });
+              el.appendChild(list);
+              var active = list.querySelector(".is-active");
+              if (active && active.scrollIntoView) active.scrollIntoView({ block: "nearest" });
             }
             ctx.renderNoteRefSuggest = render;
 
-            function applyItems(items, view, $from) {
-              items = Array.isArray(items) ? items.slice(0, 12) : [];
-              if (!items.length) {
+            function place(view, pos) {
+              var coords = view.coordsAtPos(pos);
+              el.classList.remove("hidden");
+              var w = el.offsetWidth || 280;
+              var left = Math.min(Math.max(8, coords.left), Math.max(8, window.innerWidth - w - 8));
+              el.style.left = left + "px";
+              var h = el.offsetHeight || 0;
+              var vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+              var top = coords.bottom + 6;
+              if (h && top + h > vh - 8 && coords.top - h - 6 > 8) top = coords.top - h - 6;
+              el.style.top = top + "px";
+            }
+
+            function kindRows(query) {
+              var q = String(query || "").trim().toLowerCase();
+              return NOTE_REF_KINDS.filter(function (k) {
+                return !q || k.label.toLowerCase().indexOf(q) === 0;
+              }).map(function (k) {
+                return { pickKind: k.kind, label: k.label };
+              });
+            }
+
+            function runSearch(view) {
+              var $from = view.state.selection.$from;
+              var text = $from.parent.textBetween(0, $from.parentOffset, null, "￼");
+              var match = text.match(NOTE_REF_QUERY_RE);
+              if (!match) {
                 hideSuggest();
                 return;
               }
-              ctx.refItems = items;
-              ctx.refIndex = 0;
+              var token = String(match[1] || "");
+              var query = String(match[2] || "");
+              ctx.refFrom = $from.pos - token.length;
+              ctx.refTo = $from.pos;
+              if (query !== ctx.refQuery) ctx.refIndex = 0;
+              ctx.refQuery = query;
+              var kind = ctx.refKind;
+              // Без типа и без запроса — только пункты-типы, искать нечего.
+              var typeRows = kind ? [] : kindRows(query);
+              var gen = ++searchGen;
+              if ((!kind && !query.trim()) || typeof ctx.onSearchNoteRefs !== "function") {
+                ctx.refLoading = false;
+                ctx.refItems = typeRows;
+                ctx.refItemsKind = null;
+                render();
+                place(view, ctx.refFrom);
+                return;
+              }
+              ctx.refLoading = true;
+              // Пока ищем, показываем прошлые результаты того же типа — без мигания «Ищу…».
+              if (ctx.refItemsKind !== kind) ctx.refItems = typeRows;
               render();
-              var coords = view.coordsAtPos($from.pos);
-              el.style.position = "fixed";
-              el.style.zIndex = "520";
-              el.style.left = Math.max(8, coords.left) + "px";
-              el.style.top = coords.bottom + 6 + "px";
-              el.classList.remove("hidden");
-            }
-
-            return {
-              update: function (view) {
-                if (!view.state.selection.empty) {
-                  hideSuggest();
-                  return;
-                }
-                var $from = view.state.selection.$from;
-                var text = $from.parent.textBetween(0, $from.parentOffset, null, "\ufffc");
-                var match = text.match(NOTE_REF_QUERY_RE);
-                if (!match) {
-                  hideSuggest();
-                  return;
-                }
-                var token = String(match[1] || "");
-                var query = String(match[2] || "");
-                ctx.refFrom = $from.pos - token.length;
-                ctx.refTo = $from.pos;
-                if (typeof ctx.onSearchNoteRefs !== "function") {
-                  hideSuggest();
-                  return;
-                }
-                var gen = ++searchGen;
-                ctx.onSearchNoteRefs(query, function (items) {
+              place(view, ctx.refFrom);
+              ctx.onSearchNoteRefs(
+                query,
+                function (items) {
                   if (gen !== searchGen) return;
                   if (!ctx.editor || !ctx.editor.view) return;
                   var sel = ctx.editor.view.state.selection;
                   if (!sel.empty) return;
                   var $now = sel.$from;
-                  var nowText = $now.parent.textBetween(0, $now.parentOffset, null, "\ufffc");
+                  var nowText = $now.parent.textBetween(0, $now.parentOffset, null, "￼");
                   if (!NOTE_REF_QUERY_RE.test(nowText)) return;
-                  applyItems(items, ctx.editor.view, $now);
-                });
+                  items = Array.isArray(items) ? items.slice(0, 20) : [];
+                  ctx.refLoading = false;
+                  ctx.refItems = typeRows.concat(items);
+                  ctx.refItemsKind = kind;
+                  if (ctx.refIndex >= ctx.refItems.length) ctx.refIndex = 0;
+                  render();
+                  place(ctx.editor.view, ctx.refFrom);
+                },
+                kind
+              );
+            }
+
+            return {
+              update: function (view, prevState) {
+                if (!view.state.selection.empty) {
+                  hideSuggest();
+                  return;
+                }
+                if (
+                  prevState &&
+                  prevState.doc.eq(view.state.doc) &&
+                  prevState.selection.eq(view.state.selection)
+                ) {
+                  return;
+                }
+                runSearch(view);
               },
               destroy: function () {
                 searchGen += 1;
@@ -1954,12 +2147,20 @@ function createNoteRefExtensions(ctx) {
           },
           props: {
             handleKeyDown: function (view, event) {
-              var items = ctx.refItems || [];
-              var open =
-                items.length &&
-                ctx.refSuggestEl &&
-                !ctx.refSuggestEl.classList.contains("hidden");
+              var open = ctx.refSuggestEl && !ctx.refSuggestEl.classList.contains("hidden");
               if (!open) return false;
+              var items = ctx.refItems || [];
+              if (event.key === "Backspace" && ctx.refKind && !ctx.refQuery) {
+                // Сначала снимаем фильтр-чип, потом уже стираем «+».
+                event.preventDefault();
+                if (ctx.setNoteRefKind) ctx.setNoteRefKind("");
+                return true;
+              }
+              if (event.key === "Escape") {
+                if (ctx.hideNoteRefSuggest) ctx.hideNoteRefSuggest();
+                return true;
+              }
+              if (!items.length) return false;
               if (event.key === "ArrowDown") {
                 event.preventDefault();
                 ctx.refIndex = (ctx.refIndex + 1) % items.length;
@@ -1975,10 +2176,6 @@ function createNoteRefExtensions(ctx) {
               if (event.key === "Enter" || event.key === "Tab") {
                 event.preventDefault();
                 if (ctx.pickNoteRef) ctx.pickNoteRef(items[ctx.refIndex]);
-                return true;
-              }
-              if (event.key === "Escape") {
-                if (ctx.hideNoteRefSuggest) ctx.hideNoteRefSuggest();
                 return true;
               }
               return false;
@@ -2699,6 +2896,7 @@ function mount(container, options) {
     editor: null,
     onSearchNoteRefs: options.onSearchNoteRefs,
     onNoteRefChipClick: options.onNoteRefChipClick,
+    onEntityRefChipClick: options.onEntityRefChipClick,
   };
 
   const editor = new Editor({
@@ -3155,7 +3353,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261020-focus1",
+  assetVersion: "20261021-plusrefs",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,
