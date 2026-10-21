@@ -16876,3 +16876,5 @@ html.actual-voice-open #actual-voice-btn { visibility: hidden; }
   .focus-chat-date input { height: 40px; font-size: 16px; }
   .focus-chat-acts .focus-chat-btn { min-height: 40px; }
 }
+.focus-chat-card.is-openable { cursor: pointer; }
+.focus-chat-card.is-openable:hover { border-color: var(--accent-border); }

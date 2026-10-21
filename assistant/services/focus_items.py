@@ -382,15 +382,18 @@ def item_from_card(card: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def public(row: dict[str, Any]) -> dict[str, Any]:
+def public(row: dict[str, Any], now: Optional[datetime] = None) -> dict[str, Any]:
     f = row.get("fields") or {}
     src = row.get("source") or {}
+    status = row.get("status") or "new"
+    if status == "snoozed" and not is_hidden(row, now):
+        status = "new"  # срок «Отложить» прошёл — пункт снова открыт (и в Фокусе, и в карточке чата)
     return {
         "key": row["item_key"],
         "card_key": row.get("card_key") or row["item_key"],
         "kind": row.get("kind") or "",
         "type": row.get("type") or "task",
-        "status": row.get("status") or "new",
+        "status": status,
         "reason": row.get("reason") or "",
         "snooze_until": row.get("snooze_until") or "",
         "text": f.get("task") or row.get("text") or "",

@@ -167,5 +167,15 @@ class FocusItemsTests(unittest.TestCase):
             fi.apply(1, "ins:1:abc", "link", url="javascript:alert(1)")
 
 
+class PublicStatusTests(unittest.TestCase):
+    def test_expired_snooze_is_open_again(self) -> None:
+        now = datetime(2026, 10, 21, 7, 0, tzinfo=timezone.utc)
+        row = {"item_key": "sumtask:1:a", "status": "snoozed", "snooze_until": "2026-10-21T06:00:00+00:00"}
+        self.assertEqual(fi.public(row, now)["status"], "new")
+        row["snooze_until"] = "2026-10-21T09:00:00+00:00"
+        self.assertEqual(fi.public(row, now)["status"], "snoozed")
+        self.assertEqual(fi.public({"item_key": "k", "status": "converted"}, now)["status"], "converted")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261020-focustask3";
+  var WEBAPP_BUILD = "20261021-focusopen1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -33167,6 +33167,7 @@
       var l = f.link || {};
       return ["link", "Связано: " + (l.title || l.url || "задача")];
     }
+    if (f.status === "snoozed" && !(new Date(f.snooze_until).getTime() > Date.now())) return null; // срок прошёл — пункт снова открыт
     if (f.status === "snoozed") return ["clock", (f.type === "reminder" ? "Напомню " : "Вернётся в Фокус ") + focusWhenLabel(f.snooze_until)];
     if (f.status === "dismissed") return ["x", "Скрыто: " + (FOCUS_REASON_LABEL[f.reason] || "неактуально")];
     if (f.status === "retyped") return ["taskBox", "Теперь это " + ((FOCUS_TYPE_UI[f.type] || [])[1] || f.type).toLowerCase() + " · убрано из Фокуса"];
@@ -33579,9 +33580,22 @@
       card.classList.add("is-closed");
       card.appendChild(focusChatHead(tone[0], tone[1], line[1], (opts.num ? opts.num + " · " : "") + who));
       card.appendChild(focusEl("b", "focus-card-title is-muted", f.text));
+      var taskId = f.link && f.link.task_id;
+      if ((f.status === "converted" || f.status === "linked") && taskId) {
+        // Поставленная / связанная задача: карточка открывает саму задачу.
+        card.classList.add("is-openable");
+        card.addEventListener("click", function (e) {
+          if (e.target && e.target.closest && e.target.closest("button, a, input, .focus-card-foot")) return;
+          openTaskFromChip(String(taskId));
+        });
+      }
       if (opts.mine) {
         var cacts = focusEl("div", "focus-card-acts");
-        if (f.status === "linked" && f.link && f.link.url) {
+        if ((f.status === "converted" || f.status === "linked") && taskId) {
+          cacts.appendChild(focusCardBtn("Открыть задачу", "is-soft", function () {
+            openTaskFromChip(String(taskId));
+          }, "taskBox"));
+        } else if (f.status === "linked" && f.link && f.link.url) {
           cacts.appendChild(focusCardBtn("Открыть", "is-soft", function () {
             openExternal(f.link.url);
           }, "link"));
