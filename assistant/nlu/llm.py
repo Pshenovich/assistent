@@ -54,7 +54,8 @@ def _model_summary() -> str:
         os.getenv("OPENROUTER_MODEL_SUMMARY", "").strip()
         or os.getenv("OPENROUTER_MODEL_ASK", "").strip()
         or os.getenv("OPENROUTER_MODEL_CHAT", "").strip()
-        or "openai/gpt-4o"
+        # gpt-4o на eval (12 встреч) давал нестабильное число задач от запуска к запуску
+        or "openai/gpt-5.5"
     )
 
 
