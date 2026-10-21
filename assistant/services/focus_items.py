@@ -602,6 +602,10 @@ def _sync_meta_task(meta: dict[str, Any], row: dict[str, Any]) -> bool:
     f = row.get("fields") or {}
     if f.get("assignee"):
         t["assignee"] = f["assignee"]
+        if "assignee_basis" in t:  # саммари v2: ручной исполнитель важнее карты спикеров
+            t["assignee_basis"] = "named"
+            t["assignee_name"] = f["assignee"]
+            t["assignee_unresolved"] = False
     if f.get("task"):
         t["task"] = f["task"]
     if f.get("deadline"):

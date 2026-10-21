@@ -10291,6 +10291,30 @@ async def miniapp_note_make_summary(
     return {"ok": True, "item": item}
 
 
+class _SpeakerConfirmBody(BaseModel):
+    label: str
+    name: str = ""
+
+
+@miniapp_router.post("/notes/local/{note_id}/speakers")
+async def miniapp_note_confirm_speaker(
+    note_id: int,
+    body: _SpeakerConfirmBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """«Спикер 2 — это Саша»: пересобрать исполнителей саммари без нового STT/LLM."""
+    from assistant.services import transcription_notes as tnotes
+
+    uid = int(principal.telegram_user_id)
+    try:
+        item = await run_in_threadpool(
+            tnotes.confirm_speaker, uid, note_id, body.label, body.name
+        )
+    except tnotes.TranscriptionNoteError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "item": item}
+
+
 def _truthy_form_flag(raw: str | bool | None) -> bool:
     if isinstance(raw, bool):
         return raw

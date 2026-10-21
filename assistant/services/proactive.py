@@ -402,9 +402,15 @@ def rule_summary_tasks(
                 continue
             if posted_titles and _covered(str(t.get("task") or ""), posted_titles):
                 continue  # эту задачу из встречи уже поставили
-            items.append({"id": iid, "text": line})
+            item = {"id": iid, "text": line}
+            if t.get("owner_flag") == "mine":
+                item["mine"] = True
+            if t.get("quote") and float(t.get("quote_score") or 0) >= 0.6:
+                item["quote"] = str(t["quote"])[:300]
+            items.append(item)
         if not items:
             continue
+        items.sort(key=lambda i: not i.get("mine"))  # свои — первыми
         lines = [i["text"] for i in items[:12]]
         title = str(n.get("title") or "Встреча")
         cnt = len(items)

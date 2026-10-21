@@ -142,6 +142,8 @@ def _html_ul_to_md(ul_html: str) -> str:
             continue
         if re.search(r"\bchecked\b", attrs or "", re.I):
             lines.append(f"- [x] {text}")
+        elif re.search(r"\bdata-task\b", attrs or "", re.I):
+            lines.append(f"- [ ] {text}")  # открытый пункт чеклиста (саммари v2)
         else:
             lines.append(f"- {text}")
     return "\n".join(lines)

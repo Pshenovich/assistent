@@ -15,6 +15,7 @@ from assistant.lib.media_download import download_url_bytes
 from assistant.lib.message_context import telegram_message_link
 from assistant.lib.tg_media_fetch import MediaTooLargeError
 from assistant.lib.telegram_html import html_to_plain, uses_html_markup
+from assistant.lib.summary_normalize import tasks_for_inject, v2_meta
 from assistant.lib.telegram_markdown import prepare_summary_markdown
 from assistant.lib.telegram_message import reply_formatted
 from assistant.lib.urls import extract_urls
@@ -92,6 +93,8 @@ async def _reply_text_safe(
 def _summary_item_markdown(item: dict) -> str:
     meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
     tasks = meta.get("tasks") if isinstance(meta.get("tasks"), list) else None
+    if meta.get("summary_version") == 2:
+        tasks = None  # v2: задачи уже в теле на своём месте
     return prepare_summary_markdown(
         str(item.get("text") or ""),
         tasks=tasks,
@@ -142,6 +145,7 @@ def _build_meta(result: dict, *, speakers_detected: bool) -> dict:
         "topics": result.get("topics") or [],
         "open_questions": result.get("open_questions") or [],
         "risks": result.get("risks") or [],
+        **v2_meta(result),
     }
 
 
@@ -303,8 +307,16 @@ async def run_explicit_summary(
         status = await set_status(
             status, "Делаю саммари…", anchor=msg, context=context
         )
+        from assistant.lib.meeting_context import build_meeting_context
+
+        meeting_ctx = await asyncio.to_thread(
+            build_meeting_context, uid, topic=fname or ""
+        )
         summary_result = await asyncio.to_thread(
-            llm_mod.summarize_recording, transcript, speakers_detected=speakers
+            llm_mod.summarize_recording,
+            transcript,
+            speakers_detected=speakers,
+            context=meeting_ctx,
         )
         if not summary_result:
             await set_status(status, "Не удалось сделать саммари.", anchor=msg, context=context)
@@ -324,13 +336,20 @@ async def run_explicit_summary(
         ts = datetime.now(timezone.utc).isoformat()
         display_text = prepare_summary_markdown(
             summary_text,
-            tasks=summary_result.get("tasks"),
+            tasks=tasks_for_inject(summary_result),
             source_url=source_url,
             telegram_link=telegram_link,
             headline=headline,
             ts=ts,
         )
         meta = _build_meta(summary_result, speakers_detected=speakers)
+        if meta.get("summary_version") == 2:
+            meta["summary_render"] = {
+                "source_url": source_url,
+                "telegram_link": telegram_link,
+                "headline": headline,
+                "ts": ts,
+            }
         from assistant.skills.journal_pdf import pdf_download_keyboard_for_note
 
         note_id = _save_summary_note(

@@ -8934,6 +8934,59 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   color: var(--text-secondary, #909499);
 }
 
+.note-speaker-map-menu {
+  width: min(22rem, calc(100vw - 16px));
+  padding: 8px;
+}
+
+.note-speaker-map-hint {
+  padding: 2px 4px 8px;
+  font-size: 0.75rem;
+  color: var(--text-secondary, #909499);
+}
+
+.note-speaker-map-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+}
+
+.note-speaker-map-label {
+  flex: 0 0 4.8rem;
+  font-size: 0.8125rem;
+  color: var(--text-secondary, #909499);
+}
+
+.note-speaker-map-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  font: inherit;
+  font-size: 16px; /* без автозума на iOS */
+  color: var(--text);
+  background: var(--surface);
+}
+
+.note-speaker-map-row.is-guess .note-speaker-map-input {
+  border-style: dashed;
+  color: var(--text-secondary, #909499);
+}
+
+.note-speaker-map-ok {
+  flex: 0 0 auto;
+  padding: 0.4rem 0.65rem;
+  border: none;
+  border-radius: var(--radius-sm, 8px);
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--text);
+  background: var(--accent-subtle, rgba(158, 173, 219, 0.16));
+  cursor: pointer;
+}
+
 .note-sheet-chip--make-summary {
   max-width: none;
   color: var(--text);

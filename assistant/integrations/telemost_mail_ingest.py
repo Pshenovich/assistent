@@ -166,6 +166,29 @@ def _connect_imap(email_addr: str, access_token: str) -> imaplib.IMAP4_SSL:
     return mail
 
 
+def _message_date(msg: Message) -> str:
+    from email.utils import parsedate_to_datetime
+
+    try:
+        return parsedate_to_datetime(str(msg.get("Date") or "")).isoformat()
+    except (TypeError, ValueError):
+        return ""
+
+
+def _summary_meta(summary_result: dict | None) -> dict:
+    meta: dict = {"content_type": "meeting", "source": "telemost_mail"}
+    if not summary_result:
+        return meta
+    from assistant.lib.summary_normalize import v2_meta
+
+    for k in ("main_topic", "participants", "tasks", "decisions", "deadlines", "topics", "open_questions", "risks"):
+        if summary_result.get(k):
+            meta[k] = summary_result[k]
+    meta["content_type"] = summary_result.get("content_type") or "meeting"
+    meta.update(v2_meta(summary_result))
+    return meta
+
+
 def _process_message(telegram_user_id: int, msg: Message, *, subject: str) -> bool:
     body = _message_text(msg)
     if not body:
@@ -175,16 +198,31 @@ def _process_message(telegram_user_id: int, msg: Message, *, subject: str) -> bo
     conf_match = _CONF_RE.search(body)
     if conf_match:
         topic = topic or f"Телемост {conf_match.group(1)}"
+    summary_result = None
     if not summary_part and transcript_part:
+        from assistant.lib.meeting_context import build_meeting_context
         from assistant.nlu import llm as llm_mod
 
-        summary_result = llm_mod.summarize_recording(transcript_part, speakers_detected=False)
+        try:
+            meeting_ctx = build_meeting_context(
+                int(telegram_user_id),
+                topic=topic or "",
+                start_at=_message_date(msg),
+                meeting_url=conf_match.group(0) if conf_match else "",
+            )
+        except Exception as e:
+            print(f"[telemost_mail] context failed uid={telegram_user_id} err={e!r}")
+            meeting_ctx = None
+        summary_result = llm_mod.summarize_recording(
+            transcript_part, speakers_detected=False, context=meeting_ctx
+        )
         if summary_result:
+            from assistant.lib.summary_normalize import tasks_for_inject
             from assistant.lib.telegram_markdown import prepare_summary_markdown
 
             summary_part = prepare_summary_markdown(
                 str(summary_result.get("summary") or ""),
-                tasks=summary_result.get("tasks"),
+                tasks=tasks_for_inject(summary_result),
             )
     if not summary_part:
         return False
@@ -192,7 +230,7 @@ def _process_message(telegram_user_id: int, msg: Message, *, subject: str) -> bo
         "summary_text": summary_part,
         "transcript": transcript_part or summary_part,
         "participant_names": [],
-        "meta": {"content_type": "meeting", "source": "telemost_mail"},
+        "meta": _summary_meta(summary_result),
         "result": None,
     }
     note = mrp.persist_meeting_artifacts_for_user(

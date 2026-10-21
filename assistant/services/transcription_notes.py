@@ -137,6 +137,20 @@ def create_transcript_only(
     return enrich(note)
 
 
+def _body_hash(body: str) -> str:
+    import hashlib
+
+    return hashlib.sha1((body or "").strip().encode("utf-8")).hexdigest()
+
+
+def _with_body_hash(meta: Optional[dict[str, Any]], summary: str) -> dict[str, Any]:
+    """Хэш тела саммари v2: по нему понимаем, правили ли саммари руками."""
+    out = dict(meta or {})
+    if out.get("summary_version") == 2:
+        out["summary_body_hash"] = _body_hash(_as_html(summary))
+    return out
+
+
 def create_with_summary(
     user_id: int | str,
     *,
@@ -150,7 +164,7 @@ def create_with_summary(
         _title_from(title, fallback="Саммари"),
         _as_html(summary),
         role=TRANSCRIPTION_ROLE,
-        meta=meta or {},
+        meta=_with_body_hash(meta, summary),
         primary_sheet_title=SUMMARY_SHEET_TITLE,
     )
     sheets_store.create_sheet(
@@ -226,6 +240,7 @@ def finish_make_summary(
     meta.pop("summary_error", None)
     if extra_meta:
         meta.update(extra_meta)
+    meta = _with_body_hash(meta, summary_text)
     updated = notes_store.update_note(
         owner,
         int(note["id"]),
@@ -257,6 +272,7 @@ def fail_make_summary(user_id: int | str, note_id: int, error: str) -> None:
 
 def generate_summary_for_note(user_id: int | str, note_id: int) -> dict[str, Any] | None:
     """Синхронная генерация саммари (для фонового таска)."""
+    from assistant.lib.summary_normalize import tasks_for_inject, v2_meta
     from assistant.lib.telegram_markdown import prepare_summary_markdown
     from assistant.nlu import llm as llm_mod
 
@@ -276,19 +292,32 @@ def generate_summary_for_note(user_id: int | str, note_id: int) -> dict[str, Any
     meta = note.get("meta") if isinstance(note.get("meta"), dict) else {}
     speakers = bool(meta.get("speakers_detected"))
     try:
+        from assistant.lib.meeting_context import context_for_note
+
+        try:
+            owner_uid = str(note.get("owner_user_id") or note.get("user_id") or uid)
+            meeting_ctx = context_for_note(int(owner_uid), note)
+        except Exception as e:
+            print(f"[transcription_notes] context failed note={note_id} err={e!r}")
+            meeting_ctx = None
         summary_result = llm_mod.summarize_recording(
-            transcript, speakers_detected=speakers
+            transcript, speakers_detected=speakers, context=meeting_ctx
         )
         if not summary_result:
             raise RuntimeError("Не удалось сделать саммари")
         summary_text = str(summary_result.get("summary") or "").strip()
         display = prepare_summary_markdown(
             summary_text,
-            tasks=summary_result.get("tasks"),
+            tasks=tasks_for_inject(summary_result),
             source_url=str(meta.get("source_url") or "") or None,
             telegram_link=str(meta.get("telegram_link") or "") or None,
             headline=str(note.get("title") or "Саммари"),
         )
+        render_params = {
+            "source_url": str(meta.get("source_url") or "") or None,
+            "telegram_link": str(meta.get("telegram_link") or "") or None,
+            "headline": str(note.get("title") or "Саммари"),
+        }
         extra = {
             "content_type": summary_result.get("content_type") or meta.get("content_type"),
             "main_topic": summary_result.get("main_topic") or meta.get("main_topic") or "",
@@ -300,11 +329,79 @@ def generate_summary_for_note(user_id: int | str, note_id: int) -> dict[str, Any
             "open_questions": summary_result.get("open_questions") or [],
             "risks": summary_result.get("risks") or [],
             "speakers_detected": speakers,
+            **v2_meta(summary_result),
         }
+        if extra.get("summary_version") == 2:
+            extra["summary_render"] = render_params
         return finish_make_summary(uid, int(note_id), display, extra_meta=extra)
     except Exception as e:
         fail_make_summary(uid, int(note_id), str(e))
         return None
+
+
+def confirm_speaker(user_id: int | str, note_id: int, label: str, name: str) -> dict[str, Any]:
+    """«Спикер 2 — это Саша»: обновить карту спикеров и исполнителей без нового STT/LLM.
+
+    Тело саммари пересобирается, только если его не правили руками (хэш совпадает).
+    """
+    from assistant.lib import summary_normalize as sn
+    from assistant.lib.meeting_context import context_for_note
+    from assistant.lib.summary_render import render_summary_html
+    from assistant.lib.telegram_markdown import prepare_summary_markdown
+
+    uid = str(int(user_id))
+    note = notes_store.get_accessible_note(uid, int(note_id), with_sharing=False)
+    if not note or not is_transcription_note(note):
+        raise TranscriptionNoteError("Это не файл транскрипции")
+    owner = str(note.get("owner_user_id") or note.get("user_id") or uid)
+    meta = dict(note.get("meta") or {}) if isinstance(note.get("meta"), dict) else {}
+    data = sn.summary_data_from_meta(meta)
+    if not data:
+        raise TranscriptionNoteError("Для этого саммари нет карты спикеров")
+    lab = sn.norm_speaker_label(label)
+    nm = (name or "").strip()[:80]
+    smap = dict(meta.get("speaker_map") or {})
+    if lab not in smap:
+        raise TranscriptionNoteError("Нет такого спикера")
+    if nm:
+        smap[lab] = {"name": nm, "confidence": 1.0, "evidence": "подтверждено пользователем", "confirmed": True}
+    else:
+        smap[lab] = {"name": "", "confidence": 0.0, "evidence": "", "confirmed": True}
+    ctx = context_for_note(int(owner), note)
+    raw = [t for t in (sn.raw_task(x) for x in data.get("tasks") or []) if t]
+    # в summary_data лежат уже разрешённые задачи: для «self» исполнителя
+    # заново берём из карты спикеров, срок — исходной формулировкой
+    for t, src in zip(raw, [x for x in data.get("tasks") or [] if isinstance(x, dict) and str(x.get("task") or "").strip()]):
+        if t["assignee_basis"] == "self":
+            t["assignee"] = ""
+        if "deadline_text" in src:
+            t["deadline"] = str(src.get("deadline_text") or "")
+    tasks = sn.resolve_tasks(
+        raw,
+        speaker_map=smap,
+        people=ctx.people,
+        meeting_at=str(meta.get("meeting_at") or ctx.meeting_at),
+        transcript=_plain(transcript_html(note)),
+    )
+    data["tasks"] = tasks
+    data["speaker_map"] = smap
+    meta["speaker_map"] = smap
+    meta["tasks"] = tasks
+    body_kwargs: dict[str, Any] = {}
+    cur_body = str(note.get("body") or "")
+    if meta.get("summary_body_hash") and _body_hash(cur_body) == meta.get("summary_body_hash"):
+        params = meta.get("summary_render") if isinstance(meta.get("summary_render"), dict) else {}
+        display = prepare_summary_markdown(render_summary_html(data), **params)
+        body_kwargs = {"body": _as_html(display), "primary_sheet_title": SUMMARY_SHEET_TITLE}
+        meta["summary_body_hash"] = _body_hash(_as_html(display))
+    updated = notes_store.update_note(
+        owner, int(note["id"]), meta=meta, actor_user_id=uid, **body_kwargs
+    )
+    if not updated:
+        raise TranscriptionNoteError("Не удалось сохранить")
+    out = enrich(updated)
+    out["summary_rerendered"] = bool(body_kwargs)
+    return out
 
 
 def _score_text(hay: str, words: list[str]) -> int:

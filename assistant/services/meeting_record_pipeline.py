@@ -10,6 +10,8 @@ from typing import Any
 
 from assistant.integrations import meeting_bot, transcribe as obu
 from assistant.integrations.transcribe import TranscribeResult
+from assistant.lib.meeting_context import build_meeting_context
+from assistant.lib.summary_normalize import tasks_for_inject, v2_meta
 from assistant.lib.telegram_rich import append_footnotes, zoom_meeting_footnote
 from assistant.lib.vexa_transcript import formatted_transcript_from_vexa
 from assistant.nlu import llm as llm_mod
@@ -74,6 +76,7 @@ def _build_meta(
         "topics": result.get("topics") or [],
         "open_questions": result.get("open_questions") or [],
         "risks": result.get("risks") or [],
+        **v2_meta(result),
     }
 
 
@@ -132,6 +135,7 @@ def process_recording_bytes(
     topic: str,
     source_url: str | None = None,
     native_meeting_id: str | None = None,
+    start_at: Any = None,
 ) -> dict[str, Any]:
     result, participant_names = _transcribe_recording(
         audio=data,
@@ -142,7 +146,16 @@ def process_recording_bytes(
     if not transcript:
         raise RuntimeError("Пустая транскрипция записи встречи.")
     speakers = _speakers_detected(result) or bool(participant_names)
-    summary_result = llm_mod.summarize_recording(transcript, speakers_detected=speakers)
+    meeting_ctx = build_meeting_context(
+        int(user_id),
+        topic=topic,
+        start_at=start_at,
+        meeting_url=source_url or "",
+        native_meeting_id=(native_meeting_id or "").strip(),
+    )
+    summary_result = llm_mod.summarize_recording(
+        transcript, speakers_detected=speakers, context=meeting_ctx
+    )
     if not summary_result:
         raise RuntimeError("Не удалось сделать саммари.")
     summary_text = str(summary_result.get("summary") or "").strip()
@@ -152,7 +165,7 @@ def process_recording_bytes(
     headline = f"📝 Саммари встречи «{topic}»"
     display_text = prepare_summary_markdown(
         summary_text,
-        tasks=summary_result.get("tasks"),
+        tasks=tasks_for_inject(summary_result),
         source_url=source_url,
         headline=headline,
         ts=ts,
@@ -162,6 +175,8 @@ def process_recording_bytes(
         speakers_detected=speakers,
         participant_names=participant_names or None,
     )
+    if meta.get("summary_version") == 2:
+        meta["summary_render"] = {"source_url": source_url, "headline": headline, "ts": ts}
     llm_names: list[str] = []
     for item in summary_result.get("participants") or []:
         if isinstance(item, dict):
@@ -340,6 +355,7 @@ def process_job_recording_async(job_id: int, recording: dict[str, Any]) -> None:
                 topic=topic,
                 source_url=source_url,
                 native_meeting_id=native_mid,
+                start_at=job.get("start_at_utc"),
             )
             display_text = str(out.get("summary_text") or "")
             note_ids: dict[int, int] = {}

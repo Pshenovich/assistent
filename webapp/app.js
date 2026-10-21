@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261021-modal3";
+  var WEBAPP_BUILD = "20261021-speakers1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -31225,6 +31225,20 @@
         });
         host.appendChild(makeBtn);
       }
+      var spMap = transcriptionSpeakerMap(transNote);
+      if (spMap) {
+        var spBtn = document.createElement("button");
+        spBtn.type = "button";
+        spBtn.className = "note-sheet-chip note-sheet-chip--speakers";
+        spBtn.textContent = "🗣 Спикеры";
+        spBtn.setAttribute("aria-haspopup", "dialog");
+        spBtn.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          openSpeakerMapMenu(spBtn, noteSheetsNoteId(), spMap);
+        });
+        host.appendChild(spBtn);
+      }
       return;
     }
     var extras = extraNoteSheets();
@@ -31574,6 +31588,139 @@
       await body._noteEditorFlush();
     }
     return noteSheetsNoteId();
+  }
+
+  // Карта «Спикер N → человек» из саммари v2 (assistant/lib/summary_normalize.py).
+  function transcriptionSpeakerMap(item) {
+    var meta = item && item.meta;
+    var map = meta && meta.speaker_map;
+    if (!map || typeof map !== "object") return null;
+    var labels = Object.keys(map).filter(function (k) { return /^Спикер \d+$/.test(k); });
+    if (!labels.length) return null;
+    var out = {};
+    labels.sort(function (a, b) { return parseInt(a.slice(7), 10) - parseInt(b.slice(7), 10); });
+    labels.forEach(function (k) { out[k] = map[k] || {}; });
+    return out;
+  }
+
+  function closeSpeakerMapMenu() {
+    var menu = document.getElementById("note-speaker-map-menu");
+    if (menu && menu.parentNode) menu.parentNode.removeChild(menu);
+    document.removeEventListener("click", onSpeakerMapMenuDocClick, true);
+    document.removeEventListener("keydown", onSpeakerMapMenuKey, true);
+  }
+
+  function onSpeakerMapMenuDocClick(e) {
+    var menu = document.getElementById("note-speaker-map-menu");
+    if (!menu) return;
+    if (e.target && menu.contains(e.target)) return;
+    if (e.target && e.target.closest && e.target.closest(".note-sheet-chip--speakers")) return;
+    closeSpeakerMapMenu();
+  }
+
+  function onSpeakerMapMenuKey(e) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeSpeakerMapMenu();
+    }
+  }
+
+  function openSpeakerMapMenu(anchor, noteId, map) {
+    if (document.getElementById("note-speaker-map-menu")) {
+      closeSpeakerMapMenu();
+      return;
+    }
+    if (!noteId) return;
+    var menu = document.createElement("div");
+    menu.id = "note-speaker-map-menu";
+    menu.className = "note-sheet-kind-menu note-speaker-map-menu";
+    menu.setAttribute("role", "dialog");
+    var head = document.createElement("div");
+    head.className = "note-speaker-map-hint";
+    head.textContent = "Кто есть кто — по этим именам уточнятся исполнители задач";
+    menu.appendChild(head);
+
+    Object.keys(map).forEach(function (label) {
+      var info = map[label] || {};
+      var row = document.createElement("div");
+      row.className = "note-speaker-map-row";
+      var lab = document.createElement("span");
+      lab.className = "note-speaker-map-label";
+      lab.textContent = label;
+      var input = document.createElement("input");
+      input.type = "text";
+      input.maxLength = 80;
+      input.className = "note-speaker-map-input";
+      input.placeholder = "Имя";
+      input.value = info.name || "";
+      var sure = info.confirmed || Number(info.confidence || 0) >= 0.75;
+      if (info.name && !sure) row.classList.add("is-guess");
+      if (info.evidence && !info.confirmed) input.title = info.evidence;
+      var ok = document.createElement("button");
+      ok.type = "button";
+      ok.className = "note-speaker-map-ok";
+      ok.textContent = info.confirmed ? "✓" : "Да";
+      ok.setAttribute("aria-label", "Подтвердить " + label);
+      function save() {
+        ok.disabled = true;
+        apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/speakers", {
+          method: "POST",
+          body: JSON.stringify({ label: label, name: String(input.value || "").trim() }),
+        })
+          .then(function (res) {
+            var item = res && res.item;
+            closeSpeakerMapMenu();
+            if (item) {
+              prependTranscriptionInCache(item);
+              openNoteDetail(item, { isLocal: true });
+            }
+            showNoteToast(
+              item && item.summary_rerendered
+                ? "Исполнители в саммари обновлены"
+                : "Задачи обновлены; текст саммари правили вручную — его не трогаем"
+            );
+          })
+          .catch(function (e) {
+            ok.disabled = false;
+            showNoteToast((e && e.message) || "Не удалось сохранить");
+          });
+      }
+      ok.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        save();
+      });
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          save();
+        }
+      });
+      row.appendChild(lab);
+      row.appendChild(input);
+      row.appendChild(ok);
+      menu.appendChild(row);
+    });
+
+    var host =
+      (anchor && anchor.closest && anchor.closest("#note-editor-overlay")) ||
+      document.getElementById("note-editor-overlay") ||
+      document.body;
+    host.appendChild(menu);
+    var rect = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
+    var mw = menu.offsetWidth || 280;
+    var left = rect ? rect.left : 16;
+    var top = rect ? rect.bottom + 6 : 16;
+    if (left + mw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - mw - 8);
+    if (top + menu.offsetHeight > window.innerHeight - 8) {
+      top = rect ? Math.max(8, rect.top - menu.offsetHeight - 6) : 16;
+    }
+    menu.style.left = Math.round(left) + "px";
+    menu.style.top = Math.round(top) + "px";
+    setTimeout(function () {
+      document.addEventListener("click", onSpeakerMapMenuDocClick, true);
+      document.addEventListener("keydown", onSpeakerMapMenuKey, true);
+    }, 0);
   }
 
   function closeNewSheetKindMenu() {
