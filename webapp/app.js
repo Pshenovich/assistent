@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261021-modal2";
+  var WEBAPP_BUILD = "20261021-modal3";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -6246,6 +6246,8 @@
   }
 
   function postTabSwitch(name, prev) {
+    // Ушли из «Сохранённое → Чаты»: класс раскладки чатов не должен жить на других экранах.
+    if (name !== "notes") document.documentElement.classList.remove("notes-chats-tab");
     if (name === "actual") window.setTimeout(restoreActualAssistant, 0);
     if (name === "profile") {
       if (!tabInited.profile) {
@@ -24529,6 +24531,7 @@
     var pane = document.getElementById("chat-thread-pane");
     var root = document.getElementById("notes-pane-chats");
     if (!pane || !root || root.classList.contains("hidden")) return false;
+    if (currentTab !== "notes") return false;
     document.documentElement.classList.add("notes-chats-tab");
     var cs = window.getComputedStyle(pane);
     if (cs.display === "none") {
@@ -25123,7 +25126,7 @@
   }
 
   async function ensureDesktopChatComposer() {
-    if (leavingChatsTab || notesSubTab !== "chats") return;
+    if (leavingChatsTab || notesSubTab !== "chats" || currentTab !== "notes") return;
     document.documentElement.classList.add("notes-chats-tab");
     if (!chatSplitPaneReady() && !isDesktopLayout()) return;
     if (activeChatThreadId && isNoteDiscussionOpen()) {

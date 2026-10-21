@@ -16077,7 +16077,8 @@ html.notes-chats-tab .notes-project-btn { display: none; }
   #notes-pane-chats:not(.hidden) #chat-threads-list { width: 100% !important; flex: 1 1 auto !important; overflow: visible !important; height: auto !important; }
   #notes-pane-chats:not(.hidden) .chat-threads-splitter { display: none !important; }
   #notes-pane-chats:not(.hidden) #chat-thread-pane { position: fixed !important; top: 0; bottom: 0; right: 0; left: var(--notes-split-left, 696px); height: auto !important; border-left: 1px solid var(--border); z-index: 6; }
-  html.notes-chats-tab .notes-fab { right: calc(100vw - var(--notes-split-left, 696px) + 28px) !important; }
+  /* Только «+» в «Сохранённом»: кнопки других экранов (Актуальное, База знаний) не двигаем. */
+  html.notes-chats-tab #panel-notes .notes-fab { right: calc(100vw - var(--notes-split-left, 696px) + 28px) !important; }
   html.notes-chats-tab #notes-filter-btn,
   html.notes-chats-tab #notes-project-btn,
   html.notes-chats-tab #notes-project-chips,
