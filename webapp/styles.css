@@ -17054,3 +17054,163 @@ html.actual-voice-open #actual-voice-btn { visibility: hidden; }
 }
 .focus-chat-card.is-openable { cursor: pointer; }
 .focus-chat-card.is-openable:hover { border-color: var(--accent-border); }
+
+/* ==== Окно встречи / задачи / напоминания / ссылки: редизайн ==== */
+#modal-overlay .modal--sheet .modal-header { grid-template-columns: auto 1fr auto; }
+#modal-overlay .modal-title { text-align: center; font-size: 1.0625rem; font-weight: 650; }
+.modal-header-end { grid-column: 3; justify-self: end; display: inline-flex; align-items: center; gap: 8px; position: relative; }
+#modal-save {
+  width: auto;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 18px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+#modal-save.hidden, #modal-more.hidden { display: none; }
+.modal-header-btn--more {
+  border-radius: 50%;
+  color: var(--text);
+  background: var(--vkui--color_background_secondary_alpha, var(--surface-muted));
+}
+.modal-more-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  min-width: 13.5rem;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--surface-elevated, #2a2a2d);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+}
+.modal-more-menu.hidden { display: none; }
+.modal-more-item { display: block; width: 100%; min-height: 40px; padding: 0 12px; border: none; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 0.9375rem; text-align: left; cursor: pointer; }
+.modal-more-item:hover { background: rgba(255, 255, 255, 0.06); }
+.modal-more-item.is-danger { color: #f87171; }
+.modal-sheet-actions.is-empty { display: none; }
+/* Задача: «Выполнено» — главная зелёная, «Ссылка» — компактная рядом. */
+.modal-sheet-actions.is-task .modal-done-btn { flex: 1 1 auto; background: var(--success, #4bb34b); color: #fff; font-weight: 600; }
+.modal-sheet-actions.is-task .modal-link-btn { flex: 0 0 auto; }
+
+/* Переключатель типа: неактивные пункты читаемы */
+#modal-fields .event-sheet-kind-btn { color: #a3a5a9; font-size: 0.8125rem; min-height: 32px; }
+#modal-fields .event-sheet-kind-btn.is-active { color: var(--text); background: #3a3a3e; }
+#modal-fields .event-sheet-title { font-size: 1.1875rem; font-weight: 600; }
+
+.sheet-glabel { margin: 0; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: #9a9ca0; }
+
+/* Блок «Когда» */
+.sheet-when { display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow: visible; }
+.sheet-when-row { display: flex; align-items: center; gap: 8px; min-height: 36px; flex-wrap: wrap; }
+.sheet-date-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: rgba(120, 120, 128, 0.28);
+  color: var(--text);
+  font-size: 0.9375rem;
+  cursor: pointer;
+}
+.sheet-date-pill svg { color: #9a9ca0; flex: none; }
+.sheet-date-native { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; color-scheme: dark; border: none; padding: 0; }
+.sheet-when-times .sheet-time { max-width: 6.5rem; height: 36px; font-variant-numeric: tabular-nums; text-align: center; }
+.sheet-when-arrow { color: #7d8084; flex: none; }
+.sheet-when-dur { font-size: 0.875rem; color: #9a9ca0; margin-left: 2px; white-space: nowrap; }
+.sheet-when-until { font-size: 0.875rem; color: #9a9ca0; }
+.sheet-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.sheet-chip { height: 32px; padding: 0 12px; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 16px; background: transparent; color: #c4c6c9; font: inherit; font-size: 0.8125rem; font-weight: 500; cursor: pointer; }
+.sheet-chip.is-active { background: var(--accent-muted); border-color: var(--accent-border); color: #9fc4f8; }
+.sheet-switch-row { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-size: 0.875rem; color: #c4c6c9; cursor: pointer; }
+.sheet-switch-input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.sheet-switch { position: relative; width: 42px; height: 26px; border-radius: 13px; background: #3a3a3e; transition: background 0.15s ease; flex: none; }
+.sheet-switch::after { content: ""; position: absolute; left: 3px; top: 3px; width: 20px; height: 20px; border-radius: 10px; background: #e8e9eb; transition: transform 0.15s ease; }
+.sheet-switch-input:checked + .sheet-switch { background: var(--success, #4bb34b); }
+.sheet-switch-input:checked + .sheet-switch::after { transform: translateX(16px); }
+.sheet-switch-input:focus-visible + .sheet-switch { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sheet-when.is-allday .sheet-when-times,
+.sheet-when.is-allday .sheet-durs,
+.sheet-when.is-allday .sheet-when-enddate { display: none; }
+.sheet-when-summary { display: none; }
+.sheet-when.is-collapsible .sheet-when-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9375rem;
+  text-align: left;
+  cursor: pointer;
+}
+.sheet-when-summary-val { flex: 1; text-align: right; color: #9a9ca0; font-size: 0.875rem; font-variant-numeric: tabular-nums; }
+.sheet-when.is-collapsible:not(.is-collapsed) .sheet-when-summary .event-sheet-chevron { transform: rotate(180deg); }
+.sheet-when.is-collapsible.is-collapsed > :not(.sheet-when-summary):not(input[type="hidden"]) { display: none; }
+
+/* Открытая встреча: сводка и «Присоединиться» наверху */
+.sheet-ev-summary { display: flex; flex-direction: column; gap: 6px; padding: 2px 2px 4px; }
+.sheet-ev-when { margin: 0; font-size: 0.9375rem; color: #c4c6c9; font-variant-numeric: tabular-nums; }
+.sheet-ev-dur { color: #9a9ca0; }
+.sheet-ev-rel { margin: 0; font-size: 0.8125rem; font-weight: 600; color: #9fc4f8; }
+.sheet-ev-rel.is-live { color: #ffb3b3; }
+.sheet-ev-rel.is-past { color: #9a9ca0; font-weight: 500; }
+.sheet-ev-acts { display: flex; gap: 8px; margin-top: 4px; }
+.sheet-ev-join { flex: 1; height: 46px; border: none; border-radius: 12px; background: var(--accent); color: #fff; font: inherit; font-size: 1rem; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; }
+.sheet-ev-copy { flex: none; width: 46px; height: 46px; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 12px; background: var(--surface-elevated); color: #c4c6c9; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+
+/* Видеосвязь */
+.sheet-video { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.sheet-video .event-sheet-kind-switch { margin: 0; }
+.sheet-video .event-sheet-meet-link-input { margin: 0; }
+
+/* Цвет — строка кружков */
+.event-sheet-color-group--inline { padding: 8px 12px; }
+.event-sheet-color-inline { display: flex; align-items: center; gap: 12px; min-height: 36px; }
+.event-sheet-color-inline .event-sheet-color-swatches { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 4px 2px; flex: 1; min-width: 0; }
+.event-sheet-color-inline .event-sheet-color-swatches::-webkit-scrollbar { display: none; }
+.event-sheet-color-inline .event-sheet-color-swatch { flex: none; width: 24px; height: 24px; }
+
+/* Напоминание: быстрые варианты */
+.sheet-rem-when { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.sheet-rem-quick { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.sheet-rem-q { min-height: 56px; padding: 6px 12px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; background: rgba(120, 120, 128, 0.18); color: var(--text); font: inherit; text-align: left; display: flex; flex-direction: column; justify-content: center; gap: 2px; cursor: pointer; }
+.sheet-rem-q b { font-size: 0.875rem; font-weight: 600; }
+.sheet-rem-q span { font-size: 0.75rem; color: #9a9ca0; font-variant-numeric: tabular-nums; }
+.sheet-rem-q.is-active { background: rgba(240, 180, 76, 0.14); border-color: rgba(240, 180, 76, 0.55); }
+.sheet-rem-q.is-active span { color: #e8c78a; }
+.sheet-rem-when .event-sheet-row { padding: 0; }
+.event-sheet-group > .sheet-glabel { padding: 12px 12px 0; }
+.sheet-rem-when > .sheet-glabel, .sheet-when > .sheet-glabel, .sheet-video > .sheet-glabel { padding: 0; }
+.sheet-rem-repeat { margin: 10px 12px 12px; }
+
+/* Ссылка на запись */
+.booking-sheet-hint { margin: 6px 2px 0; font-size: 0.75rem; color: #9a9ca0; }
+.booking-sheet-hint.hidden { display: none; }
+.booking-sheet-result { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 14px; border: 1px solid rgba(75, 179, 75, 0.4); background: rgba(75, 179, 75, 0.1); }
+.booking-sheet-result.hidden { display: none; }
+.booking-sheet-result-head { margin: 0; font-size: 0.8125rem; font-weight: 600; color: #c9f2de; }
+.booking-sheet-result .booking-sheet-url { margin: 0; }
+.booking-sheet-result-acts { display: flex; gap: 8px; }
+.booking-sheet-result-btn { flex: 1; height: 40px; border: none; border-radius: 10px; background: var(--surface-elevated); color: var(--text); font: inherit; font-size: 0.875rem; font-weight: 600; cursor: pointer; }
+.booking-sheet-result-btn.hidden { display: none; }
+
+@media (max-width: 959px) {
+  /* 16px в полях — без зума iOS */
+  #modal-fields .event-sheet-pill, #modal-fields .field-input, #modal-fields .event-sheet-title { font-size: 16px; }
+}
+.sheet-durs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.sheet-durs .sheet-chip { padding: 0 4px; }
+.event-sheet-color-inline .event-sheet-color-swatches { flex-wrap: nowrap; }
+.booking-sheet-chips { margin-top: 8px; }
+#modal-fields .booking-sheet-seg .event-sheet-kind-btn { white-space: nowrap; font-size: 0.8125rem; padding-left: 4px; padding-right: 4px; }

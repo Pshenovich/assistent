@@ -2508,12 +2508,29 @@ class _MiniappReminderPatch(BaseModel):
     when_iso: Optional[str] = None
     done: Optional[bool] = None
     checklist: Optional[list[dict[str, Any]]] = None
+    recurrence: Optional[str] = None  # RRULE («FREQ=DAILY»…); "" — без повтора
 
 
 class _MiniappReminderCreate(BaseModel):
     task: str = ""
     when_iso: str = ""
     checklist: list[dict[str, Any]] = Field(default_factory=list)
+    recurrence: str = ""
+
+
+_REMINDER_RRULE_RE = re.compile(r"^(?:RRULE:)?FREQ=(?:DAILY|WEEKLY|MONTHLY)(?:;[A-Z]+=[A-Z0-9,+-]+)*$")
+
+
+def _clean_reminder_recurrence(raw: Optional[str]) -> Optional[str]:
+    """Повтор напоминания из окна: простые RRULE (каждый день, по будням, раз в неделю)."""
+    if raw is None:
+        return None
+    rule = str(raw).strip().upper()
+    if not rule:
+        return ""
+    if not _REMINDER_RRULE_RE.match(rule):
+        raise HTTPException(status_code=400, detail="Неизвестный повтор напоминания")
+    return rule if rule.startswith("RRULE:") else "RRULE:" + rule
 
 
 class _MiniappCalendarEventUpdate(BaseModel):
@@ -5336,6 +5353,7 @@ async def miniapp_reminders_create(
             task=task,
             when_iso=when_iso,
             checklist=body.checklist,
+            recurrence=_clean_reminder_recurrence(body.recurrence) or "",
         )
     )
     item = await run_in_threadpool(reminders_store.get_reminder_by_id, rid)
@@ -5361,6 +5379,7 @@ async def miniapp_reminders_patch(
             when_iso=body.when_iso,
             done=body.done,
             checklist=body.checklist,
+            recurrence=_clean_reminder_recurrence(body.recurrence),
         )
     )
     if updated is None:

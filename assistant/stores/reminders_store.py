@@ -156,8 +156,12 @@ def patch_reminder(
     when_iso: str | None = None,
     done: bool | None = None,
     checklist: list[dict[str, Any]] | None = None,
+    recurrence: str | None = None,
 ) -> dict[str, Any] | None:
-    """Частичное обновление записи. Возвращает обновлённый dict или None."""
+    """Частичное обновление записи. Возвращает обновлённый dict или None.
+
+    recurrence: None — не трогать, "" — убрать повтор, иначе RRULE.
+    """
     rid = (reminder_id or "").strip()
     if not rid:
         return None
@@ -179,6 +183,12 @@ def patch_reminder(
                 it.pop("done", None)
         if checklist is not None:
             it["checklist"] = _normalize_checklist(checklist)
+        if recurrence is not None:
+            rule = str(recurrence).strip()
+            if rule:
+                it["recurrence"] = rule if rule.upper().startswith("RRULE:") else "RRULE:" + rule
+            else:
+                it.pop("recurrence", None)
         out = it
         break
     if out is not None:

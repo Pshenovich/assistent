@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261021-plusrefs">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261021-modal2">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -94,7 +94,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261021-plusrefs" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261021-modal2" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -1868,11 +1868,15 @@
             </svg>
           </button>
           <h2 id="modal-title" class="modal-title">Редактирование</h2>
-          <button type="submit" class="modal-header-btn modal-header-btn--save" id="modal-save" aria-label="Сохранить" title="Сохранить">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-              <path d="M20 6 9 17l-5-5" />
-            </svg>
-          </button>
+          <div class="modal-header-end">
+            <button type="button" class="modal-header-btn modal-header-btn--more hidden" id="modal-more" aria-label="Ещё" title="Ещё" aria-haspopup="menu" aria-expanded="false">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+            </button>
+            <button type="submit" class="modal-header-btn modal-header-btn--save" id="modal-save" aria-label="Сохранить" title="Сохранить">
+              <span class="modal-save-label" id="modal-save-label">Сохранить</span>
+            </button>
+            <div id="modal-more-menu" class="modal-more-menu hidden" role="menu" aria-label="Действия"></div>
+          </div>
         </div>
         <div class="modal-body">
           <div id="modal-fields"></div>
@@ -1970,7 +1974,7 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261021-plusrefs" defer></script>
-  <script src="/webapp/app.js?v=20261021-plusrefs" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261021-modal2" defer></script>
+  <script src="/webapp/app.js?v=20261021-modal2" defer></script>
 </body>
 </html>
