@@ -85,7 +85,9 @@ def _run(pipeline: str, case: dict[str, Any]) -> tuple[dict[str, Any] | None, fl
     os.environ["SUMMARY_PIPELINE"] = pipeline
     t0 = time.time()
     if pipeline == "v1":
-        out = llm._summarize_recording_v1(case["transcript"], speakers_detected=True)
+        out = llm._summarize_recording_v1(case["transcript"], speakers_detected=True, dedupe=False)
+    elif pipeline == "v1d":
+        out = llm._summarize_recording_v1(case["transcript"], speakers_detected=True, dedupe=True)
     else:
         out = llm._summarize_recording_v2(
             case["transcript"], speakers_detected=True, context=_context(case.get("context"))

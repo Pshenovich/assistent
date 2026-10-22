@@ -1043,8 +1043,36 @@ def summarize_recording(
     return _summarize_recording_v1(text, speakers_detected=speakers_detected)
 
 
+def summary_v1_dedupe_enabled() -> bool:
+    return (os.getenv("SUMMARY_V1_DEDUPE", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _dedupe_v1_tasks(tasks: list[dict[str, Any]], transcript: str) -> list[dict[str, Any]]:
+    """v1 + склейка: задачи v1 (полнота лучше v2 на эталоне) → вызов сведения только убирает повторы."""
+    from assistant.lib import summary_normalize as sn
+    from assistant.nlu import summary_v2
+
+    raw = [t for t in (sn.raw_task(x) for x in tasks) if t]
+    if len(raw) < 2:
+        return tasks
+    merged, stats = summary_v2.consolidate_tasks(
+        _chat, raw, ctx_payload={}, model=_model_summary(), transcript_norm=sn._norm(transcript)
+    )
+    if stats.get("consolidate_failed") or not merged:
+        return tasks
+    out = []
+    for t in merged:
+        out.append({
+            "assignee": t.get("assignee") or t.get("speaker") or "",
+            "task": t["task"],
+            "deadline": t.get("deadline") or "",
+            "completed": bool(t.get("completed")),
+        })
+    return out
+
+
 def _summarize_recording_v1(
-    transcript: str, *, speakers_detected: bool = False
+    transcript: str, *, speakers_detected: bool = False, dedupe: bool | None = None
 ) -> dict[str, Any] | None:
     from concurrent.futures import ThreadPoolExecutor
 
@@ -1090,6 +1118,11 @@ def _summarize_recording_v1(
     confidence = max(0.0, min(1.0, confidence))
     summary_tasks = obj.get("tasks") if isinstance(obj.get("tasks"), list) else []
     merged_tasks = merge_tasks(summary_tasks, extracted_tasks)
+    if summary_v1_dedupe_enabled() if dedupe is None else dedupe:
+        try:
+            merged_tasks = _dedupe_v1_tasks(merged_tasks, text)
+        except Exception as e:
+            print(f"[summary_v1] dedupe failed: {e!r}")
     summary = inject_tasks_into_summary(summary, merged_tasks)
     return {
         "content_type": content_type,

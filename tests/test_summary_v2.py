@@ -310,3 +310,27 @@ def test_tasks_duplicate_paraphrases():
     a = sn.raw_task({"task": "Подготовить отчёт по продажам", "assignee": "Оксана"})
     b = sn.raw_task({"task": "Подготовить отчёт по продажам за месяц", "assignee": "Рафис"})
     assert not sn.tasks_duplicate(a, b)
+
+
+def test_v1_dedupe_merges_repeats(monkeypatch):
+    def fake_chat(system, user, **kw):
+        op = kw["operation"]
+        if op == "summarize_llm":
+            return json.dumps({"summary": "<h2>📌 Кратко</h2><p>x</p>", "tasks": [
+                {"assignee": "Ульяна", "task": "Прислать документацию по функционалу"},
+                {"assignee": "Ульяна", "task": "Скинуть документ в общий чат"}]}, ensure_ascii=False)
+        if op == "summarize_tasks_llm":
+            return json.dumps({"tasks": [{"assignee": "SPEAKER_2", "task": "Уведомить коллег о запуске"}]}, ensure_ascii=False)
+        if op == "summarize_tasks_consolidate":
+            return json.dumps({"tasks": [
+                {"task": "Прислать документацию по функционалу в общий чат", "assignee": "Ульяна", "sources": [1, 2]},
+                {"task": "Уведомить коллег о запуске", "speaker": "Спикер 2", "sources": [3]}]}, ensure_ascii=False)
+        raise AssertionError(op)
+
+    monkeypatch.setattr(llm_mod, "_chat", fake_chat)
+    out = llm_mod._summarize_recording_v1(TRANSCRIPT, dedupe=True)
+    assert [(t["assignee"], t["task"]) for t in out["tasks"]] == [
+        ("Ульяна", "Прислать документацию по функционалу в общий чат"), ("Спикер 2", "Уведомить коллег о запуске")]
+    assert out["summary"].count("<li>") == 2
+    monkeypatch.setenv("SUMMARY_V1_DEDUPE", "0")
+    assert len(llm_mod._summarize_recording_v1(TRANSCRIPT, dedupe=None)["tasks"]) == 3
