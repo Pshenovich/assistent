@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261022-share3";
+  var WEBAPP_BUILD = "20261022-focuslive1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -5684,7 +5684,29 @@
     ) {
       return window.__miniappDevMock.handle(path, opts, apiFetchReal);
     }
-    return apiFetchReal(path, opts);
+    var res = await apiFetchReal(path, opts);
+    noteFocusSourceChanged(path, opts);
+    return res;
+  }
+
+  // Задачи, встречи, напоминания и действия Лео меняют ленту «Фокуса» (просрочки, подготовка к встрече…).
+  // Любое успешное изменение — свежая лента через секунду, а не по таймеру кэша.
+  var FOCUS_SOURCE_RE = /^\/(calendar|reminders|gpt)(\/|$|\?)/;
+  var focusChangeTimer = null;
+
+  function noteFocusSourceChanged(path, opts) {
+    var method = String((opts && opts.method) || "GET").toUpperCase();
+    if (method === "GET" || !FOCUS_SOURCE_RE.test(String(path || ""))) return;
+    if (!focusLoadedAt) return; // Фокус ещё не открывали — нечего обновлять
+    if (focusChangeTimer) clearTimeout(focusChangeTimer);
+    focusChangeTimer = setTimeout(function refreshFocusAfterChange() {
+      focusChangeTimer = null;
+      if (focusLoading) {
+        focusChangeTimer = setTimeout(refreshFocusAfterChange, 800);
+        return;
+      }
+      loadFocus(true);
+    }, 1000);
   }
 
   function showGate() {
