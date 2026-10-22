@@ -86,6 +86,16 @@ PAIE_REASONING_MODELS: tuple[tuple[str, str], ...] = (
 )
 
 
+def tg_leo_models() -> list[dict[str, str]]:
+    """Модели, которые можно выбрать для Лео в Telegram (Профиль → «Лео в Telegram»)."""
+    return [{"id": mid, "label": label} for mid, label in (*GPT_PICKER_MODELS, *PAIE_REASONING_MODELS)]
+
+
+def tg_leo_model_allowed(model_id: str | None) -> bool:
+    mid = str(model_id or "").strip()
+    return bool(mid) and any(m["id"] == mid for m in tg_leo_models())
+
+
 def gpt_display_label(model_id: str | None) -> str:
     """Короткий ярлык для пузыря ответа: GPT-4.1, GPT-4o mini, …"""
     mid = sanitize_openrouter_model_id(model_id) or ""

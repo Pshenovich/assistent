@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 _LOCK = threading.Lock()
+_TELEGRAM_THREAD_LOCK = threading.Lock()
 _CONN: Optional[sqlite3.Connection] = None
 
 DEFAULT_TITLE = "Новый чат"
@@ -114,6 +115,10 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 
 
 CHAT_ORIGINS = ("", "actual")
+# Служебные треды: создаются сервером, в общем списке чатов не показываются.
+TELEGRAM_ORIGIN = "telegram"
+HIDDEN_ORIGINS = (TELEGRAM_ORIGIN,)
+TELEGRAM_THREAD_TITLE = "Лео · Telegram"
 
 
 def _attach_message_stats(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -147,19 +152,21 @@ def _attach_message_stats(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def list_threads(owner_user_id: int | str, *, limit: int = 100) -> list[dict[str, Any]]:
     uid = _uid(owner_user_id)
     lim = max(1, min(int(limit or 100), 300))
+    hidden = ",".join("?" for _ in HIDDEN_ORIGINS)
     with _LOCK:
         cur = _conn().execute(
-            """
+            f"""
             SELECT t.* FROM chat_threads t
-            WHERE t.owner_user_id = ?
+            WHERE (t.owner_user_id = ?
                OR EXISTS (
                     SELECT 1 FROM chat_members m
                     WHERE m.thread_id = t.id AND m.member_user_id = ?
-               )
+               ))
+              AND t.origin NOT IN ({hidden})
             ORDER BY t.pinned DESC, t.updated_at DESC, t.id DESC
             LIMIT ?
             """,
-            (uid, uid, lim),
+            (uid, uid, *HIDDEN_ORIGINS, lim),
         )
         rows = [_row_to_dict(r) for r in cur.fetchall()]
     for row in rows:
@@ -214,14 +221,18 @@ def get_accessible_thread(
 
 
 def create_thread(
-    owner_user_id: int | str, *, title: str | None = None, origin: str | None = None
+    owner_user_id: int | str,
+    *,
+    title: str | None = None,
+    origin: str | None = None,
+    allow_hidden: bool = False,
 ) -> dict[str, Any]:
     uid = _uid(owner_user_id)
     now = _now_iso()
     title_s = _clip(title, MAX_TITLE_LEN) or DEFAULT_TITLE
     locked = 1 if title and _clip(title, MAX_TITLE_LEN) else 0
     origin_s = str(origin or "").strip().lower()
-    if origin_s not in CHAT_ORIGINS:
+    if origin_s not in CHAT_ORIGINS and not (allow_hidden and origin_s in HIDDEN_ORIGINS):
         origin_s = ""
     with _LOCK:
         cur = _conn().execute(
@@ -235,6 +246,25 @@ def create_thread(
         _conn().commit()
         tid = int(cur.lastrowid)
     item = get_thread(uid, tid)
+    assert item is not None
+    return item
+
+
+def telegram_thread(owner_user_id: int | str) -> dict[str, Any]:
+    """Тред переписки с Лео в Telegram (один на пользователя, создаётся при первом обращении)."""
+    uid = _uid(owner_user_id)
+    with _TELEGRAM_THREAD_LOCK:
+        with _LOCK:
+            row = _conn().execute(
+                "SELECT id FROM chat_threads WHERE owner_user_id = ? AND origin = ? "
+                "ORDER BY id ASC LIMIT 1",
+                (uid, TELEGRAM_ORIGIN),
+            ).fetchone()
+        if row is None:
+            return create_thread(
+                uid, title=TELEGRAM_THREAD_TITLE, origin=TELEGRAM_ORIGIN, allow_hidden=True
+            )
+    item = get_thread(uid, int(row["id"]))
     assert item is not None
     return item
 

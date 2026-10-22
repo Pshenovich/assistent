@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261021-speakers1">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261021-tgleo2">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -94,7 +94,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261021-speakers1" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261021-tgleo2" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -571,6 +571,24 @@
             </div>
             <span class="chevron">›</span>
           </button>
+          <div class="expenses-card tg-leo-card" id="profile-tg-leo" role="group" aria-label="Лео в Telegram">
+            <div class="expenses-card-inner">
+              <div class="expenses-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m22 2-7 20-4-9-9-4Z" />
+                  <path d="M22 2 11 13" />
+                </svg>
+              </div>
+              <div>
+                <p class="expenses-label">Лео в Telegram</p>
+                <p class="expenses-total contacts-card-sub">Модель ответов в боте</p>
+              </div>
+            </div>
+            <div class="tg-leo-controls">
+              <select id="profile-tg-leo-model" class="field-input tg-leo-model" aria-label="Модель Лео в Telegram"></select>
+              <button type="button" class="btn-text" id="profile-tg-leo-history">История ›</button>
+            </div>
+          </div>
           <button type="button" class="expenses-card" id="profile-proactive-open">
             <div class="expenses-card-inner">
               <div class="expenses-icon" aria-hidden="true">
@@ -1974,7 +1992,7 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261021-speakers1" defer></script>
-  <script src="/webapp/app.js?v=20261021-speakers1" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261021-tgleo2" defer></script>
+  <script src="/webapp/app.js?v=20261021-tgleo2" defer></script>
 </body>
 </html>

@@ -394,3 +394,43 @@ def iter_user_ids_with_digest() -> list[int]:
         if digest_enabled(uid) and digest_chat_ids(uid):
             out.append(uid)
     return out
+
+
+# ---------------------------------------------------------------- Лео в Telegram
+
+TG_LEO_MODEL_KEY = "tg_leo_model"
+TG_LEO_CUT_KEY = "tg_leo_context_cut_id"
+
+
+def get_tg_leo_model(user_id: int) -> str:
+    """Модель Лео в Telegram: выбор пользователя из списка, иначе дефолт."""
+    from assistant.config import TG_LEO_MODEL_DEFAULT
+    from assistant.integrations.openrouter_client import tg_leo_model_allowed
+
+    raw = str(load_prefs(user_id).get(TG_LEO_MODEL_KEY) or "").strip()
+    return raw if raw and tg_leo_model_allowed(raw) else TG_LEO_MODEL_DEFAULT
+
+
+def set_tg_leo_model(user_id: int, model: str) -> str:
+    from assistant.integrations.openrouter_client import tg_leo_model_allowed
+
+    m = str(model or "").strip()
+    if not tg_leo_model_allowed(m):
+        raise ValueError("Модель недоступна")
+    prefs = load_prefs(user_id)
+    prefs[TG_LEO_MODEL_KEY] = m
+    save_prefs(user_id, prefs)
+    return m
+
+
+def get_tg_leo_cut_id(user_id: int) -> int:
+    try:
+        return max(0, int(load_prefs(user_id).get(TG_LEO_CUT_KEY) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def set_tg_leo_cut_id(user_id: int, comment_id: int) -> None:
+    prefs = load_prefs(user_id)
+    prefs[TG_LEO_CUT_KEY] = max(0, int(comment_id or 0))
+    save_prefs(user_id, prefs)

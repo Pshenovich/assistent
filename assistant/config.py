@@ -20,6 +20,9 @@ OBUCHAT_TRANSCRIBE_BASE = os.getenv(
 WORK_HOURS_START = os.getenv("WORK_HOURS_START", "09:00").strip() or "09:00"
 WORK_HOURS_END = os.getenv("WORK_HOURS_END", "18:00").strip() or "18:00"
 SLOT_MIN_MINUTES = int(os.getenv("SLOT_MIN_MINUTES", "30") or "30")
+# Лео в Telegram: тот же агент, что в чате Orbita (история, календарь, задачи). 0 — старый роутер.
+TG_LEO_AGENT = (os.getenv("TG_LEO_AGENT", "1").strip().lower() not in ("0", "false", "no", "off"))
+TG_LEO_MODEL_DEFAULT = os.getenv("OPENROUTER_MODEL_TG", "openai/gpt-5.5").strip() or "openai/gpt-5.5"
 
 def _mb_to_bytes(env_key: str, default_mb: int) -> int:
     return int(os.getenv(env_key, str(default_mb)) or default_mb) * 1024 * 1024

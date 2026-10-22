@@ -9609,6 +9609,24 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   border-color: var(--accent-border);
 }
 
+.tg-leo-card {
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  cursor: default;
+}
+
+.tg-leo-controls {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  width: 100%;
+}
+
+.tg-leo-model {
+  flex: 1;
+  min-width: 0;
+}
+
 .expenses-card-inner {
   display: flex;
   gap: var(--space-3);

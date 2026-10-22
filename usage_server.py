@@ -40,6 +40,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
 from assistant.stores import reminders_store  # noqa: E402
+from assistant.services.task_google_sync import (  # noqa: E402
+    clear_task_google_ids as _clear_task_google_ids,
+    sync_task_google as _sync_task_google,
+    task_owner_uid as _task_owner_uid,
+)
 from assistant.lib.usage_store import (
     daily_summary,
     distinct_operations,
@@ -4762,62 +4767,6 @@ def _reconcile_gcal_task_duplicates(uid: int, start_dt: datetime, end_dt: dateti
             print(f"[calendar_tasks] reconcile id={row.get('id')} err={e!r}")
 
 
-def _clear_task_google_ids(uid: int, task: dict[str, Any]) -> dict[str, Any]:
-    from assistant.stores import calendar_tasks as calendar_tasks_store
-
-    cleared = calendar_tasks_store.update_task(
-        uid,
-        task["id"],
-        google_task_id="",
-        google_tasklist_id="",
-        google_event_id="",
-        google_calendar_id="",
-    )
-    return cleared or task
-
-
-def _sync_task_google(uid: int, task: dict[str, Any] | None, action: str) -> dict[str, Any] | None:
-    if not task:
-        return task
-    try:
-        from assistant.services import calendar as calendar_svc
-        from assistant.services import google_tasks
-        from assistant.stores import calendar_tasks as calendar_tasks_store
-
-        owner = _task_owner_uid(task, uid)
-        if action == "delete":
-            calendar_svc.delete_task_event(owner, task)
-            google_tasks.delete_remote(owner, task)
-            return task
-        if calendar_tasks_store.task_is_delegated(task):
-            # Делегированные — только Leo; снять старый Google-синк если был.
-            if str(task.get("google_task_id") or "").strip() or str(
-                task.get("google_event_id") or ""
-            ).strip():
-                try:
-                    calendar_svc.delete_task_event(owner, task)
-                except Exception as e:
-                    print(f"[calendar_tasks] delete_task_event id={task.get('id')} err={e!r}")
-                try:
-                    google_tasks.delete_remote(owner, task)
-                except Exception as e:
-                    print(f"[calendar_tasks] delete_remote id={task.get('id')} err={e!r}")
-                return _clear_task_google_ids(owner, task)
-            return task
-        if owner != int(uid):
-            return task
-        if str(task.get("google_event_id") or "").strip():
-            calendar_svc.delete_task_event(uid, task)
-            cleared = calendar_tasks_store.update_task(
-                uid, task["id"], google_event_id="", google_calendar_id=""
-            )
-            task = cleared or task
-        return google_tasks.push_task(uid, task) or task
-    except Exception as e:
-        print(f"[calendar_tasks] google_sync action={action} err={e!r}")
-        return task
-
-
 def _local_dev_events_range(uid: int, from_d: Any, to_d: Any, timezone_name: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     cur = from_d
@@ -5412,13 +5361,6 @@ def _task_api(task: dict[str, Any], *, tz: Any, viewer_id: int | str | None = No
     if item.get("id"):
         item["url"] = task_webapp_url(item["id"])
     return item
-
-
-def _task_owner_uid(task: dict[str, Any] | None, fallback: int) -> int:
-    try:
-        return int(str((task or {}).get("owner_user_id") or fallback) or fallback)
-    except (TypeError, ValueError):
-        return int(fallback)
 
 
 def task_webapp_url(task_id: int | str) -> str:
@@ -6279,6 +6221,45 @@ async def miniapp_settings_get(
         }
 
     return await run_in_threadpool(_run)
+
+
+class _MiniappTgLeoPatch(BaseModel):
+    model: str = ""
+
+
+def _tg_leo_payload(uid: int) -> dict[str, Any]:
+    from assistant.integrations.openrouter_client import tg_leo_models
+    from assistant.stores import chat_threads as chat_threads_store
+    from assistant.stores import user_prefs
+
+    return {
+        "model": user_prefs.get_tg_leo_model(uid),
+        "models": tg_leo_models(),
+        "thread": chat_threads_store.telegram_thread(uid),
+    }
+
+
+@miniapp_router.get("/profile/telegram-leo")
+async def miniapp_tg_leo_get(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Лео в Telegram: модель и скрытый тред с перепиской."""
+    return await run_in_threadpool(_tg_leo_payload, int(principal.telegram_user_id))
+
+
+@miniapp_router.patch("/profile/telegram-leo")
+async def miniapp_tg_leo_patch(
+    body: _MiniappTgLeoPatch,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import user_prefs
+
+    uid = int(principal.telegram_user_id)
+    try:
+        await run_in_threadpool(user_prefs.set_tg_leo_model, uid, body.model)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return await run_in_threadpool(_tg_leo_payload, uid)
 
 
 @miniapp_router.patch("/settings")
@@ -7274,7 +7255,7 @@ async def miniapp_gpt_chat(
     if not q and not file_ids:
         raise HTTPException(status_code=400, detail="Пустое сообщение")
     hist: list[dict[str, str]] = []
-    for it in body.history[:50]:
+    for it in body.history[-50:]:
         r = (it.role or "").strip().lower()
         if r not in ("user", "assistant"):
             continue
@@ -7458,17 +7439,25 @@ async def miniapp_gpt_chat(
         raise HTTPException(status_code=400, detail="Этот агент запускается из своего режима")
     # Календарь для ИИ: инструменты работают с календарём спрашивающего (не владельца заметки).
     from assistant.services import gpt_calendar_tools as gcal_tools
+    from assistant.services import leo_agent
 
-    gcal_ctx = gcal_tools.GptCalendarContext(
-        uid=uid,
-        telegram_username=str(tg_uname or "").strip() or None,
-        display_name=_principal_display_name(principal),
-        sync_task_google=_sync_task_google,
-        notify_task_assignee=_notify_task_assignee,
+    gcal_ctx = leo_agent.make_calendar_context(
+        uid, telegram_username=tg_uname, display_name=_principal_display_name(principal)
     )
     gcal_tools.seed_quoted_tasks(gcal_ctx, [body.quote or "", *(body.quotes or [])])
     run_model = model or sanitize_openrouter_model_id(str(agent.get("model") or ""))
-    if (
+    tg_leo_thread = False
+    if str(body.item_kind or "") == "chat" and agent_id == "gpt":
+        from assistant.stores import chat_threads as chat_threads_store
+
+        th = chat_threads_store.get_thread(uid, str(body.item_id or ""))
+        tg_leo_thread = bool(th and th.get("origin") == chat_threads_store.TELEGRAM_ORIGIN)
+    if tg_leo_thread:
+        # Тред «Лео · Telegram»: модель из Профиля, агента приложения не трогаем.
+        from assistant.stores import user_prefs
+
+        run_model = user_prefs.get_tg_leo_model(uid)
+    elif (
         model
         and model != str(agent.get("model") or "")
         and agent["kind"] in ("gpt", user_agents.CUSTOM_KIND)
@@ -7543,15 +7532,7 @@ async def miniapp_gpt_chat(
                 uid, query, note_ids=kb_ids if body.knowledge_note_ids is not None else None
             )
         attached_notes = pack_attached_notes(uid, body.context_note_ids)
-        system_text = str(agent.get("system") or "")
-        if agent.get("kind") == "gpt":
-            from assistant.nlu.prompts import ASK_SYSTEM, LEO_IDENTITY
-
-            # Сохранённый пользователем промпт GPT мог быть скопирован до появления LEO_IDENTITY.
-            if not system_text.strip():
-                system_text = ASK_SYSTEM
-            elif "Orbita" not in system_text:
-                system_text = LEO_IDENTITY + "\n\n" + system_text
+        system_text = leo_agent.gpt_system_text(agent)
         if kind in ("local", "chat") and iid:
             owner_for_hint = _resolve_item_owner(str(uid), kind, iid)
             if owner_for_hint:
@@ -7608,26 +7589,11 @@ async def miniapp_gpt_chat(
 
         calendar_tools_on = not _emits_images(run_model or "")
         if calendar_tools_on:
-            cal_addon = gcal_tools.now_prompt_line(uid) + "\n" + gcal_tools.SYSTEM_ADDON
-            if not gcal_tools.has_google_calendar(uid):
-                cal_addon += (
-                    "\nGoogle Календарь у пользователя не подключён: встречи не видны, доступны задачи "
-                    "и напоминания Leo. Если спрашивают про встречи — предложи подключить календарь в Профиле."
-                )
-            system_text = (system_text.rstrip() + "\n\n" + cal_addon).strip() if system_text else cal_addon
+            system_text = leo_agent.append_system(system_text, leo_agent.calendar_addon(uid))
         meeting_line = _note_meeting_prompt_line(uid, kind, iid)
         if meeting_line:
             system_text = (str(system_text or "").rstrip() + "\n\n" + meeting_line).strip()
-        tool_kwargs: dict[str, Any] = (
-            {
-                "tools": gcal_tools.TOOLS,
-                "tool_runner": gcal_tools.make_runner(gcal_ctx),
-                # Вопрос про календарь — модель обязана сначала посмотреть данные.
-                "tool_choice_first": "required" if gcal_tools.looks_like_calendar_question(q) else "auto",
-            }
-            if calendar_tools_on
-            else {}
-        )
+        tool_kwargs: dict[str, Any] = leo_agent.tool_kwargs(gcal_ctx, q) if calendar_tools_on else {}
         try:
             set_openrouter_usage_telegram_user(
                 telegram_user_id=uid,
@@ -7655,15 +7621,7 @@ async def miniapp_gpt_chat(
             )
             if out is None:
                 return None
-            try:
-                gcal_tools.finalize_auto_cards(gcal_ctx, str(out.get("answer") or ""))
-            except Exception as e:
-                print(f"[gpt_calendar] auto_cards err={e!r}")
-            if gcal_ctx.actions:
-                out["calendar_actions"] = [
-                    gcal_tools.public_action(a, viewer_uid=uid)
-                    for a in gcal_tools.actions_by_ids(gcal_ctx.actions)
-                ]
+            leo_agent.attach_calendar_actions(gcal_ctx, out, uid)
             if note_edit_enabled:
                 # До разбора канваса: его парсер принимает и «голый» JSON.
                 clean_answer, edits = note_edits_lib.parse_blocks(str(out.get("answer") or ""))
@@ -7769,25 +7727,9 @@ async def miniapp_gpt_chat(
     files = out.get("files") if isinstance(out.get("files"), list) else []
     used_model = str(out.get("model") or run_model or "").strip()
     canvas = out.get("canvas") if isinstance(out.get("canvas"), list) else []
-    # Приглашения участникам встреч, которые ИИ создал/изменил (как при создании из календаря).
-    if gcal_ctx.created_events or gcal_ctx.updated_events:
-        try:
-            from assistant.services import meeting_invites as inv
-
-            organizer = principal.user if isinstance(principal.user, dict) else {}
-            for created in gcal_ctx.created_events:
-                await inv.notify_invitees_for_miniapp(
-                    organizer_uid=uid, organizer_user=organizer, result=created
-                )
-            for ev in gcal_ctx.updated_events:
-                prev = {str(e).lower() for e in (ev.get("previous_attendee_emails") or [])}
-                added = [e for e in (ev.get("attendee_emails") or []) if str(e).lower() not in prev]
-                if added:
-                    await inv.notify_invitees_for_miniapp(
-                        organizer_uid=uid, organizer_user=organizer, result=ev, only_emails=added
-                    )
-        except Exception as e:
-            print(f"[gpt_calendar] invite_notify err={e!r}")
+    await leo_agent.notify_invitees(
+        gcal_ctx, uid=uid, organizer_user=principal.user if isinstance(principal.user, dict) else None
+    )
     return {
         "answer": str(out.get("answer") or ""),
         "calendar_actions": (
@@ -7829,55 +7771,38 @@ async def miniapp_gpt_calendar_action_op(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     from assistant.services import gpt_calendar_tools as gcal_tools
+    from assistant.services import leo_agent
 
     uid = int(principal.telegram_user_id)
-    a = await run_in_threadpool(gcal_tools.get_action, action_id)
-    if not a or int(a.get("owner_uid") or 0) != uid:
-        raise HTTPException(status_code=404, detail="Действие не найдено")
-    status = str(a.get("status") or "")
     try:
-        if op == "undo":
-            if status != "done":
-                return {"action": gcal_tools.public_action(a, viewer_uid=uid)}
-            res = await run_in_threadpool(gcal_tools.undo_action, a)
-            await run_in_threadpool(partial(gcal_tools.set_action_status, action_id, "undone", result=res))
-        elif op == "apply":
-            if status != "proposed":
-                return {"action": gcal_tools.public_action(a, viewer_uid=uid)}
-            if a.get("kind") == "slot":
-                # Выбран вариант времени → встреча; остальные варианты этой подборки скрываем.
-                res = await run_in_threadpool(
-                    partial(gcal_tools.apply_slot, a, telegram_username=_miniapp_tg_username(principal))
-                )
-                created = res.pop("_created", None)
-                await run_in_threadpool(partial(gcal_tools.set_action_status, action_id, "done", result=res))
-                await run_in_threadpool(gcal_tools.dismiss_slot_siblings, a)
-                if created and created.get("attendee_emails"):
-                    try:
-                        from assistant.services import meeting_invites as inv
-
-                        await inv.notify_invitees_for_miniapp(
-                            organizer_uid=uid,
-                            organizer_user=principal.user if isinstance(principal.user, dict) else {},
-                            result=created,
-                        )
-                    except Exception as e:
-                        print(f"[gpt_calendar] slot invite err={e!r}")
-            else:
-                res = await run_in_threadpool(gcal_tools.apply_delete, a)
-                await run_in_threadpool(partial(gcal_tools.set_action_status, action_id, "applied", result=res))
-        elif op == "dismiss":
-            if status == "proposed":
-                await run_in_threadpool(gcal_tools.set_action_status, action_id, "dismissed")
-        else:
-            raise HTTPException(status_code=400, detail="Неизвестная операция")
-    except HTTPException:
-        raise
+        fresh, created = await run_in_threadpool(
+            partial(
+                leo_agent.apply_action_op,
+                uid,
+                action_id,
+                op,
+                telegram_username=_miniapp_tg_username(principal),
+            )
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail="Действие не найдено") from e
+    except leo_agent.ActionError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         print(f"[gpt_calendar] op={op} id={action_id} err={e!r}")
         raise HTTPException(status_code=502, detail=f"Не получилось: {e}") from e
-    fresh = await run_in_threadpool(gcal_tools.get_action, action_id)
-    return {"action": gcal_tools.public_action(fresh or a, viewer_uid=uid)}
+    if created and created.get("attendee_emails"):
+        try:
+            from assistant.services import meeting_invites as inv
+
+            await inv.notify_invitees_for_miniapp(
+                organizer_uid=uid,
+                organizer_user=principal.user if isinstance(principal.user, dict) else {},
+                result=created,
+            )
+        except Exception as e:
+            print(f"[gpt_calendar] slot invite err={e!r}")
+    return {"action": gcal_tools.public_action(fresh, viewer_uid=uid)}
 
 
 def _strip_speaker_labels(text: str) -> str:

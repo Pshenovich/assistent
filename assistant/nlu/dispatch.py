@@ -46,6 +46,31 @@ class RouteExtras:
     source: RouteSourceKind = "private"
     replied: Message | None = None
     urls: list[str] | None = None
+    # Лео-агент (как в чате Orbita) вместо календарного/напоминаний/ask-скиллов.
+    agent: bool = False
+
+
+# Скиллы, которые в режиме агента уходят в Лео: у него есть инструменты календаря, задач и напоминаний.
+AGENT_SKILLS = frozenset({"ask", "reminder", "assign_task", "calendar"})
+
+
+def agent_enabled(chat_type: str) -> bool:
+    """Агент — только в личке: в группах поведение прежнее."""
+    from assistant import config
+
+    return bool(config.TG_LEO_AGENT) and chat_type == "private" and is_llm_configured()
+
+
+def goes_to_agent(route: Route) -> bool:
+    if route.skill not in AGENT_SKILLS:
+        return False
+    if route.skill == "calendar":
+        # Zoom/Телемост-ссылки и контакты — свои быстрые сценарии.
+        sub = route.sub_intent or ""
+        kind = route.calendar_kind or ""
+        if kind in ("zoom", "telemost") or sub.startswith(("zoom", "telemost")) or sub == "contacts":
+            return False
+    return True
 
 
 async def build_resolved_route(
@@ -55,9 +80,13 @@ async def build_resolved_route(
     has_reply: bool,
     has_url: bool,
     has_attachment: bool,
+    allow_llm: bool = True,
 ) -> Route | None:
     regex = regex_route_mod.regex_route(text)
     llm = None
+    if not allow_llm:
+        # Режим агента: regex ловит узкие быстрые сценарии, остальное понимает сам Лео.
+        return resolve_route(regex, None)
     # LLM только если regex не сработал (иначе +1–5 с на каждое сообщение).
     # INTENT_ROUTER_WITH_REGEX=1 — старое поведение: всегда сверять с LLM.
     with_regex_llm = os.getenv("INTENT_ROUTER_WITH_REGEX", "").strip().lower() in (
@@ -100,6 +129,13 @@ async def dispatch_route(
     full = (msg.text or msg.caption or route.body or "").strip()
     uid = update.effective_user.id if update.effective_user else 0
 
+    if extras.agent and goes_to_agent(route):
+        from assistant.skills import leo_chat as leo_chat_skill
+
+        if route.skill == "assign_task":
+            context.user_data.pop("bitrix_chat_history", None)
+        await leo_chat_skill.handle(update, context, full, extras=extras)
+        return True
     if route.skill == "reminder":
         await reminders_skill.handle(update, context, text or full)
         return True
@@ -281,6 +317,7 @@ async def route_text(
     from assistant.skills.assign_task import prefers_leo_assign_over_bitrix
     from assistant.nlu.intent_router import Route
 
+    extras.agent = agent_enabled(chat_type)
     # Раньше LLM/Bitrix: Leo-постановка не должна даже заходить в bitrix skill.
     if prefers_leo_assign_over_bitrix(cleaned):
         context.user_data.pop("bitrix_chat_history", None)
@@ -302,6 +339,7 @@ async def route_text(
         has_reply=replied is not None,
         has_url=bool(urls),
         has_attachment=has_attachment,
+        allow_llm=not extras.agent,
     )
     # LLM/regex иногда тянут «поставь … задачу» в bitrix — возвращаем в Leo.
     if route is not None and route.skill == "bitrix":
@@ -315,6 +353,20 @@ async def route_text(
             )
     uid = int(update.effective_user.id) if update.effective_user else 0
     if route is None:
+        if extras.agent:
+            if knowledge_qa_likely_user_text(cleaned):
+                from assistant.stores import knowledge_base_store as kb_store
+
+                if uid and kb_store.user_has_accessible_kbs(uid):
+                    await knowledge_qa_skill.handle(update, context, cleaned)
+                    return True
+            if journal_qa_likely_user_text(cleaned):
+                await journal_qa_skill.handle(update, context, cleaned)
+                return True
+            from assistant.skills import leo_chat as leo_chat_skill
+
+            await leo_chat_skill.handle(update, context, cleaned, extras=extras)
+            return True
         if replied and cleaned:
             await ask_skill.handle(update, context, cleaned, replied=replied)
             return True

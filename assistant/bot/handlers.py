@@ -35,6 +35,7 @@ from assistant.skills import telemost as telemost_skill
 from assistant.skills import zoom as zoom_skill
 from assistant.lib.webapp_public import webapp_entry_url
 from assistant.skills import journal_pdf as journal_pdf_skill
+from assistant.skills import leo_chat as leo_chat_skill
 from assistant.skills import transcribe as transcribe_skill
 
 
@@ -405,6 +406,12 @@ async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> No
         print(f"[bot] handler_error reply failed user={uid} err={e!r}")
 
 
+async def _cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await ensure_access(update, context):
+        return
+    await leo_chat_skill.cmd_new(update, context)
+
+
 def register_handlers(app: Application) -> None:
     from assistant.bot.chat_ingest import register_chat_ingest
     from assistant.lib.update_once import claim_update_once
@@ -423,6 +430,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("app", cmd_app))
     app.add_handler(CommandHandler("web", cmd_web))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
+    app.add_handler(CommandHandler("new", _cmd_new))
     app.add_handler(CommandHandler("calendar_auth", cmd_calendar_auth))
     app.add_handler(CommandHandler("zoom_auth", cmd_zoom_auth))
     app.add_handler(CommandHandler("telemost_auth", cmd_telemost_auth))
@@ -470,6 +478,12 @@ def register_handlers(app: Application) -> None:
         CallbackQueryHandler(
             journal_pdf_skill.handle_callback,
             pattern=r"^jmpdf:",
+        )
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            leo_chat_skill.handle_callback,
+            pattern=r"^leo:",
         )
     )
     app.add_handler(

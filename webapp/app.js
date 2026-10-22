@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261021-speakers1";
+  var WEBAPP_BUILD = "20261021-tgleo2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -8997,8 +8997,74 @@
     if (sub) sub.textContent = "Оплатить " + r;
   }
 
+  // Лео в Telegram: модель ответов в боте и скрытый тред с перепиской.
+  var tgLeoState = { model: "", models: [], thread: null };
+
+  function isTgLeoThread(id) {
+    return !!(tgLeoState && tgLeoState.thread && id && String(tgLeoState.thread.id) === String(id));
+  }
+
+  function renderTgLeo() {
+    var sel = document.getElementById("profile-tg-leo-model");
+    if (!sel) return;
+    sel.innerHTML = "";
+    (tgLeoState.models || []).forEach(function (m) {
+      var opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = m.label || m.id;
+      if (m.id === tgLeoState.model) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+
+  async function loadTgLeo() {
+    try {
+      var r = await apiFetch("/profile/telegram-leo", { method: "GET" });
+      tgLeoState = { model: r.model || "", models: r.models || [], thread: r.thread || null };
+      renderTgLeo();
+    } catch (e) {
+      console.warn("loadTgLeo", e);
+    }
+  }
+
+  async function saveTgLeoModel(model) {
+    var prev = tgLeoState.model;
+    try {
+      var r = await apiFetch("/profile/telegram-leo", {
+        method: "PATCH",
+        body: JSON.stringify({ model: model }),
+      });
+      tgLeoState = { model: r.model || model, models: r.models || tgLeoState.models, thread: r.thread || tgLeoState.thread };
+      var picked = (tgLeoState.models || []).filter(function (m) {
+        return m.id === tgLeoState.model;
+      })[0];
+      showNoteToast("Лео в Telegram отвечает на " + ((picked && picked.label) || tgLeoState.model));
+    } catch (e) {
+      tgLeoState.model = prev;
+      showNoteToast((e && e.message) || "Не удалось сохранить модель");
+    }
+    renderTgLeo();
+  }
+
+  async function openTgLeoHistory() {
+    if (!tgLeoState.thread) await loadTgLeo();
+    if (!tgLeoState.thread) {
+      showNoteToast("Не удалось открыть историю");
+      return;
+    }
+    upsertChatThreadCache(tgLeoState.thread);
+    document.documentElement.classList.add("actual-assistant-open");
+    try {
+      await openChatThread(tgLeoState.thread);
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось открыть историю");
+    }
+    if (!isNoteDiscussionOpen()) document.documentElement.classList.remove("actual-assistant-open");
+  }
+
   async function loadProfile() {
     profileScreen("main");
+    loadTgLeo();
     try {
       const me = await apiFetch("/me", { method: "GET" });
       cachedMe = me;
@@ -27792,6 +27858,8 @@
   }
 
   function selectedGptModelId() {
+    // Тред «Лео · Telegram» отвечает моделью из Профиля → «Лео в Telegram».
+    if (isTgLeoThread(activeChatThreadId) && tgLeoState.model) return tgLeoState.model;
     if (composerAgentModel) return composerAgentModel;
     try {
       var stored = String(localStorage.getItem(GPT_MODEL_LS) || "").trim();
@@ -27803,6 +27871,12 @@
   function setSelectedGptModelId(id) {
     var next = String(id || "").trim();
     if (!next) return;
+    if (isTgLeoThread(activeChatThreadId)) {
+      tgLeoState.model = next;
+      syncGptModelButton();
+      saveTgLeoModel(next);
+      return;
+    }
     composerAgentModel = next;
     syncGptModelButton();
     if (isCustomAskMode(noteAskMode())) {
@@ -44111,6 +44185,14 @@
         setTab("knowledge");
       });
     }
+    var tgLeoSel = document.getElementById("profile-tg-leo-model");
+    if (tgLeoSel) {
+      tgLeoSel.addEventListener("change", function () {
+        saveTgLeoModel(tgLeoSel.value);
+      });
+    }
+    var tgLeoHistoryBtn = document.getElementById("profile-tg-leo-history");
+    if (tgLeoHistoryBtn) tgLeoHistoryBtn.addEventListener("click", openTgLeoHistory);
     var agentsOpenBtn = document.getElementById("profile-agents-open");
     if (agentsOpenBtn) {
       agentsOpenBtn.addEventListener("click", function () {
