@@ -464,7 +464,10 @@ if tok:
         print(f"dashboard_auth:{type(e).__name__}")
 PY
 
-if [[ -x scripts/setup_vexa_meeting_bot.sh ]]; then
+# Vexa (бот записи Zoom) не используется: с 2026-10-22 поднимаем её, только если VEXA_ENABLED=1.
+if ! grep -qE '^VEXA_ENABLED=(1|true|yes|on)' .env 2>/dev/null; then
+  echo "==> Vexa: выключена (VEXA_ENABLED не задан) — пропуск"
+elif [[ -x scripts/setup_vexa_meeting_bot.sh ]]; then
   echo "==> Vexa meeting bot"
   bash scripts/setup_vexa_meeting_bot.sh || {
     echo "WARN: setup_vexa_meeting_bot.sh не завершился — проверьте docker logs vexa" >&2

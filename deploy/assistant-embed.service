@@ -13,6 +13,10 @@ ExecStart=/opt/assistant/.venv/bin/uvicorn assistant.services.embed_server:app -
 Restart=on-failure
 RestartSec=10
 MemoryMax=900M
+# Модель — фоновая работа: процессор и диск в первую очередь достаются боту и API.
+Nice=10
+CPUWeight=20
+IOSchedulingClass=idle
 
 [Install]
 WantedBy=multi-user.target
