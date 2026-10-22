@@ -14,6 +14,7 @@ from assistant.bot.meeting_invite_job import register_meeting_invite_jobs
 from assistant.bot.meeting_reminder_job import register_meeting_reminder_jobs
 from assistant.bot.meeting_brief_job import register_meeting_brief_jobs
 from assistant.bot.meeting_followup_handlers import register_meeting_followup_handlers
+from assistant.bot.semantic_index_job import register_semantic_index_jobs
 from assistant.bot.task_reminder_job import register_task_reminder_jobs
 from assistant.bot.meeting_bot_scheduler_job import register_meeting_bot_scheduler_jobs
 from assistant.bot.telemost_mail_job import register_telemost_mail_jobs
@@ -53,6 +54,7 @@ def build_application() -> Application:
     register_meeting_followup_handlers(app)
     register_meeting_reminder_jobs(app)
     register_meeting_brief_jobs(app)
+    register_semantic_index_jobs(app)
     register_task_reminder_jobs(app)
     register_meeting_invite_jobs(app)
     register_meeting_bot_scheduler_jobs(app)

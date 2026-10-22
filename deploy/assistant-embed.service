@@ -1,0 +1,18 @@
+[Unit]
+Description=Assistant local embeddings (semantic memory, B6)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/assistant
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/opt/assistant/.env
+ExecStart=/opt/assistant/.venv/bin/uvicorn assistant.services.embed_server:app --host 127.0.0.1 --port 8095
+Restart=on-failure
+RestartSec=10
+MemoryMax=900M
+
+[Install]
+WantedBy=multi-user.target

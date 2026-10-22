@@ -344,6 +344,16 @@ if [[ ! -d .venv ]]; then
 fi
 ./.venv/bin/pip install -q -U pip
 ./.venv/bin/pip install -q -r requirements.txt
+# B6: эмбеддинги — сервис assistant-embed работает, только если включён в .env
+cp -f deploy/assistant-embed.service /etc/systemd/system/assistant-embed.service
+systemctl daemon-reload
+if grep -qE '^SEMANTIC_SEARCH_ENABLED=(1|true|yes|on)' .env 2>/dev/null; then
+  ./.venv/bin/pip install -q -r requirements-embed.txt || echo "WARN: requirements-embed.txt не установились" >&2
+  systemctl enable assistant-embed >/dev/null 2>&1 || true
+  systemctl restart assistant-embed || echo "WARN: assistant-embed не стартовал" >&2
+else
+  systemctl disable --now assistant-embed >/dev/null 2>&1 || true
+fi
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
   apt-get update -qq 2>/dev/null || true

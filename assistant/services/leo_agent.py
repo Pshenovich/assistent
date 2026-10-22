@@ -47,7 +47,7 @@ def append_system(system_text: str, block: str) -> str:
 
 def tool_kwargs(gcal_ctx: gcal_tools.GptCalendarContext, question: str) -> dict[str, Any]:
     return {
-        "tools": gcal_tools.TOOLS,
+        "tools": gcal_tools.active_tools(),
         "tool_runner": gcal_tools.make_runner(gcal_ctx),
         # Вопрос про календарь — модель обязана сначала посмотреть данные.
         "tool_choice_first": "required" if gcal_tools.looks_like_calendar_question(question) else "auto",

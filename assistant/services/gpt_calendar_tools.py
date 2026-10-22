@@ -259,6 +259,7 @@ SYSTEM_ADDON = """У тебя есть доступ к календарю пол
 - id встреч для изменения бери из calendar_events, не придумывай.
 - Участников указывай именами из контактов; если не уверен — contacts_find.
 - У встреч бывают материалы (транскрипции с саммари, заметки) — в calendar_events это поле materials. Что было/решили на встрече — meeting_materials; что решали с человеком, что он обещал/не сделал, подготовка к встрече с ним — person_history (там и задачи, поставленные ему, — tasks_given). Отвечай по материалам, называй встречу и дату.
+- Вопрос по содержанию прошлых обсуждений без известной встречи/даты («что решили по ценам?», «где обсуждали интеграцию?») — memory_search; отвечай по найденным фрагментам и называй источник с датой. Ничего не нашлось — так и скажи.
 - Обязательства и хвосты («что я обещал?», «что мне должны?», «что просрочено после встреч?») — commitments; у каждого пункта источник (встреча/заметка/чат) и цитата — называй источник.
 - Задачи за любое время («ставил X задачу про …, что с ней?», «чем закончилось …») — tasks_search (тема и/или исполнитель; calendar_events видит только окно дат). В ответе — статус, когда поставлена и срок, результат (поле result), если он есть; покажи найденное через show_calendar_cards.
 - Когда перечисляешь встречи/задачи/напоминания — вызови show_calendar_cards с id ВСЕХ перечисляемых (до 20): под ответом появятся карточки, которые можно открыть. Текстом дай короткий итог, без длинного списка.
@@ -368,6 +369,9 @@ TOOLS: list[dict[str, Any]] = [
                        "description": "mine — за пользователем; theirs — за другими; unknown — исполнитель не ясен"},
          "status": {"type": "string", "enum": ["open", "overdue", "closed", "snoozed", "any"], "default": "open"},
          "who": {"type": "string", "description": "Фильтр по человеку (необязательно)"}}),
+    _fn("memory_search", "Поиск по смыслу во всех материалах пользователя: саммари и транскрипты встреч, заметки, дайджесты чатов. Для вопросов «что решили по …», «где обсуждали …», «что говорил X про …», когда неизвестна конкретная встреча или дата.",
+        {"query": {"type": "string", "description": "Суть вопроса своими словами (тема, о чём речь)"}},
+        ["query"]),
     _fn("focus_item_update", "Разбор пункта Фокуса (инсайта): отметить выполненным, связать со ссылкой, отложить, скрыть, сменить тип, поправить поля. key — из истории (focus key).",
         {"key": {"type": "string", "description": "focus key пункта; если не знаешь — передай text"},
          "text": {"type": "string", "description": "Текст пункта, если key неизвестен"},
@@ -1835,3 +1839,29 @@ def tool_commitments(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
 
 
 EXECUTORS["commitments"] = tool_commitments
+
+
+def tool_memory_search(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    from assistant.lib import embed_client
+    from assistant.services import semantic_memory
+
+    if not embed_client.enabled():
+        return _err("Поиск по памяти не включён")
+    try:
+        hits = semantic_memory.search(ctx.uid, str(args.get("query") or ""), k=8)
+    except Exception as e:
+        print(f"[gpt_calendar] memory_search uid={ctx.uid} err={e!r}")
+        return _err("Поиск по памяти сейчас недоступен")
+    return _ok({"results": hits, "total": len(hits)})
+
+
+EXECUTORS["memory_search"] = tool_memory_search
+
+
+def active_tools() -> list[dict[str, Any]]:
+    """Инструменты для модели: без выключенных функций (memory_search — только с SEMANTIC_SEARCH_ENABLED)."""
+    from assistant.lib import embed_client
+
+    if embed_client.enabled():
+        return TOOLS
+    return [t for t in TOOLS if t["function"]["name"] != "memory_search"]
