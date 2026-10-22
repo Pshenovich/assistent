@@ -32,6 +32,13 @@ ACTIVE_TYPES = ("task", "promise")
 FIELDS = ("assignee", "task", "deadline", "state", "link", "comment")
 TITLES_WINDOW = timedelta(days=90)
 
+# Реестр обязательств (B1): каждый пункт Фокуса пишется сразу при построении ленты.
+# commitment_id общий у одной договорённости из разных источников (встреча, заметка, чат).
+_REGISTRY_COLS = ("direction", "commitment_id", "quote", "due_iso", "seen_at")
+DIRECTIONS = ("mine", "theirs", "unknown")
+COMMITMENT_KINDS = ("summary_task", "agreement", "chat_promise", "chat_request")
+_DEDUP_WINDOW = timedelta(days=60)
+
 _LOCK = threading.RLock()
 _CONN: Optional[sqlite3.Connection] = None
 _CONN_PATH: Optional[str] = None
@@ -74,6 +81,11 @@ def _conn() -> sqlite3.Connection:
         )
         """
     )
+    have = {r[1] for r in _CONN.execute("PRAGMA table_info(focus_items)").fetchall()}
+    for col in _REGISTRY_COLS:
+        if col not in have:
+            _CONN.execute(f"ALTER TABLE focus_items ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+    _CONN.execute("CREATE INDEX IF NOT EXISTS idx_focus_items_cid ON focus_items(owner_user_id, commitment_id)")
     _CONN.commit()
     return _CONN
 
@@ -307,6 +319,10 @@ def apply_to_feed(owner_user_id: Any, items: list[dict[str, Any]], now: Optional
     if not state:
         return items
     now = now or _now()
+    dups = duplicate_keys(owner_user_id, now)
+    for k in dups:  # дубль другой договорённости ведём как скрытый
+        if k in state:
+            state[k] = {**state[k], "status": "dismissed", "reason": "duplicate"}
     out = []
     for card in items:
         sub = card.get("items") or []
@@ -366,6 +382,7 @@ def item_from_card(card: dict[str, Any]) -> list[dict[str, Any]]:
             out.append({
                 "key": i.get("id"), "card_key": card.get("key"), "kind": "summary_task",
                 "text": task or i.get("text"), "who": who, "due": due, "source": src, "type": "task",
+                "mine": bool(i.get("mine")), "quote": str(i.get("quote") or ""),
             })
         return out
     meta = card.get("_item") or {}
@@ -378,6 +395,7 @@ def item_from_card(card: dict[str, Any]) -> list[dict[str, Any]]:
         "due": meta.get("due") or "",
         "source": src,
         "type": "promise" if str(card.get("type") or "") == "chat_promise" else "task",
+        "quote": str(meta.get("quote") or ""),
     })
     return out
 
@@ -638,3 +656,178 @@ def _sync_meta_task(meta: dict[str, Any], row: dict[str, Any]) -> bool:
         if line and line not in dec:
             meta["decisions"] = dec + [line]
     return True
+
+
+# ---------------------------------------------------------------- реестр обязательств (B1)
+
+_ME_WORDS = {"я", "мне", "меня", "мной", "сам", "сама"}
+
+
+def direction_for(item: dict[str, Any], owner_names: list[str]) -> str:
+    """mine — за пользователем; theirs — за другими; unknown — исполнитель не ясен («Спикер N»)."""
+    kind = str(item.get("kind") or "")
+    if kind in ("chat_promise", "chat_request") or item.get("mine"):
+        return "mine"
+    who = str(item.get("who") or "").strip()
+    if not who or who.lower().startswith(("спикер", "speaker")):
+        return "unknown"
+    if who.lower() in _ME_WORDS:
+        return "mine"
+    from assistant.lib.summary_normalize import match_person
+
+    if owner_names and match_person(who, [{"name": n, "aliases": []} for n in owner_names]):
+        return "mine"
+    return "theirs"
+
+
+def _due_iso(raw: str) -> str:
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})", str(raw or ""))
+    return m.group(0) if m else ""
+
+
+def _same_commitment(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    from assistant.lib.summary_normalize import tasks_duplicate
+
+    ta = {"task": str(a.get("text") or ""), "assignee": str(a.get("who") or ""), "quote": "", "speaker": "", "assignee_basis": ""}
+    tb = {"task": str(b.get("text") or ""), "assignee": str(b.get("who") or ""), "quote": "", "speaker": "", "assignee_basis": ""}
+    if not ta["task"] or not tb["task"]:
+        return False
+    for t in (ta, tb):
+        if t["assignee"].lower() in _ME_WORDS or t["assignee"].lower().startswith(("спикер", "speaker")):
+            t["assignee"] = ""
+    return tasks_duplicate(ta, tb)
+
+
+def _owner_names(owner_user_id: Any) -> list[str]:
+    try:
+        from assistant.lib.meeting_context import _owner
+
+        name, aliases = _owner(int(owner_user_id))
+        return [n for n in [name, *aliases] if n]
+    except Exception:
+        return []
+
+
+def ingest(owner_user_id: Any, cards: list[dict[str, Any]], now: Optional[datetime] = None) -> int:
+    """Записать обязательства из карточек ленты; статус и правки пользователя не трогаем."""
+    now = now or _now()
+    owner = str(owner_user_id)
+    names = _owner_names(owner_user_id)
+    existing = {str(r["item_key"]): r for r in rows(owner)}
+    recent = [r for r in existing.values() if str(r.get("created_at") or "") >= (now - _DEDUP_WINDOW).isoformat()
+              and r.get("commitment_id")]
+    n = 0
+    ts = now.isoformat()
+    with _LOCK:
+        conn = _conn()
+        for card in cards:
+            if card.get("type") not in ("summary_tasks", "agreement", "chat_promise", "chat_request"):
+                continue
+            for it in item_from_card(card):
+                key = str(it.get("key") or "").strip()[:300]
+                kind = "agreement" if it.get("kind") == "agreement" else str(it.get("kind") or "")
+                if not key or kind not in COMMITMENT_KINDS:
+                    continue
+                cur = existing.get(key)
+                direction = direction_for(it, names)
+                quote = str(it.get("quote") or "")[:300]
+                due_iso = _due_iso(it.get("due") or "")
+                if cur and cur.get("commitment_id"):
+                    conn.execute(
+                        "UPDATE focus_items SET seen_at = ?, direction = ?, quote = CASE WHEN quote = '' THEN ? ELSE quote END,"
+                        " due_iso = CASE WHEN due_iso = '' THEN ? ELSE due_iso END WHERE owner_user_id = ? AND item_key = ?",
+                        (ts, direction, quote, due_iso, owner, key),
+                    )
+                    continue
+                src_id = str((it.get("source") or {}).get("id") or "")
+                twin = next(
+                    (r for r in recent if str((r.get("source") or {}).get("id") or "") != src_id and _same_commitment(r, it)),
+                    None,
+                )
+                cid = str(twin["commitment_id"]) if twin else "c_" + hashlib.sha1(f"{owner}:{key}".encode()).hexdigest()[:12]
+                if cur:  # пункт уже разбирали руками — дописываем реестровые поля
+                    conn.execute(
+                        "UPDATE focus_items SET commitment_id = ?, direction = ?, quote = ?, due_iso = ?, seen_at = ?"
+                        " WHERE owner_user_id = ? AND item_key = ?",
+                        (cid, direction, quote, due_iso, ts, owner, key),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        INSERT INTO focus_items (owner_user_id, item_key, card_key, source_json, kind, text, who, due, type,
+                            created_at, updated_at, direction, commitment_id, quote, due_iso, seen_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (owner, key, str(it.get("card_key") or key)[:300], json.dumps(it.get("source") or {}, ensure_ascii=False),
+                         kind[:40], str(it.get("text") or "").strip()[:400], str(it.get("who") or "").strip()[:120],
+                         str(it.get("due") or "").strip()[:40], str(it.get("type") or "task")[:20], ts, ts,
+                         direction, cid, quote, due_iso, ts),
+                    )
+                row = {"item_key": key, "commitment_id": cid, "text": it.get("text"), "who": it.get("who"),
+                       "source": it.get("source") or {}, "created_at": ts}
+                recent.append(row)
+                existing[key] = row
+                n += 1
+        conn.commit()
+    return n
+
+
+def duplicate_keys(owner_user_id: Any, now: Optional[datetime] = None) -> set[str]:
+    """Пункты, чья договорённость уже закрыта или показана в другом источнике (раньше записанном)."""
+    now = now or _now()
+    by_cid: dict[str, list[dict[str, Any]]] = {}
+    for r in rows(owner_user_id):
+        if r.get("commitment_id"):
+            by_cid.setdefault(str(r["commitment_id"]), []).append(r)
+    out: set[str] = set()
+    for group in by_cid.values():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda r: str(r.get("created_at") or ""))
+        closed = any(str(r.get("status") or "") in CLOSED for r in group)
+        for i, r in enumerate(group):
+            if closed and not is_hidden(r, now):
+                out.add(str(r["item_key"]))  # закрыли в одном месте — не показываем в другом
+            elif not closed and i > 0:
+                out.add(str(r["item_key"]))  # первая запись — основная, остальные дубли
+    return out
+
+
+def commitments(
+    owner_user_id: Any, *, direction: str = "", status: str = "open", now: Optional[datetime] = None, limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Обязательства, по одному на commitment_id: текст, кто, срок, статус, источники, цитата."""
+    now = now or _now()
+    today = now.date().isoformat()
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for r in rows(owner_user_id):
+        if r.get("commitment_id"):
+            groups.setdefault(str(r["commitment_id"]), []).append(r)
+    out = []
+    for cid, group in groups.items():
+        group.sort(key=lambda r: str(r.get("created_at") or ""))
+        main = group[0]
+        closed_row = next((r for r in group if str(r.get("status") or "") in CLOSED), None)
+        snoozed = all(is_hidden(r, now) and str(r.get("status")) == "snoozed" for r in group)
+        p = public(closed_row or main, now)
+        st = "closed" if closed_row else ("snoozed" if snoozed else "open")
+        due_iso = next((str(r.get("due_iso")) for r in group if r.get("due_iso")), "") or _due_iso(p["deadline"])
+        if st == "open" and due_iso and due_iso < today:
+            st = "overdue"
+        d = str(main.get("direction") or "unknown")
+        if direction and d != direction:
+            continue
+        if status == "open" and st not in ("open", "overdue"):
+            continue
+        if status in ("overdue", "closed", "snoozed") and st != status:
+            continue
+        out.append({
+            "id": cid, "text": p["text"], "who": p["assignee"], "direction": d, "status": st,
+            "closed_as": p["status"] if closed_row else "", "deadline": p["deadline"], "due_iso": due_iso,
+            "quote": next((str(r.get("quote")) for r in group if r.get("quote")), ""),
+            "link": p["link"], "created_at": str(main.get("created_at") or ""),
+            "sources": [public(r, now)["source"] for r in group],
+            "keys": [str(r["item_key"]) for r in group],
+        })
+    out.sort(key=lambda c: (c["status"] != "overdue", c["due_iso"] or "9999", c["created_at"]))
+    return out[:limit]

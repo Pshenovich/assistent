@@ -259,6 +259,7 @@ SYSTEM_ADDON = """У тебя есть доступ к календарю пол
 - id встреч для изменения бери из calendar_events, не придумывай.
 - Участников указывай именами из контактов; если не уверен — contacts_find.
 - У встреч бывают материалы (транскрипции с саммари, заметки) — в calendar_events это поле materials. Что было/решили на встрече — meeting_materials; что решали с человеком, что он обещал/не сделал, подготовка к встрече с ним — person_history (там и задачи, поставленные ему, — tasks_given). Отвечай по материалам, называй встречу и дату.
+- Обязательства и хвосты («что я обещал?», «что мне должны?», «что просрочено после встреч?») — commitments; у каждого пункта источник (встреча/заметка/чат) и цитата — называй источник.
 - Задачи за любое время («ставил X задачу про …, что с ней?», «чем закончилось …») — tasks_search (тема и/или исполнитель; calendar_events видит только окно дат). В ответе — статус, когда поставлена и срок, результат (поле result), если он есть; покажи найденное через show_calendar_cards.
 - Когда перечисляешь встречи/задачи/напоминания — вызови show_calendar_cards с id ВСЕХ перечисляемых (до 20): под ответом появятся карточки, которые можно открыть. Текстом дай короткий итог, без длинного списка.
 - Если в контексте уже есть id задач («task id N», например из карточки Фокуса) — передай их все в show_calendar_cards, не ищи задачи заново и не ограничивайся одной.
@@ -362,6 +363,11 @@ TOOLS: list[dict[str, Any]] = [
         {"query": {"type": "string", "description": "Ключевые слова темы (например «документы клиент»); пусто — все задачи исполнителя"},
          "assignee": {"type": "string", "description": "Имя/ник исполнителя или постановщика (необязательно)"},
          "status": {"type": "string", "enum": ["any", "open", "done"], "default": "any"}}),
+    _fn("commitments", "Реестр обязательств из встреч, заметок и чатов (одна договорённость — один пункт, даже если звучала в нескольких местах). Для вопросов «что я обещал», «что мне должны / что за ними», «что просрочено», «какие хвосты после встреч».",
+        {"direction": {"type": "string", "enum": ["any", "mine", "theirs", "unknown"], "default": "any",
+                       "description": "mine — за пользователем; theirs — за другими; unknown — исполнитель не ясен"},
+         "status": {"type": "string", "enum": ["open", "overdue", "closed", "snoozed", "any"], "default": "open"},
+         "who": {"type": "string", "description": "Фильтр по человеку (необязательно)"}}),
     _fn("focus_item_update", "Разбор пункта Фокуса (инсайта): отметить выполненным, связать со ссылкой, отложить, скрыть, сменить тип, поправить поля. key — из истории (focus key).",
         {"key": {"type": "string", "description": "focus key пункта; если не знаешь — передай text"},
          "text": {"type": "string", "description": "Текст пункта, если key неизвестен"},
@@ -1799,3 +1805,33 @@ def tool_tasks_search(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
 EXECUTORS["meeting_materials"] = tool_meeting_materials
 EXECUTORS["person_history"] = tool_person_history
 EXECUTORS["tasks_search"] = tool_tasks_search
+
+
+def tool_commitments(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    from assistant.lib.summary_normalize import match_person
+    from assistant.services import focus_items
+
+    direction = str(args.get("direction") or "any")
+    status = str(args.get("status") or "open")
+    items = focus_items.commitments(
+        ctx.uid, direction="" if direction == "any" else direction, status="" if status == "any" else status, limit=200
+    )
+    who = str(args.get("who") or "").strip()
+    if who:
+        items = [c for c in items if c["who"] and match_person(c["who"], [{"name": who, "aliases": []}])
+                 or who.lower() in str(c["who"]).lower()]
+    labels = {"mine": "за мной", "theirs": "за другими", "unknown": "исполнитель не ясен"}
+    out = [
+        {
+            "text": c["text"], "who": c["who"], "direction": labels.get(c["direction"], c["direction"]),
+            "status": c["status"], "deadline": c["deadline"] or c["due_iso"],
+            "sources": [s.get("label") or s.get("title") for s in c["sources"]][:3],
+            **({"quote": c["quote"][:200]} if c["quote"] else {}),
+            **({"task_id": c["link"].get("task_id")} if (c["link"] or {}).get("task_id") else {}),
+        }
+        for c in items[:40]
+    ]
+    return _ok({"commitments": out, "total": len(items)})
+
+
+EXECUTORS["commitments"] = tool_commitments

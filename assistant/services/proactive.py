@@ -549,6 +549,7 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
     try:
         from assistant.services import focus_items
 
+        focus_items.ingest(uid, items, now)  # реестр обязательств (B1)
         items = focus_items.apply_to_feed(uid, items, now)
     except Exception as e:
         print(f"[proactive] focus items failed uid={uid} err={e!r}")
