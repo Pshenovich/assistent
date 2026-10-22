@@ -270,7 +270,10 @@ def notify_summary_ready(
 
     pdf_id = int(note_id or summary_event_id or 0)
     if note_id:
+        from assistant.services.meeting_followup import followup_button
+
         summary_markup = pdf_download_inline_keyboard_for_note(int(note_id))
+        summary_markup["inline_keyboard"].append([followup_button(int(note_id))])
     elif pdf_id:
         summary_markup = pdf_download_inline_keyboard(pdf_id)
     else:
