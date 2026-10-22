@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261022-voice">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261022-profile">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -96,7 +96,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261022-brand" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261022-profile" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -491,244 +491,221 @@
       <!-- Профиль -->
       <section id="panel-profile" class="panel hidden" role="tabpanel" hidden>
         <div id="profile-main">
-          <div class="profile-head" id="profile-head"></div>
-          <div id="profile-tariff-card" class="tariff-card"></div>
-          <button type="button" class="expenses-card" id="profile-expenses-open">
-            <div class="expenses-card-inner">
-              <div class="expenses-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M3 17l6-6 4 4 8-10" />
-                  <path d="M14 5h7v7" />
-                </svg>
-              </div>
-              <div>
-                <p class="expenses-label">Расходы за 7 дней</p>
-                <p class="expenses-total" id="profile-expenses-total">—</p>
-              </div>
+          <div class="pf-side">
+            <div class="profile-head" id="profile-head">
+              <div class="avatar pf-skel-circle" aria-hidden="true"></div>
+              <div class="profile-names"><span class="pf-skel pf-skel--name"></span><span class="pf-skel pf-skel--nick"></span></div>
             </div>
-            <span class="chevron">›</span>
-          </button>
-          <button type="button" class="expenses-card" id="profile-contacts-open">
-            <div class="expenses-card-inner">
-              <div class="expenses-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                  <circle cx="9" cy="7" r="4" />
-                  <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
-                </svg>
+            <section class="pf-wallet" id="profile-tariff-card" aria-label="Баланс и расходы">
+              <div class="pf-wallet-top">
+                <div>
+                  <p class="pf-wallet-label">Баланс</p>
+                  <p class="pf-wallet-balance" id="profile-balance"></p>
+                </div>
+                <span class="pf-plan-chip" id="profile-plan"></span>
               </div>
-              <div>
-                <p class="expenses-label">Мои контакты</p>
-                <p class="expenses-total contacts-card-sub" id="profile-contacts-count">—</p>
+              <div class="pf-wallet-foot">
+                <button type="button" class="pf-wallet-spend" id="profile-expenses-open">
+                  <span class="pf-spark" id="profile-expenses-spark" aria-hidden="true"></span>
+                  <span class="pf-wallet-spend-text">За 7 дней <b id="profile-expenses-total"></b></span>
+                  <span class="pf-chev" aria-hidden="true">›</span>
+                </button>
+                <button type="button" class="pf-pay hidden" id="profile-open-pay">Пополнить</button>
               </div>
-            </div>
-            <span class="chevron">›</span>
-          </button>
-          <button type="button" class="expenses-card" id="profile-calendars-open">
-            <div class="expenses-card-inner">
-              <div class="expenses-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="3" y="4" width="18" height="18" rx="2" />
-                  <path d="M16 2v4M8 2v4M3 10h18" />
-                </svg>
-              </div>
-              <div>
-                <p class="expenses-label">Календари</p>
-                <p class="expenses-total contacts-card-sub" id="profile-calendars-hint">Напоминания и занятость</p>
-              </div>
-            </div>
-            <span class="chevron">›</span>
-          </button>
-          <button type="button" class="expenses-card" id="profile-knowledge-base-open">
-            <div class="expenses-card-inner">
-              <div class="expenses-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-                </svg>
-              </div>
-              <div>
-                <p class="expenses-label">База знаний</p>
-                <p class="expenses-total contacts-card-sub" id="profile-knowledge-base-hint">Документы компании для PAIE</p>
-              </div>
-            </div>
-            <span class="chevron">›</span>
-          </button>
-          <button type="button" class="expenses-card" id="profile-agents-open">
-            <div class="expenses-card-inner">
-              <div class="expenses-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 8V4H8" />
-                  <rect width="16" height="12" x="4" y="8" rx="2" />
-                  <path d="M2 14h2" />
-                  <path d="M20 14h2" />
-                  <path d="M15 13v2" />
-                  <path d="M9 13v2" />
-                </svg>
-              </div>
-              <div>
-                <p class="expenses-label">Агенты</p>
-                <p class="expenses-total contacts-card-sub" id="profile-agents-hint">PAIE, Research, GPT и свои</p>
-              </div>
-            </div>
-            <span class="chevron">›</span>
-          </button>
-          <div class="expenses-card tg-leo-card" id="profile-tg-leo" role="group" aria-label="Лео в Telegram">
-            <div class="expenses-card-inner">
-              <div class="expenses-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="m22 2-7 20-4-9-9-4Z" />
-                  <path d="M22 2 11 13" />
-                </svg>
-              </div>
-              <div>
-                <p class="expenses-label">Лео в Telegram</p>
-                <p class="expenses-total contacts-card-sub">Модель ответов в боте</p>
-              </div>
-            </div>
-            <div class="tg-leo-controls">
-              <select id="profile-tg-leo-model" class="field-input tg-leo-model" aria-label="Модель Лео в Telegram"></select>
-              <button type="button" class="btn-text" id="profile-tg-leo-history">История ›</button>
-            </div>
+            </section>
           </div>
-          <button type="button" class="expenses-card" id="profile-voice-open">
-            <div class="expenses-card-inner">
-              <div class="expenses-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="9" y="2" width="6" height="12" rx="3" />
-                  <path d="M5 10a7 7 0 0 0 14 0" />
-                  <path d="M12 17v4" />
-                </svg>
-              </div>
-              <div>
-                <p class="expenses-label">Голосовой ввод</p>
-                <p class="expenses-total contacts-card-sub" id="profile-voice-hint">Паразиты, словарь, сниппеты</p>
+
+          <div class="pf-body">
+            <div class="pf-error hidden" id="profile-error" role="alert">
+              <p class="pf-error-text" data-error></p>
+              <button type="button" class="pf-error-btn" id="profile-retry">Повторить</button>
+            </div>
+
+            <div class="pf-group">
+              <p class="pf-group-title">Лео</p>
+              <div class="pf-list">
+                <div class="pf-row pf-row--select" id="profile-tg-leo">
+                  <span class="pf-ico pf-ico--blue" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Модель в Telegram</span></span>
+                    <span class="pf-row-val" id="profile-tg-leo-value"></span>
+                    <span class="pf-chev pf-chev--down" aria-hidden="true">›</span>
+                  </span>
+                  <select id="profile-tg-leo-model" class="pf-row-select" aria-label="Модель Лео в Telegram"></select>
+                </div>
+                <button type="button" class="pf-row" id="profile-tg-leo-history">
+                  <span class="pf-ico pf-ico--sky" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l3 2" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">История в Telegram</span><span class="pf-row-sub">Переписка с Лео в боте</span></span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </button>
+                <button type="button" class="pf-row" id="profile-proactive-open">
+                  <span class="pf-ico pf-ico--violet" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Подсказки</span><span class="pf-row-sub">Фокус и утренний бриф</span></span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </button>
+                <button type="button" class="pf-row" id="profile-voice-open">
+                  <span class="pf-ico pf-ico--red" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0" /><path d="M12 17v4" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Голосовой ввод</span><span class="pf-row-sub" id="profile-voice-hint">Паразиты, словарь, сниппеты</span></span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </button>
+                <button type="button" class="pf-row" id="profile-agents-open">
+                  <span class="pf-ico pf-ico--gray" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2M20 14h2M15 13v2M9 13v2" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Агенты</span><span class="pf-row-sub" id="profile-agents-hint">PAIE, Research, GPT и свои</span></span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </button>
               </div>
             </div>
-            <span class="chevron">›</span>
-          </button>
-          <button type="button" class="expenses-card" id="profile-proactive-open">
-            <div class="expenses-card-inner">
-              <div class="expenses-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" />
-                </svg>
-              </div>
-              <div>
-                <p class="expenses-label">Подсказки</p>
-                <p class="expenses-total contacts-card-sub">Фокус и утренний бриф</p>
-              </div>
-            </div>
-            <span class="chevron">›</span>
-          </button>
-          <button type="button" class="expenses-card" id="profile-chats-open">
-            <div class="expenses-card-inner">
-              <div class="expenses-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
-                </svg>
-              </div>
-              <div>
-                <p class="expenses-label">Чаты</p>
-                <p class="expenses-total contacts-card-sub" id="profile-chats-hint">Дайджест выбранных чатов</p>
-              </div>
-            </div>
-            <span class="chevron">›</span>
-          </button>
-          <div class="services-card">
-            <h3 class="services-title">Подключённые сервисы</h3>
-            <p class="services-sub">Интеграции для автоматизации</p>
-            <div class="svc-row" data-svc="google">
-              <div class="svc-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="3" y="4" width="18" height="18" rx="2" />
-                  <path d="M16 2v4M8 2v4M3 10h18" />
-                </svg>
-              </div>
-              <div class="svc-text">
-                <p class="svc-name">Google Calendar</p>
-                <p class="svc-desc svc-desc--status" data-status-line>Синхронизация встреч</p>
-              </div>
-              <div class="svc-actions">
-                <button type="button" class="btn btn-sm primary" data-action="connect">Подключить</button>
-                <button type="button" class="btn btn-sm ghost hidden" data-action="disconnect">Отключить</button>
+
+            <div class="pf-group">
+              <p class="pf-group-title">Мои данные</p>
+              <div class="pf-list">
+                <button type="button" class="pf-row" id="profile-contacts-open">
+                  <span class="pf-ico pf-ico--orange" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Контакты</span></span>
+                    <span class="pf-row-val" id="profile-contacts-count"></span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </button>
+                <button type="button" class="pf-row" id="profile-calendars-open">
+                  <span class="pf-ico pf-ico--green" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Календари</span><span class="pf-row-sub" id="profile-calendars-hint">Напоминания и занятость</span></span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </button>
+                <button type="button" class="pf-row" id="profile-knowledge-base-open">
+                  <span class="pf-ico pf-ico--yellow" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">База знаний</span><span class="pf-row-sub" id="profile-knowledge-base-hint">Документы компании для PAIE</span></span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </button>
+                <button type="button" class="pf-row" id="profile-chats-open">
+                  <span class="pf-ico pf-ico--teal" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Чаты</span><span class="pf-row-sub" id="profile-chats-hint">Дайджест выбранных чатов</span></span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </button>
               </div>
             </div>
-            <div class="svc-divider" aria-hidden="true"></div>
-            <div class="svc-row svc-row--zoom" data-svc="zoom">
-              <div class="svc-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M15 10l4-3v10l-4-3M5 7h8a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z" />
-                </svg>
-              </div>
-              <div class="svc-text">
-                <p class="svc-name">Zoom</p>
-                <p class="svc-desc svc-desc--status" data-zoom-line>Создание ссылок на встречи</p>
-              </div>
-              <div class="svc-actions">
-                <button type="button" class="btn btn-sm primary" data-action="connect">Подключить</button>
-                <button type="button" class="btn btn-sm ghost hidden" data-action="disconnect">Отключить</button>
+
+            <div class="pf-group">
+              <p class="pf-group-title">Сервисы</p>
+              <div class="pf-list pf-svc-list" id="profile-svc-list">
+                <div class="pf-row pf-svc" data-svc="google">
+                  <span class="pf-ico pf-ico--blue" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Google Calendar</span><span class="pf-row-sub svc-desc" data-status-line>Синхронизация встреч</span></span>
+                    <span class="pf-svc-actions">
+                      <button type="button" class="pf-link" data-action="connect">Подключить</button>
+                      <button type="button" class="pf-link pf-link--muted hidden" data-action="disconnect">Отключить</button>
+                    </span>
+                  </span>
+                </div>
+                <div class="pf-row pf-svc pf-svc--setup" data-svc="zoom">
+                  <span class="pf-ico pf-ico--sky" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M15 10l4-3v10l-4-3M5 7h8a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Zoom</span><span class="pf-row-sub svc-desc" data-zoom-line>Ссылки на встречи</span></span>
+                    <span class="pf-svc-actions">
+                      <button type="button" class="pf-link" data-action="connect">Подключить</button>
+                      <button type="button" class="pf-link pf-link--muted hidden" data-action="disconnect">Отключить</button>
+                    </span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </div>
+                <div class="pf-row pf-svc pf-svc--setup" data-svc="telemost">
+                  <span class="pf-ico pf-ico--red" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2" /><path d="M7 10h4v4H7z" /><path d="M15 10l4 2-4 2z" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Телемост</span><span class="pf-row-sub svc-desc" data-telemost-line>Ссылки на встречи</span></span>
+                    <span class="pf-svc-actions">
+                      <button type="button" class="pf-link" data-action="connect">Подключить</button>
+                      <button type="button" class="pf-link pf-link--muted hidden" data-action="disconnect">Отключить</button>
+                    </span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </div>
+                <div class="pf-row pf-svc pf-svc--setup pf-svc--extra" data-svc="yandex-disk">
+                  <span class="pf-ico pf-ico--yellow" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M4 7h16v10H4z" /><path d="M8 11h8M8 14h5" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Яндекс Диск</span><span class="pf-row-sub svc-desc" data-yandex-disk-line>Записи Zoom-встреч</span></span>
+                    <span class="pf-svc-actions">
+                      <button type="button" class="pf-link" data-action="connect">Подключить</button>
+                      <button type="button" class="pf-link pf-link--muted hidden" data-action="disconnect">Отключить</button>
+                    </span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </div>
+                <div class="pf-row pf-svc pf-svc--setup pf-svc--extra" data-svc="bitrix">
+                  <span class="pf-ico pf-ico--sky" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="m8 12 3 3 5-6" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Битрикс24</span><span class="pf-row-sub svc-desc" data-bitrix-line>Задачи и CRM</span></span>
+                    <span class="pf-svc-actions">
+                      <button type="button" class="pf-link" data-action="connect">Подключить</button>
+                      <button type="button" class="pf-link pf-link--muted hidden" data-action="disconnect">Отключить</button>
+                    </span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </div>
+                <button type="button" class="pf-more" id="profile-svc-more">Ещё сервисы · Яндекс Диск, Битрикс24</button>
               </div>
             </div>
-            <div class="svc-divider" aria-hidden="true"></div>
-            <div class="svc-row svc-row--telemost" data-svc="telemost">
-              <div class="svc-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="3" y="6" width="18" height="12" rx="2" />
-                  <path d="M7 10h4v4H7z" />
-                  <path d="M15 10l4 2-4 2z" />
-                </svg>
-              </div>
-              <div class="svc-text">
-                <p class="svc-name">Телемост</p>
-                <p class="svc-desc svc-desc--status" data-telemost-line>Создание ссылок на встречи</p>
-              </div>
-              <div class="svc-actions">
-                <button type="button" class="btn btn-sm primary" data-action="connect">Подключить</button>
-                <button type="button" class="btn btn-sm ghost hidden" data-action="disconnect">Отключить</button>
-              </div>
+
+            <div class="pf-list hidden" id="profile-logout-wrap">
+              <button type="button" class="pf-row pf-row--danger" id="profile-logout">
+                <span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Выйти</span></span></span>
+              </button>
             </div>
-            <div class="svc-divider" aria-hidden="true"></div>
-            <div class="svc-row svc-row--yandex-disk" data-svc="yandex-disk">
-              <div class="svc-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M4 7h16v10H4z" />
-                  <path d="M8 11h8M8 14h5" />
-                </svg>
-              </div>
-              <div class="svc-text">
-                <p class="svc-name">Яндекс Диск</p>
-                <p class="svc-desc svc-desc--status" data-yandex-disk-line>Записи Zoom-встреч</p>
-              </div>
-              <div class="svc-actions">
-                <button type="button" class="btn btn-sm primary" data-action="connect">Подключить</button>
-                <button type="button" class="btn btn-sm ghost hidden" data-action="disconnect">Отключить</button>
-              </div>
-            </div>
-            <div class="svc-divider" aria-hidden="true"></div>
-            <div class="svc-row svc-row--bitrix" data-svc="bitrix">
-              <div class="svc-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M9 11l3 3L22 4" />
-                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-                </svg>
-              </div>
-              <div class="svc-text">
-                <p class="svc-name">Битрикс24</p>
-                <p class="svc-desc svc-desc--status" data-bitrix-line>Задачи и CRM через MCP</p>
-              </div>
-              <div class="svc-actions">
-                <button type="button" class="btn btn-sm primary" data-action="connect">Подключить</button>
-                <button type="button" class="btn btn-sm ghost hidden" data-action="disconnect">Отключить</button>
-              </div>
-            </div>
-            <p class="error hidden" data-error></p>
+
+            <footer class="profile-legal-footer">
+              <p class="pf-meta">
+                <span id="profile-build"></span>
+                <button type="button" class="pf-meta-id hidden" id="profile-copy-id" title="Скопировать id для поддержки">id <span id="profile-user-id"></span></button>
+              </p>
+              <p class="pf-meta">
+                <a href="/webapp/legal/privacy.html" class="profile-legal-link" data-legal="privacy">Политика конфиденциальности</a>
+                <span class="profile-legal-sep" aria-hidden="true">·</span>
+                <a href="/webapp/legal/terms.html" class="profile-legal-link" data-legal="terms">Пользовательское соглашение</a>
+              </p>
+            </footer>
           </div>
-          <footer class="profile-legal-footer">
-            <a href="/webapp/legal/privacy.html" class="profile-legal-link" data-legal="privacy">Политика конфиденциальности</a>
-            <span class="profile-legal-sep" aria-hidden="true">·</span>
-            <a href="/webapp/legal/terms.html" class="profile-legal-link" data-legal="terms">Пользовательское соглашение</a>
-          </footer>
         </div>
 
         <div id="profile-payment" class="profile-subscreen hidden">
@@ -2134,6 +2111,6 @@
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
   <script src="/webapp/web-canvas.js?v=20261022-focuschip" defer></script>
-  <script src="/webapp/app.js?v=20261022-voice" defer></script>
+  <script src="/webapp/app.js?v=20261022-profile" defer></script>
 </body>
 </html>

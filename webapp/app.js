@@ -8482,18 +8482,33 @@
   }
 
   /* ——— Profile ——— */
+  function humanProfileError(msg) {
+    var m = String(msg || "");
+    if (/authorization|initdata|401|unauthorized|не авторизован/i.test(m)) {
+      return "Сессия истекла. Откройте Orbita заново или войдите ещё раз.";
+    }
+    if (/failed to fetch|networkerror|load failed|timeout|таймаут/i.test(m)) {
+      return "Нет связи с сервером. Проверьте интернет и повторите.";
+    }
+    return m || "Не загрузилось.";
+  }
+
   function showProfileError(msg) {
+    const wrap = document.getElementById("profile-error");
     const el = document.querySelector("#panel-profile [data-error]");
     if (!el) return;
-    el.textContent = msg;
-    el.classList.remove("hidden");
+    el.textContent = humanProfileError(msg);
+    if (wrap) wrap.classList.remove("hidden");
+    else el.classList.remove("hidden");
   }
 
   function clearProfileError() {
+    const wrap = document.getElementById("profile-error");
     const el = document.querySelector("#panel-profile [data-error]");
     if (!el) return;
     el.textContent = "";
-    el.classList.add("hidden");
+    if (wrap) wrap.classList.add("hidden");
+    else el.classList.add("hidden");
   }
 
   async function loadIntegrations() {
@@ -8508,6 +8523,7 @@
       const key = card.getAttribute("data-svc");
       const on =
         key === "booking" ? !!data.booking_assistant : !!data[key];
+      card.classList.toggle("is-on", on);
       const connectBtn = card.querySelector('[data-action="connect"]');
       const disconnectBtn = card.querySelector('[data-action="disconnect"]');
       const zoomLine = card.querySelector("[data-zoom-line]");
@@ -8542,9 +8558,9 @@
           if (on) {
             var zwho =
               data.zoom_display_name || data.zoom_email || "аккаунт подключён";
-            zoomLine.textContent = "● " + zwho;
+            zoomLine.textContent = zwho;
           } else {
-            zoomLine.textContent = "Создание ссылок на встречи";
+            zoomLine.textContent = "Ссылки на встречи";
           }
           zoomLine.classList.toggle("svc-desc--connected", on);
         }
@@ -8556,12 +8572,12 @@
           if (on) {
             var twho =
               data.telemost_display_name || data.telemost_email || "аккаунт подключён";
-            telemostLine.textContent = "● " + twho;
+            telemostLine.textContent = twho;
             if (data.telemost_org_likely === false) {
               telemostLine.textContent += " (@yandex.ru — API недоступен)";
             }
           } else {
-            telemostLine.textContent = "Создание ссылок на встречи";
+            telemostLine.textContent = "Ссылки на встречи";
           }
           telemostLine.classList.toggle("svc-desc--connected", on);
         }
@@ -8571,11 +8587,11 @@
         if (yandexDiskLine) {
           if (on) {
             if (data.yandex_disk_needs_scope_refresh) {
-              yandexDiskLine.textContent = "● нужно обновить права (отключить → подключить)";
+              yandexDiskLine.textContent = "Нужно обновить права: отключить и подключить";
             } else {
               var ywho =
                 data.yandex_disk_display_name || data.yandex_disk_login || "аккаунт подключён";
-              yandexDiskLine.textContent = "● " + ywho;
+              yandexDiskLine.textContent = ywho;
             }
           } else {
             yandexDiskLine.textContent = "Записи Zoom-встреч";
@@ -8588,9 +8604,9 @@
         var bitrixLine = card.querySelector("[data-bitrix-line]");
         if (bitrixLine) {
           if (on) {
-            bitrixLine.textContent = "● Битрикс24 подключён";
+            bitrixLine.textContent = "Подключено";
           } else {
-            bitrixLine.textContent = "Задачи и CRM через MCP";
+            bitrixLine.textContent = "Задачи и CRM";
           }
           bitrixLine.classList.toggle("svc-desc--connected", on);
         }
@@ -8600,9 +8616,7 @@
         var statusLine = card.querySelector("[data-status-line]");
         if (statusLine) {
           if (key === "google") {
-            statusLine.textContent = on
-              ? "● Google Calendar подключён"
-              : "Синхронизация встреч";
+            statusLine.textContent = on ? "Подключено" : "Синхронизация встреч";
           } else if (key === "todoist") {
             statusLine.textContent = on
               ? "● Todoist подключён"
@@ -8614,7 +8628,24 @@
         if (disconnectBtn) setHidden(disconnectBtn, !on);
       }
     });
+    syncProfileSvcMore();
     clearProfileError();
+  }
+
+  // «Ещё сервисы»: неподключённые редкие сервисы свёрнуты, подключённые видны всегда.
+  function syncProfileSvcMore() {
+    var list = document.getElementById("profile-svc-list");
+    var more = document.getElementById("profile-svc-more");
+    if (!list || !more) return;
+    var hidden = list.querySelectorAll(".pf-svc--extra:not(.is-on)");
+    var names = [];
+    hidden.forEach(function (row) {
+      var t = row.querySelector(".pf-row-title");
+      if (t) names.push(t.textContent);
+    });
+    var expanded = list.classList.contains("pf-svc-list--expanded");
+    setHidden(more, !names.length || expanded);
+    more.textContent = "Ещё сервисы · " + names.join(", ");
   }
 
   function profileScreen(name) {
@@ -9332,6 +9363,13 @@
       if (m.id === tgLeoState.model) opt.selected = true;
       sel.appendChild(opt);
     });
+    var val = document.getElementById("profile-tg-leo-value");
+    if (val) {
+      var cur = (tgLeoState.models || []).filter(function (m) {
+        return m.id === tgLeoState.model;
+      })[0];
+      val.textContent = (cur && (cur.label || cur.id)) || tgLeoState.model || "—";
+    }
   }
 
   async function loadTgLeo() {
@@ -9395,14 +9433,10 @@
         initials(me) +
         "</span></div>" +
         '<div class="profile-names">' +
-        "<h2>" +
-        (me.first_name || "Пользователь") +
-        "</h2>" +
-        "<p>@" +
-        (me.username || "—") +
-        " · id " +
-        (me.id != null ? me.id : "—") +
-        "</p></div>";
+        "<h2></h2>" +
+        "<p></p></div>";
+      head.querySelector("h2").textContent = me.first_name || "Пользователь";
+      head.querySelector("p").textContent = me.username ? "@" + me.username : "";
       var avatarImg = head.querySelector(".avatar-img");
       if (avatarImg) {
         applyTelegramAvatar(avatarImg, {
@@ -9410,56 +9444,96 @@
           username: me.username,
         });
       }
+      renderProfileMeta(me);
 
-      const b = await apiFetch("/billing", { method: "GET" });
-      const tariffCard = document.getElementById("profile-tariff-card");
-      const bal =
-        b.show_balance && typeof b.balance_rub === "number"
-          ? b.balance_rub.toLocaleString("ru-RU", {
-              minimumFractionDigits: 0,
-              maximumFractionDigits: 2,
-            }) + " ₽"
-          : "—";
-      tariffCard.innerHTML =
-        '<div class="tariff-row-top">' +
-        '<span class="tariff-name">' +
-        (b.tariff_label || "Тариф") +
-        "</span>" +
-        '<span class="tariff-pill">Активен</span></div>' +
-        '<p class="tariff-balance-label">Текущий баланс</p>' +
-        '<p class="tariff-balance">' +
-        (b.show_balance ? bal : "Безлимит") +
-        "</p>" +
-        '<button type="button" class="tariff-pay" id="profile-open-pay">Пополнить баланс</button>';
-
-      var payBtn = document.getElementById("profile-open-pay");
-      if (payBtn) {
-        payBtn.addEventListener("click", function () {
-          profileScreen("payment");
-          renderPaymentMethods();
-          syncPaymentSummary();
-        });
-      }
-
-      try {
-        const ex = await apiFetch("/usage/expenses?days=14", { method: "GET" });
-        const total = typeof ex.total_rub === "number" ? ex.total_rub : 0;
-        var expTotal = document.getElementById("profile-expenses-total");
-        if (expTotal) {
-          expTotal.textContent =
-            "₽ " + total.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
-        }
-      } catch (_) {
-        var expTotalFail = document.getElementById("profile-expenses-total");
-        if (expTotalFail) expTotalFail.textContent = "—";
-      }
-      await refreshProfileContactsCount();
-      await refreshKnowledgeBaseHint();
-      await syncDigestSettingsFromServer();
+      await Promise.all([
+        apiFetch("/billing", { method: "GET" }).then(renderProfileWallet),
+        refreshProfileExpenses(),
+        refreshProfileContactsCount(),
+        refreshKnowledgeBaseHint(),
+        syncDigestSettingsFromServer(),
+      ]);
     } catch (e) {
       showProfileError(e.message || String(e));
     }
     await loadIntegrations();
+  }
+
+  function renderProfileWallet(b) {
+    var balEl = document.getElementById("profile-balance");
+    var planEl = document.getElementById("profile-plan");
+    var payBtn = document.getElementById("profile-open-pay");
+    var limited = !!(b && b.show_balance && typeof b.balance_rub === "number");
+    if (balEl) {
+      balEl.textContent = limited
+        ? b.balance_rub.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + " ₽"
+        : "Безлимит";
+    }
+    if (planEl) planEl.textContent = (b && b.tariff_label) || "";
+    if (payBtn) setHidden(payBtn, !limited);
+  }
+
+  async function refreshProfileExpenses() {
+    var totalEl = document.getElementById("profile-expenses-total");
+    var spark = document.getElementById("profile-expenses-spark");
+    try {
+      var ex = await apiFetch("/usage/expenses?days=7", { method: "GET" });
+      var total = typeof ex.total_rub === "number" ? ex.total_rub : 0;
+      if (totalEl) {
+        totalEl.textContent = total.toLocaleString("ru-RU", { maximumFractionDigits: 2 }) + " ₽";
+      }
+      if (spark) {
+        // 7 столбиков по дням (UTC), сегодня — справа и акцентом.
+        var byDate = {};
+        (ex.days || []).forEach(function (d) {
+          byDate[d.date_utc] = Number(d.total_rub || 0);
+        });
+        var vals = [];
+        for (var k = 6; k >= 0; k--) {
+          var dt = new Date(Date.now() - k * 86400000);
+          vals.push(byDate[dt.toISOString().slice(0, 10)] || 0);
+        }
+        var max = Math.max.apply(null, vals) || 1;
+        spark.innerHTML = "";
+        vals.forEach(function (v, idx) {
+          var bar = document.createElement("i");
+          bar.style.height = Math.max(8, Math.round((v / max) * 100)) + "%";
+          if (idx === vals.length - 1) bar.className = "on";
+          spark.appendChild(bar);
+        });
+      }
+    } catch (_) {
+      if (totalEl) totalEl.textContent = "—";
+    }
+  }
+
+  function renderProfileMeta(me) {
+    var build = document.getElementById("profile-build");
+    if (build) {
+      var id = document.documentElement.getAttribute("data-build") || "";
+      build.textContent = "Orbita" + (id ? " · сборка " + id : "");
+    }
+    var idBtn = document.getElementById("profile-copy-id");
+    var idEl = document.getElementById("profile-user-id");
+    var uid = me && (me.id != null ? me.id : me.telegram_user_id);
+    if (idBtn && idEl) {
+      idEl.textContent = uid != null ? String(uid) : "";
+      setHidden(idBtn, uid == null);
+    }
+    var logoutWrap = document.getElementById("profile-logout-wrap");
+    if (logoutWrap) setHidden(logoutWrap, hasTelegramWebAppAuth());
+  }
+
+  function profileLogout() {
+    setStoredSession("");
+    setSessionHint(false);
+    gateLoginBootstrapped = false;
+    fetch(API + "/auth/logout", { method: "POST", credentials: "same-origin" })
+      .catch(function () {})
+      .then(function () {
+        showGate();
+        bootstrapGateLogin();
+      });
   }
 
   async function loadExpensesDetail() {
@@ -9472,7 +9546,7 @@
       const total = ex.total_rub || 0;
       let html =
         '<div class="stat-banner">' +
-        '<p class="stat-banner-label">Всего за период</p>' +
+        '<p class="stat-banner-label">За 14 дней</p>' +
         '<p class="stat-banner-value">₽ ' +
         Number(total).toLocaleString("ru-RU", { maximumFractionDigits: 2 }) +
         "</p></div>";
@@ -11494,7 +11568,7 @@
     try {
       var data = await apiFetch("/contacts", { method: "GET" });
       var n = (data.items || []).length;
-      el.textContent = n ? String(n) + " контакт(ов)" : "Пусто";
+      el.textContent = n ? String(n) : "Нет";
     } catch (_) {
       el.textContent = "—";
     }
@@ -44744,6 +44818,32 @@
       });
     });
 
+    onId("profile-open-pay", "click", function () {
+      profileScreen("payment");
+      renderPaymentMethods();
+      syncPaymentSummary();
+    });
+    onId("profile-retry", "click", function () {
+      clearProfileError();
+      loadProfile();
+    });
+    onId("profile-logout", "click", profileLogout);
+    onId("profile-svc-more", "click", function () {
+      var list = document.getElementById("profile-svc-list");
+      if (list) list.classList.add("pf-svc-list--expanded");
+      syncProfileSvcMore();
+    });
+    onId("profile-copy-id", "click", function () {
+      var idEl = document.getElementById("profile-user-id");
+      var text = idEl ? idEl.textContent : "";
+      if (!text) return;
+      var done = function () {
+        showNoteToast("id скопирован");
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () {});
+      }
+    });
     onId("profile-expenses-open", "click", async function () {
       profileScreen("expenses");
       await loadExpensesDetail();
