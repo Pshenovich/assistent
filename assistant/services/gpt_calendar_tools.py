@@ -165,10 +165,14 @@ def public_action(a: dict[str, Any], *, viewer_uid: int | None = None) -> dict[s
     }
     if kind == "focus_item":
         # Карточка разбора пункта Фокуса: живое состояние пунктов, а не снимок на момент ответа.
-        from assistant.services import focus_items
+        from assistant.services import focus_items, meeting_share
 
         rows = [focus_items.get(a.get("owner_uid"), k) for k in p.get("keys") or []]
         out["focus"] = [focus_items.public(r) for r in rows if r]
+        try:  # задачи встречи, которые уже поставил или выполнил кто-то из участников
+            out["focus"] = meeting_share.overlay(int(a.get("owner_uid")), out["focus"])
+        except Exception as e:
+            print(f"[focus] shared overlay failed action={a.get('id')} err={e!r}")
         out["card_key"] = p.get("card_key") or ""
     return out
 

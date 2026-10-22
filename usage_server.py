@@ -8918,11 +8918,14 @@ async def miniapp_note_meeting_get(
     uid = int(principal.telegram_user_id)
 
     def _run() -> dict[str, Any] | None:
-        if notes_store.get_accessible_note(uid, note_id, with_sharing=False) is None:
+        note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
+        if note is None:
             return None
+        owner = str(note.get("owner_user_id") or note.get("user_id") or uid)  # встречей могли поделиться
         return {
-            "meeting": meeting_links.get_for_note(uid, note_id),
-            "people": meeting_links.people_for_note(uid, note_id),
+            "meeting": meeting_links.get_for_note(owner, note_id),
+            "people": meeting_links.people_for_note(owner, note_id),
+            "is_owner": owner == str(uid),
         }
 
     res = await run_in_threadpool(_run)
@@ -9340,7 +9343,7 @@ def _focus_remember(uid: int, card: dict[str, Any], keys: Optional[list[str]] = 
     from assistant.services import focus_items
 
     out = []
-    for snap in focus_items.item_from_card(card):
+    for snap in focus_items.item_from_card(card, with_closed=True):
         if keys and str(snap.get("key")) not in keys:
             continue
         focus_items.remember(uid, snap)
@@ -10691,6 +10694,41 @@ async def miniapp_note_members_add(
         )
     )
     return {"ok": True, "member": member, "item": note}
+
+
+@miniapp_router.post("/notes/local/{note_id}/share-attendees")
+async def miniapp_note_share_attendees(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """«Поделиться с участниками»: участники встречи с Лео получают доступ к заметке."""
+    from assistant.services import meeting_share
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    await run_in_threadpool(_remember_principal_profile, principal)
+
+    def _run() -> tuple[dict[str, Any], dict[str, Any]]:
+        note = notes_store.get_note(uid, note_id)
+        if not note:
+            raise HTTPException(status_code=403, detail="Поделиться может только владелец заметки")
+        res = meeting_share.share_with_attendees(uid, note_id, owner_username=_miniapp_tg_username(principal))
+        return res, notes_store.get_accessible_note(uid, note_id) or note
+
+    try:
+        res, note = await run_in_threadpool(_run)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    title = str((note or {}).get("title") or "Встреча")
+    adder = _principal_display_name(principal)
+    for m in res["added"]:
+        try:
+            await run_in_threadpool(
+                partial(_notify_member_added, member_user_id=int(m["user_id"]), title=title, note_id=int(note_id), adder_name=adder)
+            )
+        except Exception as e:
+            print(f"[share_attendees] notify failed note={note_id} uid={m['user_id']} err={e!r}")
+    return {"ok": True, **res, "item": note}
 
 
 @miniapp_router.delete("/notes/local/{note_id}/members/{member_id}")

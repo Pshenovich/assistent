@@ -373,12 +373,18 @@ def rule_summary_tasks(
     now: datetime,
     tz: Any,
     done: Optional[set[str]] = None,
+    foreign: Optional[set[int]] = None,
 ) -> list[dict[str, Any]]:
-    """has_tasks[note_id]: названия задач, уже поставленных из этой встречи, — их пункты прячем,
-    остальные предлагаем; True — встреча разобрана целиком (старый вызов)."""
-    from assistant.services.proactive_ai import _covered
+    """has_tasks[note_id]: задачи, уже поставленные из этой встречи (названия или
+    {title, by, task_id} — от любого участника); True — встреча разобрана целиком (старый вызов).
+
+    Карточка у всех участников встречи одна: открытые задачи — в items, уже поставленные или
+    выполненные кем-то — в closed_items (со статусом и автором), в счёт карточки не идут.
+    foreign — встречи, которыми поделились: «мои» в них — про владельца, не про пользователя."""
+    from assistant.services.meeting_share import task_state
 
     done = done or set()
+    foreign = foreign or set()
     out = []
     for n in notes:
         meta = n.get("meta") if isinstance(n.get("meta"), dict) else {}
@@ -392,18 +398,23 @@ def rule_summary_tasks(
         posted = has_tasks.get(nid)
         if posted is True:
             continue
-        posted_titles = [str(x) for x in posted] if isinstance(posted, (list, tuple, set)) else []
-        items = []
+        posted_list = [
+            x if isinstance(x, dict) else {"title": str(x), "by": "", "task_id": None}
+            for x in (posted if isinstance(posted, (list, tuple, set)) else [])
+        ]
+        items, closed = [], []
         for t in tasks:
             parts = [str(t.get("assignee") or "").strip(), str(t.get("task") or "").strip(), str(t.get("deadline") or "").strip()]
             line = " — ".join(p for p in parts if p)
             iid = summary_task_id(nid, line)
+            st = task_state(t, posted_list)
+            if st:  # уже поставил или выполнил кто-то из участников встречи
+                closed.append({"id": iid, "text": line, **st})
+                continue
             if iid in done:
                 continue
-            if posted_titles and _covered(str(t.get("task") or ""), posted_titles):
-                continue  # эту задачу из встречи уже поставили
             item = {"id": iid, "text": line}
-            if t.get("owner_flag") == "mine":
+            if nid not in foreign and t.get("owner_flag") == "mine":
                 item["mine"] = True
             if t.get("quote") and float(t.get("quote_score") or 0) >= 0.6:
                 item["quote"] = str(t["quote"])[:300]
@@ -426,6 +437,7 @@ def rule_summary_tasks(
                 "ask": f"Задачи из встречи «{title}»: " + "; ".join(lines),
                 "note": {"id": nid, "kind": "transcription", "title": title},
                 "items": items,
+                "closed_items": closed,
                 "actions": [
                     {
                         "label": "Поставить всё",
@@ -516,16 +528,13 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
     if prefs.get("after_meetings"):
         items += rule_no_results(evs, kinds, now, tz)
     try:
-        notes = [
-            n for n in notes_store.list_transcription_notes(uid, limit=40)
-            if str(n.get("owner_user_id") or n.get("user_id") or uid) == str(uid)
-        ]
-        has_tasks = {
-            int(n["id"]): [str(t.get("title") or "") for t in calendar_tasks.list_tasks_for_note(uid, n["id"])]
-            for n in notes
-        }
+        from assistant.services.meeting_share import posted_for_note
+
+        notes = notes_store.list_transcription_notes(uid, limit=40)  # свои и те, которыми поделились
+        foreign = {int(n["id"]) for n in notes if str(n.get("owner_user_id") or n.get("user_id") or uid) != str(uid)}
+        has_tasks = {int(n["id"]): posted_for_note(n) for n in notes}
         if prefs.get("after_meetings"):
-            items += rule_summary_tasks(notes, has_tasks, now, tz, done_keys(uid))
+            items += rule_summary_tasks(notes, has_tasks, now, tz, done_keys(uid), foreign)
     except Exception as e:
         print(f"[proactive] summary tasks failed uid={uid} err={e!r}")
     try:

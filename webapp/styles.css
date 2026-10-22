@@ -16447,6 +16447,9 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
 .note-meeting-plaque.hidden { display: none; }
 .nmp-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .nmp-line svg { flex-shrink: 0; color: var(--accent); }
+.nmp-share { flex-wrap: wrap; row-gap: 2px; }
+.nmp-share .nmp-link:disabled { opacity: 0.6; cursor: default; }
+.nmp-hint { font-size: 0.75rem; color: var(--text-tertiary); }
 .nmp-when { border: none; background: transparent; color: var(--text); font: inherit; padding: 0; cursor: pointer; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .nmp-sp { flex: 1; }
 .nmp-link { border: none; background: transparent; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; padding: 0; white-space: nowrap; }

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261022-refine1";
+  var WEBAPP_BUILD = "20261022-share3";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -16747,6 +16747,7 @@
         if (noteMeetingState.noteId !== id) return;
         noteMeetingState.meeting = (data && data.meeting) || null;
         noteMeetingState.people = (data && data.people) || [];
+        noteMeetingState.isOwner = !data || data.is_owner !== false;
         noteMeetingState.loading = false;
         renderNoteMeetingPlaque();
       })
@@ -16778,6 +16779,7 @@
     }
     var m = st.meeting;
     var people = st.people || [];
+    var own = st.isOwner !== false; // встречей поделились — смотреть можно, менять состав нельзя
     var show = !!(m || people.length || st.showPeople);
     el.classList.toggle("hidden", !show || String(currentOpenNoteId()) !== st.noteId);
     if (!show) {
@@ -16794,7 +16796,7 @@
         '<span class="nmp-sp"></span>' +
         (m.meet_url ? '<button type="button" class="nmp-link" data-nmp="join">Ссылка</button>' : "") +
         '<button type="button" class="nmp-link" data-nmp="open">Открыть встречу</button>' +
-        '<button type="button" class="nmp-x" data-nmp="unlink" aria-label="Отвязать от встречи" title="Отвязать от встречи">×</button>' +
+        (own ? '<button type="button" class="nmp-x" data-nmp="unlink" aria-label="Отвязать от встречи" title="Отвязать от встречи">×</button>' : "") +
         "</div>";
     }
     html += '<div class="nmp-people">';
@@ -16811,11 +16813,20 @@
       seen[k] = true;
       html +=
         '<span class="nmp-chip nmp-chip--manual">' + escapeHtml(p.name || p.email) +
-        '<button type="button" data-nmp="rm" data-key="' + escapeHtml(p.person_key) + '" aria-label="Убрать участника">×</button></span>';
+        (own ? '<button type="button" data-nmp="rm" data-key="' + escapeHtml(p.person_key) + '" aria-label="Убрать участника">×</button>' : "") +
+        "</span>";
     });
-    html += '<button type="button" class="nmp-chip nmp-add" data-nmp="add">+ участник</button>';
-    html += '<span class="nmp-add-box hidden"><input type="text" class="nmp-input" placeholder="Имя или email" autocomplete="off" /><span class="nmp-suggest hidden"></span></span>';
+    if (own) {
+      html += '<button type="button" class="nmp-chip nmp-add" data-nmp="add">+ участник</button>';
+      html += '<span class="nmp-add-box hidden"><input type="text" class="nmp-input" placeholder="Имя или email" autocomplete="off" /><span class="nmp-suggest hidden"></span></span>';
+    }
     html += "</div>";
+    if (own && Object.keys(seen).length) {
+      html +=
+        '<div class="nmp-line nmp-share"><button type="button" class="nmp-link" data-nmp="share"' + (st.sharing ? " disabled" : "") + ">" +
+        (st.sharing ? "Открываю доступ…" : "Поделиться с участниками") + "</button>" +
+        '<span class="nmp-hint">транскрипция, саммари и задачи встречи — в их Фокус</span></div>';
+    }
     el.innerHTML = html;
   }
 
@@ -16832,6 +16843,32 @@
     else if (act === "unlink") unlinkNoteMeeting();
     else if (act === "add") showNotePersonInput();
     else if (act === "rm") removeNotePerson(b.getAttribute("data-key"));
+    else if (act === "share") shareNoteWithAttendees();
+  }
+
+  async function shareNoteWithAttendees() {
+    var st = noteMeetingState;
+    var id = st.noteId;
+    if (!id || st.sharing) return;
+    if (!(await confirmDialog("Открыть участникам встречи доступ к транскрипции и саммари? Они смогут их редактировать, а задачи встречи увидят в Фокусе — кто какую уже поставил, будет видно всем."))) return;
+    st.sharing = true;
+    renderNoteMeetingPlaque();
+    try {
+      var data = await apiFetch("/notes/local/" + encodeURIComponent(id) + "/share-attendees", { method: "POST" });
+      var names = function (arr) { return (arr || []).map(function (x) { return x.name; }).join(", "); };
+      var parts = [];
+      if ((data.added || []).length) parts.push("Доступ открыт: " + names(data.added));
+      if ((data.already || []).length) parts.push("Уже был: " + names(data.already));
+      if ((data.missing || []).length) parts.push("Нет в Лео: " + names(data.missing));
+      showNoteToast(parts.join(". ") || "Некому открыть доступ");
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось поделиться");
+    } finally {
+      if (noteMeetingState === st) {
+        st.sharing = false;
+        renderNoteMeetingPlaque();
+      }
+    }
   }
 
   function openNoteMeetingEvent(m) {
@@ -34248,6 +34285,13 @@
   }
 
   function focusStatusLine(f) {
+    var line = focusStatusLineBase(f);
+    // кто разобрал пункт — видно всем участникам встречи
+    if (line && f.by && ["completed", "converted", "linked"].indexOf(f.status) >= 0) line = [line[0], line[1] + " · " + f.by];
+    return line;
+  }
+
+  function focusStatusLineBase(f) {
     if (f.status === "completed") return ["check", "Выполнено" + (f.source && f.source.kind === "note" ? " · отмечено в источнике" : "")];
     if (f.status === "converted") return ["taskBox", "Поставлена задача"];
     if (f.status === "linked") {
@@ -34667,7 +34711,7 @@
       card.classList.add("is-closed");
       card.appendChild(focusChatHead(tone[0], tone[1], line[1], (opts.num ? opts.num + " · " : "") + who));
       card.appendChild(focusEl("b", "focus-card-title is-muted", f.text));
-      var taskId = f.link && f.link.task_id;
+      var taskId = !f.shared && f.link && f.link.task_id; // задача другого участника — у него
       if ((f.status === "converted" || f.status === "linked") && taskId) {
         // Поставленная / связанная задача: карточка открывает саму задачу.
         card.classList.add("is-openable");
@@ -34676,7 +34720,7 @@
           openTaskFromChip(String(taskId));
         });
       }
-      if (opts.mine) {
+      if (opts.mine && !f.shared) {
         var cacts = focusEl("div", "focus-card-acts");
         if ((f.status === "converted" || f.status === "linked") && taskId) {
           cacts.appendChild(focusCardBtn("Открыть задачу", "is-soft", function () {
@@ -34781,8 +34825,54 @@
     return card;
   }
 
+  // Задачи встречи в чате у нескольких участников: опрашиваем их состояние, пока карточки на экране,
+  // — кто-то поставил, выполнил или поправил задачу, у остальных это видно через пару секунд.
+  var FOCUS_LIVE_MS = 3000;
+  var focusLiveTimer = null;
+
+  function focusLiveIds() {
+    return Object.keys(calActionsCache).filter(function (k) {
+      var a = calActionsCache[k];
+      return a && a.kind === "focus_item" && (a.focus || []).some(function (f) {
+        return f.source && f.source.kind === "note";
+      });
+    }).slice(-50);
+  }
+
+  function ensureFocusLive() {
+    if (!focusLiveTimer) focusLiveTimer = setTimeout(tickFocusLive, FOCUS_LIVE_MS);
+  }
+
+  function tickFocusLive() {
+    focusLiveTimer = null;
+    if (!document.querySelector(".focus-chat-card")) return; // карточек на экране нет — опрос останавливается
+    var ids = focusLiveIds();
+    if (!ids.length) return;
+    if (document.hidden) {
+      ensureFocusLive();
+      return;
+    }
+    apiFetch("/gpt/calendar-actions/status", { method: "POST", body: JSON.stringify({ ids: ids }) })
+      .then(function (res) {
+        var ae = document.activeElement;
+        var typing = ae && ae.closest && ae.closest(".focus-chat-card") && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName);
+        var changed = false;
+        ((res && res.actions) || []).forEach(function (a) {
+          var cur = calActionsCache[a.id];
+          if (!a || !a.id || !cur || JSON.stringify(cur.focus || []) === JSON.stringify(a.focus || [])) return;
+          if (typing) return; // не сбивать ввод в форме — подтянем следующим тиком
+          calActionsCache[a.id] = a;
+          changed = true;
+        });
+        if (changed) refreshDiscussFeedNow();
+      })
+      .catch(function () {})
+      .then(ensureFocusLive);
+  }
+
   // Под пузырём ответа: каждый пункт — отдельная карточка, сразу с действиями.
   function renderFocusChatCard(a) {
+    if ((a.focus || []).some(function (f) { return f.source && f.source.kind === "note"; })) ensureFocusLive();
     var items = a.focus || [];
     var box = focusEl("div", "focus-chat");
     if (!items.length) {

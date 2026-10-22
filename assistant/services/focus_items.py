@@ -365,8 +365,10 @@ def apply_to_feed(owner_user_id: Any, items: list[dict[str, Any]], now: Optional
     return out
 
 
-def item_from_card(card: dict[str, Any]) -> list[dict[str, Any]]:
-    """Пункты карточки Фокуса в виде снимков для remember()."""
+def item_from_card(card: dict[str, Any], *, with_closed: bool = False) -> list[dict[str, Any]]:
+    """Пункты карточки Фокуса в виде снимков для remember().
+
+    with_closed — и задачи встречи, которые уже поставил или выполнил кто-то из участников (для чата)."""
     src: dict[str, Any] = {}
     if card.get("note"):
         src = {**card["note"], "kind": "note", "note_kind": card["note"].get("kind") or "note"}
@@ -385,7 +387,7 @@ def item_from_card(card: dict[str, Any]) -> list[dict[str, Any]]:
             })
         return out
     if card.get("type") == "summary_tasks":
-        for i in card.get("items") or []:
+        for i in list(card.get("items") or []) + (list(card.get("closed_items") or []) if with_closed else []):
             parts = [p.strip() for p in str(i.get("text") or "").split(" — ")]
             who, task, due = (parts + ["", "", ""])[:3] if len(parts) >= 3 else (
                 (parts[0], parts[1], "") if len(parts) == 2 else ("", parts[0] if parts else "", "")
@@ -595,8 +597,13 @@ def sync_source(owner_user_id: Any, row: dict[str, Any]) -> None:
         return  # пункты из чатов: исходник — переписка в Telegram, её не трогаем
     from assistant.stores import notes as notes_store
 
+    # встречей могли поделиться: пишем в заметку владельца — отметку видят все участники
+    note = notes_store.get_accessible_note(owner_user_id, int(src["id"]), with_sharing=False)
+    if not note:
+        return
+    owner_user_id = str(note.get("owner_user_id") or note.get("user_id") or owner_user_id)
     note = notes_store.get_note(owner_user_id, int(src["id"]))
-    if not note or str(note.get("owner_user_id") or note.get("user_id") or owner_user_id) != str(owner_user_id):
+    if not note:
         return
     body = str(note.get("body") or "")
     new_body, changed = place_mark(body, row)
