@@ -39,13 +39,14 @@ import sys
 import time
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 DEFAULT_DIR = ROOT / "data" / "eval" / "summaries"
 TASK_MATCH_MIN = 0.55
+SEMANTIC_MATCH = True  # --string-match выключает
 
 
 def _norm(s: str) -> str:
@@ -143,6 +144,36 @@ def load_gold_md(path: Path) -> list[dict[str, Any]]:
     return out
 
 
+MATCH_SYSTEM = """Сопоставь задачи. Даны gold — эталонный список реальных задач встречи — и got — задачи, которые нашла система.
+Для каждого элемента got укажи номер задачи gold, которой он соответствует по смыслу (то же действие, тот же объект; формулировка может отличаться), или null, если такой задачи в gold нет.
+Несколько элементов got могут соответствовать одной задаче gold — это повторы. Верни ТОЛЬКО JSON: {"match":[номер gold или null для каждого got по порядку]}"""
+
+
+def _llm_match(gold: list[dict[str, Any]], got: list[dict[str, Any]]) -> Optional[list[Optional[int]]]:
+    """Сопоставление по смыслу (модель видит только тексты задач, без транскрипта)."""
+    from assistant.nlu import llm
+
+    payload = {"gold": [{"n": i + 1, "task": g.get("task", "")} for i, g in enumerate(gold)],
+               "got": [t.get("task", "") for t in got]}
+    try:
+        obj = llm._json_obj(llm._chat(MATCH_SYSTEM, json.dumps(payload, ensure_ascii=False), operation="eval_match",
+                                      model=llm._model_summary(), timeout=120, temperature=0.0, max_tokens=2000)) or {}
+    except Exception as ex:
+        print(f"[eval] match failed: {ex!r}")
+        return None
+    m = obj.get("match")
+    if not isinstance(m, list) or len(m) != len(got):
+        return None
+    out: list[Optional[int]] = []
+    for x in m:
+        try:
+            k = int(x) - 1
+        except (TypeError, ValueError):
+            k = -1
+        out.append(k if 0 <= k < len(gold) else None)
+    return out
+
+
 def _metrics(case: dict[str, Any], out: dict[str, Any] | None) -> dict[str, Any]:
     from assistant.lib.summary_normalize import _norm as n, locate_quote, match_person
 
@@ -162,6 +193,16 @@ def _metrics(case: dict[str, Any], out: dict[str, Any] | None) -> dict[str, Any]
             sum(1 for t in quoted if locate_quote(t["quote"], tn) >= 0.8) / len(tasks) if quoted else 0.0
         )
     exp = (case.get("expected") or {}).get("tasks") or []
+    if exp and SEMANTIC_MATCH and tasks:
+        mm = _llm_match(exp, tasks)
+        if mm is not None:
+            hit = {k for k in mm if k is not None}
+            m["recall"] = len(hit) / len(exp)
+            m["precision"] = sum(1 for k in mm if k is not None) / len(tasks)  # дубль реальной задачи — не мусор
+            m["dup_rate"] = (sum(1 for k in mm if k is not None) - len(hit)) / len(tasks)
+            m["junk_rate"] = sum(1 for k in mm if k is None) / len(tasks)
+            m["distinct_precision"] = len(hit) / len(tasks)
+            return m
     if exp:
         pairs = _match(exp, tasks)
         m["recall"] = len(pairs) / len(exp)
@@ -283,6 +324,7 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="печать сырых метрик по кейсам")
     ap.add_argument("--annotate", metavar="MODEL", help="переписать expected эталоном от этой модели")
     ap.add_argument("--gold-md", type=Path, metavar="DIR", help="эталон из ручной разметки; прогон только по размеченным")
+    ap.add_argument("--string-match", action="store_true", help="сопоставлять задачи по буквам, без модели")
     args = ap.parse_args()
 
     if args.export_from_notes:
@@ -301,6 +343,8 @@ def main() -> int:
         return 1
     pipelines = [p.strip() for p in args.pipelines.split(",") if p.strip()]
     rows: dict[str, list[dict[str, Any]]] = {p: [] for p in pipelines}
+    global SEMANTIC_MATCH
+    SEMANTIC_MATCH = not args.string_match
     if args.gold_md:
         files = [f for f in files if (args.gold_md / (f.stem + ".md")).is_file()]
     for f in files[: args.limit]:
@@ -314,7 +358,7 @@ def main() -> int:
             rows[p].append(m)
             if args.json:
                 print(json.dumps({"case": f.name, "pipeline": p, **m}, ensure_ascii=False))
-    keys = ["failed", "tasks", "recall", "precision", "dup_rate", "assignee_acc", "due_acc", "with_assignee", "with_due_iso",
+    keys = ["failed", "tasks", "recall", "distinct_precision", "dup_rate", "junk_rate", "precision", "assignee_acc", "due_acc", "with_assignee", "with_due_iso",
             "quote_grounded", "st_candidates", "st_dropped", "st_windows", "sec"]
     print("metric".ljust(16) + "".join(p.ljust(10) for p in pipelines))
     for k in keys:
