@@ -111,15 +111,27 @@ def _match(expected: list[dict[str, Any]], got: list[dict[str, Any]]) -> list[tu
 
 
 def load_gold_md(path: Path) -> list[dict[str, Any]]:
-    """Отмеченные «- [x]» строки разметки → эталонные задачи."""
+    """Отмеченные строки разметки → эталонные задачи.
+
+    Отметка — «- [x] …» в начале строки или «[x]» / «- [x]» дописанные в конце строки кандидата.
+    """
     import re
 
+    mark = r"[xXхХ✓✔+]"
     out: list[dict[str, Any]] = []
     for line in path.read_text().splitlines():
-        m = re.match(r"^\s*-\s*\[[xXхХ]\]\s*(.+)$", line)
-        if not m:
+        if not re.match(r"^\s*-\s*\[", line):
             continue
-        body = re.sub(r"\s*\((?:[С12ц]+,?)+\)\s*$", "", m.group(1)).strip()
+        lead = re.match(rf"^\s*-\s*\[{mark}\]\s*(.*)$", line)
+        trail = re.search(rf"\s*-?\s*\[{mark}\]\s*$", line)
+        if lead:
+            body = lead.group(1)
+            body = re.sub(rf"\s*-?\s*\[{mark}\]\s*$", "", body)
+        elif trail:
+            body = re.sub(r"^\s*-\s*\[[^\]]*\]\s*", "", line[: trail.start()])
+        else:
+            continue
+        body = re.sub(r"\s*\((?:[С12ц]+,?)+\)\s*$", "", body).strip()
         parts = [p.strip() for p in body.split("|")]
         task = parts[0] if parts else ""
         if not task:
