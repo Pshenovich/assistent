@@ -9,8 +9,10 @@
   <title>Orbita</title>
   <meta name="apple-mobile-web-app-title" content="Orbita" />
   <link rel="manifest" href="/webapp/manifest.webmanifest" />
-  <link rel="apple-touch-icon" href="/webapp/icons/icon-180.png" />
-  <link rel="icon" type="image/png" sizes="192x192" href="/webapp/icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="/webapp/icons/icon-180.png?v=20261022-brand" />
+  <link rel="icon" type="image/svg+xml" href="/webapp/icons/icon.svg?v=20261022-brand" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/webapp/icons/icon-32.png?v=20261022-brand" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/webapp/icons/icon-192.png?v=20261022-brand" />
   <script>
     (function () {
       // Login Widget /setdomain только для assistent.networ.ru — старый PWA/edge ломает вход.
@@ -94,14 +96,14 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261022-voice" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261022-brand" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
 <body>
   <div id="gate" class="gate hidden">
     <div class="gate-card">
-      <h1 class="gate-title">Orbita</h1>
+      <h1 class="gate-title"><span class="wordmark" role="img" aria-label="Orbita"><svg class="wordmark-o" viewBox="0 0 512 512" aria-hidden="true"><circle cx="256" cy="256" r="196" fill="none" stroke="currentColor" stroke-width="88" stroke-linecap="round" stroke-dasharray="1032 200" transform="rotate(-16 256 256)"/><circle cx="394.6" cy="117.4" r="44" fill="#9b9ef9"/></svg>rbita</span></h1>
       <p class="gate-text">Войдите через Telegram, чтобы открыть профиль, календарь и интеграции.</p>
       <div id="gate-telegram-login" class="gate-telegram-login" aria-live="polite"></div>
       <div id="gate-code-login" class="gate-code-login">
@@ -1404,7 +1406,8 @@
     <div class="tabbar-backdrop" aria-hidden="true"></div>
     <div class="tabbar-wrap" id="app-sidebar">
       <div class="sidebar-head">
-        <p class="sidebar-brand">Orbita</p>
+        <img class="sidebar-logo" src="/webapp/icons/icon.svg?v=20261022-brand" alt="" aria-hidden="true" width="32" height="32" />
+        <p class="sidebar-brand"><span class="wordmark" role="img" aria-label="Orbita"><svg class="wordmark-o" viewBox="0 0 512 512" aria-hidden="true"><circle cx="256" cy="256" r="196" fill="none" stroke="currentColor" stroke-width="88" stroke-linecap="round" stroke-dasharray="1032 200" transform="rotate(-16 256 256)"/><circle cx="394.6" cy="117.4" r="44" fill="#9b9ef9"/></svg>rbita</span></p>
         <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-controls="app-sidebar" aria-expanded="true" aria-label="Свернуть меню" title="Свернуть меню">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <rect x="3" y="3" width="18" height="18" rx="2" />

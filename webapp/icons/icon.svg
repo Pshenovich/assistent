@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="sky" cx="50%" cy="28%" r="80%">
+      <stop offset="0" stop-color="#1b1d44"/>
+      <stop offset=".65" stop-color="#0d0d1c"/>
+      <stop offset="1" stop-color="#0b0b14"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a5a8ff"/>
+      <stop offset="1" stop-color="#5b5ee8"/>
+    </linearGradient>
+    <filter id="glow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="10" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="512" height="512" fill="url(#sky)"/>
+  <circle cx="256" cy="256" r="150" fill="none" stroke="url(#ring)" stroke-width="56" stroke-linecap="round" stroke-dasharray="792.5 150" transform="rotate(-16.35 256 256)"/>
+  <circle cx="362" cy="150" r="27" fill="#eef0ff" filter="url(#glow)"/>
+</svg>

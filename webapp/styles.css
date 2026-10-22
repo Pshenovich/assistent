@@ -2405,6 +2405,10 @@ html.cal-gesture-active .meetings-week-scroll {
   display: none;
 }
 
+.sidebar-logo {
+  display: none;
+}
+
 .sidebar-head {
   display: none;
 }
@@ -13420,6 +13424,38 @@ html.modal-sheet-open body {
     display: none;
   }
 
+  /* Свёрнутое меню: вверху иконка Orbita; при наведении на неё — кнопка «развернуть» на том же месте. */
+  html.sidebar-collapsed .sidebar-head {
+    display: grid;
+    place-items: center;
+  }
+
+  html.sidebar-collapsed .sidebar-logo {
+    display: block;
+    grid-area: 1 / 1;
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    pointer-events: none;
+    transition: opacity 140ms ease;
+  }
+
+  html.sidebar-collapsed .sidebar-toggle {
+    grid-area: 1 / 1;
+    opacity: 0;
+    transition: opacity 140ms ease;
+  }
+
+  html.sidebar-collapsed .sidebar-head:hover .sidebar-logo,
+  html.sidebar-collapsed .sidebar-head:focus-within .sidebar-logo {
+    opacity: 0;
+  }
+
+  html.sidebar-collapsed .sidebar-head:hover .sidebar-toggle,
+  html.sidebar-collapsed .sidebar-head:focus-within .sidebar-toggle {
+    opacity: 1;
+  }
+
   html.sidebar-collapsed .sidebar-toggle svg {
     transform: scaleX(-1);
   }
@@ -17425,4 +17461,22 @@ html.actual-voice-open #actual-voice-btn { visibility: hidden; }
 .voice-add-col .btn,
 .voice-feature-body > .btn {
   align-self: flex-start;
+}
+
+/* ---- логотип Orbita: знак-орбита вместо «o» + «rbita» Unbounded ---- */
+.wordmark {
+  display: inline-flex;
+  align-items: baseline;
+  font-family: var(--font-heading);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.wordmark-o {
+  width: 0.66em;
+  height: 0.66em;
+  margin-right: 0.03em;
+  flex: none;
+  transform: translateY(0.02em);
 }

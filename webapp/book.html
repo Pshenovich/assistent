@@ -6,6 +6,8 @@
   <meta name="theme-color" content="#19191a" />
   <title>{{TITLE}}</title>
   <meta name="description" content="Выберите свободное время для встречи" />
+  <link rel="icon" type="image/svg+xml" href="/webapp/icons/icon.svg?v=20261022-brand" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600&display=swap" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v={{BUILD}}" />
   <style>
     :root {
@@ -295,11 +297,13 @@
       line-height: 1.45;
     }
     .success strong { color: var(--text); font-weight: 650; }
+    .wordmark { display: inline-flex; align-items: baseline; font-family: "Unbounded", -apple-system, system-ui, sans-serif; font-weight: 600; letter-spacing: -0.02em; line-height: 1; }
+    .wordmark-o { width: 0.66em; height: 0.66em; margin-right: 0.03em; flex: none; transform: translateY(0.02em); }
   </style>
 </head>
 <body>
   <main class="wrap">
-    <p class="brand">Orbita</p>
+    <p class="brand"><span class="wordmark" role="img" aria-label="Orbita"><svg class="wordmark-o" viewBox="0 0 512 512" aria-hidden="true"><circle cx="256" cy="256" r="196" fill="none" stroke="currentColor" stroke-width="88" stroke-linecap="round" stroke-dasharray="1032 200" transform="rotate(-16 256 256)"/><circle cx="394.6" cy="117.4" r="44" fill="#9b9ef9"/></svg>rbita</span></p>
     <p id="book-status" class="status hidden"></p>
     <p id="book-error" class="error hidden"></p>
     <div id="book-form">

@@ -1,6 +1,6 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261022-voice";
+var CACHE_VERSION = "miniapp-v1-20261022-brand";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 var CANONICAL_ORIGIN = "https://assistent.networ.ru";
 var OBSOLETE_HOSTS = {
@@ -11,7 +11,7 @@ var OBSOLETE_HOSTS = {
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261022-voice",
+  "./styles.css?v=20261022-brand",
   "./app.js?v=20261022-voice",
   "./web-canvas.js?v=20261022-focuschip",
   "./launch.html",
@@ -23,9 +23,9 @@ var PRECACHE_URLS = [
   "./telegram-web-app.js?v=20260831-vpn-pwa",
   "./telegram-widget.js?v=20260831-vpn-pwa",
   "./manifest.webmanifest",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png",
-  "./icons/icon-180.png",
+  "./icons/icon-192.png?v=20261022-brand",
+  "./icons/icon-512.png?v=20261022-brand",
+  "./icons/icon-180.png?v=20261022-brand",
 ];
 
 function isObsoleteHost() {
