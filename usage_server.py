@@ -7812,6 +7812,76 @@ def _strip_speaker_labels(text: str) -> str:
     return strip_speaker_labels(text)
 
 
+class _MiniappVoiceSettingsPatch(BaseModel):
+    cleanup: Optional[bool] = None
+    numbers: Optional[bool] = None
+    dictionary: Optional[bool] = None
+    snippets: Optional[bool] = None
+    history: Optional[bool] = None
+    dictionary_entries: Optional[list[dict[str, Any]]] = None
+    snippet_entries: Optional[list[dict[str, Any]]] = None
+
+
+@miniapp_router.get("/voice/settings")
+async def miniapp_voice_settings_get(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Профиль → «Голосовой ввод»: переключатели, словарь, сниппеты."""
+    from assistant.stores import voice_prefs
+
+    return await run_in_threadpool(
+        voice_prefs.get_settings, int(principal.telegram_user_id)
+    )
+
+
+@miniapp_router.patch("/voice/settings")
+async def miniapp_voice_settings_patch(
+    body: _MiniappVoiceSettingsPatch,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import voice_prefs
+
+    return await run_in_threadpool(
+        voice_prefs.update_settings,
+        int(principal.telegram_user_id),
+        body.model_dump(exclude_none=True),
+    )
+
+
+@miniapp_router.get("/voice/history")
+async def miniapp_voice_history_get(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import voice_prefs
+
+    uid = int(principal.telegram_user_id)
+    items = await run_in_threadpool(voice_prefs.list_history, uid)
+    return {"items": items}
+
+
+@miniapp_router.delete("/voice/history")
+async def miniapp_voice_history_clear(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import voice_prefs
+
+    await run_in_threadpool(voice_prefs.clear_history, int(principal.telegram_user_id))
+    return {"ok": True, "items": []}
+
+
+@miniapp_router.delete("/voice/history/{item_id}")
+async def miniapp_voice_history_delete(
+    item_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import voice_prefs
+
+    uid = int(principal.telegram_user_id)
+    await run_in_threadpool(voice_prefs.delete_history_item, uid, item_id)
+    items = await run_in_threadpool(voice_prefs.list_history, uid)
+    return {"ok": True, "items": items}
+
+
 @miniapp_router.post("/voice/transcribe")
 async def miniapp_voice_transcribe(
     file: UploadFile = File(...),
@@ -7820,6 +7890,7 @@ async def miniapp_voice_transcribe(
 ) -> dict[str, Any]:
     from assistant.integrations import transcribe as obu
     from assistant.lib.usage_store import insert_usage_event
+    from assistant.stores import voice_prefs
 
     data = await file.read()
     if not data:
@@ -7859,6 +7930,19 @@ async def miniapp_voice_transcribe(
             transcript = (result.formatted_text or result.plain_text or "").strip()
         if not transcript:
             raise RuntimeError("(пустая транскрипция)")
+        # Паразиты, числа, личный словарь, сниппеты — по настройкам «Голосового ввода».
+        raw_transcript = transcript
+        uid = int(principal.telegram_user_id)
+        try:
+            transcript = voice_prefs.process_text(uid, transcript, mode="dictation") or transcript
+            voice_prefs.add_history(
+                uid,
+                text=transcript,
+                raw_text=raw_transcript,
+                source="note" if dictation else "assistant",
+            )
+        except Exception as e:
+            print(f"[miniapp_voice_transcribe] postprocess_failed uid={uid} err={e!r}")
         event_id = insert_usage_event(
             operation="obuchat_dictation" if dictation else "obuchat_transcribe",
             model=None,
@@ -7873,7 +7957,8 @@ async def miniapp_voice_transcribe(
         )
         return {
             "text": transcript,
-            "plain_text": result.plain_text,
+            "plain_text": transcript,
+            "raw_text": raw_transcript,
             "job_id": result.job_id,
             "event_id": event_id,
         }
@@ -10341,7 +10426,11 @@ async def miniapp_transcription_upload(
     uid = int(principal.telegram_user_id)
 
     def _transcribe_and_create() -> dict[str, Any]:
-        result = obu.transcribe_bytes(data, filename)
+        from assistant.stores import voice_prefs
+
+        result = voice_prefs.process_transcript_result(
+            uid, obu.transcribe_bytes(data, filename)
+        )
         transcript = (result.formatted_text or result.plain_text or "").strip()
         if not transcript:
             raise RuntimeError("(пустая транскрипция)")

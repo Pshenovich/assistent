@@ -230,6 +230,9 @@ async def run_explicit_transcribe(
             context=context,
         )
         result = await asyncio.to_thread(obu.transcribe_bytes, data, fname or "audio.mp3")
+        from assistant.stores import voice_prefs
+
+        result = voice_prefs.process_transcript_result(uid, result)
 
         status = await set_status(
             status, "Жду ответ от сервиса…", anchor=msg, context=context
@@ -312,6 +315,18 @@ async def _transcribe_and_route(update: Update, context: ContextTypes.DEFAULT_TY
         if not text:
             await set_status(status, "(пустая транскрипция)", anchor=msg, context=context)
             return
+        voice_uid = int(update.effective_user.id) if update.effective_user else 0
+        if voice_uid:
+            from assistant.stores import voice_prefs
+
+            raw_text = text
+            try:
+                text = voice_prefs.process_text(voice_uid, text, mode="command") or text
+                voice_prefs.add_history(
+                    voice_uid, text=text, raw_text=raw_text, source="telegram"
+                )
+            except Exception as e:
+                print(f"[voice] postprocess_failed uid={voice_uid} err={e!r}")
         print(f"[voice] asr chat={msg.chat_id} mid={msg.message_id} text={text[:200]!r}")
         status = await set_status(
             status, "Разбираю запрос…", anchor=msg, context=context

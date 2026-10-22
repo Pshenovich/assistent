@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261022-focuschip";
+  var WEBAPP_BUILD = "20261022-voice";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -8153,6 +8153,299 @@
     }
   }
 
+  // Профиль → «Голосовой ввод»: обработка текста после распознавания (как в ГовориИ).
+  var voiceSettings = null;
+
+  function voiceSetError(msg) {
+    var err = document.getElementById("profile-voice-err");
+    if (!err) return;
+    err.textContent = msg || "";
+    setHidden(err, !msg);
+  }
+
+  function applyVoiceSettingsUi() {
+    var s = voiceSettings || {};
+    document.querySelectorAll("[data-voice-toggle]").forEach(function (btn) {
+      var key = btn.getAttribute("data-voice-toggle");
+      var on = s[key] !== false;
+      btn.classList.toggle("svc-toggle--on", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      var feature = btn.closest(".voice-feature");
+      if (feature) feature.classList.toggle("voice-feature--off", !on);
+    });
+    renderVoiceDictionary();
+    renderVoiceSnippets();
+    var hint = document.getElementById("profile-voice-hint");
+    if (hint) {
+      var d = (s.dictionary_entries || []).length;
+      var n = (s.snippet_entries || []).length;
+      hint.textContent =
+        d || n ? "Словарь: " + d + " · сниппеты: " + n : "Паразиты, словарь, сниппеты";
+    }
+  }
+
+  function voiceDeleteButton(label, onClick) {
+    var del = document.createElement("button");
+    del.type = "button";
+    del.className = "voice-item-del";
+    del.setAttribute("aria-label", label);
+    del.textContent = "×";
+    del.addEventListener("click", onClick);
+    return del;
+  }
+
+  function renderVoiceDictionary() {
+    var list = document.getElementById("voice-dictionary-list");
+    if (!list) return;
+    list.innerHTML = "";
+    var items = (voiceSettings && voiceSettings.dictionary_entries) || [];
+    items.forEach(function (e, idx) {
+      var row = document.createElement("div");
+      row.className = "voice-item";
+      var text = document.createElement("div");
+      text.className = "voice-item-text";
+      var from = document.createElement("span");
+      from.className = "voice-item-from";
+      from.textContent = e.from;
+      var arrow = document.createElement("span");
+      arrow.className = "voice-arrow";
+      arrow.textContent = " → ";
+      var to = document.createElement("span");
+      to.className = "voice-item-to";
+      to.textContent = e.to;
+      text.appendChild(from);
+      text.appendChild(arrow);
+      text.appendChild(to);
+      row.appendChild(text);
+      row.appendChild(
+        voiceDeleteButton("Удалить «" + e.from + "»", function () {
+          var next = items.slice();
+          next.splice(idx, 1);
+          saveVoiceSettings({ dictionary_entries: next });
+        })
+      );
+      list.appendChild(row);
+    });
+  }
+
+  function renderVoiceSnippets() {
+    var list = document.getElementById("voice-snippets-list");
+    if (!list) return;
+    list.innerHTML = "";
+    var items = (voiceSettings && voiceSettings.snippet_entries) || [];
+    items.forEach(function (e, idx) {
+      var row = document.createElement("div");
+      row.className = "voice-item";
+      var text = document.createElement("div");
+      text.className = "voice-item-text";
+      var trig = document.createElement("div");
+      trig.className = "voice-item-from";
+      trig.textContent = "«" + e.trigger + "»";
+      var body = document.createElement("div");
+      body.className = "voice-item-body muted small";
+      body.textContent = e.text;
+      text.appendChild(trig);
+      text.appendChild(body);
+      row.appendChild(text);
+      row.appendChild(
+        voiceDeleteButton("Удалить сниппет «" + e.trigger + "»", function () {
+          var next = items.slice();
+          next.splice(idx, 1);
+          saveVoiceSettings({ snippet_entries: next });
+        })
+      );
+      list.appendChild(row);
+    });
+  }
+
+  function voiceHistoryTime(ts) {
+    var d = new Date(Number(ts || 0) * 1000);
+    if (isNaN(d.getTime())) return "";
+    var now = new Date();
+    var hm = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    if (d.toDateString() === now.toDateString()) return hm;
+    return d.getDate() + "." + String(d.getMonth() + 1).padStart(2, "0") + " " + hm;
+  }
+
+  var VOICE_HISTORY_SOURCE = { note: "Заметка", assistant: "Ассистент", telegram: "Telegram" };
+
+  function renderVoiceHistory(items) {
+    var list = document.getElementById("voice-history-list");
+    var empty = document.getElementById("voice-history-empty");
+    var clear = document.getElementById("voice-history-clear");
+    items = items || [];
+    if (empty) setHidden(empty, items.length > 0);
+    if (clear) setHidden(clear, items.length === 0);
+    if (!list) return;
+    list.innerHTML = "";
+    items.forEach(function (it) {
+      var row = document.createElement("div");
+      row.className = "voice-item voice-history-item";
+      var text = document.createElement("div");
+      text.className = "voice-item-text";
+      var meta = document.createElement("div");
+      meta.className = "muted small";
+      meta.textContent =
+        voiceHistoryTime(it.ts) + (VOICE_HISTORY_SOURCE[it.source] ? " · " + VOICE_HISTORY_SOURCE[it.source] : "");
+      var body = document.createElement("div");
+      body.className = "voice-item-body";
+      body.textContent = it.text || "";
+      text.appendChild(meta);
+      text.appendChild(body);
+      var copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "btn-text voice-item-copy";
+      copy.textContent = "Копировать";
+      copy.addEventListener("click", function () {
+        copyTextWithOptionalHtml(it.text || "").then(
+          function () {
+            copy.textContent = "Скопировано";
+            window.setTimeout(function () {
+              copy.textContent = "Копировать";
+            }, 1500);
+          },
+          function () {
+            voiceSetError("Не удалось скопировать");
+          }
+        );
+      });
+      row.appendChild(text);
+      row.appendChild(copy);
+      row.appendChild(
+        voiceDeleteButton("Удалить из истории", async function () {
+          try {
+            var res = await apiFetch("/voice/history/" + encodeURIComponent(it.id), { method: "DELETE" });
+            renderVoiceHistory((res && res.items) || []);
+          } catch (e) {
+            voiceSetError(e.message || String(e));
+          }
+        })
+      );
+      list.appendChild(row);
+    });
+  }
+
+  async function loadVoiceHistory() {
+    try {
+      var res = await apiFetch("/voice/history", { method: "GET" });
+      renderVoiceHistory((res && res.items) || []);
+    } catch (e) {
+      voiceSetError(e.message || String(e));
+    }
+  }
+
+  async function loadVoiceSettingsScreen() {
+    voiceSetError("");
+    try {
+      voiceSettings = await apiFetch("/voice/settings", { method: "GET" });
+      applyVoiceSettingsUi();
+    } catch (e) {
+      voiceSetError(e.message || String(e));
+    }
+    loadVoiceHistory();
+  }
+
+  async function saveVoiceSettings(patch) {
+    var prev = voiceSettings;
+    voiceSettings = Object.assign({}, voiceSettings || {}, patch);
+    applyVoiceSettingsUi();
+    voiceSetError("");
+    try {
+      voiceSettings = await apiFetch("/voice/settings", {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+      applyVoiceSettingsUi();
+      return true;
+    } catch (e) {
+      voiceSettings = prev;
+      applyVoiceSettingsUi();
+      voiceSetError(e.message || String(e));
+      return false;
+    }
+  }
+
+  function bindVoiceSettingsScreen() {
+    var open = document.getElementById("profile-voice-open");
+    if (open) {
+      open.addEventListener("click", function () {
+        profileScreen("voice");
+        loadVoiceSettingsScreen();
+      });
+    }
+    var back = document.getElementById("profile-voice-back");
+    if (back) {
+      back.addEventListener("click", function () {
+        profileScreen("main");
+      });
+    }
+    document.querySelectorAll("[data-voice-toggle]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var key = btn.getAttribute("data-voice-toggle");
+        var patch = {};
+        patch[key] = !btn.classList.contains("svc-toggle--on");
+        saveVoiceSettings(patch);
+      });
+    });
+    var dictForm = document.getElementById("voice-dictionary-form");
+    if (dictForm) {
+      dictForm.addEventListener("submit", async function (ev) {
+        ev.preventDefault();
+        var from = document.getElementById("voice-dictionary-from");
+        var to = document.getElementById("voice-dictionary-to");
+        var src = String((from && from.value) || "").trim();
+        var dst = String((to && to.value) || "").trim();
+        if (!src || !dst) {
+          voiceSetError("Заполните оба поля: как слышится и как писать");
+          return;
+        }
+        var items = ((voiceSettings && voiceSettings.dictionary_entries) || []).filter(function (e) {
+          return String(e.from).toLowerCase() !== src.toLowerCase();
+        });
+        items.push({ from: src, to: dst });
+        if (await saveVoiceSettings({ dictionary_entries: items })) {
+          from.value = "";
+          to.value = "";
+          from.focus();
+        }
+      });
+    }
+    var snipForm = document.getElementById("voice-snippets-form");
+    if (snipForm) {
+      snipForm.addEventListener("submit", async function (ev) {
+        ev.preventDefault();
+        var trig = document.getElementById("voice-snippet-trigger");
+        var body = document.getElementById("voice-snippet-text");
+        var t = String((trig && trig.value) || "").trim();
+        var b = String((body && body.value) || "").trim();
+        if (!t || !b) {
+          voiceSetError("Нужны фраза и текст сниппета");
+          return;
+        }
+        var items = ((voiceSettings && voiceSettings.snippet_entries) || []).filter(function (e) {
+          return String(e.trigger).toLowerCase() !== t.toLowerCase();
+        });
+        items.push({ trigger: t, text: b });
+        if (await saveVoiceSettings({ snippet_entries: items })) {
+          trig.value = "";
+          body.value = "";
+        }
+      });
+    }
+    var clear = document.getElementById("voice-history-clear");
+    if (clear) {
+      clear.addEventListener("click", async function () {
+        if (!(await confirmDialog("Очистить историю диктовок?"))) return;
+        try {
+          await apiFetch("/voice/history", { method: "DELETE" });
+          renderVoiceHistory([]);
+        } catch (e) {
+          voiceSetError(e.message || String(e));
+        }
+      });
+    }
+  }
+
   async function runDigestDemoSeed() {
     var err = document.getElementById("profile-chats-err");
     var msg = document.getElementById("profile-chats-msg");
@@ -8341,6 +8634,7 @@
     const knowledgeBase = document.getElementById("profile-knowledge-base");
     const agents = document.getElementById("profile-agents");
     const chats = document.getElementById("profile-chats");
+    const voice = document.getElementById("profile-voice");
     setHidden(main, name !== "main");
     setHidden(pay, name !== "payment");
     setHidden(exp, name !== "expenses");
@@ -8354,6 +8648,7 @@
     if (knowledgeBase) setHidden(knowledgeBase, name !== "knowledge-base");
     if (agents) setHidden(agents, name !== "agents");
     if (chats) setHidden(chats, name !== "chats");
+    if (voice) setHidden(voice, name !== "voice");
     if (name !== "booking") stopBookingWaQrPoll();
     if (
       name !== "zoom" &&
@@ -19892,6 +20187,7 @@
       "profile-knowledge-base",
       "profile-agents",
       "profile-chats",
+      "profile-voice",
     ];
     for (var i = 0; i < profileIds.length; i++) {
       var el = document.getElementById(profileIds[i]);
@@ -19999,6 +20295,11 @@
     }
     var chats = document.getElementById("profile-chats");
     if (chats && !chats.classList.contains("hidden")) {
+      profileScreen("main");
+      return true;
+    }
+    var voiceSub = document.getElementById("profile-voice");
+    if (voiceSub && !voiceSub.classList.contains("hidden")) {
       profileScreen("main");
       return true;
     }
@@ -44496,6 +44797,7 @@
         profileScreen("main");
       });
     }
+    bindVoiceSettingsScreen();
     var digestToggle = document.getElementById("digest-enabled-toggle");
     if (digestToggle) {
       digestToggle.addEventListener("click", function () {

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261022-focuschip">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261022-voice">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -94,7 +94,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261022-focuschip" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261022-voice" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -589,6 +589,22 @@
               <button type="button" class="btn-text" id="profile-tg-leo-history">История ›</button>
             </div>
           </div>
+          <button type="button" class="expenses-card" id="profile-voice-open">
+            <div class="expenses-card-inner">
+              <div class="expenses-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="2" width="6" height="12" rx="3" />
+                  <path d="M5 10a7 7 0 0 0 14 0" />
+                  <path d="M12 17v4" />
+                </svg>
+              </div>
+              <div>
+                <p class="expenses-label">Голосовой ввод</p>
+                <p class="expenses-total contacts-card-sub" id="profile-voice-hint">Паразиты, словарь, сниппеты</p>
+              </div>
+            </div>
+            <span class="chevron">›</span>
+          </button>
           <button type="button" class="expenses-card" id="profile-proactive-open">
             <div class="expenses-card-inner">
               <div class="expenses-icon" aria-hidden="true">
@@ -936,6 +952,127 @@
             <button type="button" class="btn ghost hidden" id="digest-demo-seed-btn">Создать демо-отчёт за вчера</button>
             <p id="profile-chats-msg" class="billing-msg muted small hidden"></p>
             <p id="profile-chats-err" class="error hidden"></p>
+          </div>
+        </div>
+
+        <div id="profile-voice" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-voice-back">← Назад</button>
+            <span class="detail-title">Голосовой ввод</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body">
+            <p class="muted small contacts-hint">
+              Обработка текста после распознавания: в диктовке заметок и чата, в голосовых боту. В транскрипциях встреч и файлов работает только словарь, остальное оставляем дословно.
+            </p>
+            <div class="voice-feature" data-voice-feature="cleanup">
+              <div class="svc-row calendars-row voice-feature-head">
+                <div class="svc-text">
+                  <p class="svc-name">Убирать слова-паразиты</p>
+                  <p class="svc-desc muted small">«Ну», «э-э», «короче», «как бы» не попадут в текст</p>
+                </div>
+                <button
+                  type="button"
+                  class="svc-toggle svc-toggle--on"
+                  data-voice-toggle="cleanup"
+                  aria-pressed="true"
+                  aria-label="Убирать слова-паразиты"
+                >
+                  <span class="svc-toggle-knob"></span>
+                </button>
+              </div>
+            </div>
+            <div class="voice-feature" data-voice-feature="numbers">
+              <div class="svc-row calendars-row voice-feature-head">
+                <div class="svc-text">
+                  <p class="svc-name">Числа цифрами</p>
+                  <p class="svc-desc muted small">«в шесть тридцать» → «в 6:30», «двадцать пятого марта» → «25 марта»</p>
+                </div>
+                <button
+                  type="button"
+                  class="svc-toggle svc-toggle--on"
+                  data-voice-toggle="numbers"
+                  aria-pressed="true"
+                  aria-label="Числа цифрами"
+                >
+                  <span class="svc-toggle-knob"></span>
+                </button>
+              </div>
+            </div>
+            <div class="voice-feature" data-voice-feature="dictionary">
+              <div class="svc-row calendars-row voice-feature-head">
+                <div class="svc-text">
+                  <p class="svc-name">Личный словарь</p>
+                  <p class="svc-desc muted small">Имена, компании и термины: как услышано → как писать</p>
+                </div>
+                <button
+                  type="button"
+                  class="svc-toggle svc-toggle--on"
+                  data-voice-toggle="dictionary"
+                  aria-pressed="true"
+                  aria-label="Личный словарь"
+                >
+                  <span class="svc-toggle-knob"></span>
+                </button>
+              </div>
+              <div class="voice-feature-body">
+                <div id="voice-dictionary-list" class="voice-list"></div>
+                <form class="voice-add-row" id="voice-dictionary-form" autocomplete="off">
+                  <input type="text" class="field-input" id="voice-dictionary-from" placeholder="Слышится" maxlength="120" aria-label="Как распознаётся" />
+                  <span class="voice-arrow" aria-hidden="true">→</span>
+                  <input type="text" class="field-input" id="voice-dictionary-to" placeholder="Писать" maxlength="120" aria-label="Как писать" />
+                  <button type="submit" class="btn btn-sm primary">Добавить</button>
+                </form>
+              </div>
+            </div>
+            <div class="voice-feature" data-voice-feature="snippets">
+              <div class="svc-row calendars-row voice-feature-head">
+                <div class="svc-text">
+                  <p class="svc-name">Сниппеты</p>
+                  <p class="svc-desc muted small">Скажите фразу целиком («адрес офиса») — вставится готовый текст. Только в диктовке</p>
+                </div>
+                <button
+                  type="button"
+                  class="svc-toggle svc-toggle--on"
+                  data-voice-toggle="snippets"
+                  aria-pressed="true"
+                  aria-label="Сниппеты"
+                >
+                  <span class="svc-toggle-knob"></span>
+                </button>
+              </div>
+              <div class="voice-feature-body">
+                <div id="voice-snippets-list" class="voice-list"></div>
+                <form class="voice-add-col" id="voice-snippets-form" autocomplete="off">
+                  <input type="text" class="field-input" id="voice-snippet-trigger" placeholder="Фраза: моя подпись" maxlength="120" aria-label="Фраза-триггер" />
+                  <textarea class="field-input" id="voice-snippet-text" rows="3" maxlength="4000" placeholder="Текст, который вставится" aria-label="Текст сниппета"></textarea>
+                  <button type="submit" class="btn btn-sm primary">Добавить сниппет</button>
+                </form>
+              </div>
+            </div>
+            <div class="voice-feature" data-voice-feature="history">
+              <div class="svc-row calendars-row voice-feature-head">
+                <div class="svc-text">
+                  <p class="svc-name">История диктовок</p>
+                  <p class="svc-desc muted small">Последние 100 диктовок, если текст никуда не вставился</p>
+                </div>
+                <button
+                  type="button"
+                  class="svc-toggle svc-toggle--on"
+                  data-voice-toggle="history"
+                  aria-pressed="true"
+                  aria-label="История диктовок"
+                >
+                  <span class="svc-toggle-knob"></span>
+                </button>
+              </div>
+              <div class="voice-feature-body">
+                <div id="voice-history-list" class="voice-list"></div>
+                <p id="voice-history-empty" class="muted small hidden">Пока пусто.</p>
+                <button type="button" class="btn btn-sm ghost hidden" id="voice-history-clear">Очистить историю</button>
+              </div>
+            </div>
+            <p id="profile-voice-err" class="error hidden"></p>
           </div>
         </div>
 
@@ -1994,6 +2131,6 @@
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
   <script src="/webapp/web-canvas.js?v=20261022-focuschip" defer></script>
-  <script src="/webapp/app.js?v=20261022-focuschip" defer></script>
+  <script src="/webapp/app.js?v=20261022-voice" defer></script>
 </body>
 </html>

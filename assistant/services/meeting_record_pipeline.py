@@ -142,6 +142,9 @@ def process_recording_bytes(
         filename=filename,
         native_meeting_id=(native_meeting_id or "").strip(),
     )
+    from assistant.stores import voice_prefs
+
+    result = voice_prefs.process_transcript_result(int(user_id), result)
     transcript = (result.formatted_text or result.plain_text or "").strip()
     if not transcript:
         raise RuntimeError("Пустая транскрипция записи встречи.")

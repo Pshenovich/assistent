@@ -3,6 +3,22 @@
   "use strict";
 
   var initialized = false;
+  var mockVoiceSettings = {
+    cleanup: true,
+    numbers: true,
+    dictionary: true,
+    snippets: true,
+    history: true,
+    dictionary_entries: [
+      { from: "гитхаб", to: "GitHub" },
+      { from: "кубер", to: "Kubernetes" },
+    ],
+    snippet_entries: [{ trigger: "адрес офиса", text: "Москва, ул. Примерная, д. 1, офис 12.\nВход со двора." }],
+  };
+  var mockVoiceHistory = [
+    { id: "h1", ts: Date.now() / 1000 - 600, text: "Составь короткое письмо клиенту: встречу переносим на четверг.", source: "note" },
+    { id: "h2", ts: Date.now() / 1000 - 90000, text: "Обновить конфиг Kubernetes и перезапустить деплой в 6:30.", source: "telegram" },
+  ];
   var reminders = [];
   var eventsByDate = {};
   var transcriptions = [];
@@ -504,6 +520,28 @@
     initMocks();
     var method = String((opts && opts.method) || "GET").toUpperCase();
     var basePath = String(path || "").split("?")[0];
+
+    if (basePath === "/voice/settings") {
+      if (method === "PATCH") {
+        var vp = JSON.parse((opts && opts.body) || "{}");
+        Object.keys(vp).forEach(function (k) {
+          mockVoiceSettings[k] = vp[k];
+        });
+      }
+      return JSON.parse(JSON.stringify(mockVoiceSettings));
+    }
+    if (basePath === "/voice/history" && method === "DELETE") {
+      mockVoiceHistory = [];
+      return { ok: true, items: [] };
+    }
+    var voiceHistDel = basePath.match(/^\/voice\/history\/([^/]+)$/);
+    if (voiceHistDel && method === "DELETE") {
+      mockVoiceHistory = mockVoiceHistory.filter(function (x) {
+        return x.id !== decodeURIComponent(voiceHistDel[1]);
+      });
+      return { ok: true, items: mockVoiceHistory };
+    }
+    if (basePath === "/voice/history") return { items: mockVoiceHistory };
 
     var localMatch = basePath.match(/^\/notes\/local\/([^/]+)(?:\/(sheets|make-summary|pdf))?$/);
     if (localMatch) {

@@ -465,7 +465,8 @@ html.boot-open-app #app.hidden {
   #profile-bitrix:not(.hidden).motion-enter,
   #profile-knowledge-base:not(.hidden).motion-enter,
   #profile-agents:not(.hidden).motion-enter,
-  #profile-chats:not(.hidden).motion-enter {
+  #profile-chats:not(.hidden).motion-enter,
+  #profile-voice:not(.hidden).motion-enter {
     animation: leo-screen-enter 0.3s cubic-bezier(0.32, 0.72, 0, 1) both;
   }
 }
@@ -4656,7 +4657,8 @@ html.note-editor-open #note-editor-overlay {
 #profile-bitrix.profile-subscreen--native-back .detail-toolbar,
 #profile-knowledge-base.profile-subscreen--native-back .detail-toolbar,
 #profile-agents.profile-subscreen--native-back .detail-toolbar,
-#profile-chats.profile-subscreen--native-back .detail-toolbar {
+#profile-chats.profile-subscreen--native-back .detail-toolbar,
+#profile-voice.profile-subscreen--native-back .detail-toolbar {
   grid-template-columns: 1fr auto;
 }
 
@@ -4672,7 +4674,8 @@ html.note-editor-open #note-editor-overlay {
 #profile-bitrix.profile-subscreen--native-back #profile-bitrix-back,
 #profile-knowledge-base.profile-subscreen--native-back #profile-knowledge-base-back,
 #profile-agents.profile-subscreen--native-back #profile-agents-back,
-#profile-chats.profile-subscreen--native-back #profile-chats-back {
+#profile-chats.profile-subscreen--native-back #profile-chats-back,
+#profile-voice.profile-subscreen--native-back #profile-voice-back {
   display: none !important;
 }
 
@@ -4688,7 +4691,8 @@ html.note-editor-open #note-editor-overlay {
 #profile-bitrix.profile-subscreen--native-back .detail-title,
 #profile-knowledge-base.profile-subscreen--native-back .detail-title,
 #profile-agents.profile-subscreen--native-back .detail-title,
-#profile-chats.profile-subscreen--native-back .detail-title {
+#profile-chats.profile-subscreen--native-back .detail-title,
+#profile-voice.profile-subscreen--native-back .detail-title {
   grid-column: 1;
   justify-self: start;
   text-align: left;
@@ -10457,7 +10461,8 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 #profile-bitrix:not(.hidden),
 #profile-knowledge-base:not(.hidden),
 #profile-agents:not(.hidden),
-#profile-chats:not(.hidden) {
+#profile-chats:not(.hidden),
+#profile-voice:not(.hidden) {
   position: fixed;
   inset: 0;
   z-index: 40;
@@ -10489,7 +10494,8 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 #profile-bitrix:not(.hidden) .detail-toolbar,
 #profile-knowledge-base:not(.hidden) .detail-toolbar,
 #profile-agents:not(.hidden) .detail-toolbar,
-#profile-chats:not(.hidden) .detail-toolbar {
+#profile-chats:not(.hidden) .detail-toolbar,
+#profile-voice:not(.hidden) .detail-toolbar {
   padding-right: var(--page-x);
   padding-left: var(--page-x);
 }
@@ -13927,7 +13933,8 @@ html.modal-sheet-open body {
   #profile-bitrix:not(.hidden),
   #profile-knowledge-base:not(.hidden),
   #profile-agents:not(.hidden),
-  #profile-chats:not(.hidden) {
+  #profile-chats:not(.hidden),
+  #profile-voice:not(.hidden) {
     left: var(--sidebar-w);
     right: 0;
     max-width: none;
@@ -17300,3 +17307,122 @@ html.actual-voice-open #actual-voice-btn { visibility: hidden; }
 .event-sheet-color-inline .event-sheet-color-swatches { flex-wrap: nowrap; }
 .booking-sheet-chips { margin-top: 8px; }
 #modal-fields .booking-sheet-seg .event-sheet-kind-btn { white-space: nowrap; font-size: 0.8125rem; padding-left: 4px; padding-right: 4px; }
+
+/* Профиль → «Голосовой ввод» */
+.voice-feature {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.voice-feature-head {
+  margin: 0;
+  padding: 0;
+}
+
+.voice-feature--off .voice-feature-body {
+  display: none;
+}
+
+.voice-feature-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.voice-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.voice-list:empty {
+  display: none;
+}
+
+.voice-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border);
+}
+
+.voice-item:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.voice-item-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+}
+
+.voice-item-from {
+  color: var(--text-secondary);
+}
+
+.voice-item-to {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.voice-item-body {
+  white-space: pre-wrap;
+  margin-top: 2px;
+}
+
+.voice-arrow {
+  color: var(--text-tertiary);
+}
+
+.voice-item-copy {
+  flex: 0 0 auto;
+  font-size: 0.8125rem;
+}
+
+.voice-item-del {
+  flex: 0 0 auto;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.voice-item-del:hover {
+  background: var(--surface-muted);
+  color: var(--danger);
+}
+
+.voice-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.voice-add-row .field-input {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+
+.voice-add-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.voice-add-col .btn,
+.voice-feature-body > .btn {
+  align-self: flex-start;
+}

@@ -298,6 +298,9 @@ async def run_explicit_summary(
             status, "Транскрибирую…", anchor=msg, context=context
         )
         result = await asyncio.to_thread(obu.transcribe_bytes, data, fname or "audio.mp3")
+        from assistant.stores import voice_prefs
+
+        result = voice_prefs.process_transcript_result(uid, result)
         transcript = (result.formatted_text or result.plain_text or "").strip()
         if not transcript:
             await set_status(status, "(пустая транскрипция)", anchor=msg, context=context)
