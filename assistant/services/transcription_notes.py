@@ -117,6 +117,12 @@ def _focus_summary_ready(owner: int | str, note_id: int) -> None:
         proactive_ai.note_changed(owner, note_id, ready=True)
     except Exception as e:
         print(f"[proactive] summary_ready failed note={note_id} err={e!r}")
+    try:
+        from assistant.services import semantic_memory
+
+        semantic_memory.note_changed(owner, delay=5)
+    except Exception as e:
+        print(f"[semantic] summary_ready failed note={note_id} err={e!r}")
 
 
 def create_transcript_only(

@@ -1852,7 +1852,18 @@ def tool_memory_search(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     except Exception as e:
         print(f"[gpt_calendar] memory_search uid={ctx.uid} err={e!r}")
         return _err("Поиск по памяти сейчас недоступен")
-    return _ok({"results": hits, "total": len(hits)})
+    res: dict[str, Any] = {"results": hits, "total": len(hits)}
+    try:
+        st = semantic_memory.status(ctx.uid)
+        if st.get("total") and st["indexed"] < st["total"]:
+            # честно сказать пользователю, что часть материалов ещё не в памяти
+            res["coverage"] = {
+                "indexed": st["indexed"], "total": st["total"], "not_yet_searchable": st["pending"],
+                "note": "Часть материалов ещё индексируется — если ответа нет, скажи об этом пользователю.",
+            }
+    except Exception as e:
+        print(f"[gpt_calendar] memory status uid={ctx.uid} err={e!r}")
+    return _ok(res)
 
 
 EXECUTORS["memory_search"] = tool_memory_search

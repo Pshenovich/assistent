@@ -179,3 +179,75 @@ def search(uid: int, query: str, *, k: int = 8, embed: Optional[Embed] = None) -
         if len(out) >= k:
             break
     return out
+
+
+# ---------------------------------------------------------------- по событию и статус
+
+import threading
+import time
+
+NOTE_DEBOUNCE_SEC = 60.0
+_TIMERS: dict[int, threading.Timer] = {}
+_RUNNING: set[int] = set()
+_T_LOCK = threading.Lock()
+_STATUS_CACHE: dict[int, tuple[float, dict[str, Any]]] = {}
+_STATUS_TTL = 20.0
+
+
+def _index_now(uid: int) -> None:
+    with _T_LOCK:
+        if uid in _RUNNING:
+            return
+        _RUNNING.add(uid)
+    try:
+        res = index_user(uid, budget_chunks=2000)
+        _STATUS_CACHE.pop(uid, None)
+        if res["indexed"] or res["removed"]:
+            print(f"[semantic] on-change uid={uid} {res}")
+    except Exception as e:
+        print(f"[semantic] on-change uid={uid} err={e!r}")
+    finally:
+        with _T_LOCK:
+            _RUNNING.discard(uid)
+
+
+def note_changed(uid: Any, *, delay: float = NOTE_DEBOUNCE_SEC) -> None:
+    """Материал изменился — переиндексировать пользователя через delay секунд (повторы откладывают)."""
+    if not embed_client.enabled():
+        return
+    try:
+        u = int(uid)
+    except (TypeError, ValueError):
+        return
+    timer = threading.Timer(delay, _index_now, args=(u,))
+    timer.daemon = True
+    with _T_LOCK:
+        old = _TIMERS.get(u)
+        if old is not None:
+            old.cancel()
+        _TIMERS[u] = timer
+    timer.start()
+
+
+def status(uid: int) -> dict[str, Any]:
+    """Сколько материалов уже в памяти: total, indexed, pending (названия первых в очереди)."""
+    if not embed_client.enabled():
+        return {"enabled": False}
+    now = time.time()
+    hit = _STATUS_CACHE.get(int(uid))
+    if hit and now - hit[0] < _STATUS_TTL:
+        return hit[1]
+    have = idx.source_hashes(uid)
+    total = indexed = 0
+    pending: list[str] = []
+    for src in sources_for_user(uid):
+        total += 1
+        if have.get(src["key"]) == _hash(src["text"]):
+            indexed += 1
+        elif len(pending) < 5:
+            title = str(src["title"] or "")
+            if title not in pending:
+                pending.append(title)
+    out = {"enabled": True, "total": total, "indexed": indexed, "pending": pending}
+    _STATUS_CACHE[int(uid)] = (now, out)
+    return out

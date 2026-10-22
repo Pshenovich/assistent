@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261021-tgleo2";
+  var WEBAPP_BUILD = "20261022-memory1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -25098,6 +25098,47 @@
     renderChatThreadsList();
   }
 
+  // Строка «🧠 Память Лео: N из M материалов», пока семантическая память догоняет новые
+  // заметки и встречи (иначе кажется, что Лео их не знает). Скрыта, когда всё проиндексировано.
+  var leoMemoryTimer = null;
+
+  function isLeoChatOpen() {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    return isNoteDiscussionOpen() && !!(wrap && wrap._shareKind === "chat");
+  }
+
+  async function refreshLeoMemoryStatus() {
+    var el = document.getElementById("leo-memory-status");
+    if (!el) return;
+    if (leoMemoryTimer) {
+      clearTimeout(leoMemoryTimer);
+      leoMemoryTimer = null;
+    }
+    if (!isLeoChatOpen()) {
+      el.classList.add("hidden");
+      return;
+    }
+    var st = null;
+    try {
+      st = await apiFetch("/memory/status", { method: "GET" });
+    } catch (_) {
+      st = null;
+    }
+    var total = st && st.enabled ? Number(st.total || 0) : 0;
+    var done = st && st.enabled ? Number(st.indexed || 0) : 0;
+    if (!total || done >= total || !isLeoChatOpen()) {
+      el.classList.add("hidden");
+      return;
+    }
+    var pending = (st.pending || []).filter(Boolean);
+    el.textContent =
+      "🧠 Память Лео: " + done + " из " + total + " материалов" +
+      (pending.length ? " · догружаю «" + pending[0] + "»" + (total - done > 1 ? " и ещё " + (total - done - 1) : "") : "");
+    el.title = "Новые заметки и встречи попадают в память Лео примерно через минуту. Пока материал не загружен, Лео может его не знать.";
+    el.classList.remove("hidden");
+    leoMemoryTimer = setTimeout(refreshLeoMemoryStatus, 30000);
+  }
+
   async function openChatThread(thread) {
     if (!thread || thread.id == null) return;
     var id = String(thread.id);
@@ -25125,6 +25166,7 @@
       alert(e.message || String(e));
       return;
     }
+    refreshLeoMemoryStatus();
     try {
       var mem = await apiFetch("/chats/" + encodeURIComponent(id) + "/members", {
         method: "GET",
@@ -32412,6 +32454,7 @@
     rememberActualAssistantChat(activeChatThreadId);
     syncChatDiscussionTitle((document.getElementById("note-discussion-title-label") || {}).textContent || "Чат");
     renderFocusPanel();
+    refreshLeoMemoryStatus();
     var ed = noteGptEditor();
     if (ed && !isMobileNoteLayout()) {
       try {

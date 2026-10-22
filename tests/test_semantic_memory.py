@@ -94,3 +94,25 @@ def test_sources_for_user_real_stores(tmp_path, monkeypatch):
     keys = sorted(s["key"].split(":")[0] for s in sm.sources_for_user(5))
     assert keys == ["note", "tr_sum", "tr_txt"]
     notes_store._CONN = None
+
+
+def test_status_and_note_changed(env, monkeypatch):
+    import threading
+
+    monkeypatch.setenv("SEMANTIC_SEARCH_ENABLED", "1")
+    monkeypatch.setattr(sm.embed_client, "embed", fake_embed)
+    sm._STATUS_CACHE.clear()
+    st = sm.status(1)
+    assert st == {"enabled": True, "total": 2, "indexed": 0, "pending": ["Синк по ценам", "Интеграция почты"]}
+
+    done = threading.Event()
+    real = sm._index_now
+    monkeypatch.setattr(sm, "_index_now", lambda uid: (real(uid), done.set()))
+    sm.note_changed(1, delay=5)
+    sm.note_changed(1, delay=0.01)  # повтор отменяет предыдущий таймер
+    assert done.wait(3)
+    st = sm.status(1)  # кэш сброшен индексацией
+    assert st["indexed"] == 2 and st["pending"] == []
+
+    monkeypatch.setenv("SEMANTIC_SEARCH_ENABLED", "0")
+    assert sm.status(1) == {"enabled": False}

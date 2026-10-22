@@ -15706,6 +15706,9 @@ html.note-discussion-open .note-discussion-overlay { background: var(--surface, 
 #note-discussion-title-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .note-discussion-subtitle { font-size: 0.71875rem; font-weight: 500; letter-spacing: 0; color: var(--text-secondary, #909499); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .note-discussion-subtitle.hidden { display: none; }
+/* Память Лео догружается — тихая строка над полем ввода */
+.leo-memory-status { margin: 0 12px 6px; padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; line-height: 1.35; color: var(--text-secondary, #909499); background: var(--accent-subtle, rgba(158, 173, 219, 0.12)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; align-self: center; max-width: calc(100% - 24px); }
+.leo-memory-status.hidden { display: none; }
 .note-title-unread { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #5b9fff; color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
 .note-title-unread.hidden { display: none; }
 .note-pane-switch-menu.is-from-right { left: auto !important; right: -52px !important; transform: none !important; }

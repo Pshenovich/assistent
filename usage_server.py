@@ -9104,6 +9104,12 @@ def _focus_note_changed(owner: Any, note_id: Any) -> None:
         proactive_ai.note_changed(owner, note_id)
     except Exception as e:
         print(f"[proactive] note_changed failed note={note_id} err={e!r}")
+    try:
+        from assistant.services import semantic_memory
+
+        semantic_memory.note_changed(owner)  # память Лео — через минуту, а не через 15
+    except Exception as e:
+        print(f"[semantic] note_changed failed note={note_id} err={e!r}")
 
 
 def _focus_enabled(uid: int) -> bool:
@@ -10214,6 +10220,16 @@ async def miniapp_note_make_summary(
         raise HTTPException(status_code=400, detail=str(e)) from e
     background_tasks.add_task(tnotes.generate_summary_for_note, uid, note_id)
     return {"ok": True, "item": item}
+
+
+@miniapp_router.get("/memory/status")
+async def miniapp_memory_status(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Сколько материалов пользователя уже в семантической памяти Лео (для строки в чате)."""
+    from assistant.services import semantic_memory
+
+    return await run_in_threadpool(semantic_memory.status, int(principal.telegram_user_id))
 
 
 class _SpeakerConfirmBody(BaseModel):
