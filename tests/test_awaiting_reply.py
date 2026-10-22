@@ -25,6 +25,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(focus_items, "sync_source", lambda *a, **k: None)
 
     def msg(cid, mid, uid, text, minutes_ago, **kw):
+        if uid != 999:  # 999 — бот: в участниках его нет
+            chat_digest.upsert_member(cid, uid, username=None)
         chat_digest.insert_message(chat_id=cid, message_id=mid, user_id=uid, username=None, display_name=f"U{uid}",
                                    text=text, ts_utc=NOW - timedelta(minutes=minutes_ago), **kw)
 
@@ -36,6 +38,7 @@ def env(tmp_path, monkeypatch):
     msg(GROUP, 5, 202, "Я сделаю", 200, reply_to_message_id=4, reply_to_user_id=201)                 # ответили реплаем
     msg(GROUP, 6, 201, "@pshenovich глянь доступы", 60, mentions=["@pshenovich"])                   # свежий, < 2 ч
     msg(GROUP, 7, 203, "Кто-нибудь знает пароль от вайфая?", 200)
+    msg(GROUP, 8, 999, "Вова, ошибка у клиента — проверьте", 200)              # бот-уведомления
     # 1:1
     msg(CID, 1, 301, "Подскажи, когда созвон?", 300)
     msg(CID, 2, 301, "И ещё: где презентация?", 280)
@@ -43,6 +46,7 @@ def env(tmp_path, monkeypatch):
     proactive_ai.save(ME, f"digest:{GROUP}:2026-10-22", "h", "Пилот", items(
         ("request", "Прислать договор", 2), ("request", "Когда будет макет", 3), ("request", "Кто будет делать", 4),
         ("request", "Глянуть доступы", 6), ("request", "Пароль от вайфая", 7), ("request", "Без номера", 0),
+        ("request", "Ошибка у клиента", 8),
         ("promise", "Пришлю отчёт", 1)))
     proactive_ai.save(ME, f"digest:{CID}:2026-10-22", "h", "Саша", items(("request", "Когда созвон", 1),
                                                                           ("request", "Где презентация", 2)))

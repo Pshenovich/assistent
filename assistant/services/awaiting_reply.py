@@ -3,6 +3,7 @@
 Модель только находит в дайджесте чата вопросы/просьбы (kind=request) — остальное проверяет код:
 - вопрос адресован пользователю: ответ на его сообщение, @упоминание, имя в тексте или чат 1:1;
 - прошло больше 2 часов, пользователь после него в чате не писал и никто не ответил реплаем;
+- автор — человек-участник чата (не бот и не автоуведомления);
 - чат не отключён (дважды «Не мне» в одном чате — вопросы оттуда больше не поднимаем).
 Показывается с AWAITING_HOUR (18:00) по времени пользователя до конца дня.
 """
@@ -121,6 +122,8 @@ def pending_requests(uid: int, *, now: Optional[datetime] = None) -> list[dict[s
             msg = chat_digest.get_message(cid, mid)
             if not msg or (msg.get("user_id") is not None and int(msg["user_id"]) == int(uid)):
                 continue
+            if not chat_digest.is_human_member(cid, msg.get("user_id")):
+                continue  # боты и автоуведомления вопросов не задают
             ts = proactive_ai._parse(msg.get("ts_utc"))
             if not ts or now - ts < MIN_AGE:
                 continue
