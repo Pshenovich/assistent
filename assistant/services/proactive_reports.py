@@ -19,7 +19,7 @@ _ALLOWED = re.compile(r"</?(h3|h4|p|ul|ol|li|b|strong|i|em|br)\s*/?>", re.I)
 WEEK_SYSTEM = """Ты — помощник руководителя. По фактам за неделю (встречи, задачи, решения из транскрипций, договорённости) напиши итоги недели.
 Только по переданным фактам, ничего не выдумывай. Кратко, по-деловому, на русском.
 Формат — только HTML-теги <h3>, <ul>, <li>, <b>, <p>. Разделы по порядку (пустые пропускай):
-<h3>Главное</h3> 3–5 пунктов; <h3>Решения</h3>; <h3>Висит</h3> (кто, что, срок); <h3>По людям</h3> (кратко по ключевым людям); <h3>На следующую неделю</h3> (что сделать первым)."""
+<h3>Главное</h3> 3–5 пунктов; <h3>Решения</h3>; <h3>Обязательства</h3> (что закрыто за неделю; что сорвано — отдельно «за мной» и «за другими» с именами; что буксует на встречах); <h3>Висит</h3> (кто, что, срок); <h3>Время</h3> (сколько ушло на встречи, если есть meeting_hours); <h3>По людям</h3> (кратко по ключевым людям); <h3>На следующую неделю</h3> (что сделать первым)."""
 
 DAY_SYSTEM = """Ты — помощник руководителя. По фактам на сегодня (встречи с временем, задачи, просрочки, подсказки) составь план дня.
 Только по переданным фактам, ничего не выдумывай. Кратко, на русском.
@@ -148,6 +148,42 @@ def _meetings(evs: list[dict[str, Any]], tz: Any) -> list[dict[str, Any]]:
     return out
 
 
+def _commitment_facts(uid: int, monday: datetime, now: datetime) -> dict[str, list[dict[str, str]]]:
+    """B9: срез реестра обязательств за неделю (B1)."""
+    from assistant.services import focus_items
+    from assistant.services.risk_rules import STALLED_MEETINGS, _meeting_sources
+
+    out: dict[str, list[dict[str, str]]] = {"closed_this_week": [], "overdue_mine": [], "overdue_theirs": [], "stalled": []}
+    try:
+        rows = focus_items.commitments(uid, status="", now=now.astimezone(timezone.utc), limit=1000)
+    except Exception as e:
+        print(f"[reports] commitments failed uid={uid} err={e!r}")
+        return out
+    since = monday.astimezone(timezone.utc).isoformat()
+    for c in rows:
+        row = {"text": c["text"], "who": c["who"] or ("я" if c["direction"] == "mine" else ""), "due": c["due_iso"] or c["deadline"]}
+        if c["status"] == "closed" and c.get("updated_at", "") >= since and c.get("closed_as") in ("completed", "linked", "converted"):
+            out["closed_this_week"].append(row)
+        elif c["status"] == "overdue":
+            out["overdue_mine" if c["direction"] == "mine" else "overdue_theirs"].append(row)
+        if c["status"] in ("open", "overdue") and _meeting_sources(c) >= STALLED_MEETINGS:
+            out["stalled"].append(row)
+    return {k: v[:25] for k, v in out.items()}
+
+
+def _meeting_hours(evs: list[dict[str, Any]]) -> float:
+    from assistant.services import proactive
+
+    total = 0.0
+    for e in evs:
+        if proactive._is_all_day(e) or proactive._declined(e) or e.get("entry_type") == "task":
+            continue
+        st, en = proactive._parse(e.get("start")), proactive._parse(e.get("end"))
+        if st and en and en > st:
+            total += min((en - st).total_seconds(), 12 * 3600) / 3600
+    return round(total, 1)
+
+
 def weekly(uid: int, *, now: Optional[datetime] = None, events: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
     from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
     from assistant.services import proactive_ai
@@ -176,8 +212,12 @@ def weekly(uid: int, *, now: Optional[datetime] = None, events: Optional[list[di
     for c in proactive_ai.insight_cards(uid, now=now.astimezone(timezone.utc), task_titles=[]):
         if c.get("type") in ("agreement", "open_question"):
             agreements.append({"type": c["type"], "text": c["title"], "source": c["source"]})
+    commitments = _commitment_facts(uid, monday, now)
+    hours = _meeting_hours(_events(uid, monday, end, events))
     facts = {
         "week": f"{monday.date().isoformat()}..{(end - timedelta(days=1)).date().isoformat()}",
+        "commitments": commitments,
+        "meeting_hours": hours,
         "meetings": meets[:60],
         "tasks_done": [{"title": t.get("title"), "who": t.get("assignee_name") or "я"} for t in done][:40],
         "tasks_hanging": [{"title": t.get("title"), "who": t.get("assignee_name") or "я", "due": str(t.get("end_at") or "")[:10]} for t in hanging][:40],
@@ -186,9 +226,11 @@ def weekly(uid: int, *, now: Optional[datetime] = None, events: Optional[list[di
         "agreements_and_open_questions": agreements[:20],
     }
     body = _sanitize(_llm(WEEK_SYSTEM, facts, "proactive_weekly"))
+    late = len(commitments["overdue_mine"]) + len(commitments["overdue_theirs"])
     kpi = (
-        f"<p><b>{len(meets)}</b> встреч · <b>{len(done)}</b> задач закрыто · <b>{len(hanging)}</b> висят · "
-        f"<b>{len(decisions)}</b> решений</p>"
+        f"<p><b>{len(meets)}</b> встреч ({hours:g} ч) · <b>{len(done)}</b> задач закрыто · <b>{len(hanging)}</b> висят · "
+        f"<b>{len(decisions)}</b> решений · <b>{len(commitments['closed_this_week'])}</b> обещаний закрыто · "
+        f"<b>{late}</b> просрочено</p>"
     )
     last = end - timedelta(days=1)
     title = f"Итоги недели · {monday.day}–{last.day} {_RU_MON[last.month - 1]}"

@@ -826,6 +826,7 @@ def commitments(
             "closed_as": p["status"] if closed_row else "", "deadline": p["deadline"], "due_iso": due_iso,
             "quote": next((str(r.get("quote")) for r in group if r.get("quote")), ""),
             "link": p["link"], "created_at": str(main.get("created_at") or ""),
+            "updated_at": max(str(r.get("updated_at") or "") for r in group),
             "sources": [public(r, now)["source"] for r in group],
             "keys": [str(r["item_key"]) for r in group],
         })

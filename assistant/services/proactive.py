@@ -553,6 +553,12 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
         items = focus_items.apply_to_feed(uid, items, now)
     except Exception as e:
         print(f"[proactive] focus items failed uid={uid} err={e!r}")
+    try:
+        from assistant.services import risk_rules
+
+        items += risk_rules.risk_cards(uid, now=now)  # B7: риски по реестру
+    except Exception as e:
+        print(f"[proactive] risks failed uid={uid} err={e!r}")
     return rank(items, dismissed_keys(uid))
 
 

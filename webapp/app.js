@@ -17487,6 +17487,7 @@
     chat_deadline: ["clock", "amber"],
     chat_blocker: ["alert", "red"],
     overdue: ["alert", "amber"],
+    risk: ["alert", "red"],
     prep: ["note", "blue"],
     no_results: ["mic", "violet"],
     summary_tasks: ["taskBox", "green"],
