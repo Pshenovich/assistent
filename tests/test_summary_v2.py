@@ -26,16 +26,16 @@ def test_locate_quote_exact_and_fuzzy():
     assert sn.locate_quote("обсудили маркетинговую стратегию на год", tn) < 0.6
 
 
-def test_self_assignment_needs_confident_speaker():
+def test_self_assignment_needs_user_confirmed_speaker():
     raw = sn.raw_task({"task": "Прислать смету", "assignee_basis": "self", "speaker": "Спикер 2",
                        "deadline": "до пятницы", "due_iso": "2026-10-23", "quote": "Я пришлю смету до пятницы"})
-    low = {"Спикер 2": {"name": "Саша", "confidence": 0.5}}
-    t = sn.resolve_tasks([raw], speaker_map=low, people=PEOPLE, meeting_at="2026-10-21T11:00:00+03:00", transcript=TRANSCRIPT)[0]
+    guess = {"Спикер 2": {"name": "Саша", "confidence": 0.95}}
+    t = sn.resolve_tasks([raw], speaker_map=guess, people=PEOPLE, meeting_at="2026-10-21T11:00:00+03:00", transcript=TRANSCRIPT)[0]
     assert t["assignee_name"] == ""
-    assert t["assignee"] == "Спикер 2 (вероятно Саша)"
+    assert t["assignee"] == "Спикер 2"  # догадку модели не подставляем
     assert t["owner_flag"] == "unknown"
-    high = {"Спикер 2": {"name": "Саша", "confidence": 0.9}}
-    t = sn.resolve_tasks([raw], speaker_map=high, people=PEOPLE, meeting_at="2026-10-21T11:00:00+03:00", transcript=TRANSCRIPT)[0]
+    confirmed = {"Спикер 2": {"name": "Саша", "confidence": 1.0, "confirmed": True}}
+    t = sn.resolve_tasks([raw], speaker_map=confirmed, people=PEOPLE, meeting_at="2026-10-21T11:00:00+03:00", transcript=TRANSCRIPT)[0]
     assert t["assignee"] == "Александр Смирнов"
     assert t["assignee_contact_key"] == "sasha@x.ru"
     assert t["owner_flag"] == "others"
@@ -85,14 +85,16 @@ def test_render_meeting_sections_and_tasks():
         "decisions": [{"text": "Запускаем пилот в ноябре"}],
         "tasks": [{"task": "Прислать смету", "assignee": "Саша", "deadline": "до пятницы (23 окт)"}],
         "open_questions": [], "risks": ["Сроки подрядчика"], "next_steps": [],
-        "speaker_map": {"Спикер 2": {"name": "Саша", "confidence": 0.5}},
+        "speaker_map": {"Спикер 2": {"name": "Саша", "confidence": 0.5},
+                        "Спикер 1": {"name": "Вова", "confidence": 1.0, "confirmed": True}},
     }
     out = render_summary_html(data)
     assert out.startswith("<h2>📌 Кратко</h2><p>Обсудили бюджет.</p><p>Договорились о пилоте.</p>")
     assert "<h2>✅ Принятые решения</h2><ul><li>Запускаем пилот в ноябре</li></ul>" in out
     assert "<h2>📋 Задачи</h2><ul><li data-task>Саша — Прислать смету — до пятницы (23 окт)</li></ul>" in out
     assert "Открытые вопросы" not in out
-    assert "Спикер 2 — Саша (предположительно)" in out
+    assert "Спикер 1 — Вова" in out
+    assert "Спикер 2 — Саша" not in out  # догадка без подтверждения в текст не попадает
 
 
 def test_render_interview_uses_sections():
@@ -112,13 +114,30 @@ def test_summarize_recording_v2_end_to_end(monkeypatch):
                    "deadline": "до пятницы", "due_iso": "2026-10-23", "quote": "Я пришлю смету до пятницы"}],
         "speaker_map": {"Спикер 2": {"name": "Саша", "confidence": 0.8, "evidence": "ответил на «Саша, что скажешь»"}},
     }
-    extra = {"tasks": [{"task": "Подготовить договор с подрядчиком", "assignee": "Петя", "assignee_basis": "named",
-                        "quote": "Петя, подготовь договор с подрядчиком"}]}
+    cands = {"tasks": [
+        {"task": "Отправить смету", "speaker": "Спикер 2", "deadline": "до пятницы", "quote": "Я пришлю смету до пятницы"},
+        {"task": "Подготовить договор с подрядчиком", "assignee": "Петя", "speaker": "Спикер 1",
+         "quote": "Петя, подготовь договор с подрядчиком"},
+        {"task": "Подумать о бюджете", "speaker": "Спикер 1", "quote": "Саша, что скажешь по бюджету?"},
+    ]}
     seen = {}
 
     def fake_chat(system, user, **kw):
-        seen[kw["operation"]] = json.loads(user)
-        return json.dumps(main if kw["operation"] == "summarize_extract_llm" else extra, ensure_ascii=False)
+        op = kw["operation"]
+        seen[op] = json.loads(user)
+        if op == "summarize_extract_llm":
+            return json.dumps(main, ensure_ascii=False)
+        if op == "summarize_task_candidates":
+            return json.dumps(cands, ensure_ascii=False)
+        if op == "summarize_tasks_consolidate":
+            ids = {c["task"]: c["id"] for c in seen[op]["candidates"]}
+            return json.dumps({"tasks": [
+                {"task": "Прислать смету", "speaker": "Спикер 2", "deadline": "до пятницы",
+                 "sources": [ids["Отправить смету"], ids["Прислать смету"]]},
+                {"task": "Подготовить договор с подрядчиком", "assignee": "Петя",
+                 "sources": [ids["Подготовить договор с подрядчиком"]]},
+            ], "dropped": [ids["Подумать о бюджете"]]}, ensure_ascii=False)
+        raise AssertionError(op)
 
     monkeypatch.setattr(llm_mod, "_chat", fake_chat)
     monkeypatch.setenv("SUMMARY_PIPELINE", "v2")
@@ -127,12 +146,84 @@ def test_summarize_recording_v2_end_to_end(monkeypatch):
     out = llm_mod.summarize_recording(TRANSCRIPT, speakers_detected=True, context=ctx)
     assert out["summary_version"] == 2
     assert seen["summarize_extract_llm"]["context"]["meeting_at"] == "2026-10-21T11:00:00+03:00"
-    assert [t["assignee"] for t in out["tasks"]] == ["Александр Смирнов", "Пётр Иванов"]
+    assert len(seen["summarize_tasks_consolidate"]["candidates"]) == 4
+    assert [t["task"] for t in out["tasks"]] == ["Прислать смету", "Подготовить договор с подрядчиком"]
+    assert [t["assignee"] for t in out["tasks"]] == ["Спикер 2", "Пётр Иванов"]
+    first = out["tasks"][0]
+    assert first["quote_score"] == 1.0 and first["due_iso"] == "2026-10-23" and first["sources"] == 2
+    assert out["summary_stats"] == {"candidates": 4, "tasks": 2, "dropped": 1, "windows": 1, "truncated": False}
     assert out["decisions"] == ["Пилот в ноябре"]
-    assert "Александр Смирнов — Прислать смету — до пятницы (23 окт)" in out["summary"]
+    assert "Спикер 2 — Прислать смету — до пятницы (23 окт)" in out["summary"]
     meta = sn.v2_meta(out)
     assert "tasks" not in meta["summary_data"]
     assert sn.summary_data_from_meta({**meta, "tasks": out["tasks"]})["tasks"] == out["tasks"]
+
+
+def test_consolidate_failure_falls_back_to_code_merge(monkeypatch):
+    def fake_chat(system, user, **kw):
+        op = kw["operation"]
+        if op == "summarize_extract_llm":
+            return json.dumps({"brief": "x", "tasks": [{"task": "Подготовить договор", "assignee": "Петя"}]})
+        if op == "summarize_task_candidates":
+            return json.dumps({"tasks": [{"task": "Подготовить договор", "assignee": "Петя"},
+                                         {"task": "Прислать смету", "speaker": "Спикер 2"}]})
+        return "oops"
+
+    monkeypatch.setattr(llm_mod, "_chat", fake_chat)
+    monkeypatch.setenv("SUMMARY_PIPELINE", "v2")
+    out = llm_mod.summarize_recording(TRANSCRIPT, context=MeetingContext(people=PEOPLE))
+    assert sorted(t["task"] for t in out["tasks"]) == ["Подготовить договор", "Прислать смету"]
+    assert out["summary_stats"]["consolidate_failed"] is True
+
+
+def test_long_transcript_uses_windows_and_synthesis(monkeypatch):
+    from assistant.nlu import summary_v2
+
+    block = "Спикер 1:\n" + ("Обсуждаем план работ на квартал. " * 30)
+    long_text = "\n\n".join([block] * 60)  # ~60 тыс. символов
+    ops = []
+
+    def fake_chat(system, user, **kw):
+        op = kw["operation"]
+        ops.append(op)
+        if op == "summarize_window_facts":
+            part = json.loads(user)["part"]
+            return json.dumps({"points": [{"topic": f"Часть {part}", "points": ["x"]}],
+                               "speaker_map": {"Спикер 1": {"name": "Вова", "confidence": 0.3 + part / 100}}})
+        if op == "summarize_task_candidates":
+            return json.dumps({"tasks": [{"task": "Составить план работ на квартал", "speaker": "Спикер 1"}]})
+        if op == "summarize_synth":
+            assert len(json.loads(user)["fragments"]) == len(summary_v2.split_windows(long_text))
+            return json.dumps({"brief": "План на квартал.", "content_type": "meeting"})
+        if op == "summarize_tasks_consolidate":
+            n = len(json.loads(user)["candidates"])
+            return json.dumps({"tasks": [{"task": "Составить план работ на квартал", "speaker": "Спикер 1",
+                                          "sources": list(range(1, n + 1))}]})
+        raise AssertionError(op)
+
+    monkeypatch.setattr(llm_mod, "_chat", fake_chat)
+    monkeypatch.setenv("SUMMARY_PIPELINE", "v2")
+    out = llm_mod.summarize_recording(long_text, context=MeetingContext())
+    windows = len(summary_v2.split_windows(long_text))
+    assert windows >= 4
+    assert "summarize_extract_llm" not in ops
+    assert ops.count("summarize_window_facts") == windows
+    assert len(out["tasks"]) == 1 and out["tasks"][0]["sources"] == windows
+    assert out["summary_stats"]["windows"] == windows
+    assert out["speaker_map"]["Спикер 1"]["confidence"] == round(0.3 + windows / 100, 2)
+
+
+def test_split_windows_overlap_and_coverage():
+    from assistant.nlu.summary_v2 import split_windows
+
+    blocks = [f"Спикер {i % 3}:\nРеплика номер {i}. " + "слово " * 200 for i in range(40)]
+    text = "\n\n".join(blocks)
+    ws = split_windows(text, size=6000, overlap=1500)
+    assert len(ws) > 1 and all(len(w) <= 6000 for w in ws)
+    for i in range(40):  # каждая реплика попала хотя бы в одно окно
+        assert any(f"Реплика номер {i}." in w for w in ws)
+    assert ws[0].split("\n\n")[-1] in ws[1]  # перекрытие хвостом
+    assert split_windows("коротко") == ["коротко"]
 
 
 def test_summarize_recording_falls_back_to_v1(monkeypatch):
@@ -177,7 +268,7 @@ def _v2_note(tmp_path, monkeypatch, *, edited: bool):
     display = prepare_summary_markdown(render_summary_html(data), headline="Бюджет")
     meta = {**sn.v2_meta(result), "tasks": tasks, "summary_render": {"headline": "Бюджет"}}
     note = tnotes.create_with_summary(7, title="Бюджет", transcript=TRANSCRIPT, summary=display, meta=meta)
-    assert "Спикер 2 (вероятно Саша) — Прислать смету" in note["body"]
+    assert "Спикер 2 — Прислать смету" in note["body"]
     if edited:
         notes_store.update_note("7", int(note["id"]), body=note["body"] + "\n\nМоя правка", actor_user_id="7")
     return tnotes, notes_store, int(note["id"])

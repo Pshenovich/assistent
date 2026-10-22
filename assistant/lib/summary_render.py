@@ -70,10 +70,9 @@ def _speakers(speaker_map: dict[str, dict[str, Any]]) -> str:
     rows = []
     for label, info in sorted(speaker_map.items()):
         name = str(info.get("name") or "").strip()
-        if not name:
-            continue
-        sure = info.get("confirmed") or float(info.get("confidence") or 0) >= 0.75
-        rows.append(f"{label} — {name}" + ("" if sure else " (предположительно)"))
+        if not name or not info.get("confirmed"):
+            continue  # догадки модели в текст саммари не выносим — только подтверждённое
+        rows.append(f"{label} — {name}")
     if not rows:
         return ""
     return f"<p><tg-spoiler>🗣 {_e('; '.join(rows))}</tg-spoiler></p>"

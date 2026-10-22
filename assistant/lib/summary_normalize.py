@@ -10,8 +10,9 @@ from datetime import date, datetime, timedelta
 from difflib import SequenceMatcher
 from typing import Any, Optional
 
-SPEAKER_CONFIRM_MIN = 0.75  # с этой уверенности «я сделаю» отдаём имени спикера
-SPEAKER_HINT_MIN = 0.4  # с этой — показываем «Спикер 2 (вероятно Саша)»
+# Диаризация Obuchat путает голоса, а догадка модели по тексту ненадёжна: имя спикера
+# подставляем в исполнителя только после подтверждения пользователем (чип «Спикеры»).
+SPEAKER_CONFIRM_MIN = 1.01
 
 _WS_RE = re.compile(r"\s+")
 _PUNCT_RE = re.compile(r"[^\w\s]+", re.UNICODE)
@@ -276,8 +277,7 @@ def resolve_task(
             who = sure
         elif speaker.startswith("Спикер"):
             who = ""
-            guess = speaker_name(speaker_map, speaker, min_conf=SPEAKER_HINT_MIN)
-            hint = f"{speaker} (вероятно {guess})" if guess else speaker
+            hint = speaker
         else:
             who = speaker  # в транскрипте реальные имена
     elif basis == "self" and not speaker:

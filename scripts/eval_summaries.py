@@ -21,6 +21,10 @@
 
     .venv/bin/python scripts/eval_summaries.py --annotate openai/gpt-5.5
 
+Эталон из ручной разметки (data/eval/drafts/note_N.md: «- [x] задача | исполнитель | срок»):
+
+    .venv/bin/python scripts/eval_summaries.py --gold-md data/eval/drafts --pipelines v1,v2
+
 Прогон (ходит в OpenRouter, нужен .env):
 
     .venv/bin/python scripts/eval_summaries.py --pipelines v1,v2
@@ -106,6 +110,27 @@ def _match(expected: list[dict[str, Any]], got: list[dict[str, Any]]) -> list[tu
     return out
 
 
+def load_gold_md(path: Path) -> list[dict[str, Any]]:
+    """Отмеченные «- [x]» строки разметки → эталонные задачи."""
+    import re
+
+    out: list[dict[str, Any]] = []
+    for line in path.read_text().splitlines():
+        m = re.match(r"^\s*-\s*\[[xXхХ]\]\s*(.+)$", line)
+        if not m:
+            continue
+        body = re.sub(r"\s*\((?:[С12ц]+,?)+\)\s*$", "", m.group(1)).strip()
+        parts = [p.strip() for p in body.split("|")]
+        task = parts[0] if parts else ""
+        if not task:
+            continue
+        who = parts[1] if len(parts) > 1 else ""
+        if who.endswith("?") or who.lower().startswith("спикер"):
+            who = ""  # метка спикера — не исполнитель
+        out.append({"task": task, "assignee": who, "deadline": parts[2] if len(parts) > 2 else ""})
+    return out
+
+
 def _metrics(case: dict[str, Any], out: dict[str, Any] | None) -> dict[str, Any]:
     from assistant.lib.summary_normalize import _norm as n, locate_quote, match_person
 
@@ -114,6 +139,9 @@ def _metrics(case: dict[str, Any], out: dict[str, Any] | None) -> dict[str, Any]
     tasks = [t for t in out.get("tasks") or [] if isinstance(t, dict)]
     tn = n(case["transcript"])
     m: dict[str, Any] = {"failed": 0, "tasks": len(tasks)}
+    for k, v in (out.get("summary_stats") or {}).items():
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            m[f"st_{k}"] = v
     if tasks:
         m["with_assignee"] = sum(1 for t in tasks if str(t.get("assignee_name", t.get("assignee")) or "").strip()) / len(tasks)
         m["with_due_iso"] = sum(1 for t in tasks if t.get("due_iso")) / len(tasks)
@@ -126,6 +154,14 @@ def _metrics(case: dict[str, Any], out: dict[str, Any] | None) -> dict[str, Any]
         pairs = _match(exp, tasks)
         m["recall"] = len(pairs) / len(exp)
         m["precision"] = len(pairs) / len(tasks) if tasks else 0.0
+        # дубль — лишняя задача, похожая на уже сопоставленную эталонную
+        matched_e = {i for i, _ in pairs}
+        matched_g = {j for _, j in pairs}
+        dups = sum(
+            1 for j, g in enumerate(tasks)
+            if j not in matched_g and any(_sim(exp[i].get("task", ""), g.get("task", "")) >= TASK_MATCH_MIN for i in matched_e)
+        )
+        m["dup_rate"] = dups / len(tasks) if tasks else 0.0
         people = list((case.get("context") or {}).get("people") or [])
         ok_who = ok_due = n_who = n_due = 0
         for i, j in pairs:
@@ -234,6 +270,7 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=15)
     ap.add_argument("--json", action="store_true", help="печать сырых метрик по кейсам")
     ap.add_argument("--annotate", metavar="MODEL", help="переписать expected эталоном от этой модели")
+    ap.add_argument("--gold-md", type=Path, metavar="DIR", help="эталон из ручной разметки; прогон только по размеченным")
     args = ap.parse_args()
 
     if args.export_from_notes:
@@ -252,8 +289,12 @@ def main() -> int:
         return 1
     pipelines = [p.strip() for p in args.pipelines.split(",") if p.strip()]
     rows: dict[str, list[dict[str, Any]]] = {p: [] for p in pipelines}
+    if args.gold_md:
+        files = [f for f in files if (args.gold_md / (f.stem + ".md")).is_file()]
     for f in files[: args.limit]:
         case = json.loads(f.read_text())
+        if args.gold_md:
+            case["expected"] = {"tasks": load_gold_md(args.gold_md / (f.stem + ".md"))}
         for p in pipelines:
             out, sec = _run(p, case)
             m = _metrics(case, out)
@@ -261,7 +302,8 @@ def main() -> int:
             rows[p].append(m)
             if args.json:
                 print(json.dumps({"case": f.name, "pipeline": p, **m}, ensure_ascii=False))
-    keys = ["failed", "tasks", "recall", "precision", "assignee_acc", "due_acc", "with_assignee", "with_due_iso", "quote_grounded", "sec"]
+    keys = ["failed", "tasks", "recall", "precision", "dup_rate", "assignee_acc", "due_acc", "with_assignee", "with_due_iso",
+            "quote_grounded", "st_candidates", "st_dropped", "st_windows", "sec"]
     print("metric".ljust(16) + "".join(p.ljust(10) for p in pipelines))
     for k in keys:
         print(k.ljust(16) + "".join(_avg(rows[p], k).ljust(10) for p in pipelines))

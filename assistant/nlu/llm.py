@@ -17,7 +17,6 @@ from assistant.lib.llm_json import strip_json_from_markdown
 from assistant.lib.summary_enrich import inject_tasks_into_summary, merge_tasks
 from assistant.nlu.prompts import (
     ACTION_ITEMS_SYSTEM,
-    ACTION_ITEMS_V2_SYSTEM,
     ASK_ATTACHMENTS,
     ASK_SYSTEM,
     CALENDAR_PARSE_SYSTEM,
@@ -28,7 +27,6 @@ from assistant.nlu.prompts import (
     KB_QA_PARSE_SYSTEM,
     NOTE_FORMAT_SYSTEM,
     REMINDER_PARSE_SYSTEM,
-    SUMMARY_EXTRACT_SYSTEM,
     SUMMARY_SEARCH_PARSE_SYSTEM,
     SUMMARY_SYSTEM,
     TELEMOST_PARSE_SYSTEM,
@@ -958,48 +956,21 @@ def _json_obj(raw: str) -> dict[str, Any] | None:
 def _summarize_recording_v2(
     transcript: str, *, speakers_detected: bool, context: Any = None
 ) -> dict[str, Any] | None:
-    """Извлечение фактов в JSON (2 вызова параллельно) → нормализация → рендер кодом."""
-    from concurrent.futures import ThreadPoolExecutor
-
+    """Окна → кандидаты → сведение задач; факты одним вызовом или синтезом по окнам → рендер кодом."""
     from assistant.lib import summary_normalize as sn
     from assistant.lib.summary_render import render_summary_html
+    from assistant.nlu import summary_v2
 
-    text = transcript[:_SUMMARY_TRANSCRIPT_MAX]
     ctx_payload = context.to_payload() if context is not None else {}
-    payload = json.dumps(
-        {"context": ctx_payload, "speakers_detected": bool(speakers_detected), "transcript": text},
-        ensure_ascii=False,
-    )
-    tasks_payload = json.dumps({"context": ctx_payload, "transcript": text}, ensure_ascii=False)
     model = _model_summary()
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        main_f = pool.submit(
-            _chat,
-            SUMMARY_EXTRACT_SYSTEM,
-            payload,
-            operation="summarize_extract_llm",
-            model=model,
-            timeout=300,
-            temperature=0.1,
-            max_tokens=8192,
-        )
-        tasks_f = pool.submit(
-            _chat,
-            ACTION_ITEMS_V2_SYSTEM,
-            tasks_payload,
-            operation="summarize_tasks_llm",
-            model=model,
-            timeout=300,
-            temperature=0.0,
-            max_tokens=4096,
-        )
-        obj = _json_obj(main_f.result())
-        try:
-            tasks_obj = _json_obj(tasks_f.result()) or {}
-        except Exception as e:
-            print(f"[summary_v2] tasks call failed: {e!r}")
-            tasks_obj = {}
-    if not obj or not (str(obj.get("brief") or "").strip() or obj.get("tasks") or obj.get("discussion")):
+    raw = summary_v2.extract(
+        transcript, speakers_detected=speakers_detected, ctx_payload=ctx_payload, model=model, chat=_chat
+    )
+    if not raw:
+        return None
+    obj = raw["obj"]
+    text = raw["text"]
+    if not (str(obj.get("brief") or "").strip() or raw["tasks"] or obj.get("discussion")):
         return None
     content_type = str(obj.get("content_type") or "meeting").strip().lower()
     if content_type not in {"meeting", "interview", "lecture", "brainstorm", "voice_note"}:
@@ -1008,13 +979,11 @@ def _summarize_recording_v2(
         confidence = max(0.0, min(1.0, float(obj.get("confidence") or 0)))
     except (TypeError, ValueError):
         confidence = 0.0
-    speaker_map = sn.clean_speaker_map(obj.get("speaker_map"), text)
-    primary = [t for t in (sn.raw_task(x) for x in obj.get("tasks") or []) if t]
-    secondary = [t for t in (sn.raw_task(x) for x in tasks_obj.get("tasks") or []) if t]
+    speaker_map = raw["speaker_map"]
     people = list(getattr(context, "people", []) or [])
     meeting_at = str(getattr(context, "meeting_at", "") or "")
     tasks = sn.resolve_tasks(
-        sn.merge_raw_tasks(primary, secondary),
+        raw["tasks"],
         speaker_map=speaker_map,
         people=people,
         meeting_at=meeting_at,
@@ -1052,6 +1021,7 @@ def _summarize_recording_v2(
         "summary_version": 2,
         "summary_model": model,
         "meeting_at": meeting_at,
+        "summary_stats": raw["stats"],
     }
 
 
