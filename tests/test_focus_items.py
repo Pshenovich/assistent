@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from assistant.services import focus_items as fi
 from assistant.services import proactive
 from assistant.services import proactive_ai as pa
+from assistant.stores import calendar_tasks as tasks_store
 from assistant.stores import notes as notes_store
 
 SUMMARY = (
@@ -24,7 +25,8 @@ class FocusItemsTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         os.environ["NOTES_DB_PATH"] = os.path.join(self._tmp.name, "notes.sqlite")
-        for m in (notes_store, pa, proactive, fi):
+        os.environ["CALENDAR_TASKS_DB_PATH"] = os.path.join(self._tmp.name, "calendar_tasks.sqlite")
+        for m in (notes_store, pa, proactive, fi, tasks_store):
             m._CONN = None  # type: ignore[attr-defined]
         self.note = notes_store.create_note(
             1, "Синк с Альфой", SUMMARY,
@@ -35,7 +37,8 @@ class FocusItemsTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
-        for m in (notes_store, pa, proactive, fi):
+        os.environ.pop("CALENDAR_TASKS_DB_PATH", None)
+        for m in (notes_store, pa, proactive, fi, tasks_store):
             m._CONN = None  # type: ignore[attr-defined]
         self._tmp.cleanup()
 
@@ -75,6 +78,46 @@ class FocusItemsTests(unittest.TestCase):
         self.assertLess(body.index("note-focus-mark"), body.index("приложить смету"))
         self.assertIn('data-leo-mark-url="https://bitrix24.ru/task/1"', body)
         self.assertIn(">Задача</span>", body)
+
+    def test_converted_task_becomes_chip_in_source(self) -> None:
+        self._remember()
+        fi.apply(1, "ins:1:abc", "converted", by="Вова", task_id=42)
+        body = notes_store.get_note(1, int(self.note["id"]))["body"]
+        self.assertIn('data-leo-mark="task"', body)
+        self.assertIn('data-leo-mark-task="42"', body)
+        self.assertIn(">Подготовить API для интеграции</span>", body)
+        self.assertNotIn(">✓<", body)
+        self.assertIn("[поставлена задача «Подготовить API для интеграции»", fi.marks_to_text(body))
+        self.assertEqual(fi.strip_marks(body).replace(" <", "<"), SUMMARY)
+        # Повторная отметка заменяет чип, а не добавляет второй.
+        fi.apply(1, "ins:1:abc", "converted", by="Вова", task_id=43)
+        body = notes_store.get_note(1, int(self.note["id"]))["body"]
+        self.assertEqual(body.count("note-focus-mark"), 1)
+        self.assertIn('data-leo-mark-task="43"', body)
+
+    def test_converted_via_assistant_finds_created_task(self) -> None:
+        # «В задачу» на карточке Фокуса: задачу ставит ассистент, id не приходит — берём свежую похожую.
+        self._remember()
+        tasks_store.create_task(1, title="Другое дело", start_at=datetime.now(timezone.utc))
+        task = tasks_store.create_task(1, title="Подготовить API для интеграции", start_at=datetime.now(timezone.utc))
+        row = fi.apply(1, "ins:1:abc", "converted", by="Вова")
+        self.assertEqual(row["link"]["task_id"], int(task["id"]))
+        body = notes_store.get_note(1, int(self.note["id"]))["body"]
+        self.assertIn('data-leo-mark-task="%s"' % task["id"], body)
+
+    def test_dismissed_and_retyped_are_marked_in_source(self) -> None:
+        self._remember()
+        self._remember("ins:1:ira", "Отправить договор", "Ира")
+        fi.apply(1, "ins:1:abc", "dismiss", by="Вова", reason="duplicate")
+        fi.apply(1, "ins:1:ira", "retype", by="Вова", type="decision")
+        body = notes_store.get_note(1, int(self.note["id"]))["body"]
+        self.assertIn('data-leo-mark="dismissed"', body)
+        self.assertIn(">дубль</span>", body)
+        self.assertIn('data-leo-mark="retyped"', body)
+        self.assertIn(">решение</span>", body)
+        self.assertIn("[скрыто: дубль", fi.marks_to_text(body))
+        fi.apply(1, "ins:1:abc", "undo", by="Вова")
+        self.assertNotIn(">дубль<", notes_store.get_note(1, int(self.note["id"]))["body"])
 
     def test_feed_hides_handled_and_rephrased(self) -> None:
         self._remember()

@@ -204,6 +204,26 @@ def _save(owner_user_id: Any, row: dict[str, Any], event: dict[str, Any]) -> dic
 
 # ---------------------------------------------------------------- действия
 
+def _recent_task_for(owner_user_id: Any, row: dict[str, Any]) -> Optional[int]:
+    """«В задачу» через ассистента: задачу ставит ИИ, id сюда не приходит — берём только что
+    созданную задачу с похожим названием, чтобы в исходнике встал чип задачи, а не просто «✓»."""
+    from assistant.stores import calendar_tasks as tasks_store
+
+    since = (_now() - timedelta(minutes=15)).replace(microsecond=0).isoformat()
+    try:
+        recent = tasks_store.list_recent_owner_tasks(owner_user_id, since)
+    except Exception as e:
+        print(f"[focus_items] recent tasks failed uid={owner_user_id} err={e!r}")
+        return None
+    want = str((row.get("fields") or {}).get("task") or row.get("text") or "")
+    best, best_s = None, 0.0
+    for t in recent:
+        s = _score(want, str(t.get("title") or ""))
+        if s > best_s:
+            best, best_s = t, s
+    return int(best["id"]) if best and best_s >= 0.5 else None
+
+
 def apply(owner_user_id: Any, item_key: str, op: str, *, by: str = "", **kw: Any) -> dict[str, Any]:
     """Действие с пунктом: done / link / snooze / dismiss / retype / update / converted / undo."""
     row = get(owner_user_id, item_key)
@@ -216,8 +236,9 @@ def apply(owner_user_id: Any, item_key: str, op: str, *, by: str = "", **kw: Any
         row.update(status="completed", reason="", snooze_until="")
     elif op == "converted":
         row.update(status="converted", reason="", snooze_until="")
-        if kw.get("task_id"):
-            row["link"] = {**(row.get("link") or {}), "task_id": int(kw["task_id"])}
+        task_id = kw.get("task_id") or _recent_task_for(owner_user_id, row)
+        if task_id:
+            row["link"] = {**(row.get("link") or {}), "task_id": int(task_id)}
     elif op == "link":
         url = str(kw.get("url") or "").strip()
         task_id = kw.get("task_id")
@@ -481,22 +502,54 @@ def _short_date(iso: str) -> str:
     return d.strftime("%d.%m") if d else ""
 
 
+_DISMISS_LABEL = {"not_a_task": "не задача", "duplicate": "дубль", "not_relevant": "неактуально",
+                  "recognition_error": "ошибка распознавания", "not_me": "не мне"}
+_RETYPE_LABEL = {"promise": "обещание", "decision": "решение", "thought": "мысль", "reminder": "напоминание"}
+
+
 def marks_to_text(html_text: str) -> str:
     """Для ИИ: значок → «[выполнено: Вова, 20.10]», чтобы по документу было видно, что сделано."""
 
     def repl(m: re.Match[str]) -> str:
         a = _mark_attrs(m.group(0))
-        st = {"done": "выполнено", "linked": "связано с задачей", "snoozed": "отложено"}.get(a.get("status", ""), "отмечено")
+        st = a.get("status", "")
+        if st == "task":
+            head = ("задача выполнена" if a.get("done") else "поставлена задача") + (f" «{a['label']}»" if a.get("label") else "")
+        elif st in ("dismissed", "retyped"):
+            head = ("скрыто: " if st == "dismissed" else "тип изменён: ") + a.get("label", "")
+        else:
+            head = {"done": "выполнено", "linked": "связано с задачей", "snoozed": "отложено"}.get(st, "отмечено")
         bits = [x for x in (a.get("by"), _short_date(a.get("at", ""))) if x]
         url = f" {a['url']}" if a.get("url") else ""
-        return f" [{st}{': ' + ', '.join(bits) if bits else ''}{url}]"
+        return f" [{head}{': ' + ', '.join(bits) if bits else ''}{url}]"
 
     return MARK_RE.sub(repl, str(html_text or ""))
 
 
 def mark_html(row: dict[str, Any]) -> str:
-    st = {"completed": "done", "linked": "linked", "converted": "done"}.get(str(row.get("status") or ""), "")
-    if not st:
+    """Значок пункта в исходнике.
+
+    Поставлена / связана задача в Лео — чип с названием задачи (открывает её);
+    выполнено — «✓»; ссылка наружу — «Задача»; «не задача», «дубль», смена типа — серая пометка,
+    чтобы в заметке было видно: пункт разобран, заводить его не нужно."""
+    status = str(row.get("status") or "")
+    link = row.get("link") or {}
+    task_id = link.get("task_id")
+    label = ""
+    if task_id and status in ("converted", "linked", "completed"):
+        st = "task"
+        label = str(link.get("title") or "").strip() or public(row)["text"]
+    elif status in ("completed", "converted"):
+        st = "done"
+    elif status == "linked":
+        st = "linked"
+    elif status == "dismissed":
+        st, label = "dismissed", _DISMISS_LABEL.get(str(row.get("reason") or ""), "скрыто")
+    elif status == "retyped":
+        st, label = "retyped", _RETYPE_LABEL.get(str(row.get("type") or ""), "")
+        if not label:
+            return ""
+    else:
         return ""
     attrs = {
         "": st,
@@ -504,15 +557,19 @@ def mark_html(row: dict[str, Any]) -> str:
         "by": str(row.get("by_name") or ""),
         "at": str(row.get("updated_at") or ""),
     }
-    url = str((row.get("link") or {}).get("url") or "")
+    url = str(link.get("url") or "")
     if url:
         attrs["url"] = url
-    task_id = (row.get("link") or {}).get("task_id")
     if task_id:
         attrs["task"] = str(task_id)
+    if label:
+        attrs["label"] = label
+    if st == "task" and status == "completed":
+        attrs["done"] = "1"
     a = " ".join(f'data-leo-mark{"-" + k if k else ""}="{_h.escape(v, quote=True)}"' for k, v in attrs.items())
-    label = "✓" if st == "done" else "Задача"
-    return f'<span class="note-focus-mark" {a} contenteditable="false">{label}</span>'
+    # Внутри только текст (без вложенных span — MARK_RE их не переварит); иконку чипа рисует CSS.
+    inner = {"done": "✓", "linked": "Задача"}.get(st) or _h.escape(label)
+    return f'<span class="note-focus-mark" {a} contenteditable="false">{inner}</span>'
 
 
 def _words(s: str) -> set[str]:

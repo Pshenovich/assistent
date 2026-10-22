@@ -1,6 +1,6 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261022-tablebar";
+var CACHE_VERSION = "miniapp-v1-20261022-focuschip";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 var CANONICAL_ORIGIN = "https://assistent.networ.ru";
 var OBSOLETE_HOSTS = {
@@ -11,9 +11,9 @@ var OBSOLETE_HOSTS = {
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261022-tablebar",
-  "./app.js?v=20261022-tablebar",
-  "./web-canvas.js?v=20261022-tablebar",
+  "./styles.css?v=20261022-focuschip",
+  "./app.js?v=20261022-focuschip",
+  "./web-canvas.js?v=20261022-focuschip",
   "./launch.html",
   "./manifest.webmanifest",
   "./note-drafts.js?v=20261005-heading-pdf",

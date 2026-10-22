@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261022-tablebar";
+  var WEBAPP_BUILD = "20261022-focuschip";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261022-tablebar"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261022-focuschip"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -17975,14 +17975,24 @@
 
   function focusMarkAttrs(el) {
     var a = { mark: el.getAttribute("data-leo-mark") || "done" };
-    ["item", "by", "at", "url", "task"].forEach(function (k) {
+    ["item", "by", "at", "url", "task", "label", "done"].forEach(function (k) {
       a[k] = el.getAttribute("data-leo-mark-" + k) || "";
     });
     var d = new Date(a.at);
     var when = isNaN(d.getTime())
       ? ""
       : d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }) + ", " + d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-    a.title = [a.mark === "linked" ? "Связано с задачей" : "Выполнено", a.by, when, "из «Фокуса»"].filter(Boolean).join(" · ");
+    var head =
+      a.mark === "task"
+        ? (a.done ? "Задача выполнена" : "Поставлена задача")
+        : a.mark === "dismissed"
+          ? "Скрыто: " + a.label
+          : a.mark === "retyped"
+            ? "Тип изменён: " + a.label
+            : a.mark === "linked"
+              ? "Связано с задачей"
+              : "Выполнено";
+    a.title = [head, a.by, when, "из «Фокуса»"].filter(Boolean).join(" · ");
     return a;
   }
 
@@ -42266,7 +42276,8 @@
       if (tag === "span" && name === "data-leo-ref") {
         return /^(task|reminder|person|chat):[^\s"'<>]{1,160}$/.test(String(val || ""));
       }
-      if (tag === "span" && /^data-leo-mark(-(item|by|at|task))?$/.test(name)) return String(val || "").length <= 120;
+      if (tag === "span" && /^data-leo-mark(-(item|by|at|task|done))?$/.test(name)) return String(val || "").length <= 120;
+      if (tag === "span" && name === "data-leo-mark-label") return String(val || "").length <= 500;
       if (tag === "span" && name === "data-leo-mark-url") return /^https?:\/\/[^\s"<>]{1,1000}$/i.test(String(val || ""));
       if (tag === "span" && name === "contenteditable" && val === "false") return true;
       if (tag === "span" && name === "aria-hidden" && val === "true") return true;

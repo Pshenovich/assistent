@@ -1531,6 +1531,10 @@ def _material_digest(ctx: GptCalendarContext, note_id: int, *, full: bool) -> di
                     row["status"] = "выполнена" + (f" ({t.get('completed_by')}, {str(t.get('completed_at') or '')[:10]})" if t.get("completed_by") else "")
                 elif t.get("focus_status") == "linked":
                     row["status"] = "связана с задачей"
+                elif t.get("focus_status") == "dismissed":
+                    row["status"] = "скрыта пользователем — не заводить"
+                elif t.get("focus_status") == "retyped":
+                    row["status"] = "не задача (" + str(t.get("type") or "другой тип") + ")"
                 if isinstance(t.get("link"), dict) and t["link"].get("url"):
                     row["link"] = str(t["link"]["url"])[:300]
                 tasks.append(row)

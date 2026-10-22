@@ -2279,8 +2279,23 @@ function paragraphTitleBeforeSlash(text) {
     .trim();
 }
 
+// Текст значка: чип задачи — её название; «не задача», «дубль», смена типа — пометка; иначе ✓ / «Задача».
+function focusMarkText(a) {
+  if (a.mark === "task" || a.mark === "dismissed" || a.mark === "retyped") return a.label || (a.mark === "task" ? "Задача" : "");
+  return a.mark === "linked" ? "Задача" : "✓";
+}
+
 function focusMarkTitle(a) {
-  var head = a.mark === "linked" ? "Связано с задачей" : "Выполнено";
+  var head =
+    a.mark === "task"
+      ? (a.done ? "Задача выполнена" : "Поставлена задача")
+      : a.mark === "dismissed"
+        ? "Скрыто: " + (a.label || "")
+        : a.mark === "retyped"
+          ? "Тип изменён: " + (a.label || "")
+          : a.mark === "linked"
+            ? "Связано с задачей"
+            : "Выполнено";
   var when = "";
   var d = new Date(String(a.at || ""));
   if (!isNaN(d.getTime())) {
@@ -2633,6 +2648,8 @@ function createLeoTaskExtensions(ctx) {
         at: { default: "" },
         url: { default: "" },
         task: { default: "" },
+        label: { default: "" },
+        done: { default: "" },
       };
     },
     parseHTML: function () {
@@ -2647,6 +2664,8 @@ function createLeoTaskExtensions(ctx) {
               at: el.getAttribute("data-leo-mark-at") || "",
               url: el.getAttribute("data-leo-mark-url") || "",
               task: el.getAttribute("data-leo-mark-task") || "",
+              label: el.getAttribute("data-leo-mark-label") || "",
+              done: el.getAttribute("data-leo-mark-done") || "",
             };
           },
         },
@@ -2655,10 +2674,10 @@ function createLeoTaskExtensions(ctx) {
     renderHTML: function (_ref) {
       var a = _ref.node.attrs;
       var attrs = { class: "note-focus-mark", "data-leo-mark": a.mark, contenteditable: "false" };
-      ["item", "by", "at", "url", "task"].forEach(function (k) {
+      ["item", "by", "at", "url", "task", "label", "done"].forEach(function (k) {
         if (a[k]) attrs["data-leo-mark-" + k] = a[k];
       });
-      return ["span", attrs, a.mark === "linked" ? "Задача" : "✓"];
+      return ["span", attrs, focusMarkText(a)];
     },
     addNodeView: function () {
       return function (_ref) {
@@ -2668,7 +2687,10 @@ function createLeoTaskExtensions(ctx) {
           el.className = "note-focus-mark";
           el.setAttribute("contenteditable", "false");
           el.setAttribute("data-leo-mark", a.mark);
-          el.textContent = a.mark === "linked" ? "Задача" : "✓";
+          if (a.done) el.setAttribute("data-leo-mark-done", a.done);
+          else el.removeAttribute("data-leo-mark-done");
+          if (a.task) el.setAttribute("data-leo-mark-task", a.task);
+          el.textContent = focusMarkText(a);
           el.title = focusMarkTitle(a);
         }
         fill(_ref.node);
@@ -3353,7 +3375,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261022-tablebar",
+  assetVersion: "20261022-focuschip",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,

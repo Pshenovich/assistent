@@ -655,6 +655,17 @@ def get_task(owner_user_id: int | str, task_id: int | str) -> Optional[dict[str,
     return item
 
 
+def list_recent_owner_tasks(owner_user_id: int | str, since_iso: str, limit: int = 20) -> list[dict[str, Any]]:
+    """Задачи владельца, созданные после since_iso (новые — первыми)."""
+    with _LOCK:
+        cur = _conn().execute(
+            "SELECT * FROM calendar_tasks WHERE owner_user_id = ? AND created_at >= ? ORDER BY id DESC LIMIT ?",
+            (_uid(owner_user_id), str(since_iso), int(limit)),
+        )
+        rows = cur.fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
 def get_task_for_user(user_id: int | str, task_id: int | str) -> Optional[dict[str, Any]]:
     tid = _parse_task_id(task_id)
     if tid is None:
