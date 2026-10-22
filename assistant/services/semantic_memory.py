@@ -123,7 +123,9 @@ def index_user(uid: int, *, embed: Optional[Embed] = None, budget_chunks: int = 
     have = idx.source_hashes(uid)
     seen: set[str] = set()
     done = skipped = chunks_n = 0
-    for src in sources_for_user(uid):
+    # сначала короткое и ценное (саммари, заметки, дайджесты), длинные транскрипты — последними
+    order = {"meeting_summary": 0, "note": 1, "chat_digest": 2, "transcript": 3}
+    for src in sorted(sources_for_user(uid), key=lambda x: order.get(x["kind"], 9)):
         seen.add(src["key"])
         h = _hash(src["text"])
         if have.get(src["key"]) == h:
