@@ -79,6 +79,11 @@ def _conn() -> sqlite3.Connection:
         )
         """
     )
+    # Кому адресовано: ответ на чьё сообщение и кого упомянули — для «ждут вашего ответа».
+    have = {r[1] for r in _CONN.execute("PRAGMA table_info(leo_chat_messages)").fetchall()}
+    for col, decl in (("reply_to_message_id", "INTEGER"), ("reply_to_user_id", "INTEGER"), ("mentions", "TEXT NOT NULL DEFAULT ''")):
+        if col not in have:
+            _CONN.execute(f"ALTER TABLE leo_chat_messages ADD COLUMN {col} {decl}")
     _CONN.execute(
         "CREATE INDEX IF NOT EXISTS idx_leo_msg_chat_date "
         "ON leo_chat_messages(chat_id, date_utc, ts_utc)"
@@ -210,8 +215,14 @@ def insert_message(
     display_name: str | None,
     text: str,
     ts_utc: datetime | None = None,
+    reply_to_message_id: int | None = None,
+    reply_to_user_id: int | None = None,
+    mentions: list[str] | None = None,
 ) -> bool:
-    """Возвращает True, если сообщение новое (вставлено)."""
+    """Возвращает True, если сообщение новое (вставлено).
+
+    mentions — «@ник» в нижнем регистре и «id:<user_id>» для упоминаний без ника.
+    """
     cid = int(chat_id)
     mid = int(message_id)
     when = ts_utc or datetime.now(timezone.utc)
@@ -230,8 +241,8 @@ def insert_message(
                 """
                 INSERT INTO leo_chat_messages (
                     chat_id, message_id, user_id, username, display_name,
-                    text, ts_utc, date_utc
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    text, ts_utc, date_utc, reply_to_message_id, reply_to_user_id, mentions
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cid,
@@ -242,6 +253,9 @@ def insert_message(
                     body,
                     when.isoformat(),
                     when.date().isoformat(),
+                    int(reply_to_message_id) if reply_to_message_id else None,
+                    int(reply_to_user_id) if reply_to_user_id else None,
+                    ",".join(sorted({str(m).strip().lower() for m in (mentions or []) if str(m).strip()})),
                 ),
             )
             conn.commit()
@@ -568,3 +582,29 @@ def participants_for_day(chat_id: int, report_date: str) -> list[dict[str, Any]]
         }
         for r in rows
     ]
+
+
+def get_message(chat_id: int, message_id: int) -> dict[str, Any] | None:
+    with _LOCK:
+        r = _conn().execute(
+            "SELECT * FROM leo_chat_messages WHERE chat_id = ? AND message_id = ?", (int(chat_id), int(message_id))
+        ).fetchone()
+    return dict(r) if r else None
+
+
+def messages_after(chat_id: int, ts_utc: str, *, limit: int = 500) -> list[dict[str, Any]]:
+    with _LOCK:
+        rs = _conn().execute(
+            "SELECT * FROM leo_chat_messages WHERE chat_id = ? AND ts_utc > ? ORDER BY ts_utc ASC LIMIT ?",
+            (int(chat_id), str(ts_utc), int(limit)),
+        ).fetchall()
+    return [dict(r) for r in rs]
+
+
+def chat_author_ids(chat_id: int, since_utc: str) -> set[int]:
+    with _LOCK:
+        rs = _conn().execute(
+            "SELECT DISTINCT user_id FROM leo_chat_messages WHERE chat_id = ? AND ts_utc >= ? AND user_id IS NOT NULL",
+            (int(chat_id), str(since_utc)),
+        ).fetchall()
+    return {int(r[0]) for r in rs}

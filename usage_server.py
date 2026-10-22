@@ -9094,6 +9094,7 @@ class _MiniappFocusDoneBody(BaseModel):
     key: str
     items: list[_MiniappFocusDoneItem] = []
     whole: bool = False
+    op: str = "done"  # done | not_me («Ждут вашего ответа»: вопрос был не мне)
 
 
 def _focus_note_changed(owner: Any, note_id: Any) -> None:
@@ -9281,7 +9282,10 @@ async def miniapp_proactive_done(
             return
         for k in _focus_remember(uid, card, [i["id"] for i in items]):
             try:
-                focus_items.apply(uid, k, "done", by=by)
+                if body.op == "not_me":
+                    focus_items.apply(uid, k, "dismiss", by=by, reason="not_me")
+                else:
+                    focus_items.apply(uid, k, "done", by=by)
             except ValueError as e:
                 print(f"[proactive] done item={k} err={e!r}")
 

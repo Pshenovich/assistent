@@ -537,7 +537,14 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
             cards = [c for c in cards if (c.get("note") or {}).get("kind") != "transcription"]
         items += cards
         if prefs.get("chats"):
-            items += proactive_ai.chat_cards(uid, task_titles=[str(t.get("title") or "") for t in window])
+            # вопросы к пользователю — не карточками в течение дня, а одной сводкой вечером (awaiting_reply)
+            items += [c for c in proactive_ai.chat_cards(uid, task_titles=[str(t.get("title") or "") for t in window])
+                      if c.get("type") != "chat_request"]
+            from assistant.services import awaiting_reply
+
+            card = awaiting_reply.awaiting_card(uid, now=now)
+            if card:
+                items.append(card)
         if prefs.get("weekly"):
             from assistant.services import proactive_reports
 

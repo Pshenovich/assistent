@@ -25,7 +25,7 @@ from typing import Any, Optional
 # Пункт ушёл из Фокуса насовсем.
 CLOSED = ("completed", "linked", "converted", "dismissed", "retyped")
 STATUSES = CLOSED + ("snoozed", "new")
-REASONS = ("not_a_task", "not_relevant", "duplicate", "recognition_error")
+REASONS = ("not_a_task", "not_relevant", "duplicate", "recognition_error", "not_me")
 TYPES = ("task", "promise", "decision", "reminder", "thought")
 # Тип, после которого пункт остаётся в Фокусе (обещание — тоже дело).
 ACTIVE_TYPES = ("task", "promise")
@@ -36,7 +36,8 @@ TITLES_WINDOW = timedelta(days=90)
 # commitment_id общий у одной договорённости из разных источников (встреча, заметка, чат).
 _REGISTRY_COLS = ("direction", "commitment_id", "quote", "due_iso", "seen_at")
 DIRECTIONS = ("mine", "theirs", "unknown")
-COMMITMENT_KINDS = ("summary_task", "agreement", "chat_promise", "chat_request")
+# Вопросы из чатов (chat_request) — не обязательства: их ведёт сводка «Ждут вашего ответа».
+COMMITMENT_KINDS = ("summary_task", "agreement", "chat_promise")
 _DEDUP_WINDOW = timedelta(days=60)
 
 _LOCK = threading.RLock()
@@ -373,6 +374,16 @@ def item_from_card(card: dict[str, Any]) -> list[dict[str, Any]]:
         src = {**card["chat"], "kind": "chat"}
     src["label"] = str(card.get("source") or "")[:200]
     out = []
+    if card.get("type") == "awaiting_reply":
+        for i in card.get("items") or []:
+            parts = str(i.get("id") or "").split(":")  # chat:<cid>:<day>:<hash>
+            chat_src = {"kind": "chat", "id": int(parts[1]) if len(parts) > 2 and parts[1].lstrip("-").isdigit() else None,
+                        "label": str(card.get("source") or "")[:200]}
+            out.append({
+                "key": i.get("id"), "card_key": card.get("key"), "kind": "chat_request",
+                "text": i.get("text"), "who": "", "due": "", "source": chat_src, "type": "task",
+            })
+        return out
     if card.get("type") == "summary_tasks":
         for i in card.get("items") or []:
             parts = [p.strip() for p in str(i.get("text") or "").split(" — ")]
@@ -721,7 +732,7 @@ def ingest(owner_user_id: Any, cards: list[dict[str, Any]], now: Optional[dateti
     with _LOCK:
         conn = _conn()
         for card in cards:
-            if card.get("type") not in ("summary_tasks", "agreement", "chat_promise", "chat_request"):
+            if card.get("type") not in ("summary_tasks", "agreement", "chat_promise"):
                 continue
             for it in item_from_card(card):
                 key = str(it.get("key") or "").strip()[:300]
@@ -801,7 +812,7 @@ def commitments(
     today = now.date().isoformat()
     groups: dict[str, list[dict[str, Any]]] = {}
     for r in rows(owner_user_id):
-        if r.get("commitment_id"):
+        if r.get("commitment_id") and r.get("kind") in COMMITMENT_KINDS:
             groups.setdefault(str(r["commitment_id"]), []).append(r)
     out = []
     for cid, group in groups.items():

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from typing import Any
 
 from telegram import ChatMemberUpdated, Update
 from telegram.ext import ChatMemberHandler, ContextTypes, TypeHandler
@@ -74,6 +75,8 @@ async def ingest_message_update(
     when = msg.date
     if when is not None and when.tzinfo is None:
         when = when.replace(tzinfo=timezone.utc)
+    reply = getattr(msg, "reply_to_message", None)
+    reply_user = getattr(reply, "from_user", None) if reply else None
     digest_store.insert_message(
         chat_id=int(chat.id),
         message_id=int(msg.message_id),
@@ -82,7 +85,27 @@ async def ingest_message_update(
         display_name=_display_name(user) if user else None,
         text=text,
         ts_utc=when if isinstance(when, datetime) else None,
+        reply_to_message_id=int(reply.message_id) if reply else None,
+        reply_to_user_id=int(reply_user.id) if reply_user else None,
+        mentions=message_mentions(msg),
     )
+
+
+def message_mentions(msg: Any) -> list[str]:
+    """@ники и id упомянутых пользователей (mention / text_mention) из текста или подписи."""
+    out: list[str] = []
+    text = msg.text or msg.caption or ""
+    entities = list(getattr(msg, "entities", None) or []) + list(getattr(msg, "caption_entities", None) or [])
+    for e in entities:
+        kind = str(getattr(e, "type", "") or "")
+        if kind.endswith("mention") and not kind.endswith("text_mention"):
+            try:
+                out.append(text[e.offset : e.offset + e.length].lower())
+            except Exception:
+                continue
+        elif kind.endswith("text_mention") and getattr(e, "user", None):
+            out.append(f"id:{int(e.user.id)}")
+    return out
 
 
 def _member_became_in_chat(update: ChatMemberUpdated) -> bool:

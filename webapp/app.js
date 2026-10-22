@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261022-memory1";
+  var WEBAPP_BUILD = "20261022-awaiting1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -17482,6 +17482,7 @@
     followup: ["cal", "violet"],
     open_question: ["chat", "violet"],
     chat_request: ["chat", "red"],
+    awaiting_reply: ["chat", "red"],
     chat_promise: ["people", "blue"],
     chat_escalation: ["flame", "red"],
     chat_deadline: ["clock", "amber"],
@@ -18090,7 +18091,7 @@
       } else if (act === "assistant") {
         if (await focusOpenAssistant()) {
           await submitNoteGptQuestion(String(p.prompt || it.ask || ""));
-          if (focusHasItems(it) && it.type !== "summary_tasks") {
+          if (focusHasItems(it) && it.type !== "summary_tasks" && it.type !== "awaiting_reply") {
             // «Поставить задачу»: пункт разобран (поставлена задача), а не просто скрыт.
             focusItems = focusItems.filter(function (x) {
               return x.key !== it.key;
@@ -18144,6 +18145,13 @@
     save.type = "button";
     save.className = "focus-card-btn is-primary focus-done-save";
     body.appendChild(save);
+    var notMe = null;
+    if (awaiting) {
+      notMe = document.createElement("button");
+      notMe.type = "button";
+      notMe.className = "focus-card-btn focus-done-save";
+      body.appendChild(notMe);
+    }
     function picked() {
       return tasks.filter(function (_, i) {
         return boxes[i].checked;
@@ -18216,16 +18224,19 @@
 
   // «✓ Сделано…» на карточке с несколькими задачами: отметить галочками выполненные.
   function openFocusDonePicker(it) {
-    var ov = focusDoneOverlay("Что уже сделано?");
+    var awaiting = it.type === "awaiting_reply";
+    var ov = focusDoneOverlay(awaiting ? "На что уже ответили?" : "Что уже сделано?");
     var items = it.items || [];
     var body = ov.querySelector(".focus-done-body");
     body.innerHTML = "";
     var sub = document.createElement("p");
     sub.className = "focus-done-sub";
-    sub.textContent =
-      ((it.note && it.note.title) ? "«" + it.note.title + "» · " : "") +
-      items.length + " " + pluralRu(items.length, "задача", "задачи", "задач") +
-      ". Отмеченные пропадут из подсказки.";
+    sub.textContent = awaiting
+      ? items.length + " " + pluralRu(items.length, "вопрос", "вопроса", "вопросов") +
+        ". «Не мне» — вопрос был адресован не вам; после двух таких в одном чате вопросы оттуда больше не покажем."
+      : ((it.note && it.note.title) ? "«" + it.note.title + "» · " : "") +
+        items.length + " " + pluralRu(items.length, "задача", "задачи", "задач") +
+        ". Отмеченные пропадут из подсказки.";
     body.appendChild(sub);
     var list = document.createElement("div");
     list.className = "focus-done-list";
@@ -18250,6 +18261,13 @@
     save.type = "button";
     save.className = "focus-card-btn is-primary focus-done-save";
     body.appendChild(save);
+    var notMe = null;
+    if (awaiting) {
+      notMe = document.createElement("button");
+      notMe.type = "button";
+      notMe.className = "focus-card-btn focus-done-save";
+      body.appendChild(notMe);
+    }
     var allCb = all.querySelector("input");
     function picked() {
       return items.filter(function (_, i) {
@@ -18258,8 +18276,12 @@
     }
     function sync() {
       var n = picked().length;
-      save.textContent = n ? "Готово · " + n : "Отметьте задачи";
+      save.textContent = n ? (awaiting ? "Ответил · " : "Готово · ") + n : (awaiting ? "Отметьте вопросы" : "Отметьте задачи");
       save.disabled = !n;
+      if (notMe) {
+        notMe.textContent = n ? "Не мне · " + n : "Не мне";
+        notMe.disabled = !n;
+      }
       allCb.checked = n === items.length && n > 0;
       allCb.indeterminate = n > 0 && n < items.length;
     }
@@ -18272,17 +18294,17 @@
     boxes.forEach(function (cb) {
       cb.addEventListener("change", sync);
     });
-    save.addEventListener("click", async function () {
+    async function submitPicked(op, btn) {
       var chosen = picked();
       if (!chosen.length) return;
       var whole = chosen.length === items.length;
-      save.disabled = true;
-      save.textContent = "Сохраняю…";
+      btn.disabled = true;
+      btn.textContent = "Сохраняю…";
       var res;
       try {
         res = await apiFetch("/proactive/done", {
           method: "POST",
-          body: JSON.stringify({ key: it.key, items: chosen, whole: whole }),
+          body: JSON.stringify({ key: it.key, items: chosen, whole: whole, op: op }),
         });
       } catch (e) {
         showNoteToast((e && e.message) || "Не удалось отметить");
@@ -18301,8 +18323,20 @@
       renderFocusRow();
       renderFocusPanel();
       if (!focusPanelOpen) refreshDiscussFeedNow();
-      showNoteToast("Отмечено выполненным: " + chosen.length);
+      showNoteToast(
+        op === "not_me"
+          ? "Скрыто как «не мне»: " + chosen.length
+          : (awaiting ? "Отмечено отвеченным: " : "Отмечено выполненным: ") + chosen.length
+      );
+    }
+    save.addEventListener("click", function () {
+      submitPicked("done", save);
     });
+    if (notMe) {
+      notMe.addEventListener("click", function () {
+        submitPicked("not_me", notMe);
+      });
+    }
     sync();
     showFocusDoneOverlay(ov);
   }
