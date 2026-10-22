@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261022-awaiting1";
+  var WEBAPP_BUILD = "20261022-refine1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -17834,7 +17834,7 @@
   }
 
   async function askAboutFocus(it, btn) {
-    if (focusHasItems(it)) {
+    if (focusHasItems(it) || (it && it.tasks && it.tasks.length)) {
       if (btn) btn.disabled = true;
       try {
         await openFocusRefineChat(it);
@@ -17960,25 +17960,38 @@
       showNoteToast((e && e.message) || "Не удалось открыть разбор");
       return;
     }
-    var a = res && res.action;
-    if (!a || !a.id) return;
-    rememberCalendarActions([a]);
+    var acts = (res && res.actions && res.actions.length ? res.actions : [res && res.action]).filter(function (x) {
+      return x && x.id;
+    });
+    if (!acts.length) return;
+    var a = acts[0];
+    rememberCalendarActions(acts);
     if (!(await focusOpenAssistant())) return;
     var wrap = document.getElementById("note-editor-more-wrap");
     if (!wrap || !wrap._shareKind || !wrap._shareId) return;
-    var n = (a.focus || []).length;
-    var src = ((a.focus || [])[0] || {}).source || {};
-    var where = src.title ? (src.kind === "chat" ? " из чата «" + src.title + "»" : " со встречи «" + src.title + "»") : "";
-    var lead =
-      (n > 1 ? "Разберём " + n + " " + pluralRu(n, "задачу", "задачи", "задач") + where + "." : "Разберём: " + (it.title || "") + ".") +
-      " Отметьте, что сделано, или напишите правки — например, «срок пятница».";
+    var lead;
+    if (res.kind === "tasks") {
+      // «Просрочено»: карточки самих задач — открыть, перенести, отметить выполненной
+      lead =
+        (it.title || "Просроченные задачи") +
+        ". Откройте задачу, чтобы перенести срок или отметить выполненной, — или напишите, что сделать, например «перенеси все на пятницу».";
+    } else {
+      var n = (a.focus || []).length;
+      var src = ((a.focus || [])[0] || {}).source || {};
+      var where = src.title ? (src.kind === "chat" ? " из чата «" + src.title + "»" : " со встречи «" + src.title + "»") : "";
+      lead =
+        (n > 1 ? "Разберём " + n + " " + pluralRu(n, "задачу", "задачи", "задач") + where + "." : "Разберём: " + (it.title || "") + ".") +
+        " Отметьте, что сделано, или напишите правки — например, «срок пятница».";
+    }
     try {
       var saved = await apiFetch(
         "/notes/" + encodeURIComponent(wrap._shareKind) + "/" + encodeURIComponent(wrap._shareId) + "/comments",
         {
           method: "POST",
           body: JSON.stringify({
-            body: clipGptCommentBody(lead).slice(0, 400) + "\n\n[[leo-cal:" + a.id + "]]",
+            body:
+              clipGptCommentBody(lead).slice(0, 400) +
+              "\n\n[[leo-cal:" + acts.map(function (x) { return x.id; }).join(",") + "]]",
             quote: "",
             prefix: "__gpt__",
             suffix: "",

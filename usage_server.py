@@ -9361,6 +9361,23 @@ async def miniapp_proactive_refine(
 
     def _run() -> dict[str, Any]:
         card = _focus_card_for(uid, key)
+        if card and not card.get("items") and card.get("tasks"):
+            # «Просрочено»: в чат — карточки самих задач (открыть, перенести, отметить)
+            ctx = gcal_tools.GptCalendarContext(uid=uid)
+            acts = []
+            for t in card["tasks"][: gcal_tools.MAX_CARDS]:
+                try:
+                    made = gcal_tools._card_for(ctx, {"type": "task", "id": str(t.get("id") or "")})
+                except Exception as e:
+                    print(f"[proactive] refine task card uid={uid} task={t.get('id')} err={e!r}")
+                    made = None
+                if made:
+                    kind, title, payload = made
+                    a = gcal_tools.get_action(gcal_tools.record_action(uid, kind, "info", title=title, payload=payload)) or {}
+                    acts.append(gcal_tools.public_action(a, viewer_uid=uid))
+            if not acts:
+                raise HTTPException(status_code=404, detail="Задачи уже не найдены — обновите Фокус")
+            return {"actions": acts, "action": acts[0], "title": card.get("title") or "", "kind": "tasks"}
         if not card or not card.get("items"):
             raise HTTPException(status_code=404, detail="Подсказка уже неактуальна — обновите Фокус")
         keys = _focus_remember(uid, card)

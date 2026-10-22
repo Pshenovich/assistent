@@ -127,19 +127,26 @@ def cal_marker_for_history(text: str) -> str:
     if not m:
         return clean
     done: list[str] = []
+    shown: list[str] = []
     for a in gcal_tools.actions_by_ids([x for x in m.group(1).split(",") if x]):
         kind = str(a.get("kind") or "")
+        if kind == "show_task":
+            # карточки задач в чате: модели нужны их id («перенеси обе на пятницу»)
+            tid = str((a.get("payload") or {}).get("target_id") or "")
+            if tid:
+                shown.append(f"«{a.get('title') or 'Задача'}» (task id {tid})")
+            continue
         if kind.startswith("show_") or kind == "focus_item":
             continue
         pub = gcal_tools.public_action(a)
         st = {"undone": " (отменено)", "proposed": " (предложено)"}.get(str(a.get("status") or ""), "")
         done.append((pub.get("title") or kind) + (f" — {pub['when']}" if pub.get("when") else "") + st)
-    return (
-        clean
-        + "\n[Уже выполнено, не повторять: "
-        + ("; ".join(done) if done else "действия с календарём из этого ответа")
-        + "]"
-    )
+    out = clean
+    if shown:
+        out += "\n[В чате показаны задачи: " + "; ".join(shown) + "]"
+    if done or not shown:
+        out += "\n[Уже выполнено, не повторять: " + ("; ".join(done) if done else "действия с календарём из этого ответа") + "]"
+    return out
 
 
 def _parse_ts(raw: Any) -> datetime | None:
