@@ -124,6 +124,17 @@ class FocusItemsTests(unittest.TestCase):
         self.assertEqual(len(out["items"]), 1)
         self.assertIn("1 задача", out["title"])
 
+    def test_chat_source_keeps_message_url(self) -> None:
+        card = pa.chat_card(
+            {"kind": "request", "text": "Скинь отчёт", "who": "Ира", "msg": 42},
+            chat_id=-1001234567890, day="2026-10-22", title="Продажи",
+            today=datetime(2026, 10, 22).date(), task_titles=[],
+        )
+        snap = fi.item_from_card(card)[0]
+        self.assertEqual(snap["source"]["url"], "https://t.me/c/1234567890/42")
+        row = fi.remember(1, snap)
+        self.assertEqual(fi.public(row)["source"]["url"], "https://t.me/c/1234567890/42")
+
     def test_assistant_tool_and_chat_card(self) -> None:
         from assistant.services import gpt_calendar_tools as gcal
 

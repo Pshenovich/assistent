@@ -11012,6 +11012,7 @@ textarea.event-sheet-title--area {
   min-height: 3.25rem;
   resize: none;
   overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .event-sheet-group {
@@ -15422,8 +15423,7 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   position: absolute;
   left: 0;
   top: 0;
-  /* Над ручкой текущего столбца (она прямо над таблицей). */
-  transform: translateY(calc(-100% - 34px));
+  /* top/left ставит JS (layoutBar): у выделенной строки/столбца, в видимой части. */
   z-index: 5;
   display: flex;
   gap: 4px;
@@ -15464,9 +15464,10 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   position: absolute;
   left: 0;
   top: 0;
-  transform: translateY(-28px);
   z-index: 6;
   min-width: 220px;
+  max-height: min(70vh, 460px);
+  overflow-y: auto;
   padding: 6px;
   display: flex;
   flex-direction: column;

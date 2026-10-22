@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261022-focuslive1";
+  var WEBAPP_BUILD = "20261022-tablebar";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261021-plusrefs"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261022-tablebar"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -14368,6 +14368,46 @@
     el.style.height = Math.max(el.scrollHeight, 52) + "px";
   }
 
+  // Название задачи/встречи: textarea переносит длинный текст, а не сдвигает его влево.
+  // Остаётся одной строкой по смыслу: переводы строк (в т.ч. при вставке) → пробел, Enter сохраняет форму.
+  function bindSheetTitleArea(el) {
+    if (!el || el._titleAreaBound) return;
+    el._titleAreaBound = true;
+    var lastW = 0;
+    var fit = function () {
+      if (!el.isConnected || !el.offsetWidth) return;
+      lastW = el.offsetWidth;
+      autosizeReminderTitle(el);
+    };
+    el.addEventListener("input", function () {
+      if (/[\r\n]/.test(el.value)) {
+        var pos = el.selectionStart;
+        el.value = el.value.replace(/\r\n|[\r\n]/g, " ");
+        try {
+          el.setSelectionRange(pos, pos);
+        } catch (_) {}
+      }
+      fit();
+    });
+    el.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+      e.preventDefault();
+      var form = el.form;
+      if (!form) return;
+      if (typeof form.requestSubmit === "function") form.requestSubmit();
+      else form.dispatchEvent(new Event("submit", { cancelable: true }));
+    });
+    el.addEventListener("focus", fit);
+    // Шит открывается после заполнения полей: пока он скрыт, scrollHeight = 0 — подгоняем, когда появится ширина.
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(function () {
+        if (el.offsetWidth && el.offsetWidth !== lastW) fit();
+      }).observe(el);
+    }
+    fit();
+    window.requestAnimationFrame(fit);
+  }
+
   function mountTaskAssignee(host, initial) {
     var fallback = defaultTaskAssignee();
     var selected = {
@@ -14581,7 +14621,7 @@
     fields.innerHTML =
       '<div class="event-sheet">' +
       (existing ? "" : eventSheetKindSwitcherHtml("task")) +
-      '<input id="m-ev-sum" type="text" class="event-sheet-title" placeholder="Название" autocomplete="off" />' +
+      '<textarea id="m-ev-sum" class="event-sheet-title event-sheet-title--area" rows="1" enterkeyhint="done" placeholder="Название" autocomplete="off"></textarea>' +
       '<input type="hidden" id="modal-task-note-id" />' +
       sheetWhenHtml({ task: true, label: "Срок" }) +
       '<div id="m-task-assignee-slot"></div>' +
@@ -14619,6 +14659,7 @@
     );
     document.getElementById("m-ev-sum").value =
       ev.summary || ev.title || (opts.quote ? String(opts.quote) : "") || "";
+    bindSheetTitleArea(document.getElementById("m-ev-sum"));
     document.getElementById("m-task-desc").value = ev.description || "";
     var resultEl = document.getElementById("m-task-result");
     if (resultEl) resultEl.value = ev.result || (ev.event && ev.event.result) || "";
@@ -15439,7 +15480,7 @@
       '<div class="event-sheet">' +
       eventSheetKindSwitcherHtml("booking") +
       '<p class="booking-sheet-lead">Внешние участники сами выберут свободное время в вашем календаре.</p>' +
-      '<input id="m-book-title" type="text" class="event-sheet-title" placeholder="Название встречи" autocomplete="off" />' +
+      '<textarea id="m-book-title" class="event-sheet-title event-sheet-title--area" rows="1" enterkeyhint="done" placeholder="Название встречи" autocomplete="off"></textarea>' +
       '<div class="event-sheet-group meeting-attendees-field">' +
       '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-ev-attendees-toggle" aria-expanded="false">' +
       '<span class="event-sheet-row-label">Из команды позвать</span>' +
@@ -15513,6 +15554,7 @@
     bindBookingSegs(fields);
     document.getElementById("m-book-title").value =
       bookingSheetState.title || String(ev.title || ev.summary || "").trim();
+    bindSheetTitleArea(document.getElementById("m-book-title"));
     var attToggle = document.getElementById("m-ev-attendees-toggle");
     var attEditor = document.getElementById("m-ev-attendees-editor");
     if (attToggle && attEditor) {
@@ -15599,7 +15641,7 @@
     fields.innerHTML =
       '<div class="event-sheet">' +
       (eventExisting ? "" : eventSheetKindSwitcherHtml("event")) +
-      '<input id="m-ev-sum" type="text" class="event-sheet-title" placeholder="Название" autocomplete="off" />' +
+      '<textarea id="m-ev-sum" class="event-sheet-title event-sheet-title--area" rows="1" enterkeyhint="done" placeholder="Название" autocomplete="off"></textarea>' +
       sheetWhenHtml({}) +
       '<div class="event-sheet-group meeting-attendees-field">' +
       '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-ev-attendees-toggle" aria-expanded="false">' +
@@ -15648,6 +15690,7 @@
         : {}
     );
     document.getElementById("m-ev-sum").value = meetingDisplayTitle(ev, { blank: true });
+    bindSheetTitleArea(document.getElementById("m-ev-sum"));
     document.getElementById("m-ev-start").value = isoToDatetimeLocalValue(
       sRaw || defaultDatetimeLocalValue(60)
     );
@@ -17613,6 +17656,10 @@
       return !FOCUS_OPEN_ACTS[a.act] && a !== doneAct;
     });
     if (!rest.length && !doneAct) openAct = null;
+    // Нет явного «Открыть», но источник — заметка/встреча: футер всё равно ведёт в неё.
+    if (!openAct && !all.some(function (a) { return FOCUS_OPEN_ACTS[a.act]; }) && it.note && it.note.id) {
+      openAct = { act: "open_note", label: "Открыть источник" };
+    }
     var src = focusSplitSource(it.source);
 
     var head = document.createElement("div");
@@ -34277,6 +34324,12 @@
 
   function focusSetUi(aid, patch) {
     Object.assign(focusUiFor(aid), patch || {});
+    // Нажатие в карточке — лента остаётся на месте, даже если только что прокручивали в конец.
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) {
+      wrap._forceDiscussScrollBottom = 0;
+      wrap._keepDiscussScroll = true;
+    }
     refreshDiscussFeedNow();
   }
 
@@ -34395,9 +34448,17 @@
     return m;
   }
 
+  function focusSourceOpenable(src) {
+    return !!(src && ((src.kind === "note" && src.id) || src.url));
+  }
+
   function focusOpenSource(src) {
-    if (!src || src.kind !== "note" || !src.id) return;
-    openMeetingMaterial({ id: src.id, kind: src.note_kind || "note", title: src.title || "" });
+    if (!src) return;
+    if (src.kind === "note" && src.id) {
+      openMeetingMaterial({ id: src.id, kind: src.note_kind || "note", title: src.title || "" });
+    } else if (src.url) {
+      openExternal(src.url);
+    }
   }
 
   function focusDatePicker(aid, f, kind) {
@@ -34695,14 +34756,15 @@
     var src = f.source || {};
     var text = src.title || src.label || "";
     if (!text) return null;
-    var isNote = src.kind === "note" && src.id;
-    var foot = focusEl(isNote ? "button" : "div", "focus-card-foot" + (isNote ? " is-link" : ""));
+    var isLink = focusSourceOpenable(src);
+    var foot = focusEl(isLink ? "button" : "div", "focus-card-foot" + (isLink ? " is-link" : ""));
     var ic = focusEl("span", "focus-card-foot-ico");
     ic.innerHTML = DISCUSS_ICONS[src.kind === "chat" ? "chat" : src.note_kind === "transcription" ? "mic" : "note"] || "";
     foot.appendChild(ic);
     foot.appendChild(focusEl("span", "focus-card-foot-text", text));
-    if (isNote) {
+    if (isLink) {
       foot.type = "button";
+      foot.title = src.kind === "chat" ? "Открыть сообщение" : "Открыть источник";
       var chev = focusEl("span", "focus-card-foot-chev");
       chev.innerHTML = DISCUSS_ICONS.right;
       foot.appendChild(chev);
@@ -35574,7 +35636,9 @@
     var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
     var stickBottom = true;
     var prevTop = 0;
-    var forceBottom = !!(wrap && wrap._forceDiscussScrollBottom);
+    // Флаг живёт недолго: он для контента, догружающегося сразу после открытия/отправки, — а не для
+    // перерисовки от кнопки в карточке («…», «В задачу») спустя время (иначе лента прыгала вниз).
+    var forceBottom = !!(wrap && wrap._forceDiscussScrollBottom && Date.now() < wrap._forceDiscussScrollBottom);
     if (scroll) {
       prevTop = scroll.scrollTop;
       stickBottom =
@@ -35582,6 +35646,10 @@
         scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 120;
     }
     if (forceBottom && wrap) wrap._forceDiscussScrollBottom = false;
+    if (wrap && wrap._keepDiscussScroll) {
+      wrap._keepDiscussScroll = false;
+      if (!forceBottom) stickBottom = false;
+    }
     if (list) {
       list._renderFp = fp;
       list.innerHTML = "";
@@ -36414,7 +36482,7 @@
     if (prev !== wrap._chatId) {
       var list = document.getElementById("note-discussion-messages");
       if (list) list._renderFp = "";
-      if (wrap) wrap._forceDiscussScrollBottom = true;
+      if (wrap) wrap._forceDiscussScrollBottom = Date.now() + 1500;
     }
     rerenderDiscussionFeed();
   }
@@ -37159,7 +37227,7 @@
   // становится вечным и любая перерисовка (кнопка в карточке) уводит ленту в конец.
   function scrollDiscussionToEnd(fromRender) {
     var wrap = document.getElementById("note-editor-more-wrap");
-    if (wrap && fromRender !== true) wrap._forceDiscussScrollBottom = true;
+    if (wrap && fromRender !== true) wrap._forceDiscussScrollBottom = Date.now() + 1500;
     function go() {
       var scroll = document.querySelector("#note-discussion-overlay .note-discussion-scroll");
       if (!scroll) return;

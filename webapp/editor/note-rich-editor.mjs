@@ -3353,7 +3353,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261021-plusrefs",
+  assetVersion: "20261022-tablebar",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,

@@ -375,12 +375,16 @@ def item_from_card(card: dict[str, Any], *, with_closed: bool = False) -> list[d
     elif card.get("chat"):
         src = {**card["chat"], "kind": "chat"}
     src["label"] = str(card.get("source") or "")[:200]
+    url = next((str((a.get("payload") or {}).get("url") or "") for a in card.get("actions") or []
+                if a.get("act") == "url"), "")
+    if url:
+        src["url"] = url  # ссылка на сообщение — футер-источник открывает его
     out = []
     if card.get("type") == "awaiting_reply":
         for i in card.get("items") or []:
             parts = str(i.get("id") or "").split(":")  # chat:<cid>:<day>:<hash>
             chat_src = {"kind": "chat", "id": int(parts[1]) if len(parts) > 2 and parts[1].lstrip("-").isdigit() else None,
-                        "label": str(card.get("source") or "")[:200]}
+                        "label": str(card.get("source") or "")[:200], "url": str(i.get("url") or "")}
             out.append({
                 "key": i.get("id"), "card_key": card.get("key"), "kind": "chat_request",
                 "text": i.get("text"), "who": "", "due": "", "source": chat_src, "type": "task",
@@ -433,7 +437,7 @@ def public(row: dict[str, Any], now: Optional[datetime] = None) -> dict[str, Any
         "state": f.get("state") or "",
         "comment": f.get("comment") or "",
         "link": row.get("link") or {},
-        "source": {k: src.get(k) for k in ("kind", "note_kind", "id", "title", "label", "date") if src.get(k) is not None},
+        "source": {k: src.get(k) for k in ("kind", "note_kind", "id", "title", "label", "date", "url") if src.get(k) is not None},
         "by": row.get("by_name") or "",
         "updated_at": row.get("updated_at") or "",
     }

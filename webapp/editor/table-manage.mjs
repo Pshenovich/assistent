@@ -597,6 +597,10 @@ TableManageView.prototype.bind = function () {
     self.layoutHandles();
   };
   this.scroll.addEventListener("scroll", this.onScroll, { passive: true });
+  // Панель держится у выделенной строки в видимой области — при прокрутке заметки двигаем её.
+  this.onPageScroll = function () {
+    if (self.active) self.layoutBar();
+  };
 
   if (typeof ResizeObserver !== "undefined") {
     var roRaf = 0;
@@ -622,6 +626,7 @@ TableManageView.prototype.unbind = function () {
   });
   this.overlay.removeEventListener("pointerdown", this.onOverlayPointerDown);
   this.scroll.removeEventListener("scroll", this.onScroll);
+  this.watchPageScroll(false);
   this.releaseDragListeners();
   if (this.ro) {
     this.ro.disconnect();
@@ -653,6 +658,7 @@ TableManageView.prototype.setActive = function (info) {
   this.active = info;
   var on = !!info;
   this.dom.classList.toggle("is-active", on);
+  this.watchPageScroll(on);
   if (!on) {
     this.bar.hidden = true;
     this.closeMenu();
@@ -669,6 +675,14 @@ TableManageView.prototype.setActive = function (info) {
   } else {
     this.layoutHandles();
   }
+};
+
+TableManageView.prototype.watchPageScroll = function (on) {
+  if (!!on === !!this.pageScrollOn) return;
+  this.pageScrollOn = !!on;
+  var fn = on ? "addEventListener" : "removeEventListener";
+  document[fn]("scroll", this.onPageScroll, { capture: true, passive: true });
+  if (window.visualViewport) window.visualViewport[fn]("resize", this.onPageScroll);
 };
 
 function barButton(act, label, html, extraClass) {
@@ -692,22 +706,27 @@ TableManageView.prototype.renderBar = function () {
     this.bar.appendChild(el);
     return el;
   }.bind(this);
+  var addMore = function (label) {
+    var more = add(barButton("more", label, ICON_MORE));
+    more.setAttribute("aria-haspopup", "menu");
+    more.setAttribute("aria-expanded", "false");
+  };
   if (a.mode === "col") {
     add(barButton("col-left", "Переместить столбец влево", arrowIcon("left"))).disabled = a.col <= 0;
     add(barButton("col-right", "Переместить столбец вправо", arrowIcon("right"))).disabled = a.col >= nCol - 1;
     add(barButton("col-add-right", "Добавить столбец справа", ICON_PLUS + "<span>столбец</span>"));
     add(barButton("col-del", "Удалить столбец", ICON_TRASH + "<span>Удалить</span>", "is-danger")).disabled = nCol <= 1;
+    addMore("Ещё действия со столбцом");
   } else if (a.mode === "row") {
     add(barButton("row-up", "Переместить строку выше", arrowIcon("up"))).disabled = a.row <= 0;
     add(barButton("row-down", "Переместить строку ниже", arrowIcon("down"))).disabled = a.row >= nRow - 1;
     add(barButton("row-add-below", "Добавить строку ниже", ICON_PLUS + "<span>строка</span>"));
     add(barButton("row-del", "Удалить строку", ICON_TRASH + "<span>Удалить</span>", "is-danger")).disabled = nRow <= 1;
+    addMore("Ещё действия со строкой");
   } else {
     add(barButton("row-add-below", "Добавить строку ниже", ICON_PLUS + "<span>строка</span>"));
     add(barButton("col-add-right", "Добавить столбец справа", ICON_PLUS + "<span>столбец</span>"));
-    var more = add(barButton("more", "Ещё действия с таблицей", ICON_MORE));
-    more.setAttribute("aria-haspopup", "menu");
-    more.setAttribute("aria-expanded", "false");
+    addMore("Ещё действия с таблицей");
   }
   this.bar.hidden = false;
 };
@@ -717,7 +736,34 @@ TableManageView.prototype.openMenu = function () {
   if (!a) return;
   var nCol = this.colCount();
   var nRow = this.rowCount();
-  var items = [
+  var items;
+  if (a.mode === "row") {
+    items = [
+      ["row-add-above", "Вставить строку выше"],
+      ["row-add-below", "Вставить строку ниже"],
+      ["row-up", "Переместить выше", a.row <= 0],
+      ["row-down", "Переместить ниже", a.row >= nRow - 1],
+      null,
+      ["toggle-header", "Первая строка — заголовок"],
+      ["ask-ai", "Попросить ИИ…"],
+      null,
+      ["row-del", "Удалить строку", nRow <= 1],
+    ];
+  } else if (a.mode === "col") {
+    items = [
+      ["col-add-left", "Вставить столбец слева"],
+      ["col-add-right", "Вставить столбец справа"],
+      ["col-left", "Переместить влево", a.col <= 0],
+      ["col-right", "Переместить вправо", a.col >= nCol - 1],
+      null,
+      ["sort-asc", "Сортировать ↑"],
+      ["sort-desc", "Сортировать ↓"],
+      ["sum-cols", "Σ Итого по столбцам (строка «Итого»)"],
+      ["ask-ai", "Попросить ИИ…"],
+      null,
+      ["col-del", "Удалить столбец", nCol <= 1],
+    ];
+  } else items = [
     ["row-add-above", "Строка выше"],
     ["row-add-below", "Строка ниже"],
     ["col-add-left", "Столбец слева"],
@@ -756,6 +802,7 @@ TableManageView.prototype.openMenu = function () {
   this.menuOpen = true;
   var more = this.bar.querySelector('[data-act="more"]');
   if (more) more.setAttribute("aria-expanded", "true");
+  this.layoutBar();
 };
 
 TableManageView.prototype.closeMenu = function () {
@@ -1063,6 +1110,7 @@ TableManageView.prototype.layoutHandles = function () {
   this.addRowBtn.style.left = Math.max(tb.left, sb.left) - box.left + "px";
   this.addRowBtn.style.width = Math.min(tb.right, sb.right) - Math.max(tb.left, sb.left) + "px";
   this.addRowBtn.style.top = tb.bottom - box.top + 4 + "px";
+  this.layoutBar();
   if (!a || this.overlay.hidden || !rows.length) return;
   var colIdx = this.drag && this.drag.kind === "move-col" ? this.drag.index : a.col;
   var rowIdx = this.drag && this.drag.kind === "move-row" ? this.drag.index : a.row;
@@ -1102,6 +1150,66 @@ TableManageView.prototype.layoutHandles = function () {
       btn.dataset.index = String(rowIdx);
     }
   }
+};
+
+// Видимая по вертикали полоса экрана (с учётом прокручиваемых предков и клавиатуры) — в координатах окна.
+function visibleBand(el) {
+  var vv = window.visualViewport;
+  var top = vv ? vv.offsetTop : 0;
+  var bottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+  for (var n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+    var oy = getComputedStyle(n).overflowY;
+    if (oy === "auto" || oy === "scroll" || oy === "hidden") {
+      var r = n.getBoundingClientRect();
+      top = Math.max(top, r.top);
+      bottom = Math.min(bottom, r.bottom);
+    }
+  }
+  return { top: top, bottom: bottom };
+}
+
+// Панель — у выделенной строки (над ней, иначе под ней), для столбца — над таблицей,
+// но не выше видимой части; меню «⋯» — прямо под панелью (или над ней, если внизу тесно).
+TableManageView.prototype.layoutBar = function () {
+  var a = this.active;
+  if (!a || this.bar.hidden) return;
+  var rows = this.table.rows;
+  if (!rows.length) return;
+  var box = this.dom.getBoundingClientRect();
+  var tb = this.table.getBoundingClientRect();
+  var band = visibleBand(this.dom);
+  var gap = 6;
+  var grip = 34; // ручка столбца над первой строкой
+  var barH = this.bar.offsetHeight || 42;
+  var barW = this.bar.offsetWidth || 0;
+  var top;
+  if (a.mode === "row") {
+    var rr = rows[Math.min(a.row, rows.length - 1)].getBoundingClientRect();
+    top = rr.top - gap - barH;
+    if (top < band.top + gap) top = rr.bottom + gap;
+  } else {
+    // Столбец или курсор в ячейке: над таблицей (не закрываем строки при наборе);
+    // верх таблицы уехал — панель липнет к верху экрана, пока таблица видна.
+    top = tb.top - grip - barH;
+    top = Math.min(Math.max(top, band.top + gap), tb.bottom - barH);
+  }
+  var left = 0;
+  if (a.mode !== "row") {
+    var cell = rows[0].cells[Math.min(a.col, rows[0].cells.length - 1)];
+    if (cell) left = cell.getBoundingClientRect().left - box.left;
+  }
+  left = Math.max(0, Math.min(left, box.width - barW));
+  this.bar.style.top = top - box.top + "px";
+  this.bar.style.left = left + "px";
+  if (this.menu.hidden) return;
+  var menuH = this.menu.offsetHeight;
+  var menuW = this.menu.offsetWidth;
+  var mTop = top + barH + 4;
+  if (mTop + menuH > band.bottom - gap && top - 4 - menuH >= band.top + gap) mTop = top - 4 - menuH;
+  var more = this.bar.querySelector('[data-act="more"]');
+  var mLeft = more ? more.getBoundingClientRect().right - box.left - menuW : left;
+  this.menu.style.top = mTop - box.top + "px";
+  this.menu.style.left = Math.max(0, Math.min(mLeft, box.width - menuW)) + "px";
 };
 
 TableManageView.prototype.handleOverlayPointerDown = function (e) {
