@@ -71,7 +71,9 @@ def build_application() -> Application:
 def main() -> None:
     app = build_application()
     print("[bot] polling…")
-    app.run_polling(drop_pending_updates=True)
+    # Сообщения, пришедшие пока бот перезапускался (выкатка), не выбрасываем —
+    # слишком старые отсекает _claim_update в handlers (is_stale_update).
+    app.run_polling(drop_pending_updates=False)
 
 
 if __name__ == "__main__":

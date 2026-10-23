@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
+from typing import Optional
 import traceback
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp, Update, WebAppInfo
@@ -387,6 +389,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
 
 
+def is_stale_update(update: object, *, now: Optional[datetime] = None) -> bool:
+    """Сообщение старше BOT_STALE_UPDATE_MIN (15 мин) — пришло, пока бот лежал долго; не исполняем."""
+    msg = getattr(update, "message", None) or getattr(update, "edited_message", None)
+    sent = getattr(msg, "date", None)
+    if not isinstance(sent, datetime):
+        return False
+    try:
+        limit = float(os.getenv("BOT_STALE_UPDATE_MIN", "15") or "15")
+    except ValueError:
+        limit = 15.0
+    now = now or datetime.now(timezone.utc)
+    if sent.tzinfo is None:
+        sent = sent.replace(tzinfo=timezone.utc)
+    return (now - sent).total_seconds() > limit * 60
+
+
 HANDLER_ERROR_REPLY = "Что-то пошло не так. Попробуйте ещё раз чуть позже."
 
 
@@ -419,6 +437,9 @@ def register_handlers(app: Application) -> None:
 
     async def _claim_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not claim_update_once(getattr(update, "update_id", None)):
+            raise ApplicationHandlerStop
+        if is_stale_update(update):
+            print(f"[bot] skip stale update id={getattr(update, 'update_id', None)}")
             raise ApplicationHandlerStop
 
     register_chat_ingest(app)
