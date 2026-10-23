@@ -6540,6 +6540,25 @@ async def miniapp_digest_item(body: dict[str, Any], principal: _MiniappPrincipal
     return {"ok": True, "item": row}
 
 
+@miniapp_router.post("/digest/step-task")
+async def miniapp_digest_step_task(body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """«В задачу» из «Следующих шагов» отчёта чата: задача поставлена — связь пункта с ней (кнопка → чип)."""
+    from assistant.services import digest_overview
+
+    uid = int(principal.telegram_user_id)
+    try:
+        res = await run_in_threadpool(partial(
+            digest_overview.step_converted, uid, str(body.get("key") or ""),
+            task_id=body.get("task_id") or None, url=str(body.get("url") or ""), title=str(body.get("title") or ""),
+            by=_principal_display_name(principal)))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    _FOCUS_CACHE.pop(uid, None)
+    return {"ok": True, **res}
+
+
 @miniapp_router.post("/digest/market/insight")
 async def miniapp_digest_market_insight(body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
     """«Рынок»: «Что это значит для вас» — один раз на выпуск (кэш), по запросу пользователя."""

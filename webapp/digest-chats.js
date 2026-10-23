@@ -92,14 +92,31 @@
 
   async function loadChat(id) {
     st.open = id;
-    if (!st.chat || st.chat.chat_id !== id) st.chat = { chat_id: id, loading: true };
+    var same = !!(st.chat && st.chat.chat_id === id && !st.chat.loading);
+    if (!same) st.chat = { chat_id: id, loading: true };
     render();
     try {
       st.chat = await api("/digest/chats/" + encodeURIComponent(id));
     } catch (e) {
       st.chat = { chat_id: id, error: (e && e.message) || "Не удалось открыть отчёт" };
     }
+    // Перечитали тот же отчёт (задача поставлена / изменена) — остаёмся на том же месте.
+    if (same) renderKeepScroll();
+    else render();
+  }
+
+  function renderKeepScroll() {
+    var r = root();
+    var body = r && r.querySelector(".dgx-body");
+    var main = document.querySelector(".main-scroll");
+    var top = body ? body.scrollTop : 0;
+    var mainTop = main ? main.scrollTop : 0;
+    var winTop = window.scrollY || 0;
     render();
+    var nb = r && r.querySelector(".dgx-body");
+    if (nb) nb.scrollTop = top;
+    if (main) main.scrollTop = mainTop;
+    if (window.scrollY !== winTop) window.scrollTo(0, winTop);
   }
 
   function listHtml() {
@@ -139,10 +156,27 @@
     return '<div class="dgx-li"><span class="dgx-dot"></span><span class="dgx-li-text">' + text + "</span>" + (extra || "") + "</div>";
   }
 
-  function taskBtn(text, chatTitle, day) {
-    return (
-      '<button type="button" class="dgx-btn" data-dgx="task" data-text="' + esc(text) + '" data-chat="' + esc(chatTitle) + '" data-day="' + esc(day) + '">В задачу</button>'
-    );
+  // «В задачу» → окно задачи (исполнитель и срок из шага); поставленная — чип задачи вместо кнопки.
+  function taskBtn(s, day) {
+    var t = s.task_link;
+    if (t) {
+      var label = '<span class="dgx-task-chip-t">' + esc(t.title || s.task) + "</span>";
+      return t.url
+        ? '<button type="button" class="dgx-task-chip" data-dgx="tg" data-url="' + esc(t.url) + '" title="Открыть задачу">' + label + "</button>"
+        : '<button type="button" class="dgx-task-chip' + (t.done ? " is-done" : "") + '" data-dgx="opentask" data-task-id="' + esc(t.id) + '" title="Открыть задачу">' + label + "</button>";
+    }
+    if (!s.key) return "";
+    return '<button type="button" class="dgx-btn" data-dgx="task" data-key="' + esc(s.key) + '" data-day="' + esc(day) + '">В задачу</button>';
+  }
+
+  function findStep(key) {
+    var hit = null;
+    ((st.chat && st.chat.days) || []).forEach(function (d) {
+      (d.next_steps || []).forEach(function (s) {
+        if (s.key === key) hit = s;
+      });
+    });
+    return hit;
   }
 
   function dayHtml(c, day, open) {
@@ -163,7 +197,7 @@
         '<div class="dgx-sec"><h4>Следующие шаги</h4>' +
         day.next_steps.map(function (s) {
           var line = (s.who ? "<b>" + esc(s.who) + "</b> — " : "") + esc(s.task) + (s.deadline ? ' <span class="dgx-muted">до ' + esc(s.deadline) + "</span>" : "");
-          return li(line, taskBtn((s.who ? s.who + " — " : "") + s.task + (s.deadline ? " (до " + s.deadline + ")" : ""), c.title, day.date));
+          return li(line, taskBtn(s, day.date));
         }).join("") +
         "</div>";
     if ((day.deadlines || []).length)
@@ -253,10 +287,41 @@
       return render();
     }
     if (act === "tg") return app().openLink(b.getAttribute("data-url"));
-    if (act === "task")
-      return app().askLeo(
-        "Поставь мне задачу: " + b.getAttribute("data-text") + " (из чата «" + b.getAttribute("data-chat") + "», " + dayLabel(b.getAttribute("data-day")).toLowerCase() + ")."
-      );
+    if (act === "task") {
+      var step = findStep(b.getAttribute("data-key"));
+      if (!step) return;
+      var stepDay = b.getAttribute("data-day");
+      var chatId = st.chat.chat_id;
+      return app().openTaskDraft({
+        title: step.task,
+        assignee: step.who,
+        deadline: step.deadline,
+        baseDay: stepDay,
+        description: "Из чата «" + (st.chat.title || "Чат") + "», " + dayLabel(stepDay).toLowerCase(),
+        onSaved: async function (task) {
+          if (!task) return;
+          // Битрикс24 и др.: id вида «bitrix24:123» — запоминаем ссылку и подпись.
+          var ext = task.external || null;
+          var body = ext
+            ? { key: step.key, url: ext.url || "", title: task.chip_label || step.task }
+            : { key: step.key, task_id: task.id };
+          step.task_link = ext ? { url: ext.url || "", title: task.chip_label || step.task } : { id: task.id, title: task.title || step.task };
+          if (st.chat && st.chat.chat_id === chatId) renderKeepScroll();
+          try {
+            await api("/digest/step-task", { method: "POST", body: JSON.stringify(body) });
+          } catch (err) {
+            toast((err && err.message) || "Задача поставлена, но связь с пунктом не сохранилась");
+          }
+        },
+      });
+    }
+    if (act === "opentask") {
+      var openedChat = st.chat && st.chat.chat_id;
+      // Переименовали / удалили задачу — перечитываем отчёт: чип с новым названием или снова «В задачу».
+      return app().openTaskById(b.getAttribute("data-task-id"), function () {
+        if (openedChat && st.chat && st.chat.chat_id === openedChat) loadChat(openedChat);
+      });
+    }
     if (act === "leo") {
       var day = (st.chat.days || [])[0] || {};
       return app().askLeo("Разберём чат «" + st.chat.title + "». Коротко за последний день: " + (day.brief || "без сводки") + ". Что мне важно знать и что сделать?");

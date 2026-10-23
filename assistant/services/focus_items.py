@@ -262,6 +262,7 @@ def apply(owner_user_id: Any, item_key: str, op: str, *, by: str = "", **kw: Any
         link: dict[str, Any] = {"url": url[:1000]} if url else {}
         if task_id:
             link["task_id"] = int(task_id)
+        if task_id or kw.get("title"):
             link["title"] = str(kw.get("title") or "").strip()[:200]
         row.update(status="linked", link=link, reason="", snooze_until="")
         event["link"] = link

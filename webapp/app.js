@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-notes3";
+  var WEBAPP_BUILD = "20261023-notes4";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -36999,9 +36999,12 @@
   }
 
   // Срок из разбора («пт», «завтра», «24.10», «2026-10-24») → YYYY-MM-DD для поля даты.
-  function focusDeadlineIso(raw) {
+  // baseIso — день, от которого считать «завтра» / «до пятницы» (например, день отчёта чата); по умолчанию сегодня.
+  var RU_MONTHS_GEN = ["январ", "феврал", "март", "апрел", "ма", "июн", "июл", "август", "сентябр", "октябр", "ноябр", "декабр"];
+  function focusDeadlineIso(raw, baseIso) {
     var t = String(raw || "").trim().toLowerCase().replace(/ё/g, "е");
-    var today = new Date();
+    var bm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(baseIso || ""));
+    var today = bm ? new Date(+bm[1], +bm[2] - 1, +bm[3]) : new Date();
     function iso(d) {
       return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
     }
@@ -37014,6 +37017,13 @@
       var d0 = new Date(y, Number(m[2]) - 1, Number(m[1]));
       if (!m[3] && d0 < new Date(today.getFullYear(), today.getMonth(), today.getDate())) d0.setFullYear(y + 1);
       return isNaN(d0.getTime()) ? "" : iso(d0);
+    }
+    m = t.match(/(\d{1,2})\s+(январ|феврал|март|апрел|ма[яй]|июн|июл|август|сентябр|октябр|ноябр|декабр)[а-я]*/);
+    if (m) {
+      var mi = RU_MONTHS_GEN.indexOf(/^ма[яй]$/.test(m[2]) ? "ма" : m[2]);
+      var dm = new Date(today.getFullYear(), mi, Number(m[1]));
+      if (dm < new Date(today.getFullYear(), today.getMonth(), today.getDate())) dm.setFullYear(today.getFullYear() + 1);
+      return mi < 0 || isNaN(dm.getTime()) ? "" : iso(dm);
     }
     if (/сегодня/.test(t)) return iso(today);
     if (/послезавтра/.test(t)) return iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2));
@@ -48017,6 +48027,63 @@
     },
     askLeo: async function (prompt) {
       if (await focusOpenAssistant()) await submitNoteGptQuestion(String(prompt || ""));
+    },
+    // Открыть задачу по id (чип задачи вне заметки); onChanged — после сохранения или удаления.
+    openTaskById: function (taskId, onChanged) {
+      var id = String(taskId || "").trim();
+      if (!/^\d+$/.test(id)) return;
+      apiFetch("/calendar/tasks/" + encodeURIComponent(id), { method: "GET" })
+        .then(function (r) {
+          var task = r && r.task;
+          if (!task) throw new Error("Задача не найдена");
+          var ev = Object.assign({}, task.event || {}, task, { id: "task-" + task.id, task_id: task.id });
+          openTaskModal(ev, {
+            onSaved: function (saved) {
+              if (typeof onChanged === "function") onChanged(saved || null);
+            },
+            onDeleted: function () {
+              if (typeof onChanged === "function") onChanged(null);
+            },
+          });
+        })
+        .catch(function (e) {
+          showNoteToast((e && e.message) || "Не удалось открыть задачу");
+        });
+    },
+    // Окно новой задачи с подставленными названием, исполнителем (из контактов) и сроком.
+    // deadline — как в разборе («до пятницы», «25.10», «завтра»), от дня baseDay; прошедший срок → сегодня.
+    openTaskDraft: function (d) {
+      d = d || {};
+      var today = todayIsoLocal();
+      // Срок временем («18:00», «к 15:30») — в день шага (не раньше сегодня), в это время.
+      var raw = String(d.deadline || "");
+      var tm = /(?:^|[^\d.])([01]?\d|2[0-3]):([0-5]\d)(?!\d)/.exec(raw);
+      var due = tm
+        ? focusDeadlineIso(raw.replace(tm[0], " "), d.baseDay) || d.baseDay || today
+        : focusDeadlineIso(raw, d.baseDay) || focusDeadlineIso("завтра");
+      if (due < today) due = today;
+      var hhmm = tm ? pad2(Number(tm[1])) + ":" + tm[2] : "";
+      // Время уже прошло (сегодня 18:00, а сейчас 19:00) — завтра в то же время.
+      if (hhmm && due === today && new Date(due + "T" + hhmm + ":00").getTime() < Date.now()) due = focusDeadlineIso("завтра");
+      var contact = focusAssigneeContact(d.assignee);
+      var startIso = hhmm ? new Date(due + "T" + hhmm + ":00").toISOString() : due + "T09:00:00";
+      var ev = {
+        summary: String(d.title || ""),
+        description: String(d.description || ""),
+        start: { dateTime: startIso },
+        end: { dateTime: hhmm ? new Date(new Date(startIso).getTime() + 30 * 60000).toISOString() : due + "T09:30:00" },
+        all_day: !hhmm,
+      };
+      if (contact) {
+        ev.assignee = {
+          user_id: contact.user_id || contact.telegram_user_id || "",
+          email: contact.email || "",
+          name: contact.name || "",
+        };
+      } else if (d.assignee && !/^я$/i.test(String(d.assignee).trim())) {
+        ev.description = [ev.description, "Исполнитель по чату: " + d.assignee].filter(Boolean).join("\n");
+      }
+      openTaskModal(ev, { onSaved: d.onSaved });
     },
     rememberActions: rememberCalendarActions,
     // Почта подключена → «Почта» во вкладке «Дайджест» (даже если дайджест чатов выключен).

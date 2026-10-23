@@ -53,7 +53,9 @@ def test_overview_groups_by_chat_with_labels_first(env):
 def test_chat_detail_days_and_awaiting(env):
     res = digest_overview.chat(ME, -1001)
     assert [d["date"] for d in res["days"]] == [TODAY.isoformat(), (TODAY - timedelta(days=1)).isoformat()]
-    assert res["days"][0]["next_steps"][0] == {"who": "Анна", "task": "Отчёт по багам", "deadline": "18:00"}
+    step = res["days"][0]["next_steps"][0]
+    assert {k: step[k] for k in ("who", "task", "deadline")} == {"who": "Анна", "task": "Отчёт по багам", "deadline": "18:00"}
+    assert step["key"] == digest_overview.step_key(-1001, TODAY.isoformat(), "Отчёт по багам") and step["task_link"] is None
     assert res["awaiting"][0]["text"] == "Апрув на релиз?" and res["url"] == "https://t.me/c/1"
 
 
@@ -70,3 +72,47 @@ def test_closing_here_closes_in_focus(env):
 def test_unknown_chat_is_not_found(env):
     with pytest.raises(LookupError):
         digest_overview.chat(ME, -5555)
+
+
+@pytest.fixture
+def tasks(tmp_path, monkeypatch):
+    from assistant.stores import calendar_tasks
+
+    monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "tasks.sqlite"))
+    calendar_tasks._CONN = None
+    yield calendar_tasks
+    calendar_tasks._CONN = None
+
+
+def _step(res):
+    return res["days"][0]["next_steps"][0]
+
+
+def test_step_to_task_becomes_chip(env, tasks):
+    from assistant.services import focus_items
+
+    key = _step(digest_overview.chat(ME, -1001))["key"]
+    t = tasks.create_task(ME, title="Отчёт по багам к 18:00", start_at=datetime.now(timezone.utc))
+    res = digest_overview.step_converted(ME, key, task_id=t["id"])
+    assert res["task_link"] == {"id": t["id"], "title": "Отчёт по багам к 18:00", "done": False}
+    assert _step(digest_overview.chat(ME, -1001))["task_link"]["id"] == t["id"]
+    # Тот же пункт Фокуса — закрыт как «поставлена задача».
+    assert focus_items.get(ME, key)["status"] == "converted"
+    # Задачу удалили — снова кнопка «В задачу».
+    tasks.delete_task(ME, t["id"])
+    assert _step(digest_overview.chat(ME, -1001))["task_link"] is None
+
+
+def test_step_to_tracker_task_keeps_link(env, tasks):
+    key = _step(digest_overview.chat(ME, -1001))["key"]
+    res = digest_overview.step_converted(ME, key, url="https://b24.example/task/7/", title="Б24 · Отчёт")
+    assert res["task_link"] == {"url": "https://b24.example/task/7/", "title": "Б24 · Отчёт"}
+
+
+def test_step_cannot_link_foreign_task(env, tasks):
+    key = _step(digest_overview.chat(ME, -1001))["key"]
+    other = tasks.create_task(ME + 1, title="Чужая", start_at=datetime.now(timezone.utc))
+    with pytest.raises(LookupError):
+        digest_overview.step_converted(ME, key, task_id=other["id"])
+    with pytest.raises(LookupError):
+        digest_overview.step_converted(ME, "digest_step:-1001:2000-01-01:000000000000", task_id=1)

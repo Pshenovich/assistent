@@ -21802,3 +21802,25 @@ textarea.tracker-desc {
 .note-tg-menu-item.note-tg-size-item { width: auto; min-width: 40px; padding: 8px 10px; justify-content: center; font-variant-numeric: tabular-nums; }
 .note-tg-size-item.note-tg-menu-item--active { background: rgba(91, 159, 255, 0.22); color: #9cc5ff; }
 .note-tg-size-item.note-tg-menu-item--active::after { display: none; }
+
+/* Дайджест → отчёт чата: поставленная из «Следующих шагов» задача — чип вместо «В задачу». */
+.dgx-task-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  flex: 0 1 auto;
+  max-width: 14rem;
+  min-width: 0;
+  padding: 0.3rem 0.7rem;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--success-muted);
+  color: var(--success);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dgx-task-chip::before { content: "✓"; flex: none; }
+.dgx-task-chip-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dgx-task-chip.is-done { opacity: 0.65; text-decoration: line-through; }
