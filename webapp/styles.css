@@ -19153,3 +19153,101 @@ form.pf-list .pf-add-row .pf-row-body {
     font-size: 1.4rem;
   }
 }
+
+/* ---- Подсказка над столбиком расходов ---- */
+.pf-bars,
+.pf-spark {
+  position: relative;
+}
+
+.pf-bar-tip {
+  position: absolute;
+  z-index: 3;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--text);
+  background: var(--surface-elevated, #2a2a2d);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, calc(-100% - 6px));
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-bar-tip.hidden {
+  display: none;
+}
+
+.pf-bar.is-tipped i {
+  background: var(--accent-pressed, #60a6f5);
+}
+
+.pf-bar.is-today.is-tipped i {
+  background: var(--accent);
+}
+
+.pf-spark i.is-tipped {
+  background: var(--accent-pressed, #60a6f5);
+}
+
+/* ---- Аватар в шапке профиля: тап — сменить фото ---- */
+.pf-avatar-btn {
+  padding: 0;
+  overflow: visible !important;
+  cursor: pointer;
+  font: inherit;
+}
+
+.pf-avatar-btn .avatar-img {
+  border-radius: 50%;
+}
+
+.pf-avatar-btn.is-busy {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.pf-avatar-cam {
+  position: absolute;
+  right: -0.15rem;
+  bottom: -0.15rem;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.pf-avatar-cam svg {
+  width: 0.75rem;
+  height: 0.75rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pf-avatar-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.pf-avatar-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.9rem;
+  margin: 0.15rem 0 0 !important;
+}
+
+.pf-avatar-links .pf-link {
+  padding: 0;
+  font-size: 0.8125rem;
+}

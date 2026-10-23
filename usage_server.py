@@ -5139,7 +5139,43 @@ async def miniapp_me(principal: _MiniappPrincipal = Depends(require_miniapp_user
         "last_name": u.get("last_name"),
         "language_code": u.get("language_code"),
         "bot_username": _miniapp_resolve_bot_username(),
+        "has_custom_avatar": await run_in_threadpool(_user_has_custom_avatar, int(principal.telegram_user_id)),
     }
+
+
+def _user_has_custom_avatar(user_id: int) -> bool:
+    from assistant.stores import user_avatar
+
+    return user_avatar.has_avatar(user_id)
+
+
+@miniapp_router.put("/profile/avatar")
+async def miniapp_profile_avatar_put(
+    request: Request,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> Response:
+    """Своя аватарка: тело запроса — сама картинка (JPEG/PNG/WebP/HEIC)."""
+    from assistant.stores import user_avatar
+
+    uid = int(principal.telegram_user_id)
+    raw = await request.body()
+    if len(raw) > user_avatar.MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Файл больше 10 МБ — выберите фото поменьше")
+    try:
+        data = await run_in_threadpool(user_avatar.save_avatar, uid, raw)
+    except user_avatar.AvatarError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@miniapp_router.delete("/profile/avatar")
+async def miniapp_profile_avatar_delete(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import user_avatar
+
+    removed = await run_in_threadpool(user_avatar.delete_avatar, int(principal.telegram_user_id))
+    return {"ok": True, "removed": bool(removed)}
 
 
 @miniapp_router.get("/integrations")
@@ -10949,7 +10985,12 @@ async def miniapp_user_photo(
     allowed = await run_in_threadpool(_viewer_may_see_user_photo, viewer, int(user_id))
     if not allowed:
         raise HTTPException(status_code=404, detail="Фото недоступно")
-    blob = await run_in_threadpool(note_members.cached_profile_photo, int(user_id))
+    from assistant.stores import user_avatar
+
+    # Своя аватарка в Orbita важнее фото из Telegram.
+    blob = await run_in_threadpool(user_avatar.get_avatar, int(user_id))
+    if not blob:
+        blob = await run_in_threadpool(note_members.cached_profile_photo, int(user_id))
     if not blob:
         raise HTTPException(status_code=404, detail="Фото недоступно")
     return Response(content=blob, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=600"})
@@ -10983,7 +11024,15 @@ async def miniapp_contact_telegram_photo(
     allowed = await run_in_threadpool(_viewer_may_see_username_photo, viewer, uname)
     if not allowed:
         raise HTTPException(status_code=404, detail="Фото недоступно")
-    blob = await run_in_threadpool(note_members.cached_username_photo, uname)
+    from assistant.stores import user_avatar
+    from assistant.stores.telegram_registry import lookup_user_id
+
+    blob = None
+    known_uid = await run_in_threadpool(lookup_user_id, uname)
+    if known_uid:
+        blob = await run_in_threadpool(user_avatar.get_avatar, int(known_uid))
+    if not blob:
+        blob = await run_in_threadpool(note_members.cached_username_photo, uname)
     if not blob:
         raise HTTPException(status_code=404, detail="Фото недоступно")
     return Response(content=blob, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=600"})

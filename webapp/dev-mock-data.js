@@ -642,6 +642,10 @@
         ],
       };
     }
+    if (basePath === "/profile/avatar" && method === "DELETE") {
+      mockProfile.me.has_custom_avatar = false;
+      return { ok: true, removed: true };
+    }
     if (basePath === "/agents" && method === "GET") {
       return {
         agents: [

@@ -9224,25 +9224,7 @@
       cachedMe = me;
       if (me.bot_username) cachedBotUsername = me.bot_username;
 
-      const head = document.getElementById("profile-head");
-      head.innerHTML =
-        '<div class="avatar">' +
-        '<img class="avatar-img" alt="" />' +
-        '<span class="avatar-fallback">' +
-        initials(me) +
-        "</span></div>" +
-        '<div class="profile-names">' +
-        "<h2></h2>" +
-        "<p></p></div>";
-      head.querySelector("h2").textContent = me.first_name || "Пользователь";
-      head.querySelector("p").textContent = me.username ? "@" + me.username : "";
-      var avatarImg = head.querySelector(".avatar-img");
-      if (avatarImg) {
-        applyTelegramAvatar(avatarImg, {
-          userId: me.id != null ? me.id : me.telegram_user_id,
-          username: me.username,
-        });
-      }
+      renderProfileHead(me);
       renderProfileMeta(me);
 
       await Promise.all([
@@ -9257,6 +9239,253 @@
       showProfileError(e.message || String(e));
     }
     await loadIntegrations();
+  }
+
+  // ---- Шапка профиля: аватар (своё фото или из Telegram), имя, ник ----
+  var PROFILE_AVATAR_MAX_BYTES = 10 * 1024 * 1024;
+
+  function profileSelfIds(me) {
+    var uid = me && (me.id != null ? me.id : me.telegram_user_id);
+    var uname = String((me && me.username) || "").replace(/^@/, "").trim().toLowerCase();
+    return { uid: uid != null ? String(uid) : "", unameKey: uname ? "u:" + uname : "" };
+  }
+
+  function renderProfileHead(me) {
+    var head = document.getElementById("profile-head");
+    if (!head) return;
+    head.innerHTML =
+      '<button type="button" class="avatar pf-avatar-btn" aria-label="Сменить фото" title="Сменить фото">' +
+      '<img class="avatar-img" alt="" />' +
+      '<span class="avatar-fallback"></span>' +
+      '<span class="pf-avatar-cam" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z" /><circle cx="12" cy="13" r="3.5" /></svg></span>' +
+      "</button>" +
+      '<input type="file" class="pf-avatar-input" accept="image/*" hidden />' +
+      '<div class="profile-names"><h2></h2><p class="pf-nick"></p>' +
+      '<p class="pf-avatar-links"><button type="button" class="pf-link" data-av="change"></button>' +
+      '<button type="button" class="pf-link pf-link--muted" data-av="delete">Удалить фото</button></p></div>';
+    head.querySelector(".avatar-fallback").textContent = initials(me);
+    head.querySelector("h2").textContent = me.first_name || "Пользователь";
+    head.querySelector(".pf-nick").textContent = me.username ? "@" + me.username : "";
+    var ids = profileSelfIds(me);
+    var img = head.querySelector(".avatar-img");
+    applyTelegramAvatar(img, { userId: ids.uid, username: me.username });
+    syncProfileAvatarLinks(me);
+    var input = head.querySelector(".pf-avatar-input");
+    head.querySelector(".pf-avatar-btn").addEventListener("click", function () {
+      input.click();
+    });
+    head.querySelector('[data-av="change"]').addEventListener("click", function () {
+      input.click();
+    });
+    head.querySelector('[data-av="delete"]').addEventListener("click", function () {
+      deleteProfileAvatar(me);
+    });
+    input.addEventListener("change", function () {
+      var file = input.files && input.files[0];
+      input.value = "";
+      if (file) uploadProfileAvatar(me, file);
+    });
+  }
+
+  function syncProfileAvatarLinks(me) {
+    var head = document.getElementById("profile-head");
+    if (!head) return;
+    var change = head.querySelector('[data-av="change"]');
+    var del = head.querySelector('[data-av="delete"]');
+    if (change) change.textContent = me.has_custom_avatar ? "Сменить фото" : "Загрузить фото";
+    if (del) setHidden(del, !me.has_custom_avatar);
+  }
+
+  // Новое фото — сразу во все кружки со своим аватаром (кэш по id и по нику).
+  function setSelfAvatarBlob(me, blob) {
+    var ids = profileSelfIds(me);
+    var cache = noteCollabState.photoBlobs;
+    [ids.uid, ids.unameKey].forEach(function (key) {
+      if (!key) return;
+      delete noteCollabState.photoMiss[key];
+      if (blob) cache[key] = URL.createObjectURL(blob);
+      else delete cache[key];
+    });
+    var img = document.querySelector("#profile-head .avatar-img");
+    if (!img) return;
+    if (blob) {
+      img.src = cache[ids.uid] || cache[ids.unameKey];
+      img.classList.add("has-photo");
+    } else {
+      img.removeAttribute("src");
+      img.classList.remove("has-photo");
+      applyTelegramAvatar(img, { userId: ids.uid, username: me.username });
+    }
+  }
+
+  async function profileAvatarError(res) {
+    try {
+      var body = await res.json();
+      return apiErrorMessage(body, "Не удалось загрузить фото");
+    } catch (_) {
+      return res.status === 413 ? "Файл больше 10 МБ — выберите фото поменьше" : "Не удалось загрузить фото";
+    }
+  }
+
+  // Сжимаем на устройстве: центральный квадрат, не больше 512×512, JPEG.
+  // Вместо 3–10 МБ с камеры уходит ~50 КБ. Если браузер не умеет читать
+  // формат (например, HEIC вне Safari) — отправляем как есть, сервер пережмёт сам.
+  var PROFILE_AVATAR_PX = 512;
+
+  async function loadImageForCanvas(file) {
+    if (typeof createImageBitmap === "function") {
+      try {
+        return await createImageBitmap(file, { imageOrientation: "from-image" });
+      } catch (_) {}
+    }
+    return await new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        resolve(img);
+      };
+      img.onerror = function () {
+        URL.revokeObjectURL(url);
+        reject(new Error("decode"));
+      };
+      img.src = url;
+    });
+  }
+
+  async function shrinkAvatarFile(file) {
+    try {
+      var img = await loadImageForCanvas(file);
+      var w = img.width || img.naturalWidth;
+      var h = img.height || img.naturalHeight;
+      if (!w || !h) return null;
+      var side = Math.min(w, h);
+      var out = Math.min(PROFILE_AVATAR_PX, side);
+      var canvas = document.createElement("canvas");
+      canvas.width = out;
+      canvas.height = out;
+      var ctx = canvas.getContext("2d");
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, (w - side) / 2, (h - side) / 2, side, side, 0, 0, out, out);
+      if (img.close) img.close();
+      return await new Promise(function (resolve) {
+        canvas.toBlob(
+          function (blob) {
+            resolve(blob && blob.size ? blob : null);
+          },
+          "image/jpeg",
+          0.86
+        );
+      });
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function uploadProfileAvatar(me, file) {
+    if (file.type && file.type.indexOf("image/") !== 0) {
+      showNoteToast("Нужна картинка: JPEG, PNG или WebP");
+      return;
+    }
+    if (file.size > PROFILE_AVATAR_MAX_BYTES) {
+      showNoteToast("Файл больше 10 МБ — выберите фото поменьше");
+      return;
+    }
+    var btn = document.querySelector("#profile-head .pf-avatar-btn");
+    if (btn) btn.classList.add("is-busy");
+    try {
+      var small = await shrinkAvatarFile(file);
+      var body = small || file;
+      var headers = Object.assign({}, authHeaders(), {
+        "Content-Type": small ? "image/jpeg" : file.type || "application/octet-stream",
+      });
+      var res = await fetch(API + "/profile/avatar", {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: headers,
+        body: body,
+      });
+      if (!res.ok) {
+        showNoteToast(await profileAvatarError(res));
+        return;
+      }
+      setSelfAvatarBlob(me, await res.blob());
+      me.has_custom_avatar = true;
+      syncProfileAvatarLinks(me);
+      showNoteToast("Фото обновлено");
+    } catch (e) {
+      showNoteToast(humanProfileError((e && e.message) || String(e)));
+    } finally {
+      if (btn) btn.classList.remove("is-busy");
+    }
+  }
+
+  async function deleteProfileAvatar(me) {
+    var ok = await confirmDialog("Удалить своё фото? Вернётся фото из Telegram.");
+    if (!ok) return;
+    try {
+      await apiFetch("/profile/avatar", { method: "DELETE" });
+    } catch (e) {
+      showNoteToast(humanProfileError((e && e.message) || String(e)));
+      return;
+    }
+    me.has_custom_avatar = false;
+    setSelfAvatarBlob(me, null);
+    syncProfileAvatarLinks(me);
+    showNoteToast("Фото удалено");
+  }
+
+  // Подсказка с суммой над столбиком графика: наведение мышью или касание.
+  function attachBarTips(container) {
+    if (!container) return;
+    // Столбики перерисовываются через innerHTML — подсказку возвращаем на место.
+    if (container._barTip) {
+      setHidden(container._barTip, true);
+      container.appendChild(container._barTip);
+      return;
+    }
+    var tip = document.createElement("span");
+    tip.className = "pf-bar-tip hidden";
+    tip.setAttribute("role", "status");
+    container._barTip = tip;
+    container.appendChild(tip);
+    function show(bar) {
+      if (!bar || !container.contains(bar)) return;
+      tip.textContent = bar.getAttribute("data-tip") || "";
+      setHidden(tip, false);
+      var cr = container.getBoundingClientRect();
+      var br = bar.getBoundingClientRect();
+      var col = bar.querySelector("i") || bar;
+      var top = col.getBoundingClientRect().top - cr.top;
+      var x = br.left - cr.left + br.width / 2;
+      var half = tip.offsetWidth / 2;
+      x = Math.max(half, Math.min(cr.width - half, x));
+      tip.style.left = x + "px";
+      tip.style.top = top + "px";
+      container.querySelectorAll(".is-tipped").forEach(function (el) {
+        el.classList.remove("is-tipped");
+      });
+      bar.classList.add("is-tipped");
+    }
+    function hide() {
+      setHidden(tip, true);
+      container.querySelectorAll(".is-tipped").forEach(function (el) {
+        el.classList.remove("is-tipped");
+      });
+    }
+    container.addEventListener("pointermove", function (e) {
+      show(e.target.closest && e.target.closest("[data-tip]"));
+    });
+    container.addEventListener("pointerdown", function (e) {
+      if (e.pointerType !== "mouse") show(e.target.closest && e.target.closest("[data-tip]"));
+    });
+    container.addEventListener("pointerleave", hide);
+  }
+
+  function expensesBarTip(dateUtc, sum) {
+    var d = new Date(dateUtc + "T12:00:00Z");
+    var label = d.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+    return label.charAt(0).toUpperCase() + label.slice(1) + " · " + (sum > 0 ? rub(sum) : "без расходов");
   }
 
   function renderProfileWallet(b) {
@@ -9289,9 +9518,11 @@
           byDate[d.date_utc] = Number(d.total_rub || 0);
         });
         var vals = [];
+        var keys = [];
         for (var k = 6; k >= 0; k--) {
-          var dt = new Date(Date.now() - k * 86400000);
-          vals.push(byDate[dt.toISOString().slice(0, 10)] || 0);
+          var key = new Date(Date.now() - k * 86400000).toISOString().slice(0, 10);
+          keys.push(key);
+          vals.push(byDate[key] || 0);
         }
         var max = Math.max.apply(null, vals) || 1;
         spark.innerHTML = "";
@@ -9299,8 +9530,10 @@
           var bar = document.createElement("i");
           bar.style.height = Math.max(8, Math.round((v / max) * 100)) + "%";
           if (idx === vals.length - 1) bar.className = "on";
+          bar.setAttribute("data-tip", expensesBarTip(keys[idx], v));
           spark.appendChild(bar);
         });
+        attachBarTips(spark);
       }
     } catch (_) {
       if (totalEl) totalEl.textContent = "—";
@@ -9425,6 +9658,7 @@
       ordered.forEach(function (d, idx) {
         var bar = document.createElement("div");
         bar.className = "pf-bar" + (idx === ordered.length - 1 ? " is-today" : "");
+        bar.setAttribute("data-tip", expensesBarTip(d.date_utc, Number(d.total_rub || 0)));
         var col = document.createElement("i");
         col.style.height = Math.max(3, Math.round((Number(d.total_rub || 0) / max) * 100)) + "%";
         var lab = document.createElement("em");
@@ -9440,6 +9674,7 @@
         barsEl.appendChild(bar);
       });
     }
+    attachBarTips(barsEl);
     var withSpend = ordered
       .filter(function (d) {
         return Number(d.total_rub || 0) > 0;
