@@ -13,7 +13,7 @@ var PRECACHE_URLS = [
   "./index.html",
   "./styles.css?v=20261023-mail5",
   "./app.js?v=20261023-mail5",
-  "./mail.js?v=20261023-mail5",
+  "./mail.js?v=20261023-mail6",
   "./mail-inbox.js?v=20261023-mail5",
   "./web-canvas.js?v=20261022-focuschip",
   "./launch.html",

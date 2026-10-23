@@ -86,6 +86,7 @@ def yandex_oauth_state(uid: int) -> dict[str, Any]:
         "email": email,
         "read": ("mail:imap_ro" in scopes or "mail:imap_full" in scopes) if known else None,
         "send": ("mail:smtp" in scopes) if known else None,
+        "saved_at": float(store.get("saved_at") or 0),  # когда выдан токен: повторный вход ждёт новый
     }
 
 

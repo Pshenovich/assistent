@@ -368,7 +368,14 @@
         '" role="switch" aria-checked="' +
         !!a.send_enabled +
         '" data-mail-act="acc-send" aria-label="Отвечать из Orbita"><span class="svc-toggle-knob"></span></button>' +
-        '<button type="button" class="pf-link pf-link--danger" data-mail-act="disconnect">Отключить</button></span></div>';
+        '<button type="button" class="pf-link pf-link--danger" data-mail-act="disconnect">Отключить</button></span></div>' +
+        (a.auth === "oauth_yandex" && !broken
+          ? '<button type="button" class="pf-row mail-acc-sub" data-acc="' +
+            esc(a.account_id) +
+            '" data-mail-act="reconnect"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Обновить права Яндекса</span>' +
+            '<span class="pf-row-sub pf-row-sub--wrap">Войти через Яндекс ещё раз — чтобы Лео мог отмечать прочитанное и переносить в спам</span></span>' +
+            '<span class="pf-chev" aria-hidden="true">›</span></span></button>'
+          : "");
     });
     h += "</div></div>";
     h +=
@@ -902,7 +909,13 @@
           st.codeFlow = true;
         } else {
           st.waitingOauth = true;
-          pollUntil(function () {
+          pollUntil(async function () {
+            if (st.reconnectSince) {
+              // повторный вход: ждём новый токен, иначе «подключимся» со старыми правами
+              var y = ((await api("/mail/accounts")) || {}).yandex || {};
+              if (!(y.saved_at > st.reconnectSince)) return false;
+              st.reconnectSince = 0;
+            }
             return yandexConnect(true);
           }, 180000, 3000);
         }
@@ -951,6 +964,7 @@
       if (app().loadIntegrations) app().loadIntegrations();
       checkAvailable();
     } else if (act === "reconnect" && acc) {
+      st.reconnectSince = acc.auth === "oauth_yandex" ? (st.yandex || {}).saved_at || 1 : 0;
       st.form.email = acc.email;
       st.form.password = "";
       startWizard(acc.provider === "yandex" && acc.auth === "oauth_yandex" ? "yandex" : acc.provider === "yandex" ? "yandex_pw" : acc.provider in WIZARDS ? acc.provider : "imap");
