@@ -36642,6 +36642,13 @@
       var link = e.target && e.target.closest && e.target.closest("a[href]");
       if (link) {
         var href = String(link.getAttribute("href") || "").trim();
+        var inAppNoteId = inAppNoteIdFromHref(href);
+        if (inAppNoteId) {
+          e.preventDefault();
+          e.stopPropagation();
+          openNoteByIdInApp(inAppNoteId);
+          return;
+        }
         if (/^https?:\/\//i.test(href) || /^tg:\/\//i.test(href)) {
           e.preventDefault();
           e.stopPropagation();
@@ -41414,6 +41421,34 @@
         }
       })
       .catch(function () {});
+  }
+
+  // Ссылка Лео на заметку (…/webapp/?note=N, как в Telegram) — открыть здесь, а не во внешнем браузере.
+  function inAppNoteIdFromHref(href) {
+    try {
+      var u = new URL(String(href || ""), location.href);
+      if (u.host !== location.host || u.pathname.indexOf("/webapp") !== 0) return "";
+      var n = u.searchParams.get("note") || "";
+      return /^\d+$/.test(n) ? n : "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function openNoteByIdInApp(noteId) {
+    apiFetch("/notes/local/" + encodeURIComponent(noteId), { method: "GET" })
+      .then(function (res) {
+        if (!res || !res.item) return;
+        if (notesDataCache) {
+          prependLocalInCache(res.item);
+          renderNotesPanesFromData(notesDataCache);
+        }
+        setTab("notes");
+        openNoteDetail(res.item, { isLocal: true });
+      })
+      .catch(function (err) {
+        showNoteToast((err && err.message) || "Не удалось открыть заметку");
+      });
   }
 
   function openPendingChatThread() {
