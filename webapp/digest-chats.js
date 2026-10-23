@@ -20,7 +20,7 @@
     if (app().toast) app().toast(t);
   }
 
-  var st = { data: null, filter: "labels", q: "", open: null, chat: null, expanded: {}, loading: false };
+  var st = { data: null, filter: "all", q: "", open: null, chat: null, expanded: {}, loading: false };
   var COLORS = ["#7a6ff0", "#d6455b", "#e8833a", "#2fa4b8", "#3fb27f", "#c05bd6", "#3d8ee8", "#b8962f"];
   var MON = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
   var WD = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
@@ -112,8 +112,9 @@
     var h = '<div class="dgx-list">';
     h +=
       '<div class="dgx-tools"><input type="search" class="dgx-search" data-dgx-q placeholder="Поиск по чатам" value="' + esc(st.q) + '" />' +
-      '<div class="dgx-chips"><button type="button" class="dgx-chip' + (st.filter === "labels" ? " is-on" : "") + '" data-dgx="filter" data-f="labels">С важным · ' + (d.with_labels || 0) +
-      '</button><button type="button" class="dgx-chip' + (st.filter === "all" ? " is-on" : "") + '" data-dgx="filter" data-f="all">Все чаты · ' + ((d.chats || []).length) + "</button></div></div>";
+      '<div class="dgx-chips"><button type="button" class="dgx-chip' + (st.filter === "all" ? " is-on" : "") + '" data-dgx="filter" data-f="all">Все чаты · ' + ((d.chats || []).length) +
+      '</button><button type="button" class="dgx-chip' + (st.filter === "labels" ? " is-on" : "") + '" data-dgx="filter" data-f="labels">Важное' +
+      (d.with_labels ? ' <span class="dgx-chip-count">' + d.with_labels + "</span>" : "") + "</button></div></div>";
     if (st.loading) h += '<div class="dgx-empty">Загружаю…</div>';
     else if (d.error) h += '<div class="dgx-empty">' + esc(d.error) + "</div>";
     else if (!(d.chats || []).length) h += '<div class="dgx-empty">Пока нет отчётов. Чаты для дайджеста выбираются в профиле → «Чаты».</div>';

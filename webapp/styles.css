@@ -20792,6 +20792,21 @@ form.pf-list .pf-add-row .pf-row-body {
   background: var(--accent);
 }
 
+/* счётчик «Важного» — красный, как непрочитанное */
+.dgx-chip-count {
+  display: inline-block;
+  min-width: 1.15rem;
+  margin-left: 0.25rem;
+  padding: 0 0.3rem;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.15rem;
+  text-align: center;
+  color: var(--on-danger, #fff);
+  background: var(--danger);
+}
+
 .dgx-row {
   display: flex;
   gap: 0.7rem;
