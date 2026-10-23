@@ -40,9 +40,34 @@
     return document.getElementById("mail-inbox");
   }
 
+  // На компьютере — как «Сохранённое»: список слева, переписка справа; на телефоне — по одному экрану.
+  function isWide() {
+    return window.matchMedia && window.matchMedia("(min-width: 900px)").matches;
+  }
+
+  function slots() {
+    var r = root();
+    if (!r) return {};
+    var sp = r.querySelector(".mail-split");
+    if (!isWide()) {
+      if (sp) r.innerHTML = "";
+      return { list: r, detail: r };
+    }
+    if (!sp) {
+      r.innerHTML = '<div class="mail-split"><div class="mail-split-list"></div><div class="mail-split-detail"></div></div>';
+      sp = r.querySelector(".mail-split");
+    }
+    return { list: sp.children[0], detail: sp.children[1] };
+  }
+
+  function renderPlaceholder() {
+    var d = slots().detail;
+    if (d && isWide() && !st.open) d.innerHTML = '<div class="mail-empty mail-empty--big">Выберите переписку слева</div>';
+  }
+
   async function show() {
     await loadSettings();
-    if (st.open) return renderThread();
+    if (st.open && !isWide()) return renderThread();
     await refresh();
   }
 
@@ -54,7 +79,7 @@
   }
 
   async function refresh() {
-    if (st.open) return openThread(st.open.thread_key, true);
+    if (st.open && !isWide()) return openThread(st.open.thread_key, true);
     st.loading = !st.data;
     renderList();
     try {
@@ -64,6 +89,11 @@
     }
     st.loading = false;
     renderList();
+    if (isWide()) {
+      if (!st.open && st.data && (st.data.threads || []).length) return openThread(st.data.threads[0].thread_key);
+      if (st.open) return openThread(st.open.thread_key, true);
+      renderPlaceholder();
+    }
   }
 
   /* ——— список веток ——— */
@@ -108,7 +138,7 @@
   }
 
   function renderList() {
-    var r = root();
+    var r = slots().list;
     if (!r) return;
     var d = st.data || {};
     var h = '<div class="mail-inbox-bar">';
@@ -144,8 +174,9 @@
       d.threads.forEach(function (t) {
         var p0 = (t.people || [])[0] || {};
         var last = t.last || {};
+        var sel = isWide() && st.open && st.open.thread_key === t.thread_key;
         h +=
-          '<button type="button" class="mail-thread-row' + (t.unread ? " is-unread" : "") + '" data-mi="open" data-tk="' + esc(t.thread_key) + '">' +
+          '<button type="button" class="mail-thread-row' + (t.unread ? " is-unread" : "") + (sel ? " is-sel" : "") + '" data-mi="open" data-tk="' + esc(t.thread_key) + '">' +
           avatar(p0.name, p0.addr) +
           '<span class="mail-thread-main"><span class="mail-thread-top"><span class="mail-thread-who">' + esc(peopleLine(t.people)) + "</span>" +
           '<span class="mail-thread-time">' + esc(when(last.date)) + "</span></span>" +
@@ -182,6 +213,7 @@
       var t = await api("/mail/threads/" + encodeURIComponent(tk));
       st.open = t;
       renderThread();
+      if (isWide()) renderList();
       var list = r && r.querySelector(".mail-msgs");
       if (list) list.scrollTop = prevScroll != null ? prevScroll : list.scrollHeight;
       if ((t.messages || []).some(function (m) { return m.unread; })) {
@@ -202,6 +234,10 @@
     st.open = null;
     st.pending = null;
     document.documentElement.classList.remove("mail-thread-open");
+    if (isWide()) {
+      renderList();
+      return renderPlaceholder();
+    }
     refresh();
   }
 
@@ -329,10 +365,10 @@
   }
 
   function renderThread() {
-    var r = root();
+    var r = slots().detail;
     var t = st.open;
     if (!r || !t) return;
-    document.documentElement.classList.add("mail-thread-open");
+    document.documentElement.classList.toggle("mail-thread-open", !isWide());
     var keepInput = r.querySelector("[data-mi-input]");
     var draftText = keepInput ? keepInput.value : st.inputText || "";
     var h = '<div class="mail-thread">';

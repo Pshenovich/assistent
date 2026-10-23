@@ -6497,6 +6497,59 @@ async def miniapp_digest_reports(
     return await run_in_threadpool(_run)
 
 
+@miniapp_router.get("/digest/chats")
+async def miniapp_digest_chats(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """«Дайджест» → «Чаты»: список по чатам — последняя главная мысль и метки (ждут ответа, эскалация, вы обещали)."""
+    from assistant.services import digest_overview
+
+    return {"ok": True, **await run_in_threadpool(digest_overview.overview, int(principal.telegram_user_id))}
+
+
+@miniapp_router.get("/digest/chats/{chat_id}")
+async def miniapp_digest_chat(chat_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Отчёт чата лентой по дням + «Ждут вашего ответа» (те же пункты, что в «Фокусе»)."""
+    from assistant.services import digest_overview
+
+    try:
+        return {"ok": True, **await run_in_threadpool(digest_overview.chat, int(principal.telegram_user_id), chat_id)}
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@miniapp_router.post("/digest/item")
+async def miniapp_digest_item(body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """«Ответил» / «Не мне» / «Сделано» из дайджеста — закрывает тот же пункт «Фокуса»."""
+    from assistant.services import digest_overview
+
+    uid = int(principal.telegram_user_id)
+    try:
+        row = await run_in_threadpool(partial(digest_overview.item_op, uid, str(body.get("key") or ""),
+                                              str(body.get("op") or ""), by=_principal_display_name(principal)))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    _FOCUS_CACHE.pop(uid, None)
+    return {"ok": True, "item": row}
+
+
+@miniapp_router.post("/digest/market/insight")
+async def miniapp_digest_market_insight(body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """«Рынок»: «Что это значит для вас» — один раз на выпуск (кэш), по запросу пользователя."""
+    from assistant.services import market_insight
+
+    uid = int(principal.telegram_user_id)
+    issue = str((body or {}).get("issue") or "")
+    if body.get("cached_only"):
+        return {"ok": True, "text": await run_in_threadpool(market_insight.cached, uid, issue)}
+    try:
+        text = await run_in_threadpool(partial(market_insight.insight, uid, issue, str(body.get("text") or ""),
+                                               force=bool(body.get("force"))))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "text": text}
+
+
 def _digest_people(uid: int, principal: Any, people: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Участники чата → контакты пользователя (по Telegram id или нику); себя не показываем."""
     from assistant.stores import contacts_store

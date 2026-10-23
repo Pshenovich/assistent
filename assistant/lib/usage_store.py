@@ -273,6 +273,7 @@ OPERATION_LABELS_RU: dict[str, str] = {
     "mail_rewrite": "Правка письма",
     "mail_draft": "Черновик ответа на письмо",
     "mail_summary": "Саммари переписки",
+    "market_insight": "Рынок: что это значит для вас",
 }
 
 

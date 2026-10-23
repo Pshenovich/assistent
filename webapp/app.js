@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-lineid";
+  var WEBAPP_BUILD = "20261023-digest1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -6818,6 +6818,7 @@
       mail_rewrite: "Правка письма",
       mail_draft: "Черновик ответа на письмо",
       mail_summary: "Саммари переписки",
+      market_insight: "Рынок: что это значит для вас",
     };
     const key = String(op || "").trim();
     if (!key) return "—";
@@ -7148,11 +7149,9 @@
       return;
     }
     tree.innerHTML = "";
-    [
-      { id: "chats", label: "Чаты" },
-      { id: "market", label: "Рынок" },
-    ]
+    [{ id: "chats", label: "Чаты" }]
       .concat(mailAvailable ? [{ id: "mail", label: "Почта" }] : [])
+      .concat([{ id: "market", label: "Рынок" }])
       .forEach(function (sec) {
       tree.appendChild(
         makeSidebarTreeRow({
@@ -7317,6 +7316,7 @@
     setHidden(document.getElementById("digest-pane-chats"), digestSubTab !== "chats");
     setHidden(document.getElementById("digest-pane-market"), digestSubTab !== "market");
     setHidden(document.getElementById("digest-pane-mail"), digestSubTab !== "mail");
+    syncDigestFocusLink();
     var refreshBtn = document.getElementById("digest-refresh-btn");
     if (refreshBtn) {
       refreshBtn.title = digestSubTab === "market" ? "Обновить рынок" : "Обновить";
@@ -7335,6 +7335,14 @@
       loadDigestReports();
     }
     renderSidebarTrees();
+  }
+
+  // «Дела — в Фокусе»: в дайджесте не дублируем список дел, а ведём туда.
+  function syncDigestFocusLink() {
+    var link = document.getElementById("digest-focus-link");
+    if (!link) return;
+    var n = (focusItems || []).length;
+    link.textContent = n ? "Дела — в Фокусе · " + n + " →" : "Дела — в Фокусе →";
   }
 
   function digestItemId(report) {
@@ -7833,6 +7841,11 @@
         setDigestTabVisible(false);
         return;
       }
+      if (window.LeoDigestChats) {
+        // новый вид: список по чатам, отчёт чата справа (webapp/digest-chats.js)
+        window.LeoDigestChats.show();
+        return;
+      }
       renderDigestList((data && data.reports) || []);
     } catch (e) {
       if (err) {
@@ -8059,6 +8072,14 @@
       var html = await res.text();
       var doc = new DOMParser().parseFromString(html, "text/html");
       var main = doc.querySelector("main");
+      if (window.LeoMarket && main) {
+        // журнальный вид выпуска: оглавление, главное, «Что это значит для вас» (webapp/digest-market.js)
+        body.innerHTML = "";
+        window.LeoMarket.render(main, body);
+        bindMarketStrategyTips(body);
+        digestMarketLoaded = true;
+        return;
+      }
       var adapted = adaptMarketNewsDom(main);
       body.innerHTML = "";
       if (!adapted || !adapted.children.length) {
@@ -46584,6 +46605,13 @@
       if (!on && digestSubTab === "mail") digestSubTab = "chats";
       if (on && !digestChatsEnabled && digestSubTab !== "market") digestSubTab = "mail";
       setDigestTabVisible(digestChatsEnabled);
+    },
+    reloadMarket: function () {
+      loadMarketDigest({ force: true });
+    },
+    openFocus: function () {
+      setTab("actual", { noAnim: true });
+      openFocusAll();
     },
     openDigestMail: function () {
       setTab("digest", { noAnim: true });

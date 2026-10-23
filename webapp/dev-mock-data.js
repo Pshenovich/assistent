@@ -821,7 +821,51 @@
     return null;
   }
 
+  // ---- «Дайджест» → «Чаты»: моки списка по чатам ----
+  function mockDigestDay(n) {
+    return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  }
+  var mockDigest = {
+    chats: [
+      { chat_id: -1001234, title: "Продукт · ядро", last_date: mockDigestDay(0), brief: "Релиз 2.4 сдвигаем на вторник — ждём миграцию биллинга", quiet: false, awaiting: 2, days: 3,
+        labels: [{ kind: "wait", text: "2 ждут ответа" }, { kind: "promise", text: "вы обещали" }] },
+      { chat_id: -1005678, title: "Продажи · Москва", last_date: mockDigestDay(1), brief: "Firm недоволен сроками поставки, просят созвон", quiet: false, awaiting: 0, days: 2,
+        labels: [{ kind: "risk", text: "эскалация" }] },
+      { chat_id: -1009012, title: "Найм", last_date: mockDigestDay(3), brief: "Три кандидата на финал, решение до пятницы", quiet: false, awaiting: 0, days: 1,
+        labels: [{ kind: "deadline", text: "срок" }] },
+      { chat_id: -1003456, title: "Маркетинг", last_date: mockDigestDay(3), brief: "Утвердили бюджет на ноябрь", quiet: false, awaiting: 0, days: 2, labels: [] },
+      { chat_id: -1007890, title: "Офис", last_date: mockDigestDay(4), brief: "Ничего важного", quiet: true, awaiting: 0, days: 1, labels: [] },
+    ],
+  };
+  function mockDigestChat(id) {
+    var c = mockDigest.chats.filter(function (x) { return x.chat_id === id; })[0] || mockDigest.chats[0];
+    return {
+      ok: true, chat_id: c.chat_id, title: c.title, url: "https://t.me/c/1234",
+      awaiting: c.awaiting ? [
+        { key: "chat:a1", who: "Анна Котова", text: "Вова, апрув на релиз во вторник? Нужно до вечера", asked_at: new Date(Date.now() - 3 * 3600000).toISOString(), url: "https://t.me/c/1234/55" },
+        { key: "chat:a2", who: "Дмитрий Морозов", text: "Кто ревьюит миграцию биллинга?", asked_at: new Date(Date.now() - 5 * 3600000).toISOString(), url: "https://t.me/c/1234/41" },
+      ] : [],
+      cards: c.labels.some(function (l) { return l.kind === "promise"; }) ? [{ key: "chat:p1", type: "chat_promise", label: "вы обещали", text: "Согласовать стенд с DevOps до среды" }] : [],
+      days: [
+        { date: c.last_date, message_count: 48, brief: c.brief, decisions: ["Стенд под нагрузочные тесты — отдельный"],
+          next_steps: [{ who: "Анна", task: "Отчёт по багам", deadline: "18:00" }, { who: "Вы", task: "Согласовать стенд с DevOps", deadline: "среда" }],
+          deadlines: [], open_questions: ["Кто сообщит клиентам о переносе?"] },
+        { date: mockDigestDay(1), message_count: 12, brief: "Обсуждали метрики онбординга, решений нет", decisions: [], next_steps: [], deadlines: [], open_questions: [] },
+        { date: mockDigestDay(3), message_count: 30, brief: "Планирование спринта", decisions: ["Спринт — 2 недели", "Демо по пятницам"], next_steps: [{ who: "Олег", task: "Бэклог", deadline: "" }], deadlines: [], open_questions: [] },
+      ],
+    };
+  }
+
   function profileMockResponse(basePath, method, opts) {
+    if (basePath === "/digest/reports" && method === "GET") return { digest_enabled: true, reports: [{ chat_id: -1001234, report_date: mockDigestDay(0), title: "Продукт · ядро", summary: {} }] };
+    if (basePath === "/digest/chats" && method === "GET") return Object.assign({ ok: true, with_labels: 3 }, mockDigest);
+    var dgm = /^\/digest\/chats\/(-?\d+)$/.exec(basePath);
+    if (dgm) return mockDigestChat(Number(dgm[1]));
+    if (basePath === "/digest/item") return { ok: true, item: {} };
+    if (basePath === "/digest/market/insight") {
+      return { ok: true, text: "• Конкуренты (Gong, Cresta) продвигают «действие в CRM», а не только аналитику — это прямо про ваш продукт: стоит обсудить на встрече «Продукт · стратегия» в чт 11:00.\n• Новость про подешевевшие модели снижает вашу стоимость саммари встреч — проверьте экономику тарифа.\n• Вы обещали прислать расчёт скидки Ольге — новость о раунде в нише можно использовать как аргумент." };
+    }
+
     var gm = /^\/gpt\/calendar-actions\/([^/]+)\/([a-z_]+)$/.exec(basePath);
     if (gm && mockMail.actions[gm[1]]) return mockMailActionOp(gm[1], gm[2]);
     if (basePath === "/gpt/calendar-actions/status") {
