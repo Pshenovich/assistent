@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-mail2";
+  var WEBAPP_BUILD = "20261023-mail3";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -18999,6 +18999,9 @@
   // «✓ Сделано…» на карточке с несколькими задачами: отметить галочками выполненные.
   function openFocusDonePicker(it) {
     var awaiting = it.type === "awaiting_reply";
+    var hasMail = awaiting && (it.items || []).some(function (x) {
+      return String(x.id || "").indexOf("mail:") === 0;
+    });
     var ov = focusDoneOverlay(awaiting ? "На что уже ответили?" : "Что уже сделано?");
     var items = it.items || [];
     var body = ov.querySelector(".focus-done-body");
@@ -19007,7 +19010,8 @@
     sub.className = "focus-done-sub";
     sub.textContent = awaiting
       ? items.length + " " + pluralRu(items.length, "вопрос", "вопроса", "вопросов") +
-        ". «Не мне» — вопрос был адресован не вам; после двух таких в одном чате вопросы оттуда больше не покажем."
+        ". «Не мне» — вопрос был адресован не вам; после двух таких в одном чате вопросы оттуда больше не покажем." +
+        (hasMail ? " «Это рассылка» — письма от этого отправителя больше не покажем." : "")
       : ((it.note && it.note.title) ? "«" + it.note.title + "» · " : "") +
         items.length + " " + pluralRu(items.length, "задача", "задачи", "задач") +
         ". Отмеченные пропадут из подсказки.";
@@ -19036,11 +19040,18 @@
     save.className = "focus-card-btn is-primary focus-done-save";
     body.appendChild(save);
     var notMe = null;
+    var bulk = null;
     if (awaiting) {
       notMe = document.createElement("button");
       notMe.type = "button";
       notMe.className = "focus-card-btn focus-done-save";
       body.appendChild(notMe);
+    }
+    if (hasMail) {
+      bulk = document.createElement("button");
+      bulk.type = "button";
+      bulk.className = "focus-card-btn focus-done-save";
+      body.appendChild(bulk);
     }
     var allCb = all.querySelector("input");
     function picked() {
@@ -19055,6 +19066,13 @@
       if (notMe) {
         notMe.textContent = n ? "Не мне · " + n : "Не мне";
         notMe.disabled = !n;
+      }
+      if (bulk) {
+        var nMail = picked().filter(function (x) {
+          return String(x.id || "").indexOf("mail:") === 0;
+        }).length;
+        bulk.textContent = nMail ? "Это рассылка · " + nMail : "Это рассылка";
+        bulk.disabled = !nMail;
       }
       allCb.checked = n === items.length && n > 0;
       allCb.indeterminate = n > 0 && n < items.length;
@@ -19098,7 +19116,9 @@
       renderFocusPanel();
       if (!focusPanelOpen) refreshDiscussFeedNow();
       showNoteToast(
-        op === "not_me"
+        op === "newsletter"
+          ? "Письма от этих отправителей больше не покажем"
+          : op === "not_me"
           ? "Скрыто как «не мне»: " + chosen.length
           : (awaiting ? "Отмечено отвеченным: " : "Отмечено выполненным: ") + chosen.length
       );
@@ -19109,6 +19129,11 @@
     if (notMe) {
       notMe.addEventListener("click", function () {
         submitPicked("not_me", notMe);
+      });
+    }
+    if (bulk) {
+      bulk.addEventListener("click", function () {
+        submitPicked("newsletter", bulk);
       });
     }
     sync();

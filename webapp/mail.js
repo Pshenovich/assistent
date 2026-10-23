@@ -204,6 +204,7 @@
   var st = {
     accounts: [],
     yandex: {},
+    signature: null,
     view: "list",
     wiz: "",
     step: 0,
@@ -238,6 +239,10 @@
       var d = await api("/mail/accounts");
       st.accounts = d.accounts || [];
       st.yandex = d.yandex || {};
+      if (st.accounts.length && st.signature == null) {
+        var cfg = await api("/mail/settings");
+        st.signature = (cfg && cfg.signature) || "";
+      }
     } catch (e) {
       st.error = (e && e.message) || "Не удалось загрузить почту";
     }
@@ -348,6 +353,11 @@
         '<button type="button" class="pf-link pf-link--danger" data-mail-act="disconnect">Отключить</button></span></div>';
     });
     h += "</div></div>";
+    h +=
+      '<div class="pf-group"><p class="pf-group-title">Подпись в письмах</p><div class="pf-list"><label class="pf-row pf-row--static field"><span class="pf-row-body">' +
+      '<textarea class="pf-input mail-signature" rows="3" data-mail-signature placeholder="Например: Владимир Пшенович, руководитель проектов, +7 …">' +
+      esc(st.signature || "") +
+      '</textarea></span></label></div><p class="pf-hint">Добавится под ответами, которые вы отправляете из Orbita.</p></div>';
     h += '<button type="button" class="pf-btn" data-mail-act="add">Подключить ещё ящик</button>';
     if (st.error) h += '<p class="pf-field-error">' + esc(st.error) + "</p>";
     return h;
@@ -816,6 +826,17 @@
         return;
       }
       onClick(e);
+    });
+    document.addEventListener("change", async function (e) {
+      var sig = e.target.closest && e.target.closest("#profile-mail-body [data-mail-signature]");
+      if (!sig) return;
+      try {
+        var res = await post("/mail/settings", { signature: sig.value }, "PATCH");
+        st.signature = res.signature;
+        toast("Подпись сохранена");
+      } catch (err) {
+        toast((err && err.message) || "Не удалось сохранить подпись");
+      }
     });
     document.addEventListener("keydown", function (e) {
       if (e.key !== "Enter") return;

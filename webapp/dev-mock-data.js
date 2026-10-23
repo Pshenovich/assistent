@@ -687,6 +687,10 @@
       if (b.password === "bad") throw mockMailErr("Почта не приняла пароль. Скорее всего, вставлен обычный пароль от почты, а нужен пароль приложения.", "password", "auth");
       return mockMailAdd(b.provider || "imap", String(b.email || "me@example.com").toLowerCase(), "password");
     }
+    if (basePath === "/mail/settings") {
+      if (method === "PATCH") mockMail.signature = String(b.signature || "");
+      return { ok: true, signature: mockMail.signature || "" };
+    }
     if (basePath === "/mail/thread-card") return { action: mockMailThreadAction(b.mail_key) };
     if (basePath === "/mail/drafts") return { action: mockMailDraft(b.mail_key, b.body || "", "user") };
     var dm = /^\/mail\/drafts\/([^/]+)$/.exec(basePath);
