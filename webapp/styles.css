@@ -19962,6 +19962,7 @@ form.pf-list .pf-add-row .pf-row-body {
 
 .mail-thread-main {
   display: grid;
+  grid-template-columns: minmax(0, 1fr); /* иначе длинная тема без переносов растягивает строку за край */
   flex: 1;
   gap: 0.1rem;
   min-width: 0;
@@ -19970,6 +19971,7 @@ form.pf-list .pf-add-row .pf-row-body {
 .mail-thread-top {
   display: flex;
   gap: 0.5rem;
+  min-width: 0;
 }
 
 .mail-thread-who {
@@ -20745,6 +20747,7 @@ form.pf-list .pf-add-row .pf-row-body {
 
 .dgx-rmain {
   display: grid;
+  grid-template-columns: minmax(0, 1fr); /* иначе длинная тема без переносов растягивает строку за край */
   flex: 1;
   gap: 0.15rem;
   min-width: 0;
