@@ -634,6 +634,9 @@ class _Blocks(HTMLParser):
             self.stack[-1]["text"] += data
 
 
+_HTML_BODY_RE = re.compile(r"\s*<(p|h[1-6]|ul|ol|div|table|blockquote|pre)\b", re.I)
+
+
 def _norm_line(s: str) -> str:
     return " ".join(re.findall(r"[a-zа-яё0-9]+", str(s or "").lower().replace("ё", "е")))
 
@@ -650,6 +653,9 @@ def place_mark(html_text: str, row: dict[str, Any]) -> tuple[str, bool]:
     src = re.sub(one, "", src, flags=re.S)
     mark = mark_html(row)
     if not mark:
+        return src, src != html_text
+    if not _HTML_BODY_RE.match(src):
+        # Тело в Markdown (свежее саммари встречи): HTML-значок в нём покажется сырым текстом.
         return src, src != html_text
     p = public(row)
     wants = [

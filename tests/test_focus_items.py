@@ -115,6 +115,12 @@ class FocusItemsTests(unittest.TestCase):
         fi.apply(1, "ins:1:para", "dismiss", by="Вова", reason="duplicate")
         self.assertEqual(notes_store.get_note(1, int(self.note["id"]))["body"], SUMMARY)
 
+    def test_markdown_body_is_never_touched(self) -> None:
+        md = "## 📋 Задачи\n- [ ] Дима — подготовить API\n"
+        row = {"item_key": "ins:1:md", "text": "Что-то другое", "who": "", "status": "converted",
+               "link": {"task_id": 7}, "fields": {}}
+        self.assertEqual(fi.place_mark(md, row), (md, False))
+
     def test_quote_finds_line_for_paraphrase(self) -> None:
         row = {"item_key": "ins:1:q", "text": "Сделать интеграционный API", "who": "", "quote": "подготовить API для интеграции до пятницы",
                "status": "converted", "link": {"task_id": 7}, "fields": {}}

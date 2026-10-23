@@ -51,6 +51,9 @@ def main() -> int:
         body = str((notes_store.get_note(owner_id, int(src["id"])) or {}).get("body") or "")
         if f'data-leo-mark-item="{fi.mark_id(row["item_key"])}"' in body:
             continue
+        if not fi._HTML_BODY_RE.match(body):
+            print(f"note={src['id']} task={row['link']['task_id']}: тело в Markdown — пропуск")
+            continue
         todo += 1
         print(f"note={src['id']} task={row['link']['task_id']} «{fi.public(row)['text'][:60]}»")
         if args.apply:
