@@ -1662,9 +1662,9 @@ function mountToolbar(toolbarEl, editor) {
       var font = NOTE_FONTS.filter(function (f) {
         return f.id === String(cmd).slice(5);
       })[0];
-      editor.chain().focus().setNoteFontStyle({ fontFamily: (font && font.css) || null }).run();
+      applyFontStyle({ fontFamily: (font && font.css) || null });
     } else if (/^size:/.test(String(cmd || ""))) {
-      editor.chain().focus().setNoteFontStyle({ fontSize: String(cmd).slice(5) || null }).run();
+      applyFontStyle({ fontSize: String(cmd).slice(5) || null });
     } else if (cmd === "paragraph") {
       clearToParagraph(editor);
     } else if (cmd === "quote") {
@@ -1716,9 +1716,47 @@ function mountToolbar(toolbarEl, editor) {
     closeTgMenus(toolbarEl);
   }
 
+  // Выделение на момент открытия «Aa»: на телефоне касание кнопки / пункта меню сбрасывает
+  // выделение раньше, чем выбран шрифт, и он применялся к пустому курсору.
+  var fontMenuRange = null;
+  editor.on("transaction", function (p) {
+    var tr = p && p.transaction;
+    if (tr && tr.docChanged && !tr.getMeta("noteFontApply")) fontMenuRange = null;
+  });
+  var toolbarTouchAt = 0;
+  toolbarEl.addEventListener(
+    "pointerdown",
+    function () {
+      toolbarTouchAt = Date.now();
+    },
+    true
+  );
+  editor.on("selectionUpdate", function () {
+    var sel = editor.state.selection;
+    if (!fontMenuRange) return;
+    // Новое выделение где-то ещё — забываем старое.
+    if (!sel.empty && (sel.from !== fontMenuRange.from || sel.to !== fontMenuRange.to)) fontMenuRange = null;
+    // Курсор поставили сами (не сброс от касания панели) — тоже.
+    else if (sel.empty && Date.now() - toolbarTouchAt > 1000) fontMenuRange = null;
+  });
+  function applyFontStyle(attrs) {
+    var sel = editor.state.selection;
+    var range = !sel.empty ? { from: sel.from, to: sel.to } : fontMenuRange;
+    var max = editor.state.doc.content.size;
+    var chain = editor.chain().focus().setMeta("noteFontApply", true);
+    if (range && range.to <= max && range.from < range.to) chain = chain.setTextSelection(range);
+    chain.setNoteFontStyle(attrs).run();
+    if (range) fontMenuRange = { from: range.from, to: Math.min(range.to, editor.state.doc.content.size) };
+  }
+
   function openMenu(name, triggerBtn) {
     var panel = toolbarEl.querySelector('[data-menu-panel="' + name + '"]');
     if (!panel) return;
+    if (name === "font") {
+      var fs = editor.state.selection;
+      // Выделение пропало (повторное «Aa» на телефоне) — остаётся прошлый диапазон, пока текст не правили.
+      if (!fs.empty) fontMenuRange = { from: fs.from, to: fs.to };
+    }
     var wasOpen = !panel.classList.contains("hidden");
     closeTgMenus(toolbarEl);
     closeLinkPopover();
@@ -1863,7 +1901,8 @@ function mountToolbar(toolbarEl, editor) {
     if (row) row.classList.toggle("is-selection", hasSelection);
     // Only close when leaving selection mode — never while caret is empty
     // (that race hid the «+» menu before the item click fired).
-    if (hadTextSelection !== hasSelection && (hadTextSelection || hasSelection)) closeTgMenus(toolbarEl);
+    var fontMenuOpen = !!toolbarEl.querySelector('[data-menu-panel="font"]:not(.hidden)');
+    if (hadTextSelection !== hasSelection && (hadTextSelection || hasSelection) && !(fontMenuOpen && fontMenuRange)) closeTgMenus(toolbarEl);
     hadTextSelection = hasSelection;
 
     ["undo", "redo"].forEach(function (act) {
@@ -3669,7 +3708,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261023-md1",
+  assetVersion: "20261023-md2",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,
