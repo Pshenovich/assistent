@@ -20491,22 +20491,29 @@ form.pf-list .pf-add-row .pf-row-body {
   gap: 0.4rem;
 }
 
-/* ответ */
+/* ответ — как поле ввода в чате Лео (.note-paie-reply-form) */
 .mail-input-wrap {
+  --mail-composer-border: #6b6b6b;
+  --mail-composer-accent: #9eaddb;
+  --mail-composer-ink: #19191a;
   position: sticky;
   bottom: 0;
+  z-index: 2;
   display: grid;
-  gap: 0.35rem;
-  padding: 0.5rem 0 0.25rem;
-  background: var(--bg);
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  gap: 0.4rem;
+  padding: 0.5rem 0 0.6rem;
+  background: var(--surface, var(--bg));
 }
 
 .mail-replybar {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.35rem 0.6rem;
-  border-left: 3px solid var(--accent);
+  padding: 0.35rem 0.4rem 0.35rem 0.7rem;
+  border-left: 3px solid var(--mail-composer-accent);
   border-radius: 8px;
   font-size: 0.8125rem;
   background: var(--surface-muted);
@@ -20520,37 +20527,95 @@ form.pf-list .pf-add-row .pf-row-body {
   white-space: nowrap;
 }
 
-.mail-input-row {
+.mail-replybar-x {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.mail-compose {
   display: flex;
+  min-width: 0;
   align-items: flex-end;
-  gap: 0.4rem;
+  gap: 8px;
+  padding: 8px 8px 8px 10px;
+  border: 1px solid var(--mail-composer-border);
+  border-radius: 26px;
+  background: var(--vkui--color_background_content, var(--surface));
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+}
+
+.mail-compose:focus-within {
+  border-color: var(--mail-composer-accent);
 }
 
 .mail-input {
+  box-sizing: border-box;
   flex: 1;
-  min-height: 2.4rem;
+  min-width: 0;
+  min-height: 40px;
   max-height: 10rem;
-  padding: 0.55rem 0.8rem;
-  border: 1px solid var(--border);
-  border-radius: 18px;
+  margin: 0;
+  padding: 9px 0;
+  border: 0;
+  border-radius: 0;
   font: inherit;
-  line-height: 1.35;
-  color: var(--text);
-  background: var(--surface);
+  font-size: 15px;
+  line-height: 22px;
+  color: var(--vkui--color_text_primary, var(--text));
+  background: transparent;
   resize: none;
   outline: none;
 }
 
-.mail-send {
+.mail-input::placeholder {
+  color: #909090;
+}
+
+.mail-compose-btn,
+.mail-compose-send {
+  display: inline-flex;
   flex: none;
-  width: 2.4rem;
-  height: 2.4rem;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
   border: 0;
-  border-radius: 50%;
-  font-size: 1rem;
-  color: var(--on-accent);
-  background: var(--accent);
+  border-radius: 100px;
+  color: var(--mail-composer-ink);
+  background: var(--mail-composer-border);
   cursor: pointer;
+}
+
+.mail-compose-btn {
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+.mail-compose-btn:hover {
+  color: var(--text);
+  background: var(--surface-muted);
+}
+
+.mail-compose-send {
+  opacity: 0.7;
+}
+
+.mail-compose-send.is-ready {
+  opacity: 1;
+  background: var(--mail-composer-accent);
+}
+
+.mail-split-detail .mail-input-wrap {
+  padding: 0.5rem 0.75rem 0.75rem;
 }
 
 /* «Оригинал» — изолированная страница */
@@ -21310,4 +21375,71 @@ form.pf-list .pf-add-row .pf-row-body {
 
 .mail-msg.is-rich .mail-bubble.is-expanded .mail-bubble-body {
   max-height: none;
+}
+
+/* «Дайджест» на десктопе: шапка, переключатель и рамка списков стоят на месте —
+   прокручиваются только список, переписка и выпуск «Рынка». */
+@media (min-width: 960px) {
+  .main-scroll.panels-stage:has(> #panel-digest:not(.hidden) > #digest-root:not(.hidden)) {
+    overflow: hidden;
+    padding-bottom: 24px;
+  }
+
+  #panel-digest:not(.hidden):has(> #digest-root:not(.hidden)) {
+    height: 100%;
+  }
+
+  #panel-digest:has(> #digest-root:not(.hidden)) #digest-root {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+
+  #panel-digest:has(> #digest-root:not(.hidden)) #digest-root > [id^="digest-pane-"]:not(.hidden),
+  #panel-digest:has(> #digest-root:not(.hidden)) #digest-pane-chats > .dgx,
+  #panel-digest:has(> #digest-root:not(.hidden)) #mail-inbox,
+  #panel-digest:has(> #digest-root:not(.hidden)) #digest-market-body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  #panel-digest:has(> #digest-root:not(.hidden)) .dgx.is-wide .dgx-split,
+  #panel-digest:has(> #digest-root:not(.hidden)) .mail-split {
+    flex: 1;
+    height: auto;
+    min-height: 0;
+  }
+
+  #panel-digest:has(> #digest-root:not(.hidden)) .mkt {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  #panel-digest:has(> #digest-root:not(.hidden)) .mkt > * {
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+  }
+}
+
+/* «Дайджест» на телефоне: заголовок и переключатель прилипают к верху при прокрутке. */
+@media (max-width: 959px) {
+  /* страница здесь прокручивается целиком; overflow-x у .main-scroll сделал бы его «прокручиваемым»
+     и залипание не сработало бы — от сдвига вбок страницу и так защищает .app (overflow-x: clip) */
+  .main-scroll.panels-stage:has(> #panel-digest:not(.hidden)) {
+    overflow: visible;
+  }
+
+  .digest-top {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    margin: calc(-1 * var(--safe-top, 0px)) calc(-1 * var(--page-x, 16px)) 0;
+    padding: var(--safe-top, 0px) var(--page-x, 16px) 0.5rem;
+    background: var(--bg);
+  }
 }

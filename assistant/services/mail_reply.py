@@ -148,12 +148,17 @@ def style_samples(uid: int, addr: str, *, limit: int = 2) -> list[str]:
     rows = rows[-limit:]
     if not rows:
         return []
+    stored = mail_index.bodies(uid, [r["mail_key"] for r in rows])  # сохранённые письма — без входа в ящик
+    out = [str(b.get("text") or "")[:800] for b in stored.values() if b.get("text")]
+    missing = [r for r in rows if r["mail_key"] not in stored]
+    if not missing:
+        return out
     try:
-        full = _fetch_full(uid, rows)
+        full = _fetch_full(uid, missing)
     except Exception as e:
         print(f"[mail] style samples uid={uid} err={e!r}")
-        return []
-    return [mail_imap.strip_quoted(mail_imap.body_text(m))[:800] for m in full.values() if m is not None]
+        return out
+    return out + [mail_imap.strip_quoted(mail_imap.body_text(m))[:800] for m in full.values() if m is not None]
 
 
 def _who(row: dict[str, Any]) -> str:
