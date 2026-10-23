@@ -634,17 +634,30 @@ class _Blocks(HTMLParser):
             self.stack[-1]["text"] += data
 
 
+def _norm_line(s: str) -> str:
+    return " ".join(re.findall(r"[a-zа-яё0-9]+", str(s or "").lower().replace("ё", "е")))
+
+
 def place_mark(html_text: str, row: dict[str, Any]) -> tuple[str, bool]:
-    """Снять старый значок пункта и поставить новый в конец самой похожей строки."""
+    """Снять старый значок пункта и поставить новый в конец самой похожей строки.
+
+    Строку ищем по цитате из исходника и по тексту пункта. Не нашлась (ИИ пересказал мысль
+    своими словами), а пункт стал задачей — чип задачи встаёт отдельной строкой в конце:
+    иначе из заметки не видно, что по ней уже поставлена задача."""
     mid = mark_id(row["item_key"])
-    src = re.sub(
-        r'<span[^>]*class="note-focus-mark"[^>]*data-leo-mark-item="%s"[^>]*>.*?</span>' % mid, "", str(html_text or ""), flags=re.S
-    )
+    one = r'<span[^>]*class="note-focus-mark"[^>]*data-leo-mark-item="%s"[^>]*>.*?</span>' % mid
+    src = re.sub(r"<p>\s*" + one + r"\s*</p>", "", str(html_text or ""), flags=re.S)
+    src = re.sub(one, "", src, flags=re.S)
     mark = mark_html(row)
     if not mark:
         return src, src != html_text
     p = public(row)
-    want = " ".join(x for x in (p["assignee"], row.get("text") or p["text"]) if x)
+    wants = [
+        " ".join(x for x in (p["assignee"], row.get("text") or p["text"]) if x),
+        str(row.get("quote") or ""),
+    ]
+    wants = [w for w in wants if w.strip()]
+    quote = _norm_line(row.get("quote") or "")
     parser = _Blocks(src)
     try:
         parser.feed(src)
@@ -653,13 +666,18 @@ def place_mark(html_text: str, row: dict[str, Any]) -> tuple[str, bool]:
         return src, src != html_text
     best, best_score = None, 0.0
     for b in parser.blocks:
-        s = _score(want, b["text"])
+        if len(quote) >= 12 and quote in _norm_line(b["text"]):
+            best, best_score = b, 1.0
+            break
+        s = max((_score(w, b["text"]) for w in wants), default=0.0)
         if s > best_score:
             best, best_score = b, s
-    if not best or best_score < 0.5:
+    if best and best_score >= 0.5:
+        at = int(best["at"])
+        return src[:at].rstrip() + " " + mark + src[at:], True
+    if 'data-leo-mark="task"' not in mark:
         return src, src != html_text
-    at = int(best["at"])
-    return src[:at].rstrip() + " " + mark + src[at:], True
+    return src.rstrip() + "<p>" + mark + "</p>", True
 
 
 def sync_source(owner_user_id: Any, row: dict[str, Any]) -> None:

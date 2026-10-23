@@ -95,6 +95,33 @@ class FocusItemsTests(unittest.TestCase):
         self.assertEqual(body.count("note-focus-mark"), 1)
         self.assertIn('data-leo-mark-task="43"', body)
 
+    def test_converted_paraphrased_insight_gets_chip_at_end(self) -> None:
+        # Инсайт пересказан своими словами — похожей строки нет, но чип задачи всё равно в заметке.
+        self._remember(key="ins:1:para", text="Запустить пилот вайбкодинга с командой", who="")
+        fi.apply(1, "ins:1:para", "converted", by="Вова", task_id=159)
+        body = notes_store.get_note(1, int(self.note["id"]))["body"]
+        self.assertIn('data-leo-mark-task="159"', body)
+        self.assertTrue(body.startswith(SUMMARY))
+        self.assertTrue(body.endswith("</span></p>"))
+        fi.apply(1, "ins:1:para", "converted", by="Вова", task_id=160)
+        body = notes_store.get_note(1, int(self.note["id"]))["body"]
+        self.assertEqual(body.count("note-focus-mark"), 1)
+        self.assertNotIn("<p></p>", body)
+        fi.apply(1, "ins:1:para", "undo", by="Вова")
+        self.assertEqual(notes_store.get_note(1, int(self.note["id"]))["body"], SUMMARY)
+
+    def test_paraphrased_dismiss_leaves_note_untouched(self) -> None:
+        self._remember(key="ins:1:para", text="Запустить пилот вайбкодинга с командой", who="")
+        fi.apply(1, "ins:1:para", "dismiss", by="Вова", reason="duplicate")
+        self.assertEqual(notes_store.get_note(1, int(self.note["id"]))["body"], SUMMARY)
+
+    def test_quote_finds_line_for_paraphrase(self) -> None:
+        row = {"item_key": "ins:1:q", "text": "Сделать интеграционный API", "who": "", "quote": "подготовить API для интеграции до пятницы",
+               "status": "converted", "link": {"task_id": 7}, "fields": {}}
+        body, changed = fi.place_mark(SUMMARY, row)
+        self.assertTrue(changed)
+        self.assertLess(body.index("note-focus-mark"), body.index("Ира"))
+
     def test_converted_via_assistant_finds_created_task(self) -> None:
         # «В задачу» на карточке Фокуса: задачу ставит ассистент, id не приходит — берём свежую похожую.
         self._remember()
