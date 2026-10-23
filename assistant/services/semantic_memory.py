@@ -96,6 +96,12 @@ def sources_for_user(uid: int) -> list[dict[str, Any]]:
                         "ref": {"chat_id": rep["chat_id"], "date": rep["report_date"]}})
     except Exception as e:
         print(f"[semantic] digests uid={uid} err={e!r}")
+    try:
+        from assistant.services import mail_memory
+
+        out += mail_memory.semantic_sources(uid)  # переписка с людьми
+    except Exception as e:
+        print(f"[semantic] mail uid={uid} err={e!r}")
     return out
 
 
@@ -124,7 +130,7 @@ def index_user(uid: int, *, embed: Optional[Embed] = None, budget_chunks: int = 
     seen: set[str] = set()
     done = skipped = chunks_n = 0
     # сначала короткое и ценное (саммари, заметки, дайджесты), длинные транскрипты — последними
-    order = {"meeting_summary": 0, "note": 1, "chat_digest": 2, "transcript": 3}
+    order = {"meeting_summary": 0, "note": 1, "chat_digest": 2, "mail_thread": 3, "transcript": 4}
     for src in sorted(sources_for_user(uid), key=lambda x: order.get(x["kind"], 9)):
         seen.add(src["key"])
         h = _hash(src["text"])

@@ -242,9 +242,12 @@
       var d = await api("/mail/accounts");
       st.accounts = d.accounts || [];
       st.yandex = d.yandex || {};
-      if (st.accounts.length && st.signature == null) {
-        var cfg = await api("/mail/settings");
-        st.signature = (cfg && cfg.signature) || "";
+      if (st.accounts.length) {
+        var cfg = (await api("/mail/settings")) || {};
+        if (st.signature == null) st.signature = cfg.signature || "";
+        st.memoryEnabled = cfg.memory_enabled !== false;
+        st.memory = cfg.memory || {};
+        st.mailView = cfg.view || "chat";
       }
       if (st.accounts.length) {
         var sd = await api("/mail/senders");
@@ -260,9 +263,11 @@
 
   function promiseText() {
     return (
-      "Читаю «Входящие» за последние 14 дней. " +
+      "Читаю «Входящие». " +
+      (st.memoryEnabled === false ? "" : "Храню переписку с людьми (без рассылок), чтобы Лео помнил контекст. ") +
       (st.send ? "Отправляю только письма, которые вы сами подтвердили кнопкой «Отправить». " : "Ничего не отправляю. ") +
-      "Ничего не удаляю."
+      "Отмечаю прочитанным то, что вы открыли в Orbita, и переношу в спам по вашей кнопке. Ничего не удаляю. " +
+      "Отключите ящик — всё сотру."
     );
   }
 
@@ -366,6 +371,20 @@
       '<textarea class="pf-input mail-signature" rows="3" data-mail-signature placeholder="Например: Владимир Пшенович, руководитель проектов, +7 …">' +
       esc(st.signature || "") +
       '</textarea></span></label></div><p class="pf-hint">Добавится под ответами, которые вы отправляете из Orbita.</p></div>';
+    var mem = st.memory || {};
+    h +=
+      '<div class="pf-group"><div class="pf-list"><div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Память переписки</span>' +
+      '<span class="pf-row-sub pf-row-sub--wrap">' +
+      (st.memoryEnabled === false
+        ? "Выключена: Лео ищет только прямо в ящике, медленнее и по словам"
+        : mem.threads
+          ? "Лео помнит " + mem.threads + " " + plural(mem.threads, "ветку", "ветки", "веток") + (mem.since ? " с " + mem.since.split("-").reverse().join(".") : "") + " — история за год догружается"
+          : "Лео собирает переписку с людьми за последний год") +
+      '</span></span><button type="button" class="svc-toggle' +
+      (st.memoryEnabled === false ? "" : " svc-toggle--on") +
+      '" role="switch" aria-checked="' +
+      (st.memoryEnabled !== false) +
+      '" data-mail-act="memory-toggle" aria-label="Память переписки"><span class="svc-toggle-knob"></span></button></span></div></div></div>';
     h += sendersHtml();
     h += '<button type="button" class="pf-btn" data-mail-act="add">Подключить ещё ящик</button>';
     if (st.error) h += '<p class="pf-field-error">' + esc(st.error) + "</p>";
@@ -744,6 +763,16 @@
       try {
         await api("/mail/senders?pattern=" + encodeURIComponent(btn.getAttribute("data-pattern")), { method: "DELETE" });
         await refresh();
+      } catch (err) {
+        toast((err && err.message) || "Не получилось");
+      }
+    } else if (act === "memory-toggle") {
+      var on = st.memoryEnabled === false;
+      if (!on && !(await app().confirm("Выключить память переписки? Лео сотрёт сохранённую переписку и будет искать только прямо в ящике."))) return;
+      try {
+        await post("/mail/settings", { memory_enabled: on }, "PATCH");
+        await refresh();
+        toast(on ? "Память переписки включена — собираю историю" : "Память переписки выключена и стёрта");
       } catch (err) {
         toast((err && err.message) || "Не получилось");
       }

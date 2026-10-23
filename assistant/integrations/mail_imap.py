@@ -191,6 +191,20 @@ def fetch(mail: imaplib.IMAP4_SSL, uids: list[int], what: str) -> dict[int, tupl
     return out
 
 
+def search_people(mail: imaplib.IMAP4_SSL, addrs: list[str], *, inbox: bool) -> list[int]:
+    """UID писем от/к этим адресам за всю историю папки (FROM — во «Входящих», TO/CC — в «Отправленных»)."""
+    uids: set[int] = set()
+    for a in addrs[:5]:
+        a = a.strip().lower()
+        if not a or '"' in a:
+            continue
+        for key in (("FROM",) if inbox else ("TO", "CC")):
+            typ, data = mail.uid("SEARCH", key, f'"{a}"')
+            if typ == "OK" and data and data[0]:
+                uids.update(int(x) for x in data[0].split() if x.isdigit())
+    return sorted(uids)
+
+
 def find_by_message_id(mail: imaplib.IMAP4_SSL, message_id: str) -> Optional[int]:
     mid = message_id.strip()
     if not mid:

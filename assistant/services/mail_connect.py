@@ -152,7 +152,10 @@ def connect(uid: int, body: dict[str, Any]) -> dict[str, Any]:
 
 
 def disconnect(uid: int, account_id: str) -> bool:
+    from assistant.services import mail_memory
+
     mail_index.purge_account(uid, account_id)
+    mail_memory.forget_account(uid, account_id)
     return mail_accounts.remove(uid, account_id)
 
 

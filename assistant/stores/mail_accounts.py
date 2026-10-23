@@ -63,6 +63,11 @@ def _conn() -> sqlite3.Connection:
     _CONN.execute(
         "CREATE TABLE IF NOT EXISTS mail_settings (owner_user_id TEXT PRIMARY KEY, signature TEXT NOT NULL DEFAULT '')"
     )
+    for col, ddl in (("memory_enabled", "INTEGER NOT NULL DEFAULT 1"), ("view", "TEXT NOT NULL DEFAULT 'chat'")):
+        try:
+            _CONN.execute(f"ALTER TABLE mail_settings ADD COLUMN {col} {ddl}")
+        except sqlite3.OperationalError:
+            pass  # колонка уже есть
     _CONN.commit()
     return _CONN
 
@@ -232,3 +237,36 @@ def set_signature(owner_user_id: Any, text: str) -> str:
         )
         conn.commit()
     return text
+
+
+VIEWS = ("chat", "letters")
+
+
+def settings(owner_user_id: Any) -> dict[str, Any]:
+    """Настройки почты пользователя: подпись, «Память переписки», вид раздела «Почта» (chat | letters)."""
+    with _LOCK:
+        r = _conn().execute("SELECT * FROM mail_settings WHERE owner_user_id = ?", (str(owner_user_id),)).fetchone()
+    if not r:
+        return {"signature": "", "memory_enabled": True, "view": "chat"}
+    return {"signature": str(r["signature"] or ""), "memory_enabled": bool(r["memory_enabled"]),
+            "view": r["view"] if r["view"] in VIEWS else "chat"}
+
+
+def update_settings(owner_user_id: Any, patch: dict[str, Any]) -> dict[str, Any]:
+    cur = settings(owner_user_id)
+    if "signature" in patch:
+        cur["signature"] = str(patch["signature"] or "").strip()[:1000]
+    if "memory_enabled" in patch:
+        cur["memory_enabled"] = bool(patch["memory_enabled"])
+    if patch.get("view") in VIEWS:
+        cur["view"] = patch["view"]
+    with _LOCK:
+        conn = _conn()
+        conn.execute(
+            "INSERT INTO mail_settings (owner_user_id, signature, memory_enabled, view) VALUES (?, ?, ?, ?)"
+            " ON CONFLICT(owner_user_id) DO UPDATE SET signature = excluded.signature,"
+            " memory_enabled = excluded.memory_enabled, view = excluded.view",
+            (str(owner_user_id), cur["signature"], int(cur["memory_enabled"]), cur["view"]),
+        )
+        conn.commit()
+    return cur

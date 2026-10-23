@@ -708,8 +708,14 @@
       return { ok: true, rules: mockMail.rules, filtered: mockMail.filtered };
     }
     if (basePath === "/mail/settings") {
-      if (method === "PATCH") mockMail.signature = String(b.signature || "");
-      return { ok: true, signature: mockMail.signature || "" };
+      mockMail.settings = mockMail.settings || { signature: "", memory_enabled: true, view: "chat" };
+      if (method === "PATCH") {
+        ["signature", "memory_enabled", "view"].forEach(function (k) {
+          if (k in b) mockMail.settings[k] = b[k];
+        });
+        mockMail.signature = mockMail.settings.signature;
+      }
+      return Object.assign({ ok: true, memory: mockMail.settings.memory_enabled ? { messages: 412, threads: 96, since: "2025-11-03" } : {} }, mockMail.settings);
     }
     if (basePath === "/mail/thread-card") return { action: mockMailThreadAction(b.mail_key) };
     if (basePath === "/mail/drafts") return { action: mockMailDraft(b.mail_key, b.body || "", "user") };

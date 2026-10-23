@@ -137,7 +137,7 @@ def _row_from(acc: dict[str, Any], folder: str, uid: int, msg, *, mine: set[str]
 
 
 def _sync_folder(uid: int, acc: dict[str, Any], mail, folder: str, *, days: int, bodies_since: datetime,
-                 mine: set[str], now: datetime) -> dict[str, int]:
+                 mine: set[str], now: datetime, memory: bool = False) -> dict[str, int]:
     aid = str(acc["account_id"])
     uv = mail_imap.select(mail, folder)
     prev_uv, last = mail_index.sync_state(uid, aid, folder)
@@ -174,6 +174,11 @@ def _sync_folder(uid: int, acc: dict[str, Any], mail, folder: str, *, days: int,
         row = _row_from(acc, folder, u, msg, mine=mine, body=body, rules=rules)
         if mail_index.upsert(uid, row):
             stats["new"] += 1
+        if memory and body and not row["bulk"]:
+            from assistant.services import mail_memory
+
+            if mail_memory.add_message(uid, row, body):
+                stats["memory"] = stats.get("memory", 0) + 1
     mail_index.set_sync_state(uid, aid, folder, uv, max(uids))
     return stats
 
@@ -191,14 +196,25 @@ def sync_account(uid: int, acc: dict[str, Any], *, now: Optional[datetime] = Non
         mail_accounts.set_status(uid, aid, status="error", error=mail_imap.humanize_login_error(str(acc.get("provider")), e))
         return {}
     try:
+        from assistant.services import mail_memory
+
+        memory = mail_memory.enabled(uid)
         first = mail_index.sync_state(uid, aid, "INBOX")[1] == 0
         inbox = _sync_folder(uid, acc, mail, "INBOX", days=FIRST_SYNC_DAYS, bodies_since=now - timedelta(days=FIRST_SYNC_DAYS),
-                             mine=mine, now=now)
+                             mine=mine, now=now, memory=memory)
         sent_stats: dict[str, int] = {}
         sent = mail_imap.sent_folder(mail)
         if sent:
-            sent_stats = _sync_folder(uid, acc, mail, sent, days=SENT_SYNC_DAYS, bodies_since=now - ANALYZE_WINDOW,
-                                      mine=mine, now=now)
+            sent_stats = _sync_folder(uid, acc, mail, sent, days=SENT_SYNC_DAYS,
+                                      bodies_since=now - (timedelta(days=FIRST_SYNC_DAYS) if memory else ANALYZE_WINDOW),
+                                      mine=mine, now=now, memory=memory)
+        if memory:
+            if inbox.get("memory") or sent_stats.get("memory"):
+                mail_memory._reindex(uid)
+            try:  # история за 12 месяцев — по месяцу на папку за проход
+                mail_memory.backfill_step(uid, acc, mail, ["INBOX"] + ([sent] if sent else []), now=now)
+            except Exception as e:
+                print(f"[mail] backfill uid={uid} acc={aid} err={e!r}")
         prev = dict(acc.get("stats") or {})
         stats = {**prev, "inbox_seen": prev.get("inbox_seen", 0) + inbox["seen"],
                  "bulk": prev.get("bulk", 0) + inbox["bulk"], "sent_seen": prev.get("sent_seen", 0) + sent_stats.get("seen", 0)}

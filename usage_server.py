@@ -12975,17 +12975,28 @@ async def miniapp_mail_senders_delete(pattern: str, principal: _MiniappPrincipal
 
 @miniapp_router.get("/mail/settings")
 async def miniapp_mail_settings(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.services import mail_memory
     from assistant.stores import mail_accounts
 
-    return {"ok": True, "signature": await run_in_threadpool(mail_accounts.signature, int(principal.telegram_user_id))}
+    uid = int(principal.telegram_user_id)
+    cfg = await run_in_threadpool(mail_accounts.settings, uid)
+    return {"ok": True, **cfg, "memory": await run_in_threadpool(mail_memory.status, uid)}
 
 
 @miniapp_router.patch("/mail/settings")
 async def miniapp_mail_settings_patch(body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Подпись, «Память переписки» (выключение стирает память), вид раздела «Почта» (chat | letters)."""
+    from assistant.services import mail_memory, mail_source
     from assistant.stores import mail_accounts
 
-    sig = await run_in_threadpool(mail_accounts.set_signature, int(principal.telegram_user_id), str((body or {}).get("signature") or ""))
-    return {"ok": True, "signature": sig}
+    uid = int(principal.telegram_user_id)
+    before = await run_in_threadpool(mail_accounts.settings, uid)
+    cfg = await run_in_threadpool(mail_accounts.update_settings, uid, body or {})
+    if before["memory_enabled"] and not cfg["memory_enabled"]:
+        await run_in_threadpool(mail_memory.forget_all, uid)
+    elif not before["memory_enabled"] and cfg["memory_enabled"]:
+        mail_source.kick(uid)
+    return {"ok": True, **cfg}
 
 
 @miniapp_router.get("/telemost/status")
