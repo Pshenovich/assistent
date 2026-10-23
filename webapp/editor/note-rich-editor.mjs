@@ -4,6 +4,7 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Placeholder from "@tiptap/extension-placeholder";
 import Underline from "@tiptap/extension-underline";
+import TextStyle from "@tiptap/extension-text-style";
 import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
 import TableCell from "@tiptap/extension-table-cell";
@@ -272,6 +273,63 @@ function isIOSDevice() {
     /iPad|iPhone|iPod/.test(navigator.userAgent) ||
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
   );
+}
+
+/* Markdown-заголовки при наборе: «# », «## », «### », «#### » в начале строки → заголовок.
+   Стандартное правило Tiptap ловит только handleTextInput, а на телефоне (автозамена, Gboard, диктовка)
+   текст приходит через композицию/DOM — поэтому проверяем саму строку после каждого ввода. */
+var MD_HEADING_RE = /^(#{1,4})[ \u00a0]/;
+const MarkdownHeadingShortcut = Extension.create({
+  name: "markdownHeadingShortcut",
+  addProseMirrorPlugins: function () {
+    return [
+      new Plugin({
+        key: new PluginKey("markdownHeadingShortcut"),
+        appendTransaction: function (trs, oldState, state) {
+          if (!trs.some(function (tr) { return tr.docChanged; })) return null;
+          if (trs.some(function (tr) { return tr.getMeta("paste") || tr.getMeta("uiEvent") === "paste" || tr.getMeta("history$") || tr.getMeta("addToHistory") === false; })) return null;
+          var sel = state.selection;
+          if (!sel.empty) return null;
+          var $from = sel.$from;
+          var para = $from.parent;
+          if (para.type.name !== "paragraph") return null;
+          // Только обычный абзац верхнего уровня или в цитате — не в списке и не в таблице.
+          for (var d = $from.depth - 1; d > 0; d--) {
+            var t = $from.node(d).type.name;
+            if (t !== "blockquote") return null;
+          }
+          var m = MD_HEADING_RE.exec(para.textContent);
+          if (!m || $from.parentOffset < m[0].length) return null;
+          // Маркер должен появиться этим вводом: строку, которая уже начиналась с «# », не трогаем.
+          var old$ = oldState.selection.$from;
+          if (old$.parent.type.name === "paragraph" && MD_HEADING_RE.test(old$.parent.textContent)) return null;
+          var heading = state.schema.nodes.heading;
+          if (!heading) return null;
+          var start = $from.start();
+          var tr = state.tr.delete(start, start + m[0].length);
+          tr.setBlockType(start, start, heading, { level: m[1].length });
+          return tr;
+        },
+      }),
+    ];
+  },
+});
+
+/* Вставка простого текста с markdown (из чата, ChatGPT, .md) — сразу оформлением. */
+var MD_PASTE_HINT_RE = /(^|\n)(#{1,6}\s+\S|[-*•]\s+\S|\d+[.)]\s+\S|-\s+\[[ xX]\]\s|>\s+\S)|\*\*[^*\n]+\*\*/;
+function pasteMarkdownText(view, event) {
+  if (!event || !event.clipboardData) return false;
+  if (event.clipboardData.getData("text/html")) return false;
+  var text = String(event.clipboardData.getData("text/plain") || "").replace(/\r\n?/g, "\n");
+  if (!text.trim() || !MD_PASTE_HINT_RE.test(text)) return false;
+  if (!(window.NoteHtml && window.NoteHtml.markdownToHtml)) return false;
+  var editor = view.dom && view.dom.editor;
+  if (!editor || isInTable(view.state)) return false;
+  var html = prepareHtmlForEditor(window.NoteHtml.markdownToHtml(text));
+  if (!html) return false;
+  event.preventDefault();
+  editor.chain().focus().insertContent(html).run();
+  return true;
 }
 
 const IosSelectionGuard = Extension.create({
@@ -1045,6 +1103,7 @@ function svgIcon(name) {
     undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H13"/>',
     redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H11"/>',
     highlight: '<path d="m9 15 6.5-6.5a2.1 2.1 0 0 0-3-3L6 12l-1 4z"/><path d="M4 20h8" stroke="#facc15" stroke-width="2.6"/>',
+    font: '<path d="M3 19 8.5 5h1L15 19"/><path d="M5.2 14h7.6"/><path d="M15.5 19v-5.2a2.6 2.6 0 0 1 5.2 0V19"/><path d="M15.5 16.2h5.2"/>',
     divider: '<path d="M4 12h16"/><path d="M8 7h8M8 17h8" opacity=".35"/>',
     noteref: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M12 10v6"/>',
     chevronRight: '<path d="m9 6 6 6-6 6"/>',
@@ -1175,6 +1234,83 @@ const ListJoinBackspace = Extension.create({
         tr.setSelection(state.selection.constructor.near(tr.doc.resolve(end)));
         editor.view.dispatch(tr.scrollIntoView());
         return true;
+      },
+    };
+  },
+});
+
+/* Шрифт и кегль выделенного текста: <span style="font-family / font-size"> (марк textStyle).
+   При чтении HTML берём только свои варианты — вставка из Google Docs / Word не тащит их Arial 11pt. */
+var NOTE_FONTS = [
+  { id: "", label: "Как в приложении", css: "" },
+  { id: "arial", label: "Arial", css: "Arial, Helvetica, sans-serif" },
+  { id: "georgia", label: "Georgia", css: "Georgia, serif" },
+  { id: "times", label: "Times New Roman", css: '"Times New Roman", Times, serif' },
+  { id: "mono", label: "Моноширинный", css: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' },
+];
+var NOTE_FONT_SIZES = ["12px", "14px", "16px", "18px", "20px", "24px", "30px"];
+
+function noteFontByCss(css) {
+  var norm = String(css || "").replace(/["'\s]/g, "").toLowerCase();
+  if (!norm) return null;
+  for (var i = 1; i < NOTE_FONTS.length; i++) {
+    if (NOTE_FONTS[i].css.replace(/["'\s]/g, "").toLowerCase() === norm) return NOTE_FONTS[i];
+  }
+  return null;
+}
+
+// Свой textStyle: <span> без нашего шрифта/кегля не превращается в марк (иначе после вставки — голые <span>).
+var NoteTextStyle = TextStyle.extend({
+  parseHTML: function () {
+    return [
+      {
+        tag: "span",
+        getAttrs: function (el) {
+          var size = String(el.style.fontSize || "").trim();
+          return noteFontByCss(el.style.fontFamily) || NOTE_FONT_SIZES.indexOf(size) >= 0 ? {} : false;
+        },
+      },
+    ];
+  },
+});
+
+var NoteFontStyle = Extension.create({
+  name: "noteFontStyle",
+  addGlobalAttributes: function () {
+    return [
+      {
+        types: ["textStyle"],
+        attributes: {
+          fontFamily: {
+            default: null,
+            parseHTML: function (el) {
+              var f = noteFontByCss(el.style.fontFamily);
+              return f ? f.css : null;
+            },
+            renderHTML: function (attrs) {
+              return attrs.fontFamily ? { style: "font-family: " + attrs.fontFamily } : {};
+            },
+          },
+          fontSize: {
+            default: null,
+            parseHTML: function (el) {
+              var v = String(el.style.fontSize || "").trim();
+              return NOTE_FONT_SIZES.indexOf(v) >= 0 ? v : null;
+            },
+            renderHTML: function (attrs) {
+              return attrs.fontSize ? { style: "font-size: " + attrs.fontSize } : {};
+            },
+          },
+        },
+      },
+    ];
+  },
+  addCommands: function () {
+    return {
+      setNoteFontStyle: function (attrs) {
+        return function (props) {
+          return props.chain().setMark("textStyle", attrs).removeEmptyTextStyle().run();
+        };
       },
     };
   },
@@ -1450,6 +1586,24 @@ function mountToolbar(toolbarEl, editor) {
     item("heading-4", "heading-4", "", "Заголовок 4", "note-tg-h note-tg-h4") +
     "</div></div>";
 
+  var fontMenu =
+    '<div class="note-tg-menu note-tg-menu--font hidden" data-menu-panel="font" role="menu">' +
+    '<p class="note-tg-menu-label">Шрифт</p>' +
+    NOTE_FONTS.map(function (f) {
+      return (
+        '<button type="button" class="note-tg-menu-item note-tg-font-item" data-cmd="font:' + f.id + '" data-check="font:' + f.id + '"' +
+        (f.css ? " style='font-family: " + f.css.replace(/'/g, "&#39;") + "'" : "") +
+        "><span>" + f.label + "</span></button>"
+      );
+    }).join("") +
+    '<p class="note-tg-menu-label">Размер</p>' +
+    '<div class="note-tg-size-row">' +
+    '<button type="button" class="note-tg-menu-item note-tg-size-item" data-cmd="size:" data-check="size:" title="Как в приложении"><span>Авто</span></button>' +
+    NOTE_FONT_SIZES.map(function (v) {
+      return '<button type="button" class="note-tg-menu-item note-tg-size-item" data-cmd="size:' + v + '" data-check="size:' + v + '"><span>' + parseInt(v, 10) + "</span></button>";
+    }).join("") +
+    "</div></div>";
+
   toolbarEl.className = "note-rich-editor-toolbar note-tg-toolbar";
   toolbarEl.innerHTML =
     '<div class="note-tg-capsule note-tg-capsule--history">' +
@@ -1459,6 +1613,7 @@ function mountToolbar(toolbarEl, editor) {
     '<div class="note-tg-capsule note-tg-capsule--default" data-mode="default">' +
     btn("", 'data-menu="insert"', "Вставить", "plus") +
     btn("", 'data-menu="style"', "Стиль текста", "heading") +
+    btn("", 'data-menu="font"', "Шрифт и размер", "font") +
     btn("", 'data-menu="list"', "Список", "list") +
     btn("", 'data-action="task"', "Чек-лист", "check") +
     "</div>" +
@@ -1471,6 +1626,7 @@ function mountToolbar(toolbarEl, editor) {
     btn("", 'data-action="link"', "Ссылка", "link") +
     '<span class="note-tg-sep" aria-hidden="true"></span>' +
     btn("", 'data-menu="style"', "Стиль текста", "heading") +
+    btn("", 'data-menu="font"', "Шрифт и размер", "font") +
     btn("", 'data-menu="list-sel"', "Список", "list") +
     "</div>" +
     '<div class="note-tg-menu hidden" data-menu-panel="insert" role="menu">' +
@@ -1481,6 +1637,7 @@ function mountToolbar(toolbarEl, editor) {
     item("noteref", "", "noteref", "Ссылка на заметку") +
     "</div>" +
     styleMenu +
+    fontMenu +
     '<div class="note-tg-menu hidden" data-menu-panel="list" role="menu">' + listItems("Обычный текст") + "</div>" +
     '<div class="note-tg-menu hidden" data-menu-panel="list-sel" role="menu">' + listItems("Ничего") + "</div>";
 
@@ -1501,6 +1658,13 @@ function mountToolbar(toolbarEl, editor) {
       } else {
         editor.chain().focus().clearNodes().setHeading({ level: 3 }).run();
       }
+    } else if (/^font:/.test(String(cmd || ""))) {
+      var font = NOTE_FONTS.filter(function (f) {
+        return f.id === String(cmd).slice(5);
+      })[0];
+      editor.chain().focus().setNoteFontStyle({ fontFamily: (font && font.css) || null }).run();
+    } else if (/^size:/.test(String(cmd || ""))) {
+      editor.chain().focus().setNoteFontStyle({ fontSize: String(cmd).slice(5) || null }).run();
     } else if (cmd === "paragraph") {
       clearToParagraph(editor);
     } else if (cmd === "quote") {
@@ -1729,8 +1893,21 @@ function mountToolbar(toolbarEl, editor) {
       btn.classList.toggle("note-tg-btn--active", editor.isActive("heading") || editor.isActive("blockquote"));
     });
 
+    var ts = editor.getAttributes("textStyle") || {};
+    var curFont = noteFontByCss(ts.fontFamily);
+    toolbarEl.querySelectorAll('[data-menu="font"]').forEach(function (btn) {
+      btn.classList.toggle("note-tg-btn--active", !!(curFont || ts.fontSize));
+    });
     toolbarEl.querySelectorAll(".note-tg-menu-item[data-check]").forEach(function (item) {
       var check = item.getAttribute("data-check");
+      if (/^font:/.test(check)) {
+        item.classList.toggle("note-tg-menu-item--active", check.slice(5) === (curFont ? curFont.id : ""));
+        return;
+      }
+      if (/^size:/.test(check)) {
+        item.classList.toggle("note-tg-menu-item--active", check.slice(5) === String(ts.fontSize || ""));
+        return;
+      }
       var headingMatch = String(check || "").match(/^heading-(\d)$/);
       var on =
         check === "plain"
@@ -3041,6 +3218,8 @@ function mount(container, options) {
         heading: { levels: [1, 2, 3, 4, 5, 6] },
       }),
       Underline,
+      NoteTextStyle,
+      NoteFontStyle,
       NoteHighlight,
       ListBackspace,
       ListJoinBackspace,
@@ -3068,6 +3247,7 @@ function mount(container, options) {
         placeholder: options.placeholder || "Начните писать…",
       }),
       IosSelectionGuard,
+      MarkdownHeadingShortcut,
     ]
       .concat(createHashtagExtensions(hashtagCtx))
       .concat(createLeoTaskExtensions(taskCtx))
@@ -3080,7 +3260,7 @@ function mount(container, options) {
         spellcheck: "true",
       },
       handlePaste: function (view, event) {
-        return pastePlainTextInTableCell(view, event, tablePasteClickPos.pos);
+        return pastePlainTextInTableCell(view, event, tablePasteClickPos.pos) || pasteMarkdownText(view, event);
       },
       handleTripleClick: function (view, pos) {
         return selectAllTextInTableCell(view, pos);
@@ -3489,7 +3669,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261023-trackers",
+  assetVersion: "20261023-md1",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,

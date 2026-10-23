@@ -327,11 +327,12 @@ def send_user_document(
     *,
     filename: str,
     caption: str | None = None,
+    mime: str = "application/pdf",
 ) -> bool:
     token = (os.getenv("TELEGRAM_BOT_TOKEN", "") or "").strip()
     if not token or not data:
         return False
-    files = {"document": (filename or "file.pdf", data, "application/pdf")}
+    files = {"document": (filename or "file.pdf", data, mime or "application/pdf")}
     form: dict = {"chat_id": str(int(telegram_user_id))}
     cap = (caption or "").strip()
     if cap:

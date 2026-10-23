@@ -1110,6 +1110,17 @@
     }
     if (basePath === "/voice/history") return { items: mockVoiceHistory };
 
+    var exportMatch = basePath.match(/^\/notes\/(local|journal)\/([^/]+)\/export$/);
+    if (exportMatch && method === "POST") {
+      var exp = {};
+      try {
+        exp = JSON.parse((opts && opts.body) || "{}");
+      } catch (_) {}
+      if (exp.to !== "device") return { ok: true };
+      var expName = "zametka-" + exportMatch[2] + "." + (exp.format || "pdf");
+      var expUrl = URL.createObjectURL(new Blob(["Мок-выгрузка " + expName + "\n"], { type: "text/plain" }));
+      return { ok: true, url: expUrl, filename: expName };
+    }
     var localMatch = basePath.match(/^\/notes\/local\/([^/]+)(?:\/(sheets|make-summary|pdf))?$/);
     if (localMatch) {
       var lid = decodeURIComponent(localMatch[1]);

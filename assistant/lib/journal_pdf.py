@@ -470,6 +470,11 @@ def _note_doc_sections(note: dict[str, Any]) -> list[tuple[str, str]]:
 
 
 def build_note_pdf(note: dict[str, Any], *, which: str = "auto") -> tuple[bytes, str, str]:
+    return build_journal_pdf(note_export_row(note, which=which))
+
+
+def note_export_row(note: dict[str, Any], *, which: str = "auto") -> dict[str, Any]:
+    """Заметка → запись в формате журнала (operation, raw_usage_json…): из неё строятся PDF, Word и TXT."""
     from html import escape as _esc
 
     from assistant.services import transcription_notes as tnotes
@@ -514,7 +519,7 @@ def build_note_pdf(note: dict[str, Any], *, which: str = "auto") -> tuple[bytes,
         "label": label,
         "file_base": "transkript" if (label and is_trans) else "",
     }
-    return build_journal_pdf(synthetic)
+    return synthetic
 
 
 def note_pdf_for_user(

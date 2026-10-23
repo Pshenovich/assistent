@@ -21740,3 +21740,65 @@ textarea.tracker-desc {
 .focus-tracker-resp input.has-user {
   color: var(--accent);
 }
+
+/* Свой календарь у полей даты (мышь): см. openDatePop в app.js. */
+@media (pointer: fine) {
+  input[type="date"]:not([data-native-picker])::-webkit-calendar-picker-indicator { cursor: pointer; }
+}
+.date-pop {
+  position: fixed;
+  z-index: 130000;
+  width: 252px;
+  padding: 10px;
+  border-radius: 12px;
+  background: #2c2d2f;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+  color: var(--text);
+  font-family: var(--font);
+  user-select: none;
+}
+.date-pop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.date-pop-title { font-size: 0.9375rem; font-weight: 600; }
+.date-pop-nav {
+  width: 30px; height: 30px; border: none; border-radius: 8px; background: transparent;
+  color: var(--text); font-size: 1.25rem; line-height: 1; cursor: pointer;
+}
+.date-pop-nav:hover, .date-pop-day:not(:disabled):hover, .date-pop-today:not(:disabled):hover { background: rgba(255, 255, 255, 0.08); }
+.date-pop-wd, .date-pop-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.date-pop-wd span { text-align: center; font-size: 0.6875rem; color: #9a9ca0; padding: 2px 0 4px; }
+.date-pop-day {
+  height: 32px; border: none; border-radius: 8px; background: transparent; color: var(--text);
+  font: inherit; font-size: 0.8125rem; font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.date-pop-day.is-other { color: #6c6e72; }
+.date-pop-day.is-today { color: var(--accent); font-weight: 600; }
+.date-pop-day.is-selected, .date-pop-day.is-selected:hover { background: var(--accent); color: var(--on-accent); }
+.date-pop-day:disabled, .date-pop-today:disabled { opacity: 0.3; cursor: default; }
+.date-pop-foot { display: flex; justify-content: flex-end; margin-top: 6px; }
+.date-pop-today {
+  height: 28px; padding: 0 10px; border: none; border-radius: 8px; background: transparent;
+  color: var(--accent); font: inherit; font-size: 0.8125rem; cursor: pointer;
+}
+
+/* Выгрузка заметки: формат и куда (openNoteExportSheet). */
+.note-export-sheet { padding: 6px 14px 14px; }
+.note-export-label { margin: 10px 2px 6px; font-size: 0.8125rem; color: var(--text-secondary); }
+.note-export-sheet .event-sheet-kind-switch { display: flex; }
+.note-export-sheet .event-sheet-kind-btn { flex: 1; }
+.note-export-go { width: 100%; margin-top: 16px; }
+
+/* «Поставленные другим» в календаре (переключатель в шапке календаря). */
+#panel-actual .meetings-head .meetings-posted-toggle.is-active,
+#panel-actual .meetings-head .meetings-posted-toggle.is-active:hover { color: var(--violet-text); background: var(--violet-muted); border-color: rgba(167, 139, 250, 0.45); }
+.meetings-week-chip--posted,
+.meetings-month-chip--posted { background: var(--violet-muted); color: var(--violet-text); border-left-color: var(--violet-text); }
+.day-timeline-band-item--posted { border-color: rgba(167, 139, 250, 0.45); border-left-color: var(--violet-text); background: var(--violet-muted); }
+
+/* Редактор: меню «Шрифт и размер». */
+.note-tg-menu--font { min-width: 248px; }
+.note-tg-font-item { padding-top: 10px; padding-bottom: 10px; }
+.note-tg-size-row { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 4px 4px; }
+.note-tg-menu-item.note-tg-size-item { width: auto; min-width: 40px; padding: 8px 10px; justify-content: center; font-variant-numeric: tabular-nums; }
+.note-tg-size-item.note-tg-menu-item--active { background: rgba(91, 159, 255, 0.22); color: #9cc5ff; }
+.note-tg-size-item.note-tg-menu-item--active::after { display: none; }

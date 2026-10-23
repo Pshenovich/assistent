@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-trackers2";
+  var WEBAPP_BUILD = "20261023-notes2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261023-trackers"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261023-md1"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -1904,10 +1904,96 @@
     if (!calendarEntryIsTask(ev)) return base;
     var cls = base + " " + base + "--task";
     if (ev && ev.done) cls += " " + base + "--task-done";
+    if (ev && ev.posted_by_me) cls += " " + base + "--posted";
     return cls;
   }
 
+  /* ——— «Поставленные другим» в календаре: переключатель в шапке календаря.
+     Делегированные задачи сервер в календарь автора не отдаёт — берём их из /calendar/tasks/posted
+     (тот же запрос, что у чипа «у других») и подмешиваем в сетку дня / недели / месяца. ——— */
+  var calShowPosted = false;
+  try {
+    calShowPosted = localStorage.getItem("cal_show_posted") === "1";
+  } catch (_) {}
+  var calPostedItems = [];
+
+  function postedCalendarEvents(fromIso, toIso) {
+    if (!calShowPosted) return [];
+    var out = [];
+    calPostedItems.forEach(function (t) {
+      if (!t || !t.event || t.owner_archived) return;
+      var day = postedTaskDayIso(t);
+      if (!day || (fromIso && day < fromIso) || (toIso && day > toIso)) return;
+      var who = postedTaskAssigneeLabel(t);
+      var title = String(t.title || t.event.summary || "Задача");
+      out.push(
+        Object.assign({}, t.event, {
+          posted_by_me: true,
+          done: !!(t.done || t.event.done),
+          summary: who ? "→ " + who + " · " + title : title,
+          posted_title: title,
+          assignee: t.event.assignee || { name: who, user_id: t.assignee_user_id, email: t.assignee_email },
+        })
+      );
+    });
+    return out;
+  }
+
+  function withPostedEvents(events, fromIso, toIso) {
+    var extra = postedCalendarEvents(fromIso, toIso);
+    if (!extra.length) return events;
+    var seen = {};
+    (events || []).forEach(function (ev) {
+      if (ev && ev.id) seen[String(ev.id)] = 1;
+    });
+    return (events || []).concat(
+      extra.filter(function (ev) {
+        return !seen[String(ev.id)];
+      })
+    );
+  }
+
+  function syncCalPostedToggle() {
+    var b = document.getElementById("meetings-posted-toggle");
+    if (!b) return;
+    b.classList.toggle("is-active", calShowPosted);
+    b.setAttribute("aria-pressed", String(calShowPosted));
+    b.title = calShowPosted ? "Скрыть задачи, поставленные другим" : "Показать задачи, поставленные другим";
+  }
+
+  function repaintMeetingsFromState() {
+    if (meetingsViewMode === "week") paintMeetingsWeek(lastMeetingsRange);
+    else if (meetingsViewMode === "month") paintMeetingsMonth(lastMeetingsRange);
+    else paintMeetingsBoard(lastMeetingsLeft, lastMeetingsRight);
+  }
+
+  function toggleCalPosted() {
+    calShowPosted = !calShowPosted;
+    try {
+      localStorage.setItem("cal_show_posted", calShowPosted ? "1" : "0");
+    } catch (_) {}
+    syncCalPostedToggle();
+    repaintMeetingsFromState();
+    if (calShowPosted) {
+      var n = postedCalendarEvents("", "").length;
+      showNoteToast(n ? "Показаны задачи, поставленные другим" : "Нет текущих задач, поставленных другим");
+    }
+  }
+
   function openCalendarEntry(ev) {
+    if (ev && ev.posted_by_me) {
+      // Задача, поставленная другому: в окне — её настоящее название, без «→ Исполнитель ·».
+      openTaskModal(Object.assign({}, ev, { summary: ev.posted_title || ev.summary }), {
+        onSaved: function () {
+          loadActual();
+        },
+        onDeleted: function (id) {
+          removePostedTaskFromState(id || ev.task_id);
+          loadActual();
+        },
+      });
+      return;
+    }
     if (calendarEntryIsTask(ev)) openTaskModal(ev);
     else openEventModal(ev);
   }
@@ -2979,6 +3065,7 @@
     var evs = ((calData && calData.events) || []).filter(function (ev) {
       return !meetingIsDeclined(ev);
     });
+    if (calDate) evs = withPostedEvents(evs, calDate, calDate);
     var dayReminders = calDate ? remindersForDate(reminders, calDate) : [];
     var disconnected = calData && calData.connected === false;
     var loadFailed = !!(calData && calData.load_error);
@@ -3013,7 +3100,8 @@
               (calendarEntryIsTask(ev) ? " day-timeline-band-item--task" : "") +
               (calendarEntryIsTask(ev) && ev.done
                 ? " day-timeline-band-item--task-done"
-                : ""),
+                : "") +
+              (ev.posted_by_me ? " day-timeline-band-item--posted" : ""),
             onClick: function () {
               openCalendarEntry(ev);
             },
@@ -3038,7 +3126,8 @@
               (calendarEntryIsTask(ev) ? " day-timeline-band-item--task" : "") +
               (calendarEntryIsTask(ev) && ev.done
                 ? " day-timeline-band-item--task-done"
-                : ""),
+                : "") +
+              (ev.posted_by_me ? " day-timeline-band-item--posted" : ""),
             onClick: function () {
               openCalendarEntry(ev);
             },
@@ -3130,6 +3219,7 @@
       if (it.kind === "event" && calendarEntryIsTask(it.ev)) {
         slot.classList.add("day-timeline-item--task");
         if (it.ev && it.ev.done) slot.classList.add("day-timeline-item--task-done");
+        if (it.ev && it.ev.posted_by_me) slot.classList.add("day-timeline-item--posted");
       }
       var cols = Math.max(1, it.cols || 1);
       var col = it.col || 0;
@@ -3454,6 +3544,7 @@
     });
     syncMeetingsHead(range.from, range.to);
     updateMeetingsRangeBadge(events);
+    events = withPostedEvents(events, range.from, range.to);
     if (lastMeetingsRange.connected === false && !events.length) {
       host.innerHTML = "";
       var banner = document.createElement("p");
@@ -3639,6 +3730,7 @@
     });
     syncMeetingsHead(anchor, null);
     updateMeetingsRangeBadge(events);
+    events = withPostedEvents(events, gridRange.from, gridRange.to);
     host.innerHTML = "";
     if (lastMeetingsRange.connected === false && !events.length) {
       var banner = document.createElement("p");
@@ -4557,13 +4649,172 @@
     persistNotesCacheToDisk();
   }
 
-  async function requestNotePdf(kind, noteId) {
+  /* ——— Выгрузка заметки: формат (PDF / Word / TXT) и куда — в чат с Лео или на устройство.
+     Последний выбор запоминается. ——— */
+  var NOTE_EXPORT_FORMATS = [
+    { id: "pdf", label: "PDF" },
+    { id: "docx", label: "Word" },
+    { id: "txt", label: "TXT" },
+  ];
+  var NOTE_EXPORT_TARGETS = [
+    { id: "chat", label: "В чат с Лео" },
+    { id: "device", label: "На устройство" },
+  ];
+
+  function noteExportPrefs() {
+    var p = { format: "pdf", to: "chat" };
+    try {
+      var s = JSON.parse(localStorage.getItem("note_export_pref") || "{}");
+      if (NOTE_EXPORT_FORMATS.some(function (f) { return f.id === s.format; })) p.format = s.format;
+      if (s.to === "chat" || s.to === "device") p.to = s.to;
+    } catch (_) {}
+    return p;
+  }
+
+  function telegramCanDownloadFile() {
+    var tg = getTelegramWebApp();
+    return !!(tg && typeof tg.downloadFile === "function" && tg.isVersionAtLeast && tg.isVersionAtLeast("8.0") && hasTelegramWebAppAuth());
+  }
+
+  function saveBlobToDevice(blob, filename) {
+    var href = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = href;
+    a.download = filename || "file";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () {
+      URL.revokeObjectURL(href);
+    }, 10000);
+  }
+
+  function filenameFromDisposition(header) {
+    var h = String(header || "");
+    var m = /filename\*=UTF-8''([^;]+)/i.exec(h);
+    if (m) {
+      try {
+        return decodeURIComponent(m[1]);
+      } catch (_) {}
+    }
+    m = /filename="?([^";]+)"?/i.exec(h);
+    return m ? m[1] : "";
+  }
+
+  async function exportNote(kind, noteId, format, to) {
     var path =
-      kind === "journal"
-        ? "/notes/journal/" + encodeURIComponent(String(noteId)) + "/pdf"
-        : "/notes/local/" + encodeURIComponent(String(noteId)) + "/pdf";
-    await apiFetch(path, { method: "POST" });
-    alert("Файл генерируется, по готовности будет отправлен в чат");
+      (kind === "journal" ? "/notes/journal/" : "/notes/local/") + encodeURIComponent(String(noteId)) + "/export";
+    if (to === "device" && telegramCanDownloadFile()) {
+      // В Telegram сохранить файл из мини-аппа можно только через его «Скачать» (на iOS blob не сохраняется).
+      var res = await apiFetch(path, { method: "POST", body: JSON.stringify({ format: format, to: to }) });
+      getTelegramWebApp().downloadFile({ url: new URL(res.url, location.href).href, file_name: res.filename });
+      return;
+    }
+    if (to === "device") {
+      // Браузер: файл приходит прямо в ответе и сразу сохраняется.
+      var resp = await fetch(API + path, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+        body: JSON.stringify({ format: format, to: to, inline: true }),
+      });
+      if (!resp.ok) {
+        var msg = "Не удалось выгрузить файл";
+        try {
+          msg = (await resp.json()).detail || msg;
+        } catch (_) {}
+        throw new Error(msg);
+      }
+      var blob = await resp.blob();
+      saveBlobToDevice(blob, filenameFromDisposition(resp.headers.get("Content-Disposition")) || "zametka." + format);
+      return;
+    }
+    await apiFetch(path, { method: "POST", body: JSON.stringify({ format: format, to: to }) });
+  }
+
+  // items: [{ kind: "local" | "journal", id }]
+  function openNoteExportSheet(items) {
+    items = (items || []).filter(function (it) {
+      return it && it.id;
+    });
+    if (!items.length) return;
+    closeNotesActionSheet();
+    var pref = noteExportPrefs();
+    var ov = document.createElement("div");
+    ov.id = "nl-sheet-overlay";
+    ov.className = "nl-sheet-overlay";
+    function seg(list, attr, cur) {
+      return list
+        .map(function (o) {
+          var on = o.id === cur;
+          return (
+            '<button type="button" class="event-sheet-kind-btn' + (on ? " is-active" : "") + '" role="radio" aria-checked="' + on + '" ' +
+            attr + '="' + o.id + '">' + o.label + "</button>"
+          );
+        })
+        .join("");
+    }
+    ov.innerHTML =
+      '<div class="nl-sheet note-export-sheet" role="dialog" aria-label="Выгрузить">' +
+      '<div class="nl-sheet-title">' + (items.length > 1 ? "Выгрузить " + items.length + " заметок" : "Выгрузить заметку") + "</div>" +
+      '<p class="note-export-label">Формат</p>' +
+      '<span class="event-sheet-kind-switch" role="radiogroup" aria-label="Формат">' + seg(NOTE_EXPORT_FORMATS, "data-export-format", pref.format) + "</span>" +
+      '<p class="note-export-label">Куда</p>' +
+      '<span class="event-sheet-kind-switch" role="radiogroup" aria-label="Куда сохранить">' + seg(NOTE_EXPORT_TARGETS, "data-export-to", pref.to) + "</span>" +
+      '<button type="button" class="btn primary note-export-go">Выгрузить</button>' +
+      "</div>";
+    var sheet = ov.querySelector(".nl-sheet");
+    ov.addEventListener("click", function (e) {
+      if (e.target === ov) {
+        closeNotesActionSheet();
+        return;
+      }
+      var b = e.target.closest("[data-export-format], [data-export-to]");
+      if (b) {
+        var attr = b.hasAttribute("data-export-format") ? "data-export-format" : "data-export-to";
+        pref[attr === "data-export-format" ? "format" : "to"] = b.getAttribute(attr);
+        sheet.querySelectorAll("[" + attr + "]").forEach(function (x) {
+          var on = x === b;
+          x.classList.toggle("is-active", on);
+          x.setAttribute("aria-checked", String(on));
+        });
+        return;
+      }
+      if (!e.target.closest(".note-export-go")) return;
+      try {
+        localStorage.setItem("note_export_pref", JSON.stringify(pref));
+      } catch (_) {}
+      closeNotesActionSheet();
+      runNoteExport(items, pref.format, pref.to);
+    });
+    document.body.appendChild(ov);
+    document.addEventListener("keydown", notesSheetKeydown, true);
+    requestAnimationFrame(function () {
+      ov.classList.add("is-open");
+    });
+  }
+
+  function runNoteExport(items, format, to) {
+    var label = (NOTE_EXPORT_FORMATS.find(function (f) { return f.id === format; }) || {}).label || format;
+    if (to === "device" && items.length > 1) showNoteToast("Готовим файлы " + label + "…");
+    var queue = items.slice();
+    var failed = 0;
+    (function next() {
+      var it = queue.shift();
+      if (!it) {
+        if (failed) showNoteToast(failed > 1 ? "Не удалось выгрузить: " + failed : "Не удалось выгрузить файл");
+        else if (to === "chat") showNoteToast(items.length > 1 ? "Файлы придут в чат с Лео" : label + " придёт в чат с Лео");
+        return;
+      }
+      exportNote(it.kind, it.id, format, to)
+        .catch(function (err) {
+          failed += 1;
+          if (items.length === 1) alert((err && err.message) || String(err));
+        })
+        .then(function () {
+          window.setTimeout(next, to === "device" ? 600 : 300);
+        });
+    })();
   }
 
   function openGptChat(title, context) {
@@ -16462,6 +16713,139 @@
     return s.charAt(0).toUpperCase() + s.slice(1);
   }
 
+  /* ——— Выбор даты мышью: свой календарь у <input type="date">.
+     В Chromium клик по полю даты только ставит фокус (календарь — по иконке, а у «пилюли» она невидима),
+     а в iframe Telegram Web showPicker() запрещён. На тач-устройствах остаётся системный выбор. ——— */
+  var DATE_POP_MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+  var datePop = null;
+
+  function datePopIso(d) {
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+
+  function datePopParse(s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ""));
+    return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+  }
+
+  function closeDatePop() {
+    if (!datePop) return;
+    datePop.el.remove();
+    document.removeEventListener("pointerdown", datePop.onDown, true);
+    document.removeEventListener("keydown", datePop.onKey, true);
+    window.removeEventListener("resize", closeDatePop);
+    datePop = null;
+  }
+
+  function pickDatePop(iso) {
+    if (!datePop) return;
+    var input = datePop.input;
+    closeDatePop();
+    input.value = iso;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    try {
+      input.focus({ preventScroll: true });
+    } catch (_) {}
+  }
+
+  function renderDatePop() {
+    var st = datePop;
+    var y = st.view.getFullYear();
+    var mo = st.view.getMonth();
+    var todayIso = datePopIso(new Date());
+    var min = st.input.min || "";
+    var max = st.input.max || "";
+    var first = new Date(y, mo, 1);
+    var start = new Date(y, mo, 1 - ((first.getDay() + 6) % 7));
+    var cells = "";
+    for (var i = 0; i < 42; i++) {
+      var d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+      var iso = datePopIso(d);
+      var cls = "date-pop-day";
+      if (d.getMonth() !== mo) cls += " is-other";
+      if (iso === todayIso) cls += " is-today";
+      if (iso === st.input.value) cls += " is-selected";
+      var off = (min && iso < min) || (max && iso > max);
+      cells +=
+        '<button type="button" class="' + cls + '" data-date-pop-day="' + iso + '"' + (off ? " disabled" : "") + ">" + d.getDate() + "</button>";
+    }
+    st.el.innerHTML =
+      '<div class="date-pop-head">' +
+      '<button type="button" class="date-pop-nav" data-date-pop-nav="-1" aria-label="Предыдущий месяц">‹</button>' +
+      '<span class="date-pop-title">' + DATE_POP_MONTHS[mo] + " " + y + "</span>" +
+      '<button type="button" class="date-pop-nav" data-date-pop-nav="1" aria-label="Следующий месяц">›</button>' +
+      "</div>" +
+      '<div class="date-pop-wd"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div>' +
+      '<div class="date-pop-grid">' + cells + "</div>" +
+      '<div class="date-pop-foot"><button type="button" class="date-pop-today" data-date-pop-day="' + todayIso + '"' +
+      ((min && todayIso < min) || (max && todayIso > max) ? " disabled" : "") + ">Сегодня</button></div>";
+  }
+
+  function placeDatePop() {
+    var st = datePop;
+    var anchor = st.input.closest(".sheet-date-pill") || st.input;
+    var r = anchor.getBoundingClientRect();
+    var w = st.el.offsetWidth;
+    var h = st.el.offsetHeight;
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    var top = r.bottom + 6;
+    if (top + h > vh - 8 && r.top - h - 6 >= 8) top = r.top - h - 6;
+    st.el.style.top = Math.max(8, Math.min(top, vh - h - 8)) + "px";
+    st.el.style.left = Math.max(8, Math.min(r.left, vw - w - 8)) + "px";
+  }
+
+  function openDatePop(input) {
+    closeDatePop();
+    var el = document.createElement("div");
+    el.className = "date-pop";
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-label", "Выбор даты");
+    var cur = datePopParse(input.value) || new Date();
+    datePop = {
+      el: el,
+      input: input,
+      view: new Date(cur.getFullYear(), cur.getMonth(), 1),
+      onDown: function (e) {
+        if (el.contains(e.target) || e.target === input) return;
+        closeDatePop();
+      },
+      onKey: function (e) {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          closeDatePop();
+        }
+      },
+    };
+    el.addEventListener("click", function (e) {
+      var nav = e.target.closest("[data-date-pop-nav]");
+      if (nav) {
+        datePop.view = new Date(datePop.view.getFullYear(), datePop.view.getMonth() + Number(nav.getAttribute("data-date-pop-nav")), 1);
+        renderDatePop();
+        return;
+      }
+      var day = e.target.closest("[data-date-pop-day]");
+      if (day && !day.disabled) pickDatePop(day.getAttribute("data-date-pop-day"));
+    });
+    renderDatePop();
+    document.body.appendChild(el);
+    placeDatePop();
+    document.addEventListener("pointerdown", datePop.onDown, true);
+    document.addEventListener("keydown", datePop.onKey, true);
+    window.addEventListener("resize", closeDatePop);
+  }
+
+  document.addEventListener("click", function (e) {
+    var input = e.target;
+    if (!input || input.tagName !== "INPUT" || input.type !== "date") return;
+    if (input.disabled || input.readOnly || input.hasAttribute("data-native-picker")) return;
+    if (!(window.matchMedia && window.matchMedia("(pointer: fine)").matches)) return;
+    e.preventDefault();
+    if (datePop && datePop.input === input) closeDatePop();
+    else openDatePop(input);
+  });
+
   function sheetWhenHtml(opts) {
     opts = opts || {};
     var chips = SHEET_DURATIONS.map(function (m) {
@@ -21249,6 +21633,7 @@
         ? postedData.count
         : postedActiveCountFromItems(postedItems);
     lastPostedTasksItems = postedItems;
+    calPostedItems = postedItems;
     lastPostedTasksActiveCount = postedCount;
     heroTodayEvents = pickHeroTodayEvents(calData, calDataNext, rangeData);
     heroTodayReminders = remindersForDate(active, todayIsoLocal());
@@ -29324,11 +29709,9 @@
     var shareKind = String(wrap._shareKind || "");
     var shareId = wrap._shareId ? String(wrap._shareId) : "";
     if (shareId && (shareKind === "local" || shareKind === "journal")) {
-      addItem("Скачать PDF", function () {
+      addItem("Выгрузить…", function () {
         closeNoteMoreMenu();
-        requestNotePdf(shareKind, shareId).catch(function (err) {
-          alert(err.message || String(err));
-        });
+        openNoteExportSheet([{ kind: shareKind, id: shareId }]);
       });
     }
 
@@ -42727,10 +43110,8 @@
         openNoteTeamShareSheet(n);
       });
     }
-    addMoreItem("Скачать PDF", function () {
-      requestNotePdf("local", id).catch(function (err) {
-        alert(err.message || String(err));
-      });
+    addMoreItem("Выгрузить…", function () {
+      openNoteExportSheet([{ kind: "local", id: id }]);
     });
     addMoreItem(n.pinned ? "Открепить" : "Закрепить", function () {
       toggleNotePin(id, !n.pinned);
@@ -43632,12 +44013,10 @@
         },
       },
       {
-        label: "Скачать PDF",
+        label: "Выгрузить…",
         icon: "pdf",
         onClick: function () {
-          requestNotePdf("local", id).catch(function (err) {
-            alert(err.message || String(err));
-          });
+          openNoteExportSheet([{ kind: "local", id: id }]);
         },
       },
       {
@@ -44013,7 +44392,7 @@
     bar.innerHTML =
       btn("project", "В проект", "folder") +
       btn("pin", "Закрепить", "pin") +
-      btn("pdf", "Скачать", "pdf") +
+      btn("pdf", "Выгрузить", "pdf") +
       btn("delete", "Удалить", "trash", true);
     document.body.appendChild(top);
     document.body.appendChild(bar);
@@ -44047,16 +44426,11 @@
         });
         exitNotesSelectMode();
       } else if (act === "pdf") {
-        var queue = items.slice();
-        (function next() {
-          var n = queue.shift();
-          if (!n) return;
-          requestNotePdf("local", String(localNoteIdFrom(n)))
-            .catch(function () {})
-            .then(function () {
-              window.setTimeout(next, 400);
-            });
-        })();
+        openNoteExportSheet(
+          items.map(function (n) {
+            return { kind: "local", id: String(localNoteIdFrom(n) || "") };
+          })
+        );
         exitNotesSelectMode();
       } else if (act === "delete") {
         scheduleNotesDelete(items, notesSubTab === "transcriptions");
@@ -46454,6 +46828,11 @@
       postedOpen.addEventListener("click", function () {
         setPostedTasksScreen(true);
       });
+    }
+    var calPostedToggle = document.getElementById("meetings-posted-toggle");
+    if (calPostedToggle) {
+      syncCalPostedToggle();
+      calPostedToggle.addEventListener("click", toggleCalPosted);
     }
     var postedBack = document.getElementById("posted-tasks-back");
     if (postedBack) {

@@ -9,11 +9,12 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import time
 from functools import partial
 from pathlib import Path
 from datetime import date, datetime, time as dt_time, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import quote, unquote
 
 import requests
@@ -10701,6 +10702,131 @@ async def miniapp_local_note_pdf(
 
     background_tasks.add_task(_send)
     return {"ok": True}
+
+
+# Выгрузка заметки файлом: PDF / Word / TXT — в чат с Лео или на устройство.
+# «На устройство» — одноразовая ссылка на 10 минут: её открывает и браузер (fetch → blob),
+# и Telegram.WebApp.downloadFile (на iOS скачать blob из мини-аппа нельзя).
+_NOTE_EXPORT_TTL_S = 600
+_note_export_files: dict[str, tuple[float, bytes, str, str]] = {}
+
+
+class _MiniappNoteExport(BaseModel):
+    format: str = "pdf"
+    to: str = "chat"
+    # to=device: True — файл прямо в ответе (браузер сохраняет сразу), False — одноразовая ссылка (Telegram).
+    inline: bool = False
+
+
+def _note_export_file_response(data: bytes, fname: str, mime: str) -> Response:
+    ascii_name = re.sub(r"[^A-Za-z0-9._-]+", "_", fname).strip("_") or "file"
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(fname)}",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _note_export_stash(data: bytes, fname: str, mime: str) -> str:
+    now = time.time()
+    for k in [k for k, v in _note_export_files.items() if v[0] < now]:
+        _note_export_files.pop(k, None)
+    token = secrets.token_urlsafe(24)
+    _note_export_files[token] = (now + _NOTE_EXPORT_TTL_S, data, fname, mime)
+    return token
+
+
+async def _miniapp_note_export(
+    build: Callable[[], tuple[bytes, str, str, str]],
+    body: _MiniappNoteExport,
+    background_tasks: BackgroundTasks,
+    uid: int,
+) -> Any:
+    from assistant.lib.note_export import FORMATS
+
+    fmt = (body.format or "pdf").strip().lower()
+    if fmt not in FORMATS:
+        raise HTTPException(status_code=400, detail="Неизвестный формат файла")
+    to = (body.to or "chat").strip().lower()
+    if to == "device":
+        try:
+            data, fname, _caption, mime = await run_in_threadpool(build)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if body.inline:
+            return _note_export_file_response(data, fname, mime)
+        token = _note_export_stash(data, fname, mime)
+        return {"ok": True, "url": f"/api/miniapp/notes/export/file/{token}", "filename": fname}
+
+    def _send() -> None:
+        from assistant.lib.telegram_notify import send_user_document, send_user_message
+
+        try:
+            data, fname, caption, mime = build()
+        except Exception as e:
+            send_user_message(uid, f"Не удалось сделать файл: {e}")
+            return
+        if not send_user_document(uid, data, filename=fname, caption=caption, mime=mime.split(";")[0]):
+            send_user_message(uid, "Не удалось отправить файл в чат.")
+
+    background_tasks.add_task(_send)
+    return {"ok": True}
+
+
+@miniapp_router.post("/notes/local/{note_id}/export")
+async def miniapp_local_note_export(
+    note_id: int,
+    body: _MiniappNoteExport,
+    background_tasks: BackgroundTasks,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> Any:
+    from assistant.lib.note_export import note_export_for_user
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    note = await run_in_threadpool(notes_store.get_accessible_note, uid, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return await _miniapp_note_export(
+        lambda: note_export_for_user(str(uid), int(note_id), body.format),
+        body,
+        background_tasks,
+        uid,
+    )
+
+
+@miniapp_router.post("/notes/journal/{event_id}/export")
+async def miniapp_journal_export(
+    event_id: int,
+    body: _MiniappNoteExport,
+    background_tasks: BackgroundTasks,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> Any:
+    from assistant.lib.note_export import journal_export_for_user
+
+    uid = int(principal.telegram_user_id)
+    row = await run_in_threadpool(get_user_usage_event, str(uid), event_id)
+    if not row or str(row.get("operation") or "") not in ("obuchat_transcribe", "summarize"):
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    return await _miniapp_note_export(
+        lambda: journal_export_for_user(str(uid), int(event_id), body.format),
+        body,
+        background_tasks,
+        uid,
+    )
+
+
+@miniapp_router.get("/notes/export/file/{token}")
+async def miniapp_note_export_file(token: str) -> Response:
+    item = _note_export_files.get(token)
+    if not item or item[0] < time.time():
+        _note_export_files.pop(token, None)
+        raise HTTPException(status_code=404, detail="Ссылка устарела — выгрузите файл ещё раз")
+    _exp, data, fname, mime = item
+    return _note_export_file_response(data, fname, mime)
 
 
 class _MiniappSheetOrder(BaseModel):
