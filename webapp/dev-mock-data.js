@@ -609,8 +609,53 @@
     }, 5000);
     return { ok: true, account: acc, send_scope: true };
   }
+  mockMail.actions = {};
+  function mockMailThreadAction(key) {
+    var a = {
+      id: "t" + Date.now().toString(16).slice(-8), kind: "email_thread", status: "info", title: "Договор поставки", mine: true,
+      mail: { mail_key: key || "k1", from: "Иван Петров", from_addr: "ivan@firm.ru", when: "22.10 14:30",
+        gist: "Вова, привет! Посмотри, пожалуйста, договор — сможем подписать до пятницы? Если есть правки, давай созвонимся.", direction: "in" },
+    };
+    mockMail.actions[a.id] = a;
+    return a;
+  }
+  function mockMailDraft(key, body, by) {
+    var a = {
+      id: "d" + Date.now().toString(16).slice(-8), kind: "email_draft", status: "proposed", title: "Re: Договор поставки", mine: true,
+      draft: { mail_key: key || "k1", account_id: "m_1", from: "vova@yandex.ru", to: ["ivan@firm.ru"], cc: [], reply_all: false,
+        subject: "Re: Договор поставки", body: body, orig_from: "Иван Петров", by: by, attachments: [], new_recipients: [],
+        accounts: [{ account_id: "m_1", email: "vova@yandex.ru", send_enabled: true }], created_at: new Date().toISOString().replace("Z", "") },
+    };
+    mockMail.actions[a.id] = a;
+    return a;
+  }
+  function mockMailActionOp(id, op) {
+    var a = mockMail.actions[id];
+    if (!a) return null;
+    if (op === "send" && a.draft.new_recipients.length) {
+      var e = new Error("Новый получатель: " + a.draft.new_recipients.join(", ") + " — отправить?");
+      e.status = 409;
+      e.detail = { message: e.message, code: "new_recipients", addrs: a.draft.new_recipients };
+      throw e;
+    }
+    if (op === "send" || op === "send_confirmed") {
+      a.status = "sending";
+      a.draft.send_at = new Date(Date.now() + 10000).toISOString();
+      setTimeout(function () {
+        if (a.status === "sending") {
+          a.status = "sent";
+          a.draft.sent_at = new Date().toISOString();
+        }
+      }, 10000);
+    } else if (op === "cancel_send") a.status = "proposed";
+    return { action: a };
+  }
+  global.__mockMail = mockMail;
+  global.__mockMailDraft = mockMailDraft;
+  global.__mockMailThreadAction = mockMailThreadAction;
+
   function mailMockResponse(basePath, method, opts) {
-    var b = JSON.parse((opts && opts.body) || "{}");
+    var b = opts && typeof opts.body === "string" ? JSON.parse(opts.body || "{}") : {};
     if (basePath === "/mail/accounts" && method === "GET") return { ok: true, accounts: mockMail.accounts, yandex: { connected: mockMail.yandexAuthorized } };
     if (basePath === "/mail/detect") {
       var email = String(b.email || "").toLowerCase();
@@ -642,6 +687,50 @@
       if (b.password === "bad") throw mockMailErr("Почта не приняла пароль. Скорее всего, вставлен обычный пароль от почты, а нужен пароль приложения.", "password", "auth");
       return mockMailAdd(b.provider || "imap", String(b.email || "me@example.com").toLowerCase(), "password");
     }
+    if (basePath === "/mail/thread-card") return { action: mockMailThreadAction(b.mail_key) };
+    if (basePath === "/mail/drafts") return { action: mockMailDraft(b.mail_key, b.body || "", "user") };
+    var dm = /^\/mail\/drafts\/([^/]+)$/.exec(basePath);
+    if (dm) {
+      var dr = mockMail.actions[dm[1]];
+      if (!dr) throw mockMailErr("Черновик не найден");
+      ["to", "cc", "subject", "body", "reply_all"].forEach(function (k) {
+        if (k in b) dr.draft[k] = b[k];
+      });
+      if ("reply_all" in b) dr.draft.cc = b.reply_all ? ["olga@firm.ru", "boss@firm.ru"] : [];
+      if ("attachments" in b) dr.draft.attachments = (mockMail.files || []).filter(function (f) { return b.attachments.indexOf(f.id) >= 0; });
+      var known = ["ivan@firm.ru", "olga@firm.ru", "boss@firm.ru"];
+      dr.draft.new_recipients = dr.draft.to.concat(dr.draft.cc).filter(function (x) { return known.indexOf(x) < 0; });
+      dr.title = dr.draft.subject;
+      return { action: dr };
+    }
+    if (basePath === "/mail/rewrite") {
+      var txt = String(b.body || "");
+      if (b.mode === "short") txt = txt.split(/\n/)[0];
+      else if (b.mode === "polite") txt = "Здравствуйте!\n\n" + txt + "\n\nСпасибо!";
+      else if (b.mode === "translate") txt = "Hello!\n\n" + txt;
+      else txt = txt + "\n(поправлено: " + b.instruction + ")";
+      return { body: txt };
+    }
+    if (basePath === "/mail/composer/slots") {
+      var q = String(b.query || "");
+      var people = /мыздрик/i.test(q) ? ["Олег Мыздриков"] : [];
+      var nextTue = /вторник/i.test(q);
+      var dl = nextTue ? "вт 03.11" : "чт 22.10";
+      return {
+        ok: true, date: nextTue ? "2026-11-03" : "2026-10-22", duration: 60, people: people, not_found: [],
+        unavailable: people.length ? ["Олег Мыздриков"] : [], tz_label: "МСК",
+        slots: [{ label: dl + ", 11:00–12:00" }, { label: dl + ", 14:00–15:00" }, { label: dl + ", 16:30–17:30" }],
+      };
+    }
+    if (basePath === "/mail/attachments") {
+      var f = { id: "f" + Date.now().toString(16).slice(-8), name: "файл.pdf", size: 182000 };
+      try {
+        var file = opts.body && opts.body.get && opts.body.get("file");
+        if (file) f = { id: f.id, name: file.name, size: file.size };
+      } catch (_) {}
+      mockMail.files = (mockMail.files || []).concat([f]);
+      return { ok: true, attachment: f };
+    }
     var m = /^\/mail\/accounts\/([^/]+)(\/sync)?$/.exec(basePath);
     if (m) {
       var acc = mockMail.accounts.filter(function (a) { return a.account_id === m[1]; })[0];
@@ -658,6 +747,12 @@
   }
 
   function profileMockResponse(basePath, method, opts) {
+    var gm = /^\/gpt\/calendar-actions\/([^/]+)\/([a-z_]+)$/.exec(basePath);
+    if (gm && mockMail.actions[gm[1]]) return mockMailActionOp(gm[1], gm[2]);
+    if (basePath === "/gpt/calendar-actions/status") {
+      var ids = JSON.parse((opts && opts.body) || "{}").ids || [];
+      return { actions: ids.map(function (i) { return mockMail.actions[i]; }).filter(Boolean) };
+    }
     if (basePath.indexOf("/mail/") === 0) {
       var mailRes = mailMockResponse(basePath, method, opts);
       if (mailRes) return mailRes;

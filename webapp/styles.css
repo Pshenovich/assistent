@@ -19454,3 +19454,354 @@ form.pf-list .pf-add-row .pf-row-body {
   overflow: visible;
   white-space: normal;
 }
+
+/* ——— Почта в чате: карточки письма и черновика, окно письма (webapp/mail.js) ——— */
+.mail-card {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--surface-muted);
+}
+
+.mail-card-head {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+
+.mail-card-ico {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 10px;
+  color: var(--accent);
+  background: var(--accent-muted);
+}
+
+.mail-card-copy {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.mail-card-meta {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.mail-card-title {
+  overflow-wrap: anywhere;
+}
+
+.mail-card-gist {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.mail-card-err {
+  font-size: 0.8125rem;
+  color: var(--danger);
+}
+
+.mail-card-acts {
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.mail-card--draft.is-sent .mail-card-ico {
+  color: var(--emerald-text);
+  background: var(--success-muted);
+}
+
+.mail-card--draft.is-failed .mail-card-ico {
+  color: var(--danger);
+  background: var(--danger-muted);
+}
+
+/* Окно письма — на месте поля ввода чата */
+.mail-composer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 78%;
+  padding: 0.5rem 0.75rem 0.75rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  overflow: auto;
+}
+
+.mail-cmp-grab {
+  display: none;
+}
+
+.mail-cmp-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mail-cmp-kind {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mail-cmp-saved {
+  flex: none;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
+.mail-cmp-send {
+  padding: 0.45rem 0.95rem;
+  border: 0;
+  border-radius: var(--radius-full);
+  font: inherit;
+  font-weight: 600;
+  color: var(--on-accent);
+  background: var(--accent);
+  cursor: pointer;
+}
+
+.mail-cmp-summary {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.875rem;
+  text-align: left;
+  color: var(--text-secondary);
+  background: transparent;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mail-cmp-fields {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.mail-cmp-field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.2rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.mail-cmp-field > span {
+  flex: none;
+  width: 3.6rem;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.mail-cmp-field input,
+.mail-cmp-field select,
+.mail-chip-input {
+  flex: 1;
+  min-width: 6rem;
+  padding: 0.35rem 0;
+  border: 0;
+  font: inherit;
+  color: var(--text);
+  background: transparent;
+  outline: none;
+}
+
+.mail-chips {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0;
+}
+
+.mail-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: 100%;
+  padding: 0.15rem 0.3rem 0.15rem 0.55rem;
+  border-radius: var(--radius-full);
+  font-size: 0.8125rem;
+  background: var(--accent-subtle);
+  overflow-wrap: anywhere;
+}
+
+.mail-chip.is-new {
+  color: #3a2f00;
+  background: #ffe58a;
+}
+
+.mail-chip--file {
+  padding-left: 0.6rem;
+  background: var(--surface-muted);
+}
+
+.mail-chip-x {
+  padding: 0 0.3rem;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.mail-cmp-replyall {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.mail-cmp-warn,
+.mail-plus-warn {
+  margin: 0.25rem 0;
+  font-size: 0.8125rem;
+  color: #f5c451;
+}
+
+.mail-cmp-body-wrap {
+  position: relative;
+}
+
+.mail-cmp-body {
+  display: block;
+  width: 100%;
+  min-height: 6rem;
+  padding: 0.5rem 0;
+  border: 0;
+  font: inherit;
+  line-height: 1.45;
+  color: var(--text);
+  background: transparent;
+  resize: none;
+  outline: none;
+}
+
+.mail-cmp-atts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.mail-cmp-tools,
+.mail-cmp-fix {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.mail-cmp-fix input {
+  flex: 1;
+  min-width: 10rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font: inherit;
+  color: var(--text);
+  background: transparent;
+}
+
+.mail-tool {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+}
+
+.mail-tool:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mail-tool--primary {
+  border-color: transparent;
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.mail-tool--undo {
+  color: var(--accent);
+}
+
+/* Меню «+» — над строкой с курсором */
+.mail-plus {
+  position: absolute;
+  z-index: 5;
+  width: min(20rem, 100%);
+  max-height: 18rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 12px;
+  background: var(--surface-elevated, var(--surface));
+  box-shadow: var(--shadow-md);
+  overflow: auto;
+}
+
+.mail-plus-head {
+  font-weight: 600;
+}
+
+.mail-plus-sub {
+  margin: 0.2rem 0 0.4rem;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.mail-plus-slot {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.mail-plus-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
+@media (max-width: 767px) {
+  .mail-composer {
+    max-height: 88%;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .mail-cmp-grab {
+    display: block;
+    align-self: center;
+    width: 2.5rem;
+    height: 0.3rem;
+    border-radius: var(--radius-full);
+    background: var(--border-strong, var(--border));
+  }
+}

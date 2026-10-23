@@ -476,6 +476,7 @@ def public_extra(a: dict[str, Any]) -> dict[str, Any]:
     draft["send_at"] = res.get("send_at") or ""
     draft["sent_at"] = res.get("sent_at") or ""
     draft["error"] = res.get("error") or ""
+    draft["created_at"] = a.get("created_at") or ""
     try:
         draft["new_recipients"] = new_recipients(uid, a)
     except Exception:

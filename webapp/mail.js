@@ -828,7 +828,817 @@
     });
   }
 
-  window.LeoMail = { openProfile: openProfile };
+  /* ——————————————————————————————— чат: письмо, черновик, окно письма ——————————————————————————————— */
+
+  var AUTO_KEY = "leo_mail_autopened";
+
+  function cacheAction(a) {
+    if (a && app().rememberActions) app().rememberActions([a]);
+  }
+
+  async function refreshActions(ids) {
+    try {
+      var res = await post("/gpt/calendar-actions/status", { ids: ids });
+      (res.actions || []).forEach(cacheAction);
+      if (app().refreshFeed) app().refreshFeed();
+      return res.actions || [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  async function openThread(mailKey) {
+    if (!mailKey) return;
+    try {
+      var res = await post("/mail/thread-card", { mail_key: mailKey });
+      cacheAction(res.action);
+      var m = res.action.mail || {};
+      await app().postLeoCard("Письмо от " + (m.from || "отправителя") + ": «" + (res.action.title || "без темы") + "». Ответить, подготовить ответ или собрать саммари переписки?", [res.action.id]);
+    } catch (e) {
+      toast((e && e.message) || "Не удалось открыть письмо");
+    }
+  }
+
+  async function replyTo(a) {
+    var m = a.mail || {};
+    try {
+      var res = await post("/mail/drafts", { mail_key: m.mail_key });
+      cacheAction(res.action);
+      await app().postLeoCard("Ответ на «" + (a.title || "письмо") + "».", [res.action.id]);
+      openComposer(res.action);
+    } catch (e) {
+      toast((e && e.message) || "Не удалось начать ответ");
+    }
+  }
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function cardBtn(label, cls, fn) {
+    var b = el("button", "note-discuss-edits-btn" + (cls ? " " + cls : ""), label);
+    b.type = "button";
+    b.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      fn(b);
+    });
+    return b;
+  }
+
+  function renderThreadCard(a) {
+    var m = a.mail || {};
+    var card = el("div", "mail-card");
+    var head = el("div", "mail-card-head");
+    head.appendChild(el("span", "mail-card-ico", "✉"));
+    var copy = el("div", "mail-card-copy");
+    copy.appendChild(el("small", "mail-card-meta", [m.direction === "out" ? "Ваше письмо" : m.from, m.when].filter(Boolean).join(" · ")));
+    copy.appendChild(el("b", "mail-card-title", a.title || "Без темы"));
+    if (m.gist) copy.appendChild(el("span", "mail-card-gist", m.gist));
+    head.appendChild(copy);
+    card.appendChild(head);
+    if (a.mine) {
+      var acts = el("div", "note-discuss-edits-actions mail-card-acts");
+      acts.appendChild(cardBtn("Ответить", "is-primary", function () {
+        replyTo(a);
+      }));
+      acts.appendChild(cardBtn("Подготовить ответ", "", function () {
+        app().askLeo("Подготовь ответ на письмо «" + (a.title || "") + "» от " + (m.from || "") + " (mail key: " + m.mail_key + ").");
+      }));
+      acts.appendChild(cardBtn("Саммари переписки", "", function () {
+        app().askLeo("Сделай саммари переписки по письму «" + (a.title || "") + "» (mail key: " + m.mail_key + "): кто что писал, что решили, что ждут от меня.");
+      }));
+      card.appendChild(acts);
+    }
+    return card;
+  }
+
+  function hm(iso) {
+    var d = new Date(iso);
+    return isNaN(d) ? "" : ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+  }
+
+  function draftTo(d) {
+    return (d.to || []).join(", ") + ((d.cc || []).length ? " +" + d.cc.length : "");
+  }
+
+  var countdownTimers = {};
+
+  function renderDraftCard(a) {
+    var d = a.draft || {};
+    if (a.status === "dismissed") return null;
+    var card = el("div", "mail-card mail-card--draft is-" + a.status);
+    var line = el("div", "mail-card-head");
+    line.appendChild(el("span", "mail-card-ico", a.status === "sent" ? "✓" : "✎"));
+    var copy = el("div", "mail-card-copy");
+    var title;
+    if (a.status === "sent") title = "Отправлено · " + hm(d.sent_at);
+    else if (a.status === "sending") title = "Отправка…";
+    else if (a.status === "failed") title = "Не отправилось";
+    else title = "Черновик";
+    copy.appendChild(el("b", "mail-card-title", title));
+    copy.appendChild(el("span", "mail-card-gist", (a.title || "Ответ") + " → " + draftTo(d)));
+    if (a.status === "failed" && d.error) copy.appendChild(el("span", "mail-card-err", d.error));
+    line.appendChild(copy);
+    card.appendChild(line);
+    if (!a.mine) return card;
+    var acts = el("div", "note-discuss-edits-actions mail-card-acts");
+    if (a.status === "sending") {
+      var left = Math.max(0, Math.ceil((new Date(d.send_at) - Date.now()) / 1000));
+      var undo = cardBtn("Отменить" + (left ? " · " + left : ""), "is-primary", async function (b) {
+        b.disabled = true;
+        try {
+          var res = await post("/gpt/calendar-actions/" + encodeURIComponent(a.id) + "/cancel_send", {});
+          cacheAction(res.action);
+          if (app().refreshFeed) app().refreshFeed();
+          toast("Отправка отменена — черновик сохранён");
+        } catch (e) {
+          toast((e && e.message) || "Не успели отменить");
+        }
+      });
+      acts.appendChild(undo);
+      if (!countdownTimers[a.id]) {
+        countdownTimers[a.id] = setTimeout(function () {
+          delete countdownTimers[a.id];
+          refreshActions([a.id]);
+        }, left > 0 ? 1000 : 2500);
+      }
+    } else if (a.status === "sent") {
+      acts.appendChild(cardBtn("Показать письмо", "", function () {
+        openComposer(a, { readOnly: true });
+      }));
+    } else {
+      acts.appendChild(cardBtn(a.status === "failed" ? "Открыть и отправить снова" : "Открыть", "is-primary", function () {
+        openComposer(a);
+      }));
+    }
+    card.appendChild(acts);
+    maybeAutoOpen(a);
+    return card;
+  }
+
+  // Черновик, который только что подготовил Лео, сразу открываем в окне письма (один раз).
+  function maybeAutoOpen(a) {
+    var d = a.draft || {};
+    if (a.status !== "proposed" || d.by !== "leo" || composer.action) return;
+    var created = Date.parse(String(d.created_at || "").replace(/Z?$/, "Z"));
+    if (!created || Date.now() - created > 3 * 60 * 1000) return;
+    var seen = [];
+    try {
+      seen = JSON.parse(localStorage.getItem(AUTO_KEY) || "[]");
+    } catch (_) {}
+    if (seen.indexOf(a.id) >= 0) return;
+    seen.push(a.id);
+    try {
+      localStorage.setItem(AUTO_KEY, JSON.stringify(seen.slice(-50)));
+    } catch (_) {}
+    setTimeout(function () {
+      openComposer(a);
+    }, 0);
+  }
+
+  function renderAction(a) {
+    if (a.kind === "email_thread") return renderThreadCard(a);
+    if (a.kind === "email_draft") return renderDraftCard(a);
+    return null;
+  }
+
+  /* ——— окно письма на месте поля ввода чата ——— */
+
+  var composer = { action: null, d: null, readOnly: false, saveTimer: null, saving: null, prevBody: null, plus: null, expanded: false };
+
+  function isMobile() {
+    return window.matchMedia && window.matchMedia("(max-width: 767px)").matches;
+  }
+
+  function chatInput() {
+    return document.getElementById("note-paie-thread");
+  }
+
+  function composerEl() {
+    var n = document.getElementById("mail-composer");
+    if (n) return n;
+    var host = chatInput();
+    if (!host || !host.parentNode) return null;
+    n = el("div", "mail-composer hidden");
+    n.id = "mail-composer";
+    n.setAttribute("role", "dialog");
+    n.setAttribute("aria-label", "Письмо");
+    host.parentNode.insertBefore(n, host);
+    n.addEventListener("click", onComposerClick);
+    n.addEventListener("input", onComposerInput);
+    n.addEventListener("keydown", onComposerKey);
+    n.addEventListener("change", onComposerChange);
+    bindSwipe(n);
+    return n;
+  }
+
+  function openComposer(a, opts) {
+    var n = composerEl();
+    if (!n) {
+      toast("Откройте чат с Лео, чтобы ответить");
+      return;
+    }
+    composer.action = a;
+    composer.d = JSON.parse(JSON.stringify(a.draft || {}));
+    composer.readOnly = !!(opts && opts.readOnly);
+    composer.prevBody = null;
+    composer.plus = null;
+    composer.expanded = !isMobile();
+    renderComposer();
+    n.classList.remove("hidden");
+    if (chatInput()) chatInput().classList.add("hidden");
+    var body = n.querySelector("[data-mf=body]");
+    if (body && !composer.readOnly) {
+      autoGrow(body);
+      body.focus();
+      body.setSelectionRange(body.value.length, body.value.length);
+    }
+  }
+
+  async function closeComposer() {
+    await flushSave();
+    var n = document.getElementById("mail-composer");
+    if (n) {
+      n.classList.add("hidden");
+      n.innerHTML = "";
+    }
+    if (chatInput()) chatInput().classList.remove("hidden");
+    composer.action = null;
+    composer.d = null;
+    if (app().refreshFeed) app().refreshFeed();
+  }
+
+  function summaryLine(d) {
+    var who = d.orig_from && (d.to || [])[0] ? d.orig_from : (d.to || [])[0] || "кому?";
+    if ((d.to || []).length > 1 || (d.cc || []).length) who += " и ещё " + ((d.to || []).length - 1 + (d.cc || []).length);
+    return who + " · " + (d.subject || "без темы");
+  }
+
+  function chipsHtml(field) {
+    var d = composer.d;
+    var fresh = d.new_recipients || [];
+    var h = '<div class="mail-chips" data-chips="' + field + '">';
+    (d[field] || []).forEach(function (addr) {
+      h +=
+        '<span class="mail-chip' +
+        (fresh.indexOf(addr) >= 0 ? " is-new" : "") +
+        '" title="' +
+        (fresh.indexOf(addr) >= 0 ? "Нового адреса не было в переписке" : "") +
+        '">' +
+        esc(addr) +
+        (composer.readOnly ? "" : '<button type="button" class="mail-chip-x" data-mc="chip-x" data-field="' + field + '" data-addr="' + esc(addr) + '" aria-label="Убрать">×</button>') +
+        "</span>";
+    });
+    if (!composer.readOnly) h += '<input type="email" class="mail-chip-input" data-chip-input="' + field + '" placeholder="' + (field === "to" ? "адрес" : "добавить копию") + '" />';
+    return h + "</div>";
+  }
+
+  function renderComposer() {
+    var n = composerEl();
+    var d = composer.d;
+    if (!n || !d) return;
+    var ro = composer.readOnly;
+    var h = '<div class="mail-cmp-grab" aria-hidden="true"></div>';
+    h += '<div class="mail-cmp-head">';
+    h += '<button type="button" class="btn-text mail-cmp-close" data-mc="close">' + (ro ? "Закрыть" : "Отмена") + "</button>";
+    h += '<span class="mail-cmp-kind">' + (ro ? "Отправленное письмо" : "Ответ на письмо") + '</span><span class="mail-cmp-saved" data-saved></span>';
+    if (!ro) h += '<button type="button" class="mail-cmp-send" data-mc="send">Отправить</button>';
+    h += "</div>";
+    h += '<button type="button" class="mail-cmp-summary' + (composer.expanded ? " hidden" : "") + '" data-mc="expand">' + esc(summaryLine(d)) + ' <span aria-hidden="true">▾</span></button>';
+    h += '<div class="mail-cmp-fields' + (composer.expanded ? "" : " hidden") + '">';
+    if ((d.accounts || []).length > 1) {
+      h += '<label class="mail-cmp-field"><span>От</span><select data-mf="account_id"' + (ro ? " disabled" : "") + ">";
+      d.accounts.forEach(function (acc) {
+        h += '<option value="' + esc(acc.account_id) + '"' + (acc.account_id === d.account_id ? " selected" : "") + ">" + esc(acc.email) + "</option>";
+      });
+      h += "</select></label>";
+    }
+    h += '<div class="mail-cmp-field"><span>Кому</span>' + chipsHtml("to") + "</div>";
+    h += '<div class="mail-cmp-field"><span>Копия</span>' + chipsHtml("cc") + "</div>";
+    h += '<label class="mail-cmp-field"><span>Тема</span><input type="text" data-mf="subject" value="' + esc(d.subject) + '"' + (ro ? " readonly" : "") + " /></label>";
+    if (!ro)
+      h +=
+        '<label class="mail-cmp-replyall"><input type="checkbox" data-mf="reply_all"' +
+        (d.reply_all ? " checked" : "") +
+        " /> Ответить всем</label>";
+    if ((d.new_recipients || []).length)
+      h += '<p class="mail-cmp-warn">Новый получатель — его не было в переписке: ' + esc(d.new_recipients.join(", ")) + ". Перед отправкой спрошу ещё раз.</p>";
+    h += "</div>";
+    h += '<div class="mail-cmp-body-wrap"><textarea class="mail-cmp-body" data-mf="body" placeholder="Текст письма. «+» — быстрые действия, например слоты"' + (ro ? " readonly" : "") + ">" + esc(d.body) + "</textarea>";
+    h += '<div class="mail-plus hidden" data-plus></div></div>';
+    if ((d.attachments || []).length) {
+      h += '<div class="mail-cmp-atts">';
+      d.attachments.forEach(function (f) {
+        h +=
+          '<span class="mail-chip mail-chip--file">📎 ' +
+          esc(f.name) +
+          " · " +
+          fmtSize(f.size) +
+          (ro ? "" : '<button type="button" class="mail-chip-x" data-mc="att-x" data-id="' + esc(f.id) + '" aria-label="Убрать вложение">×</button>') +
+          "</span>";
+      });
+      h += "</div>";
+    }
+    if (!ro) {
+      h += '<div class="mail-cmp-tools">';
+      h += '<button type="button" class="mail-tool" data-mc="attach" aria-label="Вложить файл" title="Вложить файл">📎</button><input type="file" multiple class="hidden" data-file />';
+      h += '<button type="button" class="mail-tool" data-mc="ai" data-mode="short">Короче</button>';
+      h += '<button type="button" class="mail-tool" data-mc="ai" data-mode="polite">Вежливее</button>';
+      h += '<button type="button" class="mail-tool" data-mc="ai" data-mode="translate">Перевести</button>';
+      h += '<button type="button" class="mail-tool" data-mc="fix">Поправь…</button>';
+      if (composer.prevBody != null) h += '<button type="button" class="mail-tool mail-tool--undo" data-mc="ai-undo">Вернуть как было</button>';
+      h += "</div>";
+      h += '<div class="mail-cmp-fix hidden" data-fix><input type="text" placeholder="Что поправить? Например: убери про сроки" data-fix-input /><button type="button" class="mail-tool" data-mc="fix-go">Готово</button></div>';
+    }
+    if (d.error && composer.action && composer.action.status === "failed") h += '<p class="pf-field-error">' + esc(d.error) + "</p>";
+    n.innerHTML = h;
+    autoGrow(n.querySelector("[data-mf=body]"));
+  }
+
+  function fmtSize(b) {
+    b = Number(b || 0);
+    return b > 1048576 ? (b / 1048576).toFixed(1) + " МБ" : Math.max(1, Math.round(b / 1024)) + " КБ";
+  }
+
+  function autoGrow(t) {
+    if (!t) return;
+    t.style.height = "auto";
+    t.style.height = Math.min(t.scrollHeight + 2, Math.round(window.innerHeight * (isMobile() ? 0.5 : 0.45))) + "px";
+  }
+
+  function setSaved(text) {
+    var s = document.querySelector("#mail-composer [data-saved]");
+    if (s) s.textContent = text || "";
+  }
+
+  function scheduleSave(patch) {
+    if (!composer.action || composer.readOnly) return;
+    composer.pending = Object.assign(composer.pending || {}, patch);
+    setSaved("…");
+    clearTimeout(composer.saveTimer);
+    composer.saveTimer = setTimeout(flushSave, 600);
+  }
+
+  async function flushSave() {
+    clearTimeout(composer.saveTimer);
+    var patch = composer.pending;
+    if (!patch || !composer.action) return;
+    composer.pending = null;
+    var id = composer.action.id;
+    try {
+      var res = await post("/mail/drafts/" + encodeURIComponent(id), patch);
+      cacheAction(res.action);
+      if (composer.action && composer.action.id === id) {
+        composer.action = res.action;
+        var fresh = res.action.draft || {};
+        var structural = "to" in patch || "cc" in patch || "reply_all" in patch || "attachments" in patch;
+        composer.d.new_recipients = fresh.new_recipients || [];
+        if (structural) {
+          composer.d.to = fresh.to;
+          composer.d.cc = fresh.cc;
+          composer.d.reply_all = fresh.reply_all;
+          composer.d.attachments = fresh.attachments;
+          var body = document.querySelector("#mail-composer [data-mf=body]");
+          if (body) composer.d.body = body.value;
+          renderComposer();
+        }
+        setSaved("Сохранено");
+      }
+    } catch (e) {
+      setSaved("");
+      toast((e && e.message) || "Не удалось сохранить черновик");
+    }
+  }
+
+  function addChip(field, raw) {
+    var list = String(raw || "")
+      .split(/[,;\s]+/)
+      .map(function (x) {
+        return x.trim().toLowerCase();
+      })
+      .filter(Boolean);
+    if (!list.length) return;
+    var cur = (composer.d[field] || []).slice();
+    list.forEach(function (a) {
+      if (cur.indexOf(a) < 0) cur.push(a);
+    });
+    composer.d[field] = cur;
+    var p = {};
+    p[field] = cur;
+    scheduleSave(p);
+    flushSave();
+  }
+
+  async function sendDraft(confirmed) {
+    var body = document.querySelector("#mail-composer [data-mf=body]");
+    if (body) {
+      composer.d.body = body.value;
+      composer.pending = Object.assign(composer.pending || {}, { body: body.value });
+    }
+    await flushSave();
+    var a = composer.action;
+    if (!a) return;
+    try {
+      var res = await post("/gpt/calendar-actions/" + encodeURIComponent(a.id) + "/" + (confirmed ? "send_confirmed" : "send"), {});
+      cacheAction(res.action);
+      var n = document.getElementById("mail-composer");
+      if (n) {
+        n.classList.add("hidden");
+        n.innerHTML = "";
+      }
+      if (chatInput()) chatInput().classList.remove("hidden");
+      composer.action = null;
+      composer.d = null;
+      if (app().refreshFeed) app().refreshFeed();
+    } catch (e) {
+      var det = (e && e.detail) || {};
+      if (e && e.status === 409 && det.code === "new_recipients") {
+        if (await app().confirm(det.message || e.message)) return sendDraft(true);
+        return;
+      }
+      toast((e && e.message) || "Не получилось отправить");
+    }
+  }
+
+  async function onComposerClick(e) {
+    var b = e.target.closest("[data-mc]");
+    if (!b) {
+      var chips = e.target.closest(".mail-chips");
+      if (chips) {
+        var inp = chips.querySelector("[data-chip-input]");
+        if (inp) inp.focus();
+      }
+      return;
+    }
+    var act = b.getAttribute("data-mc");
+    var n = document.getElementById("mail-composer");
+    if (act === "close") return closeComposer();
+    if (act === "expand") {
+      composer.expanded = true;
+      readBody();
+      renderComposer();
+      return;
+    }
+    if (act === "send") return sendDraft(false);
+    if (act === "chip-x") {
+      var f = b.getAttribute("data-field");
+      composer.d[f] = (composer.d[f] || []).filter(function (x) {
+        return x !== b.getAttribute("data-addr");
+      });
+      readBody();
+      var p = {};
+      p[f] = composer.d[f];
+      scheduleSave(p);
+      renderComposer();
+      return flushSave();
+    }
+    if (act === "attach") {
+      var fi = n.querySelector("[data-file]");
+      if (fi) fi.click();
+      return;
+    }
+    if (act === "att-x") {
+      composer.d.attachments = (composer.d.attachments || []).filter(function (x) {
+        return x.id !== b.getAttribute("data-id");
+      });
+      readBody();
+      scheduleSave({ attachments: composer.d.attachments.map(function (x) { return x.id; }) });
+      renderComposer();
+      return flushSave();
+    }
+    if (act === "ai") return aiRewrite(b.getAttribute("data-mode"), "", b);
+    if (act === "ai-undo") {
+      composer.d.body = composer.prevBody;
+      composer.prevBody = null;
+      renderComposer();
+      scheduleSave({ body: composer.d.body });
+      return;
+    }
+    if (act === "fix") {
+      var fx = n.querySelector("[data-fix]");
+      if (fx) {
+        fx.classList.toggle("hidden");
+        var fin = fx.querySelector("[data-fix-input]");
+        if (fin && !fx.classList.contains("hidden")) fin.focus();
+      }
+      return;
+    }
+    if (act === "fix-go") {
+      var fin2 = n.querySelector("[data-fix-input]");
+      return aiRewrite("custom", fin2 ? fin2.value : "", b);
+    }
+    if (act === "plus-insert") return plusInsert();
+  }
+
+  function readBody() {
+    var t = document.querySelector("#mail-composer [data-mf=body]");
+    if (t && composer.d) composer.d.body = t.value;
+  }
+
+  async function aiRewrite(mode, instruction, btn) {
+    readBody();
+    var body = composer.d.body;
+    if (!String(body || "").trim()) {
+      toast("Сначала напишите текст письма");
+      return;
+    }
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "…";
+    }
+    try {
+      var res = await post("/mail/rewrite", { body: body, mode: mode, instruction: instruction });
+      composer.prevBody = body;
+      composer.d.body = res.body;
+      renderComposer();
+      scheduleSave({ body: res.body });
+    } catch (e) {
+      toast((e && e.message) || "Не получилось");
+      renderComposer();
+    }
+  }
+
+  function onComposerInput(e) {
+    var t = e.target;
+    if (!composer.d) return;
+    var f = t.getAttribute("data-mf");
+    if (f === "body") {
+      composer.d.body = t.value;
+      autoGrow(t);
+      scheduleSave({ body: t.value });
+      plusDetect(t);
+    } else if (f === "subject") {
+      composer.d.subject = t.value;
+      scheduleSave({ subject: t.value });
+    } else if (t.hasAttribute("data-chip-input") && /[,;\s]$/.test(t.value)) {
+      readBody();
+      addChip(t.getAttribute("data-chip-input"), t.value);
+      renderComposer();
+      var again = document.querySelector('#mail-composer [data-chip-input="' + t.getAttribute("data-chip-input") + '"]');
+      if (again) again.focus();
+    }
+  }
+
+  function onComposerChange(e) {
+    var t = e.target;
+    if (!composer.d) return;
+    var f = t.getAttribute("data-mf");
+    if (f === "reply_all") {
+      readBody();
+      scheduleSave({ reply_all: t.checked });
+      flushSave();
+    } else if (f === "account_id") {
+      scheduleSave({ account_id: t.value });
+    } else if (t.hasAttribute("data-file")) {
+      uploadFiles(t.files);
+    } else if (t.hasAttribute("data-chip-input") && t.value.trim()) {
+      readBody();
+      addChip(t.getAttribute("data-chip-input"), t.value);
+      renderComposer();
+    }
+  }
+
+  async function uploadFiles(files) {
+    readBody();
+    var ids = (composer.d.attachments || []).map(function (x) {
+      return x.id;
+    });
+    for (var i = 0; i < (files || []).length; i++) {
+      var fd = new FormData();
+      fd.append("file", files[i], files[i].name);
+      setSaved("Загружаю " + files[i].name + "…");
+      try {
+        var res = await api("/mail/attachments", { method: "POST", body: fd });
+        composer.d.attachments = (composer.d.attachments || []).concat([res.attachment]);
+        ids.push(res.attachment.id);
+      } catch (e) {
+        toast((e && e.message) || "Не удалось загрузить файл");
+      }
+    }
+    renderComposer();
+    scheduleSave({ attachments: ids });
+    flushSave();
+  }
+
+  function onComposerKey(e) {
+    if (e.key === "Escape") {
+      if (composer.plus) {
+        e.preventDefault();
+        composer.plus.dismissedAt = composer.plus.start;
+        hidePlus();
+        return;
+      }
+      e.preventDefault();
+      closeComposer();
+      return;
+    }
+    if (e.key === "Enter" && composer.plus && (composer.plus.selected || []).length) {
+      e.preventDefault();
+      plusInsert();
+      return;
+    }
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && e.target.getAttribute("data-mf") === "body") {
+      e.preventDefault();
+      sendDraft(false);
+      return;
+    }
+    if (e.key === "Enter" && e.target.hasAttribute("data-chip-input")) {
+      e.preventDefault();
+      readBody();
+      var field = e.target.getAttribute("data-chip-input");
+      addChip(field, e.target.value);
+      renderComposer();
+      var again = document.querySelector('#mail-composer [data-chip-input="' + field + '"]');
+      if (again) again.focus();
+    }
+  }
+
+  // Свайп вниз за «ручку» на телефоне — как «Отмена» (черновик остаётся).
+  function bindSwipe(n) {
+    var y0 = null;
+    n.addEventListener(
+      "touchstart",
+      function (e) {
+        y0 = e.target.closest(".mail-cmp-grab, .mail-cmp-head") ? e.touches[0].clientY : null;
+      },
+      { passive: true }
+    );
+    n.addEventListener(
+      "touchend",
+      function (e) {
+        if (y0 != null && e.changedTouches[0].clientY - y0 > 60) closeComposer();
+        y0 = null;
+      },
+      { passive: true }
+    );
+  }
+
+  /* ——— «+» — быстрые действия (пока одно: слоты) ——— */
+
+  var QUICK_ACTIONS = [{ id: "slots", word: "слоты", title: "Слоты — свободное время" }];
+
+  function plusDetect(t) {
+    var caret = t.selectionStart;
+    var before = t.value.slice(0, caret);
+    var m = /(^|\s)\+([^\n+]{0,80})$/.exec(before);
+    if (!m) return hidePlus();
+    var start = caret - m[2].length - 1;
+    var q = m[2];
+    var first = (q.trim().split(/\s+/)[0] || "").toLowerCase();
+    var action = QUICK_ACTIONS.filter(function (x) {
+      return !first || x.word.indexOf(first) === 0 || first.indexOf(x.word.slice(0, 4)) === 0;
+    })[0];
+    if (!action) return hidePlus(); // «+7 999…» — это не команда
+    if (composer.plus && composer.plus.dismissedAt === start) return;
+    var prev = composer.plus;
+    composer.plus = { start: start, query: q, action: action.id, data: prev && prev.start === start ? prev.data : null, selected: prev && prev.start === start ? prev.selected : [] };
+    renderPlus(t);
+    clearTimeout(composer.plusTimer);
+    composer.plusTimer = setTimeout(function () {
+      loadSlots(q);
+    }, prev && prev.start === start ? 450 : 0);
+  }
+
+  function hidePlus() {
+    var p = document.querySelector("#mail-composer [data-plus]");
+    if (p) p.classList.add("hidden");
+    // закрытое по Esc меню помним, чтобы оно не всплыло снова на том же «+»
+    if (composer.plus && composer.plus.dismissedAt == null) composer.plus = null;
+  }
+
+  async function loadSlots(q) {
+    var plus = composer.plus;
+    if (!plus || plus.dismissedAt != null) return;
+    var query = q.replace(/^\s*слот[а-я]*/i, "").trim();
+    plus.loading = true;
+    renderPlus();
+    try {
+      var res = await post("/mail/composer/slots", { query: query });
+      if (composer.plus !== plus) return;
+      plus.data = res;
+      plus.selected = [];
+    } catch (e) {
+      if (composer.plus !== plus) return;
+      plus.data = { ok: false, error: (e && e.message) || "Не получилось" };
+    }
+    plus.loading = false;
+    renderPlus();
+  }
+
+  function renderPlus(t) {
+    var box = document.querySelector("#mail-composer [data-plus]");
+    var plus = composer.plus;
+    if (!box || !plus || plus.dismissedAt != null) return;
+    var d = plus.data;
+    var h = '<div class="mail-plus-head">Слоты · свободное время</div>';
+    if (plus.loading && !d) h += '<p class="mail-plus-sub">Смотрю календарь…</p>';
+    else if (d && !d.ok) h += '<p class="mail-plus-sub">' + esc(d.error || "Не получилось") + "</p>";
+    else if (d) {
+      var who = (d.people || []).length ? "вы и " + d.people.join(", ") : "только вы";
+      var day = d.slots && d.slots[0] ? d.slots[0].label.split(",")[0] : d.date;
+      h += '<p class="mail-plus-sub">' + esc(day) + " · " + esc(who) + " · " + d.duration + " мин" + (plus.loading ? " · обновляю…" : "") + "</p>";
+      (d.unavailable || []).forEach(function (n) {
+        h += '<p class="mail-plus-warn">Не вижу календарь: ' + esc(n) + " — показываю только ваши окна</p>";
+      });
+      (d.not_found || []).forEach(function (n) {
+        h += '<p class="mail-plus-warn">«' + esc(n) + "» нет в контактах</p>";
+      });
+      if (!(d.slots || []).length) h += '<p class="mail-plus-sub">Свободных окон нет — попробуйте другой день: «+слоты завтра»</p>';
+      (d.slots || []).forEach(function (s, i) {
+        h +=
+          '<label class="mail-plus-slot"><input type="checkbox" data-slot="' +
+          i +
+          '"' +
+          (plus.selected.indexOf(i) >= 0 ? " checked" : "") +
+          " /> " +
+          esc(s.label) +
+          "</label>";
+      });
+    }
+    h +=
+      '<div class="mail-plus-foot"><span>Например: +слоты я и Мыздриков следующий вторник</span><button type="button" class="mail-tool mail-tool--primary" data-mc="plus-insert"' +
+      ((plus.selected || []).length ? "" : " disabled") +
+      ">Вставить</button></div>";
+    box.innerHTML = h;
+    box.classList.remove("hidden");
+    box.onchange = function (e) {
+      var i = e.target.getAttribute("data-slot");
+      if (i == null) return;
+      i = parseInt(i, 10);
+      plus.selected = plus.selected.filter(function (x) {
+        return x !== i;
+      });
+      if (e.target.checked) plus.selected.push(i);
+      plus.selected.sort(function (a, b) {
+        return a - b;
+      });
+      var ins = box.querySelector("[data-mc=plus-insert]");
+      if (ins) ins.disabled = !plus.selected.length;
+    };
+    positionPlus(t || document.querySelector("#mail-composer [data-mf=body]"), box);
+  }
+
+  // Меню — над строкой с курсором (зеркало textarea, чтобы узнать координаты курсора).
+  function positionPlus(t, box) {
+    if (!t) return;
+    var mirror = document.createElement("div");
+    var cs = window.getComputedStyle(t);
+    ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "paddingTop", "paddingLeft", "paddingRight", "borderTopWidth", "borderLeftWidth", "boxSizing", "whiteSpace", "wordWrap"].forEach(function (k) {
+      mirror.style[k] = cs[k];
+    });
+    mirror.style.position = "absolute";
+    mirror.style.visibility = "hidden";
+    mirror.style.whiteSpace = "pre-wrap";
+    mirror.style.width = t.clientWidth + "px";
+    mirror.textContent = t.value.slice(0, t.selectionStart);
+    var mark = document.createElement("span");
+    mark.textContent = "​";
+    mirror.appendChild(mark);
+    document.body.appendChild(mirror);
+    var top = mark.offsetTop - t.scrollTop;
+    var left = Math.min(mark.offsetLeft, Math.max(0, t.clientWidth - box.offsetWidth));
+    document.body.removeChild(mirror);
+    box.style.left = Math.max(0, left) + "px";
+    box.style.bottom = Math.max(0, t.offsetHeight - top + 4) + "px";
+  }
+
+  function slotsText(labels, tzLabel) {
+    if (!labels.length) return "";
+    var day0 = labels[0].split(",")[0];
+    var parts = [labels[0]].concat(
+      labels.slice(1).map(function (lb) {
+        return lb.split(",")[0] === day0 ? lb.split(", ").slice(1).join(", ") : lb;
+      })
+    );
+    var body = parts.length > 1 ? parts.slice(0, -1).join(", ") + " или " + parts[parts.length - 1] : parts[0];
+    return "Предлагаю: " + body + (tzLabel ? " (" + tzLabel + ")" : "");
+  }
+
+  function plusInsert() {
+    var plus = composer.plus;
+    var t = document.querySelector("#mail-composer [data-mf=body]");
+    if (!plus || !t || !plus.data || !(plus.selected || []).length) return;
+    var labels = plus.selected.map(function (i) {
+      return plus.data.slots[i].label;
+    });
+    var text = slotsText(labels, plus.data.tz_label);
+    var caret = t.selectionStart;
+    t.value = t.value.slice(0, plus.start) + text + t.value.slice(caret);
+    var pos = plus.start + text.length;
+    composer.plus = null;
+    hidePlus();
+    t.focus();
+    t.setSelectionRange(pos, pos);
+    composer.d.body = t.value;
+    autoGrow(t);
+    scheduleSave({ body: t.value });
+  }
+
+  window.LeoMail = { openProfile: openProfile, renderAction: renderAction, openThread: openThread, openComposer: openComposer };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bind);
   else bind();

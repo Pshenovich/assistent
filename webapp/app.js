@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-mail";
+  var WEBAPP_BUILD = "20261023-mail2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -18860,6 +18860,8 @@
         showNoteToast("Отмечено выполненным");
       } else if (act === "mark_done_pick") {
         openFocusDonePicker(it);
+      } else if (act === "mail_thread") {
+        if (window.LeoMail) await window.LeoMail.openThread(p.mail_key);
       } else if (act === "assistant") {
         if (await focusOpenAssistant()) {
           await submitNoteGptQuestion(String(p.prompt || it.ask || ""));
@@ -24236,6 +24238,12 @@
       var a = calActionsCache[id];
       if (!a || a.missing) return;
       if (a.kind === "focus_item") return; // карточки разбора — под пузырём, см. appendFocusChatCards
+      if (a.kind === "email_thread" || a.kind === "email_draft") {
+        // письмо и черновик ответа — webapp/mail.js
+        var mailCard = window.LeoMail && window.LeoMail.renderAction(a);
+        if (mailCard) box.appendChild(mailCard);
+        return;
+      }
       if (a.kind === "show_event" || a.kind === "show_task" || a.kind === "show_reminder") {
         var cardState = calCardUiFor(a.open);
         if (cardState && cardState.deleted) return;
@@ -45999,6 +46007,33 @@
     },
     askLeo: async function (prompt) {
       if (await focusOpenAssistant()) await submitNoteGptQuestion(String(prompt || ""));
+    },
+    rememberActions: rememberCalendarActions,
+    refreshFeed: refreshDiscussFeedNow,
+    // Карточка в чат Лео без вызова модели (как «Уточнить» в Фокусе): текст + маркер действий.
+    postLeoCard: async function (lead, actionIds) {
+      if (!(await focusOpenAssistant())) return false;
+      var wrap = document.getElementById("note-editor-more-wrap");
+      if (!wrap || !wrap._shareKind || !wrap._shareId) return false;
+      var saved = await apiFetch(
+        "/notes/" + encodeURIComponent(wrap._shareKind) + "/" + encodeURIComponent(wrap._shareId) + "/comments",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            body: clipGptCommentBody(lead).slice(0, 400) + "\n\n[[leo-cal:" + actionIds.join(",") + "]]",
+            quote: "",
+            prefix: "__gpt__",
+            suffix: "",
+            parent_id: null,
+            as_role: "gpt",
+            chat_id: discussChatFields().chat_id,
+          }),
+        }
+      );
+      if (saved && saved.thread) upsertChatThreadCache(saved.thread);
+      await refreshNoteCommentsList();
+      scrollDiscussionToEnd();
+      return true;
     },
   };
 
