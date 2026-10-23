@@ -126,6 +126,13 @@ def _delete_where(uid: int, where: str, args: tuple) -> int:
     return len(ids)
 
 
+def forget_messages(uid: int, message_ids: list[str]) -> int:
+    n = 0
+    for mid in message_ids:
+        n += _delete_where(uid, "message_id = ?", (mid,))
+    return n
+
+
 def forget_sender(uid: int, pattern: str) -> int:
     """«Не показывать»: стереть письма отправителя (адрес или @домен) из памяти."""
     if pattern.startswith("@"):

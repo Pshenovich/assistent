@@ -374,6 +374,15 @@ def bury(owner_user_id: Any, pattern: str) -> list[str]:
     return keys
 
 
+def bury_keys(owner_user_id: Any, keys: list[str]) -> None:
+    with _LOCK:
+        conn = _conn()
+        conn.executemany("DELETE FROM mail_fts WHERE owner_user_id = ? AND mail_key = ?", [(str(owner_user_id), k) for k in keys])
+        conn.executemany("UPDATE mail_messages SET bulk = 1, analyzed = 2 WHERE owner_user_id = ? AND mail_key = ?",
+                         [(str(owner_user_id), k) for k in keys])
+        conn.commit()
+
+
 def filtered_rows(owner_user_id: Any, pattern: str, *, since: datetime) -> list[dict[str, Any]]:
     cond, arg = _match_sql(pattern)
     with _LOCK:

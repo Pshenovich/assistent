@@ -100,7 +100,10 @@ def check_login(acc: dict[str, Any], *, secret: str = "", access_token: str = ""
 # ---------------------------------------------------------------- синхронизация
 
 def is_filtered(msg, from_addr: str, *, mine: set[str], rules: Optional[dict[str, str]] = None) -> bool:
-    """Отсеять письмо (рассылка, робот, скрытый отправитель); «Всегда пропускать» сильнее воронки."""
+    """Отсеять письмо (приглашение из календаря, рассылка, робот, скрытый отправитель).
+    «Всегда пропускать» сильнее воронки, но не приглашений — встречи и так в «Актуальном»."""
+    if mail_filters.is_calendar(msg):
+        return True
     if from_addr in mine:
         return False
     rule = mail_senders.match(rules or {}, from_addr)
@@ -123,7 +126,7 @@ def _row_from(acc: dict[str, Any], folder: str, uid: int, msg, *, mine: set[str]
     reply_to = (mail_imap.addresses(msg, "Reply-To") or [("", "")])[0][1]
     dt = mail_imap.date_utc(msg) or _now()
     direction = "out" if from_addr in mine else "in"
-    bulk = direction == "in" and is_filtered(msg, from_addr, mine=mine, rules=rules)
+    bulk = mail_filters.is_calendar(msg) or (direction == "in" and is_filtered(msg, from_addr, mine=mine, rules=rules))
     snippet = mail_imap.strip_quoted(body)[: mail_index.SNIPPET] if body else ""
     return {
         "mail_key": mail_index.mail_key(str(acc["account_id"]), mid, folder, uid),
@@ -199,6 +202,7 @@ def sync_account(uid: int, acc: dict[str, Any], *, now: Optional[datetime] = Non
         from assistant.services import mail_memory
 
         memory = mail_memory.enabled(uid)
+        hide_calendar(uid)
         first = mail_index.sync_state(uid, aid, "INBOX")[1] == 0
         inbox = _sync_folder(uid, acc, mail, "INBOX", days=FIRST_SYNC_DAYS, bodies_since=now - timedelta(days=FIRST_SYNC_DAYS),
                              mine=mine, now=now, memory=memory)
@@ -353,6 +357,22 @@ def muted(uid: int) -> tuple[set[str], set[str]]:
             continue
         (domains.add(pattern[1:]) if pattern.startswith("@") else senders.add(pattern))
     return senders, domains
+
+
+def hide_calendar(uid: int) -> int:
+    """Уже попавшие в индекс приглашения — убрать из «Почты», поиска и памяти (по теме)."""
+    keys, mids = [], []
+    for r in mail_index.recent(uid, since=_now() - timedelta(days=mail_index.RETENTION.days)):
+        if not r.get("bulk") and mail_filters.CALENDAR_SUBJECT.match(str(r.get("subject") or "")):
+            keys.append(r["mail_key"])
+            if r.get("message_id"):
+                mids.append(r["message_id"])
+    if keys:
+        mail_index.bury_keys(uid, keys)
+        from assistant.services import mail_memory
+
+        mail_memory.forget_messages(uid, mids)
+    return len(keys)
 
 
 # ---------------------------------------------------------------- правила отправителей

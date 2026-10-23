@@ -40,6 +40,32 @@ def is_bulk(msg: Message) -> bool:
     return False
 
 
+# Приглашения и ответы из календаря: встречи и так видны в «Актуальном», в почте — шум.
+CALENDAR_SUBJECT = re.compile(
+    r"(?i)^\s*(приглашение|обновл[её]нное приглашение|обновлено приглашение|приглашение обновлено|принято|отклонено|"
+    r"под вопросом|предварительно принято|мероприятие отменено|отменено мероприятие|встреча отменена|"
+    r"invitation|updated invitation|invitation updated|accepted|declined|tentatively accepted|tentative|"
+    r"canceled event|cancelled event|event canceled|event cancelled)\b[^:]{0,40}:"
+)
+
+
+def is_calendar(msg: Message, subject: str = "") -> bool:
+    """Приглашение / ответ на приглашение / отмена встречи — по теме и вложенному text/calendar (.ics)."""
+    if not subject:
+        from assistant.integrations import mail_imap
+
+        subject = mail_imap.decode_hdr(msg.get("Subject"))
+    if CALENDAR_SUBJECT.match(subject or ""):
+        return True
+    for part in msg.walk():
+        ctype = (part.get_content_type() or "").lower()
+        if ctype in ("text/calendar", "application/ics"):
+            return True
+        if str(part.get_filename() or "").lower().endswith(".ics"):
+            return True
+    return False
+
+
 def is_robot(addr: str) -> bool:
     addr = (addr or "").strip().lower()
     if "@" not in addr:

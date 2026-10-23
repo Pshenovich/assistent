@@ -219,3 +219,31 @@ def test_search_and_people(env):
     _put("in2", "in", "news@shop.ru", [MINE], hours_ago=5, subject="Скидки на смету", bulk=True, thread="t9")
     assert [r["mail_key"] for r in mail_index.search(ME, "что писал Иван про смету")] == ["in1"]
     assert [r["mail_key"] for r in mail_index.with_people(ME, ["ivan@firm.ru"], since=NOW - timedelta(days=30))] == ["in1"]
+
+
+@pytest.mark.parametrize("subject,cal", [
+    ("Приглашение: Звонок проектный офис @ пт 23 окт. 2026 10:00", True),
+    ("Обновленное приглашение: Зум доклад", True),
+    ("Принято: Встреча с Владимиром", True),
+    ("Updated invitation: Weekly sync @ Mon", True),
+    ("Declined: Demo", True),
+    ("Re: Приглашение на конференцию", False),
+    ("Возможно, перенесём: договор", False),
+    ("Договор поставки", False),
+])
+def test_calendar_subjects(subject, cal):
+    assert mail_filters.is_calendar(_msg("ivan@firm.ru", MINE, subject=subject)) is cal
+
+
+def test_calendar_attachment_detected():
+    m = _msg("ivan@firm.ru", MINE, subject="Встреча")
+    m.add_attachment(b"BEGIN:VCALENDAR", maintype="text", subtype="calendar", filename="invite.ics")
+    assert mail_filters.is_calendar(m)
+    assert mail_source.is_filtered(m, "ivan@firm.ru", mine={MINE}, rules={"ivan@firm.ru": "allow"})
+
+
+def test_hide_calendar_cleans_index(env):
+    _put("inv", "in", "ulyana@firm.ru", [MINE], hours_ago=5, subject="Приглашение: Звонок проектный офис", thread="t9")
+    _put("ok", "in", "ivan@firm.ru", [MINE], hours_ago=5, subject="Договор", thread="t8")
+    assert mail_source.hide_calendar(ME) == 1
+    assert mail_index.get(ME, "inv")["bulk"] and not mail_index.get(ME, "ok")["bulk"]
