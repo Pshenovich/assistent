@@ -61,6 +61,8 @@ def env(tmp_path, monkeypatch):
         mod._CONN = None
     mail_accounts._FERNET = None
     monkeypatch.setattr(mail_reply, "_fetch_full", lambda uid, rows: {})
+    monkeypatch.setattr(mail_inbox, "warm_async", lambda *a, **k: None)
+    mail_inbox._THREAD_CACHE.clear()
     acc = mail_accounts.upsert(ME, provider="gmail", email=MINE, auth="password", secret="x")
     aid = acc["account_id"]
 
@@ -137,3 +139,28 @@ def test_devnull_is_robot():
     from assistant.services import mail_filters
 
     assert mail_filters.is_robot("devnull@webmaster.yandex.ru")
+
+
+
+def test_warm_fetches_once_and_open_uses_cache(env, monkeypatch):
+    from email.message import EmailMessage
+
+    calls = []
+
+    def fake_fetch(uid, rows):
+        calls.append([r["mail_key"] for r in rows])
+        out = {}
+        for r in rows:
+            m = EmailMessage()
+            m["From"], m["Message-ID"] = r["from_addr"], r["message_id"]
+            m.set_content("Текст " + r["mail_key"])
+            out[r["mail_key"]] = m
+        return out
+
+    monkeypatch.setattr(mail_reply, "_fetch_full", fake_fetch)
+    assert mail_inbox.warm(ME, ["t1"]) == 1
+    assert len(calls) == 1 and sorted(calls[0]) == ["a", "b", "c"]  # один вход в ящик на всю ветку
+    t = mail_inbox.thread(ME, "t1")
+    assert len(calls) == 1 and all(m["loaded"] for m in t["messages"])  # открытие — из кэша
+    mail_inbox.set_read(ME, ["c"])
+    assert not [m for m in mail_inbox.thread(ME, "t1")["messages"] if m["mail_key"] == "c"][0]["unread"]

@@ -139,6 +139,7 @@ def threads(uid: int, *, filt: str = "all", account_id: str = "") -> dict[str, A
                      "snippet": re.sub(r"\s+", " ", str(last.get("snippet") or ""))[:160], "date": last.get("date_utc") or ""},
         })
     out.sort(key=lambda t: t["last"]["date"], reverse=True)
+    warm_async(uid, [t["thread_key"] for t in out[:WARM_TOP]])  # открытие верхних веток — без ожидания ящика
     counts = {"all": len(out), "awaiting": sum(1 for t in out if any(lab["kind"] == "awaiting" for lab in t["labels"])),
               "unread": sum(1 for t in out if t["unread"])}
     if filt == "awaiting":
@@ -164,44 +165,110 @@ def _attachment_parts(msg) -> list[Any]:
 
 
 _THREAD_CACHE: dict[tuple[int, str], tuple[float, str, dict[str, Any]]] = {}
-THREAD_TTL = 300.0
+THREAD_TTL = 1800.0
+WARM_TOP = 20
+_WARM_LOCK = threading.Lock()
+_WARMING: dict[int, tuple[set[str], threading.Event]] = {}
+
+
+def _rows(uid: int, thread_key: str) -> list[dict[str, Any]]:
+    return [r for r in mail_index.thread(uid, thread_key) if visible(r, mail_index.my_thread_keys(uid))]
+
+
+def _cached(uid: int, thread_key: str, rows: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    import time
+
+    sig = ",".join(r["mail_key"] for r in rows)
+    hit = _THREAD_CACHE.get((int(uid), thread_key))
+    if not (hit and hit[1] == sig and time.time() - hit[0] < THREAD_TTL and all(m.get("loaded") for m in hit[2]["messages"])):
+        return None
+    out = dict(hit[2])
+    reads = read_keys(uid)
+    out["messages"] = [{**m, "unread": m["direction"] == "in" and m["mail_key"] not in reads} for m in out["messages"]]
+    return out
+
+
+def _store(uid: int, thread_key: str, rows: list[dict[str, Any]], res: dict[str, Any]) -> None:
+    import time
+
+    _THREAD_CACHE[(int(uid), thread_key)] = (time.time(), ",".join(r["mail_key"] for r in rows), res)
+    if len(_THREAD_CACHE) > 300:
+        for k in sorted(_THREAD_CACHE, key=lambda k: _THREAD_CACHE[k][0])[:60]:
+            _THREAD_CACHE.pop(k, None)
 
 
 def thread(uid: int, thread_key: str) -> dict[str, Any]:
-    """Ветка с текстами из ящика. Кэш на 5 минут (пока в ветке не появились новые письма):
-    повторное открытие и фоновое обновление — мгновенные, без нового входа в ящик."""
-    import time
-
-    rows = [r for r in mail_index.thread(uid, thread_key) if visible(r, mail_index.my_thread_keys(uid))]
-    sig = ",".join(r["mail_key"] for r in rows)
-    hit = _THREAD_CACHE.get((int(uid), thread_key))
-    if hit and hit[1] == sig and time.time() - hit[0] < THREAD_TTL and all(m.get("loaded") for m in hit[2]["messages"]):
-        out = dict(hit[2])
-        reads = read_keys(uid)
-        out["messages"] = [{**m, "unread": m["direction"] == "in" and m["mail_key"] not in reads} for m in out["messages"]]
-        return out
-    res = _thread_uncached(uid, thread_key)
-    _THREAD_CACHE[(int(uid), thread_key)] = (time.time(), sig, res)
-    if len(_THREAD_CACHE) > 200:
-        for k in sorted(_THREAD_CACHE, key=lambda k: _THREAD_CACHE[k][0])[:50]:
-            _THREAD_CACHE.pop(k, None)
+    """Ветка с текстами из ящика. Кэш на 30 минут (пока в ветке не появились новые письма);
+    верхние ветки списка подгружаются заранее (warm), открытие — без входа в ящик."""
+    rows = _rows(uid, thread_key)
+    hit = _cached(uid, thread_key, rows)
+    if hit:
+        return hit
+    with _WARM_LOCK:
+        warming = _WARMING.get(int(uid))
+    if warming and thread_key in warming[0]:
+        warming[1].wait(timeout=20)  # эту ветку уже достают из ящика — ждём, а не входим второй раз
+        hit = _cached(uid, thread_key, rows)
+        if hit:
+            return hit
+    res = _build(uid, thread_key, rows, None)
+    _store(uid, thread_key, rows, res)
     return res
 
 
-def _thread_uncached(uid: int, thread_key: str) -> dict[str, Any]:
+def warm(uid: int, thread_keys: list[str]) -> int:
+    """Подгрузить ветки заранее: один вход в ящик на все письма, затем разбор каждой ветки."""
+    from assistant.services import mail_reply
+
+    todo: dict[str, list[dict[str, Any]]] = {}
+    for tk in thread_keys:
+        rows = _rows(uid, tk)
+        if rows and _cached(uid, tk, rows) is None:
+            todo[tk] = rows
+    if not todo:
+        return 0
+    ev = threading.Event()
+    with _WARM_LOCK:
+        if int(uid) in _WARMING:
+            return 0
+        _WARMING[int(uid)] = (set(todo), ev)
+    try:
+        all_rows = [r for rows in todo.values() for r in rows]
+        try:
+            full = mail_reply._fetch_full(uid, all_rows)
+        except Exception as e:
+            print(f"[mail_inbox] warm fetch uid={uid} err={e!r}")
+            return 0
+        for tk, rows in todo.items():
+            try:
+                _store(uid, tk, rows, _build(uid, tk, rows, full))
+            except Exception as e:
+                print(f"[mail_inbox] warm build uid={uid} err={e!r}")
+        return len(todo)
+    finally:
+        ev.set()
+        with _WARM_LOCK:
+            _WARMING.pop(int(uid), None)
+
+
+def warm_async(uid: int, thread_keys: list[str]) -> None:
+    if thread_keys:
+        threading.Thread(target=warm, args=(int(uid), list(thread_keys)), daemon=True).start()
+
+
+def _build(uid: int, thread_key: str, rows: list[dict[str, Any]], full: Optional[dict[str, Any]]) -> dict[str, Any]:
     from assistant.integrations import mail_imap
     from assistant.lib import mail_html
     from assistant.services import mail_reply, mail_source
 
-    rows = mail_index.thread(uid, thread_key)
-    rows = [r for r in rows if visible(r, mail_index.my_thread_keys(uid))]
     if not rows:
         raise LookupError("Переписка не найдена")
-    try:
-        full = mail_reply._fetch_full(uid, rows)
-    except Exception as e:
-        print(f"[mail_inbox] fetch thread uid={uid} err={e!r}")
-        full = {}
+    if full is None or any(r["mail_key"] not in full for r in rows):
+        try:
+            full = {**(full or {}), **mail_reply._fetch_full(uid, [r for r in rows if r["mail_key"] not in (full or {})])}
+        except Exception as e:
+            print(f"[mail_inbox] fetch thread uid={uid} err={e!r}")
+            full = full or {}
     by_mid = {r.get("message_id"): r["mail_key"] for r in rows if r.get("message_id")}
     mine = mail_source.my_addresses(uid)
     reads = read_keys(uid)

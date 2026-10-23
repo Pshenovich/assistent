@@ -208,18 +208,20 @@
       st.summary = null;
       st.menu = false;
       renderThread();
+      if (isWide()) renderList(); // выделение и погасший значок — сразу, не после загрузки
     }
     try {
       var t = await api("/mail/threads/" + encodeURIComponent(tk));
       st.open = t;
+      // сначала — прочитано (и в списке, и в счётчике), потом перерисовка: значок гаснет сразу
+      if ((t.messages || []).some(function (m) { return m.unread; })) {
+        post("/mail/threads/" + encodeURIComponent(tk) + "/read", { read: true }).catch(function () {});
+        markReadLocally(tk);
+      }
       renderThread();
       if (isWide()) renderList();
       var list = r && r.querySelector(".mail-msgs");
       if (list) list.scrollTop = prevScroll != null ? prevScroll : list.scrollHeight;
-      if ((t.messages || []).some(function (m) { return m.unread; })) {
-        post("/mail/threads/" + encodeURIComponent(tk) + "/read", { read: true }).catch(function () {});
-        if (st.data) (st.data.threads || []).forEach(function (x) { if (x.thread_key === tk) x.unread = 0; });
-      }
     } catch (e) {
       if (st.open && st.open.thread_key === tk && (st.open.messages || []).length && !st.open.loading) {
         // повторная загрузка не удалась — показанное письмо не убираем
@@ -229,6 +231,16 @@
       st.open = { thread_key: tk, error: (e && e.message) || "Не удалось загрузить переписку", messages: [] };
       renderThread();
     }
+  }
+
+  function markReadLocally(tk) {
+    if (!st.data) return;
+    (st.data.threads || []).forEach(function (x) {
+      if (x.thread_key === tk && x.unread) {
+        x.unread = 0;
+        if (st.data.counts && st.data.counts.unread) st.data.counts.unread -= 1;
+      }
+    });
   }
 
   function closeThread() {
@@ -596,7 +608,15 @@
     }
     if (act === "retry") return refresh();
     if (act === "connect") return openProfileTab();
-    if (act === "open") return openThread(b.getAttribute("data-tk"));
+    if (act === "open") {
+      var tkOpen = b.getAttribute("data-tk");
+      var row = (st.data && (st.data.threads || []).filter(function (x) { return x.thread_key === tkOpen; })[0]) || null;
+      if (row && row.unread) {
+        markReadLocally(tkOpen);
+        post("/mail/threads/" + encodeURIComponent(tkOpen) + "/read", { read: true }).catch(function () {});
+      }
+      return openThread(tkOpen);
+    }
     if (act === "back") return closeThread();
     if (act === "reload") return openThread(st.open.thread_key);
     if (act === "view") {
