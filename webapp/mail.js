@@ -390,6 +390,12 @@
       '" role="switch" aria-checked="' +
       (st.memoryEnabled !== false) +
       '" data-mail-act="memory-toggle" aria-label="Память переписки"><span class="svc-toggle-knob"></span></button></span></div></div></div>';
+    h +=
+      '<div class="pf-group"><div class="pf-list"><div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Вид раздела «Почта»</span>' +
+      '<span class="pf-row-sub">Переписка чатом или письмами целиком</span></span><span class="mail-seg">' +
+      '<button type="button" class="mail-seg-btn' + (st.mailView !== "letters" ? " is-on" : "") + '" data-mail-act="view" data-view="chat">Чат</button>' +
+      '<button type="button" class="mail-seg-btn' + (st.mailView === "letters" ? " is-on" : "") + '" data-mail-act="view" data-view="letters">Письма</button>' +
+      '</span></span></div><button type="button" class="pf-row" data-mail-act="open-inbox"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Открыть раздел «Почта»</span></span><span class="pf-chev" aria-hidden="true">›</span></span></button></div></div>';
     h += sendersHtml();
     h += '<button type="button" class="pf-btn" data-mail-act="add">Подключить ещё ящик</button>';
     if (st.error) h += '<p class="pf-field-error">' + esc(st.error) + "</p>";
@@ -777,6 +783,13 @@
       } catch (err) {
         toast((err && err.message) || "Не получилось");
       }
+    } else if (act === "view") {
+      st.mailView = btn.getAttribute("data-view");
+      render();
+      post("/mail/settings", { view: st.mailView }, "PATCH").catch(function () {});
+    } else if (act === "open-inbox") {
+      if (app().profileScreen) app().profileScreen("main");
+      if (app().openDigestMail) app().openDigestMail();
     } else if (act === "memory-toggle") {
       var on = st.memoryEnabled === false;
       if (!on && !(await app().confirm("Выключить память переписки? Лео сотрёт сохранённую переписку и будет искать только прямо в ящике."))) return;
