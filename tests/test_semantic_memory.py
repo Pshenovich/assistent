@@ -142,3 +142,51 @@ def test_status_and_note_changed(env, monkeypatch):
 
     monkeypatch.setenv("SEMANTIC_SEARCH_ENABLED", "0")
     assert sm.status(1) == {"enabled": False}
+
+
+def test_title_in_question_wins_and_rename_refreshes(env):
+    # Короткий вопрос — одно название; текст заметки этого слова не содержит.
+    env.append({"key": "note:47", "kind": "note", "title": "Вебапп", "date": "2026-10-22",
+                "text": "Сборка мини-приложения, кэш сервис-воркера и версии ассетов при выкатке.", "ref": {"note_id": 47}})
+    env.append({"key": "sheet:47:38", "kind": "note", "title": "Вебапп · Лист 2", "date": "2026-10-22",
+                "text": "Чеклист перед релизом: тесты, версии, проверка на телефоне.", "ref": {"note_id": 47, "sheet_id": 38}})
+    sm.index_user(1, embed=fake_embed)
+    hits = sm.search(1, "дай ссылку на заметку Вебапп", embed=fake_embed)
+    assert [h["title"] for h in hits[:2]] == ["Вебапп", "Вебапп · Лист 2"]
+    assert hits[0]["url"].endswith("note=47")
+    # Переименовали — текст тот же, подпись обновилась без пересчёта векторов.
+    env[-2]["title"] = "Webapp и PWA"
+    calls = []
+    sm.index_user(1, embed=lambda t: calls.append(t) or fake_embed(t))
+    assert calls == []
+    assert any(h["title"] == "Webapp и PWA" for h in sm.search(1, "Webapp PWA", embed=fake_embed))
+
+
+def test_generic_titles_do_not_hijack(env):
+    env.append({"key": "note:9", "kind": "note", "title": "Задачи", "date": "2026-10-22",
+                "text": "Купить корм коту и позвонить в банк про карту.", "ref": {"note_id": 9}})
+    sm.index_user(1, embed=fake_embed)
+    hits = sm.search(1, "какие задачи по ценам тарифа", embed=fake_embed)
+    # «Задачи» — общее название: слово в вопросе не поднимает заметку наверх принудительно.
+    assert all(h["score"] < sm.TITLE_MATCH_RANK for h in hits if h["title"] == "Задачи")
+
+
+def test_knowledge_docs_in_memory_and_notes_find(tmp_path, monkeypatch):
+    from assistant.services import gpt_calendar_tools as gct
+    from assistant.stores import note_sheets
+    from assistant.stores import notes as notes_store
+
+    monkeypatch.setenv("NOTES_DB_PATH", str(tmp_path / "notes.sqlite"))
+    notes_store._CONN = None
+    kb = notes_store.create_note(8, "Обучат Деск", "<p>Для чего нужен продукт: чат-поддержка на сайте, боты и операторы</p>",
+                                 role=notes_store.KNOWLEDGE_ROLE)
+    note_sheets.create_sheet(kb, "Тарифы", body="<p>Тариф Про — десять операторов и интеграция с CRM</p>")
+    notes_store.create_note(8, "Вебапп", "<p>Сборка мини-приложения и кэш сервис-воркера при выкатке</p>")
+    srcs = {s["key"]: s for s in sm.sources_for_user(8)}
+    assert srcs[f"kb:{kb['id']}"]["kind"] == "knowledge"
+    assert any(k.startswith(f"sheet:{kb['id']}:") and s["title"] == "Обучат Деск · Тарифы" for k, s in srcs.items())
+    res = json.loads(gct.tool_notes_find(gct.GptCalendarContext(uid=8), {"query": "дай ссылку на заметку Вебапп"}))
+    assert res["notes"][0]["title"] == "Вебапп" and "note=" in res["notes"][0]["url"]
+    res = json.loads(gct.tool_notes_find(gct.GptCalendarContext(uid=8), {"query": "Обучат Деск"}))
+    assert res["notes"][0]["kind"] == "knowledge"
+    notes_store._CONN = None

@@ -271,6 +271,8 @@ SYSTEM_ADDON = """У тебя есть доступ к календарю пол
 - Участников указывай именами из контактов; если не уверен — contacts_find.
 - У встреч бывают материалы (транскрипции с саммари, заметки) — в calendar_events это поле materials. Что было/решили на встрече — meeting_materials; что решали с человеком, что он обещал/не сделал, подготовка к встрече с ним — person_history (там и задачи, поставленные ему, — tasks_given). Отвечай по материалам, называй встречу и дату.
 - Вопрос по содержанию прошлых обсуждений без известной встречи/даты («что решили по ценам?», «где обсуждали интеграцию?») — memory_search; отвечай по найденным фрагментам и называй источник с датой. Ничего не нашлось — так и скажи.
+- Вопрос про продукт, проект, клиента, сервис или термин пользователя («для чего нужен <название>?», «что у нас по <теме>?», «как работает <наш продукт>?») — сначала memory_search: у пользователя почти наверняка есть заметка или документ об этом. Если нашлось — отвечай по найденному тексту (можно своими словами, но смысл — из заметки), назови заметку и дай её ссылку (поле url). Общими знаниями «как обычно бывает» заменять найденное нельзя; общее — только если в материалах ничего нет, и скажи об этом прямо.
+- «Найди / открой / дай ссылку на заметку <название>» — notes_find: в ответе название и ссылка (url) каждой найденной заметки. Ссылку бери только из результата инструмента, не придумывай.
 - Обязательства и хвосты («что я обещал?», «что мне должны?», «что просрочено после встреч?») — commitments; у каждого пункта источник (встреча/заметка/чат) и цитата — называй источник.
 - Задачи за любое время («ставил X задачу про …, что с ней?», «чем закончилось …») — tasks_search (тема и/или исполнитель; calendar_events видит только окно дат). В ответе — статус, когда поставлена и срок, результат (поле result), если он есть; покажи найденное через show_calendar_cards.
 - Когда перечисляешь встречи/задачи/напоминания — вызови show_calendar_cards с id ВСЕХ перечисляемых (до 20): под ответом появятся карточки, которые можно открыть. Текстом дай короткий итог, без длинного списка.
@@ -380,8 +382,11 @@ TOOLS: list[dict[str, Any]] = [
                        "description": "mine — за пользователем; theirs — за другими; unknown — исполнитель не ясен"},
          "status": {"type": "string", "enum": ["open", "overdue", "closed", "snoozed", "any"], "default": "open"},
          "who": {"type": "string", "description": "Фильтр по человеку (необязательно)"}}),
-    _fn("memory_search", "Поиск по смыслу во всех материалах пользователя: саммари и транскрипты встреч, заметки, дайджесты чатов. Для вопросов «что решили по …», «где обсуждали …», «что говорил X про …», когда неизвестна конкретная встреча или дата.",
+    _fn("memory_search", "Поиск по смыслу во всех материалах пользователя: саммари и транскрипты встреч, заметки и все их листы, документы Базы знаний, дайджесты чатов, переписка. Для вопросов «что решили по …», «где обсуждали …», «что говорил X про …», а также про продукты, проекты, клиентов и термины пользователя («для чего нужен …», «как у нас устроено …»). У найденных заметок есть url.",
         {"query": {"type": "string", "description": "Суть вопроса своими словами (тема, о чём речь)"}},
+        ["query"]),
+    _fn("notes_find", "Найти заметки, транскрипции и документы Базы знаний пользователя по названию (и словам из текста): id, название, дата правки и ссылка url для открытия. Для «найди заметку …», «дай ссылку на заметку …», «где моя заметка про …».",
+        {"query": {"type": "string", "description": "Название заметки или слова из него"}},
         ["query"]),
     _fn("focus_item_update", "Разбор пункта Фокуса (инсайта): отметить выполненным, связать со ссылкой, отложить, скрыть, сменить тип, поправить поля. key — из истории (focus key).",
         {"key": {"type": "string", "description": "focus key пункта; если не знаешь — передай text"},
@@ -1882,6 +1887,59 @@ def tool_memory_search(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
 
 
 EXECUTORS["memory_search"] = tool_memory_search
+
+
+_NOTES_FIND_FILLER = re.compile(
+    r"^(дай|дайте|найди|найдите|открой|покажи|скинь|пришли|ссылк\w*|заметк\w*|документ\w*|транскрипц\w*|на|мне|пожалуйста|мою|мой|моя|про|где)$"
+)
+
+
+def tool_notes_find(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    """Заметки по названию: обычные, транскрипции и документы Базы знаний — со ссылками."""
+    from assistant.lib.kb_search import extract_note_search_query, score_note_against_query
+    from assistant.lib.telegram_html import html_to_plain
+    from assistant.stores import notes as notes_store
+    from assistant.stores.note_members import note_webapp_url
+
+    raw = str(args.get("query") or "").strip()
+    q = extract_note_search_query(raw) or raw
+    # «дай ссылку на заметку Вебапп» → «Вебапп»: служебные слова мешают совпадению с названием.
+    q = " ".join(w for w in q.split() if not _NOTES_FIND_FILLER.match(w.strip("«»\"',.!?").lower())) or q
+    if not q:
+        return _err("Укажите название заметки")
+    uid = int(ctx.uid)
+    pools = [("note", notes_store.list_notes(uid, limit=500))]
+    for kind, loader in (("transcription", lambda: notes_store.list_transcription_notes(uid, limit=500)),
+                         ("knowledge", lambda: notes_store.list_knowledge_notes(uid))):
+        try:
+            pools.append((kind, loader()))
+        except Exception as e:
+            print(f"[gpt_calendar] notes_find {kind} uid={uid} err={e!r}")
+    scored = []
+    seen: set[int] = set()
+    for kind, rows in pools:
+        for n in rows:
+            nid = int(n.get("id") or 0)
+            if not nid or nid in seen:
+                continue
+            seen.add(nid)
+            title = str(n.get("title") or "")
+            body = str(n.get("body") or n.get("description") or "")[:4000]
+            try:
+                plain = html_to_plain(body) if "<" in body else body
+            except Exception:
+                plain = body
+            score = score_note_against_query(q, title, plain)
+            if score > 0:
+                scored.append((score, str(n.get("updated_at") or ""), {"id": nid, "title": title or "Без названия", "kind": kind,
+                                                                     "updated": str(n.get("updated_at") or "")[:10],
+                                                                     "url": note_webapp_url(nid)}))
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    items = [x[2] for x in scored[:8]]
+    return _ok({"notes": items, "total": len(items)} if items else {"notes": [], "note": "Заметок с таким названием не нашлось"})
+
+
+EXECUTORS["notes_find"] = tool_notes_find
 
 
 def active_tools(uid: Optional[int] = None) -> list[dict[str, Any]]:

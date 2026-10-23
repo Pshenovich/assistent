@@ -66,7 +66,7 @@ def _sheet_sources(note: dict[str, Any], kind: str, *, skip_titles: tuple[str, .
         print(f"[semantic] sheets note={note.get('id')} err={e!r}")
         return []
     out = []
-    base = str(note.get("title") or ("Встреча" if kind == "transcription" else "Заметка"))
+    base = str(note.get("title") or {"transcription": "Встреча", "knowledge": "Документ"}.get(kind, "Заметка"))
     for sh in sheets:
         if str(sh.get("kind") or "doc") == "web":
             continue
@@ -76,7 +76,7 @@ def _sheet_sources(note: dict[str, Any], kind: str, *, skip_titles: tuple[str, .
         text = _plain(str(sh.get("body") or sh.get("description") or ""))
         if len(text) < 40:
             continue
-        out.append({"key": f"sheet:{note['id']}:{sh['id']}", "kind": "note", "title": f"{base} · {title or 'Лист'}",
+        out.append({"key": f"sheet:{note['id']}:{sh['id']}", "kind": "knowledge" if kind == "knowledge" else "note", "title": f"{base} · {title or 'Лист'}",
                     "date": str(sh.get("updated_at") or note.get("updated_at") or note.get("created_at") or "")[:10],
                     "text": text, "ref": {"note_id": int(note["id"]), "sheet_id": int(sh["id"]), "sheet_title": title, "kind": kind}})
     return out
@@ -112,6 +112,17 @@ def sources_for_user(uid: int) -> list[dict[str, Any]]:
                         "date": str(n.get("updated_at") or n.get("created_at") or "")[:10], "text": text,
                         "ref": {"note_id": int(n["id"]), "kind": "note"}})
         out += _sheet_sources(n, "note")
+    # База знаний (свои документы и расшаренные командой) — тоже в памяти, со всеми листами.
+    try:
+        for n in notes_store.list_knowledge_notes(uid):
+            text = _plain(str(n.get("body") or ""))
+            if len(text) >= 40:
+                out.append({"key": f"kb:{n['id']}", "kind": "knowledge", "title": n.get("title") or "Документ",
+                            "date": str(n.get("updated_at") or n.get("created_at") or "")[:10], "text": text,
+                            "ref": {"note_id": int(n["id"]), "kind": "knowledge"}})
+            out += _sheet_sources(n, "knowledge")
+    except Exception as e:
+        print(f"[semantic] knowledge uid={uid} err={e!r}")
     try:
         from assistant.stores import chat_digest
 
@@ -156,15 +167,22 @@ def _hash(text: str) -> str:
 def index_user(uid: int, *, embed: Optional[Embed] = None, budget_chunks: int = 400) -> dict[str, int]:
     """Переиндексировать изменившиеся источники (не больше budget_chunks кусков за проход)."""
     embed = embed or embed_client.embed
-    have = idx.source_hashes(uid)
+    meta = idx.source_meta(uid)
+    have = {k: v[0] for k, v in meta.items()}
     seen: set[str] = set()
     done = skipped = chunks_n = 0
-    # сначала короткое и ценное (саммари, заметки, дайджесты), длинные транскрипты — последними
-    order = {"meeting_summary": 0, "note": 1, "chat_digest": 2, "mail_thread": 3, "transcript": 4}
+    # сначала короткое и ценное (саммари, заметки, База знаний, дайджесты), длинные транскрипты — последними
+    order = {"meeting_summary": 0, "note": 1, "knowledge": 1, "chat_digest": 2, "mail_thread": 3, "transcript": 4}
     for src in sorted(sources_for_user(uid), key=lambda x: order.get(x["kind"], 9)):
         seen.add(src["key"])
         h = _hash(src["text"])
         if have.get(src["key"]) == h:
+            # Текст тот же, а название / ссылка поменялись (переименовали заметку) — обновляем подпись.
+            title = str(src["title"])[:200]
+            ref_json = json.dumps(src["ref"], ensure_ascii=False)
+            _h, old_title, old_ref = meta[src["key"]]
+            if old_title != title or old_ref != ref_json:
+                idx.update_meta(uid, src["key"], title=title, date=src["date"], ref_json=ref_json)
             skipped += 1
             continue
         chunks = chunk_text(src["text"])
@@ -185,6 +203,26 @@ def index_user(uid: int, *, embed: Optional[Embed] = None, budget_chunks: int = 
     return {"indexed": done, "skipped": skipped, "removed": removed, "chunks": chunks_n}
 
 
+TITLE_MATCH_RANK = 0.8
+# Слова, по которым название не считается «упомянутым» (иначе «Задачи», «Заметка» всплывали бы всегда).
+_GENERIC_TITLE_STEMS = {"замет", "задач", "лист", "докум", "встре", "запис", "чат", "без", "назва", "новая", "новый",
+                        "транс", "самма", "итоги", "недел", "план", "день", "финал", "описа", "копия"}
+
+
+def _title_stems(title: str) -> set[str]:
+    """Значимые слова названия (без «лист», «заметка»…); пусто — название слишком общее для совпадения."""
+    return _stems(re.sub(r"[«»\"]", " ", str(title or ""))) - _GENERIC_TITLE_STEMS
+
+
+def _note_url(note_id: Any) -> str:
+    try:
+        from assistant.stores.note_members import note_webapp_url
+
+        return note_webapp_url(int(note_id))
+    except Exception:
+        return ""
+
+
 def _stems(text: str) -> set[str]:
     return {w[:5] for w in re.findall(r"[a-zа-яё0-9]{3,}", (text or "").lower().replace("ё", "е"))}
 
@@ -201,6 +239,25 @@ def search(uid: int, query: str, *, k: int = 8, embed: Optional[Embed] = None) -
     for h in hits:
         overlap = len(qs & _stems(h["text"] + " " + h["title"])) / max(1, len(qs))
         h["rank"] = h["score"] + KEYWORD_WEIGHT * overlap
+    # Название заметки / листа целиком есть в вопросе («дай ссылку на заметку Вебапп», «для чего нужен
+    # продукт Обучат Деск») — этот источник наверх, даже если по смыслу текст далёк от короткого вопроса.
+    by_key = {}
+    for h in hits:
+        by_key.setdefault(h["source_key"], h)
+    for fc in idx.first_chunks(uid):
+        ts = _title_stems(fc["title"])
+        if not ts or not ts <= qs:
+            continue
+        # Название целиком в вопросе — выше, чем лист этой заметки («Вебапп» выше «Вебапп · Лист 2»).
+        exact = _stems(re.sub(r"[«»\"]", " ", str(fc["title"] or ""))) <= qs
+        boost = TITLE_MATCH_RANK + 0.02 * len(ts) + (0.05 if exact else 0.0)
+        cur = by_key.get(fc["source_key"])
+        if cur is not None:
+            cur["rank"] = max(cur["rank"], boost)
+        else:
+            fc = dict(fc, score=0.0, rank=boost)
+            hits.append(fc)
+            by_key[fc["source_key"]] = fc
     hits.sort(key=lambda h: -h["rank"])
     out: list[dict[str, Any]] = []
     per_source: dict[str, int] = {}
@@ -208,10 +265,14 @@ def search(uid: int, query: str, *, k: int = 8, embed: Optional[Embed] = None) -
         if per_source.get(h["source_key"], 0) >= 2:
             continue
         per_source[h["source_key"]] = per_source.get(h["source_key"], 0) + 1
-        out.append({
+        ref = json.loads(h["ref_json"] or "{}")
+        item = {
             "title": h["title"], "date": h["date"], "kind": h["kind"], "snippet": h["text"][:700],
-            "score": round(h["rank"], 3), "ref": json.loads(h["ref_json"] or "{}"),
-        })
+            "score": round(h["rank"], 3), "ref": ref,
+        }
+        if ref.get("note_id"):
+            item["url"] = _note_url(ref["note_id"])  # «дай ссылку на заметку» — ссылка готова
+        out.append(item)
         if len(out) >= k:
             break
     return out

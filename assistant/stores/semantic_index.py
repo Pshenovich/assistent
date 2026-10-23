@@ -65,6 +65,39 @@ def source_hashes(owner: Any) -> dict[str, str]:
     return {r["source_key"]: r["content_hash"] for r in rs}
 
 
+def source_meta(owner: Any) -> dict[str, tuple[str, str, str]]:
+    """{key: (content_hash, title, ref_json)} — понять, что поменялось только название / ссылка."""
+    with _LOCK:
+        rs = _conn().execute(
+            "SELECT source_key, content_hash, title, ref_json FROM sem_sources WHERE owner_user_id = ?", (str(owner),)
+        ).fetchall()
+    return {r["source_key"]: (r["content_hash"], r["title"], r["ref_json"]) for r in rs}
+
+
+def update_meta(owner: Any, key: str, *, title: str, date: str, ref_json: str) -> None:
+    """Переименовали заметку / лист: обновить подпись источника без пересчёта векторов."""
+    with _LOCK:
+        c = _conn()
+        c.execute(
+            "UPDATE sem_sources SET title = ?, date = ?, ref_json = ? WHERE owner_user_id = ? AND source_key = ?",
+            (title, date, ref_json, str(owner), key),
+        )
+        c.commit()
+
+
+def first_chunks(owner: Any) -> list[dict[str, Any]]:
+    """Первый кусок каждого источника с подписью — для совпадения по названию («дай заметку Вебапп»)."""
+    with _LOCK:
+        rs = _conn().execute(
+            """SELECT c.source_key, c.text, s.kind, s.title, s.date, s.ref_json
+               FROM sem_chunks c JOIN sem_sources s
+                 ON s.owner_user_id = c.owner_user_id AND s.source_key = c.source_key
+               WHERE c.owner_user_id = ? AND c.chunk_no = 0""",
+            (str(owner),),
+        ).fetchall()
+    return [dict(r) for r in rs]
+
+
 def upsert_source(owner: Any, key: str, *, content_hash: str, kind: str, title: str, date: str, ref_json: str,
                   chunks: list[str], vecs: list[list[float]]) -> None:
     now = datetime.now(timezone.utc).isoformat()
