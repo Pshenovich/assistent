@@ -46,6 +46,10 @@ def normalize_webhook(url: str) -> str:
     return value
 
 
+_SCOPE_BY_METHOD = {"user": "«Пользователи»", "task": "«Задачи»", "tasks": "«Задачи»", "sonet_group": "«Рабочие группы»"}
+_AUTH_ERRORS = ("invalid_token", "NO_AUTH_FOUND", "expired_token", "INVALID_CREDENTIALS", "WRONG_AUTH_TYPE")
+
+
 def call(base: str, method: str, params: dict[str, Any] | None = None) -> Any:
     try:
         r = requests.post(f"{base}{method}.json", json=params or {}, timeout=30)
@@ -58,13 +62,22 @@ def call(base: str, method: str, params: dict[str, Any] | None = None) -> Any:
     if not isinstance(data, dict):
         data = {}
     err = str(data.get("error") or "")
-    if r.status_code == 401 or err in ("invalid_token", "NO_AUTH_FOUND", "expired_token"):
-        raise TrackerError("Вебхук Битрикс24 не принят — проверьте адрес или создайте вебхук заново")
-    if err == "insufficient_scope":
-        raise TrackerError("У вебхука не хватает прав: нужны «Задачи», «Рабочие группы» и «Пользователи»")
+    desc = str(data.get("error_description") or "").strip()
     if err or r.status_code >= 400:
-        desc = str(data.get("error_description") or err or f"HTTP {r.status_code}").strip()
-        raise TrackerError(f"Битрикс24: {desc[:240]}")
+        # Адрес вебхука — секрет: в лог только метод и ответ.
+        print(f"[trackers] bitrix {method} http={r.status_code} err={err!r} desc={desc[:200]!r}")
+    # Нехватка прав приходит тоже с HTTP 401 — проверяем её раньше «не принят».
+    if err == "insufficient_scope":
+        scope = _SCOPE_BY_METHOD.get(method.split(".")[0], "")
+        raise TrackerError(
+            "У вебхука не хватает прав" + (f" {scope}" if scope else "")
+            + ". Откройте вебхук в Битрикс24 и отметьте «Задачи», «Рабочие группы» и «Пользователи»."
+        )
+    if err in _AUTH_ERRORS or (r.status_code == 401 and not err):
+        detail = f" (Битрикс24: {desc or err})" if (desc or err) else ""
+        raise TrackerError("Вебхук Битрикс24 не принят — проверьте адрес или создайте вебхук заново" + detail)
+    if err or r.status_code >= 400:
+        raise TrackerError(f"Битрикс24 ({method}): {(desc or err or f'HTTP {r.status_code}')[:240]}")
     return data.get("result")
 
 

@@ -276,3 +276,26 @@ def test_wwa_endpoint(client, monkeypatch):
     monkeypatch.setattr(task_wwa, "describe", boom)
     r = client.post("/api/miniapp/trackers/describe-wwa", json={"title": ""}, headers=_headers(UID))
     assert r.status_code == 400 and "Сначала" in r.json()["detail"]
+
+
+class _Resp:
+    def __init__(self, status: int, data: dict) -> None:
+        self.status_code = status
+        self._data = data
+
+    def json(self):
+        return self._data
+
+
+def test_call_scope_error_with_401_is_not_reported_as_bad_webhook(monkeypatch):
+    monkeypatch.setattr(b24.requests, "post", lambda *a, **k: _Resp(401, {
+        "error": "insufficient_scope", "error_description": "The request requires higher privileges"}))
+    with pytest.raises(TrackerError, match="не хватает прав «Пользователи»"):
+        b24.call(HOOK, "user.current")
+
+
+def test_call_auth_error_shows_bitrix_reason(monkeypatch):
+    monkeypatch.setattr(b24.requests, "post", lambda *a, **k: _Resp(401, {
+        "error": "INVALID_CREDENTIALS", "error_description": "Invalid request credentials"}))
+    with pytest.raises(TrackerError, match=r"не принят.*Invalid request credentials"):
+        b24.call(HOOK, "user.current")
