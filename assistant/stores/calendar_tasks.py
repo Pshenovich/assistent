@@ -98,6 +98,8 @@ def _conn() -> sqlite3.Connection:
         """
     )
     _CONN.execute("CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, id)")
+    if "meta_json" not in {str(r[1]) for r in _CONN.execute("PRAGMA table_info(task_events)")}:
+        _CONN.execute("ALTER TABLE task_events ADD COLUMN meta_json TEXT NOT NULL DEFAULT '{}'")
     _CONN.commit()
     return _CONN
 
@@ -1186,14 +1188,17 @@ def add_event(
     actor_name: str = "",
     text: str = "",
     at: str = "",
+    meta: dict[str, Any] | None = None,
 ) -> None:
     tid = _parse_task_id(task_id)
     if tid is None or kind not in EVENT_KINDS:
         return
     with _LOCK:
         _conn().execute(
-            "INSERT INTO task_events (task_id, at, actor_user_id, actor_name, kind, text) VALUES (?, ?, ?, ?, ?, ?)",
-            (tid, at or _now_iso(), str(actor_user_id or ""), _clip(actor_name, 120), kind, _clip(text, MAX_MESSAGE_LEN)),
+            "INSERT INTO task_events (task_id, at, actor_user_id, actor_name, kind, text, meta_json)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (tid, at or _now_iso(), str(actor_user_id or ""), _clip(actor_name, 120), kind,
+             _clip(text, MAX_MESSAGE_LEN), json.dumps(meta or {}, ensure_ascii=False)),
         )
         _conn().commit()
 
@@ -1212,6 +1217,7 @@ def list_events(task: dict[str, Any]) -> list[dict[str, Any]]:
             "actor_user_id": str(r["actor_user_id"] or ""),
             "actor_name": str(r["actor_name"] or ""),
             "text": str(r["text"] or ""),
+            "meta": _event_meta(r),
         }
         for r in rows
     ]
@@ -1239,6 +1245,16 @@ def list_events(task: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _event_meta(row: sqlite3.Row) -> dict[str, Any]:
+    if "meta_json" not in row.keys():
+        return {}
+    try:
+        meta = json.loads(row["meta_json"] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+
 def users_share_task(a: int | str, b: int | str) -> bool:
     """Постановщик и исполнитель одного поручения (для фото в «Поручено другим»)."""
     ua, ub = _uid(a), _uid(b)
@@ -1260,11 +1276,18 @@ def _owner_task(owner_id: int | str, task_id: int | str) -> Optional[dict[str, A
     return task
 
 
-def post_message(viewer_id: int | str, task_id: int | str, text: str, *, actor_name: str = "") -> Optional[dict[str, Any]]:
-    """Сообщение в обсуждении поручения. От исполнителя — это вопрос (поручение «ждёт» постановщика),
-    ответ постановщика вопрос снимает."""
+def post_message(
+    viewer_id: int | str,
+    task_id: int | str,
+    text: str,
+    *,
+    actor_name: str = "",
+    meta: dict[str, Any] | None = None,
+) -> Optional[dict[str, Any]]:
+    """Сообщение в обсуждении поручения (текст, вложения, ссылки на задачи/заметки/встречи).
+    От исполнителя — это вопрос (поручение «ждёт» постановщика), ответ постановщика вопрос снимает."""
     body = _clip(text, MAX_MESSAGE_LEN)
-    if not body:
+    if not body and not ((meta or {}).get("files") or (meta or {}).get("refs")):
         raise ValueError("Напишите сообщение")
     task = get_task_for_user(viewer_id, task_id)
     if not task or not task_is_delegated(task):
@@ -1281,12 +1304,12 @@ def post_message(viewer_id: int | str, task_id: int | str, text: str, *, actor_n
             add_event(tid, "message", actor_user_id=task.get("assignee_user_id") or "",
                       actor_name=str(task.get("assignee_name") or ""), text=str(task["assignee_status_note"]),
                       at=str(task.get("assignee_status_at") or ""))
-    add_event(tid, "message", actor_user_id=viewer, actor_name=actor_name, text=body)
+    add_event(tid, "message", actor_user_id=viewer, actor_name=actor_name, text=body, meta=meta)
     now = _now_iso()
     if viewer == str(task.get("assignee_user_id") or ""):
         return _set_columns(tid, {
             "assignee_status": "question",
-            "assignee_status_note": _clip(body, MAX_STATUS_NOTE_LEN),
+            "assignee_status_note": _clip(body or "Вложение", MAX_STATUS_NOTE_LEN),
             "assignee_status_at": now,
             "assignee_seen_at": task.get("assignee_seen_at") or now,
         })

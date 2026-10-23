@@ -121,7 +121,7 @@ def _relative_media_path(file_path: str, bot_token: str) -> str:
             return tail.split("/", 1)[1]
     if s.startswith(bot_token + "/"):
         return s[len(bot_token) + 1 :]
-    for prefix in ("videos/", "documents/", "voice/", "audio/", "video_notes/"):
+    for prefix in ("videos/", "documents/", "voice/", "audio/", "video_notes/", "photos/", "profile_photos/"):
         idx = s.find(prefix)
         if idx >= 0:
             return s[idx:]

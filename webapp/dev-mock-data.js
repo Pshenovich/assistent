@@ -86,9 +86,9 @@
   })();
   var nextMockTaskId = 9100;
   var mockTaskLogs = {};
-  function mockTaskLog(task, kind, uid, name, text) {
+  function mockTaskLog(task, kind, uid, name, text, meta) {
     var k = String(task.id);
-    (mockTaskLogs[k] = mockTaskLogs[k] || []).push({ at: new Date().toISOString(), kind: kind, actor_user_id: String(uid || ""), actor_name: name || "", text: text || "" });
+    (mockTaskLogs[k] = mockTaskLogs[k] || []).push({ at: new Date().toISOString(), kind: kind, actor_user_id: String(uid || ""), actor_name: name || "", text: text || "", meta: meta || {} });
   }
   // Как на сервере: события ленты плюс достроенные из полей задачи (поставлено, открыто, вопрос).
   function mockTaskEvents(task) {
@@ -1594,13 +1594,13 @@
       if (act === "events" && method === "GET") return { ok: true, events: mockTaskEvents(at) };
       if (act === "messages") {
         var txt = String(ab.text || "").trim();
-        if (!txt) throw new Error("Напишите сообщение");
+        if (!txt && !(ab.refs || []).length && !(ab.file_ids || []).length) throw new Error("Напишите сообщение");
         var fromMe = String(at.owner_user_id) === MOCK_ME;
         var logged = (mockTaskLogs[String(at.id)] || []).some(function (e) { return e.kind === "message"; });
         if (!logged && at.assignee_status === "question" && at.assignee_status_note) {
           (mockTaskLogs[String(at.id)] = mockTaskLogs[String(at.id)] || []).push({ at: at.assignee_status_at, kind: "message", actor_user_id: at.assignee_user_id, actor_name: at.assignee_name, text: at.assignee_status_note });
         }
-        mockTaskLog(at, "message", MOCK_ME, "Вова", txt);
+        mockTaskLog(at, "message", MOCK_ME, "Вова", txt, { refs: ab.refs || [], mentions: ab.mentions || [] });
         if (!fromMe) {
           at.assignee_status = "question";
           at.assignee_status_note = txt;

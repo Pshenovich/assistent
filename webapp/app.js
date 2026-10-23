@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-posted3";
+  var WEBAPP_BUILD = "20261023-posted4";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -21853,7 +21853,7 @@
 
   function postedLateLabel(task) {
     var diff = postedDayDiff(postedTaskDayIso(task));
-    if (isNaN(diff) || diff >= 0) return "Срок истёк";
+    if (isNaN(diff) || diff >= 0) return "Просрочено";
     var n = -diff;
     return "Просрочено " + n + " " + pluralRu(n, "день", "дня", "дней");
   }
@@ -22220,7 +22220,8 @@
     renderPostedSide();
   }
 
-  // Витрина команды: «Все» + исполнители (фото), красная точка — у человека есть то, что ждёт вас.
+  // Команда: вертикальные карточки — фото, имя, «N поручений · всё по плану», ближайший срок.
+  // Красный бабл на фото — просрочено или вопрос (сколько), зелёный — сдано и ждёт приёмки.
   function renderPostedTeam(items) {
     var host = document.getElementById("posted-tasks-team");
     if (!host) return;
@@ -22232,37 +22233,95 @@
       return;
     }
     host.classList.remove("hidden");
-    function item(key, label, avatarNode, dot) {
+    var arch = postedTasksTab === "archive";
+    function card(key, avatarNode, name, line, lineCls, due, dueLate, red, green) {
       var b = document.createElement("button");
       b.type = "button";
-      b.className = "pt-tm" + (postedPerson === key ? " is-on" : "");
+      b.className = "pt-tc" + (postedPerson === key ? " is-on" : "");
       b.setAttribute("aria-pressed", postedPerson === key ? "true" : "false");
-      var wrap = document.createElement("span");
-      wrap.className = "pt-tm-av";
-      wrap.appendChild(avatarNode);
-      if (dot) {
-        var d = document.createElement("span");
-        d.className = "pt-tm-dot";
-        wrap.appendChild(d);
+      var av = document.createElement("span");
+      av.className = "pt-tc-av";
+      av.appendChild(avatarNode);
+      if (red) {
+        var r = document.createElement("span");
+        r.className = "pt-badge pt-badge--red";
+        r.textContent = String(red);
+        r.title = "Просрочено или ждёт ответа";
+        av.appendChild(r);
       }
-      b.appendChild(wrap);
+      if (green) {
+        var g = document.createElement("span");
+        g.className = "pt-badge pt-badge--green" + (red ? " is-second" : "");
+        g.textContent = String(green);
+        g.title = "Сдано, ждёт приёмки";
+        av.appendChild(g);
+      }
+      b.appendChild(av);
+      var n = document.createElement("span");
+      n.className = "pt-tc-name";
+      n.textContent = name;
+      b.appendChild(n);
       var l = document.createElement("span");
-      l.className = "pt-tm-name";
-      l.textContent = label;
+      l.className = "pt-tc-line" + (lineCls ? " " + lineCls : "");
+      l.textContent = line;
       b.appendChild(l);
+      var d = document.createElement("span");
+      d.className = "pt-tc-due" + (dueLate ? " is-late" : "");
+      d.textContent = due || "";
+      b.appendChild(d);
       b.addEventListener("click", function () {
         postedPerson = postedPerson === key ? "" : key;
         postedSelectedId = "";
+        postedCardHosts.side = null;
         renderPostedScreen();
       });
       host.appendChild(b);
     }
     var allNode = document.createElement("span");
-    allNode.className = "pt-av pt-av--m pt-av--all";
+    allNode.className = "pt-av pt-av--l pt-av--all";
     allNode.textContent = String(items.length);
-    item("", "Все", allNode, false);
+    var attnAll = arch ? 0 : postedAttentionCount(items);
+    card("", allNode, "Все", items.length + " " + pluralRu(items.length, "поручение", "поручения", "поручений"),
+      "", attnAll ? attnAll + " ждут вас" : "", !!attnAll, 0, 0);
     people.forEach(function (g) {
-      item(g.key, postedFirstName(g.name), postedAvatar(g.uid, g.name, "m"), postedTasksTab === "current" && g.attn > 0);
+      var cnt = g.items.length + " " + pluralRu(g.items.length, "поручение", "поручения", "поручений");
+      var line = cnt;
+      var cls = "";
+      var due = "";
+      var dueLate = false;
+      if (arch) {
+        var lateN = g.items.filter(function (t) {
+          return postedArchiveMeta(t).cls === "is-late";
+        }).length;
+        line = cnt + " · " + (lateN ? lateN + " позже срока" : "всё в срок");
+        cls = lateN ? "is-late" : "is-ok";
+      } else {
+        var doneN = g.attn - g.late - g.question;
+        if (g.question) {
+          line = "ждёт ответа";
+          cls = "is-question";
+        } else if (g.late) {
+          line = g.late + " просрочено";
+          cls = "is-late";
+        } else if (doneN) {
+          line = "сдал(а) работу";
+          cls = "is-done";
+        } else {
+          line = "всё по плану";
+          cls = "is-ok";
+        }
+        line = cnt + " · " + line;
+        var next = sortByDue(g.items.filter(function (t) {
+          return !postedTaskIsDone(t);
+        }))[0];
+        if (next) {
+          var ds = postedDueShort(next);
+          due = "ближайший: " + ds.day + (ds.time ? ", " + ds.time : "");
+          dueLate = postedTaskIsOverdue(next);
+        }
+      }
+      card(g.key, postedAvatar(g.uid, g.name, "l"), g.name, line, cls, due, dueLate,
+        arch ? 0 : g.late + g.question, arch ? 0 : g.attn - g.late - g.question);
     });
   }
 
@@ -22296,6 +22355,29 @@
     setHidden(emptyEl, false);
   }
 
+  // Группы «В работе» по дате выполнения.
+  function postedWorkBucket(task) {
+    var diff = postedDayDiff(postedTaskDayIso(task));
+    if (isNaN(diff)) return "nodate";
+    if (diff <= 0) return "today";
+    if (diff === 1) return "tomorrow";
+    var now = new Date();
+    var dow = (now.getDay() + 6) % 7; // пн = 0
+    var toSunday = 6 - dow;
+    if (diff <= toSunday) return "week";
+    if (diff <= toSunday + 7) return "nextweek";
+    return "later";
+  }
+
+  var POSTED_WORK_BUCKETS = [
+    ["today", "Сегодня"],
+    ["tomorrow", "Завтра"],
+    ["week", "На этой неделе"],
+    ["nextweek", "На следующей неделе"],
+    ["later", "Позже"],
+    ["nodate", "Без срока"],
+  ];
+
   function renderPostedCurrentList(listEl) {
     listEl.innerHTML = "";
     var items = postedVisibleCurrent();
@@ -22316,21 +22398,35 @@
         return !postedAttention(t);
       })
     );
-    var desktop = isDesktopLayout();
     if (attn.length) {
       listEl.appendChild(postedSection("Ждут вас", attn.length, true));
+      var abox = document.createElement("div");
+      abox.className = "pt-rows";
       attn.forEach(function (t) {
-        listEl.appendChild(desktop ? renderPostedRow(t, { attention: true }) : renderPostedAttnCard(t));
+        abox.appendChild(renderPostedRow(t, { attention: true }));
       });
+      listEl.appendChild(abox);
     }
     if (work.length) {
-      listEl.appendChild(postedSection("В работе", work.length, !attn.length));
-      var box = document.createElement("div");
-      box.className = "pt-rows";
-      work.forEach(function (t) {
-        box.appendChild(renderPostedRow(t));
+      var head = postedSection("В работе", work.length, !attn.length);
+      head.classList.add("pt-sec--group");
+      listEl.appendChild(head);
+      POSTED_WORK_BUCKETS.forEach(function (b) {
+        var rows = work.filter(function (t) {
+          return postedWorkBucket(t) === b[0];
+        });
+        if (!rows.length) return;
+        var sub = document.createElement("div");
+        sub.className = "pt-subsec";
+        sub.textContent = b[1];
+        listEl.appendChild(sub);
+        var box = document.createElement("div");
+        box.className = "pt-rows";
+        rows.forEach(function (t) {
+          box.appendChild(renderPostedRow(t));
+        });
+        listEl.appendChild(box);
       });
-      listEl.appendChild(box);
     }
     if (all.length && !attn.length && !work.length) {
       var p = document.createElement("p");
@@ -22338,7 +22434,7 @@
       p.textContent = "У этого человека сейчас нет поручений.";
       listEl.appendChild(p);
     }
-    if (!desktop && all.length) {
+    if (!isDesktopLayout() && all.length) {
       var foot = document.createElement("button");
       foot.type = "button";
       foot.className = "pt-foot";
@@ -22351,81 +22447,14 @@
     }
   }
 
-  // Карточка в «Ждут вас» (телефон): причина, текст вопроса/результата и одна главная кнопка.
-  function renderPostedAttnCard(task) {
-    var kind = postedAttention(task);
-    var st = postedAssigneeState(task);
-    var card = document.createElement("div");
-    card.className = "pt-card pt-card--" + kind;
-    card.setAttribute("role", "button");
-    card.tabIndex = 0;
-    var top = document.createElement("div");
-    top.className = "pt-card-top";
-    top.appendChild(postedAvatar(postedAssigneeUid(task), postedTaskAssigneeLabel(task), "s"));
-    var who = document.createElement("span");
-    who.className = "pt-card-who";
-    who.textContent = postedFirstName(postedTaskAssigneeLabel(task));
-    top.appendChild(who);
-    var pill = document.createElement("span");
-    pill.className = "pt-pill pt-pill--" + kind;
-    pill.textContent = kind === "question" ? "Вопрос" : kind === "done" ? "Сделано" : postedLateLabel(task);
-    top.appendChild(pill);
-    card.appendChild(top);
-    var title = document.createElement("p");
-    title.className = "pt-card-title";
-    title.textContent = String(task.title || "Задача");
-    card.appendChild(title);
-    var quoteText =
-      kind === "question" ? "«" + (st.status_note || "") + "»" : kind === "done" && task.result ? "Результат: " + task.result : "";
-    if (quoteText && quoteText !== "«»") {
-      var q = document.createElement("p");
-      q.className = "pt-quote";
-      q.textContent = quoteText;
-      card.appendChild(q);
-    }
-    var acts = document.createElement("div");
-    acts.className = "pt-acts";
-    if (kind === "question") {
-      acts.appendChild(postedBtn("Ответить", "pt-btn--primary", function () {
-        openPostedCard(task.id, { focus: "reply" });
-      }));
-    } else if (kind === "late") {
-      acts.appendChild(postedBtn("Напомнить", "pt-btn--primary", function (b) {
-        b.disabled = true;
-        nudgePostedTask(task.id).then(function () {
-          b.disabled = false;
-        });
-      }));
-      acts.appendChild(postedBtn("Перенести", "", function () {
-        openPostedTaskEditor(task);
-      }));
-    } else {
-      acts.appendChild(postedBtn("Принять", "pt-btn--primary", function (b) {
-        b.disabled = true;
-        acceptPostedTask(task.id);
-      }));
-      acts.appendChild(postedBtn("Вернуть", "", function () {
-        openPostedCard(task.id, { focus: "return" });
-      }));
-    }
-    card.appendChild(acts);
-    card.addEventListener("click", function () {
-      openPostedCard(task.id);
-    });
-    card.addEventListener("keydown", function (e) {
-      if (e.target === card && (e.key === "Enter" || e.key === " ")) {
-        e.preventDefault();
-        openPostedCard(task.id);
-      }
-    });
-    return card;
-  }
 
-  // Строка: фото, название, состояние; справа — срок колонкой.
+  // Карточка поручения в списке: фото, название в две строки, «кто · состояние · срок», справа — действия.
   function renderPostedRow(task, opts) {
     opts = opts || {};
+    var kind = opts.attention ? postedAttention(task) : null;
+    var st = postedAssigneeState(task);
     var row = document.createElement("div");
-    row.className = "pt-row" + (String(task.id) === postedSelectedId ? " is-selected" : "");
+    row.className = "pt-row" + (kind ? " pt-row--" + kind : "") + (String(task.id) === postedSelectedId ? " is-selected" : "");
     row.setAttribute("role", "button");
     row.tabIndex = 0;
     row.appendChild(postedAvatar(postedAssigneeUid(task), postedTaskAssigneeLabel(task), "s"));
@@ -22437,34 +22466,78 @@
     main.appendChild(t);
     var line = document.createElement("p");
     line.className = "pt-row-line";
-    var kind = opts.attention ? postedAttention(task) : null;
-    var st = postedAssigneeState(task);
-    if (kind === "question") {
-      line.className += " is-question";
-      line.textContent = "вопрос · «" + (st.status_note || "") + "»";
-    } else if (kind === "late") {
-      line.className += " is-late";
-      line.textContent = postedLateLabel(task).toLowerCase();
-    } else if (kind === "done") {
-      line.className += " is-done";
-      line.textContent = "сделано · проверить и принять";
-    } else {
+    function part(text, cls) {
+      if (!text) return;
+      if (line.childNodes.length) {
+        var sep = document.createElement("span");
+        sep.className = "pt-sep";
+        sep.textContent = " · ";
+        line.appendChild(sep);
+      }
+      var s = document.createElement("span");
+      if (cls) s.className = cls;
+      s.textContent = text;
+      line.appendChild(s);
+    }
+    if (!postedPerson) part(postedFirstName(postedTaskAssigneeLabel(task)), "");
+    if (kind === "question") part("вопрос", "is-question");
+    else if (kind === "late") part(postedLateLabel(task).toLowerCase(), "is-late");
+    else if (kind === "done") part("сделано, проверьте", "is-done");
+    else {
       var wl = postedWorkLine(task);
-      if (wl.cls) line.className += " " + wl.cls;
-      line.textContent = (postedPerson ? "" : postedFirstName(postedTaskAssigneeLabel(task)) + " · ") + wl.text;
+      part(wl.text, wl.cls);
     }
-    main.appendChild(line);
-    row.appendChild(main);
-    var due = document.createElement("div");
-    due.className = "pt-due" + (postedTaskIsOverdue(task) ? " is-late" : "");
     var ds = postedDueShort(task);
-    due.textContent = ds.day;
-    if (ds.time) {
-      var tm = document.createElement("span");
-      tm.textContent = ds.time;
-      due.appendChild(tm);
+    part(ds.day === "без срока" ? "без срока" : "срок " + ds.day + (ds.time ? ", " + ds.time : ""), postedTaskIsOverdue(task) ? "is-late pt-due-inline" : "pt-due-inline");
+    main.appendChild(line);
+    if (kind === "question" && st.status_note) {
+      var q = document.createElement("p");
+      q.className = "pt-quote";
+      q.textContent = "«" + st.status_note + "»";
+      main.appendChild(q);
+    } else if (kind === "done" && task.result) {
+      var r = document.createElement("p");
+      r.className = "pt-quote";
+      r.textContent = "Результат: " + task.result;
+      main.appendChild(r);
     }
-    row.appendChild(due);
+    row.appendChild(main);
+    var acts = document.createElement("div");
+    acts.className = "pt-row-acts";
+    function act(label, primary, fn) {
+      acts.appendChild(postedBtn(label, primary ? "pt-btn--primary" : "", fn));
+    }
+    if (kind === "question") {
+      act("Ответить", true, function () {
+        openPostedCard(task.id, { focus: "reply" });
+      });
+    } else if (kind === "late") {
+      act("Напомнить", true, function (b) {
+        b.disabled = true;
+        nudgePostedTask(task.id).then(function () {
+          b.disabled = false;
+        });
+      });
+      act("Перенести", false, function () {
+        openPostedTaskEditor(task);
+      });
+    } else if (kind === "done") {
+      act("Принять", true, function (b) {
+        b.disabled = true;
+        acceptPostedTask(task.id);
+      });
+      act("Вернуть", false, function () {
+        openPostedCard(task.id, { focus: "return" });
+      });
+    } else {
+      act("Напомнить", false, function (b) {
+        b.disabled = true;
+        nudgePostedTask(task.id).then(function () {
+          b.disabled = false;
+        });
+      });
+    }
+    row.appendChild(acts);
     row.addEventListener("click", function () {
       openPostedCard(task.id);
     });
@@ -22565,94 +22638,71 @@
     });
   }
 
-  // Десктоп: справа — открытое поручение или сводка «Команда сейчас».
+  // Десктоп: справа всегда открыто поручение (по умолчанию — первое в списке).
   function renderPostedSide() {
     var side = document.getElementById("posted-tasks-side");
     if (!side) return;
     if (!isDesktopLayout()) {
       side.innerHTML = "";
+      postedCardHosts.side = null;
       return;
     }
-    if (postedSelectedId) {
-      if (!postedCardHosts.side || postedCardHosts.side.taskId !== postedSelectedId) {
-        mountPostedCard(side, postedSelectedId, Object.assign({ inSide: true }, postedSideOpts || {}));
-        postedSideOpts = null;
-      }
-      return;
-    }
-    postedCardHosts.side = null;
-    side.innerHTML = "";
-    var items = postedTasksTab === "archive" ? postedArchiveItems : lastPostedTasksItems.filter(function (t) {
-      return !postedTaskIsArchived(t);
+    var visible = postedTasksTab === "archive" ? postedArchiveListOrder() : postedCurrentListOrder();
+    var ids = visible.map(function (t) {
+      return String(t.id);
     });
-    if (!items.length) return;
-    var h = document.createElement("p");
-    h.className = "pt-side-title";
-    h.textContent = postedTasksTab === "archive" ? "Кто как сдавал" : "Команда сейчас";
-    side.appendChild(h);
-    postedPeople(items).forEach(function (g) {
-      var c = document.createElement("button");
-      c.type = "button";
-      c.className = "pt-person" + (postedPerson === g.key ? " is-on" : "");
-      c.appendChild(postedAvatar(g.uid, g.name, "s"));
-      var main = document.createElement("div");
-      main.className = "pt-row-main";
-      var n = document.createElement("p");
-      n.className = "pt-row-title";
-      n.textContent = g.name;
-      main.appendChild(n);
-      var line = document.createElement("p");
-      line.className = "pt-row-line";
-      var cnt = g.items.length + " " + pluralRu(g.items.length, "поручение", "поручения", "поручений");
-      var status = "";
-      var cls = "";
-      if (postedTasksTab === "archive") {
-        var lateN = g.items.filter(function (t) {
-          return postedArchiveMeta(t).cls === "is-late";
-        }).length;
-        status = lateN ? lateN + " позже срока" : "всё в срок";
-        cls = lateN ? "is-late" : "";
-      } else if (g.question) {
-        status = "ждёт ответа";
-        cls = "is-question";
-      } else if (g.late) {
-        status = g.late + " просрочено";
-        cls = "is-late";
-      } else if (g.attn) {
-        status = "сдал(а) работу";
-        cls = "is-done";
-      } else status = "всё по плану";
-      line.textContent = cnt + " · ";
-      var s = document.createElement("span");
-      s.className = cls;
-      s.textContent = status;
-      line.appendChild(s);
-      main.appendChild(line);
-      c.appendChild(main);
-      if (postedTasksTab !== "archive") {
-        var next = sortByDue(g.items.filter(function (t) {
-          return !postedTaskIsDone(t);
-        }))[0];
-        if (next) {
-          var due = document.createElement("div");
-          due.className = "pt-due" + (postedTaskIsOverdue(next) ? " is-late" : "");
-          due.textContent = postedDueShort(next).day;
-          var sm = document.createElement("span");
-          sm.textContent = "ближайший срок";
-          due.appendChild(sm);
-          c.appendChild(due);
-        }
-      }
-      c.addEventListener("click", function () {
-        postedPerson = postedPerson === g.key ? "" : g.key;
-        renderPostedScreen();
+    if (!postedSelectedId || ids.indexOf(postedSelectedId) < 0) {
+      postedSelectedId = ids[0] || "";
+      postedCardHosts.side = null;
+      var sel = document.querySelectorAll("#posted-tasks-list .pt-row");
+      sel.forEach(function (r, i) {
+        r.classList.toggle("is-selected", i === 0 && !!postedSelectedId);
       });
-      side.appendChild(c);
+    }
+    if (!postedSelectedId) {
+      postedCardHosts.side = null;
+      side.innerHTML = '<p class="pt-muted-note pt-side-empty">Здесь откроется поручение</p>';
+      return;
+    }
+    if (!postedCardHosts.side || postedCardHosts.side.taskId !== postedSelectedId) {
+      mountPostedCard(side, postedSelectedId, Object.assign({ inSide: true }, postedSideOpts || {}));
+      postedSideOpts = null;
+    }
+  }
+
+  // Порядок поручений как в списке — чтобы справа по умолчанию открывалось верхнее.
+  function postedCurrentListOrder() {
+    var items = postedVisibleCurrent();
+    var attn = items
+      .filter(function (t) {
+        return !!postedAttention(t);
+      })
+      .sort(function (a, b) {
+        var d = POSTED_ATTN_ORDER[postedAttention(a)] - POSTED_ATTN_ORDER[postedAttention(b)];
+        return d || postedTaskDueMs(a) - postedTaskDueMs(b);
+      });
+    var work = sortByDue(items.filter(function (t) {
+      return !postedAttention(t);
+    }));
+    var ordered = [];
+    POSTED_WORK_BUCKETS.forEach(function (b) {
+      work.forEach(function (t) {
+        if (postedWorkBucket(t) === b[0]) ordered.push(t);
+      });
     });
-    var hint = document.createElement("p");
-    hint.className = "pt-muted-note";
-    hint.textContent = "Выберите поручение слева — оно откроется здесь";
-    side.appendChild(hint);
+    return attn.concat(ordered);
+  }
+
+  function postedArchiveListOrder() {
+    var q = postedArchiveQ.trim().toLowerCase();
+    return postedArchiveItems
+      .filter(function (t) {
+        if (postedPerson && postedAssigneeKey(t) !== postedPerson) return false;
+        return !q || (String(t.title || "") + " " + postedTaskAssigneeLabel(t)).toLowerCase().indexOf(q) >= 0;
+      })
+      .sort(function (a, b) {
+        return String(b.accepted_at || b.updated_at || "").localeCompare(String(a.accepted_at || a.updated_at || ""));
+      });
   }
 
   // ——— Карточка поручения: у постановщика и у исполнителя. Телефон — во весь экран, десктоп — справа. ———
@@ -22718,7 +22768,16 @@
 
   function mountPostedCard(host, taskId, opts) {
     opts = opts || {};
-    var state = { host: host, taskId: String(taskId), task: null, events: [], opts: opts, mode: opts.focus || "" };
+    var focus = opts.focus || "";
+    var state = {
+      host: host,
+      taskId: String(taskId),
+      task: null,
+      events: [],
+      opts: opts,
+      mode: focus === "return" || focus === "result" ? focus : "",
+      focusInput: !!focus,
+    };
     if (opts.inSide) postedCardHosts.side = state;
     else postedCardHosts.sheet = state;
     var known = lastPostedTasksItems.concat(postedArchiveItems).filter(function (t) {
@@ -22968,7 +23027,8 @@
     if (bar.childNodes.length) foot.appendChild(bar);
     host.appendChild(foot);
 
-    if (state.mode) {
+    if (state.mode || state.focusInput) {
+      state.focusInput = false;
       var ta = host.querySelector(".pt-composer textarea");
       if (ta) window.setTimeout(function () {
         ta.focus();
@@ -23043,9 +23103,21 @@
           tag.textContent = e.kind === "done" ? "Сдано" : "Вернул(а) в работу";
           bub.appendChild(tag);
         }
-        var p = document.createElement("p");
-        p.textContent = e.text;
-        bub.appendChild(p);
+        if (e.text) {
+          var p = document.createElement("p");
+          fillDiscussBodyWithMentions(p, e.text);
+          bub.appendChild(p);
+        }
+        var meta = e.meta || {};
+        if (meta.files && meta.files.length) renderDiscussAttachments(bub, meta.files);
+        if (meta.refs && meta.refs.length) {
+          var refs = document.createElement("div");
+          refs.className = "pt-refs";
+          meta.refs.forEach(function (r) {
+            refs.appendChild(postedRefChip(r, null));
+          });
+          bub.appendChild(refs);
+        }
         var time = document.createElement("span");
         time.className = "pt-bub-time";
         time.textContent = postedTimeShort(e.at);
@@ -23070,14 +23142,66 @@
     return feed;
   }
 
+  var POSTED_REF_KIND = { task: "Задача", note: "Заметка", transcription: "Транскрипция", event: "Встреча" };
+  var POSTED_REF_ICON = {
+    task: '<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>',
+    note: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
+    transcription: '<path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0M12 18v3"/>',
+    event: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  };
+
+  function postedRefChip(r, onRemove) {
+    var b = document.createElement(onRemove ? "span" : "button");
+    if (!onRemove) b.type = "button";
+    b.className = "pt-ref";
+    b.innerHTML =
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      (POSTED_REF_ICON[r.kind] || "") + "</svg><span></span>";
+    b.querySelector("span").textContent = (r.title || POSTED_REF_KIND[r.kind] || "").slice(0, 60);
+    b.title = (POSTED_REF_KIND[r.kind] || "") + (r.title ? ": " + r.title : "");
+    if (onRemove) {
+      var x = document.createElement("button");
+      x.type = "button";
+      x.className = "pt-ref-x";
+      x.setAttribute("aria-label", "Убрать");
+      x.textContent = "×";
+      x.addEventListener("click", onRemove);
+      b.appendChild(x);
+    } else {
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        openPostedRef(r);
+      });
+    }
+    return b;
+  }
+
+  function openPostedRef(r) {
+    if (r.kind === "task") {
+      openEntityRefFromChip("task", r.id, r.title);
+      return;
+    }
+    if (isPostedCardOpen()) closePostedCard();
+    if (r.kind === "note" || r.kind === "transcription") {
+      openMeetingMaterial({ id: r.id, kind: r.kind, title: r.title });
+      return;
+    }
+    if (r.kind === "event") {
+      var ev = findLoadedCalendarEvent(r.id, r.calendar_id);
+      openEventModal(ev || { id: r.id, calendar_id: r.calendar_id, summary: r.title, start: { dateTime: r.start } });
+    }
+  }
+
   function setPostedCardMode(state, mode) {
     state.mode = mode;
     paintPostedCard(state);
   }
 
-  // Поле внизу карточки: сообщение (по умолчанию), «Вернуть» с комментарием или «Сдать результат».
+  // Поле как у ассистента: «+» (файл, задача, заметка, транскрипция, встреча), @упоминание, вложения над полем.
   function renderPostedComposer(state, otherName, draft) {
     var mode = state.mode || "";
+    if (!state.compose) state.compose = { files: [], refs: [], mentions: [] };
+    var cmp = state.compose;
     var wrap = document.createElement("div");
     wrap.className = "pt-composer" + (mode ? " is-" + mode : "");
     if (mode === "return" || mode === "result") {
@@ -23095,18 +23219,84 @@
       lbl.appendChild(x);
       wrap.appendChild(lbl);
     }
-    var row = document.createElement("div");
-    row.className = "pt-composer-row";
+    var box = document.createElement("div");
+    box.className = "pt-composer-box";
+    var pending = document.createElement("div");
+    pending.className = "pt-pending";
+    function paintPending() {
+      pending.innerHTML = "";
+      cmp.files.forEach(function (f, i) {
+        var chip = document.createElement("span");
+        chip.className = "pt-ref pt-ref--file" + (f.uploading ? " is-loading" : "");
+        if (f.previewUrl) {
+          var img = document.createElement("img");
+          img.src = f.previewUrl;
+          img.alt = "";
+          chip.appendChild(img);
+        }
+        var nm = document.createElement("span");
+        nm.textContent = f.name;
+        chip.appendChild(nm);
+        var rx = document.createElement("button");
+        rx.type = "button";
+        rx.className = "pt-ref-x";
+        rx.setAttribute("aria-label", "Убрать");
+        rx.textContent = "×";
+        rx.addEventListener("click", function () {
+          cmp.files.splice(i, 1);
+          paintPending();
+        });
+        chip.appendChild(rx);
+        pending.appendChild(chip);
+      });
+      cmp.refs.forEach(function (r, i) {
+        pending.appendChild(postedRefChip(r, function () {
+          cmp.refs.splice(i, 1);
+          paintPending();
+        }));
+      });
+      pending.classList.toggle("hidden", !cmp.files.length && !cmp.refs.length);
+    }
+    box.appendChild(pending);
     var ta = document.createElement("textarea");
     ta.rows = 1;
     ta.value = draft || (mode === "result" ? String(state.task.result || "") : "");
     ta.placeholder =
-      mode === "return" ? "Комментарий (необязательно)" : mode === "result" ? "Ссылка, файл, пара слов о результате" : (postedCardIsOwner(state.task) ? "Сообщение исполнителю" : "Сообщение постановщику");
+      mode === "return" ? "Комментарий (необязательно)" : mode === "result" ? "Ссылка, файл, пара слов о результате" :
+      postedCardIsOwner(state.task) ? "Сообщение исполнителю" : "Сообщение постановщику";
     function grow() {
       ta.style.height = "auto";
-      ta.style.height = Math.min(140, ta.scrollHeight) + "px";
+      ta.style.height = Math.min(160, ta.scrollHeight) + "px";
     }
-    ta.addEventListener("input", grow);
+    ta.addEventListener("input", function () {
+      grow();
+      syncMention();
+    });
+    box.appendChild(ta);
+    var tools = document.createElement("div");
+    tools.className = "pt-composer-tools";
+    var plus = document.createElement("button");
+    plus.type = "button";
+    plus.className = "pt-tool";
+    plus.setAttribute("aria-label", "Добавить");
+    plus.title = "Файл, задача, заметка, транскрипция или встреча";
+    plus.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+    var at = document.createElement("button");
+    at.type = "button";
+    at.className = "pt-tool";
+    at.setAttribute("aria-label", "Упомянуть");
+    at.title = "Упомянуть";
+    at.textContent = "@";
+    var fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.multiple = true;
+    fileInput.hidden = true;
+    tools.appendChild(plus);
+    tools.appendChild(at);
+    tools.appendChild(fileInput);
+    var spacer = document.createElement("span");
+    spacer.className = "pt-tools-spacer";
+    tools.appendChild(spacer);
     var send = document.createElement("button");
     send.type = "button";
     send.className = "pt-send" + (mode ? " is-text" : "");
@@ -23116,10 +23306,220 @@
       send.setAttribute("aria-label", "Отправить");
       send.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
     }
+    tools.appendChild(send);
+    box.appendChild(tools);
+    wrap.appendChild(box);
+    var menu = document.createElement("div");
+    menu.className = "pt-pop hidden";
+    wrap.appendChild(menu);
+
+    function closeMenu() {
+      menu.classList.add("hidden");
+      menu.innerHTML = "";
+      menu._mode = "";
+    }
+    function menuItem(label, hint, fn) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "pt-pop-item";
+      var l = document.createElement("span");
+      l.textContent = label;
+      b.appendChild(l);
+      if (hint) {
+        var h = document.createElement("span");
+        h.className = "pt-pop-hint";
+        h.textContent = hint;
+        b.appendChild(h);
+      }
+      b.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+      });
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        fn();
+      });
+      menu.appendChild(b);
+    }
+    function openRoot() {
+      menu.innerHTML = "";
+      menu._mode = "root";
+      menuItem("Файл или фото", "", function () {
+        closeMenu();
+        fileInput.click();
+      });
+      [["task", "Задачу"], ["note", "Заметку"], ["transcription", "Транскрипцию"], ["event", "Встречу"]].forEach(function (k) {
+        menuItem(k[1], "", function () {
+          openPicker(k[0]);
+        });
+      });
+      menu.classList.remove("hidden");
+    }
+    function openPicker(kind) {
+      menu.innerHTML = "";
+      menu._mode = "pick";
+      var search = document.createElement("input");
+      search.type = "search";
+      search.className = "pt-pop-search";
+      search.placeholder = { task: "Найти задачу", note: "Найти заметку", transcription: "Найти транскрипцию", event: "Найти встречу" }[kind];
+      menu.appendChild(search);
+      var list = document.createElement("div");
+      list.className = "pt-pop-list";
+      menu.appendChild(list);
+      var gen = 0;
+      function fill() {
+        var my = ++gen;
+        list.innerHTML = '<p class="pt-pop-hint pt-pop-pad">Ищу…</p>';
+        postedPickerItems(kind, search.value).then(function (items) {
+          if (my !== gen) return;
+          list.innerHTML = "";
+          if (!items.length) {
+            list.innerHTML = '<p class="pt-pop-hint pt-pop-pad">Ничего не нашлось</p>';
+            return;
+          }
+          items.slice(0, 12).forEach(function (it) {
+            var b = document.createElement("button");
+            b.type = "button";
+            b.className = "pt-pop-item";
+            var l = document.createElement("span");
+            l.textContent = it.title;
+            b.appendChild(l);
+            if (it.hint) {
+              var h = document.createElement("span");
+              h.className = "pt-pop-hint";
+              h.textContent = it.hint;
+              b.appendChild(h);
+            }
+            b.addEventListener("click", function (e) {
+              e.stopPropagation();
+              if (cmp.refs.length < 5 && !cmp.refs.some(function (r) { return r.kind === it.ref.kind && String(r.id) === String(it.ref.id); })) {
+                cmp.refs.push(it.ref);
+              }
+              closeMenu();
+              paintPending();
+              ta.focus();
+            });
+            list.appendChild(b);
+          });
+        });
+      }
+      var tmr = 0;
+      search.addEventListener("input", function () {
+        window.clearTimeout(tmr);
+        tmr = window.setTimeout(fill, 220);
+      });
+      fill();
+      menu.classList.remove("hidden");
+      window.setTimeout(function () {
+        search.focus();
+      }, 0);
+    }
+    plus.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (!menu.classList.contains("hidden") && menu._mode === "root") closeMenu();
+      else openRoot();
+    });
+    // @упоминание: участники поручения и ваша команда.
+    function mentionQuery() {
+      var pos = ta.selectionStart || 0;
+      var before = ta.value.slice(0, pos);
+      var m = before.match(/(^|\s)@([^\s@]{0,32})$/);
+      return m ? { q: m[2], start: pos - m[2].length - 1, end: pos } : null;
+    }
+    function syncMention() {
+      var mq = mentionQuery();
+      if (!mq) {
+        if (menu._mode === "mention") closeMenu();
+        return;
+      }
+      var people = postedMentionPeople(state).filter(function (p) {
+        return !mq.q || p.name.toLowerCase().indexOf(mq.q.toLowerCase()) >= 0;
+      });
+      menu.innerHTML = "";
+      menu._mode = "mention";
+      if (!people.length) {
+        closeMenu();
+        return;
+      }
+      people.slice(0, 8).forEach(function (p) {
+        menuItem(p.name, p.hint, function () {
+          var cur = mentionQuery() || mq;
+          var label = "@" + p.name.split(/\s+/)[0] + " ";
+          ta.value = ta.value.slice(0, cur.start) + label + ta.value.slice(cur.end);
+          if (!cmp.mentions.some(function (m) { return m.user_id === p.user_id; })) cmp.mentions.push({ user_id: p.user_id, name: p.name, tag: label.trim() });
+          closeMenu();
+          ta.focus();
+          var caret = cur.start + label.length;
+          ta.setSelectionRange(caret, caret);
+          grow();
+        });
+      });
+      menu.classList.remove("hidden");
+    }
+    at.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var pos = ta.selectionStart || ta.value.length;
+      var pre = ta.value.slice(0, pos);
+      var ins = (pre && !/\s$/.test(pre) ? " " : "") + "@";
+      ta.value = pre + ins + ta.value.slice(pos);
+      ta.focus();
+      ta.setSelectionRange(pos + ins.length, pos + ins.length);
+      syncMention();
+    });
+    fileInput.addEventListener("change", function () {
+      var picked = Array.prototype.slice.call(fileInput.files || []);
+      fileInput.value = "";
+      picked.slice(0, Math.max(0, 8 - cmp.files.length)).forEach(function (file) {
+        if (file.size > 12 * 1024 * 1024) {
+          showNoteToast("«" + file.name + "» больше 12 МБ");
+          return;
+        }
+        var item = { name: file.name, uploading: true, id: null };
+        if (/^image\//.test(file.type)) item.previewUrl = URL.createObjectURL(file);
+        cmp.files.push(item);
+        var fd = new FormData();
+        fd.append("file", file, file.name);
+        fetch(API + "/notes/task/" + encodeURIComponent(state.taskId) + "/discuss-files", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: authHeaders(),
+          body: fd,
+        })
+          .then(function (res) {
+            return res.json().then(function (j) {
+              if (!res.ok) throw new Error((j && j.detail) || "Не удалось загрузить файл");
+              return j;
+            });
+          })
+          .then(function (j) {
+            item.id = j && j.file && j.file.id;
+            item.uploading = false;
+            paintPending();
+          })
+          .catch(function (err) {
+            cmp.files.splice(cmp.files.indexOf(item), 1);
+            paintPending();
+            showNoteToast((err && err.message) || "Не удалось загрузить файл");
+          });
+      });
+      paintPending();
+    });
+    document.addEventListener("click", function onDoc(e) {
+      if (!document.body.contains(wrap)) {
+        document.removeEventListener("click", onDoc);
+        return;
+      }
+      if (!wrap.contains(e.target)) closeMenu();
+    });
+
     async function submit() {
       var text = String(ta.value || "").trim();
-      if (!mode && !text) {
+      var hasExtra = cmp.files.length || cmp.refs.length;
+      if (!mode && !text && !hasExtra) {
         ta.focus();
+        return;
+      }
+      if (cmp.files.some(function (f) { return f.uploading; })) {
+        showNoteToast("Файл ещё загружается");
         return;
       }
       send.disabled = true;
@@ -23129,8 +23529,16 @@
         else if (mode === "result") {
           r = await patchPostedTask(state.taskId, { done: true, result: text });
           r = { task: r && r.task };
-        } else r = await postedApi(state.taskId, "messages", { text: text });
+        } else {
+          r = await postedApi(state.taskId, "messages", {
+            text: text,
+            file_ids: cmp.files.map(function (f) { return f.id; }).filter(Boolean),
+            refs: cmp.refs,
+            mentions: cmp.mentions.filter(function (m) { return text.indexOf(m.tag) >= 0; }),
+          });
+        }
         ta.value = "";
+        state.compose = { files: [], refs: [], mentions: [] };
         state.mode = "";
         if (r && r.task) state.task = Object.assign({}, state.task, r.task);
         if (r && r.events) state.events = r.events;
@@ -23147,16 +23555,112 @@
     }
     send.addEventListener("click", submit);
     ta.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !menu.classList.contains("hidden")) {
+        e.stopPropagation();
+        closeMenu();
+        return;
+      }
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey || (isDesktopLayout() && !e.shiftKey))) {
+        if (menu._mode === "mention") {
+          var first = menu.querySelector(".pt-pop-item");
+          if (first) {
+            e.preventDefault();
+            first.click();
+            return;
+          }
+        }
         e.preventDefault();
         submit();
       }
     });
-    row.appendChild(ta);
-    row.appendChild(send);
-    wrap.appendChild(row);
+    paintPending();
     window.setTimeout(grow, 0);
     return wrap;
+  }
+
+  // Кого можно упомянуть: участники поручения и люди, которым вы поручаете задачи.
+  function postedMentionPeople(state) {
+    var me = postedMeUid();
+    var out = [];
+    var seen = {};
+    function add(uid, name, hint) {
+      uid = String(uid || "");
+      if (!uid || uid === me || seen[uid] || !name) return;
+      seen[uid] = 1;
+      out.push({ user_id: uid, name: String(name), hint: hint || "" });
+    }
+    var t = state.task || {};
+    add(postedAssigneeUid(t), postedTaskAssigneeLabel(t), "исполнитель");
+    add(t.owner_user_id, postedOwnerName(state), "постановщик");
+    lastPostedTasksItems.concat(postedArchiveItems).forEach(function (x) {
+      add(postedAssigneeUid(x), postedTaskAssigneeLabel(x), "из команды");
+    });
+    return out;
+  }
+
+  // Что можно приложить через «+»: задачи, заметки, транскрипции, встречи (±3 недели).
+  async function postedPickerItems(kind, query) {
+    var q = String(query || "").trim().toLowerCase();
+    if (kind === "task") {
+      var tasks = await searchTaskRefItems(q);
+      return tasks.map(function (t) {
+        return { title: t.label, hint: t.hint, ref: { kind: "task", id: t.refId, title: t.label } };
+      });
+    }
+    if (kind === "note" || kind === "transcription") {
+      var data = notesDataCache;
+      var have = data && (kind === "transcription" ? data.transcriptions : data.local_notes);
+      if (!have || !have.length) {
+        try {
+          await loadNotes();
+        } catch (_) {}
+        data = notesDataCache || {};
+      }
+      var src = kind === "transcription" ? data.transcriptions || [] : (data.local_notes || []).filter(function (n) {
+        return !looksLikeTranscriptionNote(n);
+      });
+      return src
+        .filter(function (n) {
+          return !q || noteRefDisplayTitle(n).toLowerCase().indexOf(q) >= 0;
+        })
+        .slice(0, 20)
+        .map(function (n) {
+          var title = noteRefDisplayTitle(n) || "Без названия";
+          return {
+            title: title,
+            hint: noteRefShortDate(n.updated_at || n.created_at || ""),
+            ref: { kind: kind, id: String(n.id), title: title },
+          };
+        });
+    }
+    var now = new Date();
+    var start = localDateIsoFromMs(now.getTime() - 21 * DAY_MS);
+    var end = localDateIsoFromMs(now.getTime() + 21 * DAY_MS);
+    var r;
+    try {
+      r = await apiFetch("/calendar/range?start=" + start + "&end=" + end, { method: "GET" });
+    } catch (_) {
+      return [];
+    }
+    return ((r && r.events) || [])
+      .filter(function (ev) {
+        return ev && ev.id && String(ev.id).indexOf("task-") !== 0 && (!q || String(ev.summary || "").toLowerCase().indexOf(q) >= 0);
+      })
+      .sort(function (a, b) {
+        var ta = Math.abs(new Date((a.start && (a.start.dateTime || a.start.date)) || 0).getTime() - now.getTime());
+        var tb = Math.abs(new Date((b.start && (b.start.dateTime || b.start.date)) || 0).getTime() - now.getTime());
+        return ta - tb;
+      })
+      .slice(0, 20)
+      .map(function (ev) {
+        var s = (ev.start && (ev.start.dateTime || ev.start.date)) || "";
+        var title = String(ev.summary || "Встреча");
+        return {
+          title: title,
+          hint: s ? postedTimeShort(s) : "",
+          ref: { kind: "event", id: String(ev.id), title: title, calendar_id: String(ev.calendar_id || ""), start: s },
+        };
+      });
   }
 
   function openPostedCardMenu(state, anchor) {

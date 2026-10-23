@@ -244,3 +244,31 @@ def test_reply_keeps_legacy_question(store):
     store.post_message(OWNER, t["id"], "Квартал", actor_name="Вова")
     msgs = [(e["actor_user_id"], e["text"]) for e in store.list_events(store.get_task(OWNER, t["id"])) if e["kind"] == "message"]
     assert msgs == [(str(ASSIGNEE), "Какой период?"), (str(OWNER), "Квартал")]
+
+
+def test_message_with_file_ref_and_mention(client, store, sent):
+    t = _delegated(store)
+    up = client.post(
+        f"/api/miniapp/notes/task/{t['id']}/discuss-files",
+        files={"file": ("smeta.txt", b"hello", "text/plain")},
+        headers=_headers(ASSIGNEE),
+    )
+    assert up.status_code == 200, up.text
+    fid = up.json()["file"]["id"]
+    assert client.post(f"/api/miniapp/notes/task/{t['id']}/discuss-files",
+                       files={"file": ("x.txt", b"x", "text/plain")}, headers=_headers(99)).status_code == 404
+    r = client.post(
+        f"/api/miniapp/calendar/tasks/{t['id']}/messages",
+        json={"text": "Глянь, @Артём", "file_ids": [fid, 999999],
+              "refs": [{"kind": "note", "id": "12", "title": "Смета v2"}, {"kind": "evil", "id": "1"}],
+              "mentions": [{"user_id": "33", "name": "Артём"}]},
+        headers=_headers(ASSIGNEE),
+    )
+    assert r.status_code == 200, r.text
+    msg = [e for e in r.json()["events"] if e["kind"] == "message"][-1]
+    assert [f["id"] for f in msg["meta"]["files"]] == [fid]
+    assert msg["meta"]["refs"] == [{"kind": "note", "id": "12", "title": "Смета v2"}]
+    to = [uid for uid, _ in sent]
+    assert OWNER in to and 33 in to  # постановщику — сообщение, Артёму — упоминание
+    g = client.get(f"/api/miniapp/notes/task/{t['id']}/discuss-files/{fid}", headers=_headers(OWNER))
+    assert g.status_code == 200 and g.content == b"hello"

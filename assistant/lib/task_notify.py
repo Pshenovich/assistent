@@ -152,7 +152,9 @@ def _send_task_push(to_uid: Any, text: str, tag: str) -> None:
         print(f"[calendar_tasks] {tag} uid={uid} err={e!r}")
 
 
-def notify_task_message(*, task: dict[str, Any], sender_id: Any, sender_name: str, text: str) -> None:
+def notify_task_message(
+    *, task: dict[str, Any], sender_id: Any, sender_name: str, text: str, mentions: list[dict[str, Any]] | None = None
+) -> None:
     """Сообщение в обсуждении поручения — второй стороне (постановщику или исполнителю)."""
     from assistant.stores.calendar_tasks import task_is_delegated
 
@@ -166,6 +168,13 @@ def notify_task_message(*, task: dict[str, Any], sender_id: Any, sender_name: st
     if len(body) > 600:
         body = body[:600].rstrip() + "…"
     _send_task_push(to, f"{who} по задаче {link}:\n{html.escape(body)}", "notify_message")
+    # Упомянутые через @ (кроме участников — им уже ушло): без ссылки, задача может быть им недоступна.
+    title = html.escape(str(task.get("title") or "Задача"))
+    for m in mentions or []:
+        mid = str((m or {}).get("user_id") or "")
+        if not mid or mid in (str(sender_id), owner, str(task.get("assignee_user_id") or "")):
+            continue
+        _send_task_push(mid, f"{who} упомянул(а) вас в задаче «{title}»:\n{html.escape(body)}", "notify_mention")
 
 
 def notify_task_returned(*, task: dict[str, Any], owner_name: str, comment: str) -> None:

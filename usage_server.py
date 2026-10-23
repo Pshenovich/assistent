@@ -3471,6 +3471,14 @@ def _resolve_item_owner(uid: str, kind: str, item_id: str) -> str | None:
         if _digest_report_for_user(uid_i, item_id):
             return str(uid)
         return None
+    if kind == "task":
+        # Вложения в обсуждении поручения: постановщик и исполнитель.
+        from assistant.stores import calendar_tasks as calendar_tasks_store
+
+        task = calendar_tasks_store.get_task_for_user(uid, item_id)
+        if not task:
+            return None
+        return str(task.get("owner_user_id") or "") or None
     if _owner_can_share_item(uid, kind, item_id):
         return str(uid)
     return None
@@ -5626,6 +5634,42 @@ async def miniapp_calendar_tasks_nudge(
 
 class _MiniappTaskMessageBody(BaseModel):
     text: str = ""
+    file_ids: list[int] = Field(default_factory=list)
+    refs: list[dict[str, Any]] = Field(default_factory=list)
+    mentions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+def _task_message_files(uid: int, task: dict[str, Any], file_ids: list[int]) -> list[dict[str, Any]]:
+    """Файлы, загруженные в обсуждение этого поручения (чужие id отбрасываем)."""
+    from assistant.stores import comment_files
+
+    out: list[dict[str, Any]] = []
+    owner = str(task.get("owner_user_id") or "")
+    for fid in list(dict.fromkeys(int(x) for x in file_ids if str(x).isdigit()))[:8]:
+        row = comment_files.get_file(fid)
+        if (
+            row
+            and str(row.get("owner_user_id") or "") == owner
+            and str(row.get("item_kind") or "") == "task"
+            and str(row.get("item_id") or "") == str(task["id"])
+        ):
+            out.append(_comment_file_api(row))
+    return out
+
+
+def _task_message_refs(refs: list[dict[str, Any]]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for r in refs[:5]:
+        kind = str((r or {}).get("kind") or "")
+        rid = str((r or {}).get("id") or "").strip()
+        if kind not in ("task", "note", "transcription", "event") or not rid:
+            continue
+        item = {"kind": kind, "id": rid[:200], "title": str(r.get("title") or "")[:200]}
+        if kind == "event":
+            item["calendar_id"] = str(r.get("calendar_id") or "")[:200]
+            item["start"] = str(r.get("start") or "")[:40]
+        out.append(item)
+    return out
 
 
 @miniapp_router.get("/calendar/tasks/{task_id}/events")
@@ -5656,16 +5700,32 @@ async def miniapp_calendar_tasks_message(
     uid = int(principal.telegram_user_id)
     tz = _tz_for(uid)
     name = _principal_display_name(principal)
+    task = await run_in_threadpool(calendar_tasks_store.get_task_for_user, uid, task_id)
+    if not task:
+        raise HTTPException(status_code=403, detail="Писать могут постановщик и исполнитель поручения")
+    files = await run_in_threadpool(_task_message_files, uid, task, body.file_ids)
+    refs = _task_message_refs(body.refs)
+    mentions = [
+        {"user_id": str(m.get("user_id") or "")[:20], "name": str(m.get("name") or "")[:120]}
+        for m in body.mentions[:10]
+        if str((m or {}).get("user_id") or "").isdigit()
+    ]
+    meta = {k: v for k, v in (("files", files), ("refs", refs), ("mentions", mentions)) if v}
     try:
         row = await run_in_threadpool(
-            partial(calendar_tasks_store.post_message, uid, task_id, body.text, actor_name=name)
+            partial(calendar_tasks_store.post_message, uid, task_id, body.text, actor_name=name, meta=meta)
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     if not row:
         raise HTTPException(status_code=403, detail="Писать могут постановщик и исполнитель поручения")
+    extra = []
+    if files:
+        extra.append(f"📎 {len(files)} влож.")
+    extra += [f"«{r['title']}»" for r in refs if r.get("title")]
+    push_text = " ".join([body.text.strip()] + extra).strip()
     await run_in_threadpool(
-        partial(notify_task_message, task=row, sender_id=uid, sender_name=name, text=body.text)
+        partial(notify_task_message, task=row, sender_id=uid, sender_name=name, text=push_text, mentions=mentions)
     )
     events = await run_in_threadpool(calendar_tasks_store.list_events, row)
     return {"ok": True, "task": _task_api(row, tz=tz, viewer_id=uid), "events": events}

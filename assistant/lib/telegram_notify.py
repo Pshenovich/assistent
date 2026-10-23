@@ -444,6 +444,17 @@ def get_user_profile_photo_bytes(
         file_path = str(((fr.json() or {}).get("result") or {}).get("file_path") or "")
         if not file_path:
             return None
+        if file_path.startswith("/"):
+            # Локальный Bot API (TELEGRAM_LOCAL=1) отдаёт путь к файлу в контейнере, а не ссылку:
+            # читаем файл с диска (bind mount), иначе фото исполнителей не грузились.
+            from assistant.lib.tg_media_fetch import _host_path_for_local_api
+
+            token = (bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")).strip()
+            host = _host_path_for_local_api(file_path, token)
+            if host is not None:
+                return host.read_bytes()
+            print(f"[telegram_notify] photo uid={user_id} local file not found: {file_path}")
+            return None
         if file_path.startswith("http://") or file_path.startswith("https://"):
             url = file_path
         else:
