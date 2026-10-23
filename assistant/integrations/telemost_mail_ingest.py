@@ -84,6 +84,8 @@ def _write_state(telegram_user_id: int, state: dict[str, Any]) -> None:
 def _has_mail_scope(telegram_user_id: int) -> bool:
     store = telemost_oauth.read_token_store(telegram_user_id) or {}
     scope = str(store.get("scope") or "")
+    if not scope.strip():
+        return True  # Яндекс не присылает scope при обмене кода — проверит сам вход в IMAP
     return "mail:imap_ro" in scope.split()
 
 

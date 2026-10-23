@@ -75,11 +75,17 @@ def yandex_oauth_state(uid: int) -> dict[str, Any]:
 
     store = telemost_oauth.read_token_store(int(uid)) or {}
     scopes = str(store.get("scope") or "").split()
+    # Яндекс обычно не присылает scope в ответе на обмен кода: тогда права неизвестны (None) —
+    # проверяем по-настоящему, входом в IMAP/SMTP.
+    known = bool(scopes)
+    email = str(store.get("yandex_email") or store.get("yandex_login") or "").strip().lower()
+    if email and "@" not in email:
+        email += "@yandex.ru"  # логин без домена
     return {
-        "connected": bool(store),
-        "email": str(store.get("yandex_email") or store.get("yandex_login") or "").strip().lower(),
-        "read": "mail:imap_ro" in scopes or "mail:imap_full" in scopes,
-        "send": "mail:smtp" in scopes,
+        "connected": bool(store.get("access_token")),
+        "email": email,
+        "read": ("mail:imap_ro" in scopes or "mail:imap_full" in scopes) if known else None,
+        "send": ("mail:smtp" in scopes) if known else None,
     }
 
 
@@ -89,8 +95,11 @@ def connect(uid: int, body: dict[str, Any]) -> dict[str, Any]:
     send = bool(body.get("send_enabled", True))
     if provider == "yandex" and not body.get("password"):
         st = yandex_oauth_state(uid)
-        if not st["connected"] or not st["read"] or not st["email"]:
+        if not st["connected"] or st["read"] is False:
             return {"ok": False, "need_oauth": True}
+        if not st["email"]:
+            raise ConnectError("Яндекс не сообщил адрес почты. Войдите через Яндекс ещё раз или подключите по паролю приложения.",
+                               step="oauth")
         acc = {"provider": "yandex", "email": st["email"], "auth": "oauth_yandex",
                **{k: v for k, v in zip(("imap_host", "imap_port"), mail_imap.PROVIDERS["yandex"]["imap"])},
                **{k: v for k, v in zip(("smtp_host", "smtp_port"), mail_imap.PROVIDERS["yandex"]["smtp"])}}
@@ -102,6 +111,10 @@ def connect(uid: int, body: dict[str, Any]) -> dict[str, Any]:
             raise ConnectError(str(e), step="imap", code="imap_disabled") from e
         except Exception as e:
             raise ConnectError(mail_imap.humanize_login_error("yandex", e), step="imap") from e
+        if st["send"] is None:
+            from assistant.integrations import mail_smtp
+
+            st["send"] = mail_smtp.can_auth(acc, access_token=telemost_oauth.get_valid_access_token(uid))
         saved = mail_accounts.upsert(uid, send_enabled=send and st["send"], **acc)
         mail_source.kick(uid)
         return {"ok": True, "account": mail_accounts.public(saved), "send_scope": st["send"]}

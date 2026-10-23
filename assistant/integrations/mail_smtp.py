@@ -28,6 +28,33 @@ def _host(account: dict[str, Any]) -> tuple[str, int]:
     return host, port
 
 
+def can_auth(account: dict[str, Any], *, secret: str = "", access_token: str = "") -> bool:
+    """Пускает ли SMTP (право на отправку) — без отправки письма."""
+    try:
+        host, port = _host(account)
+        ctx = ssl.create_default_context()
+        server: smtplib.SMTP = (smtplib.SMTP_SSL(host, port, timeout=TIMEOUT, context=ctx) if port == 465
+                                else smtplib.SMTP(host, port, timeout=TIMEOUT))
+        try:
+            if port != 465:
+                server.starttls(context=ctx)
+            server.ehlo()
+            if access_token:
+                token = base64.b64encode(f"user={account['email']}\x01auth=Bearer {access_token}\x01\x01".encode()).decode()
+                code, _ = server.docmd("AUTH", "XOAUTH2 " + token)
+                return code == 235
+            server.login(str(account["email"]), secret)
+            return True
+        finally:
+            try:
+                server.quit()
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[mail] smtp auth check {account.get('email')} err={e!r}")
+        return False
+
+
 def send(account: dict[str, Any], msg: EmailMessage, *, secret: str = "", access_token: str = "") -> None:
     host, port = _host(account)
     ctx = ssl.create_default_context()

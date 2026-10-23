@@ -73,7 +73,7 @@ def test_connect_yandex_needs_oauth_then_works(env, monkeypatch):
     monkeypatch.setattr(telemost_oauth, "read_token_store", lambda uid: {})
     assert mail_connect.connect(ME, {"provider": "yandex"}) == {"ok": False, "need_oauth": True}
     monkeypatch.setattr(telemost_oauth, "read_token_store",
-                        lambda uid: {"yandex_email": "Vova@yandex.ru", "scope": "mail:imap_ro telemost-api:conferences.create"})
+                        lambda uid: {"access_token": "tok", "yandex_email": "Vova@yandex.ru", "scope": "mail:imap_ro telemost-api:conferences.create"})
     monkeypatch.setattr(telemost_oauth, "get_valid_access_token", lambda uid: "tok")
     res = mail_connect.connect(ME, {"provider": "yandex", "send_enabled": True})
     assert res["ok"] and res["account"]["auth"] == "oauth_yandex"
@@ -87,3 +87,14 @@ def test_disconnect_purges_index(env):
     mail_index.upsert(ME, {"mail_key": f"{aid}:1", "account_id": aid, "subject": "x", "date_utc": "2026-10-22T10:00:00+00:00"})
     assert mail_connect.disconnect(ME, aid)
     assert mail_index.get(ME, f"{aid}:1") is None and mail_accounts.list_accounts(ME) == []
+
+
+def test_connect_yandex_without_scope_in_token_checks_for_real(env, monkeypatch):
+    """Яндекс не присылает scope при обмене кода — подключаем по факту входа в IMAP/SMTP."""
+    from assistant.integrations import mail_smtp, telemost_oauth
+
+    monkeypatch.setattr(telemost_oauth, "read_token_store", lambda uid: {"access_token": "tok", "yandex_login": "vova"})
+    monkeypatch.setattr(telemost_oauth, "get_valid_access_token", lambda uid: "tok")
+    monkeypatch.setattr(mail_smtp, "can_auth", lambda acc, **kw: True)
+    res = mail_connect.connect(ME, {"provider": "yandex", "send_enabled": True})
+    assert res["ok"] and res["account"]["email"] == "vova@yandex.ru" and res["account"]["send_enabled"]
