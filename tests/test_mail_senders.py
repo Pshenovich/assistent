@@ -88,3 +88,25 @@ def test_filtered_senders_and_revive(env):
     mail_index.revive(ME, "n1", "Ваш заказ готов")
     r = mail_index.get(ME, "n1")
     assert not r["bulk"] and r["analyzed"] == 0 and mail_index.search(ME, "заказ")
+
+
+def test_correspondent_is_not_a_robot(env):
+    m = EmailMessage()
+    m["From"], m["To"], m["Subject"] = "info@paylate.info", MINE, "Re: Оплата"
+    assert mail_source.is_filtered(m, "info@paylate.info", mine={MINE}, rules={})
+    assert not mail_source.is_filtered(m, "info@paylate.info", mine={MINE}, rules={}, known={"info@paylate.info"})
+    m2 = EmailMessage()
+    m2["From"], m2["To"], m2["Subject"] = "ulyana@firm.ru", MINE, "Приглашение: Звонок"
+    assert mail_source.is_filtered(m2, "ulyana@firm.ru", mine={MINE}, rules={}, known={"ulyana@firm.ru"})  # приглашения — всегда нет
+
+
+def test_revive_correspondents_picks_only_known_non_calendar(env, monkeypatch):
+    calls = []
+    monkeypatch.setattr(mail_source, "revive_sender", lambda uid, p: calls.append(p) or 1)
+    mail_index.upsert(ME, {"mail_key": "o1", "account_id": "m_1", "direction": "out", "from_addr": MINE, "to": ["info@paylate.info", "ulyana@firm.ru"],
+                           "subject": "Оплата", "snippet": "x", "thread_key": "t1", "date_utc": (NOW - timedelta(days=2)).isoformat()})
+    _put("p1", "info@paylate.info", bulk=True, snippet="")
+    _put("c1", "ulyana@firm.ru", bulk=True, snippet="")
+    mail_index._conn().execute("UPDATE mail_messages SET subject = 'Приглашение: Звонок' WHERE mail_key = 'c1'")
+    _put("n1", "news@shop.ru", bulk=True, snippet="")
+    assert mail_source.revive_correspondents(ME) == 1 and calls == ["info@paylate.info"]

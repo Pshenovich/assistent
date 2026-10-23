@@ -99,9 +99,11 @@ def check_login(acc: dict[str, Any], *, secret: str = "", access_token: str = ""
 
 # ---------------------------------------------------------------- синхронизация
 
-def is_filtered(msg, from_addr: str, *, mine: set[str], rules: Optional[dict[str, str]] = None) -> bool:
+def is_filtered(msg, from_addr: str, *, mine: set[str], rules: Optional[dict[str, str]] = None,
+                known: Optional[set[str]] = None) -> bool:
     """Отсеять письмо (приглашение из календаря, рассылка, робот, скрытый отправитель).
-    «Всегда пропускать» сильнее воронки, но не приглашений — встречи и так в «Актуальном»."""
+    «Всегда пропускать» сильнее воронки, но не приглашений — встречи и так в «Актуальном».
+    known — адреса, которым пользователь сам писал: с info@ / support@, с которыми идёт переписка, это не робот."""
     if mail_filters.is_calendar(msg):
         return True
     if from_addr in mine:
@@ -111,11 +113,13 @@ def is_filtered(msg, from_addr: str, *, mine: set[str], rules: Optional[dict[str
         return False
     if rule == "block":
         return True
+    if known and from_addr in known:
+        return False
     return mail_filters.is_bulk(msg) or mail_filters.is_robot(from_addr)
 
 
 def _row_from(acc: dict[str, Any], folder: str, uid: int, msg, *, mine: set[str], body: Optional[str],
-              rules: Optional[dict[str, str]] = None) -> dict[str, Any]:
+              rules: Optional[dict[str, str]] = None, known: Optional[set[str]] = None) -> dict[str, Any]:
     mid = (mail_imap.msg_ids(msg.get("Message-ID")) or [""])[0]
     irt = (mail_imap.msg_ids(msg.get("In-Reply-To")) or [""])[0]
     refs = mail_imap.msg_ids(msg.get("References"))
@@ -126,7 +130,7 @@ def _row_from(acc: dict[str, Any], folder: str, uid: int, msg, *, mine: set[str]
     reply_to = (mail_imap.addresses(msg, "Reply-To") or [("", "")])[0][1]
     dt = mail_imap.date_utc(msg) or _now()
     direction = "out" if from_addr in mine else "in"
-    bulk = mail_filters.is_calendar(msg) or (direction == "in" and is_filtered(msg, from_addr, mine=mine, rules=rules))
+    bulk = mail_filters.is_calendar(msg) or (direction == "in" and is_filtered(msg, from_addr, mine=mine, rules=rules, known=known))
     snippet = mail_imap.strip_quoted(body)[: mail_index.SNIPPET] if body else ""
     return {
         "mail_key": mail_index.mail_key(str(acc["account_id"]), mid, folder, uid),
@@ -156,13 +160,14 @@ def _sync_folder(uid: int, acc: dict[str, Any], mail, folder: str, *, days: int,
         return stats
     heads = mail_imap.fetch(mail, uids, "BODY.PEEK[HEADER]")
     rules = mail_senders.rules_map(uid)
+    known = mail_index.correspondents(uid) - mine
     want_body: list[int] = []
     parsed: dict[int, Any] = {}
     for u, (size, raw) in heads.items():
         msg = mail_imap.parse(raw)
         parsed[u] = msg
         frm = (mail_imap.addresses(msg, "From") or [("", "")])[0][1]
-        if is_filtered(msg, frm, mine=mine, rules=rules):
+        if is_filtered(msg, frm, mine=mine, rules=rules, known=known):
             stats["bulk"] += 1
             continue
         dt = mail_imap.date_utc(msg)
@@ -174,7 +179,7 @@ def _sync_folder(uid: int, acc: dict[str, Any], mail, folder: str, *, days: int,
         if u in full:
             msg = mail_imap.parse(full[u][1])
             body = mail_imap.body_text(msg)
-        row = _row_from(acc, folder, u, msg, mine=mine, body=body, rules=rules)
+        row = _row_from(acc, folder, u, msg, mine=mine, body=body, rules=rules, known=known)
         if mail_index.upsert(uid, row):
             stats["new"] += 1
         if memory and body and not row["bulk"]:
@@ -256,6 +261,10 @@ def poll_user(uid: int) -> int:
         n = 0
         for acc in mail_accounts.list_accounts(uid):
             n += int(sync_account(uid, acc).get("new", 0))
+        try:
+            revive_correspondents(uid)
+        except Exception as e:
+            print(f"[mail] revive uid={uid} err={e!r}")
         try:
             analyze_user(uid)
         except Exception as e:
@@ -359,6 +368,26 @@ def muted(uid: int) -> tuple[set[str], set[str]]:
     return senders, domains
 
 
+def revive_correspondents(uid: int, *, limit: int = 20) -> int:
+    """Письма от info@ / support@ и т. п., с которыми пользователь сам переписывается, — вернуть из «отсеянных»."""
+    known = mail_index.correspondents(uid) - my_addresses(uid)
+    rules = mail_senders.rules_map(uid)
+    since = _now() - timedelta(days=FIRST_SYNC_DAYS)
+    senders = []
+    for r in mail_index.recent(uid, since=since, direction="in"):
+        addr = str(r.get("from_addr") or "")
+        if (r.get("bulk") and addr in known and addr not in senders and mail_senders.match(rules, addr) != "block"
+                and not mail_filters.CALENDAR_SUBJECT.match(str(r.get("subject") or ""))):
+            senders.append(addr)
+    n = 0
+    for addr in senders[:limit]:
+        try:
+            n += revive_sender(uid, addr)
+        except Exception as e:
+            print(f"[mail] revive correspondent uid={uid} err={e!r}")
+    return n
+
+
 def hide_calendar(uid: int) -> int:
     """Уже попавшие в индекс приглашения — убрать из «Почты», поиска и памяти (по теме)."""
     keys, mids = [], []
@@ -402,7 +431,8 @@ def allow_sender(uid: int, pattern: str) -> dict[str, Any]:
 
 
 def revive_sender(uid: int, pattern: str, *, days: int = FIRST_SYNC_DAYS) -> int:
-    rows = mail_index.filtered_rows(uid, pattern, since=_now() - timedelta(days=days))
+    rows = [r for r in mail_index.filtered_rows(uid, pattern, since=_now() - timedelta(days=days))
+            if not mail_filters.CALENDAR_SUBJECT.match(str(r.get("subject") or ""))]
     by_acc: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
         by_acc.setdefault(str(r["account_id"]), []).append(r)
@@ -422,7 +452,10 @@ def revive_sender(uid: int, pattern: str, *, days: int = FIRST_SYNC_DAYS) -> int
                 for r in frows:
                     if int(r.get("uid") or 0) not in got:
                         continue
-                    body = mail_imap.body_text(mail_imap.parse(got[int(r["uid"])][1]))
+                    full = mail_imap.parse(got[int(r["uid"])][1])
+                    if mail_filters.is_calendar(full):
+                        continue  # приглашения не возвращаем ни для кого
+                    body = mail_imap.body_text(full)
                     mail_index.revive(uid, r["mail_key"], mail_imap.strip_quoted(body)[: mail_index.SNIPPET])
                     n += 1
         finally:

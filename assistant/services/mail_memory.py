@@ -358,6 +358,9 @@ def backfill_step(uid: int, acc: dict[str, Any], mail, folders: list[str], *, no
     floor = now - timedelta(days=BACKFILL_DAYS)
     mine = {str(acc["email"]).lower()}
     rules = mail_senders.rules_map(uid)
+    from assistant.stores import mail_index
+
+    known = mail_index.correspondents(uid) - mine
     added = 0
     for folder in folders:
         before = _cursor(uid, acc["account_id"], folder) or (now - timedelta(days=mail_source.FIRST_SYNC_DAYS))
@@ -373,13 +376,13 @@ def backfill_step(uid: int, acc: dict[str, Any], mail, folders: list[str], *, no
         for u, (size, raw) in heads.items():
             msg = mail_imap.parse(raw)
             frm = (mail_imap.addresses(msg, "From") or [("", "")])[0][1]
-            if size <= mail_source.MAX_BODY_SIZE and not mail_source.is_filtered(msg, frm, mine=mine, rules=rules):
+            if size <= mail_source.MAX_BODY_SIZE and not mail_source.is_filtered(msg, frm, mine=mine, rules=rules, known=known):
                 want.append(u)
         full = mail_imap.fetch(mail, want, "BODY.PEEK[]") if want else {}
         for u, (_size, raw) in full.items():
             msg = mail_imap.parse(raw)
             body = mail_imap.body_text(msg)
-            row = mail_source._row_from(acc, folder, u, msg, mine=mine, body=body, rules=rules)
+            row = mail_source._row_from(acc, folder, u, msg, mine=mine, body=body, rules=rules, known=known)
             if add_message(uid, row, body):
                 added += 1
         _set_cursor(uid, acc["account_id"], folder, since)
