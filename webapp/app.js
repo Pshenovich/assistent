@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-posted2";
+  var WEBAPP_BUILD = "20261023-posted3";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -15633,6 +15633,11 @@
     opts = opts || {};
     var taskId = calendarTaskId(ev);
     var existing = !!taskId;
+    // Поручение (постановщик ≠ исполнитель) открывается карточкой с обсуждением; редактор — через «Изменить».
+    if (existing && !opts.forceEdit && isDelegatedTaskEvent(ev)) {
+      openPostedCard(taskId);
+      return;
+    }
     // Новая задача, а в прошлый раз выбрали трекер — сразу его форма (переключатель «Орбита» там же).
     var lastTarget = readTaskTarget();
     if (!existing && !pendingSheetConvert && lastTarget && lastTarget !== "orbita") {
@@ -15675,7 +15680,6 @@
       (existing ? "" : eventSheetKindSwitcherHtml("task") + '<div id="m-task-target-slot"></div>') +
       '<textarea id="m-ev-sum" class="event-sheet-title event-sheet-title--area" rows="1" enterkeyhint="done" placeholder="Название" autocomplete="off"></textarea>' +
       (existing ? '<div id="m-task-tracker-links" class="tracker-links hidden"></div>' : "") +
-      (existing ? '<div id="m-task-assignee-state" class="task-ass-state hidden"></div>' : "") +
       '<input type="hidden" id="modal-task-note-id" />' +
       sheetWhenHtml({ task: true, label: "Срок" }) +
       '<div id="m-task-assignee-slot"></div>' +
@@ -15807,13 +15811,6 @@
       ev.owner_archived ||
       (ev.event && ev.event.owner_archived)
     );
-    if (existing && isDelegated) {
-      mountTaskAssigneeState(document.getElementById("m-task-assignee-state"), ev, {
-        taskId: taskId,
-        isOwner: isTaskOwner,
-        assigneeName: String((ev.assignee && ev.assignee.name) || ev.assignee_name || ""),
-      });
-    }
     var taskSource = { kind: "task", id: String(taskId), calendarId: "leo-tasks" };
     function buildTaskMenu() {
       if (!existing) return null;
@@ -15893,129 +15890,6 @@
         titleEl.focus();
       }, 0);
     }
-  }
-
-  /** Поручение в окне задачи: исполнитель отвечает «В работе» / «Есть вопрос», автор видит ответ и может напомнить. */
-  function mountTaskAssigneeState(host, ev, o) {
-    if (!host) return;
-    var st = ev.assignee_state || (ev.event && ev.event.assignee_state) || {};
-    var done = !!(ev.done || (ev.event && ev.event.done));
-    var tid = String(o.taskId);
-    host.innerHTML = "";
-    if (!o.isOwner) {
-      apiFetch("/calendar/tasks/" + encodeURIComponent(tid) + "/seen", { method: "POST" }).catch(function () {});
-      if (done) return;
-      var label = document.createElement("div");
-      label.className = "task-ass-state-label";
-      label.textContent = "Ответ постановщику";
-      host.appendChild(label);
-      var btns = document.createElement("div");
-      btns.className = "task-ass-btns";
-      var qBox = document.createElement("div");
-      qBox.className = "task-ass-question hidden";
-      var qInput = document.createElement("textarea");
-      qInput.className = "field-textarea";
-      qInput.rows = 2;
-      qInput.placeholder = "Что уточнить?";
-      qInput.value = st.status === "question" ? st.status_note || "" : "";
-      var qSend = document.createElement("button");
-      qSend.type = "button";
-      qSend.className = "btn task-ass-send";
-      qSend.textContent = "Отправить вопрос";
-      qBox.appendChild(qInput);
-      qBox.appendChild(qSend);
-      var current = st.status || "";
-      function paint() {
-        btns.querySelectorAll("[data-st]").forEach(function (b) {
-          var on = b.getAttribute("data-st") === current;
-          b.classList.toggle("on", on);
-          b.setAttribute("aria-pressed", on ? "true" : "false");
-        });
-      }
-      async function send(status, note) {
-        try {
-          var r = await apiFetch("/calendar/tasks/" + encodeURIComponent(tid) + "/status", {
-            method: "POST",
-            body: JSON.stringify({ status: status, note: note || "" }),
-          });
-          current = status;
-          paint();
-          if (r && r.task && r.task.event) ev.assignee_state = r.task.event.assignee_state;
-          showNoteToast(status === "question" ? "Вопрос отправлен постановщику" : status ? "Отметили: в работе" : "Статус снят");
-          return true;
-        } catch (err) {
-          showNoteToast((err && err.message) || "Не получилось");
-          return false;
-        }
-      }
-      [
-        ["in_progress", "В работе"],
-        ["question", "Есть вопрос"],
-      ].forEach(function (pair) {
-        var b = document.createElement("button");
-        b.type = "button";
-        b.className = "task-ass-btn";
-        b.setAttribute("data-st", pair[0]);
-        b.textContent = pair[1];
-        b.addEventListener("click", function () {
-          if (pair[0] === "question") {
-            qBox.classList.toggle("hidden");
-            if (!qBox.classList.contains("hidden")) qInput.focus();
-            return;
-          }
-          qBox.classList.add("hidden");
-          send(current === pair[0] ? "" : pair[0]);
-        });
-        btns.appendChild(b);
-      });
-      qSend.addEventListener("click", async function () {
-        var note = String(qInput.value || "").trim();
-        if (!note) {
-          qInput.focus();
-          showNoteToast("Напишите вопрос");
-          return;
-        }
-        qSend.disabled = true;
-        if (await send("question", note)) qBox.classList.add("hidden");
-        qSend.disabled = false;
-      });
-      host.appendChild(btns);
-      host.appendChild(qBox);
-      paint();
-      host.classList.remove("hidden");
-      return;
-    }
-    var who = (o.assigneeName || "Исполнитель").split(/\s+/)[0];
-    var line = document.createElement("p");
-    line.className = "task-ass-summary";
-    var parts = [];
-    if (done) parts.push(who + " · выполнено");
-    else if (st.status === "in_progress") parts.push(who + " · в работе с " + postedTimeShort(st.status_at));
-    else if (st.seen_at) parts.push(who + " · просмотрено " + postedTimeShort(st.seen_at));
-    else parts.push(who + " · ещё не просмотрено");
-    if (st.nudged_at && !done) parts.push("напомнили " + postedTimeShort(st.nudged_at));
-    line.textContent = parts.join(" · ");
-    host.appendChild(line);
-    if (st.status === "question" && st.status_note && !done) {
-      var q = document.createElement("p");
-      q.className = "task-ass-q";
-      q.textContent = "Вопрос: «" + st.status_note + "»";
-      host.appendChild(q);
-    }
-    if (!done) {
-      var nudge = document.createElement("button");
-      nudge.type = "button";
-      nudge.className = "task-ass-btn task-ass-nudge";
-      nudge.innerHTML = postedIcon("bell", 15) + "<span>Напомнить</span>";
-      nudge.addEventListener("click", async function () {
-        nudge.disabled = true;
-        var r = await nudgePostedTask(tid);
-        nudge.disabled = false;
-        if (r.ok) mountTaskAssigneeState(host, Object.assign({}, ev, { assignee_state: Object.assign({}, st, { nudged_at: new Date().toISOString() }) }), o);
-      });
-      host.appendChild(nudge);
-    }
-    host.classList.remove("hidden");
   }
 
   // ——— Внешние трекеры (Битрикс24…): задача живёт там; в Орбите — только чип в заметке и бейдж у дубля ———
@@ -21866,37 +21740,27 @@
     return many;
   }
 
+  // ——— «Поручения» (задачи, поставленные другим): «Ждут вас» / «В работе», команда, карточка с обсуждением ———
   var lastPostedTasksItems = [];
   var lastPostedTasksActiveCount = 0;
-  var postedTasksTab = "current"; // current | archive
-  // «Поручено другим»: фильтр (all | overdue | a:<ключ исполнителя>), группировка, раскрыт ли блок «Выполнено».
-  var postedFilter = "all";
-  var postedDoneOpen = false;
-  var POSTED_GROUP_LS = "leo_posted_group";
-  var postedGroupBy = (function () {
-    try {
-      return localStorage.getItem(POSTED_GROUP_LS) === "people" ? "people" : "due";
-    } catch (_) {
-      return "due";
-    }
-  })();
+  var postedTasksTab = "current"; // current | archive («Принятые»)
+  var postedArchiveItems = [];
+  var postedArchiveLoaded = false;
+  var postedPerson = ""; // ключ исполнителя в витрине команды ("" — все)
+  var postedArchiveQ = "";
+  var postedSelectedId = ""; // открытое поручение в правой панели на десктопе
+  var postedSideOpts = null; // как открыть его там (например, сразу в поле ответа)
   var DAY_MS = 86400000;
 
   function postedTaskDayIso(task) {
     var ev = (task && task.event) || {};
-    var day = String(
-      (ev && (ev.start_day || (ev.start && ev.start.date))) || ""
-    ).slice(0, 10);
+    var day = String((ev && (ev.start_day || (ev.start && ev.start.date))) || "").slice(0, 10);
     if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
     var raw = String((task && task.start_at) || (ev && ev.start && ev.start.dateTime) || "");
     if (!raw) return "";
-    try {
-      var d = new Date(raw);
-      if (isNaN(d.getTime())) return raw.slice(0, 10);
-      return localDateIsoFromMs(d.getTime()) || raw.slice(0, 10);
-    } catch (_) {
-      return raw.slice(0, 10);
-    }
+    var d = new Date(raw);
+    if (isNaN(d.getTime())) return raw.slice(0, 10);
+    return localDateIsoFromMs(d.getTime()) || raw.slice(0, 10);
   }
 
   function postedTaskIsAllDay(task) {
@@ -21908,13 +21772,12 @@
     if (!task || postedTaskIsAllDay(task)) return "";
     var ev = task.event || {};
     var raw = (ev.start && ev.start.dateTime) || task.start_at || "";
-    if (!raw) return "";
-    var d = new Date(raw);
-    if (isNaN(d.getTime())) return "";
+    var d = raw ? new Date(raw) : null;
+    if (!d || isNaN(d.getTime())) return "";
     return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
   }
 
-  // Срок: для задачи на весь день — конец дня, для задачи со временем — её конец (как в Фокусе «просрочено»).
+  // Срок: задача на весь день — конец дня, со временем — её конец (как «просрочено» в Фокусе).
   function postedTaskDueMs(task) {
     var day = postedTaskDayIso(task);
     if (postedTaskIsAllDay(task)) {
@@ -21928,8 +21791,23 @@
     return isNaN(ms) ? NaN : ms;
   }
 
+  function postedTaskIsDone(task) {
+    var ev = (task && task.event) || {};
+    return !!(task && (task.done || ev.done));
+  }
+
+  function postedTaskIsArchived(task) {
+    var ev = (task && task.event) || {};
+    return !!(task && (task.owner_archived || ev.owner_archived));
+  }
+
+  function postedTaskOutcome(task) {
+    var ev = (task && task.event) || {};
+    return String((task && task.outcome) || ev.outcome || "");
+  }
+
   function postedTaskIsOverdue(task, now) {
-    if (postedTaskIsDone(task)) return false;
+    if (postedTaskIsDone(task) || postedTaskIsArchived(task)) return false;
     var due = postedTaskDueMs(task);
     return !isNaN(due) && due < (now || Date.now());
   }
@@ -21943,51 +21821,41 @@
     return Math.round((a - b) / DAY_MS);
   }
 
-  // overdue | today | tomorrow | week | later | nodate
-  function postedDueBucket(task) {
-    if (postedTaskIsOverdue(task)) return "overdue";
-    var diff = postedDayDiff(postedTaskDayIso(task));
-    if (isNaN(diff)) return "nodate";
-    if (diff <= 0) return "today";
-    if (diff === 1) return "tomorrow";
-    if (diff <= 7) return "week";
-    return "later";
-  }
-
-  var POSTED_BUCKETS = [
-    ["overdue", "Просрочено"],
-    ["today", "Сегодня"],
-    ["tomorrow", "Завтра"],
-    ["week", "На неделе"],
-    ["later", "Позже"],
-    ["nodate", "Без срока"],
-  ];
-
-  function postedShortDate(dayIso) {
+  function postedShortDate(dayIso, withWeekday) {
     var p = String(dayIso || "").split("-");
     if (p.length !== 3) return "";
     var d = new Date(+p[0], +p[1] - 1, +p[2]);
-    var s = d.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" });
-    return s.replace(/\.(?=,|\s|$)/g, "");
+    var o = withWeekday ? { weekday: "short", day: "numeric", month: "short" } : { day: "numeric", month: "short" };
+    return d.toLocaleDateString("ru-RU", o).replace(/\.(?=,|\s|$)/g, "");
   }
 
-  // «сегодня, 16:30» · «завтра» · «сб, 24 окт» · просрочено: «вчера» / «20 окт, 14:00 · 3 дня».
-  function postedDueLabel(task) {
+  // Короткий срок для колонки справа: «сегодня» / «завтра» / «вт» / «27 окт».
+  function postedDueShort(task) {
     var day = postedTaskDayIso(task);
-    if (!day) return "без срока";
+    if (!day) return { day: "без срока", time: "" };
     var diff = postedDayDiff(day);
-    var time = postedTaskTimeLabel(task);
-    var base;
-    if (diff === 0) base = "сегодня";
-    else if (diff === 1) base = "завтра";
-    else if (diff === -1) base = "вчера";
-    else base = postedShortDate(day);
-    var out = base + (time ? ", " + time : "");
-    if (postedTaskIsOverdue(task) && diff < -1) {
-      var n = -diff;
-      out += " · " + n + " " + pluralRu(n, "день", "дня", "дней");
-    }
-    return out;
+    var label;
+    if (diff === 0) label = "сегодня";
+    else if (diff === 1) label = "завтра";
+    else if (diff === -1) label = "вчера";
+    else if (diff > 1 && diff < 7) {
+      var p = day.split("-");
+      label = new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString("ru-RU", { weekday: "short" }).replace(".", "");
+    } else label = postedShortDate(day);
+    return { day: label, time: postedTaskTimeLabel(task) };
+  }
+
+  function postedDueLong(task) {
+    var d = postedDueShort(task);
+    if (d.day === "без срока") return "без срока";
+    return "срок " + d.day + (d.time ? ", " + d.time : "");
+  }
+
+  function postedLateLabel(task) {
+    var diff = postedDayDiff(postedTaskDayIso(task));
+    if (isNaN(diff) || diff >= 0) return "Срок истёк";
+    var n = -diff;
+    return "Просрочено " + n + " " + pluralRu(n, "день", "дня", "дней");
   }
 
   function postedTaskAssigneeLabel(task) {
@@ -21996,26 +21864,33 @@
     return (
       String((task && task.assignee_name) || ass.name || "").trim() ||
       String((task && task.assignee_email) || ass.email || "").trim() ||
-      ""
+      "Исполнитель"
     );
+  }
+
+  function postedAssigneeUid(task) {
+    var ev = (task && task.event) || {};
+    return String((task && task.assignee_user_id) || (ev.assignee && ev.assignee.user_id) || "");
   }
 
   function postedAssigneeKey(task) {
     var ev = (task && task.event) || {};
     var ass = (ev && ev.assignee) || {};
     return (
-      String((task && task.assignee_user_id) || ass.user_id || "").trim() ||
+      postedAssigneeUid(task) ||
       String((task && task.assignee_email) || ass.email || "").trim().toLowerCase() ||
-      postedTaskAssigneeLabel(task).toLowerCase() ||
-      "?"
+      postedTaskAssigneeLabel(task).toLowerCase()
     );
+  }
+
+  function postedFirstName(name) {
+    return String(name || "").trim().split(/\s+/)[0] || "Исполнитель";
   }
 
   function postedInitials(name) {
     var parts = String(name || "").trim().split(/\s+/).filter(Boolean);
     if (!parts.length) return "?";
-    var s = parts[0].charAt(0) + (parts[1] ? parts[1].charAt(0) : "");
-    return s.toUpperCase();
+    return (parts[0].charAt(0) + (parts[1] ? parts[1].charAt(0) : "")).toUpperCase();
   }
 
   function postedAvatarTone(key) {
@@ -22025,20 +21900,40 @@
     return Math.abs(h) % 6;
   }
 
+  /** Фото из Telegram (или своё из Орбиты); пока нет — инициалы на цветном круге. */
+  function postedAvatar(userId, name, size) {
+    var el = document.createElement("span");
+    el.className = "pt-av pt-av--" + (size || "m") + " pt-tone--" + postedAvatarTone(userId || name);
+    el.setAttribute("aria-hidden", "true");
+    var t = document.createElement("span");
+    t.className = "pt-av-txt";
+    t.textContent = postedInitials(name);
+    el.appendChild(t);
+    if (userId) {
+      var img = document.createElement("img");
+      img.alt = "";
+      img.className = "pt-av-img";
+      el.appendChild(img);
+      applyTelegramAvatar(img, { userId: userId });
+    }
+    return el;
+  }
+
   function postedAssigneeState(task) {
     var ev = (task && task.event) || {};
     return ev.assignee_state || task.assignee_state || {};
   }
 
-  function postedTaskIsDone(task) {
-    var ev = (task && task.event) || {};
-    return !!(task && (task.done || ev.done));
+  // Что ждёт постановщика: вопрос исполнителя, сданная работа, просрочка. Иначе — null («в работе»).
+  function postedAttention(task) {
+    if (postedTaskIsArchived(task)) return null;
+    if (postedTaskIsDone(task)) return "done";
+    if (postedAssigneeState(task).status === "question") return "question";
+    if (postedTaskIsOverdue(task)) return "late";
+    return null;
   }
 
-  function postedTaskIsArchived(task) {
-    var ev = (task && task.event) || {};
-    return !!(task && (task.owner_archived || ev.owner_archived));
-  }
+  var POSTED_ATTN_ORDER = { question: 0, late: 1, done: 2 };
 
   function postedActiveCountFromItems(items) {
     return (Array.isArray(items) ? items : []).filter(function (t) {
@@ -22046,25 +21941,23 @@
     }).length;
   }
 
-  function postedOverdueCountFromItems(items) {
+  function postedAttentionCount(items) {
     return (Array.isArray(items) ? items : []).filter(function (t) {
-      return !postedTaskIsArchived(t) && postedTaskIsOverdue(t);
+      return !!postedAttention(t);
     }).length;
   }
 
-  function syncPostedTasksHeroCount(count) {
-    if (typeof count === "number" && !isNaN(count)) {
-      lastPostedTasksActiveCount = count;
-    }
-    var countEl = document.getElementById("posted-tasks-count");
-    if (countEl) countEl.textContent = String(lastPostedTasksActiveCount);
-    var chip = document.getElementById("posted-tasks-open");
-    if (chip && postedTasksTab === "current") syncPostedHeroLate(chip, postedOverdueCountFromItems(lastPostedTasksItems));
+  // Оставлено для календаря/Фокуса: число просроченных.
+  function postedOverdueCountFromItems(items) {
+    return (Array.isArray(items) ? items : []).filter(function (t) {
+      return postedTaskIsOverdue(t);
+    }).length;
   }
 
-  function syncPostedHeroLate(chip, late) {
+  function syncPostedHeroLate(chip, _late) {
+    var n = postedAttentionCount(lastPostedTasksItems);
     var el = chip.querySelector(".hero-chip-late");
-    if (!late) {
+    if (!n) {
       if (el) el.remove();
       chip.classList.remove("hero-chip--late");
       return;
@@ -22074,342 +21967,114 @@
       el.className = "hero-chip-late";
       chip.appendChild(el);
     }
-    el.textContent = "· " + late + " просрочено";
+    el.textContent = "· " + n + " " + pluralRu(n, "ждёт вас", "ждут вас", "ждут вас");
     chip.classList.add("hero-chip--late");
-    chip.title = "Поручено другим: " + late + " " + pluralRu(late, "просрочено", "просрочены", "просрочено");
+  }
+
+  function syncPostedTasksHeroCount(count) {
+    if (typeof count === "number" && !isNaN(count)) lastPostedTasksActiveCount = count;
+    var countEl = document.getElementById("posted-tasks-count");
+    if (countEl) countEl.textContent = String(lastPostedTasksActiveCount);
+    var chip = document.getElementById("posted-tasks-open");
+    if (chip) syncPostedHeroLate(chip);
   }
 
   function syncPostedTasksState(items, activeCount) {
     items = Array.isArray(items) ? items : [];
-    if (postedTasksTab === "current") lastPostedTasksItems = items;
-    else postedArchiveItems = items;
-    if (typeof activeCount === "number" && !isNaN(activeCount)) {
-      syncPostedTasksHeroCount(activeCount);
-    } else if (postedTasksTab === "current") {
-      syncPostedTasksHeroCount(postedActiveCountFromItems(items));
-    }
-    if (isPostedTasksOpen()) renderPostedTasksList(items);
+    lastPostedTasksItems = items;
+    syncPostedTasksHeroCount(
+      typeof activeCount === "number" && !isNaN(activeCount) ? activeCount : postedActiveCountFromItems(items)
+    );
+    if (isPostedTasksOpen()) renderPostedScreen();
     try {
       var cacheKind = actualCacheKind();
       var cached = readMiniappCache(cacheKind);
-      if (cached && postedTasksTab === "current") {
+      if (cached) {
         writeMiniappCache(
           cacheKind,
-          Object.assign({}, cached, {
-            postedData: {
-              ok: true,
-              items: items,
-              count: lastPostedTasksActiveCount,
-            },
-          })
+          Object.assign({}, cached, { postedData: { ok: true, items: items, count: lastPostedTasksActiveCount } })
         );
       }
     } catch (_) {}
   }
 
-  var postedArchiveItems = [];
-
-  function postedVisibleItems() {
-    return postedTasksTab === "archive" ? postedArchiveItems : lastPostedTasksItems;
+  // Совместимость: старые вызовы рисовали список напрямую.
+  function renderPostedTasksList(items) {
+    if (Array.isArray(items)) lastPostedTasksItems = items;
+    renderPostedScreen();
   }
 
   function removePostedTaskFromState(taskId) {
     var id = String(taskId || "");
     if (!id) return;
+    postedArchiveItems = postedArchiveItems.filter(function (t) {
+      return String(t.id) !== id;
+    });
+    if (postedSelectedId === id) postedSelectedId = "";
     syncPostedTasksState(
-      postedVisibleItems().filter(function (t) {
+      lastPostedTasksItems.filter(function (t) {
         return String((t && t.id) || "") !== id;
       }),
       lastPostedTasksActiveCount
     );
   }
 
-  function replacePostedTaskInState(task) {
+  // Ответ сервера по одной задаче → в нужный список («Текущие» или «Принятые»).
+  function upsertPostedTask(task) {
     if (!task || !task.id) return;
     var id = String(task.id);
-    syncPostedTasksState(
-      postedVisibleItems().map(function (t) {
-        return String((t && t.id) || "") === id ? Object.assign({}, t, task) : t;
-      })
-    );
+    var prev = lastPostedTasksItems.concat(postedArchiveItems).filter(function (t) {
+      return String(t.id) === id;
+    })[0];
+    var merged = Object.assign({}, prev || {}, task);
+    if (prev && prev.tracker_links && !task.tracker_links) merged.tracker_links = prev.tracker_links;
+    var cur = lastPostedTasksItems.filter(function (t) {
+      return String(t.id) !== id;
+    });
+    postedArchiveItems = postedArchiveItems.filter(function (t) {
+      return String(t.id) !== id;
+    });
+    if (postedTaskIsArchived(merged)) postedArchiveItems.unshift(merged);
+    else cur.push(merged);
+    syncPostedTasksState(cur, postedActiveCountFromItems(cur));
   }
+  var replacePostedTaskInState = upsertPostedTask;
 
-  function sortPostedTasks(items) {
-    items = Array.isArray(items) ? items.slice() : [];
-    items.sort(function (a, b) {
+  function sortByDue(items) {
+    return items.slice().sort(function (a, b) {
       var da = postedTaskDueMs(a);
       var db = postedTaskDueMs(b);
       if (isNaN(da) !== isNaN(db)) return isNaN(da) ? 1 : -1;
       if (da !== db && !isNaN(da)) return da - db;
-      return Number((a && a.id) || 0) - Number((b && b.id) || 0);
+      return Number(a.id || 0) - Number(b.id || 0);
     });
-    return items;
   }
 
-  function postedFilterMatches(task) {
-    if (postedFilter === "overdue") return postedTaskIsOverdue(task);
-    if (postedFilter.indexOf("a:") === 0) return postedAssigneeKey(task) === postedFilter.slice(2);
-    return true;
-  }
-
-  function postedAssigneeGroups(items) {
+  function postedPeople(items) {
     var map = {};
     var order = [];
     items.forEach(function (t) {
       var k = postedAssigneeKey(t);
       if (!map[k]) {
-        map[k] = { key: k, name: postedTaskAssigneeLabel(t) || "Без исполнителя", items: [], late: 0 };
+        map[k] = { key: k, uid: postedAssigneeUid(t), name: postedTaskAssigneeLabel(t), items: [], attn: 0, late: 0, question: 0 };
         order.push(k);
       }
-      map[k].items.push(t);
-      if (postedTaskIsOverdue(t)) map[k].late++;
+      var g = map[k];
+      g.items.push(t);
+      var a = postedAttention(t);
+      if (a) g.attn++;
+      if (a === "late") g.late++;
+      if (a === "question") g.question++;
     });
     return order
       .map(function (k) {
         return map[k];
       })
       .sort(function (a, b) {
-        if (!!a.late !== !!b.late) return a.late ? -1 : 1;
+        if (!!a.attn !== !!b.attn) return a.attn ? -1 : 1;
         if (a.items.length !== b.items.length) return b.items.length - a.items.length;
         return a.name.localeCompare(b.name, "ru");
       });
-  }
-
-  function syncPostedTasksTabsUi() {
-    var arch = postedTasksTab === "archive";
-    var title = document.getElementById("posted-tasks-title");
-    if (title) title.textContent = arch ? "Архив поручений" : "Поручено другим";
-    var archBtn = document.getElementById("posted-tasks-archive");
-    if (archBtn) {
-      archBtn.setAttribute("aria-pressed", arch ? "true" : "false");
-      archBtn.title = arch ? "Текущие поручения" : "Архив поручений";
-      archBtn.setAttribute("aria-label", archBtn.title);
-    }
-    document.querySelectorAll("#actual-posted-tasks [data-posted-group]").forEach(function (btn) {
-      var on = btn.getAttribute("data-posted-group") === postedGroupBy;
-      btn.classList.toggle("active", on);
-      btn.setAttribute("aria-selected", on ? "true" : "false");
-    });
-    var tools = document.getElementById("posted-tasks-tools");
-    if (tools) tools.classList.toggle("hidden", arch);
-  }
-
-  function setPostedTasksTab(tab) {
-    postedTasksTab = tab === "archive" ? "archive" : "current";
-    postedFilter = "all";
-    syncPostedTasksTabsUi();
-    var listEl = document.getElementById("posted-tasks-list");
-    if (listEl && postedTasksTab === "current") renderPostedTasksList(lastPostedTasksItems);
-    else if (listEl) listEl.innerHTML = "";
-    loadPostedTasksList();
-  }
-
-  function setPostedGroupBy(mode) {
-    postedGroupBy = mode === "people" ? "people" : "due";
-    try {
-      localStorage.setItem(POSTED_GROUP_LS, postedGroupBy);
-    } catch (_) {}
-    syncPostedTasksTabsUi();
-    renderPostedTasksList(lastPostedTasksItems);
-  }
-
-  function renderPostedFilters(items) {
-    var host = document.getElementById("posted-tasks-filters");
-    if (!host) return;
-    host.innerHTML = "";
-    var active = items.filter(function (t) {
-      return !postedTaskIsDone(t);
-    });
-    var late = active.filter(function (t) {
-      return postedTaskIsOverdue(t);
-    }).length;
-    var people = postedAssigneeGroups(active);
-    if (postedFilter === "overdue" && !late) postedFilter = "all";
-    if (
-      postedFilter.indexOf("a:") === 0 &&
-      !people.some(function (g) {
-        return "a:" + g.key === postedFilter;
-      })
-    ) {
-      postedFilter = "all";
-    }
-    function chip(id, label, n, extra) {
-      var b = document.createElement("button");
-      b.type = "button";
-      b.className = "posted-filter" + (extra ? " " + extra : "") + (postedFilter === id ? " active" : "");
-      b.setAttribute("aria-pressed", postedFilter === id ? "true" : "false");
-      b.textContent = label;
-      if (n != null) {
-        var c = document.createElement("span");
-        c.className = "posted-filter-n";
-        c.textContent = String(n);
-        b.appendChild(c);
-      }
-      b.addEventListener("click", function () {
-        postedFilter = postedFilter === id && id !== "all" ? "all" : id;
-        renderPostedTasksList(lastPostedTasksItems);
-      });
-      host.appendChild(b);
-    }
-    chip("all", "Все", active.length);
-    if (late) chip("overdue", "Просрочено", late, "posted-filter--late");
-    if (people.length > 1) {
-      people.forEach(function (g) {
-        chip("a:" + g.key, g.name.split(/\s+/)[0], g.items.length);
-      });
-    }
-    host.classList.toggle("hidden", !active.length);
-  }
-
-  function postedSectionHead(label, count, opts) {
-    opts = opts || {};
-    var h = document.createElement("div");
-    h.className = "posted-section-head" + (opts.late ? " posted-section-head--late" : "");
-    var t = document.createElement("span");
-    t.className = "posted-section-title";
-    t.textContent = label;
-    h.appendChild(t);
-    var n = document.createElement("span");
-    n.className = "posted-section-count";
-    n.textContent = String(count);
-    h.appendChild(n);
-    if (opts.sub) {
-      var s = document.createElement("span");
-      s.className = "posted-section-sub";
-      s.textContent = opts.sub;
-      h.appendChild(s);
-    }
-    return h;
-  }
-
-  function renderPostedEmpty(listEl, emptyEl, kind) {
-    if (!emptyEl) return;
-    emptyEl.innerHTML = "";
-    var p = document.createElement("p");
-    var btn = null;
-    if (kind === "archive") {
-      p.textContent = "В архиве пусто. Сюда попадают принятые поручения.";
-    } else if (kind === "filter") {
-      p.textContent = "Под фильтр ничего не подходит.";
-      btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "btn-text";
-      btn.textContent = "Показать все";
-      btn.addEventListener("click", function () {
-        postedFilter = "all";
-        renderPostedTasksList(lastPostedTasksItems);
-      });
-    } else {
-      p.textContent = "Поручите задачу коллеге — здесь будет видно, кто что делает и что просрочено.";
-      btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "btn posted-empty-cta";
-      btn.textContent = "Поручить задачу";
-      btn.addEventListener("click", openNewPostedTask);
-    }
-    emptyEl.appendChild(p);
-    if (btn) emptyEl.appendChild(btn);
-    setHidden(emptyEl, false);
-  }
-
-  function renderPostedTasksList(items) {
-    var listEl = document.getElementById("posted-tasks-list");
-    var emptyEl = document.getElementById("posted-tasks-empty");
-    if (!listEl) return;
-    syncPostedTasksTabsUi();
-    items = sortPostedTasks(items);
-    listEl.innerHTML = "";
-    setHidden(emptyEl, true);
-    if (postedTasksTab === "archive") {
-      items.reverse().forEach(function (t) {
-        listEl.appendChild(renderPostedTaskRow(t, { archived: true }));
-      });
-      if (!items.length) renderPostedEmpty(listEl, emptyEl, "archive");
-      return;
-    }
-    renderPostedFilters(items);
-    var shown = items.filter(postedFilterMatches);
-    var active = shown.filter(function (t) {
-      return !postedTaskIsDone(t);
-    });
-    var done = shown.filter(function (t) {
-      return postedTaskIsDone(t);
-    });
-    if (!items.length) {
-      renderPostedEmpty(listEl, emptyEl, "none");
-    } else if (!active.length && !done.length) {
-      renderPostedEmpty(listEl, emptyEl, "filter");
-    }
-    if (postedGroupBy === "people") {
-      postedAssigneeGroups(active).forEach(function (g) {
-        var sec = document.createElement("section");
-        sec.className = "posted-section";
-        sec.appendChild(
-          postedSectionHead(g.name, g.items.length, g.late ? { sub: g.late + " просрочено" } : null)
-        );
-        g.items.forEach(function (t) {
-          sec.appendChild(renderPostedTaskRow(t, { hideAssignee: true }));
-        });
-        listEl.appendChild(sec);
-      });
-    } else {
-      POSTED_BUCKETS.forEach(function (b) {
-        var rows = active.filter(function (t) {
-          return postedDueBucket(t) === b[0];
-        });
-        if (!rows.length) return;
-        var sec = document.createElement("section");
-        sec.className = "posted-section posted-section--" + b[0];
-        sec.appendChild(postedSectionHead(b[1], rows.length, { late: b[0] === "overdue" }));
-        rows.forEach(function (t) {
-          sec.appendChild(renderPostedTaskRow(t));
-        });
-        listEl.appendChild(sec);
-      });
-    }
-    if (done.length) listEl.appendChild(renderPostedDoneBlock(done));
-    syncPostedTasksHeroCount(postedActiveCountFromItems(items));
-  }
-
-  function renderPostedDoneBlock(done) {
-    var sec = document.createElement("section");
-    sec.className = "posted-section posted-done" + (postedDoneOpen ? " is-open" : "");
-    var head = document.createElement("div");
-    head.className = "posted-done-head";
-    var toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = "posted-done-toggle";
-    toggle.setAttribute("aria-expanded", postedDoneOpen ? "true" : "false");
-    toggle.innerHTML =
-      '<svg class="posted-done-ico" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>';
-    var lbl = document.createElement("span");
-    lbl.textContent = "Выполнено · " + done.length;
-    toggle.appendChild(lbl);
-    var chev = document.createElement("span");
-    chev.className = "posted-done-chev";
-    chev.setAttribute("aria-hidden", "true");
-    toggle.appendChild(chev);
-    toggle.addEventListener("click", function () {
-      postedDoneOpen = !postedDoneOpen;
-      renderPostedTasksList(lastPostedTasksItems);
-    });
-    head.appendChild(toggle);
-    var accept = document.createElement("button");
-    accept.type = "button";
-    accept.className = "posted-done-accept";
-    accept.textContent = "Принять всё";
-    accept.title = "Убрать выполненные в архив";
-    accept.addEventListener("click", function () {
-      acceptPostedDone(done);
-    });
-    head.appendChild(accept);
-    sec.appendChild(head);
-    if (postedDoneOpen) {
-      done.forEach(function (t) {
-        sec.appendChild(renderPostedTaskRow(t));
-      });
-    }
-    return sec;
   }
 
   function postedHaptic(kind) {
@@ -22417,26 +22082,11 @@
     if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred(kind || "success");
   }
 
-  function postedUndoToast(label, onUndo) {
-    var node = document.createElement("span");
-    node.className = "note-toast-copy";
-    node.appendChild(document.createTextNode(label + " · "));
-    var undo = document.createElement("button");
-    undo.type = "button";
-    undo.className = "note-toast-link";
-    undo.textContent = "Отменить";
-    undo.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      var el = document.getElementById("note-toast");
-      if (el) {
-        el.classList.add("hidden");
-        if (el._timer) window.clearTimeout(el._timer);
-      }
-      onUndo();
+  function postedApi(taskId, action, body) {
+    return apiFetch("/calendar/tasks/" + encodeURIComponent(String(taskId)) + (action ? "/" + action : ""), {
+      method: "POST",
+      body: JSON.stringify(body || {}),
     });
-    node.appendChild(undo);
-    showNoteToast("", { node: node, actionable: true });
   }
 
   async function patchPostedTask(taskId, body) {
@@ -22446,433 +22096,1208 @@
     });
   }
 
-  async function postedRefresh() {
-    await loadPostedTasksList();
-    loadActual({ silent: true });
-  }
-
-  async function acceptPostedDone(done) {
-    var ids = done.map(function (t) {
-      return String(t.id);
-    });
-    try {
-      var r = await apiFetch("/calendar/tasks/posted/accept-done", { method: "POST" });
-      postedDoneOpen = false;
-      await postedRefresh();
-      var n = (r && r.archived) || ids.length;
-      postedHaptic();
-      postedUndoToast("В архиве: " + n, function () {
-        Promise.all(
-          ids.map(function (id) {
-            return patchPostedTask(id, { owner_archived: false });
-          })
-        )
-          .catch(function (err) {
-            showNoteToast((err && err.message) || "Не получилось вернуть");
-          })
-          .then(postedRefresh);
-      });
-    } catch (err) {
-      showNoteToast((err && err.message) || "Не получилось принять");
-    }
-  }
-
-  async function postedSetArchived(task, on) {
-    try {
-      await patchPostedTask(task.id, { owner_archived: !!on });
-      removePostedTaskFromState(task.id);
-      postedHaptic();
-      postedUndoToast(on ? "В архиве" : "Возвращено", function () {
-        patchPostedTask(task.id, { owner_archived: !on })
-          .catch(function (err) {
-            showNoteToast((err && err.message) || "Не получилось");
-          })
-          .then(postedRefresh);
-      });
-      postedRefresh();
-    } catch (err) {
-      showNoteToast((err && err.message) || "Не получилось");
-    }
-  }
-
-  async function postedSetDone(task) {
-    try {
-      await patchPostedTask(task.id, { done: true });
-      postedHaptic();
-      postedUndoToast("Выполнено", function () {
-        patchPostedTask(task.id, { done: false })
-          .catch(function (err) {
-            showNoteToast((err && err.message) || "Не получилось");
-          })
-          .then(postedRefresh);
-      });
-      await postedRefresh();
-    } catch (err) {
-      showNoteToast((err && err.message) || "Не получилось отметить");
-    }
-  }
-
-  // «Напомнить»: пуш исполнителю в Telegram (сервер не даёт чаще раза в 4 часа).
+  // «Напомнить»: пуш исполнителю в Telegram (сервер — не чаще раза в 4 часа на задачу).
   async function nudgePostedTask(taskId, opts) {
     opts = opts || {};
     try {
-      var r = await apiFetch("/calendar/tasks/" + encodeURIComponent(String(taskId)) + "/nudge", { method: "POST" });
-      if (r && r.task) replacePostedTaskInState(r.task);
+      var r = await postedApi(taskId, "nudge");
+      if (r && r.task) upsertPostedTask(r.task);
       if (!opts.quiet) {
         postedHaptic();
         showNoteToast("Напомнили в Telegram");
       }
-      return { ok: true };
+      return { ok: true, task: r && r.task };
     } catch (err) {
       if (!opts.quiet) showNoteToast((err && err.message) || "Не получилось напомнить");
       return { ok: false, error: err };
     }
   }
 
+  async function acceptPostedTask(taskId) {
+    try {
+      var r = await postedApi(taskId, "accept");
+      if (r && r.task) upsertPostedTask(r.task);
+      postedHaptic();
+      showNoteToast("Принято — в «Принятых»");
+      return r;
+    } catch (err) {
+      showNoteToast((err && err.message) || "Не получилось принять");
+      return null;
+    }
+  }
+
   function postedTimeShort(iso) {
     var d = new Date(iso);
     if (isNaN(d.getTime())) return "";
-    var diff = postedDayDiff(localDateIsoFromMs(d.getTime()));
+    var day = localDateIsoFromMs(d.getTime());
+    var diff = postedDayDiff(day);
     var hm = d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-    if (diff === 0) return hm;
+    if (diff === 0) return "сегодня, " + hm;
+    if (diff === -1) return "вчера, " + hm;
+    return postedShortDate(day) + ", " + hm;
+  }
+
+  function postedDayWord(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    var diff = postedDayDiff(localDateIsoFromMs(d.getTime()));
+    if (diff === 0) return "сегодня";
     if (diff === -1) return "вчера";
     return postedShortDate(localDateIsoFromMs(d.getTime()));
   }
 
-  // «видел(а)» / «в работе» / «вопрос» — что ответил исполнитель.
-  function postedStateBadge(task) {
+  // Строка состояния в «В работе»: одно понятное слово про задачу.
+  function postedWorkLine(task) {
     var st = postedAssigneeState(task);
-    if (postedTaskIsDone(task)) return null;
-    var b = document.createElement("span");
-    if (st.status === "question") {
-      b.className = "posted-state posted-state--question";
-      b.textContent = "вопрос";
-    } else if (st.status === "in_progress") {
-      b.className = "posted-state posted-state--work";
-      b.textContent = "в работе";
-    } else if (st.seen_at) {
-      b.className = "posted-state";
-      b.textContent = "просмотрено " + postedTimeShort(st.seen_at);
-    } else {
-      b.className = "posted-state posted-state--unseen";
-      b.textContent = "не просмотрено";
-    }
+    if (st.status === "in_progress") return { text: "в работе", cls: "is-work" };
+    var parts = [];
+    parts.push(st.seen_at ? "открыта " + postedDayWord(st.seen_at) : "ещё не открыта");
+    if (st.nudged_at) parts.push("напомнили " + postedDayWord(st.nudged_at));
+    return { text: parts.join(" · "), cls: st.seen_at ? "" : "is-unseen" };
+  }
+
+  function postedBtn(label, cls, onClick) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "pt-btn" + (cls ? " " + cls : "");
+    b.textContent = label;
+    b.addEventListener("click", function (e) {
+      e.stopPropagation();
+      onClick(b);
+    });
     return b;
   }
 
-  function postedOpenTask(task) {
+  function postedVisibleCurrent() {
+    var items = lastPostedTasksItems.filter(function (t) {
+      return !postedTaskIsArchived(t);
+    });
+    if (postedPerson) {
+      items = items.filter(function (t) {
+        return postedAssigneeKey(t) === postedPerson;
+      });
+    }
+    return items;
+  }
+
+  function renderPostedScreen() {
+    var listEl = document.getElementById("posted-tasks-list");
+    if (!listEl) return;
+    var arch = postedTasksTab === "archive";
+    var title = document.getElementById("posted-tasks-title");
+    var sub = document.getElementById("posted-tasks-sub");
+    var archBtn = document.getElementById("posted-tasks-archive");
+    var search = document.getElementById("posted-tasks-search");
+    var newBtn = document.getElementById("posted-tasks-new");
+    setHidden(search, !arch);
+    setHidden(newBtn, arch);
+    if (archBtn) {
+      archBtn.textContent = arch ? "← Поручения" : "Принятые" + (postedArchiveLoaded ? " · " + postedArchiveItems.length : "");
+    }
+    if (arch) {
+      if (title) title.textContent = "Принятые";
+      if (sub) {
+        var n = postedArchiveItems.length;
+        sub.textContent = postedArchiveLoaded ? n + " " + pluralRu(n, "поручение", "поручения", "поручений") : "Загружаю…";
+      }
+      renderPostedTeam(postedArchiveItems);
+      renderPostedArchiveList(listEl);
+    } else {
+      var all = lastPostedTasksItems.filter(function (t) {
+        return !postedTaskIsArchived(t);
+      });
+      var attn = postedAttentionCount(all);
+      var work = all.length - attn;
+      if (title) title.textContent = "Поручения";
+      if (sub) {
+        sub.textContent = all.length
+          ? (attn ? attn + " " + pluralRu(attn, "ждёт вас", "ждут вас", "ждут вас") + " · " : "") + work + " в работе"
+          : "";
+      }
+      renderPostedTeam(all);
+      renderPostedCurrentList(listEl);
+    }
+    renderPostedSide();
+  }
+
+  // Витрина команды: «Все» + исполнители (фото), красная точка — у человека есть то, что ждёт вас.
+  function renderPostedTeam(items) {
+    var host = document.getElementById("posted-tasks-team");
+    if (!host) return;
+    host.innerHTML = "";
+    var people = postedPeople(items);
+    if (postedPerson && !people.some(function (g) { return g.key === postedPerson; })) postedPerson = "";
+    if (people.length < 2) {
+      host.classList.add("hidden");
+      return;
+    }
+    host.classList.remove("hidden");
+    function item(key, label, avatarNode, dot) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "pt-tm" + (postedPerson === key ? " is-on" : "");
+      b.setAttribute("aria-pressed", postedPerson === key ? "true" : "false");
+      var wrap = document.createElement("span");
+      wrap.className = "pt-tm-av";
+      wrap.appendChild(avatarNode);
+      if (dot) {
+        var d = document.createElement("span");
+        d.className = "pt-tm-dot";
+        wrap.appendChild(d);
+      }
+      b.appendChild(wrap);
+      var l = document.createElement("span");
+      l.className = "pt-tm-name";
+      l.textContent = label;
+      b.appendChild(l);
+      b.addEventListener("click", function () {
+        postedPerson = postedPerson === key ? "" : key;
+        postedSelectedId = "";
+        renderPostedScreen();
+      });
+      host.appendChild(b);
+    }
+    var allNode = document.createElement("span");
+    allNode.className = "pt-av pt-av--m pt-av--all";
+    allNode.textContent = String(items.length);
+    item("", "Все", allNode, false);
+    people.forEach(function (g) {
+      item(g.key, postedFirstName(g.name), postedAvatar(g.uid, g.name, "m"), postedTasksTab === "current" && g.attn > 0);
+    });
+  }
+
+  function postedSection(label, count, strong) {
+    var h = document.createElement("div");
+    h.className = "pt-sec" + (strong ? " is-strong" : "");
+    var t = document.createElement("span");
+    t.textContent = label;
+    var n = document.createElement("span");
+    n.className = "pt-sec-n";
+    n.textContent = String(count);
+    h.appendChild(t);
+    h.appendChild(n);
+    return h;
+  }
+
+  function renderPostedEmpty(kind) {
+    var emptyEl = document.getElementById("posted-tasks-empty");
+    if (!emptyEl) return;
+    emptyEl.innerHTML = "";
+    if (!kind) {
+      setHidden(emptyEl, true);
+      return;
+    }
+    var p = document.createElement("p");
+    if (kind === "archive") p.textContent = "Здесь будут поручения, которые вы приняли или отменили.";
+    else if (kind === "archive-search") p.textContent = "Ничего не нашлось.";
+    else p.textContent = "Поручите задачу коллеге — здесь будет видно, где нужны вы и что идёт по плану.";
+    emptyEl.appendChild(p);
+    if (kind === "none") emptyEl.appendChild(postedBtn("Поручить задачу", "pt-btn--primary", openNewPostedTask));
+    setHidden(emptyEl, false);
+  }
+
+  function renderPostedCurrentList(listEl) {
+    listEl.innerHTML = "";
+    var items = postedVisibleCurrent();
+    var all = lastPostedTasksItems.filter(function (t) {
+      return !postedTaskIsArchived(t);
+    });
+    renderPostedEmpty(all.length ? "" : "none");
+    var attn = items
+      .filter(function (t) {
+        return !!postedAttention(t);
+      })
+      .sort(function (a, b) {
+        var d = POSTED_ATTN_ORDER[postedAttention(a)] - POSTED_ATTN_ORDER[postedAttention(b)];
+        return d || postedTaskDueMs(a) - postedTaskDueMs(b);
+      });
+    var work = sortByDue(
+      items.filter(function (t) {
+        return !postedAttention(t);
+      })
+    );
+    var desktop = isDesktopLayout();
+    if (attn.length) {
+      listEl.appendChild(postedSection("Ждут вас", attn.length, true));
+      attn.forEach(function (t) {
+        listEl.appendChild(desktop ? renderPostedRow(t, { attention: true }) : renderPostedAttnCard(t));
+      });
+    }
+    if (work.length) {
+      listEl.appendChild(postedSection("В работе", work.length, !attn.length));
+      var box = document.createElement("div");
+      box.className = "pt-rows";
+      work.forEach(function (t) {
+        box.appendChild(renderPostedRow(t));
+      });
+      listEl.appendChild(box);
+    }
+    if (all.length && !attn.length && !work.length) {
+      var p = document.createElement("p");
+      p.className = "pt-muted-note";
+      p.textContent = "У этого человека сейчас нет поручений.";
+      listEl.appendChild(p);
+    }
+    if (!desktop && all.length) {
+      var foot = document.createElement("button");
+      foot.type = "button";
+      foot.className = "pt-foot";
+      foot.innerHTML = "<span></span><span aria-hidden=\"true\">›</span>";
+      foot.firstChild.textContent = "Принятые" + (postedArchiveLoaded ? " · " + postedArchiveItems.length : "");
+      foot.addEventListener("click", function () {
+        setPostedTasksTab("archive");
+      });
+      listEl.appendChild(foot);
+    }
+  }
+
+  // Карточка в «Ждут вас» (телефон): причина, текст вопроса/результата и одна главная кнопка.
+  function renderPostedAttnCard(task) {
+    var kind = postedAttention(task);
+    var st = postedAssigneeState(task);
+    var card = document.createElement("div");
+    card.className = "pt-card pt-card--" + kind;
+    card.setAttribute("role", "button");
+    card.tabIndex = 0;
+    var top = document.createElement("div");
+    top.className = "pt-card-top";
+    top.appendChild(postedAvatar(postedAssigneeUid(task), postedTaskAssigneeLabel(task), "s"));
+    var who = document.createElement("span");
+    who.className = "pt-card-who";
+    who.textContent = postedFirstName(postedTaskAssigneeLabel(task));
+    top.appendChild(who);
+    var pill = document.createElement("span");
+    pill.className = "pt-pill pt-pill--" + kind;
+    pill.textContent = kind === "question" ? "Вопрос" : kind === "done" ? "Сделано" : postedLateLabel(task);
+    top.appendChild(pill);
+    card.appendChild(top);
+    var title = document.createElement("p");
+    title.className = "pt-card-title";
+    title.textContent = String(task.title || "Задача");
+    card.appendChild(title);
+    var quoteText =
+      kind === "question" ? "«" + (st.status_note || "") + "»" : kind === "done" && task.result ? "Результат: " + task.result : "";
+    if (quoteText && quoteText !== "«»") {
+      var q = document.createElement("p");
+      q.className = "pt-quote";
+      q.textContent = quoteText;
+      card.appendChild(q);
+    }
+    var acts = document.createElement("div");
+    acts.className = "pt-acts";
+    if (kind === "question") {
+      acts.appendChild(postedBtn("Ответить", "pt-btn--primary", function () {
+        openPostedCard(task.id, { focus: "reply" });
+      }));
+    } else if (kind === "late") {
+      acts.appendChild(postedBtn("Напомнить", "pt-btn--primary", function (b) {
+        b.disabled = true;
+        nudgePostedTask(task.id).then(function () {
+          b.disabled = false;
+        });
+      }));
+      acts.appendChild(postedBtn("Перенести", "", function () {
+        openPostedTaskEditor(task);
+      }));
+    } else {
+      acts.appendChild(postedBtn("Принять", "pt-btn--primary", function (b) {
+        b.disabled = true;
+        acceptPostedTask(task.id);
+      }));
+      acts.appendChild(postedBtn("Вернуть", "", function () {
+        openPostedCard(task.id, { focus: "return" });
+      }));
+    }
+    card.appendChild(acts);
+    card.addEventListener("click", function () {
+      openPostedCard(task.id);
+    });
+    card.addEventListener("keydown", function (e) {
+      if (e.target === card && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        openPostedCard(task.id);
+      }
+    });
+    return card;
+  }
+
+  // Строка: фото, название, состояние; справа — срок колонкой.
+  function renderPostedRow(task, opts) {
+    opts = opts || {};
+    var row = document.createElement("div");
+    row.className = "pt-row" + (String(task.id) === postedSelectedId ? " is-selected" : "");
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    row.appendChild(postedAvatar(postedAssigneeUid(task), postedTaskAssigneeLabel(task), "s"));
+    var main = document.createElement("div");
+    main.className = "pt-row-main";
+    var t = document.createElement("p");
+    t.className = "pt-row-title";
+    t.textContent = String(task.title || "Задача");
+    main.appendChild(t);
+    var line = document.createElement("p");
+    line.className = "pt-row-line";
+    var kind = opts.attention ? postedAttention(task) : null;
+    var st = postedAssigneeState(task);
+    if (kind === "question") {
+      line.className += " is-question";
+      line.textContent = "вопрос · «" + (st.status_note || "") + "»";
+    } else if (kind === "late") {
+      line.className += " is-late";
+      line.textContent = postedLateLabel(task).toLowerCase();
+    } else if (kind === "done") {
+      line.className += " is-done";
+      line.textContent = "сделано · проверить и принять";
+    } else {
+      var wl = postedWorkLine(task);
+      if (wl.cls) line.className += " " + wl.cls;
+      line.textContent = (postedPerson ? "" : postedFirstName(postedTaskAssigneeLabel(task)) + " · ") + wl.text;
+    }
+    main.appendChild(line);
+    row.appendChild(main);
+    var due = document.createElement("div");
+    due.className = "pt-due" + (postedTaskIsOverdue(task) ? " is-late" : "");
+    var ds = postedDueShort(task);
+    due.textContent = ds.day;
+    if (ds.time) {
+      var tm = document.createElement("span");
+      tm.textContent = ds.time;
+      due.appendChild(tm);
+    }
+    row.appendChild(due);
+    row.addEventListener("click", function () {
+      openPostedCard(task.id);
+    });
+    row.addEventListener("keydown", function (e) {
+      if (e.target === row && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        openPostedCard(task.id);
+      }
+    });
+    return row;
+  }
+
+  function postedArchiveMeta(task) {
+    var outcome = postedTaskOutcome(task);
+    var ev = task.event || {};
+    var at = task.accepted_at || ev.accepted_at || task.updated_at || "";
+    if (outcome === "cancelled") return { text: "отменено " + postedDayWord(at), cls: "", extra: "" };
+    var parts = ["принято " + postedDayWord(at)];
+    var doneAt = task.done_at || ev.done_at || "";
+    var due = postedTaskDueMs(task);
+    var cls = "";
+    if (doneAt && !isNaN(due)) {
+      var late = Math.floor((new Date(doneAt).getTime() - due) / DAY_MS);
+      if (new Date(doneAt).getTime() <= due) parts.push("в срок");
+      else {
+        var n = Math.max(1, late + 1);
+        return { text: parts[0] + " · ", extra: "на " + n + " " + pluralRu(n, "день", "дня", "дней") + " позже", cls: "is-late" };
+      }
+    }
+    return { text: parts.join(" · "), cls: cls, extra: "" };
+  }
+
+  function renderPostedArchiveList(listEl) {
+    listEl.innerHTML = "";
+    var q = postedArchiveQ.trim().toLowerCase();
+    var items = postedArchiveItems.filter(function (t) {
+      if (postedPerson && postedAssigneeKey(t) !== postedPerson) return false;
+      if (!q) return true;
+      return (String(t.title || "") + " " + postedTaskAssigneeLabel(t)).toLowerCase().indexOf(q) >= 0;
+    });
+    items.sort(function (a, b) {
+      return String(b.accepted_at || b.updated_at || "").localeCompare(String(a.accepted_at || a.updated_at || ""));
+    });
+    if (!postedArchiveLoaded) {
+      renderPostedEmpty("");
+      return;
+    }
+    renderPostedEmpty(items.length ? "" : postedArchiveItems.length ? "archive-search" : "archive");
+    var lastMonth = "";
+    var box = null;
+    items.forEach(function (t) {
+      var at = new Date(t.accepted_at || t.updated_at || Date.now());
+      var month = at.toLocaleDateString("ru-RU", { month: "long", year: at.getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+      month = month.charAt(0).toUpperCase() + month.slice(1);
+      if (month !== lastMonth) {
+        lastMonth = month;
+        var cnt = items.filter(function (x) {
+          var d = new Date(x.accepted_at || x.updated_at || Date.now());
+          return d.getMonth() === at.getMonth() && d.getFullYear() === at.getFullYear();
+        }).length;
+        listEl.appendChild(postedSection(month, cnt, false));
+        box = document.createElement("div");
+        box.className = "pt-rows";
+        listEl.appendChild(box);
+      }
+      var row = document.createElement("div");
+      row.className = "pt-row" + (String(t.id) === postedSelectedId ? " is-selected" : "");
+      row.setAttribute("role", "button");
+      row.tabIndex = 0;
+      row.appendChild(postedAvatar(postedAssigneeUid(t), postedTaskAssigneeLabel(t), "s"));
+      var main = document.createElement("div");
+      main.className = "pt-row-main";
+      var tt = document.createElement("p");
+      tt.className = "pt-row-title";
+      tt.textContent = String(t.title || "Задача");
+      main.appendChild(tt);
+      var m = postedArchiveMeta(t);
+      var line = document.createElement("p");
+      line.className = "pt-row-line";
+      line.textContent = postedFirstName(postedTaskAssigneeLabel(t)) + " · " + m.text;
+      if (m.extra) {
+        var span = document.createElement("span");
+        span.className = m.cls;
+        span.textContent = m.extra;
+        line.appendChild(span);
+      }
+      main.appendChild(line);
+      row.appendChild(main);
+      var chev = document.createElement("span");
+      chev.className = "pt-chev";
+      chev.setAttribute("aria-hidden", "true");
+      chev.textContent = "›";
+      row.appendChild(chev);
+      row.addEventListener("click", function () {
+        openPostedCard(t.id);
+      });
+      box.appendChild(row);
+    });
+  }
+
+  // Десктоп: справа — открытое поручение или сводка «Команда сейчас».
+  function renderPostedSide() {
+    var side = document.getElementById("posted-tasks-side");
+    if (!side) return;
+    if (!isDesktopLayout()) {
+      side.innerHTML = "";
+      return;
+    }
+    if (postedSelectedId) {
+      if (!postedCardHosts.side || postedCardHosts.side.taskId !== postedSelectedId) {
+        mountPostedCard(side, postedSelectedId, Object.assign({ inSide: true }, postedSideOpts || {}));
+        postedSideOpts = null;
+      }
+      return;
+    }
+    postedCardHosts.side = null;
+    side.innerHTML = "";
+    var items = postedTasksTab === "archive" ? postedArchiveItems : lastPostedTasksItems.filter(function (t) {
+      return !postedTaskIsArchived(t);
+    });
+    if (!items.length) return;
+    var h = document.createElement("p");
+    h.className = "pt-side-title";
+    h.textContent = postedTasksTab === "archive" ? "Кто как сдавал" : "Команда сейчас";
+    side.appendChild(h);
+    postedPeople(items).forEach(function (g) {
+      var c = document.createElement("button");
+      c.type = "button";
+      c.className = "pt-person" + (postedPerson === g.key ? " is-on" : "");
+      c.appendChild(postedAvatar(g.uid, g.name, "s"));
+      var main = document.createElement("div");
+      main.className = "pt-row-main";
+      var n = document.createElement("p");
+      n.className = "pt-row-title";
+      n.textContent = g.name;
+      main.appendChild(n);
+      var line = document.createElement("p");
+      line.className = "pt-row-line";
+      var cnt = g.items.length + " " + pluralRu(g.items.length, "поручение", "поручения", "поручений");
+      var status = "";
+      var cls = "";
+      if (postedTasksTab === "archive") {
+        var lateN = g.items.filter(function (t) {
+          return postedArchiveMeta(t).cls === "is-late";
+        }).length;
+        status = lateN ? lateN + " позже срока" : "всё в срок";
+        cls = lateN ? "is-late" : "";
+      } else if (g.question) {
+        status = "ждёт ответа";
+        cls = "is-question";
+      } else if (g.late) {
+        status = g.late + " просрочено";
+        cls = "is-late";
+      } else if (g.attn) {
+        status = "сдал(а) работу";
+        cls = "is-done";
+      } else status = "всё по плану";
+      line.textContent = cnt + " · ";
+      var s = document.createElement("span");
+      s.className = cls;
+      s.textContent = status;
+      line.appendChild(s);
+      main.appendChild(line);
+      c.appendChild(main);
+      if (postedTasksTab !== "archive") {
+        var next = sortByDue(g.items.filter(function (t) {
+          return !postedTaskIsDone(t);
+        }))[0];
+        if (next) {
+          var due = document.createElement("div");
+          due.className = "pt-due" + (postedTaskIsOverdue(next) ? " is-late" : "");
+          due.textContent = postedDueShort(next).day;
+          var sm = document.createElement("span");
+          sm.textContent = "ближайший срок";
+          due.appendChild(sm);
+          c.appendChild(due);
+        }
+      }
+      c.addEventListener("click", function () {
+        postedPerson = postedPerson === g.key ? "" : g.key;
+        renderPostedScreen();
+      });
+      side.appendChild(c);
+    });
+    var hint = document.createElement("p");
+    hint.className = "pt-muted-note";
+    hint.textContent = "Выберите поручение слева — оно откроется здесь";
+    side.appendChild(hint);
+  }
+
+  // ——— Карточка поручения: у постановщика и у исполнителя. Телефон — во весь экран, десктоп — справа. ———
+  var postedCardHosts = { side: null, sheet: null };
+
+  function postedSheetEl() {
+    var ov = document.getElementById("posted-card-overlay");
+    if (ov) return ov;
+    ov = document.createElement("div");
+    ov.id = "posted-card-overlay";
+    ov.className = "pt-sheet-overlay hidden";
+    ov.setAttribute("role", "dialog");
+    ov.setAttribute("aria-modal", "true");
+    ov.innerHTML = '<div class="pt-sheet"></div>';
+    ov.addEventListener("click", function (e) {
+      if (e.target === ov) closePostedCard();
+    });
+    document.body.appendChild(ov);
+    return ov;
+  }
+
+  function isPostedCardOpen() {
+    var ov = document.getElementById("posted-card-overlay");
+    return !!(ov && !ov.classList.contains("hidden"));
+  }
+
+  function closePostedCard() {
+    var ov = document.getElementById("posted-card-overlay");
+    if (ov) {
+      ov.classList.add("hidden");
+      ov.querySelector(".pt-sheet").innerHTML = "";
+    }
+    postedCardHosts.sheet = null;
+    document.documentElement.classList.remove("pt-sheet-open");
+    syncAppOverlay();
+  }
+
+  function openPostedCard(taskId, opts) {
+    opts = opts || {};
+    var id = String(taskId);
+    if (isPostedTasksOpen() && isDesktopLayout()) {
+      postedSelectedId = id;
+      postedCardHosts.side = null;
+      postedSideOpts = opts;
+      renderPostedScreen();
+      return;
+    }
+    var ov = postedSheetEl();
+    ov.classList.remove("hidden");
+    document.documentElement.classList.add("pt-sheet-open");
+    syncAppOverlay();
+    mountPostedCard(ov.querySelector(".pt-sheet"), id, opts);
+  }
+
+  function isDelegatedTaskEvent(ev) {
+    if (!ev) return false;
+    var owner = String(ev.owner_user_id || (ev.event && ev.event.owner_user_id) || "");
+    var ass = String(
+      (ev.assignee && ev.assignee.user_id) || ev.assignee_user_id || (ev.event && ev.event.assignee && ev.event.assignee.user_id) || ""
+    );
+    return !!(owner && ass && owner !== ass);
+  }
+
+  function mountPostedCard(host, taskId, opts) {
+    opts = opts || {};
+    var state = { host: host, taskId: String(taskId), task: null, events: [], opts: opts, mode: opts.focus || "" };
+    if (opts.inSide) postedCardHosts.side = state;
+    else postedCardHosts.sheet = state;
+    var known = lastPostedTasksItems.concat(postedArchiveItems).filter(function (t) {
+      return String(t.id) === state.taskId;
+    })[0];
+    if (known) {
+      state.task = known;
+      paintPostedCard(state);
+    } else {
+      host.innerHTML = '<div class="pt-card-loading">Загружаю…</div>';
+    }
+    refreshPostedCard(state);
+  }
+
+  async function refreshPostedCard(state) {
+    try {
+      var both = await Promise.all([
+        apiFetch("/calendar/tasks/" + encodeURIComponent(state.taskId), { method: "GET" }),
+        apiFetch("/calendar/tasks/" + encodeURIComponent(state.taskId) + "/events", { method: "GET" }),
+      ]);
+      if (!document.body.contains(state.host)) return;
+      state.task = Object.assign({}, state.task || {}, both[0].task);
+      state.events = (both[1] && both[1].events) || [];
+      if (postedCardIsOwner(state.task)) upsertPostedTask(state.task);
+      paintPostedCard(state);
+    } catch (err) {
+      if (!state.task) state.host.innerHTML = '<div class="pt-card-loading"></div>';
+      showNoteToast((err && err.message) || "Не удалось открыть поручение");
+    }
+  }
+
+  function postedMeUid() {
+    return String((cachedMe && (cachedMe.telegram_user_id || cachedMe.id)) || "");
+  }
+
+  function postedCardIsOwner(task) {
     var ev = (task && task.event) || {};
-    var title = String((task && task.title) || ev.summary || "Задача");
+    if (ev.is_owner === true) return true;
+    if (ev.is_owner === false) return false;
+    return String(task.owner_user_id || "") === postedMeUid();
+  }
+
+  function postedOwnerName(state) {
+    var created = state.events.filter(function (e) {
+      return e.kind === "created" && e.actor_name;
+    })[0];
+    return (created && created.actor_name) || "Постановщик";
+  }
+
+  var POSTED_EVENT_TEXT = {
+    created: "Поручение поставлено",
+    seen: "Исполнитель открыл задачу",
+    in_progress: "Взято в работу",
+    nudge: "Отправлено напоминание",
+    done: "Работа сдана",
+    returned: "Возвращено в работу",
+    accepted: "Принято",
+    cancelled: "Поручение отменено",
+  };
+
+  function paintPostedCard(state) {
+    var task = state.task;
+    var host = state.host;
+    if (!task) return;
+    var isOwner = postedCardIsOwner(task);
+    var ev = task.event || {};
+    var done = postedTaskIsDone(task);
+    var archived = postedTaskIsArchived(task);
+    var outcome = postedTaskOutcome(task);
+    var st = postedAssigneeState(task);
+    var assigneeName = postedTaskAssigneeLabel(task);
+    var otherName = isOwner ? postedFirstName(assigneeName) : postedFirstName(postedOwnerName(state));
+    var keepDraft = host.querySelector(".pt-composer textarea");
+    var draft = keepDraft ? keepDraft.value : "";
+    host.innerHTML = "";
+
+    var head = document.createElement("div");
+    head.className = "pt-c-head";
+    if (!state.opts.inSide) {
+      var x = document.createElement("button");
+      x.type = "button";
+      x.className = "pt-icon-btn";
+      x.setAttribute("aria-label", "Закрыть");
+      x.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+      x.addEventListener("click", closePostedCard);
+      head.appendChild(x);
+    }
+    var pill = document.createElement("span");
+    var attn = isOwner ? postedAttention(task) : null;
+    if (archived) {
+      pill.className = "pt-pill pt-pill--muted";
+      pill.textContent = outcome === "cancelled" ? "Отменено" : "Принято";
+    } else if (done) {
+      pill.className = "pt-pill pt-pill--done";
+      pill.textContent = isOwner ? "Сделано" : "Сдано, ждёт приёмки";
+    } else if (attn === "question" || (!isOwner && st.status === "question")) {
+      pill.className = "pt-pill pt-pill--question";
+      pill.textContent = isOwner ? "Вопрос" : "Ждёт ответа";
+    } else if (postedTaskIsOverdue(task)) {
+      pill.className = "pt-pill pt-pill--late";
+      pill.textContent = postedLateLabel(task);
+    } else if (st.status === "in_progress") {
+      pill.className = "pt-pill pt-pill--work";
+      pill.textContent = "В работе";
+    } else {
+      pill.className = "pt-pill pt-pill--muted";
+      pill.textContent = !isOwner ? "Новая" : st.seen_at ? "Открыта" : "Ещё не открыта";
+    }
+    head.appendChild(pill);
+    var more = document.createElement("button");
+    more.type = "button";
+    more.className = "pt-icon-btn pt-c-more";
+    more.setAttribute("aria-label", "Ещё");
+    more.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
+    more.addEventListener("click", function (e) {
+      e.stopPropagation();
+      openPostedCardMenu(state, more);
+    });
+    head.appendChild(more);
+    host.appendChild(head);
+
+    var body = document.createElement("div");
+    body.className = "pt-c-body";
+    var h = document.createElement("h3");
+    h.className = "pt-c-title";
+    h.textContent = String(task.title || ev.summary || "Задача");
+    body.appendChild(h);
+    var who = document.createElement("div");
+    who.className = "pt-c-who";
+    if (isOwner) {
+      who.appendChild(postedAvatar(postedAssigneeUid(task), assigneeName, "s"));
+      var wn = document.createElement("span");
+      wn.textContent = assigneeName;
+      who.appendChild(wn);
+    } else {
+      who.appendChild(postedAvatar(String(task.owner_user_id || ""), postedOwnerName(state), "s"));
+      var on = document.createElement("span");
+      on.textContent = postedOwnerName(state);
+      var role = document.createElement("span");
+      role.className = "pt-c-role";
+      role.textContent = "постановщик";
+      on.appendChild(role);
+      who.appendChild(on);
+    }
+    var due = document.createElement("span");
+    due.className = "pt-c-due" + (postedTaskIsOverdue(task) ? " is-late" : "");
+    due.textContent = postedDueLong(task);
+    who.appendChild(due);
+    body.appendChild(who);
+    if (task.description) {
+      var d = document.createElement("p");
+      d.className = "pt-c-desc";
+      d.textContent = String(task.description);
+      body.appendChild(d);
+    }
+    var checklist = normalizeReminderChecklist(task.checklist || ev.checklist || []);
+    if (checklist.length) body.appendChild(renderPostedChecklist(state, checklist, !archived));
+    (task.tracker_links || []).forEach(function (l) {
+      var a = document.createElement("button");
+      a.type = "button";
+      a.className = "tracker-link-chip";
+      var tr = trackerById(l.provider);
+      a.textContent = (tr ? tr.title : l.provider) + " #" + l.external_id + (l.stage_name ? " · " + l.stage_name : "");
+      a.addEventListener("click", function () {
+        openExternal(l.url);
+      });
+      body.appendChild(a);
+    });
+    if (done && task.result) {
+      var res = document.createElement("div");
+      res.className = "pt-c-result";
+      res.innerHTML = "<span>Результат</span><p></p>";
+      res.querySelector("p").textContent = String(task.result);
+      body.appendChild(res);
+    }
+    var feedTitle = document.createElement("p");
+    feedTitle.className = "pt-sec";
+    feedTitle.textContent = "Обсуждение";
+    body.appendChild(feedTitle);
+    body.appendChild(renderPostedFeed(state));
+    host.appendChild(body);
+
+    var foot = document.createElement("div");
+    foot.className = "pt-c-foot";
+    if (!archived || isOwner) foot.appendChild(renderPostedComposer(state, otherName, draft));
+    var bar = document.createElement("div");
+    bar.className = "pt-acts";
+    if (isOwner) {
+      if (archived) {
+        bar.appendChild(postedBtn("Вернуть в работу", "", function () {
+          setPostedCardMode(state, "return");
+        }));
+      } else if (done) {
+        bar.appendChild(postedBtn("Принять", "pt-btn--primary", async function (b) {
+          b.disabled = true;
+          var r = await acceptPostedTask(task.id);
+          b.disabled = false;
+          if (r && r.task) {
+            state.task = Object.assign({}, state.task, r.task);
+            state.events = r.events || state.events;
+            if (state.opts.inSide) postedSelectedId = "";
+            if (!state.opts.inSide) closePostedCard();
+            else renderPostedScreen();
+          }
+        }));
+        bar.appendChild(postedBtn("Вернуть", "", function () {
+          setPostedCardMode(state, "return");
+        }));
+      } else {
+        bar.appendChild(postedBtn("Напомнить", "", async function (b) {
+          b.disabled = true;
+          var r = await nudgePostedTask(task.id);
+          b.disabled = false;
+          if (r.ok) refreshPostedCard(state);
+        }));
+        bar.appendChild(postedBtn("Перенести срок", "", function () {
+          openPostedTaskEditor(task, state);
+        }));
+      }
+    } else if (!done && !archived) {
+      bar.appendChild(postedBtn("Сдать результат", "pt-btn--primary", function () {
+        setPostedCardMode(state, "result");
+      }));
+      if (st.status !== "in_progress" && st.status !== "question") {
+        bar.appendChild(postedBtn("Взять в работу", "", async function (b) {
+          b.disabled = true;
+          try {
+            var r = await postedApi(task.id, "status", { status: "in_progress" });
+            if (r && r.task) state.task = Object.assign({}, state.task, r.task);
+            refreshPostedCard(state);
+          } catch (err) {
+            showNoteToast((err && err.message) || "Не получилось");
+          }
+          b.disabled = false;
+        }));
+      }
+      bar.appendChild(postedBtn("Попросить перенос", "", function () {
+        setPostedCardMode(state, "");
+        var ta = host.querySelector(".pt-composer textarea");
+        if (ta) {
+          ta.value = "Прошу перенести срок на ";
+          ta.focus();
+          ta.setSelectionRange(ta.value.length, ta.value.length);
+        }
+      }));
+    }
+    if (bar.childNodes.length) foot.appendChild(bar);
+    host.appendChild(foot);
+
+    if (state.mode) {
+      var ta = host.querySelector(".pt-composer textarea");
+      if (ta) window.setTimeout(function () {
+        ta.focus();
+      }, 50);
+    }
+    var feed = host.querySelector(".pt-feed");
+    if (feed && feed.lastChild && feed.lastChild.scrollIntoView && state.opts.inSide !== true) {
+      feed.lastChild.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  function renderPostedChecklist(state, checklist, editable) {
+    var box = document.createElement("div");
+    box.className = "pt-check";
+    var doneN = checklist.filter(function (it) {
+      return it.done;
+    }).length;
+    var head = document.createElement("div");
+    head.className = "pt-check-head";
+    head.innerHTML = '<span></span><span class="pt-bar"><i></i></span>';
+    head.firstChild.textContent = "Чек-лист " + doneN + " из " + checklist.length;
+    head.querySelector("i").style.width = Math.round((doneN / checklist.length) * 100) + "%";
+    box.appendChild(head);
+    checklist.forEach(function (it, idx) {
+      var lab = document.createElement("label");
+      lab.className = "pt-check-item" + (it.done ? " is-done" : "");
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!it.done;
+      cb.disabled = !editable;
+      cb.addEventListener("change", async function () {
+        var next = checklist.map(function (x, i) {
+          return i === idx ? Object.assign({}, x, { done: cb.checked }) : x;
+        });
+        try {
+          var r = await patchPostedTask(state.taskId, { checklist: next });
+          if (r && r.task) state.task = Object.assign({}, state.task, r.task);
+          if (postedCardIsOwner(state.task)) upsertPostedTask(state.task);
+          paintPostedCard(state);
+        } catch (err) {
+          cb.checked = !cb.checked;
+          showNoteToast((err && err.message) || "Не получилось");
+        }
+      });
+      lab.appendChild(cb);
+      var sp = document.createElement("span");
+      sp.textContent = it.text;
+      lab.appendChild(sp);
+      box.appendChild(lab);
+    });
+    return box;
+  }
+
+  function renderPostedFeed(state) {
+    var feed = document.createElement("div");
+    feed.className = "pt-feed";
+    var me = postedMeUid();
+    var task = state.task;
+    var assigneeName = postedTaskAssigneeLabel(task);
+    state.events.forEach(function (e) {
+      if (e.kind === "message" || (e.kind === "returned" && e.text) || (e.kind === "done" && e.text)) {
+        var mine = String(e.actor_user_id) === me;
+        var msg = document.createElement("div");
+        msg.className = "pt-msg" + (mine ? " is-mine" : "");
+        var name = e.actor_name || (String(e.actor_user_id) === postedAssigneeUid(task) ? assigneeName : postedOwnerName(state));
+        msg.appendChild(postedAvatar(e.actor_user_id, name, "xs"));
+        var bub = document.createElement("div");
+        bub.className = "pt-bub" + (e.kind === "done" ? " is-result" : e.kind === "returned" ? " is-return" : "");
+        if (e.kind !== "message") {
+          var tag = document.createElement("span");
+          tag.className = "pt-bub-tag";
+          tag.textContent = e.kind === "done" ? "Сдано" : "Вернул(а) в работу";
+          bub.appendChild(tag);
+        }
+        var p = document.createElement("p");
+        p.textContent = e.text;
+        bub.appendChild(p);
+        var time = document.createElement("span");
+        time.className = "pt-bub-time";
+        time.textContent = postedTimeShort(e.at);
+        bub.appendChild(time);
+        msg.appendChild(bub);
+        feed.appendChild(msg);
+        return;
+      }
+      var sys = document.createElement("p");
+      sys.className = "pt-sys";
+      var label = POSTED_EVENT_TEXT[e.kind] || "";
+      if (e.kind === "seen") label = "Открыто · " + postedFirstName(e.actor_name || assigneeName);
+      sys.textContent = label + " · " + postedTimeShort(e.at);
+      feed.appendChild(sys);
+    });
+    if (!state.events.length) {
+      var empty = document.createElement("p");
+      empty.className = "pt-sys";
+      empty.textContent = "Пока тихо";
+      feed.appendChild(empty);
+    }
+    return feed;
+  }
+
+  function setPostedCardMode(state, mode) {
+    state.mode = mode;
+    paintPostedCard(state);
+  }
+
+  // Поле внизу карточки: сообщение (по умолчанию), «Вернуть» с комментарием или «Сдать результат».
+  function renderPostedComposer(state, otherName, draft) {
+    var mode = state.mode || "";
+    var wrap = document.createElement("div");
+    wrap.className = "pt-composer" + (mode ? " is-" + mode : "");
+    if (mode === "return" || mode === "result") {
+      var lbl = document.createElement("div");
+      lbl.className = "pt-composer-label";
+      lbl.textContent = mode === "return" ? "Что доработать — исполнитель получит в Telegram" : "Что получилось — постановщик получит в Telegram";
+      var x = document.createElement("button");
+      x.type = "button";
+      x.className = "pt-composer-x";
+      x.setAttribute("aria-label", "Отменить");
+      x.textContent = "×";
+      x.addEventListener("click", function () {
+        setPostedCardMode(state, "");
+      });
+      lbl.appendChild(x);
+      wrap.appendChild(lbl);
+    }
+    var row = document.createElement("div");
+    row.className = "pt-composer-row";
+    var ta = document.createElement("textarea");
+    ta.rows = 1;
+    ta.value = draft || (mode === "result" ? String(state.task.result || "") : "");
+    ta.placeholder =
+      mode === "return" ? "Комментарий (необязательно)" : mode === "result" ? "Ссылка, файл, пара слов о результате" : (postedCardIsOwner(state.task) ? "Сообщение исполнителю" : "Сообщение постановщику");
+    function grow() {
+      ta.style.height = "auto";
+      ta.style.height = Math.min(140, ta.scrollHeight) + "px";
+    }
+    ta.addEventListener("input", grow);
+    var send = document.createElement("button");
+    send.type = "button";
+    send.className = "pt-send" + (mode ? " is-text" : "");
+    if (mode === "return") send.textContent = "Вернуть";
+    else if (mode === "result") send.textContent = "Сдать";
+    else {
+      send.setAttribute("aria-label", "Отправить");
+      send.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+    }
+    async function submit() {
+      var text = String(ta.value || "").trim();
+      if (!mode && !text) {
+        ta.focus();
+        return;
+      }
+      send.disabled = true;
+      try {
+        var r;
+        if (mode === "return") r = await postedApi(state.taskId, "return", { text: text });
+        else if (mode === "result") {
+          r = await patchPostedTask(state.taskId, { done: true, result: text });
+          r = { task: r && r.task };
+        } else r = await postedApi(state.taskId, "messages", { text: text });
+        ta.value = "";
+        state.mode = "";
+        if (r && r.task) state.task = Object.assign({}, state.task, r.task);
+        if (r && r.events) state.events = r.events;
+        if (postedCardIsOwner(state.task)) upsertPostedTask(state.task);
+        postedHaptic();
+        if (mode === "return") showNoteToast("Вернули в работу");
+        else if (mode === "result") showNoteToast("Сдано — постановщик получит уведомление");
+        await refreshPostedCard(state);
+        if (!postedCardIsOwner(state.task)) loadActual({ silent: true });
+      } catch (err) {
+        showNoteToast((err && err.message) || "Не получилось отправить");
+      }
+      send.disabled = false;
+    }
+    send.addEventListener("click", submit);
+    ta.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey || (isDesktopLayout() && !e.shiftKey))) {
+        e.preventDefault();
+        submit();
+      }
+    });
+    row.appendChild(ta);
+    row.appendChild(send);
+    wrap.appendChild(row);
+    window.setTimeout(grow, 0);
+    return wrap;
+  }
+
+  function openPostedCardMenu(state, anchor) {
+    var task = state.task;
+    var isOwner = postedCardIsOwner(task);
+    var items = [
+      {
+        label: "Изменить задачу",
+        fn: function () {
+          openPostedTaskEditor(task, state);
+        },
+      },
+    ];
+    if (isOwner && !postedTaskIsArchived(task)) {
+      items.push({
+        label: "Отменить поручение",
+        danger: true,
+        fn: async function () {
+          if (!(await confirmDialog("Отменить поручение? " + postedFirstName(postedTaskAssigneeLabel(task)) + " получит уведомление, задача уйдёт в «Принятые».")))
+            return;
+          try {
+            var r = await postedApi(task.id, "cancel");
+            if (r && r.task) upsertPostedTask(r.task);
+            showNoteToast("Поручение отменено");
+            if (state.opts.inSide) {
+              postedSelectedId = "";
+              renderPostedScreen();
+            } else closePostedCard();
+          } catch (err) {
+            showNoteToast((err && err.message) || "Не получилось");
+          }
+        },
+      });
+    }
+    showPostedMenu(anchor, items);
+  }
+
+  function showPostedMenu(anchor, items) {
+    var old = document.getElementById("pt-menu");
+    if (old) old.remove();
+    var m = document.createElement("div");
+    m.id = "pt-menu";
+    m.className = "pt-menu";
+    items.forEach(function (it) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "pt-menu-item" + (it.danger ? " is-danger" : "");
+      b.textContent = it.label;
+      b.addEventListener("click", function () {
+        m.remove();
+        it.fn();
+      });
+      m.appendChild(b);
+    });
+    document.body.appendChild(m);
+    var r = anchor.getBoundingClientRect();
+    m.style.top = Math.round(r.bottom + 6) + "px";
+    m.style.right = Math.max(8, Math.round(window.innerWidth - r.right)) + "px";
+    window.setTimeout(function () {
+      document.addEventListener("click", function close(e) {
+        if (!m.contains(e.target)) {
+          m.remove();
+          document.removeEventListener("click", close, true);
+        }
+      }, true);
+    }, 0);
+  }
+
+  // «Изменить» / «Перенести срок» — обычное окно задачи (срок, исполнитель, чек-лист).
+  function openPostedTaskEditor(task, state) {
+    var ev = (task && task.event) || {};
     var payload = Object.assign({}, ev, {
       task_id: task.id,
       id: "task-" + task.id,
-      summary: title,
-      checklist: normalizeReminderChecklist((task && task.checklist) || ev.checklist || []),
+      summary: String(task.title || ev.summary || "Задача"),
+      checklist: normalizeReminderChecklist(task.checklist || ev.checklist || []),
       done: postedTaskIsDone(task),
       owner_archived: postedTaskIsArchived(task),
-      assignee: ev.assignee || {
-        name: postedTaskAssigneeLabel(task),
-        user_id: task.assignee_user_id,
-        email: task.assignee_email,
-      },
+      assignee: ev.assignee || { name: postedTaskAssigneeLabel(task), user_id: task.assignee_user_id, email: task.assignee_email },
       all_day: postedTaskIsAllDay(task),
       schedule_log_lines: task.schedule_log_lines || ev.schedule_log_lines || [],
     });
     openTaskModal(payload, {
-      onSaved: postedRefresh,
+      forceEdit: true,
+      onSaved: function () {
+        loadPostedTasksList();
+        loadActual({ silent: true });
+        if (state && document.body.contains(state.host)) refreshPostedCard(state);
+      },
       onDeleted: function (id) {
         removePostedTaskFromState(id || task.id);
-        postedRefresh();
+        if (state && !state.opts.inSide) closePostedCard();
+        loadActual({ silent: true });
       },
     });
   }
 
   function openNewPostedTask() {
-    openTaskModal({}, { onSaved: postedRefresh, focusAssignee: true });
-  }
-
-  var POSTED_ICONS = {
-    bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
-    check: '<path d="M20 6 9 17l-5-5"/>',
-    archive: '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/>',
-    restore: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
-  };
-
-  function postedIcon(name, size) {
-    var s = size || 18;
-    return (
-      '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-      POSTED_ICONS[name] +
-      "</svg>"
-    );
-  }
-
-  function postedRowActions(task, opts) {
-    if (opts.archived) {
-      return [{ key: "restore", label: "Вернуть", icon: "restore", run: function () { postedSetArchived(task, false); } }];
-    }
-    var acts = [];
-    if (!postedTaskIsDone(task)) {
-      acts.push({ key: "nudge", label: "Напомнить", icon: "bell", run: function () { nudgePostedTask(task.id); } });
-      acts.push({ key: "done", label: "Готово", icon: "check", run: function () { postedSetDone(task); } });
-    }
-    acts.push({ key: "archive", label: "В архив", icon: "archive", run: function () { postedSetArchived(task, true); } });
-    return acts;
-  }
-
-  function renderPostedTaskRow(task, opts) {
-    opts = opts || {};
-    var ev = (task && task.event) || {};
-    var isDone = postedTaskIsDone(task);
-    var late = postedTaskIsOverdue(task);
-    var st = postedAssigneeState(task);
-    var row = document.createElement("div");
-    row.className = "posted-row" + (isDone ? " is-done" : "") + (late ? " is-late" : "");
-    row.setAttribute("role", "button");
-    row.tabIndex = 0;
-    var assignee = postedTaskAssigneeLabel(task);
-    if (!opts.hideAssignee) {
-      var av = document.createElement("span");
-      av.className = "posted-av posted-av--" + postedAvatarTone(postedAssigneeKey(task));
-      av.textContent = postedInitials(assignee);
-      av.setAttribute("aria-hidden", "true");
-      row.appendChild(av);
-    }
-    var main = document.createElement("div");
-    main.className = "posted-row-main";
-    var title = document.createElement("p");
-    title.className = "posted-row-title";
-    title.textContent = String((task && task.title) || ev.summary || "Задача");
-    main.appendChild(title);
-    var meta = document.createElement("p");
-    meta.className = "posted-row-meta";
-    function sep() {
-      var d = document.createElement("span");
-      d.className = "posted-sep";
-      d.textContent = "·";
-      d.setAttribute("aria-hidden", "true");
-      meta.appendChild(d);
-    }
-    if (!opts.hideAssignee && assignee) {
-      var who = document.createElement("span");
-      who.textContent = assignee;
-      meta.appendChild(who);
-      sep();
-    }
-    var due = document.createElement("span");
-    due.className = "posted-due" + (late ? " is-late" : "");
-    due.textContent = postedDueLabel(task);
-    meta.appendChild(due);
-    var badge = postedStateBadge(task);
-    if (badge) {
-      sep();
-      meta.appendChild(badge);
-    }
-    main.appendChild(meta);
-    if (st.status === "question" && st.status_note && !isDone) {
-      var q = document.createElement("p");
-      q.className = "posted-row-question";
-      q.textContent = "«" + st.status_note + "»";
-      main.appendChild(q);
-    }
-    row.appendChild(main);
-
-    var side = document.createElement("div");
-    side.className = "posted-row-side";
-    var checklist = normalizeReminderChecklist((task && task.checklist) || ev.checklist || []);
-    if (checklist.length) {
-      var doneN = checklist.filter(function (it) {
-        return it.done;
-      }).length;
-      var prog = document.createElement("span");
-      prog.className = "posted-progress";
-      prog.title = "Чек-лист: " + doneN + " из " + checklist.length;
-      prog.innerHTML = '<span class="posted-progress-n"></span><span class="posted-progress-bar"><i></i></span>';
-      prog.querySelector(".posted-progress-n").textContent = doneN + "/" + checklist.length;
-      prog.querySelector("i").style.width = Math.round((doneN / checklist.length) * 100) + "%";
-      side.appendChild(prog);
-    }
-    (task.tracker_links || []).forEach(function (l) {
-      var tr = trackerById(l.provider);
-      var b = document.createElement("a");
-      b.className = "posted-tracker";
-      b.href = l.url || "#";
-      b.textContent = (TRACKER_CHIP_PREFIX[l.provider] || l.provider || "").toUpperCase().replace("B24", "Б24");
-      b.title = (tr ? tr.title : l.provider) + " #" + l.external_id + (l.stage_name ? " · " + l.stage_name : "");
-      b.addEventListener("click", function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (l.url) openExternal(l.url);
-      });
-      side.appendChild(b);
-    });
-    if (st.nudged_at && !isDone) {
-      var nb = document.createElement("span");
-      nb.className = "posted-nudged";
-      nb.title = "Напомнили " + postedTimeShort(st.nudged_at);
-      nb.innerHTML = postedIcon("bell", 14);
-      side.appendChild(nb);
-    }
-    var acts = postedRowActions(task, opts);
-    // Десктоп: действия иконками при наведении (на телефоне — свайп влево).
-    var hover = document.createElement("div");
-    hover.className = "posted-row-hover";
-    acts.forEach(function (a) {
-      var b = document.createElement("button");
-      b.type = "button";
-      b.className = "posted-hover-btn";
-      b.title = a.label;
-      b.setAttribute("aria-label", a.label);
-      b.innerHTML = postedIcon(a.icon, 16);
-      b.addEventListener("click", function (e) {
-        e.stopPropagation();
-        a.run();
-      });
-      hover.appendChild(b);
-    });
-    side.appendChild(hover);
-    row.appendChild(side);
-
-    row.addEventListener("click", function () {
-      postedOpenTask(task);
-    });
-    row.addEventListener("keydown", function (e) {
-      if (e.target !== row) return;
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        postedOpenTask(task);
-      }
-    });
-    return wrapWithSwipeActions(row, acts);
-  }
-
-  /** Свайп влево по строке открывает кнопки действий (как в почте на телефоне). */
-  function wrapWithSwipeActions(innerRoot, actions) {
-    var BTN_W = 76;
-    var reveal = BTN_W * actions.length;
-    var stack = document.createElement("div");
-    stack.className = "swipe-acts-row";
-    var tray = document.createElement("div");
-    tray.className = "swipe-acts";
-    tray.style.width = reveal + "px";
-    actions.forEach(function (a) {
-      var b = document.createElement("button");
-      b.type = "button";
-      b.className = "swipe-act swipe-act--" + a.key;
-      b.tabIndex = -1;
-      b.innerHTML = postedIcon(a.icon, 18) + "<span></span>";
-      b.querySelector("span").textContent = a.label;
-      b.addEventListener("click", function (e) {
-        e.stopPropagation();
-        applyX(0);
-        a.run();
-      });
-      tray.appendChild(b);
-    });
-    var panel = document.createElement("div");
-    panel.className = "swipe-acts-panel";
-    panel.appendChild(innerRoot);
-    stack.appendChild(tray);
-    stack.appendChild(panel);
-
-    var x = 0;
-    var startX = 0;
-    var startY = 0;
-    var startOffset = 0;
-    var dragging = false;
-    var locked = null;
-    var moved = false;
-
-    function applyX(nx) {
-      x = Math.min(0, Math.max(-reveal - 24, nx));
-      panel.style.transform = x ? "translateX(" + x + "px)" : "";
-      stack.classList.toggle("is-swiping", x < 0);
-      stack.classList.toggle("is-revealed", x < -8);
-    }
-    function finish() {
-      if (!dragging) return;
-      dragging = false;
-      if (locked === "x") applyX(x < -SWIPE_THRESHOLD ? -reveal : 0);
-      locked = null;
-    }
-    panel.addEventListener("pointerdown", function (e) {
-      if (e.pointerType === "mouse") return; // мышью — кнопки при наведении
-      startX = e.clientX;
-      startY = e.clientY;
-      startOffset = x;
-      dragging = true;
-      locked = null;
-      moved = false;
-    });
-    panel.addEventListener("pointermove", function (e) {
-      if (!dragging) return;
-      var dx = e.clientX - startX;
-      var dy = e.clientY - startY;
-      if (!locked && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
-        locked = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
-        if (locked === "x") {
-          // Открыта другая строка — закрываем, чтобы не висело две.
-          document.querySelectorAll(".swipe-acts-row.is-revealed").forEach(function (o) {
-            if (o !== stack && o._swipeReset) o._swipeReset();
-          });
-        }
-      }
-      if (locked === "x") {
-        moved = true;
-        e.preventDefault();
-        try {
-          panel.setPointerCapture(e.pointerId);
-        } catch (_) {}
-        applyX(startOffset + dx);
-      }
-    });
-    panel.addEventListener("pointerup", finish);
-    panel.addEventListener("pointercancel", finish);
-    panel.addEventListener(
-      "click",
-      function (e) {
-        if (moved || x < -8) {
-          moved = false;
-          e.preventDefault();
-          e.stopPropagation();
-          applyX(0);
-        }
+    openTaskModal({}, {
+      focusAssignee: true,
+      onSaved: function () {
+        loadPostedTasksList();
+        loadActual({ silent: true });
       },
-      true
-    );
-    stack._swipeReset = function () {
-      applyX(0);
-    };
-    return stack;
+    });
+  }
+
+  function setPostedTasksTab(tab) {
+    postedTasksTab = tab === "archive" ? "archive" : "current";
+    postedPerson = "";
+    postedSelectedId = "";
+    postedCardHosts.side = null;
+    var search = document.getElementById("posted-tasks-search");
+    if (search) search.value = postedArchiveQ = "";
+    renderPostedScreen();
+    var scroller = document.querySelector(".main-scroll");
+    if (scroller) scroller.scrollTop = 0;
+    if (postedTasksTab === "archive") loadPostedArchive();
+  }
+
+  async function loadPostedArchive() {
+    try {
+      var data = await apiFetch("/calendar/tasks/posted?archived=1", { method: "GET" });
+      postedArchiveItems = (data && data.items) || [];
+      postedArchiveLoaded = true;
+      if (isPostedTasksOpen()) renderPostedScreen();
+    } catch (err) {
+      showNoteToast((err && err.message) || "Не удалось загрузить «Принятые»");
+    }
   }
 
   async function loadPostedTasksList() {
-    var listEl = document.getElementById("posted-tasks-list");
-    var emptyEl = document.getElementById("posted-tasks-empty");
-    if (!listEl) return;
-    var tab = postedTasksTab;
+    if (!document.getElementById("posted-tasks-list")) return;
     try {
-      var archivedQ = tab === "archive" ? "1" : "0";
-      var data = await apiFetch(
-        "/calendar/tasks/posted?archived=" + archivedQ,
-        { method: "GET" }
-      );
-      if (tab !== postedTasksTab) return; // переключили вкладку, пока шёл запрос
+      var data = await apiFetch("/calendar/tasks/posted?archived=0", { method: "GET" });
       var items = (data && data.items) || [];
-      var count =
-        data && typeof data.count === "number"
-          ? data.count
-          : lastPostedTasksActiveCount;
-      if (tab === "archive") postedArchiveItems = items;
-      syncPostedTasksState(items, count);
+      syncPostedTasksState(items, data && typeof data.count === "number" ? data.count : undefined);
     } catch (err) {
-      if (emptyEl && !postedVisibleItems().length) {
-        emptyEl.textContent = (err && err.message) || String(err);
-        setHidden(emptyEl, false);
-      } else {
-        showNoteToast((err && err.message) || "Не удалось обновить поручения");
-      }
+      showNoteToast((err && err.message) || "Не удалось обновить поручения");
     }
+    if (isPostedTasksOpen()) loadPostedArchive();
   }
 
   function setPostedTasksScreen(open) {
@@ -22883,10 +23308,10 @@
     setHidden(sub, !open);
     if (open) {
       postedTasksTab = "current";
-      postedFilter = "all";
-      postedDoneOpen = false;
-      syncPostedTasksTabsUi();
-      renderPostedTasksList(lastPostedTasksItems);
+      postedPerson = "";
+      postedSelectedId = "";
+      postedCardHosts.side = null;
+      renderPostedScreen();
       loadPostedTasksList();
       var scroller = document.querySelector(".main-scroll");
       if (scroller) scroller.scrollTop = 0;
@@ -23128,6 +23553,7 @@
 
   function canPerformAppBack() {
     if (isAppSheetModalOpen()) return true;
+    if (isPostedCardOpen()) return true;
     if (isPostedTasksOpen()) return true;
     if (isNoteDiscussionOpen()) return true;
     if (isNoteEditorModalOpen()) return true;
@@ -23161,6 +23587,10 @@
   function performAppBack() {
     if (isAppSheetModalOpen()) {
       closeModal();
+      return true;
+    }
+    if (isPostedCardOpen()) {
+      closePostedCard();
       return true;
     }
     if (isPostedTasksOpen()) {
@@ -47804,10 +48234,21 @@
     }
     var postedNew = document.getElementById("posted-tasks-new");
     if (postedNew) postedNew.addEventListener("click", openNewPostedTask);
-    document.querySelectorAll("#actual-posted-tasks [data-posted-group]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        setPostedGroupBy(btn.getAttribute("data-posted-group") || "due");
+    var postedSearch = document.getElementById("posted-tasks-search");
+    if (postedSearch) {
+      postedSearch.addEventListener("input", function () {
+        postedArchiveQ = postedSearch.value || "";
+        renderPostedScreen();
       });
+    }
+    document.addEventListener("keydown", function (e) {
+      if (e.key !== "Escape" || !isPostedTasksOpen() || !postedSelectedId || isAppSheetModalOpen()) return;
+      postedSelectedId = "";
+      postedCardHosts.side = null;
+      renderPostedScreen();
+    });
+    window.addEventListener("resize", function () {
+      if (isPostedTasksOpen()) renderPostedScreen();
     });
     var actualVoiceBtn = document.getElementById("actual-voice-btn");
     if (actualVoiceBtn) {

@@ -173,3 +173,74 @@ def test_assignee_open_or_edit_marks_seen(client, store):
                      headers=_headers(ASSIGNEE))
     assert r.status_code == 200, r.text
     assert store.assignee_state(store.get_task(OWNER, t2["id"]))["seen_at"]
+
+
+def test_discussion_question_and_answer(client, store, sent):
+    t = _delegated(store)
+    url = f"/api/miniapp/calendar/tasks/{t['id']}/messages"
+    r = client.post(url, json={"text": "Квартал или 9 месяцев?"}, headers=_headers(ASSIGNEE))
+    assert r.status_code == 200, r.text
+    assert r.json()["task"]["event"]["assignee_state"]["status"] == "question"  # «ждёт» постановщика
+    assert sent[-1][0] == OWNER and "Квартал или 9 месяцев?" in sent[-1][1]
+    r = client.post(url, json={"text": "Квартал"}, headers=_headers(OWNER))
+    st = r.json()["task"]["event"]["assignee_state"]
+    assert st["status"] == "in_progress" and st["status_note"] == ""
+    assert sent[-1][0] == ASSIGNEE
+    assert client.post(url, json={"text": "  "}, headers=_headers(OWNER)).status_code == 400
+    assert client.post(url, json={"text": "чужой"}, headers=_headers(99)).status_code == 403
+    ev = client.get(f"/api/miniapp/calendar/tasks/{t['id']}/events", headers=_headers(OWNER)).json()["events"]
+    assert [e["kind"] for e in ev] == ["created", "seen", "message", "message"]
+    assert [e["text"] for e in ev if e["kind"] == "message"] == ["Квартал или 9 месяцев?", "Квартал"]
+
+
+def test_accept_return_cancel(client, store, sent):
+    t = _delegated(store)
+    base = f"/api/miniapp/calendar/tasks/{t['id']}"
+    assert client.post(base + "/accept", headers=_headers(ASSIGNEE)).status_code == 403
+    r = client.patch(base, json={"done": True, "result": "Таблица готова"}, headers=_headers(ASSIGNEE))
+    assert r.status_code == 200 and r.json()["task"]["event"]["done_at"]
+    r = client.post(base + "/return", json={"text": "Добавь сравнение с прошлым годом"}, headers=_headers(OWNER))
+    ev = r.json()["task"]["event"]
+    assert ev["done"] is False and ev["done_at"] == "" and ev["assignee_state"]["status"] == "in_progress"
+    assert sent[-1][0] == ASSIGNEE and "прошлым годом" in sent[-1][1]
+    r = client.post(base + "/accept", headers=_headers(OWNER))
+    ev = r.json()["task"]["event"]
+    assert ev["outcome"] == "accepted" and ev["owner_archived"] and ev["done"] and ev["accepted_at"]
+    kinds = [e["kind"] for e in r.json()["events"]]
+    assert kinds[-3:] == ["done", "returned", "accepted"]
+    archived = client.get("/api/miniapp/calendar/tasks/posted?archived=1", headers=_headers(OWNER)).json()["items"]
+    assert [i["id"] for i in archived] == [t["id"]]
+
+    t2 = _delegated(store, title="Ненужное")
+    r = client.post(f"/api/miniapp/calendar/tasks/{t2['id']}/cancel", headers=_headers(OWNER))
+    assert r.json()["task"]["event"]["outcome"] == "cancelled"
+    assert "отменил" in sent[-1][1]
+    assert store.task_visible_in_calendar(store.get_task(OWNER, t2["id"]), ASSIGNEE) is False
+
+
+def test_legacy_task_events_from_fields(store):
+    t = _delegated(store)
+    store.set_assignee_status(ASSIGNEE, t["id"], "question", "Какой период?")
+    with store._LOCK:  # как у задачи, поставленной до ленты: событий нет, есть только поля
+        store._conn().execute("DELETE FROM task_events")
+        store._conn().commit()
+    ev = store.list_events(store.get_task(OWNER, t["id"]))
+    assert [e["kind"] for e in ev] == ["created", "seen", "message"]
+    assert ev[2]["text"] == "Какой период?"
+
+
+def test_photo_allowed_between_task_parties(store):
+    _delegated(store)
+    assert store.users_share_task(OWNER, ASSIGNEE) and store.users_share_task(ASSIGNEE, OWNER)
+    assert not store.users_share_task(OWNER, 99)
+
+
+def test_reply_keeps_legacy_question(store):
+    t = _delegated(store)
+    store.set_assignee_status(ASSIGNEE, t["id"], "question", "Какой период?")
+    with store._LOCK:  # вопрос из времён до ленты — только в статусе
+        store._conn().execute("DELETE FROM task_events")
+        store._conn().commit()
+    store.post_message(OWNER, t["id"], "Квартал", actor_name="Вова")
+    msgs = [(e["actor_user_id"], e["text"]) for e in store.list_events(store.get_task(OWNER, t["id"])) if e["kind"] == "message"]
+    assert msgs == [(str(ASSIGNEE), "Какой период?"), (str(OWNER), "Квартал")]

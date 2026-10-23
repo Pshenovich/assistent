@@ -66,7 +66,10 @@
       [9004, "Созвониться с клиентом Альфа по интеграции и зафиксировать сроки запуска пилота", 0, "23:30", "44", "Максим Петров", false, [], { assignee_seen_at: hAgo(3), assignee_status: "in_progress", assignee_status_at: hAgo(2) }],
       [9005, "Обновить лендинг", 1, null, "33", "Артём", false, [], {}],
       [9006, "Проверить счета", 4, "11:00", "55", "Ирина", false, [], { last_nudged_at: hAgo(1) }],
-      [9007, "Собрать фидбек от команды", -2, null, "22", "Ульяна", true, [], {}],
+      [9007, "Собрать фидбек от команды", -2, null, "22", "Ульяна", true, [], { result: "Таблица в заметке «Фидбек Q3», выводы — на втором листе", done_at: hAgo(26), assignee_seen_at: hAgo(60) }],
+      [9011, "Подготовить КП для Бета", -5, null, "44", "Максим Петров", true, [], { owner_archived: true, outcome: "accepted", done_at: hAgo(72), accepted_at: hAgo(70) }],
+      [9012, "Перенести сайт на новый хостинг", -14, null, "33", "Артём", true, [], { owner_archived: true, outcome: "accepted", done_at: hAgo(15 * 24 + 5), accepted_at: hAgo(14 * 24) }],
+      [9013, "Сверка с бухгалтерией", -26, null, "55", "Ирина", false, [], { owner_archived: true, outcome: "cancelled", accepted_at: hAgo(25 * 24) }],
       [9008, "Нанять дизайнера", 12, null, "44", "Максим Петров", false, [], {}],
       // Мне поручил коллега — проверить «В работе / Есть вопрос» у исполнителя (?task=9010).
       [9010, "Прислать комментарии к смете", 1, "12:00", MOCK_ME, "Вова", false, [], { owner_user_id: "22" }],
@@ -82,6 +85,24 @@
     });
   })();
   var nextMockTaskId = 9100;
+  var mockTaskLogs = {};
+  function mockTaskLog(task, kind, uid, name, text) {
+    var k = String(task.id);
+    (mockTaskLogs[k] = mockTaskLogs[k] || []).push({ at: new Date().toISOString(), kind: kind, actor_user_id: String(uid || ""), actor_name: name || "", text: text || "" });
+  }
+  // Как на сервере: события ленты плюс достроенные из полей задачи (поставлено, открыто, вопрос).
+  function mockTaskEvents(task) {
+    var out = (mockTaskLogs[String(task.id)] || []).slice();
+    var kinds = out.map(function (e) { return e.kind; });
+    var legacy = [];
+    var created = new Date(new Date(task.start_at).getTime() - 2 * 86400000).toISOString();
+    if (kinds.indexOf("created") < 0) legacy.push({ at: created, kind: "created", actor_user_id: String(task.owner_user_id), actor_name: String(task.owner_user_id) === MOCK_ME ? "Вова" : "Олег Смирнов", text: "" });
+    if (kinds.indexOf("seen") < 0 && task.assignee_seen_at) legacy.push({ at: task.assignee_seen_at, kind: "seen", actor_user_id: task.assignee_user_id, actor_name: task.assignee_name, text: "" });
+    if (kinds.indexOf("message") < 0 && task.assignee_status === "question" && task.assignee_status_note) legacy.push({ at: task.assignee_status_at, kind: "message", actor_user_id: task.assignee_user_id, actor_name: task.assignee_name, text: task.assignee_status_note });
+    if (kinds.indexOf("nudge") < 0 && task.last_nudged_at) legacy.push({ at: task.last_nudged_at, kind: "nudge", actor_user_id: MOCK_ME, actor_name: "Вова", text: "" });
+    if (kinds.indexOf("done") < 0 && task.done && task.done_at) legacy.push({ at: task.done_at, kind: "done", actor_user_id: task.assignee_user_id, actor_name: task.assignee_name, text: task.result || "" });
+    return legacy.concat(out).sort(function (a, b) { return String(a.at).localeCompare(String(b.at)); });
+  }
 
   // Внешний трекер (Битрикс24) для ?dev=1: доски, стадии, создание, WWA.
   var mockTracker = {
@@ -1451,6 +1472,10 @@
         chip_label: task.chip_label || "Задача",
         done: !!task.done,
         owner_archived: !!task.owner_archived,
+        done_at: task.done_at || "",
+        accepted_at: task.accepted_at || "",
+        outcome: task.outcome || "",
+        is_owner: String(task.owner_user_id || MOCK_ME) === MOCK_ME,
         assignee_state: {
           seen_at: task.assignee_seen_at || "",
           status: task.assignee_status || "",
@@ -1523,7 +1548,13 @@
         if (patch.assignee_user_id != null) existing.assignee_user_id = String(patch.assignee_user_id || "");
         if (patch.assignee_email != null) existing.assignee_email = String(patch.assignee_email || "");
         if (patch.assignee_name != null) existing.assignee_name = String(patch.assignee_name || "");
-        if (patch.done != null) existing.done = !!patch.done;
+        if (patch.done != null) {
+          if (patch.done && !existing.done) {
+            existing.done_at = new Date().toISOString();
+            mockTaskLog(existing, "done", existing.assignee_user_id, existing.assignee_name, existing.result || "");
+          }
+          existing.done = !!patch.done;
+        }
         if (patch.owner_archived != null) existing.owner_archived = !!patch.owner_archived;
         upsertMockTaskEvent(existing);
         return mockTaskApi(existing);
@@ -1548,17 +1579,70 @@
       });
       return { ok: true, archived: acc };
     }
-    var taskActMatch = basePath.match(/^\/calendar\/tasks\/(\d+)\/(nudge|seen|status)$/);
-    if (taskActMatch && method === "POST") {
+    var taskActMatch = basePath.match(/^\/calendar\/tasks\/(\d+)\/(nudge|seen|status|events|messages|accept|return|cancel)$/);
+    if (taskActMatch && (method === "POST" || taskActMatch[2] === "events")) {
       var at = mockTasks.filter(function (t) {
         return Number(t.id) === Number(taskActMatch[1]);
       })[0];
       if (!at) throw new Error("Задача не найдена");
-      if (taskActMatch[2] === "nudge") {
+      var act = taskActMatch[2];
+      var ab = {};
+      try {
+        ab = JSON.parse((opts && opts.body) || "{}");
+      } catch (_) {}
+      var nowIso = new Date().toISOString();
+      if (act === "events" && method === "GET") return { ok: true, events: mockTaskEvents(at) };
+      if (act === "messages") {
+        var txt = String(ab.text || "").trim();
+        if (!txt) throw new Error("Напишите сообщение");
+        var fromMe = String(at.owner_user_id) === MOCK_ME;
+        var logged = (mockTaskLogs[String(at.id)] || []).some(function (e) { return e.kind === "message"; });
+        if (!logged && at.assignee_status === "question" && at.assignee_status_note) {
+          (mockTaskLogs[String(at.id)] = mockTaskLogs[String(at.id)] || []).push({ at: at.assignee_status_at, kind: "message", actor_user_id: at.assignee_user_id, actor_name: at.assignee_name, text: at.assignee_status_note });
+        }
+        mockTaskLog(at, "message", MOCK_ME, "Вова", txt);
+        if (!fromMe) {
+          at.assignee_status = "question";
+          at.assignee_status_note = txt;
+          at.assignee_status_at = nowIso;
+        } else if (at.assignee_status === "question") {
+          at.assignee_status = "in_progress";
+          at.assignee_status_note = "";
+        }
+        return Object.assign(mockTaskApi(at), { events: mockTaskEvents(at) });
+      }
+      if (act === "accept") {
+        at.done = true;
+        at.owner_archived = true;
+        at.outcome = "accepted";
+        at.accepted_at = nowIso;
+        at.done_at = at.done_at || nowIso;
+        mockTaskLog(at, "accepted", MOCK_ME, "Вова", "");
+        return Object.assign(mockTaskApi(at), { events: mockTaskEvents(at) });
+      }
+      if (act === "return") {
+        at.done = false;
+        at.owner_archived = false;
+        at.outcome = "";
+        at.done_at = "";
+        at.assignee_status = "in_progress";
+        at.assignee_status_note = "";
+        mockTaskLog(at, "returned", MOCK_ME, "Вова", String(ab.text || ""));
+        return Object.assign(mockTaskApi(at), { events: mockTaskEvents(at) });
+      }
+      if (act === "cancel") {
+        at.owner_archived = true;
+        at.outcome = "cancelled";
+        at.accepted_at = nowIso;
+        mockTaskLog(at, "cancelled", MOCK_ME, "Вова", "");
+        return Object.assign(mockTaskApi(at), { events: mockTaskEvents(at) });
+      }
+      if (act === "nudge") {
         if (at.last_nudged_at && Date.now() - new Date(at.last_nudged_at).getTime() < 4 * 3600000) {
           throw new Error("Уже напомнили в " + new Date(at.last_nudged_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
         }
         at.last_nudged_at = new Date().toISOString();
+        mockTaskLog(at, "nudge", MOCK_ME, "Вова", "");
       } else if (taskActMatch[2] === "status") {
         var sb = {};
         try {

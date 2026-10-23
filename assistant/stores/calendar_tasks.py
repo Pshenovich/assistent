@@ -83,6 +83,21 @@ def _conn() -> sqlite3.Connection:
     _ensure_recurrence_column(_CONN)
     _ensure_result_column(_CONN)
     _ensure_assignee_state_columns(_CONN)
+    _ensure_outcome_columns(_CONN)
+    _CONN.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            at TEXT NOT NULL,
+            actor_user_id TEXT NOT NULL DEFAULT '',
+            actor_name TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL,
+            text TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    _CONN.execute("CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, id)")
     _CONN.commit()
     return _CONN
 
@@ -118,6 +133,18 @@ MAX_STATUS_NOTE_LEN = 500
 def _ensure_assignee_state_columns(conn: sqlite3.Connection) -> None:
     cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(calendar_tasks)")}
     for col in ASSIGNEE_STATE_COLUMNS:
+        if col not in cols:
+            conn.execute(f"ALTER TABLE calendar_tasks ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+
+
+# Итог поручения у постановщика: когда сдали, когда приняли, принято или отменено.
+OUTCOME_COLUMNS = ("done_at", "accepted_at", "outcome")
+OUTCOMES = ("", "accepted", "cancelled")
+
+
+def _ensure_outcome_columns(conn: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(calendar_tasks)")}
+    for col in OUTCOME_COLUMNS:
         if col not in cols:
             conn.execute(f"ALTER TABLE calendar_tasks ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
 
@@ -320,7 +347,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         if "owner_archived" in keys
         else False,
         "recurrence": str(row["recurrence"] or "") if "recurrence" in keys else "",
-        **{c: str(row[c] or "") if c in keys else "" for c in ASSIGNEE_STATE_COLUMNS},
+        **{c: str(row[c] or "") if c in keys else "" for c in ASSIGNEE_STATE_COLUMNS + OUTCOME_COLUMNS},
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -349,6 +376,8 @@ def task_visible_in_calendar(task: dict[str, Any] | None, viewer_id: int | str) 
         return False
     if task_is_delegated(task) and viewer == owner:
         return False
+    if task_is_delegated(task) and str(task.get("outcome") or "") == "cancelled":
+        return False  # постановщик отменил поручение — у исполнителя его больше нет
     return viewer == owner or viewer == assignee
 
 
@@ -545,6 +574,9 @@ def as_calendar_event(
         "done": bool(task.get("done")),
         "owner_archived": bool(task.get("owner_archived")),
         "assignee_state": assignee_state(task),
+        "done_at": str(task.get("done_at") or ""),
+        "accepted_at": str(task.get("accepted_at") or ""),
+        "outcome": str(task.get("outcome") or ""),
         "note_id": str(task.get("note_id") or ""),
         "chip_label": chip_label(task, tz=tz),
         "schedule_log": _normalize_schedule_log(task.get("schedule_log") or []),
@@ -1043,7 +1075,14 @@ def update_task(
         "updated_at": _now_iso(),
     }
     reassigned = fields["assignee_user_id"] != existing["assignee_user_id"]
+    if fields["done"] and not existing["done"]:
+        done_at = _now_iso()
+    elif not fields["done"]:
+        done_at = ""
+    else:
+        done_at = str(existing.get("done_at") or "")
     with _LOCK:
+        _conn().execute("UPDATE calendar_tasks SET done_at = ? WHERE id = ?", (done_at, int(existing["id"])))
         if reassigned:
             # Новый исполнитель — прежние «видел / в работе / напомнили» не про него.
             _conn().execute(
@@ -1134,6 +1173,178 @@ def _assignee_task(viewer_id: int | str, task_id: int | str) -> Optional[dict[st
     return task
 
 
+# ——— Лента поручения: события и переписка постановщика с исполнителем ———
+EVENT_KINDS = ("created", "seen", "in_progress", "message", "nudge", "done", "returned", "accepted", "cancelled")
+MAX_MESSAGE_LEN = 2000
+
+
+def add_event(
+    task_id: int | str,
+    kind: str,
+    *,
+    actor_user_id: int | str = "",
+    actor_name: str = "",
+    text: str = "",
+    at: str = "",
+) -> None:
+    tid = _parse_task_id(task_id)
+    if tid is None or kind not in EVENT_KINDS:
+        return
+    with _LOCK:
+        _conn().execute(
+            "INSERT INTO task_events (task_id, at, actor_user_id, actor_name, kind, text) VALUES (?, ?, ?, ?, ?, ?)",
+            (tid, at or _now_iso(), str(actor_user_id or ""), _clip(actor_name, 120), kind, _clip(text, MAX_MESSAGE_LEN)),
+        )
+        _conn().commit()
+
+
+def list_events(task: dict[str, Any]) -> list[dict[str, Any]]:
+    """События поручения по времени. Для задач, поставленных до ленты, достраиваем из полей задачи."""
+    tid = int(task["id"])
+    with _LOCK:
+        rows = _conn().execute(
+            "SELECT * FROM task_events WHERE task_id = ? ORDER BY at ASC, id ASC", (tid,)
+        ).fetchall()
+    out = [
+        {
+            "at": str(r["at"]),
+            "kind": str(r["kind"]),
+            "actor_user_id": str(r["actor_user_id"] or ""),
+            "actor_name": str(r["actor_name"] or ""),
+            "text": str(r["text"] or ""),
+        }
+        for r in rows
+    ]
+    kinds = {e["kind"] for e in out}
+    owner = str(task.get("owner_user_id") or "")
+    assignee = str(task.get("assignee_user_id") or "")
+    legacy: list[dict[str, Any]] = []
+    if "created" not in kinds and task.get("created_at"):
+        legacy.append({"at": str(task["created_at"]), "kind": "created", "actor_user_id": owner, "actor_name": "", "text": ""})
+    if "seen" not in kinds and task.get("assignee_seen_at"):
+        legacy.append({"at": str(task["assignee_seen_at"]), "kind": "seen", "actor_user_id": assignee,
+                       "actor_name": str(task.get("assignee_name") or ""), "text": ""})
+    if "message" not in kinds and task.get("assignee_status") == "question" and task.get("assignee_status_note"):
+        legacy.append({"at": str(task.get("assignee_status_at") or task.get("updated_at") or ""), "kind": "message",
+                       "actor_user_id": assignee, "actor_name": str(task.get("assignee_name") or ""),
+                       "text": str(task["assignee_status_note"])})
+    if "nudge" not in kinds and task.get("last_nudged_at"):
+        legacy.append({"at": str(task["last_nudged_at"]), "kind": "nudge", "actor_user_id": owner, "actor_name": "", "text": ""})
+    if "done" not in kinds and task.get("done") and task.get("done_at"):
+        legacy.append({"at": str(task["done_at"]), "kind": "done", "actor_user_id": assignee,
+                       "actor_name": str(task.get("assignee_name") or ""), "text": str(task.get("result") or "")})
+    if legacy:
+        # Достроенные события старше записанных: при равном времени — первыми (сортировка устойчивая).
+        out = sorted(legacy + out, key=lambda e: e["at"])
+    return out
+
+
+def users_share_task(a: int | str, b: int | str) -> bool:
+    """Постановщик и исполнитель одного поручения (для фото в «Поручено другим»)."""
+    ua, ub = _uid(a), _uid(b)
+    if not ua or not ub:
+        return False
+    with _LOCK:
+        row = _conn().execute(
+            "SELECT 1 FROM calendar_tasks WHERE (owner_user_id = ? AND assignee_user_id = ?)"
+            " OR (owner_user_id = ? AND assignee_user_id = ?) LIMIT 1",
+            (ua, ub, ub, ua),
+        ).fetchone()
+    return row is not None
+
+
+def _owner_task(owner_id: int | str, task_id: int | str) -> Optional[dict[str, Any]]:
+    task = get_task_for_user(owner_id, task_id)
+    if not task or not task_is_delegated(task) or str(task.get("owner_user_id") or "") != _uid(owner_id):
+        return None
+    return task
+
+
+def post_message(viewer_id: int | str, task_id: int | str, text: str, *, actor_name: str = "") -> Optional[dict[str, Any]]:
+    """Сообщение в обсуждении поручения. От исполнителя — это вопрос (поручение «ждёт» постановщика),
+    ответ постановщика вопрос снимает."""
+    body = _clip(text, MAX_MESSAGE_LEN)
+    if not body:
+        raise ValueError("Напишите сообщение")
+    task = get_task_for_user(viewer_id, task_id)
+    if not task or not task_is_delegated(task):
+        return None
+    viewer = _uid(viewer_id)
+    tid = int(task["id"])
+    if task.get("assignee_status") == "question" and task.get("assignee_status_note"):
+        with _LOCK:
+            has_msg = _conn().execute(
+                "SELECT 1 FROM task_events WHERE task_id = ? AND kind = 'message' LIMIT 1", (tid,)
+            ).fetchone()
+        if not has_msg:
+            # Вопрос задан до ленты (жил только в статусе) — сохраняем, иначе ответ его сотрёт.
+            add_event(tid, "message", actor_user_id=task.get("assignee_user_id") or "",
+                      actor_name=str(task.get("assignee_name") or ""), text=str(task["assignee_status_note"]),
+                      at=str(task.get("assignee_status_at") or ""))
+    add_event(tid, "message", actor_user_id=viewer, actor_name=actor_name, text=body)
+    now = _now_iso()
+    if viewer == str(task.get("assignee_user_id") or ""):
+        return _set_columns(tid, {
+            "assignee_status": "question",
+            "assignee_status_note": _clip(body, MAX_STATUS_NOTE_LEN),
+            "assignee_status_at": now,
+            "assignee_seen_at": task.get("assignee_seen_at") or now,
+        })
+    if task.get("assignee_status") == "question":
+        return _set_columns(tid, {"assignee_status": "in_progress", "assignee_status_note": "", "assignee_status_at": now})
+    return _get_task_row(tid)
+
+
+def accept_task(owner_id: int | str, task_id: int | str, *, actor_name: str = "") -> Optional[dict[str, Any]]:
+    """«Принять» — поручение закрыто и уходит в «Принятые»."""
+    task = _owner_task(owner_id, task_id)
+    if not task:
+        return None
+    now = _now_iso()
+    with _LOCK:
+        _conn().execute(
+            "UPDATE calendar_tasks SET done = 1, owner_archived = 1, outcome = 'accepted', accepted_at = ?,"
+            " done_at = CASE WHEN done_at = '' THEN ? ELSE done_at END, updated_at = ? WHERE id = ?",
+            (now, now, now, int(task["id"])),
+        )
+        _conn().commit()
+    add_event(task["id"], "accepted", actor_user_id=owner_id, actor_name=actor_name)
+    return _get_task_row(int(task["id"]))
+
+
+def return_task(owner_id: int | str, task_id: int | str, comment: str = "", *, actor_name: str = "") -> Optional[dict[str, Any]]:
+    """«Вернуть» — снова в работе (из «Сделано» или из «Принятых»), с комментарием исполнителю."""
+    task = _owner_task(owner_id, task_id)
+    if not task:
+        return None
+    now = _now_iso()
+    with _LOCK:
+        _conn().execute(
+            "UPDATE calendar_tasks SET done = 0, owner_archived = 0, outcome = '', accepted_at = '', done_at = '',"
+            " assignee_status = 'in_progress', assignee_status_note = '', assignee_status_at = ?, updated_at = ? WHERE id = ?",
+            (now, now, int(task["id"])),
+        )
+        _conn().commit()
+    add_event(task["id"], "returned", actor_user_id=owner_id, actor_name=actor_name, text=comment)
+    return _get_task_row(int(task["id"]))
+
+
+def cancel_task(owner_id: int | str, task_id: int | str, *, actor_name: str = "") -> Optional[dict[str, Any]]:
+    """«Отменить поручение» — в «Принятые» с пометкой «отменено», у исполнителя пропадает."""
+    task = _owner_task(owner_id, task_id)
+    if not task:
+        return None
+    now = _now_iso()
+    with _LOCK:
+        _conn().execute(
+            "UPDATE calendar_tasks SET owner_archived = 1, outcome = 'cancelled', accepted_at = ?, updated_at = ? WHERE id = ?",
+            (now, now, int(task["id"])),
+        )
+        _conn().commit()
+    add_event(task["id"], "cancelled", actor_user_id=owner_id, actor_name=actor_name)
+    return _get_task_row(int(task["id"]))
+
+
 def mark_seen(viewer_id: int | str, task_id: int | str) -> Optional[dict[str, Any]]:
     """Исполнитель открыл поручение — запоминаем первый раз (дальше не перезаписываем)."""
     task = _assignee_task(viewer_id, task_id)
@@ -1141,6 +1352,7 @@ def mark_seen(viewer_id: int | str, task_id: int | str) -> Optional[dict[str, An
         return None
     if task.get("assignee_seen_at"):
         return task
+    add_event(task["id"], "seen", actor_user_id=viewer_id, actor_name=str(task.get("assignee_name") or ""))
     return _set_columns(int(task["id"]), {"assignee_seen_at": _now_iso()})
 
 
@@ -1157,6 +1369,10 @@ def set_assignee_status(
     note = _clip(note, MAX_STATUS_NOTE_LEN) if status == "question" else ""
     if status == "question" and not note:
         raise ValueError("Напишите вопрос")
+    if status == "question":
+        add_event(task["id"], "message", actor_user_id=viewer_id, actor_name=str(task.get("assignee_name") or ""), text=note)
+    elif status == "in_progress" and task.get("assignee_status") != "in_progress":
+        add_event(task["id"], "in_progress", actor_user_id=viewer_id, actor_name=str(task.get("assignee_name") or ""))
     now = _now_iso()
     return _set_columns(
         int(task["id"]),
@@ -1169,10 +1385,11 @@ def set_assignee_status(
     )
 
 
-def mark_nudged(task_id: int | str) -> Optional[dict[str, Any]]:
+def mark_nudged(task_id: int | str, *, actor_user_id: int | str = "", actor_name: str = "") -> Optional[dict[str, Any]]:
     tid = _parse_task_id(task_id)
     if tid is None:
         return None
+    add_event(tid, "nudge", actor_user_id=actor_user_id, actor_name=actor_name)
     return _set_columns(tid, {"last_nudged_at": _now_iso()})
 
 
@@ -1182,14 +1399,14 @@ def archive_done_posted(owner_user_id: int | str) -> int:
     with _LOCK:
         cur = _conn().execute(
             """
-            UPDATE calendar_tasks SET owner_archived = 1, updated_at = ?
+            UPDATE calendar_tasks SET owner_archived = 1, outcome = 'accepted', accepted_at = ?, updated_at = ?
             WHERE owner_user_id = ?
               AND assignee_user_id != ''
               AND assignee_user_id != owner_user_id
               AND done = 1
               AND IFNULL(owner_archived, 0) = 0
             """,
-            (_now_iso(), uid),
+            (_now_iso(), _now_iso(), uid),
         )
         _conn().commit()
         return int(cur.rowcount or 0)

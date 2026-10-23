@@ -5618,8 +5618,109 @@ async def miniapp_calendar_tasks_nudge(
     )
     if not sent:
         raise HTTPException(status_code=502, detail="Не получилось отправить напоминание в Telegram")
-    row = await run_in_threadpool(calendar_tasks_store.mark_nudged, task_id)
+    row = await run_in_threadpool(
+        partial(calendar_tasks_store.mark_nudged, task_id, actor_user_id=uid, actor_name=_principal_display_name(principal))
+    )
     return {"ok": True, "task": _task_api(row or task, tz=tz, viewer_id=uid)}
+
+
+class _MiniappTaskMessageBody(BaseModel):
+    text: str = ""
+
+
+@miniapp_router.get("/calendar/tasks/{task_id}/events")
+async def miniapp_calendar_tasks_events(
+    task_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    task = await run_in_threadpool(calendar_tasks_store.get_task_for_user, uid, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    events = await run_in_threadpool(calendar_tasks_store.list_events, task)
+    return {"ok": True, "events": events}
+
+
+@miniapp_router.post("/calendar/tasks/{task_id}/messages")
+async def miniapp_calendar_tasks_message(
+    task_id: int,
+    body: _MiniappTaskMessageBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.lib.task_notify import notify_task_message
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    tz = _tz_for(uid)
+    name = _principal_display_name(principal)
+    try:
+        row = await run_in_threadpool(
+            partial(calendar_tasks_store.post_message, uid, task_id, body.text, actor_name=name)
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not row:
+        raise HTTPException(status_code=403, detail="Писать могут постановщик и исполнитель поручения")
+    await run_in_threadpool(
+        partial(notify_task_message, task=row, sender_id=uid, sender_name=name, text=body.text)
+    )
+    events = await run_in_threadpool(calendar_tasks_store.list_events, row)
+    return {"ok": True, "task": _task_api(row, tz=tz, viewer_id=uid), "events": events}
+
+
+async def _owner_task_action(task_id: int, principal: "_MiniappPrincipal", action: str, comment: str = "") -> dict[str, Any]:
+    from assistant.lib import task_notify
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    tz = _tz_for(uid)
+    name = _principal_display_name(principal)
+    if action == "accept":
+        fn = partial(calendar_tasks_store.accept_task, uid, task_id, actor_name=name)
+    elif action == "return":
+        fn = partial(calendar_tasks_store.return_task, uid, task_id, comment, actor_name=name)
+    else:
+        fn = partial(calendar_tasks_store.cancel_task, uid, task_id, actor_name=name)
+    row = await run_in_threadpool(fn)
+    if not row:
+        raise HTTPException(status_code=403, detail="Это может сделать постановщик поручения")
+    if action == "return":
+        await run_in_threadpool(partial(task_notify.notify_task_returned, task=row, owner_name=name, comment=comment))
+    elif action == "cancel":
+        await run_in_threadpool(partial(task_notify.notify_task_cancelled, task=row, owner_name=name))
+    synced = await run_in_threadpool(_sync_task_google, uid, row, "update")
+    out = synced or row
+    events = await run_in_threadpool(calendar_tasks_store.list_events, out)
+    return {"ok": True, "task": _task_api(out, tz=tz, viewer_id=uid), "events": events}
+
+
+@miniapp_router.post("/calendar/tasks/{task_id}/accept")
+async def miniapp_calendar_tasks_accept(
+    task_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    return await _owner_task_action(task_id, principal, "accept")
+
+
+@miniapp_router.post("/calendar/tasks/{task_id}/return")
+async def miniapp_calendar_tasks_return(
+    task_id: int,
+    body: _MiniappTaskMessageBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    return await _owner_task_action(task_id, principal, "return", body.text)
+
+
+@miniapp_router.post("/calendar/tasks/{task_id}/cancel")
+async def miniapp_calendar_tasks_cancel(
+    task_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    return await _owner_task_action(task_id, principal, "cancel")
 
 
 @miniapp_router.get("/calendar/tasks")
@@ -5800,6 +5901,15 @@ async def miniapp_calendar_tasks_create(
     if calendar_tasks_store.task_is_delegated(out):
         await run_in_threadpool(
             partial(
+                calendar_tasks_store.add_event,
+                out["id"],
+                "created",
+                actor_user_id=uid,
+                actor_name=_principal_display_name(principal),
+            )
+        )
+        await run_in_threadpool(
+            partial(
                 _notify_task_assignee,
                 assignee_user_id=out.get("assignee_user_id") or "",
                 task=out,
@@ -5898,6 +6008,16 @@ async def miniapp_calendar_tasks_patch(
     ):
         from assistant.lib.task_notify import notify_task_owner_done
 
+        await run_in_threadpool(
+            partial(
+                calendar_tasks_store.add_event,
+                out["id"],
+                "done",
+                actor_user_id=uid,
+                actor_name=_principal_display_name(principal),
+                text=str(out.get("result") or ""),
+            )
+        )
         await run_in_threadpool(
             partial(
                 notify_task_owner_done,
@@ -11449,6 +11569,10 @@ def _viewer_may_see_user_photo(viewer: int, user_id: int) -> bool:
 
     if note_members.shares_any_note_with(viewer, user_id):
         return True
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    if calendar_tasks_store.users_share_task(viewer, user_id):
+        return True  # постановщик и исполнитель поручения видят фото друг друга
     contacts = _miniapp_contacts_by_email(int(viewer))
     for row in contacts.values():
         try:

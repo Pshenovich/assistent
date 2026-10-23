@@ -138,3 +138,46 @@ def notify_task_owner_question(*, task: dict[str, Any], asker_name: str, questio
         send_message(owner, text)
     except Exception as e:
         print(f"[calendar_tasks] notify_owner_question uid={owner} err={e!r}")
+
+
+def _send_task_push(to_uid: Any, text: str, tag: str) -> None:
+    from assistant.lib.telegram_notify import send_message
+
+    uid = _int_uid(to_uid)
+    if uid <= 0:
+        return
+    try:
+        send_message(uid, text)
+    except Exception as e:
+        print(f"[calendar_tasks] {tag} uid={uid} err={e!r}")
+
+
+def notify_task_message(*, task: dict[str, Any], sender_id: Any, sender_name: str, text: str) -> None:
+    """Сообщение в обсуждении поручения — второй стороне (постановщику или исполнителю)."""
+    from assistant.stores.calendar_tasks import task_is_delegated
+
+    if not task_is_delegated(task):
+        return
+    owner = str(task.get("owner_user_id") or "")
+    to = str(task.get("assignee_user_id") or "") if str(sender_id) == owner else owner
+    link = task_title_link_html(str(task.get("title") or "Задача"), task.get("id") or 0)
+    who = html.escape((sender_name or "").strip() or "Участник")
+    body = (text or "").strip()
+    if len(body) > 600:
+        body = body[:600].rstrip() + "…"
+    _send_task_push(to, f"{who} по задаче {link}:\n{html.escape(body)}", "notify_message")
+
+
+def notify_task_returned(*, task: dict[str, Any], owner_name: str, comment: str) -> None:
+    link = task_title_link_html(str(task.get("title") or "Задача"), task.get("id") or 0)
+    who = html.escape((owner_name or "").strip() or "Постановщик")
+    text = f"{who} вернул(а) задачу в работу: {link}."
+    if (comment or "").strip():
+        text += f"\n{html.escape(comment.strip()[:600])}"
+    _send_task_push(task.get("assignee_user_id"), text, "notify_returned")
+
+
+def notify_task_cancelled(*, task: dict[str, Any], owner_name: str) -> None:
+    who = html.escape((owner_name or "").strip() or "Постановщик")
+    title = html.escape(str(task.get("title") or "Задача"))
+    _send_task_push(task.get("assignee_user_id"), f"{who} отменил(а) задачу «{title}» — делать её больше не нужно.", "notify_cancelled")
