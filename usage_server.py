@@ -5683,6 +5683,8 @@ async def miniapp_calendar_tasks_get(
     row = await run_in_threadpool(calendar_tasks_store.get_task_for_user, uid, task_id)
     if not row:
         raise HTTPException(status_code=404, detail="Задача не найдена")
+    # Исполнитель открыл поручение (ссылка из Telegram, календарь) — постановщик видит «просмотрено».
+    row = await run_in_threadpool(calendar_tasks_store.mark_seen, uid, task_id) or row
     return {"ok": True, "task": _task_api(row, tz=tz, viewer_id=uid)}
 
 
@@ -5866,6 +5868,9 @@ async def miniapp_calendar_tasks_patch(
         raise HTTPException(status_code=400, detail=str(e)) from e
     if not row:
         raise HTTPException(status_code=404, detail="Задача не найдена")
+    if not is_owner:
+        # Исполнитель что-то поменял в поручении — значит, видел его.
+        row = await run_in_threadpool(calendar_tasks_store.mark_seen, uid, task_id) or row
     synced = await run_in_threadpool(_sync_task_google, uid, row, "update")
     out = synced or row
     new_assignee = str(out.get("assignee_user_id") or "")

@@ -159,3 +159,17 @@ def test_posted_overdue_card_evening_only():
     assert card["type"] == "posted_overdue" and card["title"] == "1 поручение просрочено"
     assert card["actions"][0]["act"] == "nudge_tasks" and card["actions"][0]["payload"] == {"task_ids": [5]}
     assert proactive._posted_by(late, str(OWNER)) and not proactive._posted_by(late, str(ASSIGNEE))
+
+
+def test_assignee_open_or_edit_marks_seen(client, store):
+    t = _delegated(store)
+    r = client.get(f"/api/miniapp/calendar/tasks/{t['id']}", headers=_headers(OWNER))
+    assert r.status_code == 200 and r.json()["task"]["event"]["assignee_state"]["seen_at"] == ""  # автор — не «просмотрено»
+    r = client.get(f"/api/miniapp/calendar/tasks/{t['id']}", headers=_headers(ASSIGNEE))
+    assert r.status_code == 200 and r.json()["task"]["event"]["assignee_state"]["seen_at"]
+
+    t2 = _delegated(store, title="Второе")
+    r = client.patch(f"/api/miniapp/calendar/tasks/{t2['id']}", json={"checklist": [{"text": "a", "done": True}]},
+                     headers=_headers(ASSIGNEE))
+    assert r.status_code == 200, r.text
+    assert store.assignee_state(store.get_task(OWNER, t2["id"]))["seen_at"]

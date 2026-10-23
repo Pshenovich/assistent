@@ -15037,15 +15037,50 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   min-height: 60vh;
 }
 #actual-posted-tasks.actual-subscreen {
-  margin: 0 -4px;
+  margin: 0;
   --posted-late: #ff6b5e;
   --posted-warn: #f0b44c;
+}
+/* Список — во всю ширину экрана, как календарь (отступ даёт сама панель). */
+#actual-posted-tasks .subscreen-body.posted-body {
+  padding-left: 0;
+  padding-right: 0;
 }
 @media (min-width: 960px) {
   #actual-posted-tasks.actual-subscreen {
     width: 100%;
-    max-width: 760px;
+    max-width: 1180px;
     margin: 0 auto;
+  }
+  /* Десктоп: фильтры и «По сроку / По людям» — одной строкой. */
+  #actual-posted-tasks .posted-tools {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 10px;
+  }
+  #actual-posted-tasks .posted-filters {
+    flex-wrap: wrap;
+    overflow: visible;
+    margin: 0;
+    padding: 0;
+  }
+  #actual-posted-tasks .posted-tools .posted-group-switch { align-self: center; }
+  /* Группы — в две колонки «потоком» (без пустот под короткой группой), выполненные — на всю ширину. */
+  #actual-posted-tasks .posted-list {
+    display: block;
+    columns: 2 360px;
+    column-gap: 20px;
+  }
+  #actual-posted-tasks .posted-section,
+  #actual-posted-tasks .posted-section:first-child {
+    break-inside: avoid;
+    margin: 0 0 18px;
+  }
+  #actual-posted-tasks .posted-section.posted-done {
+    column-span: all;
+    margin-top: 4px;
   }
 }
 .posted-head-actions {

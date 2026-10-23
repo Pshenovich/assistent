@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-posted1";
+  var WEBAPP_BUILD = "20261023-posted2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -15991,8 +15991,8 @@
     var parts = [];
     if (done) parts.push(who + " · выполнено");
     else if (st.status === "in_progress") parts.push(who + " · в работе с " + postedTimeShort(st.status_at));
-    else if (st.seen_at) parts.push(who + " · прочитано " + postedTimeShort(st.seen_at));
-    else parts.push(who + " · ещё не прочитано");
+    else if (st.seen_at) parts.push(who + " · просмотрено " + postedTimeShort(st.seen_at));
+    else parts.push(who + " · ещё не просмотрено");
     if (st.nudged_at && !done) parts.push("напомнили " + postedTimeShort(st.nudged_at));
     line.textContent = parts.join(" · ");
     host.appendChild(line);
@@ -22552,10 +22552,10 @@
       b.textContent = "в работе";
     } else if (st.seen_at) {
       b.className = "posted-state";
-      b.textContent = "прочитано " + postedTimeShort(st.seen_at);
+      b.textContent = "просмотрено " + postedTimeShort(st.seen_at);
     } else {
       b.className = "posted-state posted-state--unseen";
-      b.textContent = "не прочитано";
+      b.textContent = "не просмотрено";
     }
     return b;
   }
