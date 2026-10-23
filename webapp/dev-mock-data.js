@@ -516,10 +516,185 @@
     return out;
   }
 
+  // ---- Профиль: моки для локальной вёрстки экранов ----
+  var mockProfile = {
+    me: { id: 123456789, first_name: "Вова", username: "pshenovich", bot_username: "orbita_dev_bot" },
+    billing: { show_balance: true, balance_rub: 1240, tariff_label: "Pro" },
+    integrations: {
+      google: true,
+      zoom: true,
+      zoom_display_name: "v.savashkevich@obuchat.me",
+      telemost: false,
+      "yandex-disk": false,
+      bitrix: false,
+    },
+    prefs: { focus: true, brief: true, brief_time: "08:30", after_meetings: true, before_meetings: true, chats: true, weekly: false },
+    settings: {
+      digest_enabled: true,
+      meeting_reminders_enabled: true,
+      meeting_reminder_minutes_before: 10,
+      task_reminders_enabled: true,
+      task_reminder_minutes_before: 15,
+      discussion_notify_telegram: true,
+      discussion_notify_web_push: false,
+    },
+    teams: [
+      { id: 901, name: "Продукт", members: [{ email: "anna@obuchat.me", name: "Анна Котова" }, { email: "d.morozov@obuchat.me", name: "Дмитрий Морозов" }], shares: [{ note_id: 5, title: "Регламент релизов" }] },
+      { id: 902, name: "Продажи", members: [{ email: "d.morozov@obuchat.me", name: "Дмитрий Морозов" }], shares: [] },
+    ],
+    tgLeo: {
+      model: "claude-sonnet",
+      models: [
+        { id: "claude-sonnet", label: "Claude Sonnet" },
+        { id: "claude-opus", label: "Claude Opus" },
+        { id: "gpt-5", label: "GPT-5" },
+      ],
+      thread: null,
+    },
+  };
+
+  function mockExpenses(days) {
+    var out = [];
+    var total = 0;
+    var labels = ["Саммари встречи", "Ассистент", "Транскрипция", "Поиск по базе знаний"];
+    for (var k = 0; k < days; k++) {
+      var dt = new Date(Date.now() - k * 86400000).toISOString().slice(0, 10);
+      var reqs = [];
+      var dayTotal = 0;
+      var n = (k * 7 + 3) % 4;
+      for (var j = 0; j <= n; j++) {
+        var cost = Math.round(((k + 2) * (j + 3) * 1.7) % 23 + 2);
+        reqs.push({ label: labels[(k + j) % labels.length], cost_rub: cost });
+        dayTotal += cost;
+      }
+      if (k === 2) {
+        reqs = [];
+        dayTotal = 0;
+      }
+      total += dayTotal;
+      out.push({ date_utc: dt, total_rub: dayTotal, requests: reqs });
+    }
+    return { total_rub: total, days: out };
+  }
+
+  function profileMockResponse(basePath, method, opts) {
+    if (basePath === "/me" && method === "GET") return mockProfile.me;
+    if (basePath === "/billing" && method === "GET") return mockProfile.billing;
+    if (basePath === "/usage/expenses" && method === "GET") {
+      var m = /days=(\d+)/.exec(String((opts && opts._path) || ""));
+      return mockExpenses(m ? parseInt(m[1], 10) : 7);
+    }
+    if (basePath === "/integrations" && method === "GET") return mockProfile.integrations;
+    if (basePath === "/profile/telegram-leo") {
+      if (method === "PATCH") {
+        var b = JSON.parse((opts && opts.body) || "{}");
+        if (b.model) mockProfile.tgLeo.model = b.model;
+      }
+      return mockProfile.tgLeo;
+    }
+    if (basePath === "/digest/chats" && method === "GET") {
+      return {
+        digest_enabled: !!mockProfile.settings.digest_enabled,
+        chats: [
+          { chat_id: -1001, title: "Продукт · ядро", selected: true },
+          { chat_id: -1002, title: "Продажи · Москва", selected: true },
+          { chat_id: -1003, title: "Офис", selected: false },
+          { chat_id: -1004, title: "Найм", selected: true },
+        ],
+      };
+    }
+    if (basePath === "/settings") {
+      if (method === "PATCH") Object.assign(mockProfile.settings, JSON.parse((opts && opts.body) || "{}"));
+      return mockProfile.settings;
+    }
+    if (basePath === "/calendar/sources" && method === "GET") {
+      return {
+        calendars: [
+          { id: "primary", summary: "Работа", primary: true, backgroundColor: "#3b82f6", excluded: false },
+          { id: "team", summary: "Команда продукта", accessRole: "writer", backgroundColor: "#34b36b", excluded: false },
+          { id: "personal", summary: "Личное", accessRole: "owner", backgroundColor: "#e5568a", excluded: false },
+          { id: "holidays", summary: "Праздники РФ", accessRole: "reader", backgroundColor: "#8e8e93", excluded: true },
+        ],
+      };
+    }
+    if (basePath === "/zoom/status" && method === "GET") {
+      return { connected: !!mockProfile.integrations.zoom, zoom_display_name: mockProfile.integrations.zoom_display_name };
+    }
+    if (basePath === "/zoom/recordings" && method === "GET") {
+      var t0 = Date.now();
+      return {
+        items: [
+          { topic: "Планёрка продукта", start_at_utc: new Date(t0 - 2 * 86400000).toISOString(), source: "cloud", play_url: "https://zoom.us/rec/1" },
+          { topic: "1:1 Анна / Вова", start_at_utc: new Date(t0 - 6 * 86400000).toISOString(), source: "local" },
+        ],
+      };
+    }
+    if (basePath === "/telemost/status" && method === "GET") return { connected: false };
+    if (basePath === "/proactive/prefs") {
+      if (method === "PATCH") Object.assign(mockProfile.prefs, JSON.parse((opts && opts.body) || "{}"));
+      return { prefs: mockProfile.prefs };
+    }
+    if (basePath === "/knowledge-bases" && method === "GET") {
+      return {
+        items: [
+          { id: 1, title: "Регламенты компании", source_type: "google_docs", role: "owner", sync_status: "ok", chunk_count: 184, last_sync_at: "2026-10-21T09:12:00" },
+          { id: 2, title: "Вики продукта", source_type: "notion", role: "member", sync_status: "ok", chunk_count: 62, last_sync_at: "2026-10-20T18:40:00" },
+        ],
+      };
+    }
+    if (basePath === "/agents" && method === "GET") {
+      return {
+        agents: [
+          { id: "paie", kind: "paie", title: "PAIE", builtin: true, model: "anthropic/claude-sonnet", prompt: "Отвечай по базе знаний компании.", rules: "", max_rounds: 4 },
+          { id: "research", kind: "research", title: "Research", builtin: true, model: "anthropic/claude-opus", prompt: "Ищи в интернете и давай ссылки.", temperature: 0.2 },
+          { id: "gpt", kind: "gpt", title: "GPT", builtin: true, model: "openai/gpt-5", prompt: "", temperature: 0.7 },
+          { id: "u1", kind: "custom", title: "Редактор постов", builtin: false, can_rename: true, can_delete: true, model: "anthropic/claude-haiku", prompt: "Ты редактор корпоративного блога.", temperature: 0.7, web_search: false },
+        ],
+      };
+    }
+    if (basePath === "/gpt/models" && method === "GET") {
+      return {
+        models: [
+          { id: "anthropic/claude-sonnet", name: "Claude Sonnet" },
+          { id: "anthropic/claude-opus", name: "Claude Opus", reasoning: true },
+          { id: "anthropic/claude-haiku", name: "Claude Haiku" },
+          { id: "openai/gpt-5", name: "GPT-5" },
+        ],
+      };
+    }
+    if (basePath === "/teams" && method === "GET") return { teams: mockProfile.teams };
+    if (basePath === "/teams" && method === "POST") {
+      var tb = JSON.parse((opts && opts.body) || "{}");
+      var team = { id: 900 + mockProfile.teams.length, name: tb.name || "Команда", members: [], shares: [] };
+      mockProfile.teams.push(team);
+      return team;
+    }
+    if (/^\/contacts\/[^/]+\/meetings$/.test(basePath)) {
+      var d0 = new Date();
+      function iso(days, h) {
+        var d = new Date(d0.getTime() + days * 86400000);
+        d.setHours(h, 0, 0, 0);
+        return d.toISOString();
+      }
+      return {
+        connected: true,
+        upcoming: [{ id: "m1", summary: "Ревью роадмапа Q4", start: { dateTime: iso(2, 11) }, end: { dateTime: iso(2, 12) }, attendees: [{}, {}, {}] }],
+        past: [
+          { id: "m2", summary: "Планёрка продукта", start: { dateTime: iso(-2, 15) }, end: { dateTime: iso(-2, 16) }, attendees: [{}, {}, {}, {}] },
+          { id: "m3", summary: "1:1 Анна / Вова", start: { dateTime: iso(-6, 12) }, end: { dateTime: iso(-6, 13) }, attendees: [{}, {}] },
+        ],
+        past_total: 6,
+        manual: [],
+      };
+    }
+    return undefined;
+  }
+
   async function handle(path, opts, realFetch) {
     initMocks();
     var method = String((opts && opts.method) || "GET").toUpperCase();
     var basePath = String(path || "").split("?")[0];
+    opts = Object.assign({}, opts || {}, { _path: path });
 
     if (basePath === "/voice/settings") {
       if (method === "PATCH") {
@@ -1237,9 +1412,15 @@
       return { ok: true, tag: tagSnapshot(created) };
     }
 
+    var profileMock = profileMockResponse(basePath, method, opts);
+    if (profileMock !== undefined) return profileMock;
+
     if (basePath === "/contacts" && method === "GET") {
       return {
         items: [
+          { key: "anna@obuchat.me", email: "anna@obuchat.me", telegram_username: "annak", name: "Анна Котова", aliases: ["Аня"], teams: [{ id: 901, name: "Продукт" }] },
+          { key: "tg:artleb", email: "", telegram_username: "artleb", name: "Артём Лебедев", teams: [] },
+          { key: "d.morozov@obuchat.me", email: "d.morozov@obuchat.me", name: "Дмитрий Морозов", teams: [{ id: 902, name: "Продажи" }] },
           { key: "uliana@example.com", email: "uliana@example.com", name: "Ульяна", teams: [] },
           { key: "tg:petrov", email: "", telegram_username: "petrov", name: "Пётр Петров", teams: [] },
         ],

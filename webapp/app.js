@@ -6292,6 +6292,14 @@
       loadNoteEditorScripts().catch(function () {});
       loadKnowledgeNotes();
       ensureUserTagsLoaded();
+      if (prev !== "knowledge") closeKnowledgeSources();
+      apiFetch("/knowledge-bases", { method: "GET" })
+        .then(function (d) {
+          var c = document.getElementById("knowledge-sources-count");
+          var n = ((d && d.items) || []).length;
+          if (c) c.textContent = n ? String(n) : "";
+        })
+        .catch(function () {});
     }
     if (name === "digest") {
       closeDigestDetail();
@@ -8081,25 +8089,39 @@
       applyDigestEnabledToggleUi(enabled);
       setDigestTabVisible(enabled);
       var chats = (data && data.chats) || [];
-      if (list) list.innerHTML = "";
+      if (list) {
+        list.innerHTML = "";
+        list.classList.remove("pf-skel-list");
+      }
       setHidden(empty, chats.length > 0);
+      setHidden(document.getElementById("profile-chats-group"), !chats.length);
       chats.forEach(function (chat) {
         var row = document.createElement("label");
-        row.className = "digest-chat-row";
+        row.className = "pf-row";
+        var title = chat.title || "Чат " + chat.chat_id;
         var cb = document.createElement("input");
         cb.type = "checkbox";
+        cb.className = "pf-check-input";
         cb.checked = !!chat.selected;
         cb.addEventListener("change", function () {
           saveDigestChatSelection();
         });
         cb.setAttribute("data-chat-id", String(chat.chat_id));
-        var text = document.createElement("span");
-        text.className = "digest-chat-title";
-        text.textContent = chat.title || "Чат " + chat.chat_id;
+        var av = document.createElement("span");
+        av.className = "pf-avatar";
+        av.setAttribute("aria-hidden", "true");
+        var words = title.replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean);
+        av.textContent = ((words[0] || "#").charAt(0) + (words[1] || "").charAt(0)).toUpperCase();
+        var body = document.createElement("span");
+        body.className = "pf-row-body";
+        body.innerHTML = '<span class="pf-row-text"><span class="pf-row-title"></span></span><span class="pf-check" aria-hidden="true"></span>';
+        body.querySelector(".pf-row-title").textContent = title;
         row.appendChild(cb);
-        row.appendChild(text);
+        row.appendChild(av);
+        row.appendChild(body);
         if (list) list.appendChild(row);
       });
+      syncDigestChatsListOff(enabled);
       if (demoBtn) {
         setHidden(demoBtn, !(data && data.miniapp_dev));
       }
@@ -8125,12 +8147,23 @@
         method: "PATCH",
         body: JSON.stringify({ digest_chat_ids: ids }),
       });
+      showNoteToast("Сохранено");
     } catch (e) {
+      if (list) {
+        list.innerHTML = "";
+        list.classList.remove("pf-skel-list");
+      }
       if (err) {
-        err.textContent = e.message || String(e);
+        err.textContent = humanProfileError(e.message || String(e));
         err.classList.remove("hidden");
       }
     }
+  }
+
+  // Дайджест выключен — список чатов приглушён и не нажимается.
+  function syncDigestChatsListOff(enabled) {
+    var list = document.getElementById("profile-chats-list");
+    if (list) list.classList.toggle("pf-list--off", !enabled);
   }
 
   async function toggleDigestEnabled() {
@@ -8138,14 +8171,17 @@
     var err = document.getElementById("profile-chats-err");
     var next = !(btn && btn.classList.contains("svc-toggle--on"));
     applyDigestEnabledToggleUi(next);
+    syncDigestChatsListOff(next);
     try {
       await apiFetch("/settings", {
         method: "PATCH",
         body: JSON.stringify({ digest_enabled: next }),
       });
       setDigestTabVisible(next);
+      showNoteToast(next ? "Дайджест включён" : "Дайджест выключен");
     } catch (e) {
       applyDigestEnabledToggleUi(!next);
+      syncDigestChatsListOff(!next);
       if (err) {
         err.textContent = e.message || String(e);
         err.classList.remove("hidden");
@@ -8158,9 +8194,12 @@
 
   function voiceSetError(msg) {
     var err = document.getElementById("profile-voice-err");
-    if (!err) return;
-    err.textContent = msg || "";
-    setHidden(err, !msg);
+    if (err) {
+      err.textContent = msg || "";
+      setHidden(err, !msg);
+    }
+    // Ошибка видна и на подэкранах словаря, сниппетов и истории.
+    if (msg && currentProfileScreen !== "voice") showNoteToast(msg);
   }
 
   function applyVoiceSettingsUi() {
@@ -8175,6 +8214,10 @@
     });
     renderVoiceDictionary();
     renderVoiceSnippets();
+    var dc = document.getElementById("voice-dictionary-count");
+    var sc = document.getElementById("voice-snippets-count");
+    if (dc) dc.textContent = s.dictionary === false ? "Выкл" : String((s.dictionary_entries || []).length || "Пусто");
+    if (sc) sc.textContent = s.snippets === false ? "Выкл" : String((s.snippet_entries || []).length || "Пусто");
     var hint = document.getElementById("profile-voice-hint");
     if (hint) {
       var d = (s.dictionary_entries || []).length;
@@ -8187,74 +8230,78 @@
   function voiceDeleteButton(label, onClick) {
     var del = document.createElement("button");
     del.type = "button";
-    del.className = "voice-item-del";
+    del.className = "pf-del";
     del.setAttribute("aria-label", label);
-    del.textContent = "×";
+    del.title = label;
+    del.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>';
     del.addEventListener("click", onClick);
     return del;
   }
 
+  function voiceRow(title, sub, extra) {
+    var row = document.createElement("div");
+    row.className = "pf-row pf-row--static";
+    var body = document.createElement("span");
+    body.className = "pf-row-body";
+    var text = document.createElement("span");
+    text.className = "pf-row-text";
+    var t = document.createElement("span");
+    t.className = "pf-row-title pf-row-title--wrap";
+    t.textContent = title;
+    text.appendChild(t);
+    if (sub) {
+      var su = document.createElement("span");
+      su.className = "pf-row-sub pf-row-sub--wrap";
+      su.textContent = sub;
+      text.appendChild(su);
+    }
+    body.appendChild(text);
+    (extra || []).forEach(function (el) {
+      body.appendChild(el);
+    });
+    row.appendChild(body);
+    return row;
+  }
+
   function renderVoiceDictionary() {
     var list = document.getElementById("voice-dictionary-list");
+    var empty = document.getElementById("voice-dictionary-empty");
     if (!list) return;
     list.innerHTML = "";
     var items = (voiceSettings && voiceSettings.dictionary_entries) || [];
+    setHidden(list, !items.length);
+    setHidden(empty, !!items.length);
     items.forEach(function (e, idx) {
-      var row = document.createElement("div");
-      row.className = "voice-item";
-      var text = document.createElement("div");
-      text.className = "voice-item-text";
-      var from = document.createElement("span");
-      from.className = "voice-item-from";
-      from.textContent = e.from;
-      var arrow = document.createElement("span");
-      arrow.className = "voice-arrow";
-      arrow.textContent = " → ";
-      var to = document.createElement("span");
-      to.className = "voice-item-to";
-      to.textContent = e.to;
-      text.appendChild(from);
-      text.appendChild(arrow);
-      text.appendChild(to);
-      row.appendChild(text);
-      row.appendChild(
-        voiceDeleteButton("Удалить «" + e.from + "»", function () {
-          var next = items.slice();
-          next.splice(idx, 1);
-          saveVoiceSettings({ dictionary_entries: next });
-        })
+      list.appendChild(
+        voiceRow(e.from + " → " + e.to, "", [
+          voiceDeleteButton("Удалить «" + e.from + "»", function () {
+            var next = items.slice();
+            next.splice(idx, 1);
+            saveVoiceSettings({ dictionary_entries: next });
+          }),
+        ])
       );
-      list.appendChild(row);
     });
   }
 
   function renderVoiceSnippets() {
     var list = document.getElementById("voice-snippets-list");
+    var empty = document.getElementById("voice-snippets-empty");
     if (!list) return;
     list.innerHTML = "";
     var items = (voiceSettings && voiceSettings.snippet_entries) || [];
+    setHidden(list, !items.length);
+    setHidden(empty, !!items.length);
     items.forEach(function (e, idx) {
-      var row = document.createElement("div");
-      row.className = "voice-item";
-      var text = document.createElement("div");
-      text.className = "voice-item-text";
-      var trig = document.createElement("div");
-      trig.className = "voice-item-from";
-      trig.textContent = "«" + e.trigger + "»";
-      var body = document.createElement("div");
-      body.className = "voice-item-body muted small";
-      body.textContent = e.text;
-      text.appendChild(trig);
-      text.appendChild(body);
-      row.appendChild(text);
-      row.appendChild(
-        voiceDeleteButton("Удалить сниппет «" + e.trigger + "»", function () {
-          var next = items.slice();
-          next.splice(idx, 1);
-          saveVoiceSettings({ snippet_entries: next });
-        })
+      list.appendChild(
+        voiceRow("«" + e.trigger + "»", e.text, [
+          voiceDeleteButton("Удалить сниппет «" + e.trigger + "»", function () {
+            var next = items.slice();
+            next.splice(idx, 1);
+            saveVoiceSettings({ snippet_entries: next });
+          }),
+        ])
       );
-      list.appendChild(row);
     });
   }
 
@@ -8272,56 +8319,48 @@
   function renderVoiceHistory(items) {
     var list = document.getElementById("voice-history-list");
     var empty = document.getElementById("voice-history-empty");
-    var clear = document.getElementById("voice-history-clear");
+    var clearWrap = document.getElementById("voice-history-clear-wrap");
+    var count = document.getElementById("voice-history-count");
     items = items || [];
     if (empty) setHidden(empty, items.length > 0);
-    if (clear) setHidden(clear, items.length === 0);
+    if (clearWrap) setHidden(clearWrap, items.length === 0);
+    if (count) count.textContent = items.length ? String(items.length) : "Пусто";
     if (!list) return;
     list.innerHTML = "";
+    setHidden(list, !items.length);
     items.forEach(function (it) {
-      var row = document.createElement("div");
-      row.className = "voice-item voice-history-item";
-      var text = document.createElement("div");
-      text.className = "voice-item-text";
-      var meta = document.createElement("div");
-      meta.className = "muted small";
-      meta.textContent =
-        voiceHistoryTime(it.ts) + (VOICE_HISTORY_SOURCE[it.source] ? " · " + VOICE_HISTORY_SOURCE[it.source] : "");
-      var body = document.createElement("div");
-      body.className = "voice-item-body";
-      body.textContent = it.text || "";
-      text.appendChild(meta);
-      text.appendChild(body);
       var copy = document.createElement("button");
       copy.type = "button";
-      copy.className = "btn-text voice-item-copy";
-      copy.textContent = "Копировать";
+      copy.className = "pf-del pf-del--accent";
+      copy.setAttribute("aria-label", "Копировать");
+      copy.title = "Копировать";
+      copy.innerHTML =
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></svg>';
       copy.addEventListener("click", function () {
         copyTextWithOptionalHtml(it.text || "").then(
           function () {
-            copy.textContent = "Скопировано";
-            window.setTimeout(function () {
-              copy.textContent = "Копировать";
-            }, 1500);
+            showNoteToast("Скопировано");
           },
           function () {
             voiceSetError("Не удалось скопировать");
           }
         );
       });
-      row.appendChild(text);
-      row.appendChild(copy);
-      row.appendChild(
-        voiceDeleteButton("Удалить из истории", async function () {
-          try {
-            var res = await apiFetch("/voice/history/" + encodeURIComponent(it.id), { method: "DELETE" });
-            renderVoiceHistory((res && res.items) || []);
-          } catch (e) {
-            voiceSetError(e.message || String(e));
-          }
-        })
+      var meta =
+        voiceHistoryTime(it.ts) + (VOICE_HISTORY_SOURCE[it.source] ? " · " + VOICE_HISTORY_SOURCE[it.source] : "");
+      list.appendChild(
+        voiceRow(it.text || "", meta, [
+          copy,
+          voiceDeleteButton("Удалить из истории", async function () {
+            try {
+              var res = await apiFetch("/voice/history/" + encodeURIComponent(it.id), { method: "DELETE" });
+              renderVoiceHistory((res && res.items) || []);
+            } catch (e) {
+              voiceSetError(e.message || String(e));
+            }
+          }),
+        ])
       );
-      list.appendChild(row);
     });
   }
 
@@ -8379,6 +8418,14 @@
         profileScreen("main");
       });
     }
+    ["dictionary", "snippets", "history"].forEach(function (key) {
+      onId("voice-" + key + "-open", "click", function () {
+        profileScreen("voice-" + key);
+      });
+      onId("profile-voice-" + key + "-back", "click", function () {
+        profileScreen("voice");
+      });
+    });
     document.querySelectorAll("[data-voice-toggle]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var key = btn.getAttribute("data-voice-toggle");
@@ -8521,39 +8568,13 @@
     }
     document.querySelectorAll("#panel-profile [data-svc]").forEach(function (card) {
       const key = card.getAttribute("data-svc");
-      const on =
-        key === "booking" ? !!data.booking_assistant : !!data[key];
+      const on = !!data[key];
       card.classList.toggle("is-on", on);
       const connectBtn = card.querySelector('[data-action="connect"]');
       const disconnectBtn = card.querySelector('[data-action="disconnect"]');
       const zoomLine = card.querySelector("[data-zoom-line]");
       const yandexDiskLine = card.querySelector("[data-yandex-disk-line]");
-      const bookingLine = card.querySelector("[data-booking-line]");
-      if (key === "booking") {
-        if (bookingLine) {
-          var waOn = !!data.booking_whatsapp;
-          if (on || waOn) {
-            var parts = [];
-            if (on) parts.push("Telegram");
-            if (waOn) parts.push("WhatsApp");
-            bookingLine.textContent = "● " + parts.join(" · ");
-          } else {
-            bookingLine.textContent =
-              "Telegram и/или WhatsApp для переписки с ресторанами";
-          }
-          bookingLine.classList.toggle("svc-desc--connected", on || waOn);
-        }
-        if (connectBtn) {
-          connectBtn.textContent = "Настроить";
-          setHidden(connectBtn, false);
-        }
-        if (disconnectBtn) {
-          setHidden(
-            disconnectBtn,
-            !on || !data.booking_assistant_can_disconnect
-          );
-        }
-      } else if (key === "zoom") {
+      if (key === "zoom") {
         if (zoomLine) {
           if (on) {
             var zwho =
@@ -8655,7 +8676,6 @@
     const main = document.getElementById("profile-main");
     const pay = document.getElementById("profile-payment");
     const exp = document.getElementById("profile-expenses");
-    const booking = document.getElementById("profile-booking");
     const contacts = document.getElementById("profile-contacts");
     const calendars = document.getElementById("profile-calendars");
     const zoom = document.getElementById("profile-zoom");
@@ -8667,20 +8687,10 @@
     const chats = document.getElementById("profile-chats");
     const voice = document.getElementById("profile-voice");
     setHidden(main, name !== "main");
-    setHidden(pay, name !== "payment");
-    setHidden(exp, name !== "expenses");
-    if (booking) setHidden(booking, name !== "booking");
-    if (contacts) setHidden(contacts, name !== "contacts");
-    if (calendars) setHidden(calendars, name !== "calendars");
-    if (zoom) setHidden(zoom, name !== "zoom");
-    if (telemost) setHidden(telemost, name !== "telemost");
-    if (yandexDisk) setHidden(yandexDisk, name !== "yandex-disk");
-    if (bitrix) setHidden(bitrix, name !== "bitrix");
-    if (knowledgeBase) setHidden(knowledgeBase, name !== "knowledge-base");
-    if (agents) setHidden(agents, name !== "agents");
-    if (chats) setHidden(chats, name !== "chats");
-    if (voice) setHidden(voice, name !== "voice");
-    if (name !== "booking") stopBookingWaQrPoll();
+    // Все вложенные экраны профиля — по id «profile-<name>».
+    document.querySelectorAll("#panel-profile .profile-subscreen").forEach(function (el) {
+      setHidden(el, el.id !== "profile-" + name);
+    });
     if (
       name !== "zoom" &&
       name !== "telemost" &&
@@ -8756,42 +8766,106 @@
       var items = data.items || [];
       if (!items.length) {
         setHidden(empty, false);
+        setHidden(list, true);
         return;
       }
       setHidden(empty, true);
+      setHidden(list, false);
       items.forEach(function (rec) {
-        var card = document.createElement("div");
-        card.className = "zoom-recording-card";
-        var title = document.createElement("p");
-        title.className = "zoom-recording-topic";
+        var card = document.createElement("button");
+        card.type = "button";
+        card.className = "pf-row";
+        var body = document.createElement("span");
+        body.className = "pf-row-body";
+        var textWrap = document.createElement("span");
+        textWrap.className = "pf-row-text";
+        var title = document.createElement("span");
+        title.className = "pf-row-title";
         title.textContent = rec.topic || "Встреча";
-        var meta = document.createElement("p");
-        meta.className = "zoom-recording-meta";
+        var meta = document.createElement("span");
+        meta.className = "pf-row-sub";
         var when = rec.start_at_utc || rec.created_at_utc || rec.start_time || rec.created_at || "";
         var status = rec.status || "";
         var src = status || (rec.source === "local" ? "локальная" : rec.source === "cloud" ? "облако" : "");
-        meta.textContent = [when ? when.replace("T", " ").slice(0, 16) : "", src].filter(Boolean).join(" · ");
-        card.appendChild(title);
-        card.appendChild(meta);
+        var whenDate = when ? new Date(when) : null;
+        var whenText =
+          whenDate && !isNaN(whenDate.getTime())
+            ? whenDate.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) +
+              " · " +
+              whenDate.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })
+            : "";
+        meta.textContent = [whenText, src].filter(Boolean).join(" · ");
+        textWrap.appendChild(title);
+        textWrap.appendChild(meta);
+        body.appendChild(textWrap);
         var link = rec.play_url || rec.download_url;
         if (link) {
-          var a = document.createElement("a");
-          a.className = "zoom-recording-link";
-          a.href = link;
-          a.target = "_blank";
-          a.rel = "noopener noreferrer";
-          a.textContent = "Открыть запись";
-          a.addEventListener("click", function (e) {
-            e.preventDefault();
+          var chev = document.createElement("span");
+          chev.className = "pf-chev";
+          chev.setAttribute("aria-hidden", "true");
+          chev.textContent = "›";
+          body.appendChild(chev);
+          card.addEventListener("click", function () {
             openLegalLink(link);
           });
-          card.appendChild(a);
+        } else {
+          card.classList.add("pf-row--static");
         }
+        card.appendChild(body);
         list.appendChild(card);
       });
     } catch (_) {
       setHidden(empty, false);
     }
+  }
+
+  // Плашка статуса в шапке экрана сервиса: on=true — зелёная, false — серая, null — проверка.
+  function setSvcPill(el, on, text) {
+    if (!el) return;
+    el.classList.toggle("pf-pill--on", on === true);
+    el.classList.toggle("pf-pill--warn", on === "warn");
+    el.innerHTML = "<span></span>";
+    el.firstChild.textContent = text;
+  }
+
+  function setSvcConnectedUi(key, on) {
+    setHidden(document.getElementById("profile-" + key + "-disconnect-wrap"), !on);
+  }
+
+  async function loadGoogleScreen() {
+    var stEl = document.getElementById("profile-google-status");
+    setSvcPill(stEl, null, "Проверка…");
+    var data;
+    try {
+      data = await apiFetch("/integrations", { method: "GET" });
+    } catch (e) {
+      setSvcPill(stEl, false, "Не удалось проверить");
+      return;
+    }
+    var on = !!(data && data.google);
+    setSvcPill(stEl, on, on ? "Подключён" : "Не подключён");
+    setHidden(document.getElementById("profile-google-settings"), !on);
+    setHidden(document.getElementById("profile-google-connect"), on);
+    setHidden(document.getElementById("profile-google-connect-hint"), on);
+    setSvcConnectedUi("google", on);
+    if (on) {
+      var val = document.getElementById("profile-google-calendars-val");
+      try {
+        var src = await apiFetch("/calendar/sources", { method: "GET" });
+        var cals = (src && src.calendars) || [];
+        var used = cals.filter(function (c) {
+          return !c.excluded;
+        }).length;
+        if (val) val.textContent = cals.length ? used + " из " + cals.length : "";
+      } catch (_) {
+        if (val) val.textContent = "";
+      }
+    }
+  }
+
+  function openGoogleSetup() {
+    profileScreen("google");
+    loadGoogleScreen();
   }
 
   async function loadZoomScreen(showLoading) {
@@ -8803,7 +8877,7 @@
     initZoomAutoRecordToggle();
     if (msg) setHidden(msg, true);
     if (err) setHidden(err, true);
-    if (showLoading !== false && stEl) stEl.textContent = "Проверка…";
+    if (showLoading !== false) setSvcPill(stEl, null, "Проверка…");
     try {
       var results = await Promise.all([
         apiFetch("/zoom/status", { method: "GET" }),
@@ -8816,19 +8890,13 @@
         !!settings.meeting_bot_available
       );
       var on = !!(st && st.connected);
-      if (stEl) {
-        if (on) {
-          var who = st.zoom_display_name || st.zoom_email || "аккаунт подключён";
-          stEl.textContent = "● " + who;
-        } else {
-          stEl.textContent = "Не подключён";
-        }
-      }
+      setSvcPill(stEl, on, on ? st.zoom_display_name || st.zoom_email || "Подключён" : "Не подключён");
       if (connectBtn) setHidden(connectBtn, on);
-      if (discBtn) setHidden(discBtn, !on);
+      setSvcConnectedUi("zoom", on);
+      setHidden(document.getElementById("profile-zoom-recordings-group"), !on);
       if (on) await loadZoomRecordings();
     } catch (e) {
-      if (stEl) stEl.textContent = "Ошибка загрузки";
+      setSvcPill(stEl, false, "Не удалось проверить");
       if (err) {
         err.textContent = e.message || String(e);
         setHidden(err, false);
@@ -8908,7 +8976,7 @@
     initTelemostAutoRecordToggle();
     if (msg) setHidden(msg, true);
     if (err) setHidden(err, true);
-    if (showLoading !== false && stEl) stEl.textContent = "Проверка…";
+    if (showLoading !== false) setSvcPill(stEl, null, "Проверка…");
     try {
       var results = await Promise.all([
         apiFetch("/telemost/status", { method: "GET" }),
@@ -8919,17 +8987,16 @@
       applyTelemostAutoRecordToggleUi(!!settings.telemost_auto_record_enabled);
       var on = !!(st && st.connected);
       if (orgWarn) setHidden(orgWarn, st.telemost_org_likely !== false);
-      if (stEl) {
-        if (on) {
-          var who = st.telemost_display_name || st.telemost_email || "аккаунт подключён";
-          stEl.textContent = "● " + who;
-          if (st.telemost_org_likely === false) {
-            stEl.textContent += " (@yandex.ru — только вручную)";
-          }
-        } else {
-          stEl.textContent = "Не подключён";
-        }
+      if (on) {
+        var who = st.telemost_display_name || st.telemost_email || "Подключён";
+        setSvcPill(stEl, st.telemost_org_likely === false ? "warn" : true, who);
+      } else {
+        setSvcPill(stEl, false, "Не подключён");
       }
+      setHidden(document.getElementById("profile-telemost-steps"), on);
+      setHidden(document.getElementById("profile-telemost-steps-hint"), on);
+      setHidden(document.getElementById("telemost-auto-record-setting"), !on);
+      setSvcConnectedUi("telemost", on);
       if (authBtn) setHidden(authBtn, on);
       if (submitBtn) setHidden(submitBtn, on);
       if (codeInp) {
@@ -8938,7 +9005,7 @@
       }
       if (discBtn) setHidden(discBtn, !on);
     } catch (e) {
-      if (stEl) stEl.textContent = "Ошибка загрузки";
+      setSvcPill(stEl, false, "Не удалось проверить");
       if (err) {
         err.textContent = e.message || String(e);
         setHidden(err, false);
@@ -9008,314 +9075,44 @@
     await loadTelemostScreen(true);
   }
 
-  function bookingShowMsg(okId, errId, okText, errText) {
-    const ok = document.getElementById(okId);
-    const er = document.getElementById(errId);
-    if (ok) {
-      ok.textContent = okText || "";
-      setHidden(ok, !okText);
-    }
-    if (er) {
-      er.textContent = errText || "";
-      setHidden(er, !errText);
-    }
-  }
-
-  var bookingWaPollTimer = null;
-
-  function stopBookingWaQrPoll() {
-    if (bookingWaPollTimer) {
-      clearInterval(bookingWaPollTimer);
-      bookingWaPollTimer = null;
-    }
-  }
-
-  function setBookingWaUi(st) {
-    const connected = !!(st && st.connected);
-    const qrUrl = st && st.qr_data_url ? st.qr_data_url : null;
-    const wrap = document.getElementById("booking-wa-qr-wrap");
-    const img = document.getElementById("booking-wa-qr-img");
-    const startBtn = document.getElementById("booking-wa-start");
-    const discBtn = document.getElementById("booking-wa-disconnect");
-    if (wrap) setHidden(wrap, !qrUrl || connected);
-    if (img && qrUrl) img.src = qrUrl;
-    if (startBtn) setHidden(startBtn, connected);
-    if (discBtn) setHidden(discBtn, !connected);
-    if (connected) stopBookingWaQrPoll();
-  }
-
-  async function loadBookingWhatsAppStatus() {
-    bookingShowMsg("booking-wa-msg", "booking-wa-err", "", "");
-    let st;
-    try {
-      st = await apiFetch("/booking-assistant/whatsapp/status", { method: "GET" });
-    } catch (e) {
-      setBookingWaUi({ connected: false });
-      return;
-    }
-    setBookingWaUi(st);
-    if (st && st.connected) {
-      bookingShowMsg(
-        "booking-wa-msg",
-        "booking-wa-err",
-        "WhatsApp подключён. Заявки с телефоном заведения пойдут в WhatsApp.",
-        ""
-      );
-    } else if (st && st.has_qr && st.qr_data_url) {
-      bookingShowMsg(
-        "booking-wa-msg",
-        "booking-wa-err",
-        "Отсканируйте QR в приложении WhatsApp (Связанные устройства).",
-        ""
-      );
-    }
-  }
-
-  function startBookingWaQrPoll() {
-    stopBookingWaQrPoll();
-    bookingWaPollTimer = setInterval(async function () {
-      try {
-        const st = await apiFetch("/booking-assistant/whatsapp/qr", { method: "GET" });
-        setBookingWaUi(st);
-        if (st && st.connected) {
-          bookingShowMsg(
-            "booking-wa-msg",
-            "booking-wa-err",
-            "WhatsApp подключён.",
-            ""
-          );
-          await loadIntegrations();
-          stopBookingWaQrPoll();
-        }
-      } catch (_) {
-        /* ignore transient poll errors */
-      }
-    }, 3000);
-  }
-
-  async function bookingWaStart() {
-    bookingShowMsg(
-      "booking-wa-msg",
-      "booking-wa-err",
-      "Подключаю WhatsApp, ждите QR (до ~30 с)…",
-      ""
-    );
-    stopBookingWaQrPoll();
-    startBookingWaQrPoll();
-    try {
-      const st = await apiFetch("/booking-assistant/whatsapp/start", {
-        method: "POST",
-        body: JSON.stringify({}),
-      });
-      setBookingWaUi(st);
-      if (st && st.connected) {
-        bookingShowMsg(
-          "booking-wa-msg",
-          "booking-wa-err",
-          "WhatsApp уже подключён.",
-          ""
-        );
-        stopBookingWaQrPoll();
-        await loadIntegrations();
-        return;
-      }
-      if (st && st.qr_data_url) {
-        bookingShowMsg(
-          "booking-wa-msg",
-          "booking-wa-err",
-          "Отсканируйте QR в WhatsApp → Связанные устройства.",
-          ""
-        );
-        return;
-      }
-      bookingShowMsg(
-        "booking-wa-msg",
-        "booking-wa-err",
-        "Жду QR от сервера… Если не появится — обновите страницу и проверьте bridge.",
-        ""
-      );
-    } catch (e) {
-      bookingShowMsg("booking-wa-msg", "booking-wa-err", "", e.message || String(e));
-    }
-  }
-
-  async function bookingWaDisconnect() {
-    stopBookingWaQrPoll();
-    bookingShowMsg("booking-wa-msg", "booking-wa-err", "", "");
-    try {
-      await apiFetch("/booking-assistant/whatsapp/disconnect", { method: "POST" });
-      setBookingWaUi({ connected: false });
-      bookingShowMsg("booking-wa-msg", "booking-wa-err", "WhatsApp отключён.", "");
-      await loadIntegrations();
-    } catch (e) {
-      bookingShowMsg("booking-wa-msg", "booking-wa-err", "", e.message || String(e));
-    }
-  }
-
-  async function loadBookingConfigForm() {
-    bookingShowMsg("booking-config-msg", "booking-config-err", "", "");
-    bookingShowMsg("booking-login-msg", "booking-login-err", "", "");
-    let cfg;
-    try {
-      cfg = await apiFetch("/booking-assistant/config", { method: "GET" });
-    } catch (e) {
-      bookingShowMsg("booking-config-msg", "booking-config-err", "", e.message || String(e));
-      return;
-    }
-    const apiId = document.getElementById("booking-api-id");
-    const apiHash = document.getElementById("booking-api-hash");
-    const dn = document.getElementById("booking-display-name");
-    const ph = document.getElementById("booking-owner-phone");
-    const g = document.getElementById("booking-gender");
-    if (apiId && cfg.api_id != null) apiId.value = String(cfg.api_id);
-    if (dn) dn.value = cfg.owner_display_name || "";
-    if (ph) ph.value = cfg.owner_phone || "";
-    if (g) g.value = cfg.assistant_gender === "female" ? "female" : "male";
-    if (apiHash) apiHash.placeholder = cfg.api_hash_set ? "•••••••• (уже сохранён)" : "";
-    if (cfg.connected && cfg.uses_server_session) {
-      bookingShowMsg(
-        "booking-config-msg",
-        "booking-config-err",
-        "Используется серверный ассистент владельца (настроен администратором).",
-        ""
-      );
-    } else if (cfg.has_own_session) {
-      bookingShowMsg(
-        "booking-login-msg",
-        "booking-login-err",
-        "Ваш ассистент подключён и готов к бронированию.",
-        ""
-      );
-    }
-  }
-
-  async function openBookingSetup() {
-    clearProfileError();
-    profileScreen("booking");
-    await loadBookingConfigForm();
-    await loadBookingWhatsAppStatus();
-  }
-
-  async function bookingSaveConfig() {
-    const apiIdEl = document.getElementById("booking-api-id");
-    const apiHashEl = document.getElementById("booking-api-hash");
-    const body = {
-      owner_display_name: (document.getElementById("booking-display-name") || {}).value || "",
-      owner_phone: (document.getElementById("booking-owner-phone") || {}).value || "",
-      assistant_gender: (document.getElementById("booking-gender") || {}).value || "male",
-    };
-    const rawId = apiIdEl && apiIdEl.value ? apiIdEl.value.trim() : "";
-    const rawHash = apiHashEl && apiHashEl.value ? apiHashEl.value.trim() : "";
-    if (rawId) body.api_id = parseInt(rawId, 10);
-    if (rawHash) body.api_hash = rawHash;
-    bookingShowMsg("booking-config-msg", "booking-config-err", "", "");
-    try {
-      await apiFetch("/booking-assistant/config", {
-        method: "PUT",
-        body: JSON.stringify(body),
-      });
-      bookingShowMsg(
-        "booking-config-msg",
-        "booking-config-err",
-        "Настройки сохранены. Отправьте код входа для аккаунта ассистента.",
-        ""
-      );
-      if (apiHashEl) apiHashEl.value = "";
-      await loadBookingConfigForm();
-    } catch (e) {
-      bookingShowMsg("booking-config-msg", "booking-config-err", "", e.message || String(e));
-    }
-  }
-
-  async function bookingSendCode() {
-    const phone = (document.getElementById("booking-assistant-phone") || {}).value || "";
-    bookingShowMsg("booking-login-msg", "booking-login-err", "", "");
-    try {
-      const r = await apiFetch("/booking-assistant/login/start", {
-        method: "POST",
-        body: JSON.stringify({ phone: phone }),
-      });
-      if (r && r.already_authorized) {
-        bookingShowMsg(
-          "booking-login-msg",
-          "booking-login-err",
-          "Ассистент уже авторизован.",
-          ""
-        );
-        await loadIntegrations();
-        return;
-      }
-      bookingShowMsg(
-        "booking-login-msg",
-        "booking-login-err",
-        "Код отправлен в Telegram на номер " + (r.phone || phone) + ".",
-        ""
-      );
-    } catch (e) {
-      bookingShowMsg("booking-login-msg", "booking-login-err", "", e.message || String(e));
-    }
-  }
-
-  async function bookingConfirmLogin() {
-    const code = (document.getElementById("booking-login-code") || {}).value || "";
-    const password = (document.getElementById("booking-login-password") || {}).value || "";
-    bookingShowMsg("booking-login-msg", "booking-login-err", "", "");
-    try {
-      const r = await apiFetch("/booking-assistant/login/confirm", {
-        method: "POST",
-        body: JSON.stringify({ code: code, password: password || null }),
-      });
-      const un = r.username ? "@" + r.username : r.first_name || "аккаунт";
-      bookingShowMsg(
-        "booking-login-msg",
-        "booking-login-err",
-        "Готово: " + un + ". Можно бронировать в боте.",
-        ""
-      );
-      await loadIntegrations();
-    } catch (e) {
-      bookingShowMsg("booking-login-msg", "booking-login-err", "", e.message || String(e));
-    }
-  }
-
-  async function bookingDisconnect() {
-    clearProfileError();
-    try {
-      await apiFetch("/booking-assistant/disconnect", { method: "POST" });
-    } catch (e) {
-      showProfileError("Бронирование: " + (e.message || e));
-      return;
-    }
-    await loadIntegrations();
-  }
+  var PAYMENT_METHOD_ICONS = {
+    card: '<path d="M2 7a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z" /><path d="M2 10h20" />',
+    sbp: '<path d="M13 2 3 14h9l-1 8 10-12h-9z" />',
+    tinkoff: '<rect x="5" y="2" width="14" height="20" rx="3" /><path d="M11 18h2" />',
+    crypto: '<circle cx="12" cy="12" r="9" /><path d="M9.5 8h4a2 2 0 0 1 0 4h-4h4.5a2 2 0 0 1 0 4H9.5M9.5 8v8M11.5 6v2M11.5 16v2" />',
+  };
 
   function renderPaymentMethods() {
     const wrap = document.getElementById("payment-methods");
     if (!wrap) return;
     const methods = [
-      { id: "card", label: "Банковская карта", icon: "💳" },
-      { id: "tinkoff", label: "Tinkoff Pay", icon: "🟡" },
-      { id: "sbp", label: "СБП (Система быстрых платежей)", icon: "⚡" },
-      { id: "crypto", label: "Криптовалюта (USDT)", icon: "₿" },
+      { id: "card", label: "Банковская карта" },
+      { id: "sbp", label: "СБП" },
+      { id: "tinkoff", label: "Tinkoff Pay" },
+      { id: "crypto", label: "USDT" },
     ];
+    if (!selectedPaymentMethod) selectedPaymentMethod = "card";
     wrap.innerHTML = "";
     methods.forEach(function (m) {
       const b = document.createElement("button");
       b.type = "button";
-      b.className = "payment-row";
+      b.className = "pf-row" + (m.id === selectedPaymentMethod ? " is-selected" : "");
       b.setAttribute("data-mid", m.id);
+      b.setAttribute("role", "radio");
+      b.setAttribute("aria-checked", m.id === selectedPaymentMethod ? "true" : "false");
       b.innerHTML =
-        '<span class="payment-row-icon" aria-hidden="true">' +
-        m.icon +
-        "</span>" +
-        '<span class="payment-row-label">' +
+        '<span class="pf-ico" aria-hidden="true"><svg viewBox="0 0 24 24">' +
+        PAYMENT_METHOD_ICONS[m.id] +
+        "</svg></span>" +
+        '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' +
         m.label +
-        "</span>" +
-        '<span class="pay-radio"></span>';
+        '</span></span><span class="pf-radio" aria-hidden="true"></span></span>';
       b.addEventListener("click", function () {
         selectedPaymentMethod = m.id;
-        wrap.querySelectorAll(".payment-row").forEach(function (r) {
-          r.classList.toggle("selected", r.getAttribute("data-mid") === m.id);
+        wrap.querySelectorAll(".pf-row").forEach(function (r) {
+          var on = r.getAttribute("data-mid") === m.id;
+          r.classList.toggle("is-selected", on);
+          r.setAttribute("aria-checked", on ? "true" : "false");
         });
       });
       wrap.appendChild(b);
@@ -9336,13 +9133,15 @@
     } else {
       v = Math.round(v);
     }
-    const r = "₽ " + v.toLocaleString("ru-RU", { maximumFractionDigits: 0 });
+    const r = v.toLocaleString("ru-RU", { maximumFractionDigits: 0 }) + " ₽";
     const sumLine = document.getElementById("payment-sum-line");
     const totalLine = document.getElementById("payment-total-line");
     const sub = document.getElementById("payment-submit");
     if (sumLine) sumLine.textContent = r;
     if (totalLine) totalLine.textContent = r;
     if (sub) sub.textContent = "Оплатить " + r;
+    // Поле суммы растёт по содержимому — «500 ₽» остаётся по центру.
+    if (custom) custom.style.width = Math.max(2, String(custom.value || "").length + 0.5) + "ch";
   }
 
   // Лео в Telegram: модель ответов в боте и скрытый тред с перепиской.
@@ -9452,6 +9251,7 @@
         refreshProfileContactsCount(),
         refreshKnowledgeBaseHint(),
         syncDigestSettingsFromServer(),
+        refreshProactiveVal(),
       ]);
     } catch (e) {
       showProfileError(e.message || String(e));
@@ -9536,62 +9336,169 @@
       });
   }
 
+  var expensesDays = 7;
+
+  function rub(n) {
+    return Number(n || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 }) + " ₽";
+  }
+
+  // «Сегодня, 22 октября» / «Вчера, 21 октября» / «Пн, 20 октября».
+  function expensesDayTitle(dateUtc) {
+    var d = new Date(dateUtc + "T12:00:00Z");
+    var today = new Date().toISOString().slice(0, 10);
+    var yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    var dm = d.toLocaleDateString("ru-RU", { day: "numeric", month: "long", timeZone: "UTC" });
+    if (dateUtc === today) return "Сегодня, " + dm;
+    if (dateUtc === yesterday) return "Вчера, " + dm;
+    var wd = d.toLocaleDateString("ru-RU", { weekday: "short", timeZone: "UTC" });
+    return wd.charAt(0).toUpperCase() + wd.slice(1) + ", " + dm;
+  }
+
+  function expensesSkeleton(list) {
+    list.classList.add("pf-skel-list");
+    list.innerHTML = '<div class="pf-row"><span class="pf-row-body"></span></div>'.repeat(3);
+  }
+
   async function loadExpensesDetail() {
-    const body = document.getElementById("profile-expenses-body");
-    if (!body) return;
-    body.innerHTML = "<p class=\"muted small\">Загрузка…</p>";
+    var list = document.getElementById("profile-expenses-body");
+    var totalEl = document.getElementById("expenses-total");
+    var subEl = document.getElementById("expenses-sub");
+    var barsEl = document.getElementById("expenses-bars");
+    var errEl = document.getElementById("expenses-err");
+    if (!list) return;
+    var days = expensesDays;
+    document.querySelectorAll("#expenses-period button").forEach(function (b) {
+      var on = Number(b.getAttribute("data-days")) === days;
+      b.classList.toggle("is-on", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    if (totalEl) totalEl.textContent = "";
+    if (subEl) subEl.textContent = "";
+    if (barsEl) barsEl.innerHTML = "";
+    if (errEl) setHidden(errEl, true);
+    expensesSkeleton(list);
+    var ex;
     try {
-      const ex = await apiFetch("/usage/expenses?days=14", { method: "GET" });
-      const days = ex.days || [];
-      const total = ex.total_rub || 0;
-      let html =
-        '<div class="stat-banner">' +
-        '<p class="stat-banner-label">За 14 дней</p>' +
-        '<p class="stat-banner-value">₽ ' +
-        Number(total).toLocaleString("ru-RU", { maximumFractionDigits: 2 }) +
-        "</p></div>";
-
-      days.forEach(function (d) {
-        const dayId = "expd-" + d.date_utc;
-        const reqs = d.requests || [];
-        let inner = "";
-        reqs.forEach(function (r) {
-          inner +=
-            '<div class="exp-day-req"><span class="muted exp-day-req-label">' +
-            (r.label || "—") +
-            "</span><span>₽ " +
-            Number(r.cost_rub || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 }) +
-            "</span></div>";
-        });
-        html +=
-          '<div class="exp-day">' +
-          '<button type="button" class="exp-day-head" data-toggle="' +
-          dayId +
-          '">' +
-          "<span><strong>" +
-          d.date_utc +
-          "</strong></span>" +
-          "<span>₽ " +
-          Number(d.total_rub || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 }) +
-          " ›</span></button>" +
-          '<div id="' +
-          dayId +
-          '" class="hidden">' +
-          inner +
-          "</div></div>";
-      });
-      body.innerHTML = html || "<p class=\"muted\">Нет расходов с учётом cost_usd за период.</p>";
-
-      body.querySelectorAll(".exp-day-head").forEach(function (btn) {
-        btn.addEventListener("click", function () {
-          const id = btn.getAttribute("data-toggle");
-          const el = document.getElementById(id);
-          if (el) el.classList.toggle("hidden");
-        });
-      });
+      ex = await apiFetch("/usage/expenses?days=" + days, { method: "GET" });
     } catch (e) {
-      body.innerHTML = "<p class=\"error\">" + (e.message || e) + "</p>";
+      list.classList.remove("pf-skel-list");
+      list.innerHTML = "";
+      if (errEl) {
+        errEl.textContent = humanProfileError(e.message || String(e));
+        setHidden(errEl, false);
+      }
+      return;
     }
+    if (days !== expensesDays) return;
+    list.classList.remove("pf-skel-list");
+    var byDate = {};
+    (ex.days || []).forEach(function (d) {
+      byDate[d.date_utc] = d;
+    });
+    var ordered = [];
+    for (var k = days - 1; k >= 0; k--) {
+      var key = new Date(Date.now() - k * 86400000).toISOString().slice(0, 10);
+      ordered.push(byDate[key] || { date_utc: key, total_rub: 0, requests: [] });
+    }
+    var total = typeof ex.total_rub === "number" ? ex.total_rub : 0;
+    if (totalEl) totalEl.textContent = rub(total);
+    if (subEl) {
+      var from = new Date(ordered[0].date_utc + "T12:00:00Z");
+      var to = new Date(ordered[ordered.length - 1].date_utc + "T12:00:00Z");
+      var fmt = { day: "numeric", month: "long", timeZone: "UTC" };
+      subEl.textContent =
+        from.toLocaleDateString("ru-RU", fmt) +
+        " – " +
+        to.toLocaleDateString("ru-RU", fmt) +
+        " · в среднем " +
+        rub(Math.round((total / days) * 100) / 100) +
+        " в день";
+    }
+    if (barsEl) {
+      var max = Math.max.apply(
+        null,
+        ordered.map(function (d) {
+          return Number(d.total_rub || 0);
+        })
+      ) || 1;
+      barsEl.classList.toggle("pf-bars--dense", days > 7);
+      ordered.forEach(function (d, idx) {
+        var bar = document.createElement("div");
+        bar.className = "pf-bar" + (idx === ordered.length - 1 ? " is-today" : "");
+        var col = document.createElement("i");
+        col.style.height = Math.max(3, Math.round((Number(d.total_rub || 0) / max) * 100)) + "%";
+        var lab = document.createElement("em");
+        var dt = new Date(d.date_utc + "T12:00:00Z");
+        if (days <= 7) {
+          var wd = dt.toLocaleDateString("ru-RU", { weekday: "short", timeZone: "UTC" });
+          lab.textContent = wd.charAt(0).toUpperCase() + wd.slice(1);
+        } else if ((ordered.length - 1 - idx) % 7 === 0) {
+          lab.textContent = String(dt.getUTCDate());
+        }
+        bar.appendChild(col);
+        bar.appendChild(lab);
+        barsEl.appendChild(bar);
+      });
+    }
+    var withSpend = ordered
+      .filter(function (d) {
+        return Number(d.total_rub || 0) > 0;
+      })
+      .reverse();
+    if (!withSpend.length) {
+      list.innerHTML =
+        '<div class="pf-empty"><p class="pf-empty-title">Расходов не было</p>' +
+        '<p class="pf-empty-text">За выбранные дни Лео ничего не списывал.</p></div>';
+      return;
+    }
+    list.innerHTML = "";
+    withSpend.forEach(function (d) {
+      var row = document.createElement("button");
+      row.type = "button";
+      row.className = "pf-row";
+      row.setAttribute("aria-expanded", "false");
+      row.innerHTML =
+        '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title"></span></span>' +
+        '<span class="pf-row-val pf-row-val--strong"></span><span class="pf-chev" aria-hidden="true">›</span></span>';
+      row.querySelector(".pf-row-title").textContent = expensesDayTitle(d.date_utc);
+      row.querySelector(".pf-row-val").textContent = rub(d.total_rub);
+      // Одинаковые операции за день — одной строкой: «Ассистент · 6 запросов».
+      var groups = {};
+      var order = [];
+      (d.requests || []).forEach(function (r) {
+        var label = r.label || "Другое";
+        if (!groups[label]) {
+          groups[label] = { n: 0, sum: 0 };
+          order.push(label);
+        }
+        groups[label].n += 1;
+        groups[label].sum += Number(r.cost_rub || 0);
+      });
+      var sub = document.createElement("div");
+      sub.className = "pf-sublist hidden";
+      order
+        .sort(function (a, b) {
+          return groups[b].sum - groups[a].sum;
+        })
+        .forEach(function (label) {
+          var g = groups[label];
+          var line = document.createElement("div");
+          var l = document.createElement("span");
+          l.textContent = g.n > 1 ? label + " · " + g.n + " " + pluralRu(g.n, "раз", "раза", "раз") : label;
+          var v = document.createElement("span");
+          v.textContent = rub(Math.round(g.sum * 100) / 100);
+          line.appendChild(l);
+          line.appendChild(v);
+          sub.appendChild(line);
+        });
+      row.addEventListener("click", function () {
+        var open = sub.classList.toggle("hidden") === false;
+        row.setAttribute("aria-expanded", open ? "true" : "false");
+        row.querySelector(".pf-chev").classList.toggle("pf-chev--open", open);
+      });
+      list.appendChild(row);
+      list.appendChild(sub);
+    });
   }
 
   var contactsEditingEmail = null;
@@ -9655,22 +9562,37 @@
     if (empty) empty.classList.toggle("hidden", !!teams.length);
     teams.forEach(function (team) {
       var id = String(team.id);
-      var label = document.createElement("label");
-      label.className = "note-share-option contacts-form-team-option";
-      var input = document.createElement("input");
-      input.type = "checkbox";
-      input.checked = !!contactsFormTeamSelected[id];
-      input.addEventListener("change", function () {
-        contactsFormTeamSelected[id] = !!input.checked;
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "pf-chip" + (contactsFormTeamSelected[id] ? " is-on" : "");
+      chip.setAttribute("aria-pressed", contactsFormTeamSelected[id] ? "true" : "false");
+      chip.textContent = team.name || "Команда";
+      chip.addEventListener("click", function () {
+        contactsFormTeamSelected[id] = !contactsFormTeamSelected[id];
+        chip.classList.toggle("is-on", contactsFormTeamSelected[id]);
+        chip.setAttribute("aria-pressed", contactsFormTeamSelected[id] ? "true" : "false");
       });
-      var copy = document.createElement("span");
-      var strong = document.createElement("strong");
-      strong.textContent = team.name || "Команда";
-      copy.appendChild(strong);
-      label.appendChild(input);
-      label.appendChild(copy);
-      list.appendChild(label);
+      list.appendChild(chip);
     });
+    var add = document.createElement("button");
+    add.type = "button";
+    add.className = "pf-chip pf-chip--add";
+    add.textContent = "+ Новая";
+    add.addEventListener("click", async function () {
+      var name = await promptDialog("Название команды", "");
+      name = String(name || "").trim();
+      if (!name) return;
+      try {
+        var created = await apiFetch("/teams", { method: "POST", body: JSON.stringify({ name: name }) });
+        var newId = created && (created.id || (created.team && created.team.id));
+        if (newId) contactsFormTeamSelected[String(newId)] = true;
+        var data = await apiFetch("/teams", { method: "GET" });
+        paintContactsFormTeams((data && data.teams) || []);
+      } catch (e) {
+        contactsShowFormMsg("", (e && e.message) || "Не удалось создать команду");
+      }
+    });
+    list.appendChild(add);
   }
 
   function updateContactsFormTelegramHint() {
@@ -9728,10 +9650,8 @@
     var input = document.getElementById("contacts-bulk-input");
     var res = document.getElementById("contacts-bulk-results");
     if (input) input.value = "";
-    if (res) {
-      res.innerHTML = "";
-      setHidden(res, true);
-    }
+    if (res) res.innerHTML = "";
+    setHidden(document.getElementById("contacts-bulk-results-wrap"), true);
     setHidden(document.getElementById("contacts-bulk-err"), true);
     ov.classList.remove("hidden");
     ov.setAttribute("aria-hidden", "false");
@@ -9752,9 +9672,9 @@
   }
 
   var CONTACTS_BULK_STATUS = {
-    added: ["ok", "добавлен"],
+    added: ["ok", "добавлен с почтой"],
     added_no_email: ["warn", "добавлен без почты — не подключал Google Календарь"],
-    not_in_leo: ["warn", "добавлен по нику — ещё не пользуется Leo"],
+    not_in_leo: ["warn", "добавлен по нику — ещё не в Orbita"],
     existing: ["muted", "уже в контактах"],
     email_added: ["ok", "уже был — добавлена почта"],
     self: ["muted", "это вы"],
@@ -9783,21 +9703,18 @@
         res.innerHTML = "";
         rows.forEach(function (r) {
           var st = CONTACTS_BULK_STATUS[r.status] || ["muted", r.status];
-          var li = document.createElement("li");
-          li.className = "contacts-bulk-row is-" + st[0];
-          var nick = document.createElement("b");
-          nick.textContent = "@" + r.username;
-          var who = document.createElement("span");
-          who.className = "contacts-bulk-name";
-          who.textContent = r.name && r.name !== "@" + r.username ? r.name : "";
-          var note = document.createElement("small");
-          note.textContent = st[1];
-          li.appendChild(nick);
-          if (who.textContent) li.appendChild(who);
-          li.appendChild(note);
-          res.appendChild(li);
+          var row = document.createElement("div");
+          row.className = "pf-row pf-row--static";
+          var named = r.name && r.name !== "@" + r.username;
+          row.innerHTML =
+            '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title"></span>' +
+            '<span class="pf-row-sub pf-status pf-status--' + st[0] + '"></span></span></span>';
+          row.querySelector(".pf-row-title").textContent = named ? r.name + " · @" + r.username : "@" + r.username;
+          var stEl = row.querySelector(".pf-status");
+          stEl.textContent = st[1].charAt(0).toUpperCase() + st[1].slice(1);
+          res.appendChild(row);
         });
-        setHidden(res, !rows.length);
+        setHidden(document.getElementById("contacts-bulk-results-wrap"), !rows.length);
       }
       if (input) input.value = "";
       await loadContacts();
@@ -9823,7 +9740,7 @@
     var hid = document.getElementById("contacts-edit-email");
     if (hid) hid.value = contactsEditingEmail || "";
     var t = document.getElementById("contacts-form-title");
-    if (t) t.textContent = "Редактирование";
+    if (t) t.textContent = "Изменить контакт";
     var n = document.getElementById("contacts-f-name");
     var e = document.getElementById("contacts-f-email");
     var tg = document.getElementById("contacts-f-tg");
@@ -9857,89 +9774,67 @@
   }
 
   function renderContactCard(c) {
-    var card = document.createElement("div");
-    card.className = "contact-card";
-    var head = document.createElement("div");
-    head.className = "contact-card-head";
-    head.appendChild(
-      meetingAttendeeAvatarNode({
-        email: c.email,
-        name: c.name,
-        telegram_user_id: c.telegram_user_id,
-        telegram_username: c.telegram_username,
-      })
-    );
-    var body = document.createElement("div");
-    body.className = "contact-card-body";
-    var name = document.createElement("p");
-    name.className = "contact-card-name";
-    name.textContent = c.name || "(без имени)";
-    var meta = document.createElement("div");
-    meta.className = "contact-card-meta";
-    var lines = [c.email || ""];
-    if (c.telegram_username) lines.push("@" + c.telegram_username);
-    if (c.aliases && c.aliases.length) {
-      lines.push("Также: " + c.aliases.join(", "));
-    }
-    meta.textContent = lines.filter(Boolean).join("\n");
-    body.appendChild(name);
-    body.appendChild(meta);
-    head.appendChild(body);
-    card.appendChild(head);
-    // Карточка контакта: встречи с человеком и материалы — по нажатию.
-    head.classList.add("contact-card-head--link");
-    head.addEventListener("click", function () {
+    var row = document.createElement("button");
+    row.type = "button";
+    row.className = "pf-row";
+    var av = meetingAttendeeAvatarNode({
+      email: c.email,
+      name: c.name,
+      telegram_user_id: c.telegram_user_id,
+      telegram_username: c.telegram_username,
+    });
+    av.classList.add("pf-contact-avatar");
+    fixContactAvatarInitials(av, c);
+    row.appendChild(av);
+    var body = document.createElement("span");
+    body.className = "pf-row-body";
+    var text = document.createElement("span");
+    text.className = "pf-row-text";
+    var title = document.createElement("span");
+    title.className = "pf-row-title";
+    title.textContent = c.name || c.email || "Без имени";
+    var sub = document.createElement("span");
+    sub.className = "pf-row-sub";
+    sub.textContent = [c.email || "", c.telegram_username ? "@" + c.telegram_username : ""].filter(Boolean).join(" · ");
+    text.appendChild(title);
+    if (sub.textContent) text.appendChild(sub);
+    body.appendChild(text);
+    var chev = document.createElement("span");
+    chev.className = "pf-chev";
+    chev.setAttribute("aria-hidden", "true");
+    chev.textContent = "›";
+    body.appendChild(chev);
+    row.appendChild(body);
+    row.addEventListener("click", function () {
       openContactDetail(c);
     });
-    var teams = Array.isArray(c.teams) ? c.teams : [];
-    if (teams.length) {
-      var teamsEl = document.createElement("p");
-      teamsEl.className = "contact-card-teams muted small";
-      teamsEl.textContent =
-        "Команды: " +
-        teams
-          .map(function (t) {
-            return t.name || "Команда";
-          })
-          .join(", ");
-      card.appendChild(teamsEl);
+    return row;
+  }
+
+  // Без почты аватар показывает «?» — подставляем инициалы из имени контакта.
+  function fixContactAvatarInitials(av, c) {
+    var fb = av && av.querySelector(".note-member-avatar-fallback");
+    var name = String((c && c.name) || "").trim();
+    if (!fb || !name) return;
+    var parts = name.split(/\s+/).filter(Boolean);
+    fb.textContent = ((parts[0] || "").charAt(0) + (parts[1] || "").charAt(0)).toUpperCase() || "?";
+  }
+
+  async function deleteContact(c) {
+    var label = c.name || c.email || c.telegram_username || "контакт";
+    var ok = await confirmDialog("Удалить контакт «" + label + "»? Встречи и заметки останутся.");
+    if (!ok) return false;
+    try {
+      await apiFetch("/contacts/" + encodeURIComponent(c.key || c.email), { method: "DELETE" });
+    } catch (err) {
+      showNoteToast((err && err.message) || "Не удалось удалить контакт");
+      return false;
     }
-    var actions = document.createElement("div");
-    actions.className = "contact-card-actions";
-    var editBtn = document.createElement("button");
-    editBtn.type = "button";
-    editBtn.className = "btn ghost btn-sm";
-    editBtn.textContent = "Изменить";
-    editBtn.addEventListener("click", function () {
-      contactsFillForm(c);
-    });
-    var delBtn = document.createElement("button");
-    delBtn.type = "button";
-    delBtn.className = "btn ghost btn-sm";
-    delBtn.textContent = "Удалить";
-    delBtn.addEventListener("click", async function () {
-      if (!confirm("Удалить контакт «" + (c.name || c.email) + "»?")) return;
-      try {
-        await apiFetch("/contacts/" + encodeURIComponent(c.key || c.email), { method: "DELETE" });
-        if (contactsEditingEmail === (c.key || c.email)) closeContactsFormModal();
-        await loadContacts();
-        await refreshProfileContactsCount();
-      } catch (err) {
-        alert(err.message || String(err));
-      }
-    });
-    var meetBtn = document.createElement("button");
-    meetBtn.type = "button";
-    meetBtn.className = "btn ghost btn-sm";
-    meetBtn.textContent = "Встречи";
-    meetBtn.addEventListener("click", function () {
-      openContactDetail(c);
-    });
-    actions.appendChild(meetBtn);
-    actions.appendChild(editBtn);
-    actions.appendChild(delBtn);
-    card.appendChild(actions);
-    return card;
+    if (contactsEditingEmail === (c.key || c.email)) closeContactsFormModal();
+    showNoteToast("Контакт удалён");
+    await loadContacts();
+    await refreshProfileContactsCount();
+    return true;
   }
 
   var teamPickerState = {
@@ -10421,6 +10316,10 @@
     return label;
   }
 
+  function teamsPlural(n, one, few, many) {
+    return n + " " + pluralRu(n, one, few, many);
+  }
+
   function paintTeamsManageList(teams) {
     var list = document.getElementById("teams-manage-list");
     var empty = document.getElementById("teams-manage-empty");
@@ -10428,91 +10327,43 @@
     list.innerHTML = "";
     var rows = teams || [];
     if (empty) empty.classList.toggle("hidden", !!rows.length);
+    list.classList.toggle("hidden", !rows.length);
     rows.forEach(function (team) {
-      var card = document.createElement("div");
-      card.className = "teams-manage-card";
-      var head = document.createElement("div");
-      head.className = "teams-manage-card-head";
-      var title = document.createElement("p");
-      title.className = "teams-manage-card-title";
-      title.textContent = team.name || "Команда";
-      head.appendChild(title);
-      var actions = document.createElement("div");
-      actions.className = "teams-manage-card-actions";
-      actions.appendChild(
-        teamsManageIconBtn({
-          label: "Редактировать",
-          neutral: true,
-          paths: TEAMS_ICON_EDIT,
-          onClick: function () {
-            openTeamsManageEdit(team);
-          },
-        })
-      );
-      actions.appendChild(
-        teamsManageIconBtn({
-          label: "Удалить",
-          paths: TEAMS_ICON_TRASH,
-          onClick: async function () {
-            if (!confirm("Удалить команду «" + (team.name || "") + "»?")) return;
-            try {
-              await apiFetch("/teams/" + encodeURIComponent(String(team.id)), {
-                method: "DELETE",
-              });
-              await loadTeamsManageList();
-              await loadContacts();
-            } catch (err) {
-              setTeamsManageError(err.message || String(err));
-            }
-          },
-        })
-      );
-      head.appendChild(actions);
-      card.appendChild(head);
-
-      var membersLabel = document.createElement("p");
-      membersLabel.className = "field-label";
-      membersLabel.textContent = "Участники";
-      card.appendChild(membersLabel);
-      var members = team.members || [];
-      if (!members.length) {
-        var noMembers = document.createElement("p");
-        noMembers.className = "muted small";
-        noMembers.textContent = "Пока никого нет";
-        card.appendChild(noMembers);
-      } else {
-        var membersList = document.createElement("ul");
-        membersList.className = "teams-manage-meta-list";
-        members.forEach(function (m) {
-          var li = document.createElement("li");
-          li.textContent = memberLabel(m);
-          membersList.appendChild(li);
-        });
-        card.appendChild(membersList);
-      }
-
-      var sharesLabel = document.createElement("p");
-      sharesLabel.className = "field-label";
-      sharesLabel.textContent = "Документы базы знаний";
-      card.appendChild(sharesLabel);
-      var shares = team.shares || [];
-      if (!shares.length) {
-        var noShares = document.createElement("p");
-        noShares.className = "muted small";
-        noShares.textContent = "Нет расшаренных документов.";
-        card.appendChild(noShares);
-      } else {
-        var sharesList = document.createElement("ul");
-        sharesList.className = "teams-manage-meta-list";
-        shares.forEach(function (s) {
-          var li = document.createElement("li");
-          li.textContent = s.title || "Документ";
-          sharesList.appendChild(li);
-        });
-        card.appendChild(sharesList);
-      }
-      list.appendChild(card);
+      var row = document.createElement("button");
+      row.type = "button";
+      row.className = "pf-row";
+      var members = (team.members || []).length;
+      var shares = (team.shares || []).length;
+      var sub = [];
+      sub.push(members ? teamsPlural(members, "человек", "человека", "человек") : "Пока никого");
+      if (shares) sub.push(teamsPlural(shares, "документ", "документа", "документов"));
+      row.innerHTML =
+        '<span class="pf-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg></span>' +
+        '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title"></span><span class="pf-row-sub"></span></span>' +
+        '<span class="pf-chev" aria-hidden="true">›</span></span>';
+      row.querySelector(".pf-row-title").textContent = team.name || "Команда";
+      row.querySelector(".pf-row-sub").textContent = sub.join(" · ");
+      row.addEventListener("click", function () {
+        openTeamsManageEdit(team);
+      });
+      list.appendChild(row);
     });
+  }
+
+  async function deleteTeamFromEdit() {
+    var team = teamsManageState.team;
+    if (!team) return;
+    var ok = await confirmDialog("Удалить команду «" + (team.name || "") + "»? Контакты останутся.");
+    if (!ok) return;
+    try {
+      await apiFetch("/teams/" + encodeURIComponent(String(team.id)), { method: "DELETE" });
+      showTeamsManageListView();
+      await loadTeamsManageList();
+      await loadContacts();
+      showNoteToast("Команда удалена");
+    } catch (err) {
+      setTeamsManageError(err.message || String(err));
+    }
   }
 
   function fillTeamsManageAddMemberSelect() {
@@ -10556,6 +10407,19 @@
     });
   }
 
+  function teamsEditRow(label, actionLabel, onClick) {
+    var row = document.createElement("div");
+    row.className = "pf-row pf-row--static";
+    row.innerHTML =
+      '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title"></span></span>' +
+      '<button type="button" class="pf-link pf-link--danger"></button></span>';
+    row.querySelector(".pf-row-title").textContent = label;
+    var btn = row.querySelector("button");
+    btn.textContent = actionLabel;
+    btn.addEventListener("click", onClick);
+    return row;
+  }
+
   function paintTeamsManageEdit() {
     var team = teamsManageState.team;
     if (!team) return;
@@ -10566,62 +10430,24 @@
     var membersEl = document.getElementById("teams-manage-edit-members");
     if (membersEl) {
       membersEl.innerHTML = "";
-      var members = team.members || [];
-      if (!members.length) {
-        var emptyM = document.createElement("p");
-        emptyM.className = "muted small";
-        emptyM.textContent = "Пока никого нет";
-        membersEl.appendChild(emptyM);
-      } else {
-        members.forEach(function (m) {
-          var row = document.createElement("div");
-          row.className = "teams-manage-edit-row";
-          var label = document.createElement("span");
-          label.className = "teams-manage-edit-row-label";
-          label.textContent = memberLabel(m);
-          row.appendChild(label);
-          row.appendChild(
-            teamsManageIconBtn({
-              label: "Удалить участника",
-              paths: TEAMS_ICON_TRASH,
-              onClick: function () {
-                removeTeamMemberFromEdit(m.email);
-              },
-            })
-          );
-          membersEl.appendChild(row);
-        });
-      }
+      (team.members || []).forEach(function (m) {
+        membersEl.appendChild(
+          teamsEditRow(memberLabel(m), "Убрать", function () {
+            removeTeamMemberFromEdit(m.email);
+          })
+        );
+      });
     }
     var sharesEl = document.getElementById("teams-manage-edit-shares");
     if (sharesEl) {
       sharesEl.innerHTML = "";
-      var shares = team.shares || [];
-      if (!shares.length) {
-        var emptyS = document.createElement("p");
-        emptyS.className = "muted small";
-        emptyS.textContent = "Нет расшаренных документов.";
-        sharesEl.appendChild(emptyS);
-      } else {
-        shares.forEach(function (s) {
-          var row = document.createElement("div");
-          row.className = "teams-manage-edit-row";
-          var label = document.createElement("span");
-          label.className = "teams-manage-edit-row-label";
-          label.textContent = s.title || "Документ";
-          row.appendChild(label);
-          row.appendChild(
-            teamsManageIconBtn({
-              label: "Убрать документ",
-              paths: TEAMS_ICON_TRASH,
-              onClick: function () {
-                removeTeamShareFromEdit(s.note_id);
-              },
-            })
-          );
-          sharesEl.appendChild(row);
-        });
-      }
+      (team.shares || []).forEach(function (sh) {
+        sharesEl.appendChild(
+          teamsEditRow(sh.title || "Документ", "Убрать", function () {
+            removeTeamShareFromEdit(sh.note_id);
+          })
+        );
+      });
     }
     fillTeamsManageAddMemberSelect();
     fillTeamsManageAddShareSelect();
@@ -11340,13 +11166,12 @@
   function paintCalendarsList() {
     var list = document.getElementById("calendars-list");
     var empty = document.getElementById("calendars-empty");
+    var group = document.getElementById("calendars-group");
     if (!list) return;
     list.innerHTML = "";
-    if (!calendarsCache.length) {
-      setHidden(empty, false);
-      return;
-    }
-    setHidden(empty, true);
+    list.classList.remove("pf-skel-list");
+    setHidden(empty, !!calendarsCache.length);
+    setHidden(group, !calendarsCache.length);
     calendarsCache.forEach(function (cal) {
       list.appendChild(renderCalendarRow(cal));
     });
@@ -11355,18 +11180,18 @@
   function renderCalendarRow(cal) {
     var calId = cal.id || "";
     var card = document.createElement("div");
-    card.className = "svc-row calendars-row";
+    card.className = "pf-row pf-row--static";
     card.setAttribute("data-cal-id", calId);
     var dot = document.createElement("span");
-    dot.className = "calendars-dot";
+    dot.className = "pf-cal-dot";
     dot.style.background = cal.backgroundColor || "var(--accent)";
-    var text = document.createElement("div");
-    text.className = "svc-text";
-    var name = document.createElement("p");
-    name.className = "svc-name";
+    var text = document.createElement("span");
+    text.className = "pf-row-text";
+    var name = document.createElement("span");
+    name.className = "pf-row-title";
     name.textContent = cal.summary || calId || "Календарь";
-    var sub = document.createElement("p");
-    sub.className = "svc-desc muted small";
+    var sub = document.createElement("span");
+    sub.className = "pf-row-sub";
     sub.textContent = cal.primary
       ? "Основной"
       : cal.accessRole === "reader"
@@ -11397,9 +11222,12 @@
       calendarsSaveRevision += 1;
       scheduleCalendarsSave();
     });
+    var body = document.createElement("span");
+    body.className = "pf-row-body";
+    body.appendChild(text);
+    body.appendChild(toggle);
     card.appendChild(dot);
-    card.appendChild(text);
-    card.appendChild(toggle);
+    card.appendChild(body);
     return card;
   }
 
@@ -11520,46 +11348,60 @@
     var list = document.getElementById("calendars-list");
     var err = document.getElementById("calendars-err");
     if (!list) return;
+    await ensureCalendarsSaved();
+    setHidden(err, true);
+    if (!calendarsCache.length) {
+      list.classList.add("pf-skel-list");
+      list.innerHTML = '<div class="pf-row"><span class="pf-row-body"></span></div>'.repeat(3);
+    }
+    try {
+      var data = (await apiFetch("/calendar/sources", { method: "GET" })) || {};
+      calendarsCache = data.calendars || [];
+      paintCalendarsList();
+    } catch (e) {
+      list.innerHTML = "";
+      list.classList.remove("pf-skel-list");
+      if (err) {
+        err.textContent = humanProfileError(e.message || String(e));
+        setHidden(err, false);
+      }
+    }
+  }
+
+  var notificationsBackTo = "main";
+
+  async function loadNotificationsScreen() {
     initMeetingRemindersToggle();
     initTaskRemindersToggle();
     initDiscussionNotificationsToggle();
-    await ensureCalendarsSaved();
-    setHidden(err, true);
-    list.innerHTML = "<p class=\"muted small\">Загрузка…</p>";
+    // В Telegram браузерные уведомления не работают — строку не показываем.
+    setHidden(document.getElementById("discussion-notify-web-push-row"), isInsideTelegramClient());
     try {
-      var results = await Promise.all([
-        apiFetch("/settings", { method: "GET" }),
-        apiFetch("/calendar/sources", { method: "GET" }),
-      ]);
-      var settings = results[0] || {};
-      var data = results[1] || {};
+      var settings = (await apiFetch("/settings", { method: "GET" })) || {};
       var mins = parseInt(settings.meeting_reminder_minutes_before, 10);
       var hint = document.getElementById("meeting-reminders-setting-hint");
-      if (hint && mins > 0) {
-        hint.textContent =
-          "За " +
-          mins +
-          " мин. в Telegram и в установленном приложении (нужно разрешить уведомления)";
-      }
+      if (hint && mins > 0) hint.textContent = "За " + mins + " мин · в Telegram и в приложении";
       var taskMins = parseInt(settings.task_reminder_minutes_before, 10);
       var taskHint = document.getElementById("task-reminders-setting-hint");
-      if (taskHint && taskMins > 0) {
-        taskHint.textContent = "За " + taskMins + " мин. до начала";
-      }
+      if (taskHint && taskMins > 0) taskHint.textContent = "За " + taskMins + " мин до начала";
       applyMeetingRemindersToggleUi(settings.meeting_reminders_enabled !== false);
       applyTaskRemindersToggleUi(settings.task_reminders_enabled !== false);
       applyDiscussionNotifyTelegramUi(settings.discussion_notify_telegram !== false);
       applyDiscussionNotifyWebPushUi(settings.discussion_notify_web_push !== false);
       syncWebPushSubscriptionIfNeeded();
-      calendarsCache = data.calendars || [];
-      paintCalendarsList();
     } catch (e) {
-      list.innerHTML = "";
+      var err = document.getElementById("discussion-notifications-setting-err");
       if (err) {
-        err.textContent = e.message || String(e);
+        err.textContent = humanProfileError(e.message || String(e));
         setHidden(err, false);
       }
     }
+  }
+
+  function openNotificationsScreen(from) {
+    notificationsBackTo = from || "main";
+    profileScreen("notifications");
+    loadNotificationsScreen();
   }
 
   async function refreshProfileContactsCount() {
@@ -11574,32 +11416,88 @@
     }
   }
 
-  async function loadContacts() {
+  var contactsAll = [];
+
+  function contactMatches(c, q) {
+    if (!q) return true;
+    var hay = [c.name, c.email, c.telegram_username ? "@" + c.telegram_username : "", (c.aliases || []).join(" ")]
+      .join(" ")
+      .toLowerCase();
+    return hay.indexOf(q) >= 0;
+  }
+
+  function paintContactsList() {
     var list = document.getElementById("contacts-list");
     var empty = document.getElementById("contacts-empty");
+    var nothing = document.getElementById("contacts-nothing");
+    var search = document.getElementById("contacts-search");
+    var hint = document.getElementById("contacts-hint");
+    if (!list) return;
+    list.innerHTML = "";
+    var q = String((search && search.value) || "").trim().toLowerCase();
+    setHidden(empty, !!contactsAll.length);
+    if (hint) setHidden(hint, !contactsAll.length);
+    var items = contactsAll.filter(function (c) {
+      return contactMatches(c, q);
+    });
+    setHidden(nothing, !contactsAll.length || !!items.length);
+    // Группы по первой букве имени, как в адресной книге.
+    var groups = [];
+    var byLetter = {};
+    items.forEach(function (c) {
+      var name = String(c.name || c.email || c.telegram_username || "#").trim();
+      var letter = name.charAt(0).toUpperCase();
+      if (!/[A-ZА-ЯЁ]/.test(letter)) letter = "#";
+      if (!byLetter[letter]) {
+        byLetter[letter] = [];
+        groups.push(letter);
+      }
+      byLetter[letter].push(c);
+    });
+    groups.forEach(function (letter) {
+      var wrap = document.createElement("div");
+      wrap.className = "pf-group";
+      var h = document.createElement("p");
+      h.className = "pf-letter";
+      h.textContent = letter;
+      var box = document.createElement("div");
+      box.className = "pf-list";
+      byLetter[letter].forEach(function (c) {
+        box.appendChild(renderContactCard(c));
+      });
+      wrap.appendChild(h);
+      wrap.appendChild(box);
+      list.appendChild(wrap);
+    });
+  }
+
+  async function loadContacts() {
+    var list = document.getElementById("contacts-list");
     var err = document.getElementById("contacts-err");
+    var teamsCount = document.getElementById("contacts-teams-count");
     if (!list) return;
     setHidden(err, true);
-    list.innerHTML = "<p class=\"muted small\">Загрузка…</p>";
+    if (!contactsAll.length) {
+      list.innerHTML =
+        '<div class="pf-list pf-skel-list">' + '<div class="pf-row"><span class="pf-row-body"></span></div>'.repeat(4) + "</div>";
+    }
+    apiFetch("/teams", { method: "GET" })
+      .then(function (d) {
+        if (teamsCount) teamsCount.textContent = String(((d && d.teams) || []).length || "Нет");
+      })
+      .catch(function () {
+        if (teamsCount) teamsCount.textContent = "";
+      });
     try {
       var data = await apiFetch("/contacts", { method: "GET" });
-      var items = data.items || [];
-      list.innerHTML = "";
-      if (!items.length) {
-        setHidden(empty, false);
-        return;
-      }
-      setHidden(empty, true);
-      items.sort(function (a, b) {
-        return (a.name || "").localeCompare(b.name || "", "ru");
+      contactsAll = (data.items || []).slice().sort(function (a, b) {
+        return String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "ru");
       });
-      items.forEach(function (c) {
-        list.appendChild(renderContactCard(c));
-      });
+      paintContactsList();
     } catch (e) {
       list.innerHTML = "";
       if (err) {
-        err.textContent = e.message || String(e);
+        err.textContent = humanProfileError(e.message || String(e));
         setHidden(err, false);
       }
     }
@@ -11750,25 +11648,16 @@
     try {
       data = await apiFetch("/integrations", { method: "GET" });
     } catch (e) {
-      if (stEl) stEl.textContent = "Не удалось проверить статус.";
+      setSvcPill(stEl, false, "Не удалось проверить");
       return;
     }
     var on = !!(data && (data["yandex-disk"] || data.yandex_disk_connected));
     var needsRefresh = !!(on && data && data.yandex_disk_needs_scope_refresh);
-    if (stEl) {
-      if (on) {
-        if (needsRefresh) {
-          stEl.textContent =
-            "● подключён, но нужны права на чтение — нажмите «Отключить», затем снова «Подключить»";
-        } else {
-          var who =
-            data.yandex_disk_display_name || data.yandex_disk_login || "аккаунт подключён";
-          stEl.textContent = "● " + who;
-        }
-      } else {
-        stEl.textContent = "Не подключён";
-      }
-    }
+    if (on && needsRefresh) setSvcPill(stEl, "warn", "Нужно обновить права");
+    else if (on) setSvcPill(stEl, true, data.yandex_disk_display_name || data.yandex_disk_login || "Подключён");
+    else setSvcPill(stEl, false, "Не подключён");
+    setHidden(document.getElementById("profile-yandex-disk-steps"), on && !needsRefresh);
+    setSvcConnectedUi("yandex-disk", on);
     if (authBtn) setHidden(authBtn, on && !needsRefresh);
     if (submitBtn) setHidden(submitBtn, on && !needsRefresh);
     if (codeWrap) {
@@ -11778,7 +11667,7 @@
     if (discBtn) setHidden(discBtn, !on);
     if (msgEl && needsRefresh) {
       msgEl.textContent =
-        "Диск подключён со старыми правами: Leo может сохранять файлы, но не получает ссылку на папку. Отключите и подключите снова.";
+        "Диск подключён со старыми правами: Лео сохраняет файлы, но не видит ссылку на папку. Отключите и подключите снова.";
       msgEl.classList.remove("hidden");
     }
   }
@@ -11810,13 +11699,14 @@
     try {
       data = await apiFetch("/integrations", { method: "GET" });
     } catch (e) {
-      if (stEl) stEl.textContent = "Не удалось проверить статус.";
+      setSvcPill(stEl, false, "Не удалось проверить");
       return;
     }
     var on = !!(data && (data.bitrix || data.bitrix_connected));
-    if (stEl) {
-      stEl.textContent = on ? "● Битрикс24 подключён" : "Не подключён";
-    }
+    setSvcPill(stEl, on, on ? "Подключён" : "Не подключён");
+    setHidden(document.getElementById("profile-bitrix-steps"), on);
+    setHidden(document.getElementById("profile-bitrix-token-wrap"), on);
+    setSvcConnectedUi("bitrix", on);
     if (submitBtn) setHidden(submitBtn, on);
     if (tokenInp) {
       var tokenField = tokenInp.closest(".field");
@@ -11873,9 +11763,10 @@
     try {
       await apiFetch("/bitrix-mcp/disconnect", { method: "POST" });
     } catch (e) {
-      showProfileError("bitrix: " + (e.message || e));
+      showNoteToast("Битрикс24: " + humanProfileError(e.message || e));
       return;
     }
+    showNoteToast("Битрикс24 отключён");
     await loadIntegrations();
     await loadBitrixScreen(false);
   }
@@ -11888,8 +11779,13 @@
     if (item.sync_status === "error") return "Ошибка синхронизации";
     if (item.sync_status === "ok") {
       var chunks = item.chunk_count != null ? item.chunk_count : 0;
-      var when = item.last_sync_at ? String(item.last_sync_at).slice(0, 16).replace("T", " ") : "";
-      return "● " + chunks + " фрагм." + (when ? " · " + when : "");
+      var d = item.last_sync_at ? new Date(String(item.last_sync_at)) : null;
+      var when =
+        d && !isNaN(d.getTime())
+          ? "обновлено " + d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }) + ", " +
+            d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })
+          : "";
+      return chunks + " " + pluralRu(chunks, "фрагмент", "фрагмента", "фрагментов") + (when ? " · " + when : "");
     }
     return "Ожидает синхронизации";
   }
@@ -11933,10 +11829,11 @@
       });
       var members = (data && data.members) || [];
       if (titleEl) {
-        titleEl.textContent = "Участники с доступом к чтению и поиску в боте.";
+        titleEl.textContent = "Эти люди могут искать по источнику в боте.";
       }
       if (!members.length) {
-        listEl.innerHTML = "<p class=\"muted small\">Пока только владелец.</p>";
+        listEl.innerHTML =
+          '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title pf-row-title--muted">Пока только вы</span></span></span></div>';
         return;
       }
       listEl.innerHTML = members
@@ -11945,20 +11842,18 @@
           var role = m.role === "owner" ? "владелец" : "участник";
           var revoke =
             m.role === "member"
-              ? '<button type="button" class="btn ghost small" data-kb-revoke="' +
+              ? '<button type="button" class="pf-link pf-link--danger" data-kb-revoke="' +
                 m.telegram_user_id +
-                '">Отключить</button>'
+                '">Убрать</button>'
               : "";
           return (
-            '<div class="svc-row">' +
-            '<div class="svc-text"><p class="svc-name">' +
-            label +
-            '</p><p class="svc-desc">' +
+            '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' +
+            escapeHtml(label) +
+            '</span><span class="pf-row-sub">' +
             role +
-            "</p></div>" +
-            '<div class="svc-actions">' +
+            "</span></span>" +
             revoke +
-            "</div></div>"
+            "</span></div>"
           );
         })
         .join("");
@@ -11981,7 +11876,8 @@
         });
       });
     } catch (e) {
-      listEl.innerHTML = "<p class=\"muted small\">" + (e.message || e) + "</p>";
+      listEl.innerHTML = "";
+      showKbError(humanProfileError(e.message || String(e)));
     }
   }
 
@@ -12006,6 +11902,29 @@
     }
   }
 
+  function isKnowledgeSourcesOpen() {
+    var el = document.getElementById("knowledge-sources");
+    return !!(el && !el.classList.contains("hidden"));
+  }
+
+  function openKnowledgeSources() {
+    setHidden(document.getElementById("knowledge-root"), true);
+    setHidden(document.getElementById("knowledge-sources"), false);
+    var fab = document.getElementById("knowledge-create-btn");
+    if (fab) fab.classList.add("kb-fab-suppressed");
+    pulseMotionEnter(document.getElementById("knowledge-sources"));
+    loadKnowledgeBaseScreen();
+    syncTelegramNativeBack();
+  }
+
+  function closeKnowledgeSources() {
+    setHidden(document.getElementById("knowledge-sources"), true);
+    setHidden(document.getElementById("knowledge-root"), false);
+    var fab = document.getElementById("knowledge-create-btn");
+    if (fab) fab.classList.remove("kb-fab-suppressed");
+    syncTelegramNativeBack();
+  }
+
   async function loadKnowledgeBaseScreen() {
     clearKbMessages();
     syncKbNotionFieldVisibility();
@@ -12013,15 +11932,21 @@
     var emptyEl = document.getElementById("profile-kb-empty");
     var membersSection = document.getElementById("profile-kb-members-section");
     if (!listEl) return;
-    listEl.innerHTML = "<p class=\"muted small\">Загрузка…</p>";
+    listEl.classList.add("pf-skel-list");
+    setHidden(listEl, false);
+    listEl.innerHTML = '<div class="pf-row"><span class="pf-row-body"></span></div>'.repeat(2);
     if (emptyEl) emptyEl.classList.add("hidden");
     if (membersSection) setHidden(membersSection, true);
     selectedKbId = null;
     try {
       var data = await apiFetch("/knowledge-bases", { method: "GET" });
       var items = (data && data.items) || [];
+      listEl.classList.remove("pf-skel-list");
+      var countEl = document.getElementById("knowledge-sources-count");
+      if (countEl) countEl.textContent = items.length ? String(items.length) : "";
       if (!items.length) {
         listEl.innerHTML = "";
+        setHidden(listEl, true);
         if (emptyEl) emptyEl.classList.remove("hidden");
         await refreshKnowledgeBaseHint();
         return;
@@ -12033,24 +11958,24 @@
           var statusLabel = kbSyncStatusLabel(it);
           var actions =
             (isOwner
-              ? '<button type="button" class="btn ghost small" data-kb-sync="' +
+              ? '<button type="button" class="pf-link" data-kb-sync="' +
                 it.id +
-                '">Синхронизировать</button>' +
-                '<button type="button" class="btn ghost small" data-kb-members="' +
+                '">Обновить</button>' +
+                '<button type="button" class="pf-link" data-kb-members="' +
                 it.id +
                 '">Доступ</button>' +
-                '<button type="button" class="btn ghost small" data-kb-delete="' +
+                '<button type="button" class="pf-link pf-link--danger" data-kb-delete="' +
                 it.id +
                 '">Удалить</button>'
               : "") +
             "";
           return (
-            '<div class="svc-row svc-row--kb" data-kb-item="' +
+            '<div class="pf-row pf-row--static" data-kb-item="' +
             it.id +
-            '">' +
-            '<div class="svc-text"><p class="svc-name">' +
+            '"><span class="pf-row-body">' +
+            '<span class="pf-row-text"><span class="pf-row-title">' +
             escapeHtml(it.title || "База знаний") +
-            '</p><p class="svc-desc"' +
+            '</span><span class="pf-row-sub pf-row-sub--wrap"' +
             (statusTitle
               ? ' title="' + escapeHtml(statusTitle).replace(/"/g, "&quot;") + '"'
               : "") +
@@ -12059,10 +11984,9 @@
             " · " +
             statusLabel +
             (isOwner ? "" : " · общая")) +
-            "</p></div>" +
-            '<div class="svc-actions">' +
-            actions +
-            "</div></div>"
+            "</span>" +
+            (actions ? '<span class="pf-kb-actions">' + actions + "</span>" : "") +
+            "</span></span></div>"
           );
         })
         .join("");
@@ -12092,7 +12016,7 @@
       listEl.querySelectorAll("[data-kb-delete]").forEach(function (btn) {
         btn.addEventListener("click", async function () {
           var id = btn.getAttribute("data-kb-delete");
-          if (!id || !window.confirm("Удалить базу знаний и индекс?")) return;
+          if (!id || !(await confirmDialog("Удалить источник и его индекс? PAIE перестанет по нему отвечать."))) return;
           try {
             await apiFetch("/knowledge-bases/" + encodeURIComponent(id), {
               method: "DELETE",
@@ -12111,7 +12035,9 @@
       });
       await refreshKnowledgeBaseHint();
     } catch (e) {
-      listEl.innerHTML = "<p class=\"muted small\">" + (e.message || e) + "</p>";
+      listEl.classList.remove("pf-skel-list");
+      listEl.innerHTML = "";
+      showKbError(humanProfileError(e.message || String(e)));
     }
   }
 
@@ -12295,6 +12221,16 @@
     }
   }
 
+  // «Подключить» у любого сервиса ведёт на его экран: там шаги и статус.
+  function openServiceSetup(svc) {
+    if (svc === "google") return openGoogleSetup();
+    if (svc === "zoom") return openZoomSetup();
+    if (svc === "telemost") return openTelemostSetup();
+    if (svc === "yandex-disk") return openYandexDiskSetup();
+    if (svc === "bitrix") return openBitrixSetup();
+    return oauthStart(svc);
+  }
+
   async function oauthStart(svc) {
     if (svc === "bitrix") {
       openBitrixSetup();
@@ -12340,7 +12276,17 @@
     }
   }
 
+  var SVC_LABEL = {
+    google: "Google Календарь",
+    zoom: "Zoom",
+    telemost: "Телемост",
+    "yandex-disk": "Яндекс Диск",
+    bitrix: "Битрикс24",
+  };
+
   async function oauthDisconnect(svc) {
+    var ok = await confirmDialog("Отключить " + (SVC_LABEL[svc] || svc) + "? Лео перестанет им пользоваться.");
+    if (!ok) return;
     clearProfileError();
     if (svc === "bitrix") {
       await disconnectBitrix();
@@ -12349,10 +12295,12 @@
     try {
       await apiFetch("/oauth/" + svc + "/disconnect", { method: "POST" });
     } catch (e) {
-      showProfileError(svc + ": " + (e.message || e));
+      showNoteToast((SVC_LABEL[svc] || svc) + ": " + humanProfileError(e.message || e));
       return;
     }
+    showNoteToast((SVC_LABEL[svc] || svc) + " отключён");
     await loadIntegrations();
+    if (svc === "google") await loadGoogleScreen();
     if (svc === "zoom") await loadZoomScreen(false);
     if (svc === "telemost") await loadTelemostScreen(false);
     if (svc === "yandex-disk") await loadYandexDiskScreen(false);
@@ -17618,7 +17566,7 @@
         '<div class="modal modal--sheet contact-detail-sheet" role="dialog" aria-modal="true" aria-label="Контакт">' +
         '<div class="modal-header"><button type="button" class="modal-header-btn modal-header-btn--close" data-cd="close" aria-label="Закрыть">' +
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>' +
-        '<h2 class="modal-title">Контакт</h2><button type="button" class="modal-header-btn contact-detail-edit" data-cd="edit">Изменить</button></div>' +
+        '<h2 class="modal-title">Контакт</h2><span class="modal-header-spacer" aria-hidden="true"></span></div>' +
         '<div class="modal-body contact-detail-body"></div></div>';
       document.body.appendChild(ov);
       ov.addEventListener("click", function (e) {
@@ -17634,13 +17582,14 @@
     var body = ov.querySelector(".contact-detail-body");
     body.innerHTML = "";
     body.appendChild(contactDetailHead(c));
+    body.appendChild(contactDetailInfo(c));
     var backlinks = document.createElement("div");
     backlinks.className = "note-backlinks-row contact-detail-backlinks hidden";
     body.appendChild(backlinks);
     mountNoteBacklinks(backlinks, "person", key, closeContactDetail);
-    var loading = document.createElement("p");
-    loading.className = "ev-materials-empty";
-    loading.textContent = c.email ? "Ищу встречи в календаре…" : "Ищу материалы…";
+    var loading = document.createElement("div");
+    loading.className = "pf-list pf-skel-list";
+    loading.innerHTML = '<div class="pf-row"><span class="pf-row-body"></span></div>'.repeat(3);
     body.appendChild(loading);
     ov.classList.remove("hidden");
     ov.setAttribute("aria-hidden", "false");
@@ -17650,6 +17599,7 @@
     try {
       data = await apiFetch("/contacts/" + encodeURIComponent(key) + "/meetings", { method: "GET" });
     } catch (e) {
+      loading.className = "pf-hint";
       loading.textContent = (e && e.message) || "Не удалось загрузить встречи";
       return;
     }
@@ -17670,43 +17620,103 @@
 
   function contactDetailHead(c) {
     var head = document.createElement("div");
-    head.className = "contact-detail-head";
-    head.appendChild(
-      meetingAttendeeAvatarNode({
-        email: c.email,
-        name: c.name,
-        telegram_user_id: c.telegram_user_id,
-        telegram_username: c.telegram_username,
-      })
-    );
-    var col = document.createElement("div");
+    head.className = "contact-detail-head pf-contact-hero";
+    var av = meetingAttendeeAvatarNode({
+      email: c.email,
+      name: c.name,
+      telegram_user_id: c.telegram_user_id,
+      telegram_username: c.telegram_username,
+    });
+    fixContactAvatarInitials(av, c);
+    head.appendChild(av);
     var n = document.createElement("div");
     n.className = "contact-detail-name";
-    n.textContent = c.name || c.email || "(без имени)";
-    var meta = document.createElement("div");
-    meta.className = "contact-detail-meta";
-    var bits = [c.email || "", c.telegram_username ? "@" + c.telegram_username : ""];
+    n.textContent = c.name || c.email || "Без имени";
+    head.appendChild(n);
     var teams = (c.teams || []).map(function (t) { return t.name; }).filter(Boolean);
-    if (teams.length) bits.push("команда «" + teams.join("», «") + "»");
-    meta.textContent = bits.filter(Boolean).join(" · ");
-    col.appendChild(n);
-    col.appendChild(meta);
-    head.appendChild(col);
+    if (teams.length) {
+      var meta = document.createElement("div");
+      meta.className = "contact-detail-meta";
+      meta.textContent = (teams.length > 1 ? "команды «" : "команда «") + teams.join("», «") + "»";
+      head.appendChild(meta);
+    }
     return head;
   }
 
-  function renderContactDetail(body, c, data) {
-    function sect(text) {
-      var h = document.createElement("div");
-      h.className = "meeting-pick-sect";
-      h.textContent = text;
-      body.appendChild(h);
+  // Быстрые действия и поля контакта под шапкой карточки.
+  function contactDetailInfo(c) {
+    var frag = document.createDocumentFragment();
+    var acts = document.createElement("div");
+    acts.className = "pf-contact-acts";
+    function act(label, icon, href, onClick) {
+      var el = document.createElement(href ? "a" : "button");
+      if (href) {
+        el.href = href;
+        el.target = "_blank";
+        el.rel = "noopener";
+      } else {
+        el.type = "button";
+      }
+      el.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + icon + "</svg><span></span>";
+      el.querySelector("span").textContent = label;
+      if (onClick) el.addEventListener("click", onClick);
+      acts.appendChild(el);
     }
-    function note(text) {
+    if (c.telegram_username) {
+      act("Telegram", '<path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" />', "https://t.me/" + encodeURIComponent(c.telegram_username));
+    }
+    if (c.email) {
+      act("Почта", '<rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 7-10 6L2 7" />', "mailto:" + c.email);
+    }
+    act("Изменить", '<path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />', null, function () {
+      closeContactDetail();
+      contactsFillForm(c);
+    });
+    frag.appendChild(acts);
+    var fields = [];
+    if (c.email) fields.push(["почта", c.email]);
+    if (c.telegram_username) fields.push(["telegram", "@" + c.telegram_username]);
+    if (c.aliases && c.aliases.length) fields.push(["также зовут", c.aliases.join(", ")]);
+    if (fields.length) {
+      var box = document.createElement("div");
+      box.className = "pf-list";
+      fields.forEach(function (f) {
+        var row = document.createElement("div");
+        row.className = "pf-field";
+        var l = document.createElement("span");
+        l.className = "pf-field-label";
+        l.textContent = f[0];
+        var v = document.createElement("span");
+        v.className = "pf-field-value";
+        v.textContent = f[1];
+        row.appendChild(l);
+        row.appendChild(v);
+        box.appendChild(row);
+      });
+      frag.appendChild(box);
+    }
+    return frag;
+  }
+
+  function renderContactDetail(body, c, data) {
+    var box = null;
+    function sect(text) {
+      var g = document.createElement("div");
+      g.className = "pf-group";
+      var h = document.createElement("p");
+      h.className = "pf-group-title";
+      h.textContent = text;
+      box = document.createElement("div");
+      box.className = "pf-list pf-meet-list";
+      g.appendChild(h);
+      g.appendChild(box);
+      body.appendChild(g);
+    }
+    function note(text, target) {
       var p = document.createElement("p");
-      p.className = "ev-materials-empty";
+      p.className = "pf-hint";
       p.textContent = text;
-      body.appendChild(p);
+      (target || body).appendChild(p);
     }
     if (!c.email) note("У контакта нет почты — встречи из календаря не найти. Ниже — материалы, куда он добавлен вручную.");
     else if (data.connected === false) note("Календарь не подключён — подключите Google Календарь в Профиле, чтобы видеть встречи.");
@@ -17715,12 +17725,15 @@
     var past = data.past || [];
     if (up.length) {
       sect("Ближайшие");
-      up.slice(0, 5).forEach(function (ev) { body.appendChild(contactMeetingRow(ev, false)); });
+      up.slice(0, 5).forEach(function (ev) { box.appendChild(contactMeetingRow(ev, false)); });
     }
     if (c.email && data.connected !== false) {
       sect("Прошедшие · " + (data.past_total || 0) + " за 90 дней");
-      if (!past.length) note("За последние 90 дней встреч с этим человеком не было.");
-      past.forEach(function (ev) { body.appendChild(contactMeetingRow(ev, true)); });
+      if (!past.length) {
+        box.remove();
+        note("За последние 90 дней встреч с этим человеком не было.", body.lastChild);
+      }
+      past.forEach(function (ev) { box.appendChild(contactMeetingRow(ev, true)); });
     }
     var manual = data.manual || [];
     if (manual.length) {
@@ -17734,12 +17747,17 @@
         row.querySelector(".cm-title").textContent = m.summary || m.title || "Без названия";
         row.querySelector(".cm-meta").textContent = m.summary ? m.title : (m.kind === "transcription" ? "транскрипция" : "заметка");
         row.querySelector(".cm-acts").appendChild(contactMaterialBtn({ note_id: m.note_id, kind: m.kind, title: m.title }));
-        body.appendChild(row);
+        box.appendChild(row);
       });
     }
-    if (!up.length && !past.length && !manual.length && c.email && data.connected !== false && !data.error) {
-      // Уже сказали выше про 90 дней.
-    }
+    var del = document.createElement("div");
+    del.className = "pf-list";
+    del.innerHTML =
+      '<button type="button" class="pf-row pf-row--danger"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Удалить контакт</span></span></span></button>';
+    del.querySelector("button").addEventListener("click", async function () {
+      if (await deleteContact(c)) closeContactDetail();
+    });
+    body.appendChild(del);
   }
 
   function contactMaterialBtn(m) {
@@ -18860,87 +18878,116 @@
   ];
 
   async function openProactiveSettings() {
-    var ov = document.getElementById("proactive-settings-overlay");
-    if (!ov) {
-      ov = document.createElement("div");
-      ov.id = "proactive-settings-overlay";
-      ov.className = "modal-overlay hidden";
-      ov.innerHTML =
-        '<div class="modal modal--sheet proactive-settings-sheet" role="dialog" aria-modal="true" aria-label="Подсказки ассистента">' +
-        '<div class="modal-header"><button type="button" class="modal-header-btn modal-header-btn--close" data-ps="close" aria-label="Закрыть">' +
-        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>' +
-        '<h2 class="modal-title">Подсказки ассистента</h2><span></span></div><div class="modal-body proactive-settings-body"></div></div>';
-      document.body.appendChild(ov);
-      ov.addEventListener("click", function (e) {
-        if (e.target === ov || e.target.closest('[data-ps="close"]')) closeProactiveSettings();
-      });
+    profileScreen("proactive");
+    var body = document.getElementById("proactive-settings-body");
+    if (!body) return;
+    if (!body.children.length) {
+      body.innerHTML =
+        '<div class="pf-list pf-skel-list">' + '<div class="pf-row"><span class="pf-row-body"></span></div>'.repeat(4) + "</div>";
     }
-    ov.classList.remove("hidden");
-    ov.setAttribute("aria-hidden", "false");
-    onModalSheetOpen();
-    syncAppOverlay();
-    var body = ov.querySelector(".proactive-settings-body");
-    body.innerHTML = '<p class="ev-materials-empty">Загружаю…</p>';
     var prefs = {};
     try {
       prefs = ((await apiFetch("/proactive/prefs", { method: "GET" })) || {}).prefs || {};
     } catch (e) {
-      body.innerHTML = '<p class="error"></p>';
-      body.firstChild.textContent = (e && e.message) || "Не удалось загрузить";
+      body.innerHTML = '<p class="pf-field-error"></p>';
+      body.firstChild.textContent = humanProfileError((e && e.message) || "Не удалось загрузить");
       return;
     }
     paintProactiveSettings(body, prefs);
   }
 
+  async function refreshProactiveVal() {
+    var val = document.getElementById("profile-proactive-val");
+    if (!val) return;
+    try {
+      var prefs = ((await apiFetch("/proactive/prefs", { method: "GET" })) || {}).prefs || {};
+      var n = PROACTIVE_ROWS.filter(function (r) {
+        return !!prefs[r[0]];
+      }).length;
+      val.textContent = n + " из " + PROACTIVE_ROWS.length;
+    } catch (_) {
+      val.textContent = "";
+    }
+  }
+
   function closeProactiveSettings() {
-    var ov = document.getElementById("proactive-settings-overlay");
-    if (!ov || ov.classList.contains("hidden")) return;
-    ov.classList.add("hidden");
-    ov.setAttribute("aria-hidden", "true");
-    onModalSheetClose();
-    syncAppOverlay();
+    if (currentProfileScreen === "proactive") profileScreen("main");
   }
 
   function paintProactiveSettings(body, prefs) {
     body.innerHTML = "";
+    var byKey = {};
     PROACTIVE_ROWS.forEach(function (r) {
+      byKey[r[0]] = r;
+    });
+    function toggleRow(key) {
+      var r = byKey[key];
       var row = document.createElement("div");
-      row.className = "svc-row proactive-row";
-      var txt = document.createElement("div");
-      txt.className = "svc-text";
-      txt.innerHTML = '<p class="svc-name"></p><p class="svc-desc muted small"></p>';
-      txt.querySelector(".svc-name").textContent = r[1];
-      txt.querySelector(".svc-desc").textContent = r[2];
-      row.appendChild(txt);
-      if (r[0] === "brief") {
-        var t = document.createElement("input");
-        t.type = "time";
-        t.className = "field-input proactive-time";
-        t.value = prefs.brief_time || "08:30";
-        t.addEventListener("change", function () {
-          saveProactivePref(body, { brief_time: t.value || "08:30" });
-        });
-        row.appendChild(t);
-      }
-      var on = !!prefs[r[0]];
-      var b = document.createElement("button");
-      b.type = "button";
-      b.className = "svc-toggle" + (on ? " svc-toggle--on" : "");
-      b.setAttribute("aria-pressed", on ? "true" : "false");
+      row.className = "pf-row pf-row--static";
+      var on = !!prefs[key];
+      row.innerHTML =
+        '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title"></span><span class="pf-row-sub"></span></span>' +
+        '<button type="button" class="svc-toggle' + (on ? " svc-toggle--on" : "") + '" aria-pressed="' + (on ? "true" : "false") + '"><span class="svc-toggle-knob"></span></button></span>';
+      row.querySelector(".pf-row-title").textContent = r[1];
+      var sub = r[2];
+      row.querySelector(".pf-row-sub").textContent = sub.charAt(0).toUpperCase() + sub.slice(1);
+      var b = row.querySelector("button");
       b.setAttribute("aria-label", r[1]);
-      b.innerHTML = '<span class="svc-toggle-knob"></span>';
       b.addEventListener("click", function () {
         var patch = {};
-        patch[r[0]] = !prefs[r[0]];
+        patch[key] = !prefs[key];
         saveProactivePref(body, patch);
       });
-      row.appendChild(b);
-      body.appendChild(row);
-    });
-    var note = document.createElement("p");
-    note.className = "notes-filter-hint";
-    note.textContent = "Ассистент ничего не делает без вашего нажатия: подсказки — только предложения.";
-    body.appendChild(note);
+      return row;
+    }
+    function group(title, keys, hint) {
+      var g = document.createElement("div");
+      g.className = "pf-group";
+      if (title) {
+        var h = document.createElement("p");
+        h.className = "pf-group-title";
+        h.textContent = title;
+        g.appendChild(h);
+      }
+      var list = document.createElement("div");
+      list.className = "pf-list";
+      keys.forEach(function (k) {
+        list.appendChild(toggleRow(k));
+        if (k === "brief" && prefs.brief) {
+          var tr = document.createElement("label");
+          tr.className = "pf-row pf-row--static";
+          tr.innerHTML =
+            '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title pf-row-title--muted">Время брифа</span></span></span>';
+          var t = document.createElement("input");
+          t.type = "time";
+          t.className = "pf-time";
+          t.value = prefs.brief_time || "08:30";
+          t.addEventListener("change", function () {
+            saveProactivePref(body, { brief_time: t.value || "08:30" });
+          });
+          tr.querySelector(".pf-row-body").appendChild(t);
+          list.appendChild(tr);
+        }
+      });
+      g.appendChild(list);
+      if (hint) {
+        var p = document.createElement("p");
+        p.className = "pf-hint";
+        p.textContent = hint;
+        g.appendChild(p);
+      }
+      body.appendChild(g);
+    }
+    group("День", ["focus", "brief"]);
+    group("Вокруг встреч", ["before_meetings", "after_meetings"]);
+    group("Ещё", ["chats", "weekly"], "Лео ничего не делает без вашего нажатия: подсказки — только предложения.");
+    var val = document.getElementById("profile-proactive-val");
+    if (val) {
+      var n = PROACTIVE_ROWS.filter(function (r) {
+        return !!prefs[r[0]];
+      }).length;
+      val.textContent = n + " из " + PROACTIVE_ROWS.length;
+    }
   }
 
   async function saveProactivePref(body, patch) {
@@ -20322,6 +20369,18 @@
       closeDigestDetail();
       return true;
     }
+    if (isKnowledgeSourcesOpen()) {
+      closeKnowledgeSources();
+      return true;
+    }
+    // Любой вложенный экран профиля: «Назад» — это его собственная кнопка в шапке.
+    var openProfileSub = document.querySelector("#panel-profile:not(.hidden) .profile-subscreen:not(.hidden)");
+    if (openProfileSub) {
+      var subBack = openProfileSub.querySelector(".detail-toolbar > .btn-text");
+      if (subBack) subBack.click();
+      else profileScreen("main");
+      return true;
+    }
     var pay = document.getElementById("profile-payment");
     var exp = document.getElementById("profile-expenses");
     var booking = document.getElementById("profile-booking");
@@ -20806,6 +20865,14 @@
       agents && !agents.classList.contains("hidden") && profilePanelVisible;
 
     if (detail) detail.classList.remove("notes-detail--native-back");
+    document.querySelectorAll("#panel-profile .profile-subscreen--native-back").forEach(function (el) {
+      el.classList.remove("profile-subscreen--native-back");
+    });
+    var anyProfileSub = profilePanelVisible
+      ? document.querySelector("#panel-profile .profile-subscreen:not(.hidden)")
+      : knowledgePanelVisible
+        ? document.querySelector("#knowledge-sources:not(.hidden)")
+        : null;
     if (pay) pay.classList.remove("profile-subscreen--native-back");
     if (exp) exp.classList.remove("profile-subscreen--native-back");
     if (booking) booking.classList.remove("profile-subscreen--native-back");
@@ -20968,6 +21035,14 @@
     }
     if (agentsOpen) {
       agents.classList.add("profile-subscreen--native-back");
+      try {
+        tg.BackButton.show();
+      } catch (_) {}
+      finishAppBackChrome();
+      return;
+    }
+    if (anyProfileSub) {
+      anyProfileSub.classList.add("profile-subscreen--native-back");
       try {
         tg.BackButton.show();
       } catch (_) {}
@@ -28893,10 +28968,9 @@
   function profileAgentsMsg(ok, err) {
     var msg = document.getElementById("agents-form-msg");
     var error = document.getElementById("agents-form-err");
-    if (msg) {
-      msg.textContent = ok || "";
-      msg.classList.toggle("hidden", !ok);
-    }
+    if (msg) msg.classList.add("hidden");
+    // Успех — тостом: форма к этому моменту обычно уже закрыта.
+    if (ok) showNoteToast(ok);
     if (error) {
       error.textContent = err || "";
       error.classList.toggle("hidden", !err);
@@ -28927,30 +29001,46 @@
     });
   }
 
+  var AGENT_KIND_HINT = {
+    paie: "Отвечает по базе знаний",
+    research: "Ищет в интернете",
+    gpt: "Общий помощник",
+  };
+
+  function agentModelLabel(id) {
+    if (!id) return "";
+    var all = (gptModelsState.models || []).concat((typeof paieModelsState !== "undefined" && paieModelsState.models) || []);
+    var m = all.filter(function (x) {
+      return x && x.id === id;
+    })[0];
+    return (m && (m.name || m.label)) || String(id).split("/").pop();
+  }
+
   function renderProfileAgentsList() {
-    var host = document.getElementById("profile-agents-list");
-    if (!host) return;
-    host.innerHTML = "";
+    var builtinEl = document.getElementById("agents-builtin-list");
+    var customEl = document.getElementById("agents-custom-list");
+    if (!builtinEl || !customEl) return;
+    builtinEl.classList.remove("pf-skel-list");
+    builtinEl.innerHTML = "";
+    customEl.innerHTML = "";
     (userAgentsState.agents || []).forEach(function (agent) {
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "agent-card";
-      var title = document.createElement("p");
-      title.className = "agent-card-title";
-      title.textContent = agent.title || agent.id;
-      var meta = document.createElement("p");
-      meta.className = "agent-card-meta";
-      meta.textContent = agent.builtin
-        ? (agent.model || "модель по умолчанию")
-        : "свой агент · " + (agent.model || "");
-      var left = document.createElement("div");
-      left.appendChild(title);
-      left.appendChild(meta);
-      btn.appendChild(left);
-      btn.addEventListener("click", function () {
+      var row = document.createElement("button");
+      row.type = "button";
+      row.className = "pf-row";
+      row.innerHTML =
+        '<span class="pf-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2M20 14h2M15 13v2M9 13v2" /></svg></span>' +
+        '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title"></span><span class="pf-row-sub"></span></span>' +
+        '<span class="pf-row-val"></span><span class="pf-chev" aria-hidden="true">›</span></span>';
+      row.querySelector(".pf-row-title").textContent = agent.title || agent.id;
+      var sub = row.querySelector(".pf-row-sub");
+      var hint = agent.builtin ? AGENT_KIND_HINT[agent.kind] || "" : "";
+      if (hint) sub.textContent = hint;
+      else sub.remove();
+      row.querySelector(".pf-row-val").textContent = agentModelLabel(agent.model) || "по умолчанию";
+      row.addEventListener("click", function () {
         openAgentForm(agent);
       });
-      host.appendChild(btn);
+      (agent.builtin ? builtinEl : customEl).appendChild(row);
     });
   }
 
@@ -28979,38 +29069,33 @@
     document.getElementById("modal-event-id").value = "";
     document.getElementById("modal-calendar-id").value = "";
     fields.innerHTML =
-      '<div class="event-sheet">' +
+      '<div class="event-sheet pf-screen-body pf-agent-form">' +
       '<input type="hidden" id="agents-edit-id" value="" />' +
-      '<div id="agents-title-field">' +
-      '<input id="agents-f-title" type="text" class="event-sheet-title" maxlength="60" placeholder="Название" autocomplete="off" />' +
+      '<div class="pf-list" id="agents-title-field">' +
+      '<label class="pf-field"><span class="pf-field-label">Название</span>' +
+      '<input id="agents-f-title" type="text" class="pf-input" maxlength="60" placeholder="Например, «Редактор постов»" autocomplete="off" /></label>' +
       "</div>" +
-      '<label class="field">' +
-      '<span class="field-label">Промпт</span>' +
-      '<textarea id="agents-f-prompt" class="field-textarea agents-textarea" rows="8" maxlength="12000"></textarea>' +
-      "</label>" +
-      '<label class="field">' +
-      '<span class="field-label">Правила</span>' +
-      '<textarea id="agents-f-rules" class="field-textarea agents-textarea agents-textarea--rules" rows="4" maxlength="4000" placeholder="Дополнительные ограничения и тон"></textarea>' +
-      "</label>" +
-      '<label class="field">' +
-      '<span class="field-label">Модель</span>' +
-      '<select id="agents-f-model" class="field-input"></select>' +
-      "</label>" +
-      '<label class="field" id="agents-temp-field">' +
-      '<span class="field-label">Температура</span>' +
-      '<input type="number" id="agents-f-temp" class="field-input" min="0" max="2" step="0.1" />' +
-      "</label>" +
-      '<label class="field field--check hidden" id="agents-web-field">' +
-      '<input type="checkbox" id="agents-f-web" />' +
-      "<span>Поиск в вебе</span>" +
-      "</label>" +
-      '<label class="field hidden" id="agents-rounds-field">' +
-      '<span class="field-label">Макс. раундов PAIE</span>' +
-      '<input type="number" id="agents-f-rounds" class="field-input" min="1" max="8" step="1" />' +
-      "</label>" +
-      '<button type="button" class="btn ghost hidden" id="agents-reset">Сбросить к заводским</button>' +
-      '<p id="agents-form-msg" class="billing-msg muted small hidden"></p>' +
-      '<p id="agents-form-err" class="error hidden"></p>' +
+      '<div class="pf-group"><p class="pf-group-title">Промпт</p><div class="pf-list">' +
+      '<label class="pf-field"><textarea id="agents-f-prompt" class="pf-input agents-textarea" rows="8" maxlength="12000" placeholder="Кто этот агент и как он работает"></textarea></label>' +
+      '<label class="pf-field"><span class="pf-field-label">Правила</span>' +
+      '<textarea id="agents-f-rules" class="pf-input agents-textarea agents-textarea--rules" rows="3" maxlength="4000" placeholder="Ограничения и тон"></textarea></label>' +
+      "</div></div>" +
+      '<div class="pf-group"><p class="pf-group-title">Модель</p><div class="pf-list">' +
+      '<label class="pf-row pf-row--static pf-row--select-inline"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Модель</span></span>' +
+      '<select id="agents-f-model" class="pf-select"></select></span></label>' +
+      '<div class="pf-field" id="agents-temp-field">' +
+      '<span class="pf-range-head"><span class="pf-row-title">Креативность</span><output id="agents-f-temp-out" class="pf-row-val"></output></span>' +
+      '<input type="range" id="agents-f-temp" class="pf-range" min="0" max="2" step="0.1" aria-label="Креативность" />' +
+      '<span class="pf-range-scale"><span>точнее</span><span>свободнее</span></span>' +
+      "</div>" +
+      '<label class="pf-row pf-row--static hidden" id="agents-web-field"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Поиск в интернете</span></span>' +
+      '<input type="checkbox" id="agents-f-web" class="pf-switch" /></span></label>' +
+      '<label class="pf-row pf-row--static hidden" id="agents-rounds-field"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Шагов поиска</span><span class="pf-row-sub">Сколько раз агент уточняет запрос к базе</span></span>' +
+      '<input type="number" id="agents-f-rounds" class="pf-num-input" min="1" max="8" step="1" /></span></label>' +
+      "</div></div>" +
+      '<button type="button" class="pf-btn pf-btn--ghost hidden" id="agents-reset">Вернуть настройки по умолчанию</button>' +
+      '<p id="agents-form-msg" class="pf-hint billing-msg hidden"></p>' +
+      '<p id="agents-form-err" class="pf-field-error hidden"></p>' +
       "</div>";
     var idEl = document.getElementById("agents-edit-id");
     var titleEl = document.getElementById("agents-f-title");
@@ -29035,6 +29120,12 @@
             ? "0.2"
             : "0.1";
     }
+    var tempOut = document.getElementById("agents-f-temp-out");
+    function syncTempOut() {
+      if (tempOut && tempEl) tempOut.textContent = Number(tempEl.value || 0).toLocaleString("ru-RU", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    }
+    if (tempEl) tempEl.addEventListener("input", syncTempOut);
+    syncTempOut();
     if (webEl) webEl.checked = !!(agent && agent.web_search);
     if (roundsEl) {
       roundsEl.value = agent && agent.max_rounds != null ? String(agent.max_rounds) : "4";
@@ -44844,6 +44935,12 @@
         navigator.clipboard.writeText(text).then(done, function () {});
       }
     });
+    document.querySelectorAll("#expenses-period button").forEach(function (b) {
+      b.addEventListener("click", function () {
+        expensesDays = Number(b.getAttribute("data-days")) || 7;
+        loadExpensesDetail();
+      });
+    });
     onId("profile-expenses-open", "click", async function () {
       profileScreen("expenses");
       await loadExpensesDetail();
@@ -44884,6 +44981,9 @@
     }
     var proactiveOpenBtn = document.getElementById("profile-proactive-open");
     if (proactiveOpenBtn) proactiveOpenBtn.addEventListener("click", openProactiveSettings);
+    onId("profile-proactive-back", "click", function () {
+      profileScreen("main");
+    });
     var chatsOpenBtn = document.getElementById("profile-chats-open");
     if (chatsOpenBtn) {
       chatsOpenBtn.addEventListener("click", function () {
@@ -45083,6 +45183,29 @@
         if (e.target.id === "teams-manage-overlay") closeTeamsManageModal();
       });
     }
+    onId("teams-manage-delete", "click", deleteTeamFromEdit);
+    onId("knowledge-sources-open", "click", openKnowledgeSources);
+    onId("knowledge-sources-back", "click", closeKnowledgeSources);
+    onId("profile-notifications-open", "click", function () {
+      openNotificationsScreen("main");
+    });
+    onId("calendars-notifications-open", "click", function () {
+      openNotificationsScreen("calendars");
+    });
+    onId("profile-notifications-back", "click", function () {
+      var to = notificationsBackTo || "main";
+      profileScreen(to);
+      if (to === "calendars") loadCalendarsSources();
+    });
+    onId("calendars-connect-google", "click", function () {
+      oauthStart("google");
+    });
+    onId("contacts-teams-open", "click", openTeamsManageModal);
+    onId("contacts-empty-add", "click", function () {
+      openNewContactModal();
+    });
+    var contactsSearch = document.getElementById("contacts-search");
+    if (contactsSearch) contactsSearch.addEventListener("input", paintContactsList);
     var teamsManageCreateBtn = document.getElementById("teams-manage-create-btn");
     if (teamsManageCreateBtn) {
       teamsManageCreateBtn.addEventListener("click", createTeamFromManage);
@@ -45238,7 +45361,7 @@
     var bitrixDisc = document.getElementById("profile-bitrix-disconnect");
     if (bitrixDisc) {
       bitrixDisc.addEventListener("click", async function () {
-        await disconnectBitrix();
+        await oauthDisconnect("bitrix");
       });
     }
     var bitrixRow = document.querySelector('#panel-profile [data-svc="bitrix"]');
@@ -45291,28 +45414,7 @@
     onId("profile-payment-back", "click", function () {
       profileScreen("main");
     });
-    var bookingBack = document.getElementById("profile-booking-back");
-    if (bookingBack) {
-      bookingBack.addEventListener("click", function () {
-        stopBookingWaQrPoll();
-        profileScreen("main");
-        loadIntegrations();
-      });
-    }
-    var bookingSave = document.getElementById("booking-save-config");
-    if (bookingSave) bookingSave.addEventListener("click", bookingSaveConfig);
-    var bookingCode = document.getElementById("booking-send-code");
-    if (bookingCode) bookingCode.addEventListener("click", bookingSendCode);
-    var bookingConfirm = document.getElementById("booking-confirm-login");
-    if (bookingConfirm) bookingConfirm.addEventListener("click", bookingConfirmLogin);
-    var bookingWaStartBtn = document.getElementById("booking-wa-start");
-    if (bookingWaStartBtn) bookingWaStartBtn.addEventListener("click", bookingWaStart);
-    var bookingWaDiscBtn = document.getElementById("booking-wa-disconnect");
-    if (bookingWaDiscBtn) bookingWaDiscBtn.addEventListener("click", bookingWaDisconnect);
 
-    onId("payment-submit", "click", function () {
-      alert("Оплата пока недоступна. Выберите способ и промокод можно сохранить позже.");
-    });
 
     onId("payment-promo-apply", "click", async function () {
       const inp = document.getElementById("payment-promo-input");
@@ -45344,9 +45446,33 @@
         const svc = card && card.getAttribute("data-svc");
         const act = btn.getAttribute("data-action");
         if (!svc || !act) return;
-        if (act === "connect") oauthStart(svc);
+        if (act === "connect") openServiceSetup(svc);
         if (act === "disconnect") oauthDisconnect(svc);
       });
+    });
+    var googleRow = document.querySelector('#panel-profile [data-svc="google"]');
+    if (googleRow) {
+      googleRow.addEventListener("click", function (e) {
+        if (e.target.closest("[data-action]")) return;
+        openGoogleSetup();
+      });
+    }
+    onId("profile-google-back", "click", function () {
+      profileScreen("main");
+      loadIntegrations();
+    });
+    onId("profile-google-connect", "click", function () {
+      oauthStart("google");
+    });
+    onId("profile-google-disconnect", "click", function () {
+      oauthDisconnect("google");
+    });
+    onId("profile-google-calendars", "click", function () {
+      profileScreen("calendars");
+      loadCalendarsSources();
+    });
+    onId("profile-google-notifications", "click", function () {
+      openNotificationsScreen("google");
     });
     var zoomRow = document.querySelector('#panel-profile [data-svc="zoom"]');
     if (zoomRow) {
