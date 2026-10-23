@@ -4766,8 +4766,14 @@
     el.classList.toggle("hidden", !message);
   }
 
+  function transcriptionUploadUrl() {
+    var input = document.getElementById("transcription-upload-url");
+    return input ? String(input.value || "").trim() : "";
+  }
+
   function syncTranscriptionUploadUi() {
     var file = transcriptionUploadSelectedFile();
+    var url = file ? "" : transcriptionUploadUrl();
     var nameEl = document.getElementById("transcription-upload-filename");
     var pickLabel = document.getElementById("transcription-upload-pick-label");
     var submit = document.getElementById("transcription-upload-submit");
@@ -4779,8 +4785,8 @@
       pickLabel.textContent = file ? "Выбрать другой файл" : "Выбрать файл";
     }
     if (submit) {
-      submit.disabled = transcriptionUploadBusy || !file;
-      submit.textContent = transcriptionUploadBusy ? "Обработка…" : "Загрузить";
+      submit.disabled = transcriptionUploadBusy || (!file && !url);
+      submit.textContent = transcriptionUploadBusy ? "Обработка…" : url ? "Транскрибировать" : "Загрузить";
     }
     syncTranscriptionUploadModeOptions();
   }
@@ -4789,6 +4795,8 @@
     transcriptionUploadBusy = false;
     var input = document.getElementById("transcription-upload-input");
     if (input) input.value = "";
+    var urlInput = document.getElementById("transcription-upload-url");
+    if (urlInput) urlInput.value = "";
     var transcriptRadio = document.querySelector(
       'input[name="transcription-upload-mode"][value="transcript"]'
     );
@@ -4829,12 +4837,17 @@
   async function submitTranscriptionUpload() {
     if (transcriptionUploadBusy) return;
     var file = transcriptionUploadSelectedFile();
-    if (!file) {
-      setTranscriptionUploadError("Выберите файл");
+    var url = file ? "" : transcriptionUploadUrl();
+    if (!file && !url) {
+      setTranscriptionUploadError("Выберите файл или вставьте ссылку");
+      return;
+    }
+    if (url && !/^https?:\/\//i.test(url)) {
+      setTranscriptionUploadError("Нужна ссылка, начинающаяся с http:// или https://");
       return;
     }
     var maxBytes = 100 * 1024 * 1024;
-    if (file.size > maxBytes) {
+    if (file && file.size > maxBytes) {
       setTranscriptionUploadError("Файл слишком большой (макс. 100 МБ)");
       return;
     }
@@ -4842,13 +4855,14 @@
     transcriptionUploadBusy = true;
     setTranscriptionUploadError("");
     setTranscriptionUploadStatus(
-      withSummary
-        ? "Транскрибирую и готовлю саммари… Это может занять несколько минут."
-        : "Транскрибирую файл… Это может занять несколько минут."
+      (url ? "Скачиваю по ссылке и транскрибирую" : "Транскрибирую файл") +
+        (withSummary ? ", потом сделаю саммари" : "") +
+        "… Это может занять несколько минут."
     );
     syncTranscriptionUploadUi();
     var fd = new FormData();
-    fd.append("file", file, file.name || "audio.mp3");
+    if (file) fd.append("file", file, file.name || "audio.mp3");
+    else fd.append("url", url);
     fd.append("with_summary", withSummary ? "1" : "0");
     try {
       var res = await apiFetch("/notes/transcriptions/upload", {
@@ -45500,6 +45514,19 @@
     if (transcriptionUploadOverlay) {
       transcriptionUploadOverlay.addEventListener("click", function (e) {
         if (e.target.id === "transcription-upload-overlay") closeTranscriptionUploadModal();
+      });
+    }
+    var transcriptionUploadUrlInput = document.getElementById("transcription-upload-url");
+    if (transcriptionUploadUrlInput) {
+      transcriptionUploadUrlInput.addEventListener("input", function () {
+        setTranscriptionUploadError("");
+        syncTranscriptionUploadUi();
+      });
+      transcriptionUploadUrlInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          submitTranscriptionUpload();
+        }
       });
     }
     var transcriptionUploadInput = document.getElementById("transcription-upload-input");

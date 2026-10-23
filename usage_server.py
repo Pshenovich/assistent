@@ -10526,13 +10526,15 @@ def _truthy_form_flag(raw: str | bool | None) -> bool:
 @miniapp_router.post("/notes/transcriptions/upload")
 async def miniapp_transcription_upload(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    url: str = Form(""),
     with_summary: str = Form("0"),
     meeting: str = Form(""),
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     """Загрузка аудио/видео из миниаппа → транскрипция (+ опционально саммари).
 
+    Вместо файла можно передать url — прямую ссылку, Яндекс.Диск или Google Диск.
     meeting — JSON встречи (из окна встречи «Добавить запись»): транскрипция получает
     её тему и сразу привязывается к встрече.
     """
@@ -10540,16 +10542,33 @@ async def miniapp_transcription_upload(
     from assistant.lib.usage_store import insert_usage_event
     from assistant.services import transcription_notes as tnotes
 
-    data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="Пустой файл")
-    max_bytes = 100 * 1024 * 1024
-    if len(data) > max_bytes:
-        raise HTTPException(status_code=413, detail="Файл слишком большой (макс. 100 МБ)")
-    filename = str(file.filename or "audio.mp3").strip() or "audio.mp3"
+    source_url = (url or "").strip()
+    if file is not None:
+        data = await file.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="Пустой файл")
+        max_bytes = 100 * 1024 * 1024
+        if len(data) > max_bytes:
+            raise HTTPException(status_code=413, detail="Файл слишком большой (макс. 100 МБ)")
+        filename = str(file.filename or "audio.mp3").strip() or "audio.mp3"
+        content_type = file.content_type
+        source_url = ""
+    elif source_url:
+        from assistant.lib.media_download import download_url_bytes
+
+        try:
+            data, filename = await run_in_threadpool(download_url_bytes, source_url)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            print(f"[miniapp_transcription_upload] url download failed url={source_url!r} err={e!r}")
+            raise HTTPException(status_code=502, detail="Не удалось скачать файл по ссылке") from e
+        filename = str(filename or "media.mp4").strip() or "media.mp4"
+        content_type = None
+    else:
+        raise HTTPException(status_code=400, detail="Выберите файл или вставьте ссылку")
     source_filename = filename
     source_size = len(data)
-    content_type = file.content_type
     want_summary = _truthy_form_flag(with_summary)
     try:
         data, filename = await run_in_threadpool(
@@ -10600,10 +10619,12 @@ async def miniapp_transcription_upload(
             telegram_username=username,
         )
         meta = {
-            "source": "miniapp_upload",
+            "source": "miniapp_url" if source_url else "miniapp_upload",
             "filename": source_filename,
             "job_id": result.job_id,
         }
+        if source_url:
+            meta["url"] = source_url
         note = tnotes.create_transcript_only(
             uid,
             title=title,

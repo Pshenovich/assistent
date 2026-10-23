@@ -1625,7 +1625,7 @@
         </div>
         <div class="modal-body transcription-upload-body">
           <p class="muted small transcription-upload-hint">
-            Загрузите аудио или видео — файл будет транскрибирован.
+            Загрузите аудио или видео либо вставьте ссылку на файл — он будет транскрибирован.
           </p>
           <label class="transcription-upload-file-pick">
             <input
@@ -1637,6 +1637,17 @@
             <span class="btn ghost transcription-upload-pick-btn" id="transcription-upload-pick-label">Выбрать файл</span>
           </label>
           <p id="transcription-upload-filename" class="transcription-upload-filename muted small hidden"></p>
+          <label class="field transcription-upload-url-field">
+            <span class="field-label">Или ссылка на файл</span>
+            <input
+              type="url"
+              id="transcription-upload-url"
+              class="field-input"
+              inputmode="url"
+              autocomplete="off"
+              placeholder="Google Диск, Яндекс.Диск или прямая ссылка"
+            />
+          </label>
           <fieldset class="transcription-upload-mode" aria-label="Что сделать">
             <legend class="field-label">После загрузки</legend>
             <label class="transcription-upload-option">
@@ -2205,7 +2216,7 @@
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
   <script src="/webapp/web-canvas.js?v=20261022-focuschip" defer></script>
-  <script src="/webapp/app.js?v=20261023-digest6" defer></script>
+  <script src="/webapp/app.js?v=20261023-trurl" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261023-unread1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261023-digest6" defer></script>
