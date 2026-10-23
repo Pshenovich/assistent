@@ -6497,9 +6497,9 @@ async def miniapp_digest_reports(
     return await run_in_threadpool(_run)
 
 
-@miniapp_router.get("/digest/chats")
-async def miniapp_digest_chats(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
-    """«Дайджест» → «Чаты»: список по чатам — последняя главная мысль и метки (ждут ответа, эскалация, вы обещали)."""
+@miniapp_router.get("/digest/overview")
+async def miniapp_digest_overview(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """«Дайджест» → «Чаты»: список по чатам (только отмеченные в профиле; /digest/chats — список для настроек) — последняя главная мысль и метки (ждут ответа, эскалация, вы обещали)."""
     from assistant.services import digest_overview
 
     return {"ok": True, **await run_in_threadpool(digest_overview.overview, int(principal.telegram_user_id))}

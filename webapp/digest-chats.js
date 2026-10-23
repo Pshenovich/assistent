@@ -80,7 +80,7 @@
     st.loading = !st.data;
     render();
     try {
-      st.data = await api("/digest/chats");
+      st.data = await api("/digest/overview");
     } catch (e) {
       st.data = { error: (e && e.message) || "Не удалось загрузить дайджест" };
     }
@@ -267,7 +267,7 @@
         await api("/digest/item", { method: "POST", body: JSON.stringify({ key: b.getAttribute("data-key"), op: b.getAttribute("data-op") }) });
         toast(b.getAttribute("data-op") === "not_me" ? "Скрыто — и в Фокусе тоже" : "Отмечено — и в Фокусе тоже");
         await loadChat(st.chat.chat_id);
-        api("/digest/chats").then(function (d) {
+        api("/digest/overview").then(function (d) {
           st.data = d;
           render();
         }).catch(function () {});

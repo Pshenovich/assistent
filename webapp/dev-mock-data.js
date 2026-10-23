@@ -858,7 +858,7 @@
 
   function profileMockResponse(basePath, method, opts) {
     if (basePath === "/digest/reports" && method === "GET") return { digest_enabled: true, reports: [{ chat_id: -1001234, report_date: mockDigestDay(0), title: "Продукт · ядро", summary: {} }] };
-    if (basePath === "/digest/chats" && method === "GET") return Object.assign({ ok: true, with_labels: 3 }, mockDigest);
+    if (basePath === "/digest/overview" && method === "GET") return Object.assign({ ok: true, with_labels: 3 }, mockDigest);
     var dgm = /^\/digest\/chats\/(-?\d+)$/.exec(basePath);
     if (dgm) return mockDigestChat(Number(dgm[1]));
     if (basePath === "/digest/item") return { ok: true, item: {} };
