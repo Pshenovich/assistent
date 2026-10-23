@@ -187,6 +187,10 @@ def _sync_folder(uid: int, acc: dict[str, Any], mail, folder: str, *, days: int,
         row = _row_from(acc, folder, u, msg, mine=mine, body=body, rules=rules, known=known)
         if mail_index.upsert(uid, row):
             stats["new"] += 1
+        if body is not None and not row["bulk"]:  # готовое письмо — «Почта» откроет его без входа в ящик
+            from assistant.services import mail_inbox
+
+            mail_inbox.remember(uid, row["mail_key"], msg)
         if memory and body and not row["bulk"]:
             from assistant.services import mail_memory
 

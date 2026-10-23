@@ -1,8 +1,8 @@
 """Раздел «Почта» в «Дайджесте»: переписка с людьми как мессенджер.
 
 Список веток — из индекса (письма от людей за 90 дней, рассылки и скрытые отправители уже отсеяны),
-метки Лео — из разбора писем. Ветка — тексты читаются из ящика в момент открытия (IMAP, без «прочитано»),
-HTML чистится (mail_html). «Прочитано» Orbita ведёт сама; с ящиком синхронизирует mail_sync (если есть права).
+метки Лео — из разбора писем. Ветка — из сохранённых готовых писем (mail_bodies: очищенный HTML, текст, вложения);
+их кладёт синхронизация, а чего нет — дочитывается из ящика один раз (IMAP, без «прочитано»). «Прочитано» Orbita ведёт сама; с ящиком синхронизирует mail_sync (если есть права).
 """
 
 from __future__ import annotations
@@ -179,8 +179,6 @@ def _attachment_parts(msg) -> list[Any]:
     return out
 
 
-_THREAD_CACHE: dict[tuple[int, str], tuple[float, str, dict[str, Any]]] = {}
-THREAD_TTL = 1800.0
 WARM_TOP = 20
 _WARM_LOCK = threading.Lock()
 _WARMING: dict[int, tuple[set[str], threading.Event]] = {}
@@ -190,56 +188,71 @@ def _rows(uid: int, thread_key: str) -> list[dict[str, Any]]:
     return [r for r in mail_index.thread(uid, thread_key) if visible(r, mail_index.my_thread_keys(uid))]
 
 
-def _cached(uid: int, thread_key: str, rows: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
-    import time
+def body_of(msg) -> dict[str, Any]:
+    """Письмо из ящика → готовое к показу: текст без цитаты, очищенный HTML, список вложений."""
+    from assistant.integrations import mail_imap
+    from assistant.lib import mail_html
 
-    sig = ",".join(r["mail_key"] for r in rows)
-    hit = _THREAD_CACHE.get((int(uid), thread_key))
-    if not (hit and hit[1] == sig and time.time() - hit[0] < THREAD_TTL and all(m.get("loaded") for m in hit[2]["messages"])):
+    text = mail_imap.strip_quoted(mail_imap.body_text(msg))
+    rendered = mail_html.render(msg, text)
+    files = []
+    for i, part in enumerate(_attachment_parts(msg)):
+        data = part.get_payload(decode=True) or b""
+        files.append({"part": i, "name": mail_imap.decode_hdr(part.get_filename()) or "файл",
+                      "size": len(data), "type": part.get_content_type()})
+    return {"text": text[:20000], "html": rendered["html"], "html_full": rendered["html_full"],
+            "remote_images": rendered["remote_images"], "rich": bool(rendered.get("rich")), "attachments": files}
+
+
+def remember(uid: int, mail_key: str, msg) -> Optional[dict[str, Any]]:
+    """Сохранить письмо у себя (при синхронизации или первом открытии) — дальше открывается без ящика."""
+    try:
+        body = body_of(msg)
+        mail_index.save_body(uid, mail_key, body)
+        return body
+    except Exception as e:
+        print(f"[mail_inbox] remember uid={uid} key={mail_key} err={e!r}")
         return None
-    out = dict(hit[2])
-    reads = read_keys(uid)
-    out["messages"] = [{**m, "unread": m["direction"] == "in" and m["mail_key"] not in reads} for m in out["messages"]]
+
+
+def _bodies(uid: int, rows: list[dict[str, Any]], *, fetch: bool = True) -> dict[str, dict[str, Any]]:
+    """Сохранённые письма ветки; недостающие — одним входом в ящик, и тоже сохраняем."""
+    from assistant.services import mail_reply
+
+    out = mail_index.bodies(uid, [r["mail_key"] for r in rows])
+    missing = [r for r in rows if r["mail_key"] not in out]
+    if missing and fetch:
+        try:
+            full = mail_reply._fetch_full(uid, missing)
+        except Exception as e:
+            print(f"[mail_inbox] fetch uid={uid} err={e!r}")
+            full = {}
+        for k, msg in full.items():
+            body = remember(uid, k, msg)
+            if body:
+                out[k] = body
     return out
 
 
-def _store(uid: int, thread_key: str, rows: list[dict[str, Any]], res: dict[str, Any]) -> None:
-    import time
-
-    _THREAD_CACHE[(int(uid), thread_key)] = (time.time(), ",".join(r["mail_key"] for r in rows), res)
-    if len(_THREAD_CACHE) > 300:
-        for k in sorted(_THREAD_CACHE, key=lambda k: _THREAD_CACHE[k][0])[:60]:
-            _THREAD_CACHE.pop(k, None)
-
-
 def thread(uid: int, thread_key: str) -> dict[str, Any]:
-    """Ветка с текстами из ящика. Кэш на 30 минут (пока в ветке не появились новые письма);
-    верхние ветки списка подгружаются заранее (warm), открытие — без входа в ящик."""
+    """Ветка из сохранённых писем; в ящик — только за теми, которых у нас ещё нет."""
     rows = _rows(uid, thread_key)
-    hit = _cached(uid, thread_key, rows)
-    if hit:
-        return hit
     with _WARM_LOCK:
         warming = _WARMING.get(int(uid))
     if warming and thread_key in warming[0]:
         warming[1].wait(timeout=20)  # эту ветку уже достают из ящика — ждём, а не входим второй раз
-        hit = _cached(uid, thread_key, rows)
-        if hit:
-            return hit
-    res = _build(uid, thread_key, rows, None)
-    _store(uid, thread_key, rows, res)
-    return res
+    return _build(uid, thread_key, rows, _bodies(uid, rows))
 
 
 def warm(uid: int, thread_keys: list[str]) -> int:
-    """Подгрузить ветки заранее: один вход в ящик на все письма, затем разбор каждой ветки."""
-    from assistant.services import mail_reply
-
+    """Подгрузить заранее письма верхних веток, которых ещё нет у нас: один вход в ящик на все."""
     todo: dict[str, list[dict[str, Any]]] = {}
     for tk in thread_keys:
         rows = _rows(uid, tk)
-        if rows and _cached(uid, tk, rows) is None:
-            todo[tk] = rows
+        have = mail_index.bodies(uid, [r["mail_key"] for r in rows])
+        miss = [r for r in rows if r["mail_key"] not in have]
+        if miss:
+            todo[tk] = miss
     if not todo:
         return 0
     ev = threading.Event()
@@ -248,20 +261,7 @@ def warm(uid: int, thread_keys: list[str]) -> int:
             return 0
         _WARMING[int(uid)] = (set(todo), ev)
     try:
-        all_rows = [r for rows in todo.values() for r in rows]
-        try:
-            full = mail_reply._fetch_full(uid, all_rows)
-        except Exception as e:
-            print(f"[mail_inbox] warm fetch uid={uid} err={e!r}")
-            return 0
-        labels = _labels(uid)  # один раз на все ветки, а не на каждую
-        for tk, rows in todo.items():
-            try:
-                res = _build(uid, tk, rows, full, labels, refetch=False)  # недостающее — при открытии, не здесь
-                if all(m.get("loaded") for m in res["messages"]):
-                    _store(uid, tk, rows, res)
-            except Exception as e:
-                print(f"[mail_inbox] warm build uid={uid} err={e!r}")
+        _bodies(uid, [r for rows in todo.values() for r in rows])
         return len(todo)
     finally:
         ev.set()
@@ -274,43 +274,30 @@ def warm_async(uid: int, thread_keys: list[str]) -> None:
         threading.Thread(target=warm, args=(int(uid), list(thread_keys)), daemon=True).start()
 
 
-def _build(uid: int, thread_key: str, rows: list[dict[str, Any]], full: Optional[dict[str, Any]],
-           labels: Optional[dict[str, list[dict[str, str]]]] = None, refetch: bool = True) -> dict[str, Any]:
-    from assistant.integrations import mail_imap
+def _build(uid: int, thread_key: str, rows: list[dict[str, Any]], bodies: dict[str, dict[str, Any]],
+           labels: Optional[dict[str, list[dict[str, str]]]] = None) -> dict[str, Any]:
     from assistant.lib import mail_html
-    from assistant.services import mail_reply, mail_source
+    from assistant.services import mail_source
 
     if not rows:
         raise LookupError("Переписка не найдена")
-    if full is None or (refetch and any(r["mail_key"] not in full for r in rows)):
-        try:
-            full = {**(full or {}), **mail_reply._fetch_full(uid, [r for r in rows if r["mail_key"] not in (full or {})])}
-        except Exception as e:
-            print(f"[mail_inbox] fetch thread uid={uid} err={e!r}")
-            full = full or {}
     by_mid = {r.get("message_id"): r["mail_key"] for r in rows if r.get("message_id")}
     mine = mail_source.my_addresses(uid)
     reads = read_keys(uid)
     msgs = []
     for r in rows:
-        msg = full.get(r["mail_key"])
-        text = mail_imap.strip_quoted(mail_imap.body_text(msg)) if msg is not None else str(r.get("snippet") or "")
-        rendered = mail_html.render(msg, text) if msg is not None else {
-            "html": mail_html.text_to_html(text), "html_full": "", "remote_images": False, "rich": False}
-        files = []
-        if msg is not None:
-            for i, part in enumerate(_attachment_parts(msg)):
-                data = part.get_payload(decode=True) or b""
-                files.append({"part": i, "name": mail_imap.decode_hdr(part.get_filename()) or "файл",
-                              "size": len(data), "type": part.get_content_type()})
+        b = bodies.get(r["mail_key"])
+        if b is None:
+            text = str(r.get("snippet") or "")
+            b = {"text": text, "html": mail_html.text_to_html(text), "html_full": "", "remote_images": False,
+                 "rich": False, "attachments": []}
         msgs.append({
             "mail_key": r["mail_key"], "direction": r["direction"], "from_addr": r.get("from_addr") or "",
             "from": r.get("from_name") or r.get("from_addr") or "", "to": r.get("to") or [], "cc": r.get("cc") or [],
-            "subject": r.get("subject") or "", "date": r.get("date_utc") or "", "text": text[:20000],
-            "html": rendered["html"], "html_full": rendered["html_full"], "remote_images": rendered["remote_images"],
-            "rich": bool(rendered.get("rich")),
-            "attachments": files, "reply_to_key": by_mid.get(r.get("in_reply_to") or "") or "",
-            "unread": r["direction"] == "in" and r["mail_key"] not in reads, "loaded": msg is not None,
+            "subject": r.get("subject") or "", "date": r.get("date_utc") or "", "text": b["text"],
+            "html": b["html"], "html_full": b["html_full"], "remote_images": b["remote_images"], "rich": b["rich"],
+            "attachments": b["attachments"], "reply_to_key": by_mid.get(r.get("in_reply_to") or "") or "",
+            "unread": r["direction"] == "in" and r["mail_key"] not in reads, "loaded": r["mail_key"] in bodies,
         })
     people = {}
     for m in msgs:

@@ -69,6 +69,13 @@ def _conn() -> sqlite3.Connection:
             last_uid INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (owner_user_id, account_id, folder)
         );
+        -- готовое к показу письмо (очищенный HTML, текст, вложения): ветка открывается без входа в ящик
+        CREATE TABLE IF NOT EXISTS mail_bodies (
+            owner_user_id TEXT NOT NULL,
+            mail_key TEXT NOT NULL,
+            data TEXT NOT NULL,
+            PRIMARY KEY (owner_user_id, mail_key)
+        );
         """
     )
     _CONN.commit()
@@ -323,6 +330,7 @@ def purge_account(owner_user_id: Any, account_id: str) -> None:
         conn.execute("DELETE FROM mail_fts WHERE owner_user_id = ? AND mail_key LIKE ?", (owner, f"{account_id}:%"))
         conn.execute("DELETE FROM mail_messages WHERE owner_user_id = ? AND account_id = ?", (owner, account_id))
         conn.execute("DELETE FROM mail_sync_state WHERE owner_user_id = ? AND account_id = ?", (owner, account_id))
+        conn.execute("DELETE FROM mail_bodies WHERE owner_user_id = ? AND mail_key LIKE ?", (owner, f"{account_id}:%"))
         conn.commit()
 
 
@@ -344,6 +352,8 @@ def purge_old(now: Optional[datetime] = None) -> int:
         conn.executemany("DELETE FROM mail_fts WHERE owner_user_id = ? AND mail_key = ?",
                          [(r["owner_user_id"], r["mail_key"]) for r in old_out])
         conn.execute("DELETE FROM mail_messages WHERE date_utc < ? AND direction = 'out'", (out_cutoff,))
+        conn.execute("DELETE FROM mail_bodies WHERE NOT EXISTS (SELECT 1 FROM mail_messages m"
+                     " WHERE m.owner_user_id = mail_bodies.owner_user_id AND m.mail_key = mail_bodies.mail_key)")
         conn.commit()
     return len(keys)
 
@@ -370,6 +380,7 @@ def bury(owner_user_id: Any, pattern: str) -> list[str]:
             f"UPDATE mail_messages SET bulk = 1, analyzed = 2 WHERE owner_user_id = ? AND direction = 'in' AND {cond}",
             (str(owner_user_id), arg),
         )
+        conn.executemany("DELETE FROM mail_bodies WHERE owner_user_id = ? AND mail_key = ?", [(str(owner_user_id), k) for k in keys])
         conn.commit()
     return keys
 
@@ -380,6 +391,7 @@ def bury_keys(owner_user_id: Any, keys: list[str]) -> None:
         conn.executemany("DELETE FROM mail_fts WHERE owner_user_id = ? AND mail_key = ?", [(str(owner_user_id), k) for k in keys])
         conn.executemany("UPDATE mail_messages SET bulk = 1, analyzed = 2 WHERE owner_user_id = ? AND mail_key = ?",
                          [(str(owner_user_id), k) for k in keys])
+        conn.executemany("DELETE FROM mail_bodies WHERE owner_user_id = ? AND mail_key = ?", [(str(owner_user_id), k) for k in keys])
         conn.commit()
 
 
@@ -433,3 +445,35 @@ def filtered_senders(owner_user_id: Any, *, since: datetime, limit: int = 100) -
             out.append({"addr": r["from_addr"], "name": r["from_name"] or "", "count": int(r["n"]),
                         "last_date": r["last_date"], "last_subject": (last["subject"] if last else "") or ""})
     return out
+
+
+BODY_MAX = 4 * 1024 * 1024  # письма тяжелее (крупные встроенные картинки) не храним — читаем из ящика
+
+
+def bodies(owner_user_id: Any, keys: list[str]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    with _LOCK:
+        conn = _conn()
+        for i in range(0, len(keys), 300):
+            part = keys[i:i + 300]
+            for r in conn.execute(
+                f"SELECT mail_key, data FROM mail_bodies WHERE owner_user_id = ? AND mail_key IN ({','.join('?' * len(part))})",
+                (str(owner_user_id), *part),
+            ).fetchall():
+                try:
+                    out[r["mail_key"]] = json.loads(r["data"])
+                except ValueError:
+                    pass
+    return out
+
+
+def save_body(owner_user_id: Any, key: str, data: dict[str, Any]) -> bool:
+    raw = json.dumps(data, ensure_ascii=False)
+    if len(raw) > BODY_MAX:
+        return False
+    with _LOCK:
+        conn = _conn()
+        conn.execute("INSERT OR REPLACE INTO mail_bodies (owner_user_id, mail_key, data) VALUES (?, ?, ?)",
+                     (str(owner_user_id), key, raw))
+        conn.commit()
+    return True

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-digest5";
+  var WEBAPP_BUILD = "20261023-digest6";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -6604,6 +6604,10 @@
     if (name === "digest" && !digestTabEnabled) name = "actual";
     if (TAB_ORDER.indexOf(name) < 0) name = "actual";
     var prev = currentTab;
+    // «Дайджест» всегда открывается на «Чатах» (или на том разделе, куда ведёт ссылка).
+    if (name === "digest" && prev !== "digest") {
+      digestSubTab = options.digestSub || (digestChatsEnabled || !mailAvailable ? "chats" : "mail");
+    }
     document.querySelectorAll(".tabbar-btn").forEach(function (btn) {
       var on = btn.getAttribute("data-tab") === name;
       btn.classList.toggle("active", on);
@@ -7164,7 +7168,7 @@
           label: sec.label,
           active: currentTab === "digest" && digestSubTab === sec.id,
           onClick: function () {
-            setTab("digest", { noAnim: true });
+            setTab("digest", { noAnim: true, digestSub: sec.id });
             setDigestSubTab(sec.id);
             renderSidebarTrees();
           },
@@ -46618,7 +46622,7 @@
       openFocusAll();
     },
     openDigestMail: function () {
-      setTab("digest", { noAnim: true });
+      setTab("digest", { noAnim: true, digestSub: "mail" });
       setDigestSubTab("mail");
     },
     refreshFeed: refreshDiscussFeedNow,

@@ -62,7 +62,6 @@ def env(tmp_path, monkeypatch):
     mail_accounts._FERNET = None
     monkeypatch.setattr(mail_reply, "_fetch_full", lambda uid, rows: {})
     monkeypatch.setattr(mail_inbox, "warm_async", lambda *a, **k: None)
-    mail_inbox._THREAD_CACHE.clear()
     mail_inbox._LABELS_CACHE.clear()
     acc = mail_accounts.upsert(ME, provider="gmail", email=MINE, auth="password", secret="x")
     aid = acc["account_id"]
@@ -162,6 +161,24 @@ def test_warm_fetches_once_and_open_uses_cache(env, monkeypatch):
     assert mail_inbox.warm(ME, ["t1"]) == 1
     assert len(calls) == 1 and sorted(calls[0]) == ["a", "b", "c"]  # один вход в ящик на всю ветку
     t = mail_inbox.thread(ME, "t1")
-    assert len(calls) == 1 and all(m["loaded"] for m in t["messages"])  # открытие — из кэша
+    assert len(calls) == 1 and all(m["loaded"] for m in t["messages"])  # открытие — из сохранённых писем
+    assert "Текст a" in t["messages"][0]["html"]
+    mail_inbox.thread(ME, "t1")
+    assert len(calls) == 1  # и повторно — без ящика
     mail_inbox.set_read(ME, ["c"])
     assert not [m for m in mail_inbox.thread(ME, "t1")["messages"] if m["mail_key"] == "c"][0]["unread"]
+
+
+def test_bodies_dropped_with_account_and_blocked_sender(env):
+    from email.message import EmailMessage
+
+    aid = env
+    m = EmailMessage()
+    m.set_content("Секрет")
+    mail_inbox.remember(ME, "c", m)
+    assert mail_index.bodies(ME, ["c"])
+    mail_index.bury(ME, "ivan@firm.ru")
+    assert not mail_index.bodies(ME, ["c"])
+    mail_inbox.remember(ME, f"{aid}:x", m)
+    mail_index.purge_account(ME, aid)
+    assert not mail_index.bodies(ME, [f"{aid}:x"])
