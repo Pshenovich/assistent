@@ -257,7 +257,9 @@ def warm(uid: int, thread_keys: list[str]) -> int:
         labels = _labels(uid)  # один раз на все ветки, а не на каждую
         for tk, rows in todo.items():
             try:
-                _store(uid, tk, rows, _build(uid, tk, rows, full, labels))
+                res = _build(uid, tk, rows, full, labels, refetch=False)  # недостающее — при открытии, не здесь
+                if all(m.get("loaded") for m in res["messages"]):
+                    _store(uid, tk, rows, res)
             except Exception as e:
                 print(f"[mail_inbox] warm build uid={uid} err={e!r}")
         return len(todo)
@@ -273,14 +275,14 @@ def warm_async(uid: int, thread_keys: list[str]) -> None:
 
 
 def _build(uid: int, thread_key: str, rows: list[dict[str, Any]], full: Optional[dict[str, Any]],
-           labels: Optional[dict[str, list[dict[str, str]]]] = None) -> dict[str, Any]:
+           labels: Optional[dict[str, list[dict[str, str]]]] = None, refetch: bool = True) -> dict[str, Any]:
     from assistant.integrations import mail_imap
     from assistant.lib import mail_html
     from assistant.services import mail_reply, mail_source
 
     if not rows:
         raise LookupError("Переписка не найдена")
-    if full is None or any(r["mail_key"] not in full for r in rows):
+    if full is None or (refetch and any(r["mail_key"] not in full for r in rows)):
         try:
             full = {**(full or {}), **mail_reply._fetch_full(uid, [r for r in rows if r["mail_key"] not in (full or {})])}
         except Exception as e:
