@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 from assistant.integrations import mail_imap
 from assistant.services import mail_filters
-from assistant.stores import mail_accounts, mail_index
+from assistant.stores import mail_accounts, mail_index, mail_senders
 
 FIRST_SYNC_DAYS = 14
 SENT_SYNC_DAYS = 180
@@ -99,7 +99,20 @@ def check_login(acc: dict[str, Any], *, secret: str = "", access_token: str = ""
 
 # ---------------------------------------------------------------- синхронизация
 
-def _row_from(acc: dict[str, Any], folder: str, uid: int, msg, *, mine: set[str], body: Optional[str]) -> dict[str, Any]:
+def is_filtered(msg, from_addr: str, *, mine: set[str], rules: Optional[dict[str, str]] = None) -> bool:
+    """Отсеять письмо (рассылка, робот, скрытый отправитель); «Всегда пропускать» сильнее воронки."""
+    if from_addr in mine:
+        return False
+    rule = mail_senders.match(rules or {}, from_addr)
+    if rule == "allow":
+        return False
+    if rule == "block":
+        return True
+    return mail_filters.is_bulk(msg) or mail_filters.is_robot(from_addr)
+
+
+def _row_from(acc: dict[str, Any], folder: str, uid: int, msg, *, mine: set[str], body: Optional[str],
+              rules: Optional[dict[str, str]] = None) -> dict[str, Any]:
     mid = (mail_imap.msg_ids(msg.get("Message-ID")) or [""])[0]
     irt = (mail_imap.msg_ids(msg.get("In-Reply-To")) or [""])[0]
     refs = mail_imap.msg_ids(msg.get("References"))
@@ -110,7 +123,7 @@ def _row_from(acc: dict[str, Any], folder: str, uid: int, msg, *, mine: set[str]
     reply_to = (mail_imap.addresses(msg, "Reply-To") or [("", "")])[0][1]
     dt = mail_imap.date_utc(msg) or _now()
     direction = "out" if from_addr in mine else "in"
-    bulk = direction == "in" and (mail_filters.is_bulk(msg) or mail_filters.is_robot(from_addr))
+    bulk = direction == "in" and is_filtered(msg, from_addr, mine=mine, rules=rules)
     snippet = mail_imap.strip_quoted(body)[: mail_index.SNIPPET] if body else ""
     return {
         "mail_key": mail_index.mail_key(str(acc["account_id"]), mid, folder, uid),
@@ -139,14 +152,14 @@ def _sync_folder(uid: int, acc: dict[str, Any], mail, folder: str, *, days: int,
         mail_index.set_sync_state(uid, aid, folder, uv, last)
         return stats
     heads = mail_imap.fetch(mail, uids, "BODY.PEEK[HEADER]")
+    rules = mail_senders.rules_map(uid)
     want_body: list[int] = []
     parsed: dict[int, Any] = {}
     for u, (size, raw) in heads.items():
         msg = mail_imap.parse(raw)
         parsed[u] = msg
         frm = (mail_imap.addresses(msg, "From") or [("", "")])[0][1]
-        bulk = frm not in mine and (mail_filters.is_bulk(msg) or mail_filters.is_robot(frm))
-        if bulk:
+        if is_filtered(msg, frm, mine=mine, rules=rules):
             stats["bulk"] += 1
             continue
         dt = mail_imap.date_utc(msg)
@@ -158,7 +171,7 @@ def _sync_folder(uid: int, acc: dict[str, Any], mail, folder: str, *, days: int,
         if u in full:
             msg = mail_imap.parse(full[u][1])
             body = mail_imap.body_text(msg)
-        row = _row_from(acc, folder, u, msg, mine=mine, body=body)
+        row = _row_from(acc, folder, u, msg, mine=mine, body=body, rules=rules)
         if mail_index.upsert(uid, row):
             stats["new"] += 1
     mail_index.set_sync_state(uid, aid, folder, uv, max(uids))
@@ -310,7 +323,71 @@ def muted(uid: int) -> tuple[set[str], set[str]]:
         senders.add(addr)
         per_domain.setdefault(mail_filters.domain_of(addr), set()).add(str(r.get("item_key")))
     domains = {d for d, keys in per_domain.items() if len(keys) >= NOT_ME_DOMAIN_MUTE}
+    for pattern, rule in mail_senders.rules_map(uid).items():
+        if rule != "block":
+            continue
+        (domains.add(pattern[1:]) if pattern.startswith("@") else senders.add(pattern))
     return senders, domains
+
+
+# ---------------------------------------------------------------- правила отправителей
+
+def block_sender(uid: int, pattern: str) -> dict[str, Any]:
+    """«Не показывать»: правило + письма отправителя уходят из списка, поиска и памяти Лео."""
+    rule = mail_senders.set_rule(uid, pattern, "block")
+    keys = mail_index.bury(uid, rule["pattern"])
+    try:
+        from assistant.services import mail_memory
+
+        mail_memory.forget_sender(uid, rule["pattern"])
+    except Exception as e:
+        print(f"[mail] forget sender uid={uid} err={e!r}")
+    return {**rule, "hidden": len(keys)}
+
+
+def allow_sender(uid: int, pattern: str) -> dict[str, Any]:
+    """«Всегда пропускать»: правило + письма отправителя за 14 дней перечитываются и разбираются заново."""
+    rule = mail_senders.set_rule(uid, pattern, "allow")
+    n = 0
+    try:
+        n = revive_sender(uid, rule["pattern"])
+    except Exception as e:
+        print(f"[mail] revive sender uid={uid} err={e!r}")
+    return {**rule, "revived": n}
+
+
+def revive_sender(uid: int, pattern: str, *, days: int = FIRST_SYNC_DAYS) -> int:
+    rows = mail_index.filtered_rows(uid, pattern, since=_now() - timedelta(days=days))
+    by_acc: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        by_acc.setdefault(str(r["account_id"]), []).append(r)
+    n = 0
+    for aid, items in by_acc.items():
+        acc = mail_accounts.get(uid, aid)
+        if not acc:
+            continue
+        mail = open_imap(uid, acc)
+        try:
+            by_folder: dict[str, list[dict[str, Any]]] = {}
+            for r in items:
+                by_folder.setdefault(str(r.get("folder") or "INBOX"), []).append(r)
+            for folder, frows in by_folder.items():
+                mail_imap.select(mail, folder)
+                got = mail_imap.fetch(mail, [int(r["uid"]) for r in frows if r.get("uid")], "BODY.PEEK[]")
+                for r in frows:
+                    if int(r.get("uid") or 0) not in got:
+                        continue
+                    body = mail_imap.body_text(mail_imap.parse(got[int(r["uid"])][1]))
+                    mail_index.revive(uid, r["mail_key"], mail_imap.strip_quoted(body)[: mail_index.SNIPPET])
+                    n += 1
+        finally:
+            try:
+                mail.logout()
+            except Exception:
+                pass
+    if n:
+        kick(uid)
+    return n
 
 
 def _analyzed_today(uid: int, now: datetime) -> int:
@@ -336,9 +413,13 @@ def candidates(uid: int, *, now: Optional[datetime] = None) -> tuple[list[dict[s
     people = meeting_people(uid, now)
     my_threads = mail_index.my_thread_keys(uid)
     ms, md = muted(uid)
+    rules = mail_senders.rules_map(uid)
     keep, skip = [], []
     for r in rows:
-        if r["direction"] == "out":
+        rule = mail_senders.match(rules, r.get("from_addr") or "") if r["direction"] == "in" else None
+        if rule:  # правило пользователя сильнее воронки
+            ok = rule == "allow" and bool(r.get("snippet"))
+        elif r["direction"] == "out":
             ok = bool(r.get("snippet")) and any(not mail_filters.is_robot(a) for a in r.get("to") or [])
         else:
             ok = bool(r.get("snippet")) and mail_filters.focus_candidate(

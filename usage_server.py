@@ -12924,6 +12924,55 @@ async def miniapp_mail_attachment_upload(
     return {"ok": True, "attachment": {k: meta[k] for k in ("id", "name", "size")}}
 
 
+@miniapp_router.get("/mail/senders")
+async def miniapp_mail_senders(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Правила отправителей («Скрытые», «Всегда пропускать») и «Отсеяно Лео» за 14 дней."""
+    from assistant.stores import mail_index, mail_senders
+
+    uid = int(principal.telegram_user_id)
+
+    def _load() -> dict[str, Any]:
+        rules = mail_senders.list_rules(uid)
+        rmap = {r["pattern"]: r["rule"] for r in rules}
+        since = datetime.now(timezone.utc) - timedelta(days=14)
+        filtered = [f for f in mail_index.filtered_senders(uid, since=since) if mail_senders.match(rmap, f["addr"]) != "block"]
+        return {"ok": True, "rules": [{k: r[k] for k in ("pattern", "rule", "created_at")} | {"moved": len(r["moved"])} for r in rules],
+                "filtered": filtered}
+
+    return await run_in_threadpool(_load)
+
+
+@miniapp_router.post("/mail/senders")
+async def miniapp_mail_senders_set(body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """«Не показывать» (block) / «Всегда пропускать» (allow) для адреса или домена."""
+    from assistant.services import mail_source
+
+    uid = int(principal.telegram_user_id)
+    rule = str((body or {}).get("rule") or "")
+    fn = {"block": mail_source.block_sender, "allow": mail_source.allow_sender}.get(rule)
+    if not fn:
+        raise HTTPException(status_code=400, detail="Неизвестное правило")
+    try:
+        res = await run_in_threadpool(fn, uid, str(body.get("pattern") or ""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    _FOCUS_CACHE.pop(uid, None)
+    return {"ok": True, **res}
+
+
+@miniapp_router.delete("/mail/senders")
+async def miniapp_mail_senders_delete(pattern: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.stores import mail_senders
+
+    uid = int(principal.telegram_user_id)
+    try:
+        old = await run_in_threadpool(mail_senders.remove, uid, pattern)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    _FOCUS_CACHE.pop(uid, None)
+    return {"ok": True, "removed": bool(old), "moved": len((old or {}).get("moved") or [])}
+
+
 @miniapp_router.get("/mail/settings")
 async def miniapp_mail_settings(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
     from assistant.stores import mail_accounts

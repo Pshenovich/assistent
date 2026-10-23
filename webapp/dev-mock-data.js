@@ -687,6 +687,26 @@
       if (b.password === "bad") throw mockMailErr("Почта не приняла пароль. Скорее всего, вставлен обычный пароль от почты, а нужен пароль приложения.", "password", "auth");
       return mockMailAdd(b.provider || "imap", String(b.email || "me@example.com").toLowerCase(), "password");
     }
+    if (basePath.indexOf("/mail/senders") === 0) {
+      mockMail.rules = mockMail.rules || [];
+      mockMail.filtered = mockMail.filtered || [
+        { addr: "noreply@bank.ru", name: "Банк", count: 6, last_subject: "Выписка за октябрь" },
+        { addr: "crm@client.ru", name: "CRM Клиента", count: 3, last_subject: "Новая заявка №1042" },
+      ];
+      if (method === "POST") {
+        var pat = String(b.pattern || "").toLowerCase();
+        if (pat.indexOf("@") < 0) pat = "@" + pat;
+        mockMail.rules = mockMail.rules.filter(function (r) { return r.pattern !== pat; }).concat([{ pattern: pat, rule: b.rule, moved: 0 }]);
+        mockMail.filtered = mockMail.filtered.filter(function (f) { return f.addr !== pat; });
+        return { ok: true, pattern: pat, rule: b.rule, revived: b.rule === "allow" ? 3 : 0 };
+      }
+      if (method === "DELETE") {
+        var dp = decodeURIComponent((/pattern=([^&]*)/.exec((opts && opts._path) || basePath) || [])[1] || "");
+        mockMail.rules = mockMail.rules.filter(function (r) { return r.pattern !== dp; });
+        return { ok: true, removed: true, moved: 0 };
+      }
+      return { ok: true, rules: mockMail.rules, filtered: mockMail.filtered };
+    }
     if (basePath === "/mail/settings") {
       if (method === "PATCH") mockMail.signature = String(b.signature || "");
       return { ok: true, signature: mockMail.signature || "" };

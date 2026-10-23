@@ -19837,3 +19837,13 @@ form.pf-list .pf-add-row .pf-row-body {
 .ev-drop-veil b { font-size: 1.0625rem; }
 .ev-drop-veil span { max-width: 22rem; font-size: 0.85rem; color: var(--text-secondary); }
 .ev-materials-drop-hint { margin: 0; font-size: 0.75rem; color: var(--text-tertiary); text-align: center; }
+
+.mail-group-toggle {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}

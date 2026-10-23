@@ -346,3 +346,81 @@ def purge_old(now: Optional[datetime] = None) -> int:
         conn.execute("DELETE FROM mail_messages WHERE date_utc < ? AND direction = 'out'", (out_cutoff,))
         conn.commit()
     return len(keys)
+
+
+def _match_sql(pattern: str) -> tuple[str, str]:
+    """Условие на from_addr для шаблона адреса или домена (@firm.ru)."""
+    if pattern.startswith("@"):
+        return "from_addr LIKE ?", "%" + pattern
+    return "from_addr = ?", pattern
+
+
+def bury(owner_user_id: Any, pattern: str) -> list[str]:
+    """Письма скрытого отправителя: в «отсеянные», из поиска."""
+    cond, arg = _match_sql(pattern)
+    with _LOCK:
+        conn = _conn()
+        keys = [str(r["mail_key"]) for r in conn.execute(
+            f"SELECT mail_key FROM mail_messages WHERE owner_user_id = ? AND direction = 'in' AND {cond}",
+            (str(owner_user_id), arg),
+        ).fetchall()]
+        conn.executemany("DELETE FROM mail_fts WHERE owner_user_id = ? AND mail_key = ?",
+                         [(str(owner_user_id), k) for k in keys])
+        conn.execute(
+            f"UPDATE mail_messages SET bulk = 1, analyzed = 2 WHERE owner_user_id = ? AND direction = 'in' AND {cond}",
+            (str(owner_user_id), arg),
+        )
+        conn.commit()
+    return keys
+
+
+def filtered_rows(owner_user_id: Any, pattern: str, *, since: datetime) -> list[dict[str, Any]]:
+    cond, arg = _match_sql(pattern)
+    with _LOCK:
+        rows = _conn().execute(
+            f"SELECT * FROM mail_messages WHERE owner_user_id = ? AND direction = 'in' AND bulk = 1 AND date_utc >= ? AND {cond}",
+            (str(owner_user_id), since.isoformat(), arg),
+        ).fetchall()
+    return [_row(r) for r in rows]
+
+
+def revive(owner_user_id: Any, key: str, snippet: str) -> None:
+    """Отправителя разрешили: письмо снова «от человека», с текстом, в поиске и на разбор."""
+    row = get(owner_user_id, key)
+    if not row:
+        return
+    people = " ".join([row.get("from_name") or "", row.get("from_addr") or ""] + row.get("to", []) + row.get("cc", []))
+    with _LOCK:
+        conn = _conn()
+        conn.execute(
+            "UPDATE mail_messages SET bulk = 0, analyzed = 0, snippet = ? WHERE owner_user_id = ? AND mail_key = ?",
+            (snippet[:SNIPPET], str(owner_user_id), key),
+        )
+        conn.execute("DELETE FROM mail_fts WHERE owner_user_id = ? AND mail_key = ?", (str(owner_user_id), key))
+        conn.execute(
+            "INSERT INTO mail_fts (owner_user_id, mail_key, subject, people, snippet) VALUES (?, ?, ?, ?, ?)",
+            (str(owner_user_id), key, row.get("subject") or "", people, snippet[:SNIPPET]),
+        )
+        conn.commit()
+
+
+def filtered_senders(owner_user_id: Any, *, since: datetime, limit: int = 100) -> list[dict[str, Any]]:
+    """«Отсеяно Лео»: отправители отсеянных входящих — сколько писем, последняя тема."""
+    with _LOCK:
+        rows = _conn().execute(
+            """
+            SELECT from_addr, MAX(from_name) AS from_name, COUNT(*) AS n, MAX(date_utc) AS last_date
+            FROM mail_messages WHERE owner_user_id = ? AND direction = 'in' AND bulk = 1 AND date_utc >= ? AND from_addr != ''
+            GROUP BY from_addr ORDER BY last_date DESC LIMIT ?
+            """,
+            (str(owner_user_id), since.isoformat(), limit),
+        ).fetchall()
+        out = []
+        for r in rows:
+            last = _conn().execute(
+                "SELECT subject FROM mail_messages WHERE owner_user_id = ? AND from_addr = ? AND bulk = 1 ORDER BY date_utc DESC LIMIT 1",
+                (str(owner_user_id), r["from_addr"]),
+            ).fetchone()
+            out.append({"addr": r["from_addr"], "name": r["from_name"] or "", "count": int(r["n"]),
+                        "last_date": r["last_date"], "last_subject": (last["subject"] if last else "") or ""})
+    return out

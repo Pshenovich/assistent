@@ -205,6 +205,9 @@
     accounts: [],
     yandex: {},
     signature: null,
+    rules: [],
+    filtered: [],
+    showFiltered: false,
     view: "list",
     wiz: "",
     step: 0,
@@ -242,6 +245,11 @@
       if (st.accounts.length && st.signature == null) {
         var cfg = await api("/mail/settings");
         st.signature = (cfg && cfg.signature) || "";
+      }
+      if (st.accounts.length) {
+        var sd = await api("/mail/senders");
+        st.rules = sd.rules || [];
+        st.filtered = sd.filtered || [];
       }
     } catch (e) {
       st.error = (e && e.message) || "Не удалось загрузить почту";
@@ -358,8 +366,67 @@
       '<textarea class="pf-input mail-signature" rows="3" data-mail-signature placeholder="Например: Владимир Пшенович, руководитель проектов, +7 …">' +
       esc(st.signature || "") +
       '</textarea></span></label></div><p class="pf-hint">Добавится под ответами, которые вы отправляете из Orbita.</p></div>';
+    h += sendersHtml();
     h += '<button type="button" class="pf-btn" data-mail-act="add">Подключить ещё ящик</button>';
     if (st.error) h += '<p class="pf-field-error">' + esc(st.error) + "</p>";
+    return h;
+  }
+
+  function sendersHtml() {
+    var allow = st.rules.filter(function (r) {
+      return r.rule === "allow";
+    });
+    var block = st.rules.filter(function (r) {
+      return r.rule === "block";
+    });
+    var h = '<div class="pf-group"><p class="pf-group-title">Всегда пропускать</p><div class="pf-list">';
+    allow.forEach(function (r) {
+      h +=
+        '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' +
+        esc(r.pattern) +
+        '</span></span><button type="button" class="pf-link pf-link--muted" data-mail-act="rule-del" data-pattern="' +
+        esc(r.pattern) +
+        '">Убрать</button></span></div>';
+    });
+    h +=
+      '<label class="pf-row pf-row--static field"><span class="pf-row-body"><input type="text" class="pf-input" data-mail-field="allow" placeholder="Адрес или домен: ivan@client.ru, @client.ru" />' +
+      '<button type="button" class="pf-link" data-mail-act="allow-add">Добавить</button></span></label>';
+    h += '</div><p class="pf-hint">Письма от них Лео покажет, даже если принял их за рассылку или робота.</p></div>';
+    if (block.length) {
+      h += '<div class="pf-group"><p class="pf-group-title">Скрытые отправители</p><div class="pf-list">';
+      block.forEach(function (r) {
+        h +=
+          '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' +
+          esc(r.pattern) +
+          '</span></span><button type="button" class="pf-link" data-mail-act="rule-del" data-pattern="' +
+          esc(r.pattern) +
+          '">Показывать снова</button></span></div>';
+      });
+      h += "</div></div>";
+    }
+    if (st.filtered.length) {
+      h +=
+        '<div class="pf-group"><button type="button" class="pf-group-title mail-group-toggle" data-mail-act="filtered-toggle">Отсеяно Лео за 14 дней · ' +
+        st.filtered.length +
+        " " +
+        (st.showFiltered ? "▴" : "▾") +
+        "</button>";
+      if (st.showFiltered) {
+        h += '<div class="pf-list">';
+        st.filtered.forEach(function (f) {
+          h +=
+            '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' +
+            esc(f.name || f.addr) +
+            '</span><span class="pf-row-sub">' +
+            esc((f.name ? f.addr + " · " : "") + f.count + " " + plural(f.count, "письмо", "письма", "писем") + (f.last_subject ? " · «" + f.last_subject + "»" : "")) +
+            '</span></span><button type="button" class="pf-link" data-mail-act="allow-addr" data-pattern="' +
+            esc(f.addr) +
+            '">Пропускать</button></span></div>';
+        });
+        h += "</div>";
+      }
+      h += "</div>";
+    }
     return h;
   }
 
@@ -662,6 +729,27 @@
     if (act === "send-toggle") {
       st.send = !st.send;
       render();
+    } else if (act === "allow-add" || act === "allow-addr") {
+      var pattern = act === "allow-add" ? st.form.allow : btn.getAttribute("data-pattern");
+      if (!pattern) return;
+      try {
+        var ra = await post("/mail/senders", { pattern: pattern, rule: "allow" });
+        st.form.allow = "";
+        toast("Будем пропускать " + ra.pattern + (ra.revived ? " · перечитал писем: " + ra.revived : ""));
+        await refresh();
+      } catch (err) {
+        toast((err && err.message) || "Не получилось");
+      }
+    } else if (act === "rule-del") {
+      try {
+        await api("/mail/senders?pattern=" + encodeURIComponent(btn.getAttribute("data-pattern")), { method: "DELETE" });
+        await refresh();
+      } catch (err) {
+        toast((err && err.message) || "Не получилось");
+      }
+    } else if (act === "filtered-toggle") {
+      st.showFiltered = !st.showFiltered;
+      render();
     } else if (act === "add") {
       st.view = "choose";
       st.error = "";
@@ -843,7 +931,7 @@
       var inp = e.target.closest && e.target.closest("#profile-mail-body [data-mail-field]");
       if (!inp) return;
       var f = inp.getAttribute("data-mail-field");
-      var act = f === "email" && st.view === "choose" ? "detect" : f === "code" ? "yandex-code" : "connect";
+      var act = f === "email" && st.view === "choose" ? "detect" : f === "code" ? "yandex-code" : f === "allow" ? "allow-add" : "connect";
       var b = body().querySelector('[data-mail-act="' + act + '"]');
       if (b) b.click();
     });
