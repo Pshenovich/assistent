@@ -22,21 +22,14 @@ _env_get() {
   printf '%s' "$val"
 }
 
-SSH_USER="$(_env_get SSH_USERNAME)"
-SSH_PASS="$(_env_get SSH_PASSWORD)"
-SSH_HOST="$(_env_get SSH_IP)"
+# Прод (assistent.networ.ru) — только DEPLOY_SSH_*; старый сервер больше не используется.
+SSH_HOST="$(_env_get DEPLOY_SSH_HOST)"
+SSH_USER="$(_env_get DEPLOY_SSH_USER)"
+SSH_USER="${SSH_USER:-root}"
+SSH_PASS="$(_env_get DEPLOY_SSH_PASSWORD)"
 SSH_PORT="$(_env_get DEPLOY_SSH_PORT)"
 SSH_IDENTITY="$(_env_get SSH_IDENTITY_FILE)"
 SSH_IDENTITY="${SSH_IDENTITY:-$HOME/.ssh/leo_server}"
-
-# Прод миниаппа: DEPLOY_SSH_* (assistent.networ.ru), иначе старый origin SSH_*
-if [[ -n "$(_env_get DEPLOY_SSH_HOST)" ]]; then
-  SSH_HOST="$(_env_get DEPLOY_SSH_HOST)"
-  SSH_USER="$(_env_get DEPLOY_SSH_USER)"
-  SSH_USER="${SSH_USER:-root}"
-  _edge_pass="$(_env_get DEPLOY_SSH_PASSWORD)"
-  [[ -n "$_edge_pass" ]] && SSH_PASS="$_edge_pass"
-fi
 
 if [[ "$SSH_USER" == *@* ]]; then
   _host_part="${SSH_USER#*@}"
@@ -47,7 +40,7 @@ SSH_HOST="${SSH_HOST#*@}"
 SSH_PORT="${SSH_PORT:-22}"
 
 if [[ -z "$SSH_USER" || -z "$SSH_HOST" ]]; then
-  echo "Нужны SSH_USERNAME и SSH_IP в .env" >&2
+  echo "Нужен DEPLOY_SSH_HOST в .env" >&2
   exit 1
 fi
 
@@ -62,7 +55,7 @@ elif [[ -n "$SSH_PASS" ]]; then
     exit 1
   fi
 else
-  echo "Нужен SSH_PASSWORD в .env или SSH-ключ (~/.ssh/leo_server / SSH_IDENTITY_FILE)" >&2
+  echo "Нужен DEPLOY_SSH_PASSWORD в .env или SSH-ключ (~/.ssh/leo_server / SSH_IDENTITY_FILE)" >&2
   exit 1
 fi
 

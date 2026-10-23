@@ -2315,14 +2315,39 @@ function taskChipLabelFromEl(el) {
   return normalizeTaskChipLabel(named ? named.textContent : el.textContent);
 }
 
-function fillTaskChipEl(el, taskId, label) {
-  el.className = "note-task-chip";
+// Задача во внешнем трекере (Битрикс24…): чип открывает её там, а не задачу Орбиты.
+var TASK_CHIP_PROVIDER_SHORT = { bitrix24: "Б24" };
+var TASK_CHIP_EXT_ICON_SVG =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>' +
+  "</svg>";
+
+function taskChipProviderShort(provider) {
+  return TASK_CHIP_PROVIDER_SHORT[provider] || "";
+}
+
+function fillTaskChipEl(el, taskId, label, provider, url) {
+  var ext = !!provider;
+  el.className = "note-task-chip" + (ext ? " note-task-chip--ext" : "");
   el.setAttribute("data-leo-task-id", taskId || "");
+  if (ext) {
+    el.setAttribute("data-leo-task-provider", provider);
+    el.setAttribute("data-leo-task-url", url || "");
+    el.title = "Открыть в " + (provider === "bitrix24" ? "Битрикс24" : provider);
+  } else {
+    el.removeAttribute("data-leo-task-provider");
+    el.removeAttribute("data-leo-task-url");
+    el.removeAttribute("title");
+  }
   el.setAttribute("contenteditable", "false");
   el.innerHTML =
     '<span class="note-task-chip-icon" aria-hidden="true">' +
-    TASK_CHIP_ICON_SVG +
-    '</span><span class="note-task-chip-label"></span>';
+    (ext ? TASK_CHIP_EXT_ICON_SVG : TASK_CHIP_ICON_SVG) +
+    "</span>" +
+    (ext && taskChipProviderShort(provider) ? '<span class="note-task-chip-provider"></span>' : "") +
+    '<span class="note-task-chip-label"></span>';
+  var short = el.querySelector(".note-task-chip-provider");
+  if (short) short.textContent = taskChipProviderShort(provider) + " ·";
   el.querySelector(".note-task-chip-label").textContent = normalizeTaskChipLabel(label);
 }
 
@@ -2365,11 +2390,22 @@ function focusMarkTitle(a) {
   return [head, a.by, when, "из «Фокуса»"].filter(Boolean).join(" · ");
 }
 
+function taskChipAttrs(taskId, label, ext) {
+  ext = ext || {};
+  return {
+    taskId: String(taskId || ""),
+    label: normalizeTaskChipLabel(label),
+    provider: String(ext.provider || ""),
+    url: String(ext.url || ""),
+  };
+}
+
 function collectLeoTaskIds(doc) {
   var ids = new Set();
   if (!doc) return ids;
   doc.descendants(function (node) {
-    if (node.type && node.type.name === "leoTaskChip" && node.attrs && node.attrs.taskId) {
+    // Внешние задачи (Битрикс24…) Орбита не удаляет — их не отслеживаем.
+    if (node.type && node.type.name === "leoTaskChip" && node.attrs && node.attrs.taskId && !node.attrs.provider) {
       ids.add(String(node.attrs.taskId));
     }
   });
@@ -2388,6 +2424,8 @@ function createLeoTaskExtensions(ctx) {
       return {
         taskId: { default: "" },
         label: { default: "" },
+        provider: { default: "" },
+        url: { default: "" },
       };
     },
     parseHTML: function () {
@@ -2398,6 +2436,8 @@ function createLeoTaskExtensions(ctx) {
             return {
               taskId: el.getAttribute("data-leo-task-id") || "",
               label: taskChipLabelFromEl(el),
+              provider: el.getAttribute("data-leo-task-provider") || "",
+              url: el.getAttribute("data-leo-task-url") || "",
             };
           },
         },
@@ -2405,25 +2445,39 @@ function createLeoTaskExtensions(ctx) {
     },
     renderHTML: function (_ref) {
       var HTMLAttributes = _ref.HTMLAttributes;
+      var attrs = {
+        "data-leo-task-id": HTMLAttributes.taskId,
+        class: "note-task-chip",
+        contenteditable: "false",
+      };
+      if (HTMLAttributes.provider) {
+        attrs["data-leo-task-provider"] = HTMLAttributes.provider;
+        attrs["data-leo-task-url"] = HTMLAttributes.url || "";
+        attrs.class = "note-task-chip note-task-chip--ext";
+      }
+      var short = HTMLAttributes.provider ? taskChipProviderShort(HTMLAttributes.provider) : "";
       return [
         "span",
-        {
-          "data-leo-task-id": HTMLAttributes.taskId,
-          class: "note-task-chip",
-          contenteditable: "false",
-        },
+        attrs,
         ["span", { class: "note-task-chip-icon", "aria-hidden": "true" }],
-        ["span", { class: "note-task-chip-label" }, normalizeTaskChipLabel(HTMLAttributes.label)],
-      ];
+      ]
+        .concat(short ? [["span", { class: "note-task-chip-provider" }, short + " ·"]] : [])
+        .concat([["span", { class: "note-task-chip-label" }, normalizeTaskChipLabel(HTMLAttributes.label)]]);
     },
     addNodeView: function () {
       return function (_ref) {
         var node = _ref.node;
         var el = document.createElement("span");
-        fillTaskChipEl(el, node.attrs.taskId, node.attrs.label);
+        fillTaskChipEl(el, node.attrs.taskId, node.attrs.label, node.attrs.provider, node.attrs.url);
         el.addEventListener("click", function (e) {
           e.preventDefault();
           e.stopPropagation();
+          var url = el.getAttribute("data-leo-task-url") || "";
+          if (el.getAttribute("data-leo-task-provider")) {
+            if (url && typeof ctx.onExternalTaskClick === "function") ctx.onExternalTaskClick(url);
+            else if (url) window.open(url, "_blank", "noopener");
+            return;
+          }
           var id = el.getAttribute("data-leo-task-id") || "";
           if (id && typeof ctx.onTaskChipClick === "function") ctx.onTaskChipClick(id);
         });
@@ -2431,7 +2485,7 @@ function createLeoTaskExtensions(ctx) {
           dom: el,
           update: function (updated) {
             if (!updated || updated.type.name !== "leoTaskChip") return false;
-            fillTaskChipEl(el, updated.attrs.taskId, updated.attrs.label);
+            fillTaskChipEl(el, updated.attrs.taskId, updated.attrs.label, updated.attrs.provider, updated.attrs.url);
             return true;
           },
         };
@@ -2969,6 +3023,7 @@ function mount(container, options) {
     suppressChipDelete: false,
     onTaskSlash: options.onTaskSlash,
     onTaskChipClick: options.onTaskChipClick,
+    onExternalTaskClick: options.onExternalTaskClick,
     onTaskChipRemoved: options.onTaskChipRemoved,
     onFocusMarkClick: options.onFocusMarkClick,
   };
@@ -3315,20 +3370,20 @@ function mount(container, options) {
       var sel = editor.state.selection;
       return { from: sel.from, to: sel.to };
     },
-    insertTaskChip: function (taskId, label) {
+    insertTaskChip: function (taskId, label, ext) {
       editor
         .chain()
         .focus()
         .insertContent([
           {
             type: "leoTaskChip",
-            attrs: { taskId: String(taskId || ""), label: normalizeTaskChipLabel(label) },
+            attrs: taskChipAttrs(taskId, label, ext),
           },
           { type: "text", text: " " },
         ])
         .run();
     },
-    insertTaskChipAfter: function (taskId, label, pos) {
+    insertTaskChipAfter: function (taskId, label, pos, ext) {
       var size = editor.state.doc.content.size;
       var at = typeof pos === "number" ? pos : editor.state.selection.to;
       if (at < 0 || at > size) at = editor.state.selection.to;
@@ -3339,7 +3394,7 @@ function mount(container, options) {
           { type: "text", text: " " },
           {
             type: "leoTaskChip",
-            attrs: { taskId: String(taskId || ""), label: normalizeTaskChipLabel(label) },
+            attrs: taskChipAttrs(taskId, label, ext),
           },
           { type: "text", text: " " },
         ])
@@ -3351,10 +3406,10 @@ function mount(container, options) {
       var changed = false;
       editor.state.doc.descendants(function (node, pos) {
         if (node.type.name === "leoTaskChip" && String(node.attrs.taskId) === id) {
-          tr.setNodeMarkup(pos, undefined, {
+          tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, {
             taskId: id,
             label: normalizeTaskChipLabel(label || node.attrs.label),
-          });
+          }));
           changed = true;
         }
       });
@@ -3390,10 +3445,10 @@ function mount(container, options) {
       var changed = false;
       editor.state.doc.descendants(function (node, pos) {
         if (node.type.name === "leoTaskChip" && String(node.attrs.taskId) === src) {
-          tr.setNodeMarkup(pos, undefined, {
+          tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, {
             taskId: dst,
             label: normalizeTaskChipLabel(label || node.attrs.label),
-          });
+          }));
           changed = true;
         }
       });
@@ -3434,7 +3489,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261023-lineid",
+  assetVersion: "20261023-trackers",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,

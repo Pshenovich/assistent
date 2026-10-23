@@ -5254,6 +5254,11 @@ async def miniapp_integrations(
 
     bitrix_on = bitrix_mcp_is_connected(tid)
     try:
+        trackers = _trackers_public(tid)
+    except Exception as e:
+        print(f"[integrations] trackers failed uid={tid} err={e!r}")
+        trackers = []
+    try:
         from assistant.services.mail_connect import accounts as mail_accounts_list
 
         mail_list = mail_accounts_list(tid)
@@ -5288,6 +5293,7 @@ async def miniapp_integrations(
         "bitrix_connected": bitrix_on,
         "mail": bool(mail_list),
         "mail_accounts": mail_list,
+        "trackers": trackers,
     }
 
 
@@ -13327,6 +13333,241 @@ async def miniapp_bitrix_mcp_disconnect(
     from assistant.integrations.bitrix_mcp_token import remove_user_token
 
     return {"disconnected": remove_user_token(int(principal.telegram_user_id))}
+
+
+# --- Внешние трекеры задач (Битрикс24 и др.): доски, стадии, заведение задачи, описание по WWA ---
+
+
+def _tracker_or_404(provider: str) -> Any:
+    from assistant.trackers.base import TrackerError
+    from assistant.trackers.registry import get_provider
+
+    try:
+        return get_provider(provider)
+    except TrackerError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+def _tracker_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    from assistant.trackers.base import TrackerError, TrackerNotConnected
+
+    try:
+        return fn(*args, **kwargs)
+    except TrackerNotConnected as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except TrackerError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+def _trackers_public(uid: int) -> list[dict[str, Any]]:
+    from assistant.stores import trackers as trackers_store
+    from assistant.trackers.registry import PROVIDERS
+
+    out = []
+    for p in PROVIDERS.values():
+        try:
+            connected = bool(p.is_connected(uid))
+            conn = p.connection(uid)
+        except Exception as e:
+            print(f"[trackers] status failed provider={p.id} uid={uid} err={e!r}")
+            connected, conn = False, {}
+        out.append({
+            "id": p.id,
+            "title": p.title,
+            "short_title": p.short_title,
+            "connected": connected,
+            "connection": conn,
+            "defaults": trackers_store.get_settings(uid, p.id),
+        })
+    return out
+
+
+class _MiniappTrackerTaskBody(BaseModel):
+    title: str = ""
+    description: str = ""
+    board_id: str = ""
+    board_name: str = ""
+    stage_id: str = ""
+    stage_name: str = ""
+    responsible: str = ""
+    deadline: str = ""
+    note_id: str = ""
+    calendar_task_id: str = ""
+    focus_key: str = ""
+
+
+class _MiniappWwaBody(BaseModel):
+    title: str = ""
+    description: str = ""
+    note_id: str = ""
+    focus_key: str = ""
+    context: str = ""
+
+
+@miniapp_router.get("/trackers")
+async def miniapp_trackers(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict:
+    uid = int(principal.telegram_user_id)
+    return {"trackers": await run_in_threadpool(_trackers_public, uid)}
+
+
+@miniapp_router.post("/trackers/{provider}/webhook")
+async def miniapp_tracker_webhook_connect(
+    provider: str,
+    body: dict[str, Any],
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict:
+    p = _tracker_or_404(provider)
+    if not hasattr(p, "connect_webhook"):
+        raise HTTPException(status_code=400, detail="Этот трекер подключается иначе")
+    url = str(body.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Вставьте адрес вебхука")
+    uid = int(principal.telegram_user_id)
+    conn = await run_in_threadpool(_tracker_call, p.connect_webhook, uid, url)
+    return {"connected": True, "connection": conn}
+
+
+@miniapp_router.delete("/trackers/{provider}/webhook")
+async def miniapp_tracker_webhook_disconnect(
+    provider: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict:
+    p = _tracker_or_404(provider)
+    if not hasattr(p, "disconnect"):
+        raise HTTPException(status_code=400, detail="Этот трекер отключается иначе")
+    return {"disconnected": await run_in_threadpool(p.disconnect, int(principal.telegram_user_id))}
+
+
+@miniapp_router.get("/trackers/{provider}/boards")
+async def miniapp_tracker_boards(
+    provider: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict:
+    p = _tracker_or_404(provider)
+    boards = await run_in_threadpool(_tracker_call, p.list_boards, int(principal.telegram_user_id))
+    return {"boards": [b.public() for b in boards]}
+
+
+@miniapp_router.get("/trackers/{provider}/boards/{board_id}/stages")
+async def miniapp_tracker_stages(
+    provider: str,
+    board_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict:
+    p = _tracker_or_404(provider)
+    stages = await run_in_threadpool(_tracker_call, p.list_stages, int(principal.telegram_user_id), board_id)
+    return {"stages": [s.public() for s in stages]}
+
+
+@miniapp_router.put("/trackers/{provider}/settings")
+async def miniapp_tracker_settings(
+    provider: str,
+    body: dict[str, Any],
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict:
+    from assistant.stores import trackers as trackers_store
+
+    p = _tracker_or_404(provider)
+    saved = await run_in_threadpool(
+        partial(
+            trackers_store.save_settings,
+            int(principal.telegram_user_id),
+            p.id,
+            board_id=str(body.get("board_id") or ""),
+            board_name=str(body.get("board_name") or ""),
+            stage_id=str(body.get("stage_id") or ""),
+            stage_name=str(body.get("stage_name") or ""),
+        )
+    )
+    return {"ok": True, "defaults": saved}
+
+
+@miniapp_router.post("/trackers/{provider}/tasks")
+async def miniapp_tracker_create_task(
+    provider: str,
+    body: _MiniappTrackerTaskBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict:
+    from assistant.stores import trackers as trackers_store
+    from assistant.trackers.base import TaskDraft
+
+    p = _tracker_or_404(provider)
+    uid = int(principal.telegram_user_id)
+    if not body.title.strip():
+        raise HTTPException(status_code=400, detail="Укажите название задачи")
+    draft = TaskDraft(
+        title=body.title.strip(),
+        description=body.description,
+        board_id=body.board_id,
+        stage_id=body.stage_id,
+        responsible=body.responsible,
+        deadline=body.deadline,
+    )
+    created = await run_in_threadpool(_tracker_call, p.create_task, uid, draft)
+    row = await run_in_threadpool(
+        partial(
+            trackers_store.add_task,
+            uid,
+            p.id,
+            external_id=created.external_id,
+            url=created.url,
+            title=created.title,
+            board_id=body.board_id,
+            board_name=body.board_name,
+            stage_id=body.stage_id,
+            stage_name=body.stage_name,
+            note_id=body.note_id,
+            calendar_task_id=body.calendar_task_id,
+            focus_key=body.focus_key,
+        )
+    )
+    return {
+        "ok": True,
+        "task": row,
+        "external": {"provider": p.id, "id": created.external_id, "url": created.url},
+        "chip_label": created.title,
+        "responsible_name": created.extra.get("responsible_name") or "",
+    }
+
+
+@miniapp_router.get("/trackers/links")
+async def miniapp_tracker_links(
+    calendar_task_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict:
+    from assistant.stores import trackers as trackers_store
+
+    links = await run_in_threadpool(
+        trackers_store.tasks_for_calendar_task, int(principal.telegram_user_id), calendar_task_id
+    )
+    return {"links": links}
+
+
+@miniapp_router.post("/trackers/describe-wwa")
+async def miniapp_tracker_describe_wwa(
+    body: _MiniappWwaBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict:
+    from assistant.services import task_wwa
+
+    try:
+        text = await run_in_threadpool(
+            partial(
+                task_wwa.describe,
+                int(principal.telegram_user_id),
+                title=body.title,
+                description=body.description,
+                note_id=body.note_id or None,
+                focus_key=body.focus_key,
+                context=body.context,
+            )
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        print(f"[trackers] wwa failed uid={principal.telegram_user_id} err={e!r}")
+        raise HTTPException(status_code=502, detail="Не получилось описать задачу — попробуйте ещё раз") from e
+    return {"ok": True, "description": text}
 
 
 def _kb_public_item(kb: dict[str, Any]) -> dict[str, Any]:

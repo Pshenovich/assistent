@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-digest6";
+  var WEBAPP_BUILD = "20261023-trackers";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261023-lineid"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261023-trackers"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -8623,9 +8623,11 @@
       showProfileError(e.message || String(e));
       return;
     }
+    if (Array.isArray(data.trackers)) setTrackersCache(data.trackers);
+    var b24Tracker = trackerById("bitrix24");
     document.querySelectorAll("#panel-profile [data-svc]").forEach(function (card) {
       const key = card.getAttribute("data-svc");
-      const on = !!data[key];
+      const on = !!data[key] || (key === "bitrix" && !!(b24Tracker && b24Tracker.connected));
       card.classList.toggle("is-on", on);
       const connectBtn = card.querySelector('[data-action="connect"]');
       const disconnectBtn = card.querySelector('[data-action="disconnect"]');
@@ -12013,7 +12015,14 @@
       return;
     }
     var on = !!(data && (data.bitrix || data.bitrix_connected));
-    setSvcPill(stEl, on, on ? "Подключён" : "Не подключён");
+    var tasksOn = !!((data && data.trackers) || []).filter(function (t) {
+      return t.id === "bitrix24" && t.connected;
+    }).length;
+    setSvcPill(
+      stEl,
+      on || tasksOn,
+      on && tasksOn ? "Подключён" : on ? "Подключён чат с Лео" : tasksOn ? "Подключены задачи" : "Не подключён"
+    );
     setHidden(document.getElementById("profile-bitrix-steps"), on);
     setHidden(document.getElementById("profile-bitrix-token-wrap"), on);
     setSvcConnectedUi("bitrix", on);
@@ -12023,6 +12032,111 @@
       if (tokenField) setHidden(tokenField, on);
     }
     if (discBtn) setHidden(discBtn, !on);
+    await loadBitrixTasksSection();
+  }
+
+  // «Задачи из Орбиты»: вебхук для задач и доска/стадия по умолчанию (сохраняются сразу при выборе).
+  async function loadBitrixTasksSection() {
+    var hook = document.getElementById("profile-bitrix-webhook-wrap");
+    var defs = document.getElementById("profile-bitrix-defaults");
+    var defsHint = document.getElementById("profile-bitrix-defaults-hint");
+    var disc = document.getElementById("profile-bitrix-webhook-disconnect-wrap");
+    var lead = document.getElementById("profile-bitrix-tasks-lead");
+    var errEl = document.getElementById("profile-bitrix-tasks-err");
+    if (!hook || !defs) return;
+    if (errEl) errEl.classList.add("hidden");
+    await loadTrackers(true);
+    var tr = trackerById("bitrix24");
+    var on = !!(tr && tr.connected);
+    setHidden(hook, on);
+    setHidden(defs, !on);
+    setHidden(defsHint, !on);
+    setHidden(disc, !on);
+    if (lead) {
+      var who = on && tr.connection ? [tr.connection.account_name, (tr.connection.portal || "").replace(/^https:\/\//, "")].filter(Boolean).join(" · ") : "";
+      lead.textContent = on
+        ? "Подключено" + (who ? ": " + who : "") + ". Задачи ставятся из задачи, Фокуса и заметок."
+        : "Ставьте задачи команде прямо в Битрикс24: из задачи, Фокуса и заметок, с описанием по WWA.";
+    }
+    if (!on) return;
+    var boardSel = document.getElementById("profile-bitrix-board");
+    var stageSel = document.getElementById("profile-bitrix-stage");
+    // Пересоздаём селекты, чтобы не копить обработчики при повторном открытии экрана.
+    [boardSel, stageSel].forEach(function (el) {
+      var fresh = el.cloneNode(false);
+      el.parentNode.replaceChild(fresh, el);
+    });
+    boardSel = document.getElementById("profile-bitrix-board");
+    stageSel = document.getElementById("profile-bitrix-stage");
+    var defaults = tr.defaults || {};
+    function save() {
+      var body = {
+        board_id: boardSel.value,
+        board_name: selectedOptionText(boardSel),
+        stage_id: stageSel.value,
+        stage_name: selectedOptionText(stageSel),
+      };
+      apiFetch("/trackers/bitrix24/settings", { method: "PUT", body: JSON.stringify(body) })
+        .then(function (r) {
+          if (tr) tr.defaults = (r && r.defaults) || body;
+          showNoteToast("Сохранено");
+        })
+        .catch(function (e) {
+          showNoteToast("Не сохранилось: " + ((e && e.message) || e));
+        });
+    }
+    // Сменили доску — сохраняем, когда пришли её стадии (первая стадия по умолчанию).
+    await bindTrackerBoardStage("bitrix24", boardSel, stageSel, defaults, errEl, save);
+    stageSel.addEventListener("change", save);
+  }
+
+  async function connectBitrixWebhook() {
+    var inp = document.getElementById("profile-bitrix-webhook");
+    var errEl = document.getElementById("profile-bitrix-tasks-err");
+    var btn = document.getElementById("profile-bitrix-webhook-submit");
+    var url = String((inp && inp.value) || "").trim();
+    if (errEl) errEl.classList.add("hidden");
+    if (!url) {
+      if (errEl) {
+        errEl.textContent = "Вставьте адрес вебхука из Битрикс24.";
+        errEl.classList.remove("hidden");
+      }
+      return;
+    }
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Проверяю…";
+    }
+    try {
+      await apiFetch("/trackers/bitrix24/webhook", { method: "POST", body: JSON.stringify({ url: url }) });
+      if (inp) inp.value = "";
+      trackerGetCache = {};
+      await loadBitrixScreen(true);
+      showNoteToast("Задачи Битрикс24 подключены");
+    } catch (e) {
+      if (errEl) {
+        errEl.textContent = (e && e.message) || String(e);
+        errEl.classList.remove("hidden");
+      }
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Подключить задачи";
+      }
+    }
+  }
+
+  async function disconnectBitrixWebhook() {
+    try {
+      await apiFetch("/trackers/bitrix24/webhook", { method: "DELETE" });
+    } catch (e) {
+      showNoteToast("Битрикс24: " + humanProfileError(e.message || e));
+      return;
+    }
+    if (readTaskTarget() === "bitrix24") rememberTaskTarget("orbita");
+    trackerGetCache = {};
+    showNoteToast("Задачи Битрикс24 отключены");
+    await loadBitrixScreen(true);
   }
 
   function openBitrixSetup() {
@@ -15226,6 +15340,23 @@
     opts = opts || {};
     var taskId = calendarTaskId(ev);
     var existing = !!taskId;
+    // Новая задача, а в прошлый раз выбрали трекер — сразу его форма (переключатель «Орбита» там же).
+    var lastTarget = readTaskTarget();
+    if (!existing && !pendingSheetConvert && lastTarget && lastTarget !== "orbita") {
+      var lastTracker = trackerById(lastTarget);
+      if (lastTracker && lastTracker.connected) {
+        openTrackerTaskModal(
+          {
+            title: ev.summary || ev.title || (opts.quote ? String(opts.quote) : "") || "",
+            description: ev.description || "",
+            note_id: ev.note_id || currentOpenNoteId() || "",
+            context: opts.quote || ev.context || "",
+          },
+          { provider: lastTracker.id, onSaved: opts.onSaved }
+        );
+        return;
+      }
+    }
     document.getElementById("modal-title").textContent = existing ? "Задача" : "Новая задача";
     document.getElementById("modal-kind").value = "task";
     document.getElementById("modal-reminder-id").value = "";
@@ -15248,8 +15379,9 @@
     var fields = document.getElementById("modal-fields");
     fields.innerHTML =
       '<div class="event-sheet">' +
-      (existing ? "" : eventSheetKindSwitcherHtml("task")) +
+      (existing ? "" : eventSheetKindSwitcherHtml("task") + '<div id="m-task-target-slot"></div>') +
       '<textarea id="m-ev-sum" class="event-sheet-title event-sheet-title--area" rows="1" enterkeyhint="done" placeholder="Название" autocomplete="off"></textarea>' +
+      (existing ? '<div id="m-task-tracker-links" class="tracker-links hidden"></div>' : "") +
       '<input type="hidden" id="modal-task-note-id" />' +
       sheetWhenHtml({ task: true, label: "Срок" }) +
       '<div id="m-task-assignee-slot"></div>' +
@@ -15295,6 +15427,7 @@
     document.getElementById("m-ev-end").value = endLocal;
     document.getElementById("modal-task-note-id").value = ev.note_id || currentOpenNoteId() || "";
     if (existing) mountNoteBacklinks(document.getElementById("m-task-backlinks"), "task", taskId, closeModal);
+    else mountTaskTargetSwitch(ev, opts);
     var logLines =
       (ev.schedule_log_lines && ev.schedule_log_lines.length
         ? ev.schedule_log_lines
@@ -15381,23 +15514,62 @@
       (ev.event && ev.event.owner_archived)
     );
     var taskSource = { kind: "task", id: String(taskId), calendarId: "leo-tasks" };
-    var taskMenu = null;
-    if (existing) {
-      taskMenu = modalConvertMenu("task", taskSource);
+    function buildTaskMenu() {
+      if (!existing) return null;
+      var taskMenu = modalConvertMenu("task", taskSource);
+      var dupTracker = connectedTracker();
+      if (dupTracker) {
+        var dupItem = {
+          label: "Дубль в " + dupTracker.title,
+          fn: function () {
+            openTrackerTaskModal(
+              {
+                title: String((document.getElementById("m-ev-sum") || {}).value || "").trim(),
+                description: String((document.getElementById("m-task-desc") || {}).value || ""),
+                note_id: String((document.getElementById("modal-task-note-id") || {}).value || ""),
+                calendar_task_id: String(taskId),
+                deadline: String(sRaw || "").slice(0, 10),
+              },
+              { provider: dupTracker.id }
+            );
+          },
+        };
+        taskMenu.unshift(dupItem);
+        mountTrackerLinks(document.getElementById("m-task-tracker-links"), taskId, function (n) {
+          if (!n) return;
+          dupItem.label = "Ещё дубль в " + dupTracker.title;
+          var btns = document.querySelectorAll("#modal-more-menu .modal-more-item");
+          if (btns[0] && /^Дубль в /.test(btns[0].textContent)) btns[0].textContent = dupItem.label;
+        });
+      }
       if (isTaskOwner && isDelegated) {
         taskMenu.push({ label: isOwnerArchived ? "Вернуть из архива" : "В архив", fn: modalToggleTaskArchive });
       }
       taskMenu.push({ label: "Удалить задачу", danger: true, fn: modalDelete });
+      return taskMenu;
     }
-    setModalSheetActions({
-      showDelete: existing,
-      showDone: existing && !ev.done,
-      copyLinkUrl: existing ? ev.url || taskShareUrl(taskId) : "",
-      showArchive: existing && isTaskOwner && isDelegated,
-      archiveLabel: isOwnerArchived ? "Вернуть из архива" : "В архив",
-      saveLabel: existing ? "Сохранить" : "Создать",
-      menu: taskMenu,
-    });
+    function applyTaskActions() {
+      setModalSheetActions({
+        showDelete: existing,
+        showDone: existing && !ev.done,
+        copyLinkUrl: existing ? ev.url || taskShareUrl(taskId) : "",
+        showArchive: existing && isTaskOwner && isDelegated,
+        archiveLabel: isOwnerArchived ? "Вернуть из архива" : "В архив",
+        saveLabel: existing ? "Сохранить" : "Создать",
+        menu: buildTaskMenu(),
+      });
+    }
+    applyTaskActions();
+    // Задачу открыли раньше, чем пришёл список трекеров (ссылка ?task=…): достраиваем «Дубль в …».
+    if (existing && !connectedTracker()) {
+      loadTrackers().then(function () {
+        var still =
+          document.getElementById("modal-kind").value === "task" &&
+          document.getElementById("modal-event-id").value === String(taskId) &&
+          !document.getElementById("modal-overlay").classList.contains("hidden");
+        if (still && connectedTracker()) applyTaskActions();
+      });
+    }
     if (kindEl) {
       kindEl.setAttribute("data-task-owner-archived", isOwnerArchived ? "1" : "0");
     }
@@ -15413,9 +15585,504 @@
     }
   }
 
+  // ——— Внешние трекеры (Битрикс24…): задача живёт там; в Орбите — только чип в заметке и бейдж у дубля ———
+  var trackersCache = { list: null, at: 0 };
+  var TASK_TARGET_KEY = "leo_task_target";
+  var TRACKER_CHIP_PREFIX = { bitrix24: "b24" };
+  var trackerSheet = null;
+
+  function setTrackersCache(list) {
+    trackersCache = { list: Array.isArray(list) ? list : [], at: Date.now() };
+  }
+
+  function loadTrackers(force) {
+    if (!force && trackersCache && trackersCache.list && Date.now() - trackersCache.at < 60000) {
+      return Promise.resolve(trackersCache.list);
+    }
+    return apiFetch("/trackers", { method: "GET" })
+      .then(function (r) {
+        setTrackersCache(r && r.trackers);
+        return trackersCache.list;
+      })
+      .catch(function () {
+        return (trackersCache && trackersCache.list) || [];
+      });
+  }
+
+  function trackerById(id) {
+    var list = (trackersCache && trackersCache.list) || [];
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+
+  function connectedTracker() {
+    var list = (trackersCache && trackersCache.list) || [];
+    for (var i = 0; i < list.length; i++) if (list[i].connected) return list[i];
+    return null;
+  }
+
+  function readTaskTarget() {
+    try {
+      return localStorage.getItem(TASK_TARGET_KEY) || "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function rememberTaskTarget(v) {
+    try {
+      localStorage.setItem(TASK_TARGET_KEY, v || "");
+    } catch (_) {}
+  }
+
+  function trackerChipId(provider, externalId) {
+    return (TRACKER_CHIP_PREFIX[provider] || provider) + "-" + String(externalId || "");
+  }
+
+  function taskTargetSwitchHtml(active, tracker) {
+    function btn(id, label) {
+      var on = id === active;
+      return (
+        '<button type="button" class="event-sheet-kind-btn' + (on ? " is-active" : "") +
+        '" role="tab" aria-selected="' + (on ? "true" : "false") + '" data-task-target="' + escapeHtml(id) + '">' +
+        escapeHtml(label) + "</button>"
+      );
+    }
+    return (
+      '<div class="event-sheet-kind-switch task-target-switch" role="tablist" aria-label="Где создать задачу">' +
+      btn("orbita", "Орбита") +
+      btn(tracker.id, tracker.title) +
+      "</div>"
+    );
+  }
+
+  function bindTaskTargetSwitch(root, active, onPick) {
+    var host = root && root.querySelector(".task-target-switch");
+    if (!host) return;
+    host.querySelectorAll("[data-task-target]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var next = b.getAttribute("data-task-target");
+        if (!next || next === active) return;
+        rememberTaskTarget(next);
+        onPick(next);
+      });
+    });
+  }
+
+  // Переключатель «Орбита / Битрикс24» в новой задаче Орбиты (если трекер подключён).
+  function mountTaskTargetSwitch(ev, opts) {
+    function paint() {
+      var slot = document.getElementById("m-task-target-slot");
+      var tr = connectedTracker();
+      if (!slot || !tr) return;
+      var wrap = document.createElement("div");
+      wrap.innerHTML = taskTargetSwitchHtml("orbita", tr);
+      slot.parentNode.replaceChild(wrap.firstChild, slot);
+      bindTaskTargetSwitch(document.getElementById("modal-fields"), "orbita", function (next) {
+        var title = String((document.getElementById("m-ev-sum") || {}).value || "").trim();
+        var desc = String((document.getElementById("m-task-desc") || {}).value || "");
+        var noteEl = document.getElementById("modal-task-note-id");
+        var onSaved = taskModalOnSaved;
+        openTrackerTaskModal(
+          {
+            title: title,
+            description: desc,
+            note_id: noteEl ? String(noteEl.value || "") : "",
+            context: opts.quote || ev.context || "",
+          },
+          { provider: next, onSaved: onSaved }
+        );
+      });
+    }
+    if (connectedTracker()) paint();
+    else loadTrackers().then(paint);
+  }
+
+  function trackerSelectOptions(sel, items, selectedId, emptyLabel) {
+    sel.innerHTML = "";
+    if (emptyLabel != null) {
+      var empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = emptyLabel;
+      sel.appendChild(empty);
+    }
+    items.forEach(function (it) {
+      var o = document.createElement("option");
+      o.value = String(it.id);
+      o.textContent = it.name;
+      sel.appendChild(o);
+    });
+    sel.value = selectedId && items.some(function (it) { return String(it.id) === String(selectedId); })
+      ? String(selectedId)
+      : sel.options.length
+        ? sel.options[0].value
+        : "";
+  }
+
+  function selectedOptionText(sel) {
+    var o = sel && sel.options[sel.selectedIndex];
+    return o && o.value ? o.textContent : "";
+  }
+
+  // Доска → стадии. defaults: { board_id, board_name, stage_id, stage_name } — что выбрать по умолчанию.
+  function bindTrackerBoardStage(providerId, boardSel, stageSel, defaults, errEl, onBoardChanged) {
+    defaults = defaults || {};
+    function showErr(text) {
+      if (!errEl) return;
+      errEl.textContent = text || "";
+      errEl.classList.toggle("hidden", !text);
+    }
+    function fallback(sel, id, name) {
+      trackerSelectOptions(sel, id ? [{ id: id, name: name || id }] : [], id, id ? null : "—");
+    }
+    function loadStages(boardId, wantStage) {
+      if (!boardId) {
+        trackerSelectOptions(stageSel, [], "", "—");
+        return Promise.resolve();
+      }
+      stageSel.disabled = true;
+      trackerSelectOptions(stageSel, [], "", "Загрузка…");
+      return trackerGet(
+        "/trackers/" + encodeURIComponent(providerId) + "/boards/" + encodeURIComponent(boardId) + "/stages"
+      )
+        .then(function (r) {
+          var stages = (r && r.stages) || [];
+          trackerSelectOptions(stageSel, stages, wantStage, stages.length ? null : "Без стадий");
+        })
+        .catch(function (e) {
+          if (String(boardId) === String(defaults.board_id)) fallback(stageSel, defaults.stage_id, defaults.stage_name);
+          else trackerSelectOptions(stageSel, [], "", "—");
+          showErr("Стадии не загрузились: " + ((e && e.message) || "ошибка"));
+        })
+        .then(function () {
+          stageSel.disabled = false;
+        });
+    }
+    boardSel.disabled = true;
+    trackerSelectOptions(boardSel, [], "", "Загрузка…");
+    trackerSelectOptions(stageSel, [], "", "—");
+    boardSel.addEventListener("change", function () {
+      showErr("");
+      var b = boardSel.value;
+      loadStages(b, String(b) === String(defaults.board_id) ? defaults.stage_id : "").then(function () {
+        if (onBoardChanged) onBoardChanged();
+      });
+    });
+    return trackerGet("/trackers/" + encodeURIComponent(providerId) + "/boards")
+      .then(function (r) {
+        var boards = (r && r.boards) || [];
+        trackerSelectOptions(boardSel, boards, defaults.board_id, boards.length ? null : "Нет досок");
+        boardSel.disabled = false;
+        var b = boardSel.value;
+        return loadStages(b, String(b) === String(defaults.board_id) ? defaults.stage_id : "");
+      })
+      .catch(function (e) {
+        boardSel.disabled = false;
+        fallback(boardSel, defaults.board_id, defaults.board_name);
+        fallback(stageSel, defaults.stage_id, defaults.stage_name);
+        showErr("Доски не загрузились: " + ((e && e.message) || "ошибка"));
+      });
+  }
+
+  // Доски и стадии меняются редко, а форма Фокуса перерисовывается часто — ответы держим минуту.
+  var trackerGetCache = {};
+  function trackerGet(path) {
+    var hit = trackerGetCache[path];
+    if (hit && Date.now() - hit.at < 60000) return hit.promise;
+    var promise = apiFetch(path, { method: "GET" });
+    trackerGetCache[path] = { at: Date.now(), promise: promise };
+    promise.catch(function () {
+      delete trackerGetCache[path];
+    });
+    return promise;
+  }
+
+  function autosizeTrackerDesc(el) {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + 2 + "px";
+  }
+
+  // Новая задача во внешнем трекере. seed: title, description, note_id, calendar_task_id (дубль), focus_key, context.
+  function openTrackerTaskModal(seed, opts) {
+    seed = seed || {};
+    opts = opts || {};
+    var tracker = (opts.provider && trackerById(opts.provider)) || connectedTracker();
+    if (!tracker || !tracker.connected) {
+      loadTrackers(true).then(function () {
+        var tr = (opts.provider && trackerById(opts.provider)) || connectedTracker();
+        if (tr && tr.connected) openTrackerTaskModal(seed, Object.assign({}, opts, { provider: tr.id }));
+        else showCalendarToast("Подключите Битрикс24 для задач в профиле");
+      });
+      return;
+    }
+    clearCalendarGestureState();
+    var dup = !!seed.calendar_task_id;
+    document.getElementById("modal-title").textContent = dup ? "Дубль в " + tracker.title : "Новая задача";
+    var kindEl = document.getElementById("modal-kind");
+    kindEl.value = "tracker-task";
+    document.getElementById("modal-reminder-id").value = "";
+    document.getElementById("modal-event-id").value = "";
+    document.getElementById("modal-calendar-id").value = "";
+    taskModalOnSaved = typeof opts.onSaved === "function" ? opts.onSaved : null;
+    taskModalOnDeleted = null;
+    trackerSheet = { tracker: tracker, seed: seed, prevDesc: null };
+    var noteId = String(seed.note_id || "");
+    var fields = document.getElementById("modal-fields");
+    fields.innerHTML =
+      '<div class="event-sheet tracker-sheet">' +
+      (dup ? "" : eventSheetKindSwitcherHtml("task") + taskTargetSwitchHtml(tracker.id, tracker)) +
+      '<textarea id="m-ev-sum" class="event-sheet-title event-sheet-title--area" rows="1" enterkeyhint="done" placeholder="Название" autocomplete="off"></textarea>' +
+      '<div class="event-sheet-group tracker-desc-group">' +
+      '<div class="event-sheet-row tracker-desc-head">' +
+      '<span class="event-sheet-row-label">Описание</span>' +
+      '<span class="tracker-wwa-acts">' +
+      '<button type="button" class="tracker-wwa-btn tracker-wwa-btn--ghost hidden" id="m-trk-undo">Вернуть</button>' +
+      '<button type="button" class="tracker-wwa-btn" id="m-trk-wwa">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>' +
+      '<span id="m-trk-wwa-label">Описать по WWA</span></button>' +
+      "</span></div>" +
+      '<textarea id="m-task-desc" class="field-textarea event-sheet-desc tracker-desc" rows="4" placeholder="Зачем, что сделать, как принять — или нажмите «Описать по WWA»"></textarea>' +
+      "</div>" +
+      (noteId || seed.focus_key
+        ? '<p class="tracker-hint" id="m-trk-ctx"></p>'
+        : "") +
+      '<div class="event-sheet-group">' +
+      '<label class="event-sheet-row tracker-row"><span class="event-sheet-row-label">Доска</span>' +
+      '<select id="m-trk-board" class="tracker-select"></select></label>' +
+      '<label class="event-sheet-row tracker-row"><span class="event-sheet-row-label">Стадия</span>' +
+      '<select id="m-trk-stage" class="tracker-select"></select></label>' +
+      '<label class="event-sheet-row tracker-row"><span class="event-sheet-row-label">Исполнитель</span>' +
+      '<input id="m-trk-resp" class="tracker-input" type="text" autocomplete="off" placeholder="Я" /></label>' +
+      '<label class="event-sheet-row tracker-row"><span class="event-sheet-row-label">Срок</span>' +
+      '<input id="m-trk-deadline" class="tracker-input tracker-input--date" type="date" /></label>' +
+      "</div>" +
+      '<p class="pf-field-error hidden" id="m-trk-err"></p>' +
+      "</div>";
+    if (!dup) {
+      bindCreateKindSwitcher("task", {});
+      bindTaskTargetSwitch(fields, tracker.id, function () {
+        var onSaved = taskModalOnSaved;
+        openTaskModal(
+          {
+            summary: String(document.getElementById("m-ev-sum").value || "").trim(),
+            description: String(document.getElementById("m-task-desc").value || ""),
+            note_id: noteId,
+            context: seed.context || "",
+          },
+          { onSaved: onSaved, quote: seed.context || "" }
+        );
+      });
+    }
+    var titleEl = document.getElementById("m-ev-sum");
+    titleEl.value = seed.title || "";
+    bindSheetTitleArea(titleEl);
+    var descEl = document.getElementById("m-task-desc");
+    descEl.value = seed.description || "";
+    descEl.addEventListener("input", function () {
+      autosizeTrackerDesc(descEl);
+    });
+    var deadlineEl = document.getElementById("m-trk-deadline");
+    if (seed.deadline) deadlineEl.value = String(seed.deadline).slice(0, 10);
+    var ctxEl = document.getElementById("m-trk-ctx");
+    if (ctxEl) {
+      var openTitle =
+        noteId && noteId === currentOpenNoteId()
+          ? String((document.getElementById("note-editor-title-input") || {}).value || "").trim()
+          : "";
+      var src = seed.source_title || openTitle || "";
+      ctxEl.textContent = src ? "Лео учтёт контекст: «" + src + "»" : "Лео учтёт контекст заметки";
+    }
+    bindTrackerWwa(seed);
+    bindTrackerBoardStage(
+      tracker.id,
+      document.getElementById("m-trk-board"),
+      document.getElementById("m-trk-stage"),
+      tracker.defaults || {},
+      document.getElementById("m-trk-err")
+    );
+    setModalSheetActions({ showDelete: false, showDone: false, saveLabel: "Создать", menu: null });
+    document.getElementById("modal-overlay").classList.remove("hidden");
+    document.getElementById("modal-overlay").setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
+    window.requestAnimationFrame(function () {
+      autosizeTrackerDesc(descEl);
+    });
+    if (!seed.title) {
+      window.setTimeout(function () {
+        titleEl.focus();
+      }, 0);
+    }
+  }
+
+  function bindTrackerWwa(seed) {
+    var btn = document.getElementById("m-trk-wwa");
+    var undo = document.getElementById("m-trk-undo");
+    var label = document.getElementById("m-trk-wwa-label");
+    var descEl = document.getElementById("m-task-desc");
+    if (!btn || !descEl) return;
+    var busy = false;
+    btn.addEventListener("click", function () {
+      if (busy) return;
+      var title = String((document.getElementById("m-ev-sum") || {}).value || "").trim();
+      var before = String(descEl.value || "");
+      if (!title && !before.trim()) {
+        showCalendarToast("Сначала напишите, что нужно сделать");
+        return;
+      }
+      busy = true;
+      btn.classList.add("is-loading");
+      btn.setAttribute("aria-busy", "true");
+      label.textContent = "Описываю…";
+      apiFetch("/trackers/describe-wwa", {
+        method: "POST",
+        body: JSON.stringify({
+          title: title,
+          description: before,
+          note_id: String(seed.note_id || ""),
+          focus_key: String(seed.focus_key || ""),
+          context: String(seed.context || ""),
+        }),
+      })
+        .then(function (r) {
+          if (!document.body.contains(descEl)) return;
+          var text = String((r && r.description) || "").trim();
+          if (!text) throw new Error("Пустой ответ — попробуйте ещё раз");
+          if (trackerSheet) trackerSheet.prevDesc = before;
+          descEl.value = text;
+          autosizeTrackerDesc(descEl);
+          if (undo) undo.classList.remove("hidden");
+          label.textContent = "Описать заново";
+        })
+        .catch(function (e) {
+          label.textContent = "Описать по WWA";
+          showCalendarToast((e && e.message) || "Не получилось описать задачу");
+        })
+        .then(function () {
+          busy = false;
+          btn.classList.remove("is-loading");
+          btn.removeAttribute("aria-busy");
+        });
+    });
+    if (undo) {
+      undo.addEventListener("click", function () {
+        if (!trackerSheet || trackerSheet.prevDesc == null) return;
+        descEl.value = trackerSheet.prevDesc;
+        trackerSheet.prevDesc = null;
+        autosizeTrackerDesc(descEl);
+        undo.classList.add("hidden");
+        label.textContent = "Описать по WWA";
+      });
+    }
+  }
+
+  async function saveTrackerTaskFromModal() {
+    var st = trackerSheet;
+    if (!st) return;
+    var tracker = st.tracker;
+    var title = String((document.getElementById("m-ev-sum") || {}).value || "").trim();
+    if (!title) {
+      showCalendarToast("Укажите название задачи");
+      return;
+    }
+    var boardSel = document.getElementById("m-trk-board");
+    var stageSel = document.getElementById("m-trk-stage");
+    var body = {
+      title: title,
+      description: String((document.getElementById("m-task-desc") || {}).value || ""),
+      board_id: boardSel ? boardSel.value : "",
+      board_name: selectedOptionText(boardSel),
+      stage_id: stageSel ? stageSel.value : "",
+      stage_name: selectedOptionText(stageSel),
+      responsible: String((document.getElementById("m-trk-resp") || {}).value || "").trim(),
+      deadline: String((document.getElementById("m-trk-deadline") || {}).value || ""),
+      note_id: String(st.seed.note_id || ""),
+      calendar_task_id: String(st.seed.calendar_task_id || ""),
+      focus_key: String(st.seed.focus_key || ""),
+    };
+    var label = document.getElementById("modal-save-label");
+    if (label) label.textContent = "Создаю…";
+    try {
+      var r = await apiFetch("/trackers/" + encodeURIComponent(tracker.id) + "/tasks", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      var ext = (r && r.external) || {};
+      var cb = taskModalOnSaved;
+      closeModal();
+      trackerSheet = null;
+      showTrackerCreatedToast(tracker, ext);
+      if (cb) {
+        cb({
+          id: trackerChipId(tracker.id, ext.id),
+          chip_label: (r && r.chip_label) || title,
+          external: ext,
+        });
+      }
+    } catch (e) {
+      if (label) label.textContent = "Создать";
+      var errEl = document.getElementById("m-trk-err");
+      var msg = (e && e.message) || "Не удалось создать задачу";
+      if (errEl) {
+        errEl.textContent = msg;
+        errEl.classList.remove("hidden");
+      }
+      showCalendarToast(msg);
+    }
+  }
+
+  function showTrackerCreatedToast(tracker, ext) {
+    var node = document.createElement("span");
+    node.className = "tracker-toast";
+    node.appendChild(document.createTextNode("Задача в " + tracker.title + (ext.id ? " #" + ext.id : "") + " "));
+    if (ext.url) {
+      var a = document.createElement("button");
+      a.type = "button";
+      a.className = "note-toast-link";
+      a.textContent = "Открыть";
+      a.addEventListener("click", function () {
+        openExternal(ext.url);
+      });
+      node.appendChild(a);
+    }
+    showNoteToast("", { node: node, actionable: !!ext.url });
+  }
+
+  // У задачи Орбиты: «Битрикс24 #123 · Оценка» — уже заведённые дубли.
+  function mountTrackerLinks(host, calendarTaskId, onCount) {
+    if (!host || !calendarTaskId) return;
+    apiFetch("/trackers/links?calendar_task_id=" + encodeURIComponent(calendarTaskId), { method: "GET" })
+      .then(function (r) {
+        var links = (r && r.links) || [];
+        if (!document.body.contains(host)) return;
+        host.innerHTML = "";
+        links.forEach(function (l) {
+          var tr = trackerById(l.provider);
+          var b = document.createElement("button");
+          b.type = "button";
+          b.className = "tracker-link-chip";
+          b.title = l.title || "";
+          var text = (tr ? tr.title : l.provider) + " #" + l.external_id + (l.stage_name ? " · " + l.stage_name : "");
+          b.innerHTML =
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>';
+          var span = document.createElement("span");
+          span.textContent = text;
+          b.appendChild(span);
+          b.addEventListener("click", function () {
+            openExternal(l.url);
+          });
+          host.appendChild(b);
+        });
+        host.classList.toggle("hidden", !links.length);
+        if (onCount) onCount(links.length);
+      })
+      .catch(function () {});
+  }
+
   function openTaskFromChip(taskId) {
     var id = String(taskId || "").trim();
-    if (!id) return;
+    if (!/^\d+$/.test(id)) return;
     function show(task) {
       if (!task) return;
       var ev = Object.assign({}, task.event || {}, task, {
@@ -15549,7 +16216,8 @@
 
   function deleteTaskFromChip(taskId) {
     var id = String(taskId || "").trim();
-    if (!id) return;
+    // Чипы внешних трекеров (b24-…) — не задачи Орбиты, удалять нечего.
+    if (!/^\d+$/.test(id)) return;
     apiFetch("/calendar/tasks/" + encodeURIComponent(id), { method: "DELETE" })
       .then(function () {
         loadActual();
@@ -17125,6 +17793,10 @@
 
   async function modalSubmitInner() {
     const kind = document.getElementById("modal-kind").value;
+    if (kind === "tracker-task") {
+      await saveTrackerTaskFromModal();
+      return;
+    }
     if (kind === "reminder") {
       const id = document.getElementById("modal-reminder-id").value;
       const body = {
@@ -23407,6 +24079,7 @@
             onTaskSlash: createTaskFromSlash,
             onOpenLink: openExternal,
             onTaskChipClick: openTaskFromChip,
+            onExternalTaskClick: openExternal,
             onTaskChipRemoved: deleteTaskFromChip,
             onFocusMarkClick: onFocusMarkClick,
             onSearchNoteRefs: searchNoteRefItems,
@@ -35881,7 +36554,11 @@
   function focusTaskForm(aid, f) {
     var ui = focusUiFor(aid);
     var d = ui.draft;
+    var tracker = connectedTracker();
+    if (tracker && !d.target) d.target = readTaskTarget() === tracker.id ? tracker.id : "orbita";
+    if (tracker && d.target === tracker.id) return focusTrackerTaskForm(aid, f, tracker);
     var wrap = focusEl("div", "focus-chat-edit focus-chat-task");
+    if (tracker) wrap.appendChild(focusTaskTargetSwitch(aid, d, tracker));
     var grid = focusEl("div", "focus-chat-fields");
     function label(text) {
       grid.appendChild(focusEl("label", "focus-chat-field-label", text));
@@ -35970,6 +36647,204 @@
           .catch(function (e) {
             b.disabled = false;
             showNoteToast((e && e.message) || "Не удалось поставить задачу");
+          });
+      })
+    );
+    acts.appendChild(focusBtn("Отмена", "is-ghost", function () {
+      focusSetUi(aid, { mode: "view", draft: {} });
+    }));
+    wrap.appendChild(acts);
+    return wrap;
+  }
+
+  function focusTaskTargetSwitch(aid, d, tracker) {
+    var host = document.createElement("div");
+    host.innerHTML = taskTargetSwitchHtml(d.target || "orbita", tracker);
+    var sw = host.firstChild;
+    sw.classList.add("focus-task-target");
+    bindTaskTargetSwitch(host, d.target || "orbita", function (next) {
+      d.target = next;
+      focusSetUi(aid, { draft: d });
+    });
+    return sw;
+  }
+
+  // «В задачу» → Битрикс24 (или другой трекер): описание с «Описать по WWA», доска, стадия, исполнитель, срок.
+  function focusTrackerTaskForm(aid, f, tracker) {
+    var ui = focusUiFor(aid);
+    var d = ui.draft;
+    var src = f.source || {};
+    var noteId = src.kind === "note" && src.id ? String(src.id) : "";
+    var wrap = focusEl("div", "focus-chat-edit focus-chat-task focus-chat-task--tracker");
+    wrap.appendChild(focusTaskTargetSwitch(aid, d, tracker));
+    var grid = focusEl("div", "focus-chat-fields");
+    function label(text) {
+      grid.appendChild(focusEl("label", "focus-chat-field-label", text));
+    }
+    label("Задача");
+    var title = document.createElement("input");
+    title.type = "text";
+    title.value = d.title != null ? d.title : f.text || "";
+    title.addEventListener("input", function () {
+      d.title = title.value;
+    });
+    grid.appendChild(title);
+    label("Описание");
+    var descBox = focusEl("div", "focus-tracker-desc");
+    var desc = document.createElement("textarea");
+    desc.rows = 3;
+    desc.placeholder = "Коротко — или «Описать по WWA»";
+    desc.value = d.desc != null ? d.desc : f.comment || "";
+    desc.addEventListener("input", function () {
+      d.desc = desc.value;
+      autosizeTrackerDesc(desc);
+    });
+    var wwaActs = focusEl("div", "focus-tracker-wwa");
+    var undo = focusBtn("Вернуть", "is-ghost" + (d.descPrev != null ? "" : " hidden"), function () {
+      if (d.descPrev == null) return;
+      desc.value = d.descPrev;
+      d.desc = d.descPrev;
+      d.descPrev = null;
+      undo.classList.add("hidden");
+      autosizeTrackerDesc(desc);
+    });
+    var wwa = focusBtn(d.descPrev != null ? "Описать заново" : "Описать по WWA", "", function (b) {
+      var t = String(title.value || "").trim();
+      var before = String(desc.value || "");
+      if (!t && !before.trim()) {
+        showNoteToast("Сначала напишите, что нужно сделать");
+        return;
+      }
+      b.disabled = true;
+      b.classList.add("is-loading");
+      var lbl = b.querySelector("span");
+      if (lbl) lbl.textContent = "Описываю…";
+      apiFetch("/trackers/describe-wwa", {
+        method: "POST",
+        body: JSON.stringify({
+          title: t,
+          description: before,
+          note_id: noteId,
+          focus_key: f.key || "",
+          context: src.item ? String(src.item) : "",
+        }),
+      })
+        .then(function (r) {
+          var text = String((r && r.description) || "").trim();
+          if (!text) throw new Error("Пустой ответ — попробуйте ещё раз");
+          d.descPrev = before;
+          d.desc = text;
+          if (document.body.contains(desc)) {
+            desc.value = text;
+            autosizeTrackerDesc(desc);
+            undo.classList.remove("hidden");
+            if (lbl) lbl.textContent = "Описать заново";
+          } else {
+            refreshDiscussFeedNow();
+          }
+        })
+        .catch(function (e) {
+          if (lbl) lbl.textContent = "Описать по WWA";
+          showNoteToast((e && e.message) || "Не получилось описать задачу");
+        })
+        .then(function () {
+          b.disabled = false;
+          b.classList.remove("is-loading");
+        });
+    });
+    wwaActs.appendChild(undo);
+    wwaActs.appendChild(wwa);
+    descBox.appendChild(desc);
+    descBox.appendChild(wwaActs);
+    grid.appendChild(descBox);
+    label("Доска");
+    var boardSel = document.createElement("select");
+    grid.appendChild(boardSel);
+    label("Стадия");
+    var stageSel = document.createElement("select");
+    grid.appendChild(stageSel);
+    label("Исполнитель");
+    var resp = document.createElement("input");
+    resp.type = "text";
+    resp.placeholder = "Я";
+    resp.value = d.resp != null ? d.resp : f.assignee || "";
+    resp.addEventListener("input", function () {
+      d.resp = resp.value;
+    });
+    grid.appendChild(resp);
+    label("Срок");
+    var due = document.createElement("input");
+    due.type = "date";
+    due.value = d.due != null ? d.due : focusDeadlineIso(f.deadline) || "";
+    due.addEventListener("input", function () {
+      d.due = due.value;
+    });
+    due.addEventListener("change", function () {
+      d.due = due.value;
+    });
+    grid.appendChild(due);
+    wrap.appendChild(grid);
+    var err = focusEl("p", "focus-chat-hint focus-tracker-err hidden");
+    wrap.appendChild(err);
+    var defs = tracker.defaults || {};
+    bindTrackerBoardStage(
+      tracker.id,
+      boardSel,
+      stageSel,
+      {
+        board_id: d.board != null ? d.board : defs.board_id,
+        board_name: d.boardName != null ? d.boardName : defs.board_name,
+        stage_id: d.stage != null ? d.stage : defs.stage_id,
+        stage_name: d.stageName != null ? d.stageName : defs.stage_name,
+      },
+      err
+    );
+    boardSel.addEventListener("change", function () {
+      d.board = boardSel.value;
+      d.boardName = selectedOptionText(boardSel);
+      d.stage = "";
+    });
+    stageSel.addEventListener("change", function () {
+      d.stage = stageSel.value;
+      d.stageName = selectedOptionText(stageSel);
+    });
+    window.requestAnimationFrame(function () {
+      autosizeTrackerDesc(desc);
+    });
+    var acts = focusEl("div", "focus-chat-acts");
+    acts.appendChild(
+      focusBtn("Создать в " + tracker.short_title, "is-primary", function (b) {
+        var text = String(title.value || "").trim();
+        if (!text) {
+          showNoteToast("Укажите, что сделать");
+          return;
+        }
+        b.disabled = true;
+        apiFetch("/trackers/" + encodeURIComponent(tracker.id) + "/tasks", {
+          method: "POST",
+          body: JSON.stringify({
+            title: text,
+            description: String(desc.value || ""),
+            board_id: boardSel.value,
+            board_name: selectedOptionText(boardSel),
+            stage_id: stageSel.value,
+            stage_name: selectedOptionText(stageSel),
+            responsible: String(resp.value || "").trim(),
+            deadline: due.value || "",
+            note_id: noteId,
+            focus_key: f.key || "",
+          }),
+        })
+          .then(function (r) {
+            var ext = (r && r.external) || {};
+            showTrackerCreatedToast(tracker, ext);
+            // Пункт закрыт ссылкой на задачу в трекере; в заметке — пометка со ссылкой.
+            return focusRunOp(aid, f, { op: "link", url: ext.url, title: text }, "");
+          })
+          .catch(function (e) {
+            b.disabled = false;
+            err.textContent = (e && e.message) || "Не удалось создать задачу";
+            err.classList.remove("hidden");
           });
       })
     );
@@ -40871,10 +41746,14 @@
                   if (!inst || !saved || !saved.id) return;
                   var label =
                     saved.chip_label || (saved.event && saved.event.chip_label) || "";
+                  // Задача во внешнем трекере: чип со ссылкой туда.
+                  var ext = saved.external
+                    ? { provider: saved.external.provider, url: saved.external.url }
+                    : null;
                   if (inst.insertTaskChipAfter && range) {
-                    inst.insertTaskChipAfter(saved.id, label, range.to);
+                    inst.insertTaskChipAfter(saved.id, label, range.to, ext);
                   } else if (inst.insertTaskChip) {
-                    inst.insertTaskChip(saved.id, label);
+                    inst.insertTaskChip(saved.id, label, ext);
                   }
                 },
               }
@@ -43595,7 +44474,9 @@
     // и при открытии транскрипции/саммари чип «Задача» пропадал (а автосохранение закрепляло потерю).
     var SUMMARY_CHIP_CLASSES = {
       "note-task-chip": true,
+      "note-task-chip note-task-chip--ext": true,
       "note-task-chip-icon": true,
+      "note-task-chip-provider": true,
       "note-task-chip-label": true,
       "note-ref-chip": true,
       "note-ref-chip-icon": true,
@@ -43610,6 +44491,11 @@
       if (name === "data-leo-item" && /^(li|p|h[1-6]|td|th)$/.test(tag)) return /^i[0-9a-f]{10}$/.test(String(val || ""));
       if (tag === "span" && /^data-leo-(task|note|sheet)-id$/.test(name)) {
         return /^[A-Za-z0-9_-]{1,64}$/.test(String(val || ""));
+      }
+      // Чип задачи во внешнем трекере (Битрикс24…): провайдер и ссылка на задачу там.
+      if (tag === "span" && name === "data-leo-task-provider") return /^[a-z0-9]{1,32}$/.test(String(val || ""));
+      if (tag === "span" && name === "data-leo-task-url") {
+        return /^https:\/\/[^\s"'<>]{1,500}$/.test(String(val || ""));
       }
       if (tag === "span" && name === "data-leo-ref") {
         return /^(task|reminder|person|chat):[^\s"'<>]{1,160}$/.test(String(val || ""));
@@ -46243,6 +47129,10 @@
         connectBitrix(token);
       });
     }
+    var bitrixHookSubmit = document.getElementById("profile-bitrix-webhook-submit");
+    if (bitrixHookSubmit) bitrixHookSubmit.addEventListener("click", connectBitrixWebhook);
+    var bitrixHookDisc = document.getElementById("profile-bitrix-webhook-disconnect");
+    if (bitrixHookDisc) bitrixHookDisc.addEventListener("click", disconnectBitrixWebhook);
     var bitrixDisc = document.getElementById("profile-bitrix-disconnect");
     if (bitrixDisc) {
       bitrixDisc.addEventListener("click", async function () {
@@ -46417,6 +47307,8 @@
         if (me.bot_username) cachedBotUsername = me.bot_username;
         setSessionHint(true);
         persistBrowserSessionFromCurrentAuth();
+        // Трекеры заранее: переключатель «Орбита / Битрикс24» и «Дубль в …» нужны сразу при открытии задачи.
+        loadTrackers();
       })
       .catch(function () {});
 

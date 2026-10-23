@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261023-digest6">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261023-trackers">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -96,7 +96,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261023-digest6" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261023-trackers" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -1416,11 +1416,11 @@
               <div class="pf-hero">
                 <span class="pf-hero-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="m8 12 3 3 5-6" /></svg></span>
                 <p class="pf-hero-title">Битрикс24</p>
-                <p class="pf-hero-text">Задачи, сделки и CRM — обычными сообщениями Лео.</p>
+                <p class="pf-hero-text">Задачи, сделки и CRM — сообщениями Лео; задачи команде — прямо из Орбиты.</p>
                 <span class="pf-pill" id="profile-bitrix-status"><span>Проверка…</span></span>
               </div>
               <div class="pf-group" id="profile-bitrix-steps">
-                <p class="pf-group-title">Где взять токен</p>
+                <p class="pf-group-title">Лео в чате: где взять токен</p>
                 <div class="pf-list">
                   <div class="pf-row pf-row--static"><span class="pf-num" aria-hidden="true">1</span><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title pf-row-title--wrap">Настройки → MCP → «Работа с Битрикс24 из внешних AI-систем»</span></span></span></div>
                   <div class="pf-row pf-row--static"><span class="pf-num" aria-hidden="true">2</span><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title pf-row-title--wrap">Приложения → MCP-подключения</span></span></span></div>
@@ -1437,7 +1437,36 @@
               <p id="profile-bitrix-msg" class="pf-hint billing-msg hidden"></p>
               <p id="profile-bitrix-err" class="pf-field-error hidden"></p>
               <div class="pf-list hidden" id="profile-bitrix-disconnect-wrap">
-                <button type="button" class="pf-row pf-row--danger" id="profile-bitrix-disconnect"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Отключить Битрикс24</span></span></span></button>
+                <button type="button" class="pf-row pf-row--danger" id="profile-bitrix-disconnect"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Отключить Лео от Битрикс24</span></span></span></button>
+              </div>
+
+              <div class="pf-group tracker-pf-section" id="profile-bitrix-tasks">
+                <p class="pf-group-title">Задачи из Орбиты</p>
+                <p class="pf-hint tracker-pf-lead" id="profile-bitrix-tasks-lead">Ставьте задачи команде прямо в Битрикс24: из задачи, Фокуса и заметок, с описанием по WWA.</p>
+                <div id="profile-bitrix-webhook-wrap">
+                  <div class="pf-list">
+                    <div class="pf-row pf-row--static"><span class="pf-num" aria-hidden="true">1</span><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title pf-row-title--wrap">Битрикс24 → Разработчикам → Другое → «Входящий вебхук»</span></span></span></div>
+                    <div class="pf-row pf-row--static"><span class="pf-num" aria-hidden="true">2</span><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title pf-row-title--wrap">Права: «Задачи», «Рабочие группы», «Пользователи»</span></span></span></div>
+                    <div class="pf-row pf-row--static"><span class="pf-num" aria-hidden="true">3</span><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title pf-row-title--wrap">Сохранить и скопировать «Вебхук для вызова rest api»</span></span></span></div>
+                  </div>
+                  <div class="pf-list tracker-pf-field">
+                    <label class="pf-field field">
+                      <span class="pf-field-label">Адрес вебхука</span>
+                      <input type="password" id="profile-bitrix-webhook" class="pf-input" autocomplete="off" placeholder="https://портал.bitrix24.ru/rest/1/…" />
+                    </label>
+                  </div>
+                  <button type="button" class="pf-btn tracker-pf-btn" id="profile-bitrix-webhook-submit">Подключить задачи</button>
+                </div>
+                <div class="pf-list hidden" id="profile-bitrix-defaults">
+                  <label class="pf-row pf-row--static tracker-pf-row"><span class="pf-row-title">Доска</span><select id="profile-bitrix-board" class="tracker-select"></select></label>
+                  <label class="pf-row pf-row--static tracker-pf-row"><span class="pf-row-title">Стадия</span><select id="profile-bitrix-stage" class="tracker-select"></select></label>
+                </div>
+                <p class="pf-hint hidden" id="profile-bitrix-defaults-hint">Сюда встают новые задачи. Для конкретной задачи доску и стадию можно сменить.</p>
+                <p id="profile-bitrix-tasks-msg" class="pf-hint billing-msg hidden"></p>
+                <p id="profile-bitrix-tasks-err" class="pf-field-error hidden"></p>
+                <div class="pf-list hidden" id="profile-bitrix-webhook-disconnect-wrap">
+                  <button type="button" class="pf-row pf-row--danger" id="profile-bitrix-webhook-disconnect"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Отключить задачи Битрикс24</span></span></span></button>
+                </div>
               </div>
             </div>
           </div>
@@ -2216,7 +2245,7 @@
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
   <script src="/webapp/web-canvas.js?v=20261022-focuschip" defer></script>
-  <script src="/webapp/app.js?v=20261023-trurl" defer></script>
+  <script src="/webapp/app.js?v=20261023-trackers" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261023-unread1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261023-digest6" defer></script>

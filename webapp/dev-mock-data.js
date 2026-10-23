@@ -49,6 +49,81 @@
   ];
   var nextMockTaskId = 9100;
 
+  // Внешний трекер (Битрикс24) для ?dev=1: доски, стадии, создание, WWA.
+  var mockTracker = {
+    connected: true,
+    defaults: { board_id: "153", board_name: "Obuchat · Клиентские задачи", stage_id: "1053", stage_name: "Оценка" },
+    boards: [
+      { id: "personal", name: "Мои задачи", kind: "personal" },
+      { id: "153", name: "Obuchat · Клиентские задачи", kind: "group" },
+      { id: "12", name: "Продукт и платформа: длинное название проекта для проверки обрезки", kind: "group" },
+    ],
+    stages: {
+      personal: [{ id: "5", name: "Не спланированы" }, { id: "6", name: "На этой неделе" }],
+      "153": [{ id: "1053", name: "Оценка" }, { id: "1054", name: "Новые" }, { id: "1089", name: "В работе" }],
+      "12": [{ id: "2001", name: "Бэклог продукта с очень длинным названием стадии" }, { id: "2002", name: "Готово" }],
+    },
+    links: {
+      "9001": [{
+        provider: "bitrix24", external_id: "4790", title: "Сделать презентацию", stage_name: "Оценка",
+        url: "https://acme.bitrix24.ru/workgroups/group/153/tasks/task/view/4790/",
+      }],
+    },
+    nextId: 4812,
+  };
+
+  function trackerPublic() {
+    return [{
+      id: "bitrix24", title: "Битрикс24", short_title: "Б24", connected: mockTracker.connected,
+      connection: mockTracker.connected ? { transport: "webhook", portal: "https://acme.bitrix24.ru", account_name: "Вова П" } : {},
+      defaults: mockTracker.defaults,
+    }];
+  }
+
+  function trackerMockResponse(basePath, method, opts) {
+    if (basePath.indexOf("/trackers") !== 0) return null;
+    var body = {};
+    try { body = opts && opts.body ? JSON.parse(opts.body) : {}; } catch (_) {}
+    var path = String((opts && opts._path) || basePath);
+    if (basePath === "/trackers") return { trackers: trackerPublic() };
+    if (basePath === "/trackers/bitrix24/boards") return { boards: mockTracker.boards };
+    var sm = /^\/trackers\/bitrix24\/boards\/([^/]+)\/stages$/.exec(basePath);
+    if (sm) return { stages: mockTracker.stages[decodeURIComponent(sm[1])] || [] };
+    if (basePath === "/trackers/bitrix24/settings") {
+      mockTracker.defaults = body;
+      return { ok: true, defaults: body };
+    }
+    if (basePath === "/trackers/bitrix24/webhook") {
+      mockTracker.connected = method !== "DELETE";
+      return method === "DELETE" ? { disconnected: true } : { connected: true, connection: trackerPublic()[0].connection };
+    }
+    if (basePath === "/trackers/describe-wwa") {
+      var t = String(body.title || "задача");
+      return {
+        ok: true,
+        description:
+          "Зачем\nКлиенту нужно сверять оплаты со своей бухгалтерией без ручного копирования («" + t + "»).\n\n" +
+          "Что сделать\n- Кнопка «Выгрузить в CSV» на экране оплат\n- Поля: дата, сумма, плательщик, статус, ID транзакции\n- Учитывать текущие фильтры экрана\n\n" +
+          "Критерии приёмки\n- Файл открывается в Excel без проблем с кодировкой\n- Выгрузка за месяц — меньше 10 секунд\n- Уточнить: нужен ли отдельный столбец с НДС",
+      };
+    }
+    if (basePath === "/trackers/bitrix24/tasks") {
+      var id = String(mockTracker.nextId++);
+      var url = "https://acme.bitrix24.ru/workgroups/group/" + (body.board_id || "0") + "/tasks/task/view/" + id + "/";
+      if (body.calendar_task_id) {
+        (mockTracker.links[body.calendar_task_id] = mockTracker.links[body.calendar_task_id] || []).push({
+          provider: "bitrix24", external_id: id, url: url, title: body.title, stage_name: body.stage_name || "",
+        });
+      }
+      return { ok: true, external: { provider: "bitrix24", id: id, url: url }, chip_label: body.title };
+    }
+    if (basePath === "/trackers/links") {
+      var cm = /calendar_task_id=([^&]+)/.exec(path);
+      return { links: (cm && mockTracker.links[decodeURIComponent(cm[1])]) || [] };
+    }
+    return null;
+  }
+
   function nowIso() {
     return new Date().toISOString();
   }
@@ -882,7 +957,11 @@
       var m = /days=(\d+)/.exec(String((opts && opts._path) || ""));
       return mockExpenses(m ? parseInt(m[1], 10) : 7);
     }
-    if (basePath === "/integrations" && method === "GET") return mockProfile.integrations;
+    if (basePath === "/integrations" && method === "GET") {
+      return Object.assign({}, mockProfile.integrations, { trackers: trackerPublic() });
+    }
+    var trackerRes = trackerMockResponse(basePath, method, opts);
+    if (trackerRes) return trackerRes;
     if (basePath === "/profile/telegram-leo") {
       if (method === "PATCH") {
         var b = JSON.parse((opts && opts.body) || "{}");

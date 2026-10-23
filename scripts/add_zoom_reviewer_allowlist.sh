@@ -34,11 +34,14 @@ if ! [[ "$USER_ID" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-SSH_USER="$(_env_get SSH_USERNAME)"
-SSH_PASS="$(_env_get SSH_PASSWORD)"
-SSH_HOST="$(_env_get SSH_IP)"
+SSH_HOST="$(_env_get DEPLOY_SSH_HOST)"
+SSH_USER="$(_env_get DEPLOY_SSH_USER)"
+SSH_USER="${SSH_USER:-root}"
+SSH_PASS="$(_env_get DEPLOY_SSH_PASSWORD)"
 SSH_PORT="$(_env_get DEPLOY_SSH_PORT)"
 SSH_PORT="${SSH_PORT:-22}"
+SSH_IDENTITY="$(_env_get SSH_IDENTITY_FILE)"
+SSH_IDENTITY="${SSH_IDENTITY:-$HOME/.ssh/leo_server}"
 
 if [[ "$SSH_USER" == *@* ]]; then
   _host_part="${SSH_USER#*@}"
@@ -47,17 +50,19 @@ if [[ "$SSH_USER" == *@* ]]; then
 fi
 SSH_HOST="${SSH_HOST#*@}"
 
-if [[ -z "$SSH_USER" || -z "$SSH_HOST" || -z "$SSH_PASS" ]]; then
-  echo "Need SSH_USERNAME, SSH_IP, SSH_PASSWORD in .env" >&2
+if [[ -z "$SSH_HOST" ]]; then
+  echo "Need DEPLOY_SSH_HOST in .env" >&2
   exit 1
 fi
 
-if ! command -v sshpass >/dev/null 2>&1; then
-  echo "Install sshpass" >&2
+if [[ -f "$SSH_IDENTITY" ]]; then
+  SSH=(ssh -i "$SSH_IDENTITY" -o IdentitiesOnly=yes -p "$SSH_PORT" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20)
+elif [[ -n "$SSH_PASS" ]] && command -v sshpass >/dev/null 2>&1; then
+  SSH=(sshpass -p "$SSH_PASS" ssh -p "$SSH_PORT" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20)
+else
+  echo "Need ~/.ssh/leo_server (SSH_IDENTITY_FILE) or DEPLOY_SSH_PASSWORD + sshpass" >&2
   exit 1
 fi
-
-SSH=(sshpass -p "$SSH_PASS" ssh -p "$SSH_PORT" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20)
 
 _remote_script=$(cat <<EOF
 set -euo pipefail
