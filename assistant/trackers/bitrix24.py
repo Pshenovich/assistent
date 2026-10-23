@@ -28,22 +28,25 @@ from assistant.trackers.markup import md_to_bbcode
 PROVIDER_ID = "bitrix24"
 PERSONAL_BOARD_ID = "personal"
 
-_WEBHOOK_RE = re.compile(r"^https://[A-Za-z0-9.-]+/rest/\d+/[A-Za-z0-9_]+/?$")
+# Адрес вебхука в любой вставке: вокруг может быть текст, невидимые символы, пример метода после токена.
+_WEBHOOK_FIND_RE = re.compile(r"https?://([A-Za-z0-9.-]+\.[A-Za-z]{2,})/rest/(\d+)/([A-Za-z0-9_-]+)", re.IGNORECASE)
+_INVISIBLE_RE = re.compile(r"[\s\u00a0\u200b-\u200f\u2028\u2029\u2060\ufeff]+")
 _STAGES_TTL_SEC = 600
 _STAGES_CACHE: dict[tuple[int, str], tuple[float, list[Stage]]] = {}
 
 
 def normalize_webhook(url: str) -> str:
-    value = str(url or "").strip().strip('"').strip("'")
-    # Битрикс показывает пример вызова — отрезаем имя метода, если его скопировали вместе с адресом.
-    value = re.sub(r"/[a-z_]+(?:\.[a-z_]+)+(?:\.json)?/?$", "/", value, flags=re.IGNORECASE)
-    if not value.endswith("/"):
-        value += "/"
-    if not _WEBHOOK_RE.match(value):
+    value = _INVISIBLE_RE.sub("", str(url or ""))
+    m = _WEBHOOK_FIND_RE.search(value)
+    if not m:
+        # Сам адрес — секрет: в лог только его форма (буквы → a, цифры → 9).
+        shape = re.sub(r"[0-9]", "9", re.sub(r"[A-Za-z]", "a", value))[:120]
+        print(f"[trackers] bitrix webhook rejected shape={shape!r}")
         raise TrackerError(
             "Это не похоже на адрес вебхука. Нужен адрес вида https://ваш-портал.bitrix24.ru/rest/1/abc123/"
         )
-    return value
+    host, user_id, token = m.group(1).lower(), m.group(2), m.group(3)
+    return f"https://{host}/rest/{user_id}/{token}/"
 
 
 _SCOPE_BY_METHOD = {"user": "«Пользователи»", "task": "«Задачи»", "tasks": "«Задачи»", "sonet_group": "«Рабочие группы»"}

@@ -96,11 +96,18 @@ def test_normalize_webhook():
     assert b24.normalize_webhook("https://acme.bitrix24.ru/rest/7/abc123xyz") == HOOK
     # Скопировали вместе с примером метода — отрезаем.
     assert b24.normalize_webhook(HOOK + "profile.json") == HOOK
+    assert b24.normalize_webhook(HOOK + "profile/") == HOOK
     assert b24.normalize_webhook(HOOK + "tasks.task.add.json") == HOOK
+    # Невидимые символы и текст вокруг (копирование из Telegram, Битрикса).
+    assert b24.normalize_webhook("\u200b" + HOOK + "\u200b\n") == HOOK
+    assert b24.normalize_webhook("Вебхук: " + HOOK + " ") == HOOK
+    assert b24.normalize_webhook("http://ACME.bitrix24.ru/rest/7/abc123xyz/") == HOOK
+    assert b24.normalize_webhook("https://obuchat.bitrix24.ru/rest/73/9q8w7e6r5t4eg4/") == (
+        "https://obuchat.bitrix24.ru/rest/73/9q8w7e6r5t4eg4/")
     with pytest.raises(TrackerError):
         b24.normalize_webhook("https://acme.bitrix24.ru/marketplace/")
     with pytest.raises(TrackerError):
-        b24.normalize_webhook("http://acme.bitrix24.ru/rest/7/abc/")
+        b24.normalize_webhook("abc123xyz")
 
 
 def test_connect_stores_encrypted_webhook(fake):
