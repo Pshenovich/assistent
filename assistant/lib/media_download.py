@@ -25,10 +25,18 @@ _YANDEX_DISK_HOSTS = frozenset(
 def _filename_from_disposition(header: str | None) -> str | None:
     if not header:
         return None
-    m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";\n]+)"?', header, re.I)
-    if m:
-        return unquote(m.group(1).strip().strip('"'))
-    return None
+    m = re.search(r"filename\*=(?:UTF-8'')?\"?([^\";\n]+)\"?", header, re.I) or re.search(
+        r'filename="?([^";\n]+)"?', header, re.I
+    )
+    if not m:
+        return None
+    name = unquote(m.group(1).strip().strip('"'))
+    try:
+        # requests декодирует заголовки как latin-1, а Google и др. шлют UTF-8 байты
+        name = name.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+    return name
 
 
 def _filename_from_url(url: str) -> str:
@@ -83,11 +91,34 @@ def resolve_yandex_disk_download_url(url: str) -> tuple[str, str | None]:
     return href, fname
 
 
+_GOOGLE_DRIVE_HOSTS = frozenset({"drive.google.com", "docs.google.com"})
+_GOOGLE_DRIVE_DOWNLOAD = "https://drive.usercontent.google.com/download"
+
+
+def google_drive_file_id(url: str) -> str | None:
+    """ID файла из ссылки Google Диска (/file/d/<id>/view, open?id=, uc?id=)."""
+    p = urlparse((url or "").strip())
+    if (p.hostname or "").lower() not in _GOOGLE_DRIVE_HOSTS:
+        return None
+    m = re.search(r"/file/d/([A-Za-z0-9_-]{10,})", p.path or "")
+    if m:
+        return m.group(1)
+    if (p.path or "").rstrip("/") in ("/open", "/uc"):
+        ids = parse_qs(p.query or "").get("id") or []
+        if ids and re.fullmatch(r"[A-Za-z0-9_-]{10,}", ids[0]):
+            return ids[0]
+    return None
+
+
 def resolve_download_url(url: str) -> tuple[str, str | None]:
-    """Нормализует ссылку: для Яндекс.Диска возвращает прямой URL."""
+    """Нормализует ссылку: Яндекс.Диск и Google Диск → прямой URL на файл."""
     u = (url or "").strip()
     if is_yandex_disk_public_url(u):
         return resolve_yandex_disk_download_url(u)
+    gid = google_drive_file_id(u)
+    if gid:
+        # confirm=t пропускает страницу «не удалось проверить на вирусы» у больших файлов
+        return f"{_GOOGLE_DRIVE_DOWNLOAD}?id={gid}&export=download&confirm=t", None
     return u, None
 
 
@@ -117,6 +148,11 @@ def download_url_bytes(url: str) -> tuple[bytes, str]:
         ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
         if ctype:
             if any(ctype.startswith(p) for p in _HTML_MARKERS):
+                if "drive.usercontent.google.com" in u:
+                    raise ValueError(
+                        "Google Диск не отдал файл: откройте доступ "
+                        "«Все, у кого есть ссылка» и пришлите ссылку ещё раз."
+                    )
                 raise ValueError(
                     "По ссылке отдаётся веб-страница, а не файл. "
                     "Нужна прямая ссылка на аудио или видео."
