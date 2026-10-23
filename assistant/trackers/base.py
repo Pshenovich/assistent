@@ -36,12 +36,24 @@ class Stage:
 
 
 @dataclass
+class Person:
+    id: str
+    name: str
+    position: str = ""
+    photo: str = ""
+
+    def public(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class TaskDraft:
     title: str
     description: str = ""
     board_id: str = ""
     stage_id: str = ""
     responsible: str = ""
+    responsible_id: str = ""  # выбран из списка — ищем по ID, не по имени
     deadline: str = ""  # YYYY-MM-DD
 
 
@@ -65,5 +77,7 @@ class TrackerProvider(Protocol):
     def list_boards(self, uid: int) -> list[Board]: ...
 
     def list_stages(self, uid: int, board_id: str) -> list[Stage]: ...
+
+    def search_users(self, uid: int, query: str) -> list[Person]: ...
 
     def create_task(self, uid: int, draft: TaskDraft) -> CreatedTask: ...

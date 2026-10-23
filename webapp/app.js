@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-trackers";
+  var WEBAPP_BUILD = "20261023-trackers2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -15797,6 +15797,107 @@
     return promise;
   }
 
+  // Исполнитель из трекера: список сотрудников при фокусе и по мере ввода. state: { id, name } выбранного.
+  function bindTrackerUserPicker(input, listEl, providerId, state, onPick) {
+    if (!input || !listEl) return;
+    var timer = null;
+    var seq = 0;
+    function hide() {
+      listEl.classList.add("hidden");
+      listEl.innerHTML = "";
+    }
+    function initials(name) {
+      return String(name || "")
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map(function (w) {
+          return w.charAt(0).toUpperCase();
+        })
+        .join("");
+    }
+    function render(users, q) {
+      listEl.innerHTML = "";
+      if (!users.length) {
+        var empty = document.createElement("div");
+        empty.className = "tracker-user-empty";
+        empty.textContent = q ? "Никого не нашли в Битрикс24" : "Нет сотрудников";
+        listEl.appendChild(empty);
+      }
+      users.slice(0, 8).forEach(function (u) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "tracker-user-item";
+        var av = document.createElement("span");
+        av.className = "tracker-user-avatar";
+        av.textContent = initials(u.name);
+        var text = document.createElement("span");
+        text.className = "tracker-user-text";
+        var nm = document.createElement("span");
+        nm.className = "tracker-user-name";
+        nm.textContent = u.name;
+        text.appendChild(nm);
+        if (u.position) {
+          var pos = document.createElement("span");
+          pos.className = "tracker-user-pos";
+          pos.textContent = u.position;
+          text.appendChild(pos);
+        }
+        b.appendChild(av);
+        b.appendChild(text);
+        // mousedown, а не click: иначе blur поля успевает спрятать список.
+        b.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+        });
+        b.addEventListener("click", function () {
+          state.id = String(u.id);
+          state.name = u.name;
+          input.value = u.name;
+          input.classList.add("has-user");
+          hide();
+          if (onPick) onPick(state);
+        });
+        listEl.appendChild(b);
+      });
+      listEl.classList.remove("hidden");
+    }
+    function load() {
+      var q = String(input.value || "").trim();
+      var my = ++seq;
+      trackerGet("/trackers/" + encodeURIComponent(providerId) + "/users?q=" + encodeURIComponent(q))
+        .then(function (r) {
+          if (my !== seq || document.activeElement !== input) return;
+          render((r && r.users) || [], q);
+        })
+        .catch(function () {
+          if (my === seq) hide();
+        });
+    }
+    if (state.id && state.name && input.value === state.name) input.classList.add("has-user");
+    input.addEventListener("input", function () {
+      if (state.id && input.value !== state.name) {
+        state.id = "";
+        state.name = "";
+        input.classList.remove("has-user");
+        if (onPick) onPick(state);
+      }
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(load, 250);
+    });
+    input.addEventListener("focus", function () {
+      if (!state.id) load();
+    });
+    input.addEventListener("blur", function () {
+      window.setTimeout(hide, 120);
+    });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !listEl.classList.contains("hidden")) {
+        e.stopPropagation();
+        hide();
+      }
+    });
+  }
+
   function autosizeTrackerDesc(el) {
     if (!el) return;
     el.style.height = "auto";
@@ -15854,6 +15955,7 @@
       '<select id="m-trk-stage" class="tracker-select"></select></label>' +
       '<label class="event-sheet-row tracker-row"><span class="event-sheet-row-label">Исполнитель</span>' +
       '<input id="m-trk-resp" class="tracker-input" type="text" autocomplete="off" placeholder="Я" /></label>' +
+      '<div id="m-trk-resp-list" class="tracker-user-list hidden" role="listbox" aria-label="Сотрудники"></div>' +
       '<label class="event-sheet-row tracker-row"><span class="event-sheet-row-label">Срок</span>' +
       '<input id="m-trk-deadline" class="tracker-input tracker-input--date" type="date" /></label>' +
       "</div>" +
@@ -15894,6 +15996,13 @@
       ctxEl.textContent = src ? "Лео учтёт контекст: «" + src + "»" : "Лео учтёт контекст заметки";
     }
     bindTrackerWwa(seed);
+    trackerSheet.resp = { id: "", name: "" };
+    bindTrackerUserPicker(
+      document.getElementById("m-trk-resp"),
+      document.getElementById("m-trk-resp-list"),
+      tracker.id,
+      trackerSheet.resp
+    );
     bindTrackerBoardStage(
       tracker.id,
       document.getElementById("m-trk-board"),
@@ -15996,6 +16105,7 @@
       stage_id: stageSel ? stageSel.value : "",
       stage_name: selectedOptionText(stageSel),
       responsible: String((document.getElementById("m-trk-resp") || {}).value || "").trim(),
+      responsible_id: st.resp && st.resp.id ? st.resp.id : "",
       deadline: String((document.getElementById("m-trk-deadline") || {}).value || ""),
       note_id: String(st.seed.note_id || ""),
       calendar_task_id: String(st.seed.calendar_task_id || ""),
@@ -36767,11 +36877,18 @@
     var resp = document.createElement("input");
     resp.type = "text";
     resp.placeholder = "Я";
+    resp.autocomplete = "off";
     resp.value = d.resp != null ? d.resp : f.assignee || "";
     resp.addEventListener("input", function () {
       d.resp = resp.value;
     });
-    grid.appendChild(resp);
+    var respBox = focusEl("div", "focus-tracker-resp");
+    var respList = focusEl("div", "tracker-user-list hidden");
+    respBox.appendChild(resp);
+    respBox.appendChild(respList);
+    grid.appendChild(respBox);
+    d.respPick = d.respPick || { id: "", name: "" };
+    bindTrackerUserPicker(resp, respList, tracker.id, d.respPick);
     label("Срок");
     var due = document.createElement("input");
     due.type = "date";
@@ -36830,6 +36947,7 @@
             stage_id: stageSel.value,
             stage_name: selectedOptionText(stageSel),
             responsible: String(resp.value || "").trim(),
+            responsible_id: d.respPick && d.respPick.id ? d.respPick.id : "",
             deadline: due.value || "",
             note_id: noteId,
             focus_key: f.key || "",

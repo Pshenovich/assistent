@@ -33,7 +33,7 @@ class FakeBitrix:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
-        self.users = [{"ID": "42", "NAME": "Иван", "LAST_NAME": "Петров"}]
+        self.users = [{"ID": "42", "NAME": "Иван", "LAST_NAME": "Петров", "WORK_POSITION": "Разработчик", "ACTIVE": True}]
 
     def __call__(self, base: str, method: str, params: dict | None = None):
         params = params or {}
@@ -55,6 +55,8 @@ class FakeBitrix:
             }
         if method == "user.search":
             return self.users
+        if method == "user.get":
+            return self.users + [{"ID": "50", "NAME": "Уволенный", "LAST_NAME": "Сотрудник", "ACTIVE": False}]
         if method == "tasks.task.add":
             return {"task": {"id": "4812"}}
         if method == "task.stages.movetask":
@@ -306,3 +308,25 @@ def test_call_auth_error_shows_bitrix_reason(monkeypatch):
         "error": "INVALID_CREDENTIALS", "error_description": "Invalid request credentials"}))
     with pytest.raises(TrackerError, match=r"не принят.*Invalid request credentials"):
         b24.call(HOOK, "user.current")
+
+
+def test_search_users_and_create_by_id(fake):
+    t = b24.Bitrix24Tracker()
+    t.connect_webhook(UID, HOOK)
+    found = t.search_users(UID, "Иван")
+    assert [(p.id, p.name, p.position) for p in found] == [("42", "Иван Петров", "Разработчик")]
+    assert fake.last("user.search") == {"FIND": "Иван"}
+    # Без запроса — активные сотрудники (уволенные отброшены).
+    assert [p.id for p in t.search_users(UID, "")] == ["42"]
+    n = len([m for m, _ in fake.calls if m == "user.search"])
+    t.create_task(UID, TaskDraft(title="X", responsible="Иван Петров", responsible_id="42"))
+    assert fake.last("tasks.task.add")["fields"]["RESPONSIBLE_ID"] == 42
+    assert len([m for m, _ in fake.calls if m == "user.search"]) == n  # выбран из списка — без поиска
+
+
+def test_users_endpoint(client):
+    h = _headers(UID)
+    client.post("/api/miniapp/trackers/bitrix24/webhook", json={"url": HOOK}, headers=h)
+    r = client.get("/api/miniapp/trackers/bitrix24/users?q=Иван", headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["users"] == [{"id": "42", "name": "Иван Петров", "position": "Разработчик", "photo": ""}]

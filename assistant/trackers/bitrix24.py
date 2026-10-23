@@ -18,6 +18,7 @@ import requests
 from assistant.trackers.base import (
     Board,
     CreatedTask,
+    Person,
     Stage,
     TaskDraft,
     TrackerError,
@@ -196,6 +197,44 @@ class Bitrix24Tracker:
         _STAGES_CACHE[key] = (time.monotonic(), stages)
         return list(stages)
 
+    def search_users(self, uid: int, query: str) -> list[Person]:
+        """Сотрудники портала для выбора исполнителя: по имени/фамилии или первые 50 без запроса."""
+        base = self._creds(uid)["secret"]
+        q = str(query or "").strip()
+        found: list[dict[str, Any]] = []
+        if q:
+            from assistant.services.bitrix_task_create import _name_search_queries
+
+            seen: set[str] = set()
+            for variant in _name_search_queries(q):
+                try:
+                    batch = call(base, "user.search", {"FIND": variant})
+                except TrackerError:
+                    batch = None
+                for u in batch or []:
+                    if isinstance(u, dict) and u.get("ID") and str(u["ID"]) not in seen:
+                        seen.add(str(u["ID"]))
+                        found.append(u)
+                if found:
+                    break
+        else:
+            result = call(base, "user.get", {"FILTER": {"ACTIVE": True}, "SORT": "LAST_NAME", "ORDER": "ASC"})
+            found = [u for u in (result or []) if isinstance(u, dict) and u.get("ID")]
+        people = []
+        for u in found:
+            if u.get("ACTIVE") is False or str(u.get("ACTIVE") or "").upper() == "N":
+                continue  # уволенные
+            name = _user_name(u)
+            if not name:
+                continue
+            people.append(Person(
+                id=str(u["ID"]),
+                name=name,
+                position=str(u.get("WORK_POSITION") or "").strip(),
+                photo=str(u.get("PERSONAL_PHOTO") or "") if str(u.get("PERSONAL_PHOTO") or "").startswith("http") else "",
+            ))
+        return people[:50]
+
     def _find_user(self, base: str, query: str) -> tuple[str, str]:
         from assistant.services.bitrix_task_create import _name_search_queries, _pick_user
 
@@ -221,7 +260,9 @@ class Bitrix24Tracker:
         if description:
             fields["DESCRIPTION"] = description
         responsible_id, responsible_name = creds.get("account_id") or "", creds.get("account_name") or ""
-        if str(draft.responsible or "").strip():
+        if str(draft.responsible_id or "").strip().isdigit():
+            responsible_id, responsible_name = str(draft.responsible_id).strip(), str(draft.responsible or "").strip()
+        elif str(draft.responsible or "").strip():
             responsible_id, responsible_name = self._find_user(base, draft.responsible.strip())
         if responsible_id:
             fields["RESPONSIBLE_ID"] = int(responsible_id)

@@ -13390,6 +13390,7 @@ class _MiniappTrackerTaskBody(BaseModel):
     stage_id: str = ""
     stage_name: str = ""
     responsible: str = ""
+    responsible_id: str = ""
     deadline: str = ""
     note_id: str = ""
     calendar_task_id: str = ""
@@ -13459,6 +13460,17 @@ async def miniapp_tracker_stages(
     return {"stages": [s.public() for s in stages]}
 
 
+@miniapp_router.get("/trackers/{provider}/users")
+async def miniapp_tracker_users(
+    provider: str,
+    q: str = "",
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict:
+    p = _tracker_or_404(provider)
+    people = await run_in_threadpool(_tracker_call, p.search_users, int(principal.telegram_user_id), q[:80])
+    return {"users": [x.public() for x in people]}
+
+
 @miniapp_router.put("/trackers/{provider}/settings")
 async def miniapp_tracker_settings(
     provider: str,
@@ -13501,6 +13513,7 @@ async def miniapp_tracker_create_task(
         board_id=body.board_id,
         stage_id=body.stage_id,
         responsible=body.responsible,
+        responsible_id=body.responsible_id,
         deadline=body.deadline,
     )
     created = await run_in_threadpool(_tracker_call, p.create_task, uid, draft)

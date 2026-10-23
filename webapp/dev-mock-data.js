@@ -89,6 +89,17 @@
     if (basePath === "/trackers/bitrix24/boards") return { boards: mockTracker.boards };
     var sm = /^\/trackers\/bitrix24\/boards\/([^/]+)\/stages$/.exec(basePath);
     if (sm) return { stages: mockTracker.stages[decodeURIComponent(sm[1])] || [] };
+    if (basePath === "/trackers/bitrix24/users") {
+      var um = /[?&]q=([^&]*)/.exec(path);
+      var uq = um ? decodeURIComponent(um[1]).toLowerCase() : "";
+      var people = [
+        { id: "42", name: "Иван Петров", position: "Ведущий разработчик бэкенда с очень длинной должностью" },
+        { id: "43", name: "Ульяна Смирнова", position: "Менеджер проектов" },
+        { id: "44", name: "Константин Константинопольский", position: "" },
+        { id: "45", name: "Анна Иванова", position: "QA" },
+      ];
+      return { users: people.filter(function (p) { return !uq || p.name.toLowerCase().indexOf(uq) >= 0; }) };
+    }
     if (basePath === "/trackers/bitrix24/settings") {
       mockTracker.defaults = body;
       return { ok: true, defaults: body };
