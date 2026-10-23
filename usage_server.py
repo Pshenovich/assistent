@@ -10936,7 +10936,24 @@ async def miniapp_note_sheet_patch(
 
     uid = int(principal.telegram_user_id)
     if note_sheets_store.is_primary_id(sheet_id):
-        raise HTTPException(status_code=400, detail="Основную правьте через заметку")
+        # Основной лист: переименовать можно, как любой; текст — через заметку.
+        if body.title is None or body.description is not None or body.kind is not None:
+            raise HTTPException(status_code=400, detail="Основную правьте через заметку")
+
+        def _rename() -> dict[str, Any] | None:
+            note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
+            if note is None:
+                return None
+            owner = str(note.get("owner_user_id") or uid)
+            return note_sheets_store.rename_primary(owner, note, str(body.title or ""), actor_user_id=uid)
+
+        try:
+            primary = await run_in_threadpool(_rename)
+        except note_sheets_store.SheetError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if primary is None:
+            raise HTTPException(status_code=404, detail="Заметка не найдена")
+        return {"ok": True, "item": primary, "note_updated_at": primary.get("updated_at")}
     if body.title is None and body.description is None and body.kind is None:
         raise HTTPException(status_code=400, detail="Укажите title и/или description")
     try:
@@ -11006,7 +11023,22 @@ async def miniapp_note_sheet_delete(
 
     uid = int(principal.telegram_user_id)
     if note_sheets_store.is_primary_id(sheet_id):
-        raise HTTPException(status_code=400, detail="Основную нельзя удалить")
+        # Основной лист: его место занимает следующий текстовый лист.
+        def _del_primary() -> dict[str, Any] | None:
+            note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
+            if note is None:
+                return None
+            owner = str(note.get("owner_user_id") or uid)
+            return note_sheets_store.delete_primary(owner, note, actor_user_id=uid)
+
+        try:
+            res = await run_in_threadpool(_del_primary)
+        except note_sheets_store.SheetError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if res is None:
+            raise HTTPException(status_code=404, detail="Заметка не найдена")
+        await run_in_threadpool(_memory_sheet_changed, uid, note_id)
+        return {"ok": True, **res}
     try:
         extra_id = int(sheet_id)
     except (TypeError, ValueError) as e:

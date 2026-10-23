@@ -465,6 +465,48 @@ def _record_sheet_version(sheet: dict[str, Any], *, new_body: Optional[str] = No
         print(f"[note_sheets] version failed sheet={sheet.get('id')} err={e!r}")
 
 
+def _primary_locked(note: dict[str, Any]) -> bool:
+    """У встречи с саммари основной лист — «Саммари»: по названию код отличает саммари от расшифровки."""
+    from assistant.services import transcription_notes as tnotes
+
+    return tnotes.has_summary(note)
+
+
+def rename_primary(owner_user_id: int | str, note: dict[str, Any], title: str, *, actor_user_id: Any = None) -> dict[str, Any]:
+    """Переименовать основной лист (как любой другой)."""
+    if _primary_locked(note):
+        raise SheetError("Лист «Саммари» у встречи переименовать нельзя")
+    t = " ".join(str(title or "").split())[:80]
+    if not t:
+        raise SheetError("Укажите название листа")
+    updated = notes_store.update_note(owner_user_id, int(note["id"]), primary_sheet_title=t, actor_user_id=actor_user_id)
+    if not updated:
+        raise SheetError("Заметка не найдена")
+    return primary_sheet(updated)
+
+
+def delete_primary(owner_user_id: int | str, note: dict[str, Any], *, actor_user_id: Any = None) -> dict[str, Any]:
+    """Удалить основной лист: его место занимает следующий текстовый лист (с текстом и названием).
+    Канвас основным быть не может; если текстовых листов больше нет — удалять нечего, только заметку."""
+    if _primary_locked(note):
+        raise SheetError("Лист «Саммари» у встречи удалить нельзя")
+    nxt = next((x for x in list_extra_sheets(int(note["id"])) if x.get("kind") != SHEET_KIND_WEB), None)
+    if nxt is None:
+        raise SheetError("Это единственный текстовый лист — его нельзя удалить, можно удалить заметку")
+    updated = notes_store.update_note(
+        owner_user_id,
+        int(note["id"]),
+        body=str(nxt.get("body") or ""),
+        primary_sheet_title=str(nxt.get("title") or ""),
+        allow_empty_body=True,
+        actor_user_id=actor_user_id,
+    )
+    if not updated:
+        raise SheetError("Заметка не найдена")
+    delete_sheet(int(note["id"]), int(nxt["id"]))
+    return {"primary": primary_sheet(updated), "promoted_sheet_id": int(nxt["id"])}
+
+
 def delete_sheet(note_id: int, sheet_id: int) -> bool:
     existing = get_extra_sheet(note_id, sheet_id)
     if existing:

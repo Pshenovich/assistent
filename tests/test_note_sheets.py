@@ -76,6 +76,33 @@ class NoteSheetsStoreTests(unittest.TestCase):
         sheets.create_sheet(kb, "Черновик")
         self.assertEqual([s["title"] for s in sheets.list_sheets(kb)][1:], ["Черновик"])
 
+    def test_primary_rename_and_delete_promotes_next(self) -> None:
+        note = notes_store.create_note(7, "Проект", "<p>основной текст</p>")
+        canvas = sheets.create_sheet(note, "Слайды", body="<html>deck</html>", kind="web")
+        second = sheets.create_sheet(note, "Бюджет", body="<p>цифры</p>")
+        renamed = sheets.rename_primary(7, note, "  Обзор  ")
+        self.assertEqual(renamed["title"], "Обзор")
+        note = notes_store.get_note(7, note["id"])
+        res = sheets.delete_primary(7, note)
+        self.assertEqual(res["promoted_sheet_id"], second["id"])
+        note = notes_store.get_note(7, note["id"])
+        self.assertEqual(note["body"], "<p>цифры</p>")
+        self.assertEqual(note["primary_sheet_title"], "Бюджет")
+        self.assertEqual([s["title"] for s in sheets.list_sheets(note)], ["Бюджет", "Слайды"])
+        # Остался только канвас — основной текстовый лист удалить нельзя.
+        with self.assertRaises(sheets.SheetError):
+            sheets.delete_primary(7, note)
+        self.assertIsNotNone(sheets.get_extra_sheet(note["id"], canvas["id"]))
+
+    def test_meeting_summary_primary_locked(self) -> None:
+        note = notes_store.create_note(8, "Синк", "<p>итоги</p>", role=notes_store.TRANSCRIPTION_ROLE,
+                                       primary_sheet_title=notes_store.SUMMARY_SHEET_TITLE)
+        sheets.create_sheet(note, notes_store.TRANSCRIPT_SHEET_TITLE, body="<p>реплики</p>")
+        with self.assertRaises(sheets.SheetError):
+            sheets.rename_primary(8, note, "Итоги")
+        with self.assertRaises(sheets.SheetError):
+            sheets.delete_primary(8, note)
+
     def test_delete_note_cascades(self) -> None:
         note = notes_store.create_note(6, "A", "b")
         extra = sheets.create_sheet(note, "Черновик")

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-kb1";
+  var WEBAPP_BUILD = "20261023-sheets1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261023-md2"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261023-font4"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -34121,7 +34121,7 @@
       }
       chip.addEventListener("click", function (e) {
         e.preventDefault();
-        if (String(s.id) === String(noteSheetState.leftId) && !s.is_primary) {
+        if (String(s.id) === String(noteSheetState.leftId) && !(s.is_primary && noteSheetState.primaryLocked)) {
           startNoteSheetRename(chip, s);
           return;
         }
@@ -34259,8 +34259,31 @@
     }
   }
 
+  // Основной лист переименовывается так же (PATCH sheets/main); текст его — в самой заметке.
+  async function persistPrimarySheetTitle(title) {
+    var noteId = noteSheetsNoteId();
+    if (!noteId || String(noteId).indexOf("tmp_") === 0) throw new Error("Сначала сохраните заметку");
+    var res = await apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/sheets/main", {
+      method: "PATCH",
+      body: JSON.stringify({ title: title }),
+    });
+    // Название листа меняет версию заметки — иначе следующее сохранение текста упрётся в «изменена другим».
+    var item = res && res.item;
+    var moreWrap = document.getElementById("note-editor-more-wrap");
+    if (moreWrap && item) {
+      if (item.revision) moreWrap._noteRevision = item.revision;
+      if (res.note_updated_at) moreWrap._noteUpdatedAt = res.note_updated_at;
+    }
+    var main = findNoteSheet(NOTE_SHEET_MAIN);
+    if (main && item && item.revision) main.revision = item.revision;
+    var cached = resolveLocalNoteFromCache({ id: noteId });
+    if (cached) cached.primary_sheet_title = title;
+  }
+
   function startNoteSheetRename(chip, sheet) {
-    if (!chip || !sheet || sheet.is_primary) return;
+    if (!chip || !sheet) return;
+    var isPrimary = !!(sheet.is_primary || isPrimarySheetId(sheet.id));
+    if (isPrimary && noteSheetState.primaryLocked) return;
     if (chip.classList.contains("is-editing")) return;
     var input = document.createElement("input");
     input.type = "text";
@@ -34304,7 +34327,7 @@
           clearTimeout(noteSheetState.sheetTimers[String(sheet.id)]);
           delete noteSheetState.sheetTimers[String(sheet.id)];
         }
-        persistExtraSheet(sheet.id)
+        (isPrimary ? persistPrimarySheetTitle(next) : persistExtraSheet(sheet.id))
           .then(function () {
             renderNoteSheetChips();
             renderNoteKnowledgeMenu();
@@ -34348,8 +34371,45 @@
     });
   }
 
+  // Основной лист: его место занимает следующий текстовый лист (сервер переносит текст и название).
+  async function deletePrimaryNoteSheet(sheet) {
+    var noteId = noteSheetsNoteId();
+    if (!noteId || String(noteId).indexOf("tmp_") === 0 || noteSheetState.primaryLocked) {
+      renderNoteSheetChips();
+      return;
+    }
+    var next = noteSheetState.sheets.filter(function (s) {
+      return s && !s.is_primary && !isPrimarySheetId(s.id) && !isWebSheet(s);
+    })[0];
+    if (!next) {
+      renderNoteSheetChips();
+      alert("Это единственный текстовый лист — его нельзя удалить. Можно удалить заметку целиком.");
+      return;
+    }
+    var ok = await confirmYesNoDialog(
+      "Удалить лист «" + (sheet.title || "Основная") + "»? Основным станет «" + (next.title || "Лист") + "»."
+    );
+    if (!ok) {
+      renderNoteSheetChips();
+      return;
+    }
+    try {
+      var body = getNoteEditorBodyEl();
+      if (body && typeof body._noteEditorFlush === "function") await body._noteEditorFlush();
+      if (noteSheetState.sheetTimers[String(next.id)]) await persistExtraSheet(next.id);
+      await apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/sheets/main", { method: "DELETE" });
+      var res = await apiFetch("/notes/local/" + encodeURIComponent(String(noteId)), { method: "GET" });
+      var item = res && res.item;
+      if (item) openLocalNoteDetail(item, { isLocal: true, knowledge: isKnowledgeNoteItem(item) });
+    } catch (e) {
+      alert((e && e.message) || String(e));
+      renderNoteSheetChips();
+    }
+  }
+
   async function deleteNoteSheet(sheet) {
-    if (!sheet || sheet.is_primary || isPrimarySheetId(sheet.id)) return;
+    if (!sheet) return;
+    if (sheet.is_primary || isPrimarySheetId(sheet.id)) return deletePrimaryNoteSheet(sheet);
     var id = String(sheet.id);
     var noteId = noteSheetsNoteId();
     if (!id || !noteId) return;
@@ -34699,6 +34759,8 @@
     destroyRightWebCanvas();
     clearCanvasSelections();
     noteSheetState.enabled = !!note;
+    // У встречи с саммари основной лист — «Саммари»: по названию сервер отличает саммари от расшифровки.
+    noteSheetState.primaryLocked = !!(note && isTranscriptionNoteItem(note) && String(note.primary_sheet_title || "") === "Саммари");
     noteSheetState.primaryBody = primaryBody || (note && (note.body || note.description)) || "";
     noteSheetState.leftId = NOTE_SHEET_MAIN;
     noteSheetState.rightMode = "discussion";
@@ -45087,6 +45149,19 @@
       }
       // Чип задачи во внешнем трекере (Битрикс24…): провайдер и ссылка на задачу там.
       if (tag === "span" && name === "data-leo-task-provider") return /^[a-z0-9]{1,32}$/.test(String(val || ""));
+      // Шрифт и кегль из редактора («Aa»): только font-family / font-size, без прочего CSS.
+      if (tag === "span" && name === "data-note-fs") return true;
+      if (tag === "span" && name === "style") {
+        return String(val || "")
+          .split(";")
+          .map(function (d) {
+            return d.trim();
+          })
+          .filter(Boolean)
+          .every(function (d) {
+            return /^font-size:\s*\d{1,2}px$/i.test(d) || /^font-family:\s*[a-z0-9 ,"'-]{1,120}$/i.test(d);
+          });
+      }
       if (tag === "span" && name === "data-leo-task-url") {
         return /^https:\/\/[^\s"'<>]{1,500}$/.test(String(val || ""));
       }

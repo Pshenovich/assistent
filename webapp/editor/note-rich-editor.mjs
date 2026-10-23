@@ -1249,6 +1249,17 @@ var NOTE_FONTS = [
   { id: "mono", label: "Моноширинный", css: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' },
 ];
 var NOTE_FONT_SIZES = ["12px", "14px", "16px", "18px", "20px", "24px", "30px"];
+// Заголовки при смене кегля всей заметки — пропорционально (как h1 1.3em / h2 1.12em в CSS).
+var NOTE_HEADING_SCALE = { 1: 1.3, 2: 1.12, 3: 1, 4: 1, 5: 1, 6: 1 };
+
+// Кегль из меню — всегда; посчитанный для заголовка (data-note-fs) — любой 10–60px.
+function noteFontSizeFrom(el) {
+  var v = String((el && el.style && el.style.fontSize) || "").trim();
+  if (NOTE_FONT_SIZES.indexOf(v) >= 0) return v;
+  var m = /^(\d{2})px$/.exec(v);
+  if (m && el.hasAttribute && el.hasAttribute("data-note-fs") && +m[1] >= 10 && +m[1] <= 60) return v;
+  return null;
+}
 
 function noteFontByCss(css) {
   var norm = String(css || "").replace(/["'\s]/g, "").toLowerCase();
@@ -1266,8 +1277,7 @@ var NoteTextStyle = TextStyle.extend({
       {
         tag: "span",
         getAttrs: function (el) {
-          var size = String(el.style.fontSize || "").trim();
-          return noteFontByCss(el.style.fontFamily) || NOTE_FONT_SIZES.indexOf(size) >= 0 ? {} : false;
+          return noteFontByCss(el.style.fontFamily) || noteFontSizeFrom(el) ? {} : false;
         },
       },
     ];
@@ -1294,11 +1304,13 @@ var NoteFontStyle = Extension.create({
           fontSize: {
             default: null,
             parseHTML: function (el) {
-              var v = String(el.style.fontSize || "").trim();
-              return NOTE_FONT_SIZES.indexOf(v) >= 0 ? v : null;
+              return noteFontSizeFrom(el);
             },
             renderHTML: function (attrs) {
-              return attrs.fontSize ? { style: "font-size: " + attrs.fontSize } : {};
+              if (!attrs.fontSize) return {};
+              var out = { style: "font-size: " + attrs.fontSize };
+              if (NOTE_FONT_SIZES.indexOf(attrs.fontSize) < 0) out["data-note-fs"] = "1";
+              return out;
             },
           },
         },
@@ -1588,6 +1600,7 @@ function mountToolbar(toolbarEl, editor) {
 
   var fontMenu =
     '<div class="note-tg-menu note-tg-menu--font hidden" data-menu-panel="font" role="menu">' +
+    '<p class="note-tg-menu-hint" data-font-target></p>' +
     '<p class="note-tg-menu-label">Шрифт</p>' +
     NOTE_FONTS.map(function (f) {
       return (
@@ -1739,9 +1752,65 @@ function mountToolbar(toolbarEl, editor) {
     // Курсор поставили сами (не сброс от касания панели) — тоже.
     else if (sel.empty && Date.now() - toolbarTouchAt > 1000) fontMenuRange = null;
   });
+  // Ничего не выделено — шрифт / кегль всей заметки: по каждому текстовому блоку.
+  // Кегль заголовков — пропорционально (H1 ×1.3, H2 ×1.12), шрифт — у всех.
+  function applyFontStyleToDoc(attrs) {
+    var sizeOnly = attrs.fontSize !== undefined && attrs.fontFamily === undefined;
+    var state = editor.state;
+    var type = state.schema.marks.textStyle;
+    var tr = state.tr;
+    var touched = false;
+    state.doc.descendants(function (node, pos, parent) {
+      if (!node.isText) return true;
+      var own = attrs;
+      if (sizeOnly && parent && parent.type.name === "heading") {
+        // Заголовок крупнее текста в той же пропорции, что и по умолчанию.
+        var scale = NOTE_HEADING_SCALE[parent.attrs.level] || 1;
+        own = { fontSize: attrs.fontSize ? Math.round(parseInt(attrs.fontSize, 10) * scale) + "px" : null };
+      }
+      var cur = node.marks.filter(function (m) {
+        return m.type === type;
+      })[0];
+      var next = Object.assign({}, cur ? cur.attrs : {}, own);
+      var has = Object.keys(next).some(function (k) {
+        return next[k] != null && next[k] !== "";
+      });
+      tr.removeMark(pos, pos + node.nodeSize, type);
+      if (has) tr.addMark(pos, pos + node.nodeSize, type.create(next));
+      touched = true;
+      return false;
+    });
+    if (!touched) {
+      editor.chain().focus().setNoteFontStyle(attrs).run();
+      return;
+    }
+    // Новый текст у курсора — тем же шрифтом.
+    var caretMarks = state.storedMarks || state.selection.$from.marks();
+    var caretStyle = caretMarks.filter(function (m) {
+      return m.type === type;
+    })[0];
+    var stored = caretMarks.filter(function (m) {
+      return m.type !== type;
+    });
+    var nextStored = Object.assign({}, caretStyle ? caretStyle.attrs : {}, attrs);
+    if (Object.keys(nextStored).some(function (k) { return nextStored[k] != null; })) stored = stored.concat(type.create(nextStored));
+    tr.setStoredMarks(stored);
+    tr.setMeta("noteFontApply", true);
+    editor.view.dispatch(tr);
+    editor.commands.focus();
+  }
+
+  function fontTargetIsDoc() {
+    return editor.state.selection.empty && !fontMenuRange;
+  }
+
   function applyFontStyle(attrs) {
     var sel = editor.state.selection;
     var range = !sel.empty ? { from: sel.from, to: sel.to } : fontMenuRange;
+    if (!range) {
+      applyFontStyleToDoc(attrs);
+      return;
+    }
     var max = editor.state.doc.content.size;
     var chain = editor.chain().focus().setMeta("noteFontApply", true);
     if (range && range.to <= max && range.from < range.to) chain = chain.setTextSelection(range);
@@ -1756,6 +1825,8 @@ function mountToolbar(toolbarEl, editor) {
       var fs = editor.state.selection;
       // Выделение пропало (повторное «Aa» на телефоне) — остаётся прошлый диапазон, пока текст не правили.
       if (!fs.empty) fontMenuRange = { from: fs.from, to: fs.to };
+      var hint = panel.querySelector("[data-font-target]");
+      if (hint) hint.textContent = fontTargetIsDoc() ? "Ко всей заметке · выделите текст, чтобы изменить часть" : "К выделенному тексту";
     }
     var wasOpen = !panel.classList.contains("hidden");
     closeTgMenus(toolbarEl);
@@ -3708,7 +3779,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261023-md2",
+  assetVersion: "20261023-font4",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,
