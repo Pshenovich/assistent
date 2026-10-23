@@ -30,12 +30,16 @@ def gpt_system_text(agent: dict[str, Any]) -> str:
 
 
 def calendar_addon(uid: int) -> str:
+    from assistant.services import mail_tools
+
     cal_addon = gcal_tools.now_prompt_line(uid) + "\n" + gcal_tools.SYSTEM_ADDON
     if not gcal_tools.has_google_calendar(uid):
         cal_addon += (
             "\nGoogle Календарь у пользователя не подключён: встречи не видны, доступны задачи "
             "и напоминания Leo. Если спрашивают про встречи — предложи подключить календарь в Профиле."
         )
+    if mail_tools.has_mail(uid):
+        cal_addon += "\n" + mail_tools.MAIL_ADDON
     return cal_addon
 
 
@@ -46,11 +50,17 @@ def append_system(system_text: str, block: str) -> str:
 
 
 def tool_kwargs(gcal_ctx: gcal_tools.GptCalendarContext, question: str) -> dict[str, Any]:
+    from assistant.services import mail_tools
+
+    tools = gcal_tools.active_tools(gcal_ctx.uid)
+    mail_q = mail_tools.looks_like_mail_question(question) and any(
+        t["function"]["name"] in mail_tools.MAIL_TOOL_NAMES for t in tools
+    )
     return {
-        "tools": gcal_tools.active_tools(),
+        "tools": tools,
         "tool_runner": gcal_tools.make_runner(gcal_ctx),
-        # Вопрос про календарь — модель обязана сначала посмотреть данные.
-        "tool_choice_first": "required" if gcal_tools.looks_like_calendar_question(question) else "auto",
+        # Вопрос про календарь или почту — модель обязана сначала посмотреть данные.
+        "tool_choice_first": "required" if gcal_tools.looks_like_calendar_question(question) or mail_q else "auto",
     }
 
 
@@ -135,6 +145,15 @@ def cal_marker_for_history(text: str) -> str:
             tid = str((a.get("payload") or {}).get("target_id") or "")
             if tid:
                 shown.append(f"«{a.get('title') or 'Задача'}» (task id {tid})")
+            continue
+        if kind == "email_thread":
+            p = a.get("payload") or {}
+            shown.append(f"письмо «{a.get('title') or 'без темы'}» от {p.get('from') or '?'} (mail key: {p.get('mail_key')})")
+            continue
+        if kind == "email_draft":
+            p = a.get("payload") or {}
+            st = {"sent": "отправлен", "sending": "отправляется", "failed": "не отправился"}.get(str(a.get("status")), "черновик у пользователя")
+            done.append(f"ответ на письмо «{a.get('title') or ''}» (mail key: {p.get('mail_key')}) — {st}")
             continue
         if kind.startswith("show_") or kind == "focus_item":
             continue
@@ -268,6 +287,14 @@ class ActionError(Exception):
     pass
 
 
+class ActionNeedsConfirm(ActionError):
+    """Отправка письма на адрес не из переписки — нужен явный повтор с подтверждением."""
+
+    def __init__(self, message: str, addrs: list[str]) -> None:
+        super().__init__(message)
+        self.addrs = addrs
+
+
 def apply_action_op(
     uid: int, action_id: str, op: str, *, telegram_username: str | None = None
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
@@ -297,6 +324,18 @@ def apply_action_op(
     elif op == "dismiss":
         if status == "proposed":
             gcal_tools.set_action_status(action_id, "dismissed")
+    elif op in ("send", "send_confirmed", "cancel_send") and a.get("kind") == "email_draft":
+        from assistant.services import mail_reply
+
+        try:
+            if op == "cancel_send":
+                mail_reply.cancel_send(uid, action_id)
+            else:
+                mail_reply.request_send(uid, action_id, confirm_new=op == "send_confirmed")
+        except mail_reply.NeedsConfirm as e:
+            raise ActionNeedsConfirm(str(e), e.addrs) from e
+        except mail_reply.ReplyError as e:
+            raise ActionError(str(e)) from e
     else:
         raise ActionError("Неизвестная операция")
     return gcal_tools.get_action(action_id) or a, created

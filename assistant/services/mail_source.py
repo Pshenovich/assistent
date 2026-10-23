@@ -234,7 +234,10 @@ def poll_all_users() -> int:
         except Exception as e:
             print(f"[mail] poll uid={uid} err={e!r}")
     try:
+        from assistant.stores import mail_attachments
+
         mail_index.purge_old()
+        mail_attachments.purge_old()
     except Exception as e:
         print(f"[mail] purge err={e!r}")
     return total

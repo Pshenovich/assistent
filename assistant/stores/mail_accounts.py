@@ -60,6 +60,9 @@ def _conn() -> sqlite3.Connection:
         )
         """
     )
+    _CONN.execute(
+        "CREATE TABLE IF NOT EXISTS mail_settings (owner_user_id TEXT PRIMARY KEY, signature TEXT NOT NULL DEFAULT '')"
+    )
     _CONN.commit()
     return _CONN
 
@@ -210,3 +213,22 @@ def public(acc: dict[str, Any]) -> dict[str, Any]:
     """Для клиента: без секретов."""
     return {k: acc.get(k) for k in ("account_id", "provider", "email", "auth", "send_enabled", "status",
                                     "last_error", "last_sync_at", "stats")}
+
+
+def signature(owner_user_id: Any) -> str:
+    with _LOCK:
+        r = _conn().execute("SELECT signature FROM mail_settings WHERE owner_user_id = ?", (str(owner_user_id),)).fetchone()
+    return str(r["signature"] or "") if r else ""
+
+
+def set_signature(owner_user_id: Any, text: str) -> str:
+    text = str(text or "").strip()[:1000]
+    with _LOCK:
+        conn = _conn()
+        conn.execute(
+            "INSERT INTO mail_settings (owner_user_id, signature) VALUES (?, ?)"
+            " ON CONFLICT(owner_user_id) DO UPDATE SET signature = excluded.signature",
+            (str(owner_user_id), text),
+        )
+        conn.commit()
+    return text

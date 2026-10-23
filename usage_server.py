@@ -7831,6 +7831,8 @@ async def miniapp_gpt_calendar_action_op(
         )
     except LookupError as e:
         raise HTTPException(status_code=404, detail="Действие не найдено") from e
+    except leo_agent.ActionNeedsConfirm as e:
+        raise HTTPException(status_code=409, detail={"message": str(e), "code": "new_recipients", "addrs": e.addrs}) from e
     except leo_agent.ActionError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
@@ -12763,6 +12765,126 @@ async def miniapp_mail_account_delete(account_id: str, principal: _MiniappPrinci
     from assistant.services import mail_connect
 
     return {"ok": await run_in_threadpool(mail_connect.disconnect, int(principal.telegram_user_id), account_id)}
+
+
+# ---------------------------------------------------------------- почта: разбор и ответ из чата
+
+
+def _mail_reply_error(e: Exception) -> HTTPException:
+    from assistant.services.mail_reply import ReplyError
+
+    if isinstance(e, LookupError):
+        return HTTPException(status_code=404, detail="Черновик не найден")
+    if isinstance(e, (ReplyError, ValueError)):
+        return HTTPException(status_code=400, detail=str(e))
+    print(f"[mail] reply err={e!r}")
+    return HTTPException(status_code=502, detail="Не получилось связаться с почтой. Попробуйте ещё раз.")
+
+
+@miniapp_router.post("/mail/thread-card")
+async def miniapp_mail_thread_card(body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """«Разобрать письмо»: карточка письма для чата Лео (кнопки «Ответить», «Подготовить ответ», «Саммари»)."""
+    from assistant.services import gpt_calendar_tools as gcal_tools
+    from assistant.services import mail_reply
+
+    uid = int(principal.telegram_user_id)
+    try:
+        aid = await run_in_threadpool(mail_reply.thread_card, uid, str(body.get("mail_key") or ""))
+    except Exception as e:
+        raise _mail_reply_error(e) from e
+    return {"action": gcal_tools.public_action(gcal_tools.get_action(aid) or {}, viewer_uid=uid)}
+
+
+@miniapp_router.post("/mail/drafts")
+async def miniapp_mail_draft_create(body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """«Ответить»: пустой черновик (адресаты — из исходного письма), его открывает окно письма."""
+    from assistant.services import gpt_calendar_tools as gcal_tools
+    from assistant.services import mail_reply
+
+    uid = int(principal.telegram_user_id)
+    try:
+        aid = await run_in_threadpool(
+            partial(mail_reply.create_draft, uid, str(body.get("mail_key") or ""), body=str(body.get("body") or ""),
+                    reply_all=bool(body.get("reply_all")))
+        )
+    except Exception as e:
+        raise _mail_reply_error(e) from e
+    return {"action": gcal_tools.public_action(gcal_tools.get_action(aid) or {}, viewer_uid=uid)}
+
+
+@miniapp_router.post("/mail/drafts/{action_id}")
+async def miniapp_mail_draft_update(
+    action_id: str, body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """Правки из окна письма (сохраняются на ходу): кому, копия, тема, текст, вложения, «Ответить всем»."""
+    from assistant.services import gpt_calendar_tools as gcal_tools
+    from assistant.services import mail_reply
+
+    uid = int(principal.telegram_user_id)
+    try:
+        a = await run_in_threadpool(mail_reply.update_draft, uid, action_id, body or {})
+    except Exception as e:
+        raise _mail_reply_error(e) from e
+    return {"action": gcal_tools.public_action(a, viewer_uid=uid)}
+
+
+@miniapp_router.post("/mail/rewrite")
+async def miniapp_mail_rewrite(body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """ИИ-правка текста в окне письма: short / polite / translate / custom. Ничего не отправляет."""
+    from assistant.services import mail_composer
+
+    try:
+        text = await run_in_threadpool(
+            partial(mail_composer.rewrite, int(principal.telegram_user_id), str(body.get("body") or ""),
+                    str(body.get("mode") or ""), instruction=str(body.get("instruction") or ""),
+                    lang=str(body.get("lang") or "английский"))
+        )
+    except Exception as e:
+        raise _mail_reply_error(e) from e
+    return {"body": text}
+
+
+@miniapp_router.post("/mail/composer/slots")
+async def miniapp_mail_composer_slots(body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """«+слоты [люди] [день]» в окне письма: свободные (общие) окна."""
+    from assistant.services import mail_composer
+
+    try:
+        return await run_in_threadpool(mail_composer.slots, int(principal.telegram_user_id), str(body.get("query") or ""))
+    except Exception as e:
+        print(f"[mail] slots err={e!r}")
+        return {"ok": False, "error": "Не получилось посмотреть календарь. Попробуйте ещё раз."}
+
+
+@miniapp_router.post("/mail/attachments")
+async def miniapp_mail_attachment_upload(
+    file: UploadFile = File(...), principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import mail_attachments
+
+    data = await file.read(mail_attachments.MAX_TOTAL + 1)
+    try:
+        meta = await run_in_threadpool(
+            mail_attachments.save, int(principal.telegram_user_id), file.filename or "файл", file.content_type or "", data
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "attachment": {k: meta[k] for k in ("id", "name", "size")}}
+
+
+@miniapp_router.get("/mail/settings")
+async def miniapp_mail_settings(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.stores import mail_accounts
+
+    return {"ok": True, "signature": await run_in_threadpool(mail_accounts.signature, int(principal.telegram_user_id))}
+
+
+@miniapp_router.patch("/mail/settings")
+async def miniapp_mail_settings_patch(body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.stores import mail_accounts
+
+    sig = await run_in_threadpool(mail_accounts.set_signature, int(principal.telegram_user_id), str((body or {}).get("signature") or ""))
+    return {"ok": True, "signature": sig}
 
 
 @miniapp_router.get("/telemost/status")

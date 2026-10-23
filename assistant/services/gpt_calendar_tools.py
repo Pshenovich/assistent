@@ -174,6 +174,13 @@ def public_action(a: dict[str, Any], *, viewer_uid: int | None = None) -> dict[s
         except Exception as e:
             print(f"[focus] shared overlay failed action={a.get('id')} err={e!r}")
         out["card_key"] = p.get("card_key") or ""
+    if kind in ("email_thread", "email_draft"):
+        from assistant.services import mail_reply
+
+        try:
+            out.update(mail_reply.public_extra(a))
+        except Exception as e:
+            print(f"[mail] public action={a.get('id')} err={e!r}")
     return out
 
 
@@ -1877,10 +1884,18 @@ def tool_memory_search(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
 EXECUTORS["memory_search"] = tool_memory_search
 
 
-def active_tools() -> list[dict[str, Any]]:
-    """Инструменты для модели: без выключенных функций (memory_search — только с SEMANTIC_SEARCH_ENABLED)."""
+def active_tools(uid: Optional[int] = None) -> list[dict[str, Any]]:
+    """Инструменты для модели: без выключенных функций (memory_search — только с SEMANTIC_SEARCH_ENABLED,
+    mail_* — только у пользователя с подключённой почтой)."""
     from assistant.lib import embed_client
+    from assistant.services import mail_tools
 
-    if embed_client.enabled():
-        return TOOLS
-    return [t for t in TOOLS if t["function"]["name"] != "memory_search"]
+    off: set[str] = set()
+    if not embed_client.enabled():
+        off.add("memory_search")
+    if uid is None or not mail_tools.has_mail(uid):
+        off.update(mail_tools.MAIL_TOOL_NAMES)
+    return [t for t in TOOLS if t["function"]["name"] not in off]
+
+
+from assistant.services import mail_tools as _mail_tools  # noqa: E402,F401 — регистрирует mail_* в TOOLS/EXECUTORS

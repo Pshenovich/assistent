@@ -269,6 +269,8 @@ OPERATION_LABELS_RU: dict[str, str] = {
     "chat_digest": "Дайджест чатов",
     "answer_with_context": "Обсуждение с GPT (архив)",
     "chat/completions": "Запрос к модели",
+    "mail_insights": "Разбор почты",
+    "mail_rewrite": "Правка письма",
 }
 
 

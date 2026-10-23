@@ -6810,6 +6810,8 @@
       chat_digest: "Дайджест чатов",
       answer_with_context: "Обсуждение с GPT (архив)",
       "chat/completions": "Запрос к модели",
+      mail_insights: "Разбор почты",
+      mail_rewrite: "Правка письма",
     };
     const key = String(op || "").trim();
     if (!key) return "—";
