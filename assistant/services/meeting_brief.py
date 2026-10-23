@@ -53,21 +53,20 @@ def _start_dt(ev: dict[str, Any]) -> Optional[datetime]:
 
 
 def _trim_history(h: dict[str, Any]) -> dict[str, Any]:
-    """Только то, что нужно брифу: последние 3 встречи с материалами и незакрытые поручения."""
-    meetings = []
-    for m in (h.get("meetings") or [])[:6]:
-        mats = m.get("materials") or []
-        if not mats and len(meetings) >= 2:
-            continue
-        meetings.append({k: m.get(k) for k in ("title", "start") if m.get(k)} | ({"materials": mats} if mats else {}))
-        if len(meetings) >= 3:
-            break
-    tasks = [t for t in h.get("tasks_given") or [] if not str(t.get("status") or "").startswith("выполн")]
+    """Только «когда виделись»: последние 3 встречи (название и дата).
+
+    Материалы и поручения из чужих встреч сюда не берём — иначе в бриф груминга
+    попадает то, что обсуждали с участником один на один. Повестка и обязательства
+    берутся только из прошлой встречи этой серии (series).
+    """
+    meetings = [
+        {k: m.get(k) for k in ("title", "start") if m.get(k)}
+        for m in (h.get("meetings") or [])[:3]
+    ]
     out: dict[str, Any] = {"person": h.get("person")}
+    meetings = [m for m in meetings if m]
     if meetings:
         out["meetings"] = meetings
-    if tasks:
-        out["open_tasks_given"] = tasks[:8]
     return out
 
 

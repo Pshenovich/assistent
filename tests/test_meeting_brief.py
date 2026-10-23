@@ -52,8 +52,10 @@ def test_collect_facts_and_message(monkeypatch):
     assert calls["args"]["person"] == "sasha@x.ru"
     assert calls["args"]["end_date"] == "2026-10-22"
     p = facts["people"][0]
-    assert len(p["meetings"]) == 2  # с материалами + одна без, остальное отрезано
-    assert p["open_tasks_given"] == [{"title": "Смета"}]
+    # только «когда виделись»: без материалов и поручений с чужих встреч
+    assert p["meetings"] == [{"title": "Синк по пилоту", "start": "15 окт"},
+                             {"title": "Старое", "start": "1 окт"}, {"title": "Ещё", "start": "2 сен"}]
+    assert "open_tasks_given" not in p
     assert facts["series"] == "15 окт: решили пилот"
     assert "бюджет" in facts["meeting"]["description"] and "<b>" not in facts["meeting"]["description"]
 
