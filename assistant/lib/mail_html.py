@@ -34,6 +34,25 @@ ATTRS = {
     "span": {"class"},
     "blockquote": {"class", "type"},
 }
+# «Как в почте»: для писем с вёрсткой (таблицы, свои цвета) оставляем безопасные стили и показываем их на белом листе.
+STYLE_PROPS = {
+    "color", "background-color", "font-size", "font-weight", "font-style", "font-family", "text-align",
+    "text-decoration", "text-transform", "line-height", "letter-spacing", "vertical-align", "white-space",
+    "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+    "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
+    "width", "max-width", "min-width", "height", "border", "border-top", "border-right", "border-bottom",
+    "border-left", "border-color", "border-width", "border-style", "border-radius", "border-collapse",
+    "border-spacing", "display", "table-layout",
+}  # без background / background-image: через url() грузятся трекинг-пиксели
+RICH_ATTRS = {
+    "table": {"width", "cellpadding", "cellspacing", "border", "align", "bgcolor", "style"},
+    "td": {"colspan", "rowspan", "width", "height", "align", "valign", "bgcolor", "style"},
+    "th": {"colspan", "rowspan", "width", "height", "align", "valign", "bgcolor", "style"},
+    "tr": {"align", "valign", "bgcolor", "style"},
+    "font": {"color", "size", "face", "style"},
+}
+_RICH_RE = re.compile(r"(?is)<table\b|bgcolor\s*=|style\s*=\s*[\"'][^\"']*background")
+
 _QUOTE_CLASSES = ("gmail_quote", "yahoo_quoted", "moz-cite-prefix", "protonmail_quote", "zmail_extra")
 _SIG_CLASSES = ("gmail_signature", "signature", "moz-signature")
 _URL_RE = re.compile(r"(https?://[^\s<>\"']+)")
@@ -173,12 +192,25 @@ def _html_part(msg: Message) -> str:
     return ""
 
 
-def clean(raw_html: str, cids: dict[str, str] | None = None) -> tuple[str, bool]:
+def is_rich(raw_html: str) -> bool:
+    """Письмо со своей вёрсткой (таблицы, фоны) — показываем «как в почте», на белом листе."""
+    return bool(_RICH_RE.search(raw_html or ""))
+
+
+def clean(raw_html: str, cids: dict[str, str] | None = None, *, rich: bool = False) -> tuple[str, bool]:
     prepared, remote = _prepare(raw_html or "", cids or {})
+    attrs = ATTRS
+    if rich:
+        attrs = {k: set(v) for k, v in ATTRS.items()}
+        for tag, extra in RICH_ATTRS.items():
+            attrs[tag] = attrs.get(tag, set()) | extra
+        for tag in TAGS:
+            attrs.setdefault(tag, set()).add("style")
     out = nh3.clean(
-        prepared, tags=TAGS, attributes=ATTRS, url_schemes={"http", "https", "mailto", "tel", "data"},
+        prepared, tags=TAGS, attributes=attrs, url_schemes={"http", "https", "mailto", "tel", "data"},
         attribute_filter=_attr_filter, link_rel="noopener noreferrer nofollow", strip_comments=True,
         clean_content_tags={"script", "style", "title", "head"},
+        filter_style_properties=STYLE_PROPS if rich else None,
     )
     out = re.sub(r"<a\s", '<a target="_blank" ', out)
     return out, remote
@@ -190,10 +222,11 @@ def render(msg: Message, plain_author_text: str) -> dict[str, Any]:
 
     raw = _html_part(msg)
     if raw:
-        full, remote = clean(raw, _inline_images(msg))
+        rich = is_rich(raw)
+        full, remote = clean(raw, _inline_images(msg), rich=rich)
         short = drop_quotes(full)
         if not re.sub(r"<[^>]+>|&nbsp;|\s", "", short):
             short = text_to_html(plain_author_text)
-        return {"html": short, "html_full": full, "remote_images": remote}
+        return {"html": short, "html_full": full, "remote_images": remote, "rich": rich}
     text = mail_imap.body_text(msg)
-    return {"html": text_to_html(plain_author_text), "html_full": text_to_html(text), "remote_images": False}
+    return {"html": text_to_html(plain_author_text), "html_full": text_to_html(text), "remote_images": False, "rich": False}

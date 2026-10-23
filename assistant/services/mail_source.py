@@ -396,10 +396,15 @@ def revive_correspondents(uid: int, *, limit: int = 20) -> int:
 
 
 def hide_calendar(uid: int) -> int:
-    """Уже попавшие в индекс приглашения — убрать из «Почты», поиска и памяти (по теме)."""
+    """Уже попавшие в индекс приглашения и письма роботов — убрать из «Почты», поиска и памяти."""
     keys, mids = [], []
+    known = mail_index.correspondents(uid) - my_addresses(uid)
+    rules = mail_senders.rules_map(uid)
     for r in mail_index.recent(uid, since=_now() - timedelta(days=mail_index.RETENTION.days)):
-        if not r.get("bulk") and mail_filters.CALENDAR_SUBJECT.match(str(r.get("subject") or "")):
+        addr = str(r.get("from_addr") or "")
+        robot = (r.get("direction") == "in" and mail_filters.is_robot(addr) and addr not in known
+                 and mail_senders.match(rules, addr) != "allow")  # правила «робота» могли уточниться после синхронизации
+        if not r.get("bulk") and (robot or mail_filters.CALENDAR_SUBJECT.match(str(r.get("subject") or ""))):
             keys.append(r["mail_key"])
             if r.get("message_id"):
                 mids.append(r["message_id"])

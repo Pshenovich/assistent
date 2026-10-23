@@ -119,3 +119,21 @@ def test_replied_thread_shows_filtered_original(env):
     assert [m["mail_key"] for m in t["messages"]] == ["pi", "po"]  # исходное письмо видно, приглашение — нет
     listed = {x["thread_key"]: x for x in mail_inbox.threads(ME)["threads"]}
     assert listed["tp"]["count"] == 2 and "t9" not in listed  # рассылка из чужой ветки по-прежнему скрыта
+
+
+def test_rich_letter_keeps_safe_layout():
+    raw = ('<table width="600" bgcolor="#ffffff" style="border-collapse:collapse"><tr><td style="color:#111;font-size:20px;'
+           'background:url(https://t.co/p.gif);position:fixed" onclick="x()">Самое важное о techinformpress.ru</td>'
+           '<td align="right">258</td></tr></table>')
+    assert mail_html.is_rich(raw)
+    out, _ = mail_html.clean(raw, rich=True)
+    assert 'width="600"' in out and 'bgcolor="#ffffff"' in out and "font-size:20px" in out and 'align="right"' in out
+    assert "url(" not in out and "position" not in out and "onclick" not in out
+    plain, _ = mail_html.clean(raw)  # обычное письмо — без чужих стилей
+    assert "style=" not in plain
+
+
+def test_devnull_is_robot():
+    from assistant.services import mail_filters
+
+    assert mail_filters.is_robot("devnull@webmaster.yandex.ru")

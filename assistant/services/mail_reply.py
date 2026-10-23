@@ -62,7 +62,11 @@ def _account(uid: int, account_id: str) -> dict[str, Any]:
 
 
 def _fetch_full(uid: int, rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """{mail_key: email.message.Message} — по Message-ID из «Входящих»/«Отправленных», без отметки «прочитано»."""
+    """{mail_key: email.message.Message} без отметки «прочитано».
+
+    Сначала — по номеру письма в папке (UID из синхронизации, одним запросом) со сверкой Message-ID;
+    не нашлось — поиском по Message-ID (Яндекс не всегда находит письмо поиском по заголовку, поэтому это запасной путь).
+    Письма, отправленные из Orbita (папка «sent»), ищутся в «Отправленных» ящика."""
     out: dict[str, Any] = {}
     by_acc: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
@@ -71,23 +75,46 @@ def _fetch_full(uid: int, rows: list[dict[str, Any]]) -> dict[str, Any]:
         acc = mail_accounts.get(uid, aid)
         if not acc:
             continue
-        mail = mail_source.open_imap(uid, acc)
         try:
+            mail = mail_source.open_imap(uid, acc)
+        except Exception as e:
+            print(f"[mail] fetch login uid={uid} acc={aid} err={e!r}")
+            continue
+        try:
+            sent_name = None
             by_folder: dict[str, list[dict[str, Any]]] = {}
             for r in items:
-                by_folder.setdefault(str(r.get("folder") or "INBOX"), []).append(r)
+                folder = str(r.get("folder") or "INBOX")
+                if folder == "sent":
+                    sent_name = sent_name or mail_imap.sent_folder(mail) or ""
+                    folder = sent_name
+                if folder:
+                    by_folder.setdefault(folder, []).append(r)
             for folder, frows in by_folder.items():
                 try:
                     mail_imap.select(mail, folder)
                 except Exception:
                     continue
+                with_uid = [r for r in frows if int(r.get("uid") or 0) > 0]
+                got = mail_imap.fetch(mail, [int(r["uid"]) for r in with_uid], "BODY.PEEK[]") if with_uid else {}
                 for r in frows:
-                    u = mail_imap.find_by_message_id(mail, r.get("message_id") or "") if r.get("message_id") else r.get("uid")
-                    if not u:
-                        continue
-                    got = mail_imap.fetch(mail, [int(u)], "BODY.PEEK[]")
-                    if got:
-                        out[r["mail_key"]] = mail_imap.parse(next(iter(got.values()))[1])
+                    msg = None
+                    hit = got.get(int(r.get("uid") or 0))
+                    if hit:
+                        msg = mail_imap.parse(hit[1])
+                        mid = (mail_imap.msg_ids(msg.get("Message-ID")) or [""])[0]
+                        if r.get("message_id") and mid and mid != r["message_id"]:
+                            msg = None  # номер сменился (UIDVALIDITY) — ищем по Message-ID
+                    if msg is None and r.get("message_id"):
+                        u = mail_imap.find_by_message_id(mail, r["message_id"])
+                        if u:
+                            g2 = mail_imap.fetch(mail, [int(u)], "BODY.PEEK[]")
+                            if g2:
+                                msg = mail_imap.parse(next(iter(g2.values()))[1])
+                    if msg is not None:
+                        out[r["mail_key"]] = msg
+        except Exception as e:
+            print(f"[mail] fetch uid={uid} acc={aid} err={e!r}")
         finally:
             try:
                 mail.logout()

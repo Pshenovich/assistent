@@ -12,7 +12,7 @@ _BULK_HEADERS = ("List-Unsubscribe", "List-Id", "List-Post", "Feedback-ID", "X-C
                  "X-Mailgun-Tag", "X-Mailgun-Campaign-Id", "X-SES-Outgoing", "X-SES-CONFIGURATION-SET",
                  "X-MC-User", "X-Mailchimp-Campaign", "X-Sendpulse-Id", "X-UniSender-Id", "X-Unisender-Campaign")
 _ROBOT_LOCAL = re.compile(
-    r"^(?:no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?|notify|alerts?|mailer[-_.]?daemon|postmaster|bounces?"
+    r"^(?:no[-_.]?reply|do[-_.]?not[-_.]?reply|dev[-_.]?null|notifications?|notify|alerts?|mailer[-_.]?daemon|postmaster|bounces?"
     r"|news(?:letter)?|digest|marketing|promo|info|support|billing|robot|auto|system|daemon|calendar-notification)"
     r"(?:[-_.+].*)?$",
     re.I,

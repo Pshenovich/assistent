@@ -221,6 +221,11 @@
         if (st.data) (st.data.threads || []).forEach(function (x) { if (x.thread_key === tk) x.unread = 0; });
       }
     } catch (e) {
+      if (st.open && st.open.thread_key === tk && (st.open.messages || []).length && !st.open.loading) {
+        // повторная загрузка не удалась — показанное письмо не убираем
+        toast("Не удалось обновить переписку — показана последняя загруженная версия");
+        return;
+      }
       st.open = { thread_key: tk, error: (e && e.message) || "Не удалось загрузить переписку", messages: [] };
       renderThread();
     }
@@ -296,7 +301,7 @@
       if (subj) prevSubj = subj;
       var out = m.direction === "out";
       var s = st.shown[m.mail_key] || {};
-      h += '<div class="mail-msg' + (out ? " is-out" : "") + '" data-key="' + esc(m.mail_key) + '">';
+      h += '<div class="mail-msg' + (out ? " is-out" : "") + (m.rich ? " is-rich" : "") + '" data-key="' + esc(m.mail_key) + '">';
       if (!out && group) h += '<div class="mail-msg-who">' + esc(m.from) + "</div>";
       h += '<div class="mail-bubble' + (s.more ? " is-expanded" : "") + '" data-mi="bubble" data-key="' + esc(m.mail_key) + '">';
       if (m.reply_to_key && m.reply_to_key !== prevKey) {
@@ -306,7 +311,7 @@
             '<button type="button" class="mail-reply-quote" data-mi="jump" data-key="' + esc(rm.mail_key) + '"><b>' +
             esc(rm.direction === "out" ? "Вы" : rm.from) + "</b><span>" + esc(plainSnippet(rm)) + "</span></button>";
       }
-      h += '<div class="mail-bubble-body mail-html">' + (m.loaded === false && !m.html ? "<p>…</p>" : bodyHtml(m)) + "</div>";
+      h += '<div class="mail-bubble-body mail-html' + (m.rich ? " mail-paper" : "") + '">' + (m.loaded === false && !m.html ? "<p>…</p>" : bodyHtml(m)) + "</div>";
       h += '<button type="button" class="mail-more hidden" data-mi="more" data-key="' + esc(m.mail_key) + '">Показать полностью</button>';
       h += bubbleTools(m);
       h += '<div class="mail-bubble-meta">' + esc(when(m.date)) + (out ? " ✓" : "") + "</div>";
@@ -339,7 +344,7 @@
         '<div class="mail-letter-meta"><b>' + esc(m.direction === "out" ? "Вы" : m.from) + "</b>" +
         '<span>кому: ' + esc((m.to || []).concat(m.cc || []).join(", ")) + "</span></div>" +
         '<span class="mail-letter-date">' + esc(new Date(m.date).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })) + "</span></header>" +
-        '<div class="mail-letter-body mail-html mail-html--letter">' + html + "</div>" +
+        '<div class="mail-letter-body mail-html mail-html--letter' + (m.rich ? " mail-paper" : "") + '">' + html + "</div>" +
         (m.remote_images && !s.images ? '<button type="button" class="mail-mini" data-mi="images" data-key="' + esc(m.mail_key) + '">Показать картинки</button>' : "") +
         attachmentsHtml(m) +
         '<div class="mail-letter-acts"><button type="button" class="mail-mini" data-mi="reply-full" data-key="' + esc(m.mail_key) + '">Ответить</button>' +

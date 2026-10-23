@@ -21269,3 +21269,45 @@ form.pf-list .pf-add-row .pf-row-body {
     padding: 0.3rem 0.8rem;
   }
 }
+
+/* Письмо со своей вёрсткой (таблицы, цвета) — «как в почте», на белом листе */
+.mail-msg.is-rich {
+  max-width: 100%;
+  width: 100%;
+}
+
+.mail-msg.is-rich .mail-bubble {
+  width: 100%;
+  padding: 0.35rem;
+}
+
+.mail-paper {
+  padding: 0.9rem 1rem;
+  border-radius: 10px;
+  color: #1a1a1a;
+  background: #fff;
+  overflow-x: auto;
+}
+
+.mail-paper a {
+  color: #1a5fd0;
+}
+
+.mail-paper table {
+  max-width: 100%;
+  font-size: inherit;
+}
+
+.mail-paper td,
+.mail-paper th {
+  padding: 0;
+  border: 0; /* рамки — только если они есть в самом письме */
+}
+
+.mail-msg.is-rich .mail-bubble-body {
+  max-height: 32em;
+}
+
+.mail-msg.is-rich .mail-bubble.is-expanded .mail-bubble-body {
+  max-height: none;
+}

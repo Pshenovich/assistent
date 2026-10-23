@@ -272,11 +272,16 @@ def find_by_message_id(mail: imaplib.IMAP4_SSL, message_id: str) -> Optional[int
     mid = message_id.strip()
     if not mid:
         return None
-    typ, data = mail.uid("SEARCH", "HEADER", "Message-ID", f'"{mid}"')
-    if typ != "OK" or not data or not data[0]:
-        return None
-    uids = [int(x) for x in data[0].split() if x.isdigit()]
-    return uids[-1] if uids else None
+    for needle in (mid, mid.strip("<>")):  # одни серверы ищут с угловыми скобками, другие — без
+        try:
+            typ, data = mail.uid("SEARCH", "HEADER", "Message-ID", f'"{needle}"')
+        except Exception:
+            continue
+        if typ == "OK" and data and data[0]:
+            uids = [int(x) for x in data[0].split() if x.isdigit()]
+            if uids:
+                return uids[-1]
+    return None
 
 
 # ---------------------------------------------------------------- разбор письма

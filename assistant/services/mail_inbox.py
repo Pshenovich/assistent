@@ -163,7 +163,32 @@ def _attachment_parts(msg) -> list[Any]:
     return out
 
 
+_THREAD_CACHE: dict[tuple[int, str], tuple[float, str, dict[str, Any]]] = {}
+THREAD_TTL = 300.0
+
+
 def thread(uid: int, thread_key: str) -> dict[str, Any]:
+    """Ветка с текстами из ящика. Кэш на 5 минут (пока в ветке не появились новые письма):
+    повторное открытие и фоновое обновление — мгновенные, без нового входа в ящик."""
+    import time
+
+    rows = [r for r in mail_index.thread(uid, thread_key) if visible(r, mail_index.my_thread_keys(uid))]
+    sig = ",".join(r["mail_key"] for r in rows)
+    hit = _THREAD_CACHE.get((int(uid), thread_key))
+    if hit and hit[1] == sig and time.time() - hit[0] < THREAD_TTL and all(m.get("loaded") for m in hit[2]["messages"]):
+        out = dict(hit[2])
+        reads = read_keys(uid)
+        out["messages"] = [{**m, "unread": m["direction"] == "in" and m["mail_key"] not in reads} for m in out["messages"]]
+        return out
+    res = _thread_uncached(uid, thread_key)
+    _THREAD_CACHE[(int(uid), thread_key)] = (time.time(), sig, res)
+    if len(_THREAD_CACHE) > 200:
+        for k in sorted(_THREAD_CACHE, key=lambda k: _THREAD_CACHE[k][0])[:50]:
+            _THREAD_CACHE.pop(k, None)
+    return res
+
+
+def _thread_uncached(uid: int, thread_key: str) -> dict[str, Any]:
     from assistant.integrations import mail_imap
     from assistant.lib import mail_html
     from assistant.services import mail_reply, mail_source
@@ -185,7 +210,7 @@ def thread(uid: int, thread_key: str) -> dict[str, Any]:
         msg = full.get(r["mail_key"])
         text = mail_imap.strip_quoted(mail_imap.body_text(msg)) if msg is not None else str(r.get("snippet") or "")
         rendered = mail_html.render(msg, text) if msg is not None else {
-            "html": mail_html.text_to_html(text), "html_full": "", "remote_images": False}
+            "html": mail_html.text_to_html(text), "html_full": "", "remote_images": False, "rich": False}
         files = []
         if msg is not None:
             for i, part in enumerate(_attachment_parts(msg)):
@@ -197,6 +222,7 @@ def thread(uid: int, thread_key: str) -> dict[str, Any]:
             "from": r.get("from_name") or r.get("from_addr") or "", "to": r.get("to") or [], "cc": r.get("cc") or [],
             "subject": r.get("subject") or "", "date": r.get("date_utc") or "", "text": text[:20000],
             "html": rendered["html"], "html_full": rendered["html_full"], "remote_images": rendered["remote_images"],
+            "rich": bool(rendered.get("rich")),
             "attachments": files, "reply_to_key": by_mid.get(r.get("in_reply_to") or "") or "",
             "unread": r["direction"] == "in" and r["mail_key"] not in reads, "loaded": msg is not None,
         })
