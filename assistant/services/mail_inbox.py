@@ -78,7 +78,22 @@ def clean_subject(s: str) -> str:
     return re.sub(r"^(\s*(re|fwd?|ответ|пересл\.?)\s*(\[\d+\])?\s*:\s*)+", "", s or "", flags=re.I).strip() or "Без темы"
 
 
+_LABELS_CACHE: dict[int, tuple[float, dict[str, list[dict[str, str]]]]] = {}
+
+
 def _labels(uid: int) -> dict[str, list[dict[str, str]]]:
+    """Метки Лео с кэшем на минуту: считаются по всем письмам и разборам — дорого делать на каждую ветку."""
+    import time
+
+    hit = _LABELS_CACHE.get(int(uid))
+    if hit and time.time() - hit[0] < 60:
+        return hit[1]
+    res = _labels_uncached(uid)
+    _LABELS_CACHE[int(uid)] = (time.time(), res)
+    return res
+
+
+def _labels_uncached(uid: int) -> dict[str, list[dict[str, str]]]:
     """thread_key → метки Лео: ждёт ответа / вы обещали / срок."""
     from assistant.services import mail_source
 
@@ -239,9 +254,10 @@ def warm(uid: int, thread_keys: list[str]) -> int:
         except Exception as e:
             print(f"[mail_inbox] warm fetch uid={uid} err={e!r}")
             return 0
+        labels = _labels(uid)  # один раз на все ветки, а не на каждую
         for tk, rows in todo.items():
             try:
-                _store(uid, tk, rows, _build(uid, tk, rows, full))
+                _store(uid, tk, rows, _build(uid, tk, rows, full, labels))
             except Exception as e:
                 print(f"[mail_inbox] warm build uid={uid} err={e!r}")
         return len(todo)
@@ -256,7 +272,8 @@ def warm_async(uid: int, thread_keys: list[str]) -> None:
         threading.Thread(target=warm, args=(int(uid), list(thread_keys)), daemon=True).start()
 
 
-def _build(uid: int, thread_key: str, rows: list[dict[str, Any]], full: Optional[dict[str, Any]]) -> dict[str, Any]:
+def _build(uid: int, thread_key: str, rows: list[dict[str, Any]], full: Optional[dict[str, Any]],
+           labels: Optional[dict[str, list[dict[str, str]]]] = None) -> dict[str, Any]:
     from assistant.integrations import mail_imap
     from assistant.lib import mail_html
     from assistant.services import mail_reply, mail_source
@@ -300,7 +317,7 @@ def _build(uid: int, thread_key: str, rows: list[dict[str, Any]], full: Optional
                 people.setdefault(a, m["from"] if a == m["from_addr"] else "")
     return {"thread_key": thread_key, "subject": clean_subject(next((m["subject"] for m in msgs if m["subject"]), "")),
             "people": [{"addr": a, "name": n} for a, n in people.items()], "messages": msgs,
-            "labels": _labels(uid).get(thread_key, []), "account_id": rows[-1]["account_id"]}
+            "labels": (labels if labels is not None else _labels(uid)).get(thread_key, []), "account_id": rows[-1]["account_id"]}
 
 
 def attachment(uid: int, mail_key: str, part: int) -> dict[str, Any]:

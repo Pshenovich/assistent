@@ -63,6 +63,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(mail_reply, "_fetch_full", lambda uid, rows: {})
     monkeypatch.setattr(mail_inbox, "warm_async", lambda *a, **k: None)
     mail_inbox._THREAD_CACHE.clear()
+    mail_inbox._LABELS_CACHE.clear()
     acc = mail_accounts.upsert(ME, provider="gmail", email=MINE, auth="password", secret="x")
     aid = acc["account_id"]
 
