@@ -149,7 +149,27 @@
     });
     main2 += "</div>";
     body.innerHTML = '<div class="mkt">' + toc + main2 + "</div>";
+    watchSections(body);
     loadInsight(p, body);
+  }
+
+  // Меню следит за прокруткой: подсвечен раздел, который сейчас на экране.
+  var observer = null;
+  function watchSections(body) {
+    if (observer) observer.disconnect();
+    if (!("IntersectionObserver" in window)) return;
+    var items = body.querySelectorAll('.mkt-toc-item[data-mkt="go"]');
+    observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        items.forEach(function (x) {
+          x.classList.toggle("is-on", x.getAttribute("data-id") === en.target.id);
+        });
+      });
+    }, { rootMargin: "-20% 0px -70% 0px" });
+    body.querySelectorAll("#mkt-top, .mkt-sec").forEach(function (sec) {
+      observer.observe(sec);
+    });
   }
 
   async function loadInsight(p, body, force) {

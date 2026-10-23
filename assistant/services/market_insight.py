@@ -13,11 +13,19 @@ _LOCK = threading.RLock()
 _CONN: Optional[sqlite3.Connection] = None
 _CONN_PATH: Optional[str] = None
 
-SYSTEM = """Ты — помощник руководителя. Тебе дают отраслевой дайджест за день и контекст пользователя (его ближайшие встречи и открытые обязательства).
-Напиши блок «Что это значит для вас»: 2–3 коротких пункта — какие новости из выпуска касаются именно его дел и что с этим сделать
-(обсудить на конкретной встрече из списка, проверить гипотезу, ответить конкуренту). Называй встречу так, как она называется, с днём.
-Не пересказывай новости и не выдумывай фактов. Если ничего не касается пользователя — одной фразой так и скажи.
+SYSTEM = """Ты — помощник руководителя. Тебе дают отраслевой дайджест за день и контекст пользователя:
+его ближайшие встречи (у каждой пометка: внутренняя или с внешними участниками и их компании) и открытые обязательства.
+Напиши блок «Что это значит для вас»: 1–3 коротких пункта — какие новости касаются его продукта и рынка и что с этим сделать
+(проверить гипотезу, посмотреть на конкурента, учесть в продукте или цене).
+Встречу упоминай, только если связь прямая и очевидная:
+- внутренняя встреча, у которой в названии та же тема, что у новости (продукт, стратегия, конкуренты, цены, маркетинг, планёрка по продукту);
+- встреча с внешней компанией — только если новость прямо про эту компанию или её рынок. Встречу с клиентом НЕ предлагай как место,
+  чтобы «обсудить новости рынка».
+Если подходящей встречи нет — не упоминай встречи вообще. Каждый пункт начинай с самой новости (одна-две фразы, на что она влияет).
+Не пересказывай весь выпуск, не выдумывай фактов. Если ничего не касается пользователя — одной фразой так и скажи.
 Ответ — пункты списком через «• », без вступления и заголовка."""
+
+CACHE_VERSION = "v2"  # меняется вместе с логикой — старые разборы пересобираются
 
 
 def _conn() -> sqlite3.Connection:
@@ -40,9 +48,45 @@ def _conn() -> sqlite3.Connection:
 
 
 def cached(uid: int, issue: str) -> Optional[str]:
+    if not issue.endswith(":" + CACHE_VERSION):
+        issue = ((issue or "").strip()[:40] or datetime.now(timezone.utc).date().isoformat()) + ":" + CACHE_VERSION
     with _LOCK:
         r = _conn().execute("SELECT text FROM market_insights WHERE owner_user_id = ? AND issue = ?", (str(uid), issue)).fetchone()
     return str(r["text"]) if r else None
+
+
+_PUBLIC_DOMAINS = {"gmail.com", "googlemail.com", "yandex.ru", "ya.ru", "mail.ru", "inbox.ru", "list.ru", "bk.ru",
+                   "outlook.com", "hotmail.com", "icloud.com", "me.com", "rambler.ru"}
+
+
+def meeting_kind(attendees: list[dict[str, Any]], own_domains: set[str]) -> str:
+    """«внутренняя» / «с внешними участниками: компании» — по доменам почты гостей."""
+    ext: list[str] = []
+    for a in attendees or []:
+        if not isinstance(a, dict) or a.get("self") or a.get("resource"):
+            continue
+        dom = str(a.get("email") or "").rsplit("@", 1)[-1].lower()
+        if dom and dom not in own_domains and dom not in ext:
+            ext.append(dom)
+    if not ext:
+        return "внутренняя"
+    names = [d for d in ext if d not in _PUBLIC_DOMAINS] or ext
+    return "с внешними участниками: " + ", ".join(names[:4])
+
+
+def _own_domains(uid: int, events: list[dict[str, Any]]) -> set[str]:
+    own: set[str] = set()
+    for ev in events:
+        for a in (ev.get("raw") or {}).get("attendees") or []:
+            if isinstance(a, dict) and a.get("self") and a.get("email"):
+                own.add(str(a["email"]).rsplit("@", 1)[-1].lower())
+    try:
+        from assistant.stores import mail_accounts
+
+        own |= {str(x["email"]).rsplit("@", 1)[-1].lower() for x in mail_accounts.list_accounts(uid)}
+    except Exception:
+        pass
+    return {d for d in own if d not in _PUBLIC_DOMAINS} or own
 
 
 def _context(uid: int) -> str:
@@ -56,11 +100,14 @@ def _context(uid: int) -> str:
             tz = _tz_for(uid)
             now = datetime.now(timezone.utc)
             days = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
-            for ev in calendar_sources.list_events_in_window(uid, now, now + timedelta(days=7))[:20]:
+            events = calendar_sources.list_events_in_window(uid, now, now + timedelta(days=7))[:20]
+            own = _own_domains(uid, events)
+            for ev in events:
                 st = ev.get("start")
                 if isinstance(st, datetime):
                     st = st.astimezone(tz)
-                    lines.append(f"встреча «{ev.get('summary')}» — {days[st.weekday()]} {st.strftime('%d.%m %H:%M')}")
+                    kind = meeting_kind((ev.get("raw") or {}).get("attendees") or [], own)
+                    lines.append(f"встреча «{ev.get('summary')}» — {days[st.weekday()]} {st.strftime('%d.%m %H:%M')} ({kind})")
     except Exception as e:
         print(f"[market_insight] calendar uid={uid} err={e!r}")
     try:
@@ -74,7 +121,7 @@ def _context(uid: int) -> str:
 
 
 def insight(uid: int, issue: str, issue_text: str, *, force: bool = False) -> str:
-    issue = (issue or "").strip()[:40] or datetime.now(timezone.utc).date().isoformat()
+    issue = ((issue or "").strip()[:40] or datetime.now(timezone.utc).date().isoformat()) + ":" + CACHE_VERSION
     if not force:
         hit = cached(uid, issue)
         if hit:

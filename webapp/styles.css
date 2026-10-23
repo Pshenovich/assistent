@@ -19851,6 +19851,7 @@ form.pf-list .pf-add-row .pf-row-body {
 /* ——— «Дайджест» → «Почта»: переписка как мессенджер (webapp/mail-inbox.js) ——— */
 .mail-inbox {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.6rem;
 }
 
@@ -19925,10 +19926,12 @@ form.pf-list .pf-add-row .pf-row-body {
 
 .mail-threads {
   display: grid;
+  grid-template-columns: minmax(0, 1fr); /* длинная строка без переносов не растягивает колонку */
 }
 
 .mail-thread-row {
   display: flex;
+  min-width: 0;
   gap: 0.7rem;
   align-items: flex-start;
   padding: 0.65rem 0.25rem;
@@ -21012,8 +21015,8 @@ form.pf-list .pf-add-row .pf-row-body {
 /* Рынок — журнальный выпуск */
 .mkt {
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
-  overflow: hidden;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  overflow: clip; /* не hidden: иначе меню слева не прилипает при прокрутке */
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--surface);
@@ -21021,17 +21024,20 @@ form.pf-list .pf-add-row .pf-row-body {
 
 .mkt-toc {
   display: grid;
-  gap: 0.15rem;
+  gap: 0.2rem;
   align-content: start;
-  padding: 0.9rem 0.6rem;
+  align-self: start;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  padding: 0.75rem 0.6rem;
   border-right: 1px solid var(--border);
   position: sticky;
   top: 0;
 }
 
 .mkt-toc small {
-  margin: 0.6rem 0.6rem 0.2rem;
-  font-size: 0.6875rem;
+  margin: 0.8rem 0.75rem 0.25rem;
+  font-size: 0.75rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-tertiary);
@@ -21042,11 +21048,12 @@ form.pf-list .pf-add-row .pf-row-body {
 }
 
 .mkt-toc-item {
-  padding: 0.4rem 0.6rem;
+  padding: 0.6rem 0.75rem;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   font: inherit;
-  font-size: 0.875rem;
+  font-size: 1rem; /* как названия в списках «Чатов» и «Почты» */
+  font-weight: 500;
   text-align: left;
   color: var(--text-secondary);
   background: transparent;
@@ -21229,5 +21236,12 @@ form.pf-list .pf-add-row .pf-row-body {
 
   .mkt-body {
     padding: 0.6rem 0 1rem;
+  }
+}
+
+@media (max-width: 767px) {
+  .mkt-toc-item {
+    font-size: 0.875rem;
+    padding: 0.3rem 0.8rem;
   }
 }
