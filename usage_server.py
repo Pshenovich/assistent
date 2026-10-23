@@ -5240,6 +5240,13 @@ async def miniapp_integrations(
             pass
 
     bitrix_on = bitrix_mcp_is_connected(tid)
+    try:
+        from assistant.services.mail_connect import accounts as mail_accounts_list
+
+        mail_list = mail_accounts_list(tid)
+    except Exception as e:
+        print(f"[integrations] mail failed uid={tid} err={e!r}")
+        mail_list = []
 
     return {
         "google": google_on,
@@ -5266,6 +5273,8 @@ async def miniapp_integrations(
         "booking_assistant_can_disconnect": False,
         "bitrix": bitrix_on,
         "bitrix_connected": bitrix_on,
+        "mail": bool(mail_list),
+        "mail_accounts": mail_list,
     }
 
 
@@ -12657,6 +12666,103 @@ async def miniapp_oauth_telemost_disconnect(
     from assistant.integrations.telemost_oauth import disconnect_user
 
     return {"disconnected": disconnect_user(int(principal.telegram_user_id))}
+
+
+# ---------------------------------------------------------------- почта (подключение ящиков)
+
+
+def _mail_error(e: Exception) -> HTTPException:
+    from assistant.services.mail_connect import ConnectError
+
+    if isinstance(e, ConnectError):
+        return HTTPException(status_code=400, detail={"message": str(e), "step": e.step, "code": e.code})
+    print(f"[mail] connect err={e!r}")
+    return HTTPException(status_code=502, detail={"message": "Не получилось связаться с почтой. Попробуйте ещё раз."})
+
+
+@miniapp_router.get("/mail/accounts")
+async def miniapp_mail_accounts(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.services import mail_connect
+
+    uid = int(principal.telegram_user_id)
+    return {
+        "ok": True,
+        "accounts": await run_in_threadpool(mail_connect.accounts, uid),
+        "yandex": await run_in_threadpool(mail_connect.yandex_oauth_state, uid),
+    }
+
+
+@miniapp_router.post("/mail/detect")
+async def miniapp_mail_detect(body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Мастер подключения по адресу: провайдер, сервер, подсказки."""
+    from assistant.services import mail_connect
+
+    del principal
+    try:
+        return {"ok": True, **await run_in_threadpool(mail_connect.detect, str(body.get("email") or ""))}
+    except Exception as e:
+        raise _mail_error(e) from e
+
+
+@miniapp_router.post("/mail/connect")
+async def miniapp_mail_connect(body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.services import mail_connect
+
+    try:
+        return await run_in_threadpool(mail_connect.connect, int(principal.telegram_user_id), body or {})
+    except Exception as e:
+        raise _mail_error(e) from e
+
+
+@miniapp_router.post("/mail/yandex/start")
+async def miniapp_mail_yandex_start(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Вход через Яндекс для почты — тот же OAuth, что у Телемоста, с правами на почту."""
+    from assistant.integrations.telemost_oauth import (
+        build_authorization_url,
+        register_oauth_state,
+        uses_verification_code_flow,
+    )
+
+    try:
+        state = register_oauth_state(int(principal.telegram_user_id))
+        return {"url": build_authorization_url(state, include_mail_scope=True),
+                "verification_code_flow": uses_verification_code_flow()}
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+
+
+@miniapp_router.patch("/mail/accounts/{account_id}")
+async def miniapp_mail_account_patch(
+    account_id: str, body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import mail_accounts
+
+    uid = int(principal.telegram_user_id)
+    if not mail_accounts.get(uid, account_id):
+        raise HTTPException(status_code=404, detail="Ящик не найден")
+    if "send_enabled" in (body or {}):
+        await run_in_threadpool(mail_accounts.set_send_enabled, uid, account_id, bool(body["send_enabled"]))
+    return {"ok": True, "account": mail_accounts.public(mail_accounts.get(uid, account_id) or {})}
+
+
+@miniapp_router.post("/mail/accounts/{account_id}/sync")
+async def miniapp_mail_account_sync(account_id: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.services import mail_source
+    from assistant.stores import mail_accounts
+
+    uid = int(principal.telegram_user_id)
+    if not mail_accounts.get(uid, account_id):
+        raise HTTPException(status_code=404, detail="Ящик не найден")
+    mail_source.kick(uid)
+    return {"ok": True}
+
+
+@miniapp_router.delete("/mail/accounts/{account_id}")
+async def miniapp_mail_account_delete(account_id: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Отключить ящик: стереть пароль/доступ, состояние синхронизации и индекс писем."""
+    from assistant.services import mail_connect
+
+    return {"ok": await run_in_threadpool(mail_connect.disconnect, int(principal.telegram_user_id), account_id)}
 
 
 @miniapp_router.get("/telemost/status")

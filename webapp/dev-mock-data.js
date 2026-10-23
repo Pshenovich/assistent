@@ -577,7 +577,91 @@
     return { total_rub: total, days: out };
   }
 
+  // ---- Почта: моки мастеров подключения ----
+  var mockMail = { accounts: [], yandexAuthorized: false };
+  function mockMailErr(message, step, code) {
+    var e = new Error(message);
+    e.status = 400;
+    e.detail = { message: message, step: step || "", code: code || "" };
+    return e;
+  }
+  function mockMailAdd(provider, email, auth) {
+    var acc = {
+      account_id: "m_" + email.replace(/[^a-z0-9]/gi, ""),
+      provider: provider,
+      email: email,
+      auth: auth,
+      send_enabled: true,
+      status: "ok",
+      last_error: "",
+      last_sync_at: "",
+      stats: {},
+    };
+    mockMail.accounts = mockMail.accounts.filter(function (a) {
+      return a.email !== email;
+    });
+    mockMail.accounts.push(acc);
+    mockProfile.integrations.mail = true;
+    mockProfile.integrations.mail_accounts = mockMail.accounts;
+    setTimeout(function () {
+      acc.last_sync_at = new Date().toISOString();
+      acc.stats = { first_sync: { seen: 230, bulk: 190 } };
+    }, 5000);
+    return { ok: true, account: acc, send_scope: true };
+  }
+  function mailMockResponse(basePath, method, opts) {
+    var b = JSON.parse((opts && opts.body) || "{}");
+    if (basePath === "/mail/accounts" && method === "GET") return { ok: true, accounts: mockMail.accounts, yandex: { connected: mockMail.yandexAuthorized } };
+    if (basePath === "/mail/detect") {
+      var email = String(b.email || "").toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw mockMailErr("Похоже, в адресе опечатка — проверьте, пожалуйста.", "email");
+      var dom = email.split("@")[1];
+      var prov = /gmail/.test(dom) ? "gmail" : /yandex|ya\.ru/.test(dom) ? "yandex" : /mail\.ru|inbox|list\.ru|bk\.ru/.test(dom) ? "mailru" : dom === "obuchat.me" ? "gmail" : "imap";
+      return {
+        ok: true, email: email, provider: prov, corporate: dom === "obuchat.me",
+        hint: dom === "obuchat.me" ? "Это корпоративная почта Google Workspace. Если в настройках Google не будет раздела «Пароли приложений», их отключил администратор — попросите его включить или подключите другую почту." : "",
+        needs_server: prov === "imap", imap_host: prov === "imap" ? "" : "imap." + dom, imap_port: 993, smtp_host: "", smtp_port: 465,
+      };
+    }
+    if (basePath === "/mail/yandex/start") {
+      setTimeout(function () {
+        mockMail.yandexAuthorized = true;
+      }, 4000);
+      return { url: "https://oauth.yandex.ru/authorize?mock=1", verification_code_flow: false };
+    }
+    if (basePath === "/mail/connect") {
+      if (b.provider === "yandex" && !b.password) {
+        if (!mockMail.yandexAuthorized) return { ok: false, need_oauth: true };
+        if (!mockMail.imapWarned) {
+          mockMail.imapWarned = true;
+          throw mockMailErr("Яндекс не пустил по IMAP: скорее всего, в настройках почты выключен доступ почтовым программам.", "imap", "imap_disabled");
+        }
+        return mockMailAdd("yandex", "vova@yandex.ru", "oauth_yandex");
+      }
+      if (!b.password) throw mockMailErr("Вставьте пароль приложения.", "password");
+      if (b.password === "bad") throw mockMailErr("Почта не приняла пароль. Скорее всего, вставлен обычный пароль от почты, а нужен пароль приложения.", "password", "auth");
+      return mockMailAdd(b.provider || "imap", String(b.email || "me@example.com").toLowerCase(), "password");
+    }
+    var m = /^\/mail\/accounts\/([^/]+)(\/sync)?$/.exec(basePath);
+    if (m) {
+      var acc = mockMail.accounts.filter(function (a) { return a.account_id === m[1]; })[0];
+      if (method === "DELETE") {
+        mockMail.accounts = mockMail.accounts.filter(function (a) { return a.account_id !== m[1]; });
+        mockProfile.integrations.mail = mockMail.accounts.length > 0;
+        mockProfile.integrations.mail_accounts = mockMail.accounts;
+        return { ok: true };
+      }
+      if (method === "PATCH" && acc && "send_enabled" in b) acc.send_enabled = !!b.send_enabled;
+      return { ok: true, account: acc };
+    }
+    return null;
+  }
+
   function profileMockResponse(basePath, method, opts) {
+    if (basePath.indexOf("/mail/") === 0) {
+      var mailRes = mailMockResponse(basePath, method, opts);
+      if (mailRes) return mailRes;
+    }
     if (basePath === "/me" && method === "GET") return mockProfile.me;
     if (basePath === "/billing" && method === "GET") return mockProfile.billing;
     if (basePath === "/usage/expenses" && method === "GET") {

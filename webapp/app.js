@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261022-voice";
+  var WEBAPP_BUILD = "20261023-mail";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -5609,9 +5609,9 @@
         );
         const err = new Error(msg);
         err.status = res.status;
-        if (res.status === 409 && body && body.detail && typeof body.detail === "object") {
+        if (body && body.detail && typeof body.detail === "object") {
           err.detail = body.detail;
-          err.conflictItem = body.detail.item || null;
+          if (res.status === 409) err.conflictItem = body.detail.item || null;
         }
         if (res.status >= 500) markNetworkFailure();
         throw err;
@@ -8621,6 +8621,24 @@
         }
         if (connectBtn) setHidden(connectBtn, on);
         if (disconnectBtn) setHidden(disconnectBtn, !on);
+      } else if (key === "mail") {
+        var mailLine = card.querySelector("[data-mail-line]");
+        var mailAccs = data.mail_accounts || [];
+        if (mailLine) {
+          var mailErr = mailAccs.some(function (a) {
+            return a.status === "auth_error" || a.status === "error";
+          });
+          mailLine.textContent = !on
+            ? "Ждут ответа, обещания, ответы на письма"
+            : mailErr
+              ? "Нужно переподключить"
+              : mailAccs.map(function (a) {
+                  return a.email;
+                }).join(", ");
+          mailLine.classList.toggle("svc-desc--connected", on && !mailErr);
+        }
+        if (connectBtn) setHidden(connectBtn, on);
+        if (disconnectBtn) setHidden(disconnectBtn, true);
       } else if (key === "bitrix") {
         var bitrixLine = card.querySelector("[data-bitrix-line]");
         if (bitrixLine) {
@@ -12458,6 +12476,7 @@
 
   // «Подключить» у любого сервиса ведёт на его экран: там шаги и статус.
   function openServiceSetup(svc) {
+    if (svc === "mail") return window.LeoMail && window.LeoMail.openProfile();
     if (svc === "google") return openGoogleSetup();
     if (svc === "zoom") return openZoomSetup();
     if (svc === "telemost") return openTelemostSetup();
@@ -45716,6 +45735,13 @@
         openZoomSetup();
       });
     }
+    var mailRow = document.querySelector('#panel-profile [data-svc="mail"]');
+    if (mailRow) {
+      mailRow.addEventListener("click", function (e) {
+        if (e.target.closest("[data-action]")) return;
+        if (window.LeoMail) window.LeoMail.openProfile();
+      });
+    }
     var telemostRow = document.querySelector('#panel-profile [data-svc="telemost"]');
     if (telemostRow) {
       telemostRow.addEventListener("click", function (e) {
@@ -45954,6 +45980,25 @@
   window.addEventListener("error", function (e) {
     console.error("window.error", (e && e.error) || (e && e.message) || e);
   });
+
+  // Мост для webapp/mail.js (почта: подключение, разбор писем, окно письма).
+  window.LeoApp = {
+    apiFetch: apiFetch,
+    setHidden: setHidden,
+    toast: showNoteToast,
+    confirm: confirmDialog,
+    escapeHtml: escapeHtml,
+    profileScreen: profileScreen,
+    loadIntegrations: loadIntegrations,
+    openLink: function (url) {
+      var tg = window.Telegram && window.Telegram.WebApp;
+      if (tg && tg.openLink) tg.openLink(url);
+      else window.open(url, "_blank", "noopener,noreferrer");
+    },
+    askLeo: async function (prompt) {
+      if (await focusOpenAssistant()) await submitNoteGptQuestion(String(prompt || ""));
+    },
+  };
 
   init();
 })();

@@ -19251,3 +19251,206 @@ form.pf-list .pf-add-row .pf-row-body {
   padding: 0;
   font-size: 0.8125rem;
 }
+
+/* ——— Почта: мастера подключения (webapp/mail.js) ——— */
+.mail-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.mail-tile {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.mail-tile:active {
+  background: var(--surface-muted);
+}
+
+.mail-tile-title {
+  font-weight: 600;
+}
+
+.mail-tile-sub {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.mail-wiz,
+.mail-done {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.mail-wiz-progress {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.mail-wiz-title {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 650;
+}
+
+.mail-wiz-text {
+  margin: 0;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.mail-wiz-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.mail-wiz-alt {
+  justify-self: center;
+}
+
+.mail-wiz .pf-list,
+.mail-wiz .pf-group-title {
+  margin: 0;
+}
+
+/* Схема экрана провайдера с подсвеченной кнопкой */
+.mail-illo {
+  padding: 0.75rem;
+  border-radius: var(--radius-lg, 12px);
+  background: var(--surface-muted);
+}
+
+.mail-illo-win {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 0.8125rem;
+}
+
+.mail-illo-bar {
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mail-illo-page {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.7rem 0.75rem;
+}
+
+.mail-illo-lines {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.mail-illo-lines i {
+  display: block;
+  height: 0.4rem;
+  border-radius: 4px;
+  background: var(--surface-muted);
+}
+
+.mail-illo-lines i:last-child {
+  width: 60%;
+}
+
+.mail-illo-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.mail-illo-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.mail-illo-btn,
+.mail-illo-input,
+.mail-illo-check,
+.mail-illo-pass {
+  display: inline-block;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.mail-illo-btn--fill {
+  border-color: transparent;
+  color: var(--on-accent);
+  background: var(--text-tertiary);
+}
+
+.mail-illo-input {
+  min-width: 5rem;
+  color: var(--text);
+}
+
+.mail-illo-pass {
+  justify-self: center;
+  padding: 0.45rem 0.8rem;
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+  color: #3a2f00;
+  background: #ffe58a;
+}
+
+.mail-illo-hl {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 0 var(--accent-border);
+  animation: mail-illo-pulse 1.6s ease-out infinite;
+}
+
+.mail-illo-btn--fill.mail-illo-hl {
+  background: var(--accent);
+}
+
+@keyframes mail-illo-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--accent-border);
+  }
+  70% {
+    box-shadow: 0 0 0 0.45rem rgba(82, 158, 244, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(82, 158, 244, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mail-illo-hl {
+    animation: none;
+  }
+}
+
+.mail-acc-sub .pf-row-body {
+  gap: 0.75rem;
+}
+
+/* Тексты почты (обещание Лео, ответы на «Не получается», отчёт синхронизации) — целиком, без обрезки в 2 строки */
+#profile-mail-body .pf-row-sub--wrap,
+#profile-mail-body .pf-row-title--wrap {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+  white-space: normal;
+}
