@@ -19811,3 +19811,29 @@ form.pf-list .pf-add-row .pf-row-body {
   min-height: 4.5rem;
   resize: vertical;
 }
+
+/* Повтор встречи */
+.sheet-repeat { display: flex; flex-direction: column; }
+.sheet-repeat-body { display: flex; flex-direction: column; gap: 10px; padding: 4px 12px 12px; }
+.sheet-repeat-body.hidden { display: none; }
+.sheet-repeat-toggle #m-repeat-value { max-width: 15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sheet-repeat.is-open .sheet-repeat-toggle .event-sheet-chevron { transform: rotate(180deg); }
+.sheet-repeat-custom, .sheet-repeat-end { display: flex; flex-direction: column; gap: 10px; }
+.sheet-repeat-custom.hidden, .sheet-repeat-end.hidden, .sheet-repeat-line.hidden, .sheet-repeat-wds.hidden, .sheet-repeat-month.hidden, .sheet-repeat-summary.hidden { display: none; }
+.sheet-repeat-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 36px; font-size: 0.875rem; color: #c4c6c9; }
+.sheet-repeat-line > span:first-child { min-width: 4.5rem; }
+.sheet-repeat-num { width: 4.25rem; height: 36px; text-align: center; font-variant-numeric: tabular-nums; }
+.sheet-repeat-unit { height: 36px; padding: 0 10px; color-scheme: dark; }
+.sheet-repeat-wds { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.sheet-repeat-wd { height: 36px; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; background: transparent; color: #c4c6c9; font: inherit; font-size: 0.8125rem; font-weight: 600; cursor: pointer; }
+.sheet-repeat-wd.is-active { background: var(--accent-muted); border-color: var(--accent-border); color: #9fc4f8; }
+.sheet-repeat-summary { margin: 0; font-size: 0.8125rem; color: #9fc4f8; }
+
+/* Окно встречи: перетаскивание записи */
+#modal-overlay .modal { position: relative; }
+.ev-drop-veil { position: absolute; inset: 8px; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; border: 2px dashed var(--accent); border-radius: 16px; background: rgba(20, 20, 22, 0.92); color: var(--text); text-align: center; pointer-events: none; }
+.ev-drop-veil.hidden { display: none; }
+.ev-drop-veil svg { width: 36px; height: 36px; color: var(--accent); }
+.ev-drop-veil b { font-size: 1.0625rem; }
+.ev-drop-veil span { max-width: 22rem; font-size: 0.85rem; color: var(--text-secondary); }
+.ev-materials-drop-hint { margin: 0; font-size: 0.75rem; color: var(--text-tertiary); text-align: center; }

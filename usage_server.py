@@ -2546,6 +2546,19 @@ class _MiniappCalendarEventUpdate(BaseModel):
     description: Optional[str] = None
     location: Optional[str] = None
     attendees: Optional[list[str]] = None
+    # None — не трогать; [] — без повтора; ["RRULE:…"] — правило повтора.
+    recurrence: Optional[list[str]] = None
+
+
+def _miniapp_event_recurrence(body: "_MiniappCalendarEventUpdate") -> Optional[list[str]]:
+    if body.recurrence is None:
+        return None
+    from assistant.lib.recurrence import sanitize_client_recurrence
+
+    try:
+        return sanitize_client_recurrence(body.recurrence)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
 
 
 class _MiniappCalendarTaskBody(BaseModel):
@@ -6963,6 +6976,9 @@ async def miniapp_calendar_event_create(
     if body.location is not None:
         parsed["location"] = str(body.location).strip()
     parsed["attendees"] = _normalize_attendee_emails(body.attendees)
+    rules = _miniapp_event_recurrence(body)
+    if rules:
+        parsed["recurrence"] = rules
     uname = (
         principal.user.get("username")
         if isinstance(principal.user, dict)
@@ -7000,6 +7016,7 @@ async def miniapp_calendar_event_create(
         "description": str(body.description or ""),
         "location": str(body.location or "").strip(),
         "attendees": [{"email": e, "name": ""} for e in parsed.get("attendees") or []],
+        "recurrence": list(created.get("recurrence") or []),
     }
     try:
         from assistant.services import meeting_invites as inv
@@ -7035,6 +7052,9 @@ async def miniapp_calendar_event_update(
         parsed["location"] = str(body.location).strip()
     if body.attendees is not None:
         parsed["attendees"] = _normalize_attendee_emails(body.attendees)
+    rules = _miniapp_event_recurrence(body)
+    if rules is not None:
+        parsed["recurrence"] = rules
     if not parsed:
         raise HTTPException(status_code=400, detail="Нет полей для обновления")
 
@@ -7105,6 +7125,38 @@ async def miniapp_calendar_event_update(
     except Exception as e:
         print(f"[miniapp_calendar] invite_notify_update err={e!r}")
     return {"event": ser}
+
+
+@miniapp_router.get("/calendar/events/{event_id}/recurrence")
+async def miniapp_calendar_event_recurrence(
+    event_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    calendar_id: Optional[str] = Query(None),
+) -> dict[str, Any]:
+    """Правило повтора встречи (у экземпляра — правило его серии)."""
+    from assistant.services import calendar as cal_svc
+
+    uid = int(principal.telegram_user_id)
+    eid = str(event_id or "").strip()
+    if _is_local_dev_event_id(eid):
+        return {"recurrence": [], "series_id": ""}
+
+    def _run() -> dict[str, Any]:
+        ev = cal_svc.get_event(uid, eid, calendar_id=calendar_id)
+        series_id = str(ev.get("recurringEventId") or "").strip()
+        lines = ev.get("recurrence") or []
+        if series_id:
+            master = cal_svc.get_event(uid, series_id, calendar_id=calendar_id)
+            lines = master.get("recurrence") or []
+        rules = [str(x) for x in lines if str(x).strip().upper().startswith("RRULE:")]
+        return {"recurrence": rules, "series_id": series_id}
+
+    try:
+        return await run_in_threadpool(_run)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        _raise_calendar_http(e)
 
 
 @miniapp_router.delete("/calendar/events/{event_id}")

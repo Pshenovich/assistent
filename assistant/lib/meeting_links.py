@@ -22,6 +22,14 @@ _ONLINE_HOST_HINTS = (
     "jitsi",
     "kontur.ru",
     "trueconf",
+    "telemost.360.yandex.ru",
+    "mts-link.ru",
+    "webinar.ru",
+    "jazz.sber.ru",
+    "salutejazz.ru",
+    "calls.vk.com",
+    "ktalk.ru",
+    "dion.vc",
 )
 
 _VIDEO_ENTRY_TYPES = frozenset({"video", "phone", "sip", "more"})
@@ -74,6 +82,15 @@ def extract_online_meeting_urls(event: dict[str, Any]) -> list[str]:
             uri = str(ep.get("uri") or "").strip()
             if uri.startswith("http"):
                 add(uri)
+
+    # Поле «Место» целиком из одной ссылки — это ссылка на звонок, даже если сервис
+    # нам незнаком (так сохраняет «Своя ссылка» в окне встречи).
+    loc = _normalize_url(str(event.get("location") or ""))
+    if loc.lower().startswith(("http://", "https://")) and not any(c.isspace() for c in loc):
+        key = _dedupe_key(loc)
+        if key not in seen:
+            seen.add(key)
+            out.append(loc)
 
     blobs: list[str] = []
     for key in ("description", "location"):

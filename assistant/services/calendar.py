@@ -20,6 +20,7 @@ from assistant.config import (
 )
 from assistant.integrations import google_calendar_oauth
 from assistant.lib import calendar_action_tokens
+from assistant.lib import recurrence as recur
 from assistant.lib.calendar_attendees import infer_event_title_from_text, resolve_attendee_names
 from assistant.lib.calendar_event_utils import (
     calendar_busy_from_events,
@@ -896,12 +897,37 @@ def update_event(
     )
     if attendees_touched:
         body["attendees"] = attendees
-    patched = svc.events().patch(
-        calendarId=cal_id,
-        eventId=event_id,
-        body=body,
-        sendUpdates="all" if (attendees if attendees_touched else prev_emails) else "none",
-    ).execute()
+    send_updates = "all" if (attendees if attendees_touched else prev_emails) else "none"
+    series_id = str(ev.get("recurringEventId") or "").strip()
+    if "recurrence" in parsed and not series_id:
+        rules = [str(x) for x in (parsed.get("recurrence") or []) if str(x).strip()]
+        body["recurrence"] = recur.replace_rrule(ev.get("recurrence"), rules)
+    if body or not series_id:
+        patched = svc.events().patch(
+            calendarId=cal_id,
+            eventId=event_id,
+            body=body,
+            sendUpdates=send_updates,
+        ).execute()
+    else:
+        patched = ev
+    if "recurrence" in parsed and series_id:
+        # Экземпляр серии: правило живёт у серии. «Не повторять» — серия заканчивается на этой встрече.
+        master = svc.events().get(calendarId=cal_id, eventId=series_id).execute()
+        rules = [str(x) for x in (parsed.get("recurrence") or []) if str(x).strip()]
+        if rules:
+            new_lines = recur.replace_rrule(master.get("recurrence"), rules)
+        else:
+            inst_start = _event_start_local(patched, user_id) or _event_start_local(ev, user_id)
+            if inst_start is None:
+                raise RuntimeError("Не удалось определить время встречи из серии")
+            new_lines = recur.end_series_at(master.get("recurrence"), inst_start)
+        svc.events().patch(
+            calendarId=cal_id,
+            eventId=series_id,
+            body={"recurrence": new_lines},
+            sendUpdates=send_updates,
+        ).execute()
     st = _event_start_local(patched, user_id)
     en_raw = (patched.get("end") or {}).get("dateTime")
     en = None

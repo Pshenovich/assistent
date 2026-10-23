@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -220,3 +221,70 @@ def ensure_until_or_count(rrule: str, *, start: datetime, max_days: int = 400) -
     end = (start.date() if isinstance(start, datetime) else date.today()) + timedelta(days=max_days)
     sep = "" if rrule.endswith(":") else ";"
     return f"{rrule}{sep}UNTIL={end.strftime('%Y%m%d')}T235959Z"
+
+
+_CLIENT_RULE_RE = re.compile(r"^RRULE:[A-Z0-9=;,+\-]{6,300}$")
+
+
+def sanitize_client_recurrence(raw: Any) -> list[str]:
+    """Правила повтора из окна встречи: только RRULE, только знакомые ключи, разумные пределы."""
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out: list[str] = []
+    for item in raw:
+        line = str(item or "").strip().upper()
+        if not line:
+            continue
+        if not line.startswith("RRULE:"):
+            line = "RRULE:" + line
+        if not _CLIENT_RULE_RE.match(line):
+            raise ValueError("Неверное правило повтора")
+        parts = dict(
+            p.split("=", 1) for p in line[len("RRULE:"):].split(";") if "=" in p
+        )
+        if parts.get("FREQ") not in ("DAILY", "WEEKLY", "MONTHLY", "YEARLY"):
+            raise ValueError("Неверное правило повтора")
+        allowed = {"FREQ", "INTERVAL", "BYDAY", "BYMONTHDAY", "BYMONTH", "BYSETPOS", "UNTIL", "COUNT", "WKST"}
+        if set(parts) - allowed:
+            raise ValueError("Неверное правило повтора")
+        if "INTERVAL" in parts and not (parts["INTERVAL"].isdigit() and 1 <= int(parts["INTERVAL"]) <= 99):
+            raise ValueError("Интервал повтора — от 1 до 99")
+        if "COUNT" in parts and not (parts["COUNT"].isdigit() and 1 <= int(parts["COUNT"]) <= 730):
+            raise ValueError("Число повторов — от 1 до 730")
+        if "UNTIL" in parts and not re.fullmatch(r"\d{8}(T\d{6}Z)?", parts["UNTIL"]):
+            raise ValueError("Неверная дата окончания повтора")
+        out.append(line)
+    return out[:1]
+
+
+def until_before(start: datetime) -> str:
+    """UNTIL, на котором серия заканчивается этим экземпляром (включительно)."""
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=ZoneInfo("UTC"))
+    return start.astimezone(ZoneInfo("UTC")).strftime("%Y%m%dT%H%M%SZ")
+
+
+def replace_rrule(lines: list[str] | None, new_rules: list[str]) -> list[str]:
+    """Заменить RRULE серии, сохранив EXDATE/RDATE (удалённые и перенесённые экземпляры)."""
+    keep = [
+        str(x)
+        for x in (lines or [])
+        if str(x).strip() and not str(x).strip().upper().startswith(("RRULE:", "EXRULE:"))
+    ]
+    return list(new_rules) + keep if new_rules else []
+
+
+def end_series_at(lines: list[str] | None, start: datetime) -> list[str]:
+    """Оставить серию, но закончить её на экземпляре start."""
+    until = until_before(start)
+    out: list[str] = []
+    for x in lines or []:
+        s = str(x).strip()
+        if s.upper().startswith("RRULE:"):
+            parts = [p for p in s[len("RRULE:"):].split(";") if p and not p.upper().startswith(("UNTIL=", "COUNT="))]
+            parts.append("UNTIL=" + until)
+            s = "RRULE:" + ";".join(parts)
+        out.append(s)
+    return out

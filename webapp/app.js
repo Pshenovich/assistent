@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-mail3";
+  var WEBAPP_BUILD = "20261023-drop";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -15673,6 +15673,421 @@
     );
   }
 
+  /* ——— Повтор встречи: быстрые варианты и «Настроить…» (каждые N, дни недели, окончание) ——— */
+  var REPEAT_WD = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
+  var REPEAT_WD_SHORT = { MO: "пн", TU: "вт", WE: "ср", TH: "чт", FR: "пт", SA: "сб", SU: "вс" };
+  var REPEAT_WD_ORDER = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+  var REPEAT_WD_ACC = { MO: "понедельник", TU: "вторник", WE: "среду", TH: "четверг", FR: "пятницу", SA: "субботу", SU: "воскресенье" };
+  var REPEAT_WEEKDAYS = ["MO", "TU", "WE", "TH", "FR"];
+  var REPEAT_UNITS = {
+    DAILY: ["день", "дня", "дней"],
+    WEEKLY: ["неделю", "недели", "недель"],
+    MONTHLY: ["месяц", "месяца", "месяцев"],
+    YEARLY: ["год", "года", "лет"],
+  };
+
+  function repeatStartDate() {
+    var d = String((document.getElementById("m-ev-start-date") || {}).value || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) d = String((document.getElementById("m-ev-start") || {}).value || "").slice(0, 10);
+    var dt = new Date((d || todayIsoLocal()) + "T12:00:00");
+    return isNaN(dt.getTime()) ? new Date() : dt;
+  }
+
+  function repeatNthOfMonth(dt) {
+    var nth = Math.ceil(dt.getDate() / 7);
+    var dim = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
+    return { nth: nth, isLast: dt.getDate() + 7 > dim, wd: REPEAT_WD[dt.getDay()] };
+  }
+
+  function repeatOrdinal(n, wd) {
+    // «во 2-й вторник», «в 3-ю пятницу», «в 1-е воскресенье»
+    var fem = wd === "WE" || wd === "FR" || wd === "SA";
+    var neut = wd === "SU";
+    var suf = fem ? "-ю" : neut ? "-е" : "-й";
+    return (n === 2 && wd === "TU" ? "во " : "в ") + n + suf + " " + REPEAT_WD_ACC[wd];
+  }
+
+  function repeatLastLabel(wd) {
+    var fem = wd === "WE" || wd === "FR" || wd === "SA";
+    return "в " + (fem ? "последнюю" : wd === "SU" ? "последнее" : "последний") + " " + REPEAT_WD_ACC[wd];
+  }
+
+  function parseRepeatRule(rule) {
+    var st = { freq: "", interval: 1, byday: [], monthMode: "day", end: "never", until: "", count: 10, raw: "" };
+    var s = String(rule || "").replace(/^RRULE:/i, "").toUpperCase().trim();
+    if (!s) return st;
+    var parts = {};
+    s.split(";").forEach(function (p) {
+      var i = p.indexOf("=");
+      if (i > 0) parts[p.slice(0, i)] = p.slice(i + 1);
+    });
+    if (!/^(DAILY|WEEKLY|MONTHLY|YEARLY)$/.test(parts.FREQ || "")) {
+      st.raw = "RRULE:" + s;
+      return st;
+    }
+    st.freq = parts.FREQ;
+    st.interval = Math.max(1, parseInt(parts.INTERVAL || "1", 10) || 1);
+    var known = { FREQ: 1, INTERVAL: 1, BYDAY: 1, BYMONTHDAY: 1, UNTIL: 1, COUNT: 1, WKST: 1 };
+    var opaque = Object.keys(parts).some(function (k) {
+      return !known[k];
+    });
+    if (parts.BYDAY) {
+      var days = parts.BYDAY.split(",");
+      var m = /^(-?\d)([A-Z]{2})$/.exec(days[0]);
+      if (st.freq === "MONTHLY" && m && days.length === 1) st.monthMode = m[1] === "-1" ? "last" : "nth";
+      else if (days.every(function (d) { return REPEAT_WD_SHORT[d]; })) st.byday = days;
+      else opaque = true;
+    }
+    if (parts.UNTIL && /^\d{8}/.test(parts.UNTIL)) {
+      var u = parts.UNTIL;
+      var ud = /T\d{6}Z$/.test(u)
+        ? new Date(Date.UTC(+u.slice(0, 4), +u.slice(4, 6) - 1, +u.slice(6, 8), +u.slice(9, 11), +u.slice(11, 13)))
+        : new Date(+u.slice(0, 4), +u.slice(4, 6) - 1, +u.slice(6, 8), 12);
+      st.end = "until";
+      st.until = localDateIsoFromMs(ud.getTime());
+    } else if (parts.COUNT) {
+      st.end = "count";
+      st.count = Math.max(1, parseInt(parts.COUNT, 10) || 1);
+    }
+    if (opaque) st.raw = "RRULE:" + s;
+    return st;
+  }
+
+  function buildRepeatRule(st) {
+    if (st.raw) return st.raw;
+    if (!st.freq) return "";
+    var dt = repeatStartDate();
+    var p = ["FREQ=" + st.freq];
+    var n = Math.min(99, Math.max(1, parseInt(st.interval, 10) || 1));
+    if (n > 1) p.push("INTERVAL=" + n);
+    if (st.freq === "WEEKLY") {
+      var days = st.byday.length ? st.byday.slice() : [REPEAT_WD[dt.getDay()]];
+      days.sort(function (a, b) {
+        return REPEAT_WD_ORDER.indexOf(a) - REPEAT_WD_ORDER.indexOf(b);
+      });
+      p.push("BYDAY=" + days.join(","));
+    } else if (st.freq === "MONTHLY") {
+      var nm = repeatNthOfMonth(dt);
+      if (st.monthMode === "nth") p.push("BYDAY=" + Math.min(nm.nth, 4) + nm.wd);
+      else if (st.monthMode === "last") p.push("BYDAY=-1" + nm.wd);
+      else p.push("BYMONTHDAY=" + dt.getDate());
+    }
+    if (st.end === "until" && st.until) {
+      var end = new Date(st.until + "T23:59:59");
+      if (!isNaN(end.getTime())) p.push("UNTIL=" + end.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, ""));
+    } else if (st.end === "count") {
+      p.push("COUNT=" + Math.min(730, Math.max(1, parseInt(st.count, 10) || 1)));
+    }
+    return "RRULE:" + p.join(";");
+  }
+
+  function repeatPreset(st) {
+    if (st.raw) return "custom";
+    if (!st.freq) return "none";
+    if (st.interval !== 1) return "custom";
+    var wd = REPEAT_WD[repeatStartDate().getDay()];
+    if (st.freq === "DAILY") return "daily";
+    if (st.freq === "WEEKLY") {
+      var days = st.byday.slice().sort().join(",");
+      if (days === REPEAT_WEEKDAYS.slice().sort().join(",")) return "weekdays";
+      if (!st.byday.length || days === wd) return "weekly";
+      return "custom";
+    }
+    if (st.freq === "MONTHLY" && st.monthMode === "day") return "monthly";
+    if (st.freq === "YEARLY") return "yearly";
+    return "custom";
+  }
+
+  function repeatSummary(st) {
+    if (st.raw) return "Свой повтор (задан в календаре)";
+    if (!st.freq) return "";
+    var dt = repeatStartDate();
+    var n = Math.max(1, parseInt(st.interval, 10) || 1);
+    var u = REPEAT_UNITS[st.freq];
+    var head;
+    if (n === 1) {
+      head = { DAILY: "Каждый день", WEEKLY: "Каждую неделю", MONTHLY: "Каждый месяц", YEARLY: "Каждый год" }[st.freq];
+    } else {
+      var single = n % 10 === 1 && n % 100 !== 11;
+      head = (single ? (st.freq === "WEEKLY" ? "Каждую " : "Каждый ") : "Каждые ") + n + " " + pluralRu(n, u[0], u[1], u[2]);
+    }
+    var tail = "";
+    if (st.freq === "WEEKLY") {
+      var days = (st.byday.length ? st.byday : [REPEAT_WD[dt.getDay()]]).slice().sort(function (a, b) {
+        return REPEAT_WD_ORDER.indexOf(a) - REPEAT_WD_ORDER.indexOf(b);
+      });
+      if (n === 1 && days.join(",") === REPEAT_WEEKDAYS.join(",")) head = "По будням";
+      else tail = ": " + days.map(function (d) { return REPEAT_WD_SHORT[d]; }).join(", ");
+    } else if (st.freq === "MONTHLY") {
+      var nm = repeatNthOfMonth(dt);
+      tail = ", " + (st.monthMode === "nth" ? repeatOrdinal(Math.min(nm.nth, 4), nm.wd) : st.monthMode === "last" ? repeatLastLabel(nm.wd) : dt.getDate() + "-го числа");
+    } else if (st.freq === "YEARLY") {
+      tail = ", " + dt.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+    }
+    var end = "";
+    if (st.end === "until" && st.until) {
+      end = " · до " + new Date(st.until + "T12:00:00").toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });
+    } else if (st.end === "count") {
+      var c = Math.max(1, parseInt(st.count, 10) || 1);
+      end = " · " + c + " " + pluralRu(c, "раз", "раза", "раз");
+    }
+    return head + tail + end;
+  }
+
+  function eventRepeatHtml() {
+    var chips = [
+      ["none", "Не повторять"],
+      ["daily", "Каждый день"],
+      ["weekdays", "По будням"],
+      ["weekly", "Каждую неделю"],
+      ["monthly", "Каждый месяц"],
+      ["custom", "Настроить…"],
+    ];
+    var wdBtns = REPEAT_WD_ORDER.map(function (d) {
+      return '<button type="button" class="sheet-repeat-wd" data-repeat-wd="' + d + '" aria-pressed="false">' + REPEAT_WD_SHORT[d] + "</button>";
+    }).join("");
+    return (
+      '<div class="event-sheet-group sheet-repeat" id="m-ev-repeat">' +
+      '<button type="button" class="event-sheet-row event-sheet-row--nav sheet-repeat-toggle" id="m-repeat-toggle" aria-expanded="false">' +
+      '<span class="event-sheet-row-label">Повтор</span>' +
+      '<span class="event-sheet-row-value"><span id="m-repeat-value">Не повторять</span>' +
+      eventSheetChevronHtml() +
+      "</span></button>" +
+      '<div class="sheet-repeat-body hidden">' +
+      '<div class="sheet-chips" role="radiogroup" aria-label="Повтор">' +
+      chips.map(function (c) {
+        return '<button type="button" class="sheet-chip" role="radio" data-repeat="' + c[0] + '">' + c[1] + "</button>";
+      }).join("") +
+      "</div>" +
+      '<div class="sheet-repeat-custom hidden">' +
+      '<div class="sheet-repeat-line"><span id="m-repeat-every">Каждые</span>' +
+      '<input type="number" class="event-sheet-pill sheet-repeat-num" id="m-repeat-interval" min="1" max="99" inputmode="numeric" aria-label="Интервал" />' +
+      '<select class="event-sheet-pill sheet-repeat-unit" id="m-repeat-unit" aria-label="Единица">' +
+      '<option value="DAILY"></option><option value="WEEKLY"></option><option value="MONTHLY"></option><option value="YEARLY"></option>' +
+      "</select></div>" +
+      '<div class="sheet-repeat-wds" role="group" aria-label="Дни недели">' + wdBtns + "</div>" +
+      '<div class="sheet-chips sheet-repeat-month" role="radiogroup" aria-label="День месяца"></div>' +
+      "</div>" +
+      '<div class="sheet-repeat-end hidden">' +
+      '<div class="sheet-repeat-line"><span>Окончание</span>' +
+      '<div class="sheet-chips" role="radiogroup" aria-label="Окончание">' +
+      '<button type="button" class="sheet-chip" data-repeat-end="never">Никогда</button>' +
+      '<button type="button" class="sheet-chip" data-repeat-end="until">До даты</button>' +
+      '<button type="button" class="sheet-chip" data-repeat-end="count">Число раз</button>' +
+      "</div></div>" +
+      '<div class="sheet-repeat-line sheet-repeat-until hidden"><span>До</span><input type="date" class="event-sheet-pill" id="m-repeat-until" aria-label="Повторять до" /></div>' +
+      '<div class="sheet-repeat-line sheet-repeat-count hidden"><input type="number" class="event-sheet-pill sheet-repeat-num" id="m-repeat-count" min="1" max="730" inputmode="numeric" aria-label="Сколько раз" /><span id="m-repeat-count-lbl">раз</span></div>' +
+      "</div>" +
+      '<p class="sheet-repeat-summary hidden" id="m-repeat-summary"></p>' +
+      "</div></div>"
+    );
+  }
+
+  // ev.recurrence — правило, если уже известно; у экземпляра серии правило подгружается с сервера.
+  function mountEventRepeat(ev) {
+    var host = document.getElementById("m-ev-repeat");
+    if (!host) return null;
+    var st = parseRepeatRule("");
+    var initialRule = "";
+    var dirty = false;
+    var customOpen = false;
+    var isSeries = !!(ev && ev.recurringEventId);
+    var custom = host.querySelector(".sheet-repeat-custom");
+    var endBox = host.querySelector(".sheet-repeat-end");
+    var summary = document.getElementById("m-repeat-summary");
+    var intervalEl = document.getElementById("m-repeat-interval");
+    var unitEl = document.getElementById("m-repeat-unit");
+    var untilEl = document.getElementById("m-repeat-until");
+    var countEl = document.getElementById("m-repeat-count");
+    var monthBox = host.querySelector(".sheet-repeat-month");
+
+    function paint() {
+      var preset = customOpen ? "custom" : repeatPreset(st);
+      host.querySelectorAll("[data-repeat]").forEach(function (b) {
+        var on = b.getAttribute("data-repeat") === preset;
+        b.classList.toggle("is-active", on);
+        b.setAttribute("aria-checked", on ? "true" : "false");
+      });
+      var wkBtn = host.querySelector('[data-repeat="weekly"]');
+      if (wkBtn) wkBtn.textContent = "Каждую неделю (" + REPEAT_WD_SHORT[REPEAT_WD[repeatStartDate().getDay()]] + ")";
+      var showCustom = preset === "custom" && !st.raw;
+      custom.classList.toggle("hidden", !showCustom);
+      endBox.classList.toggle("hidden", !st.freq || !!st.raw);
+      var n = Math.max(1, parseInt(st.interval, 10) || 1);
+      if (document.activeElement !== intervalEl) intervalEl.value = String(n);
+      Array.prototype.forEach.call(unitEl.options, function (o) {
+        var u = REPEAT_UNITS[o.value];
+        o.textContent = pluralRu(n, u[0], u[1], u[2]);
+      });
+      unitEl.value = st.freq || "WEEKLY";
+      var every = document.getElementById("m-repeat-every");
+      if (every) {
+        var single = n % 10 === 1 && n % 100 !== 11;
+        every.textContent = single ? (unitEl.value === "WEEKLY" ? "Каждую" : "Каждый") : "Каждые";
+      }
+      var wds = host.querySelector(".sheet-repeat-wds");
+      wds.classList.toggle("hidden", st.freq !== "WEEKLY");
+      var startWd = REPEAT_WD[repeatStartDate().getDay()];
+      var activeDays = st.byday.length ? st.byday : [startWd];
+      wds.querySelectorAll("[data-repeat-wd]").forEach(function (b) {
+        var on = activeDays.indexOf(b.getAttribute("data-repeat-wd")) >= 0;
+        b.classList.toggle("is-active", on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+      monthBox.classList.toggle("hidden", st.freq !== "MONTHLY");
+      if (st.freq === "MONTHLY") {
+        var dt = repeatStartDate();
+        var nm = repeatNthOfMonth(dt);
+        var opts = [["day", dt.getDate() + "-го числа"]];
+        if (nm.nth <= 4) opts.push(["nth", repeatOrdinal(nm.nth, nm.wd)]);
+        if (nm.isLast) opts.push(["last", repeatLastLabel(nm.wd)]);
+        if (!opts.some(function (o) { return o[0] === st.monthMode; })) st.monthMode = "day";
+        monthBox.innerHTML = opts.map(function (o) {
+          return '<button type="button" class="sheet-chip' + (o[0] === st.monthMode ? " is-active" : "") + '" data-repeat-month="' + o[0] + '">' + escapeHtml(o[1]) + "</button>";
+        }).join("");
+      }
+      host.querySelectorAll("[data-repeat-end]").forEach(function (b) {
+        b.classList.toggle("is-active", b.getAttribute("data-repeat-end") === st.end);
+      });
+      host.querySelector(".sheet-repeat-until").classList.toggle("hidden", st.end !== "until");
+      host.querySelector(".sheet-repeat-count").classList.toggle("hidden", st.end !== "count");
+      if (st.end === "until" && untilEl.value !== st.until) untilEl.value = st.until;
+      if (document.activeElement !== countEl) countEl.value = String(st.count);
+      var cl = document.getElementById("m-repeat-count-lbl");
+      if (cl) cl.textContent = pluralRu(parseInt(st.count, 10) || 1, "раз", "раза", "раз");
+      var text = repeatSummary(st);
+      if (isSeries && dirty && !st.freq) text = "Серия закончится на этой встрече";
+      else if (isSeries && dirty) text += " · для всей серии";
+      summary.textContent = text;
+      summary.classList.toggle("hidden", !text);
+      var val = document.getElementById("m-repeat-value");
+      if (val) val.textContent = text || "Не повторять";
+    }
+    var toggle = document.getElementById("m-repeat-toggle");
+    var body = host.querySelector(".sheet-repeat-body");
+    function setOpen(open) {
+      body.classList.toggle("hidden", !open);
+      host.classList.toggle("is-open", open);
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+    toggle.addEventListener("click", function () {
+      setOpen(body.classList.contains("hidden"));
+    });
+    function touch() {
+      dirty = true;
+      st.raw = "";
+      paint();
+    }
+
+    host.querySelectorAll("[data-repeat]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var p = b.getAttribute("data-repeat");
+        customOpen = p === "custom";
+        var keepEnd = { end: st.end, until: st.until, count: st.count };
+        if (p === "none") st = parseRepeatRule("");
+        else if (p === "daily") st = Object.assign(parseRepeatRule("FREQ=DAILY"), keepEnd);
+        else if (p === "weekdays") st = Object.assign(parseRepeatRule("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"), keepEnd);
+        else if (p === "weekly") st = Object.assign(parseRepeatRule("FREQ=WEEKLY"), keepEnd);
+        else if (p === "monthly") st = Object.assign(parseRepeatRule("FREQ=MONTHLY"), keepEnd);
+        else if (p === "custom" && (!st.freq || st.raw)) st = Object.assign(parseRepeatRule("FREQ=WEEKLY"), keepEnd);
+        touch();
+      });
+    });
+    intervalEl.addEventListener("input", function () {
+      var v = parseInt(intervalEl.value, 10);
+      if (v >= 1 && v <= 99) {
+        st.interval = v;
+        touch();
+      }
+    });
+    intervalEl.addEventListener("blur", paint);
+    unitEl.addEventListener("change", function () {
+      st.freq = unitEl.value;
+      if (st.freq !== "WEEKLY") st.byday = [];
+      touch();
+    });
+    host.querySelectorAll("[data-repeat-wd]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var d = b.getAttribute("data-repeat-wd");
+        var cur = st.byday.length ? st.byday.slice() : [REPEAT_WD[repeatStartDate().getDay()]];
+        var i = cur.indexOf(d);
+        if (i >= 0) {
+          if (cur.length === 1) return; // хотя бы один день
+          cur.splice(i, 1);
+        } else cur.push(d);
+        st.byday = cur;
+        customOpen = true;
+        touch();
+      });
+    });
+    monthBox.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-repeat-month]");
+      if (!b) return;
+      st.monthMode = b.getAttribute("data-repeat-month");
+      customOpen = true;
+      touch();
+    });
+    host.querySelectorAll("[data-repeat-end]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        st.end = b.getAttribute("data-repeat-end");
+        if (st.end === "until" && !st.until) {
+          var d = repeatStartDate();
+          d.setMonth(d.getMonth() + 3);
+          st.until = localDateIsoFromMs(d.getTime());
+        }
+        touch();
+      });
+    });
+    untilEl.addEventListener("change", function () {
+      st.until = String(untilEl.value || "");
+      touch();
+    });
+    countEl.addEventListener("input", function () {
+      var v = parseInt(countEl.value, 10);
+      if (v >= 1 && v <= 730) {
+        st.count = v;
+        touch();
+      }
+    });
+    countEl.addEventListener("blur", paint);
+    // Дата начала задаёт день недели / число месяца — подписи следуют за ней.
+    var when = document.getElementById("m-sheet-when");
+    if (when) {
+      when.addEventListener("change", function () {
+        setTimeout(paint, 0);
+      });
+    }
+
+    function load(rule) {
+      initialRule = String(rule || "");
+      st = parseRepeatRule(initialRule);
+      customOpen = repeatPreset(st) === "custom";
+      paint();
+    }
+    load(ev && Array.isArray(ev.recurrence) ? ev.recurrence[0] : "");
+    if (isSeries && !String(ev.id || "").startsWith("local-dev-")) {
+      var calId = String(ev.calendar_id || "primary");
+      apiFetch(
+        "/calendar/events/" + encodeURIComponent(String(ev.id)) + "/recurrence" + (calId !== "primary" ? "?calendar_id=" + encodeURIComponent(calId) : "")
+      )
+        .then(function (r) {
+          if (dirty || !document.body.contains(host)) return;
+          if (r && r.series_id) isSeries = true;
+          load(r && r.recurrence && r.recurrence[0]);
+        })
+        .catch(function () {});
+    }
+    return {
+      // null — повтор не трогали; [] — без повтора; ["RRULE:…"] — правило.
+      getRecurrence: function () {
+        if (!dirty) return null;
+        var rule = buildRepeatRule(st);
+        if (rule === initialRule) return null;
+        return rule ? [rule] : [];
+      },
+    };
+  }
+
   function sheetQuickDateIso(kind) {
     var today = todayIsoLocal();
     var d = new Date();
@@ -16216,6 +16631,7 @@
       (eventExisting ? "" : eventSheetKindSwitcherHtml("event")) +
       '<textarea id="m-ev-sum" class="event-sheet-title event-sheet-title--area" rows="1" enterkeyhint="done" placeholder="Название" autocomplete="off"></textarea>' +
       sheetWhenHtml({}) +
+      eventRepeatHtml() +
       '<div class="event-sheet-group meeting-attendees-field">' +
       '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-ev-attendees-toggle" aria-expanded="false">' +
       '<span class="event-sheet-row-label">Участники</span>' +
@@ -16241,10 +16657,10 @@
       '<div class="event-sheet-kind-switch sheet-video-seg" role="radiogroup" aria-label="Видеосвязь">' +
       '<button type="button" class="event-sheet-kind-btn" data-video="telemost">Телемост</button>' +
       '<button type="button" class="event-sheet-kind-btn" data-video="zoom">Zoom</button>' +
-      '<button type="button" class="event-sheet-kind-btn" data-video="custom">Своя</button>' +
+      '<button type="button" class="event-sheet-kind-btn" data-video="custom">Ссылка</button>' +
       '<button type="button" class="event-sheet-kind-btn" data-video="none">Нет</button>' +
       "</div>" +
-      '<input id="m-ev-link" type="url" class="field-input event-sheet-meet-link-input hidden" placeholder="https://…" inputmode="url" autocomplete="off" />' +
+      '<input id="m-ev-link" type="url" class="field-input event-sheet-meet-link-input hidden" placeholder="Вставьте ссылку на встречу" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" />' +
       '<p class="booking-sheet-hint hidden" id="m-ev-video-hint"></p>' +
       "</div>" +
       '<div class="event-sheet-link-row hidden"></div>' +
@@ -16274,6 +16690,7 @@
     syncEventPillsFromHidden("end");
     bindEventDateTimePills();
     bindSheetWhen();
+    eventRepeatApi = mountEventRepeat(ev);
     entryColorPickerApi = mountEntryColorPicker(
       document.getElementById("m-ev-color-host"),
       ev.display_color || ""
@@ -16481,6 +16898,7 @@
       if (videoHint) {
         var hint = "";
         if (!eventExisting && (choice === "telemost" || choice === "zoom")) hint = "Ссылка создастся вместе со встречей";
+        else if (choice === "custom") hint = "Любой сервис: Google Meet, МТС Линк, Jazz, VK Звонки… Ссылка попадёт в приглашение и напоминание";
         videoHint.textContent = hint;
         videoHint.classList.toggle("hidden", !hint);
       }
@@ -16544,6 +16962,23 @@
   }
 
   var syncEventVideoSeg = function () {};
+  var eventRepeatApi = null;
+
+  // «Своя ссылка»: вставили без https:// — дописываем; пробелы и явный мусор — не ссылка.
+  function normalizeMeetLink(raw) {
+    var s = String(raw || "").trim();
+    if (!s) return "";
+    var m = /https?:\/\/\S+/i.exec(s);
+    if (m) s = m[0];
+    else if (/^[\w.-]+\.[a-z]{2,}(\/\S*)?$/i.test(s)) s = "https://" + s;
+    else return null;
+    try {
+      var u = new URL(s);
+      return /\./.test(u.hostname) ? u.href : null;
+    } catch (_) {
+      return null;
+    }
+  }
 
   function mountEventSummary(ev, fields) {
     var titleEl = document.getElementById("m-ev-sum");
@@ -16811,7 +17246,15 @@
       }
       var eventColor = entryColorPickerApi ? entryColorPickerApi.getColor() : "";
       var linkEl = document.getElementById("m-ev-link");
-      var meetLink = linkEl ? String(linkEl.value || "").trim() : "";
+      var meetLink = linkEl ? normalizeMeetLink(linkEl.value) : "";
+      if (meetLink === null) {
+        showCalendarToast("Ссылка на встречу не похожа на адрес — вставьте её целиком, например https://…");
+        try {
+          linkEl.focus();
+        } catch (_) {}
+        return;
+      }
+      if (linkEl && meetLink) linkEl.value = meetLink;
       var origLoc = linkEl ? String(linkEl.dataset.origLocation || "").trim() : "";
       var locationOut = meetLink;
       if (!locationOut && origLoc && !/^https?:\/\//i.test(origLoc)) {
@@ -16827,6 +17270,15 @@
         location: locationOut,
         attendees: meetingAttendeesApi ? meetingAttendeesApi.getEmails() : [],
       };
+      var recurrence = eventRepeatApi ? eventRepeatApi.getRecurrence() : null;
+      if (recurrence && recurrence.length) {
+        var untilM = /UNTIL=(\d{8})/.exec(recurrence[0]);
+        if (untilM && untilM[1] < String(startIso || "").slice(0, 10).replace(/-/g, "")) {
+          showCalendarToast("Дата окончания повтора раньше начала встречи");
+          return;
+        }
+      }
+      if (recurrence) body.recurrence = recurrence;
       try {
         var savedEv = await apiFetch(id ? "/calendar/events/" + encodeURIComponent(id) : "/calendar/events", {
           method: id ? "PUT" : "POST",
@@ -17174,6 +17626,13 @@
       file.value = "";
       if (f) eventUploadRecording(ev, f, box);
     });
+    if (window.matchMedia && window.matchMedia("(pointer: fine)").matches) {
+      var dropHint = document.createElement("p");
+      dropHint.className = "ev-materials-drop-hint";
+      dropHint.textContent = "или перетащите файл записи в окно";
+      box.appendChild(dropHint);
+    }
+    bindEventRecordingDrop(modal);
     // Прошедшая встреча — материалы сразу после времени; будущая — в конце.
     // На десктопе блок стоит отдельной колонкой справа (CSS), порядок там не важен.
     var startPill = sheet.querySelector("#m-ev-start-date");
@@ -17267,6 +17726,73 @@
         : "Встреча ещё не прошла. Можно заранее создать заметку — например, повестку; после встречи сюда добавятся запись и итоги.";
       list.appendChild(empty);
     }
+  }
+
+  var EVENT_RECORDING_EXT = /\.(mp3|m4a|wav|ogg|oga|opus|webm|mp4|mov|aac|flac|mkv|amr|3gp)$/i;
+
+  function isRecordingFile(f) {
+    var t = String((f && f.type) || "");
+    return /^(audio|video)\//.test(t) || EVENT_RECORDING_EXT.test(String((f && f.name) || ""));
+  }
+
+  function dragHasFiles(e) {
+    var types = e.dataTransfer && e.dataTransfer.types;
+    return !!types && Array.prototype.indexOf.call(types, "Files") >= 0;
+  }
+
+  // Перетаскивание записи на окно встречи. Окно одно на все открытия — слушатели вешаем один раз,
+  // а блок «Материалы встречи» ищем в момент события (у задачи/напоминания его нет — тогда не мешаем).
+  function bindEventRecordingDrop(modal) {
+    if (!modal || modal._evDropBound) return;
+    modal._evDropBound = true;
+    var depth = 0;
+    var veil = document.createElement("div");
+    veil.className = "ev-drop-veil hidden";
+    veil.setAttribute("aria-hidden", "true");
+    veil.innerHTML = UPLOAD_ICON + '<b>Отпустите, чтобы добавить запись</b><span>Аудио или видео до 100 МБ — расшифруем и привяжем к встрече</span>';
+    modal.appendChild(veil);
+    function box() {
+      var b = document.querySelector("#modal-fields .ev-materials");
+      return b && b._ev ? b : null;
+    }
+    function hide() {
+      depth = 0;
+      veil.classList.add("hidden");
+    }
+    modal.addEventListener("dragenter", function (e) {
+      if (!dragHasFiles(e) || !box()) return;
+      e.preventDefault();
+      depth++;
+      veil.classList.remove("hidden");
+    });
+    modal.addEventListener("dragover", function (e) {
+      if (!dragHasFiles(e) || !box()) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    });
+    modal.addEventListener("dragleave", function (e) {
+      if (!dragHasFiles(e) || !box()) return;
+      depth = Math.max(0, depth - 1);
+      if (!depth) hide();
+    });
+    modal.addEventListener("drop", function (e) {
+      if (!dragHasFiles(e)) return;
+      var b = box();
+      hide();
+      if (!b) return;
+      e.preventDefault();
+      var files = Array.prototype.slice.call((e.dataTransfer && e.dataTransfer.files) || []);
+      var rec = files.filter(isRecordingFile);
+      if (!rec.length) {
+        showNoteToast("Это не запись встречи — нужен аудио- или видеофайл");
+        return;
+      }
+      if (rec.length > 1) showNoteToast("Добавляю первый файл: «" + (rec[0].name || "запись") + "»");
+      eventUploadRecording(b._ev, rec[0], b);
+    });
+    // Отпустили мимо окна или нажали Esc — убрать подсказку.
+    window.addEventListener("dragend", hide);
+    window.addEventListener("drop", hide);
   }
 
   function currentEventMaterialsBox(ev) {
