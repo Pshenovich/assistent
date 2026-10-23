@@ -82,6 +82,7 @@ def _conn() -> sqlite3.Connection:
     _ensure_owner_archived_column(_CONN)
     _ensure_recurrence_column(_CONN)
     _ensure_result_column(_CONN)
+    _ensure_assignee_state_columns(_CONN)
     _CONN.commit()
     return _CONN
 
@@ -100,6 +101,25 @@ def _ensure_result_column(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE calendar_tasks ADD COLUMN result TEXT NOT NULL DEFAULT ''"
         )
+
+
+# Обратная связь исполнителя по поручению: видел, взял в работу / есть вопрос; когда автор напомнил.
+ASSIGNEE_STATUSES = ("", "in_progress", "question")
+ASSIGNEE_STATE_COLUMNS = (
+    "assignee_seen_at",
+    "assignee_status",
+    "assignee_status_note",
+    "assignee_status_at",
+    "last_nudged_at",
+)
+MAX_STATUS_NOTE_LEN = 500
+
+
+def _ensure_assignee_state_columns(conn: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(calendar_tasks)")}
+    for col in ASSIGNEE_STATE_COLUMNS:
+        if col not in cols:
+            conn.execute(f"ALTER TABLE calendar_tasks ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
 
 
 def _ensure_google_event_columns(conn: sqlite3.Connection) -> None:
@@ -300,6 +320,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         if "owner_archived" in keys
         else False,
         "recurrence": str(row["recurrence"] or "") if "recurrence" in keys else "",
+        **{c: str(row[c] or "") if c in keys else "" for c in ASSIGNEE_STATE_COLUMNS},
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -523,6 +544,7 @@ def as_calendar_event(
         "is_owner": is_owner,
         "done": bool(task.get("done")),
         "owner_archived": bool(task.get("owner_archived")),
+        "assignee_state": assignee_state(task),
         "note_id": str(task.get("note_id") or ""),
         "chip_label": chip_label(task, tz=tz),
         "schedule_log": _normalize_schedule_log(task.get("schedule_log") or []),
@@ -1020,7 +1042,16 @@ def update_task(
         "schedule_log_json": json.dumps(log, ensure_ascii=False),
         "updated_at": _now_iso(),
     }
+    reassigned = fields["assignee_user_id"] != existing["assignee_user_id"]
     with _LOCK:
+        if reassigned:
+            # Новый исполнитель — прежние «видел / в работе / напомнили» не про него.
+            _conn().execute(
+                "UPDATE calendar_tasks SET "
+                + ", ".join(f"{c} = ''" for c in ASSIGNEE_STATE_COLUMNS)
+                + " WHERE id = ?",
+                (int(existing["id"]),),
+            )
         _conn().execute(
             """
             UPDATE calendar_tasks SET
@@ -1065,6 +1096,103 @@ def update_task(
         except Exception as e:  # подпись чипа — не повод провалить правку задачи
             print(f"[calendar_tasks] chip rename failed task={existing['id']} err={e!r}")
     return _get_task_row(int(existing["id"]))
+
+
+def assignee_state(task: dict[str, Any] | None) -> dict[str, str]:
+    """Что исполнитель сделал с поручением — для автора в «Поручено другим»."""
+    t = task or {}
+    status = str(t.get("assignee_status") or "")
+    return {
+        "seen_at": str(t.get("assignee_seen_at") or ""),
+        "status": status if status in ASSIGNEE_STATUSES else "",
+        "status_note": str(t.get("assignee_status_note") or ""),
+        "status_at": str(t.get("assignee_status_at") or ""),
+        "nudged_at": str(t.get("last_nudged_at") or ""),
+    }
+
+
+def _set_columns(task_id: int, values: dict[str, str]) -> Optional[dict[str, Any]]:
+    cols = [c for c in values if c in ASSIGNEE_STATE_COLUMNS]
+    if not cols:
+        return _get_task_row(task_id)
+    with _LOCK:
+        _conn().execute(
+            "UPDATE calendar_tasks SET " + ", ".join(f"{c} = ?" for c in cols) + " WHERE id = ?",
+            tuple(values[c] for c in cols) + (int(task_id),),
+        )
+        _conn().commit()
+    return _get_task_row(task_id)
+
+
+def _assignee_task(viewer_id: int | str, task_id: int | str) -> Optional[dict[str, Any]]:
+    """Поручение, где viewer — исполнитель (не автор)."""
+    task = get_task_for_user(viewer_id, task_id)
+    if not task or not task_is_delegated(task):
+        return None
+    if str(task.get("assignee_user_id") or "") != _uid(viewer_id):
+        return None
+    return task
+
+
+def mark_seen(viewer_id: int | str, task_id: int | str) -> Optional[dict[str, Any]]:
+    """Исполнитель открыл поручение — запоминаем первый раз (дальше не перезаписываем)."""
+    task = _assignee_task(viewer_id, task_id)
+    if not task:
+        return None
+    if task.get("assignee_seen_at"):
+        return task
+    return _set_columns(int(task["id"]), {"assignee_seen_at": _now_iso()})
+
+
+def set_assignee_status(
+    viewer_id: int | str, task_id: int | str, status: str, note: str = ""
+) -> Optional[dict[str, Any]]:
+    """«Взял в работу» / «Есть вопрос» (с текстом) / сброс — только исполнитель."""
+    status = str(status or "").strip()
+    if status not in ASSIGNEE_STATUSES:
+        raise ValueError("Неизвестный статус")
+    task = _assignee_task(viewer_id, task_id)
+    if not task:
+        return None
+    note = _clip(note, MAX_STATUS_NOTE_LEN) if status == "question" else ""
+    if status == "question" and not note:
+        raise ValueError("Напишите вопрос")
+    now = _now_iso()
+    return _set_columns(
+        int(task["id"]),
+        {
+            "assignee_status": status,
+            "assignee_status_note": note,
+            "assignee_status_at": now if status else "",
+            "assignee_seen_at": task.get("assignee_seen_at") or now,
+        },
+    )
+
+
+def mark_nudged(task_id: int | str) -> Optional[dict[str, Any]]:
+    tid = _parse_task_id(task_id)
+    if tid is None:
+        return None
+    return _set_columns(tid, {"last_nudged_at": _now_iso()})
+
+
+def archive_done_posted(owner_user_id: int | str) -> int:
+    """«Принять всё»: выполненные поручения автора — в его архив."""
+    uid = _uid(owner_user_id)
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            UPDATE calendar_tasks SET owner_archived = 1, updated_at = ?
+            WHERE owner_user_id = ?
+              AND assignee_user_id != ''
+              AND assignee_user_id != owner_user_id
+              AND done = 1
+              AND IFNULL(owner_archived, 0) = 0
+            """,
+            (_now_iso(), uid),
+        )
+        _conn().commit()
+        return int(cur.rowcount or 0)
 
 
 def delete_task(owner_user_id: int | str, task_id: int | str) -> bool:

@@ -287,6 +287,62 @@ def rule_overdue(tasks: list[dict[str, Any]], now: datetime, tz: Any, uid: str) 
     ]
 
 
+def _posted_by(t: dict[str, Any], uid: str) -> bool:
+    owner = str(t.get("owner_user_id") or "")
+    assignee = str(t.get("assignee_user_id") or "")
+    return owner == uid and bool(assignee) and assignee != uid
+
+
+def rule_posted_overdue(tasks: list[dict[str, Any]], now: datetime, tz: Any) -> list[dict[str, Any]]:
+    """Просроченные поручения другим — одна карточка с AWAITING_REPLY_HOUR (18:00) до конца дня."""
+    from assistant.services.awaiting_reply import awaiting_hour
+
+    local = now.astimezone(tz)
+    if local.hour < awaiting_hour():
+        return []
+    late = []
+    for t in tasks:
+        if t.get("done") or t.get("owner_archived"):
+            continue
+        end = _parse(t.get("end_at")) or _parse(t.get("start_at"))
+        if end and end < now - timedelta(minutes=30):
+            late.append(t)
+    if not late:
+        return []
+    late.sort(key=lambda t: str(t.get("start_at") or ""))
+    ids = [int(t["id"]) for t in late]
+    n = len(late)
+    word = "поручение просрочено" if n % 10 == 1 and n % 100 != 11 else (
+        "поручения просрочены" if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else "поручений просрочено")
+    names: list[str] = []
+    for t in late:
+        nm = str(t.get("assignee_name") or "исполнитель")
+        if nm not in names:
+            names.append(nm)
+    task_rows = []
+    for t in late:
+        start = _parse(t.get("start_at"))
+        meta = str(t.get("assignee_name") or "исполнитель") + (f" · срок {_day(start, tz, now)}" if start else "")
+        task_rows.append({"id": int(t["id"]), "text": str(t.get("title") or "Задача"), "meta": meta})
+    title = f"{n} {word}"
+    return [
+        {
+            "key": f"posted_overdue:{local.date().isoformat()}",
+            "type": "posted_overdue",
+            "tag": "⚠ поручения",
+            "urgency": 3,
+            "title": title,
+            "source": ", ".join(names[:4]) + (f" и ещё {len(names) - 4}" if len(names) > 4 else ""),
+            "ask": title + ". " + "; ".join(f"«{r['text']}» — {r['meta']} (task id {r['id']})" for r in task_rows[:20]),
+            "tasks": task_rows,
+            "actions": [
+                {"label": "Напомнить всем", "act": "nudge_tasks", "primary": True, "payload": {"task_ids": ids}},
+                {"label": "Поручения", "act": "open_posted"},
+            ],
+        }
+    ]
+
+
 def _prep_mail(ev: dict[str, Any], now: datetime) -> list[dict[str, Any]]:
     """Последние ветки переписки с участниками встречи (если подключена почта)."""
     uid = ev.get("_owner_uid")
@@ -540,7 +596,10 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
     items: list[dict[str, Any]] = []
     try:
         tasks = calendar_tasks.list_tasks_in_window(uid, now - timedelta(days=30), now)
-        items += rule_overdue(tasks, now, tz, str(uid))
+        # Поручения другим — не «перенести на завтра» в течение дня, а одна сводка вечером («Напомнить всем»).
+        posted = [t for t in tasks if _posted_by(t, str(uid))]
+        items += rule_overdue([t for t in tasks if not _posted_by(t, str(uid))], now, tz, str(uid))
+        items += rule_posted_overdue(posted, now, tz)
     except Exception as e:
         print(f"[proactive] overdue failed uid={uid} err={e!r}")
     evs = [e for e in events if isinstance(e, dict) and e.get("id") and not str(e.get("id")).startswith("task-")]

@@ -86,3 +86,55 @@ def notify_task_owner_done(
         send_message(owner, text)
     except Exception as e:
         print(f"[calendar_tasks] notify_owner_done uid={owner} err={e!r}")
+
+
+def _int_uid(raw: Any) -> int:
+    try:
+        return int(str(raw or "").strip() or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def notify_task_nudge(*, task: dict[str, Any], assigner_name: str) -> bool:
+    """«Напомнить» из «Поручено другим»: пуш исполнителю со ссылкой и сроком."""
+    from assistant.lib.telegram_notify import send_message
+    from assistant.stores.calendar_tasks import chip_label, task_is_delegated
+
+    if not task_is_delegated(task) or task.get("done"):
+        return False
+    mid = _int_uid(task.get("assignee_user_id"))
+    if mid <= 0:
+        return False
+    link = task_title_link_html(str(task.get("title") or "Задача"), task.get("id") or 0)
+    who = html.escape((assigner_name or "").strip() or "Постановщик")
+    lines = [f"{who} напоминает о задаче: {link}."]
+    when = str(task.get("chip_label") or "").strip() or chip_label(task)
+    if when:
+        lines.append(f"Срок: {html.escape(when)}")
+    try:
+        return bool(send_message(mid, "\n".join(lines)))
+    except Exception as e:
+        print(f"[calendar_tasks] notify_nudge uid={mid} err={e!r}")
+        return False
+
+
+def notify_task_owner_question(*, task: dict[str, Any], asker_name: str, question: str) -> None:
+    """Исполнитель нажал «Есть вопрос» — пуш автору с текстом вопроса."""
+    from assistant.lib.telegram_notify import send_message
+    from assistant.stores.calendar_tasks import task_is_delegated
+
+    if not task_is_delegated(task):
+        return
+    owner = _int_uid(task.get("owner_user_id"))
+    if owner <= 0:
+        return
+    link = task_title_link_html(str(task.get("title") or "Задача"), task.get("id") or 0)
+    who = html.escape((asker_name or "").strip() or "Исполнитель")
+    q = (question or "").strip()
+    if len(q) > 600:
+        q = q[:600].rstrip() + "…"
+    text = f"{who} спрашивает по задаче {link}:\n{html.escape(q)}"
+    try:
+        send_message(owner, text)
+    except Exception as e:
+        print(f"[calendar_tasks] notify_owner_question uid={owner} err={e!r}")

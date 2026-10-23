@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-sheets1";
+  var WEBAPP_BUILD = "20261023-posted1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -1908,7 +1908,7 @@
     return cls;
   }
 
-  /* ——— «Поставленные другим» в календаре: переключатель в шапке календаря.
+  /* ——— «Поручено другим» в календаре: переключатель в шапке календаря.
      Делегированные задачи сервер в календарь автора не отдаёт — берём их из /calendar/tasks/posted
      (тот же запрос, что у чипа «у других») и подмешиваем в сетку дня / недели / месяца. ——— */
   var calShowPosted = false;
@@ -1958,7 +1958,7 @@
     if (!b) return;
     b.classList.toggle("is-active", calShowPosted);
     b.setAttribute("aria-pressed", String(calShowPosted));
-    b.title = calShowPosted ? "Скрыть задачи, поставленные другим" : "Показать задачи, поставленные другим";
+    b.title = calShowPosted ? "Скрыть в календаре поручения другим" : "Показать в календаре поручения другим";
   }
 
   function repaintMeetingsFromState() {
@@ -1976,7 +1976,7 @@
     repaintMeetingsFromState();
     if (calShowPosted) {
       var n = postedCalendarEvents("", "").length;
-      showNoteToast(n ? "Показаны задачи, поставленные другим" : "Нет текущих задач, поставленных другим");
+      showNoteToast(n ? "Показаны поручения другим" : "Нет текущих поручений другим");
     }
   }
 
@@ -15675,6 +15675,7 @@
       (existing ? "" : eventSheetKindSwitcherHtml("task") + '<div id="m-task-target-slot"></div>') +
       '<textarea id="m-ev-sum" class="event-sheet-title event-sheet-title--area" rows="1" enterkeyhint="done" placeholder="Название" autocomplete="off"></textarea>' +
       (existing ? '<div id="m-task-tracker-links" class="tracker-links hidden"></div>' : "") +
+      (existing ? '<div id="m-task-assignee-state" class="task-ass-state hidden"></div>' : "") +
       '<input type="hidden" id="modal-task-note-id" />' +
       sheetWhenHtml({ task: true, label: "Срок" }) +
       '<div id="m-task-assignee-slot"></div>' +
@@ -15806,6 +15807,13 @@
       ev.owner_archived ||
       (ev.event && ev.event.owner_archived)
     );
+    if (existing && isDelegated) {
+      mountTaskAssigneeState(document.getElementById("m-task-assignee-state"), ev, {
+        taskId: taskId,
+        isOwner: isTaskOwner,
+        assigneeName: String((ev.assignee && ev.assignee.name) || ev.assignee_name || ""),
+      });
+    }
     var taskSource = { kind: "task", id: String(taskId), calendarId: "leo-tasks" };
     function buildTaskMenu() {
       if (!existing) return null;
@@ -15871,11 +15879,143 @@
     onModalSheetOpen();
     syncAppOverlay();
     var titleEl = document.getElementById("m-ev-sum");
-    if (titleEl && !existing) {
+    if (!existing && opts.focusAssignee && assToggle && assEditor) {
+      // «Поручить задачу» из «Поручено другим»: сразу выбор исполнителя.
+      assEditor.classList.remove("hidden");
+      assToggle.setAttribute("aria-expanded", "true");
+      window.setTimeout(function () {
+        var inp = assEditor.querySelector("input");
+        if (inp) inp.focus();
+        else if (titleEl) titleEl.focus();
+      }, 0);
+    } else if (titleEl && !existing) {
       window.setTimeout(function () {
         titleEl.focus();
       }, 0);
     }
+  }
+
+  /** Поручение в окне задачи: исполнитель отвечает «В работе» / «Есть вопрос», автор видит ответ и может напомнить. */
+  function mountTaskAssigneeState(host, ev, o) {
+    if (!host) return;
+    var st = ev.assignee_state || (ev.event && ev.event.assignee_state) || {};
+    var done = !!(ev.done || (ev.event && ev.event.done));
+    var tid = String(o.taskId);
+    host.innerHTML = "";
+    if (!o.isOwner) {
+      apiFetch("/calendar/tasks/" + encodeURIComponent(tid) + "/seen", { method: "POST" }).catch(function () {});
+      if (done) return;
+      var label = document.createElement("div");
+      label.className = "task-ass-state-label";
+      label.textContent = "Ответ постановщику";
+      host.appendChild(label);
+      var btns = document.createElement("div");
+      btns.className = "task-ass-btns";
+      var qBox = document.createElement("div");
+      qBox.className = "task-ass-question hidden";
+      var qInput = document.createElement("textarea");
+      qInput.className = "field-textarea";
+      qInput.rows = 2;
+      qInput.placeholder = "Что уточнить?";
+      qInput.value = st.status === "question" ? st.status_note || "" : "";
+      var qSend = document.createElement("button");
+      qSend.type = "button";
+      qSend.className = "btn task-ass-send";
+      qSend.textContent = "Отправить вопрос";
+      qBox.appendChild(qInput);
+      qBox.appendChild(qSend);
+      var current = st.status || "";
+      function paint() {
+        btns.querySelectorAll("[data-st]").forEach(function (b) {
+          var on = b.getAttribute("data-st") === current;
+          b.classList.toggle("on", on);
+          b.setAttribute("aria-pressed", on ? "true" : "false");
+        });
+      }
+      async function send(status, note) {
+        try {
+          var r = await apiFetch("/calendar/tasks/" + encodeURIComponent(tid) + "/status", {
+            method: "POST",
+            body: JSON.stringify({ status: status, note: note || "" }),
+          });
+          current = status;
+          paint();
+          if (r && r.task && r.task.event) ev.assignee_state = r.task.event.assignee_state;
+          showNoteToast(status === "question" ? "Вопрос отправлен постановщику" : status ? "Отметили: в работе" : "Статус снят");
+          return true;
+        } catch (err) {
+          showNoteToast((err && err.message) || "Не получилось");
+          return false;
+        }
+      }
+      [
+        ["in_progress", "В работе"],
+        ["question", "Есть вопрос"],
+      ].forEach(function (pair) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "task-ass-btn";
+        b.setAttribute("data-st", pair[0]);
+        b.textContent = pair[1];
+        b.addEventListener("click", function () {
+          if (pair[0] === "question") {
+            qBox.classList.toggle("hidden");
+            if (!qBox.classList.contains("hidden")) qInput.focus();
+            return;
+          }
+          qBox.classList.add("hidden");
+          send(current === pair[0] ? "" : pair[0]);
+        });
+        btns.appendChild(b);
+      });
+      qSend.addEventListener("click", async function () {
+        var note = String(qInput.value || "").trim();
+        if (!note) {
+          qInput.focus();
+          showNoteToast("Напишите вопрос");
+          return;
+        }
+        qSend.disabled = true;
+        if (await send("question", note)) qBox.classList.add("hidden");
+        qSend.disabled = false;
+      });
+      host.appendChild(btns);
+      host.appendChild(qBox);
+      paint();
+      host.classList.remove("hidden");
+      return;
+    }
+    var who = (o.assigneeName || "Исполнитель").split(/\s+/)[0];
+    var line = document.createElement("p");
+    line.className = "task-ass-summary";
+    var parts = [];
+    if (done) parts.push(who + " · выполнено");
+    else if (st.status === "in_progress") parts.push(who + " · в работе с " + postedTimeShort(st.status_at));
+    else if (st.seen_at) parts.push(who + " · прочитано " + postedTimeShort(st.seen_at));
+    else parts.push(who + " · ещё не прочитано");
+    if (st.nudged_at && !done) parts.push("напомнили " + postedTimeShort(st.nudged_at));
+    line.textContent = parts.join(" · ");
+    host.appendChild(line);
+    if (st.status === "question" && st.status_note && !done) {
+      var q = document.createElement("p");
+      q.className = "task-ass-q";
+      q.textContent = "Вопрос: «" + st.status_note + "»";
+      host.appendChild(q);
+    }
+    if (!done) {
+      var nudge = document.createElement("button");
+      nudge.type = "button";
+      nudge.className = "task-ass-btn task-ass-nudge";
+      nudge.innerHTML = postedIcon("bell", 15) + "<span>Напомнить</span>";
+      nudge.addEventListener("click", async function () {
+        nudge.disabled = true;
+        var r = await nudgePostedTask(tid);
+        nudge.disabled = false;
+        if (r.ok) mountTaskAssigneeState(host, Object.assign({}, ev, { assignee_state: Object.assign({}, st, { nudged_at: new Date().toISOString() }) }), o);
+      });
+      host.appendChild(nudge);
+    }
+    host.classList.remove("hidden");
   }
 
   // ——— Внешние трекеры (Битрикс24…): задача живёт там; в Орбите — только чип в заметке и бейдж у дубля ———
@@ -20003,7 +20143,7 @@
     loadFocus(false);
   });
 
-  var FOCUS_OPEN_ACTS = { open_note: 1, open_event: 1, open_task: 1, open_tasks: 1, url: 1 };
+  var FOCUS_OPEN_ACTS = { open_note: 1, open_event: 1, open_task: 1, open_tasks: 1, open_posted: 1, url: 1 };
 
   // Карточки с пунктами (договорённости, задачи из саммари, важное из чатов) разбираются в чате.
   function focusHasItems(it) {
@@ -20022,6 +20162,7 @@
     chat_deadline: ["clock", "amber"],
     chat_blocker: ["alert", "red"],
     overdue: ["alert", "amber"],
+    posted_overdue: ["people", "amber"],
     risk: ["alert", "red"],
     prep: ["note", "blue"],
     no_results: ["mic", "violet"],
@@ -20626,6 +20767,25 @@
       } else if (act === "open_tasks") {
         if (it.tasks && it.tasks.length) openFocusTaskList(it);
         else askAboutFocus(it);
+      } else if (act === "nudge_tasks") {
+        var ids = p.task_ids || [];
+        var sentN = 0;
+        var skipped = 0;
+        for (var ni = 0; ni < ids.length; ni++) {
+          var nr = await nudgePostedTask(ids[ni], { quiet: true });
+          if (nr.ok) sentN++;
+          else skipped++;
+        }
+        if (sentN) {
+          showNoteToast("Напомнили: " + sentN + (skipped ? " · ещё " + skipped + " — уже напоминали недавно" : ""));
+          dismissFocus(it, true);
+        } else {
+          showNoteToast(skipped ? "Уже напоминали недавно — попробуйте позже" : "Нечего напоминать");
+        }
+      } else if (act === "open_posted") {
+        if (isNoteDiscussionOpen()) closeNoteDiscussion(true);
+        if (currentTab !== "actual") setTab("actual");
+        setPostedTasksScreen(true);
       } else if (act === "event_note" || act === "event_dictate") {
         if (it.event) await eventCreateNote(it.event, act === "event_dictate");
         if (act === "event_dictate") dismissFocus(it, true);
@@ -21622,8 +21782,9 @@
         "posted-tasks-open"
       )
     );
-    chips.lastChild.setAttribute("aria-label", "Поставленные задачи");
-    chips.lastChild.title = "Задачи, которые вы поставили другим";
+    chips.lastChild.setAttribute("aria-label", "Поручено другим");
+    chips.lastChild.title = "Задачи, которые вы поручили другим";
+    syncPostedHeroLate(chips.lastChild, postedOverdueCountFromItems(lastPostedTasksItems));
     left.appendChild(chips);
     inner.appendChild(left);
     var nextBox = renderHeroNext();
@@ -21708,6 +21869,18 @@
   var lastPostedTasksItems = [];
   var lastPostedTasksActiveCount = 0;
   var postedTasksTab = "current"; // current | archive
+  // «Поручено другим»: фильтр (all | overdue | a:<ключ исполнителя>), группировка, раскрыт ли блок «Выполнено».
+  var postedFilter = "all";
+  var postedDoneOpen = false;
+  var POSTED_GROUP_LS = "leo_posted_group";
+  var postedGroupBy = (function () {
+    try {
+      return localStorage.getItem(POSTED_GROUP_LS) === "people" ? "people" : "due";
+    } catch (_) {
+      return "due";
+    }
+  })();
+  var DAY_MS = 86400000;
 
   function postedTaskDayIso(task) {
     var ev = (task && task.event) || {};
@@ -21726,22 +21899,95 @@
     }
   }
 
+  function postedTaskIsAllDay(task) {
+    var ev = (task && task.event) || {};
+    return !!(task && (task.all_day || ev.all_day));
+  }
+
   function postedTaskTimeLabel(task) {
-    if (!task) return "";
+    if (!task || postedTaskIsAllDay(task)) return "";
     var ev = task.event || {};
-    if (task.all_day || ev.all_day) return "";
-    var raw =
-      (ev.start && ev.start.dateTime) ||
-      task.start_at ||
-      "";
+    var raw = (ev.start && ev.start.dateTime) || task.start_at || "";
     if (!raw) return "";
-    try {
-      var d = new Date(raw);
-      if (isNaN(d.getTime())) return "";
-      return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-    } catch (_) {
-      return "";
+    var d = new Date(raw);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  }
+
+  // Срок: для задачи на весь день — конец дня, для задачи со временем — её конец (как в Фокусе «просрочено»).
+  function postedTaskDueMs(task) {
+    var day = postedTaskDayIso(task);
+    if (postedTaskIsAllDay(task)) {
+      if (!day) return NaN;
+      var p = day.split("-");
+      return new Date(+p[0], +p[1] - 1, +p[2], 23, 59, 59).getTime();
     }
+    var ev = (task && task.event) || {};
+    var raw = (ev.end && ev.end.dateTime) || task.end_at || (ev.start && ev.start.dateTime) || task.start_at || "";
+    var ms = raw ? new Date(raw).getTime() : NaN;
+    return isNaN(ms) ? NaN : ms;
+  }
+
+  function postedTaskIsOverdue(task, now) {
+    if (postedTaskIsDone(task)) return false;
+    var due = postedTaskDueMs(task);
+    return !isNaN(due) && due < (now || Date.now());
+  }
+
+  function postedDayDiff(dayIso) {
+    if (!dayIso) return NaN;
+    var p = dayIso.split("-");
+    var a = new Date(+p[0], +p[1] - 1, +p[2]).getTime();
+    var t = new Date();
+    var b = new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime();
+    return Math.round((a - b) / DAY_MS);
+  }
+
+  // overdue | today | tomorrow | week | later | nodate
+  function postedDueBucket(task) {
+    if (postedTaskIsOverdue(task)) return "overdue";
+    var diff = postedDayDiff(postedTaskDayIso(task));
+    if (isNaN(diff)) return "nodate";
+    if (diff <= 0) return "today";
+    if (diff === 1) return "tomorrow";
+    if (diff <= 7) return "week";
+    return "later";
+  }
+
+  var POSTED_BUCKETS = [
+    ["overdue", "Просрочено"],
+    ["today", "Сегодня"],
+    ["tomorrow", "Завтра"],
+    ["week", "На неделе"],
+    ["later", "Позже"],
+    ["nodate", "Без срока"],
+  ];
+
+  function postedShortDate(dayIso) {
+    var p = String(dayIso || "").split("-");
+    if (p.length !== 3) return "";
+    var d = new Date(+p[0], +p[1] - 1, +p[2]);
+    var s = d.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" });
+    return s.replace(/\.(?=,|\s|$)/g, "");
+  }
+
+  // «сегодня, 16:30» · «завтра» · «сб, 24 окт» · просрочено: «вчера» / «20 окт, 14:00 · 3 дня».
+  function postedDueLabel(task) {
+    var day = postedTaskDayIso(task);
+    if (!day) return "без срока";
+    var diff = postedDayDiff(day);
+    var time = postedTaskTimeLabel(task);
+    var base;
+    if (diff === 0) base = "сегодня";
+    else if (diff === 1) base = "завтра";
+    else if (diff === -1) base = "вчера";
+    else base = postedShortDate(day);
+    var out = base + (time ? ", " + time : "");
+    if (postedTaskIsOverdue(task) && diff < -1) {
+      var n = -diff;
+      out += " · " + n + " " + pluralRu(n, "день", "дня", "дней");
+    }
+    return out;
   }
 
   function postedTaskAssigneeLabel(task) {
@@ -21752,6 +21998,36 @@
       String((task && task.assignee_email) || ass.email || "").trim() ||
       ""
     );
+  }
+
+  function postedAssigneeKey(task) {
+    var ev = (task && task.event) || {};
+    var ass = (ev && ev.assignee) || {};
+    return (
+      String((task && task.assignee_user_id) || ass.user_id || "").trim() ||
+      String((task && task.assignee_email) || ass.email || "").trim().toLowerCase() ||
+      postedTaskAssigneeLabel(task).toLowerCase() ||
+      "?"
+    );
+  }
+
+  function postedInitials(name) {
+    var parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return "?";
+    var s = parts[0].charAt(0) + (parts[1] ? parts[1].charAt(0) : "");
+    return s.toUpperCase();
+  }
+
+  function postedAvatarTone(key) {
+    var h = 0;
+    var s = String(key || "");
+    for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return Math.abs(h) % 6;
+  }
+
+  function postedAssigneeState(task) {
+    var ev = (task && task.event) || {};
+    return ev.assignee_state || task.assignee_state || {};
   }
 
   function postedTaskIsDone(task) {
@@ -21770,17 +22046,43 @@
     }).length;
   }
 
+  function postedOverdueCountFromItems(items) {
+    return (Array.isArray(items) ? items : []).filter(function (t) {
+      return !postedTaskIsArchived(t) && postedTaskIsOverdue(t);
+    }).length;
+  }
+
   function syncPostedTasksHeroCount(count) {
     if (typeof count === "number" && !isNaN(count)) {
       lastPostedTasksActiveCount = count;
     }
     var countEl = document.getElementById("posted-tasks-count");
     if (countEl) countEl.textContent = String(lastPostedTasksActiveCount);
+    var chip = document.getElementById("posted-tasks-open");
+    if (chip && postedTasksTab === "current") syncPostedHeroLate(chip, postedOverdueCountFromItems(lastPostedTasksItems));
+  }
+
+  function syncPostedHeroLate(chip, late) {
+    var el = chip.querySelector(".hero-chip-late");
+    if (!late) {
+      if (el) el.remove();
+      chip.classList.remove("hero-chip--late");
+      return;
+    }
+    if (!el) {
+      el = document.createElement("span");
+      el.className = "hero-chip-late";
+      chip.appendChild(el);
+    }
+    el.textContent = "· " + late + " просрочено";
+    chip.classList.add("hero-chip--late");
+    chip.title = "Поручено другим: " + late + " " + pluralRu(late, "просрочено", "просрочены", "просрочено");
   }
 
   function syncPostedTasksState(items, activeCount) {
     items = Array.isArray(items) ? items : [];
-    lastPostedTasksItems = items;
+    if (postedTasksTab === "current") lastPostedTasksItems = items;
+    else postedArchiveItems = items;
     if (typeof activeCount === "number" && !isNaN(activeCount)) {
       syncPostedTasksHeroCount(activeCount);
     } else if (postedTasksTab === "current") {
@@ -21805,69 +22107,209 @@
     } catch (_) {}
   }
 
+  var postedArchiveItems = [];
+
+  function postedVisibleItems() {
+    return postedTasksTab === "archive" ? postedArchiveItems : lastPostedTasksItems;
+  }
+
   function removePostedTaskFromState(taskId) {
     var id = String(taskId || "");
     if (!id) return;
     syncPostedTasksState(
-      lastPostedTasksItems.filter(function (t) {
+      postedVisibleItems().filter(function (t) {
         return String((t && t.id) || "") !== id;
       }),
       lastPostedTasksActiveCount
     );
   }
 
+  function replacePostedTaskInState(task) {
+    if (!task || !task.id) return;
+    var id = String(task.id);
+    syncPostedTasksState(
+      postedVisibleItems().map(function (t) {
+        return String((t && t.id) || "") === id ? Object.assign({}, t, task) : t;
+      })
+    );
+  }
+
   function sortPostedTasks(items) {
     items = Array.isArray(items) ? items.slice() : [];
     items.sort(function (a, b) {
-      var da = postedTaskDayIso(a);
-      var db = postedTaskDayIso(b);
-      if (da !== db) return da < db ? -1 : 1;
-      var sa = String((a && a.start_at) || "");
-      var sb = String((b && b.start_at) || "");
-      if (sa !== sb) return sa < sb ? -1 : 1;
+      var da = postedTaskDueMs(a);
+      var db = postedTaskDueMs(b);
+      if (isNaN(da) !== isNaN(db)) return isNaN(da) ? 1 : -1;
+      if (da !== db && !isNaN(da)) return da - db;
       return Number((a && a.id) || 0) - Number((b && b.id) || 0);
     });
     return items;
   }
 
-  function appendPostedTasksGroup(listEl, items, sectionTitle) {
-    if (!items.length) return;
-    if (sectionTitle) {
-      var section = document.createElement("h3");
-      section.className = "posted-tasks-day";
-      section.textContent = sectionTitle;
-      listEl.appendChild(section);
-    }
-    var lastDay = null;
+  function postedFilterMatches(task) {
+    if (postedFilter === "overdue") return postedTaskIsOverdue(task);
+    if (postedFilter.indexOf("a:") === 0) return postedAssigneeKey(task) === postedFilter.slice(2);
+    return true;
+  }
+
+  function postedAssigneeGroups(items) {
+    var map = {};
+    var order = [];
     items.forEach(function (t) {
-      var day = postedTaskDayIso(t) || "без-даты";
-      if (day !== lastDay) {
-        lastDay = day;
-        var heading = document.createElement("h3");
-        heading.className = "posted-tasks-day";
-        heading.textContent =
-          day === "без-даты"
-            ? "Без даты"
-            : formatMeetingsDayTitle(day) || day;
-        listEl.appendChild(heading);
+      var k = postedAssigneeKey(t);
+      if (!map[k]) {
+        map[k] = { key: k, name: postedTaskAssigneeLabel(t) || "Без исполнителя", items: [], late: 0 };
+        order.push(k);
       }
-      listEl.appendChild(renderPostedTaskCard(t));
+      map[k].items.push(t);
+      if (postedTaskIsOverdue(t)) map[k].late++;
     });
+    return order
+      .map(function (k) {
+        return map[k];
+      })
+      .sort(function (a, b) {
+        if (!!a.late !== !!b.late) return a.late ? -1 : 1;
+        if (a.items.length !== b.items.length) return b.items.length - a.items.length;
+        return a.name.localeCompare(b.name, "ru");
+      });
   }
 
   function syncPostedTasksTabsUi() {
-    document.querySelectorAll("#actual-posted-tasks [data-posted-tab]").forEach(function (btn) {
-      var tab = btn.getAttribute("data-posted-tab") || "current";
-      var on = tab === postedTasksTab;
+    var arch = postedTasksTab === "archive";
+    var title = document.getElementById("posted-tasks-title");
+    if (title) title.textContent = arch ? "Архив поручений" : "Поручено другим";
+    var archBtn = document.getElementById("posted-tasks-archive");
+    if (archBtn) {
+      archBtn.setAttribute("aria-pressed", arch ? "true" : "false");
+      archBtn.title = arch ? "Текущие поручения" : "Архив поручений";
+      archBtn.setAttribute("aria-label", archBtn.title);
+    }
+    document.querySelectorAll("#actual-posted-tasks [data-posted-group]").forEach(function (btn) {
+      var on = btn.getAttribute("data-posted-group") === postedGroupBy;
       btn.classList.toggle("active", on);
       btn.setAttribute("aria-selected", on ? "true" : "false");
     });
+    var tools = document.getElementById("posted-tasks-tools");
+    if (tools) tools.classList.toggle("hidden", arch);
   }
 
   function setPostedTasksTab(tab) {
     postedTasksTab = tab === "archive" ? "archive" : "current";
+    postedFilter = "all";
     syncPostedTasksTabsUi();
+    var listEl = document.getElementById("posted-tasks-list");
+    if (listEl && postedTasksTab === "current") renderPostedTasksList(lastPostedTasksItems);
+    else if (listEl) listEl.innerHTML = "";
     loadPostedTasksList();
+  }
+
+  function setPostedGroupBy(mode) {
+    postedGroupBy = mode === "people" ? "people" : "due";
+    try {
+      localStorage.setItem(POSTED_GROUP_LS, postedGroupBy);
+    } catch (_) {}
+    syncPostedTasksTabsUi();
+    renderPostedTasksList(lastPostedTasksItems);
+  }
+
+  function renderPostedFilters(items) {
+    var host = document.getElementById("posted-tasks-filters");
+    if (!host) return;
+    host.innerHTML = "";
+    var active = items.filter(function (t) {
+      return !postedTaskIsDone(t);
+    });
+    var late = active.filter(function (t) {
+      return postedTaskIsOverdue(t);
+    }).length;
+    var people = postedAssigneeGroups(active);
+    if (postedFilter === "overdue" && !late) postedFilter = "all";
+    if (
+      postedFilter.indexOf("a:") === 0 &&
+      !people.some(function (g) {
+        return "a:" + g.key === postedFilter;
+      })
+    ) {
+      postedFilter = "all";
+    }
+    function chip(id, label, n, extra) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "posted-filter" + (extra ? " " + extra : "") + (postedFilter === id ? " active" : "");
+      b.setAttribute("aria-pressed", postedFilter === id ? "true" : "false");
+      b.textContent = label;
+      if (n != null) {
+        var c = document.createElement("span");
+        c.className = "posted-filter-n";
+        c.textContent = String(n);
+        b.appendChild(c);
+      }
+      b.addEventListener("click", function () {
+        postedFilter = postedFilter === id && id !== "all" ? "all" : id;
+        renderPostedTasksList(lastPostedTasksItems);
+      });
+      host.appendChild(b);
+    }
+    chip("all", "Все", active.length);
+    if (late) chip("overdue", "Просрочено", late, "posted-filter--late");
+    if (people.length > 1) {
+      people.forEach(function (g) {
+        chip("a:" + g.key, g.name.split(/\s+/)[0], g.items.length);
+      });
+    }
+    host.classList.toggle("hidden", !active.length);
+  }
+
+  function postedSectionHead(label, count, opts) {
+    opts = opts || {};
+    var h = document.createElement("div");
+    h.className = "posted-section-head" + (opts.late ? " posted-section-head--late" : "");
+    var t = document.createElement("span");
+    t.className = "posted-section-title";
+    t.textContent = label;
+    h.appendChild(t);
+    var n = document.createElement("span");
+    n.className = "posted-section-count";
+    n.textContent = String(count);
+    h.appendChild(n);
+    if (opts.sub) {
+      var s = document.createElement("span");
+      s.className = "posted-section-sub";
+      s.textContent = opts.sub;
+      h.appendChild(s);
+    }
+    return h;
+  }
+
+  function renderPostedEmpty(listEl, emptyEl, kind) {
+    if (!emptyEl) return;
+    emptyEl.innerHTML = "";
+    var p = document.createElement("p");
+    var btn = null;
+    if (kind === "archive") {
+      p.textContent = "В архиве пусто. Сюда попадают принятые поручения.";
+    } else if (kind === "filter") {
+      p.textContent = "Под фильтр ничего не подходит.";
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn-text";
+      btn.textContent = "Показать все";
+      btn.addEventListener("click", function () {
+        postedFilter = "all";
+        renderPostedTasksList(lastPostedTasksItems);
+      });
+    } else {
+      p.textContent = "Поручите задачу коллеге — здесь будет видно, кто что делает и что просрочено.";
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn posted-empty-cta";
+      btn.textContent = "Поручить задачу";
+      btn.addEventListener("click", openNewPostedTask);
+    }
+    emptyEl.appendChild(p);
+    if (btn) emptyEl.appendChild(btn);
+    setHidden(emptyEl, false);
   }
 
   function renderPostedTasksList(items) {
@@ -21877,27 +22319,124 @@
     syncPostedTasksTabsUi();
     items = sortPostedTasks(items);
     listEl.innerHTML = "";
+    setHidden(emptyEl, true);
     if (postedTasksTab === "archive") {
-      appendPostedTasksGroup(listEl, items, "");
-      setHidden(emptyEl, items.length > 0);
-      if (emptyEl && items.length === 0) {
-        emptyEl.textContent = "Архив пуст";
-      }
+      items.reverse().forEach(function (t) {
+        listEl.appendChild(renderPostedTaskRow(t, { archived: true }));
+      });
+      if (!items.length) renderPostedEmpty(listEl, emptyEl, "archive");
       return;
     }
-    var active = items.filter(function (t) {
+    renderPostedFilters(items);
+    var shown = items.filter(postedFilterMatches);
+    var active = shown.filter(function (t) {
       return !postedTaskIsDone(t);
     });
-    var done = items.filter(function (t) {
+    var done = shown.filter(function (t) {
       return postedTaskIsDone(t);
     });
-    appendPostedTasksGroup(listEl, active, "");
-    appendPostedTasksGroup(listEl, done, done.length ? "Выполненные" : "");
-    setHidden(emptyEl, items.length > 0);
-    if (emptyEl && items.length === 0) {
-      emptyEl.textContent = "Пока нет поставленных задач";
+    if (!items.length) {
+      renderPostedEmpty(listEl, emptyEl, "none");
+    } else if (!active.length && !done.length) {
+      renderPostedEmpty(listEl, emptyEl, "filter");
     }
+    if (postedGroupBy === "people") {
+      postedAssigneeGroups(active).forEach(function (g) {
+        var sec = document.createElement("section");
+        sec.className = "posted-section";
+        sec.appendChild(
+          postedSectionHead(g.name, g.items.length, g.late ? { sub: g.late + " просрочено" } : null)
+        );
+        g.items.forEach(function (t) {
+          sec.appendChild(renderPostedTaskRow(t, { hideAssignee: true }));
+        });
+        listEl.appendChild(sec);
+      });
+    } else {
+      POSTED_BUCKETS.forEach(function (b) {
+        var rows = active.filter(function (t) {
+          return postedDueBucket(t) === b[0];
+        });
+        if (!rows.length) return;
+        var sec = document.createElement("section");
+        sec.className = "posted-section posted-section--" + b[0];
+        sec.appendChild(postedSectionHead(b[1], rows.length, { late: b[0] === "overdue" }));
+        rows.forEach(function (t) {
+          sec.appendChild(renderPostedTaskRow(t));
+        });
+        listEl.appendChild(sec);
+      });
+    }
+    if (done.length) listEl.appendChild(renderPostedDoneBlock(done));
     syncPostedTasksHeroCount(postedActiveCountFromItems(items));
+  }
+
+  function renderPostedDoneBlock(done) {
+    var sec = document.createElement("section");
+    sec.className = "posted-section posted-done" + (postedDoneOpen ? " is-open" : "");
+    var head = document.createElement("div");
+    head.className = "posted-done-head";
+    var toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "posted-done-toggle";
+    toggle.setAttribute("aria-expanded", postedDoneOpen ? "true" : "false");
+    toggle.innerHTML =
+      '<svg class="posted-done-ico" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>';
+    var lbl = document.createElement("span");
+    lbl.textContent = "Выполнено · " + done.length;
+    toggle.appendChild(lbl);
+    var chev = document.createElement("span");
+    chev.className = "posted-done-chev";
+    chev.setAttribute("aria-hidden", "true");
+    toggle.appendChild(chev);
+    toggle.addEventListener("click", function () {
+      postedDoneOpen = !postedDoneOpen;
+      renderPostedTasksList(lastPostedTasksItems);
+    });
+    head.appendChild(toggle);
+    var accept = document.createElement("button");
+    accept.type = "button";
+    accept.className = "posted-done-accept";
+    accept.textContent = "Принять всё";
+    accept.title = "Убрать выполненные в архив";
+    accept.addEventListener("click", function () {
+      acceptPostedDone(done);
+    });
+    head.appendChild(accept);
+    sec.appendChild(head);
+    if (postedDoneOpen) {
+      done.forEach(function (t) {
+        sec.appendChild(renderPostedTaskRow(t));
+      });
+    }
+    return sec;
+  }
+
+  function postedHaptic(kind) {
+    var tg = window.Telegram && window.Telegram.WebApp;
+    if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred(kind || "success");
+  }
+
+  function postedUndoToast(label, onUndo) {
+    var node = document.createElement("span");
+    node.className = "note-toast-copy";
+    node.appendChild(document.createTextNode(label + " · "));
+    var undo = document.createElement("button");
+    undo.type = "button";
+    undo.className = "note-toast-link";
+    undo.textContent = "Отменить";
+    undo.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var el = document.getElementById("note-toast");
+      if (el) {
+        el.classList.add("hidden");
+        if (el._timer) window.clearTimeout(el._timer);
+      }
+      onUndo();
+    });
+    node.appendChild(undo);
+    showNoteToast("", { node: node, actionable: true });
   }
 
   async function patchPostedTask(taskId, body) {
@@ -21907,208 +22446,431 @@
     });
   }
 
-  function renderPostedTaskCard(task) {
-    var wrap = document.createElement("div");
-    var isDone = postedTaskIsDone(task);
-    var isArchived = postedTasksTab === "archive" || postedTaskIsArchived(task);
-    wrap.className =
-      "reminder-card posted-task-card" + (isDone || isArchived ? " done" : "");
+  async function postedRefresh() {
+    await loadPostedTasksList();
+    loadActual({ silent: true });
+  }
+
+  async function acceptPostedDone(done) {
+    var ids = done.map(function (t) {
+      return String(t.id);
+    });
+    try {
+      var r = await apiFetch("/calendar/tasks/posted/accept-done", { method: "POST" });
+      postedDoneOpen = false;
+      await postedRefresh();
+      var n = (r && r.archived) || ids.length;
+      postedHaptic();
+      postedUndoToast("В архиве: " + n, function () {
+        Promise.all(
+          ids.map(function (id) {
+            return patchPostedTask(id, { owner_archived: false });
+          })
+        )
+          .catch(function (err) {
+            showNoteToast((err && err.message) || "Не получилось вернуть");
+          })
+          .then(postedRefresh);
+      });
+    } catch (err) {
+      showNoteToast((err && err.message) || "Не получилось принять");
+    }
+  }
+
+  async function postedSetArchived(task, on) {
+    try {
+      await patchPostedTask(task.id, { owner_archived: !!on });
+      removePostedTaskFromState(task.id);
+      postedHaptic();
+      postedUndoToast(on ? "В архиве" : "Возвращено", function () {
+        patchPostedTask(task.id, { owner_archived: !on })
+          .catch(function (err) {
+            showNoteToast((err && err.message) || "Не получилось");
+          })
+          .then(postedRefresh);
+      });
+      postedRefresh();
+    } catch (err) {
+      showNoteToast((err && err.message) || "Не получилось");
+    }
+  }
+
+  async function postedSetDone(task) {
+    try {
+      await patchPostedTask(task.id, { done: true });
+      postedHaptic();
+      postedUndoToast("Выполнено", function () {
+        patchPostedTask(task.id, { done: false })
+          .catch(function (err) {
+            showNoteToast((err && err.message) || "Не получилось");
+          })
+          .then(postedRefresh);
+      });
+      await postedRefresh();
+    } catch (err) {
+      showNoteToast((err && err.message) || "Не получилось отметить");
+    }
+  }
+
+  // «Напомнить»: пуш исполнителю в Telegram (сервер не даёт чаще раза в 4 часа).
+  async function nudgePostedTask(taskId, opts) {
+    opts = opts || {};
+    try {
+      var r = await apiFetch("/calendar/tasks/" + encodeURIComponent(String(taskId)) + "/nudge", { method: "POST" });
+      if (r && r.task) replacePostedTaskInState(r.task);
+      if (!opts.quiet) {
+        postedHaptic();
+        showNoteToast("Напомнили в Telegram");
+      }
+      return { ok: true };
+    } catch (err) {
+      if (!opts.quiet) showNoteToast((err && err.message) || "Не получилось напомнить");
+      return { ok: false, error: err };
+    }
+  }
+
+  function postedTimeShort(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    var diff = postedDayDiff(localDateIsoFromMs(d.getTime()));
+    var hm = d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+    if (diff === 0) return hm;
+    if (diff === -1) return "вчера";
+    return postedShortDate(localDateIsoFromMs(d.getTime()));
+  }
+
+  // «видел(а)» / «в работе» / «вопрос» — что ответил исполнитель.
+  function postedStateBadge(task) {
+    var st = postedAssigneeState(task);
+    if (postedTaskIsDone(task)) return null;
+    var b = document.createElement("span");
+    if (st.status === "question") {
+      b.className = "posted-state posted-state--question";
+      b.textContent = "вопрос";
+    } else if (st.status === "in_progress") {
+      b.className = "posted-state posted-state--work";
+      b.textContent = "в работе";
+    } else if (st.seen_at) {
+      b.className = "posted-state";
+      b.textContent = "прочитано " + postedTimeShort(st.seen_at);
+    } else {
+      b.className = "posted-state posted-state--unseen";
+      b.textContent = "не прочитано";
+    }
+    return b;
+  }
+
+  function postedOpenTask(task) {
     var ev = (task && task.event) || {};
     var title = String((task && task.title) || ev.summary || "Задача");
-    var assignee = postedTaskAssigneeLabel(task);
-    var checklist = normalizeReminderChecklist(
-      (task && task.checklist) || ev.checklist || []
-    );
-    var timeLabel = postedTaskTimeLabel(task);
-
-    function openThisTask() {
-      var payload = Object.assign({}, ev, {
-        task_id: task.id,
-        id: "task-" + task.id,
-        summary: title,
-        checklist: checklist,
-        done: isDone,
-        owner_archived: isArchived,
-        assignee: ev.assignee || {
-          name: assignee,
-          user_id: task.assignee_user_id,
-          email: task.assignee_email,
-        },
-        all_day: !!(task.all_day || ev.all_day),
-        schedule_log_lines:
-          task.schedule_log_lines || ev.schedule_log_lines || [],
-      });
-      openTaskModal(payload, {
-        onSaved: function () {
-          loadPostedTasksList();
-          loadActual();
-        },
-        onDeleted: function (id) {
-          removePostedTaskFromState(id || task.id);
-          loadPostedTasksList();
-          loadActual();
-        },
-      });
-    }
-
-    var edit = document.createElement("button");
-    edit.type = "button";
-    edit.className = "meeting-card-edit-btn reminder-card-edit-btn";
-    edit.setAttribute("aria-label", "Изменить");
-    edit.title = "Изменить";
-    edit.innerHTML =
-      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' +
-      '<path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />' +
-      "</svg>";
-    edit.addEventListener("click", function (e) {
-      e.stopPropagation();
-      openThisTask();
+    var payload = Object.assign({}, ev, {
+      task_id: task.id,
+      id: "task-" + task.id,
+      summary: title,
+      checklist: normalizeReminderChecklist((task && task.checklist) || ev.checklist || []),
+      done: postedTaskIsDone(task),
+      owner_archived: postedTaskIsArchived(task),
+      assignee: ev.assignee || {
+        name: postedTaskAssigneeLabel(task),
+        user_id: task.assignee_user_id,
+        email: task.assignee_email,
+      },
+      all_day: postedTaskIsAllDay(task),
+      schedule_log_lines: task.schedule_log_lines || ev.schedule_log_lines || [],
     });
-    wrap.appendChild(edit);
+    openTaskModal(payload, {
+      onSaved: postedRefresh,
+      onDeleted: function (id) {
+        removePostedTaskFromState(id || task.id);
+        postedRefresh();
+      },
+    });
+  }
 
+  function openNewPostedTask() {
+    openTaskModal({}, { onSaved: postedRefresh, focusAssignee: true });
+  }
+
+  var POSTED_ICONS = {
+    bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+    check: '<path d="M20 6 9 17l-5-5"/>',
+    archive: '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/>',
+    restore: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
+  };
+
+  function postedIcon(name, size) {
+    var s = size || 18;
+    return (
+      '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      POSTED_ICONS[name] +
+      "</svg>"
+    );
+  }
+
+  function postedRowActions(task, opts) {
+    if (opts.archived) {
+      return [{ key: "restore", label: "Вернуть", icon: "restore", run: function () { postedSetArchived(task, false); } }];
+    }
+    var acts = [];
+    if (!postedTaskIsDone(task)) {
+      acts.push({ key: "nudge", label: "Напомнить", icon: "bell", run: function () { nudgePostedTask(task.id); } });
+      acts.push({ key: "done", label: "Готово", icon: "check", run: function () { postedSetDone(task); } });
+    }
+    acts.push({ key: "archive", label: "В архив", icon: "archive", run: function () { postedSetArchived(task, true); } });
+    return acts;
+  }
+
+  function renderPostedTaskRow(task, opts) {
+    opts = opts || {};
+    var ev = (task && task.event) || {};
+    var isDone = postedTaskIsDone(task);
+    var late = postedTaskIsOverdue(task);
+    var st = postedAssigneeState(task);
     var row = document.createElement("div");
-    row.className = "reminder-row";
-
-    var check = document.createElement("button");
-    check.type = "button";
-    check.className = "reminder-check" + (isDone ? " on" : "");
-    check.innerHTML = isDone ? "✓" : "";
-    check.setAttribute("aria-label", isDone ? "Выполнено" : "Отметить выполненной");
-    if (isDone) {
-      check.disabled = true;
-    } else {
-      check.addEventListener("click", async function (e) {
-        e.stopPropagation();
-        var tid = String(task.id);
-        try {
-          await patchPostedTask(tid, { done: true });
-          await loadPostedTasksList();
-          loadActual();
-          var tg = window.Telegram && window.Telegram.WebApp;
-          if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
-        } catch (err) {
-          await loadPostedTasksList();
-          alert(err.message || String(err));
-        }
-      });
+    row.className = "posted-row" + (isDone ? " is-done" : "") + (late ? " is-late" : "");
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    var assignee = postedTaskAssigneeLabel(task);
+    if (!opts.hideAssignee) {
+      var av = document.createElement("span");
+      av.className = "posted-av posted-av--" + postedAvatarTone(postedAssigneeKey(task));
+      av.textContent = postedInitials(assignee);
+      av.setAttribute("aria-hidden", "true");
+      row.appendChild(av);
     }
-
-    var textCol = document.createElement("div");
-    textCol.style.flex = "1";
-    textCol.style.minWidth = "0";
-    var p = document.createElement("p");
-    p.className = "reminder-text" + (isDone ? " line-through" : "");
-    p.textContent = title;
-    textCol.appendChild(p);
-    if (checklist.length) {
-      var cl = document.createElement("ul");
-      cl.className = "reminder-card-checklist";
-      checklist.forEach(function (it) {
-        var li = document.createElement("li");
-        li.className =
-          "reminder-card-checklist-item" +
-          (it.done ? " reminder-card-checklist-item--done" : "");
-        li.textContent = (it.done ? "☑ " : "☐ ") + it.text;
-        cl.appendChild(li);
-      });
-      textCol.appendChild(cl);
+    var main = document.createElement("div");
+    main.className = "posted-row-main";
+    var title = document.createElement("p");
+    title.className = "posted-row-title";
+    title.textContent = String((task && task.title) || ev.summary || "Задача");
+    main.appendChild(title);
+    var meta = document.createElement("p");
+    meta.className = "posted-row-meta";
+    function sep() {
+      var d = document.createElement("span");
+      d.className = "posted-sep";
+      d.textContent = "·";
+      d.setAttribute("aria-hidden", "true");
+      meta.appendChild(d);
     }
-    var meta = document.createElement("div");
-    meta.className = "reminder-meta posted-task-meta";
-    if (assignee) {
+    if (!opts.hideAssignee && assignee) {
       var who = document.createElement("span");
-      who.className = "posted-task-assignee";
       who.textContent = assignee;
       meta.appendChild(who);
+      sep();
     }
-    if (timeLabel) {
-      var timeEl = document.createElement("span");
-      timeEl.className = "muted small";
-      timeEl.textContent = timeLabel;
-      meta.appendChild(timeEl);
+    var due = document.createElement("span");
+    due.className = "posted-due" + (late ? " is-late" : "");
+    due.textContent = postedDueLabel(task);
+    meta.appendChild(due);
+    var badge = postedStateBadge(task);
+    if (badge) {
+      sep();
+      meta.appendChild(badge);
     }
-    if (meta.childNodes.length) textCol.appendChild(meta);
+    main.appendChild(meta);
+    if (st.status === "question" && st.status_note && !isDone) {
+      var q = document.createElement("p");
+      q.className = "posted-row-question";
+      q.textContent = "«" + st.status_note + "»";
+      main.appendChild(q);
+    }
+    row.appendChild(main);
 
-    var actions = document.createElement("div");
-    actions.className = "posted-task-actions";
-    if (!isArchived) {
-      var archiveBtn = document.createElement("button");
-      archiveBtn.type = "button";
-      archiveBtn.className = "posted-task-action";
-      archiveBtn.textContent = "В архив";
-      archiveBtn.addEventListener("click", async function (e) {
+    var side = document.createElement("div");
+    side.className = "posted-row-side";
+    var checklist = normalizeReminderChecklist((task && task.checklist) || ev.checklist || []);
+    if (checklist.length) {
+      var doneN = checklist.filter(function (it) {
+        return it.done;
+      }).length;
+      var prog = document.createElement("span");
+      prog.className = "posted-progress";
+      prog.title = "Чек-лист: " + doneN + " из " + checklist.length;
+      prog.innerHTML = '<span class="posted-progress-n"></span><span class="posted-progress-bar"><i></i></span>';
+      prog.querySelector(".posted-progress-n").textContent = doneN + "/" + checklist.length;
+      prog.querySelector("i").style.width = Math.round((doneN / checklist.length) * 100) + "%";
+      side.appendChild(prog);
+    }
+    (task.tracker_links || []).forEach(function (l) {
+      var tr = trackerById(l.provider);
+      var b = document.createElement("a");
+      b.className = "posted-tracker";
+      b.href = l.url || "#";
+      b.textContent = (TRACKER_CHIP_PREFIX[l.provider] || l.provider || "").toUpperCase().replace("B24", "Б24");
+      b.title = (tr ? tr.title : l.provider) + " #" + l.external_id + (l.stage_name ? " · " + l.stage_name : "");
+      b.addEventListener("click", function (e) {
+        e.preventDefault();
         e.stopPropagation();
-        var tid = String(task.id);
-        try {
-          await patchPostedTask(tid, { owner_archived: true });
-          await loadPostedTasksList();
-          loadActual();
-        } catch (err) {
-          alert(err.message || String(err));
-        }
+        if (l.url) openExternal(l.url);
       });
-      actions.appendChild(archiveBtn);
-    } else {
-      var restoreBtn = document.createElement("button");
-      restoreBtn.type = "button";
-      restoreBtn.className = "posted-task-action";
-      restoreBtn.textContent = "Вернуть";
-      restoreBtn.addEventListener("click", async function (e) {
-        e.stopPropagation();
-        var tid = String(task.id);
-        try {
-          await patchPostedTask(tid, { owner_archived: false });
-          await loadPostedTasksList();
-          loadActual();
-        } catch (err) {
-          alert(err.message || String(err));
-        }
-      });
-      actions.appendChild(restoreBtn);
+      side.appendChild(b);
+    });
+    if (st.nudged_at && !isDone) {
+      var nb = document.createElement("span");
+      nb.className = "posted-nudged";
+      nb.title = "Напомнили " + postedTimeShort(st.nudged_at);
+      nb.innerHTML = postedIcon("bell", 14);
+      side.appendChild(nb);
     }
-    textCol.appendChild(actions);
+    var acts = postedRowActions(task, opts);
+    // Десктоп: действия иконками при наведении (на телефоне — свайп влево).
+    var hover = document.createElement("div");
+    hover.className = "posted-row-hover";
+    acts.forEach(function (a) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "posted-hover-btn";
+      b.title = a.label;
+      b.setAttribute("aria-label", a.label);
+      b.innerHTML = postedIcon(a.icon, 16);
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        a.run();
+      });
+      hover.appendChild(b);
+    });
+    side.appendChild(hover);
+    row.appendChild(side);
 
-    row.appendChild(check);
-    row.appendChild(textCol);
-    wrap.appendChild(row);
+    row.addEventListener("click", function () {
+      postedOpenTask(task);
+    });
+    row.addEventListener("keydown", function (e) {
+      if (e.target !== row) return;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        postedOpenTask(task);
+      }
+    });
+    return wrapWithSwipeActions(row, acts);
+  }
 
-    wrap.addEventListener("click", openThisTask);
+  /** Свайп влево по строке открывает кнопки действий (как в почте на телефоне). */
+  function wrapWithSwipeActions(innerRoot, actions) {
+    var BTN_W = 76;
+    var reveal = BTN_W * actions.length;
+    var stack = document.createElement("div");
+    stack.className = "swipe-acts-row";
+    var tray = document.createElement("div");
+    tray.className = "swipe-acts";
+    tray.style.width = reveal + "px";
+    actions.forEach(function (a) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "swipe-act swipe-act--" + a.key;
+      b.tabIndex = -1;
+      b.innerHTML = postedIcon(a.icon, 18) + "<span></span>";
+      b.querySelector("span").textContent = a.label;
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        applyX(0);
+        a.run();
+      });
+      tray.appendChild(b);
+    });
+    var panel = document.createElement("div");
+    panel.className = "swipe-acts-panel";
+    panel.appendChild(innerRoot);
+    stack.appendChild(tray);
+    stack.appendChild(panel);
 
-    return wrapWithSwipeDelete(
-      wrap,
-      async function () {
-        var tid = String(task.id);
-        removePostedTaskFromState(tid);
-        await apiFetch("/calendar/tasks/" + encodeURIComponent(tid), {
-          method: "DELETE",
-        });
-        await loadPostedTasksList();
-        loadActual();
+    var x = 0;
+    var startX = 0;
+    var startY = 0;
+    var startOffset = 0;
+    var dragging = false;
+    var locked = null;
+    var moved = false;
+
+    function applyX(nx) {
+      x = Math.min(0, Math.max(-reveal - 24, nx));
+      panel.style.transform = x ? "translateX(" + x + "px)" : "";
+      stack.classList.toggle("is-swiping", x < 0);
+      stack.classList.toggle("is-revealed", x < -8);
+    }
+    function finish() {
+      if (!dragging) return;
+      dragging = false;
+      if (locked === "x") applyX(x < -SWIPE_THRESHOLD ? -reveal : 0);
+      locked = null;
+    }
+    panel.addEventListener("pointerdown", function (e) {
+      if (e.pointerType === "mouse") return; // мышью — кнопки при наведении
+      startX = e.clientX;
+      startY = e.clientY;
+      startOffset = x;
+      dragging = true;
+      locked = null;
+      moved = false;
+    });
+    panel.addEventListener("pointermove", function (e) {
+      if (!dragging) return;
+      var dx = e.clientX - startX;
+      var dy = e.clientY - startY;
+      if (!locked && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+        locked = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+        if (locked === "x") {
+          // Открыта другая строка — закрываем, чтобы не висело две.
+          document.querySelectorAll(".swipe-acts-row.is-revealed").forEach(function (o) {
+            if (o !== stack && o._swipeReset) o._swipeReset();
+          });
+        }
+      }
+      if (locked === "x") {
+        moved = true;
+        e.preventDefault();
+        try {
+          panel.setPointerCapture(e.pointerId);
+        } catch (_) {}
+        applyX(startOffset + dx);
+      }
+    });
+    panel.addEventListener("pointerup", finish);
+    panel.addEventListener("pointercancel", finish);
+    panel.addEventListener(
+      "click",
+      function (e) {
+        if (moved || x < -8) {
+          moved = false;
+          e.preventDefault();
+          e.stopPropagation();
+          applyX(0);
+        }
       },
-      { removeStack: true }
+      true
     );
+    stack._swipeReset = function () {
+      applyX(0);
+    };
+    return stack;
   }
 
   async function loadPostedTasksList() {
     var listEl = document.getElementById("posted-tasks-list");
     var emptyEl = document.getElementById("posted-tasks-empty");
     if (!listEl) return;
+    var tab = postedTasksTab;
     try {
-      var archivedQ = postedTasksTab === "archive" ? "1" : "0";
+      var archivedQ = tab === "archive" ? "1" : "0";
       var data = await apiFetch(
         "/calendar/tasks/posted?archived=" + archivedQ,
         { method: "GET" }
       );
+      if (tab !== postedTasksTab) return; // переключили вкладку, пока шёл запрос
       var items = (data && data.items) || [];
       var count =
         data && typeof data.count === "number"
           ? data.count
           : lastPostedTasksActiveCount;
+      if (tab === "archive") postedArchiveItems = items;
       syncPostedTasksState(items, count);
     } catch (err) {
-      if (emptyEl) {
+      if (emptyEl && !postedVisibleItems().length) {
         emptyEl.textContent = (err && err.message) || String(err);
         setHidden(emptyEl, false);
+      } else {
+        showNoteToast((err && err.message) || "Не удалось обновить поручения");
       }
     }
   }
@@ -22121,8 +22883,13 @@
     setHidden(sub, !open);
     if (open) {
       postedTasksTab = "current";
+      postedFilter = "all";
+      postedDoneOpen = false;
       syncPostedTasksTabsUi();
+      renderPostedTasksList(lastPostedTasksItems);
       loadPostedTasksList();
+      var scroller = document.querySelector(".main-scroll");
+      if (scroller) scroller.scrollTop = 0;
     }
   }
 
@@ -22397,7 +23164,8 @@
       return true;
     }
     if (isPostedTasksOpen()) {
-      setPostedTasksScreen(false);
+      if (postedTasksTab === "archive") setPostedTasksTab("current");
+      else setPostedTasksScreen(false);
       return true;
     }
     if (isNoteHistoryOpen()) {
@@ -47024,12 +47792,21 @@
     var postedBack = document.getElementById("posted-tasks-back");
     if (postedBack) {
       postedBack.addEventListener("click", function () {
-        setPostedTasksScreen(false);
+        if (postedTasksTab === "archive") setPostedTasksTab("current");
+        else setPostedTasksScreen(false);
       });
     }
-    document.querySelectorAll("#actual-posted-tasks [data-posted-tab]").forEach(function (btn) {
+    var postedArchive = document.getElementById("posted-tasks-archive");
+    if (postedArchive) {
+      postedArchive.addEventListener("click", function () {
+        setPostedTasksTab(postedTasksTab === "archive" ? "current" : "archive");
+      });
+    }
+    var postedNew = document.getElementById("posted-tasks-new");
+    if (postedNew) postedNew.addEventListener("click", openNewPostedTask);
+    document.querySelectorAll("#actual-posted-tasks [data-posted-group]").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        setPostedTasksTab(btn.getAttribute("data-posted-tab") || "current");
+        setPostedGroupBy(btn.getAttribute("data-posted-group") || "due");
       });
     });
     var actualVoiceBtn = document.getElementById("actual-voice-btn");

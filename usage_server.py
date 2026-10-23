@@ -5503,10 +5503,123 @@ async def miniapp_calendar_tasks_posted(
         )
     )
     items = [_task_api(r, tz=tz, viewer_id=uid) for r in rows]
+
+    def _links() -> None:
+        from assistant.stores import trackers as trackers_store
+
+        for it in items:
+            try:
+                it["tracker_links"] = trackers_store.tasks_for_calendar_task(uid, it.get("id"))
+            except Exception as e:  # бейдж трекера — не повод не показать список
+                print(f"[posted] tracker links failed task={it.get('id')} err={e!r}")
+                it["tracker_links"] = []
+
+    await run_in_threadpool(_links)
     active_count = await run_in_threadpool(
         calendar_tasks_store.count_active_posted_tasks, uid
     )
     return {"ok": True, "items": items, "count": active_count, "archived": want_archived}
+
+
+class _MiniappTaskStatusBody(BaseModel):
+    status: str = ""
+    note: str = ""
+
+
+# «Напомнить» не чаще раза в несколько часов на задачу — исполнителя не заваливаем пушами.
+TASK_NUDGE_COOLDOWN = timedelta(hours=4)
+
+
+@miniapp_router.post("/calendar/tasks/posted/accept-done")
+async def miniapp_calendar_tasks_accept_done(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    n = await run_in_threadpool(calendar_tasks_store.archive_done_posted, uid)
+    return {"ok": True, "archived": n}
+
+
+@miniapp_router.post("/calendar/tasks/{task_id}/seen")
+async def miniapp_calendar_tasks_seen(
+    task_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    row = await run_in_threadpool(calendar_tasks_store.mark_seen, uid, task_id)
+    # Автор или своя задача — «видел» не про них, это не ошибка.
+    return {"ok": True, "assignee_state": calendar_tasks_store.assignee_state(row) if row else None}
+
+
+@miniapp_router.post("/calendar/tasks/{task_id}/status")
+async def miniapp_calendar_tasks_status(
+    task_id: int,
+    body: _MiniappTaskStatusBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    tz = _tz_for(uid)
+    before = await run_in_threadpool(calendar_tasks_store.get_task_for_user, uid, task_id)
+    try:
+        row = await run_in_threadpool(
+            partial(calendar_tasks_store.set_assignee_status, uid, task_id, body.status, body.note)
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not row:
+        raise HTTPException(status_code=403, detail="Статус ставит исполнитель поручения")
+    prev = calendar_tasks_store.assignee_state(before)
+    cur = calendar_tasks_store.assignee_state(row)
+    # Пуш автору только про вопрос: «взял в работу» видно в списке, без лишнего шума.
+    if cur["status"] == "question" and (prev["status"] != "question" or prev["status_note"] != cur["status_note"]):
+        from assistant.lib.task_notify import notify_task_owner_question
+
+        await run_in_threadpool(
+            partial(
+                notify_task_owner_question,
+                task=row,
+                asker_name=_principal_display_name(principal),
+                question=cur["status_note"],
+            )
+        )
+    return {"ok": True, "task": _task_api(row, tz=tz, viewer_id=uid)}
+
+
+@miniapp_router.post("/calendar/tasks/{task_id}/nudge")
+async def miniapp_calendar_tasks_nudge(
+    task_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.services.calendar import _tz_for
+    from assistant.lib.task_notify import notify_task_nudge
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    tz = _tz_for(uid)
+    task = await run_in_threadpool(calendar_tasks_store.get_task_for_user, uid, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    if str(task.get("owner_user_id") or "") != str(uid) or not calendar_tasks_store.task_is_delegated(task):
+        raise HTTPException(status_code=403, detail="Напомнить может постановщик поручения")
+    if task.get("done"):
+        raise HTTPException(status_code=400, detail="Задача уже выполнена")
+    last = calendar_tasks_store._parse_dt(task.get("last_nudged_at"))
+    if last is not None and datetime.now(timezone.utc) - last < TASK_NUDGE_COOLDOWN:
+        when = last.astimezone(tz).strftime("%H:%M")
+        raise HTTPException(status_code=429, detail=f"Уже напомнили в {when}")
+    sent = await run_in_threadpool(
+        partial(notify_task_nudge, task=task, assigner_name=_principal_display_name(principal))
+    )
+    if not sent:
+        raise HTTPException(status_code=502, detail="Не получилось отправить напоминание в Telegram")
+    row = await run_in_threadpool(calendar_tasks_store.mark_nudged, task_id)
+    return {"ok": True, "task": _task_api(row or task, tz=tz, viewer_id=uid)}
 
 
 @miniapp_router.get("/calendar/tasks")

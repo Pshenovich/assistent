@@ -28,10 +28,11 @@
   var nextMockTagId = -91004;
   var nextMockReminderId = 100;
   var nextMockEventId = 100;
+  var MOCK_ME = "123456789"; // id пользователя из мока /me
   var mockTasks = [
     {
       id: 9001,
-      owner_user_id: "1",
+      owner_user_id: MOCK_ME,
       title: "Сделать презентацию",
       description: "",
       start_at: new Date().toISOString().slice(0, 10) + "T00:00:00+03:00",
@@ -47,6 +48,39 @@
       chip_label: "сегодня",
     },
   ];
+  // «Поручено другим» в ?dev=1: просроченные, с чек-листом и вопросом, разные исполнители.
+  (function () {
+    function day(off) {
+      var x = new Date();
+      x.setDate(x.getDate() + off);
+      return x.toISOString().slice(0, 10);
+    }
+    var hAgo = function (h) {
+      return new Date(Date.now() - h * 3600000).toISOString();
+    };
+    [
+      [9002, "Согласовать договор с подрядчиком", -3, "14:00", "33", "Артём", false, [], { assignee_seen_at: hAgo(70) }],
+      [9003, "Подготовить отчёт по продажам за Q3", -1, null, "22", "Ульяна", false,
+        [{ text: "Выгрузка из CRM", done: true }, { text: "Графики", done: false }, { text: "Выводы", done: false }],
+        { assignee_seen_at: hAgo(30), assignee_status: "question", assignee_status_note: "За какой период брать данные — квартал или 9 месяцев?", assignee_status_at: hAgo(5) }],
+      [9004, "Созвониться с клиентом Альфа по интеграции и зафиксировать сроки запуска пилота", 0, "23:30", "44", "Максим Петров", false, [], { assignee_seen_at: hAgo(3), assignee_status: "in_progress", assignee_status_at: hAgo(2) }],
+      [9005, "Обновить лендинг", 1, null, "33", "Артём", false, [], {}],
+      [9006, "Проверить счета", 4, "11:00", "55", "Ирина", false, [], { last_nudged_at: hAgo(1) }],
+      [9007, "Собрать фидбек от команды", -2, null, "22", "Ульяна", true, [], {}],
+      [9008, "Нанять дизайнера", 12, null, "44", "Максим Петров", false, [], {}],
+      // Мне поручил коллега — проверить «В работе / Есть вопрос» у исполнителя (?task=9010).
+      [9010, "Прислать комментарии к смете", 1, "12:00", MOCK_ME, "Вова", false, [], { owner_user_id: "22" }],
+    ].forEach(function (a) {
+      var d = day(a[2]);
+      mockTasks.push(Object.assign({
+        id: a[0], owner_user_id: MOCK_ME, title: a[1], description: "",
+        start_at: d + "T" + (a[3] || "00:00") + ":00+03:00",
+        end_at: a[3] ? d + "T" + a[3] + ":00+03:00" : d + "T23:59:00+03:00",
+        checklist: a[7], assignee_user_id: a[4], assignee_email: "", assignee_name: a[5], note_id: "",
+        all_day: !a[3], done: a[6], owner_archived: false, chip_label: "",
+      }, a[8]));
+    });
+  })();
   var nextMockTaskId = 9100;
 
   // Внешний трекер (Битрикс24) для ?dev=1: доски, стадии, создание, WWA.
@@ -1413,10 +1447,17 @@
           email: task.assignee_email || "",
           name: task.assignee_name || "",
         },
-        owner_user_id: task.owner_user_id || "1",
+        owner_user_id: task.owner_user_id || MOCK_ME,
         chip_label: task.chip_label || "Задача",
         done: !!task.done,
         owner_archived: !!task.owner_archived,
+        assignee_state: {
+          seen_at: task.assignee_seen_at || "",
+          status: task.assignee_status || "",
+          status_note: task.assignee_status_note || "",
+          status_at: task.assignee_status_at || "",
+          nudged_at: task.last_nudged_at || "",
+        },
         note_id: task.note_id || "",
       };
     }
@@ -1497,6 +1538,39 @@
       }
     }
 
+    if (basePath === "/calendar/tasks/posted/accept-done" && method === "POST") {
+      var acc = 0;
+      mockTasks.forEach(function (t) {
+        if (t.done && !t.owner_archived && String(t.assignee_user_id || "") !== String(t.owner_user_id || MOCK_ME)) {
+          t.owner_archived = true;
+          acc++;
+        }
+      });
+      return { ok: true, archived: acc };
+    }
+    var taskActMatch = basePath.match(/^\/calendar\/tasks\/(\d+)\/(nudge|seen|status)$/);
+    if (taskActMatch && method === "POST") {
+      var at = mockTasks.filter(function (t) {
+        return Number(t.id) === Number(taskActMatch[1]);
+      })[0];
+      if (!at) throw new Error("Задача не найдена");
+      if (taskActMatch[2] === "nudge") {
+        if (at.last_nudged_at && Date.now() - new Date(at.last_nudged_at).getTime() < 4 * 3600000) {
+          throw new Error("Уже напомнили в " + new Date(at.last_nudged_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
+        }
+        at.last_nudged_at = new Date().toISOString();
+      } else if (taskActMatch[2] === "status") {
+        var sb = {};
+        try {
+          sb = JSON.parse((opts && opts.body) || "{}");
+        } catch (_) {}
+        at.assignee_status = sb.status || "";
+        at.assignee_status_note = sb.status === "question" ? sb.note || "" : "";
+        at.assignee_status_at = sb.status ? new Date().toISOString() : "";
+      }
+      return mockTaskApi(at);
+    }
+
     if (basePath === "/calendar/tasks/posted" && method === "GET") {
       var wantArchived = false;
       try {
@@ -1509,9 +1583,9 @@
         });
       } catch (_) {}
       var postedAll = mockTasks.filter(function (t) {
-        var owner = String(t.owner_user_id || "1");
+        var owner = String(t.owner_user_id || MOCK_ME);
         var assignee = String(t.assignee_user_id || "");
-        return assignee && assignee !== owner;
+        return owner === MOCK_ME && assignee && assignee !== owner;
       });
       var posted = postedAll.filter(function (t) {
         return !!t.owner_archived === wantArchived;
@@ -1522,7 +1596,8 @@
       return {
         ok: true,
         items: posted.map(function (t) {
-          return mockTaskApi(t).task;
+          var links = (mockTracker.links[String(t.id)] || []);
+          return Object.assign(mockTaskApi(t).task, { tracker_links: links });
         }),
         count: activeCount,
         archived: wantArchived,
@@ -1580,7 +1655,7 @@
       }
       var task = {
         id: nextMockTaskId++,
-        owner_user_id: "1",
+        owner_user_id: MOCK_ME,
         title: String(taskBody.title || "").trim() || "Задача",
         description: String(taskBody.description || ""),
         start_at: taskStart,
