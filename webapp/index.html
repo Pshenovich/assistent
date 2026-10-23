@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261023-drop">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261023-mail5">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -96,7 +96,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261023-drop" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261023-mail5" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -428,12 +428,16 @@
             <div class="subtab-bar" role="tablist" aria-label="Тип дайджеста">
               <button type="button" class="subtab-btn active" data-digest-subtab="chats" role="tab" aria-selected="true">Чаты</button>
               <button type="button" class="subtab-btn" data-digest-subtab="market" role="tab" aria-selected="false">Рынок</button>
+              <button type="button" class="subtab-btn hidden" data-digest-subtab="mail" role="tab" aria-selected="false">Почта</button>
             </div>
           </div>
           <div id="digest-pane-chats">
             <div id="digest-list" class="stack digest-list"></div>
             <p id="digest-empty" class="empty-state hidden">Пока нет отчётов. Нажмите Обновить — разберём дни с последнего анализа.</p>
             <p id="digest-error" class="error hidden"></p>
+          </div>
+          <div id="digest-pane-mail" class="hidden">
+            <div id="mail-inbox" class="mail-inbox"></div>
           </div>
           <div id="digest-pane-market" class="hidden">
             <div id="digest-market-body" class="digest-market"></div>
@@ -2200,7 +2204,8 @@
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
   <script src="/webapp/web-canvas.js?v=20261022-focuschip" defer></script>
-  <script src="/webapp/app.js?v=20261023-drop" defer></script>
-  <script src="/webapp/mail.js?v=20261023-mail4" defer></script>
+  <script src="/webapp/app.js?v=20261023-mail5" defer></script>
+  <script src="/webapp/mail.js?v=20261023-mail5" defer></script>
+  <script src="/webapp/mail-inbox.js?v=20261023-mail5" defer></script>
 </body>
 </html>

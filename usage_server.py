@@ -12924,6 +12924,110 @@ async def miniapp_mail_attachment_upload(
     return {"ok": True, "attachment": {k: meta[k] for k in ("id", "name", "size")}}
 
 
+@miniapp_router.get("/mail/threads")
+async def miniapp_mail_threads(
+    filter: str = "all", account: str = "", principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """Раздел «Почта»: ветки переписки с людьми (как список чатов) с метками Лео."""
+    from assistant.services import mail_inbox
+
+    return {"ok": True, **await run_in_threadpool(partial(mail_inbox.threads, int(principal.telegram_user_id),
+                                                          filt=filter, account_id=account))}
+
+
+@miniapp_router.get("/mail/threads/{thread_key}")
+async def miniapp_mail_thread(thread_key: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.services import mail_inbox
+
+    try:
+        return {"ok": True, **await run_in_threadpool(mail_inbox.thread, int(principal.telegram_user_id), thread_key)}
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        print(f"[mail] thread err={e!r}")
+        raise HTTPException(status_code=502, detail="Не получилось загрузить переписку из почты. Попробуйте ещё раз.") from e
+
+
+@miniapp_router.post("/mail/threads/{thread_key}/read")
+async def miniapp_mail_thread_read(
+    thread_key: str, body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """Прочитано / не прочитано (в Orbita и, если есть права, в самом ящике)."""
+    from assistant.services import mail_inbox
+    from assistant.stores import mail_index
+
+    uid = int(principal.telegram_user_id)
+    read = bool((body or {}).get("read", True))
+    keys = [r["mail_key"] for r in mail_index.thread(uid, thread_key) if r["direction"] == "in"]
+    await run_in_threadpool(mail_inbox.set_read, uid, keys, read)
+    from assistant.services import mail_sync
+
+    mail_sync.mark_seen_soon(uid, keys, read)
+    return {"ok": True, "count": len(keys)}
+
+
+@miniapp_router.get("/mail/attachment")
+async def miniapp_mail_attachment(mail_key: str, part: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    import base64
+
+    from assistant.services import mail_inbox
+
+    try:
+        att = await run_in_threadpool(mail_inbox.attachment, int(principal.telegram_user_id), mail_key, int(part))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {"ok": True, "name": att["name"], "type": att["type"], "data": base64.b64encode(att["data"]).decode()}
+
+
+@miniapp_router.get("/mail/open-url")
+async def miniapp_mail_open_url(mail_key: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.services import mail_inbox
+
+    return {"ok": True, "url": await run_in_threadpool(mail_inbox.open_in_mail_url, int(principal.telegram_user_id), mail_key)}
+
+
+@miniapp_router.post("/mail/threads/{thread_key}/draft")
+async def miniapp_mail_thread_ai_draft(
+    thread_key: str, body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """«Подготовить ответ» в ветке: текст в стиле пользователя — в поле ввода (не отправляется)."""
+    from assistant.services import mail_composer
+
+    try:
+        text = await run_in_threadpool(partial(
+            mail_composer.draft_reply, int(principal.telegram_user_id), thread_key,
+            reply_to_key=str((body or {}).get("reply_to_key") or ""), instruction=str((body or {}).get("instruction") or "")))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "body": text}
+
+
+@miniapp_router.post("/mail/threads/{thread_key}/summary")
+async def miniapp_mail_thread_summary(thread_key: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.services import mail_composer
+
+    try:
+        text = await run_in_threadpool(mail_composer.summarize_thread, int(principal.telegram_user_id), thread_key)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "summary": text}
+
+
+@miniapp_router.post("/mail/threads/{thread_key}/note")
+async def miniapp_mail_thread_note(thread_key: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.services import mail_inbox
+
+    try:
+        note = await run_in_threadpool(mail_inbox.save_to_note, int(principal.telegram_user_id), thread_key)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {"ok": True, "note_id": note.get("id")}
+
+
 @miniapp_router.get("/mail/senders")
 async def miniapp_mail_senders(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
     """Правила отправителей («Скрытые», «Всегда пропускать») и «Отсеяно Лео» за 14 дней."""
@@ -12961,7 +13065,11 @@ async def miniapp_mail_senders_set(body: dict[str, Any], principal: _MiniappPrin
 
 
 @miniapp_router.delete("/mail/senders")
-async def miniapp_mail_senders_delete(pattern: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+async def miniapp_mail_senders_delete(
+    pattern: str, restore: int = 0, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """Снять правило. restore=1 — вернуть письма, перенесённые в спам, во «Входящие»."""
+    from assistant.services import mail_sync
     from assistant.stores import mail_senders
 
     uid = int(principal.telegram_user_id)
@@ -12969,8 +13077,27 @@ async def miniapp_mail_senders_delete(pattern: str, principal: _MiniappPrincipal
         old = await run_in_threadpool(mail_senders.remove, uid, pattern)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    restored = 0
+    if restore and old and old.get("moved"):
+        restored = await run_in_threadpool(mail_sync.restore_moved, uid, old["moved"])
     _FOCUS_CACHE.pop(uid, None)
-    return {"ok": True, "removed": bool(old), "moved": len((old or {}).get("moved") or [])}
+    return {"ok": True, "removed": bool(old), "restored": restored}
+
+
+@miniapp_router.post("/mail/threads/{thread_key}/spam")
+async def miniapp_mail_thread_spam(
+    thread_key: str, body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """«Спам»: не показывать отправителя + письма ветки — в папку спама ящика (если есть права)."""
+    from assistant.services import mail_sync
+
+    uid = int(principal.telegram_user_id)
+    try:
+        res = await run_in_threadpool(mail_sync.spam_thread, uid, thread_key, str((body or {}).get("pattern") or ""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    _FOCUS_CACHE.pop(uid, None)
+    return {"ok": True, **res}
 
 
 @miniapp_router.get("/mail/settings")

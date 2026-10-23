@@ -22,7 +22,7 @@ _FERNET: Any = None
 
 FIELDS = (
     "account_id", "provider", "email", "auth", "imap_host", "imap_port", "smtp_host", "smtp_port",
-    "send_enabled", "status", "last_error", "last_sync_at", "created_at", "stats_json",
+    "send_enabled", "status", "last_error", "last_sync_at", "created_at", "stats_json", "can_write",
 )
 
 
@@ -63,6 +63,10 @@ def _conn() -> sqlite3.Connection:
     _CONN.execute(
         "CREATE TABLE IF NOT EXISTS mail_settings (owner_user_id TEXT PRIMARY KEY, signature TEXT NOT NULL DEFAULT '')"
     )
+    try:  # можно ли менять ящик (прочитано, спам): NULL — ещё не пробовали
+        _CONN.execute("ALTER TABLE mail_accounts ADD COLUMN can_write INTEGER")
+    except sqlite3.OperationalError:
+        pass
     for col, ddl in (("memory_enabled", "INTEGER NOT NULL DEFAULT 1"), ("view", "TEXT NOT NULL DEFAULT 'chat'")):
         try:
             _CONN.execute(f"ALTER TABLE mail_settings ADD COLUMN {col} {ddl}")
@@ -112,6 +116,7 @@ def account_id_for(email: str) -> str:
 def _row(r: sqlite3.Row) -> dict[str, Any]:
     d = {k: r[k] for k in FIELDS}
     d["send_enabled"] = bool(d["send_enabled"])
+    d["can_write"] = None if d["can_write"] is None else bool(d["can_write"])
     try:
         d["stats"] = json.loads(d.pop("stats_json") or "{}")
     except (TypeError, ValueError):
@@ -131,7 +136,7 @@ def upsert(
             INSERT INTO mail_accounts (owner_user_id, account_id, provider, email, auth, imap_host, imap_port,
                 smtp_host, smtp_port, secret_enc, send_enabled, status, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ok', ?)
-            ON CONFLICT(owner_user_id, account_id) DO UPDATE SET
+            ON CONFLICT(owner_user_id, account_id) DO UPDATE SET can_write = NULL,
                 provider = excluded.provider, auth = excluded.auth, imap_host = excluded.imap_host,
                 imap_port = excluded.imap_port, smtp_host = excluded.smtp_host, smtp_port = excluded.smtp_port,
                 secret_enc = excluded.secret_enc, send_enabled = excluded.send_enabled, status = 'ok', last_error = ''
@@ -204,6 +209,14 @@ def set_send_enabled(owner_user_id: Any, account_id: str, enabled: bool) -> None
         conn.commit()
 
 
+def set_can_write(owner_user_id: Any, account_id: str, value: bool) -> None:
+    with _LOCK:
+        conn = _conn()
+        conn.execute("UPDATE mail_accounts SET can_write = ? WHERE owner_user_id = ? AND account_id = ?",
+                     (int(bool(value)), str(owner_user_id), account_id))
+        conn.commit()
+
+
 def remove(owner_user_id: Any, account_id: str) -> bool:
     with _LOCK:
         conn = _conn()
@@ -217,7 +230,7 @@ def remove(owner_user_id: Any, account_id: str) -> bool:
 def public(acc: dict[str, Any]) -> dict[str, Any]:
     """Для клиента: без секретов."""
     return {k: acc.get(k) for k in ("account_id", "provider", "email", "auth", "send_enabled", "status",
-                                    "last_error", "last_sync_at", "stats")}
+                                    "last_error", "last_sync_at", "stats", "can_write")}
 
 
 def signature(owner_user_id: Any) -> str:

@@ -186,3 +186,57 @@ def rewrite(uid: int, body: str, mode: str, *, instruction: str = "", lang: str 
     if not out:
         raise ValueError("Не получилось — попробуйте ещё раз.")
     return out
+
+
+# ---------------------------------------------------------------- Лео внутри ветки
+
+def _thread_prompt(uid: int, thread_key: str) -> tuple[str, dict[str, Any]]:
+    from assistant.services import mail_inbox
+
+    t = mail_inbox.thread(uid, thread_key)
+    lines = []
+    for m in t["messages"][-8:]:
+        who = "Я" if m["direction"] == "out" else (m["from"] or m["from_addr"])
+        lines.append(f"[{str(m['date'])[:16].replace('T', ' ')}] {who}: {m['text'][:3000]}")
+    return f"Тема: {t['subject']}\n\n" + "\n\n".join(lines), t
+
+
+def _llm(uid: int, system: str, user: str, operation: str, max_tokens: int = 1200) -> str:
+    from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
+    from assistant.nlu import llm
+
+    set_openrouter_usage_telegram_user(telegram_user_id=uid)
+    try:
+        out = llm._chat(system, user[:24000], operation=operation, timeout=90, temperature=0.3, max_tokens=max_tokens)
+    finally:
+        set_openrouter_usage_telegram_user(telegram_user_id=None)
+    out = str(out or "").strip().strip("`").strip()
+    if not out:
+        raise ValueError("Не получилось — попробуйте ещё раз.")
+    return out
+
+
+def draft_reply(uid: int, thread_key: str, *, reply_to_key: str = "", instruction: str = "") -> str:
+    """Текст ответа в стиле пользователя (образцы — его письма этому человеку). Ничего не отправляет."""
+    from assistant.services import mail_reply
+
+    convo, t = _thread_prompt(uid, thread_key)
+    target = next((m for m in t["messages"] if m["mail_key"] == reply_to_key), None) or next(
+        (m for m in reversed(t["messages"]) if m["direction"] == "in"), t["messages"][-1])
+    samples = mail_reply.style_samples(uid, target["from_addr"]) if target["direction"] == "in" else []
+    system = (
+        "Ты пишешь ответ на письмо от имени пользователя. Пиши как он: тон, длина, обращение — по образцам его писем. "
+        "Только текст письма: без темы, без подписи, без цитаты. Ничего не обещай за пользователя, чего нет в переписке; "
+        "если нужно решение, которого нет, — оставь короткий вопрос или [уточнить]."
+    )
+    user = (f"Переписка:\n{convo}\n\nОтвечаем на письмо от {target['from'] or 'собеседника'} ({str(target['date'])[:10]}).\n"
+            + (f"Пожелание пользователя: {instruction}\n" if instruction else "")
+            + ("Образцы, как пользователь пишет этому человеку:\n" + "\n---\n".join(samples) if samples else ""))
+    return _llm(uid, system, user, "mail_draft")
+
+
+def summarize_thread(uid: int, thread_key: str) -> str:
+    convo, _t = _thread_prompt(uid, thread_key)
+    system = ("Кратко перескажи переписку для руководителя: 1) о чём речь, 2) что решили, 3) что ждут от пользователя "
+              "(«Я» в переписке) и к какому сроку, 4) открытые вопросы. Списком, без воды, до 8 пунктов. Не выдумывай.")
+    return _llm(uid, system, convo, "mail_summary", max_tokens=700)

@@ -202,6 +202,15 @@ def sync_account(uid: int, acc: dict[str, Any], *, now: Optional[datetime] = Non
         first = mail_index.sync_state(uid, aid, "INBOX")[1] == 0
         inbox = _sync_folder(uid, acc, mail, "INBOX", days=FIRST_SYNC_DAYS, bodies_since=now - timedelta(days=FIRST_SYNC_DAYS),
                              mine=mine, now=now, memory=memory)
+        try:  # прочитанное в самом ящике → прочитано в Orbita
+            from assistant.services import mail_sync
+
+            recent_in = [r for r in mail_index.recent(uid, since=now - timedelta(days=FIRST_SYNC_DAYS), direction="in")
+                         if r["account_id"] == aid and r.get("folder") == "INBOX"]
+            mail_imap.select(mail, "INBOX")
+            mail_sync.pull_seen(uid, acc, mail, "INBOX", recent_in)
+        except Exception as e:
+            print(f"[mail] pull seen uid={uid} acc={aid} err={e!r}")
         sent_stats: dict[str, int] = {}
         sent = mail_imap.sent_folder(mail)
         if sent:

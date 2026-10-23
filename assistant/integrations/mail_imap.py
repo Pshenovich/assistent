@@ -156,6 +156,69 @@ def select(mail: imaplib.IMAP4_SSL, folder: str) -> int:
         return 0
 
 
+def select_rw(mail: imaplib.IMAP4_SSL, folder: str) -> None:
+    """Открыть папку на запись (отметки «прочитано», перенос в спам). Без прав — ошибка."""
+    try:
+        typ, data = mail.select(folder, readonly=False)  # imaplib сам бросает readonly, если папка только на чтение
+    except imaplib.IMAP4.readonly as e:
+        raise PermissionError(f"{folder} read-only") from e
+    if typ != "OK":
+        raise PermissionError(f"select {folder}: {data!r}")
+
+
+def set_seen(mail: imaplib.IMAP4_SSL, uids: list[int], seen: bool) -> None:
+    if not uids:
+        return
+    typ, data = mail.uid("STORE", ",".join(str(u) for u in uids), "+FLAGS.SILENT" if seen else "-FLAGS.SILENT", "(\\Seen)")
+    if typ != "OK":
+        raise PermissionError(f"store: {data!r}")
+
+
+def seen_uids(mail: imaplib.IMAP4_SSL, uids: list[int]) -> set[int]:
+    """Какие из писем уже прочитаны в ящике (флаг \\Seen)."""
+    out: set[int] = set()
+    for part in _chunks(uids, 200):
+        typ, data = mail.uid("FETCH", ",".join(str(u) for u in part), "(UID FLAGS)")
+        if typ != "OK":
+            continue
+        for item in data or []:
+            line = item.decode("utf-8", "replace") if isinstance(item, bytes) else str(item[0] if isinstance(item, tuple) else item)
+            m = re.search(r"UID (\d+)", line)
+            if m and "\\Seen" in line:
+                out.add(int(m.group(1)))
+    return out
+
+
+def junk_folder(mail: imaplib.IMAP4_SSL) -> Optional[str]:
+    items = folders(mail)
+    for flags, name in items:
+        if "\\Junk" in flags:
+            return name
+    for _flags, name in items:
+        if name.strip('"').lower() in ("spam", "junk", "[gmail]/spam", "спам", "junk e-mail", "inbox.spam"):
+            return name
+    return None
+
+
+def move(mail: imaplib.IMAP4_SSL, uids: list[int], dest: str) -> None:
+    """Перенести письма (UID MOVE; без него — копия и пометка в исходной папке, без EXPUNGE чужого)."""
+    if not uids:
+        return
+    ids = ",".join(str(u) for u in uids)
+    caps = " ".join(c.decode() if isinstance(c, bytes) else str(c) for c in (mail.capabilities or ())).upper()
+    if "MOVE" in caps:
+        typ, data = mail.uid("MOVE", ids, dest)
+        if typ != "OK":
+            raise PermissionError(f"move: {data!r}")
+        return
+    typ, data = mail.uid("COPY", ids, dest)
+    if typ != "OK":
+        raise PermissionError(f"copy: {data!r}")
+    mail.uid("STORE", ids, "+FLAGS.SILENT", "(\\Deleted)")
+    if "UIDPLUS" in caps:
+        mail.uid("EXPUNGE", ids)
+
+
 def search_uids(mail: imaplib.IMAP4_SSL, *, since: datetime, after_uid: int = 0, gmail_primary: bool = False) -> list[int]:
     crit = ["SINCE", since.strftime("%d-%b-%Y")]
     if after_uid:

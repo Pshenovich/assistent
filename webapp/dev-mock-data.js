@@ -687,6 +687,51 @@
       if (b.password === "bad") throw mockMailErr("Почта не приняла пароль. Скорее всего, вставлен обычный пароль от почты, а нужен пароль приложения.", "password", "auth");
       return mockMailAdd(b.provider || "imap", String(b.email || "me@example.com").toLowerCase(), "password");
     }
+    if (basePath === "/mail/threads" && method === "GET") {
+      mockMail.accounts.length || mockMailAdd("gmail", "vova@gmail.com", "password");
+      var ago = function (h) { return new Date(Date.now() - h * 3600000).toISOString(); };
+      var all = [
+        { thread_key: "t1", subject: "Договор поставки", count: 4, unread: 1, account_id: "m_1",
+          people: [{ addr: "ivan@firm.ru", name: "Иван Петров" }],
+          labels: [{ kind: "awaiting", text: "ждёт ответа" }, { kind: "deadline", text: "срок 25.10" }],
+          last: { mail_key: "k4", direction: "in", from: "Иван Петров", snippet: "Вова, так что по срокам оплаты? Нам важно закрыть до пятницы.", date: ago(2) } },
+        { thread_key: "t2", subject: "Новые условия сотрудничества", count: 6, unread: 0, account_id: "m_1",
+          people: [{ addr: "olga@partner.ru", name: "Ольга Смирнова" }, { addr: "boss@partner.ru", name: "Андрей Ким" }, { addr: "fin@partner.ru", name: "" }],
+          labels: [{ kind: "promise", text: "вы обещали: прислать расчёт скидки" }],
+          last: { mail_key: "k9", direction: "out", from: "", snippet: "Пришлю расчёт до четверга.", date: ago(27) } },
+        { thread_key: "t3", subject: "Интервью для подкаста", count: 1, unread: 1, account_id: "m_1",
+          people: [{ addr: "anna@media.ru", name: "Анна Котова" }], labels: [],
+          last: { mail_key: "k10", direction: "in", from: "Анна Котова", snippet: "Добрый день! Хотим пригласить вас в подкаст…", date: ago(80) } },
+      ];
+      var f = (/filter=([a-z]+)/.exec((opts && opts._path) || "") || [])[1] || "all";
+      var list = all.filter(function (t) {
+        return f === "awaiting" ? t.labels.some(function (l) { return l.kind === "awaiting"; }) : f === "unread" ? t.unread : true;
+      });
+      return { ok: true, threads: list, counts: { all: 3, awaiting: 1, unread: 2 }, accounts: [{ account_id: "m_1", email: "vova@gmail.com" }] };
+    }
+    var tm = /^\/mail\/threads\/([^/]+)(\/[a-z]+)?$/.exec(basePath);
+    if (tm) {
+      if (tm[2] === "/draft") return { ok: true, body: "Иван, привет!\n\nПо оплате готовы на 30 дней с даты поставки — так подойдёт? Если да, подпишем в четверг.\n\n" };
+      if (tm[2] === "/summary") return { ok: true, summary: "• Обсуждаем договор поставки на 2026 год.\n• Решили: цена фиксируется, поставка ежемесячно.\n• Ждут от вас: ответ по срокам оплаты до пятницы.\n• Открыто: кто подписывает со стороны Firm." };
+      if (tm[2]) return { ok: true };
+      var ago2 = function (h) { return new Date(Date.now() - h * 3600000).toISOString(); };
+      return { ok: true, thread_key: tm[1], subject: "Договор поставки", account_id: "m_1",
+        people: [{ addr: "ivan@firm.ru", name: "Иван Петров" }],
+        labels: [{ kind: "awaiting", text: "ждёт ответа" }],
+        messages: [
+          { mail_key: "k1", direction: "in", from: "Иван Петров", from_addr: "ivan@firm.ru", to: ["vova@gmail.com"], cc: [], subject: "Договор поставки", date: ago2(50),
+            html: "<p>Вова, привет!</p><p>Высылаю проект договора поставки на 2026 год. Основное:</p><ul><li>цена фиксируется на год;</li><li>поставка — ежемесячно;</li><li>оплата — <b>обсуждаем</b>.</li></ul><p>Посмотри, пожалуйста, до пятницы.</p><div class=\"mail-sig\">Иван Петров, коммерческий директор Firm, +7 900 000-00-00</div><img data-src=\"https://example.com/logo.png\">",
+            html_full: "<p>Вова, привет!</p><p>Высылаю проект договора…</p>", remote_images: true, reply_to_key: "", unread: false, loaded: true,
+            attachments: [{ part: 0, name: "Договор_поставки_2026.pdf", size: 482000, type: "application/pdf" }], text: "Вова, привет! Высылаю проект договора поставки на 2026 год." },
+          { mail_key: "k2", direction: "out", from: "", from_addr: "vova@gmail.com", to: ["ivan@firm.ru"], cc: [], subject: "Re: Договор поставки", date: ago2(30),
+            html: "<p>Иван, спасибо! Посмотрю и вернусь с правками до четверга.</p>", html_full: "", remote_images: false, reply_to_key: "k1", unread: false, loaded: true, attachments: [], text: "Иван, спасибо! Посмотрю и вернусь с правками до четверга." },
+          { mail_key: "k3", direction: "in", from: "Иван Петров", from_addr: "ivan@firm.ru", to: ["vova@gmail.com"], cc: [], subject: "Re: Договор поставки", date: ago2(20),
+            html: "<p>Ок, жду. И ещё момент — по логистике: склад на Каширке подойдёт?</p>", html_full: "", remote_images: false, reply_to_key: "k2", unread: false, loaded: true, attachments: [], text: "Ок, жду. И ещё момент — по логистике: склад на Каширке подойдёт?" },
+          { mail_key: "k4", direction: "in", from: "Иван Петров", from_addr: "ivan@firm.ru", to: ["vova@gmail.com"], cc: [], subject: "Re: Договор поставки", date: ago2(2),
+            html: "<p>Вова, так что по срокам оплаты? Нам важно закрыть до пятницы.</p>", html_full: "", remote_images: false, reply_to_key: "k1", unread: true, loaded: true, attachments: [], text: "Вова, так что по срокам оплаты? Нам важно закрыть до пятницы." },
+        ] };
+    }
+    if (basePath.indexOf("/mail/open-url") === 0) return { ok: true, url: "https://mail.google.com/" };
     if (basePath.indexOf("/mail/senders") === 0) {
       mockMail.rules = mockMail.rules || [];
       mockMail.filtered = mockMail.filtered || [

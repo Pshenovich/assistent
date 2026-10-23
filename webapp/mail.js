@@ -287,6 +287,11 @@
     if (a.last_sync_at) parts.push("обновлено " + fmtTime(a.last_sync_at));
     else parts.push("читаю письма…");
     var line = parts.join(" · ");
+    if (a.can_write === false)
+      line +=
+        '<br><span class="pf-status--warn">«Прочитано» и «спам» — только в Orbita: ' +
+        (a.auth === "oauth_yandex" ? "войдите через Яндекс ещё раз, чтобы разрешить Лео менять ящик" : "почта не дала Лео менять ящик") +
+        "</span>";
     if (fs) line += "<br>Просмотрел " + fs.seen + " " + plural(fs.seen, "письмо", "письма", "писем") + ": " + fs.bulk + " " + plural(fs.bulk, "рассылку", "рассылки", "рассылок") + " отсеял";
     return line;
   }
@@ -419,6 +424,8 @@
           esc(r.pattern) +
           '</span></span><button type="button" class="pf-link" data-mail-act="rule-del" data-pattern="' +
           esc(r.pattern) +
+          '" data-moved="' +
+          (r.moved || 0) +
           '">Показывать снова</button></span></div>';
       });
       h += "</div></div>";
@@ -681,6 +688,7 @@
     st.form.password = "";
     render();
     if (app().loadIntegrations) app().loadIntegrations();
+    checkAvailable();
     pollUntil(
       async function () {
         await refresh();
@@ -760,8 +768,11 @@
         toast((err && err.message) || "Не получилось");
       }
     } else if (act === "rule-del") {
+      var movedN = parseInt(btn.getAttribute("data-moved") || "0", 10);
+      var restore = movedN > 0 && (await app().confirm("Вернуть " + movedN + " " + plural(movedN, "письмо", "письма", "писем") + " из спама во «Входящие»?"));
       try {
-        await api("/mail/senders?pattern=" + encodeURIComponent(btn.getAttribute("data-pattern")), { method: "DELETE" });
+        var rd = await api("/mail/senders?pattern=" + encodeURIComponent(btn.getAttribute("data-pattern")) + (restore ? "&restore=1" : ""), { method: "DELETE" });
+        if (rd && rd.restored) toast("Вернул во «Входящие»: " + rd.restored);
         await refresh();
       } catch (err) {
         toast((err && err.message) || "Не получилось");
@@ -925,6 +936,7 @@
       }
       await refresh();
       if (app().loadIntegrations) app().loadIntegrations();
+      checkAvailable();
     } else if (act === "reconnect" && acc) {
       st.form.email = acc.email;
       st.form.password = "";
@@ -1152,14 +1164,18 @@
     return window.matchMedia && window.matchMedia("(max-width: 767px)").matches;
   }
 
+  // Что заменяет окно письма: поле ввода чата Лео или поле ответа в ветке почты (opts.host).
   function chatInput() {
-    return document.getElementById("note-paie-thread");
+    return composer.host || document.getElementById("note-paie-thread");
   }
 
   function composerEl() {
-    var n = document.getElementById("mail-composer");
-    if (n) return n;
     var host = chatInput();
+    var n = document.getElementById("mail-composer");
+    if (n) {
+      if (host && host.parentNode && n.nextSibling !== host) host.parentNode.insertBefore(n, host);
+      return n;
+    }
     if (!host || !host.parentNode) return null;
     n = el("div", "mail-composer hidden");
     n.id = "mail-composer";
@@ -1175,6 +1191,9 @@
   }
 
   function openComposer(a, opts) {
+    if (composer.action && chatInput()) chatInput().classList.remove("hidden");
+    composer.host = (opts && opts.host) || null;
+    composer.onDone = (opts && opts.onDone) || null;
     var n = composerEl();
     if (!n) {
       toast("Откройте чат с Лео, чтобы ответить");
@@ -1205,9 +1224,13 @@
       n.innerHTML = "";
     }
     if (chatInput()) chatInput().classList.remove("hidden");
+    var done = composer.onDone;
     composer.action = null;
     composer.d = null;
+    composer.host = null;
+    composer.onDone = null;
     if (app().refreshFeed) app().refreshFeed();
+    if (done) done(null);
   }
 
   function summaryLine(d) {
@@ -1389,9 +1412,13 @@
         n.innerHTML = "";
       }
       if (chatInput()) chatInput().classList.remove("hidden");
+      var done = composer.onDone;
       composer.action = null;
       composer.d = null;
+      composer.host = null;
+      composer.onDone = null;
       if (app().refreshFeed) app().refreshFeed();
+      if (done) done(res.action);
     } catch (e) {
       var det = (e && e.detail) || {};
       if (e && e.status === 409 && det.code === "new_recipients") {
@@ -1776,7 +1803,27 @@
     scheduleSave({ body: t.value });
   }
 
-  window.LeoMail = { openProfile: openProfile, renderAction: renderAction, openThread: openThread, openComposer: openComposer };
+  // Почта подключена → «Почта» во вкладке «Дайджест».
+  async function checkAvailable() {
+    try {
+      var d = await api("/mail/accounts");
+      if (app().setMailAvailable) app().setMailAvailable(((d && d.accounts) || []).length > 0);
+    } catch (_) {}
+  }
+
+  window.LeoMail = {
+    openProfile: openProfile,
+    renderAction: renderAction,
+    openThread: openThread,
+    openComposer: openComposer,
+    cacheAction: cacheAction,
+    refreshActions: refreshActions,
+    checkAvailable: checkAvailable,
+    api: api,
+    post: post,
+    esc: esc,
+  };
+  setTimeout(checkAvailable, 1500);
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bind);
   else bind();

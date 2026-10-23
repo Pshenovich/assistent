@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-drop";
+  var WEBAPP_BUILD = "20261023-mail5";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -1222,6 +1222,8 @@
   var tabInited = { profile: false };
   var TAB_ORDER = ["actual", "notes", "digest", "knowledge", "profile"];
   var digestTabEnabled = false;
+  var digestChatsEnabled = false; // дайджест чатов включён в профиле
+  var mailAvailable = false; // подключена почта — «Почта» во вкладке «Дайджест»
   var digestRefreshing = false;
   var digestSubTab = "chats";
   var sidebarTreeState = {
@@ -6305,7 +6307,7 @@
       closeDigestDetail();
       setDigestSubTab(digestSubTab || "chats");
       if (digestSubTab === "market") loadMarketDigest();
-      else loadDigestReports();
+      else if (digestSubTab === "chats") loadDigestReports();
     }
     if (name !== "notes" && name !== "knowledge") {
       closeNotesDetail();
@@ -6481,7 +6483,9 @@
     }
     if (tab === "digest") {
       if (digestSubTab === "market") await loadMarketDigest({ force: true });
-      else await loadDigestReports();
+      else if (digestSubTab === "mail") {
+        if (window.LeoMailInbox) await window.LeoMailInbox.refresh();
+      } else await loadDigestReports();
       return;
     }
     if (tab === "profile") {
@@ -6812,6 +6816,8 @@
       "chat/completions": "Запрос к модели",
       mail_insights: "Разбор почты",
       mail_rewrite: "Правка письма",
+      mail_draft: "Черновик ответа на письмо",
+      mail_summary: "Саммари переписки",
     };
     const key = String(op || "").trim();
     if (!key) return "—";
@@ -7145,7 +7151,9 @@
     [
       { id: "chats", label: "Чаты" },
       { id: "market", label: "Рынок" },
-    ].forEach(function (sec) {
+    ]
+      .concat(mailAvailable ? [{ id: "mail", label: "Почта" }] : [])
+      .forEach(function (sec) {
       tree.appendChild(
         makeSidebarTreeRow({
           depth: 0,
@@ -7242,8 +7250,8 @@
   }
 
   function setDigestTabVisible(enabled) {
-
-    digestTabEnabled = !!enabled;
+    digestChatsEnabled = !!enabled;
+    digestTabEnabled = digestChatsEnabled || mailAvailable;
     try {
       localStorage.setItem("leo_digest_enabled", digestTabEnabled ? "1" : "0");
     } catch (_) {}
@@ -7262,7 +7270,7 @@
     }
     var hint = document.getElementById("profile-chats-hint");
     if (hint) {
-      hint.textContent = digestTabEnabled
+      hint.textContent = digestChatsEnabled
         ? "Включён · отчёты во вкладке Дайджест"
         : "Дайджест выбранных чатов";
     }
@@ -7300,7 +7308,7 @@
   }
 
   function setDigestSubTab(name) {
-    digestSubTab = name === "market" ? "market" : "chats";
+    digestSubTab = name === "market" ? "market" : name === "mail" && mailAvailable ? "mail" : "chats";
     document.querySelectorAll("[data-digest-subtab]").forEach(function (b) {
       var on = b.getAttribute("data-digest-subtab") === digestSubTab;
       b.classList.toggle("active", on);
@@ -7308,6 +7316,7 @@
     });
     setHidden(document.getElementById("digest-pane-chats"), digestSubTab !== "chats");
     setHidden(document.getElementById("digest-pane-market"), digestSubTab !== "market");
+    setHidden(document.getElementById("digest-pane-mail"), digestSubTab !== "mail");
     var refreshBtn = document.getElementById("digest-refresh-btn");
     if (refreshBtn) {
       refreshBtn.title = digestSubTab === "market" ? "Обновить рынок" : "Обновить";
@@ -7319,6 +7328,9 @@
     if (digestSubTab === "market") {
       closeDigestDetail();
       loadMarketDigest();
+    } else if (digestSubTab === "mail") {
+      closeDigestDetail();
+      if (window.LeoMailInbox) window.LeoMailInbox.show();
     } else {
       loadDigestReports();
     }
@@ -46560,6 +46572,21 @@
       if (await focusOpenAssistant()) await submitNoteGptQuestion(String(prompt || ""));
     },
     rememberActions: rememberCalendarActions,
+    // Почта подключена → «Почта» во вкладке «Дайджест» (даже если дайджест чатов выключен).
+    setMailAvailable: function (on) {
+      on = !!on;
+      if (on === mailAvailable) return;
+      mailAvailable = on;
+      var b = document.querySelector('[data-digest-subtab="mail"]');
+      if (b) setHidden(b, !on);
+      if (!on && digestSubTab === "mail") digestSubTab = "chats";
+      if (on && !digestChatsEnabled && digestSubTab !== "market") digestSubTab = "mail";
+      setDigestTabVisible(digestChatsEnabled);
+    },
+    openDigestMail: function () {
+      setTab("digest", { noAnim: true });
+      setDigestSubTab("mail");
+    },
     refreshFeed: refreshDiscussFeedNow,
     // Карточка в чат Лео без вызова модели (как «Уточнить» в Фокусе): текст + маркер действий.
     postLeoCard: async function (lead, actionIds) {
