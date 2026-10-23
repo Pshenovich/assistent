@@ -20459,10 +20459,31 @@ form.pf-list .pf-add-row .pf-row-body {
   color: var(--text-tertiary);
 }
 
-.mail-html--letter .mail-quote,
-.mail-html--letter blockquote {
+/* Цитата в виде «Письма»: свёрнута до 6 строк, по нажатию — целиком */
+.mail-html--letter .mail-quote:not(.is-open),
+.mail-html--letter blockquote:not(.is-open) {
+  position: relative;
   max-height: 6em;
   overflow: hidden;
+  cursor: pointer;
+}
+
+.mail-html--letter .mail-quote:not(.is-open)::after,
+.mail-html--letter blockquote:not(.is-open)::after {
+  content: "Показать цитату ▾";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 1.6em 0 0.1em 0.7em;
+  font-size: 0.8125rem;
+  color: var(--accent);
+  background: linear-gradient(transparent, var(--surface) 70%);
+}
+
+.mail-html--letter .mail-quote .mail-quote::after,
+.mail-html--letter blockquote blockquote::after {
+  content: none; /* вложенные цитаты раскрываются вместе с внешней */
 }
 
 .mail-letter-acts {

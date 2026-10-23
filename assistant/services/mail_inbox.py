@@ -64,6 +64,16 @@ def set_read(uid: int, keys: list[str], read: bool = True) -> None:
         conn.commit()
 
 
+def visible(row: dict[str, Any], mine_threads: set[str]) -> bool:
+    """Письмо в «Почте»: не отсеянное — или отсеянное, но из ветки, где пользователь сам писал
+    (переписка с info@ / support@ видна целиком). Приглашения из календаря — никогда."""
+    from assistant.services import mail_filters
+
+    if mail_filters.CALENDAR_SUBJECT.match(str(row.get("subject") or "")):
+        return False
+    return not row.get("bulk") or (row.get("thread_key") or "") in mine_threads
+
+
 def clean_subject(s: str) -> str:
     return re.sub(r"^(\s*(re|fwd?|ответ|пересл\.?)\s*(\[\d+\])?\s*:\s*)+", "", s or "", flags=re.I).strip() or "Без темы"
 
@@ -102,9 +112,10 @@ def threads(uid: int, *, filt: str = "all", account_id: str = "") -> dict[str, A
     mine = mail_source.my_addresses(uid)
     rows = mail_index.recent(uid, since=_now() - timedelta(days=LIST_DAYS))
     reads = read_keys(uid)
+    mine_threads = mail_index.my_thread_keys(uid)
     by: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
-        if r.get("bulk") or (account_id and r["account_id"] != account_id):
+        if not visible(r, mine_threads) or (account_id and r["account_id"] != account_id):
             continue
         by.setdefault(r.get("thread_key") or r["mail_key"], []).append(r)
     labels = _labels(uid)
@@ -158,7 +169,7 @@ def thread(uid: int, thread_key: str) -> dict[str, Any]:
     from assistant.services import mail_reply, mail_source
 
     rows = mail_index.thread(uid, thread_key)
-    rows = [r for r in rows if not r.get("bulk")]
+    rows = [r for r in rows if visible(r, mail_index.my_thread_keys(uid))]
     if not rows:
         raise LookupError("Переписка не найдена")
     try:

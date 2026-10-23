@@ -563,6 +563,16 @@
   }
 
   async function onClick(e) {
+    var q = e.target.closest && e.target.closest(".mail-html--letter blockquote, .mail-html--letter .mail-quote");
+    if (q && !q.classList.contains("is-open") && root() && root().contains(q) && !e.target.closest("a")) {
+      var outer = q;
+      while (outer.parentElement && outer.parentElement.closest(".mail-html--letter blockquote, .mail-html--letter .mail-quote")) {
+        outer = outer.parentElement.closest(".mail-html--letter blockquote, .mail-html--letter .mail-quote");
+      }
+      outer.classList.add("is-open");
+      outer.querySelectorAll("blockquote, .mail-quote").forEach(function (x) { x.classList.add("is-open"); });
+      return;
+    }
     var b = e.target.closest("[data-mi]");
     var r = root();
     if (!b || !r || !r.contains(b)) {

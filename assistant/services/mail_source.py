@@ -20,7 +20,8 @@ from assistant.integrations import mail_imap
 from assistant.services import mail_filters
 from assistant.stores import mail_accounts, mail_index, mail_senders
 
-FIRST_SYNC_DAYS = 14
+FIRST_SYNC_DAYS = 30
+RESCAN_MAX = 800  # разовая догрузка, когда окно «Почты» расширилось
 SENT_SYNC_DAYS = 180
 ANALYZE_WINDOW = timedelta(days=3)
 MAX_FETCH = 300
@@ -144,16 +145,20 @@ def _row_from(acc: dict[str, Any], folder: str, uid: int, msg, *, mine: set[str]
 
 
 def _sync_folder(uid: int, acc: dict[str, Any], mail, folder: str, *, days: int, bodies_since: datetime,
-                 mine: set[str], now: datetime, memory: bool = False) -> dict[str, int]:
+                 mine: set[str], now: datetime, memory: bool = False, rescan: bool = False) -> dict[str, int]:
     aid = str(acc["account_id"])
     uv = mail_imap.select(mail, folder)
     prev_uv, last = mail_index.sync_state(uid, aid, folder)
     if uv != prev_uv:
         last = 0
     uids = mail_imap.search_uids(
-        mail, since=now - timedelta(days=days), after_uid=last,
+        mail, since=now - timedelta(days=days), after_uid=0 if rescan else last,
         gmail_primary=acc.get("provider") == "gmail" and folder == "INBOX",
-    )[-MAX_FETCH:]
+    )[-(RESCAN_MAX if rescan else MAX_FETCH):]
+    if rescan:  # уже известные письма upsert пропустит; чтобы не тянуть их тела, отбрасываем по индексу
+        known_uids = {int(r.get("uid") or 0) for r in mail_index.recent(uid, since=now - timedelta(days=days))
+                      if r["account_id"] == aid and r.get("folder") == folder}
+        uids = [u for u in uids if u not in known_uids]
     stats = {"seen": len(uids), "bulk": 0, "new": 0}
     if not uids:
         mail_index.set_sync_state(uid, aid, folder, uv, last)
@@ -187,7 +192,7 @@ def _sync_folder(uid: int, acc: dict[str, Any], mail, folder: str, *, days: int,
 
             if mail_memory.add_message(uid, row, body):
                 stats["memory"] = stats.get("memory", 0) + 1
-    mail_index.set_sync_state(uid, aid, folder, uv, max(uids))
+    mail_index.set_sync_state(uid, aid, folder, uv, max([last] + uids))
     return stats
 
 
@@ -209,8 +214,9 @@ def sync_account(uid: int, acc: dict[str, Any], *, now: Optional[datetime] = Non
         memory = mail_memory.enabled(uid)
         hide_calendar(uid)
         first = mail_index.sync_state(uid, aid, "INBOX")[1] == 0
+        rescan = not first and int((acc.get("stats") or {}).get("window") or 14) < FIRST_SYNC_DAYS
         inbox = _sync_folder(uid, acc, mail, "INBOX", days=FIRST_SYNC_DAYS, bodies_since=now - timedelta(days=FIRST_SYNC_DAYS),
-                             mine=mine, now=now, memory=memory)
+                             mine=mine, now=now, memory=memory, rescan=rescan)
         try:  # прочитанное в самом ящике → прочитано в Orbita
             from assistant.services import mail_sync
 
@@ -238,6 +244,7 @@ def sync_account(uid: int, acc: dict[str, Any], *, now: Optional[datetime] = Non
                  "bulk": prev.get("bulk", 0) + inbox["bulk"], "sent_seen": prev.get("sent_seen", 0) + sent_stats.get("seen", 0)}
         if first:
             stats["first_sync"] = {"seen": inbox["seen"], "bulk": inbox["bulk"]}
+        stats["window"] = FIRST_SYNC_DAYS  # окно «Почты» загружено целиком
         mail_accounts.set_status(uid, aid, status="ok", stats=stats, synced=True)
         return {**inbox, "sent_new": sent_stats.get("new", 0)}
     except Exception as e:

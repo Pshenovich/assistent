@@ -101,3 +101,21 @@ def test_open_in_gmail_url(env):
 def test_clean_subject():
     assert mail_inbox.clean_subject("Re: Fwd: RE: Договор") == "Договор"
     assert mail_inbox.clean_subject("") == "Без темы"
+
+
+def test_replied_thread_shows_filtered_original(env):
+    aid = env
+    mail_index.upsert(ME, {"mail_key": "pi", "account_id": aid, "direction": "in", "from_addr": "info@paylate.info",
+                           "to": [MINE], "subject": "Оплата", "snippet": "", "thread_key": "tp", "message_id": "<pi>",
+                           "date_utc": (NOW - timedelta(hours=30)).isoformat(), "bulk": True})
+    mail_index.upsert(ME, {"mail_key": "po", "account_id": aid, "direction": "out", "from_addr": MINE,
+                           "to": ["info@paylate.info"], "subject": "Re: Оплата", "snippet": "Спасибо! А пени?",
+                           "thread_key": "tp", "message_id": "<po>", "in_reply_to": "<pi>",
+                           "date_utc": (NOW - timedelta(hours=20)).isoformat()})
+    mail_index.upsert(ME, {"mail_key": "inv", "account_id": aid, "direction": "in", "from_addr": "ivan@firm.ru", "to": [MINE],
+                           "subject": "Приглашение: созвон", "thread_key": "tp", "message_id": "<inv>",
+                           "date_utc": (NOW - timedelta(hours=10)).isoformat(), "bulk": True})
+    t = mail_inbox.thread(ME, "tp")
+    assert [m["mail_key"] for m in t["messages"]] == ["pi", "po"]  # исходное письмо видно, приглашение — нет
+    listed = {x["thread_key"]: x for x in mail_inbox.threads(ME)["threads"]}
+    assert listed["tp"]["count"] == 2 and "t9" not in listed  # рассылка из чужой ветки по-прежнему скрыта
