@@ -108,6 +108,30 @@ class NotesStoreTests(unittest.TestCase):
         self.assertNotEqual(dup["id"], a["id"])
         self.assertTrue(any(n["id"] == dup["id"] for n in notes_store.list_notes(11)))
 
+    def test_copy_to_knowledge_without_access(self) -> None:
+        from assistant.stores import note_members
+        from assistant.stores import note_sheets
+
+        src = notes_store.create_note(12, "Регламент", "<p>текст</p>")
+        note_sheets.create_sheet(src, "Приложение", body="<p>доп</p>")
+        note_members.add_member(12, src["id"], 13)
+        kb = notes_store.duplicate_note(12, src["id"], to_knowledge=True)
+        assert kb is not None
+        self.assertTrue(kb["is_knowledge"])
+        self.assertEqual(kb["title"], "Регламент")
+        self.assertEqual(kb["body"], "<p>текст</p>")
+        self.assertEqual([s["title"] for s in note_sheets.list_sheets(kb)][1:], ["Приложение"])
+        # Права исходной заметки не копируются.
+        self.assertEqual([m["user_id"] for m in note_members.list_members_public(12, kb["id"])], ["12"])
+        self.assertIsNone(notes_store.get_accessible_note(13, kb["id"]))
+        self.assertIsNotNone(notes_store.get_accessible_note(13, src["id"]))
+        # Участник может скопировать к себе — копия его, без автора-владельца.
+        mine = notes_store.duplicate_note(13, src["id"], to_knowledge=True)
+        assert mine is not None
+        self.assertIsNone(notes_store.get_accessible_note(12, mine["id"]))
+        self.assertTrue(any(n["id"] == kb["id"] for n in notes_store.list_knowledge_notes(12)))
+        self.assertFalse(any(n["id"] == kb["id"] for n in notes_store.list_notes(12)))
+
     def test_search(self) -> None:
         notes_store.create_note(7, "Филиалы в Куркино", "Адрес и режим работы")
         notes_store.create_note(7, "Другое", "Про встречи на этой неделе")

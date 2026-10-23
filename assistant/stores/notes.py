@@ -796,24 +796,33 @@ def set_note_pinned(
     return True
 
 
-def duplicate_note(user_id: int | str, note_id: int) -> Optional[dict[str, Any]]:
+def duplicate_note(
+    user_id: int | str, note_id: int, *, to_knowledge: bool = False
+) -> Optional[dict[str, Any]]:
+    """Копия заметки у пользователя: текст, листы, проект. Доступ не копируется — у копии нет
+    участников, команд и ссылок. to_knowledge — копия сразу в Базу знаний (под тем же названием)."""
     uid = str(int(user_id))
     src = get_accessible_note(uid, int(note_id), with_sharing=True)
     if not src:
         return None
     title = str(src.get("title") or "").strip() or "(без названия)"
-    if not title.endswith(" (копия)"):
+    if not to_knowledge and not title.endswith(" (копия)"):
         title = title + " (копия)"
     body = str(src.get("body") or src.get("description") or "")
     src_role = str(src.get("role") or "").strip()
     if not src_role and src.get("is_knowledge"):
         src_role = KNOWLEDGE_ROLE
+    if to_knowledge:
+        src_role = KNOWLEDGE_ROLE
+    meta = dict(src.get("meta") or {}) if isinstance(src.get("meta"), dict) else {}
+    if to_knowledge:
+        meta["copied_from_note_id"] = int(src["id"])
     dup = create_note(
         uid,
         title,
         body,
         role=src_role,
-        meta=dict(src.get("meta") or {}) if isinstance(src.get("meta"), dict) else {},
+        meta=meta,
         primary_sheet_title=str(src.get("primary_sheet_title") or ""),
     )
     try:
@@ -823,7 +832,7 @@ def duplicate_note(user_id: int | str, note_id: int) -> Optional[dict[str, Any]]
             note_sheets_store.copy_sheets(int(src["id"]), int(dup["id"]))
     except Exception as e:
         print(f"[notes] duplicate sheets failed src={src['id']} dup={dup['id']} err={e!r}")
-    if src.get("is_owner"):
+    if src.get("is_owner") and not to_knowledge:
         try:
             from assistant.stores import tags as tags_store
 

@@ -71,11 +71,10 @@ class NoteSheetsStoreTests(unittest.TestCase):
         with self.assertRaises(sheets.SheetError):
             sheets.create_sheet(note, "overflow")
 
-    def test_knowledge_rejected(self) -> None:
+    def test_knowledge_note_has_sheets(self) -> None:
         kb = notes_store.create_note(5, "БЗ", "док", role=notes_store.KNOWLEDGE_ROLE)
-        with self.assertRaises(sheets.SheetError):
-            sheets.create_sheet(kb, "Черновик")
-        self.assertEqual(len(sheets.list_sheets(kb)), 1)
+        sheets.create_sheet(kb, "Черновик")
+        self.assertEqual([s["title"] for s in sheets.list_sheets(kb)][1:], ["Черновик"])
 
     def test_delete_note_cascades(self) -> None:
         note = notes_store.create_note(6, "A", "b")

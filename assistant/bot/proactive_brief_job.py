@@ -68,7 +68,7 @@ def _collect(uid: int) -> tuple[str, bool] | None:
     return (proactive.brief_message(items, today, tz, local_now), True)
 
 
-def _weekly(uid: int) -> str | None:
+def _weekly(uid: int) -> tuple[str, int | None] | None:
     """Пятница 18:00–23:00 по времени пользователя, включены «Итоги недели», отчёта за неделю ещё нет."""
     from assistant.services import proactive_reports
     from assistant.services.calendar import _tz_for
@@ -84,7 +84,8 @@ def _weekly(uid: int) -> str | None:
     if proactive_reports.report_note_id(uid, f"report:week:{monday}"):
         return None
     note = proactive_reports.weekly(uid)
-    return str(note.get("title") or "Итоги недели")
+    nid = note.get("id")
+    return (str(note.get("title") or "Итоги недели"), int(nid) if nid else None)
 
 
 async def proactive_brief_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -96,9 +97,14 @@ async def proactive_brief_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
         if not is_user_allowed(uid, None):
             continue
         try:
-            title = await asyncio.to_thread(_weekly, uid)
-            if title:
-                kb_w = InlineKeyboardMarkup([[InlineKeyboardButton("Открыть итоги", web_app=WebAppInfo(url=webapp_entry_url()))]])
+            weekly = await asyncio.to_thread(_weekly, uid)
+            if weekly:
+                from assistant.stores.note_members import note_webapp_url
+
+                title, note_id = weekly
+                # Кнопка — сразу на заметку с итогами, а не на «Актуальное».
+                url = note_webapp_url(note_id) if note_id else webapp_entry_url()
+                kb_w = InlineKeyboardMarkup([[InlineKeyboardButton("Открыть итоги", web_app=WebAppInfo(url=url))]])
                 await context.bot.send_message(chat_id=uid, text=f"<b>{title}</b> — готово: встречи, решения, что висит и что на следующую неделю. Заметка в проекте «От ассистента».", parse_mode=ParseMode.HTML, reply_markup=kb_w)
         except Exception as e:
             print(f"[weekly] uid={uid} err={e!r}")

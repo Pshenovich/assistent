@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-notes4";
+  var WEBAPP_BUILD = "20261023-kb1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -10660,12 +10660,13 @@
           { method: "PUT", body: JSON.stringify({ team_ids: ids }) }
         );
       } else if (teamPickerState.mode === "note" && teamPickerState.noteId) {
-        await apiFetch(
+        var shareRes = await apiFetch(
           "/notes/local/" +
             encodeURIComponent(teamPickerState.noteId) +
             "/team-shares",
           { method: "PUT", body: JSON.stringify({ team_ids: ids }) }
         );
+        applyNoteTeams(teamPickerState.noteId, (shareRes && shareRes.teams) || []);
       }
       closeTeamPicker();
       if (typeof shareHaptic === "function") shareHaptic();
@@ -11128,13 +11129,52 @@
   }
 
   async function setNoteTeamShares(noteId, teamIds) {
-    await apiFetch(
+    var r = await apiFetch(
       "/notes/local/" + encodeURIComponent(String(noteId)) + "/team-shares",
       {
         method: "PUT",
         body: JSON.stringify({ team_ids: teamIds }),
       }
     );
+    applyNoteTeams(noteId, (r && r.teams) || []);
+  }
+
+  /* ——— Лейбл «в какую команду расшарен документ» Базы знаний: на карточке и в строке под названием. ——— */
+  var TEAM_CHIP_SVG =
+    '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 13.8c2.1.8 3.5 2.9 3.5 5.2"/></svg>';
+
+  function teamChipsHtml(teams) {
+    return (teams || [])
+      .filter(function (t) {
+        return t && t.name;
+      })
+      .map(function (t) {
+        return '<span class="note-team-chip" title="Расшарен команде «' + escapeHtml(t.name) + '»">' + TEAM_CHIP_SVG + "<span>" + escapeHtml(t.name) + "</span></span>";
+      })
+      .join("");
+  }
+
+  function paintNoteEditorTeams(teams) {
+    var el = document.getElementById("note-editor-teams");
+    if (!el) return;
+    var html = teamChipsHtml(teams);
+    el.innerHTML = html;
+    setHidden(el, !html);
+  }
+
+  function applyNoteTeams(noteId, teams) {
+    var idStr = String(noteId);
+    var simple = (teams || []).map(function (t) {
+      return { id: t.id, name: t.name };
+    });
+    if (knowledgeDataCache && knowledgeDataCache.notes) {
+      knowledgeDataCache.notes.forEach(function (row) {
+        if (String(row.id) === idStr) row.teams = simple;
+      });
+      if (currentTab === "knowledge") renderKnowledgePaneFromData(knowledgeDataCache);
+    }
+    if (currentOpenNoteId() === idStr) paintNoteEditorTeams(simple);
   }
 
   async function removeTeamMemberFromEdit(email) {
@@ -12772,10 +12812,12 @@
         (n.title || n.content || "(без названия)");
       var descRaw = notePlainExcerpt(n.description || n.body || "", 280);
       var descHtml = linkifyEscaped(escapeHtml(descRaw));
+      var teamsHtml = teamChipsHtml(n.teams);
       inner.innerHTML =
         '<p class="note-card-excerpt">' +
         escapeHtml(titleRaw) +
         "</p>" +
+        (teamsHtml ? '<div class="note-card-teams">' + teamsHtml + "</div>" : "") +
         (descRaw
           ? '<p class="note-card-excerpt note-card-excerpt--secondary muted">' +
             descHtml +
@@ -24508,6 +24550,7 @@
       '" maxlength="500" rows="1" autocapitalize="sentences" spellcheck="true"></textarea>' +
       '<div class="note-editor-meta" id="note-editor-meta">' +
       '<div id="note-editor-meta-project" class="note-editor-meta-project"></div>' +
+      '<div id="note-editor-teams" class="note-editor-teams hidden"></div>' +
       '<div id="note-editor-members" class="note-editor-members hidden"></div>' +
       '<span id="note-editor-save-state" class="note-editor-save-state" aria-live="polite"></span>' +
       '<button type="button" id="note-editor-title-suggest" class="note-editor-title-suggest hidden"></button>' +
@@ -29715,6 +29758,13 @@
       });
     }
 
+    if (shareId && shareKind === "local" && !wrap._isKnowledge) {
+      addItem("Копировать в Базу знаний", function () {
+        closeNoteMoreMenu();
+        copyLocalNoteToKnowledge(shareId);
+      });
+    }
+
     if (wrap._isKnowledge && wrap._isNoteOwner !== false) {
       addItem("Поделиться с командой", function () {
         closeNoteMoreMenu();
@@ -34648,7 +34698,7 @@
     destroyLeftWebCanvas();
     destroyRightWebCanvas();
     clearCanvasSelections();
-    noteSheetState.enabled = !!(note && !isKnowledgeNoteItem(note));
+    noteSheetState.enabled = !!note;
     noteSheetState.primaryBody = primaryBody || (note && (note.body || note.description)) || "";
     noteSheetState.leftId = NOTE_SHEET_MAIN;
     noteSheetState.rightMode = "discussion";
@@ -43129,6 +43179,11 @@
     addMoreItem("Копировать", function () {
       duplicateLocalNote(id);
     });
+    if (!isKnowledgeNoteItem(n)) {
+      addMoreItem("Копировать в Базу знаний", function () {
+        copyLocalNoteToKnowledge(id);
+      });
+    }
     if (isListCard) {
       addMoreItem("Перенести в проект", function () {
         openNotesProjectSheet([n]);
@@ -43249,6 +43304,33 @@
       showNoteToast(isKnowledgeNoteItem(item) ? "Документ скопирован" : "Заметка скопирована");
     } catch (e) {
       alert(e.message || String(e));
+    }
+  }
+
+  // Копия в Базу знаний: текст и листы, без участников, команд и ссылок исходной заметки.
+  async function copyLocalNoteToKnowledge(noteId) {
+    try {
+      var res = await apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/copy-to-knowledge", { method: "POST" });
+      var item = res && res.item;
+      if (item) prependKnowledgeInCache(item);
+      var node = document.createElement("span");
+      var tx = document.createElement("span");
+      tx.className = "note-toast-copy";
+      tx.textContent = "Скопировано в Базу знаний";
+      node.appendChild(tx);
+      if (item) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "note-toast-link";
+        b.textContent = "Открыть";
+        b.addEventListener("click", function () {
+          openKnowledgeNoteDetail(item);
+        });
+        node.appendChild(b);
+      }
+      showNoteToast("", { node: node, actionable: true, duration: 5600 });
+    } catch (e) {
+      alert((e && e.message) || String(e));
     }
   }
 
@@ -44036,6 +44118,15 @@
           duplicateLocalNote(id);
         },
       },
+    ].concat(isKnowledgeNoteItem(n) ? [] : [
+      {
+        label: "Копировать в Базу знаний",
+        icon: "copy",
+        onClick: function () {
+          copyLocalNoteToKnowledge(id);
+        },
+      },
+    ]).concat([
       {
         label: "Выбрать",
         icon: "select",
@@ -44053,7 +44144,7 @@
           scheduleNotesDelete([n], isTranscriptionNoteItem(n));
         },
       },
-    ];
+    ]);
     openNotesActionSheet(title, items);
   }
 
@@ -45349,6 +45440,17 @@
           : "Заголовок заметки"
     );
     moveProjectPickerToMeta(wrap);
+    if (isKnowledge && noteId) {
+      if (Array.isArray(n && n.teams)) paintNoteEditorTeams(n.teams);
+      else {
+        var teamsFor = String(noteId);
+        apiFetch("/notes/local/" + encodeURIComponent(teamsFor), { method: "GET" })
+          .then(function (r) {
+            if (r && r.item && currentOpenNoteId() === teamsFor) paintNoteEditorTeams(r.item.teams || []);
+          })
+          .catch(function () {});
+      }
+    }
     var tocControls = bindNoteEditorTocControls(wrap);
     var editorPad = wrap.querySelector(".note-editor-pad--body");
     var titleInput = wrap.querySelector("#note-editor-title-input");
@@ -45919,7 +46021,7 @@
       }
     });
     }
-    hydrateNoteSheets(isKnowledge ? null : n, editorBody);
+    hydrateNoteSheets(n, editorBody);
     bindNoteTitleAutoresize(titleInput);
     if (titleInput) titleInput.addEventListener("input", schedulePatch);
     if (!noteIsCreate && noteId) consumePendingDiscussOpen("local", noteId);

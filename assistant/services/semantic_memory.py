@@ -55,6 +55,33 @@ def chunk_text(text: str, size: int = CHUNK, overlap: int = OVERLAP) -> list[str
     return out
 
 
+def _sheet_sources(note: dict[str, Any], kind: str, *, skip_titles: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+    """Дополнительные текстовые листы заметки — каждый своим источником (часто важное именно там).
+    Канвасы (презентации, страницы) не индексируем: в них вёрстка, а текст — из листов заметки."""
+    from assistant.stores import note_sheets
+
+    try:
+        sheets = note_sheets.list_extra_sheets(int(note["id"]))
+    except Exception as e:
+        print(f"[semantic] sheets note={note.get('id')} err={e!r}")
+        return []
+    out = []
+    base = str(note.get("title") or ("Встреча" if kind == "transcription" else "Заметка"))
+    for sh in sheets:
+        if str(sh.get("kind") or "doc") == "web":
+            continue
+        title = str(sh.get("title") or "").strip()
+        if title in skip_titles:
+            continue
+        text = _plain(str(sh.get("body") or sh.get("description") or ""))
+        if len(text) < 40:
+            continue
+        out.append({"key": f"sheet:{note['id']}:{sh['id']}", "kind": "note", "title": f"{base} · {title or 'Лист'}",
+                    "date": str(sh.get("updated_at") or note.get("updated_at") or note.get("created_at") or "")[:10],
+                    "text": text, "ref": {"note_id": int(note["id"]), "sheet_id": int(sh["id"]), "sheet_title": title, "kind": kind}})
+    return out
+
+
 def sources_for_user(uid: int) -> list[dict[str, Any]]:
     """Тексты пользователя для индекса: key, kind, title, date, text, ref."""
     from assistant.services import transcription_notes as tnotes
@@ -75,13 +102,16 @@ def sources_for_user(uid: int) -> list[dict[str, Any]]:
         if transcript:
             out.append({"key": f"tr_txt:{full['id']}", "kind": "transcript", "title": full.get("title") or "Встреча",
                         "date": date, "text": transcript, "ref": ref})
+        # Лист «Транскрипция» уже выше (tr_txt) — остальные листы встречи отдельно.
+        skip = (notes_store.TRANSCRIPT_SHEET_TITLE,) if tnotes.has_summary(full) else ()
+        out += _sheet_sources(full, "transcription", skip_titles=skip)
     for n in notes_store.list_notes(uid, limit=500):
         text = _plain(str(n.get("body") or ""))
-        if len(text) < 40:
-            continue
-        out.append({"key": f"note:{n['id']}", "kind": "note", "title": n.get("title") or "Заметка",
-                    "date": str(n.get("updated_at") or n.get("created_at") or "")[:10], "text": text,
-                    "ref": {"note_id": int(n["id"]), "kind": "note"}})
+        if len(text) >= 40:
+            out.append({"key": f"note:{n['id']}", "kind": "note", "title": n.get("title") or "Заметка",
+                        "date": str(n.get("updated_at") or n.get("created_at") or "")[:10], "text": text,
+                        "ref": {"note_id": int(n["id"]), "kind": "note"}})
+        out += _sheet_sources(n, "note")
     try:
         from assistant.stores import chat_digest
 

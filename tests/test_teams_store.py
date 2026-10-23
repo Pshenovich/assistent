@@ -69,6 +69,10 @@ class TeamsStoreTests(unittest.TestCase):
         self.assertEqual(len(notes_store.list_notes(2)), 0)
         own = notes_store.list_knowledge_notes(1)
         self.assertTrue(own[0]["is_owner"])
+        # Лейбл команды на карточке документа: та же команда видна и автору, и участнику.
+        self.assertEqual(teams_store.teams_for_notes([kb["id"]]), {kb["id"]: [{"id": team["id"], "name": "Продукт"}]})
+        teams_store.set_note_teams(1, kb["id"], [])
+        self.assertEqual(teams_store.teams_for_notes([kb["id"]]), {})
 
     def test_unshare_and_remove_member_revokes(self) -> None:
         self._add_contact(1, name="Боб", email="bob@test.com", telegram_user_id=3)

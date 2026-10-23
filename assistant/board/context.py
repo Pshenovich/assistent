@@ -49,6 +49,24 @@ def meeting_include_knowledge(meeting: dict[str, Any] | None) -> bool:
     return True
 
 
+def _knowledge_note_html(note: dict[str, Any]) -> str:
+    """Документ Базы знаний целиком: основной лист и текстовые листы (канвасы пропускаем)."""
+    html = str(note.get("body") or "")
+    try:
+        from assistant.stores import note_sheets
+
+        extra = [x for x in note_sheets.list_sheets(note) if not x.get("is_primary") and str(x.get("kind") or "doc") != "web"]
+    except Exception:
+        return html
+    from html import escape
+
+    for x in extra:
+        body = str(x.get("body") or "")
+        if body.strip():
+            html += f"<h2>{escape(str(x.get('title') or 'Лист'))}</h2>{body}"
+    return html
+
+
 def attach_knowledge_note(
     pack: dict[str, Any] | None,
     user_id: int | str | None,
@@ -76,7 +94,7 @@ def attach_knowledge_note(
                 continue
         elif not notes_store.note_kb_enabled(note):
             continue
-        html = str(note.get("body") or "")
+        html = _knowledge_note_html(note)
         text = share_body_to_text(html).strip()
         if not text:
             continue

@@ -120,11 +120,8 @@ def primary_sheet(note: dict[str, Any]) -> dict[str, Any]:
 
 
 def note_allows_sheets(note: dict[str, Any] | None) -> bool:
-    if not note:
-        return False
-    if note.get("is_knowledge") or str(note.get("role") or "") == notes_store.KNOWLEDGE_ROLE:
-        return False
-    return True
+    """Листы есть у любой заметки, в том числе у документов Базы знаний."""
+    return bool(note)
 
 
 def is_primary_id(sheet_id: int | str) -> bool:

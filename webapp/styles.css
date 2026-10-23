@@ -21824,3 +21824,26 @@ textarea.tracker-desc {
 .dgx-task-chip::before { content: "✓"; flex: none; }
 .dgx-task-chip-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .dgx-task-chip.is-done { opacity: 0.65; text-decoration: line-through; }
+
+/* База знаний: в какую команду расшарен документ — на карточке и в строке под названием. */
+.note-card-teams,
+.note-editor-teams { display: flex; flex-wrap: wrap; gap: 4px; }
+.note-card-teams { margin: 4px 0 2px; }
+.note-editor-teams.hidden { display: none; }
+.note-team-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 14rem;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--violet-muted);
+  color: var(--violet-text);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+.note-team-chip svg { flex: none; }
+.note-team-chip span { overflow: hidden; text-overflow: ellipsis; }

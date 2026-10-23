@@ -704,6 +704,32 @@ def refresh_contact_telegram(owner_user_id: int | str, email: str) -> list[dict[
     return added
 
 
+def teams_for_notes(note_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+    """Команды, с которыми поделились документами (для лейбла на карточке и в заметке): {note_id: [{id, name}]}.
+    Команды — автора документа; участник видит те же названия."""
+    ids = sorted({int(x) for x in note_ids if str(x).strip().lstrip("-").isdigit()})
+    out: dict[int, list[dict[str, Any]]] = {}
+    if not ids:
+        return out
+    with _LOCK:
+        conn = _conn()
+        for i in range(0, len(ids), 500):
+            chunk = ids[i : i + 500]
+            rows = conn.execute(
+                f"""
+                SELECT s.note_id, t.id AS team_id, t.name
+                FROM team_note_shares s
+                JOIN teams t ON t.id = s.team_id AND t.owner_user_id = s.owner_user_id
+                WHERE s.note_id IN ({",".join("?" * len(chunk))})
+                ORDER BY t.created_at ASC, t.id ASC
+                """,
+                chunk,
+            ).fetchall()
+            for r in rows:
+                out.setdefault(int(r["note_id"]), []).append({"id": int(r["team_id"]), "name": str(r["name"] or "")})
+    return out
+
+
 def list_note_teams(owner_user_id: int | str, note_id: int) -> list[dict[str, Any]]:
     owner = _uid(owner_user_id)
     with _LOCK:

@@ -9379,6 +9379,20 @@ def _focus_note_changed(owner: Any, note_id: Any) -> None:
         print(f"[semantic] note_changed failed note={note_id} err={e!r}")
 
 
+def _memory_sheet_changed(uid: Any, note_id: Any) -> None:
+    """Лист заметки создали / правили / удалили — память Лео переиндексирует через минуту
+    (у автора и у того, кто правил: оба ищут по этой заметке)."""
+    try:
+        from assistant.services import semantic_memory
+        from assistant.stores import notes as notes_store
+
+        note = notes_store.get_accessible_note(uid, int(note_id), with_sharing=False) or {}
+        for who in {str(uid), str(note.get("owner_user_id") or uid)}:
+            semantic_memory.note_changed(who)
+    except Exception as e:
+        print(f"[semantic] sheet_changed failed note={note_id} err={e!r}")
+
+
 def _focus_enabled(uid: int) -> bool:
     try:
         from assistant.stores import user_prefs
@@ -10156,10 +10170,14 @@ async def miniapp_knowledge_notes(
         tag_items = [("local", str(n.get("id"))) for n in notes]
         mapping = tags_store.tags_by_items(uid, tag_items)
         hash_mapping = hashtags_store.hashtags_by_items(uid, tag_items)
+        from assistant.stores import teams_store
+
+        team_map = teams_store.teams_for_notes([int(n["id"]) for n in notes if n.get("id") is not None])
         for n in notes:
             key = ("local", str(n.get("id")))
             _apply_project_fields(n, mapping.get(key, []))
             n["hashtags"] = hash_mapping.get(key, [])
+            n["teams"] = team_map.get(int(n["id"]), []) if n.get("id") is not None else []
         return notes
 
     try:
@@ -10330,6 +10348,28 @@ async def miniapp_local_note_duplicate(
     return {"ok": True, "id": item["id"], "item": item}
 
 
+@miniapp_router.post("/notes/local/{note_id}/copy-to-knowledge")
+async def miniapp_local_note_copy_to_knowledge(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Копия заметки в Базу знаний: текст и листы, без участников, команд и ссылок исходной заметки."""
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any] | None:
+        dup = notes_store.duplicate_note(uid, note_id, to_knowledge=True)
+        if not dup:
+            return None
+        return _sync_local_note_hashtags(uid, dup)
+
+    item = await run_in_threadpool(_run)
+    if not item:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    return {"ok": True, "id": item["id"], "item": item}
+
+
 @miniapp_router.put("/notes/local/{note_id}/pin")
 async def miniapp_local_note_pin(
     note_id: int,
@@ -10402,6 +10442,10 @@ async def miniapp_local_note_get(
     if tnotes.is_transcription_note(item):
         item = tnotes.enrich(item)
     item = await run_in_threadpool(_enrich_item_labels, uid, "local", item)
+    if item.get("is_knowledge"):
+        from assistant.stores import teams_store
+
+        item["teams"] = (await run_in_threadpool(teams_store.teams_for_notes, [int(note_id)])).get(int(note_id), [])
     return {"ok": True, "item": item}
 
 
@@ -10485,6 +10529,7 @@ async def miniapp_note_sheet_create(
         raise HTTPException(status_code=400, detail=str(e)) from e
     if item is None:
         raise HTTPException(status_code=404, detail="Заметка не найдена")
+    await run_in_threadpool(_memory_sheet_changed, uid, note_id)
     return {"ok": True, "item": item}
 
 
@@ -10938,6 +10983,7 @@ async def miniapp_note_sheet_patch(
         raise HTTPException(status_code=400, detail=str(e)) from e
     if item is None:
         raise HTTPException(status_code=404, detail="Заметка не найдена")
+    await run_in_threadpool(_memory_sheet_changed, uid, note_id)
     note_updated_at = None
     try:
         fresh = await run_in_threadpool(
@@ -10976,6 +11022,7 @@ async def miniapp_note_sheet_delete(
         raise HTTPException(status_code=404, detail="Заметка не найдена")
     if not ok:
         raise HTTPException(status_code=404, detail="Лист не найден")
+    await run_in_threadpool(_memory_sheet_changed, uid, note_id)
     return {"ok": True}
 
 

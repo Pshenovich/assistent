@@ -96,6 +96,32 @@ def test_sources_for_user_real_stores(tmp_path, monkeypatch):
     notes_store._CONN = None
 
 
+def test_sheets_are_indexed(tmp_path, monkeypatch):
+    from assistant.services import transcription_notes as tnotes
+    from assistant.stores import note_sheets
+    from assistant.stores import notes as notes_store
+
+    monkeypatch.setenv("NOTES_DB_PATH", str(tmp_path / "notes.sqlite"))
+    notes_store._CONN = None
+    monkeypatch.setattr(tnotes, "_focus_summary_ready", lambda *a, **k: None)
+    # Основной лист короткий — важное на втором листе.
+    note = notes_store.create_note(6, "Проект", "<p>см. листы</p>")
+    sheet = note_sheets.create_sheet(note, "Бюджет", body="<p>Бюджет пилота — 1,2 млн, согласовал финдиректор в среду</p>")
+    note_sheets.create_sheet(note, "Слайды", body="<html><body><h1>Слайды про бюджет пилота и сроки</h1></body></html>", kind="web")
+    meet = tnotes.create_with_summary(6, title="Синк", transcript="Спикер 1: обсуждаем цены на тариф", summary="<p>Решили поднять цены</p>")
+    note_sheets.create_sheet(meet, "Задачи", body="<p>Оксана готовит рассылку клиентам до пятницы</p>")
+    srcs = {s["key"]: s for s in sm.sources_for_user(6)}
+    sheet_src = srcs[f"sheet:{note['id']}:{sheet['id']}"]
+    assert sheet_src["title"] == "Проект · Бюджет" and "1,2 млн" in sheet_src["text"]
+    assert sheet_src["ref"] == {"note_id": note["id"], "sheet_id": sheet["id"], "sheet_title": "Бюджет", "kind": "note"}
+    meet_sheets = [s for k, s in srcs.items() if k.startswith(f"sheet:{meet['id']}:")]
+    # Лист «Транскрипции» уже в tr_txt — не дублируем; канвас не индексируем.
+    assert [s["title"] for s in meet_sheets] == ["Синк · Задачи"]
+    assert not any("Слайды" in s["title"] for s in srcs.values())
+    assert f"note:{note['id']}" not in srcs  # основной лист короче 40 символов
+    notes_store._CONN = None
+
+
 def test_status_and_note_changed(env, monkeypatch):
     import threading
 
