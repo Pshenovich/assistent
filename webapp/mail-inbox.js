@@ -331,17 +331,21 @@
       h += "</div>" + attachmentsHtml(m) + "</div>";
       prevKey = m.mail_key;
     });
-    if (st.pending) {
-      var p = st.pending;
-      h +=
-        '<div class="mail-msg is-out is-pending"><div class="mail-bubble"><div class="mail-bubble-body mail-html">' +
-        "<p>" + esc(p.text).replace(/\n/g, "<br>") + "</p>" +
-        '</div><div class="mail-bubble-meta">' + (p.status === "failed" ? "Не отправилось: " + esc(p.error || "") : "Отправка…") +
-        (p.status === "sending" ? ' <button type="button" class="mail-mini" data-mi="cancel-send">Отменить</button>' : "") +
-        (p.status === "failed" ? ' <button type="button" class="mail-mini" data-mi="retry-send">Ещё раз</button>' : "") +
-        "</div></div></div>";
-    }
-    return h;
+    return h + pendingHtml();
+  }
+
+  // Ответ, который ещё отправляется (10 секунд на «Отменить») или не ушёл.
+  function pendingHtml() {
+    if (!st.pending) return "";
+    var p = st.pending;
+    return (
+      '<div class="mail-msg is-out is-pending"><div class="mail-bubble"><div class="mail-bubble-body mail-html">' +
+      "<p>" + esc(p.text).replace(/\n/g, "<br>") + "</p>" +
+      '</div><div class="mail-bubble-meta">' + (p.status === "failed" ? "Не отправилось: " + esc(p.error || "") : "Отправка…") +
+      (p.status === "sending" ? ' <button type="button" class="mail-mini" data-mi="cancel-send">Отменить</button>' : "") +
+      (p.status === "failed" ? ' <button type="button" class="mail-mini" data-mi="retry-send">Ещё раз</button>' : "") +
+      "</div></div></div>"
+    );
   }
 
   function lettersHtml(t) {
@@ -362,7 +366,7 @@
         '<div class="mail-letter-acts"><button type="button" class="mail-mini" data-mi="reply-full" data-key="' + esc(m.mail_key) + '">Ответить</button>' +
         '<button type="button" class="mail-mini" data-mi="orig" data-key="' + esc(m.mail_key) + '">Оригинал</button></div></article>';
     });
-    return h;
+    return h + pendingHtml();
   }
 
   function menuHtml(t) {
@@ -415,17 +419,19 @@
     else if (t.error) h += '<div class="mail-empty">' + esc(t.error) + ' <button type="button" class="pf-link" data-mi="reload">Повторить</button></div>';
     else h += st.view === "letters" ? lettersHtml(t) : chatHtml(t);
     h += "</div>";
-    if (st.view === "chat" && !t.loading && !t.error) {
+    if (!t.loading && !t.error) {
+      // Поле ответа — как поле ввода в чате Лео; в обоих видах («Чат» и «Письма»).
       var rt = st.replyTo && msgByKey(st.replyTo);
       h += '<div class="mail-input-wrap">';
       if (rt)
         h +=
           '<div class="mail-replybar"><span><b>Ответ на письмо ' + esc(rt.direction === "out" ? "вам" : rt.from) + ":</b> " +
-          esc(plainSnippet(rt, 70)) + '</span><button type="button" class="mail-mini" data-mi="reply-x">✕</button></div>';
+          esc(plainSnippet(rt, 70)) + '</span><button type="button" class="mail-replybar-x" data-mi="reply-x" aria-label="Отменить ответ">&times;</button></div>';
       h +=
-        '<div class="mail-input-row"><button type="button" class="mail-icon-btn" data-mi="expand" title="Полное окно письма: кому, копия, тема, вложения" aria-label="Полное окно письма">⤢</button>' +
-        '<textarea class="mail-input" rows="1" data-mi-input placeholder="Ответить…">' + esc(draftText) + "</textarea>" +
-        '<button type="button" class="mail-send" data-mi="send" aria-label="Отправить">➤</button></div></div>';
+        '<div class="mail-compose">' +
+        '<button type="button" class="mail-compose-btn" data-mi="expand" title="Полное окно письма: кому, копия, тема, вложения" aria-label="Полное окно письма">' + ICON_EXPAND + "</button>" +
+        '<textarea class="mail-input" rows="1" data-mi-input placeholder="' + (rt ? "Ответить на это письмо…" : "Ответить…") + '">' + esc(draftText) + "</textarea>" +
+        '<button type="button" class="mail-compose-send' + (draftText.trim() ? " is-ready" : "") + '" data-mi="send" aria-label="Отправить">' + ICON_UP + "</button></div></div>";
     }
     h += "</div>";
     r.innerHTML = h;
@@ -446,9 +452,16 @@
     });
   }
 
+  var ICON_UP =
+    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>';
+  var ICON_EXPAND =
+    '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg>';
+
   function grow(t) {
     t.style.height = "auto";
     t.style.height = Math.min(t.scrollHeight, 160) + "px";
+    var send = t.parentNode && t.parentNode.querySelector(".mail-compose-send");
+    if (send) send.classList.toggle("is-ready", !!t.value.trim());
   }
 
   function lastReplyTarget() {
@@ -662,7 +675,16 @@
       st.replyTo = "";
       return renderThread();
     }
-    if (act === "reply-full") return openFull(key, "");
+    if (act === "reply-full") {
+      st.replyTo = key;
+      renderThread();
+      var inpF = root().querySelector("[data-mi-input]");
+      if (inpF) {
+        inpF.focus();
+        inpF.scrollIntoView({ block: "nearest" });
+      }
+      return;
+    }
     if (act === "expand") {
       var t = r.querySelector("[data-mi-input]");
       return openFull(lastReplyTarget(), t ? t.value : "");
@@ -697,14 +719,21 @@
       b.disabled = true;
       b.textContent = "✨ Пишу…";
       try {
-        var dr = await post("/mail/threads/" + encodeURIComponent(st.open.thread_key) + "/draft", { reply_to_key: st.replyTo });
-        if (st.view === "letters") return openFull(lastReplyTarget(), dr.body);
+        var tkDraft = st.open.thread_key;
+        var dr = await post("/mail/threads/" + encodeURIComponent(tkDraft) + "/draft", { reply_to_key: st.replyTo });
+        if (!st.open || st.open.thread_key !== tkDraft) return;
+        if (!String((dr && dr.body) || "").trim()) throw new Error("Лео не смог подготовить ответ — попробуйте ещё раз");
         st.inputText = dr.body;
-        var ip = r.querySelector("[data-mi-input]");
+        var ip = root().querySelector("[data-mi-input]");
         if (ip) ip.value = dr.body;
         renderThread();
         var ip2 = root().querySelector("[data-mi-input]");
-        if (ip2) ip2.focus();
+        if (ip2) {
+          ip2.focus();
+          ip2.setSelectionRange(0, 0);
+          ip2.scrollTop = 0;
+        }
+        toast("Черновик в поле ответа — поправьте и отправьте");
       } catch (err) {
         toast((err && err.message) || "Не получилось подготовить ответ");
         renderThread();

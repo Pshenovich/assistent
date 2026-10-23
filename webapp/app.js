@@ -5797,8 +5797,8 @@
     if (p.indexOf("/calendar/today") >= 0) return 20000;
     // Почта: письмо читается из ящика (вход, папка) — дольше общего лимита; ответы Лео — ещё дольше.
     if (p.indexOf("/digest/market/insight") >= 0 || p.indexOf("/mail/rewrite") >= 0) return 90000;
-    if (/\/mail\/threads\/[^/?]+\/(draft|summary)/.test(p)) return 90000;
-    if (p.indexOf("/mail/") >= 0 || p.indexOf("/digest/chats") >= 0) return 60000;
+    if (/\/mail\/threads\/[^/?]+\/(draft|summary)/.test(p)) return 120000;
+    if (p.indexOf("/mail/") >= 0 || p.indexOf("/digest/chats") >= 0 || p.indexOf("/digest/overview") >= 0) return 60000;
     if (p.indexOf("/calendar/range") >= 0) return 30000;
     if (/\/paei(\/|\?|$)/.test(p) || p.slice(-5) === "/paei") return 180000;
     if (/\/research(\/|\?|$)/.test(p) || p.slice(-9) === "/research") return 180000;

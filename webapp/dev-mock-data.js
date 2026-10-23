@@ -923,6 +923,7 @@
       { chat_id: -1007890, title: "Офис", last_date: mockDigestDay(4), brief: "Ничего важного", quiet: true, awaiting: 0, days: 1, labels: [] },
     ],
   };
+  var mockStepLinks = {};
   function mockDigestChat(id) {
     var c = mockDigest.chats.filter(function (x) { return x.chat_id === id; })[0] || mockDigest.chats[0];
     return {
@@ -934,20 +935,26 @@
       cards: c.labels.some(function (l) { return l.kind === "promise"; }) ? [{ key: "chat:p1", type: "chat_promise", label: "вы обещали", text: "Согласовать стенд с DevOps до среды" }] : [],
       days: [
         { date: c.last_date, message_count: 48, brief: c.brief, decisions: ["Стенд под нагрузочные тесты — отдельный"],
-          next_steps: [{ who: "Анна", task: "Отчёт по багам", deadline: "18:00" }, { who: "Вы", task: "Согласовать стенд с DevOps", deadline: "среда" }],
+          next_steps: [{ who: "Анна", task: "Отчёт по багам", deadline: "18:00", key: "digest_step:k1", task_link: mockStepLinks["digest_step:k1"] || null }, { who: "Вы", task: "Согласовать стенд с DevOps", deadline: "среда", key: "digest_step:k2", task_link: mockStepLinks["digest_step:k2"] || null }],
           deadlines: [], open_questions: ["Кто сообщит клиентам о переносе?"] },
         { date: mockDigestDay(1), message_count: 12, brief: "Обсуждали метрики онбординга, решений нет", decisions: [], next_steps: [], deadlines: [], open_questions: [] },
-        { date: mockDigestDay(3), message_count: 30, brief: "Планирование спринта", decisions: ["Спринт — 2 недели", "Демо по пятницам"], next_steps: [{ who: "Олег", task: "Бэклог", deadline: "" }], deadlines: [], open_questions: [] },
+        { date: mockDigestDay(3), message_count: 30, brief: "Планирование спринта", decisions: ["Спринт — 2 недели", "Демо по пятницам"], next_steps: [{ who: "Олег", task: "Бэклог", deadline: "до пятницы", key: "digest_step:k3", task_link: mockStepLinks["digest_step:k3"] || null }], deadlines: [], open_questions: [] },
       ],
     };
   }
 
   function profileMockResponse(basePath, method, opts) {
     if (basePath === "/digest/reports" && method === "GET") return { digest_enabled: true, reports: [{ chat_id: -1001234, report_date: mockDigestDay(0), title: "Продукт · ядро", summary: {} }] };
-    if (basePath === "/digest/chats" && method === "GET") return Object.assign({ ok: true, with_labels: 3 }, mockDigest);
+    if (basePath === "/digest/overview" && method === "GET") return Object.assign({ ok: true, with_labels: 3 }, mockDigest);
     var dgm = /^\/digest\/chats\/(-?\d+)$/.exec(basePath);
     if (dgm) return mockDigestChat(Number(dgm[1]));
     if (basePath === "/digest/item") return { ok: true, item: {} };
+    if (basePath === "/digest/step-task" && method === "POST") {
+      var stb = JSON.parse((opts && opts.body) || "{}");
+      var stl = stb.task_id ? { id: stb.task_id, title: "Задача #" + stb.task_id, done: false } : { url: stb.url, title: stb.title };
+      mockStepLinks[stb.key] = stl;
+      return { ok: true, key: stb.key, task_link: stl };
+    }
     if (basePath === "/digest/market/insight") {
       return { ok: true, text: "• Конкуренты (Gong, Cresta) продвигают «действие в CRM», а не только аналитику — это прямо про ваш продукт: стоит обсудить на встрече «Продукт · стратегия» в чт 11:00.\n• Новость про подешевевшие модели снижает вашу стоимость саммари встреч — проверьте экономику тарифа.\n• Вы обещали прислать расчёт скидки Ольге — новость о раунде в нише можно использовать как аргумент." };
     }
@@ -1110,6 +1117,34 @@
     }
     if (basePath === "/voice/history") return { items: mockVoiceHistory };
 
+    // Основной лист мок-документа (переименование / удаление с подъёмом «Бюджета»).
+    if (!global.__mockKbPrimary) global.__mockKbPrimary = { title: "Основная", body: "<p>Как ведём сделки</p>", revision: 1, extra: true };
+    var mockKbPrimary = global.__mockKbPrimary;
+    // База знаний: два документа, один расшарен командам (лейбл команды на карточке и в заметке).
+    var mockKb = [
+      { id: 9001, title: "Регламент продаж", body: mockKbPrimary.body, primary_sheet_title: mockKbPrimary.title, role: "knowledge", is_knowledge: true, is_owner: true, members: [], teams: [{ id: 1, name: "Продажи" }, { id: 2, name: "Руководство" }], updated_at: new Date().toISOString() },
+      { id: 9002, title: "Онбординг", body: "<p>Первый день</p>", role: "knowledge", is_knowledge: true, is_owner: true, members: [], teams: [], updated_at: new Date().toISOString() },
+    ];
+    if (basePath === "/notes/knowledge" && method === "GET") return { notes: JSON.parse(JSON.stringify(mockKb)) };
+    var kbGet = basePath.match(/^\/notes\/local\/(900[12])$/);
+    if (kbGet && method === "GET") {
+      return { ok: true, item: JSON.parse(JSON.stringify(mockKb.filter(function (k) { return String(k.id) === kbGet[1]; })[0])) };
+    }
+    if (/^\/notes\/local\/900[12]\/sheets$/.test(basePath) && method === "GET") {
+      return { sheets: [
+        { id: "main", title: mockKbPrimary.title, body: mockKbPrimary.body, is_primary: true, revision: mockKbPrimary.revision, kind: "doc" },
+      ].concat(mockKbPrimary.extra ? [{ id: 501, title: "Бюджет", body: "<p>Цифры пилота</p>", is_primary: false, revision: 1, kind: "doc" }] : []) };
+    }
+    if (/^\/notes\/local\/900[12]\/sheets\/main$/.test(basePath) && method === "PATCH") {
+      mockKbPrimary.title = JSON.parse((opts && opts.body) || "{}").title || mockKbPrimary.title;
+      mockKbPrimary.revision += 1;
+      return { ok: true, item: { id: "main", title: mockKbPrimary.title, is_primary: true, revision: mockKbPrimary.revision }, note_updated_at: new Date().toISOString() };
+    }
+    if (/^\/notes\/local\/900[12]\/sheets\/main$/.test(basePath) && method === "DELETE") {
+      if (!mockKbPrimary.extra) throw new Error("Это единственный текстовый лист — его нельзя удалить, можно удалить заметку");
+      mockKbPrimary = global.__mockKbPrimary = { title: "Бюджет", body: "<p>Цифры пилота</p>", revision: mockKbPrimary.revision + 1, extra: false };
+      return { ok: true, promoted_sheet_id: 501 };
+    }
     var exportMatch = basePath.match(/^\/notes\/(local|journal)\/([^/]+)\/export$/);
     if (exportMatch && method === "POST") {
       var exp = {};
