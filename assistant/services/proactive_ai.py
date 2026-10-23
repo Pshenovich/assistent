@@ -157,7 +157,8 @@ def analyzed_today(uid: int) -> int:
     start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     with _LOCK:
         r = _conn().execute(
-            "SELECT COUNT(*) AS n FROM proactive_insights WHERE owner_user_id = ? AND analyzed_at >= ?",
+            "SELECT COUNT(*) AS n FROM proactive_insights WHERE owner_user_id = ? AND analyzed_at >= ?"
+            " AND source_key NOT LIKE 'mail:%'",  # у почты свой лимит (mail_source.DAILY_CAP)
             (str(uid), start),
         ).fetchone()
     return int(r["n"] or 0)

@@ -25,7 +25,7 @@ from typing import Any, Optional
 # Пункт ушёл из Фокуса насовсем.
 CLOSED = ("completed", "linked", "converted", "dismissed", "retyped")
 STATUSES = CLOSED + ("snoozed", "new")
-REASONS = ("not_a_task", "not_relevant", "duplicate", "recognition_error", "not_me")
+REASONS = ("not_a_task", "not_relevant", "duplicate", "recognition_error", "not_me", "newsletter")
 TYPES = ("task", "promise", "decision", "reminder", "thought")
 # Тип, после которого пункт остаётся в Фокусе (обещание — тоже дело).
 ACTIVE_TYPES = ("task", "promise")
@@ -37,7 +37,7 @@ TITLES_WINDOW = timedelta(days=90)
 _REGISTRY_COLS = ("direction", "commitment_id", "quote", "due_iso", "seen_at")
 DIRECTIONS = ("mine", "theirs", "unknown")
 # Вопросы из чатов (chat_request) — не обязательства: их ведёт сводка «Ждут вашего ответа».
-COMMITMENT_KINDS = ("summary_task", "agreement", "chat_promise")
+COMMITMENT_KINDS = ("summary_task", "agreement", "chat_promise", "mail_promise")
 _DEDUP_WINDOW = timedelta(days=60)
 
 _LOCK = threading.RLock()
@@ -395,6 +395,9 @@ def item_from_card(card: dict[str, Any], *, with_closed: bool = False) -> list[d
         src = {**card["note"], "kind": "note", "note_kind": card["note"].get("kind") or "note"}
     elif card.get("chat"):
         src = {**card["chat"], "kind": "chat"}
+    elif card.get("mail"):
+        m = card["mail"]
+        src = {"kind": "mail", "id": m.get("mail_key"), "from": m.get("from") or "", "thread": m.get("thread") or ""}
     src["label"] = str(card.get("source") or "")[:200]
     url = next((str((a.get("payload") or {}).get("url") or "") for a in card.get("actions") or []
                 if a.get("act") == "url"), "")
@@ -403,6 +406,14 @@ def item_from_card(card: dict[str, Any], *, with_closed: bool = False) -> list[d
     out = []
     if card.get("type") == "awaiting_reply":
         for i in card.get("items") or []:
+            if str(i.get("id") or "").startswith("mail:"):  # письмо без ответа
+                out.append({
+                    "key": i.get("id"), "card_key": card.get("key"), "kind": "mail_request", "text": i.get("text"),
+                    "who": "", "due": "", "type": "task",
+                    "source": {"kind": "mail", "id": i.get("mail_key"), "from": i.get("from") or "",
+                               "label": str(card.get("source") or "")[:200]},
+                })
+                continue
             parts = str(i.get("id") or "").split(":")  # chat:<cid>:<day>:<hash>
             chat_src = {"kind": "chat", "id": int(parts[1]) if len(parts) > 2 and parts[1].lstrip("-").isdigit() else None,
                         "label": str(card.get("source") or "")[:200], "url": str(i.get("url") or "")}
@@ -432,7 +443,7 @@ def item_from_card(card: dict[str, Any], *, with_closed: bool = False) -> list[d
         "who": meta.get("who") or "",
         "due": meta.get("due") or "",
         "source": src,
-        "type": "promise" if str(card.get("type") or "") == "chat_promise" else "task",
+        "type": "promise" if str(card.get("type") or "") in ("chat_promise", "mail_promise") else "task",
         "quote": str(meta.get("quote") or ""),
     })
     return out
@@ -745,7 +756,7 @@ _ME_WORDS = {"я", "мне", "меня", "мной", "сам", "сама"}
 def direction_for(item: dict[str, Any], owner_names: list[str]) -> str:
     """mine — за пользователем; theirs — за другими; unknown — исполнитель не ясен («Спикер N»)."""
     kind = str(item.get("kind") or "")
-    if kind in ("chat_promise", "chat_request") or item.get("mine"):
+    if kind in ("chat_promise", "chat_request", "mail_promise", "mail_request") or item.get("mine"):
         return "mine"
     who = str(item.get("who") or "").strip()
     if not who or who.lower().startswith(("спикер", "speaker")):
@@ -800,7 +811,7 @@ def ingest(owner_user_id: Any, cards: list[dict[str, Any]], now: Optional[dateti
     with _LOCK:
         conn = _conn()
         for card in cards:
-            if card.get("type") not in ("summary_tasks", "agreement", "chat_promise"):
+            if card.get("type") not in ("summary_tasks", "agreement", "chat_promise", "mail_promise"):
                 continue
             for it in item_from_card(card):
                 key = str(it.get("key") or "").strip()[:300]

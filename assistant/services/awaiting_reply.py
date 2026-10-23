@@ -141,32 +141,44 @@ def pending_requests(uid: int, *, now: Optional[datetime] = None) -> list[dict[s
     return out
 
 
-def awaiting_card(uid: int, *, now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
+def awaiting_card(uid: int, *, now: Optional[datetime] = None, chats: bool = True) -> Optional[dict[str, Any]]:
+    """Сводка вечером: вопросы в чатах (chats=True) и письма без ответа (почта, если подключена)."""
+    from assistant.services import mail_source
     from assistant.services.calendar import _tz_for
 
     now = now or datetime.now(timezone.utc)
     local = now.astimezone(_tz_for(uid))
     if local.hour < awaiting_hour():
         return None
-    reqs = pending_requests(uid, now=now)
-    if not reqs:
-        return None
-    n = len(reqs)
-    word = "вопрос" if n % 10 == 1 and n % 100 != 11 else ("вопроса" if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else "вопросов")
+    reqs = pending_requests(uid, now=now) if chats else []
     items = [{"id": q["key"], "text": f"«{q['chat_title']}» · {q['who']}: {q['text']}", "url": q["url"]} for q in reqs[:12]]
+    try:
+        mail = mail_source.awaiting_items(uid, now=now)
+    except Exception as e:
+        print(f"[awaiting] mail failed uid={uid} err={e!r}")
+        mail = []
+    more = max(0, len(mail) - mail_source.CARD_LIMIT)
+    items += [{**m, "url": ""} for m in mail[: mail_source.CARD_LIMIT]]
+    if not items:
+        return None
+    n = len(reqs) + len(mail)
+    word = "вопрос" if n % 10 == 1 and n % 100 != 11 else ("вопроса" if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else "вопросов")
     lines = [f"— {i['text']} ({i['url']})" if i["url"] else f"— {i['text']}" for i in items]
+    if more:
+        lines.append(f"— и ещё {more} в почте")
+    where = "в чатах и почте" if reqs and mail else ("в почте" if mail else "в чатах")
     return {
         "key": f"awaiting:{local.date().isoformat()}",
         "type": "awaiting_reply",
         "tag": "💬 ждут ответа",
         "urgency": 3,
         "title": f"Ждут вашего ответа: {n} {word}",
-        "source": "без ответа больше 2 часов",
-        "ask": "Ждут моего ответа в чатах:\n" + "\n".join(lines),
+        "source": "без ответа больше 2 часов" + (f" · ещё {more} в почте" if more else ""),
+        "ask": f"Ждут моего ответа {where}:\n" + "\n".join(lines),
         "items": items,
         "actions": [
             {"label": "Разобрать с Лео", "act": "assistant", "primary": True,
-             "payload": {"prompt": "Мне задали вопросы в чатах, и я не ответил. Помоги коротко ответить на каждый:\n" + "\n".join(lines)}},
+             "payload": {"prompt": f"Мне задали вопросы {where}, и я не ответил. Помоги коротко ответить на каждый:\n" + "\n".join(lines)}},
             {"label": "Ответил / не мне…", "act": "mark_done_pick"},
         ],
     }

@@ -18,6 +18,7 @@ from assistant.bot.semantic_index_job import register_semantic_index_jobs
 from assistant.bot.task_reminder_job import register_task_reminder_jobs
 from assistant.bot.meeting_bot_scheduler_job import register_meeting_bot_scheduler_jobs
 from assistant.bot.telemost_mail_job import register_telemost_mail_jobs
+from assistant.bot.mail_job import register_mail_jobs
 from assistant.bot.reminder_job import register_reminder_jobs
 from assistant.bot.knowledge_sync_job import register_knowledge_sync_jobs
 from assistant.bot.proactive_brief_job import register_proactive_brief_jobs
@@ -59,6 +60,7 @@ def build_application() -> Application:
     register_meeting_invite_jobs(app)
     register_meeting_bot_scheduler_jobs(app)
     register_telemost_mail_jobs(app)
+    register_mail_jobs(app)
     register_reminder_jobs(app)
     register_knowledge_sync_jobs(app)
     register_proactive_brief_jobs(app)

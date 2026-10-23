@@ -287,6 +287,21 @@ def rule_overdue(tasks: list[dict[str, Any]], now: datetime, tz: Any, uid: str) 
     ]
 
 
+def _prep_mail(ev: dict[str, Any], now: datetime) -> list[dict[str, Any]]:
+    """Последние ветки переписки с участниками встречи (если подключена почта)."""
+    uid = ev.get("_owner_uid")
+    if not uid:
+        return []
+    try:
+        from assistant.services import mail_source
+        from assistant.services.calendar import event_attendee_emails
+
+        return mail_source.prep_threads(int(uid), event_attendee_emails(ev), now=now)
+    except Exception as e:
+        print(f"[proactive] prep mail failed err={e!r}")
+        return []
+
+
 def rule_prep(events: list[dict[str, Any]], kinds: dict[str, dict[str, int]], now: datetime, tz: Any) -> list[dict[str, Any]]:
     out = []
     for ev in events:
@@ -298,6 +313,7 @@ def rule_prep(events: list[dict[str, Any]], kinds: dict[str, dict[str, int]], no
         others = _others(ev)
         if not others:
             continue
+        threads = _prep_mail(ev, now)
         mins = int((st - now).total_seconds() // 60)
         when = f"Через {mins} мин" if mins < 60 else f"В {_hm(st, tz)}"
         key = f"{ev.get('calendar_id') or 'primary'}:{ev.get('id')}"
@@ -310,9 +326,13 @@ def rule_prep(events: list[dict[str, Any]], kinds: dict[str, dict[str, int]], no
                 "tag": "📝 скоро встреча",
                 "urgency": 3,
                 "title": f"{when} — {ev.get('summary') or 'встреча'}",
-                "source": ", ".join(others[:3]) + (" · есть заметка встречи" if has_note else " · повестки нет"),
-                "ask": f"Подготовка к встрече «{ev.get('summary')}» {_hm(st, tz)} с {', '.join(others[:5])}",
+                "source": ", ".join(others[:3]) + (" · есть заметка встречи" if has_note else " · повестки нет")
+                + (f" · переписка: «{threads[0]['subject']}»" + (f" и ещё {len(threads) - 1}" if len(threads) > 1 else "")
+                   if threads else ""),
+                "ask": f"Подготовка к встрече «{ev.get('summary')}» {_hm(st, tz)} с {', '.join(others[:5])}"
+                + ("".join(f"\nПереписка: «{t['subject']}» ({t['from']})" for t in threads)),
                 "event": _event_ref(ev),
+                "mail_threads": threads,
                 "actions": (
                     [{"label": "Материалы", "act": "open_event", "primary": True}]
                     if has_note
@@ -524,7 +544,7 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
         print(f"[proactive] kinds failed uid={uid} err={e!r}")
         kinds = {}
     if prefs.get("before_meetings"):
-        items += rule_prep(evs, kinds, now, tz)
+        items += rule_prep([{**e, "_owner_uid": uid} for e in evs], kinds, now, tz)
     if prefs.get("after_meetings"):
         items += rule_no_results(evs, kinds, now, tz)
     try:
@@ -549,11 +569,15 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
             # вопросы к пользователю — не карточками в течение дня, а одной сводкой вечером (awaiting_reply)
             items += [c for c in proactive_ai.chat_cards(uid, task_titles=[str(t.get("title") or "") for t in window])
                       if c.get("type") != "chat_request"]
-            from assistant.services import awaiting_reply
+        from assistant.services import awaiting_reply, mail_source
 
-            card = awaiting_reply.awaiting_card(uid, now=now)
-            if card:
-                items.append(card)
+        card = awaiting_reply.awaiting_card(uid, now=now, chats=bool(prefs.get("chats")))
+        if card:
+            items.append(card)
+        try:
+            items += mail_source.mail_cards(uid, task_titles=[str(t.get("title") or "") for t in window], now=now)
+        except Exception as e:
+            print(f"[proactive] mail cards failed uid={uid} err={e!r}")
         if prefs.get("weekly"):
             from assistant.services import proactive_reports
 
