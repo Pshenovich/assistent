@@ -114,7 +114,7 @@ def overlay(viewer_uid: int, items: list[dict[str, Any]]) -> list[dict[str, Any]
         want = f"{it.get('assignee') or ''} {it.get('text') or ''}"
         for t in tasks:
             line = " — ".join(x for x in (str(t.get(k) or "").strip() for k in ("assignee", "task", "deadline")) if x)
-            s = 1.0 if proactive.summary_task_id(nid, line) == it.get("key") else _score(want, f"{t.get('assignee') or ''} {t.get('task') or ''}")
+            s = 1.0 if proactive.summary_task_id(nid, line, t.get("id")) == it.get("key") else _score(want, f"{t.get('assignee') or ''} {t.get('task') or ''}")
             if s > best_s:
                 best, best_s = t, s
         if best is None or best_s < 0.5:

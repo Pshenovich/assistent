@@ -1057,6 +1057,13 @@ def update_task(
             ),
         )
         _conn().commit()
+    if fields["title"] != existing["title"]:
+        try:
+            from assistant.services import focus_items
+
+            focus_items.task_renamed(existing["owner_user_id"], int(existing["id"]), fields["title"])
+        except Exception as e:  # подпись чипа — не повод провалить правку задачи
+            print(f"[calendar_tasks] chip rename failed task={existing['id']} err={e!r}")
     return _get_task_row(int(existing["id"]))
 
 

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-mail5";
+  var WEBAPP_BUILD = "20261023-lineid";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261022-focuschip"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261023-lineid"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -43563,6 +43563,8 @@
       if (tag === "input" && name === "checked") return true;
       if (tag === "input" && name === "aria-label") return true;
       if (tag === "li" && name === "checked") return true;
+      // ID строки: по нему задача саммари и пункт Фокуса держат связь со строкой
+      if (name === "data-leo-item" && /^(li|p|h[1-6]|td|th)$/.test(tag)) return /^i[0-9a-f]{10}$/.test(String(val || ""));
       if (tag === "span" && /^data-leo-(task|note|sheet)-id$/.test(name)) {
         return /^[A-Za-z0-9_-]{1,64}$/.test(String(val || ""));
       }

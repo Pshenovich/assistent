@@ -143,17 +143,41 @@ def create_transcript_only(
     return enrich(note)
 
 
+def _summary_body(summary: str, meta: Optional[dict[str, Any]]) -> str:
+    """Тело саммари для заметки — сразу HTML, а у каждой задачи ID на её строке.
+
+    Markdown переводим так же, как приложение (note_markdown); ID задачи пишется и в meta.tasks."""
+    from assistant.lib import note_items
+    from assistant.lib.note_markdown import markdown_to_html
+
+    body = (summary or "").strip()
+    if not body:
+        return ""
+    if note_items.is_html_body(body):
+        out = body
+    elif "<" in body and ">" in body and "<table" not in body:
+        out = body  # чужой HTML без блоков — как раньше
+    elif body.startswith("#") or "\n#" in body or "**" in body or "- [" in body or "\n- " in body or "<table" in body:
+        out = markdown_to_html(body)
+    else:
+        out = _as_html(body)
+    tasks = (meta or {}).get("tasks")
+    if isinstance(tasks, list) and tasks and note_items.is_html_body(out):
+        out = note_items.stamp_summary_tasks(out, tasks)
+    return out
+
+
 def _body_hash(body: str) -> str:
     import hashlib
 
     return hashlib.sha1((body or "").strip().encode("utf-8")).hexdigest()
 
 
-def _with_body_hash(meta: Optional[dict[str, Any]], summary: str) -> dict[str, Any]:
+def _with_body_hash(meta: Optional[dict[str, Any]], body_html: str) -> dict[str, Any]:
     """Хэш тела саммари v2: по нему понимаем, правили ли саммари руками."""
     out = dict(meta or {})
     if out.get("summary_version") == 2:
-        out["summary_body_hash"] = _body_hash(_as_html(summary))
+        out["summary_body_hash"] = _body_hash(body_html)
     return out
 
 
@@ -165,12 +189,14 @@ def create_with_summary(
     summary: str,
     meta: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
+    meta = dict(meta or {})
+    body = _summary_body(summary, meta)
     note = notes_store.create_note(
         user_id,
         _title_from(title, fallback="Саммари"),
-        _as_html(summary),
+        body,
         role=TRANSCRIPTION_ROLE,
-        meta=_with_body_hash(meta, summary),
+        meta=_with_body_hash(meta, body),
         primary_sheet_title=SUMMARY_SHEET_TITLE,
     )
     sheets_store.create_sheet(
@@ -246,11 +272,12 @@ def finish_make_summary(
     meta.pop("summary_error", None)
     if extra_meta:
         meta.update(extra_meta)
-    meta = _with_body_hash(meta, summary_text)
+    body = _summary_body(summary_text, meta)
+    meta = _with_body_hash(meta, body)
     updated = notes_store.update_note(
         owner,
         int(note["id"]),
-        body=_as_html(summary_text),
+        body=body,
         primary_sheet_title=SUMMARY_SHEET_TITLE,
         meta=meta,
         allow_empty_body=True,
@@ -389,6 +416,10 @@ def confirm_speaker(user_id: int | str, note_id: int, label: str, name: str) -> 
         meeting_at=str(meta.get("meeting_at") or ctx.meeting_at),
         transcript=_plain(transcript_html(note)),
     )
+    old_tasks = [x for x in meta.get("tasks") or [] if isinstance(x, dict)]
+    for t, prev in zip(tasks, old_tasks):
+        if isinstance(t, dict) and prev.get("id"):
+            t["id"] = prev["id"]  # ID задачи переживает пересборку — связь с Фокусом и чипом не рвётся
     data["tasks"] = tasks
     data["speaker_map"] = smap
     meta["speaker_map"] = smap
@@ -398,8 +429,9 @@ def confirm_speaker(user_id: int | str, note_id: int, label: str, name: str) -> 
     if meta.get("summary_body_hash") and _body_hash(cur_body) == meta.get("summary_body_hash"):
         params = meta.get("summary_render") if isinstance(meta.get("summary_render"), dict) else {}
         display = prepare_summary_markdown(render_summary_html(data), **params)
-        body_kwargs = {"body": _as_html(display), "primary_sheet_title": SUMMARY_SHEET_TITLE}
-        meta["summary_body_hash"] = _body_hash(_as_html(display))
+        new_body = _summary_body(display, meta)
+        body_kwargs = {"body": new_body, "primary_sheet_title": SUMMARY_SHEET_TITLE}
+        meta["summary_body_hash"] = _body_hash(new_body)
     updated = notes_store.update_note(
         owner, int(note["id"]), meta=meta, actor_user_id=uid, **body_kwargs
     )

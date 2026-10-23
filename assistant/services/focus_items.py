@@ -224,6 +224,16 @@ def _recent_task_for(owner_user_id: Any, row: dict[str, Any]) -> Optional[int]:
     return int(best["id"]) if best and best_s >= 0.5 else None
 
 
+def _task_title(task_id: Any) -> str:
+    from assistant.stores import calendar_tasks as tasks_store
+
+    try:
+        row = tasks_store._get_task_row(int(task_id))
+    except Exception:
+        return ""
+    return str((row or {}).get("title") or "").strip()[:200]
+
+
 def apply(owner_user_id: Any, item_key: str, op: str, *, by: str = "", **kw: Any) -> dict[str, Any]:
     """Действие с пунктом: done / link / snooze / dismiss / retype / update / converted / undo."""
     row = get(owner_user_id, item_key)
@@ -239,6 +249,9 @@ def apply(owner_user_id: Any, item_key: str, op: str, *, by: str = "", **kw: Any
         task_id = kw.get("task_id") or _recent_task_for(owner_user_id, row)
         if task_id:
             row["link"] = {**(row.get("link") or {}), "task_id": int(task_id)}
+            title = _task_title(task_id)
+            if title:
+                row["link"]["title"] = title  # чип в заметке — с названием, которое дали задаче
     elif op == "link":
         url = str(kw.get("url") or "").strip()
         task_id = kw.get("task_id")
@@ -430,7 +443,8 @@ def item_from_card(card: dict[str, Any], *, with_closed: bool = False) -> list[d
             )
             out.append({
                 "key": i.get("id"), "card_key": card.get("key"), "kind": "summary_task",
-                "text": task or i.get("text"), "who": who, "due": due, "source": src, "type": "task",
+                "text": task or i.get("text"), "who": who, "due": due, "type": "task",
+                "source": {**src, "item": i["item"]} if i.get("item") else src,
                 "mine": bool(i.get("mine")), "quote": str(i.get("quote") or ""),
             })
         return out
@@ -442,7 +456,7 @@ def item_from_card(card: dict[str, Any], *, with_closed: bool = False) -> list[d
         "text": meta.get("text") or card.get("title") or "",
         "who": meta.get("who") or "",
         "due": meta.get("due") or "",
-        "source": src,
+        "source": {**src, "item": meta["item"]} if meta.get("item") else src,
         "type": "promise" if str(card.get("type") or "") in ("chat_promise", "mail_promise") else "task",
         "quote": str(meta.get("quote") or ""),
     })
@@ -469,7 +483,7 @@ def public(row: dict[str, Any], now: Optional[datetime] = None) -> dict[str, Any
         "state": f.get("state") or "",
         "comment": f.get("comment") or "",
         "link": row.get("link") or {},
-        "source": {k: src.get(k) for k in ("kind", "note_kind", "id", "title", "label", "date", "url") if src.get(k) is not None},
+        "source": {k: src.get(k) for k in ("kind", "note_kind", "id", "item", "title", "label", "date", "url") if src.get(k) is not None},
         "by": row.get("by_name") or "",
         "updated_at": row.get("updated_at") or "",
     }
@@ -655,8 +669,14 @@ def place_mark(html_text: str, row: dict[str, Any]) -> tuple[str, bool]:
     if not mark:
         return src, src != html_text
     if not _HTML_BODY_RE.match(src):
-        # Тело в Markdown (свежее саммари встречи): HTML-значок в нём покажется сырым текстом.
+        # Тело в Markdown (старое саммари встречи): HTML-значок в нём покажется сырым текстом.
         return src, src != html_text
+    from assistant.lib import note_items
+
+    line = note_items.find_line(src, str((row.get("source") or {}).get("item") or ""))
+    if line:  # строка пункта по её ID — как бы её ни правили
+        at = int(line["at"])
+        return src[:at].rstrip() + " " + mark + src[at:], True
     p = public(row)
     wants = [
         " ".join(x for x in (p["assignee"], row.get("text") or p["text"]) if x),
@@ -684,6 +704,42 @@ def place_mark(html_text: str, row: dict[str, Any]) -> tuple[str, bool]:
     if 'data-leo-mark="task"' not in mark:
         return src, src != html_text
     return src.rstrip() + "<p>" + mark + "</p>", True
+
+
+def task_renamed(owner_user_id: Any, task_id: int, title: str) -> int:
+    """Задачу переименовали — чип в заметке-источнике показывает новое название.
+
+    Связь пункта с задачей держится по task_id, подпись — снимок, его и обновляем."""
+    title = str(title or "").strip()[:200]
+    if not title:
+        return 0
+    with _LOCK:
+        rows = [
+            _row(r)
+            for r in _conn().execute(
+                "SELECT * FROM focus_items WHERE owner_user_id = ? AND link_json LIKE ?",
+                (str(owner_user_id), f'%"task_id": {int(task_id)}%'),
+            ).fetchall()
+        ]
+    n = 0
+    for row in rows:
+        link = dict(row.get("link") or {})
+        if int(link.get("task_id") or 0) != int(task_id) or link.get("title") == title:
+            continue
+        link["title"] = title
+        row["link"] = link
+        with _LOCK:
+            _conn().execute(
+                "UPDATE focus_items SET link_json = ? WHERE owner_user_id = ? AND item_key = ?",
+                (json.dumps(link, ensure_ascii=False), str(owner_user_id), row["item_key"]),
+            )
+            _conn().commit()
+        try:
+            sync_source(owner_user_id, row)
+        except Exception as e:
+            print(f"[focus_items] rename sync failed uid={owner_user_id} task={task_id} err={e!r}")
+        n += 1
+    return n
 
 
 def sync_source(owner_user_id: Any, row: dict[str, Any]) -> None:
@@ -720,10 +776,14 @@ def _sync_meta_task(meta: dict[str, Any], row: dict[str, Any]) -> bool:
         return False
     p = public(row)
     want = " ".join(x for x in (row.get("who"), row.get("text")) if x)
+    item_id = str((row.get("source") or {}).get("item") or "")
     best_i, best_s = -1, 0.0
     for i, t in enumerate(tasks):
         if not isinstance(t, dict):
             continue
+        if item_id and str(t.get("id") or "") == item_id:
+            best_i, best_s = i, 1.0  # задача саммари с тем же ID — как бы её ни переформулировали
+            break
         s = _score(want, f"{t.get('assignee') or ''} {t.get('task') or ''}")
         if s > best_s:
             best_i, best_s = i, s

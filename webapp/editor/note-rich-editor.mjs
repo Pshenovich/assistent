@@ -16,6 +16,64 @@ import { CellSelection, cellAround, isInTable } from "@tiptap/pm/tables";
 import { trailingNode } from "@tiptap/pm/trailing-node";
 import { canJoin } from "@tiptap/pm/transform";
 
+/** ID строки (data-leo-item): по нему задача саммари и пункт Фокуса держат связь со строкой,
+ * как бы её ни правили. Enter не копирует ID на новую строку; дубль (строку скопировали) — снимаем. */
+var LEO_LINE_TYPES = ["paragraph", "heading", "listItem", "taskItem", "tableCell", "tableHeader"];
+var LEO_ITEM_RE = /^i[0-9a-f]{10}$/;
+var LeoLineId = Extension.create({
+  name: "leoLineId",
+  addGlobalAttributes: function () {
+    return [
+      {
+        types: LEO_LINE_TYPES,
+        attributes: {
+          leoItem: {
+            default: null,
+            keepOnSplit: false,
+            parseHTML: function (el) {
+              var v = el.getAttribute("data-leo-item");
+              return v && LEO_ITEM_RE.test(v) ? v : null;
+            },
+            renderHTML: function (attrs) {
+              return attrs.leoItem ? { "data-leo-item": attrs.leoItem } : {};
+            },
+          },
+        },
+      },
+    ];
+  },
+  addProseMirrorPlugins: function () {
+    return [
+      new Plugin({
+        key: new PluginKey("leoLineIdDedupe"),
+        appendTransaction: function (trs, _old, state) {
+          if (!trs.some(function (tr) { return tr.docChanged; })) return null;
+          var seen = {};
+          var tr = null;
+          state.doc.descendants(function (node, pos, parent, index) {
+            var id = node.attrs && node.attrs.leoItem;
+            if (!id) return;
+            if (seen[id]) {
+              tr = tr || state.tr;
+              tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { leoItem: null }));
+              return;
+            }
+            seen[id] = true;
+            // Enter в начале строки: ID остался на пустой строке сверху, текст ушёл вниз — ID за текстом.
+            var next = parent && index + 1 < parent.childCount ? parent.child(index + 1) : null;
+            if (!node.textContent && next && next.type === node.type && !next.attrs.leoItem && next.textContent) {
+              tr = tr || state.tr;
+              tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { leoItem: null }));
+              tr.setNodeMarkup(pos + node.nodeSize, undefined, Object.assign({}, next.attrs, { leoItem: id }));
+            }
+          });
+          return tr;
+        },
+      }),
+    ];
+  },
+});
+
 /** Always keep a paragraph after non-paragraph blocks (table, image, …) so typing below works. */
 var TrailingParagraph = Extension.create({
   name: "trailingParagraph",
@@ -2946,6 +3004,7 @@ function mount(container, options) {
       TableHeader,
       TableCell,
       TrailingParagraph,
+      LeoLineId,
       BotTaskList.configure({
         HTMLAttributes: { class: "note-task-list" },
       }),
@@ -3375,7 +3434,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261022-focuschip",
+  assetVersion: "20261023-lineid",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,

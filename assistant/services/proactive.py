@@ -383,7 +383,12 @@ def rule_no_results(events: list[dict[str, Any]], kinds: dict[str, dict[str, int
     return out[:3]
 
 
-def summary_task_id(note_id: int, line: str) -> str:
+def summary_task_id(note_id: int, line: str, item_id: str = "") -> str:
+    """Ключ задачи саммари: по её ID (не меняется при правке текста), у старых саммари — по тексту строки."""
+    from assistant.lib.note_items import ITEM_ID_RE
+
+    if ITEM_ID_RE.match(str(item_id or "")):
+        return _key("sumtask", note_id, str(item_id))
     return _key("sumtask", note_id, hashlib.sha1(line.encode("utf-8")).hexdigest()[:10])
 
 
@@ -426,14 +431,16 @@ def rule_summary_tasks(
         for t in tasks:
             parts = [str(t.get("assignee") or "").strip(), str(t.get("task") or "").strip(), str(t.get("deadline") or "").strip()]
             line = " — ".join(p for p in parts if p)
-            iid = summary_task_id(nid, line)
+            iid = summary_task_id(nid, line, t.get("id"))
             st = task_state(t, posted_list)
             if st:  # уже поставил или выполнил кто-то из участников встречи
-                closed.append({"id": iid, "text": line, **st})
+                closed.append({"id": iid, "text": line, **({"item": t["id"]} if t.get("id") else {}), **st})
                 continue
             if iid in done:
                 continue
             item = {"id": iid, "text": line}
+            if t.get("id"):
+                item["item"] = str(t["id"])
             if nid not in foreign and t.get("owner_flag") == "mine":
                 item["mine"] = True
             if t.get("quote") and float(t.get("quote_score") or 0) >= 0.6:

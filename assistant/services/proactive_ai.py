@@ -41,7 +41,8 @@ SYSTEM = """Ты — помощник руководителя. Тебе даю�
 - followup — договорились встретиться/созвониться ещё раз (с кем и о чём);
 - open_question — вопрос, который остался нерешённым.
 Ответь строго JSON без пояснений:
-{"items":[{"kind":"agreement|followup|open_question","text":"коротко, до 120 символов","who":"кто делает (имя как в тексте) или 'я', если сам пользователь","due":"YYYY-MM-DD или ''","people":["имена участников, если важно"],"quote":"короткая цитата-основание из текста"}]}
+{"items":[{"kind":"agreement|followup|open_question","text":"коротко, до 120 символов","who":"кто делает (имя как в тексте) или 'я', если сам пользователь","due":"YYYY-MM-DD или ''","people":["имена участников, если важно"],"quote":"короткая цитата-основание из текста","line":0}]}
+line — номер строки [N], из которой пункт, если строки текста пронумерованы; иначе 0.
 Не больше 6 пунктов. Если ничего конкретного нет — {"items":[]}. Сроки «до пятницы», «завтра» переводи в даты относительно today."""
 
 
@@ -207,9 +208,62 @@ def normalize_items(obj: Any) -> list[dict[str, Any]]:
                 "due": due,
                 "people": [str(p).strip()[:80] for p in (it.get("people") or []) if str(p).strip()][:6],
                 "quote": str(it.get("quote") or "").strip()[:240],
+                "line": _int(it.get("line")),
             }
         )
     return out[:6]
+
+
+def _int(v: Any) -> int:
+    try:
+        return max(0, int(v))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _anchor_items(uid: int, note: dict[str, Any], rows: list[dict[str, Any]], items: list[dict[str, Any]]) -> None:
+    """Строка заметки для каждого пункта: ID на ней — и пункт узнаётся, как бы её ни правили.
+
+    Номер строки называет ИИ, проверяем кодом: строка должна совпадать с цитатой или текстом пункта.
+    Не совпала — ищем по цитате; не нашли — пункт без строки (как раньше)."""
+    from assistant.lib import note_items
+    from assistant.services.focus_items import _score
+    from assistant.stores import notes as notes_store
+
+    def fits(it: dict[str, Any], row: dict[str, Any]) -> float:
+        q = note_items._norm(it.get("quote") or "")
+        if len(q) >= 12 and q in note_items._norm(row["text"]):
+            return 1.0
+        return max(_score(it.get("quote") or "", row["text"]), _score(it.get("text") or "", row["text"]))
+
+    targets: list[tuple[dict[str, Any], str]] = []
+    owners: list[dict[str, Any]] = []
+    for it in items:
+        n = int(it.get("line") or 0)
+        row = rows[n - 1] if 1 <= n <= len(rows) and fits(it, rows[n - 1]) >= 0.5 else None
+        if row is None:
+            best = max(rows, key=lambda r: fits(it, r), default=None)
+            row = best if best is not None and fits(it, best) >= 0.6 else None
+        if row is None:
+            continue
+        targets.append((row, row["item"] or note_items.new_item_id()))
+        owners.append(it)
+    if not targets:
+        return
+    body = str(note.get("body") or "")
+    new_body, ids = note_items.stamp(body, targets)
+    if new_body != body:
+        try:
+            saved = notes_store.update_note(
+                uid, int(note["id"]), body=new_body, expected_revision=note.get("revision")
+            )
+        except notes_store.NoteConflictError:
+            saved = None  # заметку как раз правят — ID поставим при следующем разборе
+        if not saved:
+            ids = [t[0]["item"] for t in targets]  # прижились только уже стоявшие ID
+    for it, iid in zip(owners, ids):
+        if iid:
+            it["item"] = iid
 
 
 def analyze_note(uid: int, note: dict[str, Any], text: str, content_hash: str) -> list[dict[str, Any]]:
@@ -227,7 +281,20 @@ def analyze_note(uid: int, note: dict[str, Any], text: str, content_hash: str) -
     except Exception:
         pass
     today = datetime.now(_tz_for(uid)).date()
+    from assistant.lib import note_items
+
+    body = str(note.get("body") or "")
+    rows: list[dict[str, Any]] = []
+    if note_items.is_html_body(body):
+        numbered, rows = note_items.numbered_text(body)
+        if numbered.strip():
+            text = numbered  # Лео называет номер строки — по нему ставим ID строки
     items = _llm_items(str(note.get("title") or ""), text, today, meeting)
+    if rows:
+        try:
+            _anchor_items(uid, note, rows, items)
+        except Exception as e:
+            print(f"[proactive_ai] anchor items failed uid={uid} note={note.get('id')} err={e!r}")
     save(uid, f"note:{int(note['id'])}", content_hash, str(note.get("title") or ""), items)
     return items
 
@@ -466,7 +533,9 @@ def card_for(
     kind, text, who, due = it.get("kind"), str(it.get("text") or ""), str(it.get("who") or ""), str(it.get("due") or "")
     if handled_titles and _covered(text, handled_titles):
         return None  # уже разобран (выполнен, скрыт, связан…) — в любой формулировке
-    key = "ins:%s:%s" % (note["id"], _hash(kind or "", text)[:10])
+    item_id = str(it.get("item") or "")
+    # ID строки заметки — ключ переживает и правку строки, и пересказ при повторном разборе
+    key = "ins:%s:%s" % (note["id"], item_id) if item_id else "ins:%s:%s" % (note["id"], _hash(kind or "", text)[:10])
     due_l = _due_label(due, today) if due else ""
     if due:
         try:
@@ -505,7 +574,7 @@ def card_for(
                 {"label": "✓ Сделано", "act": "mark_done"},
             ],
             "items": [{"id": key, "text": text}],
-            "_item": {"text": text, "who": "" if me else who, "due": due},
+            "_item": {"text": text, "who": "" if me else who, "due": due, "item": item_id},
         }
     if kind == "followup":
         people = ", ".join(it.get("people") or []) or who
