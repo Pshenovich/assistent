@@ -7,9 +7,7 @@ import Underline from "@tiptap/extension-underline";
 import TextStyle from "@tiptap/extension-text-style";
 import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
-import TableCell from "@tiptap/extension-table-cell";
-import TableHeader from "@tiptap/extension-table-header";
-import { ManagedTable, ManagedTableRow } from "./table-manage.mjs";
+import { ManagedTable, ManagedTableCell, ManagedTableHeader, ManagedTableRow } from "./table-manage.mjs";
 import { DOMSerializer, Slice } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
@@ -1127,6 +1125,8 @@ function svgIcon(name) {
     checklist:
       '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2"/><path d="M4 12l1 1 2-2"/><path d="M4 18l1 1 2-2"/>',
     none: '<path d="M4 7h16M4 12h16M4 17h10"/>',
+    blank: "",
+    subheading: '<path d="M5 6v12M14 6v12M5 12h9"/><path d="M17.5 13.5a2 2 0 1 1 3 1.7L17.5 18h3.5"/>',
   };
   return "<svg " + common + ">" + (paths[name] || "") + "</svg>";
 }
@@ -1571,32 +1571,29 @@ function mountToolbar(toolbarEl, editor) {
       "</span></button>"
     );
   }
+  function sep() {
+    return '<div class="note-tg-menu-sep" role="separator"></div>';
+  }
+  // Списки — как в Telegram: «Нет» без иконки, текущий пункт — галочка справа.
   function listItems(plainLabel) {
     return (
-      item("paragraph", "plain", "none", plainLabel) +
-      item("bullet", "bulletList", "list", "Булет лист") +
+      item("paragraph", "plain-list", "blank", plainLabel) +
+      item("bullet", "bulletList", "list", "Маркированный список") +
       item("ordered", "orderedList", "numbered", "Нумерованный список") +
       item("task", "taskList", "checklist", "Чек-лист")
     );
   }
-  // Стиль текста: страница «Заголовок ›» открывается внутри того же меню, «‹ Назад» возвращает.
+  // «+» — вид блока (как в Telegram), под чертой — вставка.
   var styleMenu =
-    '<div class="note-tg-menu note-tg-menu--paged hidden" data-menu-panel="style" role="menu">' +
-    '<div class="note-tg-page" data-page="main">' +
-    '<p class="note-tg-menu-label">Стиль текста</p>' +
-    item("paragraph", "plain", "text", "Обычный текст") +
-    '<button type="button" class="note-tg-menu-item note-tg-menu-page" data-go="heading" data-check="heading">' +
-    svgIcon("heading") + "<span>Заголовок</span>" + svgIcon("chevronRight") + "</button>" +
+    '<div class="note-tg-menu hidden" data-menu-panel="style" role="menu">' +
+    item("heading-2", "heading-2", "heading", "Заголовок") +
+    item("heading-3", "heading-3", "subheading", "Подзаголовок") +
+    item("paragraph", "plain", "text", "Текст") +
     item("quote", "blockquote", "quote", "Цитата") +
-    "</div>" +
-    '<div class="note-tg-page hidden" data-page="heading">' +
-    '<button type="button" class="note-tg-menu-item note-tg-menu-page note-tg-menu-back" data-go="main">' +
-    svgIcon("chevronLeft") + "<span>Назад</span></button>" +
-    '<p class="note-tg-menu-label">Заголовок</p>' +
-    item("heading-2", "heading-2", "", "Заголовок 2", "note-tg-h note-tg-h2") +
-    item("heading-3", "heading-3", "", "Заголовок 3", "note-tg-h note-tg-h3") +
-    item("heading-4", "heading-4", "", "Заголовок 4", "note-tg-h note-tg-h4") +
-    "</div></div>";
+    sep() +
+    item("divider", "", "divider", "Разделитель") +
+    item("noteref", "", "noteref", "Ссылка на заметку") +
+    "</div>";
 
   var fontMenu =
     '<div class="note-tg-menu note-tg-menu--font hidden" data-menu-panel="font" role="menu">' +
@@ -1623,12 +1620,13 @@ function mountToolbar(toolbarEl, editor) {
     btn("note-tg-btn--undo", 'data-action="undo"', "Отменить", "undo") +
     btn("note-tg-btn--redo", 'data-action="redo"', "Повторить", "redo") +
     "</div>" +
+    // Как в Telegram: «+» (вид блока), список, таблица, файл; у нас ещё «Aa» — шрифт и кегль.
     '<div class="note-tg-capsule note-tg-capsule--default" data-mode="default">' +
-    btn("", 'data-menu="insert"', "Вставить", "plus") +
-    btn("", 'data-menu="style"', "Стиль текста", "heading") +
-    btn("", 'data-menu="font"', "Шрифт и размер", "font") +
+    btn("", 'data-menu="style"', "Вид текста и вставка", "plus") +
     btn("", 'data-menu="list"', "Список", "list") +
-    btn("", 'data-action="task"', "Чек-лист", "check") +
+    btn("", 'data-action="table"', "Таблица", "table") +
+    btn("note-tg-btn--attach", 'data-action="attach"', "Файл или фото", "paperclip") +
+    btn("", 'data-menu="font"', "Шрифт и размер", "font") +
     "</div>" +
     '<div class="note-tg-capsule note-tg-capsule--selection hidden" data-mode="selection">' +
     btn("", 'data-action="bold"', "Жирный", "bold") +
@@ -1638,21 +1636,14 @@ function mountToolbar(toolbarEl, editor) {
     btn("", 'data-action="highlight"', "Маркер", "highlight") +
     btn("", 'data-action="link"', "Ссылка", "link") +
     '<span class="note-tg-sep" aria-hidden="true"></span>' +
-    btn("", 'data-menu="style"', "Стиль текста", "heading") +
+    btn("", 'data-menu="style"', "Вид текста", "heading") +
     btn("", 'data-menu="font"', "Шрифт и размер", "font") +
     btn("", 'data-menu="list-sel"', "Список", "list") +
     "</div>" +
-    '<div class="note-tg-menu hidden" data-menu-panel="insert" role="menu">' +
-    '<p class="note-tg-menu-label">Вставить</p>' +
-    item("table", "", "table", "Таблица") +
-    item("attach", "", "paperclip", "Файл или фото") +
-    item("divider", "", "divider", "Разделитель") +
-    item("noteref", "", "noteref", "Ссылка на заметку") +
-    "</div>" +
     styleMenu +
     fontMenu +
-    '<div class="note-tg-menu hidden" data-menu-panel="list" role="menu">' + listItems("Обычный текст") + "</div>" +
-    '<div class="note-tg-menu hidden" data-menu-panel="list-sel" role="menu">' + listItems("Ничего") + "</div>";
+    '<div class="note-tg-menu hidden" data-menu-panel="list" role="menu">' + listItems("Нет") + "</div>" +
+    '<div class="note-tg-menu hidden" data-menu-panel="list-sel" role="menu">' + listItems("Нет") + "</div>";
 
   ensureFileInput();
 
@@ -1870,7 +1861,7 @@ function mountToolbar(toolbarEl, editor) {
 
   // Prevent toolbar buttons from stealing focus from the editor (incl. menu items).
   toolbarEl.addEventListener("mousedown", function (e) {
-    var attach = e.target.closest && e.target.closest('[data-cmd="attach"]');
+    var attach = e.target.closest && e.target.closest('[data-cmd="attach"], [data-action="attach"]');
     if (attach) return; // нельзя preventDefault — ломает file picker
     var btn = e.target.closest("button");
     if (!btn || !toolbarEl.contains(btn)) return;
@@ -2020,7 +2011,9 @@ function mountToolbar(toolbarEl, editor) {
       }
       var headingMatch = String(check || "").match(/^heading-(\d)$/);
       var on =
-        check === "plain"
+        check === "plain-list"
+          ? !(editor.isActive("bulletList") || editor.isActive("orderedList") || editor.isActive("taskList"))
+          : check === "plain"
           ? !(
               editor.isActive("bulletList") ||
               editor.isActive("orderedList") ||
@@ -3345,8 +3338,8 @@ function mount(container, options) {
         HTMLAttributes: { class: "note-editor-table" },
       }),
       ManagedTableRow,
-      TableHeader,
-      TableCell,
+      ManagedTableHeader,
+      ManagedTableCell,
       TrailingParagraph,
       LeoLineId,
       BotTaskList.configure({
@@ -3779,7 +3772,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261023-font4",
+  assetVersion: "20261025-tgtable",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,
