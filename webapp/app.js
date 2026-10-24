@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261023-posted4";
+  var WEBAPP_BUILD = "20261024-posted5";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -6851,6 +6851,7 @@
   }
 
   function setTab(name, options) {
+    if (name !== currentTab && isPostedCardOpen()) closePostedCard();
     if (name !== "notes" && notesSelect.on) exitNotesSelectMode();
     if (name !== "notes" && notesSplitCurrentId && isNoteEditorModalOpen()) closeNoteEditorModal();
     if (name === "notes" && currentTab !== "notes") notesSplitAutoOpened = false;
@@ -13530,8 +13531,9 @@
       return;
     }
     var composer = !!(d && d.target === "composer");
-    var wrap = composer ? document.getElementById("note-paie-reply-form") : document.getElementById("note-editor-toolbar-wrap");
-    var bar = composer
+    var custom = !!(d && d.target === "custom");
+    var wrap = custom ? d.form : composer ? document.getElementById("note-paie-reply-form") : document.getElementById("note-editor-toolbar-wrap");
+    var bar = custom || composer
       ? wrap && wrap.querySelector(".note-dictation-bar")
       : document.getElementById("note-dictation-bar");
     if (!wrap || !bar) return;
@@ -13604,18 +13606,27 @@
     d.raf = requestAnimationFrame(frame);
   }
 
-  async function startNoteDictation(atEnd, target) {
+  // target: editor | composer | actual | custom (custom: opts.form — форма с .note-dictation-bar, opts.onText(text)).
+  async function startNoteDictation(atEnd, target, opts) {
     if (noteDict) return;
     var composer = target === "composer";
     var actual = target === "actual";
-    var ed = actual ? null : composer ? noteGptEditor() : getLeftNoteRichEditor();
-    if (!actual && (!ed || (!composer && typeof ed.beginDictation !== "function"))) return;
+    var custom = target === "custom" && opts && opts.form && typeof opts.onText === "function";
+    if (target === "custom" && !custom) return;
+    var ed = actual || custom ? null : composer ? noteGptEditor() : getLeftNoteRichEditor();
+    if (!actual && !custom && (!ed || (!composer && typeof ed.beginDictation !== "function"))) return;
     if (!noteDictSupported()) {
       showNoteToast("Запись звука не поддерживается в этом браузере");
       return;
     }
-    var d = { state: "starting", editor: ed, mark: null, chunks: [], started: 0, target: actual ? "actual" : composer ? "composer" : "editor" };
-    d.bar = actual
+    var d = { state: "starting", editor: ed, mark: null, chunks: [], started: 0, target: custom ? "custom" : actual ? "actual" : composer ? "composer" : "editor" };
+    if (custom) {
+      d.form = opts.form;
+      d.onText = opts.onText;
+    }
+    d.bar = custom
+      ? opts.form.querySelector(".note-dictation-bar")
+      : actual
       ? document.querySelector("#actual-voice-wrap .note-dictation-bar")
       : composer
       ? (document.getElementById("note-paie-reply-form") || document).querySelector(".note-dictation-bar")
@@ -13632,7 +13643,7 @@
       noteDictCleanup(d);
       return;
     }
-    d.mark = composer || actual ? null : ed.beginDictation(!!atEnd);
+    d.mark = composer || actual || custom ? null : ed.beginDictation(!!atEnd);
     var mime = preferredVoiceMimeType();
     try {
       try {
@@ -13756,6 +13767,16 @@
     }
     if (d.target === "composer") {
       insertDictationIntoComposer(d.editor, text);
+      return;
+    }
+    if (d.target === "custom") {
+      if (document.body.contains(d.form)) d.onText(text);
+      else {
+        try {
+          if (navigator.clipboard) navigator.clipboard.writeText(text);
+        } catch (_) {}
+        showNoteToast("Поле закрыто — текст диктовки скопирован в буфер");
+      }
       return;
     }
     if (getLeftNoteRichEditor() !== d.editor || !d.editor.insertDictation(d.mark, text)) {
@@ -22189,8 +22210,12 @@
     var archBtn = document.getElementById("posted-tasks-archive");
     var search = document.getElementById("posted-tasks-search");
     var newBtn = document.getElementById("posted-tasks-new");
+    var newBar = document.getElementById("posted-tasks-new-bar");
+    var barTitle = document.getElementById("posted-tasks-bar-title");
     setHidden(search, !arch);
     setHidden(newBtn, arch);
+    if (newBar) newBar.style.visibility = arch ? "hidden" : "";
+    if (barTitle) barTitle.textContent = arch ? "Принятые" : "Поручения";
     if (archBtn) {
       archBtn.textContent = arch ? "← Поручения" : "Принятые" + (postedArchiveLoaded ? " · " + postedArchiveItems.length : "");
     }
@@ -23197,7 +23222,8 @@
     paintPostedCard(state);
   }
 
-  // Поле как у ассистента: «+» (файл, задача, заметка, транскрипция, встреча), @упоминание, вложения над полем.
+  // Поле — как у ассистента (тот же вид и поведение), без выбора агента и листов:
+  // «+» (файл или фото, задача, заметка, транскрипция, встреча), @упоминание, диктовка, вложения над полем.
   function renderPostedComposer(state, otherName, draft) {
     var mode = state.mode || "";
     if (!state.compose) state.compose = { files: [], refs: [], mentions: [] };
@@ -23219,177 +23245,198 @@
       lbl.appendChild(x);
       wrap.appendChild(lbl);
     }
-    var box = document.createElement("div");
-    box.className = "pt-composer-box";
-    var pending = document.createElement("div");
-    pending.className = "pt-pending";
-    function paintPending() {
-      pending.innerHTML = "";
-      cmp.files.forEach(function (f, i) {
-        var chip = document.createElement("span");
-        chip.className = "pt-ref pt-ref--file" + (f.uploading ? " is-loading" : "");
-        if (f.previewUrl) {
-          var img = document.createElement("img");
-          img.src = f.previewUrl;
-          img.alt = "";
-          chip.appendChild(img);
-        }
-        var nm = document.createElement("span");
-        nm.textContent = f.name;
-        chip.appendChild(nm);
-        var rx = document.createElement("button");
-        rx.type = "button";
-        rx.className = "pt-ref-x";
-        rx.setAttribute("aria-label", "Убрать");
-        rx.textContent = "×";
-        rx.addEventListener("click", function () {
-          cmp.files.splice(i, 1);
-          paintPending();
-        });
-        chip.appendChild(rx);
-        pending.appendChild(chip);
-      });
-      cmp.refs.forEach(function (r, i) {
-        pending.appendChild(postedRefChip(r, function () {
-          cmp.refs.splice(i, 1);
-          paintPending();
-        }));
-      });
-      pending.classList.toggle("hidden", !cmp.files.length && !cmp.refs.length);
-    }
-    box.appendChild(pending);
-    var ta = document.createElement("textarea");
-    ta.rows = 1;
+    var form = document.createElement("form");
+    form.className = "note-paie-reply-form is-gpt-mode is-comments-chat pt-assist";
+    form.innerHTML =
+      '<div class="note-paie-plus-menu hidden"></div>' +
+      '<div class="note-paie-attach-preview hidden"></div>' +
+      '<div class="note-paie-toprow">' +
+      '<button type="button" class="note-paie-attach" aria-label="Добавить" title="Файл, задача, заметка, транскрипция или встреча" aria-haspopup="true" aria-expanded="false">' +
+      DISCUSS_ICONS.plus +
+      "</button></div>" +
+      '<div class="note-paie-composer-row">' +
+      '<input type="file" class="hidden" multiple accept="image/*,.pdf,.txt,.md,.csv,.json,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip">' +
+      '<textarea class="note-paie-composer-input pt-assist-input" rows="1" maxlength="2000"></textarea>' +
+      '<button type="button" class="note-paie-mic" aria-label="Диктовать сообщение" title="Диктовка">' + DISCUSS_ICONS.mic + "</button>" +
+      '<button type="submit" class="note-paie-send" aria-label="Отправить"><span class="note-paie-send-up">' + DISCUSS_ICONS.up + "</span></button>" +
+      "</div>" +
+      '<div class="note-dictation-bar hidden" data-state="rec">' +
+      '<button type="button" class="note-dict-btn note-dict-cancel" aria-label="Отменить диктовку" title="Отменить"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>' +
+      '<div class="note-dict-mid"><span class="note-dict-dot" aria-hidden="true"></span><span class="note-dict-time">0:00</span>' +
+      '<canvas class="note-dict-wave" width="240" height="56" aria-hidden="true"></canvas><span class="note-dict-spin" aria-hidden="true"></span><span class="note-dict-label">Расшифровываю…</span></div>' +
+      '<button type="button" class="note-dict-btn note-dict-stop" aria-label="Готово — вставить текст" title="Готово"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>' +
+      "</div>";
+    wrap.appendChild(form);
+    var menu = form.querySelector(".note-paie-plus-menu");
+    var preview = form.querySelector(".note-paie-attach-preview");
+    var plus = form.querySelector(".note-paie-attach");
+    var fileInput = form.querySelector('input[type="file"]');
+    var ta = form.querySelector("textarea");
+    var mic = form.querySelector(".note-paie-mic");
+    var send = form.querySelector(".note-paie-send");
     ta.value = draft || (mode === "result" ? String(state.task.result || "") : "");
     ta.placeholder =
       mode === "return" ? "Комментарий (необязательно)" : mode === "result" ? "Ссылка, файл, пара слов о результате" :
       postedCardIsOwner(state.task) ? "Сообщение исполнителю" : "Сообщение постановщику";
+    if (mode) {
+      send.classList.add("pt-send-text");
+      send.textContent = mode === "return" ? "Вернуть" : "Сдать";
+    }
+    function syncSend() {
+      var ready = !!(String(ta.value || "").trim() || cmp.files.length || cmp.refs.length || mode);
+      send.classList.toggle("is-ready", ready);
+      send.disabled = !ready;
+    }
     function grow() {
       ta.style.height = "auto";
       ta.style.height = Math.min(160, ta.scrollHeight) + "px";
+      ta.classList.toggle("is-multiline", ta.scrollHeight > 44);
     }
-    ta.addEventListener("input", function () {
-      grow();
-      syncMention();
-    });
-    box.appendChild(ta);
-    var tools = document.createElement("div");
-    tools.className = "pt-composer-tools";
-    var plus = document.createElement("button");
-    plus.type = "button";
-    plus.className = "pt-tool";
-    plus.setAttribute("aria-label", "Добавить");
-    plus.title = "Файл, задача, заметка, транскрипция или встреча";
-    plus.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
-    var at = document.createElement("button");
-    at.type = "button";
-    at.className = "pt-tool";
-    at.setAttribute("aria-label", "Упомянуть");
-    at.title = "Упомянуть";
-    at.textContent = "@";
-    var fileInput = document.createElement("input");
-    fileInput.type = "file";
-    fileInput.multiple = true;
-    fileInput.hidden = true;
-    tools.appendChild(plus);
-    tools.appendChild(at);
-    tools.appendChild(fileInput);
-    var spacer = document.createElement("span");
-    spacer.className = "pt-tools-spacer";
-    tools.appendChild(spacer);
-    var send = document.createElement("button");
-    send.type = "button";
-    send.className = "pt-send" + (mode ? " is-text" : "");
-    if (mode === "return") send.textContent = "Вернуть";
-    else if (mode === "result") send.textContent = "Сдать";
-    else {
-      send.setAttribute("aria-label", "Отправить");
-      send.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+    function paintPending() {
+      preview.innerHTML = "";
+      cmp.files.forEach(function (f, i) {
+        var chip = document.createElement("div");
+        chip.className = "note-paie-attach-chip" + (f.previewUrl ? " is-image" : "") + (f.uploading ? " is-loading" : "");
+        if (f.previewUrl) {
+          var img = document.createElement("img");
+          img.src = f.previewUrl;
+          img.alt = f.name || "Фото";
+          chip.appendChild(img);
+        }
+        var nm = document.createElement("span");
+        nm.className = "note-paie-attach-chip-name";
+        nm.textContent = f.name || "Файл";
+        chip.appendChild(nm);
+        var rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "note-paie-attach-chip-remove";
+        rm.setAttribute("aria-label", "Убрать");
+        rm.textContent = "×";
+        rm.addEventListener("click", function () {
+          cmp.files.splice(i, 1);
+          paintPending();
+        });
+        chip.appendChild(rm);
+        preview.appendChild(chip);
+      });
+      cmp.refs.forEach(function (r, i) {
+        var chip = document.createElement("div");
+        chip.className = "note-paie-attach-chip is-note";
+        var ico = document.createElement("span");
+        ico.className = "pt-chip-ico";
+        ico.innerHTML =
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          (POSTED_REF_ICON[r.kind] || "") + "</svg>";
+        chip.appendChild(ico);
+        var nm = document.createElement("span");
+        nm.className = "note-paie-attach-chip-name";
+        nm.textContent = r.title || POSTED_REF_KIND[r.kind] || "";
+        chip.appendChild(nm);
+        var rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "note-paie-attach-chip-remove";
+        rm.setAttribute("aria-label", "Убрать");
+        rm.textContent = "×";
+        rm.addEventListener("click", function () {
+          cmp.refs.splice(i, 1);
+          paintPending();
+        });
+        chip.appendChild(rm);
+        preview.appendChild(chip);
+      });
+      preview.classList.toggle("hidden", !cmp.files.length && !cmp.refs.length);
+      syncSend();
     }
-    tools.appendChild(send);
-    box.appendChild(tools);
-    wrap.appendChild(box);
-    var menu = document.createElement("div");
-    menu.className = "pt-pop hidden";
-    wrap.appendChild(menu);
 
     function closeMenu() {
       menu.classList.add("hidden");
       menu.innerHTML = "";
       menu._mode = "";
+      plus.setAttribute("aria-expanded", "false");
     }
-    function menuItem(label, hint, fn) {
+    function addItem(host, html, fn) {
       var b = document.createElement("button");
       b.type = "button";
-      b.className = "pt-pop-item";
-      var l = document.createElement("span");
-      l.textContent = label;
-      b.appendChild(l);
-      if (hint) {
-        var h = document.createElement("span");
-        h.className = "pt-pop-hint";
-        h.textContent = hint;
-        b.appendChild(h);
-      }
+      b.className = "note-paie-menu-item note-plus-item";
+      b.innerHTML = html;
       b.addEventListener("mousedown", function (e) {
         e.preventDefault();
       });
       b.addEventListener("click", function (e) {
+        e.preventDefault();
         e.stopPropagation();
         fn();
       });
-      menu.appendChild(b);
+      host.appendChild(b);
+      return b;
+    }
+    function plusItemHtml(icon, label) {
+      return '<span class="note-plus-ico">' + icon + "</span><span>" + escapeHtml(label) + "</span>";
     }
     function openRoot() {
-      menu.innerHTML = "";
+      menu.innerHTML = '<p class="note-menu-label">Добавить к сообщению</p>';
       menu._mode = "root";
-      menuItem("Файл или фото", "", function () {
+      addItem(menu, plusItemHtml(DISCUSS_ICONS.file, "Файл или фото"), function () {
         closeMenu();
         fileInput.click();
       });
-      [["task", "Задачу"], ["note", "Заметку"], ["transcription", "Транскрипцию"], ["event", "Встречу"]].forEach(function (k) {
-        menuItem(k[1], "", function () {
+      [["task", DISCUSS_ICONS.taskBox, "Задачу"], ["note", DISCUSS_ICONS.note, "Заметку"], ["transcription", DISCUSS_ICONS.wave, "Транскрипцию"], ["event", DISCUSS_ICONS.cal, "Встречу"]].forEach(function (k) {
+        addItem(menu, plusItemHtml(k[1], k[2]), function () {
           openPicker(k[0]);
         });
       });
       menu.classList.remove("hidden");
+      plus.setAttribute("aria-expanded", "true");
     }
     function openPicker(kind) {
       menu.innerHTML = "";
       menu._mode = "pick";
+      var back = document.createElement("button");
+      back.type = "button";
+      back.className = "note-paie-plus-back";
+      back.textContent = "‹ Назад";
+      back.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openRoot();
+      });
+      menu.appendChild(back);
       var search = document.createElement("input");
       search.type = "search";
-      search.className = "pt-pop-search";
+      search.className = "note-paie-plus-search";
+      search.autocomplete = "off";
       search.placeholder = { task: "Найти задачу", note: "Найти заметку", transcription: "Найти транскрипцию", event: "Найти встречу" }[kind];
       menu.appendChild(search);
       var list = document.createElement("div");
-      list.className = "pt-pop-list";
+      list.className = "note-paie-plus-notes";
       menu.appendChild(list);
       var gen = 0;
       function fill() {
         var my = ++gen;
-        list.innerHTML = '<p class="pt-pop-hint pt-pop-pad">Ищу…</p>';
+        list.innerHTML = '<p class="note-paie-menu-empty">Ищу…</p>';
         postedPickerItems(kind, search.value).then(function (items) {
           if (my !== gen) return;
           list.innerHTML = "";
           if (!items.length) {
-            list.innerHTML = '<p class="pt-pop-hint pt-pop-pad">Ничего не нашлось</p>';
+            list.innerHTML = '<p class="note-paie-menu-empty">Ничего не нашлось</p>';
             return;
           }
           items.slice(0, 12).forEach(function (it) {
             var b = document.createElement("button");
             b.type = "button";
-            b.className = "pt-pop-item";
-            var l = document.createElement("span");
-            l.textContent = it.title;
-            b.appendChild(l);
+            b.className = "note-paie-menu-item note-paie-plus-note";
+            var t = document.createElement("span");
+            t.className = "note-paie-kb-item-title";
+            t.textContent = it.title;
+            b.appendChild(t);
             if (it.hint) {
               var h = document.createElement("span");
-              h.className = "pt-pop-hint";
+              h.className = "note-paie-plus-note-project";
               h.textContent = it.hint;
               b.appendChild(h);
             }
             b.addEventListener("click", function (e) {
+              e.preventDefault();
               e.stopPropagation();
               if (cmp.refs.length < 5 && !cmp.refs.some(function (r) { return r.kind === it.ref.kind && String(r.id) === String(it.ref.id); })) {
                 cmp.refs.push(it.ref);
@@ -23407,6 +23454,9 @@
         window.clearTimeout(tmr);
         tmr = window.setTimeout(fill, 220);
       });
+      search.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") e.preventDefault();
+      });
       fill();
       menu.classList.remove("hidden");
       window.setTimeout(function () {
@@ -23414,15 +23464,16 @@
       }, 0);
     }
     plus.addEventListener("click", function (e) {
+      e.preventDefault();
       e.stopPropagation();
       if (!menu.classList.contains("hidden") && menu._mode === "root") closeMenu();
       else openRoot();
     });
+
     // @упоминание: участники поручения и ваша команда.
     function mentionQuery() {
       var pos = ta.selectionStart || 0;
-      var before = ta.value.slice(0, pos);
-      var m = before.match(/(^|\s)@([^\s@]{0,32})$/);
+      var m = ta.value.slice(0, pos).match(/(^|\s)@([^\s@]{0,32})$/);
       return m ? { q: m[2], start: pos - m[2].length - 1, end: pos } : null;
     }
     function syncMention() {
@@ -23434,14 +23485,14 @@
       var people = postedMentionPeople(state).filter(function (p) {
         return !mq.q || p.name.toLowerCase().indexOf(mq.q.toLowerCase()) >= 0;
       });
-      menu.innerHTML = "";
-      menu._mode = "mention";
       if (!people.length) {
         closeMenu();
         return;
       }
+      menu.innerHTML = '<p class="note-menu-label">Упомянуть</p>';
+      menu._mode = "mention";
       people.slice(0, 8).forEach(function (p) {
-        menuItem(p.name, p.hint, function () {
+        var b = addItem(menu, "", function () {
           var cur = mentionQuery() || mq;
           var label = "@" + p.name.split(/\s+/)[0] + " ";
           ta.value = ta.value.slice(0, cur.start) + label + ta.value.slice(cur.end);
@@ -23451,20 +23502,50 @@
           var caret = cur.start + label.length;
           ta.setSelectionRange(caret, caret);
           grow();
+          syncSend();
         });
+        b.appendChild(postedAvatar(p.user_id, p.name, "xs"));
+        var copy = document.createElement("span");
+        copy.className = "note-ask-copy";
+        copy.innerHTML = "<b></b><small></small>";
+        copy.firstChild.textContent = p.name;
+        copy.lastChild.textContent = p.hint;
+        b.appendChild(copy);
       });
       menu.classList.remove("hidden");
     }
-    at.addEventListener("click", function (e) {
-      e.stopPropagation();
-      var pos = ta.selectionStart || ta.value.length;
-      var pre = ta.value.slice(0, pos);
-      var ins = (pre && !/\s$/.test(pre) ? " " : "") + "@";
-      ta.value = pre + ins + ta.value.slice(pos);
-      ta.focus();
-      ta.setSelectionRange(pos + ins.length, pos + ins.length);
+    ta.addEventListener("input", function () {
+      grow();
+      syncSend();
       syncMention();
     });
+
+    // Диктовка: тот же поток, что в поле ассистента; текст — в конец поля.
+    setHidden(mic, !noteDictSupported());
+    mic.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeMenu();
+      startNoteDictation(true, "custom", {
+        form: form,
+        onText: function (text) {
+          var cur = String(ta.value || "");
+          ta.value = cur + (cur && !/\s$/.test(cur) ? " " : "") + text;
+          grow();
+          syncSend();
+          ta.focus();
+        },
+      });
+    });
+    form.querySelector(".note-dict-stop").addEventListener("click", function (e) {
+      e.preventDefault();
+      stopNoteDictation();
+    });
+    form.querySelector(".note-dict-cancel").addEventListener("click", function (e) {
+      e.preventDefault();
+      cancelNoteDictation();
+    });
+
     fileInput.addEventListener("change", function () {
       var picked = Array.prototype.slice.call(fileInput.files || []);
       fileInput.value = "";
@@ -23508,13 +23589,12 @@
         document.removeEventListener("click", onDoc);
         return;
       }
-      if (!wrap.contains(e.target)) closeMenu();
+      if (!form.contains(e.target)) closeMenu();
     });
 
     async function submit() {
       var text = String(ta.value || "").trim();
-      var hasExtra = cmp.files.length || cmp.refs.length;
-      if (!mode && !text && !hasExtra) {
+      if (!mode && !text && !cmp.files.length && !cmp.refs.length) {
         ta.focus();
         return;
       }
@@ -23550,10 +23630,13 @@
         if (!postedCardIsOwner(state.task)) loadActual({ silent: true });
       } catch (err) {
         showNoteToast((err && err.message) || "Не получилось отправить");
+        syncSend();
       }
-      send.disabled = false;
     }
-    send.addEventListener("click", submit);
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      submit();
+    });
     ta.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && !menu.classList.contains("hidden")) {
         e.stopPropagation();
@@ -23562,7 +23645,7 @@
       }
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey || (isDesktopLayout() && !e.shiftKey))) {
         if (menu._mode === "mention") {
-          var first = menu.querySelector(".pt-pop-item");
+          var first = menu.querySelector(".note-paie-menu-item");
           if (first) {
             e.preventDefault();
             first.click();
@@ -24057,6 +24140,7 @@
 
   function canPerformAppBack() {
     if (isAppSheetModalOpen()) return true;
+    if (isKnowledgeSourcesOpen() || isKnowledgeFromProfileBack()) return true;
     if (isPostedCardOpen()) return true;
     if (isPostedTasksOpen()) return true;
     if (isNoteDiscussionOpen()) return true;
@@ -24228,7 +24312,16 @@
       profileScreen("main");
       return true;
     }
+    // Телефон: «База знаний» открывается из Профиля и в нижнем меню её нет — «Назад» возвращает в Профиль.
+    if (isKnowledgeFromProfileBack()) {
+      setTab("profile");
+      return true;
+    }
     return false;
+  }
+
+  function isKnowledgeFromProfileBack() {
+    return currentTab === "knowledge" && !isDesktopLayout();
   }
 
   function bindTelegramMiniappBackOnce() {
@@ -24640,6 +24733,7 @@
       agents && !agents.classList.contains("hidden") && profilePanelVisible;
 
     if (detail) detail.classList.remove("notes-detail--native-back");
+    document.documentElement.classList.remove("knowledge-native-back");
     document.querySelectorAll("#panel-profile .profile-subscreen--native-back").forEach(function (el) {
       el.classList.remove("profile-subscreen--native-back");
     });
@@ -24818,6 +24912,14 @@
     }
     if (anyProfileSub) {
       anyProfileSub.classList.add("profile-subscreen--native-back");
+      try {
+        tg.BackButton.show();
+      } catch (_) {}
+      finishAppBackChrome();
+      return;
+    }
+    if (isKnowledgeFromProfileBack()) {
+      document.documentElement.classList.add("knowledge-native-back");
       try {
         tg.BackButton.show();
       } catch (_) {}
@@ -48738,6 +48840,8 @@
     }
     var postedNew = document.getElementById("posted-tasks-new");
     if (postedNew) postedNew.addEventListener("click", openNewPostedTask);
+    var postedNewBar = document.getElementById("posted-tasks-new-bar");
+    if (postedNewBar) postedNewBar.addEventListener("click", openNewPostedTask);
     var postedSearch = document.getElementById("posted-tasks-search");
     if (postedSearch) {
       postedSearch.addEventListener("input", function () {
@@ -49363,6 +49467,9 @@
     onId("teams-manage-delete", "click", deleteTeamFromEdit);
     onId("knowledge-sources-open", "click", openKnowledgeSources);
     onId("knowledge-sources-back", "click", closeKnowledgeSources);
+    onId("knowledge-back", "click", function () {
+      setTab("profile");
+    });
     onId("profile-notifications-open", "click", function () {
       openNotificationsScreen("main");
     });
