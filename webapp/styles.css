@@ -22622,14 +22622,12 @@ textarea.tracker-desc {
 .pt-assist .pt-chip-ico { display: inline-flex; color: var(--accent); }
 .pt-assist .note-paie-attach-chip.is-loading { opacity: 0.6; }
 
-/* Профиль на телефоне: у вложенных экранов (Подсказки, Календари, Уведомления…) свой боковой отступ
-   добавлялся к отступу панели — блоки были уже, чем на главном экране профиля, а часть вылезала за край. */
-@media (max-width: 959px) {
-  /* Только встроенные в панель экраны; полноэкранные (position: fixed, inset 0) отступ дают сами. */
-  #panel-profile .profile-subscreen:not(#profile-payment):not(#profile-expenses):not(#profile-booking):not(#profile-contacts):not(#profile-calendars):not(#profile-zoom):not(#profile-telemost):not(#profile-yandex-disk):not(#profile-bitrix):not(#profile-knowledge-base):not(#profile-agents):not(#profile-chats):not(#profile-voice) .subscreen-body {
-    padding-left: 0;
-    padding-right: 0;
-  }
+/* Профиль: у встроенных вложенных экранов («Подсказки», «Уведомления»…) свой боковой отступ добавлялся к отступу
+   панели — блоки стояли правее кнопки «Назад» и были уже, чем на остальных экранах профиля. Полноэкранные
+   (position: fixed, inset 0) отступ дают сами — их не трогаем. */
+#panel-profile .profile-subscreen:not(#profile-payment):not(#profile-expenses):not(#profile-booking):not(#profile-contacts):not(#profile-calendars):not(#profile-zoom):not(#profile-telemost):not(#profile-yandex-disk):not(#profile-bitrix):not(#profile-knowledge-base):not(#profile-agents):not(#profile-chats):not(#profile-voice) .subscreen-body {
+  padding-left: 0;
+  padding-right: 0;
 }
 
 /* «База знаний» на телефоне открывается из Профиля (в нижнем меню её нет) — нужна «Назад». На десктопе есть боковое меню. */
