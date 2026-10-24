@@ -45,9 +45,46 @@ def get_openrouter_usage_telegram_user() -> tuple[str | None, str | None]:
     return _current_tg_user_id.get(), _current_tg_user_username.get()
 
 
+def comet_api_key() -> str:
+    """Ключ CometAPI (фолбэк). В .env встречается под разными именами."""
+    for name in ("COMET_API_KEY", "COMETA_APIKEY", "COMET_APIKEY", "COMETA_API_KEY"):
+        v = os.getenv(name, "").strip()
+        if v:
+            return v
+    return ""
+
+
 def is_llm_configured() -> bool:
     """Есть ли ключ для LLM: OpenRouter и/или Comet (основной или только фолбэк)."""
-    return bool(os.getenv("OPENROUTER_KEY", "").strip() or os.getenv("COMET_API_KEY", "").strip())
+    return bool(os.getenv("OPENROUTER_KEY", "").strip() or comet_api_key())
+
+
+# Если OpenRouter (прокси) не отвечает по сети — какое-то время сразу идём в Comet,
+# а не ждём таймаут на каждом запросе.
+_OR_DOWN_UNTIL = 0.0
+
+
+def _or_connect_timeout() -> float:
+    try:
+        return max(2.0, float(os.getenv("OPENROUTER_CONNECT_TIMEOUT_SEC", "8") or "8"))
+    except ValueError:
+        return 8.0
+
+
+def _or_down_sec() -> float:
+    try:
+        return max(30.0, float(os.getenv("OPENROUTER_DOWN_SEC", "300") or "300"))
+    except ValueError:
+        return 300.0
+
+
+def _openrouter_unreachable(e: BaseException) -> bool:
+    """Сетевой сбой или 5xx/403 от шлюза — OpenRouter недоступен, а не плохой запрос."""
+    if isinstance(e, (requests.ConnectionError, requests.Timeout)):
+        return True
+    if isinstance(e, requests.HTTPError) and e.response is not None:
+        return e.response.status_code in (403, 502, 503, 504)
+    return False
 
 
 def _openrouter_chat_url() -> str:
@@ -234,7 +271,7 @@ def _post_json(
     payload: dict[str, Any],
     *,
     extra_headers: dict[str, str],
-    timeout: float,
+    timeout: float | tuple[float, float],
 ) -> dict[str, Any]:
     headers: dict[str, str] = {
         "Authorization": f"Bearer {api_key}",
@@ -630,14 +667,16 @@ def openrouter_chat_completion(
     timeout: float = 120,
 ) -> dict[str, Any]:
     """POST chat/completions; при успехе логирует usage. Сначала OpenRouter, при ошибке — CometAPI."""
+    global _OR_DOWN_UNTIL
     or_key = os.getenv("OPENROUTER_KEY", "").strip()
-    comet_key = os.getenv("COMET_API_KEY", "").strip()
+    comet_key = comet_api_key()
     if not or_key and not comet_key:
         raise RuntimeError("Не заданы OPENROUTER_KEY или COMET_API_KEY в .env")
 
     primary_err: BaseException | None = None
+    or_down = bool(comet_key) and time.monotonic() < _OR_DOWN_UNTIL
 
-    if or_key:
+    if or_key and not or_down:
         extra: dict[str, str] = {}
         ref = os.getenv("OPENROUTER_HTTP_REFERER", "").strip()
         if ref:
@@ -651,7 +690,7 @@ def openrouter_chat_completion(
                 or_key,
                 payload,
                 extra_headers=extra,
-                timeout=timeout,
+                timeout=(_or_connect_timeout(), timeout),
             )
             _raise_if_bad_chat_completion("openrouter", data)
             _log_usage(data, payload, operation=operation, provider="openrouter")
@@ -659,6 +698,8 @@ def openrouter_chat_completion(
         except BaseException as e:
             primary_err = e
             if comet_key:
+                if _openrouter_unreachable(e):
+                    _OR_DOWN_UNTIL = time.monotonic() + _or_down_sec()
                 print(f"[openrouter_client] openrouter_failed op={operation!r} err={e!r} -> comet")
             else:
                 raise
