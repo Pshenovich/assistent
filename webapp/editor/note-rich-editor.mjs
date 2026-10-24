@@ -1582,7 +1582,7 @@ function mountToolbar(toolbarEl, editor) {
       item("task", "taskList", "checklist", "Чек-лист")
     );
   }
-  // «+» — вид блока (как в Telegram), под чертой — вставка. «Заголовок ›» открывает уровни внутри меню.
+  // «+» — вид блока (как в Telegram), под чертой — вставка. «Заголовок ›» и «Шрифт и размер ›» открываются внутри меню.
   var styleMenu =
     '<div class="note-tg-menu note-tg-menu--paged hidden" data-menu-panel="style" role="menu">' +
     '<div class="note-tg-page" data-page="main">' +
@@ -1590,6 +1590,8 @@ function mountToolbar(toolbarEl, editor) {
     svgIcon("heading") + "<span>Заголовок</span>" + svgIcon("chevronRight") + "</button>" +
     item("paragraph", "plain", "text", "Текст") +
     item("quote", "blockquote", "quote", "Цитата") +
+    '<button type="button" class="note-tg-menu-item note-tg-menu-page" data-go="font">' +
+    svgIcon("font") + "<span>Шрифт и размер</span>" + svgIcon("chevronRight") + "</button>" +
     sep() +
     item("divider", "", "divider", "Разделитель") +
     item("noteref", "", "noteref", "Ссылка на заметку") +
@@ -1600,10 +1602,10 @@ function mountToolbar(toolbarEl, editor) {
     item("heading-2", "heading-2", "", "Заголовок 2", "note-tg-h note-tg-h2") +
     item("heading-3", "heading-3", "", "Заголовок 3", "note-tg-h note-tg-h3") +
     item("heading-4", "heading-4", "", "Заголовок 4", "note-tg-h note-tg-h4") +
-    "</div></div>";
-
-  var fontMenu =
-    '<div class="note-tg-menu note-tg-menu--font hidden" data-menu-panel="font" role="menu">' +
+    "</div>" +
+    '<div class="note-tg-page note-tg-page--font hidden" data-page="font">' +
+    '<button type="button" class="note-tg-menu-item note-tg-menu-page note-tg-menu-back" data-go="main">' +
+    svgIcon("chevronLeft") + "<span>Назад</span></button>" +
     '<p class="note-tg-menu-hint" data-font-target></p>' +
     '<p class="note-tg-menu-label">Шрифт</p>' +
     NOTE_FONTS.map(function (f) {
@@ -1619,7 +1621,7 @@ function mountToolbar(toolbarEl, editor) {
     NOTE_FONT_SIZES.map(function (v) {
       return '<button type="button" class="note-tg-menu-item note-tg-size-item" data-cmd="size:' + v + '" data-check="size:' + v + '"><span>' + parseInt(v, 10) + "</span></button>";
     }).join("") +
-    "</div></div>";
+    "</div></div></div>";
 
   toolbarEl.className = "note-rich-editor-toolbar note-tg-toolbar";
   toolbarEl.innerHTML =
@@ -1627,13 +1629,12 @@ function mountToolbar(toolbarEl, editor) {
     btn("note-tg-btn--undo", 'data-action="undo"', "Отменить", "undo") +
     btn("note-tg-btn--redo", 'data-action="redo"', "Повторить", "redo") +
     "</div>" +
-    // Как в Telegram: «+» (вид блока), список, таблица, файл; у нас ещё «Aa» — шрифт и кегль.
+    // Как в Telegram: «+» (вид блока, шрифт и кегль), список, таблица, файл.
     '<div class="note-tg-capsule note-tg-capsule--default" data-mode="default">' +
     btn("", 'data-menu="style"', "Вид текста и вставка", "plus") +
     btn("", 'data-menu="list"', "Список", "list") +
     btn("", 'data-action="table"', "Таблица", "table") +
     btn("note-tg-btn--attach", 'data-action="attach"', "Файл или фото", "paperclip") +
-    btn("", 'data-menu="font"', "Шрифт и размер", "font") +
     "</div>" +
     '<div class="note-tg-capsule note-tg-capsule--selection hidden" data-mode="selection">' +
     btn("", 'data-action="bold"', "Жирный", "bold") +
@@ -1643,12 +1644,10 @@ function mountToolbar(toolbarEl, editor) {
     btn("", 'data-action="highlight"', "Маркер", "highlight") +
     btn("", 'data-action="link"', "Ссылка", "link") +
     '<span class="note-tg-sep" aria-hidden="true"></span>' +
-    btn("", 'data-menu="style"', "Вид текста", "heading") +
-    btn("", 'data-menu="font"', "Шрифт и размер", "font") +
+    btn("", 'data-menu="style"', "Вид текста, шрифт и размер", "heading") +
     btn("", 'data-menu="list-sel"', "Список", "list") +
     "</div>" +
     styleMenu +
-    fontMenu +
     '<div class="note-tg-menu hidden" data-menu-panel="list" role="menu">' + listItems("Нет") + "</div>" +
     '<div class="note-tg-menu hidden" data-menu-panel="list-sel" role="menu">' + listItems("Нет") + "</div>";
 
@@ -1716,6 +1715,7 @@ function mountToolbar(toolbarEl, editor) {
     var go = item.getAttribute("data-go");
     if (go) {
       var pnl = item.closest(".note-tg-menu");
+      if (go === "font") syncFontTarget(pnl);
       showMenuPage(pnl, go);
       placeMenu(pnl, toolbarEl.querySelector(".note-tg-btn--menu-open"));
       return;
@@ -1727,7 +1727,7 @@ function mountToolbar(toolbarEl, editor) {
     closeTgMenus(toolbarEl);
   }
 
-  // Выделение на момент открытия «Aa»: на телефоне касание кнопки / пункта меню сбрасывает
+  // Выделение на момент открытия меню «+» / «H» (страница «Шрифт и размер»): на телефоне касание кнопки / пункта меню сбрасывает
   // выделение раньше, чем выбран шрифт, и он применялся к пустому курсору.
   var fontMenuRange = null;
   editor.on("transaction", function (p) {
@@ -1816,15 +1816,18 @@ function mountToolbar(toolbarEl, editor) {
     if (range) fontMenuRange = { from: range.from, to: Math.min(range.to, editor.state.doc.content.size) };
   }
 
+  function syncFontTarget(panel) {
+    var hint = panel.querySelector("[data-font-target]");
+    if (hint) hint.textContent = fontTargetIsDoc() ? "Ко всей заметке · выделите текст, чтобы изменить часть" : "К выделенному тексту";
+  }
+
   function openMenu(name, triggerBtn) {
     var panel = toolbarEl.querySelector('[data-menu-panel="' + name + '"]');
     if (!panel) return;
-    if (name === "font") {
+    if (name === "style") {
       var fs = editor.state.selection;
-      // Выделение пропало (повторное «Aa» на телефоне) — остаётся прошлый диапазон, пока текст не правили.
+      // Выделение пропало (повторное открытие меню на телефоне) — остаётся прошлый диапазон, пока текст не правили.
       if (!fs.empty) fontMenuRange = { from: fs.from, to: fs.to };
-      var hint = panel.querySelector("[data-font-target]");
-      if (hint) hint.textContent = fontTargetIsDoc() ? "Ко всей заметке · выделите текст, чтобы изменить часть" : "К выделенному тексту";
     }
     var wasOpen = !panel.classList.contains("hidden");
     closeTgMenus(toolbarEl);
@@ -1970,7 +1973,7 @@ function mountToolbar(toolbarEl, editor) {
     if (row) row.classList.toggle("is-selection", hasSelection);
     // Only close when leaving selection mode — never while caret is empty
     // (that race hid the «+» menu before the item click fired).
-    var fontMenuOpen = !!toolbarEl.querySelector('[data-menu-panel="font"]:not(.hidden)');
+    var fontMenuOpen = !!toolbarEl.querySelector('[data-menu-panel="style"]:not(.hidden) [data-page="font"]:not(.hidden)');
     if (hadTextSelection !== hasSelection && (hadTextSelection || hasSelection) && !(fontMenuOpen && fontMenuRange)) closeTgMenus(toolbarEl);
     hadTextSelection = hasSelection;
 
@@ -1997,14 +2000,10 @@ function mountToolbar(toolbarEl, editor) {
         btn.classList.toggle("note-tg-btn--active", editor.isActive(markMap[action]));
       });
     });
-    toolbarEl.querySelectorAll('[data-menu="style"]').forEach(function (btn) {
-      btn.classList.toggle("note-tg-btn--active", editor.isActive("heading") || editor.isActive("blockquote"));
-    });
-
     var ts = editor.getAttributes("textStyle") || {};
     var curFont = noteFontByCss(ts.fontFamily);
-    toolbarEl.querySelectorAll('[data-menu="font"]').forEach(function (btn) {
-      btn.classList.toggle("note-tg-btn--active", !!(curFont || ts.fontSize));
+    toolbarEl.querySelectorAll('[data-menu="style"]').forEach(function (btn) {
+      btn.classList.toggle("note-tg-btn--active", editor.isActive("heading") || editor.isActive("blockquote") || !!(curFont || ts.fontSize));
     });
     toolbarEl.querySelectorAll(".note-tg-menu-item[data-check]").forEach(function (item) {
       var check = item.getAttribute("data-check");
@@ -3779,7 +3778,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-tghead",
+  assetVersion: "20261025-tgfont",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,
