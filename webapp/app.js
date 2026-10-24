@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261024-posted7";
+  var WEBAPP_BUILD = "20261025-alerts1";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
