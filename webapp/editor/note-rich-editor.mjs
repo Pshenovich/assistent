@@ -1126,7 +1126,6 @@ function svgIcon(name) {
       '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2"/><path d="M4 12l1 1 2-2"/><path d="M4 18l1 1 2-2"/>',
     none: '<path d="M4 7h16M4 12h16M4 17h10"/>',
     blank: "",
-    subheading: '<path d="M5 6v12M14 6v12M5 12h9"/><path d="M17.5 13.5a2 2 0 1 1 3 1.7L17.5 18h3.5"/>',
   };
   return "<svg " + common + ">" + (paths[name] || "") + "</svg>";
 }
@@ -1583,17 +1582,25 @@ function mountToolbar(toolbarEl, editor) {
       item("task", "taskList", "checklist", "Чек-лист")
     );
   }
-  // «+» — вид блока (как в Telegram), под чертой — вставка.
+  // «+» — вид блока (как в Telegram), под чертой — вставка. «Заголовок ›» открывает уровни внутри меню.
   var styleMenu =
-    '<div class="note-tg-menu hidden" data-menu-panel="style" role="menu">' +
-    item("heading-2", "heading-2", "heading", "Заголовок") +
-    item("heading-3", "heading-3", "subheading", "Подзаголовок") +
+    '<div class="note-tg-menu note-tg-menu--paged hidden" data-menu-panel="style" role="menu">' +
+    '<div class="note-tg-page" data-page="main">' +
+    '<button type="button" class="note-tg-menu-item note-tg-menu-page" data-go="heading" data-check="heading">' +
+    svgIcon("heading") + "<span>Заголовок</span>" + svgIcon("chevronRight") + "</button>" +
     item("paragraph", "plain", "text", "Текст") +
     item("quote", "blockquote", "quote", "Цитата") +
     sep() +
     item("divider", "", "divider", "Разделитель") +
     item("noteref", "", "noteref", "Ссылка на заметку") +
-    "</div>";
+    "</div>" +
+    '<div class="note-tg-page hidden" data-page="heading">' +
+    '<button type="button" class="note-tg-menu-item note-tg-menu-page note-tg-menu-back" data-go="main">' +
+    svgIcon("chevronLeft") + "<span>Назад</span></button>" +
+    item("heading-2", "heading-2", "", "Заголовок 2", "note-tg-h note-tg-h2") +
+    item("heading-3", "heading-3", "", "Заголовок 3", "note-tg-h note-tg-h3") +
+    item("heading-4", "heading-4", "", "Заголовок 4", "note-tg-h note-tg-h4") +
+    "</div></div>";
 
   var fontMenu =
     '<div class="note-tg-menu note-tg-menu--font hidden" data-menu-panel="font" role="menu">' +
@@ -3772,7 +3779,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-tgtable",
+  assetVersion: "20261025-tghead",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,
