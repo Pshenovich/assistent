@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261024-posted5";
+  var WEBAPP_BUILD = "20261024-posted6";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -1958,7 +1958,7 @@
     if (!b) return;
     b.classList.toggle("is-active", calShowPosted);
     b.setAttribute("aria-pressed", String(calShowPosted));
-    b.title = calShowPosted ? "Скрыть в календаре поручения другим" : "Показать в календаре поручения другим";
+    b.title = calShowPosted ? "Скрыть в календаре задачи, поставленные другим" : "Показать в календаре задачи, поставленные другим";
   }
 
   function repaintMeetingsFromState() {
@@ -1976,7 +1976,7 @@
     repaintMeetingsFromState();
     if (calShowPosted) {
       var n = postedCalendarEvents("", "").length;
-      showNoteToast(n ? "Показаны поручения другим" : "Нет текущих поручений другим");
+      showNoteToast(n ? "Показаны задачи, поставленные другим" : "Нет текущих задач, поставленных другим");
     }
   }
 
@@ -20408,7 +20408,7 @@
   }
 
   async function askAboutFocus(it, btn) {
-    if (focusHasItems(it) || (it && it.tasks && it.tasks.length)) {
+    if (focusHasItems(it) || (it && it.tasks && it.tasks.length) || (it && it.commitment_keys && it.commitment_keys.length)) {
       if (btn) btn.disabled = true;
       try {
         await openFocusRefineChat(it);
@@ -21677,8 +21677,8 @@
         "posted-tasks-open"
       )
     );
-    chips.lastChild.setAttribute("aria-label", "Поручено другим");
-    chips.lastChild.title = "Задачи, которые вы поручили другим";
+    chips.lastChild.setAttribute("aria-label", "Поставленные задачи");
+    chips.lastChild.title = "Задачи, которые вы поставили другим";
     syncPostedHeroLate(chips.lastChild, postedOverdueCountFromItems(lastPostedTasksItems));
     left.appendChild(chips);
     inner.appendChild(left);
@@ -22215,15 +22215,15 @@
     setHidden(search, !arch);
     setHidden(newBtn, arch);
     if (newBar) newBar.style.visibility = arch ? "hidden" : "";
-    if (barTitle) barTitle.textContent = arch ? "Принятые" : "Поручения";
+    if (barTitle) barTitle.textContent = arch ? "Принятые" : "Поставленные";
     if (archBtn) {
-      archBtn.textContent = arch ? "← Поручения" : "Принятые" + (postedArchiveLoaded ? " · " + postedArchiveItems.length : "");
+      archBtn.textContent = arch ? "← Поставленные" : "Принятые" + (postedArchiveLoaded ? " · " + postedArchiveItems.length : "");
     }
     if (arch) {
       if (title) title.textContent = "Принятые";
       if (sub) {
         var n = postedArchiveItems.length;
-        sub.textContent = postedArchiveLoaded ? n + " " + pluralRu(n, "поручение", "поручения", "поручений") : "Загружаю…";
+        sub.textContent = postedArchiveLoaded ? n + " " + pluralRu(n, "задача", "задачи", "задач") : "Загружаю…";
       }
       renderPostedTeam(postedArchiveItems);
       renderPostedArchiveList(listEl);
@@ -22233,7 +22233,7 @@
       });
       var attn = postedAttentionCount(all);
       var work = all.length - attn;
-      if (title) title.textContent = "Поручения";
+      if (title) title.textContent = "Поставленные задачи";
       if (sub) {
         sub.textContent = all.length
           ? (attn ? attn + " " + pluralRu(attn, "ждёт вас", "ждут вас", "ждут вас") + " · " : "") + work + " в работе"
@@ -22306,10 +22306,10 @@
     allNode.className = "pt-av pt-av--l pt-av--all";
     allNode.textContent = String(items.length);
     var attnAll = arch ? 0 : postedAttentionCount(items);
-    card("", allNode, "Все", items.length + " " + pluralRu(items.length, "поручение", "поручения", "поручений"),
+    card("", allNode, "Все", items.length + " " + pluralRu(items.length, "задача", "задачи", "задач"),
       "", attnAll ? attnAll + " ждут вас" : "", !!attnAll, 0, 0);
     people.forEach(function (g) {
-      var cnt = g.items.length + " " + pluralRu(g.items.length, "поручение", "поручения", "поручений");
+      var cnt = g.items.length + " " + pluralRu(g.items.length, "задача", "задачи", "задач");
       var line = cnt;
       var cls = "";
       var due = "";
@@ -22372,11 +22372,11 @@
       return;
     }
     var p = document.createElement("p");
-    if (kind === "archive") p.textContent = "Здесь будут поручения, которые вы приняли или отменили.";
+    if (kind === "archive") p.textContent = "Здесь будут задачи, которые вы приняли или отменили.";
     else if (kind === "archive-search") p.textContent = "Ничего не нашлось.";
-    else p.textContent = "Поручите задачу коллеге — здесь будет видно, где нужны вы и что идёт по плану.";
+    else p.textContent = "Поставьте задачу коллеге — здесь будет видно, где нужны вы и что идёт по плану.";
     emptyEl.appendChild(p);
-    if (kind === "none") emptyEl.appendChild(postedBtn("Поручить задачу", "pt-btn--primary", openNewPostedTask));
+    if (kind === "none") emptyEl.appendChild(postedBtn("Поставить задачу", "pt-btn--primary", openNewPostedTask));
     setHidden(emptyEl, false);
   }
 
@@ -22456,7 +22456,7 @@
     if (all.length && !attn.length && !work.length) {
       var p = document.createElement("p");
       p.className = "pt-muted-note";
-      p.textContent = "У этого человека сейчас нет поручений.";
+      p.textContent = "У этого человека сейчас нет задач.";
       listEl.appendChild(p);
     }
     if (!isDesktopLayout() && all.length) {
@@ -22686,7 +22686,7 @@
     }
     if (!postedSelectedId) {
       postedCardHosts.side = null;
-      side.innerHTML = '<p class="pt-muted-note pt-side-empty">Здесь откроется поручение</p>';
+      side.innerHTML = '<p class="pt-muted-note pt-side-empty">Здесь откроется задача</p>';
       return;
     }
     if (!postedCardHosts.side || postedCardHosts.side.taskId !== postedSelectedId) {
@@ -22830,7 +22830,7 @@
       paintPostedCard(state);
     } catch (err) {
       if (!state.task) state.host.innerHTML = '<div class="pt-card-loading"></div>';
-      showNoteToast((err && err.message) || "Не удалось открыть поручение");
+      showNoteToast((err && err.message) || "Не удалось открыть задачу");
     }
   }
 
@@ -22853,14 +22853,14 @@
   }
 
   var POSTED_EVENT_TEXT = {
-    created: "Поручение поставлено",
+    created: "Задача поставлена",
     seen: "Исполнитель открыл задачу",
     in_progress: "Взято в работу",
     nudge: "Отправлено напоминание",
     done: "Работа сдана",
     returned: "Возвращено в работу",
     accepted: "Принято",
-    cancelled: "Поручение отменено",
+    cancelled: "Задача отменена",
   };
 
   function paintPostedCard(state) {
@@ -22952,12 +22952,24 @@
     due.textContent = postedDueLong(task);
     who.appendChild(due);
     body.appendChild(who);
-    if (task.description) {
+    // «Из «Заметка»» в описании (так пишут задачи из Фокуса и выделения) + note_id → ссылка «Источник».
+    var descText = String(task.description || "");
+    var srcTitle = "";
+    var srcM = descText.match(/(?:^|\n)Из «([^»\n]+)»\s*$/);
+    if (srcM && task.note_id) {
+      srcTitle = srcM[1];
+      descText = descText.slice(0, srcM.index).trim();
+    }
+    if (descText) {
       var d = document.createElement("p");
       d.className = "pt-c-desc";
-      d.textContent = String(task.description);
+      d.textContent = descText;
       body.appendChild(d);
     }
+    var srcHost = document.createElement("div");
+    srcHost.className = "pt-c-sources hidden";
+    body.appendChild(srcHost);
+    mountPostedSources(srcHost, task, srcTitle, state);
     var checklist = normalizeReminderChecklist(task.checklist || ev.checklist || []);
     if (checklist.length) body.appendChild(renderPostedChecklist(state, checklist, !archived));
     (task.tracker_links || []).forEach(function (l) {
@@ -22989,14 +23001,14 @@
     foot.className = "pt-c-foot";
     if (!archived || isOwner) foot.appendChild(renderPostedComposer(state, otherName, draft));
     var bar = document.createElement("div");
-    bar.className = "pt-acts";
+    bar.className = "modal-sheet-actions pt-card-actions";
     if (isOwner) {
       if (archived) {
-        bar.appendChild(postedBtn("Вернуть в работу", "", function () {
+        bar.appendChild(postedActBtn("undo", "Вернуть в работу", false, function () {
           setPostedCardMode(state, "return");
         }));
       } else if (done) {
-        bar.appendChild(postedBtn("Принять", "pt-btn--primary", async function (b) {
+        bar.appendChild(postedActBtn("check", "Принять", true, async function (b) {
           b.disabled = true;
           var r = await acceptPostedTask(task.id);
           b.disabled = false;
@@ -23008,26 +23020,26 @@
             else renderPostedScreen();
           }
         }));
-        bar.appendChild(postedBtn("Вернуть", "", function () {
+        bar.appendChild(postedActBtn("undo", "Вернуть", false, function () {
           setPostedCardMode(state, "return");
         }));
       } else {
-        bar.appendChild(postedBtn("Напомнить", "", async function (b) {
+        bar.appendChild(postedActBtn("bell", "Напомнить", false, async function (b) {
           b.disabled = true;
           var r = await nudgePostedTask(task.id);
           b.disabled = false;
           if (r.ok) refreshPostedCard(state);
         }));
-        bar.appendChild(postedBtn("Перенести срок", "", function () {
+        bar.appendChild(postedActBtn("cal", "Перенести срок", false, function () {
           openPostedTaskEditor(task, state);
         }));
       }
     } else if (!done && !archived) {
-      bar.appendChild(postedBtn("Сдать результат", "pt-btn--primary", function () {
+      bar.appendChild(postedActBtn("check", "Сдать результат", true, function () {
         setPostedCardMode(state, "result");
       }));
       if (st.status !== "in_progress" && st.status !== "question") {
-        bar.appendChild(postedBtn("Взять в работу", "", async function (b) {
+        bar.appendChild(postedActBtn("play", "Взять в работу", false, async function (b) {
           b.disabled = true;
           try {
             var r = await postedApi(task.id, "status", { status: "in_progress" });
@@ -23039,7 +23051,7 @@
           b.disabled = false;
         }));
       }
-      bar.appendChild(postedBtn("Попросить перенос", "", function () {
+      bar.appendChild(postedActBtn("cal", "Попросить перенос", false, function () {
         setPostedCardMode(state, "");
         var ta = host.querySelector(".pt-composer textarea");
         if (ta) {
@@ -23063,6 +23075,82 @@
     if (feed && feed.lastChild && feed.lastChild.scrollIntoView && state.opts.inSide !== true) {
       feed.lastChild.scrollIntoView({ block: "nearest" });
     }
+  }
+
+  var POSTED_ACT_ICONS = {
+    bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+    cal: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M12 14v3l2 1"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    undo: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
+    play: '<path d="M7 5v14l11-7z"/>',
+  };
+
+  // Кнопки действий карточки — как внизу окна задачи (плашки с иконкой); главная — зелёная.
+  function postedActBtn(icon, label, primary, onClick) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn " + (primary ? "modal-done-btn pt-act is-primary" : "modal-link-btn pt-act");
+    b.innerHTML =
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      (POSTED_ACT_ICONS[icon] || "") + "</svg><span></span>";
+    b.querySelector("span").textContent = label;
+    b.addEventListener("click", function (e) {
+      e.stopPropagation();
+      onClick(b);
+    });
+    return b;
+  }
+
+  // «Источник»: заметка, из которой поставлена задача, и заметки, где она упомянута, — кликабельно.
+  function mountPostedSources(host, task, srcTitle, state) {
+    var seen = {};
+    var chips = document.createElement("span");
+    chips.className = "note-backlinks";
+    function add(noteId, title, sheetId, isTr) {
+      var k = String(noteId) + ":" + String(sheetId || "");
+      if (!noteId || seen[k]) return;
+      seen[k] = 1;
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "note-backlink-chip";
+      b.innerHTML = isTr ? WAVE_ICON : NOTE_ICON;
+      var t = document.createElement("span");
+      t.textContent = title || "Заметка";
+      b.appendChild(t);
+      b.title = t.textContent;
+      b.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!state.opts.inSide) closePostedCard();
+        openNoteRefFromChip(String(noteId), sheetId || "");
+      });
+      chips.appendChild(b);
+      host.classList.remove("hidden");
+    }
+    var label = document.createElement("span");
+    label.className = "event-sheet-row-label";
+    label.textContent = "Источник";
+    host.appendChild(label);
+    host.appendChild(chips);
+    if (task.note_id) add(task.note_id, srcTitle || "Заметка", "", false);
+    if (!task.id) return;
+    apiFetch("/notes/backlinks?kind=task&id=" + encodeURIComponent(String(task.id)), { method: "GET" })
+      .then(function (r) {
+        if (!host.isConnected) return;
+        var items = (r && r.items) || [];
+        items.forEach(function (it) {
+          // заметка-источник уже есть — подменяем подпись на настоящее название
+          if (task.note_id && !it.sheet_id && (String(it.note_id) === String(task.note_id) || (srcTitle && it.title === srcTitle))) {
+            var first = chips.querySelector(".note-backlink-chip span");
+            if (first) first.textContent = it.title;
+            seen[String(it.note_id) + ":"] = 1;
+            return;
+          }
+          add(it.note_id, it.sheet_id ? it.title + " · " + it.sheet_title : it.title, it.sheet_id || "", it.is_transcription);
+        });
+        if (items.length > 1 || (items.length && !task.note_id)) label.textContent = "Источники";
+      })
+      .catch(function () {});
   }
 
   function renderPostedChecklist(state, checklist, editable) {
@@ -23759,15 +23847,15 @@
     ];
     if (isOwner && !postedTaskIsArchived(task)) {
       items.push({
-        label: "Отменить поручение",
+        label: "Отменить задачу",
         danger: true,
         fn: async function () {
-          if (!(await confirmDialog("Отменить поручение? " + postedFirstName(postedTaskAssigneeLabel(task)) + " получит уведомление, задача уйдёт в «Принятые».")))
+          if (!(await confirmDialog("Отменить задачу? " + postedFirstName(postedTaskAssigneeLabel(task)) + " получит уведомление, задача уйдёт в «Принятые».")))
             return;
           try {
             var r = await postedApi(task.id, "cancel");
             if (r && r.task) upsertPostedTask(r.task);
-            showNoteToast("Поручение отменено");
+            showNoteToast("Задача отменена");
             if (state.opts.inSide) {
               postedSelectedId = "";
               renderPostedScreen();
@@ -23882,7 +23970,7 @@
       var items = (data && data.items) || [];
       syncPostedTasksState(items, data && typeof data.count === "number" ? data.count : undefined);
     } catch (err) {
-      showNoteToast((err && err.message) || "Не удалось обновить поручения");
+      showNoteToast((err && err.message) || "Не удалось обновить задачи");
     }
     if (isPostedTasksOpen()) loadPostedArchive();
   }
@@ -29288,7 +29376,9 @@
   function syncChatDiscussionChrome() {
     var closeBtn = document.getElementById("note-discussion-close");
     if (closeBtn) {
-      setHidden(closeBtn, notesSubTab === "chats" && isDesktopLayout());
+      // Прячем только в «Заметки → Чаты» на десктопе (там чат встроен в экран). notesSubTab помнит последнюю
+      // подвкладку и вне «Заметок» — без проверки вкладки «×» пропадал у ассистента на «Актуальном».
+      setHidden(closeBtn, currentTab === "notes" && notesSubTab === "chats" && isDesktopLayout());
     }
     document.documentElement.classList.toggle(
       "notes-chats-tab",
@@ -37034,6 +37124,7 @@
       return;
     }
     rememberActualAssistantChat(activeChatThreadId);
+    syncChatDiscussionChrome();
     syncChatDiscussionTitle((document.getElementById("note-discussion-title-label") || {}).textContent || "Чат");
     renderFocusPanel();
     refreshLeoMemoryStatus();

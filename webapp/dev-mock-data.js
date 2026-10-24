@@ -62,7 +62,7 @@
       [9002, "Согласовать договор с подрядчиком", -3, "14:00", "33", "Артём", false, [], { assignee_seen_at: hAgo(70) }],
       [9003, "Подготовить отчёт по продажам за Q3", -1, null, "22", "Ульяна", false,
         [{ text: "Выгрузка из CRM", done: true }, { text: "Графики", done: false }, { text: "Выводы", done: false }],
-        { assignee_seen_at: hAgo(30), assignee_status: "question", assignee_status_note: "За какой период брать данные — квартал или 9 месяцев?", assignee_status_at: hAgo(5) }],
+        { assignee_seen_at: hAgo(30), assignee_status: "question", assignee_status_note: "За какой период брать данные — квартал или 9 месяцев?", assignee_status_at: hAgo(5), description: "К совету директоров в пятницу\nИз «Планёрка»", note_id: "12" }],
       [9004, "Созвониться с клиентом Альфа по интеграции и зафиксировать сроки запуска пилота", 0, "23:30", "44", "Максим Петров", false, [], { assignee_seen_at: hAgo(3), assignee_status: "in_progress", assignee_status_at: hAgo(2) }],
       [9005, "Обновить лендинг", 1, null, "33", "Артём", false, [], {}],
       [9006, "Проверить счета", 4, "11:00", "55", "Ирина", false, [], { last_nudged_at: hAgo(1) }],

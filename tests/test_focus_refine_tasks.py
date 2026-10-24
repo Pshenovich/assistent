@@ -48,3 +48,27 @@ def test_refine_unknown_card_404(client):
     c, _ = client
     r = c.post("/api/miniapp/proactive/refine", json={"key": "nope"}, headers=_headers(UID))
     assert r.status_code == 404
+
+
+def test_refine_risk_card_returns_registry_items(client, monkeypatch):
+    from datetime import datetime, timezone
+
+    from assistant.services import focus_items as fi
+
+    c, _ = client
+    monkeypatch.setattr(fi, "_owner_names", lambda uid: ["Вова"])
+    monkeypatch.setattr(fi, "sync_source", lambda *a, **k: None)
+    fi._CONN = None
+    fi.ingest(UID, [{"key": "sumtasks:9", "type": "summary_tasks", "source": "транскрипция",
+                     "note": {"id": 9, "kind": "transcription", "title": "Встреча 9"},
+                     "items": [{"id": "sumtask:9:a", "text": "Спикер 2 — Обновить сайт — 2026-10-23"}]}],
+              datetime(2026, 10, 22, 9, 0, tzinfo=timezone.utc))
+    card = {"key": "risk:no_owner:x", "type": "risk", "title": "Срок близко, а ответственного нет: 1 задача",
+            "commitment_keys": ["sumtask:9:a", "sumtask:missing"]}
+    monkeypatch.setattr(usage_server, "_focus_card_for", lambda uid, key: card if key == card["key"] else None)
+    r = c.post("/api/miniapp/proactive/refine", json={"key": card["key"]}, headers=_headers(UID))
+    assert r.status_code == 200, r.text
+    act = r.json()["action"]
+    assert act["kind"] == "focus_item"
+    assert [f["key"] for f in act.get("focus") or []] == ["sumtask:9:a"]
+    fi._CONN = None

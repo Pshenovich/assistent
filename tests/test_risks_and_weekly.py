@@ -38,6 +38,7 @@ def test_risk_cards(db):
         {"id": "sumtask:4:b", "text": "Пётр — Прислать договор — 2026-10-19"},
         {"id": "sumtask:4:c", "text": "Спикер 2 — Обновить сайт — 2026-10-23"},
         {"id": "sumtask:4:d", "text": "Спикер 2 — Когда-нибудь потом — 2026-12-01"},
+        {"id": "sumtask:4:e", "text": "Анна — Разослать протокол — 2026-10-23"},
     ], NOW)
     cards = {c["tag"]: c for c in risk_rules.risk_cards(1, now=NOW)}
     assert set(cards) == {"⏰ ваши обещания", "⏰ ждёте от других", "🔁 буксует", "❓ нет ответственного"}
@@ -45,6 +46,11 @@ def test_risk_cards(db):
     assert cards["⏰ ждёте от других"]["source"] == "Пётр"
     assert "Подготовить смету" in cards["🔁 буксует"]["ask"]
     assert cards["❓ нет ответственного"]["lines"] == ["Спикер 2 — Обновить сайт (срок 2026-10-23)"]
+    # у «Анны» исполнитель назван — это не «нет ответственного», даже если неясно, чьё обязательство
+    assert all("Анна" not in x for x in cards["❓ нет ответственного"]["lines"])
+    # «Уточнить» покажет пункты карточками: ключи пунктов реестра
+    keys = cards["❓ нет ответственного"]["commitment_keys"]
+    assert keys == ["sumtask:4:c"] and fi.get(1, keys[0])
     assert "items" not in cards["🔁 буксует"]
     assert cards["🔁 буксует"]["actions"][0]["act"] == "assistant"
 

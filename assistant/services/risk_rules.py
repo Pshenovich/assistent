@@ -45,9 +45,18 @@ def _card(key: str, *, tag: str, urgency: int, title: str, source: str, items: l
         # без "items": кнопка «Разобрать» у карточек с пунктами закрывает пункт Фокуса по ключу,
         # а здесь пункты — обязательства реестра; карточка просто скрывается после разбора
         "lines": lines,
+        # пункты реестра (по главному ключу обязательства) — «Уточнить» показывает их карточками в чате
+        "commitment_keys": [str((c.get("keys") or [""])[0]) for c in items if c.get("keys")][:MAX_LINES],
         "actions": [{"label": "Разобрать с Лео", "act": "assistant", "primary": True,
                      "payload": {"prompt": prompt + "\n" + "\n".join("— " + x for x in lines)}}],
     }
+
+
+def _no_owner_name(who: Any) -> bool:
+    import re
+
+    w = str(who or "").strip()
+    return not w or bool(re.fullmatch(r"(спикер|speaker|участник)\s*\d*", w, flags=re.I))
 
 
 def _meeting_sources(c: dict[str, Any]) -> int:
@@ -94,7 +103,10 @@ def risk_cards(uid: int, *, now: Optional[datetime] = None) -> list[dict[str, An
             prompt="Эти задачи всплывают на встречах снова и снова — помоги понять, что их блокирует, и назначить ответственного и срок.",
         ))
     horizon = (now + NO_OWNER_HORIZON).date().isoformat()
-    no_owner = [c for c in open_ if c["direction"] == "unknown" and c.get("due_iso") and c["due_iso"] <= horizon]
+    # «Нет ответственного» — исполнитель не назван или это неопознанный «Спикер N»
+    # (direction=unknown само по себе значит лишь «не понятно, ваше или чужое»: у таких бывает имя).
+    no_owner = [c for c in open_ if c["direction"] == "unknown" and _no_owner_name(c.get("who"))
+                and c.get("due_iso") and c["due_iso"] <= horizon]
     if no_owner:
         n = len(no_owner)
         cards.append(_card(

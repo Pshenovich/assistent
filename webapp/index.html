@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261024-posted5">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261024-posted6">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -96,7 +96,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261024-posted5" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261024-posted6" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -149,9 +149,9 @@
         <div id="actual-posted-tasks" class="actual-subscreen hidden">
           <div class="detail-toolbar detail-toolbar--subscreen">
             <button type="button" class="btn-text" id="posted-tasks-back">← Назад</button>
-            <h2 class="detail-title pt-bar-title" id="posted-tasks-bar-title">Поручения</h2>
+            <h2 class="detail-title pt-bar-title" id="posted-tasks-bar-title">Поставленные</h2>
             <div class="pt-bar-actions">
-              <button type="button" class="pt-btn pt-btn--primary pt-bar-new" id="posted-tasks-new-bar" aria-label="Поручить задачу" title="Поручить задачу">
+              <button type="button" class="pt-btn pt-btn--primary pt-bar-new" id="posted-tasks-new-bar" aria-label="Поставить задачу" title="Поставить задачу">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
               </button>
             </div>
@@ -159,13 +159,13 @@
           <div class="subscreen-body posted-body">
             <div class="pt-head">
               <div class="pt-head-text">
-                <h2 class="pt-title" id="posted-tasks-title">Поручения</h2>
+                <h2 class="pt-title" id="posted-tasks-title">Поставленные задачи</h2>
                 <p class="pt-sub" id="posted-tasks-sub"></p>
               </div>
               <div class="pt-head-actions">
                 <button type="button" class="pt-btn pt-only-desktop" id="posted-tasks-archive">Принятые</button>
-                <button type="button" class="pt-btn pt-btn--primary" id="posted-tasks-new" aria-label="Поручить задачу" title="Поручить задачу">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="pt-only-desktop">Поручить</span>
+                <button type="button" class="pt-btn pt-btn--primary" id="posted-tasks-new" aria-label="Поставить задачу" title="Поставить задачу">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="pt-only-desktop">Поставить задачу</span>
                 </button>
               </div>
             </div>
@@ -176,7 +176,7 @@
                 <div id="posted-tasks-list" class="pt-list"></div>
                 <div id="posted-tasks-empty" class="pt-empty hidden"></div>
               </div>
-              <aside id="posted-tasks-side" class="pt-side" aria-label="Поручение"></aside>
+              <aside id="posted-tasks-side" class="pt-side" aria-label="Задача"></aside>
             </div>
           </div>
         </div>
@@ -189,7 +189,7 @@
             </div>
             <div class="meetings-head-tools">
               <button type="button" class="meetings-today-btn hidden" id="meetings-today">Сегодня</button>
-              <button type="button" class="cal-nav-btn meetings-posted-toggle" id="meetings-posted-toggle" aria-pressed="false" aria-label="Поручено другим" title="Показать в календаре поручения другим">
+              <button type="button" class="cal-nav-btn meetings-posted-toggle" id="meetings-posted-toggle" aria-pressed="false" aria-label="Задачи, поставленные другим" title="Показать в календаре задачи, поставленные другим">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6 1.4 0 2.6.4 3.6 1.2"/><path d="M15 17h6M18.5 14.5 21 17l-2.5 2.5"/></svg>
               </button>
               <button type="button" class="cal-nav-btn" id="meetings-prev" aria-label="Предыдущий день">
@@ -2259,17 +2259,17 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20261024-posted5"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20261024-posted6"><\/script>'
         );
       }
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
   <script src="/webapp/web-canvas.js?v=20261022-focuschip" defer></script>
-  <script src="/webapp/app.js?v=20261024-posted5" defer></script>
+  <script src="/webapp/app.js?v=20261024-posted6" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261023-reply1" defer></script>
-  <script src="/webapp/digest-chats.js?v=20261024-posted5" defer></script>
-  <script src="/webapp/digest-market.js?v=20261024-posted5" defer></script>
+  <script src="/webapp/digest-chats.js?v=20261024-posted6" defer></script>
+  <script src="/webapp/digest-market.js?v=20261024-posted6" defer></script>
 </body>
 </html>

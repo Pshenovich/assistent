@@ -15357,7 +15357,8 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 .pt-sheet-overlay {
   position: fixed;
   inset: 0;
-  z-index: 70;
+  /* Выше окна ассистента (220): задачу открывают и из его карточек; ниже окна правки задачи (280) и тостов (320). */
+  z-index: 240;
   display: flex;
   justify-content: center;
   background: var(--bg);
@@ -15570,7 +15571,7 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 .pt-card-loading { padding: 3rem 1rem; text-align: center; color: var(--text-tertiary); }
 .pt-menu {
   position: fixed;
-  z-index: 90;
+  z-index: 300;
   min-width: 200px;
   padding: 6px;
   border-radius: 12px;
@@ -22639,3 +22640,13 @@ textarea.tracker-desc {
   html.knowledge-native-back .knowledge-back-bar { display: none; }
   html.knowledge-native-back .knowledge-list-head .screen-title { display: block; }
 }
+
+/* Карточка задачи: действия — как внизу окна задачи (плашки с иконкой), главная — зелёная; «Источник» — ссылками. */
+.pt-c-foot .pt-card-actions { margin-top: 10px; flex-wrap: wrap; }
+.pt-card-actions .pt-act { flex: 1 1 0; gap: 6px; white-space: nowrap; min-width: max-content; }
+.pt-card-actions .pt-act svg { flex: none; }
+.pt-card-actions .pt-act.is-primary { background: var(--success, #4bb34b); color: #fff; }
+.pt-card-actions .pt-act:disabled { opacity: 0.55; }
+.pt-c-sources { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.pt-c-sources.hidden { display: none; }
+.pt-c-sources .event-sheet-row-label { font-size: 0.82rem; color: var(--text-secondary); }

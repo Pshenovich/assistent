@@ -9956,6 +9956,19 @@ async def miniapp_proactive_refine(
             if not acts:
                 raise HTTPException(status_code=404, detail="Задачи уже не найдены — обновите Фокус")
             return {"actions": acts, "action": acts[0], "title": card.get("title") or "", "kind": "tasks"}
+        if card and not card.get("items") and card.get("commitment_keys"):
+            # Риски по реестру обязательств: в чат — карточки самих пунктов (как у задач из саммари)
+            from assistant.services import focus_items
+
+            keys = [k for k in card["commitment_keys"] if focus_items.get(uid, k)]
+            if not keys:
+                raise HTTPException(status_code=404, detail="Подсказка уже неактуальна — обновите Фокус")
+            aid = gcal_tools.record_action(
+                uid, "focus_item", "info", title=str(card.get("title") or "")[:200],
+                payload={"keys": keys, "card_key": card.get("key")},
+            )
+            a = gcal_tools.get_action(aid) or {}
+            return {"action": gcal_tools.public_action(a, viewer_uid=uid), "title": card.get("title") or ""}
         if not card or not card.get("items"):
             raise HTTPException(status_code=404, detail="Подсказка уже неактуальна — обновите Фокус")
         keys = _focus_remember(uid, card)
