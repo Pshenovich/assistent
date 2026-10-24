@@ -69,6 +69,8 @@ async def ingest_message_update(
             int(user.id),
             username=user.username,
         )
+    thread_id = message_thread(msg)
+    remember_topic_name(int(chat.id), msg, thread_id)
     text = (msg.text or msg.caption or "").strip()
     if not text:
         return
@@ -76,6 +78,9 @@ async def ingest_message_update(
     if when is not None and when.tzinfo is None:
         when = when.replace(tzinfo=timezone.utc)
     reply = getattr(msg, "reply_to_message", None)
+    if reply is not None and getattr(reply, "forum_topic_created", None):
+        # В форуме каждое сообщение топика «отвечает» на его создание — это не реплай.
+        reply = None
     reply_user = getattr(reply, "from_user", None) if reply else None
     digest_store.insert_message(
         chat_id=int(chat.id),
@@ -88,7 +93,31 @@ async def ingest_message_update(
         reply_to_message_id=int(reply.message_id) if reply else None,
         reply_to_user_id=int(reply_user.id) if reply_user else None,
         mentions=message_mentions(msg),
+        thread_id=thread_id,
     )
+
+
+def message_thread(msg: Any) -> int | None:
+    """Топик форума; None — обычная группа или «General»."""
+    if not getattr(msg, "is_topic_message", False):
+        return None
+    tid = getattr(msg, "message_thread_id", None)
+    return int(tid) if tid else None
+
+
+def remember_topic_name(chat_id: int, msg: Any, thread_id: int | None) -> None:
+    """Bot API не отдаёт список топиков — имя ловим из сервисных сообщений."""
+    if not thread_id:
+        return
+    for src in (msg, getattr(msg, "reply_to_message", None)):
+        if src is None:
+            continue
+        created = getattr(src, "forum_topic_created", None)
+        edited = getattr(src, "forum_topic_edited", None)
+        name = getattr(created, "name", None) or getattr(edited, "name", None)
+        if name:
+            digest_store.upsert_topic(chat_id, thread_id, str(name))
+            return
 
 
 def message_mentions(msg: Any) -> list[str]:
@@ -151,9 +180,10 @@ async def on_my_chat_member(
 
 
 def register_chat_ingest(app) -> None:
-    # Раньше handlers (group=-2): только лог, без влияния на gate/NLU.
-    app.add_handler(TypeHandler(Update, ingest_message_update), group=-2)
+    # Раньше всех (group=-4), до отсечки «старых» апдейтов (-3): после простоя бота
+    # сообщения групп всё равно попадают в лог; insert идемпотентен по (chat_id, message_id).
+    app.add_handler(TypeHandler(Update, ingest_message_update), group=-4)
     app.add_handler(
         ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER),
-        group=-2,
+        group=-4,
     )

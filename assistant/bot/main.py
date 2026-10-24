@@ -22,6 +22,7 @@ from assistant.bot.mail_job import register_mail_jobs
 from assistant.bot.reminder_job import register_reminder_jobs
 from assistant.bot.knowledge_sync_job import register_knowledge_sync_jobs
 from assistant.bot.proactive_brief_job import register_proactive_brief_jobs
+from assistant.bot.chat_alert_job import register_chat_alert_jobs
 from assistant.bot.digest_auto_job import register_digest_auto_jobs
 
 
@@ -65,6 +66,7 @@ def build_application() -> Application:
     register_knowledge_sync_jobs(app)
     register_proactive_brief_jobs(app)
     register_digest_auto_jobs(app)
+    register_chat_alert_jobs(app)
     return app
 
 

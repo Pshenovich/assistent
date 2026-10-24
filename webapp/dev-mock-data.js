@@ -669,7 +669,7 @@
       "yandex-disk": false,
       bitrix: false,
     },
-    prefs: { focus: true, brief: true, brief_time: "08:30", after_meetings: true, before_meetings: true, chats: true, weekly: false },
+    prefs: { focus: true, brief: true, brief_time: "08:30", after_meetings: true, before_meetings: true, chats: true, chat_alerts: true, weekly: false },
     settings: {
       digest_enabled: true,
       meeting_reminders_enabled: true,

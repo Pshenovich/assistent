@@ -102,21 +102,45 @@ def end_refresh(user_id: int) -> None:
         _refreshing.discard(uid)
 
 
-def _format_transcript(messages: list[dict[str, Any]]) -> str:
-    lines: list[str] = []
-    for m in messages:
-        who = (
-            str(m.get("display_name") or "").strip()
-            or (f"@{m['username']}" if m.get("username") else "")
-            or (f"id:{m['user_id']}" if m.get("user_id") else "unknown")
-        )
-        ts = str(m.get("ts_utc") or "")
-        clock = ts[11:16] if len(ts) >= 16 else ""
-        prefix = f"[{clock}] {who}" if clock else who
-        text = str(m.get("text") or "").strip()
-        if text:
-            lines.append(f"{prefix}: {text}")
-    return "\n".join(lines)
+def _transcript_line(m: dict[str, Any]) -> str:
+    who = (
+        str(m.get("display_name") or "").strip()
+        or (f"@{m['username']}" if m.get("username") else "")
+        or (f"id:{m['user_id']}" if m.get("user_id") else "unknown")
+    )
+    ts = str(m.get("ts_utc") or "")
+    clock = ts[11:16] if len(ts) >= 16 else ""
+    prefix = f"[{clock}] {who}" if clock else who
+    text = str(m.get("text") or "").strip()
+    return f"{prefix}: {text}" if text else ""
+
+
+# Куски переписки на один вызов модели и сколько кусков за день разбираем максимум.
+TRANSCRIPT_CHUNK = 45000
+MAX_CHUNKS = 6
+
+
+def transcript_chunks(chat_id: int, messages: list[dict[str, Any]]) -> list[str]:
+    """День чата по топикам форума, кусками для модели; если кусков больше MAX_CHUNKS — самые свежие."""
+    names = digest_store.topic_names(int(chat_id))
+    chunks = digest_store.group_by_topic(messages, names, _transcript_line, budget=TRANSCRIPT_CHUNK)
+    return chunks[-MAX_CHUNKS:]
+
+
+def merge_summaries(parts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Склейка саммари кусков одного дня (разные топики → разные куски)."""
+    if len(parts) == 1:
+        return parts[0]
+    out = _empty_summary(note=" ".join(str(p.get("brief") or "").strip() for p in parts if p.get("brief")).strip())
+    for key in ("decisions", "next_steps", "deadlines", "open_questions"):
+        out[key] = [x for p in parts for x in (p.get(key) or [])]
+    topics: list[str] = []
+    for p in parts:
+        for t in p.get("context_topics") or []:
+            if t not in topics:
+                topics.append(t)
+    out["context_topics"] = topics[:5]
+    return out
 
 
 def _empty_summary(*, note: str = "") -> dict[str, Any]:
@@ -203,19 +227,24 @@ def run_digest_for_user(
             if not messages:
                 skipped += 1
                 continue
-            transcript = _format_transcript(messages)
-            try:
-                summary = nlu_llm.digest_chat_day(
-                    chat_title=str(title),
-                    report_date=day,
-                    transcript=transcript,
-                )
-            except Exception as e:
-                errors.append(f"{chat_id}/{day}: {e!r}")
+            parts: list[dict[str, Any]] = []
+            failed = ""
+            for transcript in transcript_chunks(int(chat_id), messages):
+                try:
+                    part = nlu_llm.digest_chat_day(
+                        chat_title=str(title),
+                        report_date=day,
+                        transcript=transcript,
+                    )
+                except Exception as e:
+                    failed = repr(e)
+                    continue
+                if part:
+                    parts.append(part)
+            if not parts:
+                errors.append(f"{chat_id}/{day}: {failed or 'empty_llm'}")
                 continue
-            if not summary:
-                errors.append(f"{chat_id}/{day}: empty_llm")
-                continue
+            summary = merge_summaries(parts)
             digest_store.upsert_report(
                 report_date=day,
                 chat_id=int(chat_id),

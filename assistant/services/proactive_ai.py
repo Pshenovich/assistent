@@ -630,6 +630,7 @@ CHAT_SYSTEM = """Ты — помощник руководителя. Тебе д
 - blocker — работа стоит и ждёт решения/действия.
 Ничего не придумывай, бери только из текста. Ответ строго JSON:
 {"items":[{"kind":"request|promise|escalation|deadline|blocker","text":"коротко, до 120 символов","who":"кто написал/о ком","msg":номер сообщения,"due":"YYYY-MM-DD или ''"}]}
+Если переписка разбита на топики форума («### Топик «…»»), смотри все топики.
 Не больше 5 пунктов. Если ничего важного — {"items":[]}."""
 
 CHAT_KINDS = ("request", "promise", "escalation", "deadline", "blocker")
@@ -645,17 +646,22 @@ def _me_identity(uid: int) -> tuple[str, str]:
         return "", ""
 
 
+def chat_line_for(uid: int, m: dict[str, Any]) -> str:
+    text = str(m.get("text") or "").strip()
+    if not text:
+        return ""
+    mine = m.get("user_id") is not None and int(m.get("user_id")) == int(uid)
+    who = "Я" if mine else (str(m.get("display_name") or "").strip() or (f"@{m['username']}" if m.get("username") else "кто-то"))
+    ts = str(m.get("ts_utc") or "")
+    return f"#{m.get('message_id')} [{ts[11:16]}] {who}: {text[:600]}"
+
+
 def chat_transcript_for(uid: int, messages: list[dict[str, Any]]) -> str:
-    lines = []
-    for m in messages:
-        text = str(m.get("text") or "").strip()
-        if not text:
-            continue
-        mine = m.get("user_id") is not None and int(m.get("user_id")) == int(uid)
-        who = "Я" if mine else (str(m.get("display_name") or "").strip() or (f"@{m['username']}" if m.get("username") else "кто-то"))
-        ts = str(m.get("ts_utc") or "")
-        lines.append(f"#{m.get('message_id')} [{ts[11:16]}] {who}: {text[:600]}")
-    return "\n".join(lines)
+    return "\n".join(ln for ln in (chat_line_for(uid, m) for m in messages) if ln)
+
+
+# Сколько кусков переписки (по MAX_TEXT) разбираем за день чата; больше — только самые свежие.
+CHAT_MAX_CHUNKS = 4
 
 
 def normalize_chat_items(obj: Any) -> list[dict[str, Any]]:
@@ -724,25 +730,32 @@ def analyze_digest(uid: int, chat_id: int, day: str, key: str, content_hash: str
     items: list[dict[str, Any]] = []
     if messages:
         name, username = _me_identity(uid)
-        payload = {
-            "chat": title,
-            "date": day,
-            "me": {"name": name, "username": username},
-            "messages": chat_transcript_for(uid, messages)[:MAX_TEXT],
-        }
-        raw = llm._chat(
-            CHAT_SYSTEM,
-            json.dumps(payload, ensure_ascii=False),
-            operation="proactive_chat_insights",
-            model=llm._model_chat_digest(),
-            timeout=90,
-            temperature=0.1,
-            max_tokens=900,
-        )
-        try:
-            items = normalize_chat_items(json.loads(strip_json_from_markdown(raw)))
-        except (json.JSONDecodeError, TypeError):
-            items = []
+        # По топикам форума и кусками: раньше бралось начало дня [:MAX_TEXT], и в активном
+        # чате всё после утра (и целые топики) не читалось.
+        chunks = digest_store.group_by_topic(
+            messages, digest_store.topic_names(chat_id), lambda m: chat_line_for(uid, m), budget=MAX_TEXT
+        )[-CHAT_MAX_CHUNKS:]
+        for chunk in chunks:
+            payload = {
+                "chat": title,
+                "date": day,
+                "me": {"name": name, "username": username},
+                "messages": chunk,
+            }
+            raw = llm._chat(
+                CHAT_SYSTEM,
+                json.dumps(payload, ensure_ascii=False),
+                operation="proactive_chat_insights",
+                model=llm._model_chat_digest(),
+                timeout=90,
+                temperature=0.1,
+                max_tokens=900,
+            )
+            try:
+                items.extend(normalize_chat_items(json.loads(strip_json_from_markdown(raw))))
+            except (json.JSONDecodeError, TypeError):
+                continue
+        items = items[:8]
     save(uid, key, content_hash, title, items)
     return items
 

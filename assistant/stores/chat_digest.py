@@ -81,12 +81,33 @@ def _conn() -> sqlite3.Connection:
     )
     # Кому адресовано: ответ на чьё сообщение и кого упомянули — для «ждут вашего ответа».
     have = {r[1] for r in _CONN.execute("PRAGMA table_info(leo_chat_messages)").fetchall()}
-    for col, decl in (("reply_to_message_id", "INTEGER"), ("reply_to_user_id", "INTEGER"), ("mentions", "TEXT NOT NULL DEFAULT ''")):
+    # thread_id — топик форума (NULL — обычная группа или «General»).
+    for col, decl in (
+        ("reply_to_message_id", "INTEGER"),
+        ("reply_to_user_id", "INTEGER"),
+        ("mentions", "TEXT NOT NULL DEFAULT ''"),
+        ("thread_id", "INTEGER"),
+    ):
         if col not in have:
             _CONN.execute(f"ALTER TABLE leo_chat_messages ADD COLUMN {col} {decl}")
     _CONN.execute(
         "CREATE INDEX IF NOT EXISTS idx_leo_msg_chat_date "
         "ON leo_chat_messages(chat_id, date_utc, ts_utc)"
+    )
+    _CONN.execute(
+        "CREATE INDEX IF NOT EXISTS idx_leo_msg_chat_thread "
+        "ON leo_chat_messages(chat_id, thread_id, ts_utc)"
+    )
+    _CONN.execute(
+        """
+        CREATE TABLE IF NOT EXISTS leo_chat_topics (
+            chat_id INTEGER NOT NULL,
+            thread_id INTEGER NOT NULL,
+            name TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (chat_id, thread_id)
+        )
+        """
     )
     _CONN.execute(
         """
@@ -218,6 +239,7 @@ def insert_message(
     reply_to_message_id: int | None = None,
     reply_to_user_id: int | None = None,
     mentions: list[str] | None = None,
+    thread_id: int | None = None,
 ) -> bool:
     """Возвращает True, если сообщение новое (вставлено).
 
@@ -241,8 +263,8 @@ def insert_message(
                 """
                 INSERT INTO leo_chat_messages (
                     chat_id, message_id, user_id, username, display_name,
-                    text, ts_utc, date_utc, reply_to_message_id, reply_to_user_id, mentions
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    text, ts_utc, date_utc, reply_to_message_id, reply_to_user_id, mentions, thread_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cid,
@@ -256,6 +278,7 @@ def insert_message(
                     int(reply_to_message_id) if reply_to_message_id else None,
                     int(reply_to_user_id) if reply_to_user_id else None,
                     ",".join(sorted({str(m).strip().lower() for m in (mentions or []) if str(m).strip()})),
+                    int(thread_id) if thread_id else None,
                 ),
             )
             conn.commit()
@@ -364,7 +387,7 @@ def messages_for_chat_date(chat_id: int, date_utc: str) -> list[dict[str, Any]]:
         conn = _conn()
         rows = conn.execute(
             """
-            SELECT message_id, user_id, username, display_name, text, ts_utc
+            SELECT message_id, user_id, username, display_name, text, ts_utc, thread_id
             FROM leo_chat_messages
             WHERE chat_id = ? AND date_utc = ?
             ORDER BY ts_utc ASC, message_id ASC
@@ -379,6 +402,7 @@ def messages_for_chat_date(chat_id: int, date_utc: str) -> list[dict[str, Any]]:
             "display_name": r["display_name"],
             "text": str(r["text"] or ""),
             "ts_utc": r["ts_utc"],
+            "thread_id": int(r["thread_id"]) if r["thread_id"] else None,
         }
         for r in rows
     ]
@@ -619,3 +643,122 @@ def is_human_member(chat_id: int, user_id: int | None) -> bool:
             "SELECT 1 FROM leo_chat_members WHERE chat_id = ? AND user_id = ?", (int(chat_id), int(user_id))
         ).fetchone()
     return r is not None
+
+
+# ---------------------------------------------------------------- топики форумов
+
+
+def upsert_topic(chat_id: int, thread_id: int, name: str) -> None:
+    """Название топика — из сервисных forum_topic_created / forum_topic_edited."""
+    nm = (name or "").strip()[:120]
+    if not thread_id or not nm:
+        return
+    with _LOCK:
+        conn = _conn()
+        conn.execute(
+            """
+            INSERT INTO leo_chat_topics (chat_id, thread_id, name, updated_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT(chat_id, thread_id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at
+            """,
+            (int(chat_id), int(thread_id), nm, _now_iso()),
+        )
+        conn.commit()
+
+
+def topic_names(chat_id: int) -> dict[int, str]:
+    with _LOCK:
+        rs = _conn().execute(
+            "SELECT thread_id, name FROM leo_chat_topics WHERE chat_id = ?", (int(chat_id),)
+        ).fetchall()
+    return {int(r["thread_id"]): str(r["name"] or "") for r in rs}
+
+
+def topic_label(names: dict[int, str], thread_id: int | None) -> str:
+    if not thread_id:
+        return "General" if names else ""
+    return names.get(int(thread_id)) or f"Топик #{int(thread_id)}"
+
+
+def max_rowid(chat_id: int, *, since_utc: str | None = None) -> int:
+    """Последний rowid чата; с since_utc — последний rowid до этого момента (курсор «читать с»)."""
+    with _LOCK:
+        if since_utc:
+            r = _conn().execute(
+                "SELECT MAX(rowid) FROM leo_chat_messages WHERE chat_id = ? AND ts_utc < ?",
+                (int(chat_id), str(since_utc)),
+            ).fetchone()
+        else:
+            r = _conn().execute("SELECT MAX(rowid) FROM leo_chat_messages WHERE chat_id = ?", (int(chat_id),)).fetchone()
+    return int(r[0] or 0) if r else 0
+
+
+def messages_after_rowid(chat_id: int, rowid: int, *, limit: int = 400) -> list[dict[str, Any]]:
+    """Новые сообщения в порядке записи (rowid растёт с каждой вставкой)."""
+    with _LOCK:
+        rs = _conn().execute(
+            "SELECT rowid AS rid, * FROM leo_chat_messages WHERE chat_id = ? AND rowid > ? ORDER BY rowid ASC LIMIT ?",
+            (int(chat_id), int(rowid), int(limit)),
+        ).fetchall()
+    return [dict(r) for r in rs]
+
+
+def thread_tail(chat_id: int, thread_id: int | None, before_ts: str, *, limit: int = 25) -> list[dict[str, Any]]:
+    """Последние сообщения топика до before_ts — контекст для новых."""
+    with _LOCK:
+        if thread_id:
+            rs = _conn().execute(
+                "SELECT * FROM leo_chat_messages WHERE chat_id = ? AND thread_id = ? AND ts_utc < ? ORDER BY ts_utc DESC LIMIT ?",
+                (int(chat_id), int(thread_id), str(before_ts), int(limit)),
+            ).fetchall()
+        else:
+            rs = _conn().execute(
+                "SELECT * FROM leo_chat_messages WHERE chat_id = ? AND thread_id IS NULL AND ts_utc < ? ORDER BY ts_utc DESC LIMIT ?",
+                (int(chat_id), str(before_ts), int(limit)),
+            ).fetchall()
+    return [dict(r) for r in reversed(rs)]
+
+
+def group_by_topic(messages: list[dict[str, Any]], names: dict[int, str], line, *, budget: int) -> list[str]:
+    """Переписка по топикам («### Топик «…»» + строки) кусками не длиннее budget.
+
+    Раньше весь день шёл одной лентой и обрезался с головы — в активном форуме модель видела
+    только утро. Теперь каждый топик целиком (или его хвост, если он сам больше budget).
+    """
+    order: list[int | None] = []
+    by: dict[int | None, list[str]] = {}
+    for m in messages:
+        ln = line(m)
+        if not ln:
+            continue
+        tid = m.get("thread_id") or None
+        if tid not in by:
+            by[tid] = []
+            order.append(tid)
+        by[tid].append(ln)
+    blocks: list[str] = []
+    for tid in order:
+        label = topic_label(names, tid)
+        head = f"### Топик «{label}»\n" if label else ""
+        lines = by[tid]
+        body = "\n".join(lines)
+        if len(head) + len(body) > budget:
+            kept: list[str] = []
+            size = len(head) + 40
+            for ln in reversed(lines):
+                if size + len(ln) + 1 > budget:
+                    break
+                kept.append(ln)
+                size += len(ln) + 1
+            body = "…(начало топика пропущено)\n" + "\n".join(reversed(kept))
+        blocks.append(head + body)
+    chunks: list[str] = []
+    cur = ""
+    for b in blocks:
+        if cur and len(cur) + 2 + len(b) > budget:
+            chunks.append(cur)
+            cur = b
+        else:
+            cur = f"{cur}\n\n{b}" if cur else b
+    if cur:
+        chunks.append(cur)
+    return chunks

@@ -354,6 +354,7 @@ PROACTIVE_DEFAULTS: dict[str, Any] = {
     "after_meetings": True,
     "before_meetings": True,
     "chats": True,
+    "chat_alerts": True,
     "weekly": False,
 }
 
