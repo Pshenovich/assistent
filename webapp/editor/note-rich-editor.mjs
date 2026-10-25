@@ -483,6 +483,132 @@ const MarkdownHeadingShortcut = Extension.create({
   },
 });
 
+/* Два столбца: «[[» в конце абзаца — этот текст (вместе с абзацами прямо над ним, до пустой строки)
+   уходит в левый столбец, справа — пустой столбец с курсором, между ними линия. Backspace в начале
+   правого столбца — столбцы снова обычным текстом. В HTML: div.note-columns > div.note-column ×2. */
+const NoteColumn = Node.create({
+  name: "noteColumn",
+  content: "block+",
+  isolating: true,
+  defining: true,
+  parseHTML: function () {
+    return [{ tag: "div.note-column" }];
+  },
+  renderHTML: function () {
+    return ["div", { class: "note-column" }, 0];
+  },
+});
+
+// Абзацы для левого столбца: текущий и непустые абзацы / заголовки прямо над ним (до пустой строки).
+function columnsSourceRange(doc, index) {
+  var first = index;
+  for (var i = index - 1; i >= 0; i -= 1) {
+    var n = doc.child(i);
+    if (!(n.type.name === "paragraph" || n.type.name === "heading") || !n.textContent.trim()) break;
+    first = i;
+  }
+  var from = 0;
+  for (var k = 0; k < first; k += 1) from += doc.child(k).nodeSize;
+  var to = from;
+  for (var j = first; j <= index; j += 1) to += doc.child(j).nodeSize;
+  return { from: from, to: to };
+}
+
+// Обернуть блоки [from, to) верхнего уровня в два столбца, курсор — в правый.
+function wrapInColumns(tr, from, to) {
+  var schema = tr.doc.type.schema;
+  var left = tr.doc.slice(from, to).content;
+  if (!left.childCount) left = schema.nodes.paragraph.create();
+  var leftCol = schema.nodes.noteColumn.create(null, left);
+  var rightCol = schema.nodes.noteColumn.create(null, schema.nodes.paragraph.create());
+  tr.replaceWith(from, to, schema.nodes.noteColumns.create(null, [leftCol, rightCol]));
+  tr.setSelection(TextSelection.create(tr.doc, from + 1 + leftCol.nodeSize + 2));
+  return tr;
+}
+
+const NoteColumns = Node.create({
+  name: "noteColumns",
+  group: "block",
+  content: "noteColumn noteColumn",
+  isolating: true,
+  parseHTML: function () {
+    return [{ tag: "div.note-columns" }];
+  },
+  renderHTML: function () {
+    return ["div", { class: "note-columns" }, 0];
+  },
+  addCommands: function () {
+    return {
+      // «+» → «Два столбца»: как «[[» в конце текущего абзаца.
+      splitIntoColumns: function () {
+        return function (props) {
+          var state = props.state;
+          var $from = state.selection.$from;
+          if ($from.depth < 1) return false;
+          var top = $from.node(1);
+          if (!top.isTextblock || $from.depth !== 1) return false;
+          if (props.dispatch) {
+            var r = columnsSourceRange(state.doc, $from.index(0));
+            props.dispatch(wrapInColumns(props.tr, r.from, r.to).scrollIntoView());
+          }
+          return true;
+        };
+      },
+    };
+  },
+  addKeyboardShortcuts: function () {
+    return {
+      // Backspace в самом начале правого столбца — снова обычный текст (левый столбец, затем правый).
+      Backspace: function (props) {
+        var state = props.editor.state;
+        var sel = state.selection;
+        if (!sel.empty) return false;
+        var $from = sel.$from;
+        for (var d = $from.depth; d > 0; d -= 1) {
+          if ($from.node(d).type.name !== "noteColumn") continue;
+          var cols = $from.node(d - 1);
+          if (cols.type.name !== "noteColumns" || $from.index(d - 1) !== 1) return false;
+          if ($from.pos !== $from.start(d) + 1 || $from.parentOffset !== 0) return false;
+          var colsPos = $from.before(d - 1);
+          var content = cols.child(0).content;
+          var right = cols.child(1);
+          var rightEmpty = right.childCount === 1 && !right.firstChild.content.size;
+          if (!rightEmpty) content = content.append(right.content);
+          var tr = state.tr.replaceWith(colsPos, colsPos + cols.nodeSize, content);
+          var caret = colsPos + cols.child(0).content.size;
+          tr.setSelection(TextSelection.near(tr.doc.resolve(Math.max(1, caret - 1)), -1));
+          props.editor.view.dispatch(tr.scrollIntoView());
+          return true;
+        }
+        return false;
+      },
+    };
+  },
+  addProseMirrorPlugins: function () {
+    return [
+      new Plugin({
+        key: new PluginKey("noteColumnsShortcut"),
+        appendTransaction: function (trs, oldState, state) {
+          if (!trs.some(function (tr) { return tr.docChanged; })) return null;
+          if (trs.some(function (tr) { return tr.getMeta("paste") || tr.getMeta("uiEvent") === "paste" || tr.getMeta("history$") || isRemoteYTr(tr); })) return null;
+          var sel = state.selection;
+          if (!sel.empty) return null;
+          var $from = sel.$from;
+          if ($from.depth !== 1 || $from.parent.type.name !== "paragraph") return null;
+          if ($from.parentOffset !== $from.parent.content.size) return null;
+          if (!/\[\[$/.test($from.parent.textContent)) return null;
+          // Только что набрали: раньше абзац на «[[» не заканчивался.
+          var old$ = oldState.selection.$from;
+          if (old$.parent.type.name === "paragraph" && /\[\[$/.test(old$.parent.textContent)) return null;
+          var tr = state.tr.delete($from.pos - 2, $from.pos);
+          var r = columnsSourceRange(tr.doc, $from.index(0));
+          return wrapInColumns(tr, r.from, r.to);
+        },
+      }),
+    ];
+  },
+});
+
 /* Вставка простого текста с markdown (из чата, ChatGPT, .md) — сразу оформлением. */
 var MD_PASTE_HINT_RE = /(^|\n)(#{1,6}\s+\S|[-*•]\s+\S|\d+[.)]\s+\S|-\s+\[[ xX]\]\s|>\s+\S)|\*\*[^*\n]+\*\*/;
 function pasteMarkdownText(view, event) {
@@ -1301,6 +1427,7 @@ function svgIcon(name) {
       '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2"/><path d="M4 12l1 1 2-2"/><path d="M4 18l1 1 2-2"/>',
     none: '<path d="M4 7h16M4 12h16M4 17h10"/>',
     blank: "",
+    columns: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/><path d="M6 9h3M6 12h3M15 9h3"/>',
     sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
     discuss: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
   };
@@ -1783,6 +1910,7 @@ function mountToolbar(toolbarEl, editor) {
     '<button type="button" class="note-tg-menu-item note-tg-menu-page note-tg-mob-only" data-go="more">' +
     svgIcon("strike") + "<span>Ещё</span>" + svgIcon("chevronRight") + "</button>" +
     sep() +
+    item("columns", "", "columns", "Два столбца") +
     item("divider", "", "divider", "Разделитель") +
     item("noteref", "", "noteref", "Ссылка на заметку") +
     "</div>" +
@@ -1901,6 +2029,8 @@ function mountToolbar(toolbarEl, editor) {
       editor.chain().focus().toggleUnderline().run();
     } else if (cmd === "highlight") {
       editor.chain().focus().toggleHighlight().run();
+    } else if (cmd === "columns") {
+      editor.chain().focus().splitIntoColumns().run();
     } else if (cmd === "divider") {
       editor.chain().focus().setHorizontalRule().run();
     } else if (cmd === "noteref") {
@@ -3692,6 +3822,8 @@ function mount(container, options) {
       }),
       IosSelectionGuard,
       MarkdownHeadingShortcut,
+      NoteColumns,
+      NoteColumn,
     ]
       .concat(createHashtagExtensions(hashtagCtx))
       .concat(createLeoTaskExtensions(taskCtx))
@@ -4264,7 +4396,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-tblscroll",
+  assetVersion: "20261025-columns",
   Y: Y,
   mount: mount,
   importBody: importBody,

@@ -22798,3 +22798,16 @@ html.note-discussion-kb-open #note-discussion-overlay #note-paie-thread.note-dis
 /* Несколько реплаев в одном сообщении: цитата → комментарий → цитата → комментарий. */
 .note-discuss-thread-text + .note-discuss-reply { margin-top: 10px; }
 .note-discuss-reply + .note-discuss-thread-text { margin-top: 2px; }
+
+/* Два столбца в заметке («[[» в конце абзаца или «+» → «Два столбца»): линия между столбцами;
+   на узком экране — друг под другом. И в редакторе, и в просмотре заметки. */
+.note-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0; margin: 0.5rem 0; }
+.note-column { min-width: 0; padding-right: 20px; }
+.note-column + .note-column { padding-right: 0; padding-left: 20px; border-left: 1px solid rgba(255, 255, 255, 0.28); }
+.note-column > :first-child { margin-top: 0; }
+.note-column > :last-child { margin-bottom: 0; }
+@media (max-width: 599px) {
+  .note-columns { grid-template-columns: minmax(0, 1fr); }
+  .note-column { padding-right: 0; }
+  .note-column + .note-column { padding-left: 0; padding-top: 10px; margin-top: 10px; border-left: 0; border-top: 1px solid rgba(255, 255, 255, 0.28); }
+}
