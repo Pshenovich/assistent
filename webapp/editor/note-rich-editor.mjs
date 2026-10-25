@@ -483,8 +483,7 @@ const MarkdownHeadingShortcut = Extension.create({
   },
 });
 
-/* Два столбца: «[[» в конце абзаца — этот текст (вместе с абзацами прямо над ним, до пустой строки)
-   уходит в левый столбец, справа — пустой столбец с курсором, между ними линия. Backspace в начале
+/* Два столбца: «[[» в конце абзаца — этот абзац (текст с последнего Enter) уходит в левый столбец, справа — пустой столбец с курсором, между ними линия. Backspace в начале
    правого столбца — столбцы снова обычным текстом. В HTML: div.note-columns > div.note-column ×2. */
 const NoteColumn = Node.create({
   name: "noteColumn",
@@ -499,19 +498,11 @@ const NoteColumn = Node.create({
   },
 });
 
-// Абзацы для левого столбца: текущий и непустые абзацы / заголовки прямо над ним (до пустой строки).
+// Левый столбец — только текущий абзац (текст с последнего Enter).
 function columnsSourceRange(doc, index) {
-  var first = index;
-  for (var i = index - 1; i >= 0; i -= 1) {
-    var n = doc.child(i);
-    if (!(n.type.name === "paragraph" || n.type.name === "heading") || !n.textContent.trim()) break;
-    first = i;
-  }
   var from = 0;
-  for (var k = 0; k < first; k += 1) from += doc.child(k).nodeSize;
-  var to = from;
-  for (var j = first; j <= index; j += 1) to += doc.child(j).nodeSize;
-  return { from: from, to: to };
+  for (var k = 0; k < index; k += 1) from += doc.child(k).nodeSize;
+  return { from: from, to: from + doc.child(index).nodeSize };
 }
 
 // Обернуть блоки [from, to) верхнего уровня в два столбца, курсор — в правый.
@@ -4396,7 +4387,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-columns",
+  assetVersion: "20261025-columns2",
   Y: Y,
   mount: mount,
   importBody: importBody,
