@@ -7728,9 +7728,56 @@ async def miniapp_paie_models(
     return await run_in_threadpool(_run)
 
 
+async def _start_chat_url_transcription(
+    background_tasks: BackgroundTasks,
+    body: _MiniappGptChatBody,
+    *,
+    uid: int,
+    model: str | None,
+    username: str | None,
+) -> dict[str, Any] | None:
+    """«<ссылка> транскрибируй» в треде чата: ответ сразу, транскрипция — в фоне."""
+    from assistant.integrations.openrouter_client import gpt_display_label
+    from assistant.services import chat_url_transcribe
+
+    if str(body.item_kind or "").strip() != "chat" or not str(body.item_id or "").strip():
+        return None
+    req = chat_url_transcribe.detect_url_transcribe_request(body.message or "")
+    if req is None:
+        return None
+    thread_id = str(body.item_id).strip()
+    owner = await run_in_threadpool(_resolve_item_owner, str(uid), "chat", thread_id)
+    if not owner or str(owner) != str(uid):
+        return None
+    print(f"[chat_url_transcribe] start uid={uid} thread={thread_id} url={req.url!r} summary={req.with_summary}")
+    background_tasks.add_task(
+        chat_url_transcribe.run_chat_url_transcription,
+        uid,
+        thread_id,
+        req,
+        model=model,
+        username=username,
+        prepare_audio=_prepare_miniapp_voice_audio,
+    )
+    return {
+        "answer": chat_url_transcribe.accepted_text(req),
+        "calendar_actions": [],
+        "bullets": [],
+        "kb_version": "",
+        "files": [],
+        "canvas": [],
+        "canvas_error": None,
+        "note_edits": None,
+        "model": model or "",
+        "model_label": gpt_display_label(model),
+        "transcription": {"url": req.url, "with_summary": req.with_summary},
+    }
+
+
 @miniapp_router.post("/gpt/chat")
 async def miniapp_gpt_chat(
     body: _MiniappGptChatBody,
+    background_tasks: BackgroundTasks,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     from assistant.compat.miniapp_shims import gpt_openrouter_answer_with_context
@@ -7952,6 +7999,12 @@ async def miniapp_gpt_chat(
             user_agents.patch_agent(uid, str(agent["id"]), {"model": model})
         except user_agents.AgentError as e:
             print(f"[agents] save model failed uid={uid} agent={agent['id']} err={e!r}")
+
+    url_job = await _start_chat_url_transcription(
+        background_tasks, body, uid=uid, model=run_model, username=tg_uname
+    )
+    if url_job is not None:
+        return url_job
 
     def _run() -> dict[str, Any] | None:
         from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
