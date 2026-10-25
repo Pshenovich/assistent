@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261025-discuss";
+  var WEBAPP_BUILD = "20261025-quotes";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -32182,41 +32182,90 @@
     if (!ed) return { text: "", quotes: [] };
     var quotes = [];
     var parts = [];
+    // То же по порядку: цитата — строками «> …», за ней свой текст (для нескольких реплаев).
+    var threaded = [];
+    function push(t) {
+      parts.push(t);
+      threaded.push(t);
+    }
     function walk(node) {
       if (node.nodeType === 3) {
-        parts.push(node.nodeValue);
+        push(node.nodeValue);
         return;
       }
       if (node.nodeType !== 1) return;
       if (node.classList && node.classList.contains("note-gpt-quote-chip")) {
         var q = String(node.getAttribute("data-quote") || "").trim();
         // Цитата уходит в поле quote / reply UI, не в тело бабла.
-        if (q) quotes.push(q);
+        if (q) {
+          quotes.push(q);
+          threaded.push("\n\n" + q.split("\n").map(function (l) { return "> " + l; }).join("\n") + "\n");
+        }
         return;
       }
       if (node.classList && node.classList.contains("note-discuss-mention")) {
         var mention = String(node.getAttribute("data-mention") || node.textContent || "").trim();
-        if (mention) parts.push(mention.indexOf("@") === 0 ? mention : "@" + mention);
+        if (mention) push(mention.indexOf("@") === 0 ? mention : "@" + mention);
         return;
       }
       if (node.nodeName === "BR") {
-        parts.push("\n");
+        push("\n");
         return;
       }
       var block = node.nodeName === "DIV" || node.nodeName === "P";
-      if (block && parts.length && parts[parts.length - 1] !== "\n") parts.push("\n");
+      if (block && parts.length && parts[parts.length - 1] !== "\n") push("\n");
       var kids = node.childNodes;
       for (var i = 0; i < kids.length; i++) walk(kids[i]);
     }
     var rootKids = ed.childNodes;
     for (var r = 0; r < rootKids.length; r++) walk(rootKids[r]);
-    var text = parts
-      .join("")
-      .replace(/\u00a0/g, " ")
-      .replace(/[ \t]+\n/g, "\n")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-    return { text: text, quotes: quotes };
+    function tidy(arr) {
+      return arr
+        .join("")
+        .replace(/\u00a0/g, " ")
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+    }
+    // Несколько цитат с комментариями между ними — отправляем по порядку («> цитата», под ней комментарий),
+    // и в сообщении, и для модели; раньше все цитаты слипались в начале, а комментарии — после.
+    if (quotes.length > 1) return { text: tidy(threaded), quotes: [], threaded: true };
+    return { text: tidy(parts), quotes: quotes };
+  }
+
+  // Тело с реплаями по порядку: строки «> …» — блок цитаты, за ним свой текст.
+  function isThreadedDiscussBody(text) {
+    return /(^|\n)> /.test(String(text || ""));
+  }
+
+  function appendDiscussThreadedBody(bubble, text, withMentions) {
+    var quoteBuf = [];
+    var textBuf = [];
+    function flushQuote() {
+      if (quoteBuf.length) appendDiscussReplyQuote(bubble, quoteBuf.join("\n"), "Цитата", 0);
+      quoteBuf = [];
+    }
+    function flushText() {
+      var t = textBuf.join("\n").trim();
+      textBuf = [];
+      if (!t) return;
+      var el = document.createElement("div");
+      el.className = "note-discuss-bubble-body note-discuss-thread-text";
+      if (withMentions) fillDiscussBodyWithMentions(el, t);
+      else el.textContent = t;
+      bubble.appendChild(el);
+    }
+    String(text || "").split("\n").forEach(function (line) {
+      if (/^> ?/.test(line)) {
+        flushText();
+        quoteBuf.push(line.replace(/^> ?/, ""));
+      } else {
+        flushQuote();
+        textBuf.push(line);
+      }
+    });
+    flushQuote();
+    flushText();
   }
 
   function cloneGptEditorRange(range, ed) {
@@ -40306,6 +40355,8 @@
       mdBody.className = "note-discuss-bubble-body";
       mdBody.innerHTML = wrapTablesForScroll(simpleMarkdownToHtml(bodyText));
       bubble.appendChild(mdBody);
+    } else if (!hideClipBody && bodyText.trim() && isThreadedDiscussBody(bodyText)) {
+      appendDiscussThreadedBody(bubble, bodyText, true);
     } else if (!hideClipBody && bodyText.trim()) {
       var textBody = document.createElement("div");
       textBody.className = "note-discuss-bubble-body";
@@ -42389,7 +42440,9 @@
         wrap && wrap._commentChairId ? Number(wrap._commentChairId) || 0 : 0
       );
     }
-    if (bodyText) {
+    if (bodyText && isThreadedDiscussBody(bodyText)) {
+      appendDiscussThreadedBody(bubble, bodyText, false);
+    } else if (bodyText) {
       var textBody = document.createElement("div");
       textBody.className = "note-discuss-bubble-body";
       textBody.textContent = bodyText;

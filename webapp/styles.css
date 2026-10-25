@@ -22794,3 +22794,7 @@ html.note-discussion-kb-open #note-discussion-overlay #note-paie-thread.note-dis
   .note-discuss-bubble-who b { color: #c4b5fd; font-weight: 600; font-size: 0.875rem; }
   .note-discuss-bubble-who small { color: var(--text-secondary, #909499); font-size: 0.75rem; }
 }
+
+/* Несколько реплаев в одном сообщении: цитата → комментарий → цитата → комментарий. */
+.note-discuss-thread-text + .note-discuss-reply { margin-top: 10px; }
+.note-discuss-reply + .note-discuss-thread-text { margin-top: 2px; }
