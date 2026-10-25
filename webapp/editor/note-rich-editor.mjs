@@ -520,16 +520,181 @@ function wrapInColumns(tr, from, to) {
   return tr;
 }
 
+// Ширина левого столбца в % (20–80): тянуть линию между столбцами мышью, как границу в таблице.
+var COLS_MIN = 20;
+var COLS_MAX = 80;
+
+function clampSplit(v) {
+  if (v == null || v === "") return null; // ширина не задана — поровну
+  var n = Math.round(Number(v));
+  if (!isFinite(n) || n === 50) return null;
+  return Math.max(COLS_MIN, Math.min(COLS_MAX, n));
+}
+
+function applyColumnsSplit(dom, split) {
+  if (split) {
+    dom.style.setProperty("--note-col-l", split + "fr");
+    dom.style.setProperty("--note-col-r", 100 - split + "fr");
+    dom.setAttribute("data-split", String(split));
+  } else {
+    dom.style.removeProperty("--note-col-l");
+    dom.style.removeProperty("--note-col-r");
+    dom.removeAttribute("data-split");
+  }
+}
+
+// Десктоп: курсор у линии между столбцами — ↔, тянется; отпустили — ширина в заметке.
+function createColumnsResizePlugin() {
+  return new Plugin({
+    key: new PluginKey("noteColumnsResize"),
+    view: function (view) {
+      var drag = null;
+      var hovered = null;
+      function divider(colsEl) {
+        var second = colsEl && colsEl.children[1];
+        if (!second) return null;
+        var first = colsEl.children[0];
+        // Столбцы друг под другом (узкий экран) — тянуть нечего.
+        if (first && second.getBoundingClientRect().top >= first.getBoundingClientRect().bottom - 1) return null;
+        return second.getBoundingClientRect().left;
+      }
+      function hitColumns(e) {
+        var el = e.target && e.target.closest && e.target.closest(".note-columns");
+        if (!el || !view.dom.contains(el)) return null;
+        var x = divider(el);
+        return x != null && Math.abs(e.clientX - x) <= 6 ? el : null;
+      }
+      function setHover(el) {
+        if (hovered === el) return;
+        if (hovered) hovered.classList.remove("is-col-resize");
+        hovered = el;
+        if (hovered) hovered.classList.add("is-col-resize");
+      }
+      function onMove(e) {
+        if (drag) {
+          var r = drag.el.getBoundingClientRect();
+          var pct = Math.max(COLS_MIN, Math.min(COLS_MAX, ((e.clientX - r.left) / r.width) * 100));
+          drag.split = Math.round(pct);
+          applyColumnsSplit(drag.el, drag.split);
+          return;
+        }
+        if (e.pointerType !== "mouse" || e.buttons) return;
+        setHover(hitColumns(e));
+      }
+      function onDown(e) {
+        if (e.pointerType !== "mouse" || e.button !== 0) return;
+        var el = hitColumns(e);
+        if (!el) return;
+        var pos;
+        try {
+          pos = view.posAtDOM(el, 0) - 1;
+        } catch (_) {
+          return;
+        }
+        var node = view.state.doc.nodeAt(pos);
+        if (!node || node.type.name !== "noteColumns") return;
+        e.preventDefault();
+        e.stopPropagation();
+        drag = { el: el, pos: pos, split: node.attrs.split || 50 };
+        el.classList.add("is-col-resizing");
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+        document.addEventListener("pointercancel", onUp);
+      }
+      // ProseMirror ловит mousedown — пока тянем линию, до него не доходит (иначе выделял бы текст).
+      function onMouseDown(e) {
+        if (drag) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }
+      function onUp() {
+        var d = drag;
+        drag = null;
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.removeEventListener("pointercancel", onUp);
+        if (!d) return;
+        d.el.classList.remove("is-col-resizing");
+        var node = view.state.doc.nodeAt(d.pos);
+        if (!node || node.type.name !== "noteColumns") return;
+        var split = clampSplit(d.split);
+        if ((node.attrs.split || null) === split) return;
+        view.dispatch(
+          view.state.tr
+            .setNodeMarkup(d.pos, null, Object.assign({}, node.attrs, { split: split }))
+            .setMeta("leoNoScroll", true)
+        );
+      }
+      function onLeave() {
+        if (!drag) setHover(null);
+      }
+      view.dom.addEventListener("pointermove", onMove);
+      view.dom.addEventListener("pointerleave", onLeave);
+      view.dom.addEventListener("pointerdown", onDown, true);
+      view.dom.addEventListener("mousedown", onMouseDown, true);
+      return {
+        destroy: function () {
+          onUp();
+          view.dom.removeEventListener("pointermove", onMove);
+          view.dom.removeEventListener("pointerleave", onLeave);
+          view.dom.removeEventListener("pointerdown", onDown, true);
+          view.dom.removeEventListener("mousedown", onMouseDown, true);
+        },
+      };
+    },
+  });
+}
+
 const NoteColumns = Node.create({
   name: "noteColumns",
   group: "block",
   content: "noteColumn noteColumn",
   isolating: true,
+  addAttributes: function () {
+    return {
+      split: {
+        default: null,
+        parseHTML: function (el) {
+          return clampSplit(el.getAttribute("data-split"));
+        },
+        renderHTML: function (attrs) {
+          if (!attrs.split) return {};
+          return {
+            "data-split": String(attrs.split),
+            style: "--note-col-l: " + attrs.split + "fr; --note-col-r: " + (100 - attrs.split) + "fr",
+          };
+        },
+      },
+    };
+  },
   parseHTML: function () {
     return [{ tag: "div.note-columns" }];
   },
-  renderHTML: function () {
-    return ["div", { class: "note-columns" }, 0];
+  renderHTML: function (props) {
+    return ["div", Object.assign({ class: "note-columns" }, props.HTMLAttributes), 0];
+  },
+  // Свой DOM: ширину во время перетаскивания меняем стилем, ProseMirror эти правки не трогает.
+  addNodeView: function () {
+    return function (props) {
+      var node = props.node;
+      var dom = document.createElement("div");
+      dom.className = "note-columns";
+      applyColumnsSplit(dom, node.attrs.split);
+      return {
+        dom: dom,
+        contentDOM: dom,
+        update: function (next) {
+          if (next.type !== node.type) return false;
+          node = next;
+          applyColumnsSplit(dom, next.attrs.split);
+          return true;
+        },
+        ignoreMutation: function (m) {
+          return m.type === "attributes" && m.target === dom;
+        },
+      };
+    };
   },
   addCommands: function () {
     return {
@@ -588,6 +753,7 @@ const NoteColumns = Node.create({
   },
   addProseMirrorPlugins: function () {
     return [
+      createColumnsResizePlugin(),
       new Plugin({
         key: new PluginKey("noteColumnsShortcut"),
         appendTransaction: function (trs, oldState, state) {
@@ -4398,7 +4564,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-colsel",
+  assetVersion: "20261025-colwidth",
   Y: Y,
   mount: mount,
   importBody: importBody,

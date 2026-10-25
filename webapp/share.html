@@ -756,7 +756,7 @@
       line-height: 1.45;
     }
     /* Два столбца в заметке (div.note-columns > div.note-column ×2): линия между, на телефоне — друг под другом. */
-    .note-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); margin: 0.5rem 0; }
+    .note-columns { display: grid; grid-template-columns: minmax(0, var(--note-col-l, 1fr)) minmax(0, var(--note-col-r, 1fr)); margin: 0.5rem 0; }
     .note-column { min-width: 0; padding-right: 20px; }
     .note-column + .note-column { padding-right: 0; padding-left: 20px; border-left: 1px solid rgba(127, 127, 127, 0.45); }
     @media (max-width: 599px) {

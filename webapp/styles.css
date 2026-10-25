@@ -22801,7 +22801,7 @@ html.note-discussion-kb-open #note-discussion-overlay #note-paie-thread.note-dis
 
 /* Два столбца в заметке («[[» в конце абзаца или «+» → «Два столбца»): линия между столбцами;
    на узком экране — друг под другом. И в редакторе, и в просмотре заметки. */
-.note-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0; margin: 0.5rem 0; }
+.note-columns { display: grid; grid-template-columns: minmax(0, var(--note-col-l, 1fr)) minmax(0, var(--note-col-r, 1fr)); gap: 0; margin: 0.5rem 0; }
 .note-column { min-width: 0; padding-right: 20px; }
 .note-column + .note-column { padding-right: 0; padding-left: 20px; border-left: 1px solid rgba(255, 255, 255, 0.28); }
 .note-column > :first-child { margin-top: 0; }
@@ -22811,3 +22811,11 @@ html.note-discussion-kb-open #note-discussion-overlay #note-paie-thread.note-dis
   .note-column { padding-right: 0; }
   .note-column + .note-column { padding-left: 0; padding-top: 10px; margin-top: 10px; border-left: 0; border-top: 1px solid rgba(255, 255, 255, 0.28); }
 }
+/* Линия между столбцами под мышью — ↔, тянется (ширина левого столбца 20–80 %). */
+.note-columns.is-col-resize,
+.note-columns.is-col-resize *,
+.note-columns.is-col-resizing,
+.note-columns.is-col-resizing * { cursor: col-resize !important; }
+.note-columns.is-col-resize > .note-column + .note-column,
+.note-columns.is-col-resizing > .note-column + .note-column { border-left-color: var(--accent, #3e88f7); }
+.note-columns.is-col-resizing { user-select: none; }
