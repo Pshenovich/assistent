@@ -409,6 +409,53 @@ if needle in t:
 else:
     print("nginx gzip: skip (no client_max_body_size)")
 PY
+
+# nginx: WebSocket живых обновлений (/api/miniapp/ws) и закрытый снаружи /internal/.
+python3 - <<'PY'
+import re
+import shutil
+import subprocess
+from pathlib import Path
+p = Path("/etc/nginx/sites-available/assistent.networ.ru")
+if not p.is_file():
+    raise SystemExit(0)
+t = p.read_text()
+if "/api/miniapp/ws" in t:
+    print("nginx realtime: already on")
+    raise SystemExit(0)
+block = (
+    "    location = /api/miniapp/ws {\n"
+    "        proxy_pass http://127.0.0.1:8080;\n"
+    "        proxy_http_version 1.1;\n"
+    "        proxy_set_header Upgrade $http_upgrade;\n"
+    "        proxy_set_header Connection \"upgrade\";\n"
+    "        proxy_set_header Host $host;\n"
+    "        proxy_set_header X-Real-IP $remote_addr;\n"
+    "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+    "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+    "        proxy_set_header X-Forwarded-Host $host;\n"
+    "        proxy_read_timeout 3600s;\n"
+    "        proxy_send_timeout 3600s;\n"
+    "        proxy_buffering off;\n"
+    "    }\n\n"
+    "    location /internal/ {\n"
+    "        return 404;\n"
+    "    }\n\n"
+)
+pat = re.compile(r"^(\s*)location / \{\s*\n\s*proxy_pass http://127\.0\.0\.1:8080;", re.M)
+new, n = pat.subn(lambda m: block + m.group(0).lstrip("\n"), t)
+if not n:
+    print("nginx realtime: skip (no location / → :8080)")
+    raise SystemExit(0)
+backup = p.with_name(p.name + ".bak-realtime")
+shutil.copyfile(p, backup)
+p.write_text(new)
+if subprocess.run(["nginx", "-t"]).returncode != 0:
+    shutil.copyfile(backup, p)
+    print("nginx realtime: nginx -t failed, restored")
+else:
+    print(f"nginx realtime: inserted x{n}")
+PY
 nginx -t && systemctl reload nginx
 
 # Дайджест генерирует assistant-news-sync; rsync репозитория его затирал.

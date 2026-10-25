@@ -56,6 +56,12 @@ def _row(r: Any) -> dict[str, Any]:
     }
 
 
+def _notify_item(chat: dict[str, Any]) -> None:
+    from assistant.realtime import notify as realtime_notify
+
+    realtime_notify.comments_changed(str(chat.get("item_kind") or ""), chat.get("item_id"))
+
+
 def supports_chats(item_kind: str) -> bool:
     return str(item_kind or "") in CHAT_KINDS
 
@@ -106,6 +112,7 @@ def create_chat(
         cid = int(cur.lastrowid)
     chat = get_chat(cid)
     assert chat is not None
+    _notify_item(chat)
     return chat
 
 
@@ -126,6 +133,7 @@ def update_chat(chat: dict[str, Any], *, title: Optional[str] = None, visibility
         conn = _conn()
         conn.execute(f"UPDATE note_chats SET {', '.join(sets)} WHERE id = ?", args)
         conn.commit()
+    _notify_item(chat)
     return get_chat(int(chat["id"])) or chat
 
 
@@ -150,6 +158,7 @@ def delete_chat(chat: dict[str, Any]) -> int:
         conn.execute("DELETE FROM note_chat_reads WHERE chat_id = ?", (cid,))
         conn.execute("DELETE FROM note_chats WHERE id = ?", (cid,))
         conn.commit()
+    _notify_item(chat)
     return len(ids)
 
 

@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261025-selbar"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261025-yjs3"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -458,11 +458,11 @@
       fetch(API + "/notes/local/" + encodeURIComponent(id), {
         method: "PATCH",
         headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
-        body: JSON.stringify({
-          title: title,
-          description: body,
-          expected_revision: wrap._noteRevision || undefined,
-        }),
+        body: JSON.stringify(
+          noteYjsActive(id)
+            ? { title: title, description: body, yjs: true }
+            : { title: title, description: body, expected_revision: wrap._noteRevision || undefined }
+        ),
         credentials: "same-origin",
         keepalive: true,
       });
@@ -30051,6 +30051,10 @@
     noteId: "",
     applying: false,
     lastTypedAt: 0,
+    lastPollAt: 0,
+    peerCount: 0,
+    sentCursor: undefined,
+    sentCursorAt: 0,
     photoBlobs: {},
     photoMiss: {},
     photoInflight: {},
@@ -30344,6 +30348,12 @@
     }
     var id = noteCollabState.noteId;
     noteCollabState.noteId = "";
+    noteCollabState.peerCount = 0;
+    noteCollabState.sentCursor = undefined;
+    noteCollabState.requestSave = null;
+    stopNoteYjs();
+    var rt = realtimeApi();
+    if (rt && id) rt.unsub(id);
     if (id) {
       apiFetch("/notes/local/" + encodeURIComponent(id) + "/collab", {
         method: "DELETE",
@@ -30546,10 +30556,8 @@
       stopNoteCollab();
       return;
     }
-    var editor = isPrimarySheetId(noteSheetState.leftId)
-      ? getLeftNoteRichEditor()
-      : null;
-    var cursor = editor && typeof editor.getCursor === "function" ? editor.getCursor() : null;
+    noteCollabState.lastPollAt = Date.now();
+    var cursor = currentNoteCursor();
     apiFetch("/notes/local/" + encodeURIComponent(id) + "/collab", {
       method: "POST",
       body: JSON.stringify({ cursor: cursor }),
@@ -30560,13 +30568,17 @@
         var peers = (data && data.peers) || [];
         var members = (data && data.members) || (wrap._noteMembers || []);
         wrap._noteMembers = members;
+        noteCollabState.peerCount = peers.length;
         renderOpenNoteMembers(members, peers);
         paintRemoteCursors(peers);
         if (data && data.sheets) syncRemoteSheets(String(id), data.sheets, data.sheet_order);
         if (!item) return;
         var remoteRev = Number(item.revision || 0);
         var localRev = Number(wrap._noteRevision || 0);
-        if (remoteRev > localRev) applyRemoteSharedNote(item, false);
+        if (remoteRev > localRev) {
+          if (noteYjsActive(id)) applyRemoteNoteTitle(item);
+          else applyRemoteSharedNote(item, false);
+        }
         else if (remoteRev === localRev && item.updated_at) {
           wrap._noteUpdatedAt = item.updated_at;
         }
@@ -30586,8 +30598,215 @@
       wrap._isNoteOwner = note.is_owner !== false;
       renderOpenNoteMembers(wrap._noteMembers, []);
     }
+    var rt = realtimeApi();
+    if (rt) rt.sub(noteId);
     noteCollabTick();
-    noteCollabState.timer = setInterval(noteCollabTick, 1400);
+    noteCollabState.timer = setInterval(noteCollabLoop, NOTE_COLLAB_SAMPLE_MS);
+  }
+
+  // ---- Живые обновления (webapp/realtime.js) ----
+  // Сокет приносит «заметка / листы / обсуждение изменились» и курсоры участников;
+  // данные берём тем же запросом collab. Без сокета — прежний опрос раз в 1,4 с.
+  var NOTE_COLLAB_SAMPLE_MS = 400; // курсор читаем часто, по сети уходит только изменение
+  var NOTE_COLLAB_POLL_MS = 1400;
+  var NOTE_COLLAB_LIVE_POLL_MS = 15000; // страховочный опрос при живом сокете
+  var NOTE_PRESENCE_KEEPALIVE_MS = 4000; // присутствие на сервере живёт 12 с
+  var NOTE_SAVE_DELAY_MS = 1500;
+  var NOTE_SAVE_DELAY_LIVE_MS = 500; // в заметке есть другие люди — сохраняем чаще
+  var realtimeStarted = false;
+  var realtimeCollabKick = null;
+  var realtimeNotesTimer = null;
+
+  function realtimeApi() {
+    return window.LeoRealtime || null;
+  }
+
+  function realtimeLive(noteId) {
+    var rt = realtimeApi();
+    return !!(rt && noteId && rt.isLive(noteId));
+  }
+
+  function startRealtime() {
+    var rt = realtimeApi();
+    if (!rt) return;
+    if (realtimeStarted) {
+      rt.restart();
+      return;
+    }
+    realtimeStarted = true;
+    rt.start({ getHeaders: authHeaders, onEvent: handleRealtimeEvent });
+  }
+
+  function currentNoteCursor() {
+    var editor = isPrimarySheetId(noteSheetState.leftId) ? getLeftNoteRichEditor() : null;
+    return editor && typeof editor.getCursor === "function" ? editor.getCursor() : null;
+  }
+
+  function noteSaveDelayMs() {
+    return noteCollabState.peerCount > 0 && realtimeLive(noteCollabState.noteId)
+      ? NOTE_SAVE_DELAY_LIVE_MS
+      : NOTE_SAVE_DELAY_MS;
+  }
+
+  function noteCollabLoop() {
+    var id = noteCollabState.noteId;
+    if (!id || document.hidden) return;
+    var now = Date.now();
+    if (realtimeLive(id)) {
+      var cursor = currentNoteCursor();
+      if (
+        cursor !== noteCollabState.sentCursor ||
+        now - noteCollabState.sentCursorAt >= NOTE_PRESENCE_KEEPALIVE_MS
+      ) {
+        if (realtimeApi().cursor(id, cursor)) {
+          noteCollabState.sentCursor = cursor;
+          noteCollabState.sentCursorAt = now;
+        }
+      }
+      if (now - noteCollabState.lastPollAt >= NOTE_COLLAB_LIVE_POLL_MS) noteCollabTick();
+      return;
+    }
+    if (now - noteCollabState.lastPollAt >= NOTE_COLLAB_POLL_MS - 50) noteCollabTick();
+  }
+
+  // ---- Совместная правка текста (webapp/note-yjs.js) ----
+  var noteYjsSession = null;
+  var noteYjsDisabled = {}; // note_id → причина: здесь совместная правка не удалась, работаем как раньше
+
+  function noteYjsActive(noteId) {
+    return !!(noteYjsSession && noteYjsSession.isReady() && String(noteYjsSession.noteId) === String(noteId));
+  }
+
+  function startNoteYjs(noteId) {
+    var id = String(noteId || "");
+    if (!id || noteYjsDisabled[id] || !window.LeoNoteYjs) return;
+    if (noteYjsSession && String(noteYjsSession.noteId) === id) {
+      noteYjsSession.join(); // переподключение: догнать журнал и отдать свои правки
+      return;
+    }
+    stopNoteYjs();
+    var api = getNoteRichEditorApi();
+    var left = getLeftNoteRichEditor();
+    if (!api || !api.Y || !left || typeof left.attachYjs !== "function") return; // старый бандл редактора
+    var rt = realtimeApi();
+    noteYjsSession = window.LeoNoteYjs.createSession({
+      noteId: id,
+      Y: api.Y,
+      send: function (obj) {
+        return !!(rt && rt.send(obj));
+      },
+      getEditor: function () {
+        return isPrimarySheetId(noteSheetState.leftId) ? getLeftNoteRichEditor() : null;
+      },
+      getAnyEditor: getLeftNoteRichEditor,
+      onReady: function () {
+        // Черновик и «выберите версию» в совместном режиме не нужны: правки сливает Yjs.
+        clearLocalNoteDraft(id);
+      },
+      onReseeded: function () {
+        if (typeof noteCollabState.requestSave === "function") noteCollabState.requestSave();
+      },
+      onRemoteChange: function () {
+        if (typeof noteCollabState.requestSave === "function") noteCollabState.requestSave();
+      },
+      onFallback: function (reason) {
+        console.warn("[yjs] fallback", id, reason);
+        noteYjsDisabled[id] = reason || "error";
+        noteYjsSession = null;
+        kickNoteCollab();
+      },
+    });
+    noteYjsSession.join();
+  }
+
+  function stopNoteYjs() {
+    if (!noteYjsSession) return;
+    var s = noteYjsSession;
+    noteYjsSession = null;
+    s.stop();
+  }
+
+  /** Заголовок — вне совместного документа: берём чужой, если сами его сейчас не правим. */
+  function applyRemoteNoteTitle(item) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) {
+      wrap._noteRevision = item.revision || wrap._noteRevision;
+      wrap._noteUpdatedAt = item.updated_at || wrap._noteUpdatedAt;
+      wrap._noteMembers = item.members || wrap._noteMembers || [];
+    }
+    var titleInput = document.getElementById("note-editor-title-input");
+    if (!titleInput || item.title == null || document.activeElement === titleInput) return;
+    if (titleInput.value === String(item.title || "")) return;
+    noteCollabState.applying = true;
+    try {
+      titleInput.value = String(item.title || "");
+      titleInput.dispatchEvent(new Event("input"));
+    } finally {
+      noteCollabState.applying = false;
+    }
+  }
+
+  function kickNoteCollab(delayMs) {
+    if (realtimeCollabKick) return;
+    realtimeCollabKick = setTimeout(function () {
+      realtimeCollabKick = null;
+      if (noteCollabState.noteId) noteCollabTick();
+    }, delayMs || 60);
+  }
+
+  function applyLivePresence(peers) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap) return;
+    var rt = realtimeApi();
+    var me = rt ? rt.userId() : "";
+    var others = (peers || []).filter(function (p) {
+      return String(p.user_id) !== me;
+    });
+    noteCollabState.peerCount = others.length;
+    renderOpenNoteMembers(wrap._noteMembers || [], others);
+    paintRemoteCursors(others);
+  }
+
+  function handleRealtimeEvent(ev) {
+    var type = ev && ev.type;
+    var openId = noteCollabState.noteId;
+    var evNote = ev && ev.note_id != null ? String(ev.note_id) : "";
+    if (type === "subscribed") {
+      if (evNote && evNote === openId) {
+        kickNoteCollab(); // догнать пропущенное, пока сокета не было
+        if (ev.yjs) startNoteYjs(openId);
+        else stopNoteYjs();
+      }
+      return;
+    }
+    if (type && type.indexOf("y.") === 0) {
+      if (noteYjsSession && evNote === String(noteYjsSession.noteId)) noteYjsSession.handle(ev);
+      return;
+    }
+    if (type === "note.changed" || type === "sheets.changed" || type === "note.deleted") {
+      if (!evNote || evNote !== openId) return;
+      var rt = realtimeApi();
+      // Своё сохранение: ответ PATCH обычно приходит следом — проверим чуть позже.
+      var own = type === "note.changed" && rt && ev.actor && String(ev.actor) === rt.userId();
+      kickNoteCollab(own ? 800 : 60);
+      return;
+    }
+    if (type === "presence") {
+      if (evNote && evNote === openId) applyLivePresence(ev.peers);
+      return;
+    }
+    if (type === "comments.changed") {
+      kickDiscussionLiveUpdates(evNote);
+      return;
+    }
+    if (type === "notes.changed") {
+      // Новая заметка из бота (транскрибация и т.п.) — обновить открытый список.
+      if (realtimeNotesTimer) clearTimeout(realtimeNotesTimer);
+      realtimeNotesTimer = setTimeout(function () {
+        realtimeNotesTimer = null;
+        if (currentTab === "notes" && !document.hidden) loadNotes().catch(function () {});
+      }, 1500);
+    }
   }
 
   function pendingNoteIdFromLocation() {
@@ -35642,6 +35861,9 @@
   }
 
   function applyLeftSheetHtml(sheet) {
+    var toPrimary = !!(sheet && isPrimarySheetId(sheet.id));
+    // Совместный документ привязан к основному листу: другой лист его не трогает.
+    if (noteYjsSession && !toPrimary) noteYjsSession.detach();
     if (isWebSheet(sheet)) {
       mountLeftWebCanvas(sheet);
       return;
@@ -35650,6 +35872,7 @@
     var editor = getLeftNoteRichEditor();
     var html = (sheet && (sheet.body || sheet.description)) || "";
     if (editor && typeof editor.setHtml === "function") editor.setHtml(html);
+    if (noteYjsSession && toPrimary) noteYjsSession.attach();
   }
 
   function saveLeftSheetScroll() {
@@ -37379,7 +37602,10 @@
 
   var discussionLiveTimer = null;
   var discussionLiveInflight = false;
+  var discussionLiveLastAt = 0;
+  var discussionLiveAgain = false; // сигнал пришёл во время запроса — повторить после него
   var DISCUSSION_LIVE_MS = 2500;
+  var DISCUSSION_LIVE_SOCKET_MS = 20000; // при живом сокете — только страховочный опрос
   var discussPresenceTimer = null;
 
   function discussPresencePath() {
@@ -37435,7 +37661,15 @@
     discussionLiveTimer = setTimeout(tickDiscussionLiveUpdates, DISCUSSION_LIVE_MS);
   }
 
-  function tickDiscussionLiveUpdates() {
+  function kickDiscussionLiveUpdates(noteId) {
+    if (!isNoteDiscussionOpen()) return;
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (!wrap || wrap._shareKind !== "local" || String(wrap._shareId) !== String(noteId)) return;
+    stopDiscussionLiveUpdates();
+    tickDiscussionLiveUpdates(true);
+  }
+
+  function tickDiscussionLiveUpdates(force) {
     discussionLiveTimer = null;
     if (!isNoteDiscussionOpen()) return;
     if (document.hidden) {
@@ -37444,21 +37678,39 @@
     }
     var wrap = document.getElementById("note-editor-more-wrap");
     if (!wrap || !wrap._shareKind || !wrap._shareId) return;
+    if (
+      force !== true &&
+      wrap._shareKind === "local" &&
+      realtimeLive(wrap._shareId) &&
+      Date.now() - discussionLiveLastAt < DISCUSSION_LIVE_SOCKET_MS
+    ) {
+      startDiscussionLiveUpdates();
+      return;
+    }
     // Не перетирать оптимистичное сообщение и локальный pending во время своей отправки.
     if (document.getElementById("note-discuss-optimistic-user")) {
       startDiscussionLiveUpdates();
       return;
     }
     if (discussionLiveInflight) {
+      if (force === true) discussionLiveAgain = true;
       startDiscussionLiveUpdates();
       return;
     }
     discussionLiveInflight = true;
+    discussionLiveLastAt = Date.now();
     refreshNoteCommentsList()
       .catch(function () {})
       .finally(function () {
         discussionLiveInflight = false;
-        if (isNoteDiscussionOpen()) startDiscussionLiveUpdates();
+        if (!isNoteDiscussionOpen()) return;
+        if (discussionLiveAgain) {
+          discussionLiveAgain = false;
+          stopDiscussionLiveUpdates();
+          tickDiscussionLiveUpdates(true);
+          return;
+        }
+        startDiscussionLiveUpdates();
       });
   }
 
@@ -47659,6 +47911,11 @@
         if (moreWrap && moreWrap._noteRevision) {
           patchBody.expected_revision = moreWrap._noteRevision;
         }
+        if (noteYjsActive(noteId)) {
+          // Правки уже слиты в совместном документе — сохраняем снимок без проверки ревизии.
+          delete patchBody.expected_revision;
+          patchBody.yjs = true;
+        }
         function applyPatchedLocal(patchedItem) {
           if (isKnowledge) {
             patchedItem.role = "knowledge";
@@ -47876,8 +48133,10 @@
       });
     }
 
-    function schedulePatch() {
+    function schedulePatch(info) {
       if (noteCollabState.applying) return;
+      // Чужая правка из совместного документа: сохраняет её автор, не мы.
+      if (info && info.remote === true) return;
       noteCollabState.lastTypedAt = Date.now();
       previewOpenNoteInList();
       if (noteId) {
@@ -47900,7 +48159,7 @@
           .catch(function (e) {
             setNoteEditorSaveHint(e.message || "Не удалось сохранить заметку");
           });
-      }, 1500);
+      }, noteSaveDelayMs());
     }
 
     async function runSave() {
@@ -48003,9 +48262,9 @@
     mountNoteRichEditor(
       editorPad,
       editorBody,
-      function () {
-        if (isPrimarySheetId(noteSheetState.leftId)) schedulePatch();
-        else scheduleExtraSheetPersist(noteSheetState.leftId);
+      function (info) {
+        if (isPrimarySheetId(noteSheetState.leftId)) schedulePatch(info);
+        else if (!(info && info.remote === true)) scheduleExtraSheetPersist(noteSheetState.leftId);
       },
       {
       tocParent: tocControls.tocParent,
@@ -48044,6 +48303,11 @@
         (!isKnowledge || (n.members && n.members.length > 1))
       ) {
         startNoteCollab(noteId, n);
+        // После startNoteCollab (он сбрасывает прошлый хук): совместный документ изменили
+        // правкой мимо Yjs или другие участники (мы ведущий) — сохранить HTML, как свою правку.
+        noteCollabState.requestSave = function () {
+          schedulePatch();
+        };
       }
     });
     }
@@ -48782,6 +49046,7 @@
           persistBrowserSessionFromCurrentAuth();
         })
         .catch(function () {});
+      startRealtime();
       setTab("actual", { noAnim: true });
       return;
     }
@@ -48791,6 +49056,7 @@
     scheduleTelegramMiniappBackBindRetries();
     bindEdgeSwipeBackOnce();
     bindOfflineQueueListenersOnce();
+    startRealtime();
 
     const root = document.documentElement;
     root.classList.remove("tg-light");

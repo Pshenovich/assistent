@@ -14,6 +14,43 @@ import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { CellSelection, cellAround, isInTable } from "@tiptap/pm/tables";
 import { trailingNode } from "@tiptap/pm/trailing-node";
 import { canJoin } from "@tiptap/pm/transform";
+import { keydownHandler } from "@tiptap/pm/keymap";
+import { createDocument } from "@tiptap/core";
+import * as Y from "yjs";
+import { mergeBlocks } from "./yjs-merge.mjs";
+import {
+  defaultDeleteFilter,
+  defaultProtectedNodes,
+  prosemirrorToYXmlFragment,
+  yXmlFragmentToProseMirrorRootNode,
+  redo as yRedo,
+  undo as yUndo,
+  ySyncPlugin,
+  ySyncPluginKey,
+  yUndoPlugin,
+  yUndoPluginKey,
+} from "y-prosemirror";
+
+/** Транзакция пришла из совместного документа Yjs (чужая правка / пересборка) — не наша. */
+function isRemoteYTr(tr) {
+  var m = tr && tr.getMeta(ySyncPluginKey);
+  return !!(m && m.isChangeOrigin);
+}
+
+/** Плагины, дописывающие правки (appendTransaction), не должны отвечать на чужие правки:
+ * автор уже дописал их у себя, а ответ каждого участника задвоит правку. */
+function skipRemoteY(plugin) {
+  var orig = plugin.spec.appendTransaction;
+  if (typeof orig === "function") {
+    plugin.spec.appendTransaction = function (trs) {
+      if (trs.some(isRemoteYTr)) return null;
+      return orig.apply(this, arguments);
+    };
+  }
+  return plugin;
+}
+
+var Y_FRAGMENT = "prosemirror";
 
 /** ID строки (data-leo-item): по нему задача саммари и пункт Фокуса держат связь со строкой,
  * как бы её ни правили. Enter не копирует ID на новую строку; дубль (строку скопировали) — снимаем. */
@@ -47,6 +84,7 @@ var LeoLineId = Extension.create({
         key: new PluginKey("leoLineIdDedupe"),
         appendTransaction: function (trs, _old, state) {
           if (!trs.some(function (tr) { return tr.docChanged; })) return null;
+          if (trs.some(isRemoteYTr)) return null;
           var seen = {};
           var tr = null;
           state.doc.descendants(function (node, pos, parent, index) {
@@ -78,10 +116,12 @@ var TrailingParagraph = Extension.create({
   name: "trailingParagraph",
   addProseMirrorPlugins: function () {
     return [
-      trailingNode({
-        nodeName: "paragraph",
-        ignoredNodes: ["paragraph"],
-      }),
+      skipRemoteY(
+        trailingNode({
+          nodeName: "paragraph",
+          ignoredNodes: ["paragraph"],
+        })
+      ),
     ];
   },
   onCreate: function () {
@@ -361,7 +401,7 @@ const MarkdownHeadingShortcut = Extension.create({
         key: new PluginKey("markdownHeadingShortcut"),
         appendTransaction: function (trs, oldState, state) {
           if (!trs.some(function (tr) { return tr.docChanged; })) return null;
-          if (trs.some(function (tr) { return tr.getMeta("paste") || tr.getMeta("uiEvent") === "paste" || tr.getMeta("history$") || tr.getMeta("addToHistory") === false; })) return null;
+          if (trs.some(function (tr) { return isRemoteYTr(tr) || tr.getMeta("paste") || tr.getMeta("uiEvent") === "paste" || tr.getMeta("history$") || tr.getMeta("addToHistory") === false; })) return null;
           var sel = state.selection;
           if (!sel.empty) return null;
           var $from = sel.$from;
@@ -439,6 +479,7 @@ const IosSelectionGuard = Extension.create({
           })) {
             return null;
           }
+          if (transactions.some(isRemoteYTr)) return null;
 
           var oldSel = oldState.selection;
           var newSel = newState.selection;
@@ -1572,6 +1613,14 @@ function closeTgMenus(toolbarEl) {
   });
 }
 
+/** «Отменить / Повторить» в совместной заметке — только свои правки (Yjs UndoManager). */
+function yUndoCan(editor, act) {
+  var st = yUndoPluginKey.getState(editor.state);
+  var um = st && st.undoManager;
+  if (!um) return false;
+  return act === "undo" ? um.undoStack.length > 0 : um.redoStack.length > 0;
+}
+
 function mountToolbar(toolbarEl, editor) {
   var refreshFn = function () {};
   // input всегда в toolbar (не внутри .note-tg-menu) — иначе display:none меню убивает iOS picker.
@@ -2036,9 +2085,15 @@ function mountToolbar(toolbarEl, editor) {
       return;
     }
     if (action === "undo") {
-      if (editor.can().chain().focus().undo().run()) editor.chain().focus().undo().run();
+      if (editor.__leoYjs) {
+        editor.commands.focus();
+        yUndo(editor.state);
+      } else if (editor.can().chain().focus().undo().run()) editor.chain().focus().undo().run();
     } else if (action === "redo") {
-      if (editor.can().chain().focus().redo().run()) editor.chain().focus().redo().run();
+      if (editor.__leoYjs) {
+        editor.commands.focus();
+        yRedo(editor.state);
+      } else if (editor.can().chain().focus().redo().run()) editor.chain().focus().redo().run();
     } else if (action === "task") {
       editor.chain().focus().toggleTaskList().run();
     } else if (action === "highlight") {
@@ -2092,7 +2147,9 @@ function mountToolbar(toolbarEl, editor) {
     ["undo", "redo"].forEach(function (act) {
       var hb = toolbarEl.querySelector('[data-action="' + act + '"]');
       if (!hb) return;
-      var can = act === "undo" ? editor.can().chain().focus().undo().run() : editor.can().chain().focus().redo().run();
+      var can = editor.__leoYjs
+        ? yUndoCan(editor, act)
+        : act === "undo" ? editor.can().chain().focus().undo().run() : editor.can().chain().focus().redo().run();
       hb.disabled = !can;
       hb.classList.toggle("note-tg-btn--disabled", !can);
     });
@@ -3523,8 +3580,10 @@ function mount(container, options) {
         },
       },
     },
-    onUpdate: function () {
-      if (typeof options.onUpdate === "function") options.onUpdate();
+    onUpdate: function (props) {
+      // remote — правка из совместного документа (чужая / пересборка): автосохранять её не нам.
+      var remote = !!(props && isRemoteYTr(props.transaction));
+      if (typeof options.onUpdate === "function") options.onUpdate({ remote: remote });
     },
     onSelectionUpdate: function (props) {
       if (typeof options.onSelection === "function") {
@@ -3665,6 +3724,97 @@ function mount(container, options) {
       }
       editor.commands.scrollIntoView();
       return true;
+    },
+    /** Подключить совместный документ: содержимое редактора становится содержимым ydoc. */
+    attachYjs: function (ydoc) {
+      if (editor.__leoYjs && editor.__leoYjs.ydoc === ydoc) return;
+      this.detachYjs();
+      var fragment = ydoc.getXmlFragment(Y_FRAGMENT);
+      var keysKey = new PluginKey("leoYjsKeys");
+      var keys = new Plugin({
+        key: keysKey,
+        props: {
+          handleKeyDown: keydownHandler({
+            "Mod-z": function (state) { return yUndo(state); },
+            "Mod-y": function (state) { return yRedo(state); },
+            "Mod-Shift-z": function (state) { return yRedo(state); },
+          }),
+        },
+      });
+      // Свой UndoManager: y-prosemirror уничтожает его вместе с видом плагина, а ProseMirror
+      // пересоздаёт виды при любой перенастройке плагинов — отмена бы молча отключилась.
+      var undoManager = new Y.UndoManager(fragment, {
+        trackedOrigins: new Set([ySyncPluginKey]),
+        deleteFilter: function (item) { return defaultDeleteFilter(item, defaultProtectedNodes); },
+        captureTransaction: function (tr) { return tr.meta.get("addToHistory") !== false; },
+      });
+      var destroyUndo = undoManager.destroy.bind(undoManager);
+      undoManager.destroy = function () {};
+      editor.__leoYjs = { ydoc: ydoc, keysKey: keysKey, destroyUndo: destroyUndo };
+      var sync = ySyncPlugin(fragment);
+      var undo = yUndoPlugin({ undoManager: undoManager });
+      taskCtx.suppressChipDelete = true;
+      try {
+        // Одной перенастройкой; клавиши — раньше истории StarterKit, иначе Ctrl+Z откатит не то.
+        editor.registerPlugin(sync, function (_p, plugins) {
+          return [keys].concat(plugins, [sync, undo]);
+        });
+      } finally {
+        taskCtx.suppressChipDelete = false;
+      }
+    },
+    /** Отключить (переход на другой лист): ydoc продолжает жить и принимать правки. */
+    detachYjs: function () {
+      var st = editor.__leoYjs;
+      if (!st) return;
+      editor.__leoYjs = null;
+      taskCtx.suppressChipDelete = true;
+      try {
+        editor.unregisterPlugin([st.keysKey, yUndoPluginKey, ySyncPluginKey]);
+      } finally {
+        taskCtx.suppressChipDelete = false;
+      }
+      st.destroyUndo();
+    },
+    isYjsAttached: function () {
+      return !!editor.__leoYjs;
+    },
+    /** Влить HTML в совместный документ разницей (первый посев или правка мимо Yjs — ИИ, бот).
+     * origin — метка транзакции Yjs, чтобы приложение отличало свои правки. */
+    applyHtmlToYjs: function (ydoc, html, origin) {
+      // Те же опции разбора, что у setContent — иначе посев разойдётся с тем, что в редакторе.
+      var doc = createDocument(importBody(html || ""), editor.schema, editor.options.parseOptions || {});
+      var fragment = ydoc.getXmlFragment(Y_FRAGMENT);
+      ydoc.transact(function () {
+        prosemirrorToYXmlFragment(doc, fragment);
+      }, origin);
+    },
+    /** Правка мимо Yjs (ИИ, бот, старое приложение): вносим только её разницу old → new,
+     * остальной документ (в т.ч. ещё не сохранённые в HTML правки людей) не трогаем. */
+    applyHtmlDeltaToYjs: function (ydoc, oldHtml, newHtml, origin) {
+      var parse = editor.options.parseOptions || {};
+      var oldDoc = createDocument(importBody(oldHtml || ""), editor.schema, parse);
+      var newDoc = createDocument(importBody(newHtml || ""), editor.schema, parse);
+      var fragment = ydoc.getXmlFragment(Y_FRAGMENT);
+      var curDoc = yXmlFragmentToProseMirrorRootNode(fragment, editor.schema);
+      function blocks(doc) {
+        var out = [];
+        doc.forEach(function (node) { out.push(node); });
+        return out;
+      }
+      var merged = mergeBlocks(blocks(oldDoc), blocks(newDoc), blocks(curDoc), function (a, b) {
+        return a.eq(b);
+      });
+      if (!merged.length) merged = [editor.schema.nodes.paragraph.create()];
+      var nextDoc = editor.schema.topNodeType.create(null, merged);
+      if (nextDoc.eq(curDoc)) return false;
+      ydoc.transact(function () {
+        prosemirrorToYXmlFragment(nextDoc, fragment);
+      }, origin);
+      return true;
+    },
+    setEditable: function (on) {
+      editor.setEditable(!!on, false);
     },
     getHtml: function () {
       return exportBody(editor);
@@ -3900,7 +4050,8 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-selbar",
+  assetVersion: "20261025-yjs3",
+  Y: Y,
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,

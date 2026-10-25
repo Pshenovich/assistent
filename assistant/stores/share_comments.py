@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from assistant.realtime import notify as realtime_notify
 from assistant.stores import notes as notes_store
 from assistant.stores import share_links as share_links_store
 
@@ -399,6 +400,7 @@ def add_comment(
     item = get_comment(cid)
     if not item:
         raise RuntimeError("Не удалось сохранить комментарий")
+    realtime_notify.comments_changed(kind, iid)
     return item
 
 
@@ -423,7 +425,10 @@ def delete_comment(
             (int(comment_id),),
         )
         _conn().commit()
-        return cur.rowcount > 0
+        ok = cur.rowcount > 0
+    if ok:
+        realtime_notify.comments_changed(str(item.get("item_kind") or ""), item.get("item_id"))
+    return ok
 
 
 def delete_all_for_item(

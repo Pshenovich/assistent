@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import html as html_lib
 from html.parser import HTMLParser
 import ipaddress
@@ -31,6 +32,8 @@ from fastapi import (
     Query,
     Request,
     UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
 )
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -82,6 +85,13 @@ app = FastAPI(
 
 
 @app.on_event("startup")
+async def _bind_realtime_hub() -> None:
+    from assistant.realtime.hub import HUB
+
+    HUB.bind_loop(asyncio.get_running_loop())
+
+
+@app.on_event("startup")
 def _recover_note_paei_jobs() -> None:
     try:
         from assistant.board.note_paei import recover_jobs_after_restart
@@ -114,7 +124,7 @@ def _default_security_csp(*, allow_any_frame_ancestor: bool = False) -> str:
         "worker-src 'self'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com data:; "
-        "img-src 'self' data: blob: https:; connect-src 'self' https:; "
+        "img-src 'self' data: blob: https:; connect-src 'self' https: wss:; "
         "frame-src 'self' https://oauth.telegram.org https://telegram.org; "
         f"frame-ancestors {ancestors}"
     )
@@ -2680,6 +2690,8 @@ class _MiniappLocalNotePatch(BaseModel):
     kb_enabled: Optional[bool] = None
     expected_updated_at: Optional[str] = None
     expected_revision: Optional[int] = None
+    # HTML из совместного документа Yjs: правки уже слиты, проверка ревизии не нужна.
+    yjs: Optional[bool] = None
 
 
 class _MiniappNoteSheetCreate(BaseModel):
@@ -10563,6 +10575,7 @@ async def miniapp_local_note_patch(
     ):
         raise HTTPException(status_code=400, detail="Укажите title и/или description")
     uid = int(principal.telegram_user_id)
+    yjs_saved: list[tuple[int, str]] = []  # (ревизия, HTML), если сохранили снимок из Yjs
 
     def _run() -> dict[str, Any] | None:
         access = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
@@ -10581,6 +10594,7 @@ async def miniapp_local_note_patch(
                         "preview_overwrite": True,
                     },
                 )
+        from_yjs = bool(body.yjs) and _realtime_yjs_enabled()
         try:
             item = notes_store.update_note(
                 owner,
@@ -10588,9 +10602,10 @@ async def miniapp_local_note_patch(
                 title=body.title,
                 body=body.description,
                 kb_enabled=body.kb_enabled,
-                expected_updated_at=body.expected_updated_at,
-                expected_revision=body.expected_revision,
+                expected_updated_at=None if from_yjs else body.expected_updated_at,
+                expected_revision=None if from_yjs else body.expected_revision,
                 actor_user_id=uid,
+                realtime_source="yjs" if from_yjs else "",
             )
         except notes_store.NoteConflictError as e:
             raise HTTPException(
@@ -10599,6 +10614,11 @@ async def miniapp_local_note_patch(
             ) from e
         if item is None:
             return None
+        if from_yjs:
+            from assistant.stores import note_ydoc
+
+            yjs_saved.append((int(item.get("revision") or 1), str(item.get("body") or "")))
+            note_ydoc.set_base(note_id, *yjs_saved[-1])
         from assistant.services import transcription_notes as tnotes
 
         if tnotes.is_transcription_note(item):
@@ -10631,6 +10651,10 @@ async def miniapp_local_note_patch(
     item = await run_in_threadpool(_run)
     if not item:
         raise HTTPException(status_code=404, detail="Заметка не найдена")
+    if yjs_saved:
+        from assistant.realtime.yrooms import rooms as yjs_rooms
+
+        yjs_rooms().mark_saved(int(note_id), *yjs_saved[-1])
     return {"ok": True, "item": item}
 
 
@@ -11592,6 +11616,10 @@ async def miniapp_note_collab(
             username=username,
         )
         others = [p for p in peers if str(p.get("user_id")) != str(uid)]
+        from assistant.realtime.hub import HUB, note_topic
+
+        # Участникам на сокете — сразу, без ожидания их опроса.
+        HUB.publish(note_topic(note_id), {"type": "presence", "note_id": int(note_id), "peers": peers})
         from assistant.stores import note_sheets as note_sheets_store
 
         return {
@@ -11633,6 +11661,265 @@ async def miniapp_note_collab_leave(
 
     await run_in_threadpool(_run)
     return {"ok": True}
+
+
+# ---- Живые обновления (WebSocket) ----
+# Сокет несёт только сигналы «изменилось» и присутствие; данные — обычными запросами.
+_REALTIME_AUTH_TIMEOUT_SEC = 10.0
+_REALTIME_IDLE_TIMEOUT_SEC = 70.0
+_REALTIME_CURSOR_MIN_INTERVAL_SEC = 0.08
+_REALTIME_MAX_NOTE_SUBS = 8
+_REALTIME_TOPIC_RE = re.compile(r"^(note|user):\d{1,18}$")
+
+
+def _realtime_origin_ok(websocket: WebSocket) -> bool:
+    origin = (websocket.headers.get("origin") or "").strip()
+    if not origin:
+        return True
+    from urllib.parse import urlparse
+
+    host = (websocket.headers.get("x-forwarded-host") or websocket.headers.get("host") or "").strip().lower()
+    try:
+        origin_host = (urlparse(origin).netloc or "").lower()
+    except Exception:
+        return False
+    return bool(host) and origin_host == host
+
+
+async def _realtime_principal(websocket: WebSocket, headers: Any) -> _MiniappPrincipal:
+    """Та же проверка, что у HTTP: initData / session / dev — из первого сообщения, cookie — из рукопожатия."""
+    raw: list[tuple[bytes, bytes]] = []
+    if isinstance(headers, dict):
+        for k, v in headers.items():
+            key = str(k or "").strip().lower()
+            if key in ("authorization", "x-telegram-init-data") and isinstance(v, str) and v.strip():
+                raw.append((key.encode("latin-1"), v.strip().encode("utf-8")))
+    cookie = websocket.headers.get("cookie")
+    if cookie:
+        raw.append((b"cookie", cookie.encode("latin-1", "ignore")))
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/miniapp/ws",
+        "headers": raw,
+        "query_string": b"",
+        "client": websocket.client,
+        "scheme": "https",
+    }
+    return await _resolve_miniapp_principal(Request(scope), enforce_access=True)
+
+
+def _realtime_yjs_enabled() -> bool:
+    return (os.getenv("REALTIME_YJS", "1") or "").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _realtime_note_access(uid: int, note_id: int) -> tuple[str, bool] | None:
+    """(владелец, совместная правка Yjs) или None — нет доступа.
+    Yjs — только у обычных общих заметок (есть участники кроме владельца)."""
+    from assistant.services import transcription_notes as tnotes
+    from assistant.stores import notes as notes_store
+
+    note = notes_store.get_accessible_note(uid, note_id)
+    if not note:
+        return None
+    owner = str(note.get("owner_user_id") or uid)
+    yjs = (
+        _realtime_yjs_enabled()
+        and not str(note.get("role") or "")
+        and not tnotes.is_transcription_note(note)
+        and len(note.get("members") or []) > 1
+    )
+    return owner, yjs
+
+
+def _realtime_b64(raw: Any) -> bytes | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        import base64
+
+        return base64.b64decode(raw, validate=True)
+    except Exception:
+        return None
+
+
+@miniapp_router.websocket("/ws")
+async def miniapp_realtime_ws(websocket: WebSocket) -> None:
+    from assistant.realtime.hub import HUB, Connection, note_topic, user_topic
+    from assistant.realtime.yrooms import rooms as yjs_rooms
+    from assistant.stores import note_members
+
+    if not _realtime_origin_ok(websocket):
+        await websocket.close(code=4403)
+        return
+    await websocket.accept()
+    HUB.bind_loop(asyncio.get_running_loop())
+    try:
+        first = await asyncio.wait_for(websocket.receive_json(), timeout=_REALTIME_AUTH_TIMEOUT_SEC)
+        if not isinstance(first, dict) or first.get("type") != "auth":
+            raise ValueError("auth expected")
+    except Exception:
+        await websocket.close(code=4401)
+        return
+    try:
+        principal = await _realtime_principal(websocket, first.get("headers"))
+    except HTTPException as e:
+        try:
+            await websocket.send_json({"type": "error", "status": e.status_code})
+        finally:
+            await websocket.close(code=4403 if e.status_code == 403 else 4401)
+        return
+
+    uid = int(principal.telegram_user_id)
+    _, display_name, username = _comment_author_from_principal(principal)
+    conn = Connection(str(uid))
+    owners: dict[int, str] = {}  # подписанные заметки → владелец (ключ присутствия)
+    yjs_notes: set[int] = set()  # подписки, где разрешена совместная правка Yjs
+    yjs_joined: set[int] = set()
+    present: set[int] = set()  # заметки, где мы отметились курсором
+    last_cursor_at: dict[int, float] = {}
+
+    async def _sender() -> None:
+        while True:
+            text = await conn.queue.get()
+            if text is None:
+                break
+            await websocket.send_text(text)
+
+    def _presence_event(owner: str, note_id: int) -> dict[str, Any]:
+        return {"type": "presence", "note_id": note_id, "peers": note_members.list_peers(owner, note_id)}
+
+    def _leave(owner: str, note_id: int) -> None:
+        present.discard(note_id)
+        note_members.leave_presence(owner, note_id, uid)
+        HUB.publish(note_topic(note_id), _presence_event(owner, note_id))
+
+    HUB.subscribe(conn, user_topic(uid))
+    sender = asyncio.create_task(_sender())
+    conn.push(json.dumps({"type": "hello", "user_id": str(uid)}))
+    try:
+        while True:
+            msg = await asyncio.wait_for(websocket.receive_json(), timeout=_REALTIME_IDLE_TIMEOUT_SEC)
+            if not isinstance(msg, dict):
+                continue
+            kind = msg.get("type")
+            if kind == "ping":
+                conn.push('{"type":"pong"}')
+                continue
+            try:
+                note_id = int(msg.get("note_id"))
+            except (TypeError, ValueError):
+                continue
+            if kind == "sub":
+                if note_id not in owners and len(owners) >= _REALTIME_MAX_NOTE_SUBS:
+                    conn.push(json.dumps({"type": "sub_denied", "note_id": note_id}))
+                    continue
+                access = await run_in_threadpool(_realtime_note_access, uid, note_id)
+                if access is None:
+                    conn.push(json.dumps({"type": "sub_denied", "note_id": note_id}))
+                    continue
+                owners[note_id], yjs_ok = access
+                if yjs_ok:
+                    yjs_notes.add(note_id)
+                else:
+                    yjs_notes.discard(note_id)
+                HUB.subscribe(conn, note_topic(note_id))
+                conn.push(json.dumps({"type": "subscribed", "note_id": note_id, "yjs": yjs_ok}))
+            elif kind == "unsub":
+                HUB.unsubscribe(conn, note_topic(note_id))
+                owner = owners.pop(note_id, None)
+                yjs_notes.discard(note_id)
+                if note_id in yjs_joined:
+                    yjs_joined.discard(note_id)
+                    await yjs_rooms().leave(conn, note_id)
+                if owner is not None and note_id in present:
+                    _leave(owner, note_id)
+            elif kind == "y.join":
+                if note_id not in yjs_notes:
+                    conn.push(json.dumps({"type": "y.error", "note_id": note_id, "reason": "not_allowed"}))
+                    continue
+                yjs_joined.add(note_id)
+                await yjs_rooms().join(conn, note_id)
+            elif kind == "y.update" and note_id in yjs_joined:
+                data = _realtime_b64(msg.get("update"))
+                if data is not None:
+                    yjs_rooms().update(conn, note_id, data)
+            elif kind == "y.compact" and note_id in yjs_joined:
+                data = _realtime_b64(msg.get("update"))
+                upto = msg.get("upto")
+                if data is not None and isinstance(upto, int):
+                    yjs_rooms().compact(conn, note_id, data, upto)
+            elif kind == "y.leave" and note_id in yjs_joined:
+                yjs_joined.discard(note_id)
+                await yjs_rooms().leave(conn, note_id)
+            elif kind == "cursor" and note_id in owners:
+                now = time.monotonic()
+                if now - last_cursor_at.get(note_id, 0.0) < _REALTIME_CURSOR_MIN_INTERVAL_SEC:
+                    continue
+                last_cursor_at[note_id] = now
+                raw_cursor = msg.get("cursor")
+                cursor = int(raw_cursor) if isinstance(raw_cursor, (int, float)) else None
+                note_members.heartbeat(
+                    owners[note_id], note_id, uid,
+                    cursor=cursor, display_name=display_name, username=username,
+                )
+                present.add(note_id)
+                HUB.publish(note_topic(note_id), _presence_event(owners[note_id], note_id))
+    except (WebSocketDisconnect, asyncio.TimeoutError):
+        pass
+    except Exception as exc:
+        print(f"[realtime] ws error uid={uid} err={exc!r}")
+    finally:
+        HUB.drop(conn)
+        sender.cancel()
+        if yjs_joined:
+            # Отдельной задачей: обработчик сокета могут отменить при обрыве,
+            # а уход из комнаты Yjs (передача посева, запись журнала) должен дойти до конца.
+            async def _yjs_cleanup(notes: list[int]) -> None:
+                for nid in notes:
+                    try:
+                        await yjs_rooms().leave(conn, nid)
+                    except Exception as exc:
+                        print(f"[yjs] leave failed note={nid} err={exc!r}")
+
+            asyncio.get_running_loop().create_task(_yjs_cleanup(list(yjs_joined)))
+        for note_id in list(present):
+            owner = owners.get(note_id)
+            if owner is not None:
+                _leave(owner, note_id)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@app.post("/internal/realtime/publish", include_in_schema=False)
+async def internal_realtime_publish(request: Request) -> dict[str, Any]:
+    """События из других процессов (бот). Только локально, мимо nginx, с общим секретом."""
+    from assistant.realtime import notify as realtime_notify
+    from assistant.realtime.hub import HUB
+
+    client_host = (request.client.host if request.client else "") or ""
+    proxied = request.headers.get("x-real-ip") or request.headers.get("x-forwarded-for")
+    if proxied or client_host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+        raise HTTPException(status_code=404, detail="Not Found")
+    if not realtime_notify.secret_ok(request.headers.get(realtime_notify.SECRET_HEADER)):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Bad JSON")
+    sent = 0
+    for item in (body.get("events") if isinstance(body, dict) else None) or []:
+        if not isinstance(item, dict):
+            continue
+        topic = str(item.get("topic") or "")
+        event = item.get("event")
+        if not _REALTIME_TOPIC_RE.match(topic) or not isinstance(event, dict) or not isinstance(event.get("type"), str):
+            continue
+        if HUB.publish(topic, event):
+            sent += 1
+    return {"ok": True, "sent": sent}
 
 
 def _viewer_may_see_user_photo(viewer: int, user_id: int) -> bool:

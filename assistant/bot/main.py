@@ -71,6 +71,10 @@ def build_application() -> Application:
 
 
 def main() -> None:
+    from assistant.realtime import notify as realtime_notify
+
+    # Правки заметок из бота — открытым экранам мини-приложения через веб-сервер.
+    realtime_notify.enable_remote()
     app = build_application()
     print("[bot] polling…")
     # Сообщения, пришедшие пока бот перезапускался (выкатка), не выбрасываем —

@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from assistant.realtime import notify as realtime_notify
+
 _LOCK = threading.Lock()
 _CONN: Optional[sqlite3.Connection] = None
 
@@ -505,6 +507,7 @@ def create_note(
         pass
     out = get_note(uid, nid)
     assert out is not None
+    realtime_notify.notes_list_changed(uid, note_id=nid)
     return out
 
 
@@ -528,6 +531,7 @@ def update_note(
     expected_updated_at: Optional[str] = None,
     expected_revision: Optional[int] = None,
     actor_user_id: Optional[int | str] = None,
+    realtime_source: str = "",
 ) -> Optional[dict[str, Any]]:
     uid = str(int(user_id))
     existing = get_note(uid, note_id)
@@ -606,6 +610,9 @@ def update_note(
             ),
         )
         _conn().commit()
+    realtime_notify.note_changed(
+        note_id, revision=new_rev, actor_user_id=actor_user_id, source=realtime_source
+    )
     viewer = actor_user_id if actor_user_id is not None else uid
     out = get_note(uid, note_id)
     return _with_sharing(out, viewer) if out else None
@@ -894,6 +901,7 @@ def delete_note(user_id: int | str, note_id: int) -> bool:
         _conn().commit()
         ok = cur.rowcount > 0
     if ok:
+        realtime_notify.note_deleted(note_id, owner_user_id=uid)
         try:
             from assistant.stores import note_sheets as note_sheets_store
 

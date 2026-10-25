@@ -7,6 +7,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from assistant.realtime import notify as realtime_notify
 from assistant.stores import notes as notes_store
 
 _LOCK = notes_store._LOCK  # type: ignore[attr-defined]
@@ -197,6 +198,7 @@ def set_sheet_order(note: dict[str, Any], order: list[Any]) -> list[dict[str, An
             (note_id, want.index(str(PRIMARY_SHEET_ID))),
         )
         conn.commit()
+    realtime_notify.sheets_changed(note_id)
     return list_sheets(note)
 
 
@@ -374,6 +376,7 @@ def create_sheet(
         note_versions.mark_current(note_id, sid)
     except Exception:
         pass
+    realtime_notify.sheets_changed(note_id)
     out = get_extra_sheet(note_id, sid)
     assert out is not None
     return out
@@ -434,6 +437,8 @@ def update_sheet(
             # Ревизию заметки не трогаем: она защищает от конфликтов правок основной вкладки.
             _conn().execute("UPDATE local_notes SET updated_at = ? WHERE id = ?", (ts, int(note_id)))
         _conn().commit()
+    if changed:
+        realtime_notify.sheets_changed(note_id)
     out = get_extra_sheet(note_id, sheet_id)
     assert out is not None
     return out
@@ -517,7 +522,10 @@ def delete_sheet(note_id: int, sheet_id: int) -> bool:
             (int(note_id), int(sheet_id)),
         )
         _conn().commit()
-        return cur.rowcount > 0
+        ok = cur.rowcount > 0
+    if ok:
+        realtime_notify.sheets_changed(note_id)
+    return ok
 
 
 def delete_all_for_note(note_id: int) -> None:
