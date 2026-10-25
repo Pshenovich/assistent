@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261025-quotes";
+  var WEBAPP_BUILD = "20261025-quotenav";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -32238,12 +32238,30 @@
     return /(^|\n)> /.test(String(text || ""));
   }
 
-  function appendDiscussThreadedBody(bubble, text, withMentions) {
+  // comment — сохранённое сообщение: цитата ведёт к сообщению, откуда взята (или к фрагменту заметки).
+  function appendDiscussThreadedBody(bubble, text, withMentions, comment) {
     var quoteBuf = [];
     var textBuf = [];
     function flushQuote() {
-      if (quoteBuf.length) appendDiscussReplyQuote(bubble, quoteBuf.join("\n"), "Цитата", 0);
+      if (!quoteBuf.length) return;
+      var q = quoteBuf.join("\n");
       quoteBuf = [];
+      var targetId = comment ? findDiscussMessageByQuote(q, comment.id) : 0;
+      var who = targetId ? discussReplyWhoLabel({ parent_id: targetId }) || "Цитата" : "Фрагмент";
+      appendDiscussReplyQuote(bubble, q, who, targetId);
+      if (targetId || !comment) return;
+      // Не из ленты — значит из заметки: нажатие показывает фрагмент в заметке.
+      var noteReply = bubble.lastElementChild;
+      if (!noteReply || !noteReply.classList.contains("note-discuss-reply")) return;
+      noteReply.classList.add("is-nav");
+      noteReply.setAttribute("role", "button");
+      noteReply.setAttribute("tabindex", "0");
+      noteReply.title = "Показать в заметке";
+      noteReply.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        jumpToNoteQuote(comment, q);
+      });
     }
     function flushText() {
       var t = textBuf.join("\n").trim();
@@ -40131,12 +40149,17 @@
   function findDiscussReplyTargetId(comment) {
     var pid = Number(comment && comment.parent_id) || 0;
     if (pid > 0) return pid;
-    var quote = String(splitDiscussQuote((comment && comment.quote) || "").text || "")
+    return findDiscussMessageByQuote(splitDiscussQuote((comment && comment.quote) || "").text, comment && comment.id);
+  }
+
+  // Сообщение выше по ленте, где есть этот текст (откуда взята цитата); 0 — не нашли.
+  function findDiscussMessageByQuote(quoteText, beforeId) {
+    var quote = String(quoteText || "")
       .replace(/\s+/g, " ")
       .trim()
       .toLowerCase();
     if (!quote) return 0;
-    var myId = Number(comment && comment.id) || 0;
+    var myId = Number(beforeId) || 0;
     var panel = document.getElementById("note-editor-comments");
     var rows = discussionComments((panel && panel._allComments) || []);
     var best = 0;
@@ -40356,7 +40379,7 @@
       mdBody.innerHTML = wrapTablesForScroll(simpleMarkdownToHtml(bodyText));
       bubble.appendChild(mdBody);
     } else if (!hideClipBody && bodyText.trim() && isThreadedDiscussBody(bodyText)) {
-      appendDiscussThreadedBody(bubble, bodyText, true);
+      appendDiscussThreadedBody(bubble, bodyText, true, c);
     } else if (!hideClipBody && bodyText.trim()) {
       var textBody = document.createElement("div");
       textBody.className = "note-discuss-bubble-body";
