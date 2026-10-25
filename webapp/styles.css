@@ -22742,3 +22742,15 @@ th[data-highlight] { background: rgba(255, 255, 255, 0.1); }
 .note-tg-btn--kb { display: none; flex-shrink: 0; background: rgba(255, 255, 255, 0.08); }
 html.note-editor-kb-open #note-editor-toolbar-wrap .note-tg-btn--kb { display: inline-flex; }
 html.note-editor-kb-open #note-editor-toolbar-wrap .note-tg-btn--discuss { display: none; }
+
+/* Выделение на телефоне: ИИ / Обсудить / Задача — в нижней панели (плашка над текстом спорила с системным меню),
+   зачёркнутый / подчёркнутый / маркер — в «H → Ещё». Десктоп — как раньше. */
+.note-tg-mob-only { display: none !important; }
+@media (max-width: 959px) and (pointer: coarse) {
+  .note-tg-capsule .note-tg-mob-only { display: inline-flex !important; }
+  .note-tg-menu .note-tg-mob-only { display: flex !important; }
+  .note-tg-capsule .note-tg-mob-only.hidden,
+  .note-tg-desk-only { display: none !important; }
+  .note-tg-btn--sel-ai { color: #c4b5fd; }
+  #note-editor-toolbar-wrap .note-editor-toolbar-row.is-selection .note-tg-btn--mic { display: none; }
+}

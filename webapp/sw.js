@@ -11,7 +11,7 @@ var OBSOLETE_HOSTS = {
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261025-mobfix",
+  "./styles.css?v=20261025-selbar",
   "./app.js?v=20261025-mobfix",
   "./mail.js?v=20261023-mail6",
   "./mail-inbox.js?v=20261023-reply1",

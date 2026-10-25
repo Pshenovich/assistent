@@ -1206,6 +1206,8 @@ function svgIcon(name) {
       '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2"/><path d="M4 12l1 1 2-2"/><path d="M4 18l1 1 2-2"/>',
     none: '<path d="M4 7h16M4 12h16M4 17h10"/>',
     blank: "",
+    sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
+    discuss: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
   };
   return "<svg " + common + ">" + (paths[name] || "") + "</svg>";
 }
@@ -1674,6 +1676,9 @@ function mountToolbar(toolbarEl, editor) {
     item("quote", "blockquote", "quote", "Цитата") +
     '<button type="button" class="note-tg-menu-item note-tg-menu-page" data-go="font">' +
     svgIcon("font") + "<span>Шрифт и размер</span>" + svgIcon("chevronRight") + "</button>" +
+    // Телефон: редкое форматирование — страницей, на панели при выделении нет места.
+    '<button type="button" class="note-tg-menu-item note-tg-menu-page note-tg-mob-only" data-go="more">' +
+    svgIcon("strike") + "<span>Ещё</span>" + svgIcon("chevronRight") + "</button>" +
     sep() +
     item("divider", "", "divider", "Разделитель") +
     item("noteref", "", "noteref", "Ссылка на заметку") +
@@ -1703,7 +1708,14 @@ function mountToolbar(toolbarEl, editor) {
     NOTE_FONT_SIZES.map(function (v) {
       return '<button type="button" class="note-tg-menu-item note-tg-size-item" data-cmd="size:' + v + '" data-check="size:' + v + '"><span>' + parseInt(v, 10) + "</span></button>";
     }).join("") +
-    "</div></div></div>";
+    "</div></div>" +
+    '<div class="note-tg-page hidden" data-page="more">' +
+    '<button type="button" class="note-tg-menu-item note-tg-menu-page note-tg-menu-back" data-go="main">' +
+    svgIcon("chevronLeft") + "<span>Назад</span></button>" +
+    item("strike", "strike", "strike", "Зачёркнутый") +
+    item("underline", "underline", "underline", "Подчёркнутый") +
+    item("highlight", "highlight", "highlight", "Маркер") +
+    "</div></div>";
 
   toolbarEl.className = "note-rich-editor-toolbar note-tg-toolbar";
   toolbarEl.innerHTML =
@@ -1719,11 +1731,17 @@ function mountToolbar(toolbarEl, editor) {
     btn("note-tg-btn--attach", 'data-action="attach"', "Файл или фото", "paperclip") +
     "</div>" +
     '<div class="note-tg-capsule note-tg-capsule--selection hidden" data-mode="selection">' +
+    // Телефон: ИИ / Обсудить / Задача — здесь, а не всплывающей плашкой над выделением
+    // (там системное меню «Копировать / Вырезать», убрать его веб-приложение не может).
+    btn("note-tg-mob-only note-tg-sel-act hidden note-tg-btn--sel-ai", 'data-action="sel-ai"', "ИИ", "sparkle") +
+    btn("note-tg-mob-only note-tg-sel-act hidden", 'data-action="sel-discuss"', "Обсудить", "discuss") +
+    btn("note-tg-mob-only note-tg-sel-act hidden", 'data-action="sel-task"', "Задача", "check") +
+    '<span class="note-tg-sep note-tg-mob-only note-tg-sel-act hidden" aria-hidden="true"></span>' +
     btn("", 'data-action="bold"', "Жирный", "bold") +
     btn("", 'data-action="italic"', "Курсив", "italic") +
-    btn("", 'data-action="strike"', "Зачёркнутый", "strike") +
-    btn("", 'data-action="underline"', "Подчёркнутый", "underline") +
-    btn("", 'data-action="highlight"', "Маркер", "highlight") +
+    btn("note-tg-desk-only", 'data-action="strike"', "Зачёркнутый", "strike") +
+    btn("note-tg-desk-only", 'data-action="underline"', "Подчёркнутый", "underline") +
+    btn("note-tg-desk-only", 'data-action="highlight"', "Маркер", "highlight") +
     btn("", 'data-action="link"', "Ссылка", "link") +
     '<span class="note-tg-sep" aria-hidden="true"></span>' +
     btn("", 'data-menu="style"', "Вид текста, шрифт и размер", "heading") +
@@ -1771,6 +1789,12 @@ function mountToolbar(toolbarEl, editor) {
       editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
     } else if (cmd === "attach") {
       pickImage();
+    } else if (cmd === "strike") {
+      editor.chain().focus().toggleStrike().run();
+    } else if (cmd === "underline") {
+      editor.chain().focus().toggleUnderline().run();
+    } else if (cmd === "highlight") {
+      editor.chain().focus().toggleHighlight().run();
     } else if (cmd === "divider") {
       editor.chain().focus().setHorizontalRule().run();
     } else if (cmd === "noteref") {
@@ -2005,6 +2029,12 @@ function mountToolbar(toolbarEl, editor) {
       return;
     }
     var action = btn.getAttribute("data-action");
+    if (/^sel-/.test(action || "")) {
+      // ИИ / Обсудить / Задача по выделению — их выполняет приложение (как плашка на десктопе).
+      closeTgMenus(toolbarEl);
+      window.dispatchEvent(new CustomEvent("leo-note-selection-action", { detail: { kind: action.slice(4) } }));
+      return;
+    }
     if (action === "undo") {
       if (editor.can().chain().focus().undo().run()) editor.chain().focus().undo().run();
     } else if (action === "redo") {
@@ -3870,7 +3900,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-mobfix",
+  assetVersion: "20261025-selbar",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261025-mobfix";
+  var WEBAPP_BUILD = "20261025-selbar";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261025-mobfix"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261025-selbar"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -44238,6 +44238,33 @@
     }
   }
 
+  // Действия по выделению для кнопок нижней панели на телефоне (заполняет bindEditorCommentSelection).
+  var noteSelectionActions = null;
+
+  function noteSelectionUsesToolbar() {
+    return !!(
+      isMobileNoteLayout() &&
+      window.matchMedia &&
+      window.matchMedia("(pointer: coarse)").matches
+    );
+  }
+
+  // Кнопки видны, только когда у выделения есть действия (у несохранённой заметки их нет — как и плашки на десктопе).
+  function syncNoteSelectionToolbar() {
+    var acts = noteSelectionActions;
+    document.querySelectorAll("#note-editor-format-toolbar-host .note-tg-sel-act").forEach(function (el) {
+      var kind = String(el.getAttribute("data-action") || "").replace(/^sel-/, "");
+      var on = !!acts && (kind === "ai" ? !!acts.ai : true);
+      el.classList.toggle("hidden", !on);
+    });
+  }
+
+  window.addEventListener("leo-note-selection-action", function (e) {
+    var kind = e && e.detail && e.detail.kind;
+    var fn = noteSelectionActions && noteSelectionActions[kind];
+    if (typeof fn === "function") fn();
+  });
+
   function bindEditorCommentSelection(kind, itemId, panel) {
     var api = window.NoteComments;
     if (!api || panel._commentSelectBound) return;
@@ -44248,14 +44275,15 @@
       var root = noteEditorCommentRoot();
       var sel = api.selectionAnchor(root);
       if (!sel || !sel.quote) {
+        noteSelectionActions = null;
+        syncNoteSelectionToolbar();
         api.hideBubble();
         refreshNoteCommentAnchors();
         return;
       }
       draft = sel;
-      api.showBubble(
-        sel.rect,
-        function () {
+      var actions = {
+        discuss: function () {
           var current = noteAskMode();
           var mode = noteAskUsesChips(current)
             ? current
@@ -44264,14 +44292,13 @@
               : "gpt";
           openNoteDiscussion({ mode: mode, draft: sel, focus: true });
         },
-        {
-          onAi:
-            kind === "local" && canUseNoteAiSheet()
-              ? function () {
-                  openNoteAiSheet({ selection: sel.quote });
-                }
-              : null,
-          onTask: function () {
+        ai:
+          kind === "local" && canUseNoteAiSheet()
+            ? function () {
+                openNoteAiSheet({ selection: sel.quote });
+              }
+            : null,
+        task: function () {
             var ed = getActiveNoteRichEditor && getActiveNoteRichEditor();
             var range = ed && ed.getSelectionRange ? ed.getSelectionRange() : null;
             openTaskModal(
@@ -44298,8 +44325,16 @@
               }
             );
           },
-        }
-      );
+      };
+      // Телефон: ИИ / Обсудить / Задача — в нижней панели (над выделением системное меню
+      // «Копировать / Вырезать», две плашки друг на друге мешали). Десктоп — плашка, как раньше.
+      if (noteSelectionUsesToolbar()) {
+        noteSelectionActions = actions;
+        syncNoteSelectionToolbar();
+        api.hideBubble();
+        return;
+      }
+      api.showBubble(sel.rect, actions.discuss, { onAi: actions.ai, onTask: actions.task });
     }
     function onDocMouseDown(e) {
       if (api.isCommentBubbleEvent && api.isCommentBubbleEvent(e)) return;
