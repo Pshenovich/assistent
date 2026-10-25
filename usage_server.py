@@ -8156,6 +8156,9 @@ async def miniapp_gpt_chat(
                 temperature=agent.get("temperature"),
                 web=bool(agent.get("web_search")),
                 max_tokens=16384 if (canvas_enabled or note_edit_enabled) else None,
+                # Картинку — только если попросил сам пользователь: в prompt приклеены лист заметки и канвас
+                # (там base64-фото и любые слова), по ним картинка генерировалась почти к каждому ответу.
+                intent_text=q,
                 **tool_kwargs,
             )
             if out is None:

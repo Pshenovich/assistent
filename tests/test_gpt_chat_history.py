@@ -318,3 +318,28 @@ def test_answer_with_context_tells_model_its_name(monkeypatch):
     monkeypatch.setattr(llm, "_chat_result", fake_result)
     llm.answer_with_context_result("какая ты модель?", model="openai/o3")
     assert "openai/o3" in seen["system"]
+
+
+def test_image_intent_only_from_user_message(monkeypatch):
+    # В question приклеены лист заметки и канвас (там могут быть «нарисуй», base64-фото) —
+    # картинку по ним не генерируем: решает только собственное сообщение пользователя.
+    calls = {"gen": 0}
+
+    def fake_result(system, user, **kwargs):
+        return "вот ответ", [{"mime": "image/png", "b64": "aaa"}]
+
+    monkeypatch.setattr(llm, "_chat_result", fake_result)
+    out = llm.answer_with_context_result(
+        "нужны примеры флоу\n\nЛист заметки: нарисуй картинку логотипа",
+        intent_text="нужны примеры флоу",
+    )
+    assert out["images"] == []
+
+
+def test_image_intent_ignores_quoted_lines(monkeypatch):
+    def fake_result(system, user, **kwargs):
+        return "вот ответ", [{"mime": "image/png", "b64": "aaa"}]
+
+    monkeypatch.setattr(llm, "_chat_result", fake_result)
+    out = llm.answer_with_context_result("> нарисуй картинку логотипа\nа как это сделать нативно?")
+    assert out["images"] == []

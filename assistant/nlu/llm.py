@@ -142,6 +142,8 @@ def _materialize_generated_media(
     cleaned, prompts = parse_generated_image_prompts(text or "")
     cleaned, embedded = extract_embedded_images(cleaned)
     model_images = list(images or [])
+    # Процитированное («> …» из ответа ассистента или заметки) — не просьба пользователя.
+    question = "\n".join(ln for ln in str(question or "").split("\n") if not ln.lstrip().startswith(">"))
     prompt_src = (question or "").strip()
     if is_bare_confirm(prompt_src) or wants_resend_attachment(prompt_src):
         for it in reversed(history or []):
@@ -733,7 +735,10 @@ def answer_with_context_result(
     tools: list[dict[str, Any]] | None = None,
     tool_runner: Any = None,
     tool_choice_first: str = "auto",
+    intent_text: str | None = None,
 ) -> dict[str, Any]:
+    """intent_text — собственное сообщение пользователя: по нему (а не по question, куда приклеены лист
+    заметки и канвас) решаем, просил ли он картинку."""
     from assistant.nlu.ask_context import assemble_ask_messages
 
     extra, user = assemble_ask_messages(
@@ -778,7 +783,7 @@ def answer_with_context_result(
     text, out_images = _materialize_generated_media(
         text,
         out_images,
-        question=question or user,
+        question=(intent_text if intent_text is not None else question) or user,
         history=history,
         source_images=images,
     )
