@@ -47,7 +47,8 @@
   function renderBody(data) {
     var raw = String((data && data.body) || "").trim();
     var canvases = Array.isArray(data && data.canvases) ? data.canvases : [];
-    if (!raw && canvases.length) return "";
+    var boards = Array.isArray(data && data.boards) ? data.boards : [];
+    if (!raw && (canvases.length || boards.length)) return "";
     var op = String((data && data.operation) || "");
     var kind = String((data && data.kind) || "");
     var api = window.NoteHtml;
@@ -76,16 +77,35 @@
     if (!host) return;
     host.innerHTML = "";
     var canvases = Array.isArray(data && data.canvases) ? data.canvases : [];
+    var boards = Array.isArray(data && data.boards) ? data.boards : [];
     var bodyEmpty = !String((data && data.body) || "").trim();
+    var single = canvases.length + boards.length === 1 && bodyEmpty;
     document.body.classList.toggle(
       "share-canvas-only",
-      !!(canvases.length && bodyEmpty)
+      !!((canvases.length || boards.length) && bodyEmpty)
     );
+    // Холсты — только просмотр: зум и перемещение, без правки (webapp/board.js).
+    boards.forEach(function (b) {
+      if (!b || !b.board || !window.LeoBoard) return;
+      var block = document.createElement("div");
+      block.className = "share-web-canvas-block share-board-block";
+      if (!single) {
+        var title = document.createElement("h2");
+        title.className = "share-web-canvas-title";
+        title.textContent = String(b.title || "Доска");
+        block.appendChild(title);
+      }
+      var frame = document.createElement("div");
+      frame.className = "share-board-frame";
+      block.appendChild(frame);
+      host.appendChild(block);
+      window.LeoBoard.create({ host: frame, json: JSON.stringify(b.board), readOnly: true, title: b.title });
+    });
     canvases.forEach(function (c, i) {
       if (!c || !c.html) return;
       var block = document.createElement("div");
       block.className = "share-web-canvas-block";
-      if (!(canvases.length === 1 && bodyEmpty)) {
+      if (!single) {
         var title = document.createElement("h2");
         title.className = "share-web-canvas-title";
         title.textContent = String(c.title || "Презентация");

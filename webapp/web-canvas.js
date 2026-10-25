@@ -1326,7 +1326,7 @@
     var pickBtn = makeBtn("Выделить");
     var editBtn = makeBtn("Редактировать", "note-web-canvas-edit-btn");
     var refreshBtn = makeBtn("Обновить", "note-web-canvas-refresh-btn");
-    refreshBtn.title = "Перезагрузить полотно";
+    refreshBtn.title = "Перезагрузить презентацию";
     var pdfBtn = makeBtn("PDF", "note-web-canvas-pdf-btn");
     pdfBtn.title = "Сохранить презентацию в PDF (все слайды)";
     pdfBtn.addEventListener("click", function (e) {

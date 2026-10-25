@@ -1,4 +1,7 @@
-"""Комнаты Yjs: совместная правка текста заметки поверх WebSocket.
+"""Комнаты Yjs: совместная правка заметки поверх WebSocket.
+
+Комната — документ одного листа: основного (``sheet="main"``, текст заметки) или холста
+(``sheet`` — id листа kind=board, документ — элементы доски). Ключ комнаты — (note_id, sheet).
 
 Сервер не разбирает Yjs — хранит журнал бинарных обновлений, пересылает их участникам
 и назначает ровно одного «посевщика» для первого открытия (иначе два клиента
@@ -9,6 +12,7 @@
 на клиенте: y.reseed несёт old_html (что было) и html (что стало) — затирать документ
 целиком нельзя, в нём бывают правки, ещё не попавшие в HTML. Сохраняет HTML автор правки
 и «ведущий» комнаты (после чужих правок и слияний), поэтому HTML отстаёт на секунды.
+У холста вместо HTML — JSON доски, слияние — по элементам.
 
 Все методы — только из цикла событий веб-процесса; база — в потоках.
 """
@@ -25,9 +29,13 @@ from assistant.realtime.hub import HUB, Connection
 SAVE_DELAY_SEC = 2.0
 COMPACT_AT = 300  # столько обновлений в журнале — просим клиента прислать снимок
 MAX_UPDATE_BYTES = 12 * 1024 * 1024
+MAIN = "main"
 
 # (note_id) -> (body_html, revision); подменяется в тестах.
 NoteReader = Callable[[int], Optional[tuple[str, int]]]
+# (note_id, sheet_id) -> (body, revision) холста; None — листа нет или он не холст.
+SheetReader = Callable[[int, str], Optional[tuple[str, int]]]
+RoomKey = tuple[int, str]
 
 
 def _read_note(note_id: int) -> Optional[tuple[str, int]]:
@@ -39,11 +47,30 @@ def _read_note(note_id: int) -> Optional[tuple[str, int]]:
     return str(note.get("body") or note.get("description") or ""), int(note.get("revision") or 1)
 
 
+def _read_sheet(note_id: int, sheet_id: str) -> Optional[tuple[str, int]]:
+    from assistant.stores import note_sheets
+
+    try:
+        sid = int(sheet_id)
+    except (TypeError, ValueError):
+        return None
+    sheet = note_sheets.get_extra_sheet(int(note_id), sid)
+    if not sheet or str(sheet.get("kind") or "") != note_sheets.SHEET_KIND_BOARD:
+        return None
+    return str(sheet.get("body") or ""), int(sheet.get("revision") or 1)
+
+
+def normalize_sheet(raw: Any) -> str:
+    s = str(raw if raw is not None else "").strip()
+    return s if s and s != MAIN else MAIN
+
+
 class YRoom:
     def __init__(
-        self, note_id: int, updates: list[bytes], base_revision: int, base_html: Optional[str]
+        self, note_id: int, updates: list[bytes], base_revision: int, base_html: Optional[str], sheet: str = MAIN
     ) -> None:
         self.note_id = note_id
+        self.sheet = sheet
         self.conns: list[Connection] = []
         self.updates = updates
         self.start_seq = 0  # seq первого элемента журнала
@@ -57,6 +84,10 @@ class YRoom:
         self.save_handle: Optional[asyncio.TimerHandle] = None
         self.compact_pending = False
 
+    @property
+    def key(self) -> RoomKey:
+        return (self.note_id, self.sheet)
+
 
 def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
@@ -66,27 +97,50 @@ def _send(conn: Connection, payload: dict[str, Any]) -> None:
     conn.push(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
+def _msg(room_or_note: Any, sheet: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Сообщение комнаты: note_id и (для листа) sheet_id — клиент разводит документы по ним."""
+    if isinstance(room_or_note, YRoom):
+        note_id, sheet = room_or_note.note_id, room_or_note.sheet
+    else:
+        note_id = int(room_or_note)
+    out = {"type": payload.pop("type"), "note_id": note_id}
+    if sheet != MAIN:
+        out["sheet_id"] = sheet
+    out.update(payload)
+    return out
+
+
 class YRooms:
-    def __init__(self, read_note: NoteReader = _read_note) -> None:
-        self.rooms: dict[int, YRoom] = {}
-        self._locks: dict[int, asyncio.Lock] = {}
+    def __init__(self, read_note: NoteReader = _read_note, read_sheet: SheetReader = _read_sheet) -> None:
+        self.rooms: dict[RoomKey, YRoom] = {}
+        self._locks: dict[RoomKey, asyncio.Lock] = {}
         self.read_note = read_note
+        self.read_sheet = read_sheet
         HUB.add_listener(self._on_hub_event)
 
+    def _read(self, note_id: int, sheet: str) -> Optional[tuple[str, int]]:
+        if sheet == MAIN:
+            return self.read_note(note_id)
+        return self.read_sheet(note_id, sheet)
+
+    def get(self, note_id: int, sheet: str = MAIN) -> Optional[YRoom]:
+        return self.rooms.get((int(note_id), normalize_sheet(sheet)))
+
     # ---- загрузка ----
-    async def _room(self, note_id: int) -> Optional[YRoom]:
-        room = self.rooms.get(note_id)
+    async def _room(self, note_id: int, sheet: str = MAIN) -> Optional[YRoom]:
+        key = (note_id, sheet)
+        room = self.rooms.get(key)
         if room is not None:
             return room
-        lock = self._locks.setdefault(note_id, asyncio.Lock())
+        lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
-            room = self.rooms.get(note_id)
+            room = self.rooms.get(key)
             if room is not None:
                 return room
             from assistant.stores import note_ydoc
 
-            updates, base, base_html = await asyncio.to_thread(note_ydoc.load, note_id)
-            note = await asyncio.to_thread(self.read_note, note_id)
+            updates, base, base_html = await asyncio.to_thread(note_ydoc.load, note_id, sheet)
+            note = await asyncio.to_thread(self._read, note_id, sheet)
             if note is None:
                 return None
             html, revision = note
@@ -94,25 +148,26 @@ class YRooms:
             if updates and base != revision:
                 # HTML менялся мимо Yjs, пока заметку никто не держал открытой.
                 if base_html is not None:
-                    print(f"[yjs] outside edit note={note_id} base={base} rev={revision} — merge")
+                    print(f"[yjs] outside edit note={note_id} sheet={sheet} base={base} rev={revision} — merge")
                     pending = (base_html, html)
                 else:
-                    print(f"[yjs] stale log note={note_id} base={base} rev={revision} — reseed from html")
+                    print(f"[yjs] stale log note={note_id} sheet={sheet} base={base} rev={revision} — reseed from html")
                     updates = []
             if updates:
-                room = YRoom(note_id, updates, base, base_html)
+                room = YRoom(note_id, updates, base, base_html, sheet)
             else:
-                room = YRoom(note_id, updates, revision, html)
+                room = YRoom(note_id, updates, revision, html, sheet)
             room.merge_old = html
             room.pending_merge = pending
-            self.rooms[note_id] = room
+            self.rooms[key] = room
             return room
 
     # ---- протокол ----
-    async def join(self, conn: Connection, note_id: int) -> None:
-        room = await self._room(note_id)
+    async def join(self, conn: Connection, note_id: int, sheet: str = MAIN) -> None:
+        sheet = normalize_sheet(sheet)
+        room = await self._room(note_id, sheet)
         if room is None:
-            _send(conn, {"type": "y.error", "note_id": note_id, "reason": "not_found"})
+            _send(conn, _msg(note_id, sheet, {"type": "y.error", "reason": "not_found"}))
             return
         if conn not in room.conns:
             room.conns.append(conn)
@@ -120,7 +175,7 @@ class YRooms:
         if room.pending_merge is not None and room.updates:
             old_html, html = room.pending_merge
             room.pending_merge = None
-            _send(conn, {"type": "y.reseed", "note_id": note_id, "old_html": old_html, "html": html})
+            _send(conn, _msg(room, sheet, {"type": "y.reseed", "old_html": old_html, "html": html}))
         self._update_leader(room)
 
     def _update_leader(self, room: YRoom) -> None:
@@ -130,58 +185,57 @@ class YRooms:
             return
         room.leader = leader
         if leader is not None:
-            _send(leader, {"type": "y.leader", "note_id": room.note_id, "leader": True})
+            _send(leader, _msg(room, room.sheet, {"type": "y.leader", "leader": True}))
 
     async def _send_state(self, room: YRoom, conn: Connection) -> None:
-        nid = room.note_id
         if room.updates:
-            _send(conn, {
-                "type": "y.state", "note_id": nid, "role": "sync",
+            _send(conn, _msg(room, room.sheet, {
+                "type": "y.state", "role": "sync",
                 "updates": [_b64(u) for u in room.updates], "seq": room.seq,
-            })
+            }))
             return
         if room.seeder is None or room.seeder not in room.conns:
             room.seeder = conn
-            note = await asyncio.to_thread(self.read_note, nid)
+            note = await asyncio.to_thread(self._read, room.note_id, room.sheet)
             if note is None:
-                _send(conn, {"type": "y.error", "note_id": nid, "reason": "not_found"})
+                _send(conn, _msg(room, room.sheet, {"type": "y.error", "reason": "not_found"}))
                 return
             html, revision = note
             room.base_revision = revision
             room.base_html = html
             room.merge_old = html
-            _send(conn, {
-                "type": "y.state", "note_id": nid, "role": "seed",
-                "html": html, "revision": revision, "seq": room.seq,
-            })
+            _send(conn, _msg(room, room.sheet, {
+                "type": "y.state", "role": "seed", "html": html, "revision": revision, "seq": room.seq,
+            }))
             return
-        _send(conn, {"type": "y.state", "note_id": nid, "role": "wait", "seq": room.seq})
+        _send(conn, _msg(room, room.sheet, {"type": "y.state", "role": "wait", "seq": room.seq}))
 
-    def update(self, conn: Connection, note_id: int, data: bytes) -> None:
-        room = self.rooms.get(note_id)
+    def update(self, conn: Connection, note_id: int, data: bytes, sheet: str = MAIN) -> None:
+        sheet = normalize_sheet(sheet)
+        room = self.rooms.get((note_id, sheet))
         if room is None or conn not in room.conns:
-            _send(conn, {"type": "y.error", "note_id": note_id, "reason": "not_joined"})
+            _send(conn, _msg(note_id, sheet, {"type": "y.error", "reason": "not_joined"}))
             return
         if not data or len(data) > MAX_UPDATE_BYTES:
-            _send(conn, {"type": "y.error", "note_id": note_id, "reason": "too_large"})
+            _send(conn, _msg(room, sheet, {"type": "y.error", "reason": "too_large"}))
             return
         seq = room.seq
         room.updates.append(data)
         room.seq += 1
         if room.seeder is conn:
             room.seeder = None
-        msg = {"type": "y.update", "note_id": note_id, "update": _b64(data), "seq": seq}
+        msg = _msg(room, sheet, {"type": "y.update", "update": _b64(data), "seq": seq})
         for other in room.conns:
             if other is not conn:
-                _send(other, msg)
-        _send(conn, {"type": "y.ack", "note_id": note_id, "seq": seq})
+                _send(other, dict(msg))
+        _send(conn, _msg(room, sheet, {"type": "y.ack", "seq": seq}))
         self._schedule_save(room)
         if len(room.updates) > COMPACT_AT and not room.compact_pending:
             room.compact_pending = True
-            _send(conn, {"type": "y.compact_request", "note_id": note_id})
+            _send(conn, _msg(room, sheet, {"type": "y.compact_request"}))
 
-    def compact(self, conn: Connection, note_id: int, snapshot: bytes, upto: int) -> None:
-        room = self.rooms.get(note_id)
+    def compact(self, conn: Connection, note_id: int, snapshot: bytes, upto: int, sheet: str = MAIN) -> None:
+        room = self.rooms.get((note_id, normalize_sheet(sheet)))
         if room is None or conn not in room.conns:
             return
         room.compact_pending = False
@@ -194,8 +248,9 @@ class YRooms:
         room.start_seq = upto - 1
         self._schedule_save(room)
 
-    async def leave(self, conn: Connection, note_id: int) -> None:
-        room = self.rooms.get(note_id)
+    async def leave(self, conn: Connection, note_id: int, sheet: str = MAIN) -> None:
+        sheet = normalize_sheet(sheet)
+        room = self.rooms.get((note_id, sheet))
         if room is None or conn not in room.conns:
             return
         room.conns.remove(conn)
@@ -207,15 +262,15 @@ class YRooms:
                     # Посевщик ушёл, не успев — посев переходит следующему.
                     await self._send_state(room, room.conns[0])
             return
-        self.rooms.pop(note_id, None)
+        self.rooms.pop(room.key, None)
         if room.save_handle is not None:
             room.save_handle.cancel()
             room.save_handle = None
         await self._flush(room)
 
-    def mark_saved(self, note_id: int, revision: int, html: str) -> None:
+    def mark_saved(self, note_id: int, revision: int, html: str, sheet: str = MAIN) -> None:
         """HTML сохранён из Yjs на этой ревизии — журнал с ней согласован."""
-        room = self.rooms.get(note_id)
+        room = self.rooms.get((int(note_id), normalize_sheet(sheet)))
         if room is not None:
             room.base_revision = int(revision)
             room.base_html = html
@@ -225,27 +280,46 @@ class YRooms:
     # ---- правки мимо Yjs ----
     def _on_hub_event(self, topic: str, event: dict[str, Any]) -> None:
         etype = event.get("type")
-        if etype not in ("note.changed", "note.deleted") or not topic.startswith("note:"):
+        if etype not in ("note.changed", "note.deleted", "sheets.changed") or not topic.startswith("note:"):
             return
         try:
             note_id = int(event.get("note_id") or topic.split(":", 1)[1])
         except (TypeError, ValueError):
             return
+        loop = asyncio.get_running_loop()
         if etype == "note.deleted":
-            room = self.rooms.pop(note_id, None)
-            if room is not None and room.save_handle is not None:
-                room.save_handle.cancel()
-            asyncio.get_running_loop().create_task(self._delete(note_id))
+            for key in [k for k in self.rooms if k[0] == note_id]:
+                room = self.rooms.pop(key)
+                if room.save_handle is not None:
+                    room.save_handle.cancel()
+            loop.create_task(self._delete(note_id))
             return
         if event.get("source") == "yjs":
             return
-        room = self.rooms.get(note_id)
-        if room is not None and room.conns:
-            asyncio.get_running_loop().create_task(self._reseed(room))
+        if etype == "note.changed":
+            room = self.rooms.get((note_id, MAIN))
+            if room is not None and room.conns:
+                loop.create_task(self._reseed(room))
+            return
+        # Листы: правка тела холста мимо Yjs, удаление листа.
+        for key, room in list(self.rooms.items()):
+            if key[0] == note_id and key[1] != MAIN and room.conns:
+                loop.create_task(self._reseed(room))
 
     async def _reseed(self, room: YRoom) -> None:
-        note = await asyncio.to_thread(self.read_note, room.note_id)
-        if note is None or not room.conns:
+        note = await asyncio.to_thread(self._read, room.note_id, room.sheet)
+        if note is None:
+            if room.sheet != MAIN and self.rooms.get(room.key) is room:
+                # Лист удалён (или больше не холст) — комнату закрываем.
+                self.rooms.pop(room.key, None)
+                if room.save_handle is not None:
+                    room.save_handle.cancel()
+                for conn in room.conns:
+                    _send(conn, _msg(room, room.sheet, {"type": "y.error", "reason": "not_found"}))
+                room.conns = []
+                await self._delete(room.note_id, room.sheet)
+            return
+        if not room.conns:
             return
         html, revision = note
         old_html = room.merge_old
@@ -253,10 +327,9 @@ class YRooms:
         if not room.updates or old_html is None or old_html == html:
             return  # документа ещё нет — посевщик возьмёт свежий HTML сам
         # Ведущий вливает правку (было → стало) слиянием; его сохранение обновит base.
-        _send(room.conns[0], {
-            "type": "y.reseed", "note_id": room.note_id,
-            "old_html": old_html, "html": html, "revision": revision,
-        })
+        _send(room.conns[0], _msg(room, room.sheet, {
+            "type": "y.reseed", "old_html": old_html, "html": html, "revision": revision,
+        }))
 
     # ---- хранение ----
     def _schedule_save(self, room: YRoom) -> None:
@@ -275,16 +348,16 @@ class YRooms:
 
         try:
             await asyncio.to_thread(
-                note_ydoc.save, room.note_id, list(room.updates), room.base_revision, room.base_html
+                note_ydoc.save, room.note_id, list(room.updates), room.base_revision, room.base_html, room.sheet
             )
         except Exception as exc:
-            print(f"[yjs] save failed note={room.note_id} err={exc!r}")
+            print(f"[yjs] save failed note={room.note_id} sheet={room.sheet} err={exc!r}")
 
-    async def _delete(self, note_id: int) -> None:
+    async def _delete(self, note_id: int, sheet: Optional[str] = None) -> None:
         from assistant.stores import note_ydoc
 
         try:
-            await asyncio.to_thread(note_ydoc.delete, note_id)
+            await asyncio.to_thread(note_ydoc.delete, note_id, sheet)
         except Exception as exc:
             print(f"[yjs] delete failed note={note_id} err={exc!r}")
 

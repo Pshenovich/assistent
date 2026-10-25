@@ -185,3 +185,120 @@ def test_yjs_disabled_by_env(env, monkeypatch):
         a.send_json({"type": "sub", "note_id": env["note_id"]})
         assert a.receive_json()["yjs"] is False
 
+
+
+# ---- холст: комната листа (note_id, sheet_id) ----
+
+BOARD = '{"v":1,"elements":{"a":{"id":"a","type":"rect","x":0,"y":0,"w":100,"h":50,"z":1,"text":"Старт"}}}'
+
+
+def _board_sheet(env):
+    from assistant.stores import note_sheets
+
+    note = notes_store.get_note_by_id(env["note_id"])
+    return note_sheets.create_sheet(note, "Холст", body=BOARD, kind="board")
+
+
+def _join_sheet(ws, uid, nid, sid, connect=True):
+    if connect:
+        _connect(ws, uid)
+        ws.send_json({"type": "sub", "note_id": nid})
+        assert ws.receive_json()["yjs"] is True
+    ws.send_json({"type": "y.join", "note_id": nid, "sheet_id": sid})
+    return _receive_until(ws, "y.state")
+
+
+def test_board_room_is_separate_from_main(env):
+    nid = env["note_id"]
+    sid = str(_board_sheet(env)["id"])
+    c = env["client"]
+    with c.websocket_connect("/api/miniapp/ws") as a, c.websocket_connect("/api/miniapp/ws") as b:
+        st = _join_sheet(a, env["owner"], nid, sid)
+        assert st["role"] == "seed" and st["sheet_id"] == sid
+        assert '"Старт"' in st["html"]
+        main = _join(b, env["member"], nid)  # основной лист — своя комната, свой посевщик
+        assert main["role"] == "seed" and "sheet_id" not in main
+        _join_sheet(b, env["member"], nid, sid, connect=False)
+        a.send_json({"type": "y.update", "note_id": nid, "sheet_id": sid, "update": b64(b"board")})
+        assert _receive_until(a, "y.ack")["sheet_id"] == sid
+        up = _receive_until(b, "y.update")
+        assert up["sheet_id"] == sid and base64.b64decode(up["update"]) == b"board"
+    import time
+
+    end = time.time() + 3
+    while note_ydoc.load(nid, sid)[0] != [b"board"] and time.time() < end:
+        time.sleep(0.02)
+    assert note_ydoc.load(nid, sid)[0] == [b"board"]
+    assert note_ydoc.load(nid)[0] == []  # журнал основного листа не тронут
+
+
+def test_board_room_only_for_board_sheets(env):
+    from assistant.stores import note_sheets
+
+    nid = env["note_id"]
+    note = notes_store.get_note_by_id(nid)
+    doc = note_sheets.create_sheet(note, "Текст", body="<p>x</p>")
+    with env["client"].websocket_connect("/api/miniapp/ws") as a:
+        _connect(a, env["owner"])
+        a.send_json({"type": "sub", "note_id": nid})
+        a.receive_json()
+        a.send_json({"type": "y.join", "note_id": nid, "sheet_id": str(doc["id"])})
+        err = _receive_until(a, "y.error")
+        assert err["reason"] == "not_found" and err["sheet_id"] == str(doc["id"])
+
+
+def test_board_yjs_save_and_outside_edit(env):
+    from assistant.stores import note_sheets
+
+    nid = env["note_id"]
+    sh = _board_sheet(env)
+    sid = str(sh["id"])
+    c = env["client"]
+    with c.websocket_connect("/api/miniapp/ws") as a:
+        _join_sheet(a, env["owner"], nid, sid)
+        a.send_json({"type": "y.update", "note_id": nid, "sheet_id": sid, "update": b64(b"seed")})
+        _receive_until(a, "y.ack")
+        # Сохранение из Yjs: без проверки ревизии, событие помечено — комната не пересевается.
+        moved = BOARD.replace('"x":0', '"x":40')
+        r = c.patch(
+            f"/api/miniapp/notes/local/{nid}/sheets/{sid}",
+            headers=_headers(env["member"]),
+            json={"description": moved, "expected_revision": 1, "yjs": True},
+        )
+        assert r.status_code == 200, r.text
+        ev = _receive_until(a, "sheets.changed")
+        assert ev["source"] == "yjs"
+        # Правка мимо Yjs (восстановление версии, старое приложение) — ведущему уходит слияние.
+        note_sheets.update_sheet(nid, int(sid), body=BOARD)
+        msg = _receive_until(a, "y.reseed")
+        assert msg["sheet_id"] == sid
+        assert '"x":40' in msg["old_html"] and '"x":0' in msg["html"]
+
+
+def test_board_sheet_delete_closes_room(env):
+    from assistant.stores import note_sheets
+
+    nid = env["note_id"]
+    sid = str(_board_sheet(env)["id"])
+    with env["client"].websocket_connect("/api/miniapp/ws") as a:
+        _join_sheet(a, env["owner"], nid, sid)
+        a.send_json({"type": "y.update", "note_id": nid, "sheet_id": sid, "update": b64(b"seed")})
+        _receive_until(a, "y.ack")
+        note_sheets.delete_sheet(nid, int(sid))
+        err = _receive_until(a, "y.error")
+        assert err["reason"] == "not_found" and err["sheet_id"] == sid
+    assert note_ydoc.load(nid, sid)[0] == []
+
+
+def test_board_cursor_is_broadcast(env):
+    nid = env["note_id"]
+    sid = str(_board_sheet(env)["id"])
+    c = env["client"]
+    with c.websocket_connect("/api/miniapp/ws") as a, c.websocket_connect("/api/miniapp/ws") as b:
+        for ws, uid in ((a, env["owner"]), (b, env["member"])):
+            _connect(ws, uid)
+            ws.send_json({"type": "sub", "note_id": nid})
+            ws.receive_json()
+        a.send_json({"type": "board.cursor", "note_id": nid, "sheet_id": sid, "x": 10.26, "y": -5})
+        cur = _receive_until(b, "board.cursor")
+        assert cur["sheet_id"] == sid and cur["x"] == 10.3 and cur["user_id"] == str(env["owner"])

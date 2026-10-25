@@ -9,6 +9,7 @@
   <meta property="og:title" content="{{TITLE}}" />
   <meta property="og:description" content="{{LABEL}}" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
+  <link rel="stylesheet" href="/webapp/board.css?v=20261025-board-ai" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
@@ -173,6 +174,17 @@
       margin: 1rem 0 0;
     }
     #share-canvases:empty { display: none; }
+    .share-board-frame {
+      position: relative;
+      display: flex;
+      width: 100%;
+      height: min(80vh, 860px);
+      min-height: 60vh;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    body.share-canvas-only .share-board-frame { height: calc(100vh - 120px); }
     .share-web-canvas-block {
       display: flex;
       flex-direction: column;
@@ -815,6 +827,8 @@
   </main>
   <script src="/webapp/note-html.js?v=20260908-stable2"></script>
   <script src="/webapp/note-comments.js?v=20260908-stable2"></script>
-  <script src="/webapp/share.js?v=20261019-deck-pdf2"></script>
+  <script src="/webapp/board-geom.js?v=20261025-board-ai"></script>
+  <script src="/webapp/board.js?v=20261025-board-ai"></script>
+  <script src="/webapp/share.js?v=20261025-board-ai"></script>
 </body>
 </html>

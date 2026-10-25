@@ -384,12 +384,16 @@ def load_note_excerpt_for_agents(
     if not note:
         return title, _clip_prompt((body or "").strip() or "(пустая заметка)", budget)
     rows = []
+    from assistant.lib.board_doc import board_plain_text
+
     for sheet in note_sheets_store.list_sheets(note):
+        raw = str(sheet.get("body") or "")
+        is_board = str(sheet.get("kind") or "doc") == "board"
         rows.append(
             {
                 "id": str(sheet.get("id")),
                 "title": str(sheet.get("title") or ""),
-                "body": share_body_to_text(str(sheet.get("body") or "")),
+                "body": board_plain_text(raw) if is_board else share_body_to_text(raw),
             }
         )
     packed = pack_note_sheets(

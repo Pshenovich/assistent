@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261025-downbtn";
+  var WEBAPP_BUILD = "20261025-board-ai";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -26659,12 +26659,20 @@
     pendingOpenSheetId: "",
     leftWebCanvas: null,
     rightWebCanvas: null,
+    leftBoard: null,
+    rightBoard: null,
     canvasSelections: [],
   };
 
   function isWebSheet(sheet) {
     if (!sheet) return false;
     return String(sheet.kind || "").toLowerCase() === "web";
+  }
+
+  // Холст (kind=board): доска с блоками и стрелками — webapp/board.js, тело листа — JSON.
+  function isBoardSheet(sheet) {
+    if (!sheet) return false;
+    return String(sheet.kind || "").toLowerCase() === "board";
   }
 
   function addCanvasSelection(sel) {
@@ -26791,7 +26799,7 @@
     if (!host || !rows.length) return;
     var wrap = document.createElement("div");
     wrap.className = "note-discuss-canvas-chips";
-    wrap.setAttribute("aria-label", "Выделенные блоки полотна");
+    wrap.setAttribute("aria-label", "Выделенные блоки презентации");
     rows.forEach(function (sel) {
       var chip = document.createElement("span");
       chip.className = "note-discuss-canvas-chip";
@@ -26928,6 +26936,85 @@
     noteSheetState.rightEditor = null;
   }
 
+  function boardSheetOptions(sheet) {
+    var sid = String(sheet.id);
+    return {
+      json: sheet.body || sheet.description || "",
+      sheetId: (noteSheetsNoteId() || "") + ":" + sid,
+      title: sheet.title || "Доска",
+      onChange: function (json) {
+        onBoardSheetChange(sid, json);
+      },
+      onCursor: function (x, y) {
+        sendBoardCursor(sid, x, y);
+      },
+      onNotify: showNoteToast,
+    };
+  }
+
+  function destroyLeftBoard() {
+    var b = noteSheetState.leftBoard;
+    if (b) stopBoardYjs(b);
+    noteSheetState.leftBoard = null;
+    if (!b) return;
+    if (b.destroy) b.destroy();
+    var pad = document.querySelector("#note-editor-overlay .note-editor-pad--body");
+    if (pad) pad.classList.remove("is-board-mode", "is-web-canvas-mode");
+    var overlay = document.getElementById("note-editor-overlay");
+    if (overlay) overlay.classList.remove("is-web-canvas-open");
+    var toolbarWrap = document.getElementById("note-editor-toolbar-wrap");
+    if (toolbarWrap) setHidden(toolbarWrap, false);
+  }
+
+  function destroyRightBoard() {
+    var b = noteSheetState.rightBoard;
+    if (b) stopBoardYjs(b);
+    noteSheetState.rightBoard = null;
+    if (b && b.destroy) b.destroy();
+  }
+
+  // Холст занимает место редактора так же, как web-канвас (те же классы раскладки).
+  function mountLeftBoard(sheet) {
+    var LeoBoard = window.LeoBoard;
+    if (!LeoBoard || !sheet) return;
+    destroyLeftBoard();
+    destroyLeftWebCanvas();
+    var host = ensureLeftWebCanvasHost();
+    var pad = document.querySelector("#note-editor-overlay .note-editor-pad--body");
+    if (!host || !pad) return;
+    host.innerHTML = "";
+    pad.classList.add("is-web-canvas-mode", "is-board-mode");
+    var overlay = document.getElementById("note-editor-overlay");
+    if (overlay) overlay.classList.add("is-web-canvas-open");
+    var toolbarWrap = document.getElementById("note-editor-toolbar-wrap");
+    if (toolbarWrap) setHidden(toolbarWrap, true);
+    noteSheetState.leftBoard = LeoBoard.create(Object.assign({ host: host }, boardSheetOptions(sheet)));
+    startBoardYjs();
+  }
+
+  function mountRightBoard(sheet) {
+    var LeoBoard = window.LeoBoard;
+    var host = document.getElementById("note-discussion-sheet-host");
+    var bar = document.getElementById("note-discussion-sheet-toolbar");
+    if (!LeoBoard || !host || !sheet) return;
+    destroyRightSheetEditor();
+    host.innerHTML = "";
+    if (bar) bar.innerHTML = "";
+    noteSheetState.rightBoard = LeoBoard.create(Object.assign({ host: host }, boardSheetOptions(sheet)));
+    noteSheetState.rightEditor = null;
+    startBoardYjs();
+  }
+
+  function onBoardSheetChange(sheetId, json) {
+    var sid = String(sheetId || "");
+    var sheet = findNoteSheet(sid);
+    if (!sheet || !isBoardSheet(sheet)) return;
+    sheet.body = String(json || "");
+    sheet.description = sheet.body;
+    upsertNoteSheet(sheet);
+    if (!isPrimarySheetId(sid)) scheduleExtraSheetPersist(sid);
+  }
+
   function onWebCanvasHtmlChange(sheetId, html) {
     var sid = String(sheetId || "");
     var sheet = findNoteSheet(sid);
@@ -27024,7 +27111,7 @@
     if (!noteId || String(noteId).indexOf("tmp_") === 0) {
       throw new Error("Заметка ещё не сохранена");
     }
-    if (isAppOffline()) throw new Error("Нет сети — правки полотна недоступны офлайн");
+    if (isAppOffline()) throw new Error("Нет сети — правки презентации недоступны офлайн");
     return (
       "/notes/local/" +
       encodeURIComponent(String(noteId)) +
@@ -27221,7 +27308,7 @@
 
   function openDocEditorRoot() {
     var left = findNoteSheet(noteSheetState.leftId);
-    if (isWebSheet(left)) return null;
+    if (isWebSheet(left) || isBoardSheet(left)) return null;
     return document.querySelector("#note-editor-overlay .note-editor-pad--body .ProseMirror") ||
       document.querySelector("#note-editor-overlay .note-editor-pad--body [contenteditable='true']");
   }
@@ -28372,10 +28459,10 @@
       } else {
         reloadLeftWebCanvasHtml(sheet);
       }
-      showNoteToast("Полотно обновлено");
+      showNoteToast("Презентация обновлена");
     } catch (e) {
       console.warn("refreshWebCanvasSheet", e);
-      showNoteToast("Не удалось обновить полотно");
+      showNoteToast("Не удалось обновить презентацию");
     }
   }
 
@@ -28409,7 +28496,19 @@
       var last = rows[rows.length - 1];
       var sid = String((last && last.sheet_id) || "");
       var sheet = sid ? findNoteSheet(sid) : null;
-      if (sheet && isWebSheet(sheet)) {
+      if (sheet && isBoardSheet(sheet)) {
+        // Доску нарисовал Лео: открыть её (или обновить открытую). В совместном режиме
+        // правка уже пришла через Yjs — тело не подменяем.
+        var json = String(sheet.body || sheet.description || "");
+        var shown = String(noteSheetState.leftId) === sid ? noteSheetState.leftBoard
+          : noteSheetState.rightMode === "sheet" && String(noteSheetState.rightId) === sid ? noteSheetState.rightBoard : null;
+        if (shown) {
+          if (!shown.isYjsAttached()) shown.setJson(json);
+        } else {
+          await switchLeftSheet(sid);
+        }
+        showNoteToast(last.action === "update" ? "Доска обновлена" : "Доска готова");
+      } else if (sheet && isWebSheet(sheet)) {
         if (String(noteSheetState.leftId) === sid) {
           reloadLeftWebCanvasHtml(sheet);
         } else {
@@ -28417,7 +28516,7 @@
           // switchLeftSheet no-ops when already open; force html if still needed
           if (String(noteSheetState.leftId) === sid) reloadLeftWebCanvasHtml(sheet);
         }
-        showNoteToast("Полотно обновлено");
+        showNoteToast("Презентация обновлена");
       }
       clearCanvasSelections();
     } catch (e) {
@@ -30564,7 +30663,10 @@
     noteSheetState.applyingRemoteSheet = id;
     try {
       if (String(noteSheetState.leftId) === id) {
-        if (isWebSheet(sheet) !== !!noteSheetState.leftWebCanvas) applyLeftSheetHtml(sheet);
+        if (isBoardSheet(sheet) !== !!noteSheetState.leftBoard) applyLeftSheetHtml(sheet);
+        else if (noteSheetState.leftBoard) {
+          if (noteSheetState.leftBoard.getJson() !== html) noteSheetState.leftBoard.setJsonKeepView(html);
+        } else if (isWebSheet(sheet) !== !!noteSheetState.leftWebCanvas) applyLeftSheetHtml(sheet);
         else if (noteSheetState.leftWebCanvas) {
           if (noteSheetState.leftWebCanvas.getHtml() !== html) noteSheetState.leftWebCanvas.setHtmlKeepScroll(html);
         } else {
@@ -30575,7 +30677,9 @@
         }
       }
       if (noteSheetState.rightMode === "sheet" && String(noteSheetState.rightId) === id) {
-        if (noteSheetState.rightWebCanvas) {
+        if (noteSheetState.rightBoard) {
+          if (noteSheetState.rightBoard.getJson() !== html) noteSheetState.rightBoard.setJsonKeepView(html);
+        } else if (noteSheetState.rightWebCanvas) {
           if (noteSheetState.rightWebCanvas.getHtml() !== html) noteSheetState.rightWebCanvas.setHtmlKeepScroll(html);
         } else if (noteSheetState.rightEditor && typeof noteSheetState.rightEditor.getHtml === "function") {
           if (noteSheetState.rightEditor.getHtml() !== html) {
@@ -30772,6 +30876,154 @@
     s.stop();
   }
 
+  // ---- Холст в совместной заметке: свой документ Yjs на лист (комната note_id + sheet_id) ----
+  var noteYjsAllowed = {}; // note_id → сервер разрешил Yjs (общая заметка)
+  var boardYjs = null; // {noteId, sheetId, board, session}
+  var boardCursors = {}; // user_id → {x, y, name, color, sheetId, t}
+  var boardCursorTimer = null;
+  var boardCursorSentAt = 0;
+
+  function openBoardForYjs() {
+    var left = findNoteSheet(noteSheetState.leftId);
+    if (noteSheetState.leftBoard && isBoardSheet(left) && !isTempSheetId(left.id)) {
+      return { board: noteSheetState.leftBoard, sheetId: String(left.id) };
+    }
+    var right = noteSheetState.rightMode === "sheet" ? findNoteSheet(noteSheetState.rightId) : null;
+    if (noteSheetState.rightBoard && isBoardSheet(right) && !isTempSheetId(right.id)) {
+      return { board: noteSheetState.rightBoard, sheetId: String(right.id) };
+    }
+    return null;
+  }
+
+  function isTempSheetId(id) {
+    return String(id || "").indexOf("tmp_") === 0;
+  }
+
+  function startBoardYjs() {
+    var noteId = String(noteSheetsNoteId() || "");
+    var open = openBoardForYjs();
+    if (!open || !noteId || !noteYjsAllowed[noteId] || !window.LeoNoteYjs || !window.LeoBoard) {
+      if (boardYjs && (!open || boardYjs.board !== open.board)) stopBoardYjs();
+      return;
+    }
+    var key = noteId + ":" + open.sheetId;
+    if (noteYjsDisabled[key]) return;
+    if (boardYjs && boardYjs.board === open.board && boardYjs.sheetId === open.sheetId) {
+      boardYjs.session.join(); // переподключение
+      return;
+    }
+    stopBoardYjs();
+    var api = getNoteRichEditorApi();
+    if (!api || !api.Y) return;
+    var Y = api.Y;
+    var board = open.board;
+    var sid = open.sheetId;
+    var rt = realtimeApi();
+    var session = window.LeoNoteYjs.createSession({
+      noteId: noteId,
+      sheetId: sid,
+      Y: Y,
+      send: function (obj) {
+        return !!(rt && rt.send(obj));
+      },
+      adapter: {
+        hasContent: function (doc) {
+          return doc.getMap("elements").size > 0;
+        },
+        canSave: function () {
+          return board.isYjsAttached();
+        },
+        attach: function (doc, ready) {
+          if (ready && !board.isYjsAttached()) board.attachYjs(doc, Y);
+        },
+        detach: function () {
+          board.detachYjs();
+        },
+        seed: function (doc, json, origin) {
+          window.LeoBoard.seedDoc(Y, doc, json, origin);
+          return true;
+        },
+        reseed: function (doc, oldJson, json, origin) {
+          window.LeoBoard.applyDelta(Y, doc, oldJson, json, origin);
+          return true;
+        },
+      },
+      onReseeded: function () {
+        scheduleExtraSheetPersist(sid);
+      },
+      onRemoteChange: function () {
+        // Ведущий сохраняет тело листа и после чужих правок — JSON на сервере не отстаёт.
+        scheduleExtraSheetPersist(sid);
+      },
+      onFallback: function (reason) {
+        console.warn("[yjs] board fallback", key, reason);
+        noteYjsDisabled[key] = reason || "error";
+        if (boardYjs && boardYjs.session === session) boardYjs = null;
+      },
+    });
+    boardYjs = { noteId: noteId, sheetId: sid, board: board, session: session };
+    session.join();
+  }
+
+  function stopBoardYjs(board) {
+    if (!boardYjs || (board && boardYjs.board !== board)) return;
+    var b = boardYjs;
+    boardYjs = null;
+    b.session.stop();
+  }
+
+  function boardYjsReady(sheetId) {
+    return !!(boardYjs && boardYjs.sheetId === String(sheetId) && boardYjs.session.isReady() && boardYjs.board.isYjsAttached());
+  }
+
+  function sendBoardCursor(sheetId, x, y) {
+    var noteId = String(noteSheetsNoteId() || "");
+    if (!noteYjsAllowed[noteId] || !realtimeLive(noteId)) return;
+    var now = Date.now();
+    if (now - boardCursorSentAt < 80) return;
+    boardCursorSentAt = now;
+    var rt = realtimeApi();
+    if (rt) rt.send({ type: "board.cursor", note_id: Number(noteId), sheet_id: String(sheetId), x: x, y: y });
+  }
+
+  var BOARD_CURSOR_COLORS = ["#e8590c", "#2f9e44", "#7048e8", "#d6336c", "#1c7ed6", "#f08c00", "#0c8599"];
+
+  function boardCursorColor(userId) {
+    var h = 0;
+    String(userId || "").split("").forEach(function (c) {
+      h = (h * 31 + c.charCodeAt(0)) >>> 0;
+    });
+    return BOARD_CURSOR_COLORS[h % BOARD_CURSOR_COLORS.length];
+  }
+
+  function paintBoardCursors() {
+    var now = Date.now();
+    var bySheet = {};
+    Object.keys(boardCursors).forEach(function (uid) {
+      var c = boardCursors[uid];
+      if (now - c.t > 6000) {
+        delete boardCursors[uid];
+        return;
+      }
+      (bySheet[c.sheetId] = bySheet[c.sheetId] || []).push(c);
+    });
+    [["left", noteSheetState.leftBoard, noteSheetState.leftId], ["right", noteSheetState.rightBoard, noteSheetState.rightId]].forEach(function (row) {
+      if (row[1]) row[1].setRemoteCursors(bySheet[String(row[2])] || []);
+    });
+    if (boardCursorTimer) clearTimeout(boardCursorTimer);
+    boardCursorTimer = Object.keys(boardCursors).length ? setTimeout(paintBoardCursors, 2000) : null;
+  }
+
+  function onBoardCursorEvent(ev) {
+    var rt = realtimeApi();
+    if (!ev || (rt && String(ev.user_id) === rt.userId())) return;
+    boardCursors[String(ev.user_id)] = {
+      x: Number(ev.x), y: Number(ev.y), name: String(ev.name || "").split(" ")[0],
+      color: boardCursorColor(ev.user_id), sheetId: String(ev.sheet_id || ""), t: Date.now(),
+    };
+    paintBoardCursors();
+  }
+
   /** Заголовок — вне совместного документа: берём чужой, если сами его сейчас не правим. */
   function applyRemoteNoteTitle(item) {
     var wrap = document.getElementById("note-editor-more-wrap");
@@ -30818,15 +31070,25 @@
     var openId = noteCollabState.noteId;
     var evNote = ev && ev.note_id != null ? String(ev.note_id) : "";
     if (type === "subscribed") {
+      if (evNote) noteYjsAllowed[evNote] = !!ev.yjs;
       if (evNote && evNote === openId) {
         kickNoteCollab(); // догнать пропущенное, пока сокета не было
         if (ev.yjs) startNoteYjs(openId);
         else stopNoteYjs();
+        startBoardYjs();
       }
       return;
     }
     if (type && type.indexOf("y.") === 0) {
+      if (ev.sheet_id != null && String(ev.sheet_id) !== "main") {
+        if (boardYjs && evNote === boardYjs.noteId) boardYjs.session.handle(ev);
+        return;
+      }
       if (noteYjsSession && evNote === String(noteYjsSession.noteId)) noteYjsSession.handle(ev);
+      return;
+    }
+    if (type === "board.cursor") {
+      if (evNote && evNote === openId) onBoardCursorEvent(ev);
       return;
     }
     if (type === "note.changed" || type === "sheets.changed" || type === "note.deleted") {
@@ -31681,6 +31943,8 @@
     nhPaintSelected();
   }
 
+  var nhBoardPreview = null;
+
   function nhPaintSelected() {
     var h = noteHistory;
     var v = h && nhFindVersion(h.selId);
@@ -31688,7 +31952,9 @@
     var body = h.bodies[v.id];
     if (body == null) return;
     var key = nhSheetKey(v);
-    var isWeb = String(v.sheet_kind || "").toLowerCase() === "web";
+    var isBoard = String(v.sheet_kind || "").toLowerCase() === "board";
+    // Холст — JSON: построчного сравнения нет, показываем версию картинкой.
+    var isWeb = String(v.sheet_kind || "").toLowerCase() === "web" || isBoard;
     var host;
     if (isDesktopLayout()) {
       var pv = nhEnsurePreview();
@@ -31712,9 +31978,18 @@
       ov.querySelector(".nh-seg").classList.toggle("hidden", isWeb);
       host = ov.querySelector(".nh-view-body");
     }
+    if (nhBoardPreview) {
+      nhBoardPreview.destroy();
+      nhBoardPreview = null;
+    }
     host.innerHTML = "";
     host.classList.toggle("nh-doc--diff", h.mode === "diff");
-    if (h.mode === "diff" && !isWeb) {
+    if (isBoard && window.LeoBoard) {
+      var bh = document.createElement("div");
+      bh.className = "nh-board-frame";
+      host.appendChild(bh);
+      nhBoardPreview = window.LeoBoard.create({ host: bh, json: body, readOnly: true });
+    } else if (h.mode === "diff" && !isWeb) {
       var gone = v.reason === "sheet_deleted" && !findNoteSheet(key);
       nhRenderDiff(host, body, gone ? "" : nhCurrentHtml(key));
     } else if (isWeb) {
@@ -31732,6 +32007,10 @@
   }
 
   function nhHidePreview() {
+    if (nhBoardPreview) {
+      nhBoardPreview.destroy();
+      nhBoardPreview = null;
+    }
     var pv = document.getElementById("note-history-preview");
     if (pv) {
       pv.classList.add("hidden");
@@ -31923,7 +32202,11 @@
         closeNoteMoreMenu();
         createNoteSheet({ openOn: "left", kind: "doc" });
       });
-      addItem("Новый канвас", function () {
+      addItem("Новая доска", function () {
+        closeNoteMoreMenu();
+        createNoteSheet({ openOn: "left", kind: "board" });
+      });
+      addItem("Новая презентация", function () {
         closeNoteMoreMenu();
         createNoteSheet({ openOn: "left", kind: "web" });
       });
@@ -32729,6 +33012,7 @@
     bell: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20h4"/></svg>',
     taskBox: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>',
     trash: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13"/></svg>',
+    board: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="7" height="5" rx="1.5"/><path d="M14 14.5l3.5-3.5 3.5 3.5-3.5 3.5z"/><path d="M10 6.5h3a2 2 0 0 1 2 2V11M6.5 9v6a2 2 0 0 0 2 2H14"/></svg>',
     notePlus: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3H7v18h12V9zM13 3v6h6M13 13v6M10 16h6"/></svg>',
     link: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/></svg>',
     x: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
@@ -35004,6 +35288,7 @@
   }
 
   function resetNoteSheetState(primaryBody) {
+    destroyLeftBoard();
     destroyRightSheetEditor();
     if (noteSheetState.rightNotePersistTimer) {
       clearTimeout(noteSheetState.rightNotePersistTimer);
@@ -35430,7 +35715,7 @@
           closeNotePaneSwitchMenu();
           setRightPaneMode("sheet", s.id);
         },
-        isWebSheet(s) ? "grid" : "note"
+        isWebSheet(s) ? "grid" : isBoardSheet(s) ? "board" : "note"
       );
     });
     if (noteSheetsEnabled()) {
@@ -35443,7 +35728,11 @@
         closeNotePaneSwitchMenu();
         createNoteSheet({ openOn: "right", kind: "doc" });
       }, "notePlus");
-      addItem("Новый канвас", false, function () {
+      addItem("Новая доска", false, function () {
+        closeNotePaneSwitchMenu();
+        createNoteSheet({ openOn: "right", kind: "board" });
+      }, "board");
+      addItem("Новая презентация", false, function () {
         closeNotePaneSwitchMenu();
         createNoteSheet({ openOn: "right", kind: "web" });
       }, "grid");
@@ -35502,6 +35791,7 @@
       noteSheetState.rightNotePersistTimer = null;
     }
     destroyRightWebCanvas();
+    destroyRightBoard();
     var inst = noteSheetState.rightEditor;
     if (inst && typeof inst.destroy === "function") {
       try {
@@ -35782,6 +36072,7 @@
 
   function readSheetEditorHtml(which) {
     if (which === "right") {
+      if (noteSheetState.rightBoard) return noteSheetState.rightBoard.getJson();
       if (noteSheetState.rightWebCanvas && typeof noteSheetState.rightWebCanvas.getHtml === "function") {
         return noteSheetState.rightWebCanvas.getHtml();
       }
@@ -35789,6 +36080,7 @@
       if (instR && typeof instR.getHtml === "function") return instR.getHtml();
       return "";
     }
+    if (noteSheetState.leftBoard) return noteSheetState.leftBoard.getJson();
     if (noteSheetState.leftWebCanvas && typeof noteSheetState.leftWebCanvas.getHtml === "function") {
       return noteSheetState.leftWebCanvas.getHtml();
     }
@@ -35843,6 +36135,11 @@
       description: html,
       expected_revision: sheet.revision,
     };
+    if (isBoardSheet(sheet) && boardYjsReady(id)) {
+      // Тело холста из совместного документа: правки других уже слиты Yjs, ревизию не сверяем.
+      body.yjs = true;
+      delete body.expected_revision;
+    }
     if (isAppOffline() || String(noteId).indexOf("tmp_") === 0) {
       sheet.body = html;
       sheet.description = html;
@@ -35911,6 +36208,17 @@
     destroyRightWebCanvas();
     host.innerHTML = "";
     if (bar) bar.innerHTML = "";
+    if (isBoardSheet(sheet)) {
+      mountRightBoard(sheet);
+      host.addEventListener(
+        "focusin",
+        function () {
+          setNoteSheetFocus("right");
+        },
+        true
+      );
+      return;
+    }
     if (isWebSheet(sheet)) {
       mountRightWebCanvas(sheet);
       host.addEventListener(
@@ -35981,6 +36289,11 @@
     var toPrimary = !!(sheet && isPrimarySheetId(sheet.id));
     // Совместный документ привязан к основному листу: другой лист его не трогает.
     if (noteYjsSession && !toPrimary) noteYjsSession.detach();
+    if (isBoardSheet(sheet)) {
+      mountLeftBoard(sheet);
+      return;
+    }
+    destroyLeftBoard();
     if (isWebSheet(sheet)) {
       mountLeftWebCanvas(sheet);
       return;
@@ -36289,6 +36602,7 @@
         chip.className =
           "note-sheet-chip" +
           (isWebSheet(s) ? " is-web" : "") +
+          (isBoardSheet(s) ? " is-board" : "") +
           (String(s.id) === String(noteSheetState.leftId) ? " is-active" : "");
         var label = document.createElement("span");
         label.className = "note-sheet-chip-label";
@@ -36336,7 +36650,7 @@
       quiet.type = "button";
       quiet.className = "note-sheet-chip note-sheet-chip--add";
       quiet.textContent = "＋";
-      quiet.setAttribute("aria-label", "Новый лист или канвас");
+      quiet.setAttribute("aria-label", "Новый лист, доска или презентация");
       quiet.setAttribute("aria-haspopup", "menu");
       quiet.addEventListener("click", function (e) {
         e.preventDefault();
@@ -36353,6 +36667,7 @@
       chip.className =
         "note-sheet-chip" +
         (isWebSheet(s) ? " is-web" : "") +
+        (isBoardSheet(s) ? " is-board" : "") +
         (String(s.id) === String(noteSheetState.leftId) ? " is-active" : "");
       chip.setAttribute("data-sheet-id", String(s.id));
       var label = document.createElement("span");
@@ -36389,7 +36704,7 @@
     add.type = "button";
     add.className = "note-sheet-chip note-sheet-chip--add";
     add.textContent = "+";
-    add.setAttribute("aria-label", "Новый лист или канвас");
+    add.setAttribute("aria-label", "Новый лист, доска или презентация");
     add.setAttribute("aria-haspopup", "menu");
     add.addEventListener("click", function (e) {
       e.preventDefault();
@@ -36634,7 +36949,7 @@
       return;
     }
     var next = noteSheetState.sheets.filter(function (s) {
-      return s && !s.is_primary && !isPrimarySheetId(s.id) && !isWebSheet(s);
+      return s && !s.is_primary && !isPrimarySheetId(s.id) && !isWebSheet(s) && !isBoardSheet(s);
     })[0];
     if (!next) {
       renderNoteSheetChips();
@@ -36927,7 +37242,8 @@
     }
 
     addItem("Лист", "Текст и правки", "doc");
-    addItem("Канвас", "Презентация / полотно", "web");
+    addItem("Доска", "Схемы, блоки и стрелки", "board");
+    addItem("Презентация", "Слайды по заметке", "web");
     // Append into the note editor overlay so we stay above its stacking context
     var host =
       (anchor && anchor.closest && anchor.closest("#note-editor-overlay")) ||
@@ -36959,12 +37275,15 @@
       showNoteToast("Сначала сохраните заметку");
       return;
     }
-    var kind = String(opts.kind || "doc").toLowerCase() === "web" ? "web" : "doc";
+    var kindRaw = String(opts.kind || "doc").toLowerCase();
+    var kind = kindRaw === "web" || kindRaw === "board" ? kindRaw : "doc";
     var title =
       opts.title ||
       (kind === "web"
-        ? "Канвас"
-        : "Лист " + (extraNoteSheets().length + 2));
+        ? "Презентация"
+        : kind === "board"
+          ? "Доска"
+          : "Лист " + (extraNoteSheets().length + 2));
     if (isAppOffline() || String(noteId).indexOf("tmp_") === 0) {
       var tmpId = newTempId("tmp_sheet_");
       var local = {
@@ -37010,6 +37329,8 @@
   }
 
   function hydrateNoteSheets(note, primaryBody) {
+    destroyLeftBoard();
+    destroyRightBoard();
     destroyLeftWebCanvas();
     destroyRightWebCanvas();
     clearCanvasSelections();
@@ -38507,7 +38828,11 @@
     if (!clean) return false;
     var activeSheet = findNoteSheet(focusedNoteSheetId() || noteSheetState.leftId);
     if (isWebSheet(activeSheet)) {
-      showNoteToast("В web-полотно вставляйте правки через обсуждение");
+      showNoteToast("В презентацию вставляйте правки через обсуждение");
+      return true;
+    }
+    if (isBoardSheet(activeSheet)) {
+      showNoteToast("На доску ответ не вставляется — откройте текстовый лист");
       return true;
     }
     var inst = getActiveNoteRichEditor();
@@ -40687,6 +41012,7 @@
     var sugg = ["Сделай саммари", "Найди задачи и сроки", "Что упущено?"];
     if (/<table/i.test(html)) sugg.push("Проверь цифры в таблице");
     else sugg.push("Предложи следующие шаги");
+    sugg.push("Нарисуй схему на доске");
     var chips = document.createElement("div");
     chips.className = "note-discuss-sugg";
     sugg.forEach(function (t) {
@@ -41422,6 +41748,12 @@
 
   function sheetPlainText(sheet) {
     if (!sheet) return "";
+    if (isBoardSheet(sheet)) {
+      var bj = String(sheet.body || sheet.description || "");
+      if (String(noteSheetState.leftId) === String(sheet.id) && noteSheetState.leftBoard) bj = noteSheetState.leftBoard.getJson();
+      else if (String(noteSheetState.rightId) === String(sheet.id) && noteSheetState.rightBoard) bj = noteSheetState.rightBoard.getJson();
+      return window.LeoBoard ? window.LeoBoard.plainText(bj) : "";
+    }
     if (isPrimarySheetId(sheet.id) && isPrimarySheetId(noteSheetState.leftId)) {
       var root = noteEditorCommentRoot();
       if (root) return String(root.innerText || root.textContent || "").trim();
@@ -42732,6 +43064,7 @@
           snippet: s.snippet,
         };
       });
+      var openBoard = kind === "local" ? openBoardForYjs() : null;
       var openCanvasSheetId =
         activeWebCanvasSheetId() ||
         (canvasSelections[0] && canvasSelections[0].sheet_id) ||
@@ -42758,6 +43091,7 @@
           canvas_selections: canvasSelections.length ? canvasSelections : undefined,
           canvas_sheet_id: openCanvasSheetId || undefined,
           canvas_theme: preferredDeckTheme() || undefined,
+          board_sheet_id: openBoard ? openBoard.sheetId : undefined,
           doc_view: docView ? docView.view : undefined,
           doc_sheet_id: docView ? docView.sheet_id : undefined,
         }),
@@ -42778,7 +43112,7 @@
       if (res && res.canvas && res.canvas.length) {
         await applyCanvasChatResult(res.canvas);
       } else if (res && res.canvas_error) {
-        showNoteToast("Полотно не создалось — попробуйте короче");
+        showNoteToast("Не получилось — попробуйте попросить короче");
       }
       var ans = String((res && res.answer) || "").trim();
       var bullets = (res && res.bullets) || [];
@@ -43931,7 +44265,7 @@
     sheets.forEach(function (s) {
       var id = String(s.id);
       var label = document.createElement("label");
-      label.className = "ns-chip" + (isWebSheet(s) ? " is-web" : "");
+      label.className = "ns-chip" + (isWebSheet(s) ? " is-web" : "") + (isBoardSheet(s) ? " is-board" : "");
       var input = document.createElement("input");
       input.type = "checkbox";
       input.name = "note-share-sheet";

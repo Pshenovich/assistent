@@ -11,6 +11,7 @@ from assistant.lib import canvas_templates
 
 SHEET_KIND_DOC = "doc"
 SHEET_KIND_WEB = "web"
+SHEET_KIND_BOARD = "board"
 KIT_VERSION = "v1"
 
 THEMES = ("bento", "editorial", "product-dark", "poster", "soft-light", "brutal")
@@ -33,7 +34,7 @@ _CANVAS_CLAIM_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 CANVAS_FAIL_MSG = (
-    "Не удалось собрать полотно — ответ модели оборвался или не распознан. "
+    "Не удалось собрать презентацию — ответ модели оборвался или не распознан. "
     "Попробуйте ещё раз короче (4–6 слайдов)."
 )
 _SCRIPT_RE = re.compile(r"<script\b[^>]*>.*?</script>", re.IGNORECASE | re.DOTALL)
@@ -201,6 +202,8 @@ def normalize_kind(raw: Any) -> str:
     k = str(raw or "").strip().lower()
     if k in (SHEET_KIND_WEB, "canvas", "presentation", "html"):
         return SHEET_KIND_WEB
+    if k in (SHEET_KIND_BOARD, "whiteboard"):
+        return SHEET_KIND_BOARD
     return SHEET_KIND_DOC
 
 

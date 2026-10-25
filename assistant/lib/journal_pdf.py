@@ -460,9 +460,15 @@ def _note_doc_sections(note: dict[str, Any]) -> list[tuple[str, str]]:
         rows = [note_sheets.primary_sheet(note)]
     out: list[tuple[str, str]] = []
     for s in rows:
-        if str(s.get("kind") or "doc") == "web":
+        sheet_kind = str(s.get("kind") or "doc")
+        if sheet_kind == "web":
             continue
-        body = tnotes._as_html(str(s.get("body") or s.get("description") or ""))
+        if sheet_kind == "board":
+            from assistant.lib.board_doc import board_text_html
+
+            body = board_text_html(s.get("body") or "")
+        else:
+            body = tnotes._as_html(str(s.get("body") or s.get("description") or ""))
         if not _html_to_plain(body).strip():
             continue
         out.append((str(s.get("title") or "").strip(), body))

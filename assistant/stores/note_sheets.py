@@ -17,6 +17,7 @@ PRIMARY_SHEET_TITLE = "Основная"
 MAX_EXTRA_SHEETS = 10
 SHEET_KIND_DOC = "doc"
 SHEET_KIND_WEB = "web"
+SHEET_KIND_BOARD = "board"
 
 
 class SheetConflictError(Exception):
@@ -33,7 +34,18 @@ def _normalize_kind(raw: Any) -> str:
     k = str(raw or "").strip().lower()
     if k in (SHEET_KIND_WEB, "canvas", "presentation", "html"):
         return SHEET_KIND_WEB
+    if k in (SHEET_KIND_BOARD, "whiteboard"):
+        return SHEET_KIND_BOARD
     return SHEET_KIND_DOC
+
+
+def _board_body(body: str) -> str:
+    from assistant.lib import board_doc
+
+    try:
+        return board_doc.normalize_board_body(body)
+    except board_doc.BoardError as e:
+        raise SheetError(str(e)) from e
 
 
 def _ensure_kind_column(conn: sqlite3.Connection) -> None:
@@ -224,7 +236,7 @@ def compose_share_body(
         return "", []
     extras_only = len(selected) > 1 or not selected[0].get("is_primary")
     for row in selected:
-        if _normalize_kind(row.get("kind")) == SHEET_KIND_WEB:
+        if _normalize_kind(row.get("kind")) != SHEET_KIND_DOC:
             continue
         body = str(row.get("body") or "").strip()
         title = str(row.get("title") or "").strip() or PRIMARY_SHEET_TITLE
@@ -254,6 +266,30 @@ def list_share_canvases(
                 # Целиком: обрезка срезала остальные слайды и скрипт показа деки.
                 "html": html_doc,
                 "kind": SHEET_KIND_WEB,
+            }
+        )
+    return out
+
+
+def list_share_boards(
+    note: dict[str, Any], sheet_ids: list[str] | None
+) -> list[dict[str, Any]]:
+    """Холсты, выбранные для публичной ссылки: JSON доски (рисует webapp/board.js) и SVG-запаска."""
+    from assistant.lib import board_doc
+
+    out: list[dict[str, Any]] = []
+    for row in _selected_share_rows(note, sheet_ids):
+        if _normalize_kind(row.get("kind")) != SHEET_KIND_BOARD:
+            continue
+        board = board_doc.parse_board(row.get("body") or "")
+        if not board["elements"]:
+            continue
+        out.append(
+            {
+                "id": str(row.get("id")),
+                "title": str(row.get("title") or "").strip() or "Доска",
+                "board": board,
+                "kind": SHEET_KIND_BOARD,
             }
         )
     return out
@@ -359,6 +395,8 @@ def create_sheet(
     pos = _next_position(note_id)
     sheet_body = body if body is not None else ""
     sheet_kind = _normalize_kind(kind)
+    if sheet_kind == SHEET_KIND_BOARD:
+        sheet_body = _board_body(sheet_body)
     with _LOCK:
         cur = _conn().execute(
             """
@@ -390,6 +428,7 @@ def update_sheet(
     body: Optional[str] = None,
     kind: Optional[str] = None,
     expected_revision: Optional[int] = None,
+    realtime_source: str = "",
 ) -> dict[str, Any]:
     existing = get_extra_sheet(note_id, sheet_id)
     if not existing:
@@ -402,11 +441,14 @@ def update_sheet(
             raise SheetConflictError(existing) from e
     new_title = existing["title"] if title is None else ((title or "").strip() or existing["title"])
     new_body = existing["body"] if body is None else (body or "").strip()
+    effective_kind = _normalize_kind(kind if kind is not None else existing.get("kind"))
+    if body is not None and effective_kind == SHEET_KIND_BOARD:
+        new_body = _board_body(new_body)
     # Web canvases may be CSS-heavy with little plain text — allow empty-ish overwrite.
-    is_web = _normalize_kind(kind if kind is not None else existing.get("kind")) == SHEET_KIND_WEB
+    # Холст — JSON, текста в нём может не быть вовсе.
     if (
         body is not None
-        and not is_web
+        and effective_kind == SHEET_KIND_DOC
         and not _plain_text(new_body)
         and _plain_text(existing["body"] or "")
     ):
@@ -438,7 +480,7 @@ def update_sheet(
             _conn().execute("UPDATE local_notes SET updated_at = ? WHERE id = ?", (ts, int(note_id)))
         _conn().commit()
     if changed:
-        realtime_notify.sheets_changed(note_id)
+        realtime_notify.sheets_changed(note_id, source=realtime_source)
     out = get_extra_sheet(note_id, sheet_id)
     assert out is not None
     return out
@@ -495,7 +537,7 @@ def delete_primary(owner_user_id: int | str, note: dict[str, Any], *, actor_user
     Канвас основным быть не может; если текстовых листов больше нет — удалять нечего, только заметку."""
     if _primary_locked(note):
         raise SheetError("Лист «Саммари» у встречи удалить нельзя")
-    nxt = next((x for x in list_extra_sheets(int(note["id"])) if x.get("kind") != SHEET_KIND_WEB), None)
+    nxt = next((x for x in list_extra_sheets(int(note["id"])) if _normalize_kind(x.get("kind")) == SHEET_KIND_DOC), None)
     if nxt is None:
         raise SheetError("Это единственный текстовый лист — его нельзя удалить, можно удалить заметку")
     updated = notes_store.update_note(
@@ -516,6 +558,13 @@ def delete_sheet(note_id: int, sheet_id: int) -> bool:
     existing = get_extra_sheet(note_id, sheet_id)
     if existing:
         _record_sheet_version(existing, reason="sheet_deleted", force=True)
+    if existing and _normalize_kind(existing.get("kind")) == SHEET_KIND_BOARD:
+        try:
+            from assistant.stores import note_ydoc
+
+            note_ydoc.delete(int(note_id), str(sheet_id))
+        except Exception as e:
+            print(f"[note_sheets] ydoc delete note={note_id} sheet={sheet_id} err={e!r}")
     with _LOCK:
         cur = _conn().execute(
             "DELETE FROM note_sheets WHERE note_id = ? AND id = ?",

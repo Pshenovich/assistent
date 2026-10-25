@@ -68,12 +68,19 @@ def _sheet_sources(note: dict[str, Any], kind: str, *, skip_titles: tuple[str, .
     out = []
     base = str(note.get("title") or {"transcription": "Встреча", "knowledge": "Документ"}.get(kind, "Заметка"))
     for sh in sheets:
-        if str(sh.get("kind") or "doc") == "web":
+        sheet_kind = str(sh.get("kind") or "doc")
+        if sheet_kind == "web":
             continue
         title = str(sh.get("title") or "").strip()
         if title in skip_titles:
             continue
-        text = _plain(str(sh.get("body") or sh.get("description") or ""))
+        raw_body = str(sh.get("body") or sh.get("description") or "")
+        if sheet_kind == "board":
+            from assistant.lib.board_doc import board_plain_text
+
+            text = " ".join(board_plain_text(raw_body).split())
+        else:
+            text = _plain(raw_body)
         if len(text) < 40:
             continue
         out.append({"key": f"sheet:{note['id']}:{sh['id']}", "kind": "knowledge" if kind == "knowledge" else "note", "title": f"{base} · {title or 'Лист'}",

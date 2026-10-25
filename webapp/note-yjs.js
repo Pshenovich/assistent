@@ -25,8 +25,58 @@
     return out;
   }
 
+  /** Документ основного листа — редактор TipTap (y-prosemirror). */
+  function editorAdapter(o) {
+    function editor() {
+      try {
+        return o.getEditor ? o.getEditor() : null;
+      } catch (_) {
+        return null;
+      }
+    }
+    function anyEditor() {
+      return (o.getAnyEditor ? o.getAnyEditor() : null) || editor();
+    }
+    return {
+      hasContent: function (doc) {
+        return doc.getXmlFragment("prosemirror").length > 0;
+      },
+      canSave: function () {
+        var ed = editor();
+        return !!(ed && ed.isYjsAttached());
+      },
+      attach: function (doc, ready, waiting) {
+        var ed = editor();
+        if (!ed || typeof ed.attachYjs !== "function") return;
+        if (!ready) {
+          if (waiting && typeof ed.setEditable === "function") ed.setEditable(false);
+          return;
+        }
+        if (!ed.isYjsAttached()) ed.attachYjs(doc);
+        if (typeof ed.setEditable === "function") ed.setEditable(true);
+      },
+      detach: function () {
+        var ed = anyEditor();
+        if (ed && typeof ed.detachYjs === "function") ed.detachYjs();
+      },
+      seed: function (doc, html, origin) {
+        var ed = anyEditor();
+        if (!ed || typeof ed.applyHtmlToYjs !== "function") return false;
+        ed.applyHtmlToYjs(doc, html, origin);
+        return true;
+      },
+      reseed: function (doc, oldHtml, html, origin) {
+        var ed = anyEditor();
+        if (!ed || typeof ed.applyHtmlDeltaToYjs !== "function") return false;
+        ed.applyHtmlDeltaToYjs(doc, oldHtml, html, origin);
+        return true;
+      },
+    };
+  }
+
   /**
-   * o.noteId, o.Y (yjs из бандла редактора), o.send(obj) → bool,
+   * o.noteId, o.sheetId (нет — основной лист; id холста — его документ), o.adapter (как
+   * editorAdapter: документ холста — webapp/board.js), o.Y (yjs из бандла редактора), o.send(obj) → bool,
    * o.getEditor() — редактор основного листа (или null, если открыт другой лист),
    * o.getAnyEditor() — любой редактор (нужна схема для посева),
    * o.onReady(), o.onReseeded() — HTML документа обновлён правкой мимо Yjs (сохранить),
@@ -36,6 +86,8 @@
   function createSession(o) {
     var Y = o.Y;
     var noteId = Number(o.noteId);
+    var sheetKey = o.sheetId != null && String(o.sheetId) !== "" && String(o.sheetId) !== "main" ? String(o.sheetId) : "main";
+    var ad = o.adapter || editorAdapter(o);
     var doc = new Y.Doc();
     var ready = false;
     var waiting = false;
@@ -51,46 +103,39 @@
         if (ready && leader) scheduleLeaderSave();
         return;
       }
-      if (!o.send({ type: "y.update", note_id: noteId, update: b64encode(update) })) offlineDirty = true;
+      if (!o.send(msg("y.update", { update: b64encode(update) }))) offlineDirty = true;
     });
+
+    function msg(type, extra) {
+      var m = { type: type, note_id: noteId };
+      if (sheetKey !== "main") m.sheet_id = sheetKey;
+      if (extra) {
+        for (var k in extra) m[k] = extra[k];
+      }
+      return m;
+    }
 
     function scheduleLeaderSave() {
       if (leaderTimer) clearTimeout(leaderTimer);
       leaderTimer = setTimeout(function () {
         leaderTimer = null;
         // Сохраняем только с подключённым редактором: HTML берётся из него.
-        var ed = editor();
-        if (stopped || !ed || !ed.isYjsAttached()) return;
+        if (stopped || !ad.canSave()) return;
         if (typeof o.onRemoteChange === "function") o.onRemoteChange();
       }, LEADER_SAVE_MS);
     }
 
-    function editor() {
-      try {
-        return o.getEditor ? o.getEditor() : null;
-      } catch (_) {
-        return null;
-      }
-    }
-
     function hasContent() {
-      return doc.getXmlFragment("prosemirror").length > 0;
+      return ad.hasContent(doc);
     }
 
     function attach() {
-      var ed = editor();
-      if (!ed || stopped || typeof ed.attachYjs !== "function") return;
-      if (!ready) {
-        if (waiting && typeof ed.setEditable === "function") ed.setEditable(false);
-        return;
-      }
-      if (!ed.isYjsAttached()) ed.attachYjs(doc);
-      if (typeof ed.setEditable === "function") ed.setEditable(true);
+      if (stopped) return;
+      ad.attach(doc, ready, waiting);
     }
 
     function detach() {
-      var ed = editor() || (o.getAnyEditor ? o.getAnyEditor() : null);
-      if (ed && typeof ed.detachYjs === "function") ed.detachYjs();
+      ad.detach();
     }
 
     function becomeReady() {
@@ -102,17 +147,12 @@
     }
 
     function sendFullState() {
-      o.send({ type: "y.update", note_id: noteId, update: b64encode(Y.encodeStateAsUpdate(doc)) });
+      o.send(msg("y.update", { update: b64encode(Y.encodeStateAsUpdate(doc)) }));
       offlineDirty = false;
     }
 
     function seedFrom(html) {
-      var ed = o.getAnyEditor ? o.getAnyEditor() : editor();
-      if (!ed || typeof ed.applyHtmlToYjs !== "function") {
-        fallback("no_editor");
-        return;
-      }
-      ed.applyHtmlToYjs(doc, html, ORIGIN_SEED);
+      if (!ad.seed(doc, html, ORIGIN_SEED)) fallback("no_editor");
     }
 
     function fallback(reason) {
@@ -121,8 +161,13 @@
       if (typeof o.onFallback === "function") o.onFallback(reason);
     }
 
-    function handle(msg) {
-      if (stopped || !msg || Number(msg.note_id) !== noteId) return;
+    function handle(m) {
+      if (stopped || !m || Number(m.note_id) !== noteId) return;
+      if ((m.sheet_id != null && String(m.sheet_id) !== "" ? String(m.sheet_id) : "main") !== sheetKey) return;
+      handleOwn(m);
+    }
+
+    function handleOwn(msg) {
       var t = msg.type;
       if (t === "y.state") {
         nextSeq = Number(msg.seq) || 0;
@@ -155,12 +200,7 @@
         return;
       }
       if (t === "y.compact_request") {
-        o.send({
-          type: "y.compact",
-          note_id: noteId,
-          update: b64encode(Y.encodeStateAsUpdate(doc)),
-          upto: nextSeq,
-        });
+        o.send(msg("y.compact", { update: b64encode(Y.encodeStateAsUpdate(doc)), upto: nextSeq }));
         return;
       }
       if (t === "y.leader") {
@@ -172,10 +212,8 @@
         // HTML изменили мимо Yjs (ИИ, бот, старое приложение): вливаем только их правку
         // (было → стало) — не затирая того, что ещё не попало в HTML.
         if (!ready || msg.old_html == null) return;
-        var ed = o.getAnyEditor ? o.getAnyEditor() : editor();
-        if (ed && typeof ed.applyHtmlDeltaToYjs === "function") {
-          ed.applyHtmlDeltaToYjs(doc, msg.old_html, msg.html || "", ORIGIN_RESEED);
-          if (typeof o.onReseeded === "function") o.onReseeded();
+        if (ad.reseed(doc, msg.old_html, msg.html || "", ORIGIN_RESEED) && typeof o.onReseeded === "function") {
+          o.onReseeded();
         }
         return;
       }
@@ -186,7 +224,7 @@
 
     function join() {
       if (stopped) return;
-      o.send({ type: "y.join", note_id: noteId });
+      o.send(msg("y.join"));
     }
 
     function stop() {
@@ -194,7 +232,7 @@
       stopped = true;
       if (leaderTimer) clearTimeout(leaderTimer);
       detach();
-      o.send({ type: "y.leave", note_id: noteId });
+      o.send(msg("y.leave"));
       try {
         doc.destroy();
       } catch (_) {}
@@ -202,6 +240,7 @@
 
     return {
       noteId: noteId,
+      sheetId: sheetKey,
       join: join,
       handle: handle,
       attach: attach,

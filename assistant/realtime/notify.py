@@ -145,12 +145,15 @@ def notes_list_changed(user_id: int | str, *, note_id: int | None = None) -> Non
     publish(topic, ev)
 
 
-def sheets_changed(note_id: int | str) -> None:
+def sheets_changed(note_id: int | str, *, source: str = "") -> None:
     try:
         nid = int(note_id)
     except (TypeError, ValueError):
         return
-    publish(note_topic(nid), {"type": "sheets.changed", "note_id": nid})
+    ev: dict[str, Any] = {"type": "sheets.changed", "note_id": nid}
+    if source:
+        ev["source"] = str(source)  # "yjs" — тело холста, сохранённое из совместного документа
+    publish(note_topic(nid), ev)
 
 
 def comments_changed(item_kind: str, item_id: Any) -> None:

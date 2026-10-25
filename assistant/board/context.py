@@ -62,6 +62,10 @@ def _knowledge_note_html(note: dict[str, Any]) -> str:
 
     for x in extra:
         body = str(x.get("body") or "")
+        if str(x.get("kind") or "doc") == "board":
+            from assistant.lib.board_doc import board_text_html
+
+            body = board_text_html(body)
         if body.strip():
             html += f"<h2>{escape(str(x.get('title') or 'Лист'))}</h2>{body}"
     return html

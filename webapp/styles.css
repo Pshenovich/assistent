@@ -7784,7 +7784,8 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   padding: 16px 16px 12px;
 }
 
-.note-discussion-sheet-host:has(.note-web-canvas) {
+.note-discussion-sheet-host:has(.note-web-canvas),
+.note-discussion-sheet-host:has(.leo-board) {
   overflow: hidden;
   padding: 0;
 }
@@ -8661,6 +8662,18 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
 .note-sheet-chip.is-web .note-sheet-chip-label::before {
   content: "▣ ";
   opacity: 0.7;
+}
+
+.note-sheet-chip.is-board .note-sheet-chip-label::before {
+  content: "◇ ";
+  opacity: 0.7;
+}
+
+/* Холст (webapp/board.css) в редакторе заметки и в правой панели */
+.note-editor-pad--body.is-board-mode > .note-web-canvas-host > .leo-board,
+.note-discussion-sheet-host > .leo-board {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .note-web-canvas {
@@ -15973,6 +15986,7 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 .note-share-sheet.is-v2 .ns-chip { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; font-size: 14px; cursor: pointer; }
 .note-share-sheet.is-v2 .ns-chip input { position: absolute; opacity: 0; pointer-events: none; }
 .note-share-sheet.is-v2 .ns-chip.is-web span::before { content: "▣ "; opacity: 0.7; }
+.note-share-sheet.is-v2 .ns-chip.is-board span::before { content: "◇ "; opacity: 0.7; }
 .note-share-sheet.is-v2 .ns-chip:has(input:checked) { border-color: var(--accent); background: var(--accent-muted, rgba(82, 158, 244, 0.16)); color: var(--text); }
 .note-share-sheet.is-v2 .ns-chip:has(input:checked)::before { content: "✓"; font-size: 12px; color: var(--accent); }
 .note-share-sheet.is-v2 .ns-chip:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -16906,6 +16920,7 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
 .nh-doc del { text-decoration: line-through; background: rgba(230, 70, 70, 0.18); color: #ff9c9c; border-radius: 3px; }
 .nh-diff-none { color: var(--text-secondary); font-style: italic; }
 .nh-web-frame { width: 100%; min-height: 70vh; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+.nh-board-frame { position: relative; display: flex; width: 100%; height: 70vh; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 .nh-preview { display: block; }
 .nh-preview.hidden { display: none !important; }
 #note-editor-overlay.nh-previewing .note-editor-pad--body,

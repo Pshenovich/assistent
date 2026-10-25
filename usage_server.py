@@ -2705,6 +2705,7 @@ class _MiniappNoteSheetPatch(BaseModel):
     description: Optional[str] = None
     kind: Optional[str] = None
     expected_revision: Optional[int] = None
+    yjs: bool = False  # тело холста из совместного документа: без проверки ревизии
 
 
 class _MiniappNoteAiEdit(BaseModel):
@@ -2900,6 +2901,8 @@ class _MiniappGptChatBody(BaseModel):
     doc_sheet_id: Optional[str] = None
     # Стиль новых презентаций по умолчанию — последний выбранный пользователем.
     canvas_theme: Optional[str] = None
+    # Открытая доска (лист kind=board): модель видит её узлы и может её дорисовать.
+    board_sheet_id: Optional[str] = None
 
 
 class _MiniappAgentCreate(BaseModel):
@@ -3361,6 +3364,7 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
         if not _sheets:
             return None  # листы ссылки удалены
         canvases = note_sheets_store.list_share_canvases(note, sheet_ids)
+        boards = note_sheets_store.list_share_boards(note, sheet_ids)
         return {
             "kind": "local",
             "operation": None,
@@ -3368,6 +3372,7 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
             "title": title[:500],
             "body": body[:120000],
             "canvases": canvases,
+            "boards": boards,
             "updated_at": note.get("updated_at"),
             "access": share_links_store.normalize_access(link.get("access")),
             "item_id": item_id,
@@ -8124,7 +8129,30 @@ async def miniapp_gpt_chat(
             sel_block = web_canvas_lib.selections_prompt_block(canvas_sel_dumps)
             if sel_block:
                 prompt = (prompt.rstrip() + "\n\n" + sel_block).strip()
+            from assistant.lib import board_ai as board_ai_lib
+
+            system_text = (system_text.rstrip() + "\n\n" + board_ai_lib.system_addon()).strip()
+            open_board_id = str(body.board_sheet_id or "").strip()
+            if open_board_id.isdigit():
+                try:
+                    from assistant.stores import note_sheets as note_sheets_store
+
+                    board_sheet = note_sheets_store.get_extra_sheet(int(iid), int(open_board_id))
+                except (TypeError, ValueError):
+                    board_sheet = None
+                if board_sheet and str(board_sheet.get("kind") or "") == "board":
+                    prompt = (
+                        prompt.rstrip() + "\n\n" + board_ai_lib.open_board_prompt_block(
+                            open_board_id, str(board_sheet.get("title") or ""), board_sheet.get("body") or ""
+                        )
+                    ).strip()
         from assistant.integrations.openrouter_client import model_emits_images as _emits_images
+
+        def board_intent_text(text: str) -> str:
+            # Просьба нарисовать доску — не повод генерировать картинку.
+            from assistant.lib import board_ai as board_ai_lib
+
+            return "" if board_ai_lib.looks_like_board_request(text) else text
 
         calendar_tools_on = not _emits_images(run_model or "")
         if calendar_tools_on:
@@ -8158,12 +8186,49 @@ async def miniapp_gpt_chat(
                 max_tokens=16384 if (canvas_enabled or note_edit_enabled) else None,
                 # Картинку — только если попросил сам пользователь: в prompt приклеены лист заметки и канвас
                 # (там base64-фото и любые слова), по ним картинка генерировалась почти к каждому ответу.
-                intent_text=q,
+                intent_text=board_intent_text(q) if canvas_enabled else q,
                 **tool_kwargs,
             )
             if out is None:
                 return None
             leo_agent.attach_calendar_actions(gcal_ctx, out, uid)
+            board_applied: list[dict[str, Any]] = []
+            board_failed = False
+            if canvas_enabled:
+                # Доска — первой: парсер презентаций принимает и «голый» JSON.
+                from assistant.lib import board_ai as board_ai_lib
+                from assistant.stores import note_sheets as note_sheets_store
+                from assistant.stores import notes as notes_store
+
+                b_clean, b_actions, b_tried = board_ai_lib.parse_blocks(str(out.get("answer") or ""))
+                if b_tried:
+                    out["answer"] = b_clean
+                    try:
+                        b_note = notes_store.get_accessible_note(uid, int(iid))
+                    except (TypeError, ValueError):
+                        b_note = None
+                    for act in b_actions[:2] if b_note else []:
+                        try:
+                            sheet = board_ai_lib.apply_action(
+                                b_note, act, note_sheets_store, open_sheet_id=str(body.board_sheet_id or "").strip()
+                            )
+                        except Exception as e:
+                            print(f"[board_ai] apply failed note={iid} err={e!r}")
+                            sheet = None
+                        if sheet:
+                            board_applied.append({
+                                "action": str(act.get("action") or "create"),
+                                "sheet_id": str(sheet.get("id")),
+                                "title": str(sheet.get("title") or ""),
+                                "kind": "board",
+                                "revision": sheet.get("revision"),
+                            })
+                    board_failed = not board_applied
+                    print(f"[board_ai] note={iid} actions={len(b_actions)} applied={len(board_applied)}")
+                    if board_applied and not str(out.get("answer") or "").strip():
+                        out["answer"] = "Нарисовал на доске «" + board_applied[-1]["title"] + "»."
+                    elif board_failed and not str(out.get("answer") or "").strip():
+                        out["answer"] = "Не получилось нарисовать доску — попробуйте описать проще."
             if note_edit_enabled:
                 # До разбора канваса: его парсер принимает и «голый» JSON.
                 clean_answer, edits = note_edits_lib.parse_blocks(str(out.get("answer") or ""))
@@ -8237,15 +8302,21 @@ async def miniapp_gpt_chat(
                                 f"action={normalized.get('action')!r} "
                                 f"sheet_id={normalized.get('sheet_id')!r}"
                             )
-                out["answer"] = web_canvas_lib.reconcile_canvas_chat_answer(
-                    clean_answer,
-                    actions=canvas_actions,
-                    applied=applied,
-                    raw_answer=answer_raw,
-                )
-                if applied:
-                    out["canvas"] = applied
-                elif canvas_actions or web_canvas_lib.canvas_payload_attempted(answer_raw):
+                if board_applied and not canvas_actions:
+                    # Ответ про доску — не «ложное Готово» презентации.
+                    out["answer"] = clean_answer or out.get("answer") or ""
+                elif board_failed and not canvas_actions:
+                    out["answer"] = "Не получилось нарисовать доску — попробуйте описать проще."
+                else:
+                    out["answer"] = web_canvas_lib.reconcile_canvas_chat_answer(
+                        clean_answer,
+                        actions=canvas_actions,
+                        applied=applied,
+                        raw_answer=answer_raw,
+                    )
+                if applied or board_applied:
+                    out["canvas"] = applied + board_applied
+                elif canvas_actions or web_canvas_lib.canvas_payload_attempted(answer_raw) or board_failed:
                     out["canvas_error"] = "apply_failed"
             if kb_version:
                 out = {**out, "kb_version": kb_version}
@@ -11371,15 +11442,29 @@ async def miniapp_note_sheet_patch(
         )
         if sheet_body is not None and effective_kind == web_canvas_lib.SHEET_KIND_WEB:
             sheet_body = web_canvas_lib.finalize_canvas_html(sheet_body)
-        return note_sheets_store.update_sheet(
+        from_yjs = (
+            bool(body.yjs)
+            and _realtime_yjs_enabled()
+            and effective_kind == web_canvas_lib.SHEET_KIND_BOARD
+            and sheet_body is not None
+        )
+        item = note_sheets_store.update_sheet(
             note_id,
             extra_id,
             title=body.title,
             body=sheet_body,
             kind=kind,
-            expected_revision=body.expected_revision,
+            expected_revision=None if from_yjs else body.expected_revision,
+            realtime_source="yjs" if from_yjs else "",
         )
+        if from_yjs and item:
+            from assistant.stores import note_ydoc
 
+            yjs_saved.append((int(item.get("revision") or 1), str(item.get("body") or "")))
+            note_ydoc.set_base(note_id, *yjs_saved[-1], sheet_id=str(extra_id))
+        return item
+
+    yjs_saved: list[tuple[int, str]] = []
     try:
         item = await run_in_threadpool(_run)
     except note_sheets_store.SheetConflictError as e:
@@ -11391,6 +11476,10 @@ async def miniapp_note_sheet_patch(
         raise HTTPException(status_code=400, detail=str(e)) from e
     if item is None:
         raise HTTPException(status_code=404, detail="Заметка не найдена")
+    if yjs_saved:
+        from assistant.realtime.yrooms import rooms as yjs_rooms
+
+        yjs_rooms().mark_saved(int(note_id), *yjs_saved[-1], sheet=str(extra_id))
     await run_in_threadpool(_memory_sheet_changed, uid, note_id)
     note_updated_at = None
     try:
@@ -11802,6 +11891,7 @@ def _realtime_b64(raw: Any) -> bytes | None:
 @miniapp_router.websocket("/ws")
 async def miniapp_realtime_ws(websocket: WebSocket) -> None:
     from assistant.realtime.hub import HUB, Connection, note_topic, user_topic
+    from assistant.realtime.yrooms import normalize_sheet as normalize_yjs_sheet
     from assistant.realtime.yrooms import rooms as yjs_rooms
     from assistant.stores import note_members
 
@@ -11831,7 +11921,7 @@ async def miniapp_realtime_ws(websocket: WebSocket) -> None:
     conn = Connection(str(uid))
     owners: dict[int, str] = {}  # подписанные заметки → владелец (ключ присутствия)
     yjs_notes: set[int] = set()  # подписки, где разрешена совместная правка Yjs
-    yjs_joined: set[int] = set()
+    yjs_joined: set[tuple[int, str]] = set()  # (заметка, лист): "main" — текст, иначе холст
     present: set[int] = set()  # заметки, где мы отметились курсором
     last_cursor_at: dict[int, float] = {}
 
@@ -11885,29 +11975,52 @@ async def miniapp_realtime_ws(websocket: WebSocket) -> None:
                 HUB.unsubscribe(conn, note_topic(note_id))
                 owner = owners.pop(note_id, None)
                 yjs_notes.discard(note_id)
-                if note_id in yjs_joined:
-                    yjs_joined.discard(note_id)
-                    await yjs_rooms().leave(conn, note_id)
+                for key in [k for k in yjs_joined if k[0] == note_id]:
+                    yjs_joined.discard(key)
+                    await yjs_rooms().leave(conn, note_id, key[1])
                 if owner is not None and note_id in present:
                     _leave(owner, note_id)
-            elif kind == "y.join":
-                if note_id not in yjs_notes:
-                    conn.push(json.dumps({"type": "y.error", "note_id": note_id, "reason": "not_allowed"}))
+            elif kind is not None and str(kind).startswith("y."):
+                ykey = (note_id, normalize_yjs_sheet(msg.get("sheet_id")))
+                if kind == "y.join":
+                    if note_id not in yjs_notes:
+                        err = {"type": "y.error", "note_id": note_id, "reason": "not_allowed"}
+                        if ykey[1] != "main":
+                            err["sheet_id"] = ykey[1]
+                        conn.push(json.dumps(err))
+                        continue
+                    if ykey not in yjs_joined and len(yjs_joined) >= _REALTIME_MAX_NOTE_SUBS * 2:
+                        continue
+                    yjs_joined.add(ykey)
+                    await yjs_rooms().join(conn, note_id, ykey[1])
+                elif kind == "y.update" and ykey in yjs_joined:
+                    data = _realtime_b64(msg.get("update"))
+                    if data is not None:
+                        yjs_rooms().update(conn, note_id, data, ykey[1])
+                elif kind == "y.compact" and ykey in yjs_joined:
+                    data = _realtime_b64(msg.get("update"))
+                    upto = msg.get("upto")
+                    if data is not None and isinstance(upto, int):
+                        yjs_rooms().compact(conn, note_id, data, upto, ykey[1])
+                elif kind == "y.leave" and ykey in yjs_joined:
+                    yjs_joined.discard(ykey)
+                    await yjs_rooms().leave(conn, note_id, ykey[1])
+            elif kind == "board.cursor" and note_id in owners:
+                # Курсор на холсте: только рассылка участникам, без записи в присутствие.
+                now = time.monotonic()
+                ck = -note_id
+                if now - last_cursor_at.get(ck, 0.0) < _REALTIME_CURSOR_MIN_INTERVAL_SEC:
                     continue
-                yjs_joined.add(note_id)
-                await yjs_rooms().join(conn, note_id)
-            elif kind == "y.update" and note_id in yjs_joined:
-                data = _realtime_b64(msg.get("update"))
-                if data is not None:
-                    yjs_rooms().update(conn, note_id, data)
-            elif kind == "y.compact" and note_id in yjs_joined:
-                data = _realtime_b64(msg.get("update"))
-                upto = msg.get("upto")
-                if data is not None and isinstance(upto, int):
-                    yjs_rooms().compact(conn, note_id, data, upto)
-            elif kind == "y.leave" and note_id in yjs_joined:
-                yjs_joined.discard(note_id)
-                await yjs_rooms().leave(conn, note_id)
+                last_cursor_at[ck] = now
+                bx, by = msg.get("x"), msg.get("y")
+                if not isinstance(bx, (int, float)) or not isinstance(by, (int, float)):
+                    continue
+                HUB.publish(note_topic(note_id), {
+                    "type": "board.cursor", "note_id": note_id,
+                    "sheet_id": normalize_yjs_sheet(msg.get("sheet_id")),
+                    "x": round(float(bx), 1), "y": round(float(by), 1),
+                    "user_id": str(uid), "name": display_name or username or "",
+                })
             elif kind == "cursor" and note_id in owners:
                 now = time.monotonic()
                 if now - last_cursor_at.get(note_id, 0.0) < _REALTIME_CURSOR_MIN_INTERVAL_SEC:
@@ -11931,12 +12044,12 @@ async def miniapp_realtime_ws(websocket: WebSocket) -> None:
         if yjs_joined:
             # Отдельной задачей: обработчик сокета могут отменить при обрыве,
             # а уход из комнаты Yjs (передача посева, запись журнала) должен дойти до конца.
-            async def _yjs_cleanup(notes: list[int]) -> None:
-                for nid in notes:
+            async def _yjs_cleanup(keys: list[tuple[int, str]]) -> None:
+                for nid, sheet in keys:
                     try:
-                        await yjs_rooms().leave(conn, nid)
+                        await yjs_rooms().leave(conn, nid, sheet)
                     except Exception as exc:
-                        print(f"[yjs] leave failed note={nid} err={exc!r}")
+                        print(f"[yjs] leave failed note={nid} sheet={sheet} err={exc!r}")
 
             asyncio.get_running_loop().create_task(_yjs_cleanup(list(yjs_joined)))
         for note_id in list(present):
