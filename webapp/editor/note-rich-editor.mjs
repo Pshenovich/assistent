@@ -354,6 +354,60 @@ function compressImageDataUrl(src) {
   });
 }
 
+var IMAGE_MAX_FILE = 25 * 1024 * 1024;
+
+function imageFilesFrom(dataTransfer) {
+  return Array.prototype.slice.call((dataTransfer && dataTransfer.files) || []).filter(function (f) {
+    return /^image\//i.test(String(f.type || "")) || /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(String(f.name || ""));
+  });
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise(function (resolve) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      resolve(String(reader.result || ""));
+    };
+    reader.onerror = function () {
+      resolve("");
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// Фото, перетащенные в заметку или вставленные из буфера (скриншот): по очереди, в место броска
+// (pos = null — к курсору), ужатые как при вставке скрепкой.
+function insertImageFiles(editor, files, pos) {
+  var tooBig = files.filter(function (f) {
+    return f.size > IMAGE_MAX_FILE;
+  });
+  if (tooBig.length) window.alert("Фото больше 25 МБ не вставляются: " + tooBig.map(function (f) { return f.name || "фото"; }).join(", "));
+  var at = pos;
+  var chain = Promise.resolve();
+  files
+    .filter(function (f) {
+      return f.size <= IMAGE_MAX_FILE;
+    })
+    .forEach(function (file) {
+      chain = chain
+        .then(function () {
+          return readFileAsDataUrl(file);
+        })
+        .then(compressImageDataUrl)
+        .then(function (src) {
+          if (!src || editor.isDestroyed) return;
+          var node = { type: "image", attrs: { src: src, alt: file.name || "Фото" } };
+          if (at == null) {
+            editor.chain().focus().insertContent([node, { type: "paragraph" }]).run();
+          } else {
+            editor.chain().focus().insertContentAt(Math.min(at, editor.state.doc.content.size), node).run();
+            at = editor.state.selection.to;
+          }
+        });
+    });
+  return chain;
+}
+
 // Уже сохранённые тяжёлые фото ужимаем после открытия (без записи в историю «Отменить»).
 function shrinkHeavyImages(editor) {
   var queue = [];
@@ -3614,7 +3668,24 @@ function mount(container, options) {
         spellcheck: "true",
       },
       handlePaste: function (view, event) {
+        // Скриншот / фото из буфера (без HTML — иначе это копия из веба, её разберёт редактор).
+        var pastedImages = imageFilesFrom(event && event.clipboardData);
+        if (pastedImages.length && !(event.clipboardData.getData("text/html") || "").trim()) {
+          event.preventDefault();
+          insertImageFiles(view.dom.editor, pastedImages, null);
+          return true;
+        }
         return pastePlainTextInTableCell(view, event, tablePasteClickPos.pos) || pasteMarkdownText(view, event);
+      },
+      // Фото, перетащенные в заметку с компьютера, — в место, куда отпустили.
+      handleDrop: function (view, event, slice, moved) {
+        if (moved) return false;
+        var dropped = imageFilesFrom(event && event.dataTransfer);
+        if (!dropped.length) return false;
+        event.preventDefault();
+        var hit = view.posAtCoords({ left: event.clientX, top: event.clientY });
+        insertImageFiles(view.dom.editor, dropped, hit ? hit.pos : null);
+        return true;
       },
       handleTripleClick: function (view, pos) {
         return selectAllTextInTableCell(view, pos);
@@ -3686,6 +3757,32 @@ function mount(container, options) {
   );
 
   var cleanupToolbar = mountToolbar(toolbar, editor);
+  // Фото отпустили рядом с текстом (пустое место окна заметки) — браузер открыл бы файл
+  // вместо приложения; вставляем в конец заметки.
+  var dropZone = function () {
+    return shell.closest(".modal, .note-editor-sheet") || shell;
+  };
+  function onDocDragOver(e) {
+    if (!shell.isConnected || !imageDragged(e) || !dropZone().contains(e.target)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  }
+  function onDocDrop(e) {
+    if (!shell.isConnected || !dropZone().contains(e.target) || editor.view.dom.contains(e.target)) return;
+    var files = imageFilesFrom(e.dataTransfer);
+    if (!files.length) return;
+    e.preventDefault();
+    insertImageFiles(editor, files, editor.state.doc.content.size);
+  }
+  function imageDragged(e) {
+    var dt = e.dataTransfer;
+    if (!dt) return false;
+    var items = Array.prototype.slice.call(dt.items || []);
+    if (items.length) return items.some(function (it) { return it.kind === "file" && /^image\//i.test(String(it.type || "")); });
+    return Array.prototype.indexOf.call(dt.types || [], "Files") >= 0;
+  }
+  document.addEventListener("dragover", onDocDragOver);
+  document.addEventListener("drop", onDocDrop);
   setTimeout(function () {
     shrinkHeavyImages(editor);
   }, 1500);
@@ -4120,13 +4217,15 @@ function mount(container, options) {
       if (typeof noteRefCtx.hideNoteRefSuggest === "function") noteRefCtx.hideNoteRefSuggest();
       if (typeof cleanupToolbar === "function") cleanupToolbar();
       if (typeof cleanupToc === "function") cleanupToc();
+      document.removeEventListener("dragover", onDocDragOver);
+      document.removeEventListener("drop", onDocDrop);
       editor.destroy();
     },
   };
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-tgmenu",
+  assetVersion: "20261025-imgdrop",
   Y: Y,
   mount: mount,
   importBody: importBody,
