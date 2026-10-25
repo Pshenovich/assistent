@@ -498,11 +498,14 @@ const NoteColumn = Node.create({
   },
 });
 
-// Левый столбец — только текущий абзац (текст с последнего Enter).
-function columnsSourceRange(doc, index) {
+// Левый столбец — только текущий абзац (текст с последнего Enter); lastIndex — до какого блока (выделение).
+function columnsSourceRange(doc, index, lastIndex) {
+  var last = lastIndex == null ? index : lastIndex;
   var from = 0;
   for (var k = 0; k < index; k += 1) from += doc.child(k).nodeSize;
-  return { from: from, to: from + doc.child(index).nodeSize };
+  var to = from;
+  for (var j = index; j <= last; j += 1) to += doc.child(j).nodeSize;
+  return { from: from, to: to };
 }
 
 // Обернуть блоки [from, to) верхнего уровня в два столбца, курсор — в правый.
@@ -530,16 +533,24 @@ const NoteColumns = Node.create({
   },
   addCommands: function () {
     return {
-      // «+» → «Два столбца»: как «[[» в конце текущего абзаца.
+      // «+» / «H» → «Столбец»: выделенный текст (все блоки, которые задевает выделение) — в левый столбец,
+      // без выделения — текущий абзац, как «[[».
       splitIntoColumns: function () {
         return function (props) {
           var state = props.state;
-          var $from = state.selection.$from;
-          if ($from.depth < 1) return false;
-          var top = $from.node(1);
-          if (!top.isTextblock || $from.depth !== 1) return false;
+          var sel = state.selection;
+          var $a = sel.$from;
+          var $b = sel.$to;
+          if ($a.depth < 1 || $b.depth < 1) return false;
+          var first = $a.index(0);
+          var last = $b.index(0);
+          // Выделение кончается в самом начале следующего блока — его не берём.
+          if (!sel.empty && last > first && $b.pos === $b.start(1)) last -= 1;
+          for (var i = first; i <= last; i += 1) {
+            if (state.doc.child(i).type.name === "noteColumns") return false; // в столбцах столбцы не делаем
+          }
           if (props.dispatch) {
-            var r = columnsSourceRange(state.doc, $from.index(0));
+            var r = columnsSourceRange(state.doc, first, last);
             props.dispatch(wrapInColumns(props.tr, r.from, r.to).scrollIntoView());
           }
           return true;
@@ -1418,7 +1429,7 @@ function svgIcon(name) {
       '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2"/><path d="M4 12l1 1 2-2"/><path d="M4 18l1 1 2-2"/>',
     none: '<path d="M4 7h16M4 12h16M4 17h10"/>',
     blank: "",
-    columns: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/><path d="M6 9h3M6 12h3M15 9h3"/>',
+    columns: '<path d="M4 7h10M4 12h10M4 17h7"/><path d="M19 4v16"/>',
     sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
     discuss: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
   };
@@ -1901,7 +1912,7 @@ function mountToolbar(toolbarEl, editor) {
     '<button type="button" class="note-tg-menu-item note-tg-menu-page note-tg-mob-only" data-go="more">' +
     svgIcon("strike") + "<span>Ещё</span>" + svgIcon("chevronRight") + "</button>" +
     sep() +
-    item("columns", "", "columns", "Два столбца") +
+    item("columns", "", "columns", "Столбец") +
     item("divider", "", "divider", "Разделитель") +
     item("noteref", "", "noteref", "Ссылка на заметку") +
     "</div>" +
@@ -4387,7 +4398,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-columns2",
+  assetVersion: "20261025-colsel",
   Y: Y,
   mount: mount,
   importBody: importBody,
