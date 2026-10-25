@@ -98,107 +98,44 @@ _remote_bash() {
   return 1
 }
 
-SERVICES_STOPPED=0
-_restore_services_on_fail() {
-  if [[ "$SERVICES_STOPPED" -eq 1 ]]; then
-    echo "==> Восстановление сервисов после сбоя деплоя" >&2
-    "${SSH[@]}" "${SSH_USER}@${SSH_HOST}" \
-      "systemctl start assistant-bot assistant-usage executive-board-bot 2>/dev/null || true" \
-      2>/dev/null || true
-  fi
+STAGE_ROOT="/opt/assistant.stage"
+DEPLOY_DIR="/root/leo-deploy"
+EXCLUDES_FILE="scripts/deploy_rsync_excludes.txt"
+
+# Записать файл на сервер (с повторами).
+_remote_write() {
+  local path="$1" content="$2" attempt
+  for attempt in 1 2 3 4 5; do
+    if "${SSH[@]}" "${SSH_USER}@${SSH_HOST}" "cat > '$path'" <<< "$content"; then
+      return 0
+    fi
+    echo "SSH попытка ${attempt}/5 (запись ${path}) не удалась" >&2
+    sleep $((attempt * 3))
+  done
+  return 1
 }
-trap _restore_services_on_fail EXIT
 
 echo "==> Проверка SSH ${SSH_HOST}"
 _ssh_retry "echo ssh_ok" >/dev/null
 
-echo "==> Остановка сервисов на ${SSH_HOST}"
-_remote_bash 'set -euo pipefail
-systemctl stop assistant-bot assistant-usage executive-board-bot assistant-whatsapp-bridge 2>/dev/null || true
-systemctl disable assistant-whatsapp-bridge 2>/dev/null || true'
-SERVICES_STOPPED=1
-
-echo "==> Резервная копия баз перед выкаткой (/root/leo-backups/predeploy)"
-_remote_bash 'set -euo pipefail
-if [[ -f /opt/assistant/scripts/backup_dbs.py ]]; then
-  python3 /opt/assistant/scripts/backup_dbs.py predeploy || echo "WARN: backup_dbs predeploy failed"
-fi'
-
-echo "==> Синхронизация кода (без .env, .venv, пользовательских данных)"
-"${RSYNC[@]}" \
-  --exclude '.env' \
-  --exclude '.env.*' \
-  --exclude '.venv/' \
-  --exclude '.git/' \
-  --exclude 'google_user_tokens/' \
-  --exclude 'google_oauth_pending/' \
-  --exclude 'zoom_user_tokens/' \
-  --exclude 'zoom_oauth_pending/' \
-  --exclude 'todoist_user_tokens/' \
-  --exclude 'todoist_oauth_pending/' \
-  --exclude 'yandex_disk_user_tokens/' \
-  --exclude 'yandex_disk_oauth_pending/' \
-  --exclude 'bitrix_mcp_user_tokens/' \
-  --exclude 'telemost_user_tokens/' \
-  --exclude 'telemost_oauth_pending/' \
-  --exclude 'contacts_user/' \
-  --exclude 'contacts.json' \
-  --exclude 'assistant/stores/contacts_user/' \
-  --exclude 'assistant/stores/contacts.json' \
-  --exclude 'reminders.json' \
-  --exclude 'reminder_preferences.json' \
-  --exclude 'calendar_pending.json' \
-  --exclude 'usage.sqlite' \
-  --exclude 'notes.sqlite' \
-  --exclude 'note_versions.sqlite' \
-  --exclude '*.sqlite-journal' \
-  --exclude '*.sqlite-wal' \
-  --exclude '*.sqlite-shm' \
-  --exclude 'allowed_telegram_access.json' \
-  --exclude 'allowed_telegram_access_donatello.json' \
-  --exclude 'access_requests.json' \
-  --exclude 'access_requests_donatello.json' \
-  --exclude 'data/allowed_telegram_access.json' \
-  --exclude 'data/allowed_telegram_access_donatello.json' \
-  --exclude 'data/access_requests.json' \
-  --exclude 'data/access_requests_donatello.json' \
-  --exclude 'data/telegram_registry.json' \
-  --exclude 'telegram_registry.json' \
-  --exclude 'data/meeting_reminders_sent.json' \
-  --exclude 'data/meeting_recordings.sqlite' \
-  --exclude 'data/calendar_tasks.sqlite' \
-  --exclude 'data/*.sqlite' \
-  --exclude 'data/' \
-  --exclude 'data/board.sqlite' \
-  --exclude 'data/paei_jobs.json' \
-  --exclude 'data/knowledge_bases.sqlite' \
-  --exclude 'data/chat_digest.sqlite' \
-  --exclude 'data/users/' \
-  --exclude 'data/telegram-bot-api/' \
-  --exclude 'data/user_agents.sqlite' \
-  --exclude 'comment_files/' \
-  --exclude 'data/comment_files/' \
-  --exclude 'miniapp_billing_state.json' \
-  --exclude 'booking_store.json' \
-  --exclude 'booking_whatsapp_sessions/' \
-  --exclude 'booking_whatsapp_user/' \
-  --exclude 'booking_assistant_user/' \
-  --exclude 'venues.json' \
-  --exclude 'venues_user/' \
-  --exclude 'telegram_assistant.session' \
-  --exclude 'telegram_assistant.session-journal' \
-  --exclude 'OAuth Client ID AssitentAI.json' \
-  --exclude 'client_secret.json' \
-  --exclude 'token.json' \
-  --exclude '*.log' \
-  --exclude 'ai_docs/' \
-  --exclude '.cursor/' \
-  --exclude 'webapp/node_modules/' \
-  --exclude 'webapp/.npm-cache/' \
-  --exclude 'webapp/dev-mock-data.js' \
-  --exclude 'tmp-restore/' \
-  --exclude 'news/' \
-  "$ROOT/" "${SSH_USER}@${SSH_HOST}:${ASSISTANT_ROOT}/"
+# Шаг 1. Код — в промежуточный каталог; бот и сайт работают. Обрыв SSH здесь прод не трогает:
+# выкатка просто останавливается, на сервере остаётся прежняя версия.
+echo "==> Синхронизация кода в ${STAGE_ROOT} (сервисы работают; без .env, .venv, данных)"
+_ssh_retry "mkdir -p '${STAGE_ROOT}' '${DEPLOY_DIR}'" >/dev/null
+_rsync_ok=0
+for _attempt in 1 2 3 4; do
+  if "${RSYNC[@]}" --partial --exclude-from="$ROOT/$EXCLUDES_FILE" \
+    "$ROOT/" "${SSH_USER}@${SSH_HOST}:${STAGE_ROOT}/"; then
+    _rsync_ok=1
+    break
+  fi
+  echo "rsync попытка ${_attempt}/4 не удалась — повтор (прод не тронут)" >&2
+  sleep $((_attempt * 10))
+done
+if [[ "$_rsync_ok" -ne 1 ]]; then
+  echo "Код не скопирован: связь с сервером нестабильна. Прод работает на прежней версии — запустите выкатку ещё раз." >&2
+  exit 1
+fi
 
 echo "==> OAuth JSON (если есть локально)"
 if [[ -f "$ROOT/OAuth Client ID AssitentAI.json" ]]; then
@@ -516,10 +453,85 @@ elif [[ -x scripts/setup_vexa_meeting_bot.sh ]]; then
 fi
 REMOTE_SETUP
 )
-_remote_bash "$REMOTE_SETUP_SCRIPT"
+# Шаг 2. Переключение — одним скриптом на самом сервере (systemd-run): обрыв SSH его не прерывает.
+# Остановка → бэкап баз → копия stage → /opt/assistant (локально, без сети) → настройка и запуск.
+# Упал на любом шаге — сам поднимает сервисы. Mac только читает его лог.
+DEPLOY_TS="$(date +%Y%m%d-%H%M%S)-$$"
+REMOTE_LOG="${DEPLOY_DIR}/${DEPLOY_TS}.log"
+REMOTE_SWITCH="${DEPLOY_DIR}/switch-${DEPLOY_TS}.sh"
+SWITCH_SCRIPT="$(cat <<SWITCH_HEAD
+#!/usr/bin/env bash
+exec >>'${REMOTE_LOG}' 2>&1
+exec 9>'${DEPLOY_DIR}/deploy.lock'
+if ! flock -n 9; then
+  echo "Другая выкатка ещё идёт — эта отменена"
+  echo "DEPLOY_EXIT=75"
+  exit 75
+fi
+SWITCH_HEAD
+)
+$(cat <<'SWITCH_BODY'
+_on_exit() {
+  rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    echo "==> Сбой выкатки (код $rc) — поднимаю сервисы"
+    systemctl start assistant-bot assistant-usage executive-board-bot 2>/dev/null || true
+  fi
+  echo "DEPLOY_EXIT=$rc"
+}
+trap _on_exit EXIT
+set -euo pipefail
 
-SERVICES_STOPPED=0
-trap - EXIT
+echo "==> Остановка сервисов"
+systemctl stop assistant-bot assistant-usage executive-board-bot assistant-whatsapp-bridge 2>/dev/null || true
+systemctl disable assistant-whatsapp-bridge 2>/dev/null || true
+
+echo "==> Резервная копия баз перед выкаткой (/root/leo-backups/predeploy)"
+if [[ -f /opt/assistant/scripts/backup_dbs.py ]]; then
+  python3 /opt/assistant/scripts/backup_dbs.py predeploy || echo "WARN: backup_dbs predeploy failed"
+fi
+
+echo "==> Код: /opt/assistant.stage → /opt/assistant"
+rsync -a --delete --exclude-from=/opt/assistant.stage/scripts/deploy_rsync_excludes.txt \
+  /opt/assistant.stage/ /opt/assistant/
+SWITCH_BODY
+)
+${REMOTE_SETUP_SCRIPT}
+"
+
+echo "==> Переключение на сервере (лог ${REMOTE_LOG})"
+_remote_write "$REMOTE_SWITCH" "$SWITCH_SCRIPT"
+_ssh_retry "systemd-run --unit='leo-deploy-${DEPLOY_TS}' --collect --quiet /bin/bash '${REMOTE_SWITCH}'" >/dev/null
+
+# Шаг 3. Читаем лог, пока не появится DEPLOY_EXIT. Связь пропала — переподключаемся;
+# выкатка на сервере идёт своим ходом.
+_log_off=0
+_lost=0
+_deploy_rc=""
+while :; do
+  if _chunk="$("${SSH[@]}" "${SSH_USER}@${SSH_HOST}" \
+    "f='${REMOTE_LOG}'; s=\$(stat -c %s \"\$f\" 2>/dev/null || echo 0); echo \"@@SIZE=\$s\"; tail -c +$((_log_off + 1)) \"\$f\" 2>/dev/null | head -c \$((s - ${_log_off}))" 2>/dev/null)"; then
+    _lost=0
+    _size="$(printf '%s\n' "$_chunk" | head -1 | sed -n 's/^@@SIZE=//p')"
+    _body="$(printf '%s\n' "$_chunk" | tail -n +2)"
+    [[ -n "$_body" ]] && printf '%s\n' "$_body"
+    [[ "$_size" =~ ^[0-9]+$ ]] && _log_off="$_size"
+    _deploy_rc="$(printf '%s\n' "$_body" | sed -n 's/^DEPLOY_EXIT=//p' | tail -1)"
+    [[ -n "$_deploy_rc" ]] && break
+  else
+    _lost=$((_lost + 1))
+    if [[ "$_lost" -ge 60 ]]; then
+      echo "Нет связи с сервером ~5 минут. Выкатка продолжается на сервере сама; лог: ${REMOTE_LOG}" >&2
+      exit 2
+    fi
+    echo "(нет связи с сервером — жду, выкатка идёт на сервере)" >&2
+  fi
+  sleep 5
+done
+if [[ "$_deploy_rc" != "0" ]]; then
+  echo "Выкатка на сервере завершилась с ошибкой (код ${_deploy_rc}); сервисы подняты. Лог: ${REMOTE_LOG}" >&2
+  exit 1
+fi
 
 echo "Готово: https://assistent.networ.ru/webapp/"
 echo "Дашборд: https://assistent.networ.ru/dashboard/?access_token=<USAGE_DASHBOARD_TOKEN>"
