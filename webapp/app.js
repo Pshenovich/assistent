@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261025-tgfont";
+  var WEBAPP_BUILD = "20261025-mobfix";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261025-tgfont"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261025-mobfix"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -850,10 +850,14 @@
       return;
     }
     el.classList.remove("hidden");
+    var n10 = n % 10;
+    var n100 = n % 100;
     el.textContent =
-      n === 1
-        ? "1 изменение ждёт сеть"
-        : n + " изменений ждут сеть";
+      n10 === 1 && n100 !== 11
+        ? n + " изменение ждёт сеть"
+        : n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)
+          ? n + " изменения ждут сеть"
+          : n + " изменений ждут сеть";
   }
 
   function remapOfflineNoteId(tmpId, realId) {
@@ -5786,6 +5790,12 @@
   function apiRequestTimeoutMs(path, o) {
     if (o && Number(o.timeout) > 0) return Number(o.timeout);
     var p = String(path || "");
+    // Заметка с фото весит мегабайты: на мобильной сети за 8 с не уходит, запрос обрывался
+    // и правка навсегда оставалась в очереди («ждут сеть»). Даём время по размеру (~50 КБ/с).
+    var bodyLen = o && typeof o.body === "string" ? o.body.length : 0;
+    if (bodyLen > 200000 && p.indexOf("/notes/") === 0) {
+      return Math.min(240000, 8000 + Math.round(bodyLen / 50));
+    }
     if (p.indexOf("/gpt/chat") >= 0) return 180000;
     if (p.indexOf("/canvas-image") >= 0) return 240000;
     // Правки слайдов по комментариям ждут ответ модели — дольше общего лимита.
@@ -14142,6 +14152,16 @@
       },
       true
     );
+    // Своя кнопка «Скрыть клавиатуру» в панели редактора (системную панель iOS над клавиатурой убрать нельзя).
+    document.addEventListener("click", function (e) {
+      var kbBtn = e.target && e.target.closest && e.target.closest("#note-editor-kb-hide");
+      if (!kbBtn) return;
+      e.preventDefault();
+      try {
+        var active = document.activeElement;
+        if (active && typeof active.blur === "function") active.blur();
+      } catch (_) {}
+    });
     document.addEventListener("focusout", function () {
       if (!modalSheetOpen) return;
       window.setTimeout(function () {

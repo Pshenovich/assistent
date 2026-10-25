@@ -265,6 +265,82 @@ var ResizableImage = Image.extend({
   },
 });
 
+/* Фото в заметке хранятся в теле (data URL): снимок с телефона — мегабайты, из-за них тормозил редактор
+   и не успевало сохранение. Ужимаем: длинная сторона до IMAGE_MAX_SIDE, JPEG; PNG с прозрачностью — PNG. */
+var IMAGE_MAX_SIDE = 1600;
+var IMAGE_KEEP_CHARS = 480000; // ~350 КБ — такие не трогаем
+
+function compressImageDataUrl(src) {
+  return new Promise(function (resolve) {
+    var s = String(src || "");
+    if (!/^data:image\/(jpeg|jpg|png|webp|heic|heif)/i.test(s) || s.length < IMAGE_KEEP_CHARS) {
+      resolve(s);
+      return;
+    }
+    var img = new window.Image();
+    img.onload = function () {
+      try {
+        var w = img.naturalWidth || img.width;
+        var h = img.naturalHeight || img.height;
+        if (!w || !h) return resolve(s);
+        var k = Math.min(1, IMAGE_MAX_SIDE / Math.max(w, h));
+        var cw = Math.max(1, Math.round(w * k));
+        var ch = Math.max(1, Math.round(h * k));
+        var canvas = document.createElement("canvas");
+        canvas.width = cw;
+        canvas.height = ch;
+        var ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, cw, ch);
+        var alpha = false;
+        if (/^data:image\/png/i.test(s)) {
+          var px = ctx.getImageData(0, 0, cw, ch).data;
+          for (var i = 3; i < px.length; i += 4) {
+            if (px[i] < 250) {
+              alpha = true;
+              break;
+            }
+          }
+        }
+        var out = alpha ? canvas.toDataURL("image/png") : canvas.toDataURL("image/jpeg", 0.82);
+        resolve(out && out.length < s.length ? out : s);
+      } catch (_) {
+        resolve(s);
+      }
+    };
+    img.onerror = function () {
+      resolve(s);
+    };
+    img.src = s;
+  });
+}
+
+// Уже сохранённые тяжёлые фото ужимаем после открытия (без записи в историю «Отменить»).
+function shrinkHeavyImages(editor) {
+  var queue = [];
+  editor.state.doc.descendants(function (node) {
+    if (node.type.name === "image" && String(node.attrs.src || "").length > IMAGE_KEEP_CHARS * 2) {
+      queue.push(String(node.attrs.src));
+    }
+  });
+  (function next() {
+    if (!queue.length || editor.isDestroyed) return;
+    var src = queue.shift();
+    compressImageDataUrl(src).then(function (out) {
+      if (editor.isDestroyed) return;
+      if (out !== src) {
+        var tr = editor.state.tr;
+        editor.state.doc.descendants(function (node, pos) {
+          if (node.type.name === "image" && node.attrs.src === src) {
+            tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { src: out }));
+          }
+        });
+        if (tr.docChanged) editor.view.dispatch(tr.setMeta("addToHistory", false));
+      }
+      next();
+    });
+  })();
+}
+
 function isIOSDevice() {
   if (typeof navigator === "undefined") return false;
   return (
@@ -370,8 +446,12 @@ const IosSelectionGuard = Extension.create({
           if (Date.now() - lastTouchTime > 4000) return null;
           if (lastTouchPos == null || lastTouchPos < 3) return null;
           if (newSel.from > 2) return null;
-          if (newSel.to < lastTouchPos - 2) return null;
+          // Баг iOS — выделение ровно от начала заметки до места касания. Длинное первое слово
+          // (долгое нажатие) и «Выбрать все» сюда не попадают: там нет пробела до касания
+          // или выделение идёт дальше него.
+          if (newSel.to < lastTouchPos - 2 || newSel.to > lastTouchPos + 30) return null;
           if (newSel.to - newSel.from < 8) return null;
+          if (!/\s/.test(newState.doc.textBetween(newSel.from, newSel.to, "\n", " "))) return null;
 
           return newState.tr.setSelection(TextSelection.create(newState.doc, lastTouchPos));
         },
@@ -1523,14 +1603,16 @@ function mountToolbar(toolbarEl, editor) {
       window.alert("В заметку можно вставить изображение (JPG, PNG, HEIC…).");
       return;
     }
-    if (file.size > 8 * 1024 * 1024) {
-      window.alert("Фото больше 8 МБ. Выберите файл поменьше.");
+    if (file.size > 25 * 1024 * 1024) {
+      window.alert("Фото больше 25 МБ. Выберите файл поменьше.");
       return;
     }
     var reader = new FileReader();
     reader.onload = function () {
-      var src = String(reader.result || "");
-      if (!src) return;
+      compressImageDataUrl(String(reader.result || "")).then(insertImage);
+    };
+    function insertImage(src) {
+      if (!src || editor.isDestroyed) return;
       editor
         .chain()
         .focus()
@@ -1543,7 +1625,7 @@ function mountToolbar(toolbarEl, editor) {
         ])
         .run();
       refreshFn();
-    };
+    }
     reader.readAsDataURL(file);
   }
 
@@ -3439,6 +3521,9 @@ function mount(container, options) {
   );
 
   var cleanupToolbar = mountToolbar(toolbar, editor);
+  setTimeout(function () {
+    shrinkHeavyImages(editor);
+  }, 1500);
   var cleanupToc = mountToc(options.tocParent, editor, {
     onTocNavigate: options.onTocNavigate,
     scrollParent: options.scrollParent,
@@ -3638,15 +3723,22 @@ function mount(container, options) {
         dom.blur();
       } catch (_) {}
       // iOS: callout часто остаётся после blur — короткий contenteditable=false его снимает.
-      var prev = dom.getAttribute("contenteditable");
+      // Возвращаем по состоянию редактора, а не «как было»: второй вызов подряд читал уже «false»
+      // и оставлял заметку нередактируемой (не выделялся и не стирался текст).
       try {
         dom.setAttribute("contenteditable", "false");
       } catch (_) {}
-      window.requestAnimationFrame(function () {
+      var restoreToken = (dom._leoEditableToken || 0) + 1;
+      dom._leoEditableToken = restoreToken;
+      var restore = function () {
+        if (dom._leoEditableToken !== restoreToken) return;
         try {
-          dom.setAttribute("contenteditable", prev == null ? "true" : prev);
+          dom.setAttribute("contenteditable", editor.isEditable ? "true" : "false");
         } catch (_) {}
-      });
+      };
+      window.requestAnimationFrame(restore);
+      // rAF не идёт, пока мини-приложение свёрнуто, — подстраховка таймером.
+      window.setTimeout(restore, 120);
     },
     focus: function () {
       editor.commands.focus("end");
@@ -3778,7 +3870,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-tgfont",
+  assetVersion: "20261025-mobfix",
   mount: mount,
   importBody: importBody,
   exportBody: exportBody,

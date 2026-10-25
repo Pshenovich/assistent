@@ -22737,3 +22737,8 @@ textarea.tracker-desc {
 /* Заливка ячейки — в редакторе и в просмотре заметки. */
 td[data-highlight],
 th[data-highlight] { background: rgba(255, 255, 255, 0.1); }
+
+/* Кнопка «Скрыть клавиатуру» — только пока открыта клавиатура; обсуждение на это время прячется (иначе ряд не влезает). */
+.note-tg-btn--kb { display: none; flex-shrink: 0; background: rgba(255, 255, 255, 0.08); }
+html.note-editor-kb-open #note-editor-toolbar-wrap .note-tg-btn--kb { display: inline-flex; }
+html.note-editor-kb-open #note-editor-toolbar-wrap .note-tg-btn--discuss { display: none; }

@@ -30,6 +30,10 @@ var activeView = null;
 var confirmCloser = null;
 // Все таблицы редактора: активной становится та, где стоит курсор.
 var allViews = new Set();
+// Палец / кнопка мыши сейчас прижаты в редакторе — меню таблицы не показываем, пока не отпустят
+// (иначе оно выскакивало посреди выделения ячеек и закрывало их).
+var pointerHeld = false;
+var MENU_DELAY = 400;
 
 function svg(paths, size) {
   var s = size || 22;
@@ -738,6 +742,7 @@ TableManageView.prototype.setActive = function (info) {
   this.dom.classList.toggle("is-active", on);
   this.watchPageScroll(on);
   if (!on) {
+    this.cancelMenuTimer();
     this.closeMenu();
     this.menuDismissed = "";
     this.overlay.hidden = true;
@@ -749,10 +754,34 @@ TableManageView.prototype.setActive = function (info) {
     this.renderOverlay();
     if (this.menuDismissed !== info.key) this.menuDismissed = "";
   }
-  // Меню — когда выделены ячейки, столбец, строка или таблица (курсор в ячейке — только рамка).
-  if (info.mode !== "cell" && this.menuDismissed !== info.key) this.openMenu();
-  else this.closeMenu();
+  // Меню — когда выделены ячейки, столбец, строка или таблица (курсор в ячейке — только рамка),
+  // и только когда выделение улеглось: палец отпущен и MENU_DELAY без изменений.
+  if (info.mode !== "cell" && this.menuDismissed !== info.key) {
+    if (this.menuOpen && prev && prev.key === info.key) this.renderMenu();
+    else this.scheduleMenu(info.key);
+  } else {
+    this.cancelMenuTimer();
+    this.closeMenu();
+  }
   this.layoutHandles();
+};
+
+TableManageView.prototype.cancelMenuTimer = function () {
+  if (this.menuTimer) clearTimeout(this.menuTimer);
+  this.menuTimer = 0;
+};
+
+TableManageView.prototype.scheduleMenu = function (key) {
+  var self = this;
+  this.cancelMenuTimer();
+  this.closeMenu();
+  this.menuTimer = setTimeout(function () {
+    self.menuTimer = 0;
+    var a = self.active;
+    if (!a || a.key !== key || a.mode === "cell" || self.drag || pointerHeld || self.menuDismissed === key) return;
+    self.openMenu();
+    self.layoutHandles();
+  }, MENU_DELAY);
 };
 
 TableManageView.prototype.watchPageScroll = function (on) {
@@ -1512,6 +1541,7 @@ TableManageView.prototype.stopEvent = function (event) {
 };
 
 TableManageView.prototype.destroy = function () {
+  this.cancelMenuTimer();
   allViews.delete(this);
   if (activeView === this) {
     activeView = null;
@@ -1537,6 +1567,19 @@ function createTableManagePlugin() {
           activeView.dismissMenu();
         }
       }
+      function onPress(e) {
+        var t = e.target;
+        if (!t || !editorView.dom.contains(t) || (t.closest && t.closest(".note-table-menu"))) return;
+        pointerHeld = true;
+      }
+      function onRelease() {
+        if (!pointerHeld) return;
+        pointerHeld = false;
+        // Отпустили — меню появится, когда выделение перестанет меняться.
+        setTimeout(function () {
+          syncActiveTable(editorView);
+        }, 0);
+      }
       function onFocus() {
         clearTimeout(blurTimer);
         syncActiveTable(editorView);
@@ -1548,6 +1591,9 @@ function createTableManagePlugin() {
         }, 200);
       }
       document.addEventListener("keydown", onKey, true);
+      document.addEventListener("pointerdown", onPress, true);
+      document.addEventListener("pointerup", onRelease, true);
+      document.addEventListener("pointercancel", onRelease, true);
       editorView.dom.addEventListener("focus", onFocus);
       editorView.dom.addEventListener("blur", onBlur);
       setTimeout(function () {
@@ -1560,6 +1606,10 @@ function createTableManagePlugin() {
         destroy: function () {
           clearTimeout(blurTimer);
           document.removeEventListener("keydown", onKey, true);
+          document.removeEventListener("pointerdown", onPress, true);
+          document.removeEventListener("pointerup", onRelease, true);
+          document.removeEventListener("pointercancel", onRelease, true);
+          pointerHeld = false;
           editorView.dom.removeEventListener("focus", onFocus);
           editorView.dom.removeEventListener("blur", onBlur);
           closeConfirm(false);

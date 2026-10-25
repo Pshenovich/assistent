@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261025-tgfont">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261025-mobfix">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -96,7 +96,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261025-tgfont" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261025-mobfix" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -2138,6 +2138,11 @@
               </svg>
               <span class="note-tg-badge hidden" id="note-editor-discuss-badge"></span>
             </button>
+            <button type="button" id="note-editor-kb-hide" class="note-tg-btn note-tg-btn--kb" aria-label="Скрыть клавиатуру" title="Скрыть клавиатуру">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="11" rx="2"/><path d="M7 8h.01M11 8h.01M15 8h.01M8 11.5h8"/><path d="m9 18.5 3 2.5 3-2.5"/>
+              </svg>
+            </button>
           </div>
         </div>
       </div>
@@ -2259,17 +2264,17 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20261025-tgfont"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20261025-mobfix"><\/script>'
         );
       }
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
   <script src="/webapp/web-canvas.js?v=20261022-focuschip" defer></script>
-  <script src="/webapp/app.js?v=20261025-tgfont" defer></script>
+  <script src="/webapp/app.js?v=20261025-mobfix" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261023-reply1" defer></script>
-  <script src="/webapp/digest-chats.js?v=20261025-tgfont" defer></script>
-  <script src="/webapp/digest-market.js?v=20261025-tgfont" defer></script>
+  <script src="/webapp/digest-chats.js?v=20261025-mobfix" defer></script>
+  <script src="/webapp/digest-market.js?v=20261025-mobfix" defer></script>
 </body>
 </html>
