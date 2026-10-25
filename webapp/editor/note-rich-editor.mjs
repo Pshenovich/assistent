@@ -428,7 +428,7 @@ function shrinkHeavyImages(editor) {
             tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { src: out }));
           }
         });
-        if (tr.docChanged) editor.view.dispatch(tr.setMeta("addToHistory", false));
+        if (tr.docChanged) editor.view.dispatch(tr.setMeta("addToHistory", false).setMeta("leoNoScroll", true));
       }
       next();
     });
@@ -3766,7 +3766,10 @@ function mount(container, options) {
     onUpdate: function (props) {
       // remote — правка из совместного документа (чужая / пересборка): автосохранять её не нам.
       var remote = !!(props && isRemoteYTr(props.transaction));
-      if (typeof options.onUpdate === "function") options.onUpdate({ remote: remote });
+      // noScroll — правка не у курсора (ширина / высота таблицы, ужатие фото, чужая правка): приложение
+      // не подтягивает заметку к курсору.
+      var noScroll = remote || !!(props && props.transaction && props.transaction.getMeta("leoNoScroll"));
+      if (typeof options.onUpdate === "function") options.onUpdate({ remote: remote, noScroll: noScroll });
     },
     onSelectionUpdate: function (props) {
       if (typeof options.onSelection === "function") {
@@ -4261,7 +4264,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-menufit",
+  assetVersion: "20261025-tblscroll",
   Y: Y,
   mount: mount,
   importBody: importBody,

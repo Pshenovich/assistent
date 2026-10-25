@@ -325,7 +325,7 @@ function setAllColWidths(editor, tablePos, widths) {
       col += span;
     });
   });
-  editor.view.dispatch(tr);
+  editor.view.dispatch(tr.setMeta("leoNoScroll", true));
 }
 
 function setRowHeight(editor, tablePos, rowIndex, height) {
@@ -342,7 +342,7 @@ function setRowHeight(editor, tablePos, rowIndex, height) {
       );
     }
   });
-  editor.view.dispatch(tr);
+  editor.view.dispatch(tr.setMeta("leoNoScroll", true));
 }
 
 function applyPreviewWidths(colgroup, table, widths, minWidth) {
@@ -1683,12 +1683,11 @@ TableManageView.prototype.handlePointerUp = function (e) {
   var view = this.editor.view;
   if (!/^resize-/.test(drag.kind)) this.menuDismissed = "";
   if (drag.moved) {
+    // Без фокуса в редактор: фокус прокручивал заметку к курсору, а тянули границу совсем в другом месте.
     if (drag.kind === "resize-col" && drag.currentWidths) {
       setAllColWidths(this.editor, pos, drag.currentWidths);
-      if (!isCoarsePointer()) view.focus();
     } else if (drag.kind === "resize-row" && drag.currentH) {
       setRowHeight(this.editor, pos, drag.index, drag.currentH);
-      if (!isCoarsePointer()) view.focus();
     } else if (drag.kind === "move-col") {
       selectLine(this.editor, pos, "col", drag.index);
     } else if (drag.kind === "move-row") {
