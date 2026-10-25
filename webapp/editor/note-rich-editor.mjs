@@ -777,6 +777,114 @@ const NoteColumns = Node.create({
   },
 });
 
+/* Сдвиг абзацев («Сдвинуть», Tab / Shift+Tab): как вложенный пункт списка, до 8 уровней.
+   В HTML — data-indent и margin-left (видно и в просмотре, и по ссылке). В списках Tab — вложенный
+   пункт, в таблице — следующая ячейка (их обработчики), сюда не доходит. */
+var INDENT_MAX = 8;
+var INDENT_STEP_EM = 1.5;
+var INDENT_TYPES = ["paragraph", "heading"];
+
+// Абзацы / заголовки выделения (не внутри списка или таблицы): сдвинуть на delta. true — что-то сдвинули.
+function changeIndent(state, dispatch, delta) {
+  var sel = state.selection;
+  var tr = state.tr;
+  var changed = false;
+  state.doc.nodesBetween(sel.from, sel.to, function (node, pos, parent) {
+    if (INDENT_TYPES.indexOf(node.type.name) < 0) return true;
+    var role = parent && parent.type.name;
+    if (/^(listItem|taskItem|tableCell|tableHeader)$/.test(role || "")) return false;
+    var cur = node.attrs.indent || 0;
+    var next = Math.max(0, Math.min(INDENT_MAX, cur + delta));
+    if (next !== cur) {
+      tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { indent: next || null }));
+      changed = true;
+    }
+    return false;
+  });
+  if (changed && dispatch) dispatch(tr);
+  return changed;
+}
+
+function inListOrTable(state) {
+  var $from = state.selection.$from;
+  for (var d = $from.depth; d > 0; d -= 1) {
+    if (/^(listItem|taskItem|table)$/.test($from.node(d).type.name)) return true;
+  }
+  return false;
+}
+
+const NoteIndent = Extension.create({
+  name: "noteIndent",
+  // Последним: Tab сначала у подсказок (хэштеги, «+», «/»), списков и таблиц.
+  priority: 10,
+  addGlobalAttributes: function () {
+    return [
+      {
+        types: INDENT_TYPES,
+        attributes: {
+          indent: {
+            default: null,
+            parseHTML: function (el) {
+              var n = parseInt(el.getAttribute("data-indent") || "", 10);
+              return n > 0 ? Math.min(INDENT_MAX, n) : null;
+            },
+            renderHTML: function (attrs) {
+              if (!attrs.indent) return {};
+              return { "data-indent": String(attrs.indent), style: "margin-left: " + attrs.indent * INDENT_STEP_EM + "em" };
+            },
+          },
+        },
+      },
+    ];
+  },
+  addCommands: function () {
+    return {
+      indentText: function () {
+        return function (props) {
+          return changeIndent(props.state, props.dispatch, 1);
+        };
+      },
+      outdentText: function () {
+        return function (props) {
+          return changeIndent(props.state, props.dispatch, -1);
+        };
+      },
+    };
+  },
+  addKeyboardShortcuts: function () {
+    return {
+      Tab: function (props) {
+        if (inListOrTable(props.editor.state)) return false;
+        // Нечего сдвигать (дальше некуда) — всё равно держим Tab в заметке, а не уводим фокус.
+        props.editor.commands.indentText();
+        return true;
+      },
+      "Shift-Tab": function (props) {
+        if (inListOrTable(props.editor.state)) return false;
+        props.editor.commands.outdentText();
+        return true;
+      },
+    };
+  },
+});
+
+// Backspace в начале сдвинутой строки — сначала назад на уровень (раньше склейки со строкой выше).
+const NoteIndentBackspace = Extension.create({
+  name: "noteIndentBackspace",
+  priority: 1000,
+  addKeyboardShortcuts: function () {
+    return {
+      Backspace: function (props) {
+        var sel = props.editor.state.selection;
+        if (!sel.empty || sel.$from.parentOffset !== 0) return false;
+        var node = sel.$from.parent;
+        if (INDENT_TYPES.indexOf(node.type.name) < 0 || !node.attrs.indent) return false;
+        return props.editor.commands.outdentText();
+      },
+    };
+  },
+});
+
 /* Вставка простого текста с markdown (из чата, ChatGPT, .md) — сразу оформлением. */
 var MD_PASTE_HINT_RE = /(^|\n)(#{1,6}\s+\S|[-*•]\s+\S|\d+[.)]\s+\S|-\s+\[[ xX]\]\s|>\s+\S)|\*\*[^*\n]+\*\*/;
 function pasteMarkdownText(view, event) {
@@ -1595,6 +1703,8 @@ function svgIcon(name) {
       '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2"/><path d="M4 12l1 1 2-2"/><path d="M4 18l1 1 2-2"/>',
     none: '<path d="M4 7h16M4 12h16M4 17h10"/>',
     blank: "",
+    indent: '<path d="M10 6h10M10 12h10M10 18h10"/><path d="m3 9 3 3-3 3"/>',
+    outdent: '<path d="M10 6h10M10 12h10M10 18h10"/><path d="m6 9-3 3 3 3"/>',
     columns: '<path d="M4 7h10M4 12h10M4 17h7"/><path d="M19 4v16"/>',
     sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
     discuss: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
@@ -2079,6 +2189,8 @@ function mountToolbar(toolbarEl, editor) {
     svgIcon("strike") + "<span>Ещё</span>" + svgIcon("chevronRight") + "</button>" +
     sep() +
     item("columns", "", "columns", "Столбец") +
+    item("indent", "", "indent", "Сдвинуть вправо") +
+    item("outdent", "", "outdent", "Сдвинуть влево") +
     item("divider", "", "divider", "Разделитель") +
     item("noteref", "", "noteref", "Ссылка на заметку") +
     "</div>" +
@@ -2144,6 +2256,7 @@ function mountToolbar(toolbarEl, editor) {
     btn("note-tg-desk-only", 'data-action="underline"', "Подчёркнутый", "underline") +
     btn("note-tg-desk-only", 'data-action="highlight"', "Маркер", "highlight") +
     btn("", 'data-action="link"', "Ссылка", "link") +
+    btn("note-tg-desk-only", 'data-action="indent"', "Сдвинуть вправо (Tab)", "indent") +
     '<span class="note-tg-sep" aria-hidden="true"></span>' +
     btn("", 'data-menu="style"', "Вид текста, шрифт и размер", "heading") +
     btn("", 'data-menu="list-sel"', "Список", "list") +
@@ -2197,6 +2310,10 @@ function mountToolbar(toolbarEl, editor) {
       editor.chain().focus().toggleUnderline().run();
     } else if (cmd === "highlight") {
       editor.chain().focus().toggleHighlight().run();
+    } else if (cmd === "indent") {
+      editor.chain().focus().indentText().run();
+    } else if (cmd === "outdent") {
+      editor.chain().focus().outdentText().run();
     } else if (cmd === "columns") {
       editor.chain().focus().splitIntoColumns().run();
     } else if (cmd === "divider") {
@@ -2547,7 +2664,9 @@ function mountToolbar(toolbarEl, editor) {
       window.dispatchEvent(new CustomEvent("leo-note-selection-action", { detail: { kind: action.slice(4) } }));
       return;
     }
-    if (action === "undo") {
+    if (action === "indent") {
+      editor.chain().focus().indentText().run();
+    } else if (action === "undo") {
       if (editor.__leoYjs) {
         editor.commands.focus();
         yUndo(editor.state);
@@ -3990,6 +4109,8 @@ function mount(container, options) {
       }),
       IosSelectionGuard,
       MarkdownHeadingShortcut,
+      NoteIndent,
+      NoteIndentBackspace,
       NoteColumns,
       NoteColumn,
     ]
@@ -4564,7 +4685,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-colwidth",
+  assetVersion: "20261025-indent",
   Y: Y,
   mount: mount,
   importBody: importBody,
