@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261025-indentl";
+  var WEBAPP_BUILD = "20261025-copy";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -39165,6 +39165,20 @@
       if (isDiscussSelectionUiTarget(e && e.target)) return;
       hideDiscussClarify();
     }
+    // Выделение в бабле — своя подсветка (родное выделение снято, чтобы не было системного меню),
+    // поэтому Ctrl+C / Cmd+C копирует то, что выделено подсветкой (как «Копировать» в плашке).
+    function onCopyKey(e) {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      if (String(e.key || "").toLowerCase() !== "c" && String(e.key || "").toLowerCase() !== "с" && e.code !== "KeyC") return;
+      var bar = document.getElementById("note-discuss-selection");
+      var d = bar && bar._draft;
+      if (!d || !String(d.quote || d.plain || "").trim()) return;
+      var sel = window.getSelection && window.getSelection();
+      if (sel && !sel.isCollapsed) return; // есть обычное выделение — пусть копирует браузер
+      e.preventDefault();
+      copyAnswerText(String(d.plain || d.quote || "").trim(), String(d.html || "").trim());
+    }
+    document.addEventListener("keydown", onCopyKey, true);
     document.addEventListener("contextmenu", onContextMenu, true);
     document.addEventListener("mouseup", onSelect);
     document.addEventListener("pointerup", onSelect);

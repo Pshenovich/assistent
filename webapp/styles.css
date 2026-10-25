@@ -7926,10 +7926,9 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   }
 }
 
+/* Сообщение, чья тема показана в заметке (нажали на него), — без рамки: она выглядела странно. */
 .note-discuss-msg.is-topic {
-  outline: 2px solid rgba(82, 158, 244, 0.55);
-  outline-offset: 4px;
-  border-radius: 12px;
+  outline: none;
 }
 
 .note-discuss-role {
