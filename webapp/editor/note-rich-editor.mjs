@@ -1744,6 +1744,7 @@ function mountToolbar(toolbarEl, editor) {
     svgIcon("chevronLeft") + "<span>Назад</span></button>" +
     '<p class="note-tg-menu-hint" data-font-target></p>' +
     '<p class="note-tg-menu-label">Шрифт</p>' +
+    '<div class="note-tg-chip-row">' +
     NOTE_FONTS.map(function (f) {
       return (
         '<button type="button" class="note-tg-menu-item note-tg-font-item" data-cmd="font:' + f.id + '" data-check="font:' + f.id + '"' +
@@ -1751,8 +1752,9 @@ function mountToolbar(toolbarEl, editor) {
         "><span>" + f.label + "</span></button>"
       );
     }).join("") +
+    "</div>" +
     '<p class="note-tg-menu-label">Размер</p>' +
-    '<div class="note-tg-size-row">' +
+    '<div class="note-tg-size-row note-tg-chip-row">' +
     '<button type="button" class="note-tg-menu-item note-tg-size-item" data-cmd="size:" data-check="size:" title="Как в приложении"><span>Авто</span></button>' +
     NOTE_FONT_SIZES.map(function (v) {
       return '<button type="button" class="note-tg-menu-item note-tg-size-item" data-cmd="size:' + v + '" data-check="size:' + v + '"><span>' + parseInt(v, 10) + "</span></button>";
@@ -1803,6 +1805,7 @@ function mountToolbar(toolbarEl, editor) {
   ensureFileInput();
 
   function runCmd(cmd) {
+    releaseSelection(true); // команда — к тому, что было выделено до открытия меню
     // Keep editor focused — menu taps would otherwise blur first and drop the click.
     if (/^heading-\d$/.test(String(cmd || ""))) {
       var level = parseInt(String(cmd).slice(-1), 10);
@@ -1872,6 +1875,7 @@ function mountToolbar(toolbarEl, editor) {
       var pnl = item.closest(".note-tg-menu");
       if (go === "font") syncFontTarget(pnl);
       showMenuPage(pnl, go);
+      pnl.scrollTop = 0;
       placeMenu(pnl, toolbarEl.querySelector(".note-tg-btn--menu-open"));
       return;
     }
@@ -1954,7 +1958,7 @@ function mountToolbar(toolbarEl, editor) {
   }
 
   function fontTargetIsDoc() {
-    return editor.state.selection.empty && !fontMenuRange;
+    return editor.state.selection.empty && !fontMenuRange && !menuRange;
   }
 
   function applyFontStyle(attrs) {
@@ -1976,6 +1980,63 @@ function mountToolbar(toolbarEl, editor) {
     if (hint) hint.textContent = fontTargetIsDoc() ? "Ко всей заметке · выделите текст, чтобы изменить часть" : "К выделенному тексту";
   }
 
+  // Телефон: пока открыто меню панели, системное меню выделения («Вырезать / Скопировать»)
+  // рисуется поверх него. Родное выделение на это время сворачиваем (меню iOS пропадает),
+  // выделенное подсвечиваем сами и возвращаем выделение перед командой.
+  var menuRangeKey = new PluginKey("leoMenuRange");
+  var menuRange = null;
+  try {
+    editor.registerPlugin(
+      new Plugin({
+        key: menuRangeKey,
+        state: {
+          init: function () {
+            return null;
+          },
+          apply: function (tr, val) {
+            var m = tr.getMeta(menuRangeKey);
+            if (m !== undefined) return m;
+            if (!val || !tr.docChanged) return val;
+            return { from: tr.mapping.map(val.from), to: tr.mapping.map(val.to) };
+          },
+        },
+        props: {
+          decorations: function (state) {
+            var r = menuRangeKey.getState(state);
+            if (!r || r.from >= r.to) return null;
+            return DecorationSet.create(state.doc, [Decoration.inline(r.from, r.to, { class: "note-menu-range" })]);
+          },
+        },
+      })
+    );
+  } catch (_) {}
+
+  function holdSelection() {
+    var sel = editor.state.selection;
+    var coarse = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+    if (!coarse || sel.empty || !(sel instanceof TextSelection)) return;
+    menuRange = { from: sel.from, to: sel.to };
+    toolbarEl.setAttribute("data-menu-range", "1");
+    editor.view.dispatch(
+      editor.state.tr
+        .setSelection(TextSelection.create(editor.state.doc, sel.to))
+        .setMeta(menuRangeKey, menuRange)
+        .setMeta("addToHistory", false)
+    );
+  }
+
+  function releaseSelection(restore) {
+    if (!menuRange) return;
+    var r = menuRangeKey.getState(editor.state) || menuRange;
+    menuRange = null;
+    toolbarEl.removeAttribute("data-menu-range");
+    var tr = editor.state.tr.setMeta(menuRangeKey, null).setMeta("addToHistory", false);
+    if (restore && r && r.from < r.to && r.to <= tr.doc.content.size) {
+      tr.setSelection(TextSelection.create(tr.doc, r.from, r.to));
+    }
+    editor.view.dispatch(tr);
+  }
+
   function openMenu(name, triggerBtn) {
     var panel = toolbarEl.querySelector('[data-menu-panel="' + name + '"]');
     if (!panel) return;
@@ -1987,11 +2048,16 @@ function mountToolbar(toolbarEl, editor) {
     var wasOpen = !panel.classList.contains("hidden");
     closeTgMenus(toolbarEl);
     closeLinkPopover();
-    if (wasOpen) return;
+    if (wasOpen) {
+      releaseSelection(true);
+      return;
+    }
     if (panel.classList.contains("note-tg-menu--paged")) showMenuPage(panel, "main");
     panel.classList.remove("hidden");
+    panel.scrollTop = 0;
     if (triggerBtn) triggerBtn.classList.add("note-tg-btn--menu-open");
     placeMenu(panel, triggerBtn);
+    holdSelection();
   }
 
   // Меню открываем над своей кнопкой (по центру), не вылезая за края тулбара.
@@ -2007,6 +2073,10 @@ function mountToolbar(toolbarEl, editor) {
     left = Math.max(minL, Math.min(left, maxL));
     panel.style.left = Math.round(left) + "px";
     panel.style.right = "auto";
+    // Не выше видимой части экрана (клавиатура, шапка): остальное листается внутри меню.
+    var vv = window.visualViewport;
+    var topLimit = (vv ? vv.offsetTop : 0) + 8;
+    panel.style.maxHeight = Math.max(160, Math.round(toolbarEl.getBoundingClientRect().top - 10 - topLimit)) + "px";
   }
 
   // Вызывать только из click/keydown: тач-pointerdown на iOS не даёт user activation,
@@ -2078,6 +2148,11 @@ function mountToolbar(toolbarEl, editor) {
       return;
     }
     var action = btn.getAttribute("data-action");
+    if (menuRange) {
+      // Кнопка панели при открытом меню — к выделенному до меню тексту.
+      closeTgMenus(toolbarEl);
+      releaseSelection(true);
+    }
     if (/^sel-/.test(action || "")) {
       // ИИ / Обсудить / Задача по выделению — их выполняет приложение (как плашка на десктопе).
       closeTgMenus(toolbarEl);
@@ -2122,13 +2197,14 @@ function mountToolbar(toolbarEl, editor) {
   function outsideMenus(e) {
     if (toolbarEl.contains(e.target)) return;
     closeTgMenus(toolbarEl);
+    releaseSelection(false); // нажали в текст — там и ставится курсор
   }
   document.addEventListener("mousedown", outsideMenus, true);
   document.addEventListener("touchstart", outsideMenus, true);
 
   var hadTextSelection = false;
   function refreshFnImpl() {
-    var hasSelection = !editor.state.selection.empty;
+    var hasSelection = !editor.state.selection.empty || !!menuRange;
     var defCap = toolbarEl.querySelector(".note-tg-capsule--default");
     var selCap = toolbarEl.querySelector(".note-tg-capsule--selection");
     if (defCap) defCap.classList.toggle("hidden", hasSelection);
@@ -4050,7 +4126,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-yjs3",
+  assetVersion: "20261025-tgmenu",
   Y: Y,
   mount: mount,
   importBody: importBody,

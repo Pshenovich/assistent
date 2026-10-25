@@ -22556,9 +22556,7 @@ textarea.tracker-desc {
   padding: 8px 0;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 26px;
-  background: rgba(38, 38, 41, 0.84);
-  -webkit-backdrop-filter: blur(28px) saturate(1.8);
-  backdrop-filter: blur(28px) saturate(1.8);
+  background: #262629;
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
 }
 .note-tg-menu-item,
@@ -22754,3 +22752,18 @@ html.note-editor-kb-open #note-editor-toolbar-wrap .note-tg-btn--discuss { displ
   .note-tg-btn--sel-ai { color: #c4b5fd; }
   #note-editor-toolbar-wrap .note-editor-toolbar-row.is-selection .note-tg-btn--mic { display: none; }
 }
+
+/* Меню панели: не выше места над панелью (max-height ставит JS) — остальное листается внутри. */
+.note-tg-menu { overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.note-tg-menu::-webkit-scrollbar { display: none; }
+/* «Шрифт и размер»: шрифты и кегли — по одному ряду, листаются вбок. */
+.note-tg-chip-row { display: flex; flex-wrap: nowrap; gap: 6px; padding: 2px 14px 8px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.note-tg-chip-row::-webkit-scrollbar { display: none; }
+.note-tg-menu-item.note-tg-font-item,
+.note-tg-menu-item.note-tg-size-item { flex: none; width: auto; min-height: 38px; padding: 8px 14px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); font-size: 1rem; }
+.note-tg-font-item.note-tg-menu-item--active,
+.note-tg-size-item.note-tg-menu-item--active { background: rgba(91, 159, 255, 0.22); color: #9cc5ff; }
+.note-tg-font-item.note-tg-menu-item--active::after,
+.note-tg-size-item.note-tg-menu-item--active::after { display: none; }
+/* Выделение, пока открыто меню панели (родное на это время свёрнуто — иначе поверх меню системное «Скопировать»). */
+.note-rich-editor-body .note-menu-range { background: rgba(91, 159, 255, 0.35); border-radius: 2px; }
