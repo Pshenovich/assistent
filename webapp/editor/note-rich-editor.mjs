@@ -2120,10 +2120,13 @@ function mountToolbar(toolbarEl, editor) {
     if (!triggerBtn || !host) return;
     var hr = host.getBoundingClientRect();
     var br = triggerBtn.getBoundingClientRect();
+    // В пределах экрана (8 px от краёв), а не панели: широкое меню («Шрифт и размер») уезжало за правый край.
+    var vw = document.documentElement.clientWidth || window.innerWidth;
+    panel.style.maxWidth = vw - 16 + "px";
     var w = panel.offsetWidth;
     var left = br.left + br.width / 2 - w / 2 - hr.left;
-    var minL = Math.max(8, -hr.left + 8);
-    var maxL = Math.min(hr.width, window.innerWidth - hr.left) - w - 8;
+    var minL = 8 - hr.left;
+    var maxL = vw - 8 - w - hr.left;
     left = Math.max(minL, Math.min(left, maxL));
     panel.style.left = Math.round(left) + "px";
     panel.style.right = "auto";
@@ -4258,7 +4261,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-tblsize",
+  assetVersion: "20261025-menufit",
   Y: Y,
   mount: mount,
   importBody: importBody,
