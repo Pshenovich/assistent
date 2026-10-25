@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261025-tblscroll";
+  var WEBAPP_BUILD = "20261025-discuss";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -34870,6 +34870,7 @@
   }
 
   function resetDiscussionOverlayViewport() {
+    document.documentElement.classList.remove("note-discussion-kb-open");
     var ov = document.getElementById("note-discussion-overlay");
     var sheet = ov && ov.querySelector(".note-discussion-sheet");
     if (ov) {
@@ -34925,6 +34926,9 @@
     sheet.style.height = sheetH + "px";
     sheet.style.maxHeight = sheetH + "px";
     sheet.style.transform = sheetShift ? "translateY(" + sheetShift + "px)" : "";
+    // Клавиатура открыта — нижний отступ под home indicator не нужен (была пустая полоса над клавиатурой).
+    var kbGuess = Math.max(0, Math.round(layoutH - sheetH - offsetTop));
+    document.documentElement.classList.toggle("note-discussion-kb-open", kbGuess > 40);
     if (window.scrollY || window.scrollX) {
       try {
         window.scrollTo(0, 0);
@@ -40311,6 +40315,28 @@
     renderDiscussAttachments(bubble, attachments);
     if (assistant && c && c.id) appendAiEditsInfo(bubble, c.id);
     if (assistant) appendCalendarActions(bubble, calMarkerIds(c && c.body));
+    // Телефон: аватар, «Ассистент» и модель — шапкой внутри бабла (аватар слева съедал ширину ответа).
+    if (assistant && bubble.childNodes.length) {
+      var head = document.createElement("div");
+      head.className = "note-discuss-bubble-head";
+      var headAv = document.createElement("span");
+      headAv.className = "note-discuss-av is-ai";
+      headAv.innerHTML = DISCUSS_ICONS.spark;
+      var headText = document.createElement("span");
+      headText.className = "note-discuss-bubble-who";
+      var headName = document.createElement("b");
+      headName.textContent = isGpt ? "Ассистент" : isResearch ? "Исследование" : authorLabel || "Ассистент";
+      headText.appendChild(headName);
+      var headModel = isGpt && authorLabel && !/^gpt$/i.test(authorLabel) ? authorLabel : "";
+      if (headModel) {
+        var headSub = document.createElement("small");
+        headSub.textContent = headModel;
+        headText.appendChild(headSub);
+      }
+      head.appendChild(headAv);
+      head.appendChild(headText);
+      bubble.insertBefore(head, bubble.firstChild);
+    }
     if (bubble.childNodes.length) item.appendChild(bubble);
     if (assistant) appendFocusChatCards(item, calMarkerIds(c && c.body));
     // Строка под сообщением: время и «···» напротив него.

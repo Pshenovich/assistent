@@ -22778,3 +22778,19 @@ html.note-editor-open .offline-sync-banner { top: calc(8px + env(safe-area-inset
 .note-table-grip--row .note-table-grip-knob { width: 30px; height: 10px; margin: -5px 0 0 -15px; }
 .note-table-grip.is-dragging .note-table-grip-knob { transform: scale(1.15); }
 .note-table-manage-overlay .note-table-resize-done { position: absolute; z-index: 4; pointer-events: auto; height: 32px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--accent, #3e88f7); color: #fff; font: inherit; font-size: 0.9375rem; font-weight: 600; cursor: pointer; }
+
+/* Обсуждение на телефоне: клавиатура открыта — без нижнего отступа под home indicator (пустая полоса над клавиатурой). */
+html.note-discussion-kb-open #note-discussion-overlay #note-paie-thread.note-discussion-compose { padding-bottom: 8px !important; }
+
+/* Ответ ассистента на телефоне: аватар и «Ассистент · модель» — шапкой внутри бабла, бабл на всю ширину. */
+.note-discuss-bubble-head { display: none; }
+@media (max-width: 959px) {
+  .note-discuss-msg.is-assistant { padding-left: 0; max-width: 100%; }
+  .note-discuss-msg.is-assistant:not(.is-pending) > .note-discuss-role,
+  .note-discuss-msg.is-assistant > .note-discuss-av { display: none; }
+  .note-discuss-msg.is-assistant:not(.is-cont) .note-discuss-bubble-head { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; }
+  .note-discuss-bubble-head .note-discuss-av { position: static; flex: none; width: 30px; height: 30px; }
+  .note-discuss-bubble-who { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+  .note-discuss-bubble-who b { color: #c4b5fd; font-weight: 600; font-size: 0.875rem; }
+  .note-discuss-bubble-who small { color: var(--text-secondary, #909499); font-size: 0.75rem; }
+}

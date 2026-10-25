@@ -305,3 +305,16 @@ def test_chat_merges_context_prefix_into_system(monkeypatch):
     assert "БАЗА ЗНАНИЙ:\nX" in seen["messages"][0]["content"]
     assert seen["messages"][-1]["content"] == "вопрос"
 
+
+
+def test_answer_with_context_tells_model_its_name(monkeypatch):
+    # Модель не знает своего имени («я GPT-4»), хотя выбрана o3 — называем её в системном промпте.
+    seen: dict = {}
+
+    def fake_result(system, user, **kwargs):
+        seen["system"] = system
+        return "ок", []
+
+    monkeypatch.setattr(llm, "_chat_result", fake_result)
+    llm.answer_with_context_result("какая ты модель?", model="openai/o3")
+    assert "openai/o3" in seen["system"]

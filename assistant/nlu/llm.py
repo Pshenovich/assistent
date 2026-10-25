@@ -701,6 +701,16 @@ def answer_with_context(
     )["answer"]
 
 
+def model_identity_line(model_id: str) -> str:
+    mid = str(model_id or "").strip()
+    if not mid:
+        return ""
+    return (
+        f"Ты отвечаешь моделью {mid} (её выбрал пользователь). "
+        "Если спросят, какая модель отвечает, называй её, а не другую."
+    )
+
+
 def answer_with_context_result(
     question: str,
     context: str = "",
@@ -744,6 +754,8 @@ def answer_with_context_result(
     sys = _system_with_attachments((system or "").strip() or ASK_SYSTEM)
     temp = 0.1 if temperature is None else float(temperature)
     run_model = model or _model_ask()
+    # Модель не знает своего имени и угадывает («я GPT-4»), хотя пользователь выбрал другую — называем её.
+    sys = sys.rstrip() + "\n\n" + model_identity_line(run_model)
     chat_out = _chat_result(
         sys,
         user,
