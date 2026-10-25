@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261025-copy">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261025-fonts">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -94,7 +94,9 @@
   <!-- Unbounded — названия и заголовки заметок, транскрипций и саммари -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" />
+  <!-- Не блокирует отрисовку: без доступа к Google Fonts (мобильный интернет в РФ, «белые списки»)
+       приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
   <link rel="stylesheet" href="/webapp/styles.css?v=20261025-copy" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
