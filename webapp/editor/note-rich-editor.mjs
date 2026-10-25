@@ -782,7 +782,7 @@ const NoteColumns = Node.create({
    пункт, в таблице — следующая ячейка (их обработчики), сюда не доходит. */
 var INDENT_MAX = 8;
 var INDENT_STEP_EM = 1.5;
-var INDENT_TYPES = ["paragraph", "heading"];
+var INDENT_TYPES = ["paragraph", "heading", "blockquote"];
 
 // Абзацы / заголовки выделения (не внутри списка или таблицы): сдвинуть на delta. true — что-то сдвинули.
 function changeIndent(state, dispatch, delta) {
@@ -790,6 +790,7 @@ function changeIndent(state, dispatch, delta) {
   var tr = state.tr;
   var changed = false;
   state.doc.nodesBetween(sel.from, sel.to, function (node, pos, parent) {
+    // Цитата сдвигается целиком — вместе с чертой слева (её абзацы не трогаем).
     if (INDENT_TYPES.indexOf(node.type.name) < 0) return true;
     var role = parent && parent.type.name;
     if (/^(listItem|taskItem|tableCell|tableHeader)$/.test(role || "")) return false;
@@ -877,9 +878,15 @@ const NoteIndentBackspace = Extension.create({
       Backspace: function (props) {
         var sel = props.editor.state.selection;
         if (!sel.empty || sel.$from.parentOffset !== 0) return false;
-        var node = sel.$from.parent;
-        if (INDENT_TYPES.indexOf(node.type.name) < 0 || !node.attrs.indent) return false;
-        return props.editor.commands.outdentText();
+        var $from = sel.$from;
+        var node = $from.parent;
+        if (INDENT_TYPES.indexOf(node.type.name) >= 0 && node.attrs.indent) return props.editor.commands.outdentText();
+        // В начале сдвинутой цитаты — назад сдвигается цитата.
+        var d = $from.depth - 1;
+        if (d > 0 && $from.node(d).type.name === "blockquote" && $from.node(d).attrs.indent && $from.index(d) === 0) {
+          return props.editor.commands.outdentText();
+        }
+        return false;
       },
     };
   },
@@ -4685,7 +4692,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-indent",
+  assetVersion: "20261025-indentq",
   Y: Y,
   mount: mount,
   importBody: importBody,
