@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261025-copy";
+  var WEBAPP_BUILD = "20261025-downbtn";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -37622,6 +37622,10 @@
   }
 
   function openNoteDiscussion(opts) {
+    // Кнопка «вниз» — при каждом открытии (лента могла быть нарисована, пока обсуждение было закрыто).
+    setTimeout(function () {
+      if (isNoteDiscussionOpen()) ensureDiscussScrollDownBtn();
+    }, 400);
     opts = opts || {};
     if (noteHistory) {
       if (opts.fromDesktopSync) return;
@@ -40771,6 +40775,9 @@
         syncNotePaieReplyForm(running);
         syncNoteComposerCommentTarget();
       }
+      // Лента уже нарисована (комментарии пришли, пока обсуждение было закрыто) — кнопку «вниз»
+      // всё равно ставим, иначе её не было вовсе.
+      if (isNoteDiscussionOpen()) ensureDiscussScrollDownBtn();
       return;
     }
     // Не рисовать чужой тред поверх текущего чата/заметки.
