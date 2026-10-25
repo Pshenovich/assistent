@@ -782,7 +782,8 @@ const NoteColumns = Node.create({
    пункт, в таблице — следующая ячейка (их обработчики), сюда не доходит. */
 var INDENT_MAX = 8;
 var INDENT_STEP_EM = 1.5;
-var INDENT_TYPES = ["paragraph", "heading", "blockquote"];
+var LIST_TYPES = ["bulletList", "orderedList", "taskList"];
+var INDENT_TYPES = ["paragraph", "heading", "blockquote"].concat(LIST_TYPES);
 
 // Абзацы / заголовки выделения (не внутри списка или таблицы): сдвинуть на delta. true — что-то сдвинули.
 function changeIndent(state, dispatch, delta) {
@@ -790,7 +791,7 @@ function changeIndent(state, dispatch, delta) {
   var tr = state.tr;
   var changed = false;
   state.doc.nodesBetween(sel.from, sel.to, function (node, pos, parent) {
-    // Цитата сдвигается целиком — вместе с чертой слева (её абзацы не трогаем).
+    // Цитата и список (верхнего уровня) сдвигаются целиком — с чертой / номерами (внутри не трогаем).
     if (INDENT_TYPES.indexOf(node.type.name) < 0) return true;
     var role = parent && parent.type.name;
     if (/^(listItem|taskItem|tableCell|tableHeader)$/.test(role || "")) return false;
@@ -804,6 +805,37 @@ function changeIndent(state, dispatch, delta) {
   });
   if (changed && dispatch) dispatch(tr);
   return changed;
+}
+
+// Пункт списка у курсора: «listItem» / «taskItem» (null — не в списке).
+function listItemTypeAt(state) {
+  var $from = state.selection.$from;
+  for (var d = $from.depth; d > 0; d -= 1) {
+    var n = $from.node(d).type.name;
+    if (n === "listItem" || n === "taskItem") return n;
+  }
+  return null;
+}
+
+// Список верхнего уровня вокруг курсора и глубина пункта: { node, depth, itemDepth } | null.
+function topListAt(state) {
+  var $from = state.selection.$from;
+  var top = null;
+  for (var d = 1; d <= $from.depth; d += 1) {
+    if (LIST_TYPES.indexOf($from.node(d).type.name) >= 0) {
+      top = { node: $from.node(d), depth: d, itemDepth: d + 1 };
+      break;
+    }
+  }
+  return top;
+}
+
+function inTable(state) {
+  var $from = state.selection.$from;
+  for (var d = $from.depth; d > 0; d -= 1) {
+    if ($from.node(d).type.name === "table") return true;
+  }
+  return false;
 }
 
 function inListOrTable(state) {
@@ -840,8 +872,12 @@ const NoteIndent = Extension.create({
   },
   addCommands: function () {
     return {
+      // В списке — сначала вложенный пункт; вложить некуда (первый пункт, весь список) — сдвигаем список.
       indentText: function () {
         return function (props) {
+          var item = listItemTypeAt(props.state);
+          // У чек-листа вложенности нет — сразу сдвиг списка.
+          if (item && item !== "taskItem" && props.can().sinkListItem(item) && props.commands.sinkListItem(item)) return true;
           return changeIndent(props.state, props.dispatch, 1);
         };
       },
@@ -855,7 +891,8 @@ const NoteIndent = Extension.create({
   addKeyboardShortcuts: function () {
     return {
       Tab: function (props) {
-        if (inListOrTable(props.editor.state)) return false;
+        if (inTable(props.editor.state)) return false;
+        // Сюда в списке доходит, только если пункт вложить некуда (обработчик списка не смог) — сдвигаем список.
         // Нечего сдвигать (дальше некуда) — всё равно держим Tab в заметке, а не уводим фокус.
         props.editor.commands.indentText();
         return true;
@@ -875,6 +912,21 @@ const NoteIndentBackspace = Extension.create({
   priority: 1000,
   addKeyboardShortcuts: function () {
     return {
+      // Сдвинутый список, курсор в пункте верхнего уровня: Shift+Tab сначала сдвигает список назад
+      // (иначе пункт превратился бы в обычный абзац).
+      "Shift-Tab": function (props) {
+        var state = props.editor.state;
+        var top = topListAt(state);
+        if (!top || !top.node.attrs.indent) return false;
+        var $from = state.selection.$from;
+        var $to = state.selection.$to;
+        if ($from.depth < top.itemDepth || $to.depth < top.itemDepth) return false;
+        // Курсор во вложенном пункте — пусть его поднимет обработчик списка.
+        for (var d = top.itemDepth + 1; d <= $from.depth; d += 1) {
+          if (LIST_TYPES.indexOf($from.node(d).type.name) >= 0) return false;
+        }
+        return props.editor.commands.outdentText();
+      },
       Backspace: function (props) {
         var sel = props.editor.state.selection;
         if (!sel.empty || sel.$from.parentOffset !== 0) return false;
@@ -4692,7 +4744,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-indentq",
+  assetVersion: "20261025-indentl",
   Y: Y,
   mount: mount,
   importBody: importBody,
