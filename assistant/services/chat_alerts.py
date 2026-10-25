@@ -1,7 +1,9 @@
 """Критичные проблемы в рабочих чатах → пуш в Telegram сразу, не дожидаясь дайджеста.
 
 Модель только предлагает (по новым сообщениям с контекстом топика), код проверяет:
-- уровень «critical», сообщение из новой пачки и не от самого пользователя;
+- уровень «critical», сообщение из новой пачки, от человека и не от самого пользователя
+  (боты, посты каналов, пересылки сами по себе пуш не вызывают);
+- в топике переписываются хотя бы двое людей — пуш о разговоре людей, а не об уведомлении;
 - пользователь ещё не писал в этом топике после него (значит, уже в курсе);
 - по топику не было пуша последние COOLDOWN_H часов и его не глушили «Не критично»;
 - не больше DAILY_MAX пушей в сутки.
@@ -25,9 +27,15 @@ MUTE_H = 24
 DAILY_MAX = 8
 CONTEXT_PER_TOPIC = 20
 MAX_TEXT = 16000
+MIN_HUMANS = 2  # сколько разных людей должно писать в топике (контекст + новые)
 
 SYSTEM = """Ты следишь за рабочими чатами руководителя и решаешь, надо ли СРОЧНО его побеспокоить.
-Тебе дают новые сообщения (помечены «NEW») с контекстом по топикам; сообщения самого руководителя помечены «Я».
+Тебе дают новые сообщения (помечены «NEW») с контекстом по топикам; сообщения самого руководителя помечены «Я»,
+автоматические (боты, посты каналов, пересылки) — «(бот)».
+Поднимай только разговор ЛЮДЕЙ о срочной проблеме: сотрудники или клиенты обсуждают, что сломалось, и это не решено.
+Уведомления ботов и систем (мониторинг, алерты, CI, заказы, «задача создана», статусы, дайджесты, рассылки) — НЕ critical сами по себе,
+даже если пришли от аккаунта человека, но выглядят как шаблон. Они важны, только если люди в топике подтверждают реальную проблему —
+тогда указывай сообщение человека, а не уведомление.
 critical — только то, что требует внимания руководителя в ближайшие часы:
 - продукт/сервис/сайт/оплата/вход не работает или массово ломается у пользователей или клиентов;
 - потеря или утечка данных, взлом, доступы попали не туда;
@@ -181,7 +189,23 @@ def message_url(chat_id: int, thread_id: Optional[int], msg: int) -> str:
 def _who(uid: int, m: dict[str, Any]) -> str:
     if m.get("user_id") is not None and int(m["user_id"]) == int(uid):
         return "Я"
-    return str(m.get("display_name") or "").strip() or (f"@{m['username']}" if m.get("username") else "кто-то")
+    name = str(m.get("display_name") or "").strip() or (f"@{m['username']}" if m.get("username") else "кто-то")
+    return name + " (бот)" if _is_auto(m) else name
+
+
+def _is_auto(m: dict[str, Any]) -> bool:
+    if m.get("is_auto"):
+        return True
+    name = str(m.get("username") or "").strip().lower()
+    return name.endswith("bot")  # у ботов ник всегда заканчивается на «bot»
+
+
+def _humans_in_topic(chat_id: int, tid: int, new: list[dict[str, Any]]) -> set[int]:
+    """Разные люди в топике: новые сообщения и хвост перед ними (боты и пересылки не считаются)."""
+    mine = [m for m in new if int(m.get("thread_id") or 0) == tid]
+    first_ts = str(mine[0].get("ts_utc") or "") if mine else ""
+    ctx = digest_store.thread_tail(int(chat_id), tid or None, first_ts, limit=CONTEXT_PER_TOPIC) if first_ts else []
+    return {int(m["user_id"]) for m in ctx + mine if m.get("user_id") is not None and not _is_auto(m)}
 
 
 def _line(uid: int, m: dict[str, Any], *, new: bool) -> str:
@@ -270,9 +294,13 @@ def verify(
             continue  # модель сослалась не на новое сообщение (или выдумала номер)
         if m.get("user_id") is not None and int(m["user_id"]) == int(uid):
             continue
+        if _is_auto(m) or m.get("user_id") is None:
+            continue  # уведомление бота / пост канала — не разговор людей
         tid = int(m.get("thread_id") or 0)
         if tid in seen_threads:
             continue
+        if len(_humans_in_topic(chat_id, tid, new)) < MIN_HUMANS:
+            continue  # один человек и боты — не обсуждение
         # Пользователь уже писал в этом топике после сообщения — он в курсе.
         if any(
             x.get("user_id") is not None and int(x["user_id"]) == int(uid)
@@ -300,8 +328,10 @@ def detect(uid: int, chat_id: int, new: list[dict[str, Any]]) -> list[dict[str, 
     from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
     from assistant.nlu import llm
 
-    if not any(m.get("user_id") is None or int(m["user_id"]) != int(uid) for m in new):
-        return []  # писал только сам пользователь
+    if not any(
+        m.get("user_id") is not None and int(m["user_id"]) != int(uid) and not _is_auto(m) for m in new
+    ):
+        return []  # писали только сам пользователь и боты — модель не зовём
     chat = digest_store.get_chat(int(chat_id)) or {}
     set_openrouter_usage_telegram_user(telegram_user_id=uid)
     payload = {

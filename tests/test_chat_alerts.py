@@ -131,3 +131,38 @@ def test_merge_summaries():
     b = {"brief": "Топик Б.", "decisions": [{"text": "2"}], "next_steps": [], "deadlines": [], "open_questions": [], "context_topics": ["x", "y"]}
     m = merge_summaries([a, b])
     assert m["brief"] == "Топик А. Топик Б." and len(m["decisions"]) == 2 and m["context_topics"] == ["x", "y"]
+
+
+def test_verify_needs_people_not_bots(store):
+    # Бот шлёт алерт мониторинга, люди молчат — пуша нет.
+    store.insert_message(chat_id=FORUM, message_id=1, user_id=777, username="grafana_alerts_bot", display_name="Grafana",
+                         text="[FIRING] API 500 rate > 5%", ts_utc=NOW - timedelta(minutes=9), thread_id=20)
+    # Пересылка / пост канала (помечен при сохранении) — тоже не повод.
+    store.insert_message(chat_id=FORUM, message_id=2, user_id=136817688, username=None, display_name="Channel",
+                         text="Сервис недоступен", ts_utc=NOW - timedelta(minutes=8), thread_id=20, is_auto=True)
+    # Один человек пишет в другом топике — ещё не обсуждение.
+    _msg(store, 3, 201, "Касса не работает", 7, thread=21)
+    new = store.messages_after_rowid(FORUM, 0)
+    proposed = [
+        {"msg": 1, "severity": "critical", "title": "API 500", "why": ""},
+        {"msg": 2, "severity": "critical", "title": "Сервис недоступен", "why": ""},
+        {"msg": 3, "severity": "critical", "title": "Касса", "why": ""},
+    ]
+    assert ca.verify(ME, FORUM, new, proposed, now=NOW) == []
+    # Второй человек подтвердил — это уже разговор людей.
+    _msg(store, 4, 202, "Да, у клиентов тоже, горит", 6, thread=21)
+    new = store.messages_after_rowid(FORUM, 0)
+    got = ca.verify(ME, FORUM, new, proposed, now=NOW)
+    assert [a["message_id"] for a in got] == [3]
+    assert "(бот)" in ca._line(ME, new[0], new=True)
+
+
+def test_ingest_marks_automated(store):
+    from assistant.bot import chat_ingest
+
+    human = NS(id=201, is_bot=False, username=None, first_name="Петя", last_name=None)
+    assert chat_ingest.is_automated(NS(from_user=human)) is False
+    assert chat_ingest.is_automated(NS(from_user=NS(id=1, is_bot=True))) is True
+    assert chat_ingest.is_automated(NS(from_user=human, sender_chat=NS(id=-100))) is True
+    assert chat_ingest.is_automated(NS(from_user=human, via_bot=NS(id=5))) is True
+    assert chat_ingest.is_automated(NS(from_user=human, forward_origin=NS(type="user"))) is True

@@ -94,7 +94,20 @@ async def ingest_message_update(
         reply_to_user_id=int(reply_user.id) if reply_user else None,
         mentions=message_mentions(msg),
         thread_id=thread_id,
+        is_auto=is_automated(msg),
     )
+
+
+def is_automated(msg: Any) -> bool:
+    """Не живой человек: бот (в т.ч. Channel_Bot / GroupAnonymousBot), пост от имени канала или чата,
+    сообщение через инлайн-бота, автопересылка из канала или пересылка."""
+    user = getattr(msg, "from_user", None)
+    if user is not None and getattr(user, "is_bot", False):
+        return True
+    for attr in ("sender_chat", "via_bot", "forward_origin", "forward_date"):
+        if getattr(msg, attr, None):
+            return True
+    return bool(getattr(msg, "is_automatic_forward", False))
 
 
 def message_thread(msg: Any) -> int | None:

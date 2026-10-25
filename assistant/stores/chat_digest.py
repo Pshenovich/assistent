@@ -87,6 +87,8 @@ def _conn() -> sqlite3.Connection:
         ("reply_to_user_id", "INTEGER"),
         ("mentions", "TEXT NOT NULL DEFAULT ''"),
         ("thread_id", "INTEGER"),
+        # Автоматическое: пост канала / анонимного админа, через инлайн-бота, пересылка.
+        ("is_auto", "INTEGER NOT NULL DEFAULT 0"),
     ):
         if col not in have:
             _CONN.execute(f"ALTER TABLE leo_chat_messages ADD COLUMN {col} {decl}")
@@ -240,6 +242,7 @@ def insert_message(
     reply_to_user_id: int | None = None,
     mentions: list[str] | None = None,
     thread_id: int | None = None,
+    is_auto: bool = False,
 ) -> bool:
     """Возвращает True, если сообщение новое (вставлено).
 
@@ -263,8 +266,8 @@ def insert_message(
                 """
                 INSERT INTO leo_chat_messages (
                     chat_id, message_id, user_id, username, display_name,
-                    text, ts_utc, date_utc, reply_to_message_id, reply_to_user_id, mentions, thread_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    text, ts_utc, date_utc, reply_to_message_id, reply_to_user_id, mentions, thread_id, is_auto
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cid,
@@ -279,6 +282,7 @@ def insert_message(
                     int(reply_to_user_id) if reply_to_user_id else None,
                     ",".join(sorted({str(m).strip().lower() for m in (mentions or []) if str(m).strip()})),
                     int(thread_id) if thread_id else None,
+                    1 if is_auto else 0,
                 ),
             )
             conn.commit()
