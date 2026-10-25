@@ -2127,10 +2127,14 @@ function mountToolbar(toolbarEl, editor) {
     left = Math.max(minL, Math.min(left, maxL));
     panel.style.left = Math.round(left) + "px";
     panel.style.right = "auto";
-    // Не выше видимой части экрана (клавиатура, шапка): остальное листается внутри меню.
-    var vv = window.visualViewport;
-    var topLimit = (vv ? vv.offsetTop : 0) + 8;
-    panel.style.maxHeight = Math.max(160, Math.round(toolbarEl.getBoundingClientRect().top - 10 - topLimit)) + "px";
+    // Не выше шапки заметки («← Назад»): остальное листается внутри меню. Считаем от шапки,
+    // а не от visualViewport — в iOS PWA с клавиатурой его offsetTop не в тех же координатах.
+    var form = toolbarEl.closest(".note-editor-modal-form, .modal");
+    var bar = form && form.querySelector(".note-editor-web-back-bar:not(.hidden), .modal-header:not([aria-hidden='true'])");
+    var topLimit = 8;
+    if (bar && bar.offsetHeight) topLimit = Math.max(8, bar.getBoundingClientRect().bottom + 6);
+    else if (form) topLimit = Math.max(8, form.getBoundingClientRect().top + 8);
+    panel.style.maxHeight = Math.max(200, Math.round(toolbarEl.getBoundingClientRect().top - 10 - topLimit)) + "px";
   }
 
   // Вызывать только из click/keydown: тач-pointerdown на iOS не даёт user activation,
@@ -2156,21 +2160,47 @@ function mountToolbar(toolbarEl, editor) {
     if (!btn || !toolbarEl.contains(btn)) return;
     e.preventDefault();
   });
+  // Пункт меню срабатывает по отпусканию без сдвига: касание с движением листает меню
+  // (раньше команда шла на pointerdown — меню нельзя было прокрутить, любое касание выбирало пункт).
+  var menuTap = null;
+  var menuTapDoneAt = 0;
   toolbarEl.addEventListener(
     "pointerdown",
     function (e) {
       var item = e.target.closest(".note-tg-menu-item");
       if (!item || !toolbarEl.contains(item)) return;
       if (e.button != null && e.button !== 0) return;
-      // Attach открывается в click; меню не закрываем здесь, иначе click не дойдёт до пункта.
-      if (item.getAttribute("data-cmd") === "attach") {
-        e.stopPropagation();
-        return;
-      }
-      // Run on pointerdown so the command isn't lost if selectionUpdate
-      // would hide the menu before click (empty caret → closeTgMenus race).
+      // Attach открывается в click (нужен user activation для file picker).
+      if (item.getAttribute("data-cmd") === "attach") return;
+      menuTap = { item: item, x: e.clientX, y: e.clientY, id: e.pointerId };
+    },
+    true
+  );
+  toolbarEl.addEventListener(
+    "pointermove",
+    function (e) {
+      if (menuTap && e.pointerId === menuTap.id && Math.abs(e.clientX - menuTap.x) + Math.abs(e.clientY - menuTap.y) > 10) menuTap = null;
+    },
+    true
+  );
+  toolbarEl.addEventListener(
+    "pointercancel",
+    function () {
+      menuTap = null; // начали листать
+    },
+    true
+  );
+  toolbarEl.addEventListener(
+    "pointerup",
+    function (e) {
+      var tap = menuTap;
+      menuTap = null;
+      if (!tap || e.pointerId !== tap.id) return;
+      var item = e.target.closest && e.target.closest(".note-tg-menu-item");
+      if (item !== tap.item) return;
       e.preventDefault();
       e.stopPropagation();
+      menuTapDoneAt = Date.now();
       var paging = item.hasAttribute("data-go");
       onMenuItem(item);
       if (!paging) closeTgMenus(toolbarEl);
@@ -2190,7 +2220,10 @@ function mountToolbar(toolbarEl, editor) {
       }
       e.preventDefault();
       e.stopPropagation();
-      if (!item.hasAttribute("data-go")) onMenuItem(item);
+      // Уже сработал по pointerup — click следом не повторяем; без pointer-событий (клавиатура) — здесь.
+      if (Date.now() - menuTapDoneAt < 600) return;
+      onMenuItem(item);
+      if (!item.hasAttribute("data-go")) closeTgMenus(toolbarEl);
       return;
     }
     var btn = e.target.closest(".note-tg-btn");
@@ -4225,7 +4258,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-imgdrop",
+  assetVersion: "20261025-tblsize",
   Y: Y,
   mount: mount,
   importBody: importBody,

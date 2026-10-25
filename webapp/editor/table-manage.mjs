@@ -81,6 +81,8 @@ var ICONS = {
   table: svg('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>'),
   ai: svg('<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>'),
   delete: svg('<rect x="4" y="4" width="16" height="16" rx="3"/><path d="m9 9 6 6M15 9l-6 6"/>'),
+  width: svg('<path d="M4 5v14M20 5v14"/><path d="M8 12h8"/><path d="m10 9-3 3 3 3M14 9l3 3-3 3"/>'),
+  height: svg('<path d="M5 4h14M5 20h14"/><path d="M12 8v8"/><path d="m9 10 3-3 3 3M9 14l3 3 3-3"/>'),
 };
 
 function parseRowHeight(element) {
@@ -584,6 +586,26 @@ function cellAtPoint(view, x, y) {
   return cellAround(view.state.doc.resolve(pos));
 }
 
+// Телефон: выделено больше одной ячейки — клавиатура не нужна и закрывает таблицу. inputmode="none"
+// и перефокус её прячут, фокус остаётся в редакторе (таблица и меню живут); вернулись в ячейку — обратно.
+function setSoftKeyboard(view, show) {
+  var dom = view.dom;
+  var hidden = dom.getAttribute("inputmode") === "none";
+  if (show ? !hidden : hidden) return;
+  if (show) dom.removeAttribute("inputmode");
+  else dom.setAttribute("inputmode", "none");
+  if (document.activeElement === dom) {
+    try {
+      dom.blur();
+      dom.focus({ preventScroll: true });
+    } catch (_) {}
+  }
+}
+
+function isCoarsePointer() {
+  return !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+}
+
 function TableManageView(props, cellMinWidth) {
   this.editor = props.editor;
   this.getPos = props.getPos;
@@ -678,6 +700,37 @@ TableManageView.prototype.bind = function () {
     self.layoutHandles();
   };
   this.scroll.addEventListener("scroll", this.onScroll, { passive: true });
+  // Десктоп: граница столбца / строки под мышью — курсор ↔ / ↕, тянется (в любой момент, без выделения).
+  this.onBorderHover = function (e) {
+    if (e.pointerType !== "mouse" || self.drag || e.buttons) return;
+    var b = self.borderAt(e.clientX, e.clientY);
+    var k = b ? b.kind : "";
+    if ((self.dom.dataset.resize || "") === k) return;
+    if (k) self.dom.dataset.resize = k;
+    else delete self.dom.dataset.resize;
+  };
+  this.onBorderLeave = function () {
+    if (!self.drag) delete self.dom.dataset.resize;
+  };
+  this.onBorderDown = function (e) {
+    if (e.pointerType !== "mouse" || e.button !== 0) return;
+    var b = self.borderAt(e.clientX, e.clientY);
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    self.startResize(b.kind, b.index, e, self.scroll);
+  };
+  // ProseMirror ловит mousedown — пока тянем границу, до него не доходит (иначе выделял бы текст).
+  this.onBorderMouseDown = function (e) {
+    if (self.drag && /^resize-/.test(self.drag.kind)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+  this.scroll.addEventListener("pointermove", this.onBorderHover);
+  this.scroll.addEventListener("pointerleave", this.onBorderLeave);
+  this.scroll.addEventListener("pointerdown", this.onBorderDown, true);
+  this.scroll.addEventListener("mousedown", this.onBorderMouseDown, true);
   // Меню держится у выделения в видимой области — при прокрутке заметки и клавиатуре двигаем его.
   this.onPageScroll = function () {
     if (self.active) self.layoutHandles();
@@ -705,6 +758,10 @@ TableManageView.prototype.unbind = function () {
   this.overlay.removeEventListener("pointerdown", this.onOverlayPointerDown);
   this.overlay.removeEventListener("mousedown", this.onUiMouseDown);
   this.scroll.removeEventListener("scroll", this.onScroll);
+  this.scroll.removeEventListener("pointermove", this.onBorderHover);
+  this.scroll.removeEventListener("pointerleave", this.onBorderLeave);
+  this.scroll.removeEventListener("pointerdown", this.onBorderDown, true);
+  this.scroll.removeEventListener("mousedown", this.onBorderMouseDown, true);
   this.watchPageScroll(false);
   this.releaseDragListeners();
   if (this.ro) {
@@ -745,18 +802,31 @@ TableManageView.prototype.setActive = function (info) {
     this.cancelMenuTimer();
     this.closeMenu();
     this.menuDismissed = "";
+    this.resizeMode = null;
     this.overlay.hidden = true;
     this.overlay.innerHTML = "";
+    if (this.kbHidden) {
+      this.kbHidden = false;
+      this.editor.view.dom.removeAttribute("inputmode");
+    }
     return;
   }
   activeView = this;
+  if (isCoarsePointer()) {
+    var multi = info.mode !== "cell";
+    if (multi !== !!this.kbHidden) {
+      this.kbHidden = multi;
+      setSoftKeyboard(this.editor.view, !multi);
+    }
+  }
+  if (this.resizeMode && prev && prev.key !== info.key) this.resizeMode = null;
   if (!prev || prev.key !== info.key || this.overlay.hidden) {
     this.renderOverlay();
     if (this.menuDismissed !== info.key) this.menuDismissed = "";
   }
   // Меню — когда выделены ячейки, столбец, строка или таблица (курсор в ячейке — только рамка),
   // и только когда выделение улеглось: палец отпущен и MENU_DELAY без изменений.
-  if (info.mode !== "cell" && this.menuDismissed !== info.key) {
+  if (info.mode !== "cell" && this.menuDismissed !== info.key && !this.resizeMode) {
     if (this.menuOpen && prev && prev.key === info.key) this.renderMenu();
     else this.scheduleMenu(info.key);
   } else {
@@ -850,6 +920,7 @@ TableManageView.prototype.renderMenu = function () {
     html +=
       menuItem("col-add-left", "col-left", "Столбец слева") +
       menuItem("col-add-right", "col-right", "Столбец справа") +
+      menuItem("resize-col", "width", "Ширина столбца") +
       menuItem("sort-asc", "sort-asc", "Сортировать А → Я") +
       menuItem("sort-desc", "sort-desc", "Сортировать Я → А") +
       menuItem("col-del", "delete", "Удалить столбец", { danger: true, disabled: nCol <= 1 });
@@ -857,6 +928,7 @@ TableManageView.prototype.renderMenu = function () {
     html +=
       menuItem("row-add-above", "row-above", "Строка выше") +
       menuItem("row-add-below", "row-below", "Строка ниже") +
+      menuItem("resize-row", "height", "Высота строки") +
       (a.row === 0 ? menuItem("toggle-header", "header", "Строка-заголовок") : "") +
       menuItem("row-del", "delete", "Удалить строку", { danger: true, disabled: nRow <= 1 });
   } else if (a.mode === "table") {
@@ -978,6 +1050,14 @@ TableManageView.prototype.runAction = function (act) {
     return;
   }
   if (act === "select-table") return this.selectTable();
+  if (act === "resize-col" || act === "resize-row") {
+    // Меню сворачивается, на границах появляются ручки — тянуть пальцем; «Готово» или нажатие мимо — выход.
+    this.dismissMenu();
+    this.resizeMode = act === "resize-col" ? "col" : "row";
+    this.renderOverlay();
+    this.layoutHandles();
+    return;
+  }
   if (act === "row-add-below") return this.addRow(a.row, false);
   if (act === "row-add-above") return this.addRow(a.row, true);
   if (act === "col-add-right") return this.addColumn(a.col, false);
@@ -1192,14 +1272,110 @@ TableManageView.prototype.renderOverlay = function () {
   colGrip.dataset.role = "move-col";
   colGrip.dataset.index = String(a.col);
   this.overlay.appendChild(colGrip);
-  if (this.isFinePointer() && a.mode === "cell") {
-    var rz = document.createElement("div");
-    rz.className = "note-table-resize";
-    rz.title = "Ширина столбца";
-    rz.dataset.role = "resize-col";
-    rz.dataset.index = String(a.col);
-    this.overlay.appendChild(rz);
+  if (this.resizeMode) this.renderResizeGrips();
+};
+
+// Режим «Ширина столбца» / «Высота строки» (телефон): ручка на каждой границе и «Готово».
+TableManageView.prototype.renderResizeGrips = function () {
+  var kind = this.resizeMode;
+  var g = this.gridLines();
+  if (!g) return;
+  var lines = kind === "col" ? g.cols : g.rows;
+  for (var i = 0; i < lines.length; i += 1) {
+    if (lines[i] == null) continue;
+    var grip = document.createElement("div");
+    grip.className = "note-table-grip note-table-grip--" + kind;
+    grip.dataset.role = kind === "col" ? "resize-col" : "resize-row";
+    grip.dataset.index = String(i);
+    grip.innerHTML = '<span class="note-table-grip-knob"></span>';
+    this.overlay.appendChild(grip);
   }
+  var done = makeButton("note-table-resize-done", "Готово", "Готово");
+  done.dataset.role = "resize-done";
+  done.dataset.index = "0";
+  this.overlay.appendChild(done);
+};
+
+// Границы по TableMap (с объединёнными ячейками): x правого края столбца c, y нижнего края строки r — в координатах окна.
+TableManageView.prototype.gridLines = function () {
+  var pos = this.tablePos();
+  var table = pos == null ? null : this.editor.state.doc.nodeAt(pos);
+  if (!table) return null;
+  var map = TableMap.get(table);
+  var view = this.editor.view;
+  var cols = new Array(map.width);
+  var rows = new Array(map.height);
+  var seen = {};
+  for (var i = 0; i < map.map.length; i += 1) {
+    var rel = map.map[i];
+    if (seen[rel]) continue;
+    seen[rel] = true;
+    var el = view.nodeDOM(pos + 1 + rel);
+    if (!el || !el.getBoundingClientRect) continue;
+    var rect = map.findCell(rel);
+    var b = el.getBoundingClientRect();
+    cols[rect.right - 1] = b.right;
+    rows[rect.bottom - 1] = b.bottom;
+  }
+  var tb = this.table.getBoundingClientRect();
+  return { cols: cols, rows: rows, left: tb.left, top: tb.top };
+};
+
+TableManageView.prototype.colWidthsFromGrid = function () {
+  var g = this.gridLines();
+  if (!g) return this.measureColWidths();
+  var out = [];
+  var prev = g.left;
+  for (var c = 0; c < g.cols.length; c += 1) {
+    var x = g.cols[c] != null ? g.cols[c] : prev + this.cellMinWidth;
+    out.push(Math.max(this.cellMinWidth, x - prev));
+    prev = x;
+  }
+  return out;
+};
+
+// Граница под мышью (±4 px): столбцы важнее строк; внешние левая и верхняя — нет.
+TableManageView.prototype.borderAt = function (x, y) {
+  var tb = this.table.getBoundingClientRect();
+  var sb = this.scroll.getBoundingClientRect();
+  if (y < tb.top - 3 || y > tb.bottom + 4 || x < Math.max(tb.left, sb.left) - 3 || x > Math.min(tb.right, sb.right) + 4) return null;
+  var g = this.gridLines();
+  if (!g) return null;
+  var best = null;
+  g.cols.forEach(function (cx, c) {
+    if (cx == null) return;
+    var d = Math.abs(x - cx);
+    if (d <= 4 && (!best || d < best.d)) best = { kind: "col", index: c, d: d };
+  });
+  if (best) return best;
+  g.rows.forEach(function (ry, r) {
+    if (ry == null) return;
+    var d = Math.abs(y - ry);
+    if (d <= 4 && (!best || d < best.d)) best = { kind: "row", index: r, d: d };
+  });
+  return best;
+};
+
+TableManageView.prototype.startResize = function (kind, index, e, target) {
+  var row = this.table.rows[index];
+  this.drag = {
+    kind: kind === "col" ? "resize-col" : "resize-row",
+    index: index,
+    startX: e.clientX,
+    startY: e.clientY,
+    startWidths: kind === "col" ? this.colWidthsFromGrid() : null,
+    startH: kind === "row" && row ? row.getBoundingClientRect().height : 0,
+    moved: false,
+    pointerId: e.pointerId,
+    target: target,
+  };
+  this.interactUntil = Date.now() + 800;
+  try {
+    target.setPointerCapture(e.pointerId);
+  } catch (_) {}
+  document.addEventListener("pointermove", this.onPointerMove);
+  document.addEventListener("pointerup", this.onPointerUp);
+  document.addEventListener("pointercancel", this.onPointerUp);
 };
 
 // Прямоугольник выделения в координатах окна: объединение ячеек (или ячейка с курсором).
@@ -1286,10 +1462,22 @@ TableManageView.prototype.layoutHandles = function () {
     }
     colGrip.style.visibility = shown ? "visible" : "hidden";
   }
-  var rz = q('[data-role="resize-col"]');
-  if (rz) {
-    place(rz, r.right - box.left, tb.top - box.top, null, tb.height);
-    rz.style.visibility = r.right <= visR + 1 && r.right >= visL ? "visible" : "hidden";
+  if (this.resizeMode) {
+    var g = this.gridLines();
+    var vis = { l: visL - box.left, r: visR - box.left };
+    this.overlay.querySelectorAll(".note-table-grip").forEach(function (grip) {
+      var i = parseInt(grip.dataset.index, 10);
+      if (!g) return;
+      if (grip.classList.contains("note-table-grip--col")) {
+        var x = g.cols[i] - box.left;
+        place(grip, x, tb.top - box.top, null, tb.height);
+        grip.style.visibility = x >= vis.l - 1 && x <= vis.r + 1 ? "visible" : "hidden";
+      } else {
+        place(grip, vis.l, g.rows[i] - box.top, vis.r - vis.l, null);
+      }
+    });
+    var done = q('[data-role="resize-done"]');
+    if (done) place(done, Math.max(vis.l, vis.r - (done.offsetWidth || 80)), tb.top - box.top - (done.offsetHeight || 32) - 8);
   }
   this.layoutMenu(r);
 };
@@ -1340,6 +1528,16 @@ TableManageView.prototype.handleOverlayPointerDown = function (e) {
   this.interactUntil = Date.now() + 800;
   var role = btn.dataset.role;
   var index = parseInt(btn.dataset.index, 10);
+  if (role === "resize-done") {
+    this.resizeMode = null;
+    this.renderOverlay();
+    this.layoutHandles();
+    return;
+  }
+  if (role === "resize-col" || role === "resize-row") {
+    this.startResize(role === "resize-col" ? "col" : "row", index, e, btn);
+    return;
+  }
   if (role !== "extend" && !isFinite(index)) return;
   var sel = this.editor.state.selection;
   this.drag = {
@@ -1347,7 +1545,7 @@ TableManageView.prototype.handleOverlayPointerDown = function (e) {
     index: index,
     startX: e.clientX,
     startY: e.clientY,
-    startWidths: role === "resize-col" ? this.measureColWidths() : null,
+    startWidths: null,
     anchor: sel instanceof CellSelection ? sel.$anchorCell.pos : this.active ? this.active.cellPos : null,
     moved: false,
     pointerId: e.pointerId,
@@ -1366,7 +1564,7 @@ TableManageView.prototype.handlePointerMove = function (e) {
   if (this.drag.pointerId != null && e.pointerId !== this.drag.pointerId) return;
   var d = dist(e.clientX, e.clientY, this.drag.startX, this.drag.startY);
   if (!this.drag.moved) {
-    if (d < DRAG_THRESHOLD) return;
+    if (d < (/^resize-/.test(this.drag.kind) ? 2 : DRAG_THRESHOLD)) return;
     this.drag.moved = true;
     this.closeMenu();
     this.drag.target.classList.add("is-dragging");
@@ -1378,6 +1576,7 @@ TableManageView.prototype.handlePointerMove = function (e) {
   this.interactUntil = Date.now() + 800;
   var kind = this.drag.kind;
   if (kind === "resize-col") this.dragResizeCol(e);
+  else if (kind === "resize-row") this.dragResizeRow(e);
   else if (kind === "move-col") this.dragMoveCol(e);
   else if (kind === "move-row") this.dragMoveRow(e);
   else if (kind === "extend") this.dragExtend(e);
@@ -1403,6 +1602,14 @@ TableManageView.prototype.dragResizeCol = function (e) {
   widths[this.drag.index] = Math.max(this.cellMinWidth, this.drag.startWidths[this.drag.index] + dx);
   this.drag.currentWidths = widths;
   applyPreviewWidths(this.colgroup, this.table, widths, this.cellMinWidth);
+  this.layoutHandles();
+};
+
+TableManageView.prototype.dragResizeRow = function (e) {
+  var h = Math.max(MIN_ROW, Math.round(this.drag.startH + (e.clientY - this.drag.startY)));
+  this.drag.currentH = h;
+  var row = this.table.rows[this.drag.index];
+  if (row) row.style.height = h + "px";
   this.layoutHandles();
 };
 
@@ -1474,11 +1681,14 @@ TableManageView.prototype.handlePointerUp = function (e) {
   var pos = this.tablePos();
   if (pos == null) return;
   var view = this.editor.view;
-  this.menuDismissed = "";
+  if (!/^resize-/.test(drag.kind)) this.menuDismissed = "";
   if (drag.moved) {
     if (drag.kind === "resize-col" && drag.currentWidths) {
       setAllColWidths(this.editor, pos, drag.currentWidths);
-      view.focus();
+      if (!isCoarsePointer()) view.focus();
+    } else if (drag.kind === "resize-row" && drag.currentH) {
+      setRowHeight(this.editor, pos, drag.index, drag.currentH);
+      if (!isCoarsePointer()) view.focus();
     } else if (drag.kind === "move-col") {
       selectLine(this.editor, pos, "col", drag.index);
     } else if (drag.kind === "move-row") {

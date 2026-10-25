@@ -22683,17 +22683,6 @@ textarea.tracker-desc {
   .note-table-manage-overlay .note-table-handle--row:not(.is-selected) { width: 22px; height: 40px; }
   .note-table-manage-overlay .note-table-handle--col:not(.is-selected) { width: 40px; height: 20px; }
 }
-.note-table-resize {
-  position: absolute;
-  width: 10px;
-  margin-left: -5px;
-  cursor: col-resize;
-  touch-action: none;
-  pointer-events: auto;
-}
-.note-table-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; border-radius: 1px; background: transparent; }
-.note-table-resize:hover::after,
-.note-table-resize.is-dragging::after { background: var(--accent, #3e88f7); }
 .note-table-menu {
   position: absolute;
   left: 0;
@@ -22767,3 +22756,25 @@ html.note-editor-kb-open #note-editor-toolbar-wrap .note-tg-btn--discuss { displ
 .note-tg-size-item.note-tg-menu-item--active::after { display: none; }
 /* Выделение, пока открыто меню панели (родное на это время свёрнуто — иначе поверх меню системное «Скопировать»). */
 .note-rich-editor-body .note-menu-range { background: rgba(91, 159, 255, 0.35); border-radius: 2px; }
+
+/* «N изменений ждут сеть» — нажимается (отправить снова / очистить); в открытой заметке — сверху, не на панели редактора. */
+.offline-sync-banner { pointer-events: auto; cursor: pointer; }
+html.note-editor-open .offline-sync-banner { top: calc(8px + env(safe-area-inset-top, 0px)); bottom: auto; }
+
+/* Таблица: ширина / высота. Десктоп — граница под мышью тянется (курсор ↔ / ↕); телефон — «Ширина столбца» /
+   «Высота строки» в меню: ручки на границах и «Готово». */
+.note-table-manage-wrap[data-resize="col"] .note-table-manage-scroll,
+.note-table-manage-wrap[data-resize="col"] .note-table-manage-scroll * { cursor: col-resize !important; }
+.note-table-manage-wrap[data-resize="row"] .note-table-manage-scroll,
+.note-table-manage-wrap[data-resize="row"] .note-table-manage-scroll * { cursor: row-resize !important; }
+.note-table-grip { position: absolute; z-index: 3; pointer-events: auto; touch-action: none; -webkit-tap-highlight-color: transparent; }
+.note-table-grip--col { width: 28px; margin-left: -14px; }
+.note-table-grip--row { height: 28px; margin-top: -14px; }
+.note-table-grip::before { content: ""; position: absolute; background: var(--accent, #3e88f7); border-radius: 1px; }
+.note-table-grip--col::before { top: 0; bottom: 0; left: 13px; width: 2px; }
+.note-table-grip--row::before { left: 0; right: 0; top: 13px; height: 2px; }
+.note-table-grip-knob { position: absolute; left: 50%; top: 50%; border-radius: 999px; background: var(--accent, #3e88f7); box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.35); }
+.note-table-grip--col .note-table-grip-knob { width: 10px; height: 30px; margin: -15px 0 0 -5px; }
+.note-table-grip--row .note-table-grip-knob { width: 30px; height: 10px; margin: -5px 0 0 -15px; }
+.note-table-grip.is-dragging .note-table-grip-knob { transform: scale(1.15); }
+.note-table-manage-overlay .note-table-resize-done { position: absolute; z-index: 4; pointer-events: auto; height: 32px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--accent, #3e88f7); color: #fff; font: inherit; font-size: 0.9375rem; font-weight: 600; cursor: pointer; }

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261025-imgdrop";
+  var WEBAPP_BUILD = "20261025-tblsize";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261025-imgdrop"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261025-tblsize"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -841,7 +841,9 @@
       el = document.createElement("div");
       el.id = "offline-sync-banner";
       el.className = "offline-sync-banner";
-      el.setAttribute("role", "status");
+      el.setAttribute("role", "button");
+      el.setAttribute("title", "Отправить снова");
+      el.addEventListener("click", onOfflineBannerClick);
       document.body.appendChild(el);
     }
     if (!n) {
@@ -858,6 +860,36 @@
         : n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)
           ? n + " изменения ждут сеть"
           : n + " изменений ждут сеть";
+  }
+
+  // Нажали на «N изменений ждут сеть»: отправить снова; не ушло — показать ошибку и предложить очистить очередь
+  // (текст заметок остаётся в черновиках на устройстве).
+  var offlineBannerBusy = false;
+  async function onOfflineBannerClick() {
+    if (offlineBannerBusy) return;
+    if (isAppOffline()) {
+      showNoteToast("Нет сети — изменения уйдут, когда она появится");
+      return;
+    }
+    offlineBannerBusy = true;
+    try {
+      await flushOfflineQueue();
+      var q = readOfflineQueue();
+      if (!q.length) {
+        showNoteToast("Изменения отправлены");
+        return;
+      }
+      var err = q[0].lastError || "нет ответа сервера";
+      var ok = await confirmDialog(
+        "Не уходят изменения: " + q.length + ". Ошибка: " + err + ".\n\nУбрать их из очереди? Текст заметок останется на устройстве."
+      );
+      if (ok) {
+        writeOfflineQueue([]);
+        showNoteToast("Очередь очищена");
+      }
+    } finally {
+      offlineBannerBusy = false;
+    }
   }
 
   function remapOfflineNoteId(tmpId, realId) {
@@ -1059,10 +1091,23 @@
             continue;
           }
           if (op.type === "note_patch" && !isTransientApiError(e)) {
-            console.warn("offline note_patch kept", op, e);
+            // Сервер отказал насовсем (400/403/413/422…): раньше правка стояла первой вечно
+            // и держала всю очередь («N изменений ждут сеть»). Текст остаётся в черновике на устройстве.
+            q.shift();
+            writeOfflineQueue(q);
+            console.warn("offline note_patch dropped", op, e);
+            showNoteToast("Заметку не удалось сохранить: " + (e.message || "ошибка сервера") + ". Текст остался на устройстве.", { duration: 7000 });
+            continue;
+          }
+          if (isTransientApiError(e)) {
+            // Запоминаем попытки и ошибку — показать по нажатию на «ждут сеть».
+            op.attempts = (op.attempts || 0) + 1;
+            op.lastError = String((e && e.message) || "Нет сети");
+            try {
+              writeOfflineQueue(q);
+            } catch (_) {}
             break;
           }
-          if (isTransientApiError(e)) break;
           // Permanent failure: drop op so the queue does not stick forever.
           q.shift();
           writeOfflineQueue(q);
