@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261026-list-icons";
+  var WEBAPP_BUILD = "20261026-lime-theme";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -29047,6 +29047,12 @@
       { file: "analytic-9.jpg", thumb: "analytic-9-thumb.jpg", name: "Капля жидкого хрома" },
       { file: "analytic-10.jpg", thumb: "analytic-10-thumb.jpg", name: "Стеклянный рельеф" }
     ],
+    lime: [
+      "Волна лаймового стекла", "Бархатные дюны", "Лента из стекла", "Ступени роста", "Стеклянный тор",
+      "Слоистый рельеф", "Капля стекла", "Арка", "Спокойная волна", "Металлическая дуга"
+    ].map(function (name, i) {
+      return { file: "lime-" + (i + 1) + ".jpg", thumb: "lime-" + (i + 1) + "-thumb.jpg", name: name };
+    }),
   };
 
   // 3D-объекты карточек «Карточки с 3D-визуалом» (scripts/gen_card_objects.py, webapp/canvas-kit/objects).
@@ -29058,9 +29064,16 @@
     ["hourglass", "Песочные часы"], ["spiral", "Спираль"], ["bubbles", "Диалог"], ["arch", "Арка"],
     ["bolt", "Молния"], ["gear", "Шестерёнки"], ["pie", "Диаграмма"], ["coins", "Монеты"],
     ["layers", "Слои"], ["puzzle", "Пазл"], ["compass", "Компас"], ["bulb", "Лампочка"]
-  ].map(function (o) {
-    return { file: o[0] + ".jpg", thumb: o[0] + "-thumb.jpg", name: o[1], dir: "objects" };
-  });
+  ];
+
+  // Объекты в цветах стиля: «Лайм» — свой набор под белый и чёрный слайд (objects-lime/<key>-light|dark.jpg).
+  function canvasCardObjects(req) {
+    var lime = String((req && req.theme) || "") === "lime";
+    var sfx = lime ? "-" + (String(req.surface || "") === "dark" ? "dark" : "light") : "";
+    return CANVAS_CARD_OBJECTS.map(function (o) {
+      return { file: o[0] + sfx + ".jpg", thumb: o[0] + sfx + "-thumb.jpg", name: o[1], dir: lime ? "objects-lime" : "objects" };
+    });
+  }
 
   function canvasAbstractUrl(file, dir) {
     if (dir) return "/webapp/canvas-kit/" + dir + "/" + file + "?v=" + encodeURIComponent(WEBAPP_BUILD);
@@ -29083,7 +29096,7 @@
     var box = document.getElementById("canvas-image-lib");
     var grid = document.getElementById("canvas-image-lib-grid");
     if (!box || !grid) return;
-    var list = req.isDecor ? CANVAS_ABSTRACTS[String(req.theme || "analytic")] || [] : req.isVisual ? CANVAS_CARD_OBJECTS : [];
+    var list = req.isDecor ? CANVAS_ABSTRACTS[String(req.theme || "analytic")] || [] : req.isVisual ? canvasCardObjects(req) : [];
     box.classList.toggle("hidden", !list.length);
     var label = box.querySelector(".canvas-image-label");
     if (label) label.textContent = req.isVisual ? "Готовые 3D-объекты" : "Готовые абстракции";

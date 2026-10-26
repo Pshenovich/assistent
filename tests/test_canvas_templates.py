@@ -355,6 +355,59 @@ class MonoStyleTests(unittest.TestCase):
         self.assertIn('data-leo-theme="analytic"', html)
 
 
+class LimeStyleTests(unittest.TestCase):
+    def test_every_variant_has_lime_renderer_and_renders(self):
+        from assistant.lib import canvas_style_lime
+
+        self.assertEqual(set(canvas_style_lime.RENDERERS), set(tpl.VARIANTS))
+        deck = tpl.build_deck(dict(SAMPLE_ACTION, theme="lime"))
+        self.assertEqual(deck["theme"], "lime")
+        html = tpl.render_deck_html(deck, {})
+        self.assertIn('data-leo-theme="lime"', html)
+        self.assertIn("family=Onest", html)
+        self.assertNotIn("Не удалось отрисовать", html)
+        self.assertIn('class="l-slide l-black', html)
+        self.assertIn('class="l-slide l-white', html)
+
+    def test_lime_cards_use_lime_objects_and_library_pick(self):
+        deck = _deck({"role": "content", "variant": "content.cards",
+                      "slots": {"title": "К", "items": [{"title": "A", "text": "a", "visual": "orb"}, {"title": "B", "text": "b"}]}})
+        deck["theme"] = "lime"
+        html = tpl.render_deck_html(deck, {})
+        self.assertIn(tpl._object_data_url("orb", "lime-light")[:120], html)
+        self.assertNotIn('data-item="items.0" data-ico', html)  # у карточек «Лайма» 3D-объект, не иконка
+        d = tpl.extract_deck(html)
+        mid = "s1-v-" + d["slides"][0]["slots"]["items"][0]["key"]
+        again = tpl.render_deck_html(d, {mid: "/webapp/canvas-kit/objects-lime/bulb-light.jpg"})
+        self.assertEqual(tpl.extract_deck(again)["slides"][0]["slots"]["items"][0]["visual"], "bulb")
+        self.assertNotIn('class="media-img"', again.split("leo-media-keep", 1)[0])
+
+    def test_default_abstract_follows_theme(self):
+        deck = _deck({"role": "cover", "variant": "cover.goals", "slots": {"title": "A", "goals": ["x"]}})
+        media = tpl.with_default_decor(deck, {})
+        analytic = media["s1-dec"]
+        deck["theme"] = "lime"
+        lime_html = tpl.render_deck_html(deck, media)
+        lime_media = tpl.extract_media(lime_html)
+        self.assertNotEqual(lime_media["s1-dec"], analytic)
+        self.assertTrue(any(lime_media["s1-dec"] == tpl._abstract_data_url(n, "lime") for n in range(1, 11)))
+        d = tpl.extract_deck(lime_html)
+        d["theme"] = "analytic"
+        self.assertEqual(tpl.extract_media(tpl.render_deck_html(d, lime_media))["s1-dec"], analytic)
+        own = {"s1-dec": "data:image/png;base64,AAAA", "s1-dec#own": "1"}
+        self.assertIn("data:image/png;base64,AAAA", tpl.render_deck_html(deck, own))
+
+    def test_custom_grid_list_icons_survive_normalize(self):
+        s = tpl.normalize_slide({"role": "custom", "variant": "custom.grid", "slots": {"title": "x", "rows": [
+            {"blocks": [{"type": "list", "span": 8, "items": [{"text": "Пилот", "icon": "flash"}, "Масштаб"]}]}]}}, sid="s1")
+        self.assertEqual(s["slots"]["rows"][0]["blocks"][0]["items"][0], {"text": "Пилот", "icon": "flash"})
+
+    def test_lime_image_style(self):
+        from assistant.lib import image_style
+
+        self.assertIn("lime", image_style.styled_prompt("a chart", "lime"))
+
+
 class ThemeChoiceTests(unittest.TestCase):
     def test_theme_from_action_and_op(self):
         deck = tpl.build_deck(dict(SAMPLE_ACTION, theme="mono"))

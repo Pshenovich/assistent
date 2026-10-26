@@ -218,6 +218,8 @@
     "post('media',{action:'menu',leoId:ensureLeoId(m)," +
     "prompt:m.getAttribute('data-leo-img-prompt')||m.getAttribute('data-img-prompt')||''," +
     "hasImg:!!m.querySelector('img.media-img'),isVisual:m.hasAttribute('data-a3')," +
+    "theme:document.documentElement.getAttribute('data-leo-theme')||''," +
+    "surface:m.closest('.l-black,.m-black')?'dark':'light'," +
     "slideTitle:t?String(t.textContent||'').trim().slice(0,120):''});" +
     "}" +
     "function onInput(){if(edit)post('dirty',{});}" +
@@ -246,7 +248,9 @@
     "n.removeAttribute('data-img-box');" +
     "if(n.hasAttribute('data-dec-shape')){n.innerHTML='';n.className='dec '+n.getAttribute('data-dec-shape');snapshotHtml();return;}" +
     "if(n.hasAttribute('data-a3')){var v=n.getAttribute('data-a3')||'orb';n.classList.remove('a3-photo');" +
-    "n.innerHTML='<div class=\"a3-obj\" style=\"background-image:url(/webapp/canvas-kit/objects/'+v.replace(/[^a-z]/g,'')+'.jpg)\"></div>';selectNode(n);snapshotHtml();return;}" +
+    "var lime=document.documentElement.getAttribute('data-leo-theme')==='lime';" +
+    "var obj=lime?'objects-lime/'+v.replace(/[^a-z]/g,'')+(n.closest('.l-black')?'-dark':'-light'):'objects/'+v.replace(/[^a-z]/g,'');" +
+    "n.innerHTML='<div class=\"a3-obj\" style=\"background-image:url(/webapp/canvas-kit/'+obj+'.jpg)\"></div>';selectNode(n);snapshotHtml();return;}" +
     "if(n.tagName&&n.tagName.toLowerCase()==='img'){" +
     "var wrap=document.createElement('div');" +
     "wrap.className='abstract abstract-orb media-slot';" +
@@ -1249,6 +1253,7 @@
   var DECK_THEMES = [
     { id: "analytic", name: "Аналитика", hint: "тёмный, зелёные акценты", colors: ["#0c1412", "#3dd6a5", "#5b8def"] },
     { id: "mono", name: "Монохром", hint: "чёрный, белый и голубой", colors: ["#0d0d0e", "#ffffff", "#dceaf6"] },
+    { id: "lime", name: "Лайм", hint: "белый и чёрный, лаймовые акценты", colors: ["#0b0b0b", "#ffffff", "#c6f432"] },
   ];
 
   var INSERT_ITEMS = [
@@ -1987,6 +1992,7 @@
           isVisual: !!d.isVisual,
           isDecor: !!d.isDecor,
           theme: String(d.theme || ""),
+          surface: String(d.surface || ""),
           slideTitle: String(d.slideTitle || ""),
           applyImg: function (dataUrl, prompt) {
             postToFrame({ type: "setImg", leoId: String(d.leoId || ""), dataUrl: dataUrl, prompt: prompt || "" });

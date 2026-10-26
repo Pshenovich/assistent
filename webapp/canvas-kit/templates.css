@@ -202,7 +202,7 @@ html[data-leo-deck].leo-review .slide.tpl.leo-overflow::after { content: "Тек
 .tpl-stage .a3.is-side { width: 36%; max-width: 230px; height: auto; align-self: stretch; border-bottom: 0; border-right: 1px solid var(--s-rule); }
 .tpl-stage .a3 > div.a3-obj { inset: 0; scale: none; transform: none; background: var(--s-el) center / auto 112% no-repeat; }
 .tpl-stage .a3.is-side > div.a3-obj { background-size: contain; }
-.tpl-stage .a3.a3-photo > .media-img[src^="/webapp/canvas-kit/objects/"] { object-fit: contain; background: var(--s-el); }
+.tpl-stage .a3.a3-photo > .media-img[src^="/webapp/canvas-kit/objects"] { object-fit: contain; background: var(--s-el); }
 .tpl-stage .a3-torus { width: 130px; height: 130px; margin: -65px 0 0 -65px; border-radius: 50%; border: 20px solid rgba(61, 214, 165, 0.55); box-shadow: inset 0 0 24px rgba(61, 214, 165, 0.35), 0 0 40px rgba(61, 214, 165, 0.2); transform: rotateX(64deg) rotateZ(24deg); }
 .tpl-stage .a3-cube { width: 84px; height: 84px; margin: -42px 0 0 -42px; transform: rotateX(-24deg) rotateY(38deg); }
 .tpl-stage .a3-cube i { position: absolute; inset: 0; border: 1px solid rgba(232, 240, 236, 0.25); border-radius: 10px; }

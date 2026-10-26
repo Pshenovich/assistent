@@ -262,8 +262,9 @@ Create (6–10 slides):
 - Use role=chart only for real numeric series from the source; pick chart.intent by what the reader must see.
 - Keep texts within the limits (≤N chars). Russian text. No markdown inside slots.
 - Repeated items: respect the ranges (e.g. 2–4). If there are more points, split into two slides.
-- Style: add "theme" ONLY if the user names one — "analytic" (Аналитика: тёмная, зелёные акценты) or
-  "mono" (Монохром: чёрный, белый и голубой). Otherwise omit it: Leo uses the user's last style.
+- Style: add "theme" ONLY if the user names one — "analytic" (Аналитика: тёмная, зелёные акценты),
+  "mono" (Монохром: чёрный, белый и голубой) or "lime" (Лайм: белые и чёрные слайды, лаймовые акценты,
+  финансовый / инвесторский стиль). Otherwise omit it: Leo uses the user's last style.
   To restyle an open deck without changing content: {{"action":"update","sheet_id":"123","theme":"mono"}}.
 
 Edit an existing template deck (an open sheet with slide ids s1, s2, …):

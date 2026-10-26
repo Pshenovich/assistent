@@ -22,6 +22,11 @@ _STYLE = {
         "matte ceramic and paper materials, soft diffused studio light, large calm shapes, Swiss minimalism, "
         "lots of empty space, wide 16:9 framing."
     ),
+    "lime": (
+        "Art direction: premium fintech pitch-deck visual. Clean white or deep black studio, acid lime and fresh chartreuse "
+        "green accents fading to pale mint, glossy and frosted glass, soft velvet, crisp soft light, calm minimal "
+        "composition with generous negative space, wide 16:9 framing."
+    ),
 }
 _NO_TEXT = "No text, no letters, no numbers, no logos, no watermarks, no UI."
 _MARK = "Art direction:"

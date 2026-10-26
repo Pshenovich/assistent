@@ -804,20 +804,25 @@ _reg(Variant(
 
 OBJECTS_DIR = Path(__file__).resolve().parents[2] / "webapp" / "canvas-kit" / "objects"
 _OBJECT_CACHE: dict[str, str] = {}
-_OBJECT_SRC_RE = re.compile(r"^/webapp/canvas-kit/objects/([a-z]+)\.jpg$")
+# Выбор из библиотеки объектов в редакторе: путь к файлу любого стиля (objects/<key>.jpg, objects-lime/<key>-light.jpg).
+_OBJECT_SRC_RE = re.compile(r"^/webapp/canvas-kit/objects(?:-[a-z]+)?/([a-z]+)(?:-(?:light|dark))?\.jpg$")
 
 
-def _object_data_url(key: str) -> str:
-    """3D-объект карточки как data URL: HTML деки самодостаточен (экспорт, ссылка на просмотр)."""
-    if key not in _OBJECT_CACHE:
+def _object_data_url(key: str, variant: str = "") -> str:
+    """3D-объект карточки как data URL: HTML деки самодостаточен (экспорт, ссылка на просмотр).
+    variant — набор стиля: "" («Аналитика»), "lime-light" / "lime-dark" (белый / чёрный слайд «Лайма»)."""
+    ck = f"{variant}/{key}"
+    if ck not in _OBJECT_CACHE:
         import base64
 
+        theme, _, bg = variant.partition("-")
+        path = OBJECTS_DIR.parent / f"objects-{theme}" / f"{key}-{bg}.jpg" if variant else OBJECTS_DIR / f"{key}.jpg"
         try:
-            raw = (OBJECTS_DIR / f"{key}.jpg").read_bytes()
+            raw = path.read_bytes()
         except OSError:
             return ""
-        _OBJECT_CACHE[key] = "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")
-    return _OBJECT_CACHE[key]
+        _OBJECT_CACHE[ck] = "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")
+    return _OBJECT_CACHE[ck]
 
 
 def _pick_visual(seed: str, used: list[str]) -> str:
@@ -832,11 +837,32 @@ def _pick_visual(seed: str, used: list[str]) -> str:
     return _VISUALS[start]
 
 
-def _visual_html(vis: str) -> str:
-    src = _object_data_url(vis)
+def _visual_html(vis: str, variant: str = "") -> str:
+    src = _object_data_url(vis, variant)
     if src:
         return f'<div class="a3-obj" style="background-image:url(\'{src}\')"></div>'
     return f'<div class="a3-{vis}">{"<i></i><i></i><i></i>" if vis == "cube" else ""}</div>'  # нет файла — CSS-фигура
+
+
+def card_visual(c: Ctx, i: int, it: dict[str, Any], used: list[str], variant: str = "") -> tuple[str, str, str, str]:
+    """3D-визуал карточки content.cards: (vis, mid, src своей картинки, html содержимого слота).
+    Объект без повторов на слайде запоминается в it["visual"]; выбор из библиотеки меняет объект, а не ставит фото."""
+    vis = str(it.get("visual") or "").strip().lower()
+    if vis not in _VISUALS or vis in used:
+        vis = _pick_visual(_s(it.get("title")) or str(i), used)
+        it["visual"] = vis  # запоминаем: правка заголовка не меняет картинку
+    used.append(vis)
+    if not _s(it.get("key")):
+        it["key"] = _new_media_key()  # визуал можно заменить своей картинкой — привязка к карточке
+    mid = f"{c.sid}-v-{_s(it.get('key'))}"
+    src = c.media.get(mid, "")
+    om = _OBJECT_SRC_RE.match(src)
+    if om and om.group(1) in _VISUALS:
+        vis = it["visual"] = om.group(1)
+        used[-1] = vis
+        src = ""
+    html = f'<img class="media-img" alt="" src="{escape(src)}"/>' if src else _visual_html(vis, variant)
+    return vis, mid, src, html
 
 
 def _r_cards(c: Ctx) -> tuple[str, str]:
@@ -849,24 +875,7 @@ def _r_cards(c: Ctx) -> tuple[str, str]:
     used: list[str] = []
     cards = ""
     for i, it in enumerate(items):
-        vis = str(it.get("visual") or "").strip().lower()
-        if vis not in _VISUALS or vis in used:
-            vis = _pick_visual(_s(it.get("title")) or str(i), used)
-            it["visual"] = vis  # запоминаем: правка заголовка не меняет картинку
-        used.append(vis)
-        if not _s(it.get("key")):
-            it["key"] = _new_media_key()  # визуал можно заменить своей картинкой — привязка к карточке
-        mid = f"{c.sid}-v-{_s(it.get('key'))}"
-        src = c.media.get(mid, "")
-        om = _OBJECT_SRC_RE.match(src)
-        if om and om.group(1) in _VISUALS:  # выбран объект из библиотеки — это не фото, а смена объекта
-            vis = it["visual"] = om.group(1)
-            used[-1] = vis
-            src = ""
-        if src:
-            vis_html = f'<img class="media-img" alt="" src="{escape(src)}"/>'
-        else:
-            vis_html = _visual_html(vis)
+        vis, mid, src, vis_html = card_visual(c, i, it, used)
         a3_cls = "a3" + (" is-side" if side else " is-small" if small else "") + (" a3-photo" if src else "")
         pad = "20px 24px 20px 22px" if side else "16px 20px 18px" if small else "20px 24px 24px"
         cards += (
@@ -1267,8 +1276,9 @@ def normalize_role(raw: Any) -> str:
 
 
 def _clean(v: Any, depth: int = 0) -> Any:
-    """Keep plain JSON data only; cap string length and nesting."""
-    if depth > 6:
+    """Keep plain JSON data only; cap string length and nesting.
+    Глубже всех — пункт с иконкой в списке «Своего макета»: slots.rows[].blocks[].items[].text (7 уровней)."""
+    if depth > 8:
         return None
     if isinstance(v, bool) or v is None:
         return v
@@ -1418,7 +1428,10 @@ def _fonts_link(families: str) -> str:
 THEMES: dict[str, dict[str, str]] = {
     "analytic": {"name": "Аналитика", "fonts": "family=Manrope:wght@500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600"},
     "mono": {"name": "Монохром", "fonts": "family=Inter+Tight:wght@300;400;500;600&family=Inter:wght@400;500;600"},
+    "lime": {"name": "Лайм", "fonts": "family=Onest:wght@300;400;500;600&family=Inter:wght@400;500;600"},
 }
+# Стили, где у карточек content.cards 3D-объект (в остальных — иконка пункта).
+CARD_3D_THEMES = ("analytic", "lime")
 
 _FONTS = _fonts_link(THEMES["analytic"]["fonts"])
 
@@ -1528,7 +1541,7 @@ def render_slide(
         inner, decor = ctx.t("title", "h2", "title", force=True) + '<p class="body">Не удалось отрисовать слайд.</p>', ""
     footer = escape(_s(deck.get("footer")) or _s(deck.get("title")))
     sid = escape(str(slide["id"]))
-    decor, dec_attr = _decor_slot(decor, f"{slide['id']}-dec", media)
+    decor, dec_attr = _decor_slot(decor, f"{slide['id']}-dec", _themed_abstracts(media, f"{slide['id']}-dec", theme))
     return (
         f'<section class="slide tpl" data-leo-id="{sid}" data-slide-id="{sid}" '
         f'data-role="{escape(slide["role"])}" data-variant="{escape(variant.id)}"{dec_attr}>'
@@ -1571,16 +1584,37 @@ ABSTRACTS_COUNT = 10  # analytic-1..10.jpg — библиотека абстра
 _ABSTRACT_CACHE: dict[int, str] = {}
 
 
-def _abstract_data_url(n: int) -> str:
-    if n not in _ABSTRACT_CACHE:
+def _abstract_data_url(n: int, kind: str = "analytic") -> str:
+    key = f"{kind}-{n}"
+    if key not in _ABSTRACT_CACHE:
         import base64
 
         try:
-            raw = (ABSTRACTS_DIR / f"analytic-{n}.jpg").read_bytes()
+            raw = (ABSTRACTS_DIR / f"{key}.jpg").read_bytes()
         except OSError:
             return ""
-        _ABSTRACT_CACHE[n] = "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")
-    return _ABSTRACT_CACHE[n]
+        _ABSTRACT_CACHE[key] = "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")
+    return _ABSTRACT_CACHE[key]
+
+
+ABSTRACT_KINDS = {"analytic": "analytic", "lime": "lime"}  # стиль → своя библиотека абстракций (1..10, номера совпадают)
+
+
+def _themed_abstracts(media: dict[str, str], mid: str, theme: str) -> dict[str, str]:
+    """Абстракция из библиотеки другого стиля → та же по номеру из библиотеки текущего: при смене стиля
+    обложка не остаётся в чужих цветах. Своя картинка пользователя не меняется."""
+    src = media.get(mid, "")
+    want = ABSTRACT_KINDS.get(theme)
+    if not src or not want or not src.startswith("data:image/jpeg"):
+        return media
+    for kind in ABSTRACT_KINDS.values():
+        if kind == want:
+            continue
+        for n in range(1, ABSTRACTS_COUNT + 1):
+            if src == _abstract_data_url(n, kind):
+                repl = _abstract_data_url(n, want)
+                return {**media, mid: repl} if repl else media
+    return media
 
 
 def with_default_decor(deck: dict[str, Any], media: Optional[dict[str, str]] = None, only: Optional[Iterable[str]] = None) -> dict[str, str]:
@@ -2075,7 +2109,7 @@ ICON_GROUPS: dict[str, tuple[str, ...]] = {
 
 
 def icon_group(variant_id: str, group_path: str, theme: str = "") -> bool:
-    if variant_id == "content.cards" and theme != "mono":
+    if variant_id == "content.cards" and (theme or DECK_THEME) in CARD_3D_THEMES:
         return False
     pat = re.sub(r"\.\d+(?=\.|$)", ".*", str(group_path))
     return pat in ICON_GROUPS.get(variant_id, ())
@@ -2083,8 +2117,8 @@ def icon_group(variant_id: str, group_path: str, theme: str = "") -> bool:
 
 ICON_LISTS = (
     "cover.goals: goals", "context.agenda: agenda", "comparison.two-col: options.*.points",
-    "comparison.before-after: before.points, after.points", "content.cards: items (в тёмно-зелёном стиле — 3D visual, "
-    "в чёрно-белом — icon; давай оба)", "content.profile: items", "content.text-media: points", "plan.steps: steps",
+    "comparison.before-after: before.points, after.points", "content.cards: items (в стилях «Аналитика» и «Лайм» — 3D visual, "
+    "в «Монохроме» — icon; давай оба)", "content.profile: items", "content.text-media: points", "plan.steps: steps",
     "closing.next-steps: actions", "closing.ask: options", "custom.grid: блок list → items",
 )
 
@@ -2128,3 +2162,7 @@ from assistant.lib import canvas_blocks  # noqa: E402,F401
 from assistant.lib import canvas_style_mono  # noqa: E402
 
 THEME_RENDERERS["mono"] = canvas_style_mono.RENDERERS
+
+from assistant.lib import canvas_style_lime  # noqa: E402
+
+THEME_RENDERERS["lime"] = canvas_style_lime.RENDERERS
