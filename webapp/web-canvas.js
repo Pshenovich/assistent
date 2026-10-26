@@ -246,7 +246,7 @@
     "n.removeAttribute('data-img-box');" +
     "if(n.hasAttribute('data-dec-shape')){n.innerHTML='';n.className='dec '+n.getAttribute('data-dec-shape');snapshotHtml();return;}" +
     "if(n.hasAttribute('data-a3')){var v=n.getAttribute('data-a3')||'orb';n.classList.remove('a3-photo');" +
-    "n.innerHTML='<div class=\"a3-'+v.replace(/[^a-z]/g,'')+'\">'+(v==='cube'?'<i></i><i></i><i></i>':'')+'</div>';selectNode(n);snapshotHtml();return;}" +
+    "n.innerHTML='<div class=\"a3-obj\" style=\"background-image:url(/webapp/canvas-kit/objects/'+v.replace(/[^a-z]/g,'')+'.jpg)\"></div>';selectNode(n);snapshotHtml();return;}" +
     "if(n.tagName&&n.tagName.toLowerCase()==='img'){" +
     "var wrap=document.createElement('div');" +
     "wrap.className='abstract abstract-orb media-slot';" +

@@ -479,13 +479,52 @@ class CustomLayoutTests(unittest.TestCase):
         self.assertNotIn('class="media-img"', html)
         # Картинка, вставленная в редакторе, переживает перерисовку и привязана к своей карточке.
         edited = html.replace(f'data-media="{mid}" data-leo-id="{mid}"', f'data-media="{mid}" data-leo-id="{mid}"', 1)
-        edited = re.sub(r'(data-media="%s"[^>]*>)<div class="a3-[a-z]+">[^<]*(?:<i></i>)*</div>' % re.escape(mid),
+        edited = re.sub(r'(data-media="%s"[^>]*>)<div class="a3-[a-z]+"[^>]*>[^<]*(?:<i></i>)*</div>' % re.escape(mid),
                         r'\1<img class="media-img" alt="" src="data:image/png;base64,AAAA"/>', edited, count=1)
         media = tpl.extract_media(edited)
         self.assertEqual(list(media), [mid])
         again = tpl.render_deck_html(tpl.extract_deck(edited), media)
         self.assertIn('class="a3 a3-photo"', again)
         self.assertEqual(again.count('class="media-img"'), 1)
+
+    def test_cards_get_3d_objects_without_repeats(self):
+        items = [{"title": f"Пункт {i}", "text": "x"} for i in range(6)]
+        items[0]["visual"] = "torus"  # ключ старой CSS-фигуры
+        deck = {"v": tpl.DECK_VERSION, "title": "T", "slides": [{"id": "s1", "role": "content", "variant": "content.cards",
+                                                                  "slots": {"title": "Т", "items": items}}]}
+        html = tpl.render_deck_html(deck, {})
+        stored = tpl.extract_deck(html)["slides"][0]["slots"]["items"]
+        vis = [it["visual"] for it in stored]
+        self.assertEqual(vis[0], "torus")
+        self.assertEqual(len(set(vis)), 6)
+        self.assertEqual(html.count('class="a3-obj" style="background-image:url(\'data:image/jpeg;base64,'), 6)
+        self.assertEqual(tpl.extract_media(html), {})  # объект по умолчанию — не картинка пользователя
+        # Перерисовка не меняет объекты, даже после правки заголовка.
+        stored[1]["title"] = "Другой заголовок"
+        again = tpl.extract_deck(tpl.render_deck_html(tpl.extract_deck(html), {}))["slides"][0]["slots"]["items"]
+        self.assertEqual([it["visual"] for it in again], vis)
+
+    def test_cards_object_from_library_switches_visual(self):
+        slots = {"title": "Т", "items": [{"title": "A", "text": "a", "visual": "orb"}, {"title": "B", "text": "b", "visual": "rings"}]}
+        deck = {"v": tpl.DECK_VERSION, "title": "T", "slides": [{"id": "s1", "role": "content", "variant": "content.cards", "slots": slots}]}
+        html = tpl.render_deck_html(deck, {})
+        mid = "s1-v-" + tpl.extract_deck(html)["slides"][0]["slots"]["items"][0]["key"]
+        again = tpl.render_deck_html(tpl.extract_deck(html), {mid: "/webapp/canvas-kit/objects/bulb.jpg"})
+        self.assertIn(f'data-a3="bulb"', again)
+        self.assertNotIn('class="media-img"', again)
+        self.assertEqual(tpl.extract_deck(again)["slides"][0]["slots"]["items"][0]["visual"], "bulb")
+
+    def test_cards_grid_2x2_puts_visual_on_the_side(self):
+        long = "Длинный текст карточки, который не помещается в узкую колонку и требует сетки два на два. " * 2
+        items = [{"title": f"П{i}", "text": long} for i in range(4)]
+        deck = {"v": tpl.DECK_VERSION, "title": "T", "slides": [{"id": "s1", "role": "content", "variant": "content.cards",
+                                                                  "slots": {"title": "Т", "items": items}}]}
+        html = tpl.render_deck_html(deck, {})
+        self.assertIn("grid cols-2", html)
+        self.assertEqual(html.count('class="a3 is-side"'), 4)
+        short = [{"title": f"П{i}", "text": "коротко"} for i in range(4)]
+        deck["slides"][0]["slots"]["items"] = short
+        self.assertNotIn('class="a3 is-side', tpl.render_deck_html(deck, {}))
 
     def test_custom_insert_plans_layout_first_then_fills_it(self):
         from assistant.lib import canvas_revise

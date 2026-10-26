@@ -60,7 +60,12 @@ _ROLE_ALIASES = {
     "notes": "appendix",
 }
 
-_VISUALS = ("torus", "cube", "orb", "prism", "rings")
+# 3D-объекты карточек: webapp/canvas-kit/objects/<ключ>.jpg (scripts/gen_card_objects.py, утверждены 2026-10-26).
+# Первые пять ключей — бывшие CSS-фигуры: старые деки и visual от модели продолжают работать.
+_VISUALS = (
+    "orb", "rings", "prism", "cube", "torus", "steps", "shield", "funnel", "wave", "nodes", "target", "cluster",
+    "hourglass", "spiral", "bubbles", "arch", "bolt", "gear", "pie", "coins", "layers", "puzzle", "compass", "bulb",
+)
 
 
 # ---------------------------------------------------------------- slot paths
@@ -758,32 +763,77 @@ _reg(Variant(
 # --- content
 
 
+OBJECTS_DIR = Path(__file__).resolve().parents[2] / "webapp" / "canvas-kit" / "objects"
+_OBJECT_CACHE: dict[str, str] = {}
+_OBJECT_SRC_RE = re.compile(r"^/webapp/canvas-kit/objects/([a-z]+)\.jpg$")
+
+
+def _object_data_url(key: str) -> str:
+    """3D-объект карточки как data URL: HTML деки самодостаточен (экспорт, ссылка на просмотр)."""
+    if key not in _OBJECT_CACHE:
+        import base64
+
+        try:
+            raw = (OBJECTS_DIR / f"{key}.jpg").read_bytes()
+        except OSError:
+            return ""
+        _OBJECT_CACHE[key] = "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")
+    return _OBJECT_CACHE[key]
+
+
+def _pick_visual(seed: str, used: list[str]) -> str:
+    """Объект для карточки без visual: от заголовка (разные деки — разные объекты), без повторов на слайде."""
+    import zlib
+
+    start = zlib.crc32(seed.encode("utf-8")) % len(_VISUALS)
+    for k in range(len(_VISUALS)):
+        v = _VISUALS[(start + k) % len(_VISUALS)]
+        if v not in used:
+            return v
+    return _VISUALS[start]
+
+
+def _visual_html(vis: str) -> str:
+    src = _object_data_url(vis)
+    if src:
+        return f'<div class="a3-obj" style="background-image:url(\'{src}\')"></div>'
+    return f'<div class="a3-{vis}">{"<i></i><i></i><i></i>" if vis == "cube" else ""}</div>'  # нет файла — CSS-фигура
+
+
 def _r_cards(c: Ctx) -> tuple[str, str]:
     items = _dicts(c.slots.get("items"))
     n = len(items)
     long_text = sum(len(_s(x.get("text"))) for x in items) / max(n, 1) > 90
     cols = _cols(n, long_text, max_cols=4)
+    side = cols == 2 and n > cols  # сетка 2×2: картинка слева, текст справа — иначе карточки сплющены
     small = n > 3 or cols < n
     used: list[str] = []
     cards = ""
     for i, it in enumerate(items):
         vis = str(it.get("visual") or "").strip().lower()
         if vis not in _VISUALS or vis in used:
-            vis = next((v for v in _VISUALS if v not in used), _VISUALS[i % len(_VISUALS)])
+            vis = _pick_visual(_s(it.get("title")) or str(i), used)
+            it["visual"] = vis  # запоминаем: правка заголовка не меняет картинку
         used.append(vis)
         if not _s(it.get("key")):
             it["key"] = _new_media_key()  # визуал можно заменить своей картинкой — привязка к карточке
         mid = f"{c.sid}-v-{_s(it.get('key'))}"
         src = c.media.get(mid, "")
+        om = _OBJECT_SRC_RE.match(src)
+        if om and om.group(1) in _VISUALS:  # выбран объект из библиотеки — это не фото, а смена объекта
+            vis = it["visual"] = om.group(1)
+            used[-1] = vis
+            src = ""
         if src:
             vis_html = f'<img class="media-img" alt="" src="{escape(src)}"/>'
         else:
-            vis_html = f'<div class="a3-{vis}">{"<i></i><i></i><i></i>" if vis == "cube" else ""}</div>'
-        a3_cls = "a3" + (" is-small" if small else "") + (" a3-photo" if src else "")
+            vis_html = _visual_html(vis)
+        a3_cls = "a3" + (" is-side" if side else " is-small" if small else "") + (" a3-photo" if src else "")
+        pad = "20px 24px 20px 22px" if side else "16px 20px 18px" if small else "20px 24px 24px"
         cards += (
-            f'<div class="card" style="padding:0;overflow:hidden;display:flex;flex-direction:column" {c.item_attrs("items", i)}>'
+            f'<div class="card" style="padding:0;overflow:hidden;display:flex;flex-direction:{"row" if side else "column"}" {c.item_attrs("items", i)}>'
             f'<div class="{a3_cls}" data-media="{mid}" data-leo-id="{mid}" data-a3="{vis}"{media_meta_attrs(c.media, mid) if src else ""}>{vis_html}</div>'
-            f'<div style="padding:{"16px 20px 18px" if small else "20px 24px 24px"}">'
+            f'<div style="padding:{pad}{";display:flex;flex-direction:column;justify-content:center;min-width:0" if side else ""}">'
             f'{c.t(f"items.{i}.title", "p", "h-card clamp2", "font-size:20px" if small else "", force=True)}'
             f'{c.t(f"items.{i}.text", "p", "body clamp4", "font-size:16px" if small else "font-size:17px", force=True)}</div></div>'
         )
@@ -793,7 +843,7 @@ def _r_cards(c: Ctx) -> tuple[str, str]:
 
 _reg(Variant(
     "content.cards", "content", "Карточки с 3D-визуалом",
-    "eyebrow?, title, items: [{title: str≤40, text: str≤140, visual?: torus|cube|orb|prism|rings}] 1–6",
+    "eyebrow?, title, items: [{title: str≤40, text: str≤140, visual?: " + "|".join(_VISUALS) + " — 3D-объект по смыслу пункта, без повторов}] 1–6",
     _r_cards,
     lambda s: _need(len(_dicts(s.get("items"))) >= 1, "нет пунктов"),
     prefer=lambda s: len(_dicts(s.get("items"))) >= 1,

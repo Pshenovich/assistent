@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261026-md-composer";
+  var WEBAPP_BUILD = "20261026-card-objects";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -29032,7 +29032,21 @@
     ],
   };
 
-  function canvasAbstractUrl(file) {
+  // 3D-объекты карточек «Карточки с 3D-визуалом» (scripts/gen_card_objects.py, webapp/canvas-kit/objects).
+  // По умолчанию подставляет шаблон; здесь — замена на другой объект.
+  var CANVAS_CARD_OBJECTS = [
+    ["orb", "Шар с орбитами"], ["rings", "Стеклянные диски"], ["prism", "Призма"], ["cube", "Куб"],
+    ["torus", "Тор"], ["steps", "Столбики роста"], ["shield", "Щит"], ["funnel", "Воронка"],
+    ["wave", "Волна"], ["nodes", "Сеть узлов"], ["target", "Мишень"], ["cluster", "Кластер кубов"],
+    ["hourglass", "Песочные часы"], ["spiral", "Спираль"], ["bubbles", "Диалог"], ["arch", "Арка"],
+    ["bolt", "Молния"], ["gear", "Шестерёнки"], ["pie", "Диаграмма"], ["coins", "Монеты"],
+    ["layers", "Слои"], ["puzzle", "Пазл"], ["compass", "Компас"], ["bulb", "Лампочка"]
+  ].map(function (o) {
+    return { file: o[0] + ".jpg", thumb: o[0] + "-thumb.jpg", name: o[1], dir: "objects" };
+  });
+
+  function canvasAbstractUrl(file, dir) {
+    if (dir) return "/webapp/canvas-kit/" + dir + "/" + file + "?v=" + encodeURIComponent(WEBAPP_BUILD);
     return "/webapp/canvas-kit/abstracts/" + file + "?v=" + encodeURIComponent(WEBAPP_BUILD);
   }
 
@@ -29052,8 +29066,10 @@
     var box = document.getElementById("canvas-image-lib");
     var grid = document.getElementById("canvas-image-lib-grid");
     if (!box || !grid) return;
-    var list = req.isDecor ? CANVAS_ABSTRACTS[String(req.theme || "analytic")] || [] : [];
+    var list = req.isDecor ? CANVAS_ABSTRACTS[String(req.theme || "analytic")] || [] : req.isVisual ? CANVAS_CARD_OBJECTS : [];
     box.classList.toggle("hidden", !list.length);
+    var label = box.querySelector(".canvas-image-label");
+    if (label) label.textContent = req.isVisual ? "Готовые 3D-объекты" : "Готовые абстракции";
     grid.innerHTML = "";
     list.forEach(function (a) {
       var b = document.createElement("button");
@@ -29064,18 +29080,19 @@
       var img = document.createElement("img");
       img.alt = "";
       img.loading = "lazy";
-      img.src = canvasAbstractUrl(a.thumb || a.file);
+      img.src = canvasAbstractUrl(a.thumb || a.file, a.dir);
       b.appendChild(img);
       b.addEventListener("click", async function () {
         var cur = canvasImageReq;
         if (!cur || b.getAttribute("aria-busy") === "true") return;
         b.setAttribute("aria-busy", "true");
         try {
-          var dataUrl = await urlToDataUrl(canvasAbstractUrl(a.file));
+          // 3D-объект — путём к файлу: сервер узнаёт его и рисует как объект карточки (data URL при сохранении).
+          var dataUrl = a.dir ? "/webapp/canvas-kit/" + a.dir + "/" + a.file : await urlToDataUrl(canvasAbstractUrl(a.file));
           closeCanvasImageSheet();
           // Без описания — помечается как «своя»: «Перерисовать картинки» её не трогает.
           if (cur.req.applyImg) cur.req.applyImg(dataUrl, "");
-          showNoteToast("Абстракция поставлена");
+          showNoteToast(a.dir ? "Объект поставлен" : "Абстракция поставлена");
         } catch (e) {
           showNoteToast((e && e.message) || "Не удалось поставить картинку");
         } finally {
