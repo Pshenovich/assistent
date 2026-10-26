@@ -72,3 +72,38 @@ def test_refine_risk_card_returns_registry_items(client, monkeypatch):
     assert act["kind"] == "focus_item"
     assert [f["key"] for f in act.get("focus") or []] == ["sumtask:9:a"]
     fi._CONN = None
+
+
+def test_items_for_stack_summary_card(client, monkeypatch):
+    """«Разобрать»: пункты карточки — сразу из реестра, без карточки в чате."""
+    from assistant.services import focus_items as fi
+
+    c, _ = client
+    monkeypatch.setattr(fi, "_owner_names", lambda uid: ["Вова"])
+    monkeypatch.setattr(fi, "sync_source", lambda *a, **k: None)
+    fi._CONN = None
+    card = {"key": "sumtasks:7", "type": "summary_tasks", "title": "2 задачи со встречи", "source": "транскрипция",
+            "note": {"id": 7, "kind": "transcription", "title": "Встреча 7"},
+            "items": [{"id": "sumtask:7:a", "text": "Спикер 2 — Обновить сайт — 2026-10-23"},
+                      {"id": "sumtask:7:b", "text": "Вова — Отправить смету"}]}
+    monkeypatch.setattr(usage_server, "_focus_card_for", lambda uid, key: card if key == card["key"] else None)
+    recorded = []
+    monkeypatch.setattr(gct, "record_action", lambda *a, **k: recorded.append(a) or "x")
+    r = c.post("/api/miniapp/proactive/items", json={"key": card["key"]}, headers=_headers(UID))
+    assert r.status_code == 200, r.text
+    items = r.json()["items"]
+    assert [i["key"] for i in items] == ["sumtask:7:a", "sumtask:7:b"]
+    assert all(i["status"] == "new" for i in items) and items[0]["text"]
+    assert not recorded  # в отличие от «Уточнить», в чат ничего не пишем
+    # пункт разобран в стопке — тот же реестр, что у карточек чата
+    r = c.post("/api/miniapp/proactive/item", json={"key": "sumtask:7:b", "op": "dismiss", "reason": "duplicate"}, headers=_headers(UID))
+    assert r.status_code == 200 and r.json()["item"]["reason"] == "duplicate"
+    items = c.post("/api/miniapp/proactive/items", json={"key": card["key"]}, headers=_headers(UID)).json()["items"]
+    assert [i["status"] for i in items] == ["new", "dismissed"]
+    fi._CONN = None
+
+
+def test_items_for_stack_unknown_card_404(client):
+    c, _ = client
+    r = c.post("/api/miniapp/proactive/items", json={"key": "nope"}, headers=_headers(UID))
+    assert r.status_code == 404

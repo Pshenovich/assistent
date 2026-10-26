@@ -10326,6 +10326,32 @@ async def miniapp_proactive_refine(
     return {"ok": True, **(await run_in_threadpool(_run))}
 
 
+@miniapp_router.post("/proactive/items")
+async def miniapp_proactive_items(
+    body: _MiniappFocusRefineBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """«Разобрать» на карточке Фокуса: пункты карточки для разбора стопкой (без записи в чат)."""
+    from assistant.services import focus_items
+
+    uid = int(principal.telegram_user_id)
+    key = str(body.key or "").strip()
+
+    def _run() -> list[dict[str, Any]]:
+        card = _focus_card_for(uid, key)
+        if card and card.get("items"):
+            keys = _focus_remember(uid, card)
+        elif card and card.get("commitment_keys"):
+            keys = [str(k) for k in card["commitment_keys"]]
+        else:
+            raise HTTPException(status_code=404, detail="Подсказка уже неактуальна — обновите Фокус")
+        rows = [focus_items.get(uid, k) for k in keys]
+        return [focus_items.public(r) for r in rows if r]
+
+    items = await run_in_threadpool(_run)
+    return {"ok": True, "items": items}
+
+
 @miniapp_router.post("/proactive/item")
 async def miniapp_proactive_item(
     body: _MiniappFocusItemBody,

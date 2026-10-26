@@ -17170,8 +17170,11 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
   .focus-arrow { display: none; }
 }
 /* Фокус: карточка разбора пункта в чате ассистента */
-.focus-chat { display: grid; gap: 8px; margin-top: 8px; max-width: 460px; }
+/* minmax(0, 1fr) + min-width: 0 — длинная строка статуса («Выполнено · отмечено в источнике · Имя») не распирает колонку и все карточки шире экрана. */
+.focus-chat { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 8px; max-width: 460px; }
+.focus-chat > * { min-width: 0; }
 .focus-chat .focus-card { width: auto; min-height: 0; }
+.focus-chat-card.is-closed .focus-card-kind-label { white-space: normal; overflow-wrap: anywhere; }
 .focus-card.no-foot { padding-bottom: 12px; }
 .focus-card-title.is-muted { font-weight: 500; color: var(--text-secondary); text-decoration: line-through; text-decoration-color: var(--text-tertiary); }
 .focus-card-note { font-size: 0.78rem; color: var(--text-secondary); }
@@ -22912,7 +22915,8 @@ body.tinbox-open { overflow: hidden; }
 .tinbox-badge { position: absolute; top: 14px; padding: 3px 10px; border-radius: 8px; border: 2px solid; font-weight: 700; font-size: 0.85rem; opacity: 0; pointer-events: none; }
 .tinbox-badge.is-left { right: 14px; color: #fbbf24; border-color: #fbbf24; transform: rotate(8deg); }
 .tinbox-badge.is-right { left: 14px; color: var(--accent); border-color: var(--accent); transform: rotate(-8deg); }
-.tinbox-acts { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: auto; padding-top: 16px; }
+/* Кнопки стопки — всегда на экране, как таббар: карточка с формой прокручивается под ними. */
+.tinbox-acts { position: sticky; bottom: calc(-1 * max(16px, env(safe-area-inset-bottom))); z-index: 3; display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: auto; margin-bottom: calc(-1 * max(16px, env(safe-area-inset-bottom))); padding: 12px 0 max(16px, env(safe-area-inset-bottom)); background: var(--bg, #111); }
 .tinbox-act { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 0; border: none; background: transparent; color: var(--text-secondary); font: inherit; font-size: 0.78rem; font-weight: 500; cursor: pointer; }
 .tinbox-act-ico { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--border-strong, var(--border)); display: inline-flex; align-items: center; justify-content: center; color: var(--text); transition: background 0.15s ease, border-color 0.15s ease; }
 .tinbox-act-ico svg { width: 20px; height: 20px; }
@@ -22938,6 +22942,71 @@ body.tinbox-open { overflow: hidden; }
 .tinbox-form-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .tinbox-btn { padding: 9px 14px; border-radius: 10px; border: 1px solid var(--border-strong, var(--border)); background: transparent; color: var(--text); font: inherit; font-size: 0.88rem; font-weight: 600; cursor: pointer; }
 .tinbox-btn.is-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
+/* «Разобрать» в Фокусе: стопка пунктов, формы чата внутри карточки — крупно, в стиле разбора входящих */
+.fstack-view { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 7px 11px; border: 1px solid var(--border-strong, var(--border)); border-radius: 10px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.fstack-view:hover { color: var(--text); background: var(--surface-elevated); }
+.fstack-view svg { width: 15px; height: 15px; }
+.fstack-card .tinbox-who .focus-card-ico { width: 28px; height: 28px; border-radius: 8px; }
+.fstack-card.is-open { overflow: visible; }
+.tinbox-src.is-static { cursor: default; }
+.tinbox-src.is-static:hover { background: var(--surface-muted); }
+.fstack-form > * { margin: 0; }
+.fstack-form .focus-chat-edit, .fstack-form .focus-chat-link { display: flex; flex-direction: column; gap: 8px; }
+.fstack-form .focus-chat-fields { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.fstack-form .focus-chat-field-label { font-size: 0.78rem; color: var(--text-secondary); margin-top: 6px; }
+.fstack-form .focus-chat-fields input, .fstack-form .focus-chat-fields select, .fstack-form .focus-chat-search, .fstack-form .focus-chat-date input,
+.fstack-form .focus-chat-fields textarea { height: 44px; padding: 0 12px; border-radius: 10px; font-size: 0.95rem; background: var(--surface-elevated); }
+.fstack-form .focus-chat-fields textarea { height: auto; min-height: 88px; padding: 10px 12px; }
+.fstack-form .focus-chat-acts { flex-direction: row-reverse; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.fstack-form .fstack-task-acts { flex-direction: row; }
+.fstack-form input[type="date"], .fstack-form input[type="time"], .fstack-when input { -webkit-appearance: none; appearance: none; min-width: 0; max-width: 100%; box-sizing: border-box; }
+.fstack-form input::-webkit-date-and-time-value, .fstack-when input::-webkit-date-and-time-value { text-align: left; }
+.fstack-title-edit { display: block; width: calc(100% + 16px); box-sizing: border-box; margin: 0 -8px 8px; padding: 6px 8px; border: none; border-radius: 10px; background: transparent; box-shadow: inset 0 0 0 1px var(--border); color: var(--text); font: inherit; font-size: 1.2rem; font-weight: 600; line-height: 1.3; resize: none; overflow: hidden; user-select: text; -webkit-user-select: text; }
+.fstack-title-edit:focus { outline: none; box-shadow: inset 0 0 0 1.5px var(--accent); }
+.fstack-when { display: flex; gap: 8px; margin: 0 0 4px; }
+.fstack-when input { flex: 1.4; height: 40px; padding: 0 10px; border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 10px; background: rgba(245, 158, 11, 0.14); color: #fbbf24; font: inherit; font-size: 0.92rem; color-scheme: dark; }
+.fstack-when input[type="time"] { flex: 1; }
+.fstack-when input:focus { outline: none; border-color: #fbbf24; }
+.fstack-assignee { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 44px; padding: 4px 6px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-elevated); cursor: text; }
+.fstack-assignee:focus-within { border-color: var(--accent); }
+.fstack-assignee .meeting-attendee-chips { display: flex; flex: none; margin: 0; }
+.fstack-assignee .meeting-attendee-add { position: relative; flex: 1; min-width: 90px; margin: 0; }
+.fstack-form .fstack-assignee input.field-input { width: 100%; height: 34px; padding: 0 6px; border: none; border-radius: 0; background: transparent; box-shadow: none; font-size: 0.95rem; }
+.fstack-form .focus-chat-btn { padding: 10px 16px; border-radius: 10px; font-size: 0.9rem; border: 1px solid var(--border-strong, var(--border)); background: transparent; }
+.fstack-form .focus-chat-btn.is-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
+.fstack-form .focus-chat-btn.is-ghost { color: var(--text); }
+.fstack-form .focus-chat-menu { padding: 0; border: none; background: transparent; gap: 2px; }
+.fstack-form .focus-chat-menu-head { padding: 10px 4px 4px; font-size: 0.78rem; }
+.fstack-form .focus-chat-menu-item, .fstack-form .focus-chat-result { padding: 12px; border: none; border-radius: 10px; font-size: 0.95rem; background: var(--surface-muted); }
+.fstack-form .focus-chat-menu-item:hover, .fstack-form .focus-chat-result:hover { background: var(--surface-elevated); }
+.fstack-form .focus-chat-results { display: flex; flex-direction: column; gap: 4px; }
+.fstack-form .focus-chat-hint { font-size: 0.85rem; }
+.fstack-form .focus-chat-date { display: flex; flex-wrap: wrap; gap: 8px; }
+.fstack-form .focus-chat-date input { flex: 1 1 100%; }
+.fstack-list { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.fstack-list-sub { margin: 0; font-size: 0.88rem; color: var(--text-secondary); }
+.fstack-rows { display: flex; flex-direction: column; gap: 8px; }
+.fstack-row { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+.fstack-row-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.fstack-row-title { font-size: 1rem; font-weight: 600; line-height: 1.35; }
+.fstack-row-meta { font-size: 0.8rem; color: var(--text-secondary); }
+.fstack-row.is-closed .fstack-row-title { color: var(--text-tertiary); font-weight: 500; text-decoration: line-through; }
+.fstack-row-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.fstack-pill { padding: 8px 12px; border: 1px solid var(--border-strong, var(--border)); border-radius: 10px; background: transparent; color: var(--text); font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+.fstack-pill:hover { background: var(--surface-elevated); }
+.fstack-pill.is-done { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
+.fstack-pill.is-ghost { color: var(--text-secondary); }
+.fstack-pill:disabled { opacity: 0.5; cursor: default; }
+.fstack-row-status { margin-right: auto; font-size: 0.85rem; font-weight: 600; color: var(--emerald-text); }
+.fstack-row-status.is-dismissed, .fstack-row-status.is-retyped { color: var(--text-tertiary); }
+.fstack-row-status.is-snoozed { color: #fbbf24; }
+.fstack-list-foot { position: sticky; bottom: calc(-1 * max(16px, env(safe-area-inset-bottom))); display: flex; justify-content: flex-end; gap: 8px; margin-bottom: calc(-1 * max(16px, env(safe-area-inset-bottom))); padding: 10px 0 max(16px, env(safe-area-inset-bottom)); background: var(--bg, #111); }
+@media (min-width: 960px) {
+  .fstack-row { flex-direction: row; align-items: center; }
+  .fstack-row-text { flex: 1; }
+  .fstack-row-acts { flex: none; justify-content: flex-end; }
+  .fstack-list-foot { bottom: -20px; margin-bottom: -20px; padding-bottom: 20px; }
+}
 .tinbox-finish { margin: auto; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 24px 0; }
 .tinbox-finish-ico { width: 56px; height: 56px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--emerald-muted); color: var(--emerald-text); margin-bottom: 6px; }
 .tinbox-finish-ico svg { width: 26px; height: 26px; }
@@ -22951,7 +23020,7 @@ body.tinbox-open { overflow: hidden; }
 @media (min-width: 960px) {
   .tinbox { justify-content: center; background: rgba(0, 0, 0, 0.55); padding: 32px; }
   .tinbox-panel { flex: none; max-width: 600px; max-height: calc(100vh - 64px); overflow-y: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 16px; padding: 14px 20px 20px; box-shadow: var(--shadow-md, 0 12px 40px rgba(0, 0, 0, 0.4)); box-sizing: border-box; }
-  .tinbox-acts { margin-top: 18px; }
+  .tinbox-acts { margin-top: 18px; bottom: -20px; margin-bottom: -20px; padding-bottom: 20px; }
   .tinbox-finish { margin: 0; }
 }
 
