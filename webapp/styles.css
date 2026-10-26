@@ -22862,21 +22862,9 @@ details.note-toggle > summary::after { content: ""; display: inline-block; width
 details.note-toggle[open] > summary::after { transform: rotate(180deg); }
 
 /* ——— Входящие поручения: карточка в Фокусе и разбор стопкой ——— */
-.focus-inbox-card { justify-content: space-between; gap: 14px; padding: 14px; text-align: left; font: inherit; color: var(--text); cursor: pointer; border-color: var(--accent-border); }
-.focus-inbox-card.is-wide { flex-direction: row; align-items: center; }
-.focus-inbox-row { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; }
-.focus-inbox-card:not(.is-wide) .focus-inbox-row { flex: none; }
-.focus-inbox-card:not(.is-wide) .focus-card-btn { align-self: flex-start; margin-top: auto; }
-.focus-inbox-src { white-space: normal; }
-.focus-inbox-card:hover { background: var(--surface-elevated); }
-.focus-inbox-card .focus-card-ico { width: 40px; height: 40px; border-radius: 11px; }
-.focus-inbox-card .focus-card-ico svg { width: 20px; height: 20px; }
-.focus-inbox-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.focus-inbox-src { font-size: 0.78rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; }
-.focus-inbox-card .focus-card-btn { flex: none; }
 body.tinbox-open { overflow: hidden; }
 .tinbox { position: fixed; inset: 0; z-index: 300; background: var(--bg, #111); color: var(--text); display: flex; flex-direction: column; align-items: center; padding: max(12px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); box-sizing: border-box; overflow-y: auto; }
-.tinbox > * { width: 100%; max-width: 560px; }
+.tinbox-panel { width: 100%; max-width: 560px; flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .tinbox-loading { margin: auto; text-align: center; color: var(--text-secondary); }
 .tinbox-top { display: flex; align-items: center; gap: 12px; min-height: 40px; }
 .tinbox-count { font-size: 0.85rem; color: var(--text-secondary); white-space: nowrap; }
@@ -22916,14 +22904,20 @@ body.tinbox-open { overflow: hidden; }
 .tinbox-badge { position: absolute; top: 14px; padding: 3px 10px; border-radius: 8px; border: 2px solid; font-weight: 700; font-size: 0.85rem; opacity: 0; pointer-events: none; }
 .tinbox-badge.is-left { right: 14px; color: #fbbf24; border-color: #fbbf24; transform: rotate(8deg); }
 .tinbox-badge.is-right { left: 14px; color: var(--accent); border-color: var(--accent); transform: rotate(-8deg); }
-.tinbox-acts { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 16px; }
-.tinbox-act { display: inline-flex; align-items: center; gap: 6px; padding: 9px 12px; border-radius: 11px; border: 1px solid var(--border-strong, var(--border)); background: transparent; color: var(--text); font: inherit; font-size: 0.88rem; font-weight: 600; cursor: pointer; }
-.tinbox-act:hover { background: var(--surface-elevated); }
-.tinbox-act.is-on { background: var(--accent-subtle); border-color: var(--accent-border); color: var(--accent); }
-.tinbox-act.is-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
-.tinbox-act-ico { display: inline-flex; }
-.tinbox-act-ico svg { width: 16px; height: 16px; }
-.tinbox-kbd { font: inherit; font-size: 0.7rem; font-weight: 500; padding: 0 5px; border-radius: 4px; border: 1px solid currentColor; opacity: 0.5; }
+.tinbox-acts { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: auto; padding-top: 16px; }
+.tinbox-act { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 0; border: none; background: transparent; color: var(--text-secondary); font: inherit; font-size: 0.78rem; font-weight: 500; cursor: pointer; }
+.tinbox-act-ico { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--border-strong, var(--border)); display: inline-flex; align-items: center; justify-content: center; color: var(--text); transition: background 0.15s ease, border-color 0.15s ease; }
+.tinbox-act-ico svg { width: 20px; height: 20px; }
+.tinbox-act:hover .tinbox-act-ico { background: var(--surface-elevated); }
+.tinbox-act.is-primary { color: var(--accent); }
+.tinbox-act.is-primary .tinbox-act-ico { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
+.tinbox-act.is-primary:hover .tinbox-act-ico { background: var(--accent-pressed, var(--accent)); }
+.tinbox-act.is-on .tinbox-act-ico { background: var(--accent-subtle); border-color: var(--accent-border); color: var(--accent); }
+.tinbox-act-label { text-align: center; line-height: 1.2; }
+/* Подсказка с клавишей — при наведении (только где есть мышь). */
+@media (hover: hover) {
+  .tinbox-act[data-tip]:hover::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); padding: 5px 9px; border-radius: 8px; background: var(--surface-elevated, #2a2a2e); border: 1px solid var(--border); color: var(--text); font-size: 0.75rem; font-weight: 500; white-space: nowrap; pointer-events: none; z-index: 2; }
+}
 .tinbox-form { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; user-select: text; -webkit-user-select: text; }
 .tinbox-label { font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px; }
 .tinbox-form input, .tinbox-form textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.92rem; color: var(--text); background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; resize: vertical; }
@@ -22940,20 +22934,15 @@ body.tinbox-open { overflow: hidden; }
 .tinbox-finish-ico { width: 56px; height: 56px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--emerald-muted); color: var(--emerald-text); margin-bottom: 6px; }
 .tinbox-finish-ico svg { width: 26px; height: 26px; }
 .tinbox-finish .tinbox-btn { margin-top: 10px; min-width: 140px; }
-/* Телефон: пять круглых кнопок с подписью снизу; клавиши не показываем. */
-@media (hover: none), (max-width: 560px) {
-  .tinbox-kbd { display: none; }
-  .tinbox-acts { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
-  .tinbox-act { flex-direction: column; gap: 4px; padding: 0; border: none; background: transparent; font-size: 0.72rem; font-weight: 500; color: var(--text-secondary); }
-  .tinbox-act:hover { background: transparent; }
-  .tinbox-act-ico { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--border-strong, var(--border)); align-items: center; justify-content: center; color: var(--text); }
-  .tinbox-act-ico svg { width: 20px; height: 20px; }
-  .tinbox-act.is-primary { background: transparent; color: var(--accent); }
-  .tinbox-act.is-primary .tinbox-act-ico { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
-  .tinbox-act.is-on .tinbox-act-ico { background: var(--accent-subtle); border-color: var(--accent-border); color: var(--accent); }
-  .tinbox-act-label { text-align: center; line-height: 1.2; }
-  .tinbox-acts { order: 3; margin-top: auto; padding-top: 16px; }
+/* Телефон: срок у «Беру» не влезает под кругом; тост «Вернуть» — над кнопками. */
+@media (max-width: 959px) {
   .tinbox-act-sub { display: none; }
-  /* Тост «Вернуть» — над кнопками, а не поверх них. */
   body.tinbox-open .note-toast { bottom: calc(112px + env(safe-area-inset-bottom, 0px)); }
+}
+/* Компьютер: разбор — окном по центру, как открытая поставленная задача. */
+@media (min-width: 960px) {
+  .tinbox { justify-content: center; background: rgba(0, 0, 0, 0.55); padding: 32px; }
+  .tinbox-panel { flex: none; max-width: 600px; max-height: calc(100vh - 64px); overflow-y: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 16px; padding: 14px 20px 20px; box-shadow: var(--shadow-md, 0 12px 40px rgba(0, 0, 0, 0.4)); box-sizing: border-box; }
+  .tinbox-acts { margin-top: 18px; }
+  .tinbox-finish { margin: 0; }
 }

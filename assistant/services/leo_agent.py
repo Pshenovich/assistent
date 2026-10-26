@@ -108,8 +108,7 @@ async def notify_invitees(
                 organizer_uid=uid, organizer_user=organizer, result=created
             )
         for ev in gcal_ctx.updated_events:
-            prev = {str(e).lower() for e in (ev.get("previous_attendee_emails") or [])}
-            added = [e for e in (ev.get("attendee_emails") or []) if str(e).lower() not in prev]
+            added = inv.added_invitees(ev)
             if added:
                 await inv.notify_invitees_for_miniapp(
                     organizer_uid=uid, organizer_user=organizer, result=ev, only_emails=added

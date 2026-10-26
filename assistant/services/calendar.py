@@ -181,6 +181,18 @@ def event_attendee_emails(ev: dict[str, Any] | None) -> list[str]:
     return out
 
 
+def _all_attendee_emails(ev: dict[str, Any] | None) -> list[str]:
+    out: list[str] = []
+    org = str(((ev or {}).get("organizer") or {}).get("email") or "").strip().lower()
+    if org:
+        out.append(org)
+    for row in (ev or {}).get("attendees") or []:
+        em = str((row or {}).get("email") or "").strip().lower() if isinstance(row, dict) else ""
+        if em and em not in out:
+            out.append(em)
+    return out
+
+
 def format_event_when(start: datetime, end: datetime, user_id: int) -> str:
     tz = _tz_for(user_id)
     s = start.astimezone(tz) if start.tzinfo else start.replace(tzinfo=tz)
@@ -950,6 +962,8 @@ def update_event(
         "end": en,
         "attendee_emails": attendee_emails,
         "previous_attendee_emails": prev_emails,
+        # Все, кто уже был на встрече (с организатором и самим пользователем), — для «кого пригласить заново».
+        "previous_all_emails": _all_attendee_emails(ev),
     }
 
 

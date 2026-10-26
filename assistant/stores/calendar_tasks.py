@@ -1112,6 +1112,17 @@ def update_task(
                 _conn().execute(
                     "UPDATE calendar_tasks SET assignee_triage = 'inbox' WHERE id = ?", (int(existing["id"]),)
                 )
+        elif (
+            assignee_user_id not in (None, "")
+            and existing.get("assignee_triage") == "declined"
+            and uid == str(existing["owner_user_id"])
+        ):
+            # Исполнитель сказал «не моё», а постановщик снова выбрал его — задача снова у него во входящих.
+            _conn().execute(
+                "UPDATE calendar_tasks SET assignee_triage = 'inbox', assignee_status_note = '',"
+                " assignee_status_at = '' WHERE id = ?",
+                (int(existing["id"]),),
+            )
         _conn().execute(
             """
             UPDATE calendar_tasks SET
@@ -1201,7 +1212,7 @@ def _assignee_task(viewer_id: int | str, task_id: int | str) -> Optional[dict[st
 # ——— Лента поручения: события и переписка постановщика с исполнителем ———
 EVENT_KINDS = (
     "created", "seen", "in_progress", "message", "nudge", "done", "returned", "accepted", "cancelled",
-    "taken", "snoozed", "declined",
+    "taken", "snoozed", "declined", "insisted",
 )
 MAX_MESSAGE_LEN = 2000
 
@@ -1537,6 +1548,17 @@ def mark_triaged(task: dict[str, Any] | None) -> None:
     """Исполнитель работает с поручением в обход разбора (взял в работу, сдал) — значит, взял."""
     if task and str(task.get("assignee_triage") or "") in ("inbox", "snoozed"):
         _set_columns(int(task["id"]), {"assignee_triage": "accepted", "assignee_snoozed_until": ""})
+
+
+def insist_task(owner_id: int | str, task_id: int | str, comment: str = "", *, actor_name: str = "") -> Optional[dict[str, Any]]:
+    """Исполнитель нажал «Не моё», постановщик настаивает — задача снова у него во входящих."""
+    task = _owner_task(owner_id, task_id)
+    if not task or str(task.get("assignee_triage") or "") != "declined":
+        return None
+    add_event(task["id"], "insisted", actor_user_id=owner_id, actor_name=actor_name, text=_clip(comment, MAX_MESSAGE_LEN))
+    return _set_columns(int(task["id"]), {
+        "assignee_triage": "inbox", "assignee_snoozed_until": "", "assignee_status_note": "", "assignee_status_at": "",
+    })
 
 
 def list_inbox_user_ids() -> list[int]:

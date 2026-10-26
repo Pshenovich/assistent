@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261026-task-inbox";
+  var WEBAPP_BUILD = "20261026-inbox-ui";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -2083,6 +2083,34 @@
     }
     el.classList.add("has-entry-color");
     el.style.setProperty("--entry-color", color);
+  }
+
+  var eventModalInitialPrint = "";
+
+  // Поля встречи из формы — то, что уходит в PUT/POST /calendar/events (без цвета: он личный).
+  function eventFormBody() {
+    var calId = document.getElementById("modal-calendar-id").value || "primary";
+    var linkEl = document.getElementById("m-ev-link");
+    var meetLink = linkEl ? normalizeMeetLink(linkEl.value) : "";
+    var origLoc = linkEl ? String(linkEl.dataset.origLocation || "").trim() : "";
+    var locationOut = meetLink || "";
+    if (!locationOut && origLoc && !/^https?:\/\//i.test(origLoc)) {
+      // Не затирать обычный адрес (не URL), если поле ссылки пустое.
+      locationOut = origLoc;
+    }
+    var descEl = document.getElementById("m-ev-desc");
+    var body = {
+      calendar_id: calId,
+      title: String((document.getElementById("m-ev-sum") || {}).value || "").trim(),
+      start: datetimeLocalToIso((document.getElementById("m-ev-start") || {}).value),
+      end: datetimeLocalToIso((document.getElementById("m-ev-end") || {}).value),
+      description: descEl ? descEl.value : "",
+      location: locationOut,
+      attendees: meetingAttendeesApi ? meetingAttendeesApi.getEmails() : [],
+    };
+    var recurrence = eventRepeatApi ? eventRepeatApi.getRecurrence() : null;
+    if (recurrence) body.recurrence = recurrence;
+    return body;
   }
 
   async function persistEntryDisplayColor(ev, color) {
@@ -18173,6 +18201,14 @@
       document.querySelector(".meeting-attendees-field"),
       ev.attendees || []
     );
+    // Снимок формы: если при «Сохранить» поменялся только цвет, встречу в Google не трогаем
+    // (иначе участникам уходят письма и приглашения из-за личного цвета).
+    eventModalInitialPrint = "";
+    window.setTimeout(function () {
+      try {
+        eventModalInitialPrint = JSON.stringify(eventFormBody());
+      } catch (_) {}
+    }, 0);
     function makeLinkActionBtn(label) {
       var btn = document.createElement("button");
       btn.type = "button";
@@ -18671,22 +18707,8 @@
         return;
       }
       if (linkEl && meetLink) linkEl.value = meetLink;
-      var origLoc = linkEl ? String(linkEl.dataset.origLocation || "").trim() : "";
-      var locationOut = meetLink;
-      if (!locationOut && origLoc && !/^https?:\/\//i.test(origLoc)) {
-        // Не затирать обычный адрес (не URL), если поле ссылки пустое.
-        locationOut = origLoc;
-      }
-      const body = {
-        calendar_id: calId,
-        title: title,
-        start: startIso,
-        end: endIso,
-        description: descEl ? descEl.value : "",
-        location: locationOut,
-        attendees: meetingAttendeesApi ? meetingAttendeesApi.getEmails() : [],
-      };
-      var recurrence = eventRepeatApi ? eventRepeatApi.getRecurrence() : null;
+      const body = eventFormBody();
+      var recurrence = body.recurrence || null;
       if (recurrence && recurrence.length) {
         var untilM = /UNTIL=(\d{8})/.exec(recurrence[0]);
         if (untilM && untilM[1] < String(startIso || "").slice(0, 10).replace(/-/g, "")) {
@@ -18694,12 +18716,15 @@
           return;
         }
       }
-      if (recurrence) body.recurrence = recurrence;
+      // Поменяли только цвет — встречу не пересохраняем (цвет личный, участникам о нём знать незачем).
+      var onlyColor = !!id && !!eventModalInitialPrint && JSON.stringify(body) === eventModalInitialPrint;
       try {
-        var savedEv = await apiFetch(id ? "/calendar/events/" + encodeURIComponent(id) : "/calendar/events", {
-          method: id ? "PUT" : "POST",
-          body: JSON.stringify(body),
-        });
+        var savedEv = onlyColor
+          ? null
+          : await apiFetch(id ? "/calendar/events/" + encodeURIComponent(id) : "/calendar/events", {
+              method: id ? "PUT" : "POST",
+              body: JSON.stringify(body),
+            });
         var savedEvent = savedEv && savedEv.event;
         var colorTarget = {
           id: (savedEvent && savedEvent.id) || id,
@@ -20429,12 +20454,18 @@
     var host = tinboxEl("div", "tinbox");
     host.setAttribute("role", "dialog");
     host.setAttribute("aria-label", "Входящие задачи");
+    var panel = tinboxEl("div", "tinbox-panel");
+    host.appendChild(panel);
+    // Компьютер: окно по центру — клик мимо него закрывает разбор.
+    host.addEventListener("click", function (e) {
+      if (e.target === host) closeTaskInbox();
+    });
     document.body.appendChild(host);
     document.body.classList.add("tinbox-open");
-    tinbox = { host: host, items: [], idx: 0, mode: "", busy: false, last: null, stats: { accept: 0, snooze: 0, done: 0, decline: 0 } };
+    tinbox = { host: host, panel: panel, items: [], idx: 0, mode: "", busy: false, last: null, stats: { accept: 0, snooze: 0, done: 0, decline: 0 } };
     tinbox.onKey = tinboxOnKey;
     document.addEventListener("keydown", tinbox.onKey, true);
-    host.appendChild(tinboxEl("div", "tinbox-loading", "Загружаем задачи…"));
+    panel.appendChild(tinboxEl("div", "tinbox-loading", "Загружаем задачи…"));
     try {
       var res = await apiFetch("/calendar/tasks/inbox", { method: "GET" });
       if (!tinbox) return;
@@ -20465,7 +20496,7 @@
   function renderTaskInbox() {
     var s = tinbox;
     if (!s) return;
-    var host = s.host;
+    var host = s.panel;
     host.innerHTML = "";
     var total = s.items.length;
     var top = tinboxEl("div", "tinbox-top");
@@ -20602,8 +20633,8 @@
       // «Беру на пт»: срок — в подписи на компьютере; на телефоне под кругом только «Беру».
       if (a.id === "accept") label.appendChild(tinboxEl("span", "tinbox-act-sub", tinboxAcceptLabel(task).replace(/^Беру/, "")));
       b.appendChild(label);
-      b.appendChild(tinboxEl("kbd", "tinbox-kbd", a.key));
-      b.title = a.label + " (" + a.key + ")";
+      b.setAttribute("aria-keyshortcuts", a.code.replace(/^Key/, "").replace(/^Arrow/, "Arrow"));
+      b.dataset.tip = a.label + " · клавиша " + a.key;
       b.addEventListener("click", function () {
         tinboxRun(a.id);
       });
@@ -20919,23 +20950,46 @@
 
   // Карточка в Фокусе: «Вам поставили N задач» → разбор.
   function focusInboxCard(it, inPanel) {
-    var card = tinboxEl("button", "focus-card focus-inbox-card" + (inPanel ? " is-wide" : ""));
-    card.type = "button";
-    var row = tinboxEl("span", "focus-inbox-row");
+    // Та же раскладка, что у соседних карточек: тип, заголовок, кнопка, футер-источник.
+    var card = tinboxEl("div", "focus-card focus-inbox-card" + (inPanel ? " is-wide" : ""));
+    var head = tinboxEl("div", "focus-card-head");
     var ico = tinboxEl("span", "focus-card-ico is-blue");
     ico.innerHTML = DISCUSS_ICONS.taskBox;
-    row.appendChild(ico);
-    var main = tinboxEl("span", "focus-inbox-main");
-    main.appendChild(tinboxEl("b", "focus-card-title", it.title || "Входящие задачи"));
-    if (it.source) main.appendChild(tinboxEl("span", "focus-inbox-src", it.source));
-    row.appendChild(main);
-    card.appendChild(row);
-    var go = tinboxEl("span", "focus-card-btn is-primary", "Разобрать");
-    card.appendChild(go);
-    card.addEventListener("click", function (e) {
+    head.appendChild(ico);
+    var kind = tinboxEl("span", "focus-card-kind");
+    kind.appendChild(tinboxEl("span", "focus-card-kind-label", "Входящие задачи"));
+    if (it.snoozed) kind.appendChild(tinboxEl("span", "focus-card-kind-due", "ещё " + it.snoozed + " отложено до завтра"));
+    head.appendChild(kind);
+    card.appendChild(head);
+    card.appendChild(tinboxEl("b", "focus-card-title", it.title || "Входящие задачи"));
+    var acts = tinboxEl("div", "focus-card-acts");
+    var go = tinboxEl("button", "focus-card-btn is-primary", "Разобрать");
+    go.type = "button";
+    go.addEventListener("click", function (e) {
       e.preventDefault();
       openTaskInbox();
     });
+    acts.appendChild(go);
+    card.appendChild(acts);
+    var who = String(it.source || "").split(" · ")[0];
+    if (who) {
+      var f = tinboxEl("button", "focus-card-foot is-link");
+      f.type = "button";
+      var fi = tinboxEl("span", "focus-card-foot-ico");
+      fi.innerHTML = DISCUSS_ICONS.people;
+      f.appendChild(fi);
+      f.appendChild(tinboxEl("span", "focus-card-foot-text", "от: " + who));
+      var chev = tinboxEl("span", "focus-card-foot-chev");
+      chev.innerHTML = DISCUSS_ICONS.right;
+      f.appendChild(chev);
+      f.addEventListener("click", function (e) {
+        e.preventDefault();
+        openTaskInbox();
+      });
+      card.appendChild(f);
+    } else {
+      card.classList.add("no-foot");
+    }
     return card;
   }
 
@@ -22853,6 +22907,20 @@
     }
   }
 
+  // После «Не моё»: постановщик оставляет задачу за тем же человеком — она снова у него во входящих.
+  async function insistPostedTask(task, comment) {
+    try {
+      var r = await postedApi(task.id, "insist", { text: String(comment || "").trim() });
+      if (r && r.task) upsertPostedTask(r.task);
+      postedHaptic();
+      showNoteToast(postedFirstName(postedTaskAssigneeLabel(task)) + ": задача снова во входящих");
+      return r;
+    } catch (err) {
+      showNoteToast((err && err.message) || "Не получилось");
+      return null;
+    }
+  }
+
   async function acceptPostedTask(taskId) {
     try {
       var r = await postedApi(taskId, "accept");
@@ -23261,7 +23329,13 @@
         openPostedCard(task.id, { focus: "reply" });
       });
     } else if (kind === "declined") {
-      act("Переназначить", true, function () {
+      act("Оставить за исполнителем", true, function (b) {
+        b.disabled = true;
+        insistPostedTask(task).then(function () {
+          b.disabled = false;
+        });
+      });
+      act("Переназначить", false, function () {
         openPostedTaskEditor(task);
       });
     } else if (kind === "late") {
@@ -23592,6 +23666,7 @@
     taken: "Исполнитель взял задачу",
     snoozed: "Исполнитель отложил разбор",
     declined: "Исполнитель: «не моё»",
+    insisted: "Постановщик оставил задачу за исполнителем",
   };
 
   function paintPostedCard(state) {
@@ -23746,7 +23821,24 @@
     if (!archived || isOwner) foot.appendChild(renderPostedComposer(state, otherName, draft));
     var bar = document.createElement("div");
     bar.className = "modal-sheet-actions pt-card-actions";
-    if (isOwner) {
+    if (isOwner && !archived && !done && st.triage === "declined") {
+      // Текст в поле обсуждения уходит исполнителю вместе с «Оставить за исполнителем».
+      bar.appendChild(postedActBtn("check", "Оставить за исполнителем", true, async function (b) {
+        var ta = host.querySelector(".pt-composer textarea");
+        b.disabled = true;
+        var r = await insistPostedTask(task, ta ? ta.value : "");
+        b.disabled = false;
+        if (r && r.task) {
+          if (ta) ta.value = "";
+          state.task = Object.assign({}, state.task, r.task);
+          state.events = r.events || state.events;
+          refreshPostedCard(state);
+        }
+      }));
+      bar.appendChild(postedActBtn("people", "Переназначить", false, function () {
+        openPostedTaskEditor(task, state);
+      }));
+    } else if (isOwner) {
       if (archived) {
         bar.appendChild(postedActBtn("undo", "Вернуть в работу", false, function () {
           setPostedCardMode(state, "return");
@@ -23827,6 +23919,7 @@
     check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
     undo: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
     play: '<path d="M7 5v14l11-7z"/>',
+    people: '<path d="M16 20v-1a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1"/><circle cx="9" cy="8" r="3.5"/><path d="M22 20v-1a4 4 0 0 0-3-3.9M16 4.1a4 4 0 0 1 0 7.8"/>',
   };
 
   // Кнопки действий карточки — как внизу окна задачи (плашки с иконкой); главная — зелёная.

@@ -153,3 +153,38 @@ def test_inbox_source_only_when_accessible(client, store, tmp_path, monkeypatch)
     assert by_id[seen["id"]]["source"] == {"id": meeting["id"], "title": "Планёрка продукта", "kind": "transcription"}
     assert "source" not in by_id[hidden["id"]]
     notes_store._CONN = None
+
+
+def test_owner_insists_after_decline(client, store, sent):
+    t = _delegated(store)
+    store.triage_decline(ASSIGNEE, t["id"], "не ко мне")
+    url = f"/api/miniapp/calendar/tasks/{t['id']}/insist"
+    assert client.post(url, json={}, headers=_headers(ASSIGNEE)).status_code == 403
+    r = client.post(url, json={"text": "Это твоя зона, без тебя никак"}, headers=_headers(OWNER))
+    assert r.status_code == 200, r.text
+    row = store.get_task_for_user(ASSIGNEE, t["id"])
+    assert row["assignee_triage"] == "inbox" and row["assignee_status_note"] == ""
+    assert _ids(store.list_inbox(ASSIGNEE)["items"]) == [t["id"]]
+    assert [uid for uid, _ in sent] == [ASSIGNEE]
+    assert "оставил(а) задачу за вами" in sent[0][1] and "твоя зона" in sent[0][1]
+    assert "insisted" in [e["kind"] for e in store.list_events(row)]
+    # Не после «не моё» — настаивать не на чем.
+    assert client.post(url, json={}, headers=_headers(OWNER)).status_code == 403
+
+
+def test_reassign_to_same_person_after_decline(client, store, sent):
+    t = _delegated(store)
+    store.triage_decline(ASSIGNEE, t["id"], "не ко мне")
+    r = client.patch(
+        f"/api/miniapp/calendar/tasks/{t['id']}",
+        json={"assignee_user_id": str(ASSIGNEE), "assignee_name": "Ульяна", "title": "Отчёт"},
+        headers=_headers(OWNER),
+    )
+    assert r.status_code == 200, r.text
+    row = store.get_task_for_user(ASSIGNEE, t["id"])
+    assert row["assignee_triage"] == "inbox"
+    assert [uid for uid, _ in sent] == [ASSIGNEE]
+    # Обычная правка без «не моё» состояние разбора не трогает.
+    store.triage_accept(ASSIGNEE, t["id"])
+    store.update_task(OWNER, t["id"], assignee_user_id=ASSIGNEE, title="Отчёт 2", tz=TZ)
+    assert store.get_task_for_user(ASSIGNEE, t["id"])["assignee_triage"] == "accepted"

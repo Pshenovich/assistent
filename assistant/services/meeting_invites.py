@@ -570,6 +570,31 @@ class _MiniappOrganizer:
         self.last_name = str(u.get("last_name") or "").strip()
 
 
+def added_invitees(result: dict[str, Any] | None) -> list[str]:
+    """Кого звать после правки встречи: только тех, кого на ней раньше не было.
+
+    Сравниваем со всеми прежними участниками, включая организатора и самого правящего
+    (иначе сохранение формы целиком — например, ради цвета — звало организатора заново).
+    Прошедшую встречу не рассылаем вовсе."""
+    r = result or {}
+    end = r.get("end") or r.get("start")
+    if isinstance(end, datetime):
+        now = datetime.now(end.tzinfo) if end.tzinfo else datetime.now()
+        if end <= now:
+            return []
+    prev = {
+        str(e).strip().lower()
+        for e in list(r.get("previous_all_emails") or []) + list(r.get("previous_attendee_emails") or [])
+        if str(e).strip()
+    }
+    out: list[str] = []
+    for e in r.get("attendee_emails") or []:
+        em = str(e).strip().lower()
+        if em and em not in prev and em not in out:
+            out.append(em)
+    return out
+
+
 async def notify_invitees_for_miniapp(
     *,
     organizer_uid: int,

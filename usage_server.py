@@ -5894,6 +5894,8 @@ async def _owner_task_action(task_id: int, principal: "_MiniappPrincipal", actio
         fn = partial(calendar_tasks_store.accept_task, uid, task_id, actor_name=name)
     elif action == "return":
         fn = partial(calendar_tasks_store.return_task, uid, task_id, comment, actor_name=name)
+    elif action == "insist":
+        fn = partial(calendar_tasks_store.insist_task, uid, task_id, comment, actor_name=name)
     else:
         fn = partial(calendar_tasks_store.cancel_task, uid, task_id, actor_name=name)
     row = await run_in_threadpool(fn)
@@ -5903,6 +5905,8 @@ async def _owner_task_action(task_id: int, principal: "_MiniappPrincipal", actio
         await run_in_threadpool(partial(task_notify.notify_task_returned, task=row, owner_name=name, comment=comment))
     elif action == "cancel":
         await run_in_threadpool(partial(task_notify.notify_task_cancelled, task=row, owner_name=name))
+    elif action == "insist":
+        await run_in_threadpool(partial(task_notify.notify_task_insisted, task=row, owner_name=name, comment=comment))
     synced = await run_in_threadpool(_sync_task_google, uid, row, "update")
     out = synced or row
     _memory_task_changed(out)
@@ -5925,6 +5929,16 @@ async def miniapp_calendar_tasks_return(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     return await _owner_task_action(task_id, principal, "return", body.text)
+
+
+@miniapp_router.post("/calendar/tasks/{task_id}/insist")
+async def miniapp_calendar_tasks_insist(
+    task_id: int,
+    body: _MiniappTaskMessageBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """После «Не моё»: постановщик оставляет задачу за тем же исполнителем."""
+    return await _owner_task_action(task_id, principal, "insist", body.text)
 
 
 @miniapp_router.post("/calendar/tasks/{task_id}/cancel")
@@ -6151,6 +6165,7 @@ async def miniapp_calendar_tasks_patch(
             status_code=403, detail="Архивировать может только постановщик"
         )
     prev_assignee = str(existing.get("assignee_user_id") or "")
+    was_declined = str(existing.get("assignee_triage") or "") == "declined"
     was_done = bool(existing.get("done"))
     assignee_uid = None
     # Пустые строки с фронта = «не менять», иначе исполнитель мог
@@ -6209,6 +6224,15 @@ async def miniapp_calendar_tasks_patch(
                 assigner_name=_principal_display_name(principal),
             )
         )
+    elif was_declined and new_assignee == prev_assignee and str(out.get("assignee_triage") or "") == "inbox":
+        # Постановщик снова выбрал того, кто сказал «не моё», — настаивает.
+        name = _principal_display_name(principal)
+        await run_in_threadpool(
+            partial(calendar_tasks_store.add_event, out["id"], "insisted", actor_user_id=uid, actor_name=name)
+        )
+        from assistant.lib.task_notify import notify_task_insisted
+
+        await run_in_threadpool(partial(notify_task_insisted, task=out, owner_name=name))
     # Исполнитель отметил задачу выполненной → пуш автору.
     if (
         body.done is True
@@ -7641,15 +7665,10 @@ async def miniapp_calendar_event_update(
     if emails and not ser.get("attendees"):
         ser["attendees"] = [{"email": e, "name": ""} for e in emails]
     try:
-        prev = {
-            str(e).strip().lower()
-            for e in (ev.get("previous_attendee_emails") or [])
-            if str(e).strip()
-        }
-        added = [e for e in emails if e not in prev]
-        if added:
-            from assistant.services import meeting_invites as inv
+        from assistant.services import meeting_invites as inv
 
+        added = inv.added_invitees(ev)
+        if added:
             await inv.notify_invitees_for_miniapp(
                 organizer_uid=int(principal.telegram_user_id),
                 organizer_user=principal.user if isinstance(principal.user, dict) else {},

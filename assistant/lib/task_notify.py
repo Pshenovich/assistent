@@ -212,6 +212,16 @@ def notify_task_declined(*, task: dict[str, Any], assignee_name: str, note: str)
     _send_task_push(task.get("owner_user_id"), text, "notify_declined")
 
 
+def notify_task_insisted(*, task: dict[str, Any], owner_name: str, comment: str = "") -> None:
+    """Постановщик оставил задачу за исполнителем после «Не моё» — сразу, это ответ на его действие."""
+    link = task_title_link_html(str(task.get("title") or "Задача"), task.get("id") or 0)
+    who = html.escape((owner_name or "").strip() or "Постановщик")
+    text = f"{who} оставил(а) задачу за вами: {link}. Она снова во входящих."
+    if (comment or "").strip():
+        text += f"\n{html.escape(comment.strip()[:600])}"
+    _send_task_push(task.get("assignee_user_id"), text, "notify_insisted")
+
+
 def inbox_digest_line(user_id: int | str) -> str:
     """Строка для утренней сводки: «Вам поставили 6 задач (Вова — 4, Аня — 2)» со ссылкой на разбор."""
     from assistant.stores import calendar_tasks, user_prefs
