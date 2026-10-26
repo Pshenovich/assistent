@@ -415,6 +415,8 @@
 }
 
 .lb-props {
+  touch-action: pan-x;
+  overscroll-behavior-x: contain;
   align-items: center;
   flex-wrap: nowrap;
   max-width: calc(100% - 16px);
@@ -596,8 +598,19 @@
     flex-direction: row;
     justify-content: flex-start;
     overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
     transform: none;
     scrollbar-width: none;
+    /* Край растворяется — видно, что дальше есть ещё инструменты. */
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+  }
+
+  .lb-tools.is-scrolled-end {
+    -webkit-mask-image: none;
+    mask-image: none;
   }
 
   .lb-tools::-webkit-scrollbar {

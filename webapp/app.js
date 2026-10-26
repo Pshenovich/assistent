@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261025-board-ai";
+  var WEBAPP_BUILD = "20261026-board-m";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -13139,6 +13139,8 @@
 
   function onNoteEditorTouchMoveGuard(e) {
     if (!isNoteEditorModalOpen()) return;
+    // Доска: холст ведёт жесты сам (touch-action: none), а её панели листаются вбок — не мешаем.
+    if (e.target && e.target.closest && e.target.closest(".leo-board")) return;
     if (isNoteEditorScrollTarget(e.target)) {
       var scrollEl = getNoteEditorScrollEl();
       if (!scrollEl || !e.target || !scrollEl.contains(e.target)) return;
@@ -41752,7 +41754,8 @@
       var bj = String(sheet.body || sheet.description || "");
       if (String(noteSheetState.leftId) === String(sheet.id) && noteSheetState.leftBoard) bj = noteSheetState.leftBoard.getJson();
       else if (String(noteSheetState.rightId) === String(sheet.id) && noteSheetState.rightBoard) bj = noteSheetState.rightBoard.getJson();
-      return window.LeoBoard ? window.LeoBoard.plainText(bj) : "";
+      // Не только текст блоков: формы, цвета и связи — чтобы Лео понимал, что нарисовано.
+      return window.LeoBoard ? window.LeoBoard.describe(bj) : "";
     }
     if (isPrimarySheetId(sheet.id) && isPrimarySheetId(noteSheetState.leftId)) {
       var root = noteEditorCommentRoot();

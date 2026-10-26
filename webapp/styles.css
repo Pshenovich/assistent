@@ -8664,9 +8664,18 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   opacity: 0.7;
 }
 
-.note-sheet-chip.is-board .note-sheet-chip-label::before {
-  content: "◇ ";
-  opacity: 0.7;
+.note-sheet-chip.is-board .note-sheet-chip-label::before,
+.note-share-sheet.is-v2 .ns-chip.is-board span::before {
+  content: "";
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  margin-right: 5px;
+  vertical-align: -2px;
+  background: currentColor;
+  opacity: 0.75;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%222.5%22%20y%3D%223.5%22%20width%3D%228%22%20height%3D%226%22%20rx%3D%221.5%22%2F%3E%3Crect%20x%3D%2213.5%22%20y%3D%2214.5%22%20width%3D%228%22%20height%3D%226%22%20rx%3D%221.5%22%2F%3E%3Cpath%20d%3D%22M10.5%206.5h3a2%202%200%200%201%202%202v6%22%2F%3E%3C%2Fsvg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%222.5%22%20y%3D%223.5%22%20width%3D%228%22%20height%3D%226%22%20rx%3D%221.5%22%2F%3E%3Crect%20x%3D%2213.5%22%20y%3D%2214.5%22%20width%3D%228%22%20height%3D%226%22%20rx%3D%221.5%22%2F%3E%3Cpath%20d%3D%22M10.5%206.5h3a2%202%200%200%201%202%202v6%22%2F%3E%3C%2Fsvg%3E") center / contain no-repeat;
 }
 
 /* Холст (webapp/board.css) в редакторе заметки и в правой панели */
@@ -15986,7 +15995,6 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 .note-share-sheet.is-v2 .ns-chip { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; font-size: 14px; cursor: pointer; }
 .note-share-sheet.is-v2 .ns-chip input { position: absolute; opacity: 0; pointer-events: none; }
 .note-share-sheet.is-v2 .ns-chip.is-web span::before { content: "▣ "; opacity: 0.7; }
-.note-share-sheet.is-v2 .ns-chip.is-board span::before { content: "◇ "; opacity: 0.7; }
 .note-share-sheet.is-v2 .ns-chip:has(input:checked) { border-color: var(--accent); background: var(--accent-muted, rgba(82, 158, 244, 0.16)); color: var(--text); }
 .note-share-sheet.is-v2 .ns-chip:has(input:checked)::before { content: "✓"; font-size: 12px; color: var(--accent); }
 .note-share-sheet.is-v2 .ns-chip:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }

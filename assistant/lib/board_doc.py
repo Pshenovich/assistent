@@ -213,6 +213,80 @@ def board_plain_text(body: Any) -> str:
     return "\n".join(lines).strip()
 
 
+_SHAPE_RU = {
+    "rect": "блок", "diamond": "ромб/решение", "ellipse": "овал", "sticky": "стикер", "text": "текст", "image": "картинка",
+}
+_COLOR_RU = {
+    "red": "красный", "orange": "оранжевый", "yellow": "жёлтый", "green": "зелёный", "blue": "синий",
+    "purple": "фиолетовый", "pink": "розовый", "gray": "серый",
+}
+
+
+def board_describe(body: Any, title: str = "") -> str:
+    """Описание доски для модели: блоки (форма, цвет, текст), связи с подписями, группы, рисунки."""
+    elements = parse_board(body)["elements"]
+    if not elements:
+        return "Доска пустая."
+    shapes = _sorted_shapes(elements)
+    num = {el["id"]: i + 1 for i, el in enumerate(shapes)}
+
+    def name(eid: str) -> str:
+        el = elements.get(eid) or {}
+        text = _one_line(el.get("text") or "")
+        return f"#{num[eid]} «{text}»" if eid in num and text else (f"#{num[eid]}" if eid in num else "?")
+
+    out = [f"Доска «{title}»:" if title else "Доска:", "Блоки (сверху вниз, слева направо):"]
+    for el in shapes:
+        st = el.get("style") or {}
+        color = st.get("fill") if el["type"] == "sticky" else (st.get("fill") if st.get("fill") not in (None, "none") else st.get("stroke"))
+        kind = _SHAPE_RU.get(el["type"], el["type"])
+        if color in _COLOR_RU:
+            kind += ", " + _COLOR_RU[str(color)]
+        text = _one_line(el.get("text") or "")
+        out.append(f"- #{num[el['id']]} [{kind}] {text}".rstrip())
+    links = []
+    free_lines = 0
+    for el in elements.values():
+        if el.get("type") != "line":
+            continue
+        a = (el.get("start") or {}).get("el")
+        b = (el.get("end") or {}).get("el")
+        label = _one_line(el.get("text") or "")
+        if a in num and b in num:
+            if el.get("arrowStart") and el.get("arrowEnd"):
+                arrow = "↔"
+            elif el.get("arrowStart"):
+                a, b, arrow = b, a, "→"
+            else:
+                arrow = "→" if el.get("arrowEnd") else "—"
+            dashed = ", пунктир" if (el.get("style") or {}).get("dash") else ""
+            extra = f" («{label}»{dashed})" if label else (f" ({dashed[2:]})" if dashed else "")
+            links.append(f"- {name(a)} {arrow} {name(b)}{extra}")
+        else:
+            free_lines += 1
+            if label:
+                links.append(f"- линия с подписью «{label}»")
+    if links:
+        out.append("Связи:")
+        out.extend(links)
+    groups: dict[str, list[str]] = {}
+    for el in shapes:
+        if el.get("group"):
+            groups.setdefault(str(el["group"]), []).append(name(el["id"]))
+    for members in groups.values():
+        if len(members) > 1:
+            out.append("Группа: " + ", ".join(members))
+    pens = sum(1 for e in elements.values() if e.get("type") == "pen")
+    extras = []
+    if pens:
+        extras.append(f"рисунков карандашом: {pens}")
+    if free_lines:
+        extras.append(f"линий без привязки: {free_lines}")
+    if extras:
+        out.append("Ещё на доске: " + ", ".join(extras) + " (их содержимое текстом не описать).")
+    return "\n".join(out)
+
+
 def board_text_html(body: Any) -> str:
     """Текст холста абзацами — для мест, которые ждут HTML (PDF, документ Базы знаний)."""
     text = board_plain_text(body)

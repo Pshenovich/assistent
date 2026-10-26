@@ -1153,6 +1153,11 @@
       toolsBar.innerHTML = TOOLS.map(function (t) {
         return '<button type="button" class="lb-btn" data-tool="' + t.id + '" title="' + esc(t.title) + '" aria-label="' + esc(t.title) + '">' + icon(t.icon) + "</button>";
       }).join("");
+      var syncToolsEnd = function () {
+        toolsBar.classList.toggle("is-scrolled-end", toolsBar.scrollLeft + toolsBar.clientWidth >= toolsBar.scrollWidth - 4);
+      };
+      toolsBar.addEventListener("scroll", syncToolsEnd, { passive: true });
+      setTimeout(syncToolsEnd, 0);
       toolsBar.addEventListener("click", function (e) {
         var b = e.target.closest("[data-tool]");
         if (!b) return;
@@ -3243,9 +3248,91 @@
     }, origin);
   }
 
+  var SHAPE_RU = { rect: "блок", diamond: "ромб/решение", ellipse: "овал", sticky: "стикер", text: "текст", image: "картинка" };
+  var COLOR_RU = {
+    red: "красный", orange: "оранжевый", yellow: "жёлтый", green: "зелёный", blue: "синий",
+    purple: "фиолетовый", pink: "розовый", gray: "серый",
+  };
+
+  function oneLine(t) {
+    return String(t || "").replace(/\s+/g, " ").trim();
+  }
+
+  /** Описание доски для Лео — как board_doc.board_describe на сервере: блоки, связи, группы, рисунки. */
+  function describeBoard(json, title) {
+    var list = parseBoard(json);
+    if (!list.length) return "Доска пустая.";
+    var byId = {};
+    list.forEach(function (el) {
+      byId[el.id] = el;
+    });
+    var shapes = list.filter(function (el) {
+      return BOXED[el.type];
+    }).sort(function (a, b) {
+      return Math.round(a.y / 40) - Math.round(b.y / 40) || a.x - b.x;
+    });
+    var num = {};
+    shapes.forEach(function (el, i) {
+      num[el.id] = i + 1;
+    });
+    function name(id) {
+      var t = oneLine((byId[id] || {}).text);
+      return num[id] ? "#" + num[id] + (t ? " «" + t + "»" : "") : "?";
+    }
+    var out = [title ? "Доска «" + title + "»:" : "Доска:", "Блоки (сверху вниз, слева направо):"];
+    shapes.forEach(function (el) {
+      var st = el.style || {};
+      var color = el.type === "sticky" ? st.fill : st.fill && st.fill !== "none" ? st.fill : st.stroke;
+      var kind = SHAPE_RU[el.type] || el.type;
+      if (COLOR_RU[color]) kind += ", " + COLOR_RU[color];
+      out.push(("- #" + num[el.id] + " [" + kind + "] " + oneLine(el.text)).replace(/\s+$/, ""));
+    });
+    var links = [];
+    var free = 0;
+    list.forEach(function (el) {
+      if (el.type !== "line") return;
+      var a = el.start && el.start.el;
+      var b = el.end && el.end.el;
+      var label = oneLine(el.text);
+      if (num[a] && num[b]) {
+        var arrow = el.arrowEnd ? "→" : "—";
+        if (el.arrowStart && el.arrowEnd) arrow = "↔";
+        else if (el.arrowStart) {
+          var t = a;
+          a = b;
+          b = t;
+          arrow = "→";
+        }
+        var dashed = el.style && el.style.dash ? "пунктир" : "";
+        var extra = label ? " («" + label + "»" + (dashed ? ", " + dashed : "") + ")" : dashed ? " (" + dashed + ")" : "";
+        links.push("- " + name(a) + " " + arrow + " " + name(b) + extra);
+      } else {
+        free++;
+        if (label) links.push("- линия с подписью «" + label + "»");
+      }
+    });
+    if (links.length) out = out.concat(["Связи:"], links);
+    var groups = {};
+    shapes.forEach(function (el) {
+      if (el.group) (groups[el.group] = groups[el.group] || []).push(name(el.id));
+    });
+    Object.keys(groups).forEach(function (g) {
+      if (groups[g].length > 1) out.push("Группа: " + groups[g].join(", "));
+    });
+    var pens = list.filter(function (el) {
+      return el.type === "pen";
+    }).length;
+    var extras = [];
+    if (pens) extras.push("рисунков карандашом: " + pens);
+    if (free) extras.push("линий без привязки: " + free);
+    if (extras.length) out.push("Ещё на доске: " + extras.join(", ") + " (их содержимое текстом не описать).");
+    return out.join("\n");
+  }
+
   window.LeoBoard = {
     create: create,
     parse: parseBoard,
+    describe: describeBoard,
     seedDoc: seedDoc,
     applyDelta: applyDelta,
     emptyJson: function () {

@@ -95,3 +95,16 @@ class BoardSheetTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BoardDescribeTests(unittest.TestCase):
+    def test_describe_shapes_links_and_extras(self):
+        pen = {"id": "p", "type": "pen", "x": 0, "y": 0, "points": [[0, 0], [5, 5]]}
+        lab = dict(L, text="да", style={"dash": "dashed"})
+        text = board_doc.board_describe(_board(A, B, C, lab, pen), "Процесс")
+        self.assertIn("Доска «Процесс»", text)
+        self.assertIn("[ромб/решение] Одобрить?", text)
+        self.assertIn("[стикер] Идея <b>", text)
+        self.assertIn("#1 «Заявка» → #2 «Одобрить?» («да», пунктир)", text)
+        self.assertIn("рисунков карандашом: 1", text)
+        self.assertEqual(board_doc.board_describe(""), "Доска пустая.")
