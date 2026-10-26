@@ -120,6 +120,8 @@ PAIE_REASONING_MODELS: tuple[tuple[str, str], ...] = (
     ("openai/o4-mini", "o4-mini"),
     ("google/gemini-2.5-pro", "Gemini 2.5 Pro"),
     ("deepseek/deepseek-r1", "DeepSeek R1"),
+    ("anthropic/claude-opus-5.5", "Claude Opus 5.5"),
+    ("anthropic/claude-fable-5.1", "Claude Fable 5.1"),
 )
 
 
@@ -138,7 +140,7 @@ def gpt_display_label(model_id: str | None) -> str:
     mid = sanitize_openrouter_model_id(model_id) or ""
     if not mid:
         return "GPT"
-    for pid, pname in GPT_PICKER_MODELS:
+    for pid, pname in (*GPT_PICKER_MODELS, *PAIE_REASONING_MODELS):
         if pid == mid:
             return pname
     short = mid.split("/")[-1].strip()

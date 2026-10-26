@@ -33376,6 +33376,8 @@
         { id: "openai/o4-mini", name: "o4-mini", reasoning: true },
         { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro", reasoning: true },
         { id: "deepseek/deepseek-r1", name: "DeepSeek R1", reasoning: true },
+        { id: "anthropic/claude-opus-5.5", name: "Claude Opus 5.5", reasoning: true },
+        { id: "anthropic/claude-fable-5.1", name: "Claude Fable 5.1", reasoning: true },
       ];
       gptModelsState.defaultId = GPT_MODEL_DEFAULT;
       gptModelsState.loaded = true;
@@ -33421,6 +33423,8 @@
         { id: "openai/o4-mini", name: "o4-mini", reasoning: true },
         { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro", reasoning: true },
         { id: "deepseek/deepseek-r1", name: "DeepSeek R1", reasoning: true },
+        { id: "anthropic/claude-opus-5.5", name: "Claude Opus 5.5", reasoning: true },
+        { id: "anthropic/claude-fable-5.1", name: "Claude Fable 5.1", reasoning: true },
       ];
       paieModelsState.defaultId = PAIE_MODEL_DEFAULT;
       paieModelsState.loaded = true;
