@@ -2621,6 +2621,7 @@ class _PublicBookBody(BaseModel):
 class _MiniappSettingsPatch(BaseModel):
     meeting_reminders_enabled: Optional[bool] = None
     task_reminders_enabled: Optional[bool] = None
+    task_assigned_notify: Optional[bool] = None
     discussion_notifications_enabled: Optional[bool] = None
     discussion_notify_telegram: Optional[bool] = None
     discussion_notify_web_push: Optional[bool] = None
@@ -6592,6 +6593,7 @@ async def miniapp_settings_get(
             "meeting_reminder_minutes_before": mr.reminder_minutes_before(),
             "task_reminders_enabled": user_prefs.task_reminders_enabled(uid),
             "task_reminder_minutes_before": tr.reminder_minutes_before(),
+            "task_assigned_notify": user_prefs.task_assigned_notify(uid),
             "discussion_notifications_enabled": user_prefs.discussion_notifications_enabled(
                 uid
             ),
@@ -6668,6 +6670,8 @@ async def miniapp_settings_patch(
             user_prefs.set_task_reminders_enabled(
                 uid, bool(body.task_reminders_enabled)
             )
+        if body.task_assigned_notify is not None:
+            user_prefs.set_task_assigned_notify(uid, bool(body.task_assigned_notify))
         if body.discussion_notifications_enabled is not None:
             user_prefs.set_discussion_notifications_enabled(
                 uid, bool(body.discussion_notifications_enabled)
@@ -6698,6 +6702,7 @@ async def miniapp_settings_patch(
             "meeting_reminder_minutes_before": mr.reminder_minutes_before(),
             "task_reminders_enabled": user_prefs.task_reminders_enabled(uid),
             "task_reminder_minutes_before": tr.reminder_minutes_before(),
+            "task_assigned_notify": user_prefs.task_assigned_notify(uid),
             "discussion_notifications_enabled": user_prefs.discussion_notifications_enabled(
                 uid
             ),

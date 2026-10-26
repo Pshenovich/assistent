@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261026-board-rename";
+  var WEBAPP_BUILD = "20261026-task-notify";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -11413,6 +11413,8 @@
   var meetingRemindersSaveInFlight = false;
   var taskRemindersEnabled = true;
   var taskRemindersSaveInFlight = false;
+  var taskAssignedNotifyEnabled = true;
+  var taskAssignedNotifySaveInFlight = false;
   var discussionNotifyTelegramEnabled = true;
   var discussionNotifyWebPushEnabled = true;
   var discussionNotifyTelegramSaveInFlight = false;
@@ -11577,6 +11579,53 @@
       var next = !taskRemindersEnabled;
       applyTaskRemindersToggleUi(next);
       saveTaskRemindersEnabled(next);
+    });
+  }
+
+  function applyTaskAssignedNotifyUi(enabled) {
+    var toggle = document.getElementById("task-assigned-toggle");
+    if (!toggle) return;
+    taskAssignedNotifyEnabled = !!enabled;
+    toggle.classList.toggle("svc-toggle--on", taskAssignedNotifyEnabled);
+    toggle.classList.toggle("svc-toggle--pending", taskAssignedNotifySaveInFlight);
+    toggle.setAttribute("aria-pressed", taskAssignedNotifyEnabled ? "true" : "false");
+  }
+
+  async function saveTaskAssignedNotify(enabled) {
+    var errEl = document.getElementById("task-assigned-setting-err");
+    var toggle = document.getElementById("task-assigned-toggle");
+    taskAssignedNotifySaveInFlight = true;
+    if (toggle) toggle.classList.add("svc-toggle--pending");
+    try {
+      var data = await apiFetch("/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ task_assigned_notify: !!enabled }),
+      });
+      applyTaskAssignedNotifyUi(!data || data.task_assigned_notify !== false);
+      if (errEl) setHidden(errEl, true);
+    } catch (e) {
+      applyTaskAssignedNotifyUi(!enabled);
+      if (errEl) {
+        errEl.textContent = e.message || String(e);
+        setHidden(errEl, false);
+      }
+    } finally {
+      taskAssignedNotifySaveInFlight = false;
+      if (toggle) toggle.classList.remove("svc-toggle--pending");
+    }
+  }
+
+  function initTaskAssignedNotifyToggle() {
+    var toggle = document.getElementById("task-assigned-toggle");
+    if (!toggle || toggle.getAttribute("data-bound") === "1") return;
+    toggle.setAttribute("data-bound", "1");
+    toggle.addEventListener("click", function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (taskAssignedNotifySaveInFlight) return;
+      var next = !taskAssignedNotifyEnabled;
+      applyTaskAssignedNotifyUi(next);
+      saveTaskAssignedNotify(next);
     });
   }
 
@@ -12032,6 +12081,7 @@
   async function loadNotificationsScreen() {
     initMeetingRemindersToggle();
     initTaskRemindersToggle();
+    initTaskAssignedNotifyToggle();
     initDiscussionNotificationsToggle();
     // В Telegram браузерные уведомления не работают — строку не показываем.
     setHidden(document.getElementById("discussion-notify-web-push-row"), isInsideTelegramClient());
@@ -12045,6 +12095,7 @@
       if (taskHint && taskMins > 0) taskHint.textContent = "За " + taskMins + " мин до начала";
       applyMeetingRemindersToggleUi(settings.meeting_reminders_enabled !== false);
       applyTaskRemindersToggleUi(settings.task_reminders_enabled !== false);
+      applyTaskAssignedNotifyUi(settings.task_assigned_notify !== false);
       applyDiscussionNotifyTelegramUi(settings.discussion_notify_telegram !== false);
       applyDiscussionNotifyWebPushUi(settings.discussion_notify_web_push !== false);
       syncWebPushSubscriptionIfNeeded();

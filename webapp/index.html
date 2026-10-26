@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261026-board-rename">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261026-task-notify">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -98,8 +98,8 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261026-board-rename" />
-  <link rel="stylesheet" href="/webapp/board.css?v=20261026-board-rename" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261026-task-notify" />
+  <link rel="stylesheet" href="/webapp/board.css?v=20261026-task-notify" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -702,7 +702,7 @@
                     <svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
                   </span>
                   <span class="pf-row-body">
-                    <span class="pf-row-text"><span class="pf-row-title">Уведомления</span><span class="pf-row-sub">Напоминания и обсуждения</span></span>
+                    <span class="pf-row-text"><span class="pf-row-title">Уведомления</span><span class="pf-row-sub">Напоминания, задачи, обсуждения</span></span>
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </button>
@@ -1222,6 +1222,18 @@
                 </div>
                 <p id="meeting-reminders-setting-err" class="pf-field-error hidden"></p>
                 <p id="task-reminders-setting-err" class="pf-field-error hidden"></p>
+              </div>
+              <div class="pf-group">
+                <p class="pf-group-title">Задачи</p>
+                <div class="pf-list">
+                  <div id="task-assigned-setting" class="pf-row pf-row--static">
+                    <span class="pf-row-body">
+                      <span class="pf-row-text"><span class="pf-row-title">Новые задачи</span><span class="pf-row-sub pf-row-sub--wrap">Когда задачу ставят на вас, Лео присылает уведомление</span></span>
+                      <button type="button" class="svc-toggle svc-toggle--on" id="task-assigned-toggle" aria-pressed="true" aria-label="Уведомления о новых задачах"><span class="svc-toggle-knob"></span></button>
+                    </span>
+                  </div>
+                </div>
+                <p id="task-assigned-setting-err" class="pf-field-error hidden"></p>
               </div>
               <div class="pf-group" id="discussion-notifications-setting">
                 <p class="pf-group-title">Обсуждения заметок</p>
@@ -2273,12 +2285,12 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261026-board-rename" defer></script>
-  <script src="/webapp/realtime.js?v=20261026-board-rename" defer></script>
-  <script src="/webapp/note-yjs.js?v=20261026-board-rename" defer></script>
-  <script src="/webapp/board-geom.js?v=20261026-board-rename" defer></script>
-  <script src="/webapp/board.js?v=20261026-board-rename" defer></script>
-  <script src="/webapp/app.js?v=20261026-board-rename" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261026-task-notify" defer></script>
+  <script src="/webapp/realtime.js?v=20261026-task-notify" defer></script>
+  <script src="/webapp/note-yjs.js?v=20261026-task-notify" defer></script>
+  <script src="/webapp/board-geom.js?v=20261026-task-notify" defer></script>
+  <script src="/webapp/board.js?v=20261026-task-notify" defer></script>
+  <script src="/webapp/app.js?v=20261026-task-notify" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261023-reply1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261025-mobfix" defer></script>

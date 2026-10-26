@@ -119,6 +119,20 @@ def set_task_reminders_enabled(user_id: int, enabled: bool) -> None:
     save_prefs(user_id, prefs)
 
 
+def task_assigned_notify(user_id: int) -> bool:
+    """Уведомление «вам поставили задачу» — по умолчанию включено."""
+    prefs = load_prefs(user_id)
+    if "task_assigned_notify" not in prefs:
+        return True
+    return bool(prefs.get("task_assigned_notify"))
+
+
+def set_task_assigned_notify(user_id: int, enabled: bool) -> None:
+    prefs = load_prefs(user_id)
+    prefs["task_assigned_notify"] = bool(enabled)
+    save_prefs(user_id, prefs)
+
+
 def _discussion_master_off(prefs: dict[str, Any]) -> bool:
     return "discussion_notifications_enabled" in prefs and not bool(
         prefs.get("discussion_notifications_enabled")

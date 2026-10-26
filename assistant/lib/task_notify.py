@@ -37,6 +37,13 @@ def notify_task_assignee(
         mid = 0
     if mid <= 0:
         return
+    try:
+        from assistant.stores import user_prefs
+
+        if not user_prefs.task_assigned_notify(mid):
+            return  # выключил в Профиль → Уведомления → «Новые задачи»
+    except Exception as e:
+        print(f"[calendar_tasks] notify_assignee prefs uid={mid} err={e!r}")
     link = task_title_link_html(str(task.get("title") or "Задача"), task.get("id") or 0)
     who = html.escape(assigner_name or "Участник")
     lines = [f"{who} поставил(а) вам задачу: {link}."]
