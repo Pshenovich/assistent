@@ -346,6 +346,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Голос обрабатывает MessageHandler(VOICE) — не дублируем (в т.ч. sticky Bitrix).
     if msg.voice:
         return
+    from assistant.bot import task_reply
+
+    if await task_reply.try_consume_reply(update, context, text):
+        return
     if await zoom_skill.try_continue_pending(update, context):
         return
     if await telemost_skill.try_continue_pending(update, context):
@@ -487,6 +491,15 @@ def register_handlers(app: Application) -> None:
         CallbackQueryHandler(
             reminders_skill.handle_callback,
             pattern=r"^rem:",
+        )
+    )
+    from assistant.bot import task_reply
+
+    # Раньше общего «tsk:» — тот на чужие колбэки только отвечает пустым answer().
+    app.add_handler(
+        CallbackQueryHandler(
+            task_reply.handle_reply_callback,
+            pattern=r"^tsk:(reply:\d+|rcancel)$",
         )
     )
     app.add_handler(

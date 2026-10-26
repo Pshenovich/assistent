@@ -1238,6 +1238,13 @@ def add_event(
              _clip(text, MAX_MESSAGE_LEN), json.dumps(meta or {}, ensure_ascii=False)),
         )
         _conn().commit()
+        who = _conn().execute(
+            "SELECT owner_user_id, assignee_user_id FROM calendar_tasks WHERE id = ?", (tid,)
+        ).fetchone()
+    if who:
+        from assistant.realtime import notify as realtime_notify
+
+        realtime_notify.task_changed(tid, [who[0], who[1]], actor_user_id=actor_user_id)
 
 
 def list_events(task: dict[str, Any]) -> list[dict[str, Any]]:

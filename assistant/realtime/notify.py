@@ -165,3 +165,19 @@ def comments_changed(item_kind: str, item_id: Any) -> None:
     except (TypeError, ValueError):
         return
     publish(note_topic(nid), {"type": "comments.changed", "note_id": nid})
+
+
+def task_changed(task_id: int | str, user_ids: list[Any], *, actor_user_id: Any = None) -> None:
+    """Новое событие в задаче (сообщение, статус, сдача…) — открытой карточке у постановщика и исполнителя."""
+    try:
+        tid = int(task_id)
+    except (TypeError, ValueError):
+        return
+    ev: dict[str, Any] = {"type": "task.changed", "task_id": tid}
+    if actor_user_id not in (None, ""):
+        ev["actor"] = str(actor_user_id)
+    for uid in dict.fromkeys(str(u or "").strip() for u in user_ids):
+        try:
+            publish(user_topic(uid), ev)
+        except (TypeError, ValueError):
+            continue

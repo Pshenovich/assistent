@@ -150,14 +150,22 @@ def notify_task_owner_question(*, task: dict[str, Any], asker_name: str, questio
         print(f"[calendar_tasks] notify_owner_question uid={owner} err={e!r}")
 
 
-def _send_task_push(to_uid: Any, text: str, tag: str) -> None:
+TASK_REPLY_CALLBACK_PREFIX = "tsk:reply:"
+
+
+def task_reply_keyboard(task_id: int | str) -> dict[str, Any]:
+    """Кнопка «Ответить» (Bot API reply_markup) — разбирает assistant/bot/task_reply.py."""
+    return {"inline_keyboard": [[{"text": "↩️ Ответить", "callback_data": f"{TASK_REPLY_CALLBACK_PREFIX}{_int_uid(task_id)}"}]]}
+
+
+def _send_task_push(to_uid: Any, text: str, tag: str, *, reply_markup: dict[str, Any] | None = None) -> None:
     from assistant.lib.telegram_notify import send_message
 
     uid = _int_uid(to_uid)
     if uid <= 0:
         return
     try:
-        send_message(uid, text)
+        send_message(uid, text, reply_markup=reply_markup)
     except Exception as e:
         print(f"[calendar_tasks] {tag} uid={uid} err={e!r}")
 
@@ -177,7 +185,10 @@ def notify_task_message(
     body = (text or "").strip()
     if len(body) > 600:
         body = body[:600].rstrip() + "…"
-    _send_task_push(to, f"{who} по задаче {link}:\n{html.escape(body)}", "notify_message")
+    # «Ответить» — следующий текст или голосовое в Telegram уходит ответом в обсуждение задачи.
+    _send_task_push(
+        to, f"{who} по задаче {link}:\n{html.escape(body)}", "notify_message", reply_markup=task_reply_keyboard(task.get("id") or 0)
+    )
     # Упомянутые через @ (кроме участников — им уже ушло): без ссылки, задача может быть им недоступна.
     title = html.escape(str(task.get("title") or "Задача"))
     for m in mentions or []:

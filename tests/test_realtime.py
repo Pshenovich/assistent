@@ -236,3 +236,26 @@ def test_remote_notify_off_by_default(monkeypatch):
     monkeypatch.setattr(realtime_notify, "_REMOTE_QUEUE", q)
     realtime_notify.note_changed(42)
     assert q.qsize() == 0
+
+
+def test_task_reply_from_bot_reaches_owner_socket(env, tmp_path, monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from assistant.bot import task_reply
+    from assistant.lib import telegram_notify
+    from assistant.stores import calendar_tasks
+
+    monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "tasks.sqlite"))
+    monkeypatch.setattr(calendar_tasks, "_CONN", None)
+    monkeypatch.setattr(telegram_notify, "send_message", lambda *a, **k: True)
+    owner, assignee = env["owner"], env["member"]
+    task = calendar_tasks.create_task(
+        owner, title="Прайс", start_at=datetime(2026, 10, 27, 12, 0, tzinfo=ZoneInfo("Europe/Moscow")),
+        assignee_user_id=assignee, assignee_name="U", tz=ZoneInfo("Europe/Moscow"),
+    )
+    with env["client"].websocket_connect("/api/miniapp/ws") as ws:
+        _connect(ws, owner)
+        assert task_reply.post_reply(assignee, task["id"], "Сделаю завтра")
+        ev = _receive_until(ws, "task.changed")
+        assert ev["task_id"] == task["id"] and ev["actor"] == str(assignee)

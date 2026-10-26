@@ -36,6 +36,11 @@ async def try_cancel_operation(
     uid = int(user.id)
     from assistant.skills import reminders as reminders_skill
 
+    from assistant.bot import task_reply
+
+    if task_reply.clear_pending_for_user(context, uid):
+        await msg.reply_text("Операция отменена: ответ по задаче.")
+        return True
     if reminders_skill.clear_await_when_for_user(context, uid):
         await msg.reply_text("Операция отменена: уточнение времени напоминания.")
         return True

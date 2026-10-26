@@ -316,18 +316,29 @@ async def _transcribe_and_route(update: Update, context: ContextTypes.DEFAULT_TY
             await set_status(status, "(пустая транскрипция)", anchor=msg, context=context)
             return
         voice_uid = int(update.effective_user.id) if update.effective_user else 0
+        from assistant.bot import task_reply
+
+        # «Ответить» / свайп-ответ на сообщение по задаче — голосовое это текст ответа, не команда.
+        replying = task_reply.reply_target(update, context) is not None
         if voice_uid:
             from assistant.stores import voice_prefs
 
             raw_text = text
             try:
-                text = voice_prefs.process_text(voice_uid, text, mode="command") or text
+                text = voice_prefs.process_text(voice_uid, text, mode="dictation" if replying else "command") or text
                 voice_prefs.add_history(
                     voice_uid, text=text, raw_text=raw_text, source="telegram"
                 )
             except Exception as e:
                 print(f"[voice] postprocess_failed uid={voice_uid} err={e!r}")
         print(f"[voice] asr chat={msg.chat_id} mid={msg.message_id} text={text[:200]!r}")
+        if replying and await task_reply.try_consume_reply(update, context, text):
+            try:
+                if status:
+                    await status.delete()
+            except Exception:
+                pass
+            return
         status = await set_status(
             status, "Разбираю запрос…", anchor=msg, context=context
         )

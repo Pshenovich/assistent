@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261026-lime-theme";
+  var WEBAPP_BUILD = "20261026-task-reply";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -23649,6 +23649,47 @@
     }
   }
 
+  var postedListLiveTimer = null;
+
+  function kickPostedLiveUpdate(taskId) {
+    if (!taskId) return;
+    var shown = false;
+    [postedCardHosts.side, postedCardHosts.sheet].forEach(function (state) {
+      if (!state || state.taskId !== taskId || !document.body.contains(state.host)) return;
+      shown = true;
+      schedulePostedLiveRefresh(state, 400);
+    });
+    if (shown || !isPostedTasksOpen()) return;
+    if (postedListLiveTimer) clearTimeout(postedListLiveTimer);
+    postedListLiveTimer = setTimeout(function () {
+      postedListLiveTimer = null;
+      if (isPostedTasksOpen() && !document.hidden) loadPostedTasksList();
+    }, 1500);
+  }
+
+  /** Перерисовка карточки сбросит диктовку, открытое меню «+» и загрузку файла — подождём. */
+  function postedComposerBusy(state) {
+    var cmpEl = state.host.querySelector(".pt-composer");
+    if (!cmpEl) return false;
+    var bar = cmpEl.querySelector(".note-dictation-bar");
+    var menu = cmpEl.querySelector(".note-paie-plus-menu");
+    if ((bar && !bar.classList.contains("hidden")) || (menu && !menu.classList.contains("hidden"))) return true;
+    return !!(state.compose && state.compose.files.some(function (f) { return f.uploading; }));
+  }
+
+  function schedulePostedLiveRefresh(state, delayMs) {
+    if (state.liveTimer) clearTimeout(state.liveTimer);
+    state.liveTimer = setTimeout(function () {
+      state.liveTimer = null;
+      if (!document.body.contains(state.host)) return;
+      if (document.hidden || postedComposerBusy(state)) {
+        schedulePostedLiveRefresh(state, 2000);
+        return;
+      }
+      refreshPostedCard(state);
+    }, delayMs);
+  }
+
   function postedMeUid() {
     return String((cachedMe && (cachedMe.telegram_user_id || cachedMe.id)) || "");
   }
@@ -23696,6 +23737,8 @@
     var otherName = isOwner ? postedFirstName(assigneeName) : postedFirstName(postedOwnerName(state));
     var keepDraft = host.querySelector(".pt-composer textarea");
     var draft = keepDraft ? keepDraft.value : "";
+    // Живое обновление (пришло сообщение) не должно выбивать из набора текста.
+    var keepCaret = keepDraft && document.activeElement === keepDraft ? [keepDraft.selectionStart, keepDraft.selectionEnd] : null;
     host.innerHTML = "";
 
     var head = document.createElement("div");
@@ -23919,6 +23962,14 @@
       if (ta) window.setTimeout(function () {
         ta.focus();
       }, 50);
+    } else if (keepCaret) {
+      var taKeep = host.querySelector(".pt-composer textarea");
+      if (taKeep) {
+        taKeep.focus();
+        try {
+          taKeep.setSelectionRange(keepCaret[0], keepCaret[1]);
+        } catch (_) {}
+      }
     }
     var feed = host.querySelector(".pt-feed");
     if (feed && feed.lastChild && feed.lastChild.scrollIntoView && state.opts.inSide !== true) {
@@ -32027,6 +32078,11 @@
     }
     if (type === "comments.changed") {
       kickDiscussionLiveUpdates(evNote);
+      return;
+    }
+    if (type === "task.changed") {
+      // Сообщение / статус в задаче (в т.ч. ответ из Telegram) — открытой карточке и списку «Поручено другим».
+      kickPostedLiveUpdate(ev.task_id != null ? String(ev.task_id) : "");
       return;
     }
     if (type === "notes.changed") {
