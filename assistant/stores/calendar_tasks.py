@@ -128,8 +128,15 @@ ASSIGNEE_STATE_COLUMNS = (
     "assignee_status_note",
     "assignee_status_at",
     "last_nudged_at",
+    "assignee_triage",
+    "assignee_snoozed_until",
 )
 MAX_STATUS_NOTE_LEN = 500
+# Разбор входящих у исполнителя: новое поручение не попадает в его календарь, пока он его не взял.
+# '' — до разбора (старые задачи, задачи себе) — ведёт себя как раньше.
+TRIAGE_STATES = ("", "inbox", "snoozed", "accepted", "declined")
+TRIAGE_HIDDEN = ("inbox", "snoozed", "declined")
+SNOOZE_HOUR = 7
 
 
 def _ensure_assignee_state_columns(conn: sqlite3.Connection) -> None:
@@ -380,6 +387,8 @@ def task_visible_in_calendar(task: dict[str, Any] | None, viewer_id: int | str) 
         return False
     if task_is_delegated(task) and str(task.get("outcome") or "") == "cancelled":
         return False  # постановщик отменил поручение — у исполнителя его больше нет
+    if task_is_delegated(task) and viewer == assignee and str(task.get("assignee_triage") or "") in TRIAGE_HIDDEN:
+        return False  # ещё во входящих (или «не моё») — в календарь не ставим
     return viewer == owner or viewer == assignee
 
 
@@ -646,8 +655,9 @@ def create_task(
             INSERT INTO calendar_tasks (
                 owner_user_id, title, description, result, start_at, end_at,
                 assignee_user_id, assignee_email, assignee_name,
-                checklist_json, note_id, all_day, recurrence, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                checklist_json, note_id, all_day, recurrence, assignee_triage,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 uid,
@@ -663,6 +673,7 @@ def create_task(
                 _clip(note_id, 40),
                 1 if all_day else 0,
                 _clip(rrule, 500),
+                "inbox" if assignee and assignee != uid else "",
                 now,
                 now,
             ),
@@ -820,13 +831,17 @@ def list_tasks_in_window(
             """
             SELECT * FROM calendar_tasks
             WHERE (owner_user_id = ? OR assignee_user_id = ?)
+              AND NOT (
+                assignee_user_id = ? AND owner_user_id != assignee_user_id
+                AND IFNULL(assignee_triage, '') IN ('inbox', 'snoozed', 'declined')
+              )
               AND (
                 (IFNULL(recurrence, '') = '' AND start_at < ? AND end_at > ?)
                 OR (IFNULL(recurrence, '') != '' AND start_at < ? AND done = 0)
               )
             ORDER BY start_at ASC, id ASC
             """,
-            (uid, uid, _iso(end), _iso(start), _iso(end)),
+            (uid, uid, uid, _iso(end), _iso(start), _iso(end)),
         )
         rows = [_row_to_dict(r) for r in cur.fetchall()]
     out: list[dict[str, Any]] = []
@@ -1093,6 +1108,10 @@ def update_task(
                 + " WHERE id = ?",
                 (int(existing["id"]),),
             )
+            if fields["assignee_user_id"] and fields["assignee_user_id"] != str(existing["owner_user_id"]):
+                _conn().execute(
+                    "UPDATE calendar_tasks SET assignee_triage = 'inbox' WHERE id = ?", (int(existing["id"]),)
+                )
         _conn().execute(
             """
             UPDATE calendar_tasks SET
@@ -1129,6 +1148,8 @@ def update_task(
             ),
         )
         _conn().commit()
+    if fields["done"] and not existing["done"] and not reassigned:
+        mark_triaged(existing)  # сдал из обхода разбора — значит, взял
     if fields["title"] != existing["title"]:
         try:
             from assistant.services import focus_items
@@ -1149,6 +1170,8 @@ def assignee_state(task: dict[str, Any] | None) -> dict[str, str]:
         "status_note": str(t.get("assignee_status_note") or ""),
         "status_at": str(t.get("assignee_status_at") or ""),
         "nudged_at": str(t.get("last_nudged_at") or ""),
+        "triage": str(t.get("assignee_triage") or ""),
+        "snoozed_until": str(t.get("assignee_snoozed_until") or ""),
     }
 
 
@@ -1176,7 +1199,10 @@ def _assignee_task(viewer_id: int | str, task_id: int | str) -> Optional[dict[st
 
 
 # ——— Лента поручения: события и переписка постановщика с исполнителем ———
-EVENT_KINDS = ("created", "seen", "in_progress", "message", "nudge", "done", "returned", "accepted", "cancelled")
+EVENT_KINDS = (
+    "created", "seen", "in_progress", "message", "nudge", "done", "returned", "accepted", "cancelled",
+    "taken", "snoozed", "declined",
+)
 MAX_MESSAGE_LEN = 2000
 
 
@@ -1417,6 +1443,8 @@ def set_assignee_status(
         add_event(task["id"], "message", actor_user_id=viewer_id, actor_name=str(task.get("assignee_name") or ""), text=note)
     elif status == "in_progress" and task.get("assignee_status") != "in_progress":
         add_event(task["id"], "in_progress", actor_user_id=viewer_id, actor_name=str(task.get("assignee_name") or ""))
+    if status == "in_progress":
+        mark_triaged(task)
     now = _now_iso()
     return _set_columns(
         int(task["id"]),
@@ -1427,6 +1455,131 @@ def set_assignee_status(
             "assignee_seen_at": task.get("assignee_seen_at") or now,
         },
     )
+
+
+def _set_triage(task: dict[str, Any], state: str, **extra: str) -> Optional[dict[str, Any]]:
+    now = _now_iso()
+    values = {
+        "assignee_triage": state,
+        "assignee_snoozed_until": extra.pop("snoozed_until", ""),
+        "assignee_seen_at": task.get("assignee_seen_at") or now,
+        **extra,
+    }
+    return _set_columns(int(task["id"]), values)
+
+
+def triage_accept(
+    viewer_id: int | str,
+    task_id: int | str,
+    *,
+    actor_name: str = "",
+    start_at: str | datetime | None = None,
+    end_at: str | datetime | None = None,
+    all_day: bool | None = None,
+    title: str | None = None,
+    description: str | None = None,
+    tz: ZoneInfo | None = None,
+) -> Optional[dict[str, Any]]:
+    """«Беру» (и «Изменить»): поручение встаёт в календарь исполнителя — на предложенный или свой срок."""
+    task = _assignee_task(viewer_id, task_id)
+    if not task:
+        return None
+    if any(v is not None for v in (start_at, end_at, all_day, title, description)):
+        update_task(
+            viewer_id, task_id, start_at=start_at, end_at=end_at, all_day=all_day,
+            title=title, description=description, tz=tz,
+            schedule_actor={"by_user_id": _uid(viewer_id), "by_name": actor_name},
+        )
+    if str(task.get("assignee_triage") or "") != "accepted":
+        add_event(task["id"], "taken", actor_user_id=viewer_id, actor_name=actor_name)
+    return _set_triage(task, "accepted", assignee_status_note="")
+
+
+def triage_snooze(
+    viewer_id: int | str, task_id: int | str, *, tz: ZoneInfo | None = None, now: datetime | None = None
+) -> Optional[dict[str, Any]]:
+    """«Позже» — убрать из стопки до завтрашнего утра (SNOOZE_HOUR по поясу пользователя)."""
+    task = _assignee_task(viewer_id, task_id)
+    if not task:
+        return None
+    zone = tz or timezone.utc
+    local_now = (now or datetime.now(timezone.utc)).astimezone(zone)
+    until = datetime.combine(local_now.date() + timedelta(days=1), time(SNOOZE_HOUR, 0), tzinfo=zone)
+    if str(task.get("assignee_triage") or "") != "snoozed":
+        add_event(task["id"], "snoozed", actor_user_id=viewer_id, actor_name=str(task.get("assignee_name") or ""))
+    return _set_triage(task, "snoozed", snoozed_until=_iso(until))
+
+
+def triage_decline(
+    viewer_id: int | str, task_id: int | str, note: str = "", *, actor_name: str = ""
+) -> Optional[dict[str, Any]]:
+    """«Не моё» — поручение возвращается постановщику с комментарием; у исполнителя пропадает."""
+    task = _assignee_task(viewer_id, task_id)
+    if not task:
+        return None
+    note = _clip(note, MAX_STATUS_NOTE_LEN)
+    add_event(task["id"], "declined", actor_user_id=viewer_id, actor_name=actor_name, text=note)
+    return _set_triage(task, "declined", assignee_status_note=note, assignee_status_at=_now_iso())
+
+
+def triage_restore(viewer_id: int | str, task_id: int | str, state: str, snoozed_until: str = "") -> Optional[dict[str, Any]]:
+    """Отмена последнего действия в разборе — вернуть прежнее состояние."""
+    if state not in TRIAGE_STATES:
+        raise ValueError("Неизвестное состояние")
+    task = _assignee_task(viewer_id, task_id)
+    if not task:
+        return None
+    extra = {"assignee_status_note": ""} if task.get("assignee_triage") == "declined" else {}
+    return _set_triage(task, state, snoozed_until=snoozed_until, **extra)
+
+
+def mark_triaged(task: dict[str, Any] | None) -> None:
+    """Исполнитель работает с поручением в обход разбора (взял в работу, сдал) — значит, взял."""
+    if task and str(task.get("assignee_triage") or "") in ("inbox", "snoozed"):
+        _set_columns(int(task["id"]), {"assignee_triage": "accepted", "assignee_snoozed_until": ""})
+
+
+def list_inbox_user_ids() -> list[int]:
+    with _LOCK:
+        raw = [
+            str(r[0] or "").strip()
+            for r in _conn().execute(
+                "SELECT DISTINCT assignee_user_id FROM calendar_tasks"
+                " WHERE assignee_user_id != owner_user_id AND done = 0"
+                " AND IFNULL(assignee_triage, '') IN ('inbox', 'snoozed')"
+            ).fetchall()
+        ]
+    return _int_user_ids(raw)
+
+
+def list_inbox(user_id: int | str, *, now: datetime | None = None) -> dict[str, Any]:
+    """Входящие поручения исполнителя: новые + отложенные, у которых наступило утро.
+
+    Отложенные до завтра отдаются только числом (snoozed)."""
+    uid = _uid(user_id)
+    now_iso = _iso(now or datetime.now(timezone.utc))
+    with _LOCK:
+        rows = _conn().execute(
+            """
+            SELECT * FROM calendar_tasks
+            WHERE assignee_user_id = ? AND owner_user_id != assignee_user_id
+              AND done = 0 AND IFNULL(outcome, '') != 'cancelled'
+              AND IFNULL(assignee_triage, '') IN ('inbox', 'snoozed')
+            ORDER BY created_at ASC, id ASC
+            """,
+            (uid,),
+        ).fetchall()
+    items: list[dict[str, Any]] = []
+    snoozed = 0
+    for r in rows:
+        t = _row_to_dict(r)
+        if t["assignee_triage"] == "snoozed" and str(t.get("assignee_snoozed_until") or "") > now_iso:
+            snoozed += 1
+            continue
+        items.append(t)
+    # Сначала новые, потом вернувшиеся из «Позже».
+    items.sort(key=lambda t: (t["assignee_triage"] == "snoozed", str(t.get("created_at") or ""), t["id"]))
+    return {"items": items, "snoozed": snoozed}
 
 
 def mark_nudged(task_id: int | str, *, actor_user_id: int | str = "", actor_name: str = "") -> Optional[dict[str, Any]]:

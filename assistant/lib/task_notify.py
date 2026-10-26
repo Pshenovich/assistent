@@ -37,6 +37,9 @@ def notify_task_assignee(
         mid = 0
     if mid <= 0:
         return
+    if str(task.get("assignee_triage") or "") == "inbox":
+        # Новое поручение ждёт во «Входящих» — о нём скажет утренняя сводка, не пуш на каждую задачу.
+        return
     try:
         from assistant.stores import user_prefs
 
@@ -197,3 +200,67 @@ def notify_task_cancelled(*, task: dict[str, Any], owner_name: str) -> None:
     who = html.escape((owner_name or "").strip() or "Постановщик")
     title = html.escape(str(task.get("title") or "Задача"))
     _send_task_push(task.get("assignee_user_id"), f"{who} отменил(а) задачу «{title}» — делать её больше не нужно.", "notify_cancelled")
+
+
+def notify_task_declined(*, task: dict[str, Any], assignee_name: str, note: str) -> None:
+    """Исполнитель нажал «Не моё» — постановщику, чтобы переназначил или отменил."""
+    link = task_title_link_html(str(task.get("title") or "Задача"), task.get("id") or 0)
+    who = html.escape((assignee_name or "").strip() or "Исполнитель")
+    text = f"{who}: задача {link} — не ко мне. Переназначьте или отмените."
+    if (note or "").strip():
+        text += f"\n{html.escape(note.strip()[:600])}"
+    _send_task_push(task.get("owner_user_id"), text, "notify_declined")
+
+
+def inbox_digest_line(user_id: int | str) -> str:
+    """Строка для утренней сводки: «Вам поставили 6 задач (Вова — 4, Аня — 2)» со ссылкой на разбор."""
+    from assistant.stores import calendar_tasks, user_prefs
+
+    uid = _int_uid(user_id)
+    if uid <= 0:
+        return ""
+    try:
+        if not user_prefs.task_assigned_notify(uid):
+            return ""
+    except Exception as e:
+        print(f"[calendar_tasks] inbox_digest prefs uid={uid} err={e!r}")
+    items = calendar_tasks.list_inbox(uid)["items"]
+    if not items:
+        return ""
+    by_owner: dict[str, int] = {}
+    for t in items:
+        name = owner_short_name(t.get("owner_user_id"))
+        by_owner[name] = by_owner.get(name, 0) + 1
+    who = ", ".join(f"{n} — {c}" for n, c in sorted(by_owner.items(), key=lambda kv: -kv[1]))
+    url = html.escape(inbox_webapp_url(), quote=True)
+    return f'📥 Вам поставили {_tasks_word(len(items))} ({html.escape(who)}). <a href="{url}">Разобрать</a>'
+
+
+def inbox_webapp_url() -> str:
+    from assistant.lib.webapp_public import webapp_entry_url
+
+    base = webapp_entry_url()
+    sep = "&" if "?" in base else "?"
+    return f"{base}{sep}inbox=1"
+
+
+def owner_display_name(owner_user_id: Any) -> str:
+    try:
+        from assistant.stores import note_members
+
+        return note_members.profile_display_name(note_members.get_profile(_int_uid(owner_user_id)), fallback="Коллега")
+    except Exception as e:
+        print(f"[calendar_tasks] owner name uid={owner_user_id} err={e!r}")
+        return "Коллега"
+
+
+def owner_short_name(owner_user_id: Any) -> str:
+    return owner_display_name(owner_user_id).split()[0]
+
+
+def _tasks_word(n: int) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} задачу"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return f"{n} задачи"
+    return f"{n} задач"

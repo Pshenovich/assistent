@@ -75,6 +75,8 @@ def test_collect_due_for_assignee(tasks_db):
         assignee_user_id=22,
         tz=tz,
     )
+    assert tr.collect_due_reminders(22, now=now) == []  # не взял — не напоминаем
+    tasks_db.triage_accept(22, row["id"])
     due_assignee = tr.collect_due_reminders(22, now=now)
     due_owner = tr.collect_due_reminders(11, now=now)
     assert [t["id"] for t in due_assignee] == [row["id"]]

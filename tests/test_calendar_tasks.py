@@ -191,6 +191,8 @@ def test_assignee_sees_and_can_edit_task(tasks_db):
     win_start = datetime(2026, 10, 7, 0, 0, tzinfo=tz)
     win_end = datetime(2026, 10, 8, 0, 0, tzinfo=tz)
     assert [t["id"] for t in store.list_tasks_in_window(11, win_start, win_end)] == [row["id"]]
+    assert store.list_tasks_in_window(22, win_start, win_end) == []  # во входящих, ещё не взял
+    store.triage_accept(22, row["id"])
     assert [t["id"] for t in store.list_tasks_in_window(22, win_start, win_end)] == [row["id"]]
     assert store.list_tasks_in_window(33, win_start, win_end) == []
 

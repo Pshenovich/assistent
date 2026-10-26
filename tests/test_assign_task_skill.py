@@ -193,6 +193,10 @@ def test_delegated_hidden_from_owner_calendar_and_posted(tasks_db):
     assert store.task_is_delegated(delegated) is True
     assert store.task_is_delegated(personal) is False
     assert store.task_visible_in_calendar(delegated, 11) is False
+    # Пока исполнитель не взял — только во входящих, не в календаре.
+    assert delegated["assignee_triage"] == "inbox"
+    assert store.task_visible_in_calendar(delegated, 22) is False
+    delegated = store.triage_accept(22, delegated["id"])
     assert store.task_visible_in_calendar(delegated, 22) is True
     assert store.task_visible_in_calendar(personal, 11) is True
 

@@ -343,6 +343,37 @@ def rule_posted_overdue(tasks: list[dict[str, Any]], now: datetime, tz: Any) -> 
     ]
 
 
+def rule_task_inbox(uid: int, now: datetime) -> list[dict[str, Any]]:
+    """Входящие поручения исполнителя — одна карточка «Вам поставили N задач», первой в ленте."""
+    from assistant.lib.task_notify import owner_short_name, _tasks_word
+    from assistant.stores import calendar_tasks
+
+    inbox = calendar_tasks.list_inbox(uid, now=now)
+    items, snoozed = inbox["items"], int(inbox["snoozed"])
+    if not items:
+        return []
+    by_owner: dict[str, int] = {}
+    for t in items:
+        name = owner_short_name(t.get("owner_user_id"))
+        by_owner[name] = by_owner.get(name, 0) + 1
+    parts = [", ".join(f"{n} — {c}" for n, c in sorted(by_owner.items(), key=lambda kv: -kv[1]))]
+    if snoozed:
+        parts.append(f"ещё {snoozed} отложено")
+    return [
+        {
+            "key": "task_inbox",
+            "type": "task_inbox",
+            "tag": "📥 входящие",
+            "urgency": 9,
+            "title": f"Вам поставили {_tasks_word(len(items))}",
+            "source": " · ".join(parts),
+            "count": len(items),
+            "snoozed": snoozed,
+            "actions": [{"label": "Разобрать", "act": "open_task_inbox", "primary": True}],
+        }
+    ]
+
+
 def _prep_mail(ev: dict[str, Any], now: datetime) -> list[dict[str, Any]]:
     """Последние ветки переписки с участниками встречи (если подключена почта)."""
     uid = ev.get("_owner_uid")
@@ -665,7 +696,15 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
         items += risk_rules.risk_cards(uid, now=now)  # B7: риски по реестру
     except Exception as e:
         print(f"[proactive] risks failed uid={uid} err={e!r}")
-    return rank(items, dismissed_keys(uid))
+    out = rank(items, dismissed_keys(uid))
+    try:
+        # Входящие — вне ранжирования и «скрыть»: пропадают, только когда всё разобрано.
+        inbox = rule_task_inbox(uid, now)
+        if inbox:
+            out = inbox + out[: MAX_ITEMS - 1]
+    except Exception as e:
+        print(f"[proactive] task inbox failed uid={uid} err={e!r}")
+    return out
 
 
 # ---------------------------------------------------------------- для бота: события и утренний бриф
@@ -752,6 +791,15 @@ def brief_message(items: list[dict[str, Any]], today_events: list[dict[str, Any]
         for e in meets[:5]:
             st = _parse(e.get("start"))
             lines.append(f"• {_hm(st, tz) if st else ''} {_h.escape(str(e.get('summary') or 'встреча'))}")
+    inbox = [it for it in items if it.get("type") == "task_inbox"]
+    items = [it for it in items if it.get("type") != "task_inbox"]
+    if inbox:
+        from assistant.lib.task_notify import inbox_webapp_url
+
+        it = inbox[0]
+        url = _h.escape(inbox_webapp_url(), quote=True)
+        lines.append("")
+        lines.append(f'📥 {_h.escape(str(it.get("title") or ""))} ({_h.escape(str(it.get("source") or ""))}). <a href="{url}">Разобрать</a>')
     if items:
         lines.append("")
         lines.append("<b>Главное:</b>")

@@ -5567,6 +5567,136 @@ async def miniapp_calendar_tasks_accept_done(
     return {"ok": True, "archived": n}
 
 
+class _MiniappTaskTriageBody(BaseModel):
+    action: str = ""
+    start: Optional[str] = None
+    end: Optional[str] = None
+    all_day: Optional[bool] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    result: Optional[str] = None
+    note: str = ""
+    # undo: вернуть прежнее состояние разбора
+    state: Optional[str] = None
+    snoozed_until: str = ""
+
+
+def _inbox_item_api(task: dict[str, Any], *, tz: Any, viewer_id: int) -> dict[str, Any]:
+    from assistant.lib.task_notify import owner_display_name
+    from assistant.stores import notes as notes_store
+
+    item = _task_api(task, tz=tz, viewer_id=viewer_id)
+    item["owner_name"] = owner_display_name(task.get("owner_user_id"))
+    nid = str(task.get("note_id") or "").strip()
+    if nid.isdigit():
+        # Документ, из которого поставлена задача, — только если исполнитель может его открыть.
+        try:
+            note = notes_store.get_accessible_note(viewer_id, int(nid), with_sharing=False)
+            if note:
+                item["source"] = {
+                    "id": int(nid),
+                    "title": str(note.get("title") or "") or "Без названия",
+                    "kind": "transcription" if note.get("role") == "transcription" else "note",
+                }
+        except Exception as e:
+            print(f"[inbox] source task={task.get('id')} err={e!r}")
+    return item
+
+
+@miniapp_router.get("/calendar/tasks/inbox")
+async def miniapp_calendar_tasks_inbox(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Входящие поручения исполнителя — для разбора карточками (Позже / Беру / Сделано / Изменить / Не моё)."""
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    tz = _tz_for(uid)
+
+    def _run() -> dict[str, Any]:
+        inbox = calendar_tasks_store.list_inbox(uid)
+        return {
+            "items": [_inbox_item_api(t, tz=tz, viewer_id=uid) for t in inbox["items"]],
+            "snoozed": inbox["snoozed"],
+        }
+
+    res = await run_in_threadpool(_run)
+    return {"ok": True, **res}
+
+
+@miniapp_router.post("/calendar/tasks/{task_id}/triage")
+async def miniapp_calendar_tasks_triage(
+    task_id: int,
+    body: _MiniappTaskTriageBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.lib import task_notify
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    tz = _tz_for(uid)
+    name = _principal_display_name(principal)
+    action = str(body.action or "").strip()
+    task = await run_in_threadpool(calendar_tasks_store._assignee_task, uid, task_id)
+    if not task:
+        raise HTTPException(status_code=403, detail="Разобрать поручение может его исполнитель")
+    if task.get("done") and action != "undo":
+        raise HTTPException(status_code=400, detail="Задача уже выполнена")
+    try:
+        if action in ("accept", "edit"):
+            row = await run_in_threadpool(
+                partial(
+                    calendar_tasks_store.triage_accept, uid, task_id, actor_name=name,
+                    start_at=(body.start or "").strip() or None, end_at=(body.end or "").strip() or None,
+                    all_day=body.all_day, title=body.title, description=body.description, tz=tz,
+                )
+            )
+        elif action == "snooze":
+            row = await run_in_threadpool(partial(calendar_tasks_store.triage_snooze, uid, task_id, tz=tz))
+        elif action == "decline":
+            row = await run_in_threadpool(
+                partial(calendar_tasks_store.triage_decline, uid, task_id, body.note, actor_name=name)
+            )
+            if row:
+                await run_in_threadpool(
+                    partial(task_notify.notify_task_declined, task=row, assignee_name=name, note=body.note)
+                )
+        elif action == "done":
+            await run_in_threadpool(partial(calendar_tasks_store.triage_accept, uid, task_id, actor_name=name))
+            row = await run_in_threadpool(
+                partial(calendar_tasks_store.update_task, uid, task_id, done=True, result=body.result, tz=tz)
+            )
+            if row:
+                await run_in_threadpool(
+                    partial(calendar_tasks_store.add_event, row["id"], "done", actor_user_id=uid,
+                            actor_name=name, text=str(row.get("result") or ""))
+                )
+                await run_in_threadpool(partial(task_notify.notify_task_owner_done, task=row, completer_name=name))
+        elif action == "undo":
+            # Отмена «Сделано» снимает и отметку о выполнении (постановщик уже получил пуш — это ок).
+            if task.get("done"):
+                await run_in_threadpool(partial(calendar_tasks_store.update_task, uid, task_id, done=False, tz=tz))
+            row = await run_in_threadpool(
+                partial(calendar_tasks_store.triage_restore, uid, task_id, str(body.state or "inbox"), body.snoozed_until)
+            )
+        else:
+            raise HTTPException(status_code=400, detail="Неизвестное действие")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not row:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    if action in ("accept", "edit", "done", "undo"):
+        synced = await run_in_threadpool(_sync_task_google, uid, row, "update")
+        row = synced or row
+    if action in ("done", "decline"):
+        _memory_task_changed(row)
+    _FOCUS_CACHE.pop(uid, None)
+    _FOCUS_CACHE.pop(int(str(row.get("owner_user_id") or 0) or 0), None)
+    return {"ok": True, "task": _task_api(row, tz=tz, viewer_id=uid)}
+
+
 @miniapp_router.post("/calendar/tasks/{task_id}/seen")
 async def miniapp_calendar_tasks_seen(
     task_id: int,
@@ -9868,7 +9998,8 @@ def _focus_feed_items(uid: int) -> list[dict[str, Any]]:
     from assistant.stores import user_prefs
 
     if not user_prefs.proactive_prefs(uid).get("focus"):
-        return []
+        # Фокус выключен, но входящие поручения разобрать всё равно надо.
+        return proactive.rule_task_inbox(uid, proactive._now())
     today = datetime.now(_tz_for(uid)).date()
     try:
         payload = _calendar_range_payload(uid, (today - timedelta(days=2)).isoformat(), (today + timedelta(days=1)).isoformat())

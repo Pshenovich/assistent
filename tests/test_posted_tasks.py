@@ -91,7 +91,10 @@ def test_reassign_resets_state(store):
     store.set_assignee_status(ASSIGNEE, t["id"], "in_progress")
     store.mark_nudged(t["id"])
     row = store.update_task(OWNER, t["id"], assignee_user_id=33, assignee_name="Артём", tz=TZ)
-    assert store.assignee_state(row) == {"seen_at": "", "status": "", "status_note": "", "status_at": "", "nudged_at": ""}
+    assert store.assignee_state(row) == {
+        "seen_at": "", "status": "", "status_note": "", "status_at": "", "nudged_at": "",
+        "triage": "inbox", "snoozed_until": "",
+    }
 
 
 def test_archive_done_posted(store):

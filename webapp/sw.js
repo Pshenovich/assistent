@@ -1,6 +1,6 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261026-task-notify";
+var CACHE_VERSION = "miniapp-v1-20261026-task-inbox";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 var CANONICAL_ORIGIN = "https://assistent.networ.ru";
 var OBSOLETE_HOSTS = {
@@ -11,18 +11,18 @@ var OBSOLETE_HOSTS = {
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261026-task-notify",
-  "./board.css?v=20261026-task-notify",
-  "./board-geom.js?v=20261026-task-notify",
-  "./board.js?v=20261026-task-notify",
-  "./realtime.js?v=20261026-task-notify",
-  "./note-yjs.js?v=20261026-task-notify",
-  "./app.js?v=20261026-task-notify",
+  "./styles.css?v=20261026-task-inbox",
+  "./board.css?v=20261026-task-inbox",
+  "./board-geom.js?v=20261026-task-inbox",
+  "./board.js?v=20261026-task-inbox",
+  "./realtime.js?v=20261026-task-inbox",
+  "./note-yjs.js?v=20261026-task-inbox",
+  "./app.js?v=20261026-task-inbox",
   "./mail.js?v=20261023-mail6",
   "./mail-inbox.js?v=20261023-reply1",
   "./digest-chats.js?v=20261025-mobfix",
   "./digest-market.js?v=20261025-mobfix",
-  "./web-canvas.js?v=20261026-task-notify",
+  "./web-canvas.js?v=20261026-task-inbox",
   "./launch.html",
   "./manifest.webmanifest",
   "./note-drafts.js?v=20261005-heading-pdf",

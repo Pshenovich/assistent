@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261026-task-notify";
+  var WEBAPP_BUILD = "20261026-task-inbox";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -20228,6 +20228,7 @@
   }
 
   function focusCard(it, inPanel) {
+    if (it && it.type === "task_inbox") return focusInboxCard(it, inPanel);
     var card = document.createElement("div");
     card.className = "focus-card" + (it.urgency >= 3 ? " is-urgent" : "") + (inPanel ? " is-wide" : "");
     var all = it.actions || [];
@@ -20360,6 +20361,601 @@
       card.classList.add("no-foot");
     }
     return card;
+  }
+
+  // ——— Входящие поручения: разбор стопкой карточек (Позже / Беру / Сделано / Изменить / Не моё) ———
+  // Новое поручение не попадает в календарь исполнителя, пока он его не взял.
+  var tinbox = null;
+
+  var TINBOX_ACTS = [
+    { id: "snooze", label: "Позже", icon: "clock", key: "←", code: "ArrowLeft" },
+    { id: "accept", label: "Беру", icon: "cal", key: "→", code: "ArrowRight", primary: true },
+    { id: "done", label: "Сделано", icon: "check", key: "D", code: "KeyD" },
+    { id: "edit", label: "Изменить", icon: "pen", key: "E", code: "KeyE" },
+    { id: "decline", label: "Не моё", icon: "undo", key: "N", code: "KeyN" },
+  ];
+
+  function tinboxEl(tag, cls, text) {
+    var el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text != null) el.textContent = text;
+    return el;
+  }
+
+  function tinboxIsoDate(d) {
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+
+  function tinboxDayLabel(iso, withWeekday) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ""));
+    if (!m) return "";
+    var d = new Date(+m[1], +m[2] - 1, +m[3]);
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+    var diff = Math.round((d.getTime() - today.getTime()) / 86400000);
+    if (diff === 0) return "сегодня";
+    if (diff === 1) return "завтра";
+    var opts = withWeekday ? { weekday: "short", day: "numeric", month: "short" } : { weekday: "short" };
+    if (!withWeekday && (diff < 0 || diff > 6)) opts = { day: "numeric", month: "short" };
+    return d.toLocaleDateString("ru-RU", opts).replace(/\./g, "");
+  }
+
+  // Предложенный постановщиком срок: день (YYYY-MM-DD) и время (HH:MM или "").
+  function tinboxDue(task) {
+    var ev = (task && task.event) || {};
+    var st = ev.start || {};
+    if (task.all_day || st.date) return { day: String(st.date || "").slice(0, 10) || localDateIsoFromMs(Date.parse(task.start_at)), time: "" };
+    var ms = Date.parse(st.dateTime || task.start_at);
+    if (isNaN(ms)) return { day: "", time: "" };
+    var d = new Date(ms);
+    return { day: localDateIsoFromMs(ms), time: pad2(d.getHours()) + ":" + pad2(d.getMinutes()) };
+  }
+
+  function tinboxAcceptLabel(task) {
+    var due = tinboxDue(task);
+    var day = tinboxDayLabel(due.day, false);
+    return day ? "Беру на " + day : "Беру";
+  }
+
+  function tinboxFirstName(name) {
+    return String(name || "").trim().split(/\s+/)[0] || "постановщику";
+  }
+
+  async function openTaskInbox() {
+    if (tinbox) {
+      tinboxReturn();
+      return;
+    }
+    var host = tinboxEl("div", "tinbox");
+    host.setAttribute("role", "dialog");
+    host.setAttribute("aria-label", "Входящие задачи");
+    document.body.appendChild(host);
+    document.body.classList.add("tinbox-open");
+    tinbox = { host: host, items: [], idx: 0, mode: "", busy: false, last: null, stats: { accept: 0, snooze: 0, done: 0, decline: 0 } };
+    tinbox.onKey = tinboxOnKey;
+    document.addEventListener("keydown", tinbox.onKey, true);
+    host.appendChild(tinboxEl("div", "tinbox-loading", "Загружаем задачи…"));
+    try {
+      var res = await apiFetch("/calendar/tasks/inbox", { method: "GET" });
+      if (!tinbox) return;
+      tinbox.items = (res && res.items) || [];
+      tinbox.snoozed = (res && res.snoozed) || 0;
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось загрузить задачи");
+      closeTaskInbox();
+      return;
+    }
+    renderTaskInbox();
+  }
+
+  function closeTaskInbox() {
+    if (!tinbox) return;
+    var changed = tinbox.stats.accept + tinbox.stats.snooze + tinbox.stats.done + tinbox.stats.decline > 0;
+    document.removeEventListener("keydown", tinbox.onKey, true);
+    if (tinbox.back) tinbox.back.remove();
+    tinbox.host.remove();
+    document.body.classList.remove("tinbox-open");
+    tinbox = null;
+    if (changed) {
+      loadFocus(true);
+      loadActual({ silent: true, skipCachePaint: true });
+    }
+  }
+
+  function renderTaskInbox() {
+    var s = tinbox;
+    if (!s) return;
+    var host = s.host;
+    host.innerHTML = "";
+    var total = s.items.length;
+    var top = tinboxEl("div", "tinbox-top");
+    if (total > 1 && s.idx < total) {
+      top.appendChild(tinboxEl("span", "tinbox-count", Math.min(s.idx + 1, total) + " из " + total));
+      var bar = tinboxEl("div", "tinbox-bar");
+      var fill = tinboxEl("span", "");
+      fill.style.width = Math.round((s.idx / total) * 100) + "%";
+      bar.appendChild(fill);
+      top.appendChild(bar);
+    } else {
+      top.appendChild(tinboxEl("span", "tinbox-count", "Входящие задачи"));
+      top.appendChild(tinboxEl("span", "tinbox-sp", ""));
+    }
+    var x = tinboxEl("button", "tinbox-x");
+    x.type = "button";
+    x.setAttribute("aria-label", "Закрыть");
+    x.innerHTML = DISCUSS_ICONS.x;
+    x.addEventListener("click", closeTaskInbox);
+    top.appendChild(x);
+    host.appendChild(top);
+
+    if (s.idx >= total) {
+      host.appendChild(tinboxFinish());
+      return;
+    }
+    var task = s.items[s.idx];
+    var stage = tinboxEl("div", "tinbox-stage");
+    if (s.idx + 1 < total) stage.appendChild(tinboxEl("div", "tinbox-peek"));
+    var card = tinboxCard(task);
+    stage.appendChild(card);
+    host.appendChild(stage);
+    host.appendChild(tinboxActions(task));
+    s.card = card;
+    if (s.mode) {
+      var f = card.querySelector("textarea, input");
+      if (f) window.setTimeout(function () { f.focus(); }, 30);
+    }
+  }
+
+  function tinboxCard(task) {
+    var s = tinbox;
+    var card = tinboxEl("div", "tinbox-card");
+    var who = tinboxEl("div", "tinbox-who");
+    who.appendChild(postedAvatar(task.owner_user_id, task.owner_name, "s"));
+    who.appendChild(tinboxEl("span", "tinbox-who-name", task.owner_name || "Постановщик"));
+    card.appendChild(who);
+    card.appendChild(tinboxEl("h2", "tinbox-title", task.title || "Задача"));
+    if (task.description) card.appendChild(tinboxEl("p", "tinbox-desc", task.description));
+    var checklist = task.checklist || [];
+    if (checklist.length) {
+      var ul = tinboxEl("ul", "tinbox-check");
+      checklist.slice(0, 8).forEach(function (c) {
+        ul.appendChild(tinboxEl("li", c.done ? "is-done" : "", c.text));
+      });
+      card.appendChild(ul);
+    }
+    if (task.source && task.source.id) card.appendChild(tinboxSourceRow(task.source));
+    var due = tinboxDue(task);
+    if (due.day) {
+      card.appendChild(
+        tinboxEl("span", "tinbox-due", "Предложенный срок: " + tinboxDayLabel(due.day, true) + (due.time ? ", " + due.time : ""))
+      );
+    }
+    var badgeL = tinboxEl("span", "tinbox-badge is-left", "Позже");
+    var badgeR = tinboxEl("span", "tinbox-badge is-right", "Беру");
+    card.appendChild(badgeL);
+    card.appendChild(badgeR);
+    if (s.mode) card.appendChild(tinboxForm(task, s.mode));
+    else tinboxSwipe(card, badgeL, badgeR);
+    return card;
+  }
+
+  // Из какого документа задача: встреча или заметка — открыть и вернуться к разбору.
+  function tinboxSourceRow(src) {
+    var isTr = src.kind === "transcription";
+    var b = tinboxEl("button", "tinbox-src");
+    b.type = "button";
+    var ico = tinboxEl("span", "tinbox-src-ico");
+    ico.innerHTML = DISCUSS_ICONS[isTr ? "mic" : "note"] || "";
+    b.appendChild(ico);
+    var txt = tinboxEl("span", "tinbox-src-text");
+    txt.appendChild(tinboxEl("span", "tinbox-src-kind", isTr ? "Из встречи" : "Из заметки"));
+    txt.appendChild(tinboxEl("span", "tinbox-src-title", src.title || "Без названия"));
+    b.appendChild(txt);
+    var chev = tinboxEl("span", "tinbox-src-chev");
+    chev.innerHTML = DISCUSS_ICONS.right;
+    b.appendChild(chev);
+    b.title = "Открыть источник";
+    b.addEventListener("click", function (e) {
+      e.preventDefault();
+      tinboxOpenSource(src);
+    });
+    return b;
+  }
+
+  // Разбор не закрываем: прячем, открываем документ, внизу — «К разбору задач».
+  function tinboxOpenSource(src) {
+    var s = tinbox;
+    if (!s) return;
+    s.away = true;
+    s.host.classList.add("is-away");
+    document.body.classList.remove("tinbox-open");
+    var back = tinboxEl("button", "tinbox-back");
+    back.type = "button";
+    back.innerHTML = DISCUSS_ICONS.taskBox;
+    back.appendChild(tinboxEl("span", "", "К разбору задач · " + (s.idx + 1) + " из " + s.items.length));
+    back.addEventListener("click", tinboxReturn);
+    document.body.appendChild(back);
+    s.back = back;
+    openMeetingMaterial({ id: src.id, kind: src.kind, title: src.title || "" });
+  }
+
+  function tinboxReturn() {
+    var s = tinbox;
+    if (!s || !s.away) return;
+    s.away = false;
+    if (s.back) s.back.remove();
+    s.back = null;
+    s.host.classList.remove("is-away");
+    document.body.classList.add("tinbox-open");
+  }
+
+  function tinboxActions(task) {
+    var row = tinboxEl("div", "tinbox-acts");
+    TINBOX_ACTS.forEach(function (a) {
+      var b = tinboxEl("button", "tinbox-act" + (a.primary ? " is-primary" : "") + (tinbox.mode === a.id ? " is-on" : ""));
+      b.type = "button";
+      b.dataset.act = a.id;
+      var ico = tinboxEl("span", "tinbox-act-ico");
+      ico.innerHTML = DISCUSS_ICONS[a.icon] || "";
+      b.appendChild(ico);
+      var label = tinboxEl("span", "tinbox-act-label", a.label);
+      // «Беру на пт»: срок — в подписи на компьютере; на телефоне под кругом только «Беру».
+      if (a.id === "accept") label.appendChild(tinboxEl("span", "tinbox-act-sub", tinboxAcceptLabel(task).replace(/^Беру/, "")));
+      b.appendChild(label);
+      b.appendChild(tinboxEl("kbd", "tinbox-kbd", a.key));
+      b.title = a.label + " (" + a.key + ")";
+      b.addEventListener("click", function () {
+        tinboxRun(a.id);
+      });
+      row.appendChild(b);
+    });
+    return row;
+  }
+
+  // Позже / Беру — сразу; Сделано / Изменить / Не моё — раскрывают форму на карточке.
+  function tinboxRun(id) {
+    var s = tinbox;
+    if (!s || s.busy || s.idx >= s.items.length) return;
+    if (id === "snooze") return tinboxApply("snooze", {}, "left");
+    if (id === "accept") return tinboxApply("accept", {}, "right");
+    s.mode = s.mode === id ? "" : id;
+    renderTaskInbox();
+  }
+
+  function tinboxForm(task, mode) {
+    var wrap = tinboxEl("div", "tinbox-form");
+    var owner = tinboxFirstName(task.owner_name);
+    var submit;
+    if (mode === "done") {
+      wrap.appendChild(tinboxEl("label", "tinbox-label", "Результат"));
+      var res = document.createElement("textarea");
+      res.rows = 3;
+      res.placeholder = "Что получилось — увидит " + owner;
+      wrap.appendChild(res);
+      submit = { label: "Сдать работу", run: function () { tinboxApply("done", { result: res.value.trim() }, "right"); } };
+    } else if (mode === "decline") {
+      wrap.appendChild(tinboxEl("label", "tinbox-label", "Комментарий — увидит " + owner));
+      var note = document.createElement("input");
+      note.type = "text";
+      note.placeholder = "Необязательно: кому это лучше поставить";
+      wrap.appendChild(note);
+      submit = { label: "Вернуть постановщику", run: function () { tinboxApply("decline", { note: note.value.trim() }, "right"); } };
+    } else {
+      var due = tinboxDue(task);
+      wrap.appendChild(tinboxEl("label", "tinbox-label", "Срок"));
+      var chips = tinboxEl("div", "tinbox-chips");
+      var date = document.createElement("input");
+      date.type = "date";
+      date.value = due.day || tinboxIsoDate(new Date());
+      var time = document.createElement("input");
+      time.type = "time";
+      time.value = due.time;
+      time.title = "Время — необязательно";
+      var base = new Date();
+      base.setHours(0, 0, 0, 0);
+      var monday = new Date(base);
+      monday.setDate(base.getDate() + (((8 - base.getDay()) % 7) || 7));
+      var tomorrow = new Date(base);
+      tomorrow.setDate(base.getDate() + 1);
+      var btnSubmit;
+      function syncChips() {
+        Array.prototype.forEach.call(chips.querySelectorAll(".tinbox-chip"), function (c) {
+          c.classList.toggle("is-on", c.dataset.day === date.value);
+        });
+        if (btnSubmit) btnSubmit.textContent = "Беру на " + (tinboxDayLabel(date.value, false) || "этот день");
+      }
+      [["Сегодня", base], ["Завтра", tomorrow], [tinboxDayLabel(tinboxIsoDate(monday), true), monday]].forEach(function (c) {
+        var b = tinboxEl("button", "tinbox-chip", c[0]);
+        b.type = "button";
+        b.dataset.day = tinboxIsoDate(c[1]);
+        b.addEventListener("click", function () {
+          date.value = b.dataset.day;
+          syncChips();
+        });
+        chips.appendChild(b);
+      });
+      date.addEventListener("change", syncChips);
+      var when = tinboxEl("div", "tinbox-when");
+      when.appendChild(date);
+      when.appendChild(time);
+      chips.appendChild(when);
+      wrap.appendChild(chips);
+      wrap.appendChild(tinboxEl("label", "tinbox-label", "Название"));
+      var title = document.createElement("input");
+      title.type = "text";
+      title.value = task.title || "";
+      wrap.appendChild(title);
+      wrap.appendChild(tinboxEl("label", "tinbox-label", "Описание"));
+      var desc = document.createElement("textarea");
+      desc.rows = 2;
+      desc.value = task.description || "";
+      wrap.appendChild(desc);
+      submit = {
+        label: "Беру",
+        run: function () {
+          if (!date.value) {
+            showNoteToast("Укажите срок");
+            return;
+          }
+          var t = time.value;
+          var payload = { title: title.value.trim() || task.title, description: desc.value };
+          if (t) {
+            var hh = Math.min(23, Number(t.slice(0, 2)) + 1);
+            payload.start = date.value + "T" + t + ":00";
+            payload.end = date.value + "T" + pad2(hh) + t.slice(2) + ":00";
+            payload.all_day = false;
+          } else {
+            payload.start = date.value + "T12:00:00";
+            payload.end = date.value + "T13:00:00";
+            payload.all_day = true;
+          }
+          tinboxApply("edit", payload, "right");
+        },
+      };
+      window.setTimeout(syncChips, 0);
+      wrap._bindSubmit = function (b) {
+        btnSubmit = b;
+      };
+    }
+    var acts = tinboxEl("div", "tinbox-form-acts");
+    var cancel = tinboxEl("button", "tinbox-btn", "Отмена");
+    cancel.type = "button";
+    cancel.addEventListener("click", function () {
+      tinbox.mode = "";
+      renderTaskInbox();
+    });
+    var ok = tinboxEl("button", "tinbox-btn is-primary", submit.label);
+    ok.type = "button";
+    ok.addEventListener("click", submit.run);
+    if (wrap._bindSubmit) wrap._bindSubmit(ok);
+    acts.appendChild(cancel);
+    acts.appendChild(ok);
+    wrap.appendChild(acts);
+    wrap._submit = submit.run;
+    wrap.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey || e.target.tagName === "INPUT")) {
+        e.preventDefault();
+        submit.run();
+      }
+    });
+    return wrap;
+  }
+
+  var TINBOX_DONE_TEXT = {
+    snooze: "Отложено до завтра",
+    accept: "Задача в календаре",
+    edit: "Задача в календаре",
+    done: "Отправлено постановщику",
+    decline: "Вернули постановщику",
+  };
+
+  async function tinboxApply(action, payload, dir) {
+    var s = tinbox;
+    if (!s || s.busy) return;
+    var task = s.items[s.idx];
+    s.busy = true;
+    var card = s.card;
+    if (card) card.classList.add("is-fly-" + dir);
+    try {
+      var res = await apiFetch("/calendar/tasks/" + encodeURIComponent(task.id) + "/triage", {
+        method: "POST",
+        body: JSON.stringify(Object.assign({ action: action }, payload || {})),
+      });
+      if (!tinbox) return;
+      s.last = { idx: s.idx, task: task, action: action };
+      if (res && res.task) s.items[s.idx] = Object.assign({}, task, res.task, { owner_name: task.owner_name, source: task.source });
+      s.stats[action === "edit" ? "accept" : action]++;
+      s.idx++;
+      s.mode = "";
+      s.busy = false;
+      renderTaskInbox();
+      tinboxUndoToast(TINBOX_DONE_TEXT[action] || "Готово");
+    } catch (e) {
+      s.busy = false;
+      if (card) card.classList.remove("is-fly-" + dir);
+      showNoteToast((e && e.message) || "Не получилось — попробуйте ещё раз");
+    }
+  }
+
+  function tinboxUndoToast(text) {
+    var node = document.createElement("span");
+    node.appendChild(tinboxEl("span", "note-toast-copy", text));
+    var b = tinboxEl("button", "note-toast-link", "Вернуть");
+    b.type = "button";
+    b.addEventListener("click", tinboxUndo);
+    node.appendChild(b);
+    showNoteToast("", { node: node, actionable: true, duration: 5000 });
+  }
+
+  async function tinboxUndo() {
+    var s = tinbox;
+    if (!s || !s.last || s.busy) return;
+    var last = s.last;
+    s.last = null;
+    s.busy = true;
+    try {
+      await apiFetch("/calendar/tasks/" + encodeURIComponent(last.task.id) + "/triage", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "undo",
+          state: last.task.assignee_triage || "inbox",
+          snoozed_until: last.task.assignee_snoozed_until || "",
+        }),
+      });
+      if (!tinbox) return;
+      s.items[last.idx] = last.task;
+      s.stats[last.action === "edit" ? "accept" : last.action]--;
+      s.idx = last.idx;
+      s.busy = false;
+      renderTaskInbox();
+      var el = document.getElementById("note-toast");
+      if (el) el.classList.add("hidden");
+    } catch (e) {
+      s.busy = false;
+      showNoteToast((e && e.message) || "Не удалось вернуть");
+    }
+  }
+
+  function tinboxFinish() {
+    var s = tinbox;
+    var box = tinboxEl("div", "tinbox-finish");
+    var ico = tinboxEl("span", "tinbox-finish-ico");
+    ico.innerHTML = DISCUSS_ICONS.check;
+    box.appendChild(ico);
+    box.appendChild(tinboxEl("h2", "tinbox-title", s.items.length ? "Всё разобрано" : "Новых задач нет"));
+    var parts = [];
+    if (s.stats.accept) parts.push("в календаре — " + s.stats.accept);
+    if (s.stats.done) parts.push("сделано — " + s.stats.done);
+    if (s.stats.snooze) parts.push("отложено до завтра — " + s.stats.snooze);
+    if (s.stats.decline) parts.push("вернули постановщику — " + s.stats.decline);
+    if (!s.items.length && s.snoozed) parts.push("отложенных до завтра — " + s.snoozed);
+    if (parts.length) box.appendChild(tinboxEl("p", "tinbox-desc", parts.join(" · ")));
+    var b = tinboxEl("button", "tinbox-btn is-primary", "Готово");
+    b.type = "button";
+    b.addEventListener("click", closeTaskInbox);
+    box.appendChild(b);
+    window.setTimeout(function () { b.focus(); }, 30);
+    return box;
+  }
+
+  // Смахивание на телефоне: влево — «Позже», вправо — «Беру». Кнопки работают и без него.
+  function tinboxSwipe(card, badgeL, badgeR) {
+    var startX = 0;
+    var startY = 0;
+    var dx = 0;
+    var active = false;
+    var horizontal = null;
+    card.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0 || e.target.closest("button, a, input, textarea")) return;
+      active = true;
+      horizontal = null;
+      startX = e.clientX;
+      startY = e.clientY;
+      dx = 0;
+    });
+    card.addEventListener("pointermove", function (e) {
+      if (!active) return;
+      var mx = e.clientX - startX;
+      var my = e.clientY - startY;
+      if (horizontal === null) {
+        if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+        horizontal = Math.abs(mx) > Math.abs(my);
+        if (!horizontal) {
+          active = false;
+          return;
+        }
+        try { card.setPointerCapture(e.pointerId); } catch (_) {}
+        card.classList.add("is-drag");
+      }
+      dx = mx;
+      card.style.transform = "translateX(" + dx + "px) rotate(" + dx / 22 + "deg)";
+      badgeL.style.opacity = String(Math.min(1, Math.max(0, -dx / 90)));
+      badgeR.style.opacity = String(Math.min(1, Math.max(0, dx / 90)));
+    });
+    function end() {
+      if (!active) return;
+      active = false;
+      card.classList.remove("is-drag");
+      if (Math.abs(dx) > 100 && horizontal) {
+        card.style.transform = "";
+        tinboxApply(dx < 0 ? "snooze" : "accept", {}, dx < 0 ? "left" : "right");
+        return;
+      }
+      card.style.transform = "";
+      badgeL.style.opacity = "";
+      badgeR.style.opacity = "";
+    }
+    card.addEventListener("pointerup", end);
+    card.addEventListener("pointercancel", end);
+  }
+
+  function tinboxOnKey(e) {
+    var s = tinbox;
+    if (!s || s.away) return;
+    var typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || "");
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (s.mode) {
+        s.mode = "";
+        renderTaskInbox();
+      } else closeTaskInbox();
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.code === "KeyZ" && !typing) {
+      e.preventDefault();
+      tinboxUndo();
+      return;
+    }
+    if (typing || e.metaKey || e.ctrlKey || e.altKey || s.mode) return;
+    var a = TINBOX_ACTS.filter(function (x) {
+      return x.code === e.code;
+    })[0];
+    if (!a) return;
+    e.preventDefault();
+    e.stopPropagation();
+    tinboxRun(a.id);
+  }
+
+  // Карточка в Фокусе: «Вам поставили N задач» → разбор.
+  function focusInboxCard(it, inPanel) {
+    var card = tinboxEl("button", "focus-card focus-inbox-card" + (inPanel ? " is-wide" : ""));
+    card.type = "button";
+    var row = tinboxEl("span", "focus-inbox-row");
+    var ico = tinboxEl("span", "focus-card-ico is-blue");
+    ico.innerHTML = DISCUSS_ICONS.taskBox;
+    row.appendChild(ico);
+    var main = tinboxEl("span", "focus-inbox-main");
+    main.appendChild(tinboxEl("b", "focus-card-title", it.title || "Входящие задачи"));
+    if (it.source) main.appendChild(tinboxEl("span", "focus-inbox-src", it.source));
+    row.appendChild(main);
+    card.appendChild(row);
+    var go = tinboxEl("span", "focus-card-btn is-primary", "Разобрать");
+    card.appendChild(go);
+    card.addEventListener("click", function (e) {
+      e.preventDefault();
+      openTaskInbox();
+    });
+    return card;
+  }
+
+  function pendingInboxFromLocation() {
+    try {
+      if (new URLSearchParams(location.search || "").get("inbox")) return true;
+    } catch (_) {}
+    var tg = window.Telegram && window.Telegram.WebApp;
+    var start = tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param;
+    return /^inbox$/i.test(String(start || ""));
+  }
+
+  function openPendingInboxFromLocation() {
+    if (!pendingInboxFromLocation()) return;
+    try {
+      var u = new URL(location.href);
+      u.searchParams.delete("inbox");
+      history.replaceState(null, "", u.pathname + u.search + u.hash);
+    } catch (_) {}
+    openTaskInbox();
   }
 
   function renderFocusRow() {
@@ -20774,6 +21370,8 @@
           dismissFocus(it, true);
           loadActual({ silent: true });
         }
+      } else if (act === "open_task_inbox") {
+        openTaskInbox();
       } else if (act === "open_task") {
         var got = await apiFetch("/calendar/tasks/" + encodeURIComponent(String(p.task_id)), { method: "GET" });
         if (got && got.task && got.task.event) openCalendarEntry(got.task.event);
@@ -22068,12 +22666,13 @@
   function postedAttention(task) {
     if (postedTaskIsArchived(task)) return null;
     if (postedTaskIsDone(task)) return "done";
+    if (postedAssigneeState(task).triage === "declined") return "declined";
     if (postedAssigneeState(task).status === "question") return "question";
     if (postedTaskIsOverdue(task)) return "late";
     return null;
   }
 
-  var POSTED_ATTN_ORDER = { question: 0, late: 1, done: 2 };
+  var POSTED_ATTN_ORDER = { declined: 0, question: 1, late: 2, done: 3 };
 
   function postedActiveCountFromItems(items) {
     return (Array.isArray(items) ? items : []).filter(function (t) {
@@ -22196,7 +22795,7 @@
     items.forEach(function (t) {
       var k = postedAssigneeKey(t);
       if (!map[k]) {
-        map[k] = { key: k, uid: postedAssigneeUid(t), name: postedTaskAssigneeLabel(t), items: [], attn: 0, late: 0, question: 0 };
+        map[k] = { key: k, uid: postedAssigneeUid(t), name: postedTaskAssigneeLabel(t), items: [], attn: 0, late: 0, question: 0, declined: 0 };
         order.push(k);
       }
       var g = map[k];
@@ -22204,7 +22803,8 @@
       var a = postedAttention(t);
       if (a) g.attn++;
       if (a === "late") g.late++;
-      if (a === "question") g.question++;
+      if (a === "question" || a === "declined") g.question++;
+      if (a === "declined") g.declined++;
     });
     return order
       .map(function (k) {
@@ -22290,6 +22890,10 @@
   function postedWorkLine(task) {
     var st = postedAssigneeState(task);
     if (st.status === "in_progress") return { text: "в работе", cls: "is-work" };
+    // Разбор входящих у исполнителя: ещё не разобрал / отложил / взял.
+    if (st.triage === "inbox") return { text: "ждёт разбора", cls: "is-unseen" };
+    if (st.triage === "snoozed") return { text: "отложил(а)", cls: "" };
+    if (st.triage === "accepted") return { text: "взял(а)", cls: "is-work" };
     var parts = [];
     parts.push(st.seen_at ? "открыта " + postedDayWord(st.seen_at) : "ещё не открыта");
     if (st.nudged_at) parts.push("напомнили " + postedDayWord(st.nudged_at));
@@ -22442,7 +23046,7 @@
       } else {
         var doneN = g.attn - g.late - g.question;
         if (g.question) {
-          line = "ждёт ответа";
+          line = g.declined ? "не моё — переназначьте" : "ждёт ответа";
           cls = "is-question";
         } else if (g.late) {
           line = g.late + " просрочено";
@@ -22625,6 +23229,7 @@
     }
     if (!postedPerson) part(postedFirstName(postedTaskAssigneeLabel(task)), "");
     if (kind === "question") part("вопрос", "is-question");
+    else if (kind === "declined") part("не моё", "is-question");
     else if (kind === "late") part(postedLateLabel(task).toLowerCase(), "is-late");
     else if (kind === "done") part("сделано, проверьте", "is-done");
     else {
@@ -22634,7 +23239,7 @@
     var ds = postedDueShort(task);
     part(ds.day === "без срока" ? "без срока" : "срок " + ds.day + (ds.time ? ", " + ds.time : ""), postedTaskIsOverdue(task) ? "is-late pt-due-inline" : "pt-due-inline");
     main.appendChild(line);
-    if (kind === "question" && st.status_note) {
+    if ((kind === "question" || kind === "declined") && st.status_note) {
       var q = document.createElement("p");
       q.className = "pt-quote";
       q.textContent = "«" + st.status_note + "»";
@@ -22654,6 +23259,10 @@
     if (kind === "question") {
       act("Ответить", true, function () {
         openPostedCard(task.id, { focus: "reply" });
+      });
+    } else if (kind === "declined") {
+      act("Переназначить", true, function () {
+        openPostedTaskEditor(task);
       });
     } else if (kind === "late") {
       act("Напомнить", true, function (b) {
@@ -22980,6 +23589,9 @@
     returned: "Возвращено в работу",
     accepted: "Принято",
     cancelled: "Задача отменена",
+    taken: "Исполнитель взял задачу",
+    snoozed: "Исполнитель отложил разбор",
+    declined: "Исполнитель: «не моё»",
   };
 
   function paintPostedCard(state) {
@@ -23017,6 +23629,9 @@
     } else if (done) {
       pill.className = "pt-pill pt-pill--done";
       pill.textContent = isOwner ? "Сделано" : "Сдано, ждёт приёмки";
+    } else if (st.triage === "declined") {
+      pill.className = "pt-pill pt-pill--question";
+      pill.textContent = isOwner ? "Не моё" : "Вернули постановщику";
     } else if (attn === "question" || (!isOwner && st.status === "question")) {
       pill.className = "pt-pill pt-pill--question";
       pill.textContent = isOwner ? "Вопрос" : "Ждёт ответа";
@@ -23028,7 +23643,17 @@
       pill.textContent = "В работе";
     } else {
       pill.className = "pt-pill pt-pill--muted";
-      pill.textContent = !isOwner ? "Новая" : st.seen_at ? "Открыта" : "Ещё не открыта";
+      pill.textContent = !isOwner
+        ? "Новая"
+        : st.triage === "inbox"
+          ? "Ждёт разбора"
+          : st.triage === "snoozed"
+            ? "Отложил(а)"
+            : st.triage === "accepted"
+              ? "Взял(а)"
+              : st.seen_at
+                ? "Открыта"
+                : "Ещё не открыта";
     }
     head.appendChild(pill);
     var more = document.createElement("button");
@@ -45761,7 +46386,7 @@
       .catch(function () {});
   }
 
-  var DEEPLINK_PARAM_KEYS = ["event", "e", "cal", "calendar", "day", "date", "note", "n", "chat", "c", "task", "t"];
+  var DEEPLINK_PARAM_KEYS = ["event", "e", "cal", "calendar", "day", "date", "note", "n", "chat", "c", "task", "t", "inbox"];
   var DEEPLINK_CACHE_NAME = "leo-deeplink";
   var DEEPLINK_MAX_AGE_MS = 5 * 60 * 1000;
   var lastIncomingDeepLink = { href: "", at: 0 };
@@ -45825,6 +46450,7 @@
     eventDeepLinkConsumed = false;
     openPendingEventFromLocation();
     openPendingTaskFromLocation();
+    openPendingInboxFromLocation();
     openPendingSharedNote(notesDataCache || {});
   }
 
@@ -50862,6 +51488,7 @@
     var bootHadDeepLink = locationHasDeepLink();
     openPendingEventFromLocation();
     openPendingTaskFromLocation();
+    openPendingInboxFromLocation();
     // ?note= / ?chat= из уведомлений: на телефоне вкладка «Заметки» при старте не грузится,
     // и ссылка «добавил(а) вас в заметку» иначе открывала просто главный экран.
     openPendingSharedNote(notesDataCache || {});

@@ -63,9 +63,32 @@ def _collect(uid: int) -> tuple[str, bool] | None:
     start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
     today = [e for e in events if (lambda s: s is not None and start <= s.astimezone(tz) < start + timedelta(days=1))(proactive._parse(e.get("start")))]
     proactive.mark_brief_sent(uid, day)
+    if any(it.get("type") == "task_inbox" for it in items):
+        proactive.mark_brief_sent(uid, _INBOX_DAY + day)  # входящие уже в брифе — отдельно не шлём
     if not items and not today:
         return ("", False)
     return (proactive.brief_message(items, today, tz, local_now), True)
+
+
+_INBOX_DAY = "inbox:"
+
+
+def _inbox_digest(uid: int) -> str | None:
+    """Раз в день, во время брифа: «Вам поставили N задач → Разобрать» — тем, кому бриф не пришёл."""
+    from assistant.lib.task_notify import inbox_digest_line
+    from assistant.services import proactive
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import user_prefs
+
+    local_now = datetime.now(_tz_for(uid))
+    day = local_now.date().isoformat()
+    if proactive.brief_already_sent(uid, _INBOX_DAY + day):
+        return None
+    if not proactive.brief_due(local_now, user_prefs.proactive_prefs(uid).get("brief_time")):
+        return None
+    line = inbox_digest_line(uid)
+    proactive.mark_brief_sent(uid, _INBOX_DAY + day)
+    return line or None
 
 
 def _weekly(uid: int) -> tuple[str, int | None] | None:
@@ -121,6 +144,35 @@ async def proactive_brief_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
             print(f"[brief] sent uid={uid}")
         except Exception as e:
             print(f"[brief] send uid={uid} err={e!r}")
+    await _send_inbox_digests(context)
+
+
+async def _send_inbox_digests(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Входящие поручения — одно сообщение в день вместо пуша на каждую задачу."""
+    from assistant.lib.task_notify import inbox_webapp_url
+    from assistant.stores import calendar_tasks
+
+    try:
+        uids = await asyncio.to_thread(calendar_tasks.list_inbox_user_ids)
+    except Exception as e:
+        print(f"[inbox] users err={e!r}")
+        return
+    for uid in uids:
+        if not is_user_allowed(uid, None):
+            continue
+        try:
+            text = await asyncio.to_thread(_inbox_digest, uid)
+        except Exception as e:
+            print(f"[inbox] uid={uid} err={e!r}")
+            continue
+        if not text:
+            continue
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("Разобрать", web_app=WebAppInfo(url=inbox_webapp_url()))]])
+        try:
+            await context.bot.send_message(chat_id=uid, text=text, parse_mode=ParseMode.HTML, reply_markup=kb, disable_web_page_preview=True)
+            print(f"[inbox] sent uid={uid}")
+        except Exception as e:
+            print(f"[inbox] send uid={uid} err={e!r}")
 
 
 def register_proactive_brief_jobs(app) -> None:
