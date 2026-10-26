@@ -78,7 +78,7 @@ def _block(c: Ctx, r: int, i: int, b: dict[str, Any]) -> str:
         inner = c.group(
             f"{p}.items",
             "".join(
-                f'<li {c.item_attrs(f"{p}.items", j)}>{c.t(f"{p}.items.{j}", "span", "", force=True)}</li>'
+                f'<li {c.item_attrs(f"{p}.items", j)}>{c.ico(f"{p}.items.{j}", "ico cb-li-ico")}{c.t(f"{p}.items.{j}", "span", "", force=True)}</li>'
                 for j in range(len(items))
             ),
             "cb-list",

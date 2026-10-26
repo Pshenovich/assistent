@@ -135,6 +135,19 @@ html[data-leo-deck].leo-review .slide.tpl.leo-overflow::after { content: "Тек
 .tpl-stage .grow { flex: 1; min-height: 0; }
 .tpl-stage .split { display: grid; gap: 56px; align-items: center; height: 100%; }
 .tpl-stage .row-rule { padding: 10px 0; border-top: 1px solid var(--s-rule); font-size: 17px; }
+/* иконки пунктов списков (assistant/lib/canvas_icons.py) */
+.tpl-stage .ico { display: inline-block; flex: none; width: 22px; height: 22px; }
+.tpl-stage .ico-sm { width: 20px; height: 20px; }
+.tpl-stage .ico-md { width: 26px; height: 26px; }
+.tpl-stage .ico-lg { width: 32px; height: 32px; }
+.tpl-stage .ico-block { display: block; margin-bottom: 12px; }
+.tpl-stage .ico-tile { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 12px; border-radius: 12px; background: var(--s-acc-soft); color: var(--s-acc); }
+.tpl-stage .ico-tile > .ico { width: 24px; height: 24px; }
+.tpl-stage .ico-row { display: flex; gap: 12px; align-items: flex-start; }
+.tpl-stage .ico-row > .ico { margin-top: 2px; }
+.tpl-stage .ico-row > p { margin: 0; min-width: 0; }
+.tpl-stage .cb-list li:has(> .cb-li-ico) { display: flex; gap: 12px; align-items: flex-start; }
+.tpl-stage .cb-li-ico { width: 20px; height: 20px; margin-top: 2px; color: var(--s-acc); }
 .tpl-stage .center-y { margin-top: auto; margin-bottom: auto; }
 .tpl-stage .legend { display: flex; gap: 18px; font-size: 14px; color: var(--s-muted); margin-bottom: 8px; flex-wrap: wrap; }
 .tpl-stage .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 7px; }

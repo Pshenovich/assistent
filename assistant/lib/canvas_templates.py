@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
 from assistant.lib import canvas_charts
+from assistant.lib import canvas_icons
 
 DECK_VERSION = 1
 DECK_THEME = "analytic"
@@ -126,20 +127,36 @@ def _dicts(v: Any) -> list[dict[str, Any]]:
 class Ctx:
     """Per-slide render helpers: every editable text node gets data-slot."""
 
-    def __init__(self, slide: dict[str, Any], media: dict[str, str]):
+    def __init__(self, slide: dict[str, Any], media: dict[str, str], theme: str = ""):
         self.slide = slide
         self.sid = str(slide["id"])
         self.slots = slide.get("slots") or {}
         self.media = media
+        self.theme = theme
+
+    def tp(self, path: str) -> str:
+        """Пункт списка бывает строкой или {text, icon} — текст тогда лежит в path.text."""
+        return f"{path}.text" if isinstance(get_path(self.slots, path), dict) else path
 
     def val(self, path: str) -> str:
-        return _s(get_path(self.slots, path))
+        return _s(get_path(self.slots, self.tp(path)))
+
+    def slot(self, path: str) -> str:
+        """data-slot/data-leo-id текста пункта (для разметки, собранной вручную)."""
+        p = escape(self.tp(path))
+        return f'data-slot="{p}" data-leo-id="{self.sid}-{p}"'
+
+    def ico(self, path: str, cls: str = "ico") -> str:
+        """<svg> иконки пункта списка (item.icon) или "" — тогда остаётся прежний маркер."""
+        it = get_path(self.slots, path)
+        return canvas_icons.svg(it.get("icon"), cls) if isinstance(it, dict) else ""
 
     def has(self, path: str) -> bool:
         return bool(self.val(path))
 
     def t(self, path: str, tag: str = "p", cls: str = "", style: str = "", force: bool = False) -> str:
         """Editable text node; omitted when empty unless force (edit placeholder)."""
+        path = self.tp(path)
         v = self.val(path)
         if not v and not force:
             return ""
@@ -160,7 +177,12 @@ class Ctx:
         return f'<div{c}{st} data-group="{escape(path)}" data-min="{lo}" data-max="{hi}">{inner}</div>'
 
     def item_attrs(self, path: str, i: int) -> str:
-        return f'data-item="{escape(path)}.{i}"'
+        attrs = f'data-item="{escape(path)}.{i}"'
+        if icon_group(self.slide.get("variant", ""), path, self.theme):
+            it = get_path(self.slots, f"{path}.{i}")
+            cur = canvas_icons.norm(it.get("icon")) if isinstance(it, dict) else ""
+            attrs += f' data-ico="{cur}"'  # редактор: у пункта можно сменить иконку
+        return attrs
 
 
 _NUMBER_SLOTS = {"value", "big", "num", "total", "before_value", "after_value"}
@@ -240,10 +262,29 @@ def _need(cond: bool, why: str) -> str:
 # --- cover
 
 
+def _ico_tile(c: Ctx, path: str) -> str:
+    """Иконка пункта в плитке (на месте номера) или ""."""
+    svg = c.ico(path)
+    return f'<span class="ico-tile">{svg}</span>' if svg else ""
+
+
+def _point_row(c: Ctx, group: str, i: int, style: str = "") -> str:
+    """Пункт-строка списка: с иконкой — иконка слева от текста, без неё — прежняя строка с чертой."""
+    path = f"{group}.{i}"
+    st = f' style="{style}"' if style else ""
+    text = escape(c.val(path))
+    svg = c.ico(path, "ico ico-sm acc")
+    if not svg:
+        return f'<p class="row-rule"{st} {c.item_attrs(group, i)} {c.slot(path)}>{text}</p>'
+    return (f'<div class="row-rule ico-row"{st} {c.item_attrs(group, i)}>{svg}'
+            f'<p {c.slot(path)}>{text}</p></div>')
+
+
 def _r_cover_goals(c: Ctx) -> tuple[str, str]:
     goals = _lst(c.slots.get("goals"))
     items = "".join(
-        f'<div class="card" {c.item_attrs("goals", i)}><span class="num">{i + 1:02d}</span>'
+        f'<div class="card" {c.item_attrs("goals", i)}>'
+        f'{_ico_tile(c, f"goals.{i}") or f"""<span class="num">{i + 1:02d}</span>"""}'
         f'{c.t(f"goals.{i}", "p", "clamp3", force=True)}</div>'
         for i in range(len(goals))
     )
@@ -352,7 +393,7 @@ def _r_ctx_agenda(c: Ctx) -> tuple[str, str]:
     items = "".join(
         f'<div style="display:grid;grid-template-columns:64px 1fr;gap:18px;align-items:baseline;'
         f'padding:14px 0;border-bottom:1px solid var(--s-rule)" {c.item_attrs("agenda", i)}>'
-        f'<span class="big acc" style="font-size:28px">{i + 1}</span><div>'
+        f'{c.ico(f"agenda.{i}", "ico ico-lg acc") or f"""<span class="big acc" style="font-size:28px">{i + 1}</span>"""}<div>'
         f'{c.t(f"agenda.{i}.title", "p", "", "font-size:22px;font-weight:600", force=True)}'
         f'{c.t(f"agenda.{i}.note", "p", "body", "font-size:16px;margin-top:2px")}</div></div>'
         for i in range(len(rows))
@@ -643,9 +684,8 @@ def _r_cmp_two(c: Ctx) -> tuple[str, str]:
     for oi, o in enumerate(opts):
         pts = _lst(o.get("points"))
         rows = "".join(
-            f'<p class="row-rule" {c.item_attrs(f"options.{oi}.points", pi)} '
-            f'data-slot="options.{oi}.points.{pi}" data-leo-id="{c.sid}-options.{oi}.points.{pi}">{escape(_s(p))}</p>'
-            for pi, p in enumerate(pts)
+            _point_row(c, f"options.{oi}.points", pi)
+            for pi in range(len(pts))
         )
         accent = " is-accent" if _s(o.get("tag")) else ""
         cols.append(
@@ -723,9 +763,8 @@ def _r_cmp_ba(c: Ctx) -> tuple[str, str]:
     def side(key: str, accent: bool) -> str:
         pts = _lst(get_path(c.slots, f"{key}.points"))
         rows = "".join(
-            f'<p class="row-rule" style="{"" if accent else "color:var(--s-muted)"}" {c.item_attrs(f"{key}.points", i)} '
-            f'data-slot="{key}.points.{i}" data-leo-id="{c.sid}-{key}.points.{i}">{escape(_s(p))}</p>'
-            for i, p in enumerate(pts)
+            _point_row(c, f"{key}.points", i, "" if accent else "color:var(--s-muted)")
+            for i in range(len(pts))
         )
         default = "После" if accent else "Сейчас"
         if not c.has(f"{key}.label"):
@@ -855,6 +894,7 @@ def _r_profile(c: Ctx) -> tuple[str, str]:
     items = _dicts(c.slots.get("items"))
     cells = "".join(
         f'<div class="card" style="padding:22px" {c.item_attrs("items", i)}>'
+        f'{c.ico(f"items.{i}", "ico ico-md acc ico-block")}'
         f'{c.t(f"items.{i}.title", "p", "lbl", "margin:0 0 8px", force=True)}'
         f'{c.t(f"items.{i}.text", "p", "clamp3", "font-size:18px", force=True)}</div>'
         for i in range(len(items))
@@ -883,8 +923,8 @@ _reg(Variant(
 def _r_text_media(c: Ctx) -> tuple[str, str]:
     pts = _lst(c.slots.get("points"))
     rows = "".join(
-        f'<p class="row-rule" {c.item_attrs("points", i)} data-slot="points.{i}" data-leo-id="{c.sid}-points.{i}">{escape(_s(p))}</p>'
-        for i, p in enumerate(pts)
+        _point_row(c, "points", i)
+        for i in range(len(pts))
     )
     mid = f"{c.sid}-media"
     src = c.media.get(mid, "")
@@ -1033,8 +1073,8 @@ def _r_timeline(c: Ctx) -> tuple[str, str]:
         its = _lst(p.get("items"))
         rows = "".join(
             f'<p class="body row-rule" style="font-size:16px;padding:7px 0" {c.item_attrs(f"periods.{i}.items", j)} '
-            f'data-slot="periods.{i}.items.{j}" data-leo-id="{c.sid}-periods.{i}.items.{j}">{escape(_s(x))}</p>'
-            for j, x in enumerate(its)
+            f'{c.slot(f"periods.{i}.items.{j}")}>{escape(c.val(f"periods.{i}.items.{j}"))}</p>'
+            for j in range(len(its))
         )
         dot = "var(--s-acc)" if i == 0 else "var(--s-el)"
         cols.append(
@@ -1072,7 +1112,7 @@ def _r_steps(c: Ctx) -> tuple[str, str]:
     steps = _dicts(c.slots.get("steps"))
     rows = "".join(
         f'<div class="card" style="display:grid;grid-template-columns:44px minmax(0,1fr) 190px 90px;gap:16px;align-items:center;padding:14px 20px" {c.item_attrs("steps", i)}>'
-        f'<span class="big acc" style="font-size:26px">{i + 1}</span><div>'
+        f'{c.ico(f"steps.{i}", "ico ico-lg acc") or f"""<span class="big acc" style="font-size:26px">{i + 1}</span>"""}<div>'
         f'{c.t(f"steps.{i}.title", "p", "", "font-weight:600;font-size:18px", force=True)}'
         f'{c.t(f"steps.{i}.text", "p", "body clamp2", "font-size:15px")}</div>'
         f'{c.t(f"steps.{i}.owner", "p", "body", "font-size:15px", force=True)}'
@@ -1098,7 +1138,8 @@ def _r_next(c: Ctx) -> tuple[str, str]:
     acts = _dicts(c.slots.get("actions"))
     rows = "".join(
         f'<div style="display:flex;justify-content:space-between;gap:20px;padding:18px 0;border-top:1px solid var(--s-rule);font-size:21px" {c.item_attrs("actions", i)}>'
-        f'{c.t(f"actions.{i}.text", "span", "", force=True)}'
+        f'<span style="display:flex;gap:14px;align-items:flex-start">{c.ico(f"actions.{i}", "ico ico-md acc")}'
+        f'{c.t(f"actions.{i}.text", "span", "", force=True)}</span>'
         f'{c.t(f"actions.{i}.due", "span", "acc", "white-space:nowrap;font-weight:600")}</div>'
         for i in range(len(acts))
     )
@@ -1130,6 +1171,7 @@ def _r_ask(c: Ctx) -> tuple[str, str]:
     opts = _dicts(c.slots.get("options"))
     cells = "".join(
         f'<div class="card{" is-accent" if i == 0 else ""}" {c.item_attrs("options", i)}>'
+        f'{c.ico(f"options.{i}", "ico ico-md acc ico-block")}'
         f'{c.t(f"options.{i}.name", "p", "acc" if i == 0 else "", "font-weight:700;font-size:19px;margin:0 0 6px", force=True)}'
         f'{c.t(f"options.{i}.text", "p", "body clamp3", "font-size:16px", force=True)}</div>'
         for i in range(len(opts))
@@ -1163,9 +1205,9 @@ def _r_notes(c: Ctx) -> tuple[str, str]:
     cav = _lst(c.slots.get("caveats"))
     src = _dicts(c.slots.get("sources"))
     cav_html = "".join(
-        f'<p class="body row-rule" style="font-size:16px" {c.item_attrs("caveats", i)} data-slot="caveats.{i}" '
-        f'data-leo-id="{c.sid}-caveats.{i}">{escape(_s(x))}</p>'
-        for i, x in enumerate(cav)
+        f'<p class="body row-rule" style="font-size:16px" {c.item_attrs("caveats", i)} {c.slot(f"caveats.{i}")}>'
+        f'{escape(c.val(f"caveats.{i}"))}</p>'
+        for i in range(len(cav))
     )
     src_html = "".join(
         f'<div class="row-rule" {c.item_attrs("sources", i)}>{c.t(f"sources.{i}.name", "p", "", "font-size:16px", force=True)}'
@@ -1477,7 +1519,7 @@ def render_slide(
     slide: dict[str, Any], index: int, deck: dict[str, Any], media: dict[str, str], theme: str = DECK_THEME
 ) -> str:
     variant = VARIANTS.get(slide.get("variant", "")) or VARIANTS[_FALLBACK_VARIANT.get(slide.get("role", ""), "content.cards")]
-    ctx = Ctx(slide, media)
+    ctx = Ctx(slide, media, theme)
     render = THEME_RENDERERS.get(theme, {}).get(variant.id) or variant.render
     try:
         inner, decor = render(ctx)
@@ -1890,6 +1932,29 @@ def op_remove_item(deck: dict[str, Any], slide_id: str, group_path: str, index: 
     lst.pop(i)
 
 
+def op_set_icon(deck: dict[str, Any], slide_id: str, item_path: str, icon: str) -> None:
+    """Иконка пункта списка из редактора; пустое имя — убрать. Пункт-строка становится {text, icon}."""
+    s = _slide(deck, slide_id)
+    group, _, idx = str(item_path).rpartition(".")
+    if not idx.isdigit() or not icon_group(s.get("variant", ""), group, deck_theme(deck)):
+        raise DeckOpError("У этого элемента не бывает иконки")
+    name = canvas_icons.norm(icon)
+    if icon and not name:
+        raise DeckOpError("Нет такой иконки")
+    slots = s.setdefault("slots", {})
+    it = get_path(slots, item_path)
+    if isinstance(it, dict):
+        if name:
+            it["icon"] = name
+        else:
+            it.pop("icon", None)
+    elif it is not None and not isinstance(it, list):
+        if name:
+            set_path(slots, item_path, {"text": _s(it), "icon": name})
+    else:
+        raise DeckOpError("Элемент не найден")
+
+
 def op_delete_slide(deck: dict[str, Any], slide_id: str) -> None:
     s = _slide(deck, slide_id)
     if len(deck["slides"]) <= 1:
@@ -1915,6 +1980,8 @@ def apply_op(deck: dict[str, Any], op: dict[str, Any]) -> dict[str, Any]:
         op_add_item(deck, sid, str(op.get("group") or ""), int(after) if after is not None else None)
     elif kind == "remove_item":
         op_remove_item(deck, sid, str(op.get("group") or ""), int(op.get("index") or 0))
+    elif kind == "set_icon":
+        op_set_icon(deck, sid, str(op.get("path") or ""), str(op.get("icon") or ""))
     elif kind == "delete_slide":
         op_delete_slide(deck, sid)
     elif kind == "move_slide":
@@ -1987,7 +2054,49 @@ def schema_prompt() -> str:
         for v in variants_for_role(role):
             lines.append(f"- {role} · {v.id} ({v.name}): {v.schema}")
     lines.append(IMAGE_PROMPT_RULE)
+    lines.append(icon_prompt_rule())
     return "\n".join(lines)
+
+
+# Списки, у пунктов которых может быть иконка: макет → группы (в остальных макетах поле icon игнорируется).
+ICON_GROUPS: dict[str, tuple[str, ...]] = {
+    "cover.goals": ("goals",),
+    "context.agenda": ("agenda",),
+    "comparison.two-col": ("options.*.points",),
+    "comparison.before-after": ("before.points", "after.points"),
+    "content.cards": ("items",),  # иконка видна только в чёрно-белом стиле, в тёмно-зелёном — 3D-объект
+    "content.profile": ("items",),
+    "content.text-media": ("points",),
+    "plan.steps": ("steps",),
+    "closing.next-steps": ("actions",),
+    "closing.ask": ("options",),
+    "custom.grid": ("rows.*.blocks.*.items",),
+}
+
+
+def icon_group(variant_id: str, group_path: str, theme: str = "") -> bool:
+    if variant_id == "content.cards" and theme != "mono":
+        return False
+    pat = re.sub(r"\.\d+(?=\.|$)", ".*", str(group_path))
+    return pat in ICON_GROUPS.get(variant_id, ())
+
+
+ICON_LISTS = (
+    "cover.goals: goals", "context.agenda: agenda", "comparison.two-col: options.*.points",
+    "comparison.before-after: before.points, after.points", "content.cards: items (в тёмно-зелёном стиле — 3D visual, "
+    "в чёрно-белом — icon; давай оба)", "content.profile: items", "content.text-media: points", "plan.steps: steps",
+    "closing.next-steps: actions", "closing.ask: options", "custom.grid: блок list → items",
+)
+
+
+def icon_prompt_rule() -> str:
+    return (
+        "icon (иконки пунктов списков): в списках " + "; ".join(ICON_LISTS) + ". "
+        "Пункт-объект получает поле \"icon\"; пункт-строку пиши объектом {\"text\": \"…\", \"icon\": \"…\"}. "
+        "Иконки — когда пункты списка разные понятия (каналы, роли, этапы, выгоды), а не продолжение одной мысли: "
+        "тогда всем пунктам списка, без повторов в одном списке; иначе ни одному. Имя — только из каталога, "
+        "по смыслу пункта (имя — описание): " + canvas_icons.prompt_list()
+    )
 
 
 IMAGE_PROMPT_RULE = (

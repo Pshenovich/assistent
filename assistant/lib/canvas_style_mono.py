@@ -60,7 +60,7 @@ def _cover_goals(c: Ctx) -> tuple[str, str]:
     goals = _lst(c.slots.get("goals"))
     n = len(goals)
     rows = "".join(
-        f'<div class="m-goal" {c.item_attrs("goals", i)}><span class="m-goal-n">{_num(i)}</span>'
+        f'<div class="m-goal" {c.item_attrs("goals", i)}>{c.ico(f"goals.{i}", "ico m-goal-ico") or f"""<span class="m-goal-n">{_num(i)}</span>"""}'
         f'{c.t(f"goals.{i}", "p", "m-goal-t", force=True)}</div>'
         for i in range(n)
     )
@@ -136,7 +136,7 @@ def _ctx_agenda(c: Ctx) -> tuple[str, str]:
     agenda = _dicts(c.slots.get("agenda"))
     n = len(agenda)
     rows = "".join(
-        f'<div class="m-agenda-row" {c.item_attrs("agenda", i)}><span class="m-agenda-n">{i + 1}</span>'
+        f'<div class="m-agenda-row" {c.item_attrs("agenda", i)}><span class="m-agenda-n">{c.ico(f"agenda.{i}") or i + 1}</span>'
         f'<div class="m-agenda-b">{c.t(f"agenda.{i}.title", "p", "m-agenda-t", force=True)}'
         f'{c.t(f"agenda.{i}.note", "p", "m-agenda-note")}</div></div>'
         for i in range(n)
@@ -327,7 +327,7 @@ def _cmp_two(c: Ctx) -> tuple[str, str]:
     for i, o in enumerate(opts):
         pts = _lst(o.get("points"))
         items = "".join(
-            f'<li {c.item_attrs(f"options.{i}.points", j)}>{_CHECK}{c.t(f"options.{i}.points.{j}", "span", "", force=True)}</li>'
+            f'<li {c.item_attrs(f"options.{i}.points", j)}>{c.ico(f"options.{i}.points.{j}", "ico m-li-ico") or _CHECK}{c.t(f"options.{i}.points.{j}", "span", "", force=True)}</li>'
             for j in range(len(pts))
         )
         tone = "dark" if (_s(o.get("tag")) or (i == 1 and not tagged)) else "ice"
@@ -379,7 +379,7 @@ def _before_after(c: Ctx) -> tuple[str, str]:
         block = c.slots.get(key) if isinstance(c.slots.get(key), dict) else {}
         pts = _lst(block.get("points"))
         items = "".join(
-            f'<li {c.item_attrs(f"{key}.points", j)}>{c.t(f"{key}.points.{j}", "span", "", force=True)}</li>'
+            f'<li {c.item_attrs(f"{key}.points", j)}>{c.ico(f"{key}.points.{j}", "ico m-li-ico")}{c.t(f"{key}.points.{j}", "span", "", force=True)}</li>'
             for j in range(len(pts))
         )
         label = c.t(f"{key}.label", "p", "m-pill") or f'<p class="m-pill">{default}</p>'
@@ -401,7 +401,7 @@ def _content_cards(c: Ctx) -> tuple[str, str]:
     n = len(items)
     cards = "".join(
         f'<div class="m-card{" is-inverse" if (n >= 2 and i == 1) else ""}" {c.item_attrs("items", i)}>'
-        f'<span class="m-ico" aria-hidden="true">!</span>'
+        f'<span class="m-ico" aria-hidden="true">{c.ico(f"items.{i}") or "!"}</span>'
         f'<p class="m-card-n">{_num(i)}</p>'
         f'{c.t(f"items.{i}.title", "p", "m-card-h", force=True)}'
         f'{c.t(f"items.{i}.text", "p", "m-card-t")}</div>'
@@ -414,7 +414,7 @@ def _profile(c: Ctx) -> tuple[str, str]:
     items = _dicts(c.slots.get("items"))
     n = len(items)
     cells = "".join(
-        f'<div class="m-field" {c.item_attrs("items", i)}>{c.t(f"items.{i}.title", "p", "m-field-l", force=True)}'
+        f'<div class="m-field" {c.item_attrs("items", i)}>{c.ico(f"items.{i}", "ico m-field-ico")}{c.t(f"items.{i}.title", "p", "m-field-l", force=True)}'
         f'{c.t(f"items.{i}.text", "p", "m-field-t", force=True)}</div>'
         for i in range(n)
     )
@@ -432,9 +432,9 @@ def _profile(c: Ctx) -> tuple[str, str]:
 def _text_media(c: Ctx) -> tuple[str, str]:
     pts = _lst(c.slots.get("points"))
     rows = "".join(
-        f'<p class="m-tag-row" {c.item_attrs("points", i)}>{_CHECK}'
-        f'<span data-slot="points.{i}" data-leo-id="{c.sid}-points.{i}">{escape(_s(p))}</span></p>'
-        for i, p in enumerate(pts)
+        f'<p class="m-tag-row" {c.item_attrs("points", i)}>{c.ico(f"points.{i}", "ico m-li-ico") or _CHECK}'
+        f'<span {c.slot(f"points.{i}")}>{escape(c.val(f"points.{i}"))}</span></p>'
+        for i in range(len(pts))
     )
     mid = f"{c.sid}-media"
     src = c.media.get(mid, "")
@@ -523,7 +523,7 @@ def _steps(c: Ctx) -> tuple[str, str]:
     steps = _dicts(c.slots.get("steps"))
     n = len(steps)
     rows = "".join(
-        f'<div class="m-prog" {c.item_attrs("steps", i)}><span class="m-prog-n">{i + 1:02d}</span>'
+        f'<div class="m-prog" {c.item_attrs("steps", i)}><span class="m-prog-n">{c.ico(f"steps.{i}") or f"{i + 1:02d}"}</span>'
         f'<div class="m-prog-b">{c.t(f"steps.{i}.title", "p", "m-prog-t", force=True)}{c.t(f"steps.{i}.text", "p", "m-prog-x")}</div>'
         f'<div class="m-prog-m">{c.t(f"steps.{i}.owner", "span", "m-pill m-pill-sm")}{c.t(f"steps.{i}.due", "span", "m-pill m-pill-sm m-pill-ice-fill")}</div></div>'
         for i in range(n)
@@ -538,7 +538,7 @@ def _next_steps(c: Ctx) -> tuple[str, str]:
     acts = _dicts(c.slots.get("actions"))
     n = len(acts)
     rows = "".join(
-        f'<div class="m-act" {c.item_attrs("actions", i)}><span class="m-act-n">{i + 1}</span>'
+        f'<div class="m-act" {c.item_attrs("actions", i)}><span class="m-act-n">{c.ico(f"actions.{i}") or i + 1}</span>'
         f'{c.t(f"actions.{i}.text", "p", "m-act-t", force=True)}{c.t(f"actions.{i}.due", "span", "m-pill m-pill-sm m-pill-dark")}</div>'
         for i in range(n)
     )
@@ -562,7 +562,7 @@ def _ask(c: Ctx) -> tuple[str, str]:
     opts = _dicts(c.slots.get("options"))
     n = len(opts)
     cards = "".join(
-        f'<div class="m-askopt" {c.item_attrs("options", i)}><span class="m-askopt-n">{chr(65 + i)}</span>'
+        f'<div class="m-askopt" {c.item_attrs("options", i)}><span class="m-askopt-n">{c.ico(f"options.{i}") or chr(65 + i)}</span>'
         f'{c.t(f"options.{i}.name", "p", "m-askopt-h", force=True)}{c.t(f"options.{i}.text", "p", "m-askopt-t")}</div>'
         for i in range(n)
     )

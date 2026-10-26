@@ -1,5 +1,6 @@
 import copy
 import os
+import copy
 import re
 import tempfile
 import unittest
@@ -525,6 +526,65 @@ class CustomLayoutTests(unittest.TestCase):
         short = [{"title": f"П{i}", "text": "коротко"} for i in range(4)]
         deck["slides"][0]["slots"]["items"] = short
         self.assertNotIn('class="a3 is-side', tpl.render_deck_html(deck, {}))
+
+    def test_list_items_with_icons_both_themes(self):
+        from assistant.lib import canvas_icons
+
+        self.assertIn("users — ", canvas_icons.prompt_list())
+        self.assertIn("icon (иконки пунктов списков)", tpl.schema_prompt())
+        goals = [{"text": "Видеть каждый звонок", "icon": "headphones"}, {"text": "Без иконки", "icon": "no_such_icon"}, "Строка"]
+        for theme in ("analytic", "mono"):
+            deck = {"v": tpl.DECK_VERSION, "theme": theme, "title": "T", "slides": [
+                {"id": "s1", "role": "cover", "variant": "cover.goals", "slots": {"title": "Т", "goals": copy.deepcopy(goals)}},
+                {"id": "s2", "role": "plan", "variant": "plan.steps",
+                 "slots": {"title": "План", "steps": [{"title": "Шаг", "icon": "gear"}, {"title": "Второй", "icon": "flash"}]}},
+            ]}
+            html = tpl.render_deck_html(deck, {})
+            self.assertIn('data-icon="headphones"', html)
+            self.assertIn('data-icon="gear"', html)
+            self.assertNotIn("no_such_icon", html.split("leo-deck", 1)[0])
+            self.assertIn('data-slot="goals.0.text"', html)
+            self.assertIn('data-slot="goals.2"', html)
+            self.assertNotIn("{&#x27;text", html)
+            # Правка текста в редакторе сохраняет иконку пункта.
+            edited = html.replace(">Видеть каждый звонок<", ">Слышать каждый звонок<", 1)
+            again = tpl.extract_deck(tpl.refinalize(edited))
+            g0 = again["slides"][0]["slots"]["goals"][0]
+            self.assertEqual(g0, {"text": "Слышать каждый звонок", "icon": "headphones"})
+
+    def test_set_icon_op_from_editor(self):
+        deck = {"v": tpl.DECK_VERSION, "title": "T", "slides": [
+            {"id": "s1", "role": "cover", "variant": "cover.goals", "slots": {"title": "Т", "goals": ["Первый", "Второй"]}},
+            {"id": "s2", "role": "content", "variant": "content.cards", "slots": {"title": "К", "items": [{"title": "A", "text": "a"}]}},
+        ]}
+        html = tpl.render_deck_html(deck, {})
+        self.assertIn('data-item="goals.0" data-ico=""', html)
+        self.assertNotIn('data-item="items.0" data-ico', html)  # в тёмно-зелёном стиле у карточки 3D-объект, не иконка
+        d = tpl.extract_deck(html)
+        tpl.apply_op(d, {"op": "set_icon", "slide_id": "s1", "path": "goals.1", "icon": "brain"})
+        self.assertEqual(d["slides"][0]["slots"]["goals"][1], {"text": "Второй", "icon": "brain"})
+        html2 = tpl.render_deck_html(d, {})
+        self.assertIn('data-item="goals.1" data-ico="brain"', html2)
+        tpl.apply_op(d, {"op": "set_icon", "slide_id": "s1", "path": "goals.1", "icon": ""})
+        self.assertEqual(d["slides"][0]["slots"]["goals"][1], {"text": "Второй"})
+        with self.assertRaises(tpl.DeckOpError):
+            tpl.apply_op(d, {"op": "set_icon", "slide_id": "s1", "path": "goals.0", "icon": "no_such_icon"})
+        with self.assertRaises(tpl.DeckOpError):
+            tpl.apply_op(d, {"op": "set_icon", "slide_id": "s1", "path": "title.0", "icon": "brain"})
+        with self.assertRaises(tpl.DeckOpError):
+            tpl.apply_op(d, {"op": "set_icon", "slide_id": "s2", "path": "items.0", "icon": "brain"})
+        d["theme"] = "mono"
+        tpl.apply_op(d, {"op": "set_icon", "slide_id": "s2", "path": "items.0", "icon": "brain"})
+        self.assertIn('data-icon="brain"', tpl.render_deck_html(d, {}))
+
+    def test_point_rows_accept_icon_items(self):
+        slots = {"title": "Т", "options": [{"name": "A", "points": [{"text": "Быстро", "icon": "flash"}, "Дёшево"]},
+                                            {"name": "B", "points": ["Медленно"]}]}
+        deck = {"v": tpl.DECK_VERSION, "title": "T", "slides": [{"id": "s1", "role": "comparison", "variant": "comparison.two-col", "slots": slots}]}
+        html = tpl.render_deck_html(deck, {})
+        self.assertIn('class="row-rule ico-row"', html)
+        self.assertIn('data-slot="options.0.points.0.text"', html)
+        self.assertIn('data-slot="options.0.points.1"', html)
 
     def test_custom_insert_plans_layout_first_then_fills_it(self):
         from assistant.lib import canvas_revise

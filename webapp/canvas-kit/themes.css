@@ -71,6 +71,15 @@ html[data-leo-theme="mono"] .tpl-stage:has(.m-ice) { background: var(--m-ice); }
 .m-black .m-pill-dark { background: #fff; border-color: #fff; color: var(--m-black); }
 .m-arrow { display: inline-grid; place-items: center; flex: 0 0 auto; width: 46px; height: 46px; border: 1.5px solid currentColor; border-radius: 50%; }
 .m-ico { display: inline-grid; place-items: center; width: 42px; height: 42px; border-radius: 11px; background: var(--m-black); color: #fff; font-weight: 600; font-size: 18px; flex: none; }
+/* иконки пунктов списков */
+.tpl-stage .m-ico > .ico, .tpl-stage .m-agenda-n > .ico, .tpl-stage .m-act-n > .ico, .tpl-stage .m-askopt-n > .ico, .tpl-stage .m-prog-n > .ico { width: 55%; height: 55%; max-width: 30px; max-height: 30px; }
+.tpl-stage .m-li-ico { flex: 0 0 auto; width: 24px; height: 24px; }
+.tpl-stage .m-tag-row > .m-li-ico { width: 22px; height: 22px; margin-left: 4px; }
+.tpl-stage .m-ba-list li:has(> .m-li-ico) { display: flex; gap: 12px; align-items: flex-start; }
+.tpl-stage .m-goal-ico { width: 30px; height: 30px; color: var(--m-ice); }
+.tpl-stage .m-field-ico { display: block; width: 26px; height: 26px; margin-bottom: 10px; }
+.tpl-stage .cb-li-ico { flex: 0 0 auto; width: 20px; height: 20px; }
+.tpl-stage .m-custom .cb-list li:has(> .cb-li-ico) { display: flex; gap: 10px; align-items: center; }
 .m-check { display: inline-grid; place-items: center; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; background: var(--m-black); color: #fff; }
 .m-panel-dark .m-check, .m-black .m-check { background: #fff; color: var(--m-black); }
 

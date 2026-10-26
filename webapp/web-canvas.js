@@ -561,7 +561,7 @@
     var hoverItem = null;
 
     function post(type, payload) {
-      if (type === "op") payload = Object.assign({ scrollY: window.scrollY || 0 }, payload);
+      if (type === "op" || type === "icon") payload = Object.assign({ scrollY: window.scrollY || 0 }, payload);
       try {
         parent.postMessage(Object.assign({ source: "leo-web-canvas", type: type }, payload || {}), "*");
       } catch (e) {}
@@ -923,7 +923,13 @@
       hideHover();
       hoverItem = item;
       hover = chrome("div", "leo-item-tools");
+      var hasIco = item.hasAttribute("data-ico");
       hover.innerHTML =
+        (hasIco
+          ? '<button type="button" data-act="icon" title="' + (item.getAttribute("data-ico") ? "Сменить иконку" : "Поставить иконку") + '">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' +
+            '<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="3.5"/></svg></button>'
+          : "") +
         '<button type="button" data-act="add" title="Добавить такой же элемент после">+</button>' +
         '<button type="button" data-act="remove" title="Удалить элемент">×</button>';
       var add = hover.querySelector('[data-act="add"]');
@@ -947,6 +953,11 @@
           return;
         }
         var sid = sec.getAttribute("data-slide-id");
+        if (b.getAttribute("data-act") === "icon") {
+          post("icon", { slideId: sid, path: path, icon: item.getAttribute("data-ico") || "" });
+          hideHover();
+          return;
+        }
         if (b.getAttribute("data-act") === "add") post("op", { op: "add_item", slideId: sid, group: group, after: index });
         else post("op", { op: "remove_item", slideId: sid, group: group, index: index });
         hideHover();
@@ -954,7 +965,7 @@
       var r = item.getBoundingClientRect();
       var sr = sec.getBoundingClientRect();
       hover.style.top = Math.max(4, r.top - sr.top + 4) + "px";
-      hover.style.left = Math.max(4, r.right - sr.left - 64) + "px";
+      hover.style.left = Math.max(4, r.right - sr.left - (hasIco ? 96 : 64)) + "px";
       sec.appendChild(hover);
     }
 
@@ -1295,6 +1306,8 @@
     var onMedia = typeof opts.onMedia === "function" ? opts.onMedia : null;
     // onOp({op, slideId, …, html}) → Promise<new html>; onRevise({comments, html}) → Promise<{html, results}>
     var onOp = typeof opts.onOp === "function" ? opts.onOp : null;
+    // onIcon({sheetId, icon, apply(name)}) — выбрать иконку пункта списка (пустое имя — убрать).
+    var onIcon = typeof opts.onIcon === "function" ? opts.onIcon : null;
     var onRevise = typeof opts.onRevise === "function" ? opts.onRevise : null;
     var onNotify = typeof opts.onNotify === "function" ? opts.onNotify : function () {};
     var sheetId = String(opts.sheetId || "");
@@ -1933,6 +1946,19 @@
           index: Number(d.index) || 0,
           after: d.after == null ? null : Number(d.after),
           delta: Number(d.delta) || 0,
+        });
+        return;
+      }
+      if (d.type === "icon" && onIcon) {
+        var iconScrollY = Number(d.scrollY) || 0;
+        var iconReq = { slideId: String(d.slideId || ""), path: String(d.path || "") };
+        onIcon({
+          sheetId: sheetId,
+          icon: String(d.icon || ""),
+          apply: function (name) {
+            restoreScrollY = iconScrollY;
+            return runOp({ op: "set_icon", slideId: iconReq.slideId, path: iconReq.path, icon: String(name || "") });
+          },
         });
         return;
       }

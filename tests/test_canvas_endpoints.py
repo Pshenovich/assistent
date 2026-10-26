@@ -69,6 +69,21 @@ def test_variant_switch_and_item_ops(env):
     assert "Максимум" in r.json()["detail"]
 
 
+def test_set_icon_op_and_icon_catalog(env):
+    c, base, h = env["client"], env["base"], _headers(env["owner"])
+    r = c.post(base + "/canvas-op", headers=h, json={"op": "set_icon", "slide_id": "s1", "path": "goals.0", "icon": "brain"})
+    assert r.status_code == 200, r.text
+    g0 = _deck(r.json()["item"])["slides"][0]["slots"]["goals"][0]
+    assert isinstance(g0, dict) and g0["icon"] == "brain" and g0["text"]
+    assert 'data-icon="brain"' in r.json()["item"]["body"]
+    r = c.post(base + "/canvas-op", headers=h, json={"op": "set_icon", "slide_id": "s1", "path": "goals.0", "icon": "nope"})
+    assert r.status_code == 400
+    r = c.get("/api/miniapp/canvas-icons", headers=h)
+    assert r.status_code == 200
+    icons = {x["name"]: x for x in r.json()["icons"]}
+    assert "brain" in icons and icons["brain"]["desc"] and "<path" in icons["brain"]["svg"]
+
+
 def test_unavailable_variant_is_rejected(env):
     c, base, h = env["client"], env["base"], _headers(env["owner"])
     r = c.post(base + "/canvas-op", headers=h, json={"op": "variant", "slide_id": "s1", "variant": "cover.split-stat"})

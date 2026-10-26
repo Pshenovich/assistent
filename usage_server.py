@@ -2760,6 +2760,8 @@ class _MiniappCanvasOpBody(BaseModel):
     index: int = 0
     after: Optional[int] = None
     delta: int = 0
+    path: str = ""
+    icon: str = ""
     # Current editor HTML: inline text edits are synced before the op.
     html: Optional[str] = None
 
@@ -13121,6 +13123,16 @@ async def miniapp_canvas_op(
     if item is None:
         raise HTTPException(status_code=404, detail="Полотно не найдено")
     return {"ok": True, "item": item}
+
+
+@miniapp_router.get("/canvas-icons")
+async def miniapp_canvas_icons(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Иконки пунктов списков для выбора в редакторе презентации: имя, когда ставить, SVG (без обёртки)."""
+    from assistant.lib import canvas_icons
+
+    return {"icons": [{"name": k, "desc": v, "svg": canvas_icons.inner(k)} for k, v in canvas_icons.catalog().items()]}
 
 
 @miniapp_router.get("/canvas-layouts")

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261026-modal-close";
+  var WEBAPP_BUILD = "20261026-list-icons";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -6149,6 +6149,7 @@
     var tagsSheet = document.getElementById("tags-manage-overlay");
     var notesFilterSheet = document.getElementById("notes-filter-overlay");
     var canvasImageSheet = document.getElementById("canvas-image-overlay");
+    var canvasIconSheet = document.getElementById("canvas-icon-overlay");
     var noteAiSheet = document.getElementById("note-ai-overlay");
     var contactsForm = document.getElementById("contacts-form-overlay");
     var contactsBulk = document.getElementById("contacts-bulk-overlay");
@@ -6172,6 +6173,7 @@
       (tagsSheet && !tagsSheet.classList.contains("hidden")) ||
       (notesFilterSheet && !notesFilterSheet.classList.contains("hidden")) ||
       (canvasImageSheet && !canvasImageSheet.classList.contains("hidden")) ||
+      (canvasIconSheet && !canvasIconSheet.classList.contains("hidden")) ||
       (noteAiSheet && !noteAiSheet.classList.contains("hidden")) ||
       (contactsForm && !contactsForm.classList.contains("hidden")) ||
       (contactsBulk && !contactsBulk.classList.contains("hidden")) ||
@@ -27651,6 +27653,7 @@
       onMedia: function (req) {
         handleWebCanvasMedia(String(sheet.id), req);
       },
+      onIcon: openCanvasIconSheet,
       onOp: function (req) {
         return runWebCanvasOp(String(sheet.id), req);
       },
@@ -27696,6 +27699,7 @@
       onMedia: function (req) {
         handleWebCanvasMedia(String(sheet.id), req);
       },
+      onIcon: openCanvasIconSheet,
       onOp: function (req) {
         return runWebCanvasOp(String(sheet.id), req);
       },
@@ -27923,6 +27927,8 @@
         index: req.index || 0,
         after: req.after == null ? null : req.after,
         delta: req.delta || 0,
+        path: req.path || "",
+        icon: req.icon || "",
         html: req.html || null,
       }),
     });
@@ -29147,6 +29153,110 @@
     var ta = document.getElementById("canvas-image-prompt");
     var btn = document.getElementById("canvas-image-generate");
     if (btn) btn.disabled = !(ta && ta.value.trim());
+  }
+
+  // Иконка пункта списка в презентации: каталог с описаниями (assistant/lib/canvas_icons.py), поиск, «Убрать».
+  var canvasIconsCache = null;
+  var canvasIconReq = null;
+
+  function loadCanvasIcons() {
+    if (canvasIconsCache) return Promise.resolve(canvasIconsCache);
+    return apiFetch("/canvas-icons", { method: "GET" }).then(function (res) {
+      canvasIconsCache = (res && Array.isArray(res.icons) ? res.icons : []).filter(function (x) {
+        return x && x.name && x.svg;
+      });
+      return canvasIconsCache;
+    });
+  }
+
+  function canvasIconSvg(inner) {
+    return '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">' + inner + "</svg>";
+  }
+
+  function renderCanvasIconGrid() {
+    var grid = document.getElementById("canvas-icon-grid");
+    var q = document.getElementById("canvas-icon-search");
+    var empty = document.getElementById("canvas-icon-empty");
+    if (!grid || !canvasIconsCache) return;
+    var words = String((q && q.value) || "").toLowerCase().trim().split(/\s+/).filter(Boolean);
+    var cur = canvasIconReq ? canvasIconReq.icon : "";
+    var list = canvasIconsCache.filter(function (x) {
+      var hay = (x.name.replace(/_/g, " ") + " " + x.desc).toLowerCase();
+      return words.every(function (w) { return hay.indexOf(w) >= 0; });
+    });
+    grid.innerHTML = "";
+    list.forEach(function (x) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "canvas-icon-btn" + (x.name === cur ? " is-current" : "");
+      b.setAttribute("role", "listitem");
+      b.setAttribute("aria-label", x.desc);
+      b.title = x.desc;
+      b.innerHTML = canvasIconSvg(x.svg);
+      b.addEventListener("click", function () { pickCanvasIcon(x.name); });
+      grid.appendChild(b);
+    });
+    if (empty) empty.classList.toggle("hidden", list.length > 0);
+  }
+
+  function pickCanvasIcon(name) {
+    var req = canvasIconReq;
+    closeCanvasIconSheet();
+    if (!req || typeof req.apply !== "function") return;
+    if (String(name || "") === String(req.icon || "")) return;
+    req.apply(name);
+  }
+
+  function openCanvasIconSheet(req) {
+    var ov = document.getElementById("canvas-icon-overlay");
+    if (!ov || !req) return;
+    canvasIconReq = req;
+    var q = document.getElementById("canvas-icon-search");
+    if (q) q.value = "";
+    var clear = document.getElementById("canvas-icon-clear");
+    if (clear) clear.classList.toggle("hidden", !req.icon);
+    var grid = document.getElementById("canvas-icon-grid");
+    if (grid && !canvasIconsCache) grid.innerHTML = '<p class="canvas-icon-note">Загружаем иконки…</p>';
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
+    loadCanvasIcons()
+      .then(function () {
+        if (canvasIconReq === req) renderCanvasIconGrid();
+      })
+      .catch(function (e) {
+        if (grid) grid.innerHTML = "";
+        showNoteToast((e && e.message) || "Не удалось загрузить иконки");
+      });
+    if (q && isDesktopLayout()) setTimeout(function () { q.focus(); }, 30);
+  }
+
+  function closeCanvasIconSheet() {
+    var ov = document.getElementById("canvas-icon-overlay");
+    if (!ov || ov.classList.contains("hidden")) return;
+    canvasIconReq = null;
+    ov.classList.add("hidden");
+    ov.setAttribute("aria-hidden", "true");
+    onModalSheetClose();
+    syncAppOverlay();
+  }
+
+  function bindCanvasIconSheet() {
+    var ov = document.getElementById("canvas-icon-overlay");
+    if (!ov) return;
+    ov.addEventListener("click", function (e) {
+      if (e.target === ov) closeCanvasIconSheet();
+    });
+    ov.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") closeCanvasIconSheet();
+    });
+    var close = document.getElementById("canvas-icon-close");
+    if (close) close.addEventListener("click", closeCanvasIconSheet);
+    var q = document.getElementById("canvas-icon-search");
+    if (q) q.addEventListener("input", renderCanvasIconGrid);
+    var clear = document.getElementById("canvas-icon-clear");
+    if (clear) clear.addEventListener("click", function () { pickCanvasIcon(""); });
   }
 
   function bindCanvasImageSheet() {
@@ -51065,6 +51175,7 @@
     if (tagsManageClose) tagsManageClose.addEventListener("click", closeTagsManageSheet);
     bindNotesFilterUi();
     bindCanvasImageSheet();
+    bindCanvasIconSheet();
     bindNoteAiSheet();
     // «Попросить ИИ…» в меню таблицы: открываем обсуждение в режиме ИИ с началом запроса про таблицу.
     window.addEventListener("leo-table-ask-ai", function (e) {
