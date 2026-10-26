@@ -1849,18 +1849,21 @@
           var allIn = Array.from(grp).every(function (x) {
             return nextSel.has(x);
           });
-          grp.forEach(function (x) {
-            if (allIn) nextSel.delete(x);
-            else nextSel.add(x);
-          });
-          selected = nextSel;
-          schedule();
-          if (allIn) return;
+          // Уже выделенный: снимем выделение только по щелчку без движения — с Shift его можно тащить.
+          if (!allIn) {
+            grp.forEach(function (x) {
+              nextSel.add(x);
+            });
+            selected = nextSel;
+            schedule();
+          } else {
+            base.toggleOff = Array.from(grp);
+          }
         } else if (!selected.has(id)) {
           setSelection([id]);
         }
         ids = Array.from(selected);
-        startMove(base, ids, e.altKey, id);
+        startMove(base, ids, id);
         return;
       }
       // Пустое место: мышью — рамка выделения, пальцем — панорама.
@@ -1873,17 +1876,9 @@
       schedule();
     }
 
-    function startMove(base, ids, dup, hit) {
+    function startMove(base, ids, hit) {
       var list = ids.map(getEl).filter(Boolean);
       begin();
-      if (dup) {
-        var copies = copyEls(list, 0, 0);
-        copies.forEach(put);
-        list = copies;
-        setSelection(copies.map(function (c) {
-          return c.id;
-        }));
-      }
       var moving = {};
       list.forEach(function (el) {
         moving[el.id] = 1;
@@ -1983,7 +1978,7 @@
       } else if (g.kind === "create") {
         doCreate(g, p, e.shiftKey);
       } else if (g.kind === "end") {
-        doEnd(g, p, e.altKey);
+        doEnd(g, p, e.altKey, e.shiftKey);
       } else if (g.kind === "bend") {
         var ln = getEl(g.id);
         if (ln) patch(g.id, { bend: Math.round(G.bendFromPoint(ln, G.resolveLine(ln, getEl), p)) });
@@ -2020,24 +2015,53 @@
         });
         put(ln2);
         gesture = Object.assign(g, { kind: "end", id: ln2.id, which: "p1", created: true });
-        doEnd(gesture, p, e.altKey);
+        doEnd(gesture, p, e.altKey, e.shiftKey);
       }
     }
 
+    /** Option/Alt при перетаскивании — тянем копию, оригинал остаётся на месте (как в Miro). */
+    function duplicateDragged(g) {
+      g.items.forEach(function (el0) {
+        put(clone(el0)); // оригиналы — на исходные места
+      });
+      var copies = copyEls(g.items, 0, 0);
+      copies.forEach(put);
+      g.items = copies.map(clone);
+      g.moving = {};
+      copies.forEach(function (c) {
+        g.moving[c.id] = 1;
+      });
+      g.dup = true;
+      setSelection(copies.map(function (c) {
+        return c.id;
+      }));
+    }
+
     function doMove(g, p, e) {
+      if (e.altKey && !g.dup) duplicateDragged(g);
       var dx = p.x - g.p0.x;
       var dy = p.y - g.p0.y;
+      // Shift — только по горизонтали или только по вертикали (куда сдвинули больше).
+      var lock = e.shiftKey ? (Math.abs(dx) >= Math.abs(dy) ? "x" : "y") : "";
+      if (lock === "x") dy = 0;
+      if (lock === "y") dx = 0;
+      // Cmd/Ctrl — без привязки к сетке и направляющим.
+      var free = e.metaKey || e.ctrlKey;
       guides = [];
-      if (g.bounds) {
+      if (g.bounds && !free) {
         var b = g.bounds;
-        if (showGrid && !e.altKey) {
-          dx = Math.round((b.x + dx) / GRID) * GRID - b.x;
-          dy = Math.round((b.y + dy) / GRID) * GRID - b.y;
+        if (showGrid) {
+          if (lock !== "y") dx = Math.round((b.x + dx) / GRID) * GRID - b.x;
+          if (lock !== "x") dy = Math.round((b.y + dy) / GRID) * GRID - b.y;
         }
-        if (!e.altKey) {
-          var adj = alignGuides(g, b, dx, dy);
-          dx = adj.dx;
-          dy = adj.dy;
+        var adj = alignGuides(g, b, dx, dy);
+        if (lock !== "y") dx = adj.dx;
+        if (lock !== "x") dy = adj.dy;
+        if (lock) {
+          guides = guides.filter(function (gd) {
+            // Направляющая по зафиксированной оси не действует — не рисуем её.
+            return lock === "x" ? gd.a.x === gd.b.x : gd.a.y === gd.b.y;
+          });
         }
       }
       g.items.forEach(function (el0) {
@@ -2113,11 +2137,22 @@
       put(Object.assign({}, el, { x: x, y: y, w: Math.max(4, w), h: Math.max(4, h) }));
     }
 
-    function doEnd(g, p, free) {
+    function doEnd(g, p, free, shift) {
       var ln = getEl(g.id);
       if (!ln) return;
       var key = g.which === "p0" ? "start" : "end";
       var other = g.which === "p0" ? "end" : "start";
+      if (shift) {
+        // Shift — угол линии с шагом 15°, конец свободный (прилипание сбило бы угол).
+        var r0 = G.resolveLine(ln, getEl);
+        var o = g.which === "p0" ? r0.p1 : r0.p0;
+        var v = G.sub(p, o);
+        var len = G.len(v);
+        var step = Math.PI / 12;
+        var ang = Math.round(Math.atan2(v.y, v.x) / step) * step;
+        p = G.add(o, G.pt(Math.cos(ang) * len, Math.sin(ang) * len));
+        free = true;
+      }
       var exclude = {};
       exclude[ln.id] = 1;
       var sn = snapEnd(p, exclude, free);
@@ -2304,7 +2339,13 @@
         if (!g.moved && !cancelled) quickAdd(g.from, g.side);
       } else if (g.kind === "move" || g.kind === "resize" || g.kind === "rotate" || g.kind === "bend" || g.kind === "gscale") {
         commit();
-        if (g.kind === "move" && !g.moved && e && !cancelled) onTap(g.hit, p, e);
+        if (g.kind === "move" && !g.moved && e && !cancelled) {
+          if (g.toggleOff) {
+            g.toggleOff.forEach(function (x) {
+              selected.delete(x);
+            });
+          } else onTap(g.hit, p, e);
+        }
       } else if (g.kind === "pan") {
         if (g.tapEmpty && !g.moved) {
           selected.clear();

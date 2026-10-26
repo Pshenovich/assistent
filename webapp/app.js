@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261026-pastelink";
+  var WEBAPP_BUILD = "20261026-board-rename";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -36897,8 +36897,13 @@
       var prevTitle = String(sheet.title || "");
       var next = String(input.value || "").trim() || prevTitle;
       if (next.length > 80) next = next.slice(0, 80).trim() || prevTitle;
+      // Вкладка держит объект листа с момента отрисовки, а сохранение (у доски — частое)
+      // подменяет его в noteSheetState — имя пишем в текущий объект, иначе уйдёт старое.
+      var live = findNoteSheet(sheet.id);
+      if (live && live !== sheet) prevTitle = String(live.title || prevTitle);
       if (ok && next !== prevTitle) {
         sheet.title = next;
+        if (live) live.title = next;
         if (noteSheetState.sheetTimers[String(sheet.id)]) {
           clearTimeout(noteSheetState.sheetTimers[String(sheet.id)]);
           delete noteSheetState.sheetTimers[String(sheet.id)];
@@ -36911,6 +36916,8 @@
           })
           .catch(function (e) {
             sheet.title = prevTitle;
+            var cur = findNoteSheet(sheet.id);
+            if (cur) cur.title = prevTitle;
             renderNoteSheetChips();
             renderNoteKnowledgeMenu();
             setNoteEditorSaveHint(e.message || "Не удалось сохранить название листа");
