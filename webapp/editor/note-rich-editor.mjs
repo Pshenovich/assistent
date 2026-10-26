@@ -1179,6 +1179,22 @@ const NoteToggle = Node.create({
   },
 });
 
+var PASTE_URL_RE = /^(?:https?:\/\/|www\.|t\.me\/|mailto:)[^\s<>"]+$/i;
+
+function pasteUrlAsLink(view, event) {
+  var sel = view.state.selection;
+  // Тип — по JSON: в таблице выделение создаёт своя копия prosemirror-state, instanceof там не срабатывает.
+  if (sel.empty || sel.toJSON().type !== "text" || !event || !event.clipboardData) return false;
+  var url = String(event.clipboardData.getData("text/plain") || "").trim();
+  if (!url || !PASTE_URL_RE.test(url)) return false;
+  if (/^www\./i.test(url) || /^t\.me\//i.test(url)) url = "https://" + url;
+  var editor = view.dom && view.dom.editor;
+  if (!editor) return false;
+  event.preventDefault();
+  editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
+  return true;
+}
+
 /* Вставка простого текста с markdown (из чата, ChatGPT, .md) — сразу оформлением. */
 var MD_PASTE_HINT_RE = /(^|\n)(#{1,6}\s+\S|[-*•]\s+\S|\d+[.)]\s+\S|-\s+\[[ xX]\]\s|>\s+\S)|\*\*[^*\n]+\*\*/;
 function pasteMarkdownText(view, event) {
@@ -4426,6 +4442,9 @@ function mount(container, options) {
         spellcheck: "true",
       },
       handlePaste: function (view, event) {
+        // Выделили текст и вставили ссылку — выделенное становится гиперссылкой (и в таблице, где вставку
+        // иначе перехватывает обработчик ячеек, и если у ссылки пробел / перенос по краям).
+        if (pasteUrlAsLink(view, event)) return true;
         // Скриншот / фото из буфера (без HTML — иначе это копия из веба, её разберёт редактор).
         var pastedImages = imageFilesFrom(event && event.clipboardData);
         if (pastedImages.length && !(event.clipboardData.getData("text/html") || "").trim()) {
@@ -4509,6 +4528,11 @@ function mount(container, options) {
   editor.view.dom.addEventListener(
     "paste",
     function (event) {
+      // Ссылка на выделенный текст — раньше вставки в ячейку (та заменила бы выделение текстом ссылки).
+      if (pasteUrlAsLink(editor.view, event)) {
+        event.stopImmediatePropagation();
+        return;
+      }
       if (pastePlainTextInTableCell(editor.view, event, tablePasteClickPos.pos)) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -4986,7 +5010,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261026-toggle",
+  assetVersion: "20261026-pastelink",
   Y: Y,
   mount: mount,
   importBody: importBody,
