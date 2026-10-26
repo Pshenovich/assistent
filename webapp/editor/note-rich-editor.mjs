@@ -944,6 +944,241 @@ const NoteIndentBackspace = Extension.create({
   },
 });
 
+/* Сворачиваемый блок: заголовок со шевроном в конце строки (∨ свёрнуто / ⌃ развёрнуто), под ним —
+   что угодно (текст, заголовки, списки). В HTML — <details class="note-toggle" open><summary>…</summary>
+   <div class="note-toggle-body">…</div></details>: в просмотре и по ссылке сворачивается и без редактора. */
+var TOGGLE_CHEVRON =
+  '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+
+const NoteToggleSummary = Node.create({
+  name: "noteToggleSummary",
+  content: "inline*",
+  defining: true,
+  parseHTML: function () {
+    return [{ tag: "details.note-toggle > summary" }, { tag: "summary.note-toggle-summary" }];
+  },
+  renderHTML: function () {
+    return ["summary", { class: "note-toggle-summary" }, 0];
+  },
+  addNodeView: function () {
+    return function (props) {
+      var node = props.node;
+      var dom = document.createElement("div");
+      dom.className = "note-toggle-summary";
+      var text = document.createElement("span");
+      text.className = "note-toggle-summary-text";
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "note-toggle-chevron";
+      btn.contentEditable = "false";
+      btn.setAttribute("aria-label", "Свернуть / развернуть");
+      btn.innerHTML = TOGGLE_CHEVRON;
+      dom.appendChild(text);
+      dom.appendChild(btn);
+      dom.classList.toggle("is-empty", !node.content.size);
+      btn.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+      });
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var pos = typeof props.getPos === "function" ? props.getPos() : null;
+        if (typeof pos !== "number") return;
+        var view = props.editor.view;
+        var togglePos = pos - 1;
+        var t = view.state.doc.nodeAt(togglePos);
+        if (!t || t.type.name !== "noteToggle") return;
+        var tr = view.state.tr.setNodeMarkup(togglePos, null, Object.assign({}, t.attrs, { open: !t.attrs.open }));
+        // Свернули, а курсор был внутри — ставим его в конец заголовка (иначе он «пропадает» в скрытом).
+        var sel = view.state.selection;
+        if (t.attrs.open && sel.from > pos + node.nodeSize && sel.from < togglePos + t.nodeSize) {
+          tr.setSelection(TextSelection.create(tr.doc, pos + node.nodeSize - 1));
+        }
+        view.dispatch(tr.setMeta("leoNoScroll", true));
+      });
+      return {
+        dom: dom,
+        contentDOM: text,
+        update: function (next) {
+          if (next.type !== node.type) return false;
+          node = next;
+          dom.classList.toggle("is-empty", !next.content.size);
+          return true;
+        },
+        stopEvent: function (e) {
+          return !!(e.target && e.target.closest && e.target.closest(".note-toggle-chevron"));
+        },
+        ignoreMutation: function (m) {
+          return m.target === dom || btn.contains(m.target);
+        },
+      };
+    };
+  },
+});
+
+const NoteToggleBody = Node.create({
+  name: "noteToggleBody",
+  content: "block+",
+  defining: true,
+  parseHTML: function () {
+    return [{ tag: "div.note-toggle-body" }];
+  },
+  renderHTML: function () {
+    return ["div", { class: "note-toggle-body" }, 0];
+  },
+});
+
+// Блоки [first..last] верхнего уровня → сворачиваемый блок: текст первого — заголовок, остальное — внутрь.
+function wrapInToggle(tr, from, to, caretInBody) {
+  var schema = tr.doc.type.schema;
+  var blocks = [];
+  tr.doc.slice(from, to).content.forEach(function (n) {
+    blocks.push(n);
+  });
+  var head = blocks.shift();
+  var summary = schema.nodes.noteToggleSummary.create(null, head && head.isTextblock ? head.content : null);
+  if (head && !head.isTextblock) blocks.unshift(head);
+  if (!blocks.length) blocks.push(schema.nodes.paragraph.create());
+  var body = schema.nodes.noteToggleBody.create(null, blocks);
+  var toggle = schema.nodes.noteToggle.create({ open: true }, [summary, body]);
+  tr.replaceWith(from, to, toggle);
+  var caret = caretInBody ? from + 1 + summary.nodeSize + 2 : from + 1 + summary.nodeSize - 1;
+  tr.setSelection(TextSelection.near(tr.doc.resolve(caret)));
+  return tr;
+}
+
+// Снять сворачиваемый блок: заголовок — обычной строкой, содержимое — под ней.
+function unwrapToggle(tr, togglePos, toggle) {
+  var schema = tr.doc.type.schema;
+  var summary = toggle.child(0);
+  var body = toggle.child(1);
+  var out = [schema.nodes.paragraph.create(null, summary.content)];
+  var bodyEmpty = body.childCount === 1 && !body.firstChild.content.size;
+  if (!bodyEmpty) body.forEach(function (n) {
+    out.push(n);
+  });
+  tr.replaceWith(togglePos, togglePos + toggle.nodeSize, out);
+  tr.setSelection(TextSelection.create(tr.doc, togglePos + 1));
+  return tr;
+}
+
+function toggleAround($pos) {
+  for (var d = $pos.depth; d > 0; d -= 1) {
+    if ($pos.node(d).type.name === "noteToggle") return { node: $pos.node(d), pos: $pos.before(d), depth: d };
+  }
+  return null;
+}
+
+const NoteToggle = Node.create({
+  name: "noteToggle",
+  group: "block",
+  content: "noteToggleSummary noteToggleBody",
+  defining: true,
+  addAttributes: function () {
+    return {
+      open: {
+        default: true,
+        parseHTML: function (el) {
+          return el.hasAttribute("open");
+        },
+        renderHTML: function (attrs) {
+          return attrs.open ? { open: "" } : {};
+        },
+      },
+    };
+  },
+  parseHTML: function () {
+    return [{ tag: "details.note-toggle" }];
+  },
+  renderHTML: function (props) {
+    return ["details", Object.assign({ class: "note-toggle" }, props.HTMLAttributes), 0];
+  },
+  addNodeView: function () {
+    return function (props) {
+      var node = props.node;
+      var dom = document.createElement("div");
+      dom.className = "note-toggle";
+      dom.classList.toggle("is-open", !!node.attrs.open);
+      return {
+        dom: dom,
+        contentDOM: dom,
+        update: function (next) {
+          if (next.type !== node.type) return false;
+          node = next;
+          dom.classList.toggle("is-open", !!next.attrs.open);
+          return true;
+        },
+        ignoreMutation: function (m) {
+          return m.type === "attributes" && m.target === dom;
+        },
+      };
+    };
+  },
+  addCommands: function () {
+    return {
+      // Меню списка → «Сворачиваемый блок»: строка (или выделенные строки) — в блок; уже в блоке — снять.
+      toggleNoteToggle: function () {
+        return function (props) {
+          var state = props.state;
+          var sel = state.selection;
+          var t = toggleAround(sel.$from);
+          if (t) {
+            if (props.dispatch) unwrapToggle(props.tr, t.pos, t.node);
+            return true;
+          }
+          var $a = sel.$from;
+          var $b = sel.$to;
+          if ($a.depth < 1) return false;
+          var first = $a.index(0);
+          var last = $b.index(0);
+          if (!sel.empty && last > first && $b.pos === $b.start(1)) last -= 1;
+          if (props.dispatch) {
+            var from = 0;
+            for (var k = 0; k < first; k += 1) from += state.doc.child(k).nodeSize;
+            var to = from;
+            for (var j = first; j <= last; j += 1) to += state.doc.child(j).nodeSize;
+            wrapInToggle(props.tr, from, to, true);
+          }
+          return true;
+        };
+      },
+    };
+  },
+  addKeyboardShortcuts: function () {
+    return {
+      // Enter в заголовке: развёрнут — внутрь блока; свёрнут — новая строка после блока.
+      Enter: function (props) {
+        var state = props.editor.state;
+        var $from = state.selection.$from;
+        if ($from.parent.type.name !== "noteToggleSummary") return false;
+        var t = toggleAround($from);
+        if (!t) return false;
+        var tr = state.tr;
+        if (t.node.attrs.open) {
+          var bodyStart = t.pos + 1 + t.node.child(0).nodeSize + 1;
+          tr.setSelection(TextSelection.near(tr.doc.resolve(bodyStart + 1)));
+        } else {
+          var after = t.pos + t.node.nodeSize;
+          tr.insert(after, state.schema.nodes.paragraph.create());
+          tr.setSelection(TextSelection.create(tr.doc, after + 1));
+        }
+        props.editor.view.dispatch(tr.scrollIntoView());
+        return true;
+      },
+      // Backspace в начале заголовка — снова обычный текст.
+      Backspace: function (props) {
+        var state = props.editor.state;
+        var sel = state.selection;
+        if (!sel.empty || sel.$from.parent.type.name !== "noteToggleSummary" || sel.$from.parentOffset !== 0) return false;
+        var t = toggleAround(sel.$from);
+        if (!t) return false;
+        props.editor.view.dispatch(unwrapToggle(state.tr, t.pos, t.node).scrollIntoView());
+        return true;
+      },
+    };
+  },
+});
+
 /* Вставка простого текста с markdown (из чата, ChatGPT, .md) — сразу оформлением. */
 var MD_PASTE_HINT_RE = /(^|\n)(#{1,6}\s+\S|[-*•]\s+\S|\d+[.)]\s+\S|-\s+\[[ xX]\]\s|>\s+\S)|\*\*[^*\n]+\*\*/;
 function pasteMarkdownText(view, event) {
@@ -1762,6 +1997,7 @@ function svgIcon(name) {
       '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2"/><path d="M4 12l1 1 2-2"/><path d="M4 18l1 1 2-2"/>',
     none: '<path d="M4 7h16M4 12h16M4 17h10"/>',
     blank: "",
+    toggle: '<path d="m4 8 4 4-4 4"/><path d="M12 7h9M12 12h9M12 17h6"/>',
     indent: '<path d="M10 6h10M10 12h10M10 18h10"/><path d="m3 9 3 3-3 3"/>',
     outdent: '<path d="M10 6h10M10 12h10M10 18h10"/><path d="m6 9-3 3 3 3"/>',
     columns: '<path d="M4 7h10M4 12h10M4 17h7"/><path d="M19 4v16"/>',
@@ -2230,7 +2466,8 @@ function mountToolbar(toolbarEl, editor) {
       item("paragraph", "plain-list", "blank", plainLabel) +
       item("bullet", "bulletList", "list", "Маркированный список") +
       item("ordered", "orderedList", "numbered", "Нумерованный список") +
-      item("task", "taskList", "checklist", "Чек-лист")
+      item("task", "taskList", "checklist", "Чек-лист") +
+      item("toggle", "noteToggle", "toggle", "Сворачиваемый блок")
     );
   }
   // «+» — вид блока (как в Telegram), под чертой — вставка. «Заголовок ›» и «Шрифт и размер ›» открываются внутри меню.
@@ -2355,6 +2592,8 @@ function mountToolbar(toolbarEl, editor) {
       editor.chain().focus().toggleBlockquote().run();
     } else if (cmd === "task") {
       editor.chain().focus().toggleTaskList().run();
+    } else if (cmd === "toggle") {
+      editor.chain().focus().toggleNoteToggle().run();
     } else if (cmd === "bullet") {
       editor.chain().focus().toggleBulletList().run();
     } else if (cmd === "ordered") {
@@ -2829,7 +3068,7 @@ function mountToolbar(toolbarEl, editor) {
       var headingMatch = String(check || "").match(/^heading-(\d)$/);
       var on =
         check === "plain-list"
-          ? !(editor.isActive("bulletList") || editor.isActive("orderedList") || editor.isActive("taskList"))
+          ? !(editor.isActive("bulletList") || editor.isActive("orderedList") || editor.isActive("taskList") || editor.isActive("noteToggle"))
           : check === "plain"
           ? !(
               editor.isActive("bulletList") ||
@@ -4170,6 +4409,9 @@ function mount(container, options) {
       MarkdownHeadingShortcut,
       NoteIndent,
       NoteIndentBackspace,
+      NoteToggle,
+      NoteToggleSummary,
+      NoteToggleBody,
       NoteColumns,
       NoteColumn,
     ]
@@ -4744,7 +4986,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261025-indentl",
+  assetVersion: "20261026-toggle",
   Y: Y,
   mount: mount,
   importBody: importBody,
