@@ -309,7 +309,7 @@ def _render_el(c: ct.Ctx, i: int, el: dict[str, Any], surface: str) -> str:
     st = el.get("style") or {}
     attrs = f'class="fr-el fr-{t}" data-fid="{escape(el["id"])}" style="{_box(el)}"'
     if t == "text":
-        path = f"elements.{i}.html"
+        path = f"free.{el['id']}.html"  # по id, не по номеру: номер меняется при удалении и дублировании
         css = f"text-align:{st['align']};color:{paint(st['color'])};font-weight:{st['weight']};"
         if st.get("px"):
             css += f"font-size:{st['px']}px;"

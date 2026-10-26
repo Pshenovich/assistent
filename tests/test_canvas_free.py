@@ -46,7 +46,7 @@ class FreeSlideTests(unittest.TestCase):
             html = tpl.render_deck_html(deck, {})
             self.assertNotIn("Не удалось отрисовать", html)
             self.assertIn('class="fr-slide fr-dark"', html)
-            self.assertIn('data-slot="elements.0.html"', html)
+            self.assertIn('data-slot="free.t1.html"', html)
             self.assertIn("left:80.0px;top:60.0px;width:800.0px;height:120.0px", html)
             self.assertIn('data-icon="brain"', html)
             self.assertIn('data-media="s1-media"', html)

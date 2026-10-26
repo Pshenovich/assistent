@@ -1865,12 +1865,13 @@ def sync_text_edits(deck: dict[str, Any], html: str) -> dict[str, Any]:
             continue
         slots = s.setdefault("slots", {})
         if s.get("variant") == "free.canvas":
-            if not re.fullmatch(r"elements\.\d+\.html", path):
-                continue
-            from assistant.lib import canvas_free
+            m = re.fullmatch(r"free\.([a-z0-9]{1,16})\.html", path)
+            if m:
+                from assistant.lib import canvas_free
 
-            if isinstance(get_path(slots, path.rsplit(".", 1)[0]), dict):
-                set_path(slots, path, canvas_free.sanitize_html(text))
+                el = next((e for e in slots.get("elements") or [] if isinstance(e, dict) and e.get("id") == m.group(1)), None)
+                if el is not None and el.get("type") == "text":
+                    el["html"] = canvas_free.sanitize_html(text)
             continue
         new = text[:_TEXT_CAP]
         old = get_path(slots, path)

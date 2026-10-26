@@ -542,6 +542,591 @@
   }
 
   /**
+   * Редактор свободного слайда (free.canvas, assistant/lib/canvas_free.py) — внутри фрейма, в режиме правок.
+   * Позиции и оформление пишем прямо в JSON деки (#leo-deck) и шлём «dirty»: сохраняет обычное автосохранение,
+   * слайд не перерисовывается — выделение и история отмены живут, пока открыт редактор.
+   * Текст правится как обычно (data-slot по id элемента); всё служебное — .leo-edit-chrome.
+   */
+  function frameFreeMain() {
+    var root = document.documentElement;
+    if (!root.hasAttribute("data-leo-deck")) return;
+    var STAGE_W = 1280;
+    var STAGE_H = 720;
+    var SNAP = 6;
+    var PAINT = {
+      text: "var(--s-text)", muted: "var(--s-muted)", faint: "var(--s-faint)", acc: "var(--s-acc)", "on-acc": "var(--s-on-acc)",
+      el: "var(--s-el)", rule: "var(--s-rule)", tint: "var(--s-tint)", "acc-soft": "var(--s-acc-soft)", grad: "var(--fr-grad)",
+      white: "#ffffff", black: "#0b0b0b", none: "transparent",
+    };
+    var sel = [];
+    var cur = null; // { sec, sid, stage }
+    var hist = {};
+    var detached = {};
+    var textEdit = null;
+    var gesture = null;
+    var overlay = null;
+    var allowClick = false;
+
+    function editing() {
+      return root.classList.contains("leo-edit-mode");
+    }
+    function post(type, payload) {
+      try {
+        parent.postMessage(Object.assign({ source: "leo-web-canvas", type: type }, payload || {}), "*");
+      } catch (e) {}
+    }
+    function paint(v) {
+      return Object.prototype.hasOwnProperty.call(PAINT, v) ? PAINT[v] : String(v || "");
+    }
+    // ---- модель: JSON деки внутри документа
+    function deckNode() {
+      return document.getElementById("leo-deck");
+    }
+    function readDeck() {
+      try {
+        return JSON.parse(deckNode().textContent || "{}");
+      } catch (e) {
+        return null;
+      }
+    }
+    function writeDeck(d) {
+      deckNode().textContent = JSON.stringify(d).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
+    }
+    function slideData(d, sid) {
+      return ((d && d.slides) || []).filter(function (s) { return String(s.id) === String(sid); })[0] || null;
+    }
+    function getEls(sid) {
+      var s = slideData(readDeck(), sid);
+      return s && s.slots && Array.isArray(s.slots.elements) ? s.slots.elements : [];
+    }
+    function setEls(sid, els) {
+      var d = readDeck();
+      var s = slideData(d, sid);
+      if (!s) return;
+      s.slots = s.slots || {};
+      s.slots.elements = els;
+      writeDeck(d);
+      post("dirty", {});
+    }
+    function byId(els, id) {
+      return els.filter(function (e) { return e.id === id; })[0] || null;
+    }
+    function H(sid) {
+      if (!hist[sid]) hist[sid] = { undo: [], redo: [] };
+      return hist[sid];
+    }
+    // Изменение модели: снимок в историю, правка, перерисовка затронутых узлов, сохранение.
+    function commit(sid, mutate) {
+      var els = getEls(sid);
+      var before = JSON.stringify(els);
+      mutate(els);
+      if (JSON.stringify(els) === before) return;
+      var h = H(sid);
+      h.undo.push(before);
+      if (h.undo.length > 100) h.undo.shift();
+      h.redo = [];
+      setEls(sid, els);
+      syncDom(sid, els);
+    }
+    function restore(sid, json) {
+      var els = JSON.parse(json);
+      setEls(sid, els);
+      syncDom(sid, els);
+    }
+    function undo(redo) {
+      if (!cur) return;
+      var h = H(cur.sid);
+      var from = redo ? h.redo : h.undo;
+      var to = redo ? h.undo : h.redo;
+      if (!from.length) return;
+      to.push(JSON.stringify(getEls(cur.sid)));
+      restore(cur.sid, from.pop());
+    }
+    // ---- DOM
+    function slideRoot(sec) {
+      return sec && sec.querySelector(".fr-slide");
+    }
+    function nodeOf(sec, id) {
+      return sec.querySelector('.fr-el[data-fid="' + String(id).replace(/"/g, "") + '"]');
+    }
+    function applyEl(node, e) {
+      var st = node.style;
+      st.left = e.x + "px";
+      st.top = e.y + "px";
+      st.width = e.w + "px";
+      st.height = e.h + "px";
+      st.zIndex = String(e.z || 1);
+      st.transform = e.rot ? "rotate(" + e.rot + "deg)" : "";
+      st.opacity = e.opacity ? String(e.opacity) : "";
+      var s = e.style || {};
+      if (e.type === "text") {
+        var t = node.querySelector(".fr-text");
+        if (!t) return;
+        t.className = "fr-text fr-size-" + (s.size || "m") + " fr-font-" + (s.font || "body");
+        t.style.textAlign = s.align || "left";
+        t.style.color = paint(s.color || "text");
+        t.style.fontWeight = String(s.weight || 400);
+        t.style.fontSize = s.px ? s.px + "px" : "";
+        t.style.lineHeight = s.lh ? String(s.lh) : "";
+        t.style.letterSpacing = s.ls ? s.ls + "em" : "";
+        t.style.whiteSpace = s.nowrap ? "nowrap" : "";
+        t.style.textWrap = !s.nowrap && s.balance ? "balance" : "";
+        t.style.background = s.bg ? paint(s.bg) : "";
+      } else if (e.type === "shape") {
+        var i = node.querySelector(".fr-shape,.fr-line");
+        if (!i) return;
+        i.style.background = paint(s.fill || "el");
+        if (i.classList.contains("fr-shape")) {
+          i.style.borderRadius = e.shape === "circle" ? "50%" : (s.radius || 0) + "px";
+          i.style.border = s.stroke && s.stroke !== "none" ? "2px solid " + paint(s.stroke) : "";
+        }
+      } else if (e.type === "icon") {
+        var ic = node.querySelector(".fr-icon");
+        if (ic) ic.style.color = paint(s.color || "acc");
+      } else if (e.type === "image" || e.type === "object") {
+        var clip = node.querySelector(".fr-clip,.fr-a3");
+        if (clip) clip.style.borderRadius = (s.radius != null ? s.radius : 16) + "px";
+      }
+    }
+    function syncDom(sid, els) {
+      var sec = document.querySelector('section[data-slide-id="' + String(sid).replace(/"/g, "") + '"]');
+      var rootEl = slideRoot(sec);
+      if (!rootEl) return;
+      var keep = {};
+      els.forEach(function (e) {
+        keep[e.id] = 1;
+        var n = nodeOf(sec, e.id);
+        if (!n && detached[e.id]) {
+          n = detached[e.id];
+          delete detached[e.id];
+          rootEl.appendChild(n);
+        }
+        if (n) applyEl(n, e);
+      });
+      [].slice.call(rootEl.querySelectorAll(".fr-el[data-fid]")).forEach(function (n) {
+        var id = n.getAttribute("data-fid");
+        if (!keep[id]) {
+          detached[id] = n;
+          n.remove();
+        }
+      });
+      sel = sel.filter(function (n) { return n.isConnected; });
+      drawChrome();
+    }
+    // ---- выделение и рамки
+    function scaleOf(stage) {
+      var r = stage.getBoundingClientRect();
+      return r.width / STAGE_W || 1;
+    }
+    function setCur(sec) {
+      if (cur && cur.sec === sec) return;
+      cur = sec ? { sec: sec, sid: sec.getAttribute("data-slide-id"), stage: sec.querySelector(".tpl-stage") } : null;
+    }
+    function select(nodes, add) {
+      if (!add) sel = [];
+      nodes.forEach(function (n) {
+        var i = sel.indexOf(n);
+        if (add && i >= 0) sel.splice(i, 1);
+        else if (i < 0) sel.push(n);
+      });
+      drawChrome();
+    }
+    function clearSel() {
+      sel = [];
+      endTextEdit();
+      drawChrome();
+    }
+    function ensureOverlay() {
+      if (!cur) return null;
+      if (overlay && overlay.parentNode === cur.stage) return overlay;
+      if (overlay) overlay.remove();
+      overlay = document.createElement("div");
+      overlay.className = "leo-edit-chrome leo-fr-overlay";
+      cur.stage.appendChild(overlay);
+      return overlay;
+    }
+    function modelOf(n) {
+      return cur ? byId(getEls(cur.sid), n.getAttribute("data-fid")) : null;
+    }
+    function drawChrome(guides) {
+      if (!cur || !editing()) {
+        if (overlay) overlay.remove();
+        overlay = null;
+        return;
+      }
+      var ov = ensureOverlay();
+      var k = scaleOf(cur.stage);
+      var hs = Math.max(8, 10 / k);
+      ov.innerHTML = "";
+      ov.style.setProperty("--k", String(k));
+      sel.forEach(function (n) {
+        var e = modelOf(n);
+        if (!e) return;
+        var f = document.createElement("div");
+        f.className = "leo-fr-frame" + (textEdit === n ? " is-text" : "");
+        f.style.cssText = "left:" + e.x + "px;top:" + e.y + "px;width:" + e.w + "px;height:" + e.h + "px;border-width:" + 1.5 / k + "px";
+        ov.appendChild(f);
+        if (sel.length === 1 && textEdit !== n) {
+          ["nw", "n", "ne", "e", "se", "s", "sw", "w"].forEach(function (h) {
+            var d = document.createElement("i");
+            d.className = "leo-fr-h";
+            d.setAttribute("data-h", h);
+            var x = e.x + (h.indexOf("w") >= 0 ? 0 : h.indexOf("e") >= 0 ? e.w : e.w / 2);
+            var y = e.y + (h.indexOf("n") >= 0 ? 0 : h.indexOf("s") >= 0 ? e.h : e.h / 2);
+            d.style.cssText = "left:" + (x - hs / 2) + "px;top:" + (y - hs / 2) + "px;width:" + hs + "px;height:" + hs + "px;border-width:" + 1.5 / k + "px";
+            ov.appendChild(d);
+          });
+        }
+      });
+      (guides || []).forEach(function (g) {
+        var l = document.createElement("div");
+        l.className = "leo-fr-guide";
+        l.style.cssText = g.v
+          ? "left:" + g.at + "px;top:0;width:" + 1 / k + "px;height:" + STAGE_H + "px"
+          : "top:" + g.at + "px;left:0;height:" + 1 / k + "px;width:" + STAGE_W + "px";
+        ov.appendChild(l);
+      });
+      if (gesture && gesture.kind === "marquee" && gesture.box) {
+        var m = document.createElement("div");
+        m.className = "leo-fr-marquee";
+        var b = gesture.box;
+        m.style.cssText = "left:" + b.x + "px;top:" + b.y + "px;width:" + b.w + "px;height:" + b.h + "px";
+        ov.appendChild(m);
+      }
+      post("freeSel", { count: sel.length, types: sel.map(function (n) { var e = modelOf(n); return e ? e.type : ""; }) });
+    }
+    // ---- прилипание к краям и центрам сцены и других элементов
+    function snap(box, others) {
+      var xs = [0, STAGE_W / 2, STAGE_W];
+      var ys = [0, STAGE_H / 2, STAGE_H];
+      others.forEach(function (o) {
+        xs.push(o.x, o.x + o.w / 2, o.x + o.w);
+        ys.push(o.y, o.y + o.h / 2, o.y + o.h);
+      });
+      var best = { dx: 0, dy: 0, gx: null, gy: null };
+      var bx = [box.x, box.x + box.w / 2, box.x + box.w];
+      var by = [box.y, box.y + box.h / 2, box.y + box.h];
+      var mx = SNAP;
+      bx.forEach(function (v) {
+        xs.forEach(function (t) {
+          if (Math.abs(t - v) < mx) {
+            mx = Math.abs(t - v);
+            best.dx = t - v;
+            best.gx = t;
+          }
+        });
+      });
+      var my = SNAP;
+      by.forEach(function (v) {
+        ys.forEach(function (t) {
+          if (Math.abs(t - v) < my) {
+            my = Math.abs(t - v);
+            best.dy = t - v;
+            best.gy = t;
+          }
+        });
+      });
+      return best;
+    }
+    function bbox(list) {
+      var x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9;
+      list.forEach(function (e) {
+        x1 = Math.min(x1, e.x);
+        y1 = Math.min(y1, e.y);
+        x2 = Math.max(x2, e.x + e.w);
+        y2 = Math.max(y2, e.y + e.h);
+      });
+      return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+    }
+    function r1(v) {
+      return Math.round(v * 10) / 10;
+    }
+    // ---- указатель
+    function freeSec(t) {
+      var sec = t && t.closest ? t.closest('section[data-variant="free.canvas"]') : null;
+      return sec && editing() ? sec : null;
+    }
+    function stagePoint(ev) {
+      var r = cur.stage.getBoundingClientRect();
+      var k = scaleOf(cur.stage);
+      return { x: (ev.clientX - r.left) / k, y: (ev.clientY - r.top) / k };
+    }
+    // Высота текстового блока — по тексту (как текстовые рамки в Keynote): после ресайза и правки.
+    function textHeight(node) {
+      var t = node && node.querySelector(".fr-text");
+      if (!t) return 0;
+      var prev = t.style.height;
+      t.style.height = "auto";
+      var h = t.offsetHeight;
+      t.style.height = prev;
+      return Math.ceil(h) + 2;
+    }
+    function endTextEdit() {
+      if (!textEdit) return;
+      var node = textEdit;
+      var t = node.querySelector("[data-slot]");
+      if (t) t.blur();
+      textEdit = null;
+      if (cur && node.isConnected) {
+        var id = node.getAttribute("data-fid");
+        var th = textHeight(node);
+        if (th) commit(cur.sid, function (els) {
+          var m = byId(els, id);
+          if (m && Math.abs(m.h - th) > 1) m.h = th;
+        });
+      }
+    }
+    window.addEventListener(
+      "pointerdown",
+      function (ev) {
+        if (ev.button !== 0) return;
+        var t = ev.target;
+        if (t.closest && t.closest(".leo-edit-chrome:not(.leo-fr-overlay)")) return;
+        var sec = freeSec(t);
+        if (!sec) {
+          if (cur && !(t.closest && t.closest(".leo-fr-overlay"))) {
+            clearSel();
+            cur = null;
+            drawChrome();
+          }
+          return;
+        }
+        setCur(sec);
+        var handle = t.closest && t.closest(".leo-fr-h");
+        var node = t.closest && t.closest(".fr-el");
+        if (textEdit && node === textEdit) return; // курсор в тексте — как обычно
+        if (textEdit) endTextEdit();
+        ev.stopImmediatePropagation();
+        ev.preventDefault();
+        try {
+          window.focus(); // preventDefault не даёт фокус фрейму — без него не работают клавиши (⌘Z, стрелки, Delete)
+        } catch (e) {}
+        var p = stagePoint(ev);
+        if (handle && sel.length === 1) {
+          var e0 = modelOf(sel[0]);
+          gesture = { kind: "resize", h: handle.getAttribute("data-h"), p: p, start: JSON.parse(JSON.stringify(e0)), moved: false };
+        } else if (node) {
+          if (ev.shiftKey) select([node], true);
+          else if (sel.indexOf(node) < 0) select([node], false);
+          var els = getEls(cur.sid);
+          gesture = {
+            kind: "move",
+            p: p,
+            moved: false,
+            start: sel.map(function (n) { return JSON.parse(JSON.stringify(byId(els, n.getAttribute("data-fid")))); }),
+          };
+        } else {
+          if (!ev.shiftKey) sel = [];
+          gesture = { kind: "marquee", p: p, box: null, base: sel.slice() };
+        }
+        try {
+          (ev.target.setPointerCapture ? ev.target : document.documentElement).setPointerCapture(ev.pointerId);
+        } catch (e) {}
+        drawChrome();
+      },
+      true
+    );
+    window.addEventListener(
+      "pointermove",
+      function (ev) {
+        if (!gesture || !cur) return;
+        var p = stagePoint(ev);
+        var dx = p.x - gesture.p.x;
+        var dy = p.y - gesture.p.y;
+        if (!gesture.moved && Math.abs(dx) + Math.abs(dy) < 2) return;
+        gesture.moved = true;
+        var els = getEls(cur.sid);
+        var ids = sel.map(function (n) { return n.getAttribute("data-fid"); });
+        var others = els.filter(function (e) { return ids.indexOf(e.id) < 0; });
+        var guides = [];
+        if (gesture.kind === "move") {
+          var moved = gesture.start.map(function (e) { return Object.assign({}, e, { x: e.x + dx, y: e.y + dy }); });
+          if (!ev.altKey) {
+            var s = snap(bbox(moved), others);
+            moved.forEach(function (e) { e.x += s.dx; e.y += s.dy; });
+            if (s.gx != null) guides.push({ v: true, at: s.gx });
+            if (s.gy != null) guides.push({ v: false, at: s.gy });
+          }
+          moved.forEach(function (e) {
+            var n = nodeOf(cur.sec, e.id);
+            e.x = r1(e.x);
+            e.y = r1(e.y);
+            if (n) applyEl(n, e);
+            var m = byId(els, e.id);
+            if (m) { m.x = e.x; m.y = e.y; }
+          });
+          gesture.live = els;
+        } else if (gesture.kind === "resize") {
+          var s0 = gesture.start;
+          var h = gesture.h;
+          var x = s0.x, y = s0.y, w = s0.w, hh = s0.h;
+          if (h.indexOf("e") >= 0) w = s0.w + dx;
+          if (h.indexOf("s") >= 0) hh = s0.h + dy;
+          if (h.indexOf("w") >= 0) { w = s0.w - dx; x = s0.x + dx; }
+          if (h.indexOf("n") >= 0) { hh = s0.h - dy; y = s0.y + dy; }
+          if (ev.shiftKey && h.length === 2 && s0.w && s0.h) {
+            var ratio = s0.w / s0.h;
+            if (w / hh > ratio) w = hh * ratio; else hh = w / ratio;
+            if (h.indexOf("w") >= 0) x = s0.x + s0.w - w;
+            if (h.indexOf("n") >= 0) y = s0.y + s0.h - hh;
+          }
+          w = Math.max(8, w);
+          hh = Math.max(4, hh);
+          var m2 = byId(els, s0.id);
+          if (m2) {
+            m2.x = r1(x); m2.y = r1(y); m2.w = r1(w); m2.h = r1(hh);
+            var n2 = nodeOf(cur.sec, s0.id);
+            if (n2) applyEl(n2, m2);
+          }
+          gesture.live = els;
+        } else if (gesture.kind === "marquee") {
+          var b = { x: Math.min(p.x, gesture.p.x), y: Math.min(p.y, gesture.p.y), w: Math.abs(dx), h: Math.abs(dy) };
+          gesture.box = b;
+          var hit = els.filter(function (e) {
+            return e.x < b.x + b.w && e.x + e.w > b.x && e.y < b.y + b.h && e.y + e.h > b.y;
+          }).map(function (e) { return nodeOf(cur.sec, e.id); }).filter(Boolean);
+          sel = gesture.base.concat(hit.filter(function (n) { return gesture.base.indexOf(n) < 0; }));
+        }
+        drawChrome(guides);
+      },
+      true
+    );
+    window.addEventListener(
+      "pointerup",
+      function () {
+        if (!gesture || !cur) return;
+        var g = gesture;
+        gesture = null;
+        if (g.moved && g.live && g.kind !== "marquee") {
+          // Во время жеста JSON деки не менялся — фиксируем итог одним шагом истории.
+          var live = JSON.parse(JSON.stringify(g.live));
+          var sec0 = cur.sec;
+          commit(cur.sid, function (arr) {
+            live.forEach(function (e) {
+              var m = byId(arr, e.id);
+              if (!m) return;
+              Object.assign(m, e);
+              if (g.kind === "resize" && m.type === "text") {
+                var th = textHeight(nodeOf(sec0, m.id));
+                if (th) m.h = th;
+              }
+            });
+          });
+        }
+        drawChrome();
+      },
+      true
+    );
+    // Двойной клик: текст — правка, картинка / объект — меню изображения.
+    window.addEventListener(
+      "dblclick",
+      function (ev) {
+        var sec = freeSec(ev.target);
+        if (!sec) return;
+        var node = ev.target.closest(".fr-el");
+        if (!node) return;
+        var t = node.querySelector("[data-slot]");
+        if (t) {
+          ev.preventDefault();
+          textEdit = node;
+          select([node], false);
+          t.focus();
+          var range = document.caretRangeFromPoint ? document.caretRangeFromPoint(ev.clientX, ev.clientY) : null;
+          if (range) {
+            var s = window.getSelection();
+            s.removeAllRanges();
+            s.addRange(range);
+          }
+          drawChrome();
+          return;
+        }
+        var media = node.querySelector("[data-media]");
+        if (media) {
+          allowClick = true;
+          media.click();
+          allowClick = false;
+        }
+      },
+      true
+    );
+    window.addEventListener(
+      "click",
+      function (ev) {
+        if (allowClick || !freeSec(ev.target)) return;
+        if (textEdit && ev.target.closest(".fr-el") === textEdit) return;
+        if (ev.target.closest(".fr-el,.fr-slide")) {
+          ev.stopImmediatePropagation();
+          ev.preventDefault();
+        }
+      },
+      true
+    );
+    // ---- клавиатура
+    window.addEventListener(
+      "keydown",
+      function (ev) {
+        if (!cur || !editing()) return;
+        var mod = ev.metaKey || ev.ctrlKey;
+        if (textEdit) {
+          if (ev.key === "Escape") {
+            endTextEdit();
+            drawChrome();
+          }
+          return;
+        }
+        var a = document.activeElement;
+        if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT" || a.isContentEditable)) return;
+        if (mod && (ev.key === "z" || ev.key === "Z")) {
+          ev.preventDefault();
+          undo(ev.shiftKey);
+          return;
+        }
+        if (mod && (ev.key === "y" || ev.key === "Y")) {
+          ev.preventDefault();
+          undo(true);
+          return;
+        }
+        if (!sel.length) return;
+        var ids = sel.map(function (n) { return n.getAttribute("data-fid"); });
+        var step = ev.shiftKey ? 10 : 1;
+        var mv = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[ev.key];
+        if (mv) {
+          ev.preventDefault();
+          commit(cur.sid, function (els) {
+            els.forEach(function (e) {
+              if (ids.indexOf(e.id) >= 0) { e.x = r1(e.x + mv[0]); e.y = r1(e.y + mv[1]); }
+            });
+          });
+        } else if (ev.key === "Delete" || ev.key === "Backspace") {
+          ev.preventDefault();
+          commit(cur.sid, function (els) {
+            for (var i = els.length - 1; i >= 0; i--) if (ids.indexOf(els[i].id) >= 0) els.splice(i, 1);
+          });
+          sel = [];
+          drawChrome();
+        } else if (ev.key === "Escape") {
+          clearSel();
+        }
+      },
+      true
+    );
+    new MutationObserver(function () {
+      if (!editing()) {
+        sel = [];
+        textEdit = null;
+        cur = null;
+        drawChrome();
+      }
+    }).observe(root, { attributes: true, attributeFilter: ["class"] });
+    // Хост (панель оформления, этап 4) управляет выделенным через сообщения.
+    window.addEventListener("message", function (ev) {
+      var d = ev && ev.data;
+      if (!d || d.source !== "leo-web-canvas-host" || !cur) return;
+      if (d.type === "freeUndo") undo(!!d.redo);
+    });
+  }
+
+  /**
    * Edit-mode review UI inside the frame (serialized into srcdoc).
    * Every slide gets a comment box below it; template decks also get a layout
    * menu (chevron, top-right), slide move/delete, and add/remove for repeated items.
@@ -1358,6 +1943,22 @@
     "html.leo-review [data-slot][contenteditable=true]:focus{outline:2px solid rgba(61,214,165,.9);outline-offset:3px}" +
     "</style>";
 
+  // Редактор свободного слайда (frameFreeMain): рамки выделения, ручки, направляющие — в координатах сцены.
+  var FREE_STYLE =
+    "<style id=\"leo-canvas-free-style\">" +
+    ".leo-edit-chrome.leo-fr-overlay{position:absolute;inset:0;top:0;right:0;z-index:70;display:block;padding:0;border-radius:0;background:none;box-shadow:none;pointer-events:none}" +
+    ".leo-fr-frame{position:absolute;box-sizing:border-box;border:1.5px solid #3b82f6;pointer-events:none}" +
+    ".leo-fr-frame.is-text{border-style:dashed}" +
+    ".leo-fr-h{position:absolute;box-sizing:border-box;border:1.5px solid #3b82f6;border-radius:3px;background:#fff;pointer-events:auto;touch-action:none}" +
+    ".leo-fr-h[data-h=nw],.leo-fr-h[data-h=se]{cursor:nwse-resize}.leo-fr-h[data-h=ne],.leo-fr-h[data-h=sw]{cursor:nesw-resize}" +
+    ".leo-fr-h[data-h=n],.leo-fr-h[data-h=s]{cursor:ns-resize}.leo-fr-h[data-h=e],.leo-fr-h[data-h=w]{cursor:ew-resize}" +
+    ".leo-fr-guide{position:absolute;background:#ec4899;pointer-events:none}" +
+    ".leo-fr-marquee{position:absolute;border:1px solid #3b82f6;background:rgba(59,130,246,.12);pointer-events:none}" +
+    "html.leo-edit-mode section[data-variant='free.canvas'] .fr-el{cursor:move}" +
+    "html.leo-edit-mode section[data-variant='free.canvas'] [data-slot][contenteditable=true]{outline:none;cursor:move}" +
+    "html.leo-edit-mode section[data-variant='free.canvas'] [data-slot][contenteditable=true]:focus{cursor:text}" +
+    "</style>";
+
   var EDIT_STYLE =
     "<style id=\"leo-canvas-edit-style\">" +
     "html.leo-edit-mode [data-leo-id]{cursor:default}" +
@@ -1507,12 +2108,15 @@
       DECK_PRINT_TAG +
       EDIT_STYLE +
       REVIEW_STYLE +
+      FREE_STYLE +
       '<script id="leo-canvas-picker">\n' +
       FRAME_SCRIPT +
       "\n(" +
       frameReviewMain.toString() +
       ")();\n(" +
       frameImageMain.toString() +
+      ")();\n(" +
+      frameFreeMain.toString() +
       ")();\n</script>";
     if (/<\/body>/i.test(raw)) {
       return raw.replace(/<\/body>/i, tag + "</body>");
