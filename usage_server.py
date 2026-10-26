@@ -2762,6 +2762,9 @@ class _MiniappCanvasOpBody(BaseModel):
     delta: int = 0
     path: str = ""
     icon: str = ""
+    # Свободный слайд (free.canvas): элементы и фон для detach / free_update / add_free_slide.
+    elements: Optional[list[dict[str, Any]]] = None
+    surface: str = ""
     # Current editor HTML: inline text edits are synced before the op.
     html: Optional[str] = None
 

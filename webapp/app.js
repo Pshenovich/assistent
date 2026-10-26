@@ -27980,6 +27980,8 @@
         delta: req.delta || 0,
         path: req.path || "",
         icon: req.icon || "",
+        elements: Array.isArray(req.elements) ? req.elements : null,
+        surface: req.surface || "",
         html: req.html || null,
       }),
     });

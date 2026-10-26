@@ -307,6 +307,7 @@ html[data-leo-deck]:not(.leo-review) .tpl-stage .cb-who:empty { display: none; }
 .fr-icon { display: flex; width: 100%; height: 100%; }
 .tpl-stage .fr-icon > .ico { width: 100%; height: 100%; }
 .fr-clip { position: relative; width: 100%; height: 100%; overflow: hidden; }
+.fr-clip.fr-flip .media-img { transform: scaleX(-1); }
 .tpl-stage .fr-clip > .media-slot { position: absolute; inset: 0; height: 100%; min-height: 0; border-radius: 0; }
 .tpl-stage .a3.fr-a3 { position: relative; width: 100%; height: 100%; overflow: hidden; border-bottom: 0; background: var(--s-el); }
 .fr-chart { width: 100%; height: 100%; display: flex; align-items: center; }

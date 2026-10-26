@@ -690,6 +690,7 @@
       wrap.className = "leo-add-slide";
       wrap.innerHTML =
         '<button type="button" class="leo-add-slide-toggle">+ Слайд после этого</button>' +
+        (TPL ? '<button type="button" class="leo-add-slide-toggle leo-add-blank" title="Пустой свободный слайд — без ИИ">+ Пустой слайд</button>' : "") +
         '<div class="leo-add-slide-form" hidden>' +
         '<div class="leo-layout-chips" role="radiogroup" aria-label="Макет нового слайда"></div>' +
         '<div class="leo-review-row"><textarea rows="2"></textarea>' +
@@ -699,6 +700,15 @@
       var ta = form.querySelector("textarea");
       var go = form.querySelector(".leo-add-slide-go");
       var chipsBox = form.querySelector(".leo-layout-chips");
+      var blank = wrap.querySelector(".leo-add-blank");
+      if (blank) {
+        blank.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var sec0 = document.querySelector('section[data-slide-id="' + String(sid).replace(/"/g, "") + '"]');
+          post("op", { op: "add_free_slide", slideId: sid, surface: sec0 ? measureSurface(sec0) : "light" });
+        });
+      }
       var layout = "auto";
       function chip(value, label, removable) {
         var b = document.createElement("button");
@@ -771,6 +781,245 @@
       box.appendChild(wrap);
     }
 
+    // ---- «Отвязать»: разбор отрисованного слайда на свободные элементы (assistant/lib/canvas_free.py) ----
+    var FR_SIZES = [["s", 16], ["m", 20], ["l", 28], ["xl", 40], ["xxl", 56], ["xxxl", 80]];
+    function rgbOf(str) {
+      var m = String(str || "").match(/rgba?\(([^)]+)\)/);
+      if (!m) {
+        var h = String(str || "").trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+        if (!h) return null;
+        var x = h[1].length === 3 ? h[1].replace(/./g, "$&$&") : h[1];
+        return [parseInt(x.slice(0, 2), 16), parseInt(x.slice(2, 4), 16), parseInt(x.slice(4, 6), 16), 1];
+      }
+      var p = m[1].split(/[ ,\/]+/).filter(Boolean).map(parseFloat);
+      return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
+    }
+    function colorDist(a, b) {
+      if (!a || !b) return 1e9;
+      return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) + 255 * Math.abs((a[3] == null ? 1 : a[3]) - (b[3] == null ? 1 : b[3]));
+    }
+    // Ближайший цвет-токен стиля (значения токенов берём в контексте самого элемента).
+    function nearestToken(el, color, names) {
+      var cs = getComputedStyle(el);
+      var c = rgbOf(color);
+      var best = names[0];
+      var bestD = 1e9;
+      names.forEach(function (n) {
+        var v = n === "white" ? "#ffffff" : n === "black" ? "#0b0b0b" : cs.getPropertyValue("--s-" + n);
+        var d = colorDist(c, rgbOf(v)) + (n === "white" || n === "black" ? 12 : 0);
+        if (d < bestD) {
+          bestD = d;
+          best = n;
+        }
+      });
+      return best;
+    }
+    // Токен, если цвет с ним совпадает (перекрасится при смене стиля), иначе точный цвет.
+    function paintOf(el, color, names) {
+      var t = nearestToken(el, color, names);
+      var cs = getComputedStyle(el);
+      var v = t === "white" ? "#ffffff" : t === "black" ? "#0b0b0b" : cs.getPropertyValue("--s-" + t);
+      var c = rgbOf(color);
+      if (!c || colorDist(c, rgbOf(v)) <= 36) return t;
+      return c[3] < 1 ? "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + Math.round(c[3] * 100) / 100 + ")" : "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
+    }
+    function clipText(cs) {
+      return /text/.test(cs.webkitBackgroundClip || cs.backgroundClip || "");
+    }
+    function lum(rgb) {
+      return rgb ? (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255 : 1;
+    }
+    function measureSurface(sec) {
+      if (sec.querySelector(".l-mint,.m-ice")) return "accent";
+      var slide = sec.querySelector(".fr-slide,.l-slide,.m-slide") || sec.querySelector(".tpl-stage");
+      var bg = rgbOf(getComputedStyle(slide).backgroundColor);
+      if (!bg || bg[3] === 0) bg = rgbOf(getComputedStyle(sec.querySelector(".tpl-stage") || sec).backgroundColor);
+      var bi = getComputedStyle(sec.querySelector(".tpl-stage") || sec).backgroundImage;
+      if ((!bg || bg[3] === 0) && /gradient/.test(bi || "")) return "dark";
+      return lum(bg) < 0.45 ? "dark" : "light";
+    }
+    function deckSlots(sid) {
+      try {
+        var d = JSON.parse((document.getElementById("leo-deck") || {}).textContent || "{}");
+        var s = (d.slides || []).filter(function (x) { return String(x.id) === String(sid); })[0];
+        return s ? { slots: s.slots || {}, variant: s.variant || "" } : { slots: {}, variant: "" };
+      } catch (e) {
+        return { slots: {}, variant: "" };
+      }
+    }
+    function pathGet(obj, path) {
+      return String(path || "").split(".").reduce(function (o, k) { return o == null ? o : o[k]; }, obj);
+    }
+    function measureSlide(sec) {
+      var stage = sec.querySelector(".tpl-stage");
+      var sr = stage.getBoundingClientRect();
+      var k = sr.width / 1280 || 1;
+      var sid = sec.getAttribute("data-slide-id") || "";
+      var info = deckSlots(sid);
+      var out = [];
+      var n = 0;
+      function box(r) {
+        return {
+          x: Math.round(((r.left - sr.left) / k) * 10) / 10,
+          y: Math.round(((r.top - sr.top) / k) * 10) / 10,
+          w: Math.max(4, Math.round((r.width / k) * 10) / 10),
+          h: Math.max(2, Math.round((r.height / k) * 10) / 10),
+        };
+      }
+      function visible(el) {
+        if (el.closest(".leo-edit-chrome,.leo-media-keep,[hidden]")) return false;
+        var r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 1) return false;
+        var cs = getComputedStyle(el);
+        return cs.visibility !== "hidden" && cs.display !== "none" && parseFloat(cs.opacity || "1") > 0.05;
+      }
+      function depth(el) {
+        var d = 0;
+        for (var p = el; p && p !== stage; p = p.parentElement) d++;
+        return d;
+      }
+      function add(el, z) {
+        el.z = z;
+        out.push(el);
+      }
+      var inner = stage.querySelector(".tpl-in") || stage;
+      var zoom = parseFloat(getComputedStyle(inner).zoom || "1") || 1;
+      var displayFont = String(getComputedStyle(stage).getPropertyValue("--f-display") || "").split(",")[0].replace(/["']/g, "").trim().toLowerCase();
+      // 1) фоны: плашки, карточки, панели; разделители — линиями
+      inner.querySelectorAll("*").forEach(function (el) {
+        if (n > 110 || el.closest("svg,[data-media],.dec") || !visible(el)) return;
+        var cs = getComputedStyle(el);
+        var r = el.getBoundingClientRect();
+        var b = box(r);
+        var bg = rgbOf(cs.backgroundColor);
+        if (clipText(cs)) return; // градиентный текст — это текст, не плашка
+        var grad = /gradient/.test(cs.backgroundImage || "");
+        var hasBg = grad || (bg && bg[3] > 0.04);
+        var isRoot = el.classList.contains("l-slide") || el.classList.contains("m-slide") || el.classList.contains("fr-slide");
+        if (hasBg && !isRoot && b.w >= 3 && b.h >= 2) {
+          var thin = b.w <= 3 || b.h <= 3;
+          var radius = parseFloat(cs.borderTopLeftRadius) || 0;
+          var shape = thin ? "line" : radius >= Math.min(b.w, b.h) / 2 - 1 ? "circle" : radius > 0 ? "round" : "rect";
+          var gi = String(cs.backgroundImage || "");
+          var fill = grad
+            ? (/^(linear|radial)-gradient\(/.test(gi) && gi.length < 400 && gi.indexOf("url") < 0 ? gi : "grad")
+            : paintOf(el, cs.backgroundColor, ["el", "acc", "acc-soft", "tint", "text", "rule", "white", "black"]);
+          add({ type: "shape", shape: shape, x: b.x, y: b.y, w: b.w, h: b.h, style: { fill: fill, radius: Math.round(radius) } }, depth(el));
+          n++;
+        }
+        [["Top", 0], ["Bottom", 1], ["Left", 2], ["Right", 3]].forEach(function (side) {
+          var bw = parseFloat(cs["border" + side[0] + "Width"]) || 0;
+          var bc = rgbOf(cs["border" + side[0] + "Color"]);
+          if (bw < 0.5 || !bc || bc[3] < 0.04 || n > 110) return;
+          var t = Math.max(1, bw / 1);
+          var lb = side[1] === 0 ? { x: b.x, y: b.y, w: b.w, h: t } : side[1] === 1 ? { x: b.x, y: b.y + b.h - t, w: b.w, h: t }
+            : side[1] === 2 ? { x: b.x, y: b.y, w: t, h: b.h } : { x: b.x + b.w - t, y: b.y, w: t, h: b.h };
+          if (radius > 4 && hasBg) return; // обводка карточки — часть плашки
+          add({ type: "shape", shape: "line", x: lb.x, y: lb.y, w: Math.max(lb.w, 1), h: Math.max(lb.h, 1),
+            style: { fill: paintOf(el, cs["border" + side[0] + "Color"], ["rule", "text", "acc", "muted", "white", "black"]) } }, depth(el));
+          n++;
+        });
+      });
+      // 2) картинки, 3D-объекты, фон-абстракция
+      stage.querySelectorAll("[data-media]").forEach(function (el) {
+        if (!visible(el) || el.closest(".leo-media-keep")) return;
+        var mid = el.getAttribute("data-media") || "";
+        var mkey = mid.indexOf(sid + "-") === 0 ? mid.slice(sid.length + 1) : "";
+        if (!mkey) return;
+        var cs = getComputedStyle(el);
+        var b = box(el.getBoundingClientRect());
+        var radius = Math.round(parseFloat(cs.borderTopLeftRadius) || 0);
+        if (el.hasAttribute("data-a3")) {
+          add({ type: "object", visual: el.getAttribute("data-a3"), mkey: mkey, x: b.x, y: b.y, w: b.w, h: b.h, style: { radius: radius } }, 50);
+        } else if (el.querySelector("img.media-img") || el.getAttribute("data-leo-img-prompt") || el.getAttribute("data-img-prompt")) {
+          var img = el.querySelector("img.media-img");
+          var flip = !!(img && /matrix\(-1/.test(getComputedStyle(img).transform || ""));
+          add({ type: "image", mkey: mkey, prompt: el.getAttribute("data-img-prompt") || el.getAttribute("data-leo-img-prompt") || "",
+            x: b.x, y: b.y, w: b.w, h: b.h, style: { radius: radius }, flip: flip,
+            opacity: Math.round((parseFloat(cs.opacity) || 1) * 100) / 100 }, el.classList.contains("dec") ? 0 : 50);
+        } else if (!el.classList.contains("dec")) {
+          add({ type: "image", mkey: mkey, x: b.x, y: b.y, w: b.w, h: b.h, style: { radius: radius } }, 50);
+        }
+      });
+      // 3) графики (SVG) — данными графика слайда или блока «Своего макета»
+      stage.querySelectorAll("svg.chart").forEach(function (svg) {
+        if (!visible(svg)) return;
+        var item = svg.closest("[data-item]");
+        var data = null;
+        var ctype = "";
+        if (info.variant.indexOf("chart.") === 0) {
+          data = info.slots.chart;
+          ctype = info.variant.slice(6);
+        } else if (item) {
+          var blk = pathGet(info.slots, item.getAttribute("data-item"));
+          data = blk && blk.chart;
+          ctype = (data && data.type) || "";
+        }
+        if (!data) return;
+        var b = box(svg.getBoundingClientRect());
+        add({ type: "chart", chart: data, ctype: ctype, x: b.x, y: b.y, w: b.w, h: b.h }, 60);
+      });
+      // 4) иконки
+      stage.querySelectorAll("svg[data-icon]").forEach(function (svg) {
+        if (!visible(svg)) return;
+        var b = box(svg.getBoundingClientRect());
+        add({ type: "icon", icon: svg.getAttribute("data-icon"), x: b.x, y: b.y, w: b.w, h: b.h,
+          style: { color: nearestToken(svg, getComputedStyle(svg).color, ["acc", "text", "muted", "on-acc", "white", "black"]) } }, 120);
+      });
+      // 5) тексты
+      function ownText(el) {
+        for (var c = el.firstChild; c; c = c.nextSibling) if (c.nodeType === 3 && c.nodeValue.trim()) return true;
+        return false;
+      }
+      var textEls = [].slice.call(stage.querySelectorAll("[data-slot]")).filter(function (el) {
+        return !el.closest("svg") && !el.parentElement.closest("[data-slot]");
+      });
+      // Декоративные тексты не из полей: «01», кавычки, стрелки, подписи шкал.
+      stage.querySelectorAll(".tpl-in *").forEach(function (el) {
+        if (el.hasAttribute("data-slot") || el.closest("[data-slot],svg,[data-media],.leo-edit-chrome") || !ownText(el)) return;
+        if (el.querySelector("[data-slot]")) return;
+        textEls.push(el);
+      });
+      textEls.forEach(function (el) {
+        if (!visible(el)) return;
+        var txt = String(el.textContent || "").trim();
+        if (!txt) return;
+        var cs = getComputedStyle(el);
+        var fs = (parseFloat(cs.fontSize) || 18) * zoom;
+        var size = FR_SIZES.reduce(function (a, s) { return Math.abs(s[1] - fs) < Math.abs(a[1] - fs) ? s : a; })[0];
+        var w = parseInt(cs.fontWeight, 10) || 400;
+        var weight = [300, 400, 500, 600, 700].reduce(function (a, x) { return Math.abs(x - w) < Math.abs(a - w) ? x : a; });
+        var fam = String(cs.fontFamily || "").split(",")[0].replace(/["']/g, "").trim().toLowerCase();
+        var html = el.innerHTML;
+        if (cs.textTransform === "uppercase") html = html.toUpperCase();
+        var rr = el.getBoundingClientRect();
+        if (!el.hasAttribute("data-slot")) {
+          // Декоративный текст часто центрирован в большой ячейке — берём рамку самого текста.
+          var rg = document.createRange();
+          rg.selectNodeContents(el);
+          var tr = rg.getBoundingClientRect();
+          if (tr.width > 0 && tr.height > 0) rr = tr;
+        }
+        var b = box(rr);
+        var align = cs.textAlign === "center" ? "center" : cs.textAlign === "right" || cs.textAlign === "end" ? "right" : "left";
+        var lhPx = parseFloat(cs.lineHeight);
+        var lh = isFinite(lhPx) ? lhPx * zoom / fs : 1.2;
+        var ls = (parseFloat(cs.letterSpacing) || 0) * zoom / fs;
+        var cc = rgbOf(cs.color);
+        var color = clipText(cs) || !cc || cc[3] < 0.05 ? "acc" : paintOf(el, cs.color, ["text", "muted", "faint", "acc", "on-acc", "white", "black"]);
+        var oneLine = b.h <= lh * fs * 1.5;
+        var st = { size: size, px: Math.round(fs * 10) / 10, lh: Math.round(lh * 100) / 100, font: displayFont && fam === displayFont ? "display" : "body",
+          align: align, weight: weight, color: color };
+        if (Math.abs(ls) > 0.002) st.ls = Math.round(ls * 1000) / 1000;
+        if (oneLine) st.nowrap = true;
+        else if (/balance/.test(cs.textWrap || cs.textWrapStyle || "")) st.balance = true;
+        add({ type: "text", html: el.hasAttribute("data-slot") ? html : html.replace(/<[^>]*>/g, ""), x: b.x, y: b.y, w: b.w + 6, h: b.h + 2, style: st }, 200);
+      });
+      out.sort(function (a, b) { return a.z - b.z; });
+      out.forEach(function (el, i) { el.z = i + 1; });
+      return { elements: out.slice(0, 120), surface: measureSurface(sec) };
+    }
+
     function buildTools(sec, sid, i) {
       var list = variantsUi[sid] || [];
       var cur = sec.getAttribute("data-variant") || "";
@@ -798,6 +1047,18 @@
           '<button type="button" data-act="savelayout" title="Сохранить в «Мои макеты»" aria-label="Сохранить макет">☆ Сохранить макет</button>'
         );
       }
+      var isFree = cur === "free.canvas";
+      if (isFree && sec.querySelector("[data-free-origin]")) {
+        tools.insertAdjacentHTML(
+          "afterbegin",
+          '<button type="button" data-act="reattach" title="Вернуть слайд к макету, каким он был до отвязки (ручные изменения пропадут)">↺ Вернуть макет</button>'
+        );
+      } else if (!isFree) {
+        tools.insertAdjacentHTML(
+          "afterbegin",
+          '<button type="button" data-act="detach" title="Сделать слайд свободным: двигать, менять размер и оформление элементов, добавлять новые">✥ Отвязать</button>'
+        );
+      }
       tools.querySelector(".leo-variant-btn span").textContent = curName;
       if (list.length < 2) tools.querySelector(".leo-variant-btn").disabled = true;
       var all = slides();
@@ -816,6 +1077,24 @@
           else openMenu(tools, sid, cur, list);
         } else if (act === "savelayout") {
           post("saveLayout", { slideId: sid });
+        } else if (act === "detach") {
+          var parts = measureSlide(sec);
+          if (!parts.elements.length) {
+            post("notice", { text: "Не удалось разобрать слайд на элементы" });
+            return;
+          }
+          post("op", { op: "detach", slideId: sid, elements: parts.elements, surface: parts.surface });
+        } else if (act === "reattach") {
+          if (b.classList.contains("is-armed")) {
+            post("op", { op: "reattach", slideId: sid });
+            return;
+          }
+          b.textContent = "Ручные правки пропадут — вернуть?";
+          b.classList.add("is-armed");
+          setTimeout(function () {
+            b.textContent = "↺ Вернуть макет";
+            b.classList.remove("is-armed");
+          }, 3000);
         } else if (act === "decor") {
           var dec = sec.querySelector("[data-dec-shape]");
           var t = sec.querySelector(".title,.display,h1,h2");
@@ -1951,6 +2230,8 @@
           index: Number(d.index) || 0,
           after: d.after == null ? null : Number(d.after),
           delta: Number(d.delta) || 0,
+          elements: Array.isArray(d.elements) ? d.elements : null,
+          surface: d.surface != null ? String(d.surface) : "",
         });
         return;
       }

@@ -156,8 +156,24 @@ def _pick(v: Any, allowed: tuple, default: Any) -> Any:
     return v if v in allowed else default
 
 
-def _color(v: Any, default: str) -> str:
-    return v if isinstance(v, str) and v in COLORS else default
+_RAW_COLOR_RE = re.compile(r"^(?:#[0-9a-fA-F]{3,8}|rgba?\(\s*[\d.]+%?\s*,\s*[\d.]+%?\s*,\s*[\d.]+%?\s*(?:,\s*[\d.]+%?\s*)?\))$")
+_GRAD_RE = re.compile(r"^(?:linear|radial)-gradient\([0-9a-zA-Z#(),.%\s-]{1,400}\)$")
+
+
+def _color(v: Any, default: str, allow_grad: bool = False) -> str:
+    """Токен стиля (перекрашивается при смене стиля) или точный цвет / градиент из отвязанного макета."""
+    if not isinstance(v, str):
+        return default
+    v = v.strip()
+    if v in COLORS or _RAW_COLOR_RE.match(v):
+        return v
+    if allow_grad and _GRAD_RE.match(v) and "url" not in v.lower():
+        return v
+    return default
+
+
+def paint(v: str) -> str:
+    return COLORS.get(v, v)
 
 
 def clean_element(raw: Any, used_ids: set[str]) -> Optional[dict[str, Any]]:
@@ -182,6 +198,9 @@ def clean_element(raw: Any, used_ids: set[str]) -> Optional[dict[str, Any]]:
     rot = _num(raw.get("rot"), -180, 180, 0)
     if rot:
         el["rot"] = rot
+    op = _num(raw.get("opacity"), 0.05, 1, 1)
+    if op < 1:
+        el["opacity"] = op
     st = raw.get("style") if isinstance(raw.get("style"), dict) else {}
     if t == "text":
         el["html"] = sanitize_html(raw.get("html") if raw.get("html") is not None else escape(str(raw.get("text") or "")))
@@ -192,12 +211,24 @@ def clean_element(raw: Any, used_ids: set[str]) -> Optional[dict[str, Any]]:
             "color": _color(st.get("color"), "text"),
             "weight": _pick(st.get("weight"), WEIGHTS, 400),
         }
-        if st.get("bg") in COLORS and st.get("bg") != "none":
-            el["style"]["bg"] = st["bg"]
+        # Точные размеры из отвязанного макета (иначе — пресет size).
+        if st.get("px") is not None:
+            el["style"]["px"] = _num(st.get("px"), 8, 240, 20)
+        if st.get("lh") is not None:
+            el["style"]["lh"] = _num(st.get("lh"), 0.7, 3, 1.3)
+        if st.get("ls") is not None:
+            el["style"]["ls"] = _num(st.get("ls"), -0.2, 0.5, 0)
+        if st.get("nowrap"):
+            el["style"]["nowrap"] = True
+        elif st.get("balance"):
+            el["style"]["balance"] = True
+        bg = _color(st.get("bg"), "none", allow_grad=True)
+        if bg != "none":
+            el["style"]["bg"] = bg
     elif t == "shape":
         el["shape"] = _pick(raw.get("shape"), SHAPES, "rect")
         el["style"] = {
-            "fill": _color(st.get("fill"), "el"),
+            "fill": _color(st.get("fill"), "el", allow_grad=True),
             "stroke": _color(st.get("stroke"), "none"),
             "radius": int(_num(st.get("radius"), 0, 400, 16 if el["shape"] == "round" else 0)),
         }
@@ -209,6 +240,8 @@ def clean_element(raw: Any, used_ids: set[str]) -> Optional[dict[str, Any]]:
             if prompt:
                 el["prompt"] = prompt[:300]
             el["style"] = {"radius": int(_num(st.get("radius"), 0, 400, 16))}
+            if raw.get("flip"):
+                el["flip"] = True
         else:
             vis = str(raw.get("visual") or "").strip().lower()
             el["visual"] = vis if vis in ct._VISUALS else ct._VISUALS[0]
@@ -261,7 +294,8 @@ def clean_slots(raw: Any) -> dict[str, Any]:
 
 def _box(el: dict[str, Any]) -> str:
     rot = f"transform:rotate({el['rot']}deg);" if el.get("rot") else ""
-    return f"left:{el['x']}px;top:{el['y']}px;width:{el['w']}px;height:{el['h']}px;z-index:{el['z']};{rot}"
+    op = f"opacity:{el['opacity']};" if el.get("opacity") else ""
+    return f"left:{el['x']}px;top:{el['y']}px;width:{el['w']}px;height:{el['h']}px;z-index:{el['z']};{rot}{op}"
 
 
 def _object_variant(theme: str, surface: str) -> str:
@@ -276,25 +310,36 @@ def _render_el(c: ct.Ctx, i: int, el: dict[str, Any], surface: str) -> str:
     attrs = f'class="fr-el fr-{t}" data-fid="{escape(el["id"])}" style="{_box(el)}"'
     if t == "text":
         path = f"elements.{i}.html"
-        css = f"text-align:{st['align']};color:{COLORS[st['color']]};font-weight:{st['weight']};"
+        css = f"text-align:{st['align']};color:{paint(st['color'])};font-weight:{st['weight']};"
+        if st.get("px"):
+            css += f"font-size:{st['px']}px;"
+        if st.get("lh"):
+            css += f"line-height:{st['lh']};"
+        if st.get("ls"):
+            css += f"letter-spacing:{st['ls']}em;"
+        if st.get("nowrap"):
+            css += "white-space:nowrap;"
+        elif st.get("balance"):
+            css += "text-wrap:balance;"
         if st.get("bg"):
-            css += f"background:{COLORS[st['bg']]};"
+            css += f"background:{paint(st['bg'])};"
         return (
             f'<div {attrs}><div class="fr-text fr-size-{st["size"]} fr-font-{st["font"]}" style="{css}" '
             f'data-slot="{path}" data-leo-id="{c.sid}-{path}" data-rich="1">{el.get("html") or ""}</div></div>'
         )
     if t == "shape":
         if el["shape"] == "line":
-            return f'<div {attrs}><i class="fr-line" style="background:{COLORS[st["fill"]]}"></i></div>'
+            return f'<div {attrs}><i class="fr-line" style="background:{paint(st["fill"])}"></i></div>'
         radius = "50%" if el["shape"] == "circle" else f"{st.get('radius', 0)}px"
-        border = f"border:2px solid {COLORS[st['stroke']]};" if st.get("stroke", "none") != "none" else ""
-        return f'<div {attrs}><i class="fr-shape" style="background:{COLORS[st["fill"]]};border-radius:{radius};{border}"></i></div>'
+        border = f"border:2px solid {paint(st['stroke'])};" if st.get("stroke", "none") != "none" else ""
+        return f'<div {attrs}><i class="fr-shape" style="background:{paint(st["fill"])};border-radius:{radius};{border}"></i></div>'
     if t == "icon":
-        return f'<div {attrs}><span class="fr-icon" style="color:{COLORS[st["color"]]}">{canvas_icons.svg(el["icon"], "ico fr-ico")}</span></div>'
+        return f'<div {attrs}><span class="fr-icon" style="color:{paint(st["color"])}">{canvas_icons.svg(el["icon"], "ico fr-ico")}</span></div>'
     if t == "image":
         mid = f"{c.sid}-{el['mkey']}"
         slot = ct.media_slot_html(c, mid, el.get("prompt") or "", "fr-media")
-        return f'<div {attrs}><div class="fr-clip" style="border-radius:{st.get("radius", 16)}px">{slot}</div></div>'
+        flip = " fr-flip" if el.get("flip") else ""
+        return f'<div {attrs}><div class="fr-clip{flip}" style="border-radius:{st.get("radius", 16)}px">{slot}</div></div>'
     if t == "object":
         mid = f"{c.sid}-{el['mkey']}"
         src = c.media.get(mid, "")
@@ -326,7 +371,8 @@ def render(c: ct.Ctx) -> tuple[str, str]:
     # Чистим и при отрисовке (JSON деки пишется после неё): индексы data-slot совпадают с сохранёнными.
     els = c.slots["elements"] = clean_elements(c.slots.get("elements"))
     body = "".join(_render_el(c, i, e, surface) for i, e in sorted(enumerate(els), key=lambda p: p[1].get("z", 0)))
-    return f'<div class="fr-slide fr-{surface}" data-free-surface="{surface}">{body}</div>', ""
+    origin = ' data-free-origin="1"' if isinstance(c.slots.get("origin"), dict) else ""
+    return f'<div class="fr-slide fr-{surface}" data-free-surface="{surface}"{origin}>{body}</div>', ""
 
 
 # ---------------------------------------------------------------- operations
