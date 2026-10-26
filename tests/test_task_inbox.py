@@ -188,3 +188,21 @@ def test_reassign_to_same_person_after_decline(client, store, sent):
     store.triage_accept(ASSIGNEE, t["id"])
     store.update_task(OWNER, t["id"], assignee_user_id=ASSIGNEE, title="Отчёт 2", tz=TZ)
     assert store.get_task_for_user(ASSIGNEE, t["id"])["assignee_triage"] == "accepted"
+
+
+def test_owner_notified_when_assignee_deletes(store, sent, monkeypatch):
+    from assistant.lib import task_notify
+
+    monkeypatch.setattr(task_notify, "owner_display_name", lambda uid: "Ульяна Ким")
+    t = _delegated(store, title="Отчёт за Q3")
+    assert store.delete_task(ASSIGNEE, t["id"]) is True
+    assert [uid for uid, _ in sent] == [OWNER]
+    assert "Ульяна Ким удалил(а) задачу «Отчёт за Q3»" in sent[0][1]
+
+    sent.clear()
+    mine = _delegated(store, title="Сам удалю")
+    store.delete_task(OWNER, mine["id"])  # постановщик удалил сам — никому
+    cancelled = _delegated(store, title="Отменённая")
+    store.cancel_task(OWNER, cancelled["id"])
+    store.delete_task(ASSIGNEE, cancelled["id"])  # уже отменена — не шумим
+    assert sent == []

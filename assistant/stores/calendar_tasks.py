@@ -1641,7 +1641,25 @@ def delete_task(owner_user_id: int | str, task_id: int | str) -> bool:
             (int(existing["id"]),),
         )
         _conn().commit()
-        return cur.rowcount > 0
+        deleted = cur.rowcount > 0
+    if deleted and _deleted_by_assignee(existing, owner_user_id):
+        # Исполнитель удалил поручение — постановщик иначе узнал бы об этом, только не найдя его в «Поставленных».
+        try:
+            from assistant.lib.task_notify import notify_task_deleted_by_assignee
+
+            notify_task_deleted_by_assignee(task=existing)
+        except Exception as e:
+            print(f"[calendar_tasks] notify deleted task={existing.get('id')} err={e!r}")
+    return deleted
+
+
+def _deleted_by_assignee(task: dict[str, Any], actor_id: int | str) -> bool:
+    return (
+        task_is_delegated(task)
+        and _uid(actor_id) == str(task.get("assignee_user_id") or "")
+        # Отменённое постановщиком или уже принятое — ему об этом знать незачем.
+        and str(task.get("outcome") or "") not in ("cancelled", "accepted")
+    )
 
 
 def find_by_google_event(

@@ -212,6 +212,16 @@ def notify_task_declined(*, task: dict[str, Any], assignee_name: str, note: str)
     _send_task_push(task.get("owner_user_id"), text, "notify_declined")
 
 
+def notify_task_deleted_by_assignee(*, task: dict[str, Any]) -> None:
+    """Исполнитель удалил поставленную ему задачу — постановщику (ссылки нет: задачи больше нет)."""
+    who = html.escape(owner_display_name(task.get("assignee_user_id")) if task.get("assignee_user_id") else "")
+    if not who or who == "Коллега":
+        who = html.escape(str(task.get("assignee_name") or "").strip() or "Исполнитель")
+    title = html.escape(str(task.get("title") or "Задача"))
+    text = f"{who} удалил(а) задачу «{title}», которую вы поставили. Если она ещё нужна — поставьте заново."
+    _send_task_push(task.get("owner_user_id"), text, "notify_deleted")
+
+
 def notify_task_insisted(*, task: dict[str, Any], owner_name: str, comment: str = "") -> None:
     """Постановщик оставил задачу за исполнителем после «Не моё» — сразу, это ответ на его действие."""
     link = task_title_link_html(str(task.get("title") or "Задача"), task.get("id") or 0)

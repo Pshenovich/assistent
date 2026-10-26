@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261026-inbox-ui";
+  var WEBAPP_BUILD = "20261026-md-composer";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -33172,6 +33172,7 @@
     if (!ed) return true;
     if (ed.querySelector(".note-gpt-quote-chip")) return false;
     if (ed.querySelector(".note-discuss-mention")) return false;
+    if (ed.querySelector("ul, ol, h1, h2, h3")) return false;
     return !String(ed.innerText || "").replace(/\u00a0/g, " ").trim();
   }
 
@@ -33231,6 +33232,175 @@
     return String(el.innerText || "").replace(/\u00a0/g, " ");
   }
 
+  // ——— Вёрстка в поле ввода обсуждения / чатов, как в заметках ———
+  // «# », «## », «### » — заголовок; «- », «* » — список; «1. » — нумерованный.
+  // Enter в пункте — новый пункт, на пустом — выход из списка; Backspace в начале — обычная строка.
+  var COMPOSER_MD_BLOCK = /^(H[1-3]|LI)$/;
+
+  function composerCaret(ed) {
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount || !sel.isCollapsed) return null;
+    var r = sel.getRangeAt(0);
+    return ed.contains(r.startContainer) ? r : null;
+  }
+
+  function composerBlockOf(ed, node) {
+    for (var n = node; n && n !== ed; n = n.parentNode) {
+      if (n.nodeType === 1 && COMPOSER_MD_BLOCK.test(n.nodeName)) return n;
+    }
+    return null;
+  }
+
+  function composerPlaceCaret(el, atEnd) {
+    var r = document.createRange();
+    r.selectNodeContents(el);
+    r.collapse(!atEnd);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+
+  function composerFill(el) {
+    if (!String(el.textContent || "").length && !el.querySelector("br, .note-discuss-mention")) el.appendChild(document.createElement("br"));
+    return el;
+  }
+
+  // Строка ввода: узлы от начала строки (после <br> или начала обёртки) до следующего <br>.
+  function composerLineNodes(node) {
+    var nodes = [node];
+    for (var n = node.nextSibling; n; n = n.nextSibling) {
+      nodes.push(n);
+      if (n.nodeName === "BR") break;
+    }
+    return nodes;
+  }
+
+  function composerMdInputRule(ed, e) {
+    if (!e || e.inputType !== "insertText" || e.data !== " ") return;
+    var r = composerCaret(ed);
+    if (!r || r.startContainer.nodeType !== 3) return;
+    var tn = r.startContainer;
+    if (composerBlockOf(ed, tn)) return;
+    var par = tn.parentNode;
+    if (par !== ed && !((par.nodeName === "DIV" || par.nodeName === "P") && par.parentNode === ed)) return;
+    var prev = tn.previousSibling;
+    // Пустые текстовые узлы (остаются после переноса строки) — не текст перед маркером.
+    while (prev && prev.nodeType === 3 && !prev.nodeValue) {
+      var gone = prev;
+      prev = prev.previousSibling;
+      gone.remove();
+    }
+    if (prev && prev.nodeName !== "BR") return;
+    var before = tn.nodeValue.slice(0, r.startOffset).replace(/\u00a0/g, " ");
+    var m = /^(#{1,3}) $/.exec(before) || /^([-*•]) $/.exec(before) || /^(\d{1,3})[.)] $/.exec(before);
+    if (!m) return;
+    var block;
+    var wrap;
+    if (m[1].charAt(0) === "#") {
+      block = wrap = document.createElement("h" + m[1].length);
+    } else {
+      var ordered = /^\d/.test(m[1]);
+      wrap = document.createElement(ordered ? "ol" : "ul");
+      if (ordered && m[1] !== "1") wrap.setAttribute("start", m[1]);
+      block = document.createElement("li");
+      wrap.appendChild(block);
+    }
+    tn.nodeValue = tn.nodeValue.slice(r.startOffset);
+    var line = composerLineNodes(tn);
+    var whole = par !== ed && !prev && line[line.length - 1] === par.lastChild;
+    var anchor = whole ? par : line[0];
+    anchor.parentNode.insertBefore(wrap, anchor);
+    line.forEach(function (n) {
+      if (n.nodeName === "BR" && n === line[line.length - 1] && line.length > 1) n.remove();
+      else block.appendChild(n);
+    });
+    if (whole) par.remove();
+    if (prev && prev.nodeName === "BR") prev.remove();
+    composerFill(block);
+    // Подряд идущие списки одного вида — один список.
+    var before2 = wrap.previousSibling;
+    if (block !== wrap && before2 && before2.nodeName === wrap.nodeName) {
+      before2.appendChild(block);
+      wrap.remove();
+    }
+    composerPlaceCaret(block, false);
+  }
+
+  function composerMdKeydown(ed, e) {
+    if (e.key !== "Enter" && e.key !== "Backspace") return false;
+    if (e.metaKey || e.ctrlKey || e.altKey) return false;
+    var r = composerCaret(ed);
+    if (!r) return false;
+    var block = composerBlockOf(ed, r.startContainer);
+    if (!block) return false;
+    var atStart = (function () {
+      var t = document.createRange();
+      t.selectNodeContents(block);
+      t.setEnd(r.startContainer, r.startOffset);
+      return !t.toString().length;
+    })();
+    var empty = !String(block.textContent || "").replace(/\u00a0/g, " ").trim() && !block.querySelector(".note-discuss-mention");
+    if (e.key === "Backspace") {
+      if (!atStart) return false;
+      e.preventDefault();
+      composerUnwrapBlock(ed, block);
+      return true;
+    }
+    if (e.shiftKey && block.nodeName !== "LI") return false;
+    e.preventDefault();
+    if (block.nodeName === "LI" && empty) {
+      composerUnwrapBlock(ed, block);
+      return true;
+    }
+    // Остаток строки после каретки — в новый пункт (или в обычную строку после заголовка).
+    var tail = document.createRange();
+    tail.setStart(r.startContainer, r.startOffset);
+    tail.setEnd(block, block.childNodes.length);
+    var frag = tail.extractContents();
+    var next = document.createElement(block.nodeName === "LI" ? "li" : "div");
+    next.appendChild(frag);
+    [block, next].forEach(function (el) {
+      Array.prototype.slice.call(el.childNodes).forEach(function (n) {
+        if (n.nodeType === 3 && !n.nodeValue) n.remove();
+      });
+    });
+    composerFill(block);
+    composerFill(next);
+    block.parentNode.insertBefore(next, block.nextSibling);
+    composerPlaceCaret(next, false);
+    return true;
+  }
+
+  // Пункт / заголовок → обычная строка на том же месте (список при этом делится надвое).
+  function composerUnwrapBlock(ed, block) {
+    var line = document.createElement("div");
+    while (block.firstChild) line.appendChild(block.firstChild);
+    composerFill(line);
+    if (block.nodeName !== "LI") {
+      block.parentNode.replaceChild(line, block);
+    } else {
+      var list = block.parentNode;
+      var idx = Array.prototype.indexOf.call(list.children, block);
+      var rest = [];
+      for (var n = block.nextSibling; n; n = n.nextSibling) rest.push(n);
+      block.remove();
+      list.parentNode.insertBefore(line, list.nextSibling);
+      if (rest.length) {
+        var tailList = document.createElement(list.nodeName.toLowerCase());
+        if (list.nodeName === "OL") {
+          // Номера после выделенной строки не сдвигаются: «3. c» остаётся третьим.
+          tailList.setAttribute("start", String(Number(list.getAttribute("start") || 1) + idx + 1));
+        }
+        rest.forEach(function (x) {
+          tailList.appendChild(x);
+        });
+        line.parentNode.insertBefore(tailList, line.nextSibling);
+      }
+      if (!list.children.length) list.remove();
+    }
+    composerPlaceCaret(line, false);
+  }
+
   function serializeGptComposer(ed) {
     ed = ed || noteGptEditor();
     if (!ed) return { text: "", quotes: [] };
@@ -33263,7 +33433,36 @@
         return;
       }
       if (node.nodeName === "BR") {
+        // Пустая строка пункта списка / заголовка — не перенос.
+        if (!(node.parentNode && /^(LI|H[1-6])$/.test(node.parentNode.nodeName) && node.parentNode.childNodes.length === 1)) push("\n");
+        return;
+      }
+      // Вёрстка из поля ввода → Markdown: «# заголовок», «- пункт», «1. пункт».
+      var md = /^H([1-6])$/.exec(node.nodeName);
+      if (md || node.nodeName === "LI") {
+        if (parts.length && parts[parts.length - 1] !== "\n") push("\n");
+        var p0 = parts.length;
+        var t0 = threaded.length;
+        var prefix = md ? "#".repeat(Number(md[1])) + " " : "- ";
+        if (!md && node.parentNode && node.parentNode.nodeName === "OL") {
+          var n = Number(node.parentNode.getAttribute("start") || 1);
+          for (var sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) n++;
+          prefix = n + ". ";
+        }
+        push(prefix);
+        var kidsMd = node.childNodes;
+        for (var k = 0; k < kidsMd.length; k++) walk(kidsMd[k]);
+        if (!parts.slice(p0 + 1).join("").replace(/\u00a0/g, " ").trim()) {
+          parts.length = p0;
+          threaded.length = t0;
+          return;
+        }
         push("\n");
+        return;
+      }
+      if (node.nodeName === "UL" || node.nodeName === "OL") {
+        var lk = node.childNodes;
+        for (var li = 0; li < lk.length; li++) walk(lk[li]);
         return;
       }
       var block = node.nodeName === "DIV" || node.nodeName === "P";
@@ -33734,6 +33933,57 @@
       last = start + m[2].length;
     }
     if (last < raw.length) appendDiscussTextWithLinks(el, raw.slice(last));
+  }
+
+  // Сообщение участника: «# », «- », «1. » из поля ввода — заголовки и списки; упоминания и ссылки как раньше.
+  var DISCUSS_MD_LINE = /^(?:(#{1,3}) |[-*•] |(\d{1,3})[.)] )(.*)$/;
+
+  function fillDiscussBodyBlocks(el, text) {
+    var lines = String(text || "").split("\n");
+    if (!lines.some(function (l) { return DISCUSS_MD_LINE.test(l); })) {
+      fillDiscussBodyWithMentions(el, text);
+      return;
+    }
+    el.textContent = "";
+    el.classList.add("has-md");
+    var list = null;
+    var plain = [];
+    function flushPlain() {
+      if (!plain.length) return;
+      var p = document.createElement("div");
+      p.className = "note-discuss-md-p";
+      fillDiscussBodyWithMentions(p, plain.join("\n"));
+      el.appendChild(p);
+      plain = [];
+    }
+    lines.forEach(function (line) {
+      var m = DISCUSS_MD_LINE.exec(line);
+      if (!m) {
+        list = null;
+        if (line.trim() || plain.length) plain.push(line);
+        return;
+      }
+      flushPlain();
+      if (m[1]) {
+        list = null;
+        var h = document.createElement("p");
+        h.className = "note-discuss-md-h note-discuss-md-h" + m[1].length;
+        fillDiscussBodyWithMentions(h, m[3]);
+        el.appendChild(h);
+        return;
+      }
+      var tag = m[2] ? "OL" : "UL";
+      if (!list || list.nodeName !== tag) {
+        list = document.createElement(tag.toLowerCase());
+        list.className = "note-discuss-md-list";
+        if (m[2] && m[2] !== "1") list.setAttribute("start", m[2]);
+        el.appendChild(list);
+      }
+      var li = document.createElement("li");
+      fillDiscussBodyWithMentions(li, m[3]);
+      list.appendChild(li);
+    });
+    flushPlain();
   }
 
   function discussionHistoryAuthorLabel(c) {
@@ -35865,7 +36115,8 @@
       syncGptEditorEmpty(editor);
       sizeGptEditor();
       window.requestAnimationFrame(sizeGptEditor);
-      editor.addEventListener("input", function () {
+      editor.addEventListener("input", function (e) {
+        composerMdInputRule(editor, e);
         syncGptEditorEmpty(editor);
         editor.setAttribute("data-placeholder", noteAskPlaceholder("gpt"));
         autosizeNoteComposer(editor);
@@ -35944,6 +36195,13 @@
           closeDiscussMentionMenu();
           if (typeof form.requestSubmit === "function") form.requestSubmit();
           else form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+          return;
+        }
+        if (!e.isComposing && composerMdKeydown(editor, e)) {
+          syncGptEditorEmpty(editor);
+          autosizeNoteComposer(editor);
+          rememberGptEditorRange();
+          syncNotePaieReplyForm();
         }
       });
       if (!editor._composerRo && typeof ResizeObserver === "function") {
@@ -41508,7 +41766,7 @@
     } else if (!hideClipBody && bodyText.trim()) {
       var textBody = document.createElement("div");
       textBody.className = "note-discuss-bubble-body";
-      fillDiscussBodyWithMentions(textBody, bodyText);
+      fillDiscussBodyBlocks(textBody, bodyText);
       bubble.appendChild(textBody);
     }
     renderDiscussAttachments(bubble, attachments);
@@ -43604,7 +43862,8 @@
     } else if (bodyText) {
       var textBody = document.createElement("div");
       textBody.className = "note-discuss-bubble-body";
-      textBody.textContent = bodyText;
+      // До ответа сервера — та же вёрстка, что после (заголовки, списки).
+      fillDiscussBodyBlocks(textBody, bodyText);
       bubble.appendChild(textBody);
     }
     if (bubble.childNodes.length) item.appendChild(bubble);
