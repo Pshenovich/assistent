@@ -284,3 +284,30 @@ html[data-leo-deck].leo-review .tpl-stage .g-cap:empty { min-height: 1.4em; bord
 html[data-leo-deck]:not(.leo-review) .tpl-stage .cb-card-t:empty,
 html[data-leo-deck]:not(.leo-review) .tpl-stage .cb-num-l:empty,
 html[data-leo-deck]:not(.leo-review) .tpl-stage .cb-who:empty { display: none; }
+
+/* ---- свободный слайд (free.canvas, assistant/lib/canvas_free.py): элементы с координатами на сцене ---- */
+.tpl-in:has(> .fr-slide) { padding: 0; }
+.fr-slide { position: absolute; inset: 0; font-family: var(--f-body); color: var(--s-text); --fr-grad: linear-gradient(135deg, #3dd6a5 0%, #5b8def 100%); }
+.fr-slide.fr-light { background: #eef3f0; --s-text: #0c1412; --s-muted: #4d5c56; --s-faint: #7b8a84; --s-rule: rgba(12, 20, 18, 0.12); --s-el: #ffffff; --s-acc: #14986f; --s-on-acc: #ffffff; --s-tint: rgba(12, 20, 18, 0.04); --s-acc-soft: rgba(20, 152, 111, 0.12); }
+.fr-slide.fr-accent { background: linear-gradient(160deg, #134434 0%, #0c1412 70%); }
+.fr-el { position: absolute; box-sizing: border-box; }
+.fr-text { width: 100%; height: 100%; line-height: 1.3; overflow-wrap: anywhere; border-radius: 10px; }
+.fr-text:empty::before { content: "Текст"; opacity: 0.35; }
+.fr-text .acc { color: var(--s-acc); }
+.fr-text .muted { color: var(--s-muted); }
+.fr-size-s { font-size: 16px; }
+.fr-size-m { font-size: 20px; }
+.fr-size-l { font-size: 28px; line-height: 1.2; }
+.fr-size-xl { font-size: 40px; line-height: 1.1; }
+.fr-size-xxl { font-size: 56px; line-height: 1.04; }
+.fr-size-xxxl { font-size: 80px; line-height: 0.98; }
+.fr-font-display { font-family: var(--f-display); letter-spacing: -0.02em; }
+.fr-shape, .fr-line { display: block; width: 100%; height: 100%; box-sizing: border-box; }
+.fr-line { min-height: 2px; border-radius: 2px; }
+.fr-icon { display: flex; width: 100%; height: 100%; }
+.tpl-stage .fr-icon > .ico { width: 100%; height: 100%; }
+.fr-clip { position: relative; width: 100%; height: 100%; overflow: hidden; }
+.tpl-stage .fr-clip > .media-slot { position: absolute; inset: 0; height: 100%; min-height: 0; border-radius: 0; }
+.tpl-stage .a3.fr-a3 { position: relative; width: 100%; height: 100%; overflow: hidden; border-bottom: 0; background: var(--s-el); }
+.fr-chart { width: 100%; height: 100%; display: flex; align-items: center; }
+.fr-chart .chart { width: 100%; height: 100%; }

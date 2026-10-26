@@ -26,7 +26,7 @@ class CatalogTests(unittest.TestCase):
             self.assertNotIn("Не удалось отрисовать", html)
             seen |= {s["variant"] for s in deck["slides"]}
         # Every non-chart variant + the main chart types are exercised.
-        missing = {v for v in tpl.VARIANTS if not v.startswith("chart.")} - seen
+        missing = {v for v in tpl.VARIANTS if not v.startswith("chart.")} - seen - {"free.canvas"}  # свободный слайд делает человек
         self.assertEqual(missing, {"closing.ask", "appendix.notes"} & missing)
 
     def test_explicit_variant_kept_when_data_fits(self) -> None:

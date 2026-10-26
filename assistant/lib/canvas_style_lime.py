@@ -611,5 +611,6 @@ RENDERERS: dict[str, Callable[[Ctx], tuple[str, str]]] = {
     "closing.ask": _ask,
     "appendix.notes": _appendix,
 }
+RENDERERS["free.canvas"] = lambda c: ct.VARIANTS["free.canvas"].render(c)  # свободный слайд — общий для стилей
 for _ctype in ("bar-h", "line", "area", "grouped", "stacked100", "donut", "waterfall", "funnel", "bullet", "dumbbell", "heatmap"):
     RENDERERS[f"chart.{_ctype}"] = _chart_frame(_ctype)

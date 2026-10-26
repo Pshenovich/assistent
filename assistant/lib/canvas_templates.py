@@ -40,6 +40,7 @@ ROLES: tuple[tuple[str, str], ...] = (
     ("closing", "Финал"),
     ("appendix", "Приложение"),
     ("custom", "Свой макет"),
+    ("free", "Свободный слайд"),
 )
 ROLE_IDS = tuple(r for r, _ in ROLES)
 _ROLE_ALIASES = {
@@ -1258,6 +1259,7 @@ _FALLBACK_VARIANT = {
     "closing": "closing.next-steps",
     "appendix": "appendix.notes",
     "custom": "custom.grid",
+    "free": "free.canvas",
 }
 
 
@@ -1334,6 +1336,10 @@ def auto_variant(role: str, slots: dict[str, Any], *, avoid: str = "") -> str:
 def normalize_slide(raw: Any, *, sid: str, prev_variant: str = "") -> dict[str, Any]:
     src = raw if isinstance(raw, dict) else {}
     role = normalize_role(src.get("role"))
+    if role == "free":  # свободный слайд: свои проверки элементов (больше 40 штук, html текстов)
+        from assistant.lib import canvas_free
+
+        return {"id": sid, "role": "free", "variant": canvas_free.FREE_VARIANT, "slots": canvas_free.clean_slots(src.get("slots"))}
     slots = _clean(src.get("slots")) if isinstance(src.get("slots"), dict) else {}
     # Tolerate slots given at the top level.
     if not slots:
@@ -1795,12 +1801,17 @@ class _SlotTextParser(HTMLParser):
         self.stack: list[tuple[int, str, list[str]]] = []
         self.out: dict[tuple[str, str], str] = {}
         self.skip_depth: Optional[int] = None
+        self.rich: set[str] = set()
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
         if tag in self._VOID:
             if tag == "br" and self.stack:
-                self.stack[-1][2].append(" ")
+                self.stack[-1][2].append("<br>" if self.stack[-1][1] in self.rich else " ")
             return
+        if self.skip_depth is None:
+            for _, path, buf in self.stack:
+                if path in self.rich:
+                    buf.append(self.get_starttag_text() or "")
         self.depth += 1
         a = {k: (v or "") for k, v in attrs}
         cls = a.get("class", "")
@@ -1811,6 +1822,8 @@ class _SlotTextParser(HTMLParser):
             self.slide_depth = self.depth
         if self.slide and a.get("data-slot") is not None and self.skip_depth is None:
             self.stack.append((self.depth, a["data-slot"], []))
+            if a.get("data-rich"):
+                self.rich.add(a["data-slot"])  # текст свободного слайда: сохраняем разметку (b, i, span)
 
     def handle_endtag(self, tag: str) -> None:
         if tag in self._VOID:
@@ -1818,7 +1831,12 @@ class _SlotTextParser(HTMLParser):
         if self.stack and self.stack[-1][0] == self.depth:
             _, path, buf = self.stack.pop()
             if self.slide:
-                self.out[(self.slide, path)] = re.sub(r"\s+", " ", "".join(buf)).strip()
+                raw = "".join(buf)
+                self.out[(self.slide, path)] = raw if path in self.rich else re.sub(r"\s+", " ", raw).strip()
+        elif self.skip_depth is None:
+            for _, path, buf in self.stack:
+                if path in self.rich:
+                    buf.append(f"</{tag}>")
         if self.skip_depth == self.depth:
             self.skip_depth = None
         if self.slide and self.depth == self.slide_depth:
@@ -1829,7 +1847,7 @@ class _SlotTextParser(HTMLParser):
         if self.skip_depth is not None:
             return
         for entry in self.stack:
-            entry[2].append(data)
+            entry[2].append(escape(data, quote=False) if entry[1] in self.rich else data)
 
 
 def sync_text_edits(deck: dict[str, Any], html: str) -> dict[str, Any]:
@@ -1846,6 +1864,14 @@ def sync_text_edits(deck: dict[str, Any], html: str) -> dict[str, Any]:
         if not s:
             continue
         slots = s.setdefault("slots", {})
+        if s.get("variant") == "free.canvas":
+            if not re.fullmatch(r"elements\.\d+\.html", path):
+                continue
+            from assistant.lib import canvas_free
+
+            if isinstance(get_path(slots, path.rsplit(".", 1)[0]), dict):
+                set_path(slots, path, canvas_free.sanitize_html(text))
+            continue
         new = text[:_TEXT_CAP]
         old = get_path(slots, path)
         if old is None:
@@ -2014,6 +2040,18 @@ def apply_op(deck: dict[str, Any], op: dict[str, Any]) -> dict[str, Any]:
         op_add_item(deck, sid, str(op.get("group") or ""), int(after) if after is not None else None)
     elif kind == "remove_item":
         op_remove_item(deck, sid, str(op.get("group") or ""), int(op.get("index") or 0))
+    elif kind in ("detach", "reattach", "free_update", "add_free_slide"):
+        from assistant.lib import canvas_free
+
+        surface = str(op.get("surface") or "")
+        if kind == "detach":
+            canvas_free.op_detach(deck, sid, op.get("elements"), surface)
+        elif kind == "reattach":
+            canvas_free.op_reattach(deck, sid)
+        elif kind == "free_update":
+            canvas_free.op_update(deck, sid, op.get("elements"), surface)
+        else:
+            canvas_free.op_add_blank(deck, sid, surface)
     elif kind == "set_icon":
         op_set_icon(deck, sid, str(op.get("path") or ""), str(op.get("icon") or ""))
     elif kind == "delete_slide":
@@ -2159,6 +2197,7 @@ def outline_prompt(deck: dict[str, Any]) -> str:
 
 # «Свой макет» и отрисовки стилей регистрируются после того, как модуль целиком загружен.
 from assistant.lib import canvas_blocks  # noqa: E402,F401
+from assistant.lib import canvas_free  # noqa: E402,F401
 from assistant.lib import canvas_style_mono  # noqa: E402
 
 THEME_RENDERERS["mono"] = canvas_style_mono.RENDERERS

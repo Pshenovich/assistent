@@ -741,3 +741,13 @@ html[data-leo-theme="lime"] .tpl-stage .dec.dec-photo.is-low { width: 55%; opaci
 .l-src-n { font-size: 17px; }
 .tpl-stage .l-slide li { list-style: none; }
 .l-panel-obj { background: #161715; }
+
+/* ---- свободный слайд в «Монохроме» и «Лайме»: фоны светлый / тёмный / акцентный и токены на них ---- */
+html[data-leo-theme="mono"] .fr-slide { --fr-grad: linear-gradient(135deg, #dceaf6 0%, #9db5cd 100%); }
+html[data-leo-theme="mono"] .fr-slide.fr-light { background: #ffffff; --s-text: #0d0d0e; --s-muted: #555b62; --s-faint: #8a9097; --s-rule: rgba(13, 13, 14, 0.14); --s-el: #dceaf6; --s-acc: #0d0d0e; --s-on-acc: #ffffff; --s-tint: rgba(13, 13, 14, 0.05); --s-acc-soft: rgba(13, 13, 14, 0.08); }
+html[data-leo-theme="mono"] .fr-slide.fr-dark { background: #0d0d0e; --s-text: #ffffff; --s-muted: rgba(255, 255, 255, 0.66); --s-faint: rgba(255, 255, 255, 0.4); --s-rule: rgba(255, 255, 255, 0.16); --s-el: #3b3c3f; --s-acc: #dceaf6; --s-on-acc: #0d0d0e; --s-tint: rgba(255, 255, 255, 0.06); --s-acc-soft: rgba(220, 234, 246, 0.14); }
+html[data-leo-theme="mono"] .fr-slide.fr-accent { background: #dceaf6; --s-text: #0d0d0e; --s-muted: #4d5560; --s-faint: #7d8590; --s-rule: rgba(13, 13, 14, 0.12); --s-el: #ffffff; --s-acc: #0d0d0e; --s-on-acc: #ffffff; }
+html[data-leo-theme="lime"] .fr-slide { --fr-grad: linear-gradient(135deg, #6fae1a 0%, #b5ec3a 55%, #e6fbb0 100%); }
+html[data-leo-theme="lime"] .fr-slide.fr-light { background: #ffffff; --s-text: #111311; --s-muted: #5e625a; --s-faint: #8c9087; --s-rule: rgba(17, 19, 17, 0.12); --s-el: #f3f4ef; --s-acc: #5c9e12; --s-on-acc: #111311; --s-tint: rgba(17, 19, 17, 0.04); --s-acc-soft: rgba(156, 214, 42, 0.18); }
+html[data-leo-theme="lime"] .fr-slide.fr-dark { background: #0b0b0b; --s-text: #ffffff; --s-muted: #a3a79e; --s-faint: #6f736b; --s-rule: rgba(255, 255, 255, 0.14); --s-el: #171816; --s-acc: #c6f432; --s-on-acc: #111311; --s-tint: rgba(255, 255, 255, 0.05); --s-acc-soft: rgba(198, 244, 50, 0.16); }
+html[data-leo-theme="lime"] .fr-slide.fr-accent { background: #ecfbc6; --s-text: #111311; --s-muted: #4f5a3c; --s-faint: #7c8566; --s-rule: rgba(17, 19, 17, 0.12); --s-el: #ffffff; --s-acc: #4f8a10; --s-on-acc: #111311; }
