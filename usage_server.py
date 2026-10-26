@@ -153,7 +153,9 @@ class _OwaspSecurityHeadersMiddleware(BaseHTTPMiddleware):
         return xf == "https"
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        t0 = time.perf_counter()
         response = await call_next(request)
+        _log_slow_request(request, response, time.perf_counter() - t0)
         if self._request_is_https(request) or os.getenv(
             "SECURITY_HSTS_ON_HTTP", ""
         ).strip().lower() in ("1", "true", "yes"):
@@ -175,6 +177,31 @@ class _OwaspSecurityHeadersMiddleware(BaseHTTPMiddleware):
         else:
             response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
         return response
+
+
+def _slow_request_sec() -> float:
+    try:
+        return float(os.getenv("SLOW_REQUEST_LOG_SEC", "1.5") or "1.5")
+    except ValueError:
+        return 1.5
+
+
+def _log_slow_request(request: Request, response: Any, dur: float) -> None:
+    """Медленные запросы API — в журнал: путь, время и занятость пула потоков (ждут ли запросы очереди)."""
+    if dur < _slow_request_sec() or not request.url.path.startswith("/api/"):
+        return
+    try:
+        import anyio.to_thread
+
+        lim = anyio.to_thread.current_default_thread_limiter()
+        pool = f"{int(lim.borrowed_tokens)}/{int(lim.total_tokens)}"
+    except Exception:
+        pool = "?"
+    print(
+        f"[slow] {request.method} {request.url.path} {getattr(response, 'status_code', '?')} "
+        f"{dur:.2f}s threads={pool}",
+        flush=True,
+    )
 
 
 app.add_middleware(_OwaspSecurityHeadersMiddleware)

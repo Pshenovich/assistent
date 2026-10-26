@@ -22965,3 +22965,6 @@ body.tinbox-open { overflow: hidden; }
 ul.note-discuss-md-list { list-style: disc; }
 ol.note-discuss-md-list { list-style: decimal; }
 .note-discuss-md-list li { margin: 1px 0; white-space: pre-wrap; }
+
+/* «Сохранить» в окне записи, пока ждём сервер. */
+#modal-save.is-busy { opacity: 0.6; pointer-events: none; }

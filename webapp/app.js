@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261026-card-objects";
+  var WEBAPP_BUILD = "20261026-modal-close";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -18507,13 +18507,32 @@
     if (ev && typeof ev.preventDefault === "function") ev.preventDefault();
     if (modalSubmitBusy) return;
     modalSubmitBusy = true;
+    // Нажатие видно сразу: пока ждём сервер, кнопка — «Сохраняю…».
+    var saveBtn = document.getElementById("modal-save");
+    var saveLabel = document.getElementById("modal-save-label");
+    var prevLabel = saveLabel ? saveLabel.textContent : "";
+    if (saveBtn) saveBtn.classList.add("is-busy");
+    if (saveLabel) saveLabel.textContent = "Сохраняю…";
     try {
       await modalSubmitInner();
     } catch (e) {
       showCalendarToast((e && e.message) || "Не удалось сохранить");
     } finally {
       modalSubmitBusy = false;
+      if (saveBtn) saveBtn.classList.remove("is-busy");
+      if (saveLabel && saveLabel.textContent === "Сохраняю…") saveLabel.textContent = prevLabel;
     }
+  }
+
+  // Личный цвет записи — после закрытия окна, не задерживая его.
+  function persistEntryDisplayColorLater(target, color) {
+    persistEntryDisplayColor(target, color)
+      .then(function () {
+        if (typeof loadActual === "function") loadActual({ silent: true, skipCachePaint: true });
+      })
+      .catch(function (colorErr) {
+        showCalendarToast((colorErr && colorErr.message) || "Цвет не сохранён");
+      });
   }
 
   async function modalSubmitInner() {
@@ -18634,24 +18653,14 @@
         var saved = r && r.task;
         rememberTaskTip(saved);
         var colorId = id || (saved && (saved.id || (saved.task_id != null ? saved.task_id : "")));
-        if (colorId || taskColor) {
-          try {
-            await persistEntryDisplayColor(
-              {
-                id: String(colorId).indexOf("task-") === 0 ? colorId : "task-" + colorId,
-                task_id: colorId,
-                entry_type: "task",
-              },
-              taskColor
-            );
-          } catch (colorErr) {
-            showCalendarToast((colorErr && colorErr.message) || "Цвет не сохранён");
-          }
-        }
+        var colorTask = colorId
+          ? { id: String(colorId).indexOf("task-") === 0 ? colorId : "task-" + colorId, task_id: colorId, entry_type: "task" }
+          : null;
         if (!id) await finishPendingSheetConvertAfterCreate();
         else pendingSheetConvert = null;
         var savedCb = taskModalOnSaved;
         closeModal();
+        if (colorTask) persistEntryDisplayColorLater(colorTask, taskColor);
         if (savedCb) savedCb(saved);
         if (isPostedTasksOpen()) await loadPostedTasksList();
         await loadActual({ skipCachePaint: true });
@@ -18730,7 +18739,8 @@
           id: (savedEvent && savedEvent.id) || id,
           calendar_id: (savedEvent && savedEvent.calendar_id) || calId,
         };
-        if (colorTarget.id) {
+        // Только цвет — ждать нечего, иначе цвет уходит после закрытия окна.
+        if (colorTarget.id && onlyColor) {
           try {
             await persistEntryDisplayColor(colorTarget, eventColor);
           } catch (colorErr) {
@@ -18755,6 +18765,7 @@
         if (!id) await finishPendingSheetConvertAfterCreate();
         else pendingSheetConvert = null;
         closeModal();
+        if (colorTarget.id && !onlyColor) persistEntryDisplayColorLater(colorTarget, eventColor);
         await loadActual();
       } catch (e) {
         showCalendarToast(e.message || String(e));
