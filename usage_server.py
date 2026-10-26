@@ -5613,6 +5613,8 @@ async def miniapp_calendar_tasks_status(
                 question=cur["status_note"],
             )
         )
+    if cur["status_note"]:
+        _memory_task_changed(row)
     return {"ok": True, "task": _task_api(row, tz=tz, viewer_id=uid)}
 
 
@@ -5744,6 +5746,7 @@ async def miniapp_calendar_tasks_message(
     await run_in_threadpool(
         partial(notify_task_message, task=row, sender_id=uid, sender_name=name, text=push_text, mentions=mentions)
     )
+    _memory_task_changed(row)
     events = await run_in_threadpool(calendar_tasks_store.list_events, row)
     return {"ok": True, "task": _task_api(row, tz=tz, viewer_id=uid), "events": events}
 
@@ -5771,6 +5774,7 @@ async def _owner_task_action(task_id: int, principal: "_MiniappPrincipal", actio
         await run_in_threadpool(partial(task_notify.notify_task_cancelled, task=row, owner_name=name))
     synced = await run_in_threadpool(_sync_task_google, uid, row, "update")
     out = synced or row
+    _memory_task_changed(out)
     events = await run_in_threadpool(calendar_tasks_store.list_events, out)
     return {"ok": True, "task": _task_api(out, tz=tz, viewer_id=uid), "events": events}
 
@@ -6102,6 +6106,7 @@ async def miniapp_calendar_tasks_patch(
                 completer_name=_principal_display_name(principal),
             )
         )
+    _memory_task_changed(out)
     return {"ok": True, "task": _task_api(out, tz=tz, viewer_id=uid)}
 
 
@@ -9814,6 +9819,19 @@ def _focus_note_changed(owner: Any, note_id: Any) -> None:
         semantic_memory.note_changed(owner)  # память Лео — через минуту, а не через 15
     except Exception as e:
         print(f"[semantic] note_changed failed note={note_id} err={e!r}")
+
+
+def _memory_task_changed(task: dict[str, Any] | None) -> None:
+    """Задачу правили / написали в переписке — память Лео (постановщика и исполнителя) через минуту."""
+    if not task:
+        return
+    try:
+        from assistant.services import semantic_memory
+
+        for who in {str(task.get("owner_user_id") or ""), str(task.get("assignee_user_id") or "")} - {""}:
+            semantic_memory.note_changed(who)
+    except Exception as e:
+        print(f"[semantic] task_changed failed task={task.get('id')} err={e!r}")
 
 
 def _memory_sheet_changed(uid: Any, note_id: Any) -> None:

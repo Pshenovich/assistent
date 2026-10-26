@@ -1245,6 +1245,27 @@ def list_events(task: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def discussion_by_task(task_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+    """Переписка поручений одним запросом: сообщения и комментарии возврата (с текстом), по времени."""
+    ids = sorted({int(t) for t in task_ids if str(t).isdigit()})
+    out: dict[int, list[dict[str, Any]]] = {}
+    for i in range(0, len(ids), 500):
+        part = ids[i:i + 500]
+        with _LOCK:
+            rows = _conn().execute(
+                f"SELECT task_id, at, actor_user_id, actor_name, kind, text FROM task_events"
+                f" WHERE task_id IN ({','.join('?' * len(part))}) AND kind IN ('message', 'returned')"
+                f" AND TRIM(COALESCE(text, '')) != '' ORDER BY at ASC, id ASC",
+                part,
+            ).fetchall()
+        for r in rows:
+            out.setdefault(int(r["task_id"]), []).append({
+                "at": str(r["at"] or ""), "kind": str(r["kind"]), "actor_user_id": str(r["actor_user_id"] or ""),
+                "actor_name": str(r["actor_name"] or ""), "text": str(r["text"] or ""),
+            })
+    return out
+
+
 def _event_meta(row: sqlite3.Row) -> dict[str, Any]:
     if "meta_json" not in row.keys():
         return {}

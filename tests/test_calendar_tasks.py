@@ -295,3 +295,25 @@ def test_assignee_can_change_schedule_and_log(tasks_db):
     assert lines and "→" in lines[0] and "Андрей" in lines[0]
     ev = store.as_calendar_event(updated, tz=tz, viewer_id=22)
     assert ev["schedule_log_lines"] == lines
+
+
+def test_task_discussion_goes_to_leo_memory(tasks_db, monkeypatch):
+    store = tasks_db
+    from assistant.services import semantic_memory as sm
+
+    monkeypatch.setattr("assistant.lib.task_notify.task_webapp_url", lambda tid: f"https://x/?task={tid}")
+    tz = ZoneInfo("Europe/Moscow")
+    row = store.create_task(
+        11, title="Упаковка", start_at=datetime(2026, 10, 7, 15, 0, tzinfo=tz), tz=tz,
+        assignee_user_id=22, assignee_name="Дима",
+    )
+    store.create_task(11, title="Позвонить", start_at=datetime(2026, 10, 7, 16, 0, tzinfo=tz), tz=tz)
+    store.post_message(22, row["id"], "Нашёл двух поставщиков, какой берём?", actor_name="Дима")
+    store.post_message(11, row["id"], "Берём второго, итог: коробки по 40 ₽ с ноября", actor_name="Вова")
+
+    for uid in (11, 22):  # и постановщик, и исполнитель
+        srcs = sm.task_sources(uid)
+        assert [s["key"] for s in srcs] == [f"task:{row['id']}"]  # голая «Позвонить» не индексируется
+        text = srcs[0]["text"]
+        assert "Дима" in text and "какой берём" in text and "коробки по 40 ₽" in text
+        assert srcs[0]["ref"]["url"].endswith(f"task={row['id']}")

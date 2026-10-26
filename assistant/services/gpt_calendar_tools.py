@@ -274,7 +274,7 @@ SYSTEM_ADDON = """У тебя есть доступ к календарю пол
 - Вопрос про продукт, проект, клиента, сервис или термин пользователя («для чего нужен <название>?», «что у нас по <теме>?», «как работает <наш продукт>?») — сначала memory_search: у пользователя почти наверняка есть заметка или документ об этом. Если нашлось — отвечай по найденному тексту (можно своими словами, но смысл — из заметки), назови заметку и дай её ссылку (поле url). Общими знаниями «как обычно бывает» заменять найденное нельзя; общее — только если в материалах ничего нет, и скажи об этом прямо.
 - «Найди / открой / дай ссылку на заметку <название>» — notes_find: в ответе название и ссылка (url) каждой найденной заметки. Ссылку бери только из результата инструмента, не придумывай.
 - Обязательства и хвосты («что я обещал?», «что мне должны?», «что просрочено после встреч?») — commitments; у каждого пункта источник (встреча/заметка/чат) и цитата — называй источник.
-- Задачи за любое время («ставил X задачу про …, что с ней?», «чем закончилось …») — tasks_search (тема и/или исполнитель; calendar_events видит только окно дат). В ответе — статус, когда поставлена и срок, результат (поле result), если он есть; покажи найденное через show_calendar_cards.
+- Задачи за любое время («ставил X задачу про …, что с ней?», «чем закончилось …») — tasks_search (тема и/или исполнитель; calendar_events видит только окно дат). В ответе — статус, когда поставлена и срок, результат (поле result), если он есть, и что договорились в переписке (discussion); покажи найденное через show_calendar_cards.
 - Когда перечисляешь встречи/задачи/напоминания — вызови show_calendar_cards с id ВСЕХ перечисляемых (до 20): под ответом появятся карточки, которые можно открыть. Текстом дай короткий итог, без длинного списка.
 - Если в контексте уже есть id задач («task id N», например из карточки Фокуса) — передай их все в show_calendar_cards, не ищи задачи заново и не ограничивайся одной.
 - Когда подбираешь время встречи — найди окна (calendar_free_slots) и вызови offer_slots с 3–6 лучшими вариантами (и участниками): пользователь выберет карточку, встреча создастся сама.
@@ -373,7 +373,7 @@ TOOLS: list[dict[str, Any]] = [
         {"person": {"type": "string", "description": "Имя или @ник из контактов"},
          "start_date": {**_DATE, "description": "По умолчанию — 60 дней назад"}, "end_date": _DATE},
         ["person"]),
-    _fn("tasks_search", "Поиск задач Leo за всё время (поставленные пользователем другим, его собственные и поставленные ему): по теме и/или исполнителю. Возвращает статус, описание, результат, чек-лист. Для вопросов «ставил X задачу про …, что с ней», «какие задачи у X», «чем закончилась задача …».",
+    _fn("tasks_search", "Поиск задач Leo за всё время (поставленные пользователем другим, его собственные и поставленные ему): по теме и/или исполнителю. Возвращает статус, описание, результат, чек-лист и последние сообщения переписки с исполнителем (discussion). Для вопросов «ставил X задачу про …, что с ней», «какие задачи у X», «чем закончилась задача …».",
         {"query": {"type": "string", "description": "Ключевые слова темы (например «документы клиент»); пусто — все задачи исполнителя"},
          "assignee": {"type": "string", "description": "Имя/ник исполнителя или постановщика (необязательно)"},
          "status": {"type": "string", "enum": ["any", "open", "done"], "default": "any"}}),
@@ -382,7 +382,7 @@ TOOLS: list[dict[str, Any]] = [
                        "description": "mine — за пользователем; theirs — за другими; unknown — исполнитель не ясен"},
          "status": {"type": "string", "enum": ["open", "overdue", "closed", "snoozed", "any"], "default": "open"},
          "who": {"type": "string", "description": "Фильтр по человеку (необязательно)"}}),
-    _fn("memory_search", "Поиск по смыслу во всех материалах пользователя: саммари и транскрипты встреч, заметки и все их листы, документы Базы знаний, дайджесты чатов, переписка. Для вопросов «что решили по …», «где обсуждали …», «что говорил X про …», а также про продукты, проекты, клиентов и термины пользователя («для чего нужен …», «как у нас устроено …»). У найденных заметок есть url.",
+    _fn("memory_search", "Поиск по смыслу во всех материалах пользователя: саммари и транскрипты встреч, заметки и все их листы, документы Базы знаний, задачи с перепиской исполнителя и итогом, дайджесты чатов, переписка. Для вопросов «что решили по …», «где обсуждали …», «что говорил X про …», а также про продукты, проекты, клиентов и термины пользователя («для чего нужен …», «как у нас устроено …»). У найденных заметок есть url.",
         {"query": {"type": "string", "description": "Суть вопроса своими словами (тема, о чём речь)"}},
         ["query"]),
     _fn("notes_find", "Найти заметки, транскрипции и документы Базы знаний пользователя по названию (и словам из текста): id, название, дата правки и ссылка url для открытия. Для «найди заметку …», «дай ссылку на заметку …», «где моя заметка про …».",
@@ -1776,6 +1776,8 @@ def _task_brief(ctx: GptCalendarContext, t: dict[str, Any]) -> dict[str, Any]:
     cl = [c for c in t.get("checklist") or [] if isinstance(c, dict) and str(c.get("text") or "").strip()]
     if cl:
         item["checklist"] = [("✓ " if c.get("done") else "· ") + str(c.get("text"))[:120] for c in cl[:12]]
+    if t.get("assignee_status_note") and t.get("assignee_status") in ("question", "in_progress"):
+        item["assignee_note"] = str(t.get("assignee_status_note"))[:300]
     if t.get("owner_archived"):
         item["archived"] = True
     if t.get("recurrence"):
@@ -1791,7 +1793,9 @@ def tool_tasks_search(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     match_person = _person_matcher(ctx, str(args.get("assignee") or ""))
     q = _stems(query)
     hits: list[tuple[float, dict[str, Any]]] = []
-    for t in calendar_tasks.list_involved_tasks(ctx.uid):
+    tasks = calendar_tasks.list_involved_tasks(ctx.uid)
+    talk = calendar_tasks.discussion_by_task([int(t["id"]) for t in tasks if t.get("assignee_user_id")])
+    for t in tasks:
         if status == "open" and t.get("done"):
             continue
         if status == "done" and not t.get("done"):
@@ -1808,6 +1812,7 @@ def tool_tasks_search(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
                 str(t.get("description") or ""),
                 str(t.get("result") or ""),
                 " ".join(str(c.get("text") or "") for c in t.get("checklist") or [] if isinstance(c, dict)),
+                " ".join(m["text"] for m in talk.get(int(t["id"])) or []),
             ]))
             title = _stems(str(t.get("title") or ""))
             found = len(q & hay)
@@ -1817,7 +1822,19 @@ def tool_tasks_search(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
         hits.append((score, t))
     # list_involved_tasks уже свежие первыми — sort стабилен.
     hits.sort(key=lambda p: -p[0])
-    out = [_task_brief(ctx, t) for _, t in hits[:15]]
+    top = [t for _, t in hits[:15]]
+    out = []
+    for t in top:
+        it = _task_brief(ctx, t)
+        msgs = talk.get(int(t["id"])) or []
+        if msgs:
+            # Последние сообщения: там часто итоговое решение по задаче.
+            it["discussion"] = [
+                f"{m.get('actor_name') or ('исполнитель' if m['actor_user_id'] == str(t.get('assignee_user_id') or '') else 'постановщик')}"
+                f" ({m['at'][:10]}): {m['text'].strip()[:500]}"
+                for m in msgs[-8:]
+            ]
+        out.append(it)
     for it in out:
         ctx.seen_items.append({"type": "task", "id": it["id"], "title": it["title"]})
     res: dict[str, Any] = {"items": out, "total": len(hits)}

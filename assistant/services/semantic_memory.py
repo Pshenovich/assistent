@@ -145,11 +145,68 @@ def sources_for_user(uid: int) -> list[dict[str, Any]]:
     except Exception as e:
         print(f"[semantic] digests uid={uid} err={e!r}")
     try:
+        out += task_sources(uid)
+    except Exception as e:
+        print(f"[semantic] tasks uid={uid} err={e!r}")
+    try:
         from assistant.services import mail_memory
 
         out += mail_memory.semantic_sources(uid)  # переписка с людьми
     except Exception as e:
         print(f"[semantic] mail uid={uid} err={e!r}")
+    return out
+
+
+TASK_LIMIT = 1000
+
+
+def _task_actor(task: dict[str, Any], ev: dict[str, Any]) -> str:
+    name = str(ev.get("actor_name") or "").strip()
+    if name:
+        return name
+    actor = str(ev.get("actor_user_id") or "")
+    if actor and actor == str(task.get("assignee_user_id") or ""):
+        return str(task.get("assignee_name") or "").strip() or "Исполнитель"
+    return "Постановщик"
+
+
+def task_sources(uid: int) -> list[dict[str, Any]]:
+    """Задачи с содержанием (описание, результат, переписка с исполнителем) — у постановщика и исполнителя.
+    Голые задачи из одного названия не индексируем: их и так находит tasks_search."""
+    from assistant.lib.task_notify import task_webapp_url
+    from assistant.stores import calendar_tasks
+
+    tasks = calendar_tasks.list_involved_tasks(uid, limit=TASK_LIMIT)
+    talk = calendar_tasks.discussion_by_task([int(t["id"]) for t in tasks if t.get("assignee_user_id")])
+    out: list[dict[str, Any]] = []
+    for t in tasks:
+        tid = int(t["id"])
+        body: list[str] = []
+        desc = _plain(str(t.get("description") or "")).strip()
+        if desc:
+            body.append(f"Описание: {desc}")
+        checklist = [c for c in t.get("checklist") or [] if isinstance(c, dict) and str(c.get("text") or "").strip()]
+        if checklist:
+            body.append("Чек-лист: " + "; ".join(("✓ " if c.get("done") else "") + str(c["text"]).strip() for c in checklist))
+        msgs = talk.get(tid) or []
+        if msgs:
+            body.append("Переписка с исполнителем:")
+            for ev in msgs:
+                prefix = "вернул(а) на доработку: " if ev["kind"] == "returned" else ""
+                body.append(f"{_task_actor(t, ev)} ({ev['at'][:10]}): {prefix}{ev['text'].strip()}")
+        result = _plain(str(t.get("result") or "")).strip()
+        if result:
+            body.append(f"Итог / результат: {result}")
+        if len(" ".join(body)) < 40:
+            continue
+        head = [f"Задача «{t.get('title') or 'Задача'}»."]
+        if t.get("assignee_name"):
+            head.append(f"Исполнитель: {t['assignee_name']}.")
+        head.append("Статус: выполнена." if t.get("done") else "Статус: не выполнена.")
+        out.append({"key": f"task:{tid}", "kind": "task", "title": f"Задача «{t.get('title') or 'Задача'}»",
+                    "date": str(t.get("updated_at") or t.get("created_at") or "")[:10],
+                    "text": " ".join(head) + "\n" + "\n".join(body),
+                    "ref": {"task_id": tid, "kind": "task", "url": task_webapp_url(tid)}})
     return out
 
 
@@ -179,7 +236,7 @@ def index_user(uid: int, *, embed: Optional[Embed] = None, budget_chunks: int = 
     seen: set[str] = set()
     done = skipped = chunks_n = 0
     # сначала короткое и ценное (саммари, заметки, База знаний, дайджесты), длинные транскрипты — последними
-    order = {"meeting_summary": 0, "note": 1, "knowledge": 1, "chat_digest": 2, "mail_thread": 3, "transcript": 4}
+    order = {"meeting_summary": 0, "note": 1, "knowledge": 1, "task": 2, "chat_digest": 2, "mail_thread": 3, "transcript": 4}
     for src in sorted(sources_for_user(uid), key=lambda x: order.get(x["kind"], 9)):
         seen.add(src["key"])
         h = _hash(src["text"])
@@ -279,6 +336,8 @@ def search(uid: int, query: str, *, k: int = 8, embed: Optional[Embed] = None) -
         }
         if ref.get("note_id"):
             item["url"] = _note_url(ref["note_id"])  # «дай ссылку на заметку» — ссылка готова
+        elif ref.get("url"):
+            item["url"] = ref["url"]
         out.append(item)
         if len(out) >= k:
             break
