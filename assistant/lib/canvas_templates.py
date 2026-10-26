@@ -2181,7 +2181,9 @@ IMAGE_PROMPT_RULE = (
 
 def deck_prompt_json(deck: dict[str, Any], only: Optional[set[str]] = None) -> str:
     slides = [
-        {"id": s["id"], "role": s["role"], "variant": s["variant"], "slots": s["slots"]}
+        # У свободного слайда исходный макет (origin) модели не нужен — он только для «Вернуть макет».
+        {"id": s["id"], "role": s["role"], "variant": s["variant"],
+         "slots": {k: v for k, v in s["slots"].items() if k != "origin"} if s.get("variant") == "free.canvas" else s["slots"]}
         for s in deck.get("slides") or []
         if only is None or str(s["id"]) in only
     ]

@@ -29270,7 +29270,8 @@
     closeCanvasIconSheet();
     if (!req || typeof req.apply !== "function") return;
     if (String(name || "") === String(req.icon || "")) return;
-    req.apply(name);
+    var found = (canvasIconsCache || []).filter(function (x) { return x.name === name; })[0];
+    req.apply(name, found ? found.svg : "");
   }
 
   function openCanvasIconSheet(req) {

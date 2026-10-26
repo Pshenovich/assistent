@@ -114,5 +114,29 @@ class FreeSlideTests(unittest.TestCase):
         self.assertIn("origin", s["slots"])
 
 
+    def test_leo_revises_free_slide_by_comment(self):
+        import json
+
+        from assistant.lib import canvas_revise
+
+        deck = _deck({"role": "cover", "variant": "cover.goals", "slots": {"title": "A", "goals": ["x"]}})
+        tpl.apply_op(deck, {"op": "detach", "slide_id": "s1", "elements": ELEMENTS[:2]})
+        html = tpl.render_deck_html(deck, {})
+        seen = {}
+
+        def ask(system, user):
+            seen["user"] = user
+            els = json.loads(user.split("Текущие данные этих слайдов (JSON):\n", 1)[1].split("\n\n", 1)[0])["slides"][0]["slots"]["elements"]
+            els[0]["html"] = "Короче"
+            return "```leo-canvas\n" + json.dumps({"action": "update", "slides": [{"id": "s1", "slots": {"elements": els}}]}, ensure_ascii=False) + "\n```"
+
+        out, results = canvas_revise.revise(html, {"s1": "Сократи заголовок"}, ask=ask)
+        self.assertEqual(results, {"s1": "applied"})
+        self.assertNotIn('"origin"', seen["user"])
+        s1 = tpl.extract_deck(out)["slides"][0]
+        self.assertEqual((s1["variant"], s1["slots"]["elements"][0]["html"]), ("free.canvas", "Короче"))
+        self.assertEqual(s1["slots"]["origin"]["variant"], "cover.goals")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -752,6 +752,7 @@
       if (!cur || !editing()) {
         if (overlay) overlay.remove();
         overlay = null;
+        hideBar();
         return;
       }
       var ov = ensureOverlay();
@@ -793,7 +794,7 @@
         m.style.cssText = "left:" + b.x + "px;top:" + b.y + "px;width:" + b.w + "px;height:" + b.h + "px";
         ov.appendChild(m);
       }
-      post("freeSel", { count: sel.length, types: sel.map(function (n) { var e = modelOf(n); return e ? e.type : ""; }) });
+      drawBar();
     }
     // ---- прилипание к краям и центрам сцены и других элементов
     function snap(box, others) {
@@ -1105,17 +1106,393 @@
           sel = [];
           drawChrome();
         } else if (ev.key === "Escape") {
+          if (addMenu) {
+            addMenu.remove();
+            addMenu = null;
+          }
           clearSel();
         }
       },
       true
     );
+    // ---- панель оформления выделенного и «+ Элемент» (fixed, в координатах окна фрейма)
+    var bar = null;
+    var addMenu = null;
+    var clip = null;
+    var SWATCH_TEXT = ["text", "muted", "acc", "white", "black"];
+    var SWATCH_FILL = ["el", "acc", "acc-soft", "grad", "text", "white", "black", "none"];
+    var SIZES = [["s", "S"], ["m", "M"], ["l", "L"], ["xl", "XL"], ["xxl", "2XL"], ["xxxl", "3XL"]];
+    function newId() {
+      return Math.random().toString(16).slice(2, 10);
+    }
+    function esc(s) {
+      return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+      });
+    }
+    function selModels() {
+      var els = getEls(cur.sid);
+      return sel.map(function (n) { return byId(els, n.getAttribute("data-fid")); }).filter(Boolean);
+    }
+    function patchSel(fn) {
+      if (!cur || !sel.length) return;
+      var ids = sel.map(function (n) { return n.getAttribute("data-fid"); });
+      commit(cur.sid, function (els) {
+        els.forEach(function (e) {
+          if (ids.indexOf(e.id) >= 0) fn(e);
+        });
+      });
+      // текст: высота по новому оформлению
+      var sec = cur.sec;
+      commitQuiet(function (els) {
+        els.forEach(function (e) {
+          if (ids.indexOf(e.id) >= 0 && e.type === "text") {
+            var th = textHeight(nodeOf(sec, e.id));
+            if (th) e.h = th;
+          }
+        });
+      });
+    }
+    // Правка без отдельного шага истории (догоняет предыдущий commit).
+    function commitQuiet(fn) {
+      var els = getEls(cur.sid);
+      var before = JSON.stringify(els);
+      fn(els);
+      if (JSON.stringify(els) === before) return;
+      setEls(cur.sid, els);
+      syncDom(cur.sid, els);
+    }
+    function swatch(name, isFill) {
+      // Цвет кружка — как на этом слайде (токены зависят от фона слайда и стиля).
+      var c = paint(name);
+      var sr = cur && slideRoot(cur.sec);
+      if (sr && /^var\(/.test(c)) {
+        var v = getComputedStyle(sr).getPropertyValue(c.slice(4, -1)).trim();
+        if (v) c = v;
+      }
+      var bg = name === "none" ? "repeating-linear-gradient(45deg,#fff 0 4px,#ddd 4px 8px)" : c;
+      return '<button type="button" class="leo-fr-sw" data-v="' + name + '" title="' + name + '" style="background:' + bg + '"></button>';
+    }
+    function hideBar() {
+      if (bar) bar.remove();
+      bar = null;
+    }
+    function drawBar() {
+      if (!cur || !sel.length || gesture || !editing()) return hideBar();
+      var models = selModels();
+      if (!models.length) return hideBar();
+      var types = models.map(function (e) { return e.type; });
+      var one = models.length === 1 ? models[0] : null;
+      var allText = types.every(function (t) { return t === "text"; });
+      var allShape = types.every(function (t) { return t === "shape"; });
+      var html = "";
+      if (allText) {
+        var st = (one && one.style) || {};
+        html +=
+          '<select data-act="size" title="Размер текста">' +
+          SIZES.map(function (s) { return '<option value="' + s[0] + '"' + (st.size === s[0] && !st.px ? " selected" : "") + ">" + s[1] + "</option>"; }).join("") +
+          (st.px ? '<option value="" selected>' + Math.round(st.px) + "</option>" : "") +
+          "</select>" +
+          '<button type="button" data-act="font" title="Шрифт заголовка / текста">' + (st.font === "display" ? "Заг" : "Текст") + "</button>" +
+          '<button type="button" data-act="bold" title="Жирный (в режиме правки текста — выделенный фрагмент)"><b>Ж</b></button>' +
+          '<button type="button" data-act="accent" title="Выделить фрагмент цветом акцента (в режиме правки текста)">A<sub>●</sub></button>' +
+          '<span class="leo-fr-sep"></span>' +
+          SWATCH_TEXT.map(function (n) { return swatch(n); }).join("") +
+          '<span class="leo-fr-sep"></span>' +
+          '<button type="button" data-act="align" data-v="left" title="Влево">⇤</button>' +
+          '<button type="button" data-act="align" data-v="center" title="По центру">↔</button>' +
+          '<button type="button" data-act="align" data-v="right" title="Вправо">⇥</button>';
+      } else if (allShape) {
+        html += SWATCH_FILL.map(function (n) { return swatch(n, true); }).join("") +
+          '<span class="leo-fr-sep"></span>' +
+          '<button type="button" data-act="radius" data-v="0" title="Прямые углы">▢</button>' +
+          '<button type="button" data-act="radius" data-v="16" title="Скруглить">▢̃</button>' +
+          '<button type="button" data-act="radius" data-v="circle" title="Круг">○</button>';
+      } else if (types.every(function (t) { return t === "icon"; })) {
+        html += SWATCH_TEXT.map(function (n) { return swatch(n); }).join("");
+      }
+      html +=
+        (html ? '<span class="leo-fr-sep"></span>' : "") +
+        '<button type="button" data-act="front" title="На передний план">⤒</button>' +
+        '<button type="button" data-act="back" title="На задний план">⤓</button>' +
+        '<button type="button" data-act="dup" title="Дублировать (⌘D)">⧉</button>' +
+        '<button type="button" data-act="del" title="Удалить (Delete)">🗑</button>';
+      if (!bar) {
+        bar = document.createElement("div");
+        bar.className = "leo-edit-chrome leo-fr-bar";
+        bar.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
+        bar.addEventListener("mousedown", function (e) {
+          if (e.target.tagName !== "SELECT") e.preventDefault(); // не терять выделение текста
+        });
+        bar.addEventListener("click", onBar);
+        bar.addEventListener("change", onBar);
+        document.body.appendChild(bar);
+      }
+      bar.innerHTML = html;
+      // над выделением (в координатах окна)
+      var r = null;
+      sel.forEach(function (n) {
+        var q = n.getBoundingClientRect();
+        r = r ? { l: Math.min(r.l, q.left), t: Math.min(r.t, q.top), r: Math.max(r.r, q.right) } : { l: q.left, t: q.top, r: q.right };
+      });
+      var bw = bar.offsetWidth || 300;
+      var left = Math.max(6, Math.min(window.innerWidth - bw - 6, (r.l + r.r) / 2 - bw / 2));
+      var top = r.t - 46;
+      if (top < 6) top = r.t + 8;
+      bar.style.left = left + "px";
+      bar.style.top = top + "px";
+    }
+    function onBar(ev) {
+      var b = ev.target.closest("[data-act],[data-v]");
+      if (!b || !cur) return;
+      if (ev.type === "click" && b.tagName === "SELECT") return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      var act = b.getAttribute("data-act") || "swatch";
+      var v = b.getAttribute("data-v") || b.value;
+      var models = selModels();
+      if (act === "swatch") {
+        var isFill = models.every(function (e) { return e.type === "shape"; });
+        patchSel(function (e) {
+          e.style = e.style || {};
+          if (isFill) e.style.fill = v;
+          else e.style.color = v;
+        });
+      } else if (act === "size") {
+        if (!v) return;
+        patchSel(function (e) { e.style.size = v; delete e.style.px; delete e.style.lh; });
+      } else if (act === "font") {
+        var toDisplay = !models.every(function (e) { return (e.style || {}).font === "display"; });
+        patchSel(function (e) { e.style.font = toDisplay ? "display" : "body"; });
+      } else if (act === "bold") {
+        if (textEdit) {
+          document.execCommand("bold");
+          post("dirty", {});
+        } else {
+          var bold = !models.every(function (e) { return (e.style || {}).weight >= 600; });
+          patchSel(function (e) { e.style.weight = bold ? 600 : 400; });
+        }
+      } else if (act === "accent") {
+        if (!textEdit) {
+          post("notice", { text: "Дважды кликните по тексту и выделите фрагмент" });
+          return;
+        }
+        var s = window.getSelection();
+        if (s && s.rangeCount && !s.isCollapsed) {
+          var txt = esc(s.toString());
+          document.execCommand("insertHTML", false, '<span class="acc">' + txt + "</span>");
+          post("dirty", {});
+        }
+      } else if (act === "align") {
+        patchSel(function (e) { e.style.align = v; });
+      } else if (act === "radius") {
+        patchSel(function (e) {
+          if (v === "circle") e.shape = "circle";
+          else {
+            if (e.shape === "circle") e.shape = "round";
+            e.style.radius = parseInt(v, 10) || 0;
+            e.shape = e.style.radius ? "round" : "rect";
+          }
+        });
+      } else if (act === "front" || act === "back") {
+        var ids = sel.map(function (n) { return n.getAttribute("data-fid"); });
+        commit(cur.sid, function (els) {
+          var zs = els.map(function (e) { return e.z || 1; });
+          var hi = Math.max.apply(null, zs);
+          var lo = Math.min.apply(null, zs);
+          els.forEach(function (e) {
+            if (ids.indexOf(e.id) >= 0) e.z = act === "front" ? hi + 1 : Math.max(0, lo - 1);
+          });
+        });
+      } else if (act === "dup") {
+        duplicate(sel, 20);
+      } else if (act === "del") {
+        removeSel();
+      }
+      drawBar();
+    }
+    function removeSel() {
+      var ids = sel.map(function (n) { return n.getAttribute("data-fid"); });
+      commit(cur.sid, function (els) {
+        for (var i = els.length - 1; i >= 0; i--) if (ids.indexOf(els[i].id) >= 0) els.splice(i, 1);
+      });
+      sel = [];
+      drawChrome();
+    }
+    // Копия узла с новым id: текст — новый data-slot, картинка — новый media-ключ (картинка копируется).
+    function cloneNode(n, id) {
+      var c = n.cloneNode(true);
+      c.setAttribute("data-fid", id);
+      var t = c.querySelector("[data-slot]");
+      if (t) {
+        t.setAttribute("data-slot", "free." + id + ".html");
+        t.setAttribute("data-leo-id", cur.sid + "-free." + id + ".html");
+      }
+      var m = c.querySelector("[data-media]");
+      if (m) {
+        var mid = cur.sid + "-f-" + id;
+        m.setAttribute("data-media", mid);
+        m.setAttribute("data-leo-id", mid);
+      }
+      return c;
+    }
+    function duplicate(nodes, off) {
+      if (!cur || !nodes.length) return;
+      var els0 = getEls(cur.sid);
+      var hi = Math.max.apply(null, [0].concat(els0.map(function (e) { return e.z || 1; })));
+      var rootEl = slideRoot(cur.sec);
+      var made = [];
+      var pairs = nodes.map(function (n) {
+        var src = byId(els0, n.getAttribute("data-fid"));
+        if (!src) return null;
+        var id = newId();
+        var copy = JSON.parse(JSON.stringify(src));
+        copy.id = id;
+        copy.x = r1(copy.x + off);
+        copy.y = r1(copy.y + off);
+        copy.z = ++hi;
+        if (copy.mkey) copy.mkey = "f-" + id;
+        var c = cloneNode(n, id);
+        rootEl.appendChild(c);
+        made.push(c);
+        return copy;
+      }).filter(Boolean);
+      commit(cur.sid, function (els) {
+        pairs.forEach(function (p) { els.push(p); });
+      });
+      select(made, false);
+    }
+    // ---- новые элементы: разметка как у canvas_free.render
+    function nodeHtml(e) {
+      var st = e.style || {};
+      var head = '<div class="fr-el fr-' + e.type + '" data-fid="' + e.id + '" style="">';
+      if (e.type === "text") {
+        var path = "free." + e.id + ".html";
+        return head + '<div class="fr-text fr-size-' + st.size + " fr-font-" + st.font + '" data-slot="' + path + '" data-leo-id="' + cur.sid + "-" + path +
+          '" data-rich="1" contenteditable="true">' + e.html + "</div></div>";
+      }
+      if (e.type === "shape") return head + (e.shape === "line" ? '<i class="fr-line"></i>' : '<i class="fr-shape"></i>') + "</div>";
+      if (e.type === "icon") {
+        return head + '<span class="fr-icon"><svg class="ico fr-ico" data-icon="' + esc(e.icon) + '" viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">' +
+          (e._svg || "") + "</svg></span></div>";
+      }
+      var mid = cur.sid + "-" + e.mkey;
+      if (e.type === "image") {
+        return head + '<div class="fr-clip"><div class="media-slot tpl-media tpl-media-empty abstract fr-media" data-media="' + mid + '" data-leo-id="' + mid + '">' +
+          '<div><p class="lbl acc" style="margin:0 0 8px">Изображение</p><p style="max-width:30ch">Двойной клик — загрузить или сгенерировать</p></div></div></div></div>';
+      }
+      if (e.type === "object") {
+        var lime = root.getAttribute("data-leo-theme") === "lime";
+        var dark = cur.sec.querySelector(".fr-dark");
+        var url = lime ? "/webapp/canvas-kit/objects-lime/" + e.visual + (dark ? "-dark" : "-light") + ".jpg" : "/webapp/canvas-kit/objects/" + e.visual + ".jpg";
+        return head + '<div class="a3 fr-a3" data-media="' + mid + '" data-leo-id="' + mid + '" data-a3="' + e.visual + '"><div class="a3-obj" style="background-image:url(' + url + ')"></div></div></div>';
+      }
+      return "";
+    }
+    function addElement(kind, extra) {
+      if (!cur) return;
+      var els0 = getEls(cur.sid);
+      var z = 1 + Math.max.apply(null, [0].concat(els0.map(function (e) { return e.z || 1; })));
+      var id = newId();
+      var e = { id: id, type: kind, x: 440, y: 260, w: 400, h: 200, z: z };
+      if (kind === "heading") {
+        e = Object.assign(e, { type: "text", x: 80, y: 80, w: 900, h: 80, html: "Заголовок",
+          style: { size: "xxl", font: "display", align: "left", color: "text", weight: 400 } });
+      } else if (kind === "text") {
+        e = Object.assign(e, { y: 300, w: 520, h: 60, html: "Текст", style: { size: "m", font: "body", align: "left", color: "text", weight: 400 } });
+      } else if (kind === "rect" || kind === "circle" || kind === "line") {
+        e = Object.assign(e, { type: "shape", shape: kind === "rect" ? "round" : kind, style: { fill: kind === "line" ? "rule" : "el", radius: kind === "rect" ? 16 : 0 } });
+        if (kind === "circle") { e.w = 200; e.h = 200; }
+        if (kind === "line") { e.y = 360; e.w = 600; e.h = 2; e.x = 340; }
+      } else if (kind === "image") {
+        e = Object.assign(e, { x: 400, y: 160, w: 480, h: 400, mkey: "f-" + id, style: { radius: 16 } });
+      } else if (kind === "object") {
+        e = Object.assign(e, { x: 520, y: 240, w: 240, h: 240, mkey: "f-" + id, visual: (extra && extra.visual) || "orb", style: { radius: 16 } });
+      } else if (kind === "icon") {
+        e = Object.assign(e, { x: 600, y: 320, w: 80, h: 80, icon: extra.name, _svg: extra.svg || "", style: { color: "acc" } });
+      }
+      var wrap = document.createElement("div");
+      wrap.innerHTML = nodeHtml(e);
+      var node = wrap.firstChild;
+      delete e._svg;
+      slideRoot(cur.sec).appendChild(node);
+      commit(cur.sid, function (els) { els.push(e); });
+      select([node], false);
+      if (e.type === "text") {
+        textEdit = node;
+        var t = node.querySelector("[data-slot]");
+        t.focus();
+        document.execCommand("selectAll");
+        drawChrome();
+      }
+    }
+    function openAdd(anchor, sec) {
+      if (addMenu) {
+        addMenu.remove();
+        addMenu = null;
+        return;
+      }
+      setCur(sec);
+      addMenu = document.createElement("div");
+      addMenu.className = "leo-edit-chrome leo-fr-add";
+      addMenu.innerHTML = [["heading", "Заголовок"], ["text", "Текст"], ["rect", "Прямоугольник"], ["circle", "Круг"], ["line", "Линия"],
+        ["image", "Картинка"], ["icon", "Иконка…"], ["object", "3D-объект"]]
+        .map(function (x) { return '<button type="button" data-k="' + x[0] + '">' + x[1] + "</button>"; }).join("");
+      addMenu.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
+      addMenu.addEventListener("click", function (e) {
+        var b = e.target.closest("[data-k]");
+        if (!b) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var k = b.getAttribute("data-k");
+        addMenu.remove();
+        addMenu = null;
+        if (k === "icon") post("freeIcon", { slideId: cur.sid });
+        else addElement(k);
+      });
+      document.body.appendChild(addMenu);
+      var r = anchor.getBoundingClientRect();
+      addMenu.style.left = Math.max(6, r.right - 180) + "px";
+      addMenu.style.top = r.bottom + 6 + "px";
+    }
+    document.addEventListener("leo-free-add", function (ev) {
+      var d = ev.detail || {};
+      if (d.sec && d.anchor) openAdd(d.anchor, d.sec);
+    });
+    window.addEventListener("keydown", function (ev) {
+      if (!cur || !editing() || textEdit) return;
+      var a = document.activeElement;
+      if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT" || a.isContentEditable)) return;
+      var mod = ev.metaKey || ev.ctrlKey;
+      var k = String(ev.key || "").toLowerCase();
+      if (mod && k === "d" && sel.length) {
+        ev.preventDefault();
+        duplicate(sel, 20);
+      } else if (mod && k === "c" && sel.length) {
+        clip = sel.slice();
+      } else if (mod && k === "v" && clip && clip.length) {
+        ev.preventDefault();
+        duplicate(clip.filter(function (n) { return n.isConnected; }), 30);
+      }
+    }, true);
+    window.addEventListener("message", function (ev) {
+      var d = ev && ev.data;
+      if (!d || d.source !== "leo-web-canvas-host") return;
+      if (d.type === "freeAddIcon" && d.name) {
+        var sec = document.querySelector('section[data-slide-id="' + String(d.slideId || "").replace(/"/g, "") + '"]');
+        if (sec) setCur(sec);
+        addElement("icon", { name: String(d.name), svg: String(d.svg || "") });
+      }
+    });
+
     new MutationObserver(function () {
       if (!editing()) {
         sel = [];
         textEdit = null;
         cur = null;
         drawChrome();
+        if (addMenu) addMenu.remove();
+        addMenu = null;
       }
     }).observe(root, { attributes: true, attributeFilter: ["class"] });
     // Хост (панель оформления, этап 4) управляет выделенным через сообщения.
@@ -1633,6 +2010,12 @@
         );
       }
       var isFree = cur === "free.canvas";
+      if (isFree) {
+        tools.insertAdjacentHTML(
+          "afterbegin",
+          '<button type="button" data-act="freeadd" title="Добавить на слайд текст, фигуру, картинку, иконку или 3D-объект">+ Элемент</button>'
+        );
+      }
       if (isFree && sec.querySelector("[data-free-origin]")) {
         tools.insertAdjacentHTML(
           "afterbegin",
@@ -1662,6 +2045,8 @@
           else openMenu(tools, sid, cur, list);
         } else if (act === "savelayout") {
           post("saveLayout", { slideId: sid });
+        } else if (act === "freeadd") {
+          document.dispatchEvent(new CustomEvent("leo-free-add", { detail: { sec: sec, anchor: b } }));
         } else if (act === "detach") {
           var parts = measureSlide(sec);
           if (!parts.elements.length) {
@@ -1954,6 +2339,14 @@
     ".leo-fr-h[data-h=n],.leo-fr-h[data-h=s]{cursor:ns-resize}.leo-fr-h[data-h=e],.leo-fr-h[data-h=w]{cursor:ew-resize}" +
     ".leo-fr-guide{position:absolute;background:#ec4899;pointer-events:none}" +
     ".leo-fr-marquee{position:absolute;border:1px solid #3b82f6;background:rgba(59,130,246,.12);pointer-events:none}" +
+    ".leo-edit-chrome.leo-fr-bar,.leo-edit-chrome.leo-fr-add{position:fixed;top:0;right:auto;z-index:80;display:flex;align-items:center;gap:4px;padding:5px;border-radius:10px;background:#fff;box-shadow:0 6px 24px rgba(0,0,0,.22);font:12px/1 ui-sans-serif,system-ui,-apple-system,sans-serif;color:#18201d}" +
+    ".leo-fr-bar button,.leo-fr-bar select{appearance:none;height:28px;min-width:28px;padding:0 8px;border:1px solid rgba(10,10,10,.12);border-radius:7px;background:#fff;color:#18201d;font:inherit;cursor:pointer}" +
+    ".leo-fr-bar select{padding-right:6px}" +
+    ".leo-fr-bar .leo-fr-sw{min-width:22px;width:22px;height:22px;padding:0;border-radius:50%;border:1px solid rgba(10,10,10,.2)}" +
+    ".leo-fr-sep{width:1px;height:20px;background:rgba(10,10,10,.12);margin:0 2px}" +
+    ".leo-edit-chrome.leo-fr-add{flex-direction:column;align-items:stretch;min-width:170px;padding:4px}" +
+    ".leo-fr-add button{appearance:none;padding:8px 10px;border:0;border-radius:7px;background:none;color:#18201d;font:inherit;font-size:13px;text-align:left;cursor:pointer}" +
+    ".leo-fr-add button:hover{background:#eef4f1}" +
     "html.leo-edit-mode section[data-variant='free.canvas'] .fr-el{cursor:move}" +
     "html.leo-edit-mode section[data-variant='free.canvas'] [data-slot][contenteditable=true]{outline:none;cursor:move}" +
     "html.leo-edit-mode section[data-variant='free.canvas'] [data-slot][contenteditable=true]:focus{cursor:text}" +
@@ -2836,6 +3229,17 @@
           delta: Number(d.delta) || 0,
           elements: Array.isArray(d.elements) ? d.elements : null,
           surface: d.surface != null ? String(d.surface) : "",
+        });
+        return;
+      }
+      if (d.type === "freeIcon" && onIcon) {
+        var freeSid = String(d.slideId || "");
+        onIcon({
+          sheetId: sheetId,
+          icon: "",
+          apply: function (name, svg) {
+            postToFrame({ type: "freeAddIcon", slideId: freeSid, name: String(name || ""), svg: String(svg || "") });
+          },
         });
         return;
       }
