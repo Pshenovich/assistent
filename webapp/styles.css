@@ -23393,3 +23393,11 @@ ol.note-discuss-md-list { list-style: decimal; }
 .sheet-props .note-backlinks-row { padding-left: calc(0.9rem + 28px); }
 .sheet-result-group > .sheet-sublabel { margin: 0; padding: 10px 0.9rem 0; }
 .sheet-result-group .field-textarea.event-sheet-desc { min-height: 48px; padding-top: 4px; border: none; background: transparent; }
+/* Подсказки не липнут к полям: отступ сверху, рамки чипов мягче */
+.sheet-when .sheet-chips.sheet-scroll { margin-top: 4px; }
+.sheet-when .sheet-when-sep { margin-top: 6px; margin-bottom: 4px; }
+.sheet-props .sheet-chip { border-color: rgba(255, 255, 255, 0.14); color: #d6d8db; }
+.sheet-props .sheet-chip.is-active { border-color: var(--accent-border, var(--accent)); color: var(--accent); }
+/* Повтор: варианты одной строкой с прокруткой, «Настроить…» — там же последним */
+.sheet-props .sheet-repeat-body { gap: 12px; }
+.sheet-repeat-body .sheet-chips.sheet-scroll { padding-bottom: 2px; }

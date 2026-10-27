@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261027-sheets";
+  var WEBAPP_BUILD = "20261027-sheets2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261027-sheets"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261027-sheets2"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -17665,7 +17665,7 @@
       eventSheetChevronHtml() +
       "</span></button>" +
       '<div class="sheet-repeat-body hidden">' +
-      '<div class="sheet-chips" role="radiogroup" aria-label="Повтор">' +
+      '<div class="sheet-chips sheet-scroll" role="radiogroup" aria-label="Повтор">' +
       chips.map(function (c) {
         return '<button type="button" class="sheet-chip" role="radio" data-repeat="' + c[0] + '">' + c[1] + "</button>";
       }).join("") +

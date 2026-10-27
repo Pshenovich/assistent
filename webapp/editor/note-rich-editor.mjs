@@ -5012,7 +5012,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261027-sheets",
+  assetVersion: "20261027-sheets2",
   Y: Y,
   mount: mount,
   importBody: importBody,
