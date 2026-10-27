@@ -50,6 +50,14 @@ class CardsTests(unittest.TestCase):
         self.assertEqual(q["title"], "Не решено: Какой анонимизатор")
         self.assertNotIn("mark_done", [a["act"] for a in fu["actions"] + q["actions"]])
 
+    def test_promise_only_from_my_message(self) -> None:
+        # Чужое «завтра поставлю в прод» — не «вы обещали»: автор сверяется по номеру сообщения.
+        authors = {10: 777, 11: 555}
+        self.assertTrue(pa.promise_is_mine(777, {"kind": "promise", "msg": 10}, authors))
+        self.assertFalse(pa.promise_is_mine(777, {"kind": "promise", "msg": 11}, authors))
+        self.assertFalse(pa.promise_is_mine(777, {"kind": "promise", "msg": 0}, authors))
+        self.assertFalse(pa.promise_is_mine(777, {"kind": "promise", "msg": 99}, authors))
+
     def test_chat_card_mark_done_only_for_tasks(self) -> None:
         promise = pa.chat_card({"kind": "promise", "text": "Пришлю доступы к стенду", "msg": 3}, chat_id=-100, day="2026-10-17",
                                title="Бустра", today=TODAY, task_titles=[])

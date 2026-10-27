@@ -684,6 +684,23 @@ def normalize_chat_items(obj: Any) -> list[dict[str, Any]]:
     return out[:5]
 
 
+def promise_is_mine(uid: int, it: dict[str, Any], authors: dict[int, Optional[int]]) -> bool:
+    """«Вы обещали» — только если сообщение-источник написал сам пользователь.
+
+    ИИ путает автора (чужое «завтра поставлю в прод» в ответ на сообщение пользователя);
+    код сверяет по номеру сообщения. Нет номера или сообщения — не обещание."""
+    try:
+        msg = int(it.get("msg") or 0)
+    except (TypeError, ValueError):
+        return False
+    author = authors.get(msg)
+    return bool(msg) and author is not None and int(author) == int(uid)
+
+
+def _authors(messages: list[dict[str, Any]]) -> dict[int, Optional[int]]:
+    return {int(m.get("message_id") or 0): m.get("user_id") for m in messages or []}
+
+
 def digest_candidates(uid: int) -> list[tuple[int, str, str, str]]:
     """Отчёты дайджеста по выбранным чатам за 3 дня, ещё не разобранные «для меня» в текущем виде."""
     from assistant.stores import chat_digest as digest_store
@@ -755,7 +772,8 @@ def analyze_digest(uid: int, chat_id: int, day: str, key: str, content_hash: str
                 items.extend(normalize_chat_items(json.loads(strip_json_from_markdown(raw))))
             except (json.JSONDecodeError, TypeError):
                 continue
-        items = items[:8]
+        authors = _authors(messages)
+        items = [it for it in items if it.get("kind") != "promise" or promise_is_mine(uid, it, authors)][:8]
     save(uid, key, content_hash, title, items)
     return items
 
@@ -837,6 +855,7 @@ def chat_cards(uid: int, *, task_titles: Optional[list[str]] = None, chat_id: Op
             (str(uid), pattern),
         ).fetchall()
     out = []
+    authors_cache: dict[tuple[int, str], dict[int, Optional[int]]] = {}
     for r in rows:
         try:
             _, cid, d = str(r["source_key"]).split(":", 2)
@@ -844,6 +863,18 @@ def chat_cards(uid: int, *, task_titles: Optional[list[str]] = None, chat_id: Op
         except ValueError:
             continue
         for it in items:
+            if it.get("kind") == "promise":
+                # разобрано до проверки автора — сверяем при показе
+                ck = (int(cid), d)
+                if ck not in authors_cache:
+                    from assistant.stores import chat_digest as digest_store
+
+                    try:
+                        authors_cache[ck] = _authors(digest_store.messages_for_chat_date(int(cid), d))
+                    except Exception:
+                        authors_cache[ck] = {}
+                if not promise_is_mine(uid, it, authors_cache[ck]):
+                    continue
             c = chat_card(
                 it, chat_id=int(cid), day=d, title=str(r["title"] or ""), today=today,
                 task_titles=task_titles or [], handled_titles=handled,

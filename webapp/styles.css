@@ -23401,3 +23401,12 @@ ol.note-discuss-md-list { list-style: decimal; }
 /* Повтор: варианты одной строкой с прокруткой, «Настроить…» — там же последним */
 .sheet-props .sheet-repeat-body { gap: 12px; }
 .sheet-repeat-body .sheet-chips.sheet-scroll { padding-bottom: 2px; }
+/* Занятость на телефоне: час ≈ 56 px, прокрутка вбок, имена закреплены слева */
+.meeting-avail .meeting-avail-scroll { overflow-x: auto; overflow-y: visible; scrollbar-width: none; -webkit-overflow-scrolling: touch; padding: 4px 0; margin: -4px 0; }
+.meeting-avail .meeting-avail-scroll::-webkit-scrollbar { display: none; }
+@media (max-width: 959px) {
+  .meeting-avail .meeting-avail-grid { min-width: calc(78px + var(--avail-hours, 9) * 56px); }
+  .meeting-avail .meeting-avail-label,
+  .meeting-avail .meeting-avail-row > span:first-child { position: sticky; left: 0; z-index: 2; align-self: stretch; display: flex; align-items: center; background: var(--surface-elevated); box-shadow: 6px 0 6px -4px rgba(0, 0, 0, 0.5); }
+  .meeting-avail .meeting-avail-row--hours > span:first-child { box-shadow: none; }
+}

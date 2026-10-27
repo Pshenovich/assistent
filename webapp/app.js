@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261027-sheets2";
+  var WEBAPP_BUILD = "20261027-sheets4";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261027-sheets2"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261027-sheets4"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -14110,9 +14110,24 @@
     }
   }
 
+  // Поле с клавиатурой в фокусе? Без него клавиатуры нет, и урезать окно нечем.
+  function editableFieldFocused() {
+    var a = document.activeElement;
+    if (!a || a === document.body) return false;
+    if (a.isContentEditable) return true;
+    var tag = String(a.tagName || "").toLowerCase();
+    if (tag === "textarea") return !a.readOnly;
+    if (tag !== "input") return false;
+    var type = String(a.type || "text").toLowerCase();
+    return !a.readOnly && !/^(button|checkbox|radio|range|color|file|submit|reset|hidden|image)$/.test(type);
+  }
+
   function noteEditorVisibleHeightPx() {
     var tg = window.Telegram && window.Telegram.WebApp;
     var vv = window.visualViewport;
+    // Клавиатуры нет — полная высота. Telegram (после разворота / полноэкранного режима) и iOS
+    // (после скрытия клавиатуры) отдают устаревшую меньшую высоту, и окно задачи обрезалось на полэкрана.
+    if (!editableFieldFocused() && window.innerHeight > 0) return Math.round(window.innerHeight);
     var heights = [];
     if (tg && typeof tg.viewportHeight === "number" && tg.viewportHeight > 0) {
       heights.push(tg.viewportHeight);
@@ -15079,8 +15094,12 @@
     head.appendChild(nav);
     host.appendChild(head);
 
+    // На телефоне шкала шире экрана (час ≈ 56 px) и прокручивается вбок, имена закреплены слева.
+    var scroller = document.createElement("div");
+    scroller.className = "meeting-avail-scroll";
     var grid = document.createElement("div");
     grid.className = "meeting-avail-grid";
+    grid.style.setProperty("--avail-hours", String(Math.max(1, Math.round(span / 3600000))));
     var hours = document.createElement("div");
     hours.className = "meeting-avail-hours";
     var tick = new Date(workStart);
@@ -15191,7 +15210,18 @@
       allLab.textContent = "Все";
       addRow(allLab, jointFree, { joint: true });
     }
-    host.appendChild(grid);
+    scroller.appendChild(grid);
+    host.appendChild(scroller);
+    if (scroller.scrollWidth > scroller.clientWidth + 4) {
+      // к выбранному времени (или к началу дня): слот — в первой трети видимой шкалы
+      var trackEl = grid.querySelector(".meeting-avail-track");
+      var labelW = trackEl ? trackEl.offsetLeft : 0;
+      var trackW = trackEl ? trackEl.offsetWidth : 0;
+      var focusMs = sel ? sel.start : Date.now();
+      var ratio = Math.min(1, Math.max(0, (focusMs - workStart) / span));
+      var visible = scroller.clientWidth - labelW;
+      scroller.scrollLeft = Math.max(0, labelW + ratio * trackW - labelW - visible / 3);
+    }
 
     // «Все свободны»: окна, куда встреча помещается целиком (до 4), — тап ставит время.
     var dur = meetingDurationMs();
