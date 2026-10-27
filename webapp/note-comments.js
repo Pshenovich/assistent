@@ -448,6 +448,11 @@
   function alignCardsByAnchors(listEl, root, comments) {
     if (!listEl) return;
     var tops = {};
+    // Карточек нет — искать цитаты незачем: на длинном листе это сотни миллисекунд на каждый клик и клавишу.
+    if (!listEl.querySelector("[data-comment-id]")) {
+      alignCardTops(listEl, tops);
+      return;
+    }
     (comments || []).forEach(function (c) {
       if (!c || !c.id || !c.quote || isPaieComment(c) || isGptTurn(c) || isResearchTurn(c)) return;
       var range = rangeForAnchor(root, c.quote, c.prefix, c.suffix);

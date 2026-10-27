@@ -5010,7 +5010,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261026-pastelink",
+  assetVersion: "20261027-widetable",
   Y: Y,
   mount: mount,
   importBody: importBody,

@@ -1161,6 +1161,14 @@ def update_task(
         _conn().commit()
     if fields["done"] and not existing["done"] and not reassigned:
         mark_triaged(existing)  # сдал из обхода разбора — значит, взял
+    if bool(fields["done"]) != bool(existing["done"]):
+        try:  # задача из пункта встречи — в саммари «Выполнено» / снова «поставлена»
+            from assistant.services import focus_items
+
+            by = str(existing.get("assignee_name") or "") if str(existing.get("assignee_user_id") or "") == uid else ""
+            focus_items.task_done_changed(existing["owner_user_id"], int(existing["id"]), bool(fields["done"]), by)
+        except Exception as e:
+            print(f"[calendar_tasks] focus done sync failed task={existing['id']} err={e!r}")
     if fields["title"] != existing["title"]:
         try:
             from assistant.services import focus_items

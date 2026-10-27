@@ -24,6 +24,11 @@ import {
 
 var tableManageKey = new PluginKey("tableManage");
 var MIN_COL = 48;
+// Столбец без своей ширины в широкой таблице (вставка из Google Sheets / Excel приходит без ширин):
+// не уже этого. Иначе 30+ столбцов сжимаются до 48 px, длинный текст в ячейках переносится по букве,
+// таблица вырастает до сотен тысяч пикселей и каждая правка в ячейке подвешивает вкладку на секунды.
+var AUTO_COL = 200;
+var AUTO_COL_FROM = 5;
 var MIN_ROW = 32;
 var DRAG_THRESHOLD = 8;
 var activeView = null;
@@ -174,6 +179,7 @@ function updateColumns(node, colgroup, table, cellMinWidth, overrideCol, overrid
   var fixedWidth = true;
   var nextDOM = colgroup.firstChild;
   var row = node.firstChild;
+  var autoWidth = row && TableMap.get(node).width >= AUTO_COL_FROM ? Math.max(AUTO_COL, cellMinWidth) : cellMinWidth;
   if (row) {
     for (var i = 0, col = 0; i < row.childCount; i += 1) {
       var attrs = row.child(i).attrs;
@@ -183,7 +189,7 @@ function updateColumns(node, colgroup, table, cellMinWidth, overrideCol, overrid
         var hasWidth =
           overrideCol === col ? overrideValue : colwidth && colwidth[j];
         var cssWidth = hasWidth ? Math.max(hasWidth, cellMinWidth) + "px" : "";
-        totalWidth += hasWidth || cellMinWidth;
+        totalWidth += hasWidth || autoWidth;
         if (!hasWidth) fixedWidth = false;
         if (!nextDOM) {
           var colEl = document.createElement("col");

@@ -74,11 +74,18 @@ def posted_for_note(note: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+SHARED_DISMISS = ("not_a_task", "duplicate")
+
+
 def task_state(t: dict[str, Any], posted: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
     """Задача из саммари уже разобрана кем-то из участников встречи: статус, кто, ссылка. None — открыта."""
     from assistant.services.proactive_ai import _covered
 
     st = str(t.get("focus_status") or "")
+    reason = str(t.get("focus_reason") or "")
+    if st == "dismissed" and reason in SHARED_DISMISS:
+        # «Не задача» / «Дубль» — про сам пункт, а не про человека: убираем у всех. «Не моя» — личное.
+        return {"status": "dismissed", "reason": reason, "by": str(t.get("completed_by") or ""), "link": {}}
     if t.get("completed") or t.get("link") or st in ("completed", "converted", "linked"):
         link = t.get("link") if isinstance(t.get("link"), dict) else {}
         if st not in ("completed", "converted", "linked"):

@@ -132,6 +132,38 @@ class ShareTests(unittest.TestCase):
         shown = {f["key"]: f for f in ms.overlay(1, [fi.public(fi.get(1, key))])}
         self.assertEqual((shown[key]["assignee"], shown[key]["deadline"], shown[key]["status"]), ("Артём", "пятница", "new"))
 
+    def test_not_a_task_shared_not_me_personal(self) -> None:
+        self._share()
+        card = proactive.rule_summary_tasks([notes_store.get_note(1, self.nid)], {}, NOW, timezone.utc)[0]
+        for sn in fi.item_from_card(card, with_closed=True):
+            fi.remember(2, sn)
+        k_dup, k_mine = card["items"][0]["id"], card["items"][1]["id"]
+        fi.apply(2, k_dup, "dismiss", reason="duplicate", by="Ульяна")
+        fi.apply(2, k_mine, "dismiss", reason="not_me", by="Ульяна")
+        card = proactive.rule_summary_tasks([notes_store.get_note(1, self.nid)], {}, NOW, timezone.utc)[0]
+        open_ids = [i["id"] for i in card["items"]]
+        self.assertNotIn(k_dup, open_ids)  # «Дубль» — у всех
+        self.assertIn(k_mine, open_ids)  # «Не моя» — только у того, кто отказался
+        tasks = notes_store.get_note(1, self.nid)["meta"]["tasks"]
+        self.assertEqual(tasks[0].get("focus_reason"), "duplicate")
+        self.assertNotIn("focus_status", tasks[1])
+
+    def test_posted_task_done_marks_summary_completed(self) -> None:
+        self._share()
+        card = proactive.rule_summary_tasks([notes_store.get_note(1, self.nid)], {}, NOW, timezone.utc)[0]
+        for sn in fi.item_from_card(card, with_closed=True):
+            fi.remember(1, sn)
+        key = card["items"][0]["id"]
+        fi.apply(1, key, "converted", task_id=55, by="Вова")
+        self.assertEqual(fi.task_done_changed(1, 55, True, "Ульяна"), 1)
+        note_now = notes_store.get_note(1, self.nid)
+        t = note_now["meta"]["tasks"][0]
+        self.assertEqual((t["focus_status"], t["completed_by"]), ("completed", "Ульяна"))
+        self.assertIn('data-leo-mark-done="1"', note_now["body"])
+        self.assertEqual(ms.task_state(t, [])["status"], "completed")
+        self.assertEqual(fi.task_done_changed(1, 55, False), 1)
+        self.assertEqual(notes_store.get_note(1, self.nid)["meta"]["tasks"][0]["focus_status"], "converted")
+
 
 if __name__ == "__main__":
     unittest.main()

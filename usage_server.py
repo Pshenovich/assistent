@@ -10552,7 +10552,14 @@ async def miniapp_proactive_items(
         else:
             raise HTTPException(status_code=404, detail="Подсказка уже неактуальна — обновите Фокус")
         rows = [focus_items.get(uid, k) for k in keys]
-        return [focus_items.public(r) for r in rows if r]
+        out = [focus_items.public(r) for r in rows if r]
+        try:  # задачи встречи, которые уже поставил или выполнил другой участник, — не в стопку
+            from assistant.services import meeting_share
+
+            out = meeting_share.overlay(uid, out)
+        except Exception as e:
+            print(f"[focus] shared overlay failed key={key} err={e!r}")
+        return out
 
     items = await run_in_threadpool(_run)
     return {"ok": True, "items": items}

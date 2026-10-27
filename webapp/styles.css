@@ -22984,6 +22984,16 @@ body.tinbox-open { overflow: hidden; }
 .tinbox-act.is-primary:hover .tinbox-act-ico { background: var(--accent-pressed, var(--accent)); }
 .tinbox-act.is-on .tinbox-act-ico { background: var(--accent-subtle); border-color: var(--accent-border); color: var(--accent); }
 .tinbox-act-label { text-align: center; line-height: 1.2; }
+/* Стопка «Разобрать»: отказ — красный контур слева, «В задачу» — синий контур справа, без заливки. */
+.tinbox-act.is-danger { color: var(--danger); }
+.tinbox-act.is-danger .tinbox-act-ico { border-color: var(--danger); color: var(--danger); }
+.tinbox-act.is-danger:hover .tinbox-act-ico, .tinbox-act.is-danger.is-on .tinbox-act-ico { background: var(--danger-muted, rgba(239, 68, 68, 0.12)); border-color: var(--danger); color: var(--danger); }
+.tinbox-act.is-accent { color: var(--accent); }
+.tinbox-act.is-accent .tinbox-act-ico { border-color: var(--accent); color: var(--accent); }
+.tinbox-act.is-accent:hover .tinbox-act-ico, .tinbox-act.is-accent.is-on .tinbox-act-ico { background: var(--accent-subtle); border-color: var(--accent); color: var(--accent); }
+.fstack .tinbox-badge.is-left { color: var(--danger); border-color: var(--danger); }
+.fstack-pop.is-decline { width: min(240px, 100%); }
+.fstack-pop.is-decline .focus-chat-menu-item { justify-content: flex-start; text-align: left; font-weight: 600; }
 /* Подсказка с клавишей — при наведении (только где есть мышь). */
 @media (hover: hover) {
   .tinbox-act[data-tip]:hover::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); padding: 5px 9px; border-radius: 8px; background: var(--surface-elevated, #2a2a2e); border: 1px solid var(--border); color: var(--text); font-size: 0.75rem; font-weight: 500; white-space: nowrap; pointer-events: none; z-index: 2; }
@@ -23238,3 +23248,18 @@ ol.note-discuss-md-list { list-style: decimal; }
 #note-discussion-share.hidden { display: none; }
 #note-discussion-share.is-active { color: var(--vkui--color_text_accent, #529ef4); }
 #note-discussion-share:active { opacity: 0.85; transform: scale(0.98); }
+
+/* «Надиктовать» к прошедшей встрече: плашка записи внизу экрана → транскрипция встречи. */
+.ev-rec { position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 400; display: flex; align-items: center; gap: 12px; width: min(520px, calc(100vw - 32px)); box-sizing: border-box; padding: 10px 10px 10px 16px; border: 1px solid var(--border-strong, var(--border)); border-radius: 16px; background: var(--surface-elevated, #232326); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35); color: var(--text); }
+.ev-rec-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--danger); animation: ev-rec-pulse 1.2s ease-in-out infinite; }
+@keyframes ev-rec-pulse { 50% { opacity: 0.35; } }
+.ev-rec-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.ev-rec-text b { font-size: 0.92rem; }
+.ev-rec-sub { font-size: 0.78rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-rec-time { flex: none; font-variant-numeric: tabular-nums; color: var(--text-secondary); font-size: 0.88rem; }
+.ev-rec-btn { flex: none; padding: 8px 14px; border: none; border-radius: 10px; background: var(--accent); color: var(--on-accent, #fff); font: inherit; font-size: 0.88rem; font-weight: 600; cursor: pointer; }
+.ev-rec-btn.is-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); font-weight: 500; }
+/* Карандаш в углу карточки стопки — «Изменить». */
+.tinbox-pen { margin-left: auto; flex: none; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 9px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.tinbox-pen:hover { background: var(--surface-elevated); color: var(--text); }
+.tinbox-pen svg { width: 16px; height: 16px; }

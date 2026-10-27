@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261027-chat-live";
+  var WEBAPP_BUILD = "20261027-widetable";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261026-pastelink"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261027-widetable"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -19075,6 +19075,7 @@
       e.preventDefault();
       var act = b.getAttribute("data-act");
       if (act === "upload") file.click();
+      else if (act === "dictate" && eventIsPast(ev)) eventDictateRecording(ev);
       else eventCreateNote(ev, act === "dictate");
     });
     file.addEventListener("change", function () {
@@ -19267,8 +19268,10 @@
     var key = meetingEventKey(ev);
     if (eventUploadsPending[key]) return;
     eventUploadsPending[key] = { name: f.name || "запись" };
-    renderEventMaterials(box, ev, []);
-    loadEventMaterials(ev, box);
+    if (box) {
+      renderEventMaterials(box, ev, []);
+      loadEventMaterials(ev, box);
+    }
     var fd = new FormData();
     fd.append("file", f, f.name || "audio.mp3");
     fd.append("with_summary", "1");
@@ -19305,6 +19308,86 @@
     }
     var live = currentEventMaterialsBox(ev);
     if (live) loadEventMaterials(ev, live);
+  }
+
+  // «Надиктовать» к прошедшей встрече: запись голоса → транскрипция встречи с саммари (как «Добавить запись»),
+  // а не заметка — итоги надиктовывают, и они должны лежать рядом с остальными записями встречи.
+  var eventDict = null;
+
+  async function eventDictateRecording(ev) {
+    if (eventDict) return;
+    if (!noteDictSupported()) {
+      showNoteToast("Запись звука недоступна в этом браузере");
+      return;
+    }
+    var d = { ev: ev, chunks: [], sec: 0 };
+    eventDict = d;
+    try {
+      d.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      eventDict = null;
+      showNoteToast("Нет доступа к микрофону — разрешите его в настройках браузера");
+      return;
+    }
+    var mime = preferredVoiceMimeType();
+    try {
+      d.rec = mime ? new MediaRecorder(d.stream, { mimeType: mime }) : new MediaRecorder(d.stream);
+    } catch (_) {
+      try {
+        d.rec = new MediaRecorder(d.stream);
+      } catch (e2) {
+        eventDictFinish(d, false);
+        showNoteToast("Запись звука недоступна в этом браузере");
+        return;
+      }
+    }
+    d.rec.addEventListener("dataavailable", function (e) {
+      if (e.data && e.data.size) d.chunks.push(e.data);
+    });
+    d.rec.addEventListener("stop", function () {
+      if (!d.keep) return;
+      var type = d.rec.mimeType || mime || "audio/webm";
+      var file = new File([new Blob(d.chunks, { type: type })], "Итоги встречи." + voiceExtFromMime(type), { type: type });
+      eventUploadRecording(d.ev, file, currentEventMaterialsBox(d.ev));
+    });
+    var bar = document.createElement("div");
+    bar.className = "ev-rec";
+    bar.setAttribute("role", "status");
+    bar.innerHTML =
+      '<span class="ev-rec-dot"></span><span class="ev-rec-text"><b>Итоги встречи</b><span class="ev-rec-sub">' +
+      escapeHtml(ev.title || ev.summary || "Встреча") +
+      '</span></span><span class="ev-rec-time">0:00</span>' +
+      '<button type="button" class="ev-rec-btn is-ghost" data-rec="cancel">Отмена</button>' +
+      '<button type="button" class="ev-rec-btn" data-rec="done">Готово</button>';
+    bar.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-rec]");
+      if (b) eventDictFinish(d, b.getAttribute("data-rec") === "done");
+    });
+    document.body.appendChild(bar);
+    d.bar = bar;
+    d.timer = setInterval(function () {
+      d.sec++;
+      var t = bar.querySelector(".ev-rec-time");
+      if (t) t.textContent = noteDictFmt(d.sec);
+      if (d.sec >= 60 * 60) eventDictFinish(d, true);
+    }, 1000);
+    d.rec.start(1000);
+  }
+
+  function eventDictFinish(d, keep) {
+    if (eventDict !== d) return;
+    eventDict = null;
+    d.keep = !!keep && d.sec >= 2;
+    if (keep && !d.keep) showNoteToast("Слишком коротко — запись не сохранена");
+    if (d.timer) clearInterval(d.timer);
+    if (d.bar) d.bar.remove();
+    try {
+      if (d.rec && d.rec.state !== "inactive") d.rec.stop();
+    } catch (_) {}
+    try {
+      if (d.stream) d.stream.getTracks().forEach(function (t) { t.stop(); });
+    } catch (_) {}
+    if (d.keep) showNoteToast("Расшифровываю итоги — появятся в материалах встречи");
   }
 
   async function eventCreateNote(ev, dictate) {
@@ -20233,9 +20316,9 @@
     "Открыть встречу": "Встреча",
   };
 
-  // «Поставить задачу» / «Себе на пт» / «Задача себе» / «Напомнить себе» — это «В задачу».
+  // «Поставить задачу» / «Поставить всё» / «Себе на пт» / «Задача себе» / «Напомнить себе» — это «В задачу».
   function focusIsTaskAct(a) {
-    return !!a && a.act === "assistant" && /^(Поставить задачу|Себе|Задача себе|Напомнить себе)(\s|$)/.test(String(a.label || ""));
+    return !!a && a.act === "assistant" && /^(Поставить задачу|Поставить всё|Себе|Задача себе|Напомнить себе)(\s|$)/.test(String(a.label || ""));
   }
 
   function focusKindLabel(tag) {
@@ -20364,8 +20447,8 @@
       b.textContent = taskAct ? "В задачу" : FOCUS_SHORT_LABEL[a.label] || a.label;
       b.addEventListener("click", function (e) {
         e.preventDefault();
-        if (a.act === "__stack") openFocusStack(it, "stack");
-        else if (taskAct) openFocusStack(it, "stack", { task: true });
+        // «В задачу» с пунктами — всегда стопка карточек (и при одном пункте); чат с Лео — только «Уточнить».
+        if (a.act === "__stack" || taskAct) openFocusStack(it, "stack");
         else runFocusAction(it, a, b);
       });
       acts.appendChild(b);
@@ -20420,17 +20503,32 @@
     return card;
   }
 
-  // ——— Входящие поручения: разбор стопкой карточек (Позже / Беру / Сделано / Изменить / Не моё) ———
+  // ——— Входящие поручения: разбор стопкой карточек (Не моё / Позже / Сделано / Изменить / Беру) ———
   // Новое поручение не попадает в календарь исполнителя, пока он его не взял.
+  // Жесты как в стопке задач встречи: ← / влево — отказ с обязательной причиной, → / вправо — «Беру».
   var tinbox = null;
 
   var TINBOX_ACTS = [
-    { id: "snooze", label: "Позже", icon: "clock", key: "←", code: "ArrowLeft" },
-    { id: "accept", label: "Беру", icon: "cal", key: "→", code: "ArrowRight", primary: true },
+    { id: "decline", label: "Не моё", icon: "x", key: "←", code: "ArrowLeft", tone: "danger" },
+    { id: "snooze", label: "Позже", icon: "clock", key: "P", code: "KeyP" },
     { id: "done", label: "Сделано", icon: "check", key: "D", code: "KeyD" },
     { id: "edit", label: "Изменить", icon: "pen", key: "E", code: "KeyE" },
-    { id: "decline", label: "Не моё", icon: "undo", key: "N", code: "KeyN" },
+    { id: "accept", label: "Беру", icon: "cal", key: "→", code: "ArrowRight", tone: "accent" },
   ];
+
+  // Карандаш в углу карточки — правка без поиска по кнопкам и клавишам.
+  function tinboxPen(fn) {
+    var b = tinboxEl("button", "tinbox-pen");
+    b.type = "button";
+    b.innerHTML = DISCUSS_ICONS.pen || "";
+    b.title = "Изменить · клавиша E";
+    b.setAttribute("aria-label", "Изменить");
+    b.addEventListener("click", function (e) {
+      e.preventDefault();
+      fn();
+    });
+    return b;
+  }
 
   function tinboxEl(tag, cls, text) {
     var el = document.createElement(tag);
@@ -20491,6 +20589,11 @@
     // Компьютер: окно по центру — клик мимо него закрывает разбор.
     host.addEventListener("click", function (e) {
       if (e.target === host) closeTaskInbox();
+    });
+    host.addEventListener("pointerdown", function (e) {
+      if (!tinbox || !tinbox.menu || e.target.closest(".fstack-pop, .tinbox-act")) return;
+      tinbox.menu = "";
+      renderTaskInbox();
     });
     document.body.appendChild(host);
     document.body.classList.add("tinbox-open");
@@ -20593,12 +20696,16 @@
         tinboxEl("span", "tinbox-due", "Предложенный срок: " + tinboxDayLabel(due.day, true) + (due.time ? ", " + due.time : ""))
       );
     }
-    var badgeL = tinboxEl("span", "tinbox-badge is-left", "Позже");
+    var badgeL = tinboxEl("span", "tinbox-badge is-left", "Не беру");
     var badgeR = tinboxEl("span", "tinbox-badge is-right", "Беру");
     card.appendChild(badgeL);
     card.appendChild(badgeR);
     if (s.mode) card.appendChild(tinboxForm(task, s.mode));
-    else tinboxSwipe(card, badgeL, badgeR);
+    else {
+      tinboxSwipe(card, badgeL, badgeR, function (dir) {
+        tinboxRun(dir === "left" ? "decline" : "accept");
+      });
+    }
     return card;
   }
 
@@ -20655,7 +20762,8 @@
   function tinboxActions(task) {
     var row = tinboxEl("div", "tinbox-acts");
     TINBOX_ACTS.forEach(function (a) {
-      var b = tinboxEl("button", "tinbox-act" + (a.primary ? " is-primary" : "") + (tinbox.mode === a.id ? " is-on" : ""));
+      var on = tinbox.mode === a.id || (a.id === "decline" && tinbox.menu === "decline");
+      var b = tinboxEl("button", "tinbox-act" + (a.tone ? " is-" + a.tone : "") + (on ? " is-on" : ""));
       b.type = "button";
       b.dataset.act = a.id;
       var ico = tinboxEl("span", "tinbox-act-ico");
@@ -20672,16 +20780,50 @@
       });
       row.appendChild(b);
     });
+    if (tinbox.menu === "decline") {
+      var pop = tinboxEl("div", "fstack-pop is-left is-decline");
+      pop.setAttribute("role", "menu");
+      var items = [{ head: "Почему не берёте? · 1–3" }].concat(
+        FSTACK_DECLINE.map(function (r) {
+          return { label: r[1], fn: function () { tinboxDecline(r[1]); } };
+        })
+      );
+      items.push({ label: "С комментарием…", fn: function () { tinbox.menu = ""; tinbox.mode = "decline"; renderTaskInbox(); } });
+      pop.appendChild(focusMenu(items));
+      row.appendChild(pop);
+    }
     return row;
   }
 
-  // Позже / Беру — сразу; Сделано / Изменить / Не моё — раскрывают форму на карточке.
+  // «Не моё»: поручение возвращается постановщику — причина уходит ему комментарием.
+  function tinboxDecline(reason) {
+    if (!tinbox) return;
+    tinbox.menu = "";
+    tinboxApply("decline", { note: reason }, "left");
+  }
+
+  // Позже / Беру — сразу; «Не моё» — окно с причиной; Сделано / Изменить — форма на карточке.
   function tinboxRun(id) {
     var s = tinbox;
     if (!s || s.busy || s.idx >= s.items.length) return;
-    if (id === "snooze") return tinboxApply("snooze", {}, "left");
-    if (id === "accept") return tinboxApply("accept", {}, "right");
-    s.mode = s.mode === id ? "" : id;
+    if (id === "snooze") {
+      s.menu = "";
+      return tinboxApply("snooze", {}, "left");
+    }
+    if (id === "accept") {
+      // Открыта правка — «Беру» берёт с правками.
+      var form = s.mode === "edit" && s.card && s.card.querySelector(".tinbox-form");
+      s.menu = "";
+      if (form && form._submit) return form._submit();
+      return tinboxApply("accept", {}, "right");
+    }
+    if (id === "decline") {
+      s.mode = "";
+      s.menu = s.menu === "decline" ? "" : "decline";
+    } else {
+      s.menu = "";
+      s.mode = s.mode === id ? "" : id;
+    }
     renderTaskInbox();
   }
 
@@ -20702,7 +20844,7 @@
       note.type = "text";
       note.placeholder = "Необязательно: кому это лучше поставить";
       wrap.appendChild(note);
-      submit = { label: "Вернуть постановщику", run: function () { tinboxApply("decline", { note: note.value.trim() }, "right"); } };
+      submit = { label: "Вернуть постановщику", run: function () { tinboxApply("decline", { note: note.value.trim() }, "left"); } };
     } else {
       var due = tinboxDue(task);
       wrap.appendChild(tinboxEl("label", "tinbox-label", "Срок"));
@@ -20830,6 +20972,7 @@
       s.stats[action === "edit" ? "accept" : action]++;
       s.idx++;
       s.mode = "";
+      s.menu = "";
       s.busy = false;
       renderTaskInbox();
       tinboxUndoToast(TINBOX_DONE_TEXT[action] || "Готово");
@@ -20959,11 +21102,18 @@
     var s = tinbox;
     if (!s || s.away) return;
     var typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || "");
+    if (s.menu === "decline" && !typing && /^Digit[1-3]$/.test(e.code)) {
+      e.preventDefault();
+      e.stopPropagation();
+      tinboxDecline(FSTACK_DECLINE[Number(e.code.slice(5)) - 1][1]);
+      return;
+    }
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
-      if (s.mode) {
+      if (s.mode || s.menu) {
         s.mode = "";
+        s.menu = "";
         renderTaskInbox();
       } else closeTaskInbox();
       return;
@@ -20973,7 +21123,7 @@
       tinboxUndo();
       return;
     }
-    if (typing || e.metaKey || e.ctrlKey || e.altKey || s.mode) return;
+    if (typing || e.metaKey || e.ctrlKey || e.altKey || s.mode || s.menu) return;
     var a = TINBOX_ACTS.filter(function (x) {
       return x.code === e.code;
     })[0];
@@ -20989,12 +21139,20 @@
   // «Списком» — все пункты в одном окне: Выполнено / Дубль / Не задача у каждого.
   var fstack = null;
 
+  // ← / смахивание влево — отказ, причина обязательна (окно «Не моя / Это дубль / Не задача»);
+  // → / смахивание вправо — в задачу как есть. Порядок кнопок — как направления: отказ слева, «В задачу» справа.
   var FSTACK_ACTS = [
-    { id: "snooze", label: "Позже", icon: "clock", key: "←", code: "ArrowLeft" },
-    { id: "task", label: "В задачу", icon: "taskBox", key: "→", code: "ArrowRight", primary: true },
+    { id: "decline", label: "Не задача", icon: "x", key: "←", code: "ArrowLeft", tone: "danger" },
+    { id: "snooze", label: "Позже", icon: "clock", key: "P", code: "KeyP" },
     { id: "done", label: "Выполнено", icon: "check", key: "D", code: "KeyD" },
     { id: "link", label: "Связать", icon: "link", key: "L", code: "KeyL" },
-    { id: "more", label: "Не задача", icon: "dots", key: "N", code: "KeyN" },
+    { id: "task", label: "В задачу", icon: "taskBox", key: "→", code: "ArrowRight", tone: "accent" },
+  ];
+
+  var FSTACK_DECLINE = [
+    ["not_me", "Не моя"],
+    ["duplicate", "Это дубль"],
+    ["not_a_task", "Не задача"],
   ];
 
   var FSTACK_QUICK = [
@@ -21172,6 +21330,7 @@
     head.appendChild(ico);
     head.appendChild(tinboxEl("span", "tinbox-who-name", tui[1]));
     if (f.assignee) head.appendChild(tinboxEl("span", "tinbox-who-src", "· " + f.assignee));
+    if (ui.mode !== "task") head.appendChild(tinboxPen(function () { fstackRun("edit"); }));
     card.appendChild(head);
     var tracker = ui.mode === "task" ? connectedTracker() : null;
     if (tracker && !ui.draft.target) ui.draft.target = readTaskTarget() === tracker.id ? tracker.id : "orbita";
@@ -21196,7 +21355,7 @@
     }
     if (edit) card.appendChild(edit.when);
     else if (f.deadline) card.appendChild(tinboxEl("span", "tinbox-due", "Срок: " + fstackDue(f.deadline)));
-    var badgeL = tinboxEl("span", "tinbox-badge is-left", "Позже");
+    var badgeL = tinboxEl("span", "tinbox-badge is-left", "Не беру");
     var badgeR = tinboxEl("span", "tinbox-badge is-right", "В задачу");
     card.appendChild(badgeL);
     card.appendChild(badgeR);
@@ -21218,7 +21377,7 @@
       }
     } else {
       tinboxSwipe(card, badgeL, badgeR, function (dir) {
-        fstackRun(dir === "left" ? "snooze_now" : "task");
+        fstackRun(dir === "left" ? "decline" : "task");
       });
     }
     return card;
@@ -21312,8 +21471,8 @@
     var ui = focusUiFor(fstackAid(f));
     var row = tinboxEl("div", "tinbox-acts");
     FSTACK_ACTS.forEach(function (a) {
-      var on = (a.id === "task" || a.id === "link") ? ui.mode === a.id : a.id === "snooze" ? ui.menu === "snooze" || ui.mode === "snooze_date" : a.id === "more" ? ui.menu === "more" || ui.mode === "remind_date" : false;
-      var b = tinboxEl("button", "tinbox-act" + (a.primary ? " is-primary" : "") + (on ? " is-on" : ""));
+      var on = (a.id === "task" || a.id === "link") ? ui.mode === a.id : a.id === "snooze" ? ui.menu === "snooze" || ui.mode === "snooze_date" : a.id === "decline" ? ui.menu === "decline" || ui.mode === "remind_date" : false;
+      var b = tinboxEl("button", "tinbox-act" + (a.tone ? " is-" + a.tone : "") + (on ? " is-on" : ""));
       b.type = "button";
       b.dataset.act = a.id;
       var ico = tinboxEl("span", "tinbox-act-ico");
@@ -21326,26 +21485,72 @@
       });
       row.appendChild(b);
     });
-    // «Позже» / «Не задача»: варианты — всплывающим окном над своей кнопкой.
-    if (ui.menu === "snooze" || ui.menu === "more") {
+    // «Не задача» / «Позже»: варианты — всплывающим окном над своей кнопкой.
+    if (ui.menu === "snooze" || ui.menu === "decline") {
       var aid = fstackAid(f);
-      var pop = tinboxEl("div", "fstack-pop is-" + (ui.menu === "more" ? "right" : "left"));
+      var pop = tinboxEl("div", "fstack-pop is-left" + (ui.menu === "decline" ? " is-decline" : ""));
       pop.setAttribute("role", "menu");
-      pop.appendChild(focusMenu(ui.menu === "more" ? focusMoreMenuItems(aid, f) : focusSnoozeMenuItems(aid, f)));
+      pop.appendChild(focusMenu(ui.menu === "decline" ? fstackDeclineItems(aid, f) : focusSnoozeMenuItems(aid, f)));
       row.appendChild(pop);
     }
     return row;
   }
 
+  // Отказ от пункта: без причины не уходит — иначе непонятно, что было не так. Клавиши 1–3.
+  function fstackDeclineItems(aid, f) {
+    return [{ head: "Почему не берёте? · 1–3" }].concat(
+      FSTACK_DECLINE.map(function (r) {
+        return { label: r[1], fn: function () { fstackDecline(f, r[0]); } };
+      })
+    );
+  }
+
+  function fstackDecline(f, reason) {
+    var label = (FSTACK_DECLINE.filter(function (r) { return r[0] === reason; })[0] || [])[1] || FOCUS_REASON_LABEL[reason] || "Скрыто";
+    return fstackOp(f, { op: "dismiss", reason: reason }, "Скрыто: " + label.toLowerCase(), "left");
+  }
+
+  // → / смахивание вправо / «В задачу» — задача в Орбиту как есть: название, срок, исполнитель и комментарий
+  // из разбора. Исполнитель не нашёлся в контактах — сначала карточка с правкой. В трекер — через карандаш.
+  function fstackTakeAsIs(f) {
+    var s = fstack;
+    var aid = fstackAid(f);
+    var me = defaultTaskAssignee();
+    var named = String(f.assignee || "").trim();
+    var mine = !named || /^я$/i.test(named) || named.split(/\s+/)[0].toLowerCase() === String(me.name || "").split(/\s+/)[0].toLowerCase();
+    var contact = mine ? null : focusAssigneeContact(named);
+    if (!mine && !contact) {
+      Object.assign(focusUiFor(aid), { mode: "task", menu: "", draft: { target: "orbita" } });
+      renderFocusStack();
+      showNoteToast("«" + named + "» нет в контактах — выберите исполнителя");
+      return;
+    }
+    var who = contact ? { user_id: contact.user_id || contact.telegram_user_id || "", email: contact.email || "", name: contact.name || "" } : me;
+    s.taking = true;
+    Promise.resolve(
+      focusCreateTask(aid, f, { title: f.text || "", due: focusDeadlineIso(f.deadline) || focusDeadlineIso("завтра"), comment: f.comment || "", who: who })
+    ).then(function () {
+      s.taking = false;
+    });
+  }
+
   // Выполнено и смахивание влево (← — завтра в 9:00) — сразу; остальное раскрывает форму или меню на карточке.
   function fstackRun(id) {
     var s = fstack;
-    if (!s || s.busy || s.view !== "stack" || s.idx >= s.items.length) return;
+    if (!s || s.busy || s.taking || s.view !== "stack" || s.idx >= s.items.length) return;
     var f = s.items[s.idx];
     if (id === "done") return fstackOp(f, { op: "done" }, "Отмечено выполненным", "right");
     if (id === "snooze_now") return fstackOp(f, { op: "snooze", until: focusAt(1, 9).toISOString() }, "Вернётся завтра в 9:00", "left");
     var ui = focusUiFor(fstackAid(f));
-    if (id === "task" || id === "link") Object.assign(ui, { mode: ui.mode === id ? "view" : id, menu: "", draft: ui.mode === id ? ui.draft : {} });
+    if (id === "task") {
+      // Открыта правка — «В задачу» ставит с правками; иначе — как есть.
+      var submit = ui.mode === "task" && s.card && s.card.querySelector(".tinbox-form .is-primary");
+      if (submit) submit.click();
+      else fstackTakeAsIs(f);
+      return;
+    }
+    if (id === "edit") Object.assign(ui, { mode: "task", menu: "", draft: {} });
+    else if (id === "link") Object.assign(ui, { mode: ui.mode === id ? "view" : id, menu: "", draft: ui.mode === id ? ui.draft : {} });
     else Object.assign(ui, { mode: "view", menu: ui.menu === id ? "" : id });
     renderFocusStack();
   }
@@ -21360,7 +21565,7 @@
     var i = s.items.indexOf(f);
     s.busy = true;
     var fly = s.view === "stack" && i === s.idx && s.card;
-    dir = dir || (body.op === "snooze" ? "left" : "right");
+    dir = dir || (body.op === "snooze" || body.op === "dismiss" || body.op === "retype" ? "left" : "right");
     if (fly) s.card.classList.add("is-fly-" + dir);
     try {
       var res = await focusItemOp(f.key, body);
@@ -21551,6 +21756,13 @@
     var f = s.view === "stack" ? s.items[s.idx] : null;
     var ui = f ? focusUiFor(fstackAid(f)) : null;
     var open = !!(ui && ((ui.mode && ui.mode !== "view") || ui.menu));
+    // Окно отказа: 1 — «Не моя», 2 — «Это дубль», 3 — «Не задача».
+    if (ui && ui.menu === "decline" && !typing && /^Digit[1-3]$/.test(e.code)) {
+      e.preventDefault();
+      e.stopPropagation();
+      fstackDecline(f, FSTACK_DECLINE[Number(e.code.slice(5)) - 1][0]);
+      return;
+    }
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
@@ -21566,6 +21778,12 @@
       return;
     }
     if (typing || e.metaKey || e.ctrlKey || e.altKey || open || !f) return;
+    if (e.code === "KeyE") {
+      e.preventDefault();
+      e.stopPropagation();
+      fstackRun("edit");
+      return;
+    }
     var a = FSTACK_ACTS.filter(function (x) {
       return x.code === e.code;
     })[0];
@@ -22079,7 +22297,8 @@
         if (currentTab !== "actual") setTab("actual");
         setPostedTasksScreen(true);
       } else if (act === "event_note" || act === "event_dictate") {
-        if (it.event) await eventCreateNote(it.event, act === "event_dictate");
+        if (it.event && act === "event_dictate" && eventIsPast(it.event)) eventDictateRecording(it.event);
+        else if (it.event) await eventCreateNote(it.event, act === "event_dictate");
         if (act === "event_dictate") dismissFocus(it, true);
       } else if (act === "open_event") {
         if (it.event) openEventModal(findLoadedCalendarEvent(it.event.id, it.event.calendar_id) || it.event);
@@ -33138,6 +33357,15 @@
       if (activeChatThreadId) kickDiscussionLiveUpdates(activeChatThreadId, "chat");
       return;
     }
+    if (type === "focus.changed") {
+      // Участник встречи разобрал её задачи — карточка «Задачи из встречи» общая, перечитываем сразу.
+      if (realtimeFocusTimer) clearTimeout(realtimeFocusTimer);
+      realtimeFocusTimer = setTimeout(function () {
+        realtimeFocusTimer = null;
+        if (!document.hidden && !fstack && !tinbox) loadFocus(true);
+      }, 700);
+      return;
+    }
     if (type === "task.changed") {
       // Сообщение / статус в задаче (в т.ч. ответ из Telegram) — открытой карточке и списку «Поручено другим».
       kickPostedLiveUpdate(ev.task_id != null ? String(ev.task_id) : "");
@@ -33156,6 +33384,7 @@
   // Чат из «Чатов»: сообщение, название, участники. Своё сообщение тоже приходит — лента
   // перечитывается, но оптимистичное сообщение tickDiscussionLiveUpdates не трогает.
   var realtimeChatsTimer = null;
+  var realtimeFocusTimer = null;
   function onRealtimeChatChanged(ev) {
     var chatId = ev && ev.chat_id != null ? String(ev.chat_id) : "";
     if (!chatId) return;
@@ -42499,7 +42728,7 @@
     decision: ["taskBox", "Решение"],
     thought: ["taskBox", "Мысль"],
   };
-  var FOCUS_REASON_LABEL = { not_a_task: "Не задача", not_relevant: "Неактуально", duplicate: "Дубль", recognition_error: "Ошибка распознавания" };
+  var FOCUS_REASON_LABEL = { not_a_task: "Не задача", not_relevant: "Неактуально", duplicate: "Дубль", recognition_error: "Ошибка распознавания", not_me: "Не моя" };
   var FOCUS_STATE_LABEL = { "": "Открыта", open: "Открыта", in_progress: "В работе", done: "Выполнена" };
 
   function focusUiFor(aid) {
@@ -42551,7 +42780,7 @@
   function focusStatusLine(f) {
     var line = focusStatusLineBase(f);
     // кто разобрал пункт — видно всем участникам встречи
-    if (line && f.by && ["completed", "converted", "linked"].indexOf(f.status) >= 0) line = [line[0], line[1] + " · " + f.by];
+    if (line && f.by && ["completed", "converted", "linked", "dismissed"].indexOf(f.status) >= 0) line = [line[0], line[1] + " · " + f.by];
     return line;
   }
 
@@ -47808,7 +48037,17 @@
     revealNoteDiscussionTopic(found || { id: id });
   }
 
+  // mouseup + pointerup + keyup + scroll одного кадра — один проход по цитатам.
+  var noteCommentAnchorsRaf = 0;
   function refreshNoteCommentAnchors() {
+    if (noteCommentAnchorsRaf) return;
+    noteCommentAnchorsRaf = requestAnimationFrame(function () {
+      noteCommentAnchorsRaf = 0;
+      refreshNoteCommentAnchorsNow();
+    });
+  }
+
+  function refreshNoteCommentAnchorsNow() {
     var panel = document.getElementById("note-editor-comments");
     if (!panel) return;
     var comments = panel._allComments || panel._commentsCache || [];
@@ -48105,9 +48344,10 @@
       if (sel && !sel.isCollapsed) return;
       var live = document.getElementById("note-editor-comments");
       var comments = (live && live._allComments) || [];
-      if (!api.commentAtPoint) return;
-      var hit = api.commentAtPoint(root, comments, e.clientX, e.clientY);
       var activeId = live && live._activeCommentId;
+      // Тема не открыта — тап по цитате ничего не делает, а поиск всех цитат по листу дорогой.
+      if (!api.commentAtPoint || !activeId) return;
+      var hit = api.commentAtPoint(root, comments, e.clientX, e.clientY);
       var hitRoot = hit && api.topicRoot ? api.topicRoot(comments, hit.id) || hit : hit;
       // Невидимые цитаты не перехватывают тап — иначе нельзя просто поставить курсор.
       if (hitRoot && activeId && String(hitRoot.id) === String(activeId)) {
@@ -50036,7 +50276,8 @@
       return;
     }
     if (isNoteEditorModalOpen()) {
-      if (notesSplitCurrentId === id) return;
+      // Повторный клик игнорируем, только если открыта именно эта заметка, а не просто подсвечена в списке.
+      if (notesSplitCurrentId === id && currentOpenNoteId() === id) return;
       var ok = await handleNoteEditorModalClose({ skipPrompt: true });
       if (!ok) return;
     }
@@ -51130,8 +51371,13 @@
     return openLocalNoteDetail(resolveLocalNoteFromCache(n), opts || { isLocal: true });
   }
 
+  // Открытия заметок не накладываются: ответ на более ранний клик (тяжёлая заметка грузится дольше)
+  // не перерисовывает поверх той, что открыли позже.
+  var localNoteOpenSeq = 0;
+
   function openLocalNoteDetail(n, opts) {
     opts = opts || {};
+    var seq = ++localNoteOpenSeq;
     var noteIsCreate = !!opts.create;
     var noteId = localNoteIdFrom(n);
     noteId = noteId != null ? String(noteId) : "";
@@ -51147,6 +51393,7 @@
     // шапка и карточка БЗ теряют проект до полной перезагрузки списка.
     apiFetch("/notes/local/" + encodeURIComponent(noteId), { method: "GET" })
       .then(function (res) {
+        if (seq !== localNoteOpenSeq) return; // уже открывают другую заметку
         var fresh = res && res.item;
         if (fresh) {
           var keptTags = noteTagsOf(n);
@@ -51174,6 +51421,7 @@
         openLocalNoteDetailReady(n, opts, noteIsCreate, noteId);
       })
       .catch(function () {
+        if (seq !== localNoteOpenSeq) return;
         // В списке только превью (первые 600 символов) — открывать его на редактирование нельзя:
         // сохранение затёрло бы полный текст. Без сети показываем, что не загрузилось.
         if (n && n.body_preview_only) {

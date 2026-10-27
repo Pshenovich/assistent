@@ -311,11 +311,42 @@ def apply(owner_user_id: Any, item_key: str, op: str, *, by: str = "", **kw: Any
     else:
         raise ValueError("Неизвестное действие")
     saved = _save(owner_user_id, row, event)
+    if op == "dismiss" and saved.get("reason") == "not_me":
+        return saved  # «Не моя» — личное: в общем саммари не помечаем, у других пункт остаётся
     try:
         sync_source(owner_user_id, saved)
     except Exception as e:  # отметка в исходнике — бонус, не повод провалить действие
         print(f"[focus_items] source sync failed uid={owner_user_id} key={item_key} err={e!r}")
     return saved
+
+
+def task_done_changed(owner_user_id: Any, task_id: int, done: bool, by: str = "") -> int:
+    """Задачу, поставленную из пункта, выполнили (или вернули в работу) — в саммари пункт «Выполнено»."""
+    with _LOCK:
+        found = [
+            _row(r)
+            for r in _conn().execute(
+                "SELECT * FROM focus_items WHERE owner_user_id = ? AND link_json LIKE ?",
+                (str(owner_user_id), f'%"task_id": {int(task_id)}%'),
+            ).fetchall()
+        ]
+    n = 0
+    for row in found:
+        if int((row.get("link") or {}).get("task_id") or 0) != int(task_id):
+            continue
+        want = "completed" if done else "converted"
+        if row.get("status") not in ("converted", "completed", "linked") or row.get("status") == want:
+            continue
+        row = dict(row, status=want)
+        if by:
+            row["by_name"] = by
+        saved = _save(owner_user_id, row, {"op": "task_done" if done else "task_undone", "by": by})
+        try:
+            sync_source(owner_user_id, saved)
+        except Exception as e:
+            print(f"[focus_items] task done sync failed uid={owner_user_id} task={task_id} err={e!r}")
+        n += 1
+    return n
 
 
 def handled_titles(owner_user_id: Any, now: Optional[datetime] = None) -> list[str]:
@@ -769,6 +800,19 @@ def sync_source(owner_user_id: Any, row: dict[str, Any]) -> None:
             body=new_body if changed else None,
             meta=meta if meta_changed else None,
         )
+        _notify_participants(owner_user_id, int(src["id"]))
+
+
+def _notify_participants(note_owner: str, note_id: int) -> None:
+    """Владельцу и участникам встречи — перечитать Фокус: карточка задач у всех одна."""
+    try:
+        from assistant.realtime import notify as realtime_notify
+        from assistant.stores import note_members
+
+        uids = [note_owner] + [str(m.get("user_id") or "") for m in note_members.list_member_rows(note_owner, note_id)]
+        realtime_notify.focus_changed(note_id, uids)
+    except Exception as e:
+        print(f"[focus_items] focus notify failed note={note_id} err={e!r}")
 
 
 def _sync_meta_task(meta: dict[str, Any], row: dict[str, Any]) -> bool:
@@ -808,12 +852,16 @@ def _sync_meta_task(meta: dict[str, Any], row: dict[str, Any]) -> bool:
     st = row.get("status")
     t["completed"] = st in ("completed", "converted")
     t["focus_status"] = st
-    if st in ("completed", "converted", "linked"):
+    if st in ("completed", "converted", "linked", "dismissed"):
         t["completed_by"] = row.get("by_name") or ""
         t["completed_at"] = row.get("updated_at") or ""
     else:
         t.pop("completed_by", None)
         t.pop("completed_at", None)
+    if st == "dismissed" and row.get("reason"):
+        t["focus_reason"] = str(row["reason"])
+    else:
+        t.pop("focus_reason", None)
     if p["link"]:
         t["link"] = p["link"]
     else:

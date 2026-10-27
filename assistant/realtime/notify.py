@@ -197,6 +197,22 @@ def chat_changed(chat_id: int | str, user_ids: list[Any], *, what: str = "meta")
             continue
 
 
+def focus_changed(note_id: int | str, user_ids: list[Any]) -> None:
+    """Задачи встречи разобрали (поставили, выполнили, отказались) — Фокус участников перечитывается сразу."""
+    try:
+        nid = int(note_id)
+    except (TypeError, ValueError):
+        return
+    ev: dict[str, Any] = {"type": "focus.changed", "note_id": nid}
+    for uid in dict.fromkeys(str(u or "").strip() for u in user_ids):
+        if not uid:
+            continue
+        try:
+            publish(user_topic(uid), ev)
+        except (TypeError, ValueError):
+            continue
+
+
 def task_changed(task_id: int | str, user_ids: list[Any], *, actor_user_id: Any = None) -> None:
     """Новое событие в задаче (сообщение, статус, сдача…) — открытой карточке у постановщика и исполнителя."""
     try:
