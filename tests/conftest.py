@@ -26,6 +26,9 @@ if os.getenv("LEO_TESTS_USE_DOTENV", "").strip() != "1":
 
 _SANDBOX = Path(tempfile.mkdtemp(prefix="leo-tests-"))
 
+# фоновое угадывание спикеров ходит в LLM — в тестах только явным вызовом
+os.environ.setdefault("SPEAKER_GUESS_ENABLED", "0")
+
 _FILE_ENV = {
     "BOARD_DB_PATH": "data/board.sqlite",
     "MEETING_RECORDINGS_DB_PATH": "data/meeting_recordings.sqlite",

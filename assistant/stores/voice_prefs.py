@@ -126,7 +126,11 @@ def process_transcript_result(user_id: int, result: Any) -> Any:
         return result
     plain = process_text(user_id, result.plain_text or "", mode="transcript")
     formatted = process_text(user_id, result.formatted_text or "", mode="transcript")
-    return replace(result, plain_text=plain, formatted_text=formatted)
+    segments = tuple(
+        {**s, "text": process_text(user_id, str(s.get("text") or ""), mode="transcript")}
+        for s in (getattr(result, "segments", None) or ())
+    )
+    return replace(result, plain_text=plain, formatted_text=formatted, segments=segments)
 
 
 # ------------------------------------------------------------------ история

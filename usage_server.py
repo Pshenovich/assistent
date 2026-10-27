@@ -11281,6 +11281,45 @@ async def miniapp_note_confirm_speaker(
     return {"ok": True, "item": item}
 
 
+@miniapp_router.get("/notes/local/{note_id}/speakers")
+async def miniapp_note_speakers(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """«Кто есть кто»: спикеры с репликами, догадками и кандидатами в имена."""
+    from assistant.services import transcription_notes as tnotes
+
+    uid = int(principal.telegram_user_id)
+    try:
+        return await run_in_threadpool(tnotes.speakers_view, uid, note_id)
+    except tnotes.TranscriptionNoteError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+class _SpeakerMergeBody(BaseModel):
+    source: str
+    target: str
+
+
+@miniapp_router.post("/notes/local/{note_id}/speakers/merge")
+async def miniapp_note_merge_speakers(
+    note_id: int,
+    body: _SpeakerMergeBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Диаризация разделила одного человека на двоих — склеить."""
+    from assistant.services import transcription_notes as tnotes
+
+    uid = int(principal.telegram_user_id)
+    try:
+        item = await run_in_threadpool(
+            tnotes.merge_speakers, uid, note_id, body.source, body.target
+        )
+    except tnotes.TranscriptionNoteError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "item": item}
+
+
 def _truthy_form_flag(raw: str | bool | None) -> bool:
     if isinstance(raw, bool):
         return raw
@@ -11394,6 +11433,7 @@ async def miniapp_transcription_upload(
             title=title,
             transcript=transcript,
             meta=meta,
+            segments=getattr(result, "segments", None),
         )
         if meeting_ev.get("id") or meeting_ev.get("event_id"):
             try:

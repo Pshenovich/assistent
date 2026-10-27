@@ -93,6 +93,131 @@ def summary_html(note: dict[str, Any]) -> str:
     return ""
 
 
+def _segments(note: dict[str, Any]) -> list[dict[str, Any]] | None:
+    from assistant.stores import transcript_segments
+
+    try:
+        return transcript_segments.get(int(note["id"]))
+    except Exception as e:
+        print(f"[transcription_notes] segments read failed note={note.get('id')} err={e!r}")
+        return None
+
+
+def _speaker_map(meta: Any) -> dict[str, Any]:
+    smap = meta.get("speaker_map") if isinstance(meta, dict) else None
+    return dict(smap) if isinstance(smap, dict) else {}
+
+
+def _same_text(a: str, b: str) -> bool:
+    return " ".join(_plain(a).split()) == " ".join(_plain(b).split())
+
+
+def _render_transcript(segments: list[dict[str, Any]], speaker_map: dict[str, Any]) -> str:
+    from assistant.lib.transcript_render import render_html
+
+    return render_html(segments, speaker_map)
+
+
+def _unedited_segments(note: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Сегменты, если транскрипт руками не правили (иначе правки пользователя важнее)."""
+    segs = _segments(note)
+    if not segs:
+        return None
+    if not _same_text(transcript_html(note), _render_transcript(segs, _speaker_map(note.get("meta")))):
+        return None
+    return segs
+
+
+def transcript_for_llm(note: dict[str, Any]) -> str:
+    """Текст для саммари: «Имя:\n…» по сегментам с подтверждёнными именами, иначе — как в заметке."""
+    from assistant.integrations.transcribe import formatted_from_segments
+    from assistant.lib.transcript_render import speaker_names
+
+    segs = _unedited_segments(note)
+    if not segs:
+        return _plain(transcript_html(note))
+    names = speaker_names(_speaker_map(note.get("meta")))
+    return formatted_from_segments(
+        [{**s, "speaker": names.get(str(s.get("speaker") or ""), s.get("speaker") or "")} for s in segs]
+    )
+
+
+def _multi_speaker(segments: Any) -> bool:
+    return len({str(s.get("speaker") or "") for s in (segments or []) if isinstance(s, dict)} - {""}) > 1
+
+
+def _save_segments(note_id: int, segments: Any) -> None:
+    if not segments:
+        return
+    from assistant.stores import transcript_segments
+
+    try:
+        transcript_segments.save(int(note_id), list(segments))
+    except Exception as e:
+        print(f"[transcription_notes] segments save failed note={note_id} err={e!r}")
+
+
+def guess_speakers(owner: int | str, note_id: int) -> dict[str, Any]:
+    """Догадки «Спикер N — это …» в meta.speaker_map (не подтверждённые; подтверждённые не трогаем)."""
+    from assistant.lib.meeting_context import context_for_note
+    from assistant.nlu import llm as llm_mod
+    from assistant.nlu import speaker_guess
+
+    oid = str(int(owner))
+    note = notes_store.get_note(oid, int(note_id))
+    segs = _segments(note) if note else None
+    if not note or not _multi_speaker(segs):
+        return {}
+    ctx = context_for_note(int(oid), note)
+    guesses = speaker_guess.guess(
+        segs or [],
+        context_payload={k: v for k, v in ctx.to_payload().items() if k != "previous"},
+        people=ctx.people,
+        chat=llm_mod._chat,
+        model=llm_mod._model_summary(),
+    )
+    fresh = notes_store.get_note(oid, int(note_id))
+    if not fresh:
+        return {}
+    meta = dict(fresh.get("meta") or {}) if isinstance(fresh.get("meta"), dict) else {}
+    smap = _speaker_map(meta)
+    for label, g in guesses.items():
+        cur = smap.get(label)
+        if isinstance(cur, dict) and (cur.get("confirmed") or float(cur.get("confidence") or 0) > float(g.get("confidence") or 0)):
+            continue
+        smap[label] = g
+    meta["speaker_map"] = smap
+    meta["speaker_guess_done"] = True
+    notes_store.update_note(oid, int(note_id), meta=meta)
+    return guesses
+
+
+def schedule_speaker_guess(owner: int | str, note_id: int, segments: Any) -> None:
+    """Угадать спикеров в фоне — к открытию «Кто есть кто» догадки уже готовы."""
+    import os
+    import threading
+
+    if not _multi_speaker(segments) or os.getenv("SPEAKER_GUESS_ENABLED", "1").strip() == "0":
+        return
+
+    def run() -> None:
+        try:
+            guess_speakers(owner, note_id)
+        except Exception as e:
+            print(f"[speaker_guess] failed note={note_id} err={e!r}")
+
+    threading.Thread(target=run, name=f"speaker-guess-{note_id}", daemon=True).start()
+
+
+def _set_transcript_html(owner: str, note: dict[str, Any], body: str, *, actor: str) -> None:
+    if has_summary(note):
+        extra = _sheet_by_title(note, TRANSCRIPT_SHEET_TITLE)
+        if extra:
+            sheets_store.update_sheet(int(note["id"]), int(extra["id"]), body=body)
+        return
+    notes_store.update_note(owner, int(note["id"]), body=body, actor_user_id=actor)
+
+
 def enrich(note: dict[str, Any]) -> dict[str, Any]:
     out = dict(note)
     out["is_transcription"] = True
@@ -131,15 +256,22 @@ def create_transcript_only(
     title: str,
     transcript: str,
     meta: Optional[dict[str, Any]] = None,
+    segments: Any = None,
 ) -> dict[str, Any]:
+    meta = dict(meta or {})
+    if _multi_speaker(segments):
+        meta["speakers_detected"] = True
+    body = _render_transcript(list(segments), _speaker_map(meta)) if segments else _as_html(transcript)
     note = notes_store.create_note(
         user_id,
         _title_from(title, fallback="Транскрипция"),
-        _as_html(transcript),
+        body,
         role=TRANSCRIPTION_ROLE,
-        meta=meta or {},
+        meta=meta,
         primary_sheet_title=TRANSCRIPT_SHEET_TITLE,
     )
+    _save_segments(int(note["id"]), segments)
+    schedule_speaker_guess(user_id, int(note["id"]), segments)
     return enrich(note)
 
 
@@ -188,6 +320,7 @@ def create_with_summary(
     transcript: str,
     summary: str,
     meta: Optional[dict[str, Any]] = None,
+    segments: Any = None,
 ) -> dict[str, Any]:
     meta = dict(meta or {})
     body = _summary_body(summary, meta)
@@ -199,9 +332,12 @@ def create_with_summary(
         meta=_with_body_hash(meta, body),
         primary_sheet_title=SUMMARY_SHEET_TITLE,
     )
-    sheets_store.create_sheet(
-        note, TRANSCRIPT_SHEET_TITLE, body=_as_html(transcript)
+    transcript_body = (
+        _render_transcript(list(segments), _speaker_map(meta)) if segments else _as_html(transcript)
     )
+    sheets_store.create_sheet(note, TRANSCRIPT_SHEET_TITLE, body=transcript_body)
+    _save_segments(int(note["id"]), segments)
+    schedule_speaker_guess(user_id, int(note["id"]), segments)
     fresh = notes_store.get_note(user_id, int(note["id"])) or note
     _focus_summary_ready(user_id, int(note["id"]))
     return enrich(fresh)
@@ -318,12 +454,12 @@ def generate_summary_for_note(user_id: int | str, note_id: int) -> dict[str, Any
             note = begin_make_summary(uid, int(note_id))
         except TranscriptionNoteError:
             return None
-    transcript = _plain(transcript_html(note))
+    transcript = transcript_for_llm(note)
     if not transcript:
         fail_make_summary(uid, int(note_id), "Пустая транскрипция")
         return None
     meta = note.get("meta") if isinstance(note.get("meta"), dict) else {}
-    speakers = bool(meta.get("speakers_detected"))
+    speakers = bool(meta.get("speakers_detected")) or _multi_speaker(_segments(note))
     try:
         from assistant.lib.meeting_context import context_for_note
 
@@ -361,11 +497,18 @@ def generate_summary_for_note(user_id: int | str, note_id: int) -> dict[str, Any
             "topics": summary_result.get("topics") or [],
             "open_questions": summary_result.get("open_questions") or [],
             "risks": summary_result.get("risks") or [],
+            "tasks_dropped": summary_result.get("tasks_dropped") or [],
             "speakers_detected": speakers,
             **v2_meta(summary_result),
         }
         if extra.get("summary_version") == 2:
             extra["summary_render"] = render_params
+        confirmed = {k: v for k, v in _speaker_map(meta).items() if isinstance(v, dict) and v.get("confirmed")}
+        if confirmed or _speaker_map(meta):
+            # подтверждённое пользователем (и догадки до саммари) не затираем картой из v2
+            merged = {**_speaker_map(meta), **_speaker_map(extra)}
+            merged.update(confirmed)
+            extra["speaker_map"] = merged
         return finish_make_summary(uid, int(note_id), display, extra_meta=extra)
     except Exception as e:
         fail_make_summary(uid, int(note_id), str(e))
@@ -373,14 +516,12 @@ def generate_summary_for_note(user_id: int | str, note_id: int) -> dict[str, Any
 
 
 def confirm_speaker(user_id: int | str, note_id: int, label: str, name: str) -> dict[str, Any]:
-    """«Спикер 2 — это Саша»: обновить карту спикеров и исполнителей без нового STT/LLM.
+    """«Спикер 2 — это Саша»: имя в транскрипте и у исполнителей без нового STT/LLM.
 
-    Тело саммари пересобирается, только если его не правили руками (хэш совпадает).
+    Работает и до саммари. Транскрипт перерисовывается, если его не правили руками;
+    тело саммари — если не правили его (хэш совпадает).
     """
     from assistant.lib import summary_normalize as sn
-    from assistant.lib.meeting_context import context_for_note
-    from assistant.lib.summary_render import render_summary_html
-    from assistant.lib.telegram_markdown import prepare_summary_markdown
 
     uid = str(int(user_id))
     note = notes_store.get_accessible_note(uid, int(note_id), with_sharing=False)
@@ -388,18 +529,46 @@ def confirm_speaker(user_id: int | str, note_id: int, label: str, name: str) -> 
         raise TranscriptionNoteError("Это не файл транскрипции")
     owner = str(note.get("owner_user_id") or note.get("user_id") or uid)
     meta = dict(note.get("meta") or {}) if isinstance(note.get("meta"), dict) else {}
-    data = sn.summary_data_from_meta(meta)
-    if not data:
-        raise TranscriptionNoteError("Для этого саммари нет карты спикеров")
     lab = sn.norm_speaker_label(label)
     nm = (name or "").strip()[:80]
-    smap = dict(meta.get("speaker_map") or {})
-    if lab not in smap:
+    smap = _speaker_map(meta)
+    segs = _unedited_segments(note)
+    known = set(smap) | {str(s.get("speaker") or "") for s in (_segments(note) or [])}
+    if lab not in known:
         raise TranscriptionNoteError("Нет такого спикера")
+    prev = smap.get(lab) if isinstance(smap.get(lab), dict) else {}
     if nm:
-        smap[lab] = {"name": nm, "confidence": 1.0, "evidence": "подтверждено пользователем", "confirmed": True}
+        smap[lab] = {**prev, "name": nm, "confidence": 1.0, "evidence": "подтверждено пользователем", "confirmed": True}
     else:
         smap[lab] = {"name": "", "confidence": 0.0, "evidence": "", "confirmed": True}
+    meta["speaker_map"] = smap
+    if segs:
+        _set_transcript_html(owner, note, _render_transcript(segs, smap), actor=uid)
+        note = notes_store.get_accessible_note(uid, int(note_id), with_sharing=False) or note
+    body_kwargs: dict[str, Any] = {}
+    data = sn.summary_data_from_meta(meta)
+    if data:
+        body_kwargs = _reassign_tasks(owner, note, meta, data, smap)
+    updated = notes_store.update_note(
+        owner, int(note["id"]), meta=meta, actor_user_id=uid, **body_kwargs
+    )
+    if not updated:
+        raise TranscriptionNoteError("Не удалось сохранить")
+    out = enrich(updated)
+    out["summary_rerendered"] = bool(body_kwargs)
+    out["transcript_rerendered"] = bool(segs)
+    return out
+
+
+def _reassign_tasks(
+    owner: str, note: dict[str, Any], meta: dict[str, Any], data: dict[str, Any], smap: dict[str, Any]
+) -> dict[str, Any]:
+    """Исполнители задач саммари v2 по новой карте спикеров. Меняет meta; возвращает правку тела."""
+    from assistant.lib import summary_normalize as sn
+    from assistant.lib.meeting_context import context_for_note
+    from assistant.lib.summary_render import render_summary_html
+    from assistant.lib.telegram_markdown import prepare_summary_markdown
+
     ctx = context_for_note(int(owner), note)
     raw = [t for t in (sn.raw_task(x) for x in data.get("tasks") or []) if t]
     # в summary_data лежат уже разрешённые задачи: для «self» исполнителя
@@ -422,24 +591,105 @@ def confirm_speaker(user_id: int | str, note_id: int, label: str, name: str) -> 
             t["id"] = prev["id"]  # ID задачи переживает пересборку — связь с Фокусом и чипом не рвётся
     data["tasks"] = tasks
     data["speaker_map"] = smap
-    meta["speaker_map"] = smap
     meta["tasks"] = tasks
-    body_kwargs: dict[str, Any] = {}
     cur_body = str(note.get("body") or "")
-    if meta.get("summary_body_hash") and _body_hash(cur_body) == meta.get("summary_body_hash"):
-        params = meta.get("summary_render") if isinstance(meta.get("summary_render"), dict) else {}
-        display = prepare_summary_markdown(render_summary_html(data), **params)
-        new_body = _summary_body(display, meta)
-        body_kwargs = {"body": new_body, "primary_sheet_title": SUMMARY_SHEET_TITLE}
-        meta["summary_body_hash"] = _body_hash(new_body)
-    updated = notes_store.update_note(
-        owner, int(note["id"]), meta=meta, actor_user_id=uid, **body_kwargs
-    )
+    if not (meta.get("summary_body_hash") and _body_hash(cur_body) == meta.get("summary_body_hash")):
+        return {}
+    params = meta.get("summary_render") if isinstance(meta.get("summary_render"), dict) else {}
+    display = prepare_summary_markdown(render_summary_html(data), **params)
+    new_body = _summary_body(display, meta)
+    meta["summary_body_hash"] = _body_hash(new_body)
+    return {"body": new_body, "primary_sheet_title": SUMMARY_SHEET_TITLE}
+
+
+def speakers_view(user_id: int | str, note_id: int) -> dict[str, Any]:
+    """Для «Кто есть кто»: спикеры с репликами и догадками, кандидаты в имена."""
+    from assistant.lib import transcript_render as tr
+    from assistant.lib.meeting_context import context_for_note
+
+    uid = str(int(user_id))
+    note = notes_store.get_accessible_note(uid, int(note_id), with_sharing=False)
+    if not note or not is_transcription_note(note):
+        raise TranscriptionNoteError("Это не файл транскрипции")
+    owner = str(note.get("owner_user_id") or note.get("user_id") or uid)
+    smap = _speaker_map(note.get("meta"))
+    segs = _segments(note) or []
+    labels: list[str] = []
+    talk: dict[str, float] = {}
+    for sg in segs:
+        lab = str(sg.get("speaker") or "")
+        if not lab:
+            continue
+        if lab not in labels:
+            labels.append(lab)
+        if sg.get("start") is not None and sg.get("end") is not None:
+            talk[lab] = talk.get(lab, 0.0) + max(0.0, float(sg["end"]) - float(sg["start"]))
+    if not labels:  # старые заметки: спикеры только из карты v2
+        labels = sorted((k for k in smap if k.startswith("Спикер ")), key=lambda k: int(k[7:]) if k[7:].isdigit() else 0)
+    quotes = tr.samples(segs, per_speaker=3, max_chars=160)
+    speakers = []
+    for lab in labels:
+        info = smap.get(lab) if isinstance(smap.get(lab), dict) else {}
+        speakers.append({
+            "label": lab,
+            "name": str(info.get("name") or ""),
+            "confidence": float(info.get("confidence") or 0),
+            "evidence": str(info.get("evidence") or ""),
+            "confirmed": bool(info.get("confirmed")),
+            "talk_sec": round(talk.get(lab, 0.0)),
+            "samples": [{"t": tr.fmt_time(q.get("start")), "text": q["text"]} for q in quotes.get(lab, [])],
+        })
+    candidates: list[str] = []
+    try:
+        ctx = context_for_note(int(owner), note)
+        names = list(ctx.attendees) + [str(p.get("name") or "") for p in ctx.people]
+    except Exception as e:
+        print(f"[transcription_notes] speakers ctx failed note={note_id} err={e!r}")
+        names = []
+    names += [str(v.get("name") or "") for v in smap.values() if isinstance(v, dict)]
+    seen: set[str] = set()
+    for n in names:
+        n = n.strip()
+        if n and "@" not in n and n.lower() not in seen:
+            seen.add(n.lower())
+            candidates.append(n)
+    return {
+        "speakers": speakers,
+        "candidates": candidates[:60],
+        "can_merge": bool(segs),
+        "guessing": bool(segs) and _multi_speaker(segs) and not (note.get("meta") or {}).get("speaker_guess_done"),
+    }
+
+
+def merge_speakers(user_id: int | str, note_id: int, src: str, dst: str) -> dict[str, Any]:
+    """Диаризация разделила одного человека на двоих: реплики «src» становятся репликами «dst»."""
+    from assistant.lib import summary_normalize as sn
+
+    uid = str(int(user_id))
+    note = notes_store.get_accessible_note(uid, int(note_id), with_sharing=False)
+    if not note or not is_transcription_note(note):
+        raise TranscriptionNoteError("Это не файл транскрипции")
+    owner = str(note.get("owner_user_id") or note.get("user_id") or uid)
+    a, b = sn.norm_speaker_label(src), sn.norm_speaker_label(dst)
+    segs = _segments(note) or []
+    if a == b or not any(s.get("speaker") == a for s in segs) or not any(s.get("speaker") == b for s in segs):
+        raise TranscriptionNoteError("Нет такого спикера")
+    meta = dict(note.get("meta") or {}) if isinstance(note.get("meta"), dict) else {}
+    smap = _speaker_map(meta)
+    unedited = _unedited_segments(note) is not None
+    segs = [{**s, "speaker": b} if s.get("speaker") == a else s for s in segs]
+    _save_segments(int(note["id"]), segs)
+    if a in smap:
+        if not (isinstance(smap.get(b), dict) and smap[b].get("confirmed")) and isinstance(smap[a], dict) and smap[a].get("confirmed"):
+            smap[b] = smap[a]
+        smap.pop(a, None)
+    meta["speaker_map"] = smap
+    if unedited:
+        _set_transcript_html(owner, note, _render_transcript(segs, smap), actor=uid)
+    updated = notes_store.update_note(owner, int(note["id"]), meta=meta, actor_user_id=uid)
     if not updated:
         raise TranscriptionNoteError("Не удалось сохранить")
-    out = enrich(updated)
-    out["summary_rerendered"] = bool(body_kwargs)
-    return out
+    return enrich(updated)
 
 
 def _score_text(hay: str, words: list[str]) -> int:

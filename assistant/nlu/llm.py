@@ -29,6 +29,7 @@ from assistant.nlu.prompts import (
     REMINDER_PARSE_SYSTEM,
     SUMMARY_SEARCH_PARSE_SYSTEM,
     SUMMARY_SYSTEM,
+    TASK_VERIFY_SYSTEM,
     TELEMOST_PARSE_SYSTEM,
     VOICE_COMMAND_SYSTEM,
     ZOOM_PARSE_SYSTEM,
@@ -1088,8 +1089,67 @@ def _dedupe_v1_tasks(tasks: list[dict[str, Any]], transcript: str) -> list[dict[
     return out
 
 
+def summary_task_verify_enabled() -> bool:
+    return (os.getenv("SUMMARY_TASK_VERIFY", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _verify_v1_tasks(tasks: list[dict[str, Any]], transcript: str) -> dict[str, Any]:
+    """Проверка задач по транскрипту: {"tasks", "dropped"}; в dropped — kind
+    (decision / question / not_task / duplicate) и причина.
+
+    LLM только классифицирует номера; формулировки не меняются. Сбой — задачи как были.
+    Договорённости и вопросы в разделы саммари не дописываем: у v1 они свои, вышли бы повторы."""
+    keep: dict[str, Any] = {"tasks": tasks, "dropped": []}
+    items = [t for t in tasks if isinstance(t, dict) and str(t.get("task") or "").strip()]
+    if not items:
+        return keep
+    cands = [
+        {"id": i + 1, "task": str(t.get("task") or ""), "assignee": str(t.get("assignee") or ""),
+         "deadline": str(t.get("deadline") or "")}
+        for i, t in enumerate(items)
+    ]
+    raw = _chat(
+        TASK_VERIFY_SYSTEM,
+        json.dumps({"transcript": transcript[:_SUMMARY_TRANSCRIPT_MAX], "candidates": cands}, ensure_ascii=False),
+        operation="summary_task_verify",
+        model=_model_summary(),
+        timeout=180,
+        temperature=0.0,
+        max_tokens=4096,
+    )
+    obj = _json_obj(raw or "")
+    verdicts: dict[int, dict[str, Any]] = {}
+    for v in (obj or {}).get("items") or []:
+        try:
+            verdicts[int(v.get("id"))] = v
+        except (TypeError, ValueError, AttributeError):
+            continue
+    if len(verdicts) < len(items) // 2:
+        print(f"[summary_v1] verify: too few verdicts {len(verdicts)}/{len(items)}, keeping all")
+        return keep
+    out: dict[str, Any] = {"tasks": [], "dropped": []}
+    for i, t in enumerate(items, start=1):
+        v = verdicts.get(i) or {}
+        kind = str(v.get("kind") or "task").strip().lower()
+        dup = v.get("duplicate_of")
+        if kind == "duplicate":
+            try:
+                ok_dup = int(dup) != i and 1 <= int(dup) <= len(items)
+            except (TypeError, ValueError):
+                ok_dup = False
+            kind = "duplicate" if ok_dup else "task"  # дубль «ни на что» — не выбрасываем
+        if kind == "task" or kind not in {"decision", "question", "not_task", "duplicate"}:
+            out["tasks"].append(t)
+        else:
+            out["dropped"].append({"task": str(t.get("task") or ""), "kind": kind, "reason": str(v.get("reason") or "")[:120]})
+    if not out["tasks"] and items:
+        print("[summary_v1] verify: dropped every task, keeping all")
+        return keep
+    return out
+
+
 def _summarize_recording_v1(
-    transcript: str, *, speakers_detected: bool = False, dedupe: bool | None = None
+    transcript: str, *, speakers_detected: bool = False, dedupe: bool | None = None, verify: bool | None = None
 ) -> dict[str, Any] | None:
     from concurrent.futures import ThreadPoolExecutor
 
@@ -1140,6 +1200,16 @@ def _summarize_recording_v1(
             merged_tasks = _dedupe_v1_tasks(merged_tasks, text)
         except Exception as e:
             print(f"[summary_v1] dedupe failed: {e!r}")
+    decisions = obj.get("decisions") if isinstance(obj.get("decisions"), list) else []
+    open_questions = obj.get("open_questions") if isinstance(obj.get("open_questions"), list) else []
+    dropped: list[dict[str, Any]] = []
+    if summary_task_verify_enabled() if verify is None else verify:
+        try:
+            checked = _verify_v1_tasks(merged_tasks, text)
+            merged_tasks = checked["tasks"]
+            dropped = checked["dropped"]
+        except Exception as e:
+            print(f"[summary_v1] verify failed: {e!r}")
     summary = inject_tasks_into_summary(summary, merged_tasks)
     return {
         "content_type": content_type,
@@ -1148,10 +1218,11 @@ def _summarize_recording_v1(
         "summary": summary,
         "participants": obj.get("participants") if isinstance(obj.get("participants"), list) else [],
         "tasks": merged_tasks,
-        "decisions": obj.get("decisions") if isinstance(obj.get("decisions"), list) else [],
+        "decisions": decisions,
         "deadlines": obj.get("deadlines") if isinstance(obj.get("deadlines"), list) else [],
         "topics": obj.get("topics") if isinstance(obj.get("topics"), list) else [],
-        "open_questions": obj.get("open_questions") if isinstance(obj.get("open_questions"), list) else [],
+        "open_questions": open_questions,
+        "tasks_dropped": dropped,
         "risks": obj.get("risks") if isinstance(obj.get("risks"), list) else [],
     }
 

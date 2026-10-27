@@ -190,6 +190,7 @@ def _save_transcription_note(
         title=topic or filename or "Транскрипция",
         transcript=text,
         meta=meta,
+        segments=getattr(result, "segments", None),
     )
     return int(note["id"])
 

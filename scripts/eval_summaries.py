@@ -88,6 +88,8 @@ def _run(pipeline: str, case: dict[str, Any]) -> tuple[dict[str, Any] | None, fl
         out = llm._summarize_recording_v1(case["transcript"], speakers_detected=True, dedupe=False)
     elif pipeline == "v1d":
         out = llm._summarize_recording_v1(case["transcript"], speakers_detected=True, dedupe=True)
+    elif pipeline == "v1dv":  # v1d + проверка задач по транскрипту (SUMMARY_TASK_VERIFY)
+        out = llm._summarize_recording_v1(case["transcript"], speakers_detected=True, dedupe=True, verify=True)
     else:
         out = llm._summarize_recording_v2(
             case["transcript"], speakers_detected=True, context=_context(case.get("context"))

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261027-focus-task2";
+  var WEBAPP_BUILD = "20261027-speakers";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -38483,16 +38483,21 @@
         host.appendChild(makeBtn);
       }
       var spMap = transcriptionSpeakerMap(transNote);
-      if (spMap) {
+      var spDetected = !!(transNote && transNote.meta && transNote.meta.speakers_detected);
+      if (spMap || spDetected) {
         var spBtn = document.createElement("button");
         spBtn.type = "button";
         spBtn.className = "note-sheet-chip note-sheet-chip--speakers";
-        spBtn.textContent = "🗣 Спикеры";
+        var spOpen = spMap
+          ? Object.keys(spMap).filter(function (k) { return !(spMap[k] && spMap[k].confirmed); }).length
+          : 0;
+        spBtn.textContent = "🗣 Кто есть кто" + (spOpen ? " · " + spOpen : "");
+        if (spOpen || !spMap) spBtn.classList.add("is-todo");
         spBtn.setAttribute("aria-haspopup", "dialog");
         spBtn.addEventListener("click", function (e) {
           e.preventDefault();
           e.stopPropagation();
-          openSpeakerMapMenu(spBtn, noteSheetsNoteId(), spMap);
+          openSpeakerMapMenu(spBtn, noteSheetsNoteId());
         });
         host.appendChild(spBtn);
       }
@@ -38950,102 +38955,215 @@
     }
   }
 
-  function openSpeakerMapMenu(anchor, noteId, map) {
+  function speakerTalkLabel(sec) {
+    var n = Number(sec || 0);
+    if (n < 60) return n ? Math.max(1, Math.round(n)) + " с" : "";
+    return Math.round(n / 60) + " мин";
+  }
+
+  function placeSpeakerMapMenu(menu, anchor) {
+    var rect = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
+    var mw = menu.offsetWidth || 320;
+    var left = rect ? rect.left : 16;
+    var top = rect ? rect.bottom + 6 : 16;
+    if (left + mw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - mw - 8);
+    if (top + menu.offsetHeight > window.innerHeight - 8) {
+      top = Math.max(8, window.innerHeight - menu.offsetHeight - 8);
+    }
+    menu.style.left = Math.round(left) + "px";
+    menu.style.top = Math.round(top) + "px";
+  }
+
+  function speakerMapReopen(item, toast) {
+    closeSpeakerMapMenu();
+    if (item) {
+      prependTranscriptionInCache(item);
+      openNoteDetail(item, { isLocal: true });
+    }
+    if (toast) showNoteToast(toast);
+  }
+
+  function openSpeakerMapMenu(anchor, noteId) {
     if (document.getElementById("note-speaker-map-menu")) {
       closeSpeakerMapMenu();
       return;
     }
     if (!noteId) return;
+    var base = "/notes/local/" + encodeURIComponent(String(noteId)) + "/speakers";
     var menu = document.createElement("div");
     menu.id = "note-speaker-map-menu";
     menu.className = "note-sheet-kind-menu note-speaker-map-menu";
     menu.setAttribute("role", "dialog");
+    menu.setAttribute("aria-label", "Кто есть кто");
     var head = document.createElement("div");
     head.className = "note-speaker-map-hint";
-    head.textContent = "Кто есть кто — по этим именам уточнятся исполнители задач";
+    head.textContent = "Загружаю спикеров…";
     menu.appendChild(head);
-
-    Object.keys(map).forEach(function (label) {
-      var info = map[label] || {};
-      var row = document.createElement("div");
-      row.className = "note-speaker-map-row";
-      var lab = document.createElement("span");
-      lab.className = "note-speaker-map-label";
-      lab.textContent = label;
-      var input = document.createElement("input");
-      input.type = "text";
-      input.maxLength = 80;
-      input.className = "note-speaker-map-input";
-      input.placeholder = "Имя";
-      input.value = info.name || "";
-      var sure = info.confirmed || Number(info.confidence || 0) >= 0.75;
-      if (info.name && !sure) row.classList.add("is-guess");
-      if (info.evidence && !info.confirmed) input.title = info.evidence;
-      var ok = document.createElement("button");
-      ok.type = "button";
-      ok.className = "note-speaker-map-ok";
-      ok.textContent = info.confirmed ? "✓" : "Да";
-      ok.setAttribute("aria-label", "Подтвердить " + label);
-      function save() {
-        ok.disabled = true;
-        apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/speakers", {
-          method: "POST",
-          body: JSON.stringify({ label: label, name: String(input.value || "").trim() }),
-        })
-          .then(function (res) {
-            var item = res && res.item;
-            closeSpeakerMapMenu();
-            if (item) {
-              prependTranscriptionInCache(item);
-              openNoteDetail(item, { isLocal: true });
-            }
-            showNoteToast(
-              item && item.summary_rerendered
-                ? "Исполнители в саммари обновлены"
-                : "Задачи обновлены; текст саммари правили вручную — его не трогаем"
-            );
-          })
-          .catch(function (e) {
-            ok.disabled = false;
-            showNoteToast((e && e.message) || "Не удалось сохранить");
-          });
-      }
-      ok.addEventListener("click", function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        save();
-      });
-      input.addEventListener("keydown", function (e) {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          save();
-        }
-      });
-      row.appendChild(lab);
-      row.appendChild(input);
-      row.appendChild(ok);
-      menu.appendChild(row);
-    });
-
     var host =
       (anchor && anchor.closest && anchor.closest("#note-editor-overlay")) ||
       document.getElementById("note-editor-overlay") ||
       document.body;
     host.appendChild(menu);
-    var rect = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
-    var mw = menu.offsetWidth || 280;
-    var left = rect ? rect.left : 16;
-    var top = rect ? rect.bottom + 6 : 16;
-    if (left + mw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - mw - 8);
-    if (top + menu.offsetHeight > window.innerHeight - 8) {
-      top = rect ? Math.max(8, rect.top - menu.offsetHeight - 6) : 16;
-    }
-    menu.style.left = Math.round(left) + "px";
-    menu.style.top = Math.round(top) + "px";
+    placeSpeakerMapMenu(menu, anchor);
     setTimeout(function () {
       document.addEventListener("click", onSpeakerMapMenuDocClick, true);
       document.addEventListener("keydown", onSpeakerMapMenuKey, true);
     }, 0);
+
+    apiFetch(base)
+      .then(function (view) {
+        if (!menu.parentNode) return;
+        var speakers = (view && view.speakers) || [];
+        if (!speakers.length) {
+          head.textContent = "В этой записи один спикер";
+          return;
+        }
+        head.textContent =
+          "Кто есть кто — имя появится в транскрипте и у исполнителей задач" +
+          (view.guessing ? ". Лео ещё угадывает имена…" : "");
+        var dl = document.createElement("datalist");
+        dl.id = "note-speaker-candidates";
+        (view.candidates || []).forEach(function (n) {
+          var o = document.createElement("option");
+          o.value = n;
+          dl.appendChild(o);
+        });
+        menu.appendChild(dl);
+        speakers.forEach(function (sp) {
+          menu.appendChild(speakerMapPerson(sp, speakers, view, base));
+        });
+        placeSpeakerMapMenu(menu, anchor);
+      })
+      .catch(function (e) {
+        head.textContent = (e && e.message) || "Не удалось загрузить спикеров";
+      });
+  }
+
+  function speakerMapPerson(sp, all, view, base) {
+    var label = sp.label;
+    var box = document.createElement("div");
+    box.className = "note-speaker-map-person";
+    var top = document.createElement("div");
+    top.className = "note-speaker-map-top";
+    var lab = document.createElement("span");
+    lab.className = "note-speaker-map-label";
+    lab.textContent = label + (sp.talk_sec ? " · " + speakerTalkLabel(sp.talk_sec) : "");
+    top.appendChild(lab);
+    if (view.can_merge && all.length > 1) {
+      var merge = document.createElement("select");
+      merge.className = "note-speaker-map-merge";
+      merge.setAttribute("aria-label", "Объединить " + label + " с другим спикером");
+      var first = document.createElement("option");
+      first.value = "";
+      first.textContent = "Тот же, что…";
+      merge.appendChild(first);
+      all.forEach(function (other) {
+        if (other.label === label) return;
+        var o = document.createElement("option");
+        o.value = other.label;
+        o.textContent = other.label + (other.confirmed && other.name ? " (" + other.name + ")" : "");
+        merge.appendChild(o);
+      });
+      merge.addEventListener("change", function () {
+        var target = merge.value;
+        if (!target) return;
+        if (!window.confirm("Реплики «" + label + "» станут репликами «" + target + "»?")) {
+          merge.value = "";
+          return;
+        }
+        merge.disabled = true;
+        apiFetch(base + "/merge", {
+          method: "POST",
+          body: JSON.stringify({ source: label, target: target }),
+        })
+          .then(function (res) {
+            speakerMapReopen(res && res.item, "Спикеры объединены");
+          })
+          .catch(function (e) {
+            merge.disabled = false;
+            merge.value = "";
+            showNoteToast((e && e.message) || "Не удалось объединить");
+          });
+      });
+      top.appendChild(merge);
+    }
+    box.appendChild(top);
+
+    if (sp.samples && sp.samples.length) {
+      var ul = document.createElement("ul");
+      ul.className = "note-speaker-map-samples";
+      sp.samples.forEach(function (q) {
+        var li = document.createElement("li");
+        if (q.t) {
+          var t = document.createElement("span");
+          t.className = "note-speaker-map-t";
+          t.textContent = q.t;
+          li.appendChild(t);
+        }
+        li.appendChild(document.createTextNode("«" + q.text + "»"));
+        ul.appendChild(li);
+      });
+      box.appendChild(ul);
+    }
+
+    var row = document.createElement("div");
+    row.className = "note-speaker-map-row";
+    var input = document.createElement("input");
+    input.type = "text";
+    input.maxLength = 80;
+    input.className = "note-speaker-map-input";
+    input.placeholder = "Имя — из списка или новое";
+    input.setAttribute("list", "note-speaker-candidates");
+    input.setAttribute("aria-label", "Имя для " + label);
+    input.value = sp.name || "";
+    if (sp.name && !sp.confirmed) row.classList.add("is-guess");
+    var ok = document.createElement("button");
+    ok.type = "button";
+    ok.className = "note-speaker-map-ok";
+    ok.textContent = sp.confirmed ? "✓" : "Да";
+    ok.setAttribute("aria-label", "Подтвердить имя для " + label);
+    function save() {
+      ok.disabled = true;
+      apiFetch(base, {
+        method: "POST",
+        body: JSON.stringify({ label: label, name: String(input.value || "").trim() }),
+      })
+        .then(function (res) {
+          var item = res && res.item;
+          var parts = [];
+          if (item && item.transcript_rerendered) parts.push("имя в транскрипте");
+          if (item && item.summary_rerendered) parts.push("исполнители в саммари");
+          speakerMapReopen(
+            item,
+            parts.length ? "Обновлено: " + parts.join(", ") : "Сохранено; текст правили вручную — его не трогаем"
+          );
+        })
+        .catch(function (e) {
+          ok.disabled = false;
+          showNoteToast((e && e.message) || "Не удалось сохранить");
+        });
+    }
+    ok.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      save();
+    });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        save();
+      }
+    });
+    row.appendChild(input);
+    row.appendChild(ok);
+    box.appendChild(row);
+    if (sp.name && !sp.confirmed && sp.evidence) {
+      var why = document.createElement("div");
+      why.className = "note-speaker-map-why";
+      why.textContent = "Догадка Лео: " + sp.evidence;
+      box.appendChild(why);
+    }
+    return box;
   }
 
   function closeNewSheetKindMenu() {

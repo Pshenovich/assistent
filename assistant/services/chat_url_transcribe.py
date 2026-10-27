@@ -148,6 +148,7 @@ def transcribe_url_to_note(
             "filename": source_filename,
             "job_id": result.job_id,
         },
+        segments=getattr(result, "segments", None),
     )
     if with_summary:
         note = tnotes.begin_make_summary(uid, int(note["id"]))

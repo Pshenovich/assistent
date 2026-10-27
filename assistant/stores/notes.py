@@ -909,6 +909,12 @@ def delete_note(user_id: int | str, note_id: int) -> bool:
         except Exception as e:
             print(f"[notes] delete sheets failed note={note_id} err={e!r}")
         try:
+            from assistant.stores import transcript_segments
+
+            transcript_segments.delete(int(note_id))
+        except Exception as e:
+            print(f"[notes] delete segments failed note={note_id} err={e!r}")
+        try:
             with _LOCK:
                 _conn().execute(
                     "DELETE FROM note_pins WHERE item_kind = 'local' AND item_id = ?",

@@ -76,6 +76,7 @@ def _build_meta(
         "topics": result.get("topics") or [],
         "open_questions": result.get("open_questions") or [],
         "risks": result.get("risks") or [],
+        "tasks_dropped": result.get("tasks_dropped") or [],
         **v2_meta(result),
     }
 
@@ -234,6 +235,7 @@ def persist_meeting_artifacts_for_user(
         transcript=transcript,
         summary=str(processed.get("summary_text") or ""),
         meta=meta,
+        segments=getattr(processed.get("result"), "segments", None),
     )
     if note and note.get("id") is not None:
         from assistant.services import meeting_autolink

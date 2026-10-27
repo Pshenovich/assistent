@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import datetime, timezone
+from typing import Any
 
 from telegram import InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
@@ -145,6 +146,7 @@ def _build_meta(result: dict, *, speakers_detected: bool) -> dict:
         "topics": result.get("topics") or [],
         "open_questions": result.get("open_questions") or [],
         "risks": result.get("risks") or [],
+        "tasks_dropped": result.get("tasks_dropped") or [],
         **v2_meta(result),
     }
 
@@ -158,6 +160,7 @@ def _save_summary_note(
     filename: str | None = None,
     source_url: str | None = None,
     telegram_link: str | None = None,
+    segments: Any = None,
 ) -> int:
     payload = dict(meta or {})
     payload["source"] = "telegram"
@@ -178,6 +181,7 @@ def _save_summary_note(
         transcript=transcript,
         summary=summary_text,
         meta=payload,
+        segments=segments,
     )
     return int(note["id"])
 
@@ -357,6 +361,7 @@ async def run_explicit_summary(
 
         note_id = _save_summary_note(
             user_id=uid,
+            segments=getattr(result, "segments", None),
             transcript=transcript,
             summary_text=display_text,
             meta=meta,

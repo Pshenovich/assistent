@@ -37,6 +37,9 @@ class TranscribeResult:
     plain_text: str
     formatted_text: str
     job_id: str | None = None
+    # ({"start": сек, "end": сек, "speaker": "Спикер 1", "text": …}, …) — по времени;
+    # speaker пустой, если говорящий один.
+    segments: tuple = ()
 
 
 def _api_key() -> str:
@@ -50,67 +53,101 @@ def _speakers_mode() -> str:
     return (os.getenv("OBUCHAT_SPEAKERS", "auto") or "auto").strip() or "auto"
 
 
-def _plain_text_from_body(body: dict[str, Any]) -> str:
-    for key in ("transcript", "text", "result"):
-        v = body.get(key)
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-    dia = body.get("diarization")
-    if isinstance(dia, list):
-        parts = [str(x.get("text") or "").strip() for x in dia if isinstance(x, dict)]
-        joined = "\n".join(p for p in parts if p)
-        if joined:
-            return joined
+_SPEAKER_ID_RE = re.compile(r"^(?:speaker|спикер)[ _-]?(\d+)$", re.IGNORECASE)
+
+
+def _speaker_name(seg: dict[str, Any]) -> str:
+    """«SPEAKER_1» / «1» / «Спикер 1» → «Спикер 1»; имя (Zoom) — как есть."""
+    for key in ("speaker", "speaker_id", "label", "name"):
+        v = seg.get(key)
+        if v is None or not str(v).strip():
+            continue
+        raw = str(v).strip()
+        if raw.isdigit():
+            return f"Спикер {raw}"
+        m = _SPEAKER_ID_RE.match(raw)
+        return f"Спикер {m.group(1)}" if m else raw
     return ""
 
 
-def _speaker_label(seg: dict[str, Any]) -> str:
-    for key in ("speaker", "speaker_id", "label", "name"):
-        v = seg.get(key)
-        if v is not None and str(v).strip():
-            return str(v).strip()
-    return "Спикер"
+def _seconds(v: Any) -> float | None:
+    try:
+        return round(float(v), 2)
+    except (TypeError, ValueError):
+        return None
 
 
-def _formatted_from_diarization(dia: list[Any]) -> str:
-    blocks: list[str] = []
-    for item in dia:
+def _segments_from_body(body: dict[str, Any]) -> list[dict[str, Any]]:
+    """Сегменты из ответа: сейчас это список в «transcript», раньше — «diarization»."""
+    items: list[Any] = []
+    for key in ("transcript", "diarization", "segments"):
+        v = body.get(key)
+        if isinstance(v, list) and v:
+            items = v
+            break
+    out: list[dict[str, Any]] = []
+    for item in items:
         if not isinstance(item, dict):
             continue
         text = str(item.get("text") or "").strip()
         if not text:
             continue
-        label = _speaker_label(item)
-        if label.isdigit():
-            label = f"Спикер {label}"
-        elif not label.lower().startswith("спикер"):
-            label = f"Спикер {label}"
-        blocks.append(f"{label}:\n{text}")
-    return "\n\n".join(blocks)
+        out.append({
+            "start": _seconds(item.get("start")),
+            "end": _seconds(item.get("end")),
+            "speaker": _speaker_name(item),
+            "text": text,
+        })
+    if out and all(s["start"] is not None for s in out):
+        out.sort(key=lambda s: s["start"])  # у Obuchat реплики разных спикеров перекрываются
+    if len({s["speaker"] for s in out}) <= 1:
+        for s in out:
+            s["speaker"] = ""
+    return out
+
+
+def formatted_from_segments(segments: list[dict[str, Any]]) -> str:
+    """«Спикер 1:\n…» блоками; подряд идущие реплики одного спикера — в один блок."""
+    blocks: list[tuple[str, list[str]]] = []
+    for s in segments:
+        sp = str(s.get("speaker") or "")
+        if blocks and blocks[-1][0] == sp:
+            blocks[-1][1].append(str(s.get("text") or ""))
+        else:
+            blocks.append((sp, [str(s.get("text") or "")]))
+    parts = []
+    for sp, texts in blocks:
+        text = " ".join(t for t in texts if t)
+        parts.append(f"{sp}:\n{text}" if sp else text)
+    return "\n\n".join(parts)
+
+
+def _plain_text_from_body(body: dict[str, Any]) -> str:
+    for key in ("transcript", "text", "result"):
+        v = body.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
 
 
 def _result_from_body(body: dict[str, Any], *, job_id: str | None = None) -> TranscribeResult | None:
+    segments = _segments_from_body(body)
+    if segments:
+        formatted = formatted_from_segments(segments)
+        plain = "\n".join(s["text"] for s in segments)
+        return TranscribeResult(
+            plain_text=plain, formatted_text=formatted, job_id=job_id, segments=tuple(segments)
+        )
     plain = _plain_text_from_body(body)
-    dia = body.get("diarization")
-    formatted = ""
-    if isinstance(dia, list) and dia:
-        formatted = _formatted_from_diarization(dia)
-    if not formatted:
-        formatted = plain
-    if not plain and not formatted:
-        return None
     if not plain:
-        plain = formatted
-    # Obuchat стал отдавать «SPEAKER_1: …» и в «чистом» тексте: убираем метки,
+        return None
+    # Obuchat отдаёт «SPEAKER_1: …» и в «чистом» тексте: убираем метки,
     # а в размеченном — только если говорящий один (иначе метки нужны).
+    formatted = plain
     plain = strip_speaker_labels(plain)
-    if formatted and _single_speaker(formatted):
+    if _single_speaker(formatted):
         formatted = strip_speaker_labels(formatted)
-    return TranscribeResult(
-        plain_text=plain,
-        formatted_text=formatted or plain,
-        job_id=job_id,
-    )
+    return TranscribeResult(plain_text=plain, formatted_text=formatted or plain, job_id=job_id)
 
 
 def _post_timeout_sec() -> float:
