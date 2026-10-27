@@ -23230,3 +23230,11 @@ ol.note-discuss-md-list { list-style: decimal; }
 .topic-history p { margin: 0; font-size: 0.76rem; color: var(--text-tertiary); }
 .ev-topic-chip { align-self: flex-start; margin: 0 0 8px; padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--radius-full); background: transparent; color: var(--text-secondary); font-size: 0.8rem; cursor: pointer; }
 .ev-topic-chip:hover { color: var(--text-primary); border-color: var(--text-tertiary); }
+
+/* «Чаты»: кнопка «Поделиться» в шапке открытого чата — слева от кнопки чатов. */
+.note-chats-wrap { display: flex; align-items: center; gap: 8px; }
+.note-discussion-header.has-chat-share { grid-template-columns: 80px 1fr 80px; }
+#note-discussion-share { width: 36px; height: 36px; border-radius: 50%; color: var(--text); background: rgba(255, 255, 255, 0.08); }
+#note-discussion-share.hidden { display: none; }
+#note-discussion-share.is-active { color: var(--vkui--color_text_accent, #529ef4); }
+#note-discussion-share:active { opacity: 0.85; transform: scale(0.98); }

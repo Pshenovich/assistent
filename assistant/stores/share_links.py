@@ -11,7 +11,9 @@ from typing import Any, Optional
 from assistant.stores import notes as notes_store
 
 _LOCK = notes_store._LOCK  # type: ignore[attr-defined]
-_VALID_KINDS = frozenset({"local", "journal", "digest"})
+_VALID_KINDS = frozenset({"local", "journal", "digest", "chat"})
+# Чат по ссылке — только чтение: комментариев к переписке нет.
+_VIEW_ONLY_KINDS = frozenset({"chat"})
 _VALID_ACCESS = frozenset({"view", "comment"})
 _DEFAULT_ACCESS = "view"
 _TOKEN_BYTES = 24
@@ -273,6 +275,8 @@ def create_or_get_share(
     iid = str(item_id).strip()
     if not iid:
         raise ValueError("Не указан идентификатор записи")
+    if kind in _VIEW_ONLY_KINDS:
+        access = "view"
     # Своя ссылка на каждый набор листов: тот же набор — та же ссылка (меняется только доступ).
     # Без sheet_ids (журнал, чат, старые вызовы) — последняя активная ссылка, как раньше.
     active = list_active_shares(uid, kind, iid)

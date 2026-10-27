@@ -9,7 +9,7 @@
   <meta property="og:title" content="{{TITLE}}" />
   <meta property="og:description" content="{{LABEL}}" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/board.css?v=20261026-task-notify" />
+  <link rel="stylesheet" href="/webapp/board.css?v=20261027-chat-live" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
@@ -402,6 +402,28 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .share-chat { display: flex; flex-direction: column; gap: 0.75rem; }
+    .share-chat-msg {
+      align-self: flex-end;
+      max-width: 85%;
+      padding: 0.6rem 0.85rem;
+      border-radius: 16px 16px 4px 16px;
+      background: rgba(82, 158, 244, 0.16);
+    }
+    .share-chat-msg--gpt {
+      align-self: stretch;
+      max-width: none;
+      padding: 0.25rem 0;
+      border-radius: 0;
+      background: transparent;
+    }
+    .share-chat-meta { display: flex; gap: 0.5rem; align-items: baseline; margin-bottom: 0.25rem; font-size: 0.78rem; color: var(--muted); }
+    .share-chat-author { font-weight: 600; color: var(--text); }
+    .share-chat-msg--gpt .share-chat-author { color: var(--accent); }
+    .share-chat-body { word-break: break-word; }
+    .share-chat-body > :first-child { margin-top: 0; }
+    .share-chat-body > :last-child { margin-bottom: 0; }
+    .share-chat-empty { color: var(--muted); text-align: center; }
     .status, .error {
       margin: 2.5rem auto 0;
       max-width: 28rem;
@@ -846,8 +868,8 @@ details.note-toggle[open] > summary::after { transform: rotate(180deg); }
   </main>
   <script src="/webapp/note-html.js?v=20260908-stable2"></script>
   <script src="/webapp/note-comments.js?v=20260908-stable2"></script>
-  <script src="/webapp/board-geom.js?v=20261026-task-notify"></script>
-  <script src="/webapp/board.js?v=20261026-task-notify"></script>
-  <script src="/webapp/share.js?v=20261026-task-notify"></script>
+  <script src="/webapp/board-geom.js?v=20261027-chat-live"></script>
+  <script src="/webapp/board.js?v=20261027-chat-live"></script>
+  <script src="/webapp/share.js?v=20261027-chat-live"></script>
 </body>
 </html>

@@ -157,14 +157,44 @@ def sheets_changed(note_id: int | str, *, source: str = "") -> None:
 
 
 def comments_changed(item_kind: str, item_id: Any) -> None:
-    """Комментарии/обсуждение; живые обновления — пока только для локальных заметок."""
-    if str(item_kind or "") != "local":
+    """Комментарии/обсуждение: заметке — по её теме, чату из «Чатов» — каждому участнику."""
+    kind = str(item_kind or "")
+    if kind == "chat":
+        try:
+            from assistant.stores import chat_threads
+
+            uids = chat_threads.participant_ids(item_id)
+        except Exception as exc:
+            print(f"[realtime] chat participants failed chat={item_id} err={exc!r}")
+            return
+        chat_changed(item_id, uids, what="messages")
+        return
+    if kind != "local":
         return
     try:
         nid = int(item_id)
     except (TypeError, ValueError):
         return
     publish(note_topic(nid), {"type": "comments.changed", "note_id": nid})
+
+
+def chat_changed(chat_id: int | str, user_ids: list[Any], *, what: str = "meta") -> None:
+    """Чат из «Чатов»: what="messages" — новые/удалённые сообщения, "meta" — название, участники, удаление.
+
+    Тема user: — у чата нет своей подписки; в событии только id, данные клиент берёт запросом.
+    """
+    try:
+        cid = int(chat_id)
+    except (TypeError, ValueError):
+        return
+    ev: dict[str, Any] = {"type": "chat.changed", "chat_id": cid, "what": str(what or "meta")}
+    for uid in dict.fromkeys(str(u or "").strip() for u in user_ids):
+        if not uid:
+            continue
+        try:
+            publish(user_topic(uid), ev)
+        except (TypeError, ValueError):
+            continue
 
 
 def task_changed(task_id: int | str, user_ids: list[Any], *, actor_user_id: Any = None) -> None:

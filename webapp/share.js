@@ -44,7 +44,52 @@
       .join("");
   }
 
+  function renderRichText(raw) {
+    var api = window.NoteHtml;
+    var html = String(raw || "");
+    if (!api) return plainToHtml(html);
+    if (!looksLikeHtml(html) && looksLikeMarkdown(html) && typeof api.markdownToHtml === "function") {
+      html = api.markdownToHtml(html);
+    } else if (!looksLikeHtml(html)) {
+      html = plainToHtml(html);
+    }
+    if (typeof api.enrichForDisplay === "function") {
+      html = api.enrichForDisplay(html, { interactive: false });
+    }
+    return html;
+  }
+
+  // Чат по ссылке: лента реплик (имя · время), ответы ассистента — с разметкой.
+  function renderChatMessages(data) {
+    var messages = Array.isArray(data && data.messages) ? data.messages : [];
+    if (!messages.length) return '<p class="share-chat-empty">В чате пока нет сообщений</p>';
+    return (
+      '<div class="share-chat">' +
+      messages
+        .map(function (m) {
+          var gpt = !!(m && m.is_gpt);
+          var when = formatWhen(m && m.created_at);
+          var body = gpt
+            ? renderRichText(m.body)
+            : plainToHtml(String((m && m.body) || ""));
+          return (
+            '<div class="share-chat-msg' + (gpt ? " share-chat-msg--gpt" : "") + '">' +
+            '<div class="share-chat-meta"><span class="share-chat-author">' +
+            escapeHtml(String((m && m.author) || (gpt ? "Ассистент" : "Участник"))) +
+            "</span>" +
+            (when ? '<span class="share-chat-time">' + escapeHtml(when) + "</span>" : "") +
+            "</div>" +
+            '<div class="share-chat-body">' + (body || "—") + "</div>" +
+            "</div>"
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
   function renderBody(data) {
+    if (String((data && data.kind) || "") === "chat") return renderChatMessages(data);
     var raw = String((data && data.body) || "").trim();
     var canvases = Array.isArray(data && data.canvases) ? data.canvases : [];
     var boards = Array.isArray(data && data.boards) ? data.boards : [];
@@ -435,7 +480,7 @@
       if (titleEl) titleEl.textContent = title;
       if (bodyEl) {
         bodyEl.innerHTML = renderBody(data);
-        buildShareToc(bodyEl);
+        if (String(data.kind || "") !== "chat") buildShareToc(bodyEl);
       }
       renderShareCanvases(data);
       if (doc) doc.classList.remove("hidden");

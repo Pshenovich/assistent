@@ -3118,6 +3118,7 @@ _SHARE_KIND_LABELS = {
     "format_note": "Заметка",
     "answer_with_context": "Ответ",
     "digest": "Дайджест",
+    "chat": "Чат",
 }
 
 
@@ -3469,6 +3470,50 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
             "access": share_links_store.normalize_access(link.get("access")),
             "item_id": item_id,
         }
+    if kind == "chat":
+        from assistant.stores import chat_threads as chat_threads_store
+        from assistant.stores import share_comments as share_comments_store
+
+        thread = chat_threads_store.get_thread(uid, item_id)
+        if not thread:
+            return None
+        rows = share_comments_store.list_comments(uid, "chat", item_id)[-500:]
+        messages: list[dict[str, Any]] = []
+        total = 0
+        for row in reversed(rows):
+            body = str(row.get("body") or "").strip()
+            if not body:
+                continue
+            total += len(body)
+            if total > 120000:
+                break
+            is_assistant = (
+                share_comments_store.is_gpt_comment(row)
+                or share_comments_store.is_research_comment(row)
+                or share_comments_store.is_agent_turn(row)
+                or share_comments_store.is_paie_comment(row)
+            )
+            # Наружу — только имя и текст: без telegram id и username.
+            messages.append(
+                {
+                    "author": "Ассистент" if is_assistant else (str(row.get("author_name") or "").strip() or "Участник"),
+                    "is_gpt": is_assistant,
+                    "body": body,
+                    "created_at": row.get("created_at"),
+                }
+            )
+        messages.reverse()
+        return {
+            "kind": "chat",
+            "operation": None,
+            "label": _SHARE_KIND_LABELS["chat"],
+            "title": (str(thread.get("title") or "").strip() or "Чат")[:500],
+            "body": "",
+            "messages": messages,
+            "updated_at": thread.get("updated_at"),
+            "access": "view",
+            "item_id": item_id,
+        }
     return None
 
 
@@ -3571,6 +3616,20 @@ def _notify_member_added(
         int(member_user_id),
         f"{who} добавил(а) вас в заметку {link}.",
     )
+
+
+def _notify_chat_member_added(
+    *,
+    member_user_id: int,
+    title: str,
+    thread_id: int,
+    adder_name: str,
+) -> None:
+    from assistant.lib.telegram_notify import send_message
+
+    link = _discussion_title_link_html(title or "Чат", "chat", str(thread_id))
+    who = html_lib.escape(adder_name or "Участник")
+    send_message(int(member_user_id), f"{who} добавил(а) вас в чат {link}.")
 
 
 def _notify_team_members_added(added: list[dict[str, Any]], adder_name: str) -> None:
@@ -9231,7 +9290,7 @@ async def miniapp_chat_members_add(
     uid = int(principal.telegram_user_id)
     await run_in_threadpool(_remember_principal_profile, principal)
 
-    def _run() -> tuple[dict[str, Any], dict[str, Any]]:
+    def _run() -> tuple[dict[str, Any], dict[str, Any], bool]:
         thread = chat_threads_store.get_thread(uid, thread_id)
         if not thread:
             raise HTTPException(status_code=404, detail="Чат не найден")
@@ -9249,16 +9308,30 @@ async def miniapp_chat_members_add(
         )
         if int(member_id) == int(owner):
             raise HTTPException(status_code=400, detail="Это владелец чата")
+        was_member = chat_threads_store.is_member(owner, thread_id, member_id)
         member = chat_threads_store.add_member(owner, thread_id, member_id)
         fresh = chat_threads_store.get_accessible_thread(uid, thread_id)
-        return member, fresh or thread
+        return member, fresh or thread, was_member
 
     try:
-        member, thread = await run_in_threadpool(_run)
+        member, thread, was_member = await run_in_threadpool(_run)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except HTTPException:
         raise
+    if not was_member:
+        try:
+            await run_in_threadpool(
+                partial(
+                    _notify_chat_member_added,
+                    member_user_id=int(member["user_id"]),
+                    title=str((thread or {}).get("title") or "Чат"),
+                    thread_id=int(thread_id),
+                    adder_name=_principal_display_name(principal),
+                )
+            )
+        except Exception as e:
+            print(f"[chat_members] notify failed chat={thread_id} err={e!r}")
     return {"ok": True, "member": member, "chat": thread}
 
 

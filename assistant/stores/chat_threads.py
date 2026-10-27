@@ -297,6 +297,7 @@ def rename_thread(
         _conn().commit()
         if cur.rowcount <= 0:
             return None
+    _notify_changed(tid)
     return get_thread(uid, tid)
 
 
@@ -450,6 +451,7 @@ def delete_thread(owner_user_id: int | str, thread_id: int | str) -> bool:
         tid = int(thread_id)
     except (TypeError, ValueError):
         return False
+    before = participant_ids(tid)
     with _LOCK:
         cur = _conn().execute(
             "DELETE FROM chat_threads WHERE id = ? AND owner_user_id = ?",
@@ -476,7 +478,39 @@ def delete_thread(owner_user_id: int | str, thread_id: int | str) -> bool:
             comment_files.delete_for_item(uid, "chat", tid)
         except Exception as e:
             print(f"[chat_threads] delete comment files failed thread={tid} err={e!r}")
+        _notify_changed(tid, before)
     return deleted
+
+
+def participant_ids(thread_id: int | str) -> list[str]:
+    """Владелец и участники чата (id треда глобальный) — для живых обновлений."""
+    try:
+        tid = int(thread_id)
+    except (TypeError, ValueError):
+        return []
+    with _LOCK:
+        row = _conn().execute(
+            "SELECT owner_user_id FROM chat_threads WHERE id = ?", (tid,)
+        ).fetchone()
+        if not row:
+            return []
+        owner = str(row["owner_user_id"] or "")
+        cur = _conn().execute(
+            "SELECT member_user_id FROM chat_members WHERE owner_user_id = ? AND thread_id = ?",
+            (owner, tid),
+        )
+        members = [str(r["member_user_id"] or "") for r in cur.fetchall()]
+    return [u for u in [owner, *members] if u]
+
+
+def _notify_changed(thread_id: int | str, extra_user_ids: list[Any] | None = None) -> None:
+    try:
+        from assistant.realtime import notify as realtime_notify
+
+        uids = participant_ids(thread_id) + [str(u) for u in (extra_user_ids or [])]
+        realtime_notify.chat_changed(thread_id, uids)
+    except Exception as e:
+        print(f"[chat_threads] realtime notify failed thread={thread_id} err={e!r}")
 
 
 def is_member(
@@ -585,6 +619,7 @@ def add_member(
             (owner, tid, mid, member_role, ts),
         )
         _conn().commit()
+    _notify_changed(tid)
     prof = note_members.get_profile(mid)
     return {
         "user_id": int(mid) if str(mid).isdigit() else mid,
@@ -616,4 +651,7 @@ def remove_member(
             (owner, tid, mid),
         )
         _conn().commit()
-        return cur.rowcount > 0
+        removed = cur.rowcount > 0
+    if removed:
+        _notify_changed(tid, [mid])
+    return removed

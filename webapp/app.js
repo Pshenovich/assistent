@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261027-topics";
+  var WEBAPP_BUILD = "20261027-chat-live";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -31405,6 +31405,42 @@
       btn.title = actual ? "Чаты с Ассистентом" : t;
       btn.setAttribute("aria-expanded", "false");
     }
+    var sub = document.getElementById("note-discussion-subtitle");
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (sub && wrap && wrap._shareKind === "chat") {
+      var others = Math.max(0, ((wrap._noteMembers || []).length) - 1);
+      var subText = others ? "Вы и ещё " + others : "";
+      sub.textContent = subText;
+      sub.classList.toggle("hidden", !subText);
+    }
+    syncChatShareButton();
+  }
+
+  // Кнопка «Поделиться» в шапке открытого чата: ссылка для чтения и участники.
+  function syncChatShareButton() {
+    var btn = document.getElementById("note-discussion-share");
+    if (!btn) return;
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var ov = document.getElementById("note-discussion-overlay");
+    var show =
+      !!wrap &&
+      wrap._shareKind === "chat" &&
+      !!wrap._shareId &&
+      !!ov &&
+      !ov.classList.contains("hidden") &&
+      !document.documentElement.classList.contains("actual-assistant-open");
+    if (show && (wrap._noteMembers || []).length < 2) {
+      // Пустой черновик делиться нечем — кнопка появится после первого сообщения.
+      var thread = (chatThreadsCache || []).find(function (t) {
+        return String(t.id) === String(wrap._shareId);
+      });
+      if (thread && !chatThreadHasMessages(thread)) show = false;
+    }
+    setHidden(btn, !show);
+    var head = btn.closest(".note-discussion-header");
+    if (head) head.classList.toggle("has-chat-share", show);
+    var shared = !!wrap && ((wrap._noteMembers || []).length > 1);
+    btn.classList.toggle("is-active", shared);
   }
 
   function sortChatThreadsCache() {
@@ -31527,6 +31563,7 @@
       "notes-chats-tab",
       currentTab === "notes" && notesSubTab === "chats"
     );
+    syncChatShareButton();
   }
 
   function upsertChatThreadCache(thread) {
@@ -31753,13 +31790,19 @@
     return lines.join("\n").trim();
   }
 
-  async function shareChatThread(thread) {
+  async function shareChatThread(thread, opts) {
     if (!thread || thread.id == null) return;
     try {
       var id = String(thread.id);
-      ensureChatShareWrap(id);
       var wrap = document.getElementById("note-editor-more-wrap");
+      // Из шапки открытого чата — его обёртку не пересоздаём, иначе лента сбросится.
+      if (!wrap || wrap._shareKind !== "chat" || String(wrap._shareId) !== id) {
+        ensureChatShareWrap(id);
+        wrap = document.getElementById("note-editor-more-wrap");
+      }
       if (!wrap) return;
+      if (Array.isArray(thread.members) && thread.members.length) wrap._noteMembers = thread.members;
+      if (thread.is_owner != null) wrap._isNoteOwner = thread.is_owner !== false;
       try {
         var data = await apiFetch(
           "/notes/chat/" + encodeURIComponent(id) + "/share",
@@ -31767,7 +31810,7 @@
         );
         applyShareState(wrap, data);
       } catch (_) {}
-      openShareAccessSheet();
+      openShareAccessSheet(opts && opts.pane);
     } catch (e) {
       alert(e.message || String(e));
     }
@@ -31881,6 +31924,7 @@
     if (wrapEarly && Array.isArray(thread.members)) {
       wrapEarly._noteMembers = thread.members;
     }
+    if (wrapEarly && thread.is_owner != null) wrapEarly._isNoteOwner = thread.is_owner !== false;
     renderChatThreadsList();
     await pruneEmptyChatDrafts(id);
     if (prevId && String(prevId) !== id) {
@@ -31906,6 +31950,7 @@
       var wrapMem = document.getElementById("note-editor-more-wrap");
       if (wrapMem && mem) {
         wrapMem._noteMembers = (mem.chat && mem.chat.members) || mem.members || [];
+        if (mem.chat && mem.chat.is_owner != null) wrapMem._isNoteOwner = mem.chat.is_owner !== false;
         if (mem.chat) upsertChatThreadCache(mem.chat);
       }
     } catch (_) {}
@@ -33084,6 +33129,15 @@
       kickDiscussionLiveUpdates(evNote);
       return;
     }
+    if (type === "chat.changed") {
+      onRealtimeChatChanged(ev);
+      return;
+    }
+    if (type === "open") {
+      // Сокет (пере)подключился — догнать открытый чат: события, пока его не было, потеряны.
+      if (activeChatThreadId) kickDiscussionLiveUpdates(activeChatThreadId, "chat");
+      return;
+    }
     if (type === "task.changed") {
       // Сообщение / статус в задаче (в т.ч. ответ из Telegram) — открытой карточке и списку «Поручено другим».
       kickPostedLiveUpdate(ev.task_id != null ? String(ev.task_id) : "");
@@ -33096,6 +33150,47 @@
         realtimeNotesTimer = null;
         if (currentTab === "notes" && !document.hidden) loadNotes().catch(function () {});
       }, 1500);
+    }
+  }
+
+  // Чат из «Чатов»: сообщение, название, участники. Своё сообщение тоже приходит — лента
+  // перечитывается, но оптимистичное сообщение tickDiscussionLiveUpdates не трогает.
+  var realtimeChatsTimer = null;
+  function onRealtimeChatChanged(ev) {
+    var chatId = ev && ev.chat_id != null ? String(ev.chat_id) : "";
+    if (!chatId) return;
+    var isOpen = String(activeChatThreadId || "") === chatId;
+    if (isOpen && ev.what === "messages") kickDiscussionLiveUpdates(chatId, "chat");
+    if (isOpen && ev.what !== "messages") refreshOpenChatMembers(chatId);
+    if (realtimeChatsTimer) clearTimeout(realtimeChatsTimer);
+    realtimeChatsTimer = setTimeout(function () {
+      realtimeChatsTimer = null;
+      if (document.hidden || document.querySelector(".chat-thread-menu:not(.hidden)")) return;
+      loadChatThreads().catch(function () {});
+    }, 1200);
+  }
+
+  async function refreshOpenChatMembers(chatId) {
+    try {
+      var mem = await apiFetch("/chats/" + encodeURIComponent(chatId) + "/members", { method: "GET" });
+      var wrap = document.getElementById("note-editor-more-wrap");
+      if (!wrap || wrap._shareKind !== "chat" || String(wrap._shareId) !== String(chatId)) return;
+      wrap._noteMembers = (mem && mem.chat && mem.chat.members) || (mem && mem.members) || [];
+      if (mem && mem.chat && mem.chat.is_owner != null) wrap._isNoteOwner = mem.chat.is_owner !== false;
+      if (mem && mem.chat) upsertChatThreadCache(mem.chat);
+      var ov = document.getElementById("note-share-sheet-overlay");
+      if (ov && !ov.classList.contains("hidden")) paintShareMembersList();
+    } catch (e) {
+      // 404 — чат удалили или нас убрали из участников.
+      if (String(activeChatThreadId || "") !== String(chatId) || !e || Number(e.status) !== 404) return;
+      chatThreadsCache = (chatThreadsCache || []).filter(function (t) {
+        return String(t.id) !== String(chatId);
+      });
+      activeChatThreadId = "";
+      closeShareAccessSheet();
+      if (isNoteDiscussionOpen()) closeNoteDiscussion(true);
+      renderChatThreadsList();
+      showNoteToast("Чат удалён или вас убрали из участников");
     }
   }
 
@@ -40242,6 +40337,24 @@
         closeNoteDiscussion();
       });
     }
+    var chatShareBtn = document.getElementById("note-discussion-share");
+    if (chatShareBtn && !chatShareBtn._bound) {
+      chatShareBtn._bound = true;
+      chatShareBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var wrap = document.getElementById("note-editor-more-wrap");
+        if (!wrap || wrap._shareKind !== "chat" || !wrap._shareId) return;
+        var thread = null;
+        for (var i = 0; i < (chatThreadsCache || []).length; i++) {
+          if (String(chatThreadsCache[i].id) === String(wrap._shareId)) {
+            thread = chatThreadsCache[i];
+            break;
+          }
+        }
+        shareChatThread(thread || { id: wrap._shareId });
+      });
+    }
     var newCtxBtn = document.getElementById("note-discussion-new-ctx");
     if (newCtxBtn && !newCtxBtn._bound) {
       newCtxBtn._bound = true;
@@ -40920,10 +41033,10 @@
     discussionLiveTimer = setTimeout(tickDiscussionLiveUpdates, DISCUSSION_LIVE_MS);
   }
 
-  function kickDiscussionLiveUpdates(noteId) {
+  function kickDiscussionLiveUpdates(itemId, kind) {
     if (!isNoteDiscussionOpen()) return;
     var wrap = document.getElementById("note-editor-more-wrap");
-    if (!wrap || wrap._shareKind !== "local" || String(wrap._shareId) !== String(noteId)) return;
+    if (!wrap || wrap._shareKind !== (kind || "local") || String(wrap._shareId) !== String(itemId)) return;
     stopDiscussionLiveUpdates();
     tickDiscussionLiveUpdates(true);
   }
@@ -40937,10 +41050,13 @@
     }
     var wrap = document.getElementById("note-editor-more-wrap");
     if (!wrap || !wrap._shareKind || !wrap._shareId) return;
+    // При живом сокете сообщения приходят событием — опрос только страховочный.
+    var socketLive =
+      (wrap._shareKind === "local" && realtimeLive(wrap._shareId)) ||
+      (wrap._shareKind === "chat" && !!realtimeApi() && realtimeApi().isOpen());
     if (
       force !== true &&
-      wrap._shareKind === "local" &&
-      realtimeLive(wrap._shareId) &&
+      socketLive &&
       Date.now() - discussionLiveLastAt < DISCUSSION_LIVE_SOCKET_MS
     ) {
       startDiscussionLiveUpdates();
@@ -46872,6 +46988,9 @@
       links.unshift(data);
       wrap._shareLinks = links;
     }
+    // Дальше — только заметка: панель комментариев закрыла бы открытый чат,
+    // а кэш заметок с тем же числовым id получил бы чужую ссылку.
+    if (wrap._shareKind === "chat") return;
     syncNoteCommentsPanel();
     patchLocalShareInCache(wrap._shareId, {
       shared: wrap._shareShared,
@@ -46913,7 +47032,7 @@
     listShareCtx = null;
   }
 
-  function openShareAccessSheet() {
+  function openShareAccessSheet(initialPane) {
     var wrap = getShareCtx();
     if (!wrap || !wrap._shareKind || !wrap._shareId) return;
     var ov = document.getElementById("note-share-sheet-overlay");
@@ -46936,15 +47055,15 @@
         '<p class="ns-label">Что открыть по ссылке</p>' +
         '<div id="note-share-sheets-list" class="ns-chips"></div>' +
         "</div>" +
-        '<p class="ns-label">Доступ по ссылке</p>' +
-        '<div class="ns-seg" role="radiogroup" aria-label="Доступ по ссылке">' +
+        '<p class="ns-label" id="ns-access-label">Доступ по ссылке</p>' +
+        '<div class="ns-seg" id="ns-access-seg" role="radiogroup" aria-label="Доступ по ссылке">' +
         '<label><input type="radio" name="note-share-access" value="view" /><span>Просмотр</span></label>' +
         '<label><input type="radio" name="note-share-access" value="comment" /><span>Комментарии</span></label>' +
         "</div>" +
         '<p class="ns-hint" id="ns-access-hint">Любой со ссылкой сможет читать</p>' +
         '<button type="button" class="btn ns-primary" id="note-share-sheet-copy">Скопировать ссылку</button>' +
         '<div id="note-share-links-block" class="note-share-links-block hidden">' +
-        '<p class="ns-label">Ссылки на эту заметку</p>' +
+        '<p class="ns-label" id="note-share-links-label">Ссылки на эту заметку</p>' +
         '<div id="note-share-links-list" class="note-share-links-list"></div>' +
         "</div>" +
         "</section>" +
@@ -46997,7 +47116,18 @@
     }
     var tabs = ov.querySelector(".ns-tabs");
     if (tabs) tabs.classList.toggle("hidden", !supportsMembers);
-    setSharePane("link");
+    // Чат по ссылке — только страница для чтения, без выбора доступа.
+    var isChat = wrap._shareKind === "chat";
+    var accessLabel = document.getElementById("ns-access-label");
+    var accessSeg = document.getElementById("ns-access-seg");
+    if (accessLabel) accessLabel.classList.toggle("hidden", isChat);
+    if (accessSeg) accessSeg.classList.toggle("hidden", isChat);
+    syncShareAccessHint();
+    var linksLabel = document.getElementById("note-share-links-label");
+    if (linksLabel) linksLabel.textContent = isChat ? "Ссылки на этот чат" : "Ссылки на эту заметку";
+    var addBox = ov.querySelector(".note-share-member-add");
+    if (addBox) addBox.classList.toggle("hidden", isChat && wrap._isNoteOwner === false);
+    setSharePane(supportsMembers && initialPane === "people" ? "people" : "link");
     var peopleCount = document.getElementById("ns-people-count");
     if (peopleCount) {
       var nMembers = (wrap._noteMembers || []).length;
@@ -47006,11 +47136,14 @@
     if (membersHint) {
       membersHint.textContent =
         wrap._shareKind === "chat"
-          ? "Участники видят чат во вкладке «Чаты»."
+          ? wrap._isNoteOwner === false
+            ? "Добавлять участников может только автор чата."
+            : "Участники видят чат во вкладке «Чаты», пишут в него и получают ответы ассистента."
           : "Участники видят заметку у себя в списке и могут её редактировать.";
     }
     paintShareMembersList();
     paintShareSheetPicker();
+    if (isChat) syncShareSelectionState();
     ov.classList.remove("hidden");
     if (supportsMembers) {
       loadShareMemberContacts();
@@ -47035,7 +47168,10 @@
 
   function syncShareAccessHint() {
     var hint = document.getElementById("ns-access-hint");
-    if (hint) {
+    var ctx = getShareCtx();
+    if (hint && ctx && ctx._shareKind === "chat") {
+      hint.textContent = "Страница для чтения: вся переписка, обновляется вместе с чатом";
+    } else if (hint) {
       hint.textContent =
         selectedShareAccess() === "comment"
           ? "Можно читать и оставлять комментарии после входа через Telegram"
@@ -47158,6 +47294,8 @@
 
   function shareLinkSheetsLabel(link) {
     var ids = (link && link.sheet_ids) || [];
+    var ctx = getShareCtx();
+    if (ctx && ctx._shareKind === "chat") return "Весь чат";
     if (!ids.length) return "Вся заметка";
     var byId = {};
     shareSheetOptions().forEach(function (s) {
@@ -47226,7 +47364,7 @@
       );
       var left = (data && data.links) || [];
       applyShareState(wrap, left.length ? Object.assign({}, left[0], { shared: true, links: left }) : { shared: false, links: [] });
-      if (!left.length) hideNoteCommentsPanel();
+      if (!left.length && kind !== "chat") hideNoteCommentsPanel();
       syncShareSelectionState();
       renderNoteSheetChips();
       showNoteToast("Ссылка отключена");
@@ -47544,6 +47682,7 @@
       await copyShareUrl(wrap._shareUrl);
       closeNoteMoreMenu();
       closeShareAccessSheet();
+      if (kind === "chat") showNoteToast("Ссылка скопирована");
       shareHaptic();
     } catch (e) {
       alert(e.message || String(e));

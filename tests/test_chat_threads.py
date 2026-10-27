@@ -154,3 +154,60 @@ def test_origin_actual(threads_db):
     assert c["origin"] == ""
     by = {r["id"]: r["origin"] for r in store.list_threads(42)}
     assert by[a["id"]] == "actual" and by[b["id"]] == ""
+
+
+def test_chat_share_link_is_view_only_and_payload(threads_db, monkeypatch):
+    store = threads_db
+    from assistant.stores import share_comments
+    from assistant.stores import share_links
+    import usage_server
+
+    monkeypatch.setattr(store, "suggest_chat_title", lambda _m: "План")
+    row = store.create_thread(5)
+    store.rename_thread(5, row["id"], "План запуска", lock=True)
+    share_comments.add_comment(
+        5, "chat", row["id"], author_user_id=5, author_name="Вова",
+        author_username="vova", body="Что делаем?",
+    )
+    share_comments.add_comment(
+        5, "chat", row["id"], author_user_id=5, author_name="GPT",
+        author_username="gpt", body="**Шаг 1**", prefix=share_comments.GPT_PREFIX,
+    )
+    link = share_links.create_or_get_share(5, "chat", row["id"], "comment")
+    assert link["access"] == "view"
+
+    payload = usage_server._public_share_payload(link)
+    assert payload is not None
+    assert payload["kind"] == "chat"
+    assert payload["title"] == "План запуска"
+    assert payload["access"] == "view"
+    msgs = payload["messages"]
+    assert [m["author"] for m in msgs] == ["Вова", "Ассистент"]
+    assert [m["is_gpt"] for m in msgs] == [False, True]
+    assert "vova" not in str(payload)
+
+    store.delete_thread(5, row["id"])
+    assert usage_server._public_share_payload(link) is None
+
+
+def test_chat_realtime_events_reach_owner_and_members(threads_db, monkeypatch):
+    store = threads_db
+    from assistant.realtime import notify as realtime_notify
+    from assistant.stores import share_comments
+
+    sent: list[tuple[str, dict]] = []
+    monkeypatch.setattr(realtime_notify, "publish", lambda topic, ev: sent.append((topic, ev)))
+    monkeypatch.setattr(store, "suggest_chat_title", lambda _m: "X")
+    row = store.create_thread(10)
+    store.add_member(10, row["id"], 11)
+    assert store.participant_ids(row["id"]) == ["10", "11"]
+
+    sent.clear()
+    share_comments.add_comment(10, "chat", row["id"], author_user_id=11, author_name="Аня", body="привет")
+    topics = sorted(t for t, ev in sent if ev.get("type") == "chat.changed" and ev.get("what") == "messages")
+    assert topics == ["user:10", "user:11"]
+
+    sent.clear()
+    store.remove_member(10, row["id"], 11)
+    # Убранный участник тоже узнаёт — чтобы чат пропал из его списка.
+    assert sorted(t for t, _ in sent) == ["user:10", "user:11"]
