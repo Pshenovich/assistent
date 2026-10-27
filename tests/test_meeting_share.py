@@ -36,7 +36,8 @@ class SummaryTasksForMembersTests(unittest.TestCase):
         own = proactive.rule_summary_tasks([n], {}, NOW, timezone.utc)[0]
         shared = proactive.rule_summary_tasks([n], {}, NOW, timezone.utc, foreign={7})[0]
         self.assertEqual([i["text"] for i in own["items"]], [i["text"] for i in shared["items"]])
-        self.assertIn("3 задачи", own["title"])  # закрытая в счёт не идёт
+        self.assertIn("3 пункта ждут вашего решения", own["title"])  # закрытая в счёт не идёт
+        self.assertEqual(own["tag"], "Задачи встречи · 1/4")
         self.assertEqual(own["closed_items"], [{"id": own["closed_items"][0]["id"], "text": "Ульяна — Посчитать токены",
                                                 "status": "converted", "by": "Ульяна", "link": {"task_id": 42}}])
 
@@ -97,6 +98,22 @@ class ShareTests(unittest.TestCase):
         self.assertEqual([m["name"] for m in res["missing"]], ["Андрей"])
         self.assertTrue(note_members.is_member(1, self.nid, 2))
         self.assertEqual(self._share()["already"], [{"user_id": 2, "name": "Ульяна Виноградова"}])
+
+    def test_auto_share_only_for_meeting_summary_and_once(self) -> None:
+        ids = {"me@x.ru": 1, "u@x.ru": 2}
+        sent = []
+        with mock.patch("assistant.services.meeting_invites.telegram_id_for_attendee_email",
+                        side_effect=lambda owner, em, **kw: ids.get(em)), \
+                mock.patch("assistant.bot.access_gate.is_user_allowed", return_value=True), \
+                mock.patch("assistant.lib.telegram_notify.send_message", side_effect=lambda uid, text: sent.append((uid, text))):
+            self.assertEqual(ms.auto_share(1, self.nid), [])  # обычная заметка, не саммари
+            notes_store.update_note(1, self.nid, meta={"tasks": [dict(t) for t in TASKS]}, primary_sheet_title="Саммари")
+            with mock.patch("assistant.services.transcription_notes.has_summary", return_value=True):
+                self.assertEqual([m["user_id"] for m in ms.auto_share(1, self.nid)], [2])
+                self.assertEqual(ms.auto_share(1, self.nid), [])  # второй раз — никого и без сообщений
+        self.assertTrue(note_members.is_member(1, self.nid, 2))
+        self.assertEqual([uid for uid, _ in sent], [2])
+        self.assertIn("саммари встречи", sent[0][1])
 
     def test_member_marking_task_updates_owner_note(self) -> None:
         self._share()

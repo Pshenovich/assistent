@@ -28,6 +28,8 @@ _SANDBOX = Path(tempfile.mkdtemp(prefix="leo-tests-"))
 
 # фоновое угадывание спикеров ходит в LLM — в тестах только явным вызовом
 os.environ.setdefault("SPEAKER_GUESS_ENABLED", "0")
+# авто-доступ участникам к саммари встречи — фоном ищет людей и пишет в Telegram; в тестах явно
+os.environ.setdefault("MEETING_AUTO_SHARE", "0")
 
 _FILE_ENV = {
     "BOARD_DB_PATH": "data/board.sqlite",

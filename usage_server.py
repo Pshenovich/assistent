@@ -2614,6 +2614,8 @@ class _MiniappCalendarTaskBody(BaseModel):
     owner_archived: Optional[bool] = None
     all_day: Optional[bool] = None
     text: Optional[str] = None
+    # ID пункта задач встречи (data-leo-item) в заметке note_id: задача ставится, только если пункт ничей
+    meeting_item: Optional[str] = None
 
 
 class _MiniappCalendarAvailabilityBody(BaseModel):
@@ -5624,12 +5626,22 @@ async def miniapp_calendar_tasks_posted(
     def _links() -> None:
         from assistant.stores import trackers as trackers_store
 
+        from assistant.stores import notes as notes_store
+
+        titles: dict[str, str] = {}
         for it in items:
             try:
                 it["tracker_links"] = trackers_store.tasks_for_calendar_task(uid, it.get("id"))
             except Exception as e:  # бейдж трекера — не повод не показать список
                 print(f"[posted] tracker links failed task={it.get('id')} err={e!r}")
                 it["tracker_links"] = []
+            nid = str(it.get("note_id") or "")
+            if nid.isdigit():  # поручение из встречи — «из «Синк по запуску»» в строке списка
+                if nid not in titles:
+                    n = notes_store.get_accessible_note(uid, int(nid), with_sharing=False)
+                    titles[nid] = str(n.get("title") or "") if n and str(n.get("role") or "") == "transcription" else ""
+                if titles[nid]:
+                    it["meeting_title"] = titles[nid]
 
     await run_in_threadpool(_links)
     active_count = await run_in_threadpool(
@@ -6186,31 +6198,46 @@ async def miniapp_calendar_tasks_create(
             body.end = parsed["end"].isoformat()
     if not start_raw:
         raise HTTPException(status_code=400, detail="Укажите начало задачи")
-    reused = await run_in_threadpool(
-        _find_reusable_note_task, uid, str(body.note_id or ""), title, start_raw, tz
-    )
-    if reused:
-        return {"ok": True, "task": _task_api(reused, tz=tz, viewer_id=uid)}
-    assignee_uid = _resolve_calendar_task_assignee(principal, body)
-    try:
-        row = await run_in_threadpool(
-            partial(
-                calendar_tasks_store.create_task,
-                uid,
-                title=title,
-                description=body.description or "",
-                result=body.result or "",
-                start_at=start_raw,
-                end_at=body.end,
-                assignee_user_id=assignee_uid or uid,
-                assignee_email=body.assignee_email or "",
-                assignee_name=body.assignee_name or _principal_display_name(principal),
-                checklist=body.checklist,
-                note_id=body.note_id or "",
-                all_day=bool(body.all_day),
-                tz=tz,
-            )
+    meeting_item = str(body.meeting_item or "").strip()
+    if meeting_item and not str(body.note_id or "").isdigit():
+        raise HTTPException(status_code=400, detail="Пункт встречи — только вместе с заметкой")
+    if not meeting_item:
+        reused = await run_in_threadpool(
+            _find_reusable_note_task, uid, str(body.note_id or ""), title, start_raw, tz
         )
+        if reused:
+            return {"ok": True, "task": _task_api(reused, tz=tz, viewer_id=uid)}
+    assignee_uid = _resolve_calendar_task_assignee(principal, body)
+    create = partial(
+        calendar_tasks_store.create_task,
+        uid,
+        title=title,
+        description=body.description or "",
+        result=body.result or "",
+        start_at=start_raw,
+        end_at=body.end,
+        assignee_user_id=assignee_uid or uid,
+        assignee_email=body.assignee_email or "",
+        assignee_name=body.assignee_name or _principal_display_name(principal),
+        checklist=body.checklist,
+        note_id=body.note_id or "",
+        all_day=bool(body.all_day),
+        tz=tz,
+    )
+    from assistant.services import meeting_tasks
+
+    if meeting_item:
+        # «Беру» / «Поручить» из таблицы задач встречи: двое одновременно — задача достаётся первому
+        create = partial(
+            meeting_tasks.claim, uid, int(body.note_id), meeting_item, create,
+            by=_principal_display_name(principal),
+        )
+    try:
+        row = await run_in_threadpool(create)
+    except meeting_tasks.Taken as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     synced = await run_in_threadpool(_sync_task_google, uid, row, "create")
@@ -12168,6 +12195,57 @@ async def miniapp_note_members_add(
     return {"ok": True, "member": member, "item": note}
 
 
+class _MeetingTaskOpBody(BaseModel):
+    op: str = ""
+    reason: Optional[str] = None
+    fields: Optional[dict[str, Any]] = None
+
+
+@miniapp_router.get("/notes/local/{note_id}/meeting-tasks")
+async def miniapp_note_meeting_tasks(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Таблица задач встречи: пункты с живым статусом и счётчик «Разобрано N из M»."""
+    from assistant.services import meeting_tasks
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
+        if not note:
+            raise HTTPException(status_code=404, detail="Заметка не найдена")
+        return meeting_tasks.rows(note)
+
+    return {"ok": True, **(await run_in_threadpool(_run))}
+
+
+@miniapp_router.post("/notes/local/{note_id}/meeting-tasks/{item_id}")
+async def miniapp_note_meeting_task_op(
+    note_id: int,
+    item_id: str,
+    body: _MeetingTaskOpBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Действие с пунктом из таблицы: Сделано / Не задача / Дубль / Вернуть / правка ячейки."""
+    from assistant.services import meeting_tasks
+
+    uid = int(principal.telegram_user_id)
+    try:
+        item = await run_in_threadpool(
+            partial(
+                meeting_tasks.apply, uid, note_id, item_id, body.op,
+                by=_principal_display_name(principal), reason=body.reason, fields=body.fields,
+            )
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "item": item}
+
+
 @miniapp_router.post("/notes/local/{note_id}/share-attendees")
 async def miniapp_note_share_attendees(
     note_id: int,
@@ -14900,6 +14978,7 @@ class _MiniappTrackerTaskBody(BaseModel):
     note_id: str = ""
     calendar_task_id: str = ""
     focus_key: str = ""
+    meeting_item: str = ""  # пункт задач встречи в note_id: в трекер — только если пункт ничей
 
 
 class _MiniappWwaBody(BaseModel):
@@ -15021,10 +15100,9 @@ async def miniapp_tracker_create_task(
         responsible_id=body.responsible_id,
         deadline=body.deadline,
     )
-    created = await run_in_threadpool(_tracker_call, p.create_task, uid, draft)
-    row = await run_in_threadpool(
-        partial(
-            trackers_store.add_task,
+    def _create() -> tuple[Any, dict[str, Any]]:
+        created = _tracker_call(p.create_task, uid, draft)
+        row = trackers_store.add_task(
             uid,
             p.id,
             external_id=created.external_id,
@@ -15038,7 +15116,25 @@ async def miniapp_tracker_create_task(
             calendar_task_id=body.calendar_task_id,
             focus_key=body.focus_key,
         )
-    )
+        link = {"url": created.url, "title": created.title, "provider": p.id, "stage": body.stage_name}
+        return (created, row), link
+
+    from assistant.services import meeting_tasks
+
+    if body.meeting_item and str(body.note_id or "").isdigit():
+        # из таблицы задач встречи: двое одновременно — в трекер уходит одна задача
+        run = partial(
+            meeting_tasks.claim_tracker, uid, int(body.note_id), body.meeting_item, _create,
+            by=_principal_display_name(principal),
+        )
+    else:
+        run = lambda: _create()[0]  # noqa: E731
+    try:
+        created, row = await run_in_threadpool(run)
+    except meeting_tasks.Taken as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
     return {
         "ok": True,
         "task": row,

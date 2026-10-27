@@ -99,12 +99,12 @@ class RulesTests(unittest.TestCase):
         n = {"id": 5, "title": "Планёрка", "created_at": (NOW - timedelta(days=1)).isoformat(), "meta": {"tasks": tasks}}
         full = proactive.rule_summary_tasks([n], {}, NOW, TZ)[0]
         self.assertEqual(len(full["items"]), 9)
-        self.assertIn("9 задач", full["title"])
+        self.assertIn("9 пунктов ждут", full["title"])
         self.assertEqual(full["actions"][-1]["act"], "mark_done_pick")
         done = {i["id"] for i in full["items"][:3]}
         part = proactive.rule_summary_tasks([n], {}, NOW, TZ, done)[0]
         self.assertEqual(part["key"], full["key"])
-        self.assertIn("6 задач", part["title"])
+        self.assertIn("6 пунктов ждут", part["title"])
         prompt = part["actions"][0]["payload"]["prompt"]
         self.assertNotIn("Задача 0", prompt)
         self.assertIn("Задача 8", prompt)
@@ -116,7 +116,7 @@ class RulesTests(unittest.TestCase):
         n = {"id": 5, "title": "Планёрка", "created_at": (NOW - timedelta(days=1)).isoformat(), "meta": {"tasks": tasks}}
         out = proactive.rule_summary_tasks([n], {5: ["Подготовить релиз к пятнице"]}, NOW, TZ)
         self.assertEqual([i["text"] for i in out[0]["items"]], ["Мария — Прислать смету"])
-        self.assertIn("1 задача", out[0]["title"])
+        self.assertIn("1 пункт ждёт", out[0]["title"])
         both = ["Подготовить релиз", "Прислать смету Марии"]
         self.assertEqual(proactive.rule_summary_tasks([n], {5: both}, NOW, TZ), [])
 

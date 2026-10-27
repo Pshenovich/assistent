@@ -312,12 +312,31 @@ def apply(owner_user_id: Any, item_key: str, op: str, *, by: str = "", **kw: Any
         raise ValueError("Неизвестное действие")
     saved = _save(owner_user_id, row, event)
     if op == "dismiss" and saved.get("reason") == "not_me":
-        return saved  # «Не моя» — личное: в общем саммари не помечаем, у других пункт остаётся
+        # «Не моя» — личное: в общем саммари пункт открыт, но решать его теперь владельцу записи
+        _route_not_me(owner_user_id, saved)
+        return saved
     try:
         sync_source(owner_user_id, saved)
     except Exception as e:  # отметка в исходнике — бонус, не повод провалить действие
         print(f"[focus_items] source sync failed uid={owner_user_id} key={item_key} err={e!r}")
     return saved
+
+
+def _route_not_me(viewer_uid: Any, row: dict[str, Any]) -> None:
+    src = row.get("source") or {}
+    if src.get("kind") != "note" or not src.get("id"):
+        return
+    try:
+        from assistant.services import meeting_tasks
+        from assistant.stores import notes as notes_store
+
+        note = notes_store.get_accessible_note(viewer_uid, int(src["id"]), with_sharing=False)
+        tasks = ((note or {}).get("meta") or {}).get("tasks") or []
+        i = _meta_task_index(tasks, row) if tasks else -1
+        if i >= 0 and tasks[i].get("id"):
+            meeting_tasks.not_me(viewer_uid, int(src["id"]), str(tasks[i]["id"]))
+    except Exception as e:
+        print(f"[focus_items] not_me route failed uid={viewer_uid} key={row.get('item_key')} err={e!r}")
 
 
 def task_done_changed(owner_user_id: Any, task_id: int, done: bool, by: str = "") -> int:
@@ -801,8 +820,15 @@ def sync_source(owner_user_id: Any, row: dict[str, Any]) -> None:
     body = str(note.get("body") or "")
     meta = dict(note.get("meta") or {}) if isinstance(note.get("meta"), dict) else {}
     tasks = meta.get("tasks") if isinstance(meta.get("tasks"), list) else None
-    new_body, changed = place_mark(body, row, tasks)
     meta_changed = _sync_meta_task(meta, row)
+    from assistant.services import meeting_tasks
+
+    if tasks and meeting_tasks.has_table(body) and _meta_task_index(tasks, row) >= 0:
+        # задачи саммари — таблица: значок не нужен, статус — в ячейках строки
+        new_body = meeting_tasks.refresh_body(body, meeting_tasks.rows({**note, "meta": meta}))
+        changed = new_body != body
+    else:
+        new_body, changed = place_mark(body, row, tasks)
     if changed or meta_changed:
         notes_store.update_note(
             owner_user_id,
@@ -819,7 +845,7 @@ def _notify_participants(note_owner: str, note_id: int) -> None:
         from assistant.realtime import notify as realtime_notify
         from assistant.stores import note_members
 
-        uids = [note_owner] + [str(m.get("user_id") or "") for m in note_members.list_member_rows(note_owner, note_id)]
+        uids = [note_owner] + [str(m.get("member_user_id") or "") for m in note_members.list_member_rows(note_owner, note_id)]
         realtime_notify.focus_changed(note_id, uids)
     except Exception as e:
         print(f"[focus_items] focus notify failed note={note_id} err={e!r}")

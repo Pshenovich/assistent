@@ -173,7 +173,8 @@ class NoteTests(unittest.TestCase):
         fresh = notes_store.get_note(1, int(note["id"]))
         self.assertEqual(fresh["meta"]["tasks"][0]["assignee"], "Дмитрий")
         self.assertIn("Дима обещал отчёт", fresh["body"])
-        self.assertRegex(fresh["body"], r"Дмитрий — Подготовить отчёт")
+        # задачи — таблица: новое имя в ячейке «Ответственный» строки задачи
+        self.assertIn('<p>Подготовить отчёт</p></td><td><p>Не разобрано</p></td><td><p>Дмитрий</p></td>', fresh["body"])
 
     def test_is_me_and_dialog(self) -> None:
         note = self._note()

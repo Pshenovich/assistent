@@ -1141,7 +1141,8 @@ def _verify_v1_tasks(tasks: list[dict[str, Any]], transcript: str) -> dict[str, 
         if kind == "task" or kind not in {"decision", "question", "not_task", "duplicate"}:
             out["tasks"].append(t)
         else:
-            out["dropped"].append({"task": str(t.get("task") or ""), "kind": kind, "reason": str(v.get("reason") or "")[:120]})
+            out["dropped"].append({"task": str(t.get("task") or ""), "kind": kind, "reason": str(v.get("reason") or "")[:120],
+                                   "assignee": str(t.get("assignee") or ""), "deadline": str(t.get("deadline") or "")})
     if not out["tasks"] and items:
         print("[summary_v1] verify: dropped every task, keeping all")
         return keep

@@ -488,6 +488,10 @@ def summary_task_id(note_id: int, line: str, item_id: str = "") -> str:
     return _key("sumtask", note_id, hashlib.sha1(line.encode("utf-8")).hexdigest()[:10])
 
 
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    return one if n % 10 == 1 and n % 100 != 11 else (few if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else many)
+
+
 def rule_summary_tasks(
     notes: list[dict[str, Any]],
     has_tasks: dict[int, Any],
@@ -495,13 +499,16 @@ def rule_summary_tasks(
     tz: Any,
     done: Optional[set[str]] = None,
     foreign: Optional[set[int]] = None,
+    viewer: Optional[str] = None,
 ) -> list[dict[str, Any]]:
-    """has_tasks[note_id]: задачи, уже поставленные из этой встречи (названия или
-    {title, by, task_id} — от любого участника); True — встреча разобрана целиком (старый вызов).
+    """Карточка «Задачи встречи · N из M»: пункты, по которым решать этому пользователю.
 
-    Карточка у всех участников встречи одна: открытые задачи — в items, уже поставленные или
-    выполненные кем-то — в closed_items (со статусом и автором), в счёт карточки не идут.
-    foreign — встречи, которыми поделились: «мои» в них — про владельца, не про пользователя."""
+    has_tasks[note_id]: задачи, уже поставленные из этой встречи (названия или {title, by, task_id}
+    — от любого участника); True — встреча разобрана целиком (старый вызов).
+    viewer — кто смотрит: в карточке только пункты, где он исполнитель (или владелец записи, если
+    исполнитель неясен, не в Лео или отказался); нет таких — нет карточки. Без viewer — все открытые.
+    Разобранные кем-то — в closed_items (со статусом и автором), в счёт карточки не идут."""
+    from assistant.services import meeting_tasks
     from assistant.services.meeting_share import task_state
 
     done = done or set()
@@ -523,44 +530,69 @@ def rule_summary_tasks(
             x if isinstance(x, dict) else {"title": str(x), "by": "", "task_id": None}
             for x in (posted if isinstance(posted, (list, tuple, set)) else [])
         ]
-        items, closed = [], []
-        for t in tasks:
+        state = meeting_tasks.rows(n, posted_list)
+        items, closed, waiting = [], [], []
+        for t, st_row in zip(tasks, state["items"]):
             parts = [str(t.get("assignee") or "").strip(), str(t.get("task") or "").strip(), str(t.get("deadline") or "").strip()]
             line = " — ".join(p for p in parts if p)
             iid = summary_task_id(nid, line, t.get("id"))
-            st = task_state(t, posted_list)
-            if st:  # уже поставил или выполнил кто-то из участников встречи
+            st = task_state(t, posted_list) if st_row["code"] != "declined" else None
+            if st:  # уже поставил или выполнил кто-то из участников встречи (отказ исполнителя — снова открыт)
                 closed.append({"id": iid, "text": line, **({"item": t["id"]} if t.get("id") else {}), **st})
                 continue
+            if st_row["code"] not in meeting_tasks.UNDECIDED:
+                continue  # в работе / в трекере и т.п. — по таблице
+            if viewer and st_row.get("decider") and str(st_row["decider"]) != str(viewer):
+                continue  # решать не ему — пункт у исполнителя или владельца записи
             if iid in done:
                 continue
             item = {"id": iid, "text": line}
             if t.get("id"):
                 item["item"] = str(t["id"])
-            if nid not in foreign and t.get("owner_flag") == "mine":
+            if viewer and str(st_row.get("decider") or "") == str(viewer) and str(t.get("assignee") or "").strip():
                 item["mine"] = True
+            elif nid not in foreign and t.get("owner_flag") == "mine":
+                item["mine"] = True
+            if st_row["code"] == "declined":
+                item["declined"] = st_row["label"]
             if t.get("quote") and float(t.get("quote_score") or 0) >= 0.6:
                 item["quote"] = str(t["quote"])[:300]
             items.append(item)
+            waiting.append((str(t.get("task") or "").strip(), st_row))
         if not items:
             continue
-        items.sort(key=lambda i: not i.get("mine"))  # свои — первыми
+        order = sorted(range(len(items)), key=lambda i: not items[i].get("mine"))  # свои — первыми
+        items = [items[i] for i in order]
+        waiting = [waiting[i] for i in order]
         lines = [i["text"] for i in items[:12]]
         title = str(n.get("title") or "Встреча")
         cnt = len(items)
-        word = "задача" if cnt % 10 == 1 and cnt % 100 != 11 else ("задачи" if 2 <= cnt % 10 <= 4 and not 12 <= cnt % 100 <= 14 else "задач")
+        short = []
+        for text, st_row in waiting[:2]:
+            words = text.split()
+            label = " ".join(words[:3]) + ("…" if len(words) > 3 else "")
+            if st_row["code"] == "declined":
+                who = str(st_row.get("who") or "исполнитель").split()[0]
+                label += f" ({who} отказ{'ался' if not who.endswith('а') and not who.endswith('я') else 'алась'})"
+            short.append(label)
+        more = f" и ещё {cnt - 2}" if cnt > 2 else ""
+        head = f"{cnt} {_plural(cnt, 'пункт ждёт', 'пункта ждут', 'пунктов ждут')} вашего решения: " + ", ".join(short) + more
         out.append(
             {
                 "key": _key("sumtasks", nid),
                 "type": "summary_tasks",
-                "tag": "✅ после встречи",
+                "tag": f"Задачи встречи · {state['decided']}/{state['total']}",  # «из» не влезает в подпись карточки
                 "urgency": 2,
-                "title": f"«{title}»: {cnt} {word} из встречи — в Orbita их нет",
-                "source": f"транскрипция · {_day(created, tz, now)}",
+                "title": head,
+                "sub": _day(created, tz, now),
+                "source": title,
                 "ask": f"Задачи из встречи «{title}»: " + "; ".join(lines),
-                "note": {"id": nid, "kind": "transcription", "title": title},
+                "note": {"id": nid, "kind": "transcription", "title": title, "anchor": "tasks"},
                 "items": items,
                 "closed_items": closed,
+                "decided": state["decided"],
+                "total": state["total"],
+                "created_at": created.isoformat(),
                 "actions": [
                     {
                         "label": "Поставить всё",
@@ -668,7 +700,7 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
         foreign = {int(n["id"]) for n in notes if str(n.get("owner_user_id") or n.get("user_id") or uid) != str(uid)}
         has_tasks = {int(n["id"]): posted_for_note(n) for n in notes}
         if prefs.get("after_meetings"):
-            items += rule_summary_tasks(notes, has_tasks, now, tz, done_keys(uid), foreign)
+            items += rule_summary_tasks(notes, has_tasks, now, tz, done_keys(uid), foreign, viewer=str(uid))
     except Exception as e:
         print(f"[proactive] summary tasks failed uid={uid} err={e!r}")
     try:
@@ -817,6 +849,23 @@ def brief_message(items: list[dict[str, Any]], today_events: list[dict[str, Any]
         url = _h.escape(inbox_webapp_url(), quote=True)
         lines.append("")
         lines.append(f'📥 {_h.escape(str(it.get("title") or ""))} ({_h.escape(str(it.get("source") or ""))}). <a href="{url}">Разобрать</a>')
+    # Задачи встреч, которые ждут решения больше суток, — отдельной строкой на встречу, со ссылкой на таблицу.
+    stale = [
+        it for it in items
+        if it.get("type") == "summary_tasks" and (_parse(it.get("created_at")) or local_now) <= local_now - timedelta(hours=24)
+    ]
+    items = [it for it in items if it not in stale]
+    if stale:
+        from assistant.stores.note_members import note_webapp_url
+
+        lines.append("")
+        for it in stale[:3]:
+            note = it.get("note") or {}
+            n = len(it.get("items") or [])
+            url = _h.escape(note_webapp_url(int(note["id"])) + "&tasks=1", quote=True) if note.get("id") else ""
+            what = f"{n} {_plural(n, 'пункт ждёт', 'пункта ждут', 'пунктов ждут')} вашего решения больше суток"
+            link = f' <a href="{url}">Открыть таблицу</a>' if url else ""
+            lines.append(f"🗂 «{_h.escape(str(note.get('title') or 'Встреча'))}»: {what}.{link}")
     if items:
         lines.append("")
         lines.append("<b>Главное:</b>")

@@ -1,9 +1,15 @@
 """«Поделиться с участниками»: участники встречи с аккаунтом в Лео получают доступ к её заметке
-(транскрипция + саммари), задачи из неё — в их Фокус (только свои)."""
+(транскрипция + саммари), задачи из неё — в их Фокус (только свои).
+
+Саммари встречи, привязанной к событию календаря, открывается участникам само (auto_share):
+у встречи одна заметка и одна таблица задач на всех."""
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Optional
+
+_AUTO_LOCK = threading.Lock()
 
 
 def _candidates(owner_uid: int, note_id: int) -> list[dict[str, str]]:
@@ -56,6 +62,59 @@ def share_with_attendees(owner_uid: int, note_id: int, *, owner_username: Option
         note_members.add_member(owner_uid, note_id, uid)
         added.append(row)
     return {"added": added, "already": already, "missing": missing}
+
+
+def auto_share(owner_uid: Any, note_id: int) -> list[dict[str, Any]]:
+    """Саммари встречи готово и встреча известна — открыть заметку участникам с Лео.
+
+    Повторный вызов никого не добавляет и не пишет второй раз. Возвращает добавленных."""
+    from assistant.services import transcription_notes as tnotes
+    from assistant.stores import meeting_links, note_members
+    from assistant.stores import notes as notes_store
+
+    with _AUTO_LOCK:
+        note = notes_store.get_note(owner_uid, int(note_id))
+        if not note or not tnotes.has_summary(note):
+            return []
+        if not meeting_links.get_for_note(owner_uid, int(note_id)):
+            return []
+        added = share_with_attendees(int(owner_uid), int(note_id))["added"]
+    if added:
+        owner_name = note_members.profile_display_name(note_members.get_profile(owner_uid), fallback="")
+        title = str(note.get("title") or "Встреча")
+        for m in added:
+            _notify_auto_shared(int(m["user_id"]), title=title, note_id=int(note_id), owner_name=owner_name)
+    return added
+
+
+def schedule_auto_share(owner_uid: Any, note_id: int) -> None:
+    """auto_share в фоне: календарь и рассылка не задерживают сохранение саммари / привязку."""
+    import os
+
+    if os.getenv("MEETING_AUTO_SHARE", "1").strip() == "0":
+        return
+
+    def run() -> None:
+        try:
+            auto_share(owner_uid, note_id)
+        except Exception as e:
+            print(f"[meeting_share] auto share failed owner={owner_uid} note={note_id} err={e!r}")
+
+    threading.Thread(target=run, name=f"meeting-share-{note_id}", daemon=True).start()
+
+
+def _notify_auto_shared(member_uid: int, *, title: str, note_id: int, owner_name: str) -> None:
+    import html as html_lib
+
+    from assistant.lib.telegram_notify import send_message
+    from assistant.stores import note_members
+
+    link = note_members.note_title_link_html(title, note_id)
+    who = html_lib.escape(owner_name or "Участник встречи")
+    try:
+        send_message(int(member_uid), f"{who} открыл(а) вам саммари встречи {link}. Задачи — в таблице: свои можно взять там.")
+    except Exception as e:
+        print(f"[meeting_share] notify failed note={note_id} uid={member_uid} err={e!r}")
 
 
 def posted_for_note(note: dict[str, Any]) -> list[dict[str, Any]]:

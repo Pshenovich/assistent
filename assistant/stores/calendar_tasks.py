@@ -1169,6 +1169,12 @@ def update_task(
             focus_items.task_done_changed(existing["owner_user_id"], int(existing["id"]), bool(fields["done"]), by)
         except Exception as e:
             print(f"[calendar_tasks] focus done sync failed task={existing['id']} err={e!r}")
+    if str(existing.get("note_id") or "").isdigit() and (
+        bool(fields["done"]) != bool(existing["done"])
+        or fields["start_at"] != existing["start_at"]
+        or fields["assignee_user_id"] != existing["assignee_user_id"]
+    ):
+        _meeting_task_changed(int(existing["note_id"]))
     if fields["title"] != existing["title"]:
         try:
             from assistant.services import focus_items
@@ -1204,7 +1210,10 @@ def _set_columns(task_id: int, values: dict[str, str]) -> Optional[dict[str, Any
             tuple(values[c] for c in cols) + (int(task_id),),
         )
         _conn().commit()
-    return _get_task_row(task_id)
+    row = _get_task_row(task_id)
+    if row and str(row.get("note_id") or "").isdigit() and {"assignee_status", "assignee_triage"} & set(cols):
+        _meeting_task_changed(int(row["note_id"]))
+    return row
 
 
 def _assignee_task(viewer_id: int | str, task_id: int | str) -> Optional[dict[str, Any]]:
@@ -1253,6 +1262,23 @@ def add_event(
         from assistant.realtime import notify as realtime_notify
 
         realtime_notify.task_changed(tid, [who[0], who[1]], actor_user_id=actor_user_id)
+
+
+def _meeting_task_changed(note_id: int) -> None:
+    """Поручение из встречи взяли / в работе / отказ / сдали — статус в таблице задач встречи."""
+
+    def run() -> None:
+        try:
+            from assistant.services import meeting_tasks
+            from assistant.stores import notes as notes_store
+
+            note = notes_store.get_note_by_id(note_id)
+            if note:
+                meeting_tasks.refresh_note(str(note.get("user_id") or ""), note_id)
+        except Exception as e:
+            print(f"[calendar_tasks] meeting refresh failed note={note_id} err={e!r}")
+
+    threading.Thread(target=run, name=f"meeting-tasks-{note_id}", daemon=True).start()
 
 
 def list_events(task: dict[str, Any]) -> list[dict[str, Any]]:

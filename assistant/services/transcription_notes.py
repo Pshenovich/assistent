@@ -248,6 +248,9 @@ def _focus_summary_ready(owner: int | str, note_id: int) -> None:
         semantic_memory.note_changed(owner, delay=5)
     except Exception as e:
         print(f"[semantic] summary_ready failed note={note_id} err={e!r}")
+    from assistant.services import meeting_share
+
+    meeting_share.schedule_auto_share(owner, note_id)  # встреча уже привязана — участникам сразу
 
 
 def create_transcript_only(
@@ -295,6 +298,13 @@ def _summary_body(summary: str, meta: Optional[dict[str, Any]]) -> str:
         out = _as_html(body)
     tasks = (meta or {}).get("tasks")
     if isinstance(tasks, list) and tasks and note_items.is_html_body(out):
+        from assistant.services import meeting_tasks
+
+        # отброшенные проверкой — не теряем: в таблицу, свёрнутыми «Возможно, не задача»
+        meeting_tasks.merge_doubtful(meta)
+        tasks = meta["tasks"]
+        # задачи — таблица «Задача | Статус | Ответственный | Дедлайн», ID пункта на его строке
+        out = meeting_tasks.replace_tasks_section(out, tasks)
         out = note_items.stamp_summary_tasks(out, tasks)
     return out
 
@@ -571,6 +581,16 @@ def confirm_speaker(
                 meta["summary_body_hash"] = _body_hash(new_body)
             body_kwargs = {"body": new_body, "primary_sheet_title": SUMMARY_SHEET_TITLE}
             renamed = True
+    from assistant.services import meeting_tasks
+
+    cur = str(body_kwargs.get("body", note.get("body") or ""))
+    if meeting_tasks.has_table(cur):
+        # ячейки «Ответственный / Срок» таблицы задач — из meta, даже если текст саммари правили
+        fresh = meeting_tasks.refresh_body(cur, meeting_tasks.rows({**note, "meta": meta}))
+        if fresh != cur:
+            if meta.get("summary_body_hash") and _body_hash(cur) == meta.get("summary_body_hash"):
+                meta["summary_body_hash"] = _body_hash(fresh)
+            body_kwargs = {**body_kwargs, "body": fresh, "primary_sheet_title": SUMMARY_SHEET_TITLE}
     updated = notes_store.update_note(
         owner, int(note["id"]), meta=meta, actor_user_id=uid, **body_kwargs
     )

@@ -23417,3 +23417,46 @@ ol.note-discuss-md-list { list-style: decimal; }
   .meeting-avail .meeting-avail-row > span:first-child { position: sticky; left: 0; z-index: 2; align-self: stretch; display: flex; align-items: center; background: var(--surface-elevated); box-shadow: 6px 0 6px -4px rgba(0, 0, 0, 0.5); }
   .meeting-avail .meeting-avail-row--hours > span:first-child { box-shadow: none; }
 }
+
+/* Таблица задач встречи в саммари: живой статус, ответственный и срок поверх ячеек (их ведёт сервер),
+   над таблицей — «Разобрано N из M», «Не задачи» и «Дубли» свёрнуты под ней. На телефоне строки — карточки. */
+.mt-summary { display: flex; align-items: center; gap: 10px; margin: 2px 0 8px; user-select: none; }
+.mt-summary-bar { flex: 1; max-width: 240px; height: 6px; border-radius: 3px; background: var(--surface-elevated, #2a2a2e); overflow: hidden; }
+.mt-summary-bar > span { display: block; height: 100%; border-radius: 3px; background: var(--success, #4bb34b); }
+.mt-summary-text { font-size: var(--ui-font-sm); color: var(--text-secondary); white-space: nowrap; }
+.ProseMirror table:has(tr.mt-row) col:nth-child(1) { width: 46%; }
+.ProseMirror table:has(tr.mt-row) col:nth-child(2) { width: 20%; }
+.ProseMirror table:has(tr.mt-row) col:nth-child(3) { width: 20%; }
+.ProseMirror table:has(tr.mt-row) col:nth-child(4) { width: 14%; }
+.ProseMirror td.mt-cell > p { display: none; }
+.ProseMirror td.mt-cell { cursor: pointer; vertical-align: middle; }
+.mt-val { display: inline-flex; align-items: center; max-width: 100%; font-size: var(--ui-font-sm); color: var(--text); cursor: pointer; }
+.mt-val.is-empty { color: var(--text-tertiary); }
+.mt-chip { display: inline-block; line-height: 24px; height: 24px; padding: 0 9px; border-radius: var(--radius-full); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.78rem; }
+.mt-chip--open { background: var(--ui-due-bg); color: var(--ui-due-fg); box-shadow: inset 0 0 0 1px var(--ui-due-border); }
+.mt-chip--taken, .mt-chip--accepted, .mt-chip--in_progress, .mt-chip--tracker { background: var(--accent-muted); color: var(--quote-text); }
+.mt-chip--assigned, .mt-chip--question { background: var(--violet-muted); color: var(--violet-text); }
+.mt-chip--done { background: var(--emerald-muted); color: var(--emerald-text); }
+.mt-chip--declined { background: rgba(239, 68, 68, 0.14); color: #f87171; }
+.mt-chip--not_task, .mt-chip--duplicate { background: var(--surface-muted); color: var(--text-tertiary); }
+.mt-chip--doubtful { background: var(--surface-muted); color: var(--text-secondary); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.ProseMirror tr.mt-row.mt-row--doubtful.is-excluded td:first-child { text-decoration: none; color: var(--text-secondary); }
+.ProseMirror tr.mt-row.is-excluded td:first-child { color: var(--text-tertiary); text-decoration: line-through; }
+.ProseMirror tr.mt-row.is-collapsed { display: none; }
+.mt-excluded-toggle { display: block; border: none; background: transparent; color: var(--text-tertiary); font: inherit; font-size: var(--ui-font-sm); padding: 6px 0; cursor: pointer; }
+.mt-excluded-toggle::after { content: " ▾"; }
+.mt-excluded-toggle.is-open::after { content: " ▴"; }
+.pt-menu-info { padding: 8px 12px 6px; font-size: 0.78rem; color: var(--text-tertiary); }
+@media (max-width: 640px) {
+  .ProseMirror table:has(tr.mt-row),
+  .ProseMirror table:has(tr.mt-row) > tbody { display: block; width: 100% !important; min-width: 0 !important; border: none; }
+  .ProseMirror table:has(tr.mt-row) colgroup,
+  .ProseMirror tr.mt-head { display: none; }
+  .ProseMirror tr.mt-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; padding: 10px 12px; border-radius: 12px; background: var(--surface-elevated, #2a2a2e); }
+  .ProseMirror tr.mt-row.is-collapsed { display: none; }
+  .ProseMirror tr.mt-row > td { display: block; flex: 0 0 auto; width: auto !important; min-width: 0 !important; max-width: 100%; padding: 0 !important; border: none !important; background: none !important; }
+  .ProseMirror tr.mt-row > td:first-child { flex: 0 0 100%; margin-bottom: 2px; }
+  .ProseMirror tr.mt-row > td:first-child > p { margin: 0; }
+  .ProseMirror tr.mt-row > td.mt-col2 .mt-val,
+  .ProseMirror tr.mt-row > td.mt-col3 .mt-val { height: 24px; padding: 0 9px; border-radius: var(--radius-full); background: var(--surface-muted); color: var(--text-secondary); font-size: 0.78rem; }
+}

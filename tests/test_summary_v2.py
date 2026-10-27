@@ -268,7 +268,7 @@ def _v2_note(tmp_path, monkeypatch, *, edited: bool):
     display = prepare_summary_markdown(render_summary_html(data), headline="Бюджет")
     meta = {**sn.v2_meta(result), "tasks": tasks, "summary_render": {"headline": "Бюджет"}}
     note = tnotes.create_with_summary(7, title="Бюджет", transcript=TRANSCRIPT, summary=display, meta=meta)
-    assert "Спикер 2 — Прислать смету" in note["body"]
+    assert "<p>Прислать смету</p></td><td><p>Не разобрано</p></td><td><p>Спикер 2</p></td>" in note["body"]
     if edited:
         notes_store.update_note("7", int(note["id"]), body=note["body"] + "\n\nМоя правка", actor_user_id="7")
     return tnotes, notes_store, int(note["id"])
@@ -278,7 +278,7 @@ def test_confirm_speaker_rerenders_untouched_summary(tmp_path, monkeypatch):
     tnotes, notes_store, nid = _v2_note(tmp_path, monkeypatch, edited=False)
     out = tnotes.confirm_speaker(7, nid, "Спикер 2", "Саша")
     assert out["summary_rerendered"] is True
-    assert "Александр Смирнов — Прислать смету — до пятницы (23 окт)" in out["body"]
+    assert "<p>Прислать смету</p></td><td><p>Не разобрано</p></td><td><p>Александр Смирнов</p></td><td><p>до пятницы (23 окт)</p></td>" in out["body"]
     assert out["meta"]["tasks"][0]["assignee_contact_key"] == "sasha@x.ru"
     assert out["meta"]["speaker_map"]["Спикер 2"]["confirmed"] is True
     notes_store._CONN = None
@@ -290,6 +290,7 @@ def test_confirm_speaker_keeps_edited_body(tmp_path, monkeypatch):
     assert out["summary_rerendered"] is False
     assert "Моя правка" in out["body"]
     assert out["meta"]["tasks"][0]["assignee"] == "Александр Смирнов"
+    assert "<td><p>Александр Смирнов</p></td>" in out["body"]  # ячейку исполнителя ведёт сервер
     notes_store._CONN = None
 
 

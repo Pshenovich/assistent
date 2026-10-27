@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261027-fraglink";
+  var WEBAPP_BUILD = "20261027-meetingtasks";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261027-fraglink"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261027-meetingtasks"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -14565,6 +14565,7 @@
     closeModalMoreMenu();
     taskModalOnSaved = null;
     taskModalOnDeleted = null;
+    taskModalMeetingItem = "";
     pendingSheetConvert = null;
     onModalSheetClose();
     syncAppOverlay();
@@ -14791,6 +14792,7 @@
   var taskAssigneeApi = null;
   var taskModalOnSaved = null;
   var taskModalOnDeleted = null;
+  var taskModalMeetingItem = ""; // пункт задач встречи: задача ставится, только если его ещё никто не взял
   var MEETING_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
 
   function meetingEmailKey(email) {
@@ -15980,6 +15982,7 @@
       checklist: reminderChecklistApi ? reminderChecklistApi.getItems() : [],
       note_id: noteEl ? String(noteEl.value || "") : "",
     };
+    if (taskModalMeetingItem) body.meeting_item = taskModalMeetingItem;
     var resultEl = document.getElementById("m-task-result");
     if (resultEl) body.result = String(resultEl.value || "");
     var alldayEl = document.getElementById("m-task-allday");
@@ -16028,6 +16031,7 @@
             description: ev.description || "",
             note_id: ev.note_id || currentOpenNoteId() || "",
             context: opts.quote || ev.context || "",
+            meeting_item: opts.meetingItem || "",
           },
           { provider: lastTracker.id, onSaved: opts.onSaved }
         );
@@ -16041,6 +16045,7 @@
     document.getElementById("modal-calendar-id").value = ev.calendar_id || "leo-tasks";
     taskModalOnSaved = typeof opts.onSaved === "function" ? opts.onSaved : null;
     taskModalOnDeleted = typeof opts.onDeleted === "function" ? opts.onDeleted : null;
+    taskModalMeetingItem = !existing && opts.meetingItem ? String(opts.meetingItem) : "";
     var st = ev.start || {};
     var en = ev.end || {};
     var sRaw = st.dateTime || ev.start_at || (st.date ? st.date + "T09:00:00" : "");
@@ -16443,12 +16448,14 @@
         var desc = String((document.getElementById("m-task-desc") || {}).value || "");
         var noteEl = document.getElementById("modal-task-note-id");
         var onSaved = taskModalOnSaved;
+        var meetingItem = taskModalMeetingItem;
         openTrackerTaskModal(
           {
             title: title,
             description: desc,
             note_id: noteEl ? String(noteEl.value || "") : "",
             context: opts.quote || ev.context || "",
+            meeting_item: meetingItem,
           },
           { provider: next, onSaved: onSaved }
         );
@@ -16877,6 +16884,7 @@
       note_id: String(st.seed.note_id || ""),
       calendar_task_id: String(st.seed.calendar_task_id || ""),
       focus_key: String(st.seed.focus_key || ""),
+      meeting_item: String(st.seed.meeting_item || ""),
     };
     var label = document.getElementById("modal-save-label");
     if (label) label.textContent = "Создаю…";
@@ -16898,6 +16906,14 @@
         });
       }
     } catch (e) {
+      if (e && e.status === 409 && body.meeting_item) {
+        // пункт встречи уже разобрал другой участник
+        closeModal();
+        trackerSheet = null;
+        meetingTasksRefresh();
+        showNoteToast(e.message || "Пункт уже разобран");
+        return;
+      }
       if (label) label.textContent = "Создать";
       var errEl = document.getElementById("m-trk-err");
       var msg = (e && e.message) || "Не удалось создать задачу";
@@ -19111,6 +19127,13 @@
         if (isPostedTasksOpen()) await loadPostedTasksList();
         await loadActual({ skipCachePaint: true });
       } catch (e) {
+        if (e && e.status === 409 && taskModalMeetingItem) {
+          // пункт встречи успел взять другой участник — задачу не ставим, показываем, кто взял
+          closeModal();
+          meetingTasksRefresh();
+          showNoteToast(e.message || "Пункт уже разобран");
+          return;
+        }
         showCalendarToast(e.message || String(e));
       }
       return;
@@ -20834,10 +20857,10 @@
     kl.className = "focus-card-kind-label";
     kl.textContent = focusKindLabel(it.tag);
     kind.appendChild(kl);
-    if (src.due) {
+    if (src.due || it.sub) {
       var kd = document.createElement("span");
       kd.className = "focus-card-kind-due";
-      kd.textContent = src.due;
+      kd.textContent = src.due || it.sub; // «Задачи встречи» — дата встречи под подписью
       kind.appendChild(kd);
     }
     head.appendChild(kind);
@@ -20875,7 +20898,7 @@
     var stackable = focusStackable(it);
     if (stackable) {
       // Несколько пунктов: «Разобрать» — стопкой по одному, галочка — все пункты списком.
-      shown = [{ act: "__stack", label: "Разобрать" }];
+      shown = [{ act: "__stack", label: it.type === "summary_tasks" ? "Разобрать " + it.items.length : "Разобрать" }];
       doneAct = { act: "__stack_list", label: "Отметить списком" };
     }
     // Главная кнопка — действие из подсказки; «Уточнить» — вторая (если действий нет — главная она).
@@ -22496,6 +22519,113 @@
     showNoteToast((a && a.title) || "Выполнено");
   }
 
+  // ——— Таблица задач встречи в саммари: живые статусы поверх таблицы и меню пункта ———
+  var meetingTasksBound = { noteId: "", editor: null, state: null, seq: 0 };
+  var meetingTasksScrollTo = ""; // открыли из карточки Фокуса — прокрутить к таблице задач
+
+  function meetingTasksAttach(editor, noteId) {
+    meetingTasksBound = { noteId: String(noteId || ""), editor: editor, state: null, seq: 0 };
+    return meetingTasksRefresh();
+  }
+
+  function meetingTasksRefresh(noteId) {
+    var b = meetingTasksBound;
+    if (!b.editor || !b.noteId || (noteId != null && String(noteId) !== b.noteId)) return Promise.resolve();
+    var seq = ++b.seq;
+    return apiFetch("/notes/local/" + encodeURIComponent(b.noteId) + "/meeting-tasks", { method: "GET" })
+      .then(function (r) {
+        if (b !== meetingTasksBound || seq !== b.seq) return;
+        b.state = r || null;
+        try {
+          if (b.editor && typeof b.editor.setMeetingTasks === "function") {
+            b.editor.setMeetingTasks(r && r.items && r.items.length ? r : null);
+          }
+        } catch (_) {} // заметку уже закрыли — редактора нет
+        if (meetingTasksScrollTo && meetingTasksScrollTo === b.noteId) {
+          meetingTasksScrollTo = "";
+          setTimeout(function () {
+            var el = document.querySelector(".mt-summary");
+            var h = el && el.parentElement ? el.previousElementSibling || el : el;
+            if (h && h.scrollIntoView) h.scrollIntoView({ block: "start", behavior: "smooth" });
+          }, 80);
+        }
+      })
+      .catch(function () {});
+  }
+
+  function meetingTaskOp(item, body) {
+    var nid = meetingTasksBound.noteId;
+    return apiFetch("/notes/local/" + encodeURIComponent(nid) + "/meeting-tasks/" + encodeURIComponent(item), {
+      method: "POST",
+      body: JSON.stringify(body),
+    })
+      .then(function () {
+        return meetingTasksRefresh();
+      })
+      .catch(function (e) {
+        showNoteToast((e && e.message) || "Не получилось");
+      });
+  }
+
+  // «Беру» / «Поручить…»: окно задачи с формулировкой пункта; сервер поставит задачу, только если пункт ничей.
+  function meetingTaskCreate(st, delegate) {
+    var nid = meetingTasksBound.noteId;
+    var ev = {
+      summary: st.task || "",
+      description: "Из встречи «" + (getNoteEditorTitle() || "встреча") + "»",
+      note_id: nid,
+    };
+    if (!delegate) ev.assignee = defaultTaskAssignee();
+    openTaskModal(ev, {
+      focusAssignee: !!delegate,
+      meetingItem: st.id,
+      onSaved: function () {
+        meetingTasksRefresh();
+        showNoteToast(delegate ? "Поручено" : "Задача ваша");
+      },
+    });
+  }
+
+  function onMeetingTaskClick(d) {
+    var st = (d && d.state) || {};
+    if (!st.id || !d.anchor) return;
+    var open = st.code === "open" || st.code === "declined";
+    if (d.col === 3 && open) {
+      promptDialog("Срок для «" + st.task + "»", st.due || "").then(function (v) {
+        if (v != null) meetingTaskOp(st.id, { op: "update", fields: { deadline: v } });
+      });
+      return;
+    }
+    var items = [];
+    if (st.code === "doubtful") {
+      // проверка по транскрипту усомнилась — человек решает: задача это или нет
+      if (st.note) items.push({ label: "Сомнение: " + st.note, info: true, fn: function () {} });
+      items.push({ label: "Это задача", fn: function () { meetingTaskOp(st.id, { op: "undo" }); } });
+      items.push({ label: "Беру", fn: function () { meetingTaskCreate(st, false); } });
+      items.push({ label: "Поручить…", fn: function () { meetingTaskCreate(st, true); } });
+      items.push({ label: "Не задача", fn: function () { meetingTaskOp(st.id, { op: "dismiss", reason: "not_a_task" }); } });
+      showPostedMenu(d.anchor, items);
+      return;
+    }
+    if (open) {
+      items.push({ label: "Беру", fn: function () { meetingTaskCreate(st, false); } });
+      items.push({ label: "Поручить…", fn: function () { meetingTaskCreate(st, true); } });
+      items.push({ label: "Сделано", fn: function () { meetingTaskOp(st.id, { op: "done" }); } });
+      items.push({ label: "Не задача", fn: function () { meetingTaskOp(st.id, { op: "dismiss", reason: "not_a_task" }); } });
+      items.push({ label: "Дубль", fn: function () { meetingTaskOp(st.id, { op: "dismiss", reason: "duplicate" }); } });
+    } else if (st.task_id) {
+      items.push({ label: "Открыть задачу", fn: function () { openTaskFromChip(String(st.task_id)); } });
+    } else if (st.url) {
+      items.push({ label: "Открыть в трекере", fn: function () { openExternal(st.url); } });
+    }
+    if (!open && !st.task_id && st.code !== "tracker") {
+      items.push({ label: "Вернуть в «Не разобрано»", fn: function () { meetingTaskOp(st.id, { op: "undo" }); } });
+    }
+    if (!items.length) return;
+    if (st.by && !open) items.unshift({ label: (st.label || "") + (st.code === "taken" ? "" : " · " + st.by), info: true, fn: function () {} });
+    showPostedMenu(d.anchor, items);
+  }
+
   function focusMarkAttrs(el) {
     var a = { mark: el.getAttribute("data-leo-mark") || "done" };
     ["item", "by", "at", "url", "task", "label", "done"].forEach(function (k) {
@@ -22745,6 +22875,8 @@
       } else if (act === "open_event") {
         if (it.event) openEventModal(findLoadedCalendarEvent(it.event.id, it.event.calendar_id) || it.event);
       } else if (act === "open_note") {
+        // «Задачи встречи»: заметка открывается на таблице задач
+        if (it.note && it.note.anchor === "tasks") meetingTasksScrollTo = String(it.note.id);
         if (it.note) openMeetingMaterial({ id: it.note.id, kind: it.note.kind, title: it.note.title });
       } else if (act === "url") {
         if (p.url) openExternal(p.url);
@@ -24981,6 +25113,7 @@
     }
     var ds = postedDueShort(task);
     part(ds.day === "без срока" ? "без срока" : "срок " + ds.day + (ds.time ? ", " + ds.time : ""), postedTaskIsOverdue(task) ? "is-late pt-due-inline" : "pt-due-inline");
+    if (task.meeting_title) part("из «" + task.meeting_title + "»", "pt-meeting"); // поручение из встречи
     main.appendChild(line);
     if ((kind === "question" || kind === "declined") && st.status_note) {
       var q = document.createElement("p");
@@ -26480,6 +26613,14 @@
     m.id = "pt-menu";
     m.className = "pt-menu";
     items.forEach(function (it) {
+      if (it.info) {
+        // подпись над действиями (кто и когда разобрал пункт) — не кнопка
+        var p = document.createElement("div");
+        p.className = "pt-menu-info";
+        p.textContent = it.label;
+        m.appendChild(p);
+        return;
+      }
       var b = document.createElement("button");
       b.type = "button";
       b.className = "pt-menu-item" + (it.danger ? " is-danger" : "");
@@ -29117,6 +29258,7 @@
             onExternalTaskClick: openExternal,
             onTaskChipRemoved: deleteTaskFromChip,
             onFocusMarkClick: onFocusMarkClick,
+            onMeetingTaskClick: onMeetingTaskClick,
             onSearchNoteRefs: searchNoteRefItems,
             onNoteRefChipClick: openNoteRefFromChip,
             onEntityRefChipClick: openEntityRefFromChip,
@@ -33842,6 +33984,7 @@
     }
     if (type === "focus.changed") {
       // Участник встречи разобрал её задачи — карточка «Задачи из встречи» общая, перечитываем сразу.
+      if (ev.note_id != null) meetingTasksRefresh(ev.note_id); // и таблицу задач, если эта встреча открыта
       if (realtimeFocusTimer) clearTimeout(realtimeFocusTimer);
       realtimeFocusTimer = setTimeout(function () {
         realtimeFocusTimer = null;
@@ -33910,6 +34053,7 @@
     try {
       var q = new URLSearchParams(location.search || "");
       var n = q.get("note") || q.get("n");
+      if (n && /^\d+$/.test(n) && q.get("tasks") === "1") meetingTasksScrollTo = n; // из брифа — к таблице задач
       if (n && /^\d+$/.test(n)) return n;
     } catch (_) {}
     var hash = String(location.hash || "").replace(/^#/, "");
@@ -43549,6 +43693,8 @@
         assignee_email: who.email || "",
         assignee_name: who.name || "",
         note_id: src.kind === "note" && src.id ? String(src.id) : "",
+        // пункт задач встречи: поставится, только если его ещё никто не взял
+        meeting_item: src.kind === "note" && src.id && src.item ? String(src.item) : undefined,
       }, when)),
     })
       .then(function (r) {
@@ -43749,6 +43895,7 @@
             deadline: due.value || "",
             note_id: noteId,
             focus_key: f.key || "",
+            meeting_item: f.source && f.source.kind === "note" && f.source.item ? String(f.source.item) : "",
           }),
         })
           .then(function (r) {
@@ -52751,6 +52898,7 @@
       },
     }).then(function (editor) {
       noteRichEditor = editor;
+      if (noteId && isTranscriptionNoteItem(n)) meetingTasksAttach(editor, noteId);
       var detailBodyMount = getNoteEditorBodyEl();
       if (detailBodyMount) detailBodyMount._noteRichEditor = editor;
       if (detailBodyMount && detailBodyMount._noteEditor) {

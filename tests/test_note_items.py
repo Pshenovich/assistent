@@ -70,8 +70,10 @@ class SummaryIdsTests(_Db):
         ids = [t["id"] for t in notes_store.get_note(1, int(note["id"]))["meta"]["tasks"]]
         self.assertTrue(body.startswith("<h2>📌 Кратко</h2>"))
         self.assertTrue(all(ni.ITEM_ID_RE.match(i) for i in ids))
-        self.assertEqual(ni.find_line(body, ids[0])["text"], "Дима — Подготовить API — до пятницы")
+        # задачи — таблица: ID на ячейке с формулировкой, исполнитель и срок — в своих ячейках
+        self.assertEqual(ni.find_line(body, ids[0])["text"], "Подготовить API")
         self.assertEqual(ni.find_line(body, ids[1])["text"], "Собрать фидбек")
+        self.assertIn("<td><p>Дима</p></td><td><p>до пятницы</p></td>", body)
 
         # Ключ пункта Фокуса — по ID задачи: правка формулировки его не меняет.
         n = notes_store.get_note(1, int(note["id"]))
@@ -82,17 +84,31 @@ class SummaryIdsTests(_Db):
         card2 = proactive.rule_summary_tasks([n], {}, now, timezone.utc)[0]
         self.assertEqual(card["items"][0]["id"], card2["items"][0]["id"])
 
-        # Пункт поставлен в задачу — чип встаёт в строку задачи, даже если строку переписали.
+        # Пункт поставлен в задачу — статус в ячейке строки задачи, даже если формулировку переписали.
         row = fi.item_from_card(card)[0]
         fi.remember(1, row)
-        edited = body.replace("Подготовить API — до пятницы", "Сделать новое API к понедельнику")
+        edited = body.replace("<p>Подготовить API</p>", "<p>Сделать новое API к понедельнику</p>")
         notes_store.update_note(1, int(note["id"]), body=edited)
         fi.apply(1, row["key"], "converted", by="Вова", task_id=5)
-        line = ni.find_line(notes_store.get_note(1, int(note["id"]))["body"], ids[0])
-        self.assertIn("note-focus-mark", notes_store.get_note(1, int(note["id"]))["body"].split(ids[0], 1)[1].split("</li>", 1)[0])
-        self.assertEqual(line["text"], "Дима — Сделать новое API к понедельнику")
+        after = notes_store.get_note(1, int(note["id"]))["body"]
+        self.assertNotIn("note-focus-mark", after)
+        self.assertEqual(ni.find_line(after, ids[0])["text"], "Сделать новое API к понедельнику")
+        self.assertIn("<td><p>Взял Вова</p></td>", after.split(ids[0], 1)[1].split("</tr>", 1)[0])
         meta_task = notes_store.get_note(1, int(note["id"]))["meta"]["tasks"][0]
         self.assertTrue(meta_task["completed"])
+
+    def test_old_list_summary_keeps_chip(self) -> None:
+        # Саммари со списком задач (до таблиц): чип по-прежнему встаёт в конец строки задачи.
+        tasks = [{"id": "ibbbbbbbbb1", "assignee": "Дима", "task": "Подготовить API", "deadline": ""}]
+        body = '<h2>📋 Задачи</h2><ul><li data-leo-item="ibbbbbbbbb1"><p>Дима — Подготовить API</p></li></ul>'
+        nid = int(notes_store.create_note(1, "Синк", body, role="transcription", meta={"tasks": tasks})["id"])
+        n = notes_store.get_note(1, nid)
+        card = proactive.rule_summary_tasks([n], {}, datetime.now(timezone.utc), timezone.utc)[0]
+        row = fi.item_from_card(card)[0]
+        fi.remember(1, row)
+        fi.apply(1, row["key"], "converted", by="Вова", task_id=5)
+        after = notes_store.get_note(1, nid)["body"]
+        self.assertIn("note-focus-mark", after.split("ibbbbbbbbb1", 1)[1].split("</li>", 1)[0])
 
 
 class InsightAnchorTests(_Db):

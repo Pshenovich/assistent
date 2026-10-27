@@ -162,6 +162,9 @@ def link(owner_user_id: Any, note_id: Any, meeting: dict[str, Any], *, source: s
         conn.commit()
     out = get_for_note(owner_user_id, note_id)
     assert out is not None
+    from assistant.services import meeting_share
+
+    meeting_share.schedule_auto_share(owner_user_id, int(note_id))  # у саммари встречи — участники
     return out
 
 

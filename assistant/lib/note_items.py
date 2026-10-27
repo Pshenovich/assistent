@@ -31,7 +31,8 @@ def is_html_body(body: str) -> bool:
 class _Lines(HTMLParser):
     """Строки документа: текст, место для значка в конце и элемент, на котором живёт ID.
 
-    У пункта списка текст лежит в <p> внутри <li>; ID ставим на <li> — это и есть строка."""
+    У пункта списка текст лежит в <p> внутри <li>; ID ставим на <li> — это и есть строка.
+    Так же ячейка таблицы: <td><p>…</p></td>, ID — на <td> (задачи встречи)."""
 
     def __init__(self, src: str) -> None:
         super().__init__(convert_charrefs=True)
@@ -69,7 +70,7 @@ class _Lines(HTMLParser):
             "has_child_block": False,
         }
         parent = self.stack[-1] if self.stack else None
-        if tag == "p" and parent and parent["tag"] == "li" and not parent["has_child_block"] and not parent["text"].strip():
+        if tag == "p" and parent and parent["tag"] in ("li", "td") and not parent["has_child_block"] and not parent["text"].strip():
             entry["owner"] = parent
         if parent:
             parent["has_child_block"] = True

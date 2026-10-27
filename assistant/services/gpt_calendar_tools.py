@@ -17,7 +17,7 @@ import sqlite3
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable, Optional
 
 MAX_RANGE_DAYS = 62
@@ -377,6 +377,10 @@ TOOLS: list[dict[str, Any]] = [
         {"query": {"type": "string", "description": "Ключевые слова темы (например «документы клиент»); пусто — все задачи исполнителя"},
          "assignee": {"type": "string", "description": "Имя/ник исполнителя или постановщика (необязательно)"},
          "status": {"type": "string", "enum": ["any", "open", "done"], "default": "any"}}),
+    _fn("meeting_tasks_search", "Задачи из встреч пользователя (таблица «Задачи» в саммари, в т.ч. встреч, которыми с ним поделились) за последние недели: статус пункта (Не разобрано / Взял / Поручено · ждёт / Принято / В работе / Вопрос / Отказ / В трекере / Сделано / Не задача), ответственный, срок, встреча. Для вопросов «какой статус по задаче …», «кто взял …», «что не разобрано после встречи …». Нашлось несколько похожих — уточни у пользователя, о какой речь.",
+        {"query": {"type": "string", "description": "Примерное название задачи или слова из неё; пусто — все пункты"},
+         "meeting": {"type": "string", "description": "Слова из названия встречи (необязательно)"},
+         "days": {"type": "integer", "description": "За сколько дней искать встречи, по умолчанию 42"}}),
     _fn("commitments", "Реестр обязательств из встреч, заметок и чатов (одна договорённость — один пункт, даже если звучала в нескольких местах). Для вопросов «что я обещал», «что мне должны / что за ними», «что просрочено», «какие хвосты после встреч».",
         {"direction": {"type": "string", "enum": ["any", "mine", "theirs", "unknown"], "default": "any",
                        "description": "mine — за пользователем; theirs — за другими; unknown — исполнитель не ясен"},
@@ -1535,18 +1539,25 @@ def _material_digest(ctx: GptCalendarContext, note_id: int, *, full: bool) -> di
     if is_tr:
         if meta.get("main_topic"):
             out["main_topic"] = str(meta.get("main_topic"))[:300]
+        from assistant.services import meeting_tasks
+
+        # статус пункта — как в таблице задач встречи (живой, из связанной задачи)
+        state = {x["id"]: x for x in meeting_tasks.rows(note)["items"]} if meta.get("tasks") else {}
         tasks = []
         for t in meta.get("tasks") or []:
             if isinstance(t, dict):
                 row = {k: str(t.get(k) or "")[:200] for k in ("assignee", "task", "deadline", "comment") if t.get(k)}
-                if t.get("completed"):
+                x = state.get(str(t.get("id") or ""))
+                if x:
+                    row["status"] = x["label"]
+                    if x["code"] in ("not_task", "duplicate"):
+                        row["status"] += " — не заводить"
+                    elif x["code"] != "open":
+                        row["responsible"] = x["who"]
+                        if x["due"]:
+                            row["deadline"] = x["due"]
+                elif t.get("completed"):
                     row["status"] = "выполнена" + (f" ({t.get('completed_by')}, {str(t.get('completed_at') or '')[:10]})" if t.get("completed_by") else "")
-                elif t.get("focus_status") == "linked":
-                    row["status"] = "связана с задачей"
-                elif t.get("focus_status") == "dismissed":
-                    row["status"] = "скрыта пользователем — не заводить"
-                elif t.get("focus_status") == "retyped":
-                    row["status"] = "не задача (" + str(t.get("type") or "другой тип") + ")"
                 if isinstance(t.get("link"), dict) and t["link"].get("url"):
                     row["link"] = str(t["link"]["url"])[:300]
                 tasks.append(row)
@@ -1843,6 +1854,60 @@ def tool_tasks_search(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     return _ok(res)
 
 
+def tool_meeting_tasks_search(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    from assistant.services import meeting_tasks
+    from assistant.stores import notes as notes_store
+    from assistant.stores.note_members import note_webapp_url
+
+    q = _stems(str(args.get("query") or ""))
+    mq = _stems(str(args.get("meeting") or ""))
+    try:
+        days = max(1, min(int(args.get("days") or 42), 365))
+    except (TypeError, ValueError):
+        days = 42
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    hits: list[tuple[float, dict[str, Any]]] = []
+    for note in notes_store.list_transcription_notes(ctx.uid, limit=200):
+        if str(note.get("created_at") or "") < since:
+            continue
+        tasks = (note.get("meta") or {}).get("tasks") if isinstance(note.get("meta"), dict) else None
+        if not tasks:
+            continue
+        if mq and not (mq & _stems(str(note.get("title") or ""))):
+            continue
+        cand = []
+        for t in tasks:
+            if not isinstance(t, dict):
+                continue
+            hay = _stems(f"{t.get('task') or ''} {t.get('assignee') or ''}")
+            score = len(q & hay) / len(q) if q else 1.0
+            if score > 0:
+                cand.append((score, str(t.get("id") or "")))
+        if not cand:
+            continue
+        state = {x["id"]: x for x in meeting_tasks.rows(note)["items"]}
+        for score, iid in cand:
+            x = state.get(iid)
+            if not x:
+                continue
+            hits.append((score, {
+                "task": x["task"], "status": x["label"], "responsible": x["who"] or "не назначен",
+                "due": x["due"] or "", "decided_by": x["by"] if x["code"] not in ("open",) else "",
+                "meeting": str(note.get("title") or ""), "meeting_date": str(note.get("created_at") or "")[:10],
+                "url": note_webapp_url(int(note["id"])),
+            }))
+    hits.sort(key=lambda p: -p[0])
+    best = hits[0][0] if hits else 0
+    out = [h for s, h in hits if s >= best * 0.6][:12] if q else [h for _, h in hits][:30]
+    res: dict[str, Any] = {"items": out, "total": len(hits)}
+    if not hits:
+        res["note"] = "В таблицах задач встреч за этот период ничего похожего — попробуй tasks_search (задачи Лео) или другие слова."
+    elif q and len(out) > 1:
+        res["note"] = "Похожих пунктов несколько — если вопрос про один, уточни у пользователя, какой."
+    return _ok(res)
+
+
+EXECUTORS["meeting_tasks_search"] = tool_meeting_tasks_search
 EXECUTORS["meeting_materials"] = tool_meeting_materials
 EXECUTORS["person_history"] = tool_person_history
 EXECUTORS["tasks_search"] = tool_tasks_search

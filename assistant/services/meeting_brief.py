@@ -119,15 +119,32 @@ def _note_digest(uid: int, m: dict[str, Any]) -> Optional[dict[str, Any]]:
         meta = (note or {}).get("meta") if isinstance((note or {}).get("meta"), dict) else {}
         if not meta or not (meta.get("main_topic") or meta.get("tasks") or meta.get("decisions")):
             continue
+        live: dict[str, Any] = {}
+        if meta.get("tasks"):
+            try:  # статус пункта — как в таблице задач встречи (взяли ≠ сделали)
+                from assistant.services import meeting_tasks
+
+                live = {x["id"]: x for x in meeting_tasks.rows(note)["items"] if x.get("id")}
+            except Exception as e:
+                print(f"[meeting_brief] meeting tasks failed note={nid} err={e!r}")
         tasks = []
         for t in meta.get("tasks") or []:
             if not isinstance(t, dict) or not str(t.get("task") or "").strip():
                 continue
             who = str(t.get("assignee") or "").strip()
-            tasks.append({
+            x = live.get(str(t.get("id") or ""))
+            row = {
                 "task": str(t["task"]).strip(), "assignee": "" if _speaker_label(who) else who,
                 "deadline": str(t.get("deadline") or "").strip(), "completed": bool(t.get("completed")),
-            })
+            }
+            if x:
+                row["completed"] = x["code"] in ("done", "not_task", "duplicate", "doubtful")
+                row["status"] = x["label"]
+                if x.get("who") and x["code"] not in ("open",):
+                    row["assignee"] = x["who"]
+                if x.get("due") and x["code"] not in ("open",):
+                    row["deadline"] = x["due"]
+            tasks.append(row)
         decisions = [str(d.get("text") if isinstance(d, dict) else d).strip() for d in meta.get("decisions") or []]
         questions = [str(q.get("text") if isinstance(q, dict) else q).strip() for q in meta.get("open_questions") or []]
         return {
@@ -380,7 +397,7 @@ def collect_facts(user_id: int, ev: dict[str, Any], *, assume_topics: bool = Fal
         "people": people,
         "series": [
             {"date": s["date"], "title": s["title"], "topic": s["topic"], "decisions": s["decisions"],
-             "open_tasks": [{k: t[k] for k in ("assignee", "task", "deadline") if t[k]} for t in s["tasks"]
+             "open_tasks": [{k: t[k] for k in ("assignee", "task", "deadline", "status") if t.get(k)} for t in s["tasks"]
                             if not t["completed"]][:10],
              "open_questions": s["open_questions"]}
             for s in series[:_SERIES_LIMIT]

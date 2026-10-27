@@ -4189,6 +4189,160 @@ function createLeoTaskExtensions(ctx) {
   return [LeoTaskChip, LeoTaskSlash, LeoFocusMark];
 }
 
+/** Таблица задач встречи («Задача | Статус | Ответственный | Дедлайн»). Строка — пункт, если ID её первой
+ * ячейки есть в состоянии (setMeetingTasks): статус, ответственный и срок рисуются поверх текста ячеек
+ * (текст ведёт сервер, ячейки не редактируются руками), над таблицей — «Разобрано N из M»,
+ * «Не задачи» и «Дубли» свёрнуты под таблицей. Клик по ячейке — ctx.onMeetingTaskClick. */
+var meetingTasksKey = new PluginKey("leoMeetingTasks");
+var MT_EXCLUDED = { not_task: 1, duplicate: 1, doubtful: 1 };
+var MT_UNDECIDED = { open: 1, declined: 1 };
+
+function createMeetingTasksExtension(ctx) {
+  function fire(detail, e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof ctx.onMeetingTaskClick === "function") ctx.onMeetingTaskClick(Object.assign({ anchor: e.currentTarget }, detail));
+  }
+  function cellWidget(item, col) {
+    return function () {
+      var el = document.createElement("span");
+      var text = col === 1 ? item.label : col === 2 ? item.who : item.due;
+      el.className = "mt-val" + (col === 1 ? " mt-chip mt-chip--" + item.code : "") + (text ? "" : " is-empty");
+      el.setAttribute("contenteditable", "false");
+      el.setAttribute("role", "button");
+      el.textContent = text || (col === 2 && !MT_EXCLUDED[item.code] ? "выбрать…" : "—");
+      if (col === 1 && item.note) el.title = item.note;
+      el.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+      });
+      el.addEventListener("click", function (e) {
+        fire({ item: item.id, col: col, state: item }, e);
+      });
+      return el;
+    };
+  }
+  function counterWidget(decided, total) {
+    return function () {
+      var el = document.createElement("div");
+      el.className = "mt-summary";
+      el.setAttribute("contenteditable", "false");
+      var bar = document.createElement("span");
+      bar.className = "mt-summary-bar";
+      var fill = document.createElement("span");
+      fill.style.width = (total ? Math.round((100 * decided) / total) : 100) + "%";
+      bar.appendChild(fill);
+      var txt = document.createElement("span");
+      txt.className = "mt-summary-text";
+      txt.textContent = total && decided >= total ? "Всё разобрано · " + total : "Разобрано " + decided + " из " + total;
+      el.appendChild(bar);
+      el.appendChild(txt);
+      return el;
+    };
+  }
+  function tailWidget(n, open) {
+    return function (view) {
+      var el = document.createElement("button");
+      el.type = "button";
+      el.className = "mt-excluded-toggle" + (open ? " is-open" : "");
+      el.setAttribute("contenteditable", "false");
+      el.textContent = (open ? "Скрыть: " : "") + "Не задачи и сомнительные · " + n;
+      el.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+      });
+      el.addEventListener("click", function (e) {
+        e.preventDefault();
+        view.dispatch(view.state.tr.setMeta(meetingTasksKey, { open: !open }).setMeta("addToHistory", false));
+      });
+      return el;
+    };
+  }
+  var stop = function () {
+    return true;
+  };
+  return Extension.create({
+    name: "leoMeetingTasks",
+    addProseMirrorPlugins: function () {
+      return [
+        new Plugin({
+          key: meetingTasksKey,
+          state: {
+            init: function () {
+              return { items: null, open: false };
+            },
+            apply: function (tr, v) {
+              var m = tr.getMeta(meetingTasksKey);
+              return m ? Object.assign({}, v, m) : v;
+            },
+          },
+          props: {
+            decorations: function (state) {
+              var st = meetingTasksKey.getState(state);
+              if (!st || !st.items) return null;
+              var decos = [];
+              state.doc.descendants(function (node, pos) {
+                if (node.type.name !== "table") return true;
+                var rows = [];
+                node.forEach(function (row, off) {
+                  var first = row.firstChild;
+                  var id = first && first.attrs && first.attrs.leoItem;
+                  rows.push({ pos: pos + 1 + off, node: row, item: id ? st.items[id] : null, head: !!(first && first.type.name === "tableHeader") });
+                });
+                if (!rows.some(function (r) { return r.item; })) return false;
+                var decided = 0;
+                var total = 0;
+                var excluded = 0;
+                rows.forEach(function (r) {
+                  if (!r.item) {
+                    if (r.head) decos.push(Decoration.node(r.pos, r.pos + r.node.nodeSize, { class: "mt-head" }));
+                    return;
+                  }
+                  var it = r.item;
+                  var ex = !!MT_EXCLUDED[it.code];
+                  if (ex) excluded++;
+                  else {
+                    total++;
+                    if (!MT_UNDECIDED[it.code]) decided++;
+                  }
+                  decos.push(
+                    Decoration.node(r.pos, r.pos + r.node.nodeSize, {
+                      class: "mt-row mt-row--" + it.code + (ex ? " is-excluded" + (st.open ? "" : " is-collapsed") : ""),
+                    })
+                  );
+                  r.node.forEach(function (cell, coff, i) {
+                    if (i < 1 || i > 3) return;
+                    var at = r.pos + 1 + coff;
+                    decos.push(Decoration.node(at, at + cell.nodeSize, { class: "mt-cell mt-col" + i, contenteditable: "false" }));
+                    decos.push(
+                      Decoration.widget(at + 1, cellWidget(it, i), {
+                        key: ["mt", i, it.id, it.code, it.label, it.who, it.due, it.note].join("|"),
+                        side: -1,
+                        ignoreSelection: true,
+                        stopEvent: stop,
+                      })
+                    );
+                  });
+                });
+                decos.push(Decoration.widget(pos, counterWidget(decided, total), { key: "mt-sum|" + decided + "/" + total, side: -1, stopEvent: stop }));
+                if (excluded) {
+                  decos.push(
+                    Decoration.widget(pos + node.nodeSize, tailWidget(excluded, !!st.open), {
+                      key: "mt-ex|" + excluded + (st.open ? "o" : "c"),
+                      side: 1,
+                      stopEvent: stop,
+                    })
+                  );
+                }
+                return false;
+              });
+              return DecorationSet.create(state.doc, decos);
+            },
+          },
+        }),
+      ];
+    },
+  });
+}
+
 function createHashtagExtensions(ctx) {
   var HashtagHighlight = Extension.create({
     name: "hashtagHighlight",
@@ -4388,6 +4542,7 @@ function mount(container, options) {
     onTaskChipRemoved: options.onTaskChipRemoved,
     onFocusMarkClick: options.onFocusMarkClick,
   };
+  var meetingTasksCtx = { onMeetingTaskClick: options.onMeetingTaskClick };
   var noteRefCtx = {
     editor: null,
     onSearchNoteRefs: options.onSearchNoteRefs,
@@ -4442,6 +4597,7 @@ function mount(container, options) {
     ]
       .concat(createHashtagExtensions(hashtagCtx))
       .concat(createLeoTaskExtensions(taskCtx))
+      .concat([createMeetingTasksExtension(meetingTasksCtx)])
       .concat(createNoteRefExtensions(noteRefCtx)),
     content: importBody(options.body || ""),
     autofocus: options.autofocus === true,
@@ -4653,6 +4809,17 @@ function mount(container, options) {
   });
 
   return {
+    // Таблица задач встречи: { items: [{ id, code, label, who, due, note, … }] } с сервера; null — снять.
+    setMeetingTasks: function (state) {
+      var map = null;
+      if (state && Array.isArray(state.items)) {
+        map = {};
+        state.items.forEach(function (x) {
+          if (x && x.id) map[x.id] = x;
+        });
+      }
+      editor.view.dispatch(editor.state.tr.setMeta(meetingTasksKey, { items: map }).setMeta("addToHistory", false));
+    },
     beginDictation: function (atEnd) {
       var id = "d" + ++dictationSeq;
       dictationMarks[id] = atEnd ? editor.state.doc.content.size : editor.state.selection.to;
@@ -5034,7 +5201,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261027-fraglink",
+  assetVersion: "20261027-meetingtasks",
   Y: Y,
   mount: mount,
   importBody: importBody,
