@@ -17835,6 +17835,13 @@ html.actual-voice-open #actual-voice-btn { visibility: hidden; }
 /* Задача: «Выполнено» — главная зелёная, «Ссылка» — компактная рядом. */
 .modal-sheet-actions.is-task .modal-done-btn { flex: 1 1 auto; background: var(--success, #4bb34b); color: #fff; font-weight: 600; }
 .modal-sheet-actions.is-task .modal-link-btn { flex: 0 0 auto; }
+/* «В работе» слева от «Выполнено»: нажата — синий контур и точка. */
+.modal-sheet-actions .modal-progress-btn { display: flex; flex: 1 1 0; align-items: center; justify-content: center; gap: 8px; min-height: var(--vkui--size_button_large_height--regular, 44px); margin: 0; padding: 0 var(--space-3); border: 1px solid transparent; border-radius: var(--vkui--size_border_radius--regular, 10px); background: var(--vkui--color_background_secondary_alpha, var(--surface-muted)); color: var(--text); font: inherit; font-size: 0.9375rem; font-weight: 600; }
+.modal-sheet-actions .modal-progress-btn.hidden { display: none; }
+.modal-sheet-actions .modal-progress-btn.is-on { border-color: var(--accent); color: var(--accent); background: var(--accent-subtle, rgba(99, 102, 241, 0.16)); }
+.modal-sheet-actions .modal-progress-btn.is-on::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.modal-sheet-actions .modal-progress-btn:active { opacity: 0.75; }
+.modal-sheet-actions.is-task .modal-progress-btn:not(.hidden) ~ .modal-done-btn { flex: 1 1 0; }
 
 /* Переключатель типа: неактивные пункты читаемы */
 #modal-fields .event-sheet-kind-btn { color: #a3a5a9; font-size: 0.8125rem; min-height: 32px; }
@@ -17949,8 +17956,29 @@ html.actual-voice-open #actual-voice-btn { visibility: hidden; }
   /* 16px в полях — без зума iOS */
   #modal-fields .event-sheet-pill, #modal-fields .field-input, #modal-fields .event-sheet-title { font-size: 16px; }
 }
-.sheet-durs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
-.sheet-durs .sheet-chip { padding: 0 4px; }
+/* Окно записи: «Срок / Когда» — свёрнутая строка; раскрыто — «Дата», разделитель, «Время». Цвета нейтральные. */
+.sheet-when { padding: 0 0 12px; gap: 10px; }
+.sheet-when.is-collapsed { padding-bottom: 0; }
+.sheet-when > :not(.sheet-when-summary):not(input[type="hidden"]) { margin-left: 12px; margin-right: 12px; }
+.sheet-when.is-collapsible .sheet-when-summary { min-height: 44px; padding: 0.45rem 0.9rem; font-size: 1rem; }
+.sheet-when-summary-val { color: var(--text); font-size: 0.9375rem; }
+.sheet-sublabel { margin: 2px 0 -2px; font-size: 0.75rem; color: var(--text-secondary); }
+.sheet-date-pill.sheet-date-field { display: flex; width: auto; height: var(--ui-h, 40px); background: var(--ui-field-bg, rgba(120, 120, 128, 0.16)); box-shadow: inset 0 0 0 1px var(--ui-field-border, transparent); }
+.sheet-date-field .sheet-date-text { flex: 1; }
+.sheet-date-field .event-sheet-chevron { color: var(--text-secondary); }
+.sheet-when .event-sheet-pill.sheet-time { flex: 1; max-width: none; background: var(--ui-field-bg, rgba(120, 120, 128, 0.16)); color: var(--text); box-shadow: inset 0 0 0 1px var(--ui-field-border, transparent); }
+.sheet-when-times { flex-wrap: nowrap; }
+.sheet-when-sep { height: 0; border-top: 0.5px solid var(--border); margin-top: 2px; margin-bottom: 0; }
+.sheet-when-head { display: flex; align-items: center; justify-content: space-between; min-height: 26px; }
+.sheet-when-head .sheet-sublabel { margin: 0; }
+.sheet-when-head .sheet-switch-row { margin-left: auto; }
+/* Строка подсказок: одна строка, прокрутка вбок, без полосы прокрутки */
+.sheet-chips.sheet-scroll { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; margin-bottom: -2px; padding-bottom: 2px; }
+.sheet-chips.sheet-scroll::-webkit-scrollbar { display: none; }
+.sheet-chips.sheet-scroll .sheet-chip { flex: none; }
+/* Иконка у подписи строки свойства */
+.sheet-prop-label { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.sheet-row-ico { flex: none; color: var(--text-secondary); }
 .event-sheet-color-inline .event-sheet-color-swatches { flex-wrap: nowrap; }
 .booking-sheet-chips { margin-top: 8px; }
 #modal-fields .booking-sheet-seg .event-sheet-kind-btn { white-space: nowrap; font-size: 0.8125rem; padding-left: 4px; padding-right: 4px; }
@@ -23195,9 +23223,6 @@ ol.note-discuss-md-list { list-style: decimal; }
 /* срок — дата и время одинаково везде: жёлтые поля */
 .fstack-when input, .tinbox-when input { min-height: var(--ui-h); height: var(--ui-h); border: 1px solid var(--ui-due-border); border-radius: var(--ui-r); background: var(--ui-due-bg); color: var(--ui-due-fg); color-scheme: dark; }
 .sheet-date-pill, .event-sheet-pill.sheet-time { border-radius: var(--ui-r); }
-/* срок задачи в окне — тот же жёлтый, что в разборах (у встречи дата остаётся серой) */
-.sheet-when:has(.sheet-quick-dates) .sheet-date-pill, .sheet-when:has(.sheet-quick-dates) .event-sheet-pill.sheet-time { background: var(--ui-due-bg); color: var(--ui-due-fg); box-shadow: inset 0 0 0 1px var(--ui-due-border); }
-.sheet-when:has(.sheet-quick-dates) .sheet-date-pill svg { color: var(--ui-due-fg); }
 /* описание в окне — часть сгруппированного блока, без своей рамки */
 .modal--sheet .field-textarea.event-sheet-desc { border-color: transparent; border-radius: 14px; }
 @media (max-width: 959px) {
@@ -23263,3 +23288,108 @@ ol.note-discuss-md-list { list-style: decimal; }
 .tinbox-pen { margin-left: auto; flex: none; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 9px; background: transparent; color: var(--text-secondary); cursor: pointer; }
 .tinbox-pen:hover { background: var(--surface-elevated); color: var(--text); }
 .tinbox-pen svg { width: 16px; height: 16px; }
+
+/* ——— Окно записи: свойства одной группой (Срок/Когда, Исполнитель, Где, Цвет, Повтор, Участники…) ——— */
+.event-sheet-group.sheet-props { overflow: visible; }
+.sheet-props > .event-sheet-group,
+.sheet-props > .sheet-prop { overflow: visible; margin: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.sheet-props > :not(input[type="hidden"]):not(.hidden) ~ :not(input[type="hidden"]):not(.hidden) { border-top: 0.5px solid var(--border); }
+.sheet-props > .event-sheet-group.meeting-attendees-field > .event-sheet-row { border-radius: 0; }
+.sheet-prop-row .event-sheet-row-value { color: var(--text-secondary); }
+.sheet-prop-row .event-sheet-row-value > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sheet-prop-row[aria-expanded="true"] .event-sheet-row-value { color: var(--accent); }
+/* Где */
+.sheet-where-val { display: inline-flex; align-items: center; gap: 6px; }
+.sheet-where-ico { flex: none; width: 16px; height: 16px; color: var(--text); }
+.sheet-where-ico--b24, .sheet-where-ico--txt { display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: #2fc6f6; color: #fff; font-size: 0.5625rem; font-weight: 700; letter-spacing: -0.02em; }
+.sheet-where-ico--txt { background: var(--surface-muted); color: var(--text); }
+.sheet-where-body { display: flex; flex-direction: column; gap: 10px; padding: 0 12px 12px; }
+.sheet-where-body.hidden { display: none; }
+.sheet-where-body .task-target-switch { margin: 0; }
+.sheet-where-body .task-target-switch .event-sheet-kind-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.sheet-where-nested { display: flex; flex-direction: column; border-radius: 12px; background: var(--ui-field-bg, rgba(0, 0, 0, 0.18)); box-shadow: inset 0 0 0 1px var(--border); overflow: visible; }
+.sheet-where-nested > .sheet-sublabel { margin: 0; padding: 10px 12px 4px; }
+.sheet-where-nested .event-sheet-row { min-height: 42px; padding: 0.35rem 0.75rem; }
+.sheet-where-nested .event-sheet-row-label { font-size: 0.9375rem; color: var(--text-secondary); }
+.sheet-where-nested .tracker-row + .tracker-row, .sheet-where-nested .tracker-user-list + .tracker-row { border-top: 0.5px solid var(--border); }
+/* Цвет */
+.event-sheet-color-group .event-sheet-color-preview { width: 16px; height: 16px; }
+.sheet-color-body { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 6px; }
+.sheet-color-body.hidden { display: none; }
+.sheet-color-body .event-sheet-color-swatches { display: flex; flex-wrap: nowrap; gap: 10px; overflow-x: auto; scrollbar-width: none; padding: 4px 2px; }
+.sheet-color-body .event-sheet-color-swatches::-webkit-scrollbar { display: none; }
+.sheet-color-body .event-sheet-color-swatch { flex: none; width: 26px; height: 26px; }
+.sheet-color-hint { margin: 0; font-size: 0.75rem; color: var(--text-secondary); }
+/* Описание и подзадачи — одна карточка */
+.sheet-desc-group .field-textarea.event-sheet-desc { min-height: 56px; border: none; border-radius: 0; background: transparent; }
+.sheet-desc-group .rem-checklist-host { border-top: 0.5px solid var(--border); }
+.sheet-desc-group .rem-checklist-item, .sheet-desc-group .rem-checklist-draft { min-height: 40px; padding: 0.45rem 0.9rem; border-top: 0.5px solid var(--border); }
+.sheet-desc-group .rem-checklist-item:first-child { border-top: none; }
+.sheet-desc-group .rem-checklist-add { width: 100%; box-sizing: border-box; min-height: 40px; padding: 0.45rem 0.9rem; justify-content: flex-start; }
+/* История переносов срока — одна серая строка */
+.sheet-history { margin: -2px 2px 0; }
+.sheet-history.hidden { display: none; }
+.sheet-history-row { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 2px; border: none; background: transparent; color: var(--text-secondary); font: inherit; font-size: 0.8125rem; text-align: left; cursor: pointer; }
+.sheet-history-text { flex: 1; min-width: 0; }
+.sheet-history.is-single .sheet-history-row { cursor: default; }
+.sheet-history.is-single .event-sheet-chevron { display: none; }
+.sheet-history-row[aria-expanded="true"] .event-sheet-chevron { transform: rotate(180deg); }
+.sheet-history-list { padding: 2px 2px 4px; }
+.sheet-history-list.hidden { display: none; }
+.sheet-history-list p { margin: 2px 0; font-size: 0.8125rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.sheet-when .sheet-date-pill.sheet-date-field, .sheet-when .event-sheet-pill.sheet-time { border: none; box-shadow: none; background: rgba(0, 0, 0, 0.24); }
+.sheet-when .sheet-date-pill.sheet-date-field:focus-within, .sheet-when .event-sheet-pill.sheet-time:focus { box-shadow: inset 0 0 0 1px var(--accent-border, var(--accent)); }
+/* Участники: поиск, под ним добавленные, ниже — занятость */
+.sheet-props .event-sheet-attendees { display: flex; flex-direction: column; gap: 10px; padding: 0 12px 12px; border-top: none; }
+.sheet-props .event-sheet-attendees.hidden { display: none; }
+.sheet-props .event-sheet-attendees .meeting-attendee-chips { margin: 0; }
+.sheet-props .event-sheet-attendees .meeting-attendee-chips:empty { display: none; }
+.sheet-props .meeting-avail { margin: 0; padding-top: 10px; border-top: 0.5px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.sheet-props .meeting-avail.hidden { display: none; }
+.meeting-avail .meeting-avail-head { display: flex; align-items: center; justify-content: space-between; margin: 0; font-size: 0.75rem; font-weight: 400; color: var(--text-secondary); }
+.meeting-avail-nav { display: inline-flex; gap: 4px; }
+.meeting-avail-navbtn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.meeting-avail-navbtn:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
+.meeting-avail .meeting-avail-grid { min-width: 0; display: grid; grid-template-columns: 78px minmax(0, 1fr); row-gap: 6px; column-gap: 8px; align-items: center; }
+.meeting-avail .meeting-avail-row { display: contents; }
+.meeting-avail .meeting-avail-hours { position: relative; display: block; height: 14px; margin: 0; font-size: 0.6875rem; color: var(--text-tertiary); }
+.meeting-avail .meeting-avail-hour { position: absolute; top: 0; flex: none; transform: translateX(-50%); }
+.meeting-avail .meeting-avail-hour:first-child { transform: none; }
+.meeting-avail .meeting-avail-label { width: auto; font-size: 0.75rem; color: var(--text); }
+.meeting-avail .meeting-avail-label.is-muted { color: var(--text-tertiary); }
+.meeting-avail-who { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.meeting-avail-av { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent-muted); color: var(--accent); font-size: 0.5625rem; font-weight: 700; }
+.meeting-avail-label.is-muted .meeting-avail-av { background: var(--surface-muted); color: var(--text-tertiary); }
+.meeting-avail-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meeting-avail-all { font-weight: 600; color: var(--success, #4bb34b); }
+.meeting-avail .meeting-avail-track { height: 16px; border-radius: 5px; background: rgba(0, 0, 0, 0.24); overflow: visible; }
+.meeting-avail .meeting-avail-busy { top: 0; bottom: 0; border-radius: 4px; background: rgba(255, 255, 255, 0.22); }
+.meeting-avail .meeting-avail-track--joint { cursor: pointer; }
+.meeting-avail .meeting-avail-free { top: 0; bottom: 0; border-radius: 4px; background: rgba(75, 179, 75, 0.42); }
+.meeting-avail-sel { position: absolute; top: -3px; bottom: -3px; border: 2px solid var(--accent); border-radius: 6px; pointer-events: none; box-sizing: border-box; }
+.meeting-avail .sheet-sublabel { margin: 2px 0 0; }
+.meeting-avail .meeting-avail-hint { margin: 0; font-size: 0.75rem; color: var(--text-secondary); }
+/* Видеосвязь строкой */
+.sheet-props .sheet-video { padding: 0; gap: 0; }
+.sheet-video-body { display: flex; flex-direction: column; gap: 10px; padding: 0 12px 12px; }
+.sheet-video-body.hidden { display: none; }
+.sheet-video-body .event-sheet-kind-switch { margin: 0; }
+.sheet-video-body .event-sheet-meet-link-input { margin: 0; }
+/* Повтор внутри группы свойств */
+.sheet-props .sheet-repeat .sheet-repeat-body { padding: 0 12px 12px; }
+/* Напоминание: Когда / Повтор / Список строками */
+.sheet-props .sheet-rem-when { display: block; padding: 0; gap: 0; }
+.sheet-rem-body { display: flex; flex-direction: column; gap: 10px; padding: 0 12px 12px; }
+.sheet-rem-body.hidden, .sheet-rem-list-body.hidden { display: none; }
+.sheet-rem-body .sheet-rem-repeat { margin: 0; }
+.sheet-rem-exact { display: flex; gap: 8px; }
+.sheet-rem-exact .event-sheet-pill { flex: 1; min-width: 0; height: var(--ui-h, 40px); border: none; box-shadow: none; border-radius: var(--ui-r, 10px); background: rgba(0, 0, 0, 0.24); color: var(--text); color-scheme: dark; text-align: center; font-variant-numeric: tabular-nums; }
+.sheet-rem-list-body { border-top: 0.5px solid var(--border); }
+.sheet-props .sheet-rem-list-prop .rem-checklist-item:first-child { border-top: none; }
+.sheet-props .sheet-rem-when > .event-sheet-row { padding: 0.45rem 0.9rem; }
+.sheet-rem-exact .event-sheet-pill { max-width: none; width: auto; }
+.booking-expire-row.hidden { display: none; }
+.sheet-rem-body .booking-sheet-hint { margin: 0; }
+.sheet-props .note-backlinks-row { padding-left: calc(0.9rem + 28px); }
+.sheet-result-group > .sheet-sublabel { margin: 0; padding: 10px 0.9rem 0; }
+.sheet-result-group .field-textarea.event-sheet-desc { min-height: 48px; padding-top: 4px; border: none; background: transparent; }

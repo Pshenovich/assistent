@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261027-taskmarks";
+  var WEBAPP_BUILD = "20261027-sheets";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261027-taskmarks"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261027-sheets"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -2140,16 +2140,15 @@
     var selected = String(initialColor || "").trim().toLowerCase();
     if (selected && !/^#[0-9a-f]{6}$/.test(selected)) selected = "";
     host.innerHTML = "";
-    host.className = "event-sheet-group event-sheet-color-group event-sheet-color-group--inline";
-    var row = document.createElement("div");
-    row.className = "event-sheet-color-inline";
-    var lab = document.createElement("span");
-    lab.className = "event-sheet-row-label";
-    lab.textContent = "Цвет";
-    lab.title = "Цвет видите только вы";
-    row.appendChild(lab);
+    // Строка «Цвет · ●» — по тапу палитра одной строкой (цвет видите только вы).
+    host.className = "event-sheet-group sheet-prop event-sheet-color-group";
+    host.innerHTML = sheetPropRowHtml("m-ev-color-toggle", "palette", "Цвет", '<span class="event-sheet-color-preview"></span>');
+    var toggle = host.querySelector("#m-ev-color-toggle");
+    var preview = host.querySelector(".event-sheet-color-preview");
+    var body = document.createElement("div");
+    body.className = "sheet-color-body hidden";
     var swatches = document.createElement("div");
-    swatches.className = "event-sheet-color-swatches";
+    swatches.className = "event-sheet-color-swatches sheet-scroll";
     swatches.setAttribute("role", "radiogroup");
     swatches.setAttribute("aria-label", "Цвет в календаре (только у вас)");
     function paint() {
@@ -2158,6 +2157,11 @@
         btn.classList.toggle("is-selected", val === selected);
         btn.setAttribute("aria-checked", val === selected ? "true" : "false");
       });
+      if (preview) {
+        preview.classList.toggle("event-sheet-color-preview--default", !selected);
+        if (selected) preview.style.setProperty("--swatch-color", selected);
+        else preview.style.removeProperty("--swatch-color");
+      }
     }
     CAL_ENTRY_COLOR_PALETTE.forEach(function (color) {
       var btn = document.createElement("button");
@@ -2176,8 +2180,19 @@
       });
       swatches.appendChild(btn);
     });
-    row.appendChild(swatches);
-    host.appendChild(row);
+    body.appendChild(swatches);
+    var note = document.createElement("p");
+    note.className = "sheet-color-hint";
+    note.textContent = "Цвет видите только вы";
+    body.appendChild(note);
+    host.appendChild(body);
+    if (toggle) {
+      toggle.addEventListener("click", function () {
+        var open = body.classList.contains("hidden");
+        body.classList.toggle("hidden", !open);
+        toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+    }
     paint();
     return {
       getColor: function () {
@@ -14367,7 +14382,12 @@
     var done = document.getElementById("modal-done");
     var archive = document.getElementById("modal-archive");
     var link = document.getElementById("modal-copy-link");
+    var progress = document.getElementById("modal-in-progress");
     var inMenu = Array.isArray(opts.menu);
+    if (progress) {
+      progress.classList.toggle("hidden", !opts.showProgress);
+      setModalProgressOn(!!opts.progressOn);
+    }
     if (link) {
       link.classList.toggle("hidden", !opts.copyLinkUrl);
       link.setAttribute("data-url", opts.copyLinkUrl || "");
@@ -14383,12 +14403,56 @@
     setModalHeader({ saveLabel: opts.saveLabel, hideSave: opts.hideSave, menu: inMenu ? opts.menu : null });
     var actions = document.getElementById("modal-sheet-actions");
     if (actions) {
-      var any = [del, done, archive, link].some(function (b) {
+      var any = [del, done, archive, link, progress].some(function (b) {
         return b && !b.classList.contains("hidden");
       });
       actions.classList.toggle("is-empty", !any);
       actions.classList.toggle("is-task", !!opts.showDone);
     }
+  }
+
+  // «В работе» в окне задачи: нажата — задача в работе (статус исполнителя), повторное нажатие снимает.
+  function setModalProgressOn(on) {
+    var b = document.getElementById("modal-in-progress");
+    if (!b) return;
+    b.classList.toggle("is-on", !!on);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  async function modalToggleInProgress() {
+    var b = document.getElementById("modal-in-progress");
+    if (document.getElementById("modal-kind").value !== "task" || !b || b.disabled) return;
+    var id = document.getElementById("modal-event-id").value;
+    if (!id) return;
+    var on = b.getAttribute("aria-pressed") !== "true";
+    b.disabled = true;
+    setModalProgressOn(on);
+    try {
+      var r = await apiFetch("/calendar/tasks/" + encodeURIComponent(id) + "/status", {
+        method: "POST",
+        body: JSON.stringify({ status: on ? "in_progress" : "" }),
+      });
+      if (r && r.task) rememberTaskTip(r.task);
+      showCalendarToast(on ? "Задача в работе" : "Статус «в работе» снят");
+      loadActual({ skipCachePaint: true, silent: true });
+    } catch (e) {
+      setModalProgressOn(!on);
+      showCalendarToast((e && e.message) || "Не удалось сменить статус");
+    } finally {
+      b.disabled = false;
+    }
+  }
+
+  function copyModalTaskLink(url) {
+    if (!url) return;
+    copyShareUrl(url)
+      .then(function () {
+        shareHaptic();
+        showCalendarToast("Ссылка на задачу скопирована");
+      })
+      .catch(function (err) {
+        showCalendarToast((err && err.message) || "Не удалось скопировать");
+      });
   }
 
   function closeModalMoreMenu() {
@@ -14957,8 +15021,19 @@
     endEl.value = isoToDatetimeLocalValue(new Date(startMs + dur).toISOString());
     syncEventPillsFromHidden("start");
     syncEventPillsFromHidden("end");
+    var g = document.getElementById("m-sheet-when");
+    if (g) g.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
+  function meetingAvailInitials(label) {
+    var parts = String(label || "").replace(/[<>@].*$/, "").trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return "?";
+    return (parts[0].charAt(0) + (parts[1] ? parts[1].charAt(0) : "")).toUpperCase();
+  }
+
+  // Занятость участников под их списком: строка на человека (серое — занято), внизу «Все» — общие
+  // свободные окна (зелёные, тап ставит встречу), синяя рамка — выбранное время, стрелки — другой день,
+  // подсказки «Все свободны» — окна, куда встреча помещается целиком.
   function paintMeetingAvailability(host, data) {
     if (!host) return;
     host.innerHTML = "";
@@ -14975,12 +15050,35 @@
       return;
     }
     var span = workEnd - workStart;
+    var dayIso = localDateIsoFromMs(workStart);
     var head = document.createElement("div");
     head.className = "meeting-avail-head";
-    head.textContent = "Занятость";
+    var today = todayIsoLocal();
+    var dayWord = dayIso === today ? "сегодня" : dayIso === addDaysIso(today, 1) ? "завтра" : sheetShortDayLabel(dayIso).toLowerCase();
+    var ht = document.createElement("span");
+    ht.textContent = "Занятость · " + dayWord + (dayIso === today || dayIso === addDaysIso(today, 1)
+      ? ", " + new Date(dayIso + "T12:00:00").toLocaleDateString("ru-RU", { day: "numeric", month: "short" }).replace(".", "")
+      : "");
+    head.appendChild(ht);
+    var nav = document.createElement("span");
+    nav.className = "meeting-avail-nav";
+    [[-1, "Предыдущий день", "M15 6l-6 6 6 6"], [1, "Следующий день", "M9 6l6 6-6 6"]].forEach(function (d) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "meeting-avail-navbtn";
+      b.setAttribute("aria-label", d[1]);
+      b.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + d[2] + '"/></svg>';
+      b.addEventListener("click", function () {
+        var dateEl = document.getElementById("m-ev-start-date");
+        if (!dateEl) return;
+        dateEl.value = addDaysIso(dayIso, d[0]);
+        dateEl.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      nav.appendChild(b);
+    });
+    head.appendChild(nav);
     host.appendChild(head);
-    var scroll = document.createElement("div");
-    scroll.className = "meeting-avail-scroll";
+
     var grid = document.createElement("div");
     grid.className = "meeting-avail-grid";
     var hours = document.createElement("div");
@@ -14988,23 +15086,32 @@
     var tick = new Date(workStart);
     tick.setMinutes(0, 0, 0);
     if (tick.getTime() < workStart) tick.setHours(tick.getHours() + 1);
+    var step = span > 8 * 3600000 ? 2 : 1;
     while (tick.getTime() < workEnd) {
       var cell = document.createElement("span");
       cell.className = "meeting-avail-hour";
-      cell.textContent = String(tick.getHours()).padStart(2, "0");
+      cell.style.left = ((tick.getTime() - workStart) / span) * 100 + "%";
+      cell.textContent = String(tick.getHours());
       hours.appendChild(cell);
-      tick.setHours(tick.getHours() + 1);
+      tick.setHours(tick.getHours() + step);
     }
-    grid.appendChild(hours);
+    var hoursRow = document.createElement("div");
+    hoursRow.className = "meeting-avail-row meeting-avail-row--hours";
+    hoursRow.appendChild(document.createElement("span"));
+    hoursRow.appendChild(hours);
+    grid.appendChild(hoursRow);
 
-    function addRow(label, busy, opts) {
+    var selS = parseDatetimeLocal((document.getElementById("m-ev-start") || {}).value);
+    var selE = parseDatetimeLocal((document.getElementById("m-ev-end") || {}).value);
+    var sel = selS && selE && localDateIsoFromMs(selS.getTime()) === dayIso ? { start: selS.getTime(), end: selE.getTime() } : null;
+
+    function addRow(labelNode, busy, opts) {
       opts = opts || {};
       var row = document.createElement("div");
-      row.className = "meeting-avail-row";
+      row.className = "meeting-avail-row" + (opts.joint ? " meeting-avail-row--joint" : "");
       var lab = document.createElement("div");
       lab.className = "meeting-avail-label" + (opts.muted ? " is-muted" : "");
-      lab.textContent = label;
-      lab.title = label;
+      lab.appendChild(labelNode);
       var track = document.createElement("div");
       track.className = "meeting-avail-track" + (opts.joint ? " meeting-avail-track--joint" : "");
       (busy || []).forEach(function (b) {
@@ -15017,6 +15124,14 @@
         block.style.width = Math.min(100 - Math.max(0, left), width) + "%";
         track.appendChild(block);
       });
+      if (sel) {
+        var fr = document.createElement("span");
+        fr.className = "meeting-avail-sel";
+        var l = Math.max(0, ((sel.start - workStart) / span) * 100);
+        fr.style.left = l + "%";
+        fr.style.width = Math.max(1, Math.min(100 - l, ((sel.end - Math.max(sel.start, workStart)) / span) * 100)) + "%";
+        track.appendChild(fr);
+      }
       if (opts.joint) {
         track.addEventListener("click", function (e) {
           var rect = track.getBoundingClientRect();
@@ -15038,34 +15153,81 @@
       grid.appendChild(row);
     }
 
+    function personLabel(text, initials, muted) {
+      var wrap = document.createElement("span");
+      wrap.className = "meeting-avail-who";
+      var av = document.createElement("span");
+      av.className = "meeting-avail-av";
+      av.textContent = initials;
+      var nm = document.createElement("span");
+      nm.className = "meeting-avail-name";
+      nm.textContent = text;
+      wrap.appendChild(av);
+      wrap.appendChild(nm);
+      if (muted) wrap.title = "Календарь не виден Орбите";
+      return wrap;
+    }
+
     var union = [];
     var calendarPeople = 0;
     people.forEach(function (p) {
+      var rawLabel = p && p.label;
+      if (rawLabel && typeof rawLabel === "object") rawLabel = rawLabel.name || rawLabel.label || "";
+      var label = String(rawLabel || (p && p.email) || "Участник");
+      var first = label.indexOf("@") > 0 ? label.split("@")[0] : label.split(/\s+/)[0];
       var hasCal = !!(p && (p.calendar || ((p.busy || []).length > 0)));
       if (hasCal) {
         calendarPeople += 1;
         union = union.concat(p.busy || []);
+        addRow(personLabel(first, meetingAvailInitials(label)), mergeBusyMs(p.busy || []));
+      } else {
+        addRow(personLabel(first, meetingAvailInitials(label), true), [], { muted: true });
       }
     });
     var jointFree = invertBusyToFree(workStart, workEnd, mergeBusyMs(union));
     if (calendarPeople) {
-      addRow("Все свободны", jointFree, { joint: true });
+      var allLab = document.createElement("span");
+      allLab.className = "meeting-avail-all";
+      allLab.textContent = "Все";
+      addRow(allLab, jointFree, { joint: true });
     }
-    people.forEach(function (p) {
-      var label = String((p && p.label) || p.email || "Участник");
-      if (p && p.calendar) {
-        addRow(label, mergeBusyMs(p.busy || []));
-      } else {
-        addRow(label + " — нет календаря", [], { muted: true });
-      }
+    host.appendChild(grid);
+
+    // «Все свободны»: окна, куда встреча помещается целиком (до 4), — тап ставит время.
+    var dur = meetingDurationMs();
+    var slots = [];
+    jointFree.forEach(function (f) {
+      var st = Math.ceil(f.start / 900000) * 900000;
+      if (st < Date.now()) st = Math.ceil(Date.now() / 900000) * 900000;
+      if (st + dur <= f.end && slots.length < 4) slots.push(st);
     });
-    scroll.appendChild(grid);
-    host.appendChild(scroll);
+    if (calendarPeople && slots.length) {
+      var sl = document.createElement("p");
+      sl.className = "sheet-sublabel";
+      sl.textContent = "Все свободны";
+      host.appendChild(sl);
+      var chips = document.createElement("div");
+      chips.className = "sheet-chips sheet-scroll meeting-avail-slots";
+      slots.forEach(function (st) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "sheet-chip" + (sel && sel.start === st ? " is-active" : "");
+        var hm = function (ms) {
+          return new Date(ms).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+        };
+        b.textContent = hm(st) + "–" + hm(st + dur);
+        b.addEventListener("click", function () {
+          applyMeetingSlot(st);
+        });
+        chips.appendChild(b);
+      });
+      host.appendChild(chips);
+    }
     var hint = document.createElement("p");
-    hint.className = "meeting-avail-hint muted small";
+    hint.className = "meeting-avail-hint";
     hint.textContent = calendarPeople
-      ? "Нажмите на зелёный слот, чтобы поставить время"
-      : "Слоты появятся, когда у участников будет календарь в Leo";
+      ? "Серое — занято, зелёное — все свободны. Нажмите на зелёное, чтобы поставить встречу туда."
+      : "Слоты появятся, когда у участников будет календарь в Орбите";
     host.appendChild(hint);
   }
 
@@ -15341,6 +15503,20 @@
       if (availTimer) window.clearTimeout(availTimer);
       availTimer = window.setTimeout(refreshAvail, 250);
     }
+    // Другой день — новая занятость; другое время — сдвинуть рамку выбранного слота.
+    var availDay = "";
+    var availData = null;
+    var whenGroup = document.getElementById("m-sheet-when");
+    if (whenGroup) {
+      whenGroup.addEventListener("change", function () {
+        window.setTimeout(function () {
+          var day = String((document.getElementById("m-ev-start") || {}).value || "").slice(0, 10);
+          if (!items.length) return;
+          if (day !== availDay) scheduleAvail();
+          else if (availData) paintMeetingAvailability(availEl, availData);
+        }, 0);
+      });
+    }
 
     function refreshAvail() {
       var startEl = document.getElementById("m-ev-start");
@@ -15364,6 +15540,8 @@
         }),
       })
         .then(function (data) {
+          availDay = day;
+          availData = data;
           paintMeetingAvailability(availEl, data);
         })
         .catch(function () {
@@ -15522,8 +15700,8 @@
     return reminderQuickOptions()
       .map(function (o) {
         return (
-          '<button type="button" class="sheet-rem-q" data-rem-quick="' + o.id + '">' +
-          "<b>" + escapeHtml(o.label) + "</b><span>" + escapeHtml(reminderQuickSub(o.when)) + "</span></button>"
+          '<button type="button" class="sheet-chip" data-rem-quick="' + o.id + '" title="' + escapeHtml(reminderQuickSub(o.when)) + '">' +
+          escapeHtml(o.label) + "</button>"
         );
       })
       .join("");
@@ -15848,34 +16026,35 @@
     var fields = document.getElementById("modal-fields");
     fields.innerHTML =
       '<div class="event-sheet">' +
-      (existing ? "" : eventSheetKindSwitcherHtml("task") + '<div id="m-task-target-slot"></div>') +
+      (existing ? "" : eventSheetKindSwitcherHtml("task")) +
       '<textarea id="m-ev-sum" class="event-sheet-title event-sheet-title--area" rows="1" enterkeyhint="done" placeholder="Название" autocomplete="off"></textarea>' +
       (existing ? '<div id="m-task-tracker-links" class="tracker-links hidden"></div>' : "") +
       '<input type="hidden" id="modal-task-note-id" />' +
+      // Свойства одной группой: Срок, Исполнитель, Где (у новой), Цвет — строки с разделителями.
+      '<div class="event-sheet-group sheet-props">' +
       sheetWhenHtml({ task: true, label: "Срок" }) +
       '<div id="m-task-assignee-slot"></div>' +
-      '<div class="event-sheet-group event-sheet-checklist-group">' +
+      (existing ? "" : '<div id="m-task-target-slot"></div>') +
+      '<div id="m-ev-color-host"></div>' +
+      "</div>" +
+      '<div class="event-sheet-group sheet-desc-group">' +
+      '<textarea id="m-task-desc" class="field-textarea event-sheet-desc" rows="2" placeholder="Описание"></textarea>' +
       '<div id="m-task-checklist-host" class="rem-checklist-host"></div>' +
       "</div>" +
-      '<textarea id="m-task-desc" class="field-textarea event-sheet-desc" rows="3" placeholder="Описание"></textarea>' +
       (existing
-        ? '<div class="event-sheet-group">' +
-          '<div class="event-sheet-row"><span class="event-sheet-row-label">Результат</span></div>' +
+        ? '<div class="event-sheet-group sheet-result-group">' +
+          '<p class="sheet-sublabel">Результат</p>' +
           '<textarea id="m-task-result" class="field-textarea event-sheet-desc" rows="2" placeholder="Что получилось (необязательно)"></textarea>' +
           "</div>"
         : "") +
-      '<div id="m-task-schedule-log-wrap" class="event-sheet-group hidden">' +
-      '<div class="event-sheet-row">' +
-      '<span class="event-sheet-row-label">Изменения</span></div>' +
-      '<textarea id="m-task-schedule-log" class="field-textarea event-sheet-desc event-sheet-schedule-log" rows="3" readonly tabindex="-1"></textarea>' +
+      // Переносы срока — одной строкой; если их несколько, по тапу — весь список.
+      '<div id="m-task-schedule-log-wrap" class="sheet-history hidden">' +
+      '<button type="button" class="sheet-history-row" id="m-task-schedule-log-toggle" aria-expanded="false">' +
+      '<span class="sheet-history-text" id="m-task-schedule-log-head"></span>' + eventSheetChevronHtml() + "</button>" +
+      '<div class="sheet-history-list hidden" id="m-task-schedule-log"></div>' +
       "</div>" +
-      '<div id="m-ev-color-host"></div>' +
-      '<div class="event-sheet-group meeting-attendees-field">' +
-      '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-task-assignee-toggle" aria-expanded="false">' +
-      '<span class="event-sheet-row-label">Исполнитель</span>' +
-      '<span class="event-sheet-row-value"><span id="m-task-assignee-summary">Я</span>' +
-      eventSheetChevronHtml() +
-      "</span></button>" +
+      '<div class="event-sheet-group meeting-attendees-field sheet-prop">' +
+      sheetPropRowHtml("m-task-assignee-toggle", "user", "Исполнитель", '<span id="m-task-assignee-summary">Я</span>') +
       '<div id="m-task-assignee-editor" class="event-sheet-attendees hidden">' +
       '<div id="m-task-assignee-host"></div>' +
       "</div>" +
@@ -15906,7 +16085,29 @@
     var logWrap = document.getElementById("m-task-schedule-log-wrap");
     var logEl = document.getElementById("m-task-schedule-log");
     if (logWrap && logEl && logLines && logLines.length) {
-      logEl.value = logLines.join("\n");
+      var logHead = document.getElementById("m-task-schedule-log-head");
+      var logToggle = document.getElementById("m-task-schedule-log-toggle");
+      var lastLine = String(logLines[logLines.length - 1] || "");
+      if (logHead) {
+        logHead.textContent =
+          logLines.length === 1
+            ? "Срок менялся: " + lastLine
+            : "Срок менялся " + logLines.length + " " + pluralRu(logLines.length, "раз", "раза", "раз") + " · последний: " + lastLine;
+      }
+      logEl.innerHTML = "";
+      logLines.forEach(function (ln) {
+        var p = document.createElement("p");
+        p.textContent = ln;
+        logEl.appendChild(p);
+      });
+      logWrap.classList.toggle("is-single", logLines.length === 1);
+      if (logToggle && logLines.length > 1) {
+        logToggle.addEventListener("click", function () {
+          var open = logEl.classList.contains("hidden");
+          logEl.classList.toggle("hidden", !open);
+          logToggle.setAttribute("aria-expanded", open ? "true" : "false");
+        });
+      }
       logWrap.classList.remove("hidden");
     }
     syncEventPillsFromHidden("start");
@@ -16011,6 +16212,8 @@
           if (btns[0] && /^Дубль в /.test(btns[0].textContent)) btns[0].textContent = dupItem.label;
         });
       }
+      var linkUrl = ev.url || taskShareUrl(taskId);
+      taskMenu.unshift({ label: "Скопировать ссылку", fn: function () { copyModalTaskLink(linkUrl); } });
       if (isTaskOwner && isDelegated) {
         taskMenu.push({ label: isOwnerArchived ? "Вернуть из архива" : "В архив", fn: modalToggleTaskArchive });
       }
@@ -16018,10 +16221,14 @@
       return taskMenu;
     }
     function applyTaskActions() {
+      var st = ev.assignee_state || (ev.event && ev.event.assignee_state) || {};
+      // «В работе» — у исполнителя: своя задача или поручение мне (не автору чужого поручения)
+      var amExecutor = existing && (isDelegated ? assigneeUid === meUid : isTaskOwner);
       setModalSheetActions({
         showDelete: existing,
         showDone: existing && !ev.done,
-        copyLinkUrl: existing ? ev.url || taskShareUrl(taskId) : "",
+        showProgress: amExecutor && !ev.done,
+        progressOn: st.status === "in_progress",
         showArchive: existing && isTaskOwner && isDelegated,
         archiveLabel: isOwnerArchived ? "Вернуть из архива" : "В архив",
         saveLabel: existing ? "Сохранить" : "Создать",
@@ -16117,21 +16324,65 @@
     return (TRACKER_CHIP_PREFIX[provider] || provider) + "-" + String(externalId || "");
   }
 
+  // Знак Орбиты («O» из логотипа) и значок трекера — у пунктов «Где».
+  var ORBITA_MARK_SVG =
+    '<svg class="sheet-where-ico" viewBox="0 0 512 512" width="16" height="16" aria-hidden="true">' +
+    '<circle cx="256" cy="256" r="196" fill="none" stroke="currentColor" stroke-width="88" stroke-linecap="round" stroke-dasharray="1032 200" transform="rotate(-16 256 256)"/>' +
+    '<circle cx="394.6" cy="117.4" r="44" fill="#9b9ef9"/></svg>';
+
+  function trackerMarkHtml(tracker) {
+    var id = String((tracker && tracker.id) || "");
+    if (id.indexOf("bitrix") === 0) return '<span class="sheet-where-ico sheet-where-ico--b24" aria-hidden="true">24</span>';
+    var t = String((tracker && tracker.title) || "?").trim();
+    return '<span class="sheet-where-ico sheet-where-ico--txt" aria-hidden="true">' + escapeHtml(t.charAt(0).toUpperCase()) + "</span>";
+  }
+
   function taskTargetSwitchHtml(active, tracker) {
-    function btn(id, label) {
+    function btn(id, label, ico) {
       var on = id === active;
       return (
         '<button type="button" class="event-sheet-kind-btn' + (on ? " is-active" : "") +
         '" role="tab" aria-selected="' + (on ? "true" : "false") + '" data-task-target="' + escapeHtml(id) + '">' +
-        escapeHtml(label) + "</button>"
+        ico + "<span>" + escapeHtml(label) + "</span></button>"
       );
     }
     return (
       '<div class="event-sheet-kind-switch task-target-switch" role="tablist" aria-label="Где создать задачу">' +
-      btn("orbita", "Орбита") +
-      btn(tracker.id, tracker.title) +
+      btn("orbita", "Орбита", ORBITA_MARK_SVG) +
+      btn(tracker.id, tracker.title, trackerMarkHtml(tracker)) +
       "</div>"
     );
+  }
+
+  // Строка «Где»: значение — выбранное место; раскрыта — переключатель Орбита / трекер,
+  // под ним (у трекера) вложенная карточка его настроек.
+  function taskWhereHtml(active, tracker, opts) {
+    opts = opts || {};
+    var isOrbita = active === "orbita";
+    var val = (isOrbita ? ORBITA_MARK_SVG : trackerMarkHtml(tracker)) + "<span>" + escapeHtml(isOrbita ? "Орбита" : tracker.title) + "</span>";
+    return (
+      '<div class="sheet-prop sheet-where' + (opts.open ? " is-open" : "") + '" id="m-task-where">' +
+      sheetPropRowHtml("m-task-where-toggle", "box", "Где", '<span class="sheet-where-val">' + val + "</span>", { open: !!opts.open }) +
+      '<div class="sheet-where-body' + (opts.open ? "" : " hidden") + '">' +
+      (opts.noSwitch ? "" : taskTargetSwitchHtml(active, tracker)) +
+      (opts.nestedHtml
+        ? '<div class="sheet-where-nested"><p class="sheet-sublabel">Настройки ' + escapeHtml(tracker.title) + "</p>" + opts.nestedHtml + "</div>"
+        : "") +
+      "</div></div>"
+    );
+  }
+
+  function bindTaskWhereToggle(root) {
+    var wrap = root && root.querySelector("#m-task-where");
+    var tog = wrap && wrap.querySelector("#m-task-where-toggle");
+    var body = wrap && wrap.querySelector(".sheet-where-body");
+    if (!tog || !body) return;
+    tog.addEventListener("click", function () {
+      var open = body.classList.contains("hidden");
+      body.classList.toggle("hidden", !open);
+      wrap.classList.toggle("is-open", open);
+      tog.setAttribute("aria-expanded", open ? "true" : "false");
+    });
   }
 
   function bindTaskTargetSwitch(root, active, onPick) {
@@ -16154,8 +16405,9 @@
       var tr = connectedTracker();
       if (!slot || !tr) return;
       var wrap = document.createElement("div");
-      wrap.innerHTML = taskTargetSwitchHtml("orbita", tr);
+      wrap.innerHTML = taskWhereHtml("orbita", tr);
       slot.parentNode.replaceChild(wrap.firstChild, slot);
+      bindTaskWhereToggle(document.getElementById("modal-fields"));
       bindTaskTargetSwitch(document.getElementById("modal-fields"), "orbita", function (next) {
         var title = String((document.getElementById("m-ev-sum") || {}).value || "").trim();
         var desc = String((document.getElementById("m-task-desc") || {}).value || "");
@@ -16410,8 +16662,25 @@
     var fields = document.getElementById("modal-fields");
     fields.innerHTML =
       '<div class="event-sheet tracker-sheet">' +
-      (dup ? "" : eventSheetKindSwitcherHtml("task") + taskTargetSwitchHtml(tracker.id, tracker)) +
+      (dup ? "" : eventSheetKindSwitcherHtml("task")) +
       '<textarea id="m-ev-sum" class="event-sheet-title event-sheet-title--area" rows="1" enterkeyhint="done" placeholder="Название" autocomplete="off"></textarea>' +
+      // «Где» раскрыта: место (Орбита / трекер) и под ним — вложенные настройки трекера.
+      '<div class="event-sheet-group sheet-props">' +
+      taskWhereHtml(tracker.id, tracker, {
+        open: true,
+        noSwitch: dup,
+        nestedHtml:
+          '<label class="event-sheet-row tracker-row"><span class="event-sheet-row-label">Доска</span>' +
+          '<select id="m-trk-board" class="tracker-select"></select></label>' +
+          '<label class="event-sheet-row tracker-row"><span class="event-sheet-row-label">Стадия</span>' +
+          '<select id="m-trk-stage" class="tracker-select"></select></label>' +
+          '<label class="event-sheet-row tracker-row"><span class="event-sheet-row-label">Исполнитель</span>' +
+          '<input id="m-trk-resp" class="tracker-input" type="text" autocomplete="off" placeholder="Я" /></label>' +
+          '<div id="m-trk-resp-list" class="tracker-user-list hidden" role="listbox" aria-label="Сотрудники"></div>' +
+          '<label class="event-sheet-row tracker-row"><span class="event-sheet-row-label">Срок</span>' +
+          '<input id="m-trk-deadline" class="tracker-input tracker-input--date" type="date" /></label>',
+      }) +
+      "</div>" +
       '<div class="event-sheet-group tracker-desc-group">' +
       '<div class="event-sheet-row tracker-desc-head">' +
       '<span class="event-sheet-row-label">Описание</span>' +
@@ -16426,19 +16695,9 @@
       (noteId || seed.focus_key
         ? '<p class="tracker-hint" id="m-trk-ctx"></p>'
         : "") +
-      '<div class="event-sheet-group">' +
-      '<label class="event-sheet-row tracker-row"><span class="event-sheet-row-label">Доска</span>' +
-      '<select id="m-trk-board" class="tracker-select"></select></label>' +
-      '<label class="event-sheet-row tracker-row"><span class="event-sheet-row-label">Стадия</span>' +
-      '<select id="m-trk-stage" class="tracker-select"></select></label>' +
-      '<label class="event-sheet-row tracker-row"><span class="event-sheet-row-label">Исполнитель</span>' +
-      '<input id="m-trk-resp" class="tracker-input" type="text" autocomplete="off" placeholder="Я" /></label>' +
-      '<div id="m-trk-resp-list" class="tracker-user-list hidden" role="listbox" aria-label="Сотрудники"></div>' +
-      '<label class="event-sheet-row tracker-row"><span class="event-sheet-row-label">Срок</span>' +
-      '<input id="m-trk-deadline" class="tracker-input tracker-input--date" type="date" /></label>' +
-      "</div>" +
       '<p class="pf-field-error hidden" id="m-trk-err"></p>' +
       "</div>";
+    bindTaskWhereToggle(fields);
     if (!dup) {
       bindCreateKindSwitcher("task", {});
       bindTaskTargetSwitch(fields, tracker.id, function () {
@@ -16827,28 +17086,32 @@
       (remExisting ? "" : eventSheetKindSwitcherHtml("reminder")) +
       '<textarea id="m-rem-task" class="event-sheet-title event-sheet-title--area" rows="1" placeholder="О чём напомнить" autocomplete="off"></textarea>' +
       '<input type="hidden" id="m-rem-when" />' +
-      '<div class="event-sheet-group sheet-rem-when">' +
-      '<p class="sheet-glabel">Когда напомнить</p>' +
-      '<div class="sheet-rem-quick" id="m-rem-quick">' + reminderQuickHtml() + "</div>" +
-      '<div class="event-sheet-row">' +
-      '<span class="event-sheet-row-label">Или точно</span>' +
-      '<span class="event-sheet-pills">' +
-      '<input id="m-rem-when-date" type="date" class="event-sheet-pill" />' +
-      '<input id="m-rem-when-time" type="time" class="event-sheet-pill" />' +
-      "</span></div>" +
-      '<div id="m-rem-backlinks" class="event-sheet-row note-backlinks-row hidden"></div>' +
-      "</div>" +
-      '<div class="event-sheet-group">' +
-      '<p class="sheet-glabel">Повторять</p>' +
-      '<div class="sheet-chips sheet-rem-repeat" role="radiogroup" aria-label="Повтор">' +
+      // Свойства одной группой: Когда (подсказки строкой, ниже точно), Повтор, Список.
+      '<div class="event-sheet-group sheet-props">' +
+      '<div class="sheet-prop sheet-rem-when">' +
+      sheetPropRowHtml("m-rem-when-toggle", "bell", "Когда", '<span id="m-rem-when-value"></span>', { open: !remExisting }) +
+      '<div class="sheet-rem-body' + (remExisting ? " hidden" : "") + '" id="m-rem-when-body">' +
+      '<div class="sheet-chips sheet-scroll" id="m-rem-quick">' + reminderQuickHtml() + "</div>" +
+      '<div class="sheet-rem-exact">' +
+      '<input id="m-rem-when-date" type="date" class="event-sheet-pill" aria-label="Дата" />' +
+      '<input id="m-rem-when-time" type="time" class="event-sheet-pill" aria-label="Время" />' +
+      "</div></div></div>" +
+      '<div class="sheet-prop sheet-rem-repeat-prop">' +
+      sheetPropRowHtml("m-rem-repeat-toggle", "repeat", "Повтор", '<span id="m-rem-repeat-value">Нет</span>') +
+      '<div class="sheet-rem-body hidden" id="m-rem-repeat-body">' +
+      '<div class="sheet-chips sheet-scroll sheet-rem-repeat" role="radiogroup" aria-label="Повтор">' +
       REMINDER_REPEATS.map(function (o) {
         return '<button type="button" class="sheet-chip" data-rem-repeat="' + o.rule + '">' + o.label + "</button>";
       }).join("") +
-      "</div></div>" +
-      '<div class="event-sheet-group event-sheet-checklist-group">' +
-      '<p class="sheet-glabel">Список</p>' +
+      "</div></div></div>" +
+      '<div class="sheet-prop sheet-rem-list-prop event-sheet-checklist-group">' +
+      sheetPropRowHtml("m-rem-list-toggle", "list", "Список", '<span id="m-rem-list-value">Нет пунктов</span>') +
+      '<div class="sheet-rem-list-body hidden" id="m-rem-list-body">' +
       '<div id="m-rem-checklist-host" class="rem-checklist-host"></div>' +
-      "</div></div>";
+      "</div></div>" +
+      "</div>" +
+      '<div id="m-rem-backlinks" class="event-sheet-row note-backlinks-row hidden"></div>' +
+      "</div>";
     bindCreateKindSwitcher(
       "reminder",
       remExisting ? { source: { kind: "reminder", id: String(r.id), calendarId: "" } } : {}
@@ -16896,6 +17159,54 @@
       r.checklist,
       { addLabel: "Добавить пункт" }
     );
+    // Строки «Когда / Повтор / Список»: раскрытие и значение справа.
+    [["m-rem-when-toggle", "m-rem-when-body"], ["m-rem-repeat-toggle", "m-rem-repeat-body"], ["m-rem-list-toggle", "m-rem-list-body"]].forEach(function (pair) {
+      var tog = document.getElementById(pair[0]);
+      var body = document.getElementById(pair[1]);
+      if (!tog || !body) return;
+      tog.addEventListener("click", function () {
+        var open = body.classList.contains("hidden");
+        body.classList.toggle("hidden", !open);
+        tog.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+    });
+    function paintRemWhen() {
+      var v = document.getElementById("m-rem-when-value");
+      var p = datetimeLocalParts(String((document.getElementById("m-rem-when") || {}).value || ""));
+      if (!v) return;
+      if (!p.date) {
+        v.textContent = "Не выбрано";
+        return;
+      }
+      var today = todayIsoLocal();
+      var day = p.date === today ? "Сегодня" : p.date === addDaysIso(today, 1) ? "Завтра" : sheetShortDayLabel(p.date);
+      v.textContent = day + (p.time ? ", " + p.time : "");
+    }
+    function paintRemRepeat() {
+      var v = document.getElementById("m-rem-repeat-value");
+      var on = fields.querySelector(".sheet-rem-repeat .sheet-chip.is-active");
+      if (v) v.textContent = on ? on.textContent : "Нет";
+    }
+    function paintRemList() {
+      var v = document.getElementById("m-rem-list-value");
+      var n = fields.querySelectorAll("#m-rem-checklist-host .rem-checklist-item").length;
+      if (v) v.textContent = n ? n + " " + pluralRu(n, "пункт", "пункта", "пунктов") : "Нет пунктов";
+    }
+    var remWhenBody = document.getElementById("m-rem-when-body");
+    if (remWhenBody) {
+      ["click", "change", "input"].forEach(function (t) {
+        remWhenBody.addEventListener(t, function () {
+          setTimeout(paintRemWhen, 0);
+        });
+      });
+    }
+    var remRepeatBody = document.getElementById("m-rem-repeat-body");
+    if (remRepeatBody) remRepeatBody.addEventListener("click", function () { setTimeout(paintRemRepeat, 0); });
+    var remListHost = document.getElementById("m-rem-checklist-host");
+    if (remListHost && window.MutationObserver) new MutationObserver(paintRemList).observe(remListHost, { childList: true, subtree: true });
+    paintRemWhen();
+    paintRemRepeat();
+    paintRemList();
     var remSource = { kind: "reminder", id: String(r.id || ""), calendarId: "" };
     setModalSheetActions({
       showDelete: !!r.id,
@@ -17073,35 +17384,91 @@
     else openDatePop(input);
   });
 
+  // Иконки строк окна (Срок, Исполнитель, Где, Цвет…): 16 px, цвет — currentColor.
+  var SHEET_ROW_ICONS = {
+    calendar: '<rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M8 3v4M16 3v4M3.5 10h17"/>',
+    clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    user: '<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
+    users: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 4.5a3.2 3.2 0 0 1 0 6.3M21 20a6 6 0 0 0-3.5-5.4"/>',
+    box: '<path d="M4 7.5 12 4l8 3.5v9L12 20l-8-3.5z"/><path d="M4 7.5 12 11l8-3.5M12 11v9"/>',
+    palette: '<path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.2 0 1.8-.8 1.8-1.7 0-1.3-1.1-1.6-1.1-2.8 0-1 .8-1.6 1.8-1.6H17a3.5 3.5 0 0 0 3.5-3.5c0-4.1-3.8-7.4-8.5-7.4z"/><circle cx="7.8" cy="11" r="1"/><circle cx="10.5" cy="7.6" r="1"/><circle cx="14.6" cy="7.8" r="1"/>',
+    repeat: '<path d="M4 11V9a3 3 0 0 1 3-3h12l-3-3M20 13v2a3 3 0 0 1-3 3H5l3 3"/>',
+    video: '<rect x="3" y="6.5" width="12.5" height="11" rx="2.5"/><path d="m15.5 10.5 5-3v9l-5-3"/>',
+    bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
+    list: '<path d="M9 6.5h11M9 12h11M9 17.5h11"/><path d="m3.5 6.5 1.2 1.2L7 5.4M3.5 12l1.2 1.2L7 10.9M3.5 17.5l1.2 1.2L7 16.4"/>',
+    hourglass: '<path d="M7 3.5h10M7 20.5h10M8 3.5c0 4.5 8 5 8 8.5s-8 4-8 8.5M16 3.5c0 4.5-8 5-8 8.5"/>',
+    ticket: '<path d="M4 7.5A1.5 1.5 0 0 1 5.5 6h13A1.5 1.5 0 0 1 20 7.5V10a2 2 0 0 0 0 4v2.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 16.5V14a2 2 0 0 0 0-4z"/><path d="M14 6v12" stroke-dasharray="2 2"/>',
+  };
+
+  function sheetRowIcon(name) {
+    var p = SHEET_ROW_ICONS[name];
+    if (!p) return "";
+    return (
+      '<svg class="sheet-row-ico" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      p +
+      "</svg>"
+    );
+  }
+
+  // Строка свойства окна: иконка, подпись, значение, шеврон. Тело (если есть) — следом, раскрывается по тапу.
+  function sheetPropRowHtml(id, icon, label, valueHtml, opts) {
+    opts = opts || {};
+    return (
+      '<button type="button" class="event-sheet-row event-sheet-row--nav sheet-prop-row" id="' + id + '" aria-expanded="' + (opts.open ? "true" : "false") + '">' +
+      '<span class="sheet-prop-label">' + sheetRowIcon(icon) + '<span class="event-sheet-row-label">' + label + "</span></span>" +
+      '<span class="event-sheet-row-value">' + (valueHtml || "") + eventSheetChevronHtml() + "</span></button>"
+    );
+  }
+
+  // Ближайший понедельник (не сегодня) — для подсказки «Пн, 2 нояб».
+  function sheetNextMondayIso() {
+    var d = new Date();
+    return addDaysIso(todayIsoLocal(), ((1 - d.getDay() + 7) % 7) || 7);
+  }
+
+  function sheetShortDayLabel(iso) {
+    var d = new Date(iso + "T12:00:00");
+    if (isNaN(d.getTime())) return iso;
+    var wd = d.toLocaleDateString("ru-RU", { weekday: "short" }).replace(".", "");
+    var dm = d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }).replace(".", "");
+    return wd.charAt(0).toUpperCase() + wd.slice(1) + ", " + dm;
+  }
+
+  // «Срок» задачи / «Когда» встречи: свёрнутая строка со сводкой; раскрытая — «Дата» (поле и строка
+  // подсказок с прокруткой вбок), разделитель, «Время» (начало → конец, длительности). Цвета нейтральные:
+  // жёлтый у срока — только в списках, когда он горит.
   function sheetWhenHtml(opts) {
     opts = opts || {};
-    var chips = SHEET_DURATIONS.map(function (m) {
-      var lbl = { 15: "15 мин", 30: "30 мин", 45: "45 мин", 60: "1 ч", 90: "1,5 ч" }[m];
+    var durs = SHEET_DURATIONS.concat([120]);
+    var chips = durs.map(function (m) {
+      var lbl = { 15: "15 мин", 30: "30 мин", 45: "45 мин", 60: "1 ч", 90: "1,5 ч", 120: "2 ч" }[m];
       return '<button type="button" class="sheet-chip" data-sheet-dur="' + m + '">' + lbl + "</button>";
     }).join("");
-    var quick = opts.task
-      ? '<div class="sheet-chips sheet-quick-dates" role="group" aria-label="Быстрый выбор даты">' +
-        '<button type="button" class="sheet-chip" data-sheet-quick="today">Сегодня</button>' +
-        '<button type="button" class="sheet-chip" data-sheet-quick="tomorrow">Завтра</button>' +
-        '<button type="button" class="sheet-chip" data-sheet-quick="friday">Пятница</button>' +
-        '<button type="button" class="sheet-chip" data-sheet-quick="nextweek">След. неделя</button>' +
-        "</div>"
-      : "";
+    var quick =
+      '<div class="sheet-chips sheet-scroll sheet-quick-dates" role="group" aria-label="Быстрый выбор даты">' +
+      '<button type="button" class="sheet-chip" data-sheet-quick="today">Сегодня</button>' +
+      '<button type="button" class="sheet-chip" data-sheet-quick="tomorrow">Завтра</button>' +
+      '<button type="button" class="sheet-chip" data-sheet-quick="friday">Пятница</button>' +
+      '<button type="button" class="sheet-chip" data-sheet-quick="nextweek">' + escapeHtml(sheetShortDayLabel(sheetNextMondayIso())) + "</button>" +
+      '<button type="button" class="sheet-chip" data-sheet-quick="week">Через неделю</button>' +
+      "</div>";
     return (
       '<input type="hidden" id="m-ev-start" />' +
       '<input type="hidden" id="m-ev-end" />' +
-      '<div class="event-sheet-group sheet-when" id="m-sheet-when">' +
-      (opts.label ? '<p class="sheet-glabel">' + opts.label + "</p>" : "") +
-      '<div class="sheet-when-row">' +
-      '<label class="sheet-date-pill">' + SHEET_CAL_SVG +
-      '<span class="sheet-date-text" id="m-when-date-text"></span>' +
+      '<div class="event-sheet-group sheet-when is-collapsible is-collapsed' + (opts.task ? " sheet-when--task" : "") +
+      '" id="m-sheet-when" data-label="' + escapeHtml(opts.label || "Когда") + '" data-icon="' + (opts.task ? "calendar" : "clock") + '">' +
+      '<p class="sheet-sublabel">Дата</p>' +
+      '<label class="sheet-date-pill sheet-date-field">' + SHEET_CAL_SVG +
+      '<span class="sheet-date-text" id="m-when-date-text"></span>' + eventSheetChevronHtml() +
       '<input id="m-ev-start-date" type="date" class="sheet-date-native" aria-label="Дата" />' +
       "</label>" +
+      quick +
+      '<div class="sheet-when-sep" aria-hidden="true"></div>' +
+      '<div class="sheet-when-head"><p class="sheet-sublabel">Время</p>' +
       (opts.task
         ? '<label class="sheet-switch-row"><span>Весь день</span><input type="checkbox" id="m-task-allday" class="sheet-switch-input" /><span class="sheet-switch" aria-hidden="true"></span></label>'
         : "") +
       "</div>" +
-      quick +
       '<div class="sheet-when-row sheet-when-times">' +
       '<input id="m-ev-start-time" type="time" class="event-sheet-pill sheet-time" aria-label="Начало" />' +
       SHEET_ARROW_SVG +
@@ -17112,7 +17479,7 @@
       '<span class="sheet-when-until">До</span>' +
       '<input id="m-ev-end-date" type="date" class="event-sheet-pill" aria-label="Дата окончания" />' +
       "</div>" +
-      '<div class="sheet-chips sheet-durs" role="group" aria-label="Длительность">' + chips + "</div>" +
+      '<div class="sheet-chips sheet-scroll sheet-durs" role="group" aria-label="Длительность">' + chips + "</div>" +
       "</div>"
     );
   }
@@ -17293,7 +17660,7 @@
     return (
       '<div class="event-sheet-group sheet-repeat" id="m-ev-repeat">' +
       '<button type="button" class="event-sheet-row event-sheet-row--nav sheet-repeat-toggle" id="m-repeat-toggle" aria-expanded="false">' +
-      '<span class="event-sheet-row-label">Повтор</span>' +
+      '<span class="sheet-prop-label">' + sheetRowIcon("repeat") + '<span class="event-sheet-row-label">Повтор</span></span>' +
       '<span class="event-sheet-row-value"><span id="m-repeat-value">Не повторять</span>' +
       eventSheetChevronHtml() +
       "</span></button>" +
@@ -17539,6 +17906,7 @@
     if (kind === "tomorrow") return addDaysIso(today, 1);
     if (kind === "friday") return addDaysIso(today, ((5 - d.getDay() + 7) % 7) || 7);
     if (kind === "nextweek") return addDaysIso(today, ((1 - d.getDay() + 7) % 7) || 7);
+    if (kind === "week") return addDaysIso(today, 7);
     return today;
   }
 
@@ -17551,16 +17919,21 @@
     var endEl = document.getElementById("m-ev-end");
     var startDate = document.getElementById("m-ev-start-date");
     var allday = document.getElementById("m-task-allday");
-    // Свёрнутая строка «Время · 12:30–13:30 ›» (у открытой встречи); видна только с .is-collapsible.
+    // Свёрнутая строка «Срок · Завтра, 08:00 · 1 ч ›» — тап раскрывает дату и время.
     var sum = document.createElement("button");
     sum.type = "button";
     sum.className = "sheet-when-summary";
-    sum.innerHTML = '<span class="sheet-when-summary-label">Время</span><span class="sheet-when-summary-val"></span>' + eventSheetChevronHtml();
+    sum.setAttribute("aria-expanded", group.classList.contains("is-collapsed") ? "false" : "true");
+    sum.innerHTML =
+      '<span class="sheet-prop-label">' + sheetRowIcon(group.getAttribute("data-icon") || "clock") +
+      '<span class="sheet-when-summary-label">' + escapeHtml(group.getAttribute("data-label") || "Когда") + "</span></span>" +
+      '<span class="sheet-when-summary-val"></span>' + eventSheetChevronHtml();
     sum.addEventListener("click", function () {
       group.classList.toggle("is-collapsed");
       sum.setAttribute("aria-expanded", group.classList.contains("is-collapsed") ? "false" : "true");
     });
     group.insertBefore(sum, group.firstChild);
+    var isTask = group.classList.contains("sheet-when--task");
     function refresh() {
       var s = parseDatetimeLocal(startEl && startEl.value);
       var e = parseDatetimeLocal(endEl && endEl.value);
@@ -17581,12 +17954,7 @@
       });
       group.classList.toggle("is-allday", !!(allday && allday.checked));
       var sv = sum.querySelector(".sheet-when-summary-val");
-      if (sv) {
-        var t1 = String((document.getElementById("m-ev-start-time") || {}).value || "");
-        var t2 = String((document.getElementById("m-ev-end-time") || {}).value || "");
-        var shortDay = sIso ? new Date(sIso + "T12:00:00").toLocaleDateString("ru-RU", { day: "numeric", month: "short" }) : "";
-        sv.textContent = shortDay + (t1 ? " · " + t1 + (t2 ? "–" + t2 : "") : "");
-      }
+      if (sv) sv.textContent = sheetWhenSummaryText(sIso, eIso, !!(allday && allday.checked), min, isTask);
     }
     group.addEventListener("input", function () {
       setTimeout(refresh, 0);
@@ -17615,6 +17983,20 @@
       allday.addEventListener("change", refresh);
     }
     refresh();
+  }
+
+  // «Завтра, 08:00 · 1 ч» (задача) / «Завтра, 11:00–12:00» (встреча) / «Пт, 31 окт · весь день».
+  function sheetWhenSummaryText(sIso, eIso, allDay, min, isTask) {
+    if (!sIso) return "Не выбрано";
+    var today = todayIsoLocal();
+    var day = sIso === today ? "Сегодня" : sIso === addDaysIso(today, 1) ? "Завтра" : sheetShortDayLabel(sIso);
+    if (allDay) return day + " · весь день";
+    var t1 = String((document.getElementById("m-ev-start-time") || {}).value || "");
+    var t2 = String((document.getElementById("m-ev-end-time") || {}).value || "");
+    if (!t1) return day;
+    if (isTask) return day + ", " + t1 + (min > 0 ? " · " + sheetDurationLabel(min) : "");
+    if (eIso && eIso !== sIso) return day + ", " + t1 + " – " + sheetShortDayLabel(eIso) + (t2 ? ", " + t2 : "");
+    return day + ", " + t1 + (t2 ? "–" + t2 : "");
   }
 
   function eventSheetChevronHtml() {
@@ -17913,22 +18295,20 @@
       eventSheetKindSwitcherHtml("booking") +
       '<p class="booking-sheet-lead">Внешние участники сами выберут свободное время в вашем календаре.</p>' +
       '<textarea id="m-book-title" class="event-sheet-title event-sheet-title--area" rows="1" enterkeyhint="done" placeholder="Название встречи" autocomplete="off"></textarea>' +
-      '<div class="event-sheet-group meeting-attendees-field">' +
-      '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-ev-attendees-toggle" aria-expanded="false">' +
-      '<span class="event-sheet-row-label">Из команды позвать</span>' +
-      '<span class="event-sheet-row-value"><span id="m-ev-attendees-summary">Нет</span>' +
-      eventSheetChevronHtml() +
-      "</span></button>" +
+      '<div class="event-sheet-group sheet-props">' +
+      '<div class="event-sheet-group meeting-attendees-field sheet-prop">' +
+      sheetPropRowHtml("m-ev-attendees-toggle", "users", "Из команды позвать", '<span id="m-ev-attendees-summary">Нет</span>') +
       '<div id="m-ev-attendees-editor" class="event-sheet-attendees hidden">' +
-      '<div id="m-ev-attendees-chips" class="meeting-attendee-chips"></div>' +
       '<div class="meeting-attendee-add">' +
       '<input id="m-ev-attendee-input" type="text" class="field-input" placeholder="Контакт или email" autocomplete="off" />' +
       '<div id="m-ev-attendee-suggest" class="meeting-attendee-suggest hidden" role="listbox"></div>' +
-      "</div></div></div>" +
-      '<div class="event-sheet-group">' +
-      '<div class="event-sheet-row event-sheet-row--stack">' +
-      '<span class="event-sheet-row-label">Длительность</span>' +
-      '<span class="sheet-chips booking-sheet-chips" role="radiogroup" aria-label="Длительность">' +
+      "</div>" +
+      '<div id="m-ev-attendees-chips" class="meeting-attendee-chips"></div>' +
+      "</div></div>" +
+      '<div class="sheet-prop">' +
+      sheetPropRowHtml("m-book-dur-toggle", "hourglass", "Длительность", '<span id="m-book-dur-value"></span>') +
+      '<div class="sheet-rem-body hidden" id="m-book-dur-body">' +
+      '<span class="sheet-chips sheet-scroll booking-sheet-chips" role="radiogroup" aria-label="Длительность">' +
       bookingSegHtml(
         [
           { id: "15", label: "15 мин" },
@@ -17942,10 +18322,10 @@
         "sheet-chip"
       ) +
       "</span></div></div>" +
-      '<div class="event-sheet-group">' +
-      '<div class="event-sheet-row event-sheet-row--stack">' +
-      '<span class="event-sheet-row-label">Сколько раз можно записаться</span>' +
-      '<span class="event-sheet-kind-switch booking-sheet-seg" role="radiogroup" aria-label="Сколько раз можно записаться">' +
+      '<div class="sheet-prop">' +
+      sheetPropRowHtml("m-book-mode-toggle", "ticket", "Сколько раз", '<span id="m-book-mode-value"></span>') +
+      '<div class="sheet-rem-body hidden" id="m-book-mode-body">' +
+      '<span class="sheet-chips sheet-scroll booking-sheet-seg" role="radiogroup" aria-label="Сколько раз можно записаться">' +
       bookingSegHtml(
         [
           { id: "one_shot", label: "Один раз" },
@@ -17953,16 +18333,12 @@
           { id: "expiring", label: "До даты" },
         ],
         "data-book-mode",
-        mode
+        mode,
+        "sheet-chip"
       ) +
       "</span>" +
-      '<p class="booking-sheet-hint" id="m-book-mode-hint">' + bookingModeHint(mode) + "</p>" +
-      "</div>" +
-      '<div id="m-book-expire-row" class="event-sheet-row event-sheet-row--stack' +
-      (mode === "expiring" ? "" : " hidden") +
-      '">' +
-      '<span class="event-sheet-row-label">Срок действия</span>' +
-      '<span class="event-sheet-kind-switch booking-sheet-seg" role="radiogroup" aria-label="Срок действия">' +
+      '<div id="m-book-expire-row" class="booking-expire-row' + (mode === "expiring" ? "" : " hidden") + '">' +
+      '<span class="sheet-chips sheet-scroll booking-sheet-seg" role="radiogroup" aria-label="Срок действия">' +
       bookingSegHtml(
         [
           { id: "7", label: "7 дней" },
@@ -17970,9 +18346,13 @@
           { id: "30", label: "30 дней" },
         ],
         "data-book-expire",
-        expire
+        expire,
+        "sheet-chip"
       ) +
-      "</span></div></div>" +
+      "</span></div>" +
+      '<p class="booking-sheet-hint" id="m-book-mode-hint">' + bookingModeHint(mode) + "</p>" +
+      "</div></div>" +
+      "</div>" +
       '<div class="booking-sheet-result hidden" id="m-book-result" role="status">' +
       '<p class="booking-sheet-result-head">Ссылка готова — уже скопирована</p>' +
       '<input id="m-book-url" type="text" class="field-input booking-sheet-url" readonly aria-label="Ссылка на запись" />' +
@@ -17984,6 +18364,30 @@
       "</div>";
     bindCreateKindSwitcher("booking");
     bindBookingSegs(fields);
+    // Строки «Длительность / Сколько раз»: значение справа, варианты — по тапу.
+    function paintBookingRows() {
+      var d = fields.querySelector("[data-book-duration].is-active");
+      var m = fields.querySelector("[data-book-mode].is-active");
+      var x = fields.querySelector("[data-book-expire].is-active");
+      var dv = document.getElementById("m-book-dur-value");
+      var mv = document.getElementById("m-book-mode-value");
+      if (dv) dv.textContent = d ? d.textContent : "На выбор";
+      if (mv) mv.textContent = (m ? m.textContent : "Сколько угодно") + (m && m.getAttribute("data-book-mode") === "expiring" && x ? " · " + x.textContent : "");
+    }
+    [["m-book-dur-toggle", "m-book-dur-body"], ["m-book-mode-toggle", "m-book-mode-body"]].forEach(function (pair) {
+      var tog = document.getElementById(pair[0]);
+      var body = document.getElementById(pair[1]);
+      if (!tog || !body) return;
+      tog.addEventListener("click", function () {
+        var open = body.classList.contains("hidden");
+        body.classList.toggle("hidden", !open);
+        tog.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+      body.addEventListener("click", function () {
+        setTimeout(paintBookingRows, 0);
+      });
+    });
+    paintBookingRows();
     document.getElementById("m-book-title").value =
       bookingSheetState.title || String(ev.title || ev.summary || "").trim();
     bindSheetTitleArea(document.getElementById("m-book-title"));
@@ -18074,30 +18478,23 @@
       '<div class="event-sheet">' +
       (eventExisting ? "" : eventSheetKindSwitcherHtml("event")) +
       '<textarea id="m-ev-sum" class="event-sheet-title event-sheet-title--area" rows="1" enterkeyhint="done" placeholder="Название" autocomplete="off"></textarea>' +
-      sheetWhenHtml({}) +
+      // Свойства одной группой: Когда, Повтор, Участники (поиск, чипы, занятость), Видеосвязь, Цвет.
+      '<div class="event-sheet-group sheet-props">' +
+      sheetWhenHtml({ label: "Когда" }) +
       eventRepeatHtml() +
-      '<div class="event-sheet-group meeting-attendees-field">' +
-      '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-ev-attendees-toggle" aria-expanded="false">' +
-      '<span class="event-sheet-row-label">Участники</span>' +
-      '<span class="event-sheet-row-value"><span id="m-ev-attendees-summary">Нет</span>' +
-      eventSheetChevronHtml() +
-      "</span></button>" +
+      '<div class="event-sheet-group meeting-attendees-field sheet-prop">' +
+      sheetPropRowHtml("m-ev-attendees-toggle", "users", "Участники", '<span id="m-ev-attendees-summary">Нет</span>') +
       '<div id="m-ev-attendees-editor" class="event-sheet-attendees hidden">' +
-      '<div id="m-ev-attendees-chips" class="meeting-attendee-chips"></div>' +
       '<div class="meeting-attendee-add">' +
       '<input id="m-ev-attendee-input" type="text" class="field-input" placeholder="Контакт или email" autocomplete="off" />' +
       '<div id="m-ev-attendee-suggest" class="meeting-attendee-suggest hidden" role="listbox"></div>' +
-      "</div></div></div>" +
-      '<div id="m-ev-avail" class="meeting-avail hidden"></div>' +
-      '<div class="event-sheet-group">' +
-      '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-ev-desc-toggle" aria-expanded="false">' +
-      '<span class="field-label">Описание</span>' +
-      eventSheetChevronHtml() +
-      "</button>" +
-      '<textarea id="m-ev-desc" class="field-textarea event-sheet-desc hidden" rows="4"></textarea>' +
       "</div>" +
-      '<div class="event-sheet-group event-sheet-meet-link-group sheet-video">' +
-      '<p class="sheet-glabel">Видеосвязь</p>' +
+      '<div id="m-ev-attendees-chips" class="meeting-attendee-chips"></div>' +
+      '<div id="m-ev-avail" class="meeting-avail hidden"></div>' +
+      "</div></div>" +
+      '<div class="sheet-prop sheet-video event-sheet-meet-link-group">' +
+      sheetPropRowHtml("m-ev-video-toggle", "video", "Видеосвязь", '<span id="m-ev-video-value">Нет</span>') +
+      '<div class="sheet-video-body hidden">' +
       '<div class="event-sheet-kind-switch sheet-video-seg" role="radiogroup" aria-label="Видеосвязь">' +
       '<button type="button" class="event-sheet-kind-btn" data-video="telemost">Телемост</button>' +
       '<button type="button" class="event-sheet-kind-btn" data-video="zoom">Zoom</button>' +
@@ -18106,6 +18503,15 @@
       "</div>" +
       '<input id="m-ev-link" type="url" class="field-input event-sheet-meet-link-input hidden" placeholder="Вставьте ссылку на встречу" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" />' +
       '<p class="booking-sheet-hint hidden" id="m-ev-video-hint"></p>' +
+      "</div></div>" +
+      '<div id="m-ev-color-host"></div>' +
+      "</div>" +
+      '<div class="event-sheet-group">' +
+      '<button type="button" class="event-sheet-row event-sheet-row--nav" id="m-ev-desc-toggle" aria-expanded="false">' +
+      '<span class="field-label">Описание</span>' +
+      eventSheetChevronHtml() +
+      "</button>" +
+      '<textarea id="m-ev-desc" class="field-textarea event-sheet-desc hidden" rows="4"></textarea>' +
       "</div>" +
       '<div class="event-sheet-link-row hidden"></div>' +
       '<div id="m-ev-color-host"></div>' +
@@ -18154,11 +18560,6 @@
     }
     var attEditor = document.getElementById("m-ev-attendees-editor");
     var attToggle = document.getElementById("m-ev-attendees-toggle");
-    if (attEditor && attToggle) {
-      // Участники сразу на виду: добавить человека — одно касание, без раскрытия строки.
-      attEditor.classList.remove("hidden");
-      attToggle.setAttribute("aria-expanded", "true");
-    }
     if (attToggle && attEditor) {
       attToggle.addEventListener("click", function () {
         var open = attEditor.classList.contains("hidden");
@@ -18335,8 +18736,19 @@
       if (u.indexOf("zoom.us") >= 0) return "zoom";
       return "custom";
     }
+    var videoToggle = document.getElementById("m-ev-video-toggle");
+    var videoBody = fields.querySelector(".sheet-video-body");
+    if (videoToggle && videoBody) {
+      videoToggle.addEventListener("click", function () {
+        var open = videoBody.classList.contains("hidden");
+        videoBody.classList.toggle("hidden", !open);
+        videoToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+    }
     function paintVideo(choice) {
       if (!videoSeg) return;
+      var vv = document.getElementById("m-ev-video-value");
+      if (vv) vv.textContent = { telemost: "Телемост", zoom: "Zoom", custom: "Своя ссылка", none: "Нет" }[choice] || "Нет";
       videoSeg.setAttribute("data-choice", choice);
       videoSeg.querySelectorAll("[data-video]").forEach(function (b) {
         var on = b.getAttribute("data-video") === choice;
@@ -54014,6 +54426,7 @@
 
     onId("modal-cancel", "click", closeModal);
     onId("modal-done", "click", modalMarkTaskDone);
+    onId("modal-in-progress", "click", modalToggleInProgress);
     onId("modal-archive", "click", modalToggleTaskArchive);
     onId("modal-delete", "click", modalDelete);
     onId("modal-overlay", "click", function (e) {

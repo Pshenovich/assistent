@@ -1455,13 +1455,21 @@ def mark_seen(viewer_id: int | str, task_id: int | str) -> Optional[dict[str, An
 def set_assignee_status(
     viewer_id: int | str, task_id: int | str, status: str, note: str = ""
 ) -> Optional[dict[str, Any]]:
-    """«Взял в работу» / «Есть вопрос» (с текстом) / сброс — только исполнитель."""
+    """«Взял в работу» / «Есть вопрос» (с текстом) / сброс — только исполнитель.
+
+    Своя задача (исполнитель — сам автор): только «в работе» / сброс, без ленты поручения."""
     status = str(status or "").strip()
     if status not in ASSIGNEE_STATUSES:
         raise ValueError("Неизвестный статус")
     task = _assignee_task(viewer_id, task_id)
     if not task:
-        return None
+        own = get_task_for_user(viewer_id, task_id)
+        if not own or task_is_delegated(own) or str(own.get("owner_user_id") or "") != _uid(viewer_id):
+            return None
+        if status == "question":
+            raise ValueError("Вопрос задаётся по поручению")
+        return _set_columns(int(own["id"]), {"assignee_status": status, "assignee_status_note": "",
+                                             "assignee_status_at": _now_iso() if status else ""})
     note = _clip(note, MAX_STATUS_NOTE_LEN) if status == "question" else ""
     if status == "question" and not note:
         raise ValueError("Напишите вопрос")

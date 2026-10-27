@@ -86,6 +86,18 @@ def test_seen_and_status_only_by_assignee(store):
     assert store.assignee_state(row)["status_note"] == ""
 
 
+def test_own_task_in_progress(store):
+    # Своя задача: «В работе» ставит и снимает сам автор; вопрос — только в поручении.
+    t = store.create_task(OWNER, title="Увеличить лимит токенов", start_at=datetime.now(TZ), tz=TZ)
+    row = store.set_assignee_status(OWNER, t["id"], "in_progress")
+    assert store.assignee_state(row)["status"] == "in_progress"
+    assert store.as_calendar_event(row, tz=TZ, viewer_id=OWNER)["assignee_state"]["status"] == "in_progress"
+    with pytest.raises(ValueError):
+        store.set_assignee_status(OWNER, t["id"], "question", "?")
+    assert store.assignee_state(store.set_assignee_status(OWNER, t["id"], ""))["status"] == ""
+    assert store.set_assignee_status(ASSIGNEE, t["id"], "in_progress") is None  # чужая задача
+
+
 def test_reassign_resets_state(store):
     t = _delegated(store)
     store.set_assignee_status(ASSIGNEE, t["id"], "in_progress")

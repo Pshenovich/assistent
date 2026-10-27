@@ -1868,7 +1868,7 @@
         },
       ];
       (avBody.attendees || []).forEach(function (em, i) {
-        var email = String(em || "").trim().toLowerCase();
+        var email = String((em && typeof em === "object" ? em.email : em) || "").trim().toLowerCase();
         if (!email) return;
         people.push({
           id: email,

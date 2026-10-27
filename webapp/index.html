@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261027-taskmarks">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261027-sheets">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -98,8 +98,8 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261027-taskmarks" />
-  <link rel="stylesheet" href="/webapp/board.css?v=20261027-taskmarks" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261027-sheets" />
+  <link rel="stylesheet" href="/webapp/board.css?v=20261027-sheets" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -2218,6 +2218,7 @@
         <div class="modal-body">
           <div id="modal-fields"></div>
           <div class="modal-sheet-actions" id="modal-sheet-actions">
+            <button type="button" class="btn modal-progress-btn hidden" id="modal-in-progress" aria-pressed="false">В работе</button>
             <button type="button" class="btn modal-done-btn hidden" id="modal-done">Выполнено</button>
             <button type="button" class="btn modal-link-btn hidden" id="modal-copy-link" title="Скопировать ссылку на задачу">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/></svg>
@@ -2319,12 +2320,12 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261027-taskmarks" defer></script>
-  <script src="/webapp/realtime.js?v=20261027-taskmarks" defer></script>
-  <script src="/webapp/note-yjs.js?v=20261027-taskmarks" defer></script>
-  <script src="/webapp/board-geom.js?v=20261027-taskmarks" defer></script>
-  <script src="/webapp/board.js?v=20261027-taskmarks" defer></script>
-  <script src="/webapp/app.js?v=20261027-taskmarks" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261027-sheets" defer></script>
+  <script src="/webapp/realtime.js?v=20261027-sheets" defer></script>
+  <script src="/webapp/note-yjs.js?v=20261027-sheets" defer></script>
+  <script src="/webapp/board-geom.js?v=20261027-sheets" defer></script>
+  <script src="/webapp/board.js?v=20261027-sheets" defer></script>
+  <script src="/webapp/app.js?v=20261027-sheets" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261023-reply1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261025-mobfix" defer></script>
