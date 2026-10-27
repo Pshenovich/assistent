@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261027-sheets4";
+  var WEBAPP_BUILD = "20261027-fraglink";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261027-sheets4"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261027-fraglink"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -29112,7 +29112,7 @@
               return String(h.name || "");
             }),
             onTaskSlash: createTaskFromSlash,
-            onOpenLink: openExternal,
+            onOpenLink: openNoteEditorLink,
             onTaskChipClick: openTaskFromChip,
             onExternalTaskClick: openExternal,
             onTaskChipRemoved: deleteTaskFromChip,
@@ -44267,6 +44267,186 @@
     return true;
   }
 
+  // ---- Ссылка на фрагмент заметки: …/webapp/?note=N&sheet=S&at=<data-leo-item>&q=<цитата>&qp=&qs= ----
+  var FRAGMENT_QUOTE_MAX = 80;
+  var FRAGMENT_CTX_MAX = 32;
+
+  function noteFragmentUrl(noteId, sheetId, at, sel) {
+    var u = new URL("/webapp/", location.origin);
+    u.searchParams.set("note", String(noteId));
+    if (sheetId && !isPrimarySheetId(sheetId)) u.searchParams.set("sheet", String(sheetId));
+    if (at) u.searchParams.set("at", at);
+    u.searchParams.set("q", String(sel.quote || "").slice(0, FRAGMENT_QUOTE_MAX));
+    // Строка известна — цитату ищем в ней, контекст вокруг только удлинил бы ссылку.
+    if (at) return u.href;
+    var qp = String(sel.prefix || "").slice(-FRAGMENT_CTX_MAX);
+    var qs = String(sel.suffix || "").slice(0, FRAGMENT_CTX_MAX);
+    if (qp) u.searchParams.set("qp", qp);
+    if (qs) u.searchParams.set("qs", qs);
+    return u.href;
+  }
+
+  function noteFragmentFromParams(params) {
+    var note = params.get("note") || params.get("n") || "";
+    if (!/^\d+$/.test(note)) return null;
+    var at = params.get("at") || "";
+    if (!/^i[0-9a-f]{10}$/.test(at)) at = "";
+    var q = params.get("q") || "";
+    if (!at && !q) return null;
+    return {
+      note: note,
+      sheet: params.get("sheet") || "",
+      at: at,
+      q: q,
+      qp: params.get("qp") || "",
+      qs: params.get("qs") || "",
+    };
+  }
+
+  function noteFragmentFromHref(href) {
+    try {
+      var u = new URL(String(href || ""), location.href);
+      if (u.host !== location.host || u.pathname.indexOf("/webapp") !== 0) return null;
+      return noteFragmentFromParams(u.searchParams);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Строка начала выделения: ID из DOM, иначе редактор выдаёт его строке (сохранится с заметкой).
+  function selectionLineIdForFragment() {
+    try {
+      var ws = window.getSelection && window.getSelection();
+      if (ws && ws.rangeCount && !ws.isCollapsed) {
+        var node = ws.getRangeAt(0).startContainer;
+        var el = node && (node.nodeType === 1 ? node : node.parentElement);
+        var line = el && el.closest && el.closest("[data-leo-item]");
+        var id = line && line.getAttribute("data-leo-item");
+        if (id && /^i[0-9a-f]{10}$/.test(id)) return id;
+      }
+    } catch (_) {}
+    var ed = getActiveNoteRichEditor && getActiveNoteRichEditor();
+    return ed && ed.ensureSelectionLineId ? ed.ensureSelectionLineId() || "" : "";
+  }
+
+  function copyNoteFragmentLink(sel) {
+    var noteId = noteSheetsNoteId();
+    if (!noteId || !sel || !sel.quote) return;
+    var url = noteFragmentUrl(noteId, focusedNoteSheetId(), selectionLineIdForFragment(), sel);
+    var label = String(sel.quote).slice(0, 120);
+    copyTextWithOptionalHtml(url, '<a href="' + escapeHtml(url) + '">' + escapeHtml(label) + "</a>")
+      .then(function () {
+        shareHaptic();
+        showNoteToast("Ссылка скопирована");
+      })
+      .catch(function () {
+        showNoteToast("Не удалось скопировать ссылку");
+      });
+  }
+
+  function findNoteFragment(frag) {
+    var api = window.NoteComments;
+    var roots = Array.prototype.slice.call(
+      document.querySelectorAll("#note-editor-overlay .note-rich-editor-body")
+    );
+    var block = null;
+    var range = null;
+    if (frag.at) {
+      for (var i = 0; i < roots.length && !block; i++) {
+        block = roots[i].querySelector('[data-leo-item="' + frag.at + '"]');
+      }
+    }
+    if (api && api.rangeForAnchor && frag.q) {
+      var where = block ? [block].concat(roots) : roots;
+      for (var j = 0; j < where.length && !range; j++) {
+        try {
+          range = api.rangeForAnchor(where[j], frag.q, frag.qp, frag.qs);
+        } catch (_) {}
+      }
+    }
+    if (!range && !block) return null;
+    return { range: range, block: block };
+  }
+
+  // Прокрутить к фрагменту и мигнуть им, как при переходе по цитате комментария.
+  // Текст фрагмента правили — мигает вся строка; нет ни строки, ни текста — тост.
+  function jumpToNoteFragment(frag) {
+    var hit = findNoteFragment(frag);
+    if (!hit) {
+      showNoteToast("Этого фрагмента в заметке уже нет");
+      return false;
+    }
+    var node = hit.range ? hit.range.startContainer : hit.block;
+    var el = node && (node.nodeType === 1 ? node : node.parentElement);
+    // Клик по ссылке ставит курсор — прокрутка к курсору оборвала бы плавную прокрутку к фрагменту.
+    if (!noteSheetState.skipCaretScroll) {
+      noteSheetState.skipCaretScroll = true;
+      setTimeout(function () {
+        noteSheetState.skipCaretScroll = false;
+      }, 1200);
+    }
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: "center", behavior: "smooth" });
+    setTimeout(function () {
+      flashTextRange(hit.range, hit.block || el);
+    }, 350);
+    return true;
+  }
+
+  // Заметка/лист ещё открываются — ждём, пока фрагмент появится в тексте (или выйдет время).
+  function jumpToNoteFragmentWhenReady(frag) {
+    var started = Date.now();
+    clearTimeout(jumpToNoteFragmentWhenReady._t);
+    function tick() {
+      var ready =
+        noteSheetsNoteId() === String(frag.note) &&
+        (!frag.sheet || isPrimarySheetId(frag.sheet) || String(noteSheetState.leftId) === String(frag.sheet));
+      if (ready && findNoteFragment(frag)) {
+        jumpToNoteFragment(frag);
+        return;
+      }
+      if (Date.now() - started > 8000) {
+        if (ready) jumpToNoteFragment(frag);
+        return;
+      }
+      jumpToNoteFragmentWhenReady._t = setTimeout(tick, 150);
+    }
+    tick();
+  }
+
+  function openNoteFragmentLink(frag) {
+    var sameNote = noteSheetsNoteId() === String(frag.note);
+    var sheet = frag.sheet && !isPrimarySheetId(frag.sheet) ? String(frag.sheet) : "";
+    var openSheets = [String(noteSheetState.leftId || NOTE_SHEET_MAIN)];
+    if (noteSheetState.rightMode === "sheet" && noteSheetState.rightId) openSheets.push(String(noteSheetState.rightId));
+    if (sameNote && openSheets.indexOf(sheet || NOTE_SHEET_MAIN) >= 0) {
+      jumpToNoteFragment(frag);
+      return;
+    }
+    if (sameNote) {
+      Promise.resolve(switchLeftSheet(sheet || NOTE_SHEET_MAIN)).then(function () {
+        jumpToNoteFragmentWhenReady(frag);
+      });
+      return;
+    }
+    openNoteRefFromChip(frag.note, sheet);
+    jumpToNoteFragmentWhenReady(frag);
+  }
+
+  // Ссылка из текста заметки: на фрагмент / на заметку Лео — внутри приложения, остальное — наружу.
+  function openNoteEditorLink(href) {
+    var frag = noteFragmentFromHref(href);
+    if (frag) {
+      openNoteFragmentLink(frag);
+      return;
+    }
+    var inAppNoteId = inAppNoteIdFromHref(href);
+    if (inAppNoteId) {
+      openNoteByIdInApp(inAppNoteId);
+      return;
+    }
+    openExternal(href);
+  }
+
   function appendDiscussReplyQuote(host, quote, who, replyToId) {
     var q = String(quote || "").trim();
     if (!host || !q) return;
@@ -44468,6 +44648,13 @@
       var link = e.target && e.target.closest && e.target.closest("a[href]");
       if (link) {
         var href = String(link.getAttribute("href") || "").trim();
+        var frag = noteFragmentFromHref(href);
+        if (frag) {
+          e.preventDefault();
+          e.stopPropagation();
+          openNoteFragmentLink(frag);
+          return;
+        }
         var inAppNoteId = inAppNoteIdFromHref(href);
         if (inAppNoteId) {
           e.preventDefault();
@@ -48722,7 +48909,7 @@
     var acts = noteSelectionActions;
     document.querySelectorAll("#note-editor-format-toolbar-host .note-tg-sel-act").forEach(function (el) {
       var kind = String(el.getAttribute("data-action") || "").replace(/^sel-/, "");
-      var on = !!acts && (kind === "ai" ? !!acts.ai : true);
+      var on = !!acts && (kind === "ai" || kind === "link" ? !!acts[kind] : true);
       el.classList.toggle("hidden", !on);
     });
   }
@@ -48735,7 +48922,22 @@
 
   function bindEditorCommentSelection(kind, itemId, panel) {
     var api = window.NoteComments;
-    if (!api || panel._commentSelectBound) return;
+    if (panel._commentSelectBound) return;
+    if (!api) {
+      // Заметку открыли по ссылке раньше, чем загрузился note-comments.js, — привяжем, когда загрузится.
+      if (!panel._commentSelectWaiting) {
+        panel._commentSelectWaiting = true;
+        loadNoteEditorScripts()
+          .then(function () {
+            panel._commentSelectWaiting = false;
+            if (window.NoteComments && panel.isConnected) bindEditorCommentSelection(kind, itemId, panel);
+          })
+          .catch(function () {
+            panel._commentSelectWaiting = false;
+          });
+      }
+      return;
+    }
     panel._commentSelectBound = true;
     var draft = null;
     function onSelect(e) {
@@ -48766,6 +48968,12 @@
           kind === "local" && canUseNoteAiSheet()
             ? function () {
                 openNoteAiSheet({ selection: sel.quote });
+              }
+            : null,
+        link:
+          kind === "local"
+            ? function () {
+                copyNoteFragmentLink(sel);
               }
             : null,
         task: function () {
@@ -48804,7 +49012,7 @@
         api.hideBubble();
         return;
       }
-      api.showBubble(sel.rect, actions.discuss, { onAi: actions.ai, onTask: actions.task });
+      api.showBubble(sel.rect, actions.discuss, { onAi: actions.ai, onTask: actions.task, onLink: actions.link });
     }
     function onDocMouseDown(e) {
       if (api.isCommentBubbleEvent && api.isCommentBubbleEvent(e)) return;
@@ -49307,14 +49515,23 @@
       return;
     }
     noteDeepLinkConsumed = true;
+    var frag = null;
+    try {
+      frag = noteFragmentFromParams(new URLSearchParams(location.search || ""));
+    } catch (_) {}
     function go(note) {
       if (!note) return;
       setTab("notes");
+      if (frag && frag.sheet && !isPrimarySheetId(frag.sheet)) noteSheetState.pendingOpenSheetId = frag.sheet;
       openNoteDetail(note, { isLocal: true });
+      if (frag) jumpToNoteFragmentWhenReady(frag);
       try {
         var u = new URL(location.href);
         u.searchParams.delete("note");
         u.searchParams.delete("n");
+        ["sheet", "at", "q", "qp", "qs"].forEach(function (k) {
+          u.searchParams.delete(k);
+        });
         if (/note=/.test(u.hash)) u.hash = "";
         history.replaceState(null, "", u.pathname + u.search + u.hash);
       } catch (_) {}

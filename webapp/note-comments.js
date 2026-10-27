@@ -344,6 +344,15 @@
           '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' +
           "</svg>"
       );
+      var link = makeBubbleBtn(
+        "note-link-bubble",
+        "Ссылка",
+        "note-comment-bubble--task",
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">' +
+          '<path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16"/>' +
+          "</svg>"
+      );
+      link.setAttribute("title", "Скопировать ссылку на фрагмент");
       function stopSel(e) {
         e.preventDefault();
         e.stopPropagation();
@@ -356,7 +365,13 @@
         if (!btn || !wrap.contains(btn)) return;
         wrap._fired = true;
         var fn =
-          btn.id === "note-task-bubble" ? wrap._onTask : btn.id === "note-ai-bubble" ? wrap._onAi : wrap._onComment;
+          btn.id === "note-task-bubble"
+            ? wrap._onTask
+            : btn.id === "note-ai-bubble"
+              ? wrap._onAi
+              : btn.id === "note-link-bubble"
+                ? wrap._onLink
+                : wrap._onComment;
         hideBubble();
         if (typeof fn === "function") fn();
       }
@@ -368,11 +383,13 @@
       wrap.appendChild(ai);
       wrap.appendChild(discuss);
       wrap.appendChild(task);
+      wrap.appendChild(link);
       document.body.appendChild(wrap);
     }
     wrap._onComment = onClick;
     wrap._onTask = extras.onTask;
     wrap._onAi = extras.onAi;
+    wrap._onLink = extras.onLink;
     wrap._fired = false;
     var discussBtn = document.getElementById("note-comment-bubble");
     if (discussBtn) discussBtn.classList.toggle("hidden", typeof onClick !== "function");
@@ -380,6 +397,8 @@
     if (taskBtn) taskBtn.classList.toggle("hidden", typeof extras.onTask !== "function");
     var aiBtn = document.getElementById("note-ai-bubble");
     if (aiBtn) aiBtn.classList.toggle("hidden", typeof extras.onAi !== "function");
+    var linkBtn = document.getElementById("note-link-bubble");
+    if (linkBtn) linkBtn.classList.toggle("hidden", typeof extras.onLink !== "function");
     placeBubble(wrap, rect);
     window.requestAnimationFrame(function () {
       if (document.getElementById("note-comment-bubble-wrap") === wrap) placeBubble(wrap, rect);

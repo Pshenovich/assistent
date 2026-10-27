@@ -56,6 +56,11 @@ var Y_FRAGMENT = "prosemirror";
  * как бы её ни правили. Enter не копирует ID на новую строку; дубль (строку скопировали) — снимаем. */
 var LEO_LINE_TYPES = ["paragraph", "heading", "listItem", "taskItem", "tableCell", "tableHeader"];
 var LEO_ITEM_RE = /^i[0-9a-f]{10}$/;
+function newLeoItemId() {
+  var bytes = new Uint8Array(5);
+  crypto.getRandomValues(bytes);
+  return "i" + Array.prototype.map.call(bytes, function (x) { return (x < 16 ? "0" : "") + x.toString(16); }).join("");
+}
 var LeoLineId = Extension.create({
   name: "leoLineId",
   addGlobalAttributes: function () {
@@ -2021,6 +2026,7 @@ function svgIcon(name) {
     columns: '<path d="M4 7h10M4 12h10M4 17h7"/><path d="M19 4v16"/>',
     sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
     discuss: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
+    fragment: '<path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16"/>',
   };
   return "<svg " + common + ">" + (paths[name] || "") + "</svg>";
 }
@@ -2563,6 +2569,7 @@ function mountToolbar(toolbarEl, editor) {
     btn("note-tg-mob-only note-tg-sel-act hidden note-tg-btn--sel-ai", 'data-action="sel-ai"', "ИИ", "sparkle") +
     btn("note-tg-mob-only note-tg-sel-act hidden", 'data-action="sel-discuss"', "Обсудить", "discuss") +
     btn("note-tg-mob-only note-tg-sel-act hidden", 'data-action="sel-task"', "Задача", "check") +
+    btn("note-tg-mob-only note-tg-sel-act hidden", 'data-action="sel-link"', "Ссылка на фрагмент", "fragment") +
     '<span class="note-tg-sep note-tg-mob-only note-tg-sel-act hidden" aria-hidden="true"></span>' +
     btn("", 'data-action="bold"', "Жирный", "bold") +
     btn("", 'data-action="italic"', "Курсив", "italic") +
@@ -4891,6 +4898,21 @@ function mount(container, options) {
       var sel = editor.state.selection;
       return { from: sel.from, to: sel.to };
     },
+    // ID строки начала выделения (data-leo-item) — якорь ссылки на фрагмент. Нет ID — выдаём.
+    ensureSelectionLineId: function () {
+      var $from = editor.state.selection.$from;
+      for (var d = $from.depth; d > 0; d--) {
+        var node = $from.node(d);
+        if (LEO_LINE_TYPES.indexOf(node.type.name) < 0) continue;
+        if (node.attrs.leoItem) return node.attrs.leoItem;
+        var id = newLeoItemId();
+        editor.view.dispatch(
+          editor.state.tr.setNodeMarkup($from.before(d), undefined, Object.assign({}, node.attrs, { leoItem: id }))
+        );
+        return id;
+      }
+      return "";
+    },
     insertTaskChip: function (taskId, label, ext) {
       editor
         .chain()
@@ -5012,7 +5034,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261027-sheets4",
+  assetVersion: "20261027-fraglink",
   Y: Y,
   mount: mount,
   importBody: importBody,

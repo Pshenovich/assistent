@@ -16572,6 +16572,13 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 #note-discussion-new-ctx.is-open { background: rgba(255, 255, 255, 0.16); }
 /* Реплай: мигаем цитируемым фрагментом */
 ::highlight(leo-flash) { background-color: rgba(250, 204, 21, 0.45); color: inherit; }
+/* Ссылка на фрагмент заметки (…/webapp/?note=N&…&q=…) — с пометкой, чтобы не путать с внешней. */
+.note-rich-editor-body a[href*="/webapp/?note="][href*="&q="]::before {
+  content: "#";
+  margin-right: 1px;
+  font-weight: 600;
+  opacity: 0.6;
+}
 .note-discuss-bubble.is-flash, .is-flash { box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.7); border-radius: 8px; }
 .note-discuss-reply.is-nav { cursor: pointer; }
 
