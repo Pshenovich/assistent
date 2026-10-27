@@ -52,6 +52,22 @@ html.vkui--vkIOS--dark {
   --radius-xl: var(--vkui--size_border_radius_promo--regular, 20px);
   --radius-full: 999px;
 
+  /* Единые контролы карточек задач: кнопки, поля, чипы (см. «Единые контролы» в конце файла). */
+  --ui-h: 44px;            /* кнопки и поля в формах, окнах, разборах */
+  --ui-h-sm: 36px;         /* внутри небольших карточек: «Фокус», чат */
+  --ui-r: 10px;            /* скругление кнопок и полей */
+  --ui-card-r: 16px;       /* карточки */
+  --ui-chip-h: 28px;
+  --ui-font: 0.9rem;
+  --ui-font-sm: 0.82rem;
+  --ui-field-bg: var(--surface-elevated, #2a2a2e);
+  --ui-field-border: var(--border-strong, var(--border));
+  --ui-btn-bg: var(--surface-elevated, #2a2a2e);
+  --ui-btn-bg-hover: #34343a;
+  --ui-due-bg: rgba(245, 158, 11, 0.14);
+  --ui-due-fg: #fbbf24;
+  --ui-due-border: rgba(245, 158, 11, 0.35);
+
   --shadow-sm: var(--vkui--elevation1, none);
   --shadow-md: var(--vkui--elevation3, 0 8px 32px rgba(0, 0, 0, 0.45));
   --shadow-card: var(--vkui--elevation2, none);
@@ -22983,6 +22999,13 @@ body.tinbox-open { overflow: hidden; }
 .fstack-form .focus-chat-hint { font-size: 0.85rem; }
 .fstack-form .focus-chat-date { display: flex; flex-wrap: wrap; gap: 8px; }
 .fstack-form .focus-chat-date input { flex: 1 1 100%; }
+.fstack-pop { position: absolute; bottom: calc(100% + 6px); z-index: 4; width: min(300px, 100%); max-height: min(60vh, 440px); overflow-y: auto; padding: 6px; box-sizing: border-box; border: 1px solid var(--border-strong, var(--border)); border-radius: 14px; background: var(--surface-elevated, #232326); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); }
+.fstack-pop.is-left { left: 0; }
+.fstack-pop.is-right { right: 0; }
+.fstack-pop .focus-chat-menu { padding: 0; border: none; background: transparent; gap: 2px; }
+.fstack-pop .focus-chat-menu-head { padding: 8px 10px 4px; font-size: 0.75rem; color: var(--text-tertiary); }
+.fstack-pop .focus-chat-menu-item { padding: 11px 10px; border-radius: 9px; font-size: 0.95rem; }
+.fstack-pop .focus-chat-menu-item:hover { background: var(--surface, #19191c); }
 .fstack-list { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
 .fstack-list-sub { margin: 0; font-size: 0.88rem; color: var(--text-secondary); }
 .fstack-rows { display: flex; flex-direction: column; gap: 8px; }
@@ -23045,3 +23068,111 @@ ol.note-discuss-md-list { list-style: decimal; }
 
 /* «Сохранить» в окне записи, пока ждём сервер. */
 #modal-save.is-busy { opacity: 0.6; pointer-events: none; }
+
+
+/* ================= Единые контролы карточек задач =================
+   Окно задачи, «Поставлено», разбор входящих, «Разобрать», карточки Фокуса, пункты в чате.
+   Кнопки: главная (синяя) / обычная (серая) / тихая / опасная; 44px в формах, 36px в небольших карточках.
+   Поля: 44px (в чате 36px), скругление 10px, на телефоне шрифт 16px. Чипы: 28px, круглые. Карточки: 16px. */
+
+/* — кнопки — */
+.tinbox-btn, .fstack-form .focus-chat-btn, .modal-sheet-actions .modal-done-btn, .modal-sheet-actions .modal-link-btn, .modal-sheet-actions .modal-archive-btn, .modal-sheet-actions .modal-delete-btn, .pt-card-actions .pt-act, .focus-done-save {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; box-sizing: border-box;
+  min-height: var(--ui-h); height: auto; padding: 0 16px; border: 1px solid transparent; border-radius: var(--ui-r);
+  background: var(--ui-btn-bg); color: var(--text); font: inherit; font-size: var(--ui-font); font-weight: 600; line-height: 1.2; cursor: pointer;
+}
+.focus-card-btn, #panel-actual .focus-card-btn, .focus-chat-btn, .fstack-pill, .fstack-view, .pt-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; box-sizing: border-box;
+  min-height: var(--ui-h-sm); height: auto; padding: 0 12px; border: 1px solid transparent; border-radius: var(--ui-r);
+  background: var(--ui-btn-bg); color: var(--text); font: inherit; font-size: var(--ui-font-sm); font-weight: 600; line-height: 1.2; cursor: pointer; white-space: nowrap;
+}
+@media (hover: hover) {
+  .pt-btn:hover, .tinbox-btn:hover, .focus-card-btn:hover, .focus-chat-btn:hover, .fstack-pill:hover, .fstack-view:hover, .pt-card-actions .pt-act:hover,
+  .modal-sheet-actions .modal-link-btn:hover, .modal-sheet-actions .modal-archive-btn:hover { background: var(--ui-btn-bg-hover); }
+}
+/* главная */
+.tinbox-btn.is-primary, .focus-card-btn.is-primary, #panel-actual .focus-card-btn.is-primary, .focus-chat-btn.is-primary, .fstack-form .focus-chat-btn.is-primary,
+.fstack-pill.is-done, .pt-btn--primary, .pt-card-actions .pt-act.is-primary, .modal-sheet-actions .modal-done-btn, .modal-sheet-actions.is-task .modal-done-btn,
+.focus-card-btn.focus-done-save.is-primary {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff);
+}
+@media (hover: hover) {
+  .pt-btn--primary:hover, .tinbox-btn.is-primary:hover, .focus-card-btn.is-primary:hover, .focus-chat-btn.is-primary:hover, .fstack-pill.is-done:hover,
+  .pt-card-actions .pt-act.is-primary:hover, .modal-sheet-actions .modal-done-btn:hover { background: var(--accent-pressed, var(--accent)); }
+}
+/* обычная: «мягкие» и «тихие» варианты прежних карточек — тот же серый */
+.focus-card-btn.is-soft, .focus-card-btn.is-quiet, .focus-chat-btn.is-soft { background: var(--ui-btn-bg); color: var(--text); font-weight: 600; }
+/* тихая */
+.focus-chat-btn.is-ghost, .fstack-form .focus-chat-btn.is-ghost, .fstack-pill.is-ghost, .modal-sheet-actions .modal-archive-btn {
+  background: transparent; border-color: var(--ui-field-border); color: var(--text-secondary);
+}
+/* опасная */
+.modal-sheet-actions .modal-delete-btn, .modal-sheet-actions .modal-delete-btn.btn-text-danger { background: var(--ui-btn-bg); color: var(--danger); }
+/* иконка-кнопка — квадрат того же размера */
+.focus-card-btn.is-icon, #panel-actual .focus-card-btn.is-icon { width: var(--ui-h-sm); min-width: var(--ui-h-sm); padding: 0; background: var(--ui-btn-bg); border-color: transparent; color: var(--text-secondary); }
+.focus-card-split .focus-card-btn { border-radius: 0; }
+.focus-card-split .focus-card-btn:first-child { border-radius: var(--ui-r) 0 0 var(--ui-r); }
+.focus-card-split .focus-card-btn:last-child { border-radius: 0 var(--ui-r) var(--ui-r) 0; }
+.focus-card-split .focus-card-chev { padding: 0 9px; border-left: 1px solid var(--border); }
+.focus-card-btn.focus-done-save { min-height: var(--ui-h); padding: 0 16px; font-size: var(--ui-font); }
+.tinbox-btn:disabled, .focus-card-btn:disabled, .focus-chat-btn:disabled, .fstack-pill:disabled, .pt-card-actions .pt-act:disabled { opacity: 0.55; cursor: default; }
+
+/* — поля — */
+.tinbox-form input, .fstack-form .focus-chat-fields input, .fstack-form .focus-chat-fields select, .fstack-form .focus-chat-search,
+.fstack-form .focus-chat-date input {
+  box-sizing: border-box; min-height: var(--ui-h); height: var(--ui-h); padding: 0 12px; border: 1px solid var(--ui-field-border); border-radius: var(--ui-r);
+  background: var(--ui-field-bg); color: var(--text); font: inherit; font-size: 0.95rem;
+}
+.modal--sheet input.field-input, .meeting-attendee-add input.field-input {
+  box-sizing: border-box; min-height: var(--ui-h); padding: 0 12px; border: 1px solid var(--ui-field-border); border-radius: var(--ui-r);
+  background: var(--ui-field-bg); color: var(--text); font: inherit; font-size: 0.95rem;
+}
+.modal--sheet .field-textarea, .tinbox-form textarea, .fstack-form .focus-chat-fields textarea {
+  box-sizing: border-box; min-height: 88px; height: auto; padding: 10px 12px; border: 1px solid var(--ui-field-border); border-radius: var(--ui-r);
+  background: var(--ui-field-bg); color: var(--text); font: inherit; font-size: 0.95rem;
+}
+.focus-chat-fields input, .focus-chat-fields select, .focus-chat-search, .focus-chat-date input, .focus-chat-assignee .meeting-attendee-add input.field-input {
+  box-sizing: border-box; min-height: var(--ui-h-sm); height: var(--ui-h-sm); padding: 0 10px; border: 1px solid var(--ui-field-border); border-radius: var(--ui-r);
+  background: var(--ui-field-bg); color: var(--text); font: inherit; font-size: var(--ui-font-sm);
+}
+.modal--sheet .field-input:focus, .modal--sheet .field-textarea:focus, .tinbox-form input:focus, .tinbox-form textarea:focus, .focus-chat-fields input:focus,
+.focus-chat-fields select:focus, .focus-chat-search:focus, .focus-chat-date input:focus { outline: none; border-color: var(--accent); }
+/* поле исполнителя с чипом внутри — рамка снаружи, само поле без рамки */
+.fstack-assignee { min-height: var(--ui-h); border: 1px solid var(--ui-field-border); border-radius: var(--ui-r); background: var(--ui-field-bg); }
+.fstack-form .fstack-assignee input.field-input { min-height: 34px; height: 34px; border: none; background: transparent; padding: 0 6px; }
+/* срок — дата и время одинаково везде: жёлтые поля */
+.fstack-when input, .tinbox-when input { min-height: var(--ui-h); height: var(--ui-h); border: 1px solid var(--ui-due-border); border-radius: var(--ui-r); background: var(--ui-due-bg); color: var(--ui-due-fg); color-scheme: dark; }
+.sheet-date-pill, .event-sheet-pill.sheet-time { border-radius: var(--ui-r); }
+/* срок задачи в окне — тот же жёлтый, что в разборах (у встречи дата остаётся серой) */
+.sheet-when:has(.sheet-quick-dates) .sheet-date-pill, .sheet-when:has(.sheet-quick-dates) .event-sheet-pill.sheet-time { background: var(--ui-due-bg); color: var(--ui-due-fg); box-shadow: inset 0 0 0 1px var(--ui-due-border); }
+.sheet-when:has(.sheet-quick-dates) .sheet-date-pill svg { color: var(--ui-due-fg); }
+/* описание в окне — часть сгруппированного блока, без своей рамки */
+.modal--sheet .field-textarea.event-sheet-desc { border-color: transparent; border-radius: 14px; }
+@media (max-width: 959px) {
+  /* iPhone не увеличивает экран при фокусе, только если шрифт поля от 16px */
+  .modal--sheet .field-input, .modal--sheet .field-textarea, .meeting-attendee-add input.field-input, .tinbox-form input, .tinbox-form textarea, .focus-chat-fields input, .focus-chat-fields select, .focus-chat-fields textarea,
+  .focus-chat-search, .focus-chat-date input, .fstack-form .focus-chat-fields input, .fstack-form .focus-chat-search, .fstack-form .focus-chat-date input,
+  .fstack-form .fstack-assignee input.field-input, .fstack-when input, .tinbox-when input, .fstack-title-edit { font-size: 16px; }
+}
+
+/* — чипы — */
+.meeting-attendee-chip, .sheet-chip, .tinbox-chip, .pt-ref, .tracker-link-chip, .note-backlink-chip, .tinbox-due, .fstack-row-status, .pt-c-due {
+  display: inline-flex; align-items: center; gap: 6px; box-sizing: border-box; min-height: var(--ui-chip-h); height: auto; padding: 0 10px;
+  border-radius: 999px; font-size: 0.8125rem; font-weight: 600; line-height: 1.2; white-space: nowrap;
+}
+.meeting-attendee-chip { padding-left: 3px; border: 1px solid var(--border); background: var(--surface); }
+.sheet-chip, .tinbox-chip { border: 1px solid var(--ui-field-border); background: transparent; color: var(--text); cursor: pointer; }
+.sheet-chip.is-active, .sheet-chip.active, .sheet-chip[aria-pressed="true"], .tinbox-chip.is-on { background: var(--accent-subtle); border-color: var(--accent-border, var(--accent)); color: var(--accent); }
+.pt-ref { border: 1px solid var(--border); background: var(--ui-btn-bg); }
+/* срок — жёлтый чип */
+.tinbox-due, .pt-c-due { border: none; background: var(--ui-due-bg); color: var(--ui-due-fg); }
+.pt-c-due.is-late { background: rgba(255, 107, 94, 0.16); color: var(--pt-late, #ff6b5e); }
+/* статусы — одинаковые цветные метки */
+.pt-pill, .fstack-row-status { min-height: 24px; padding: 0 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+.fstack-row-status { margin-right: auto; background: rgba(95, 208, 138, 0.16); color: var(--pt-ok, #5fd08a); }
+.fstack-row-status.is-dismissed, .fstack-row-status.is-retyped { background: var(--surface-elevated); color: var(--text-secondary); }
+.fstack-row-status.is-snoozed { background: rgba(240, 180, 76, 0.16); color: var(--pt-q, #f0b44c); }
+.fstack-row-status.is-converted, .fstack-row-status.is-linked { background: var(--accent-muted); color: var(--accent); }
+
+/* — карточки — */
+.tinbox-card, .fstack-row, .focus-card, #panel-actual .focus-card, .pt-card { border-radius: var(--ui-card-r); }

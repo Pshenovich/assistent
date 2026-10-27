@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261026-triage-edit";
+  var WEBAPP_BUILD = "20261027-ui-kit";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -15612,7 +15612,8 @@
     window.requestAnimationFrame(fit);
   }
 
-  function mountTaskAssignee(host, initial) {
+  // opts.anchorHost — выпадающий список по ширине всего host (чип + поле), а не только поля ввода.
+  function mountTaskAssignee(host, initial, opts) {
     var fallback = defaultTaskAssignee();
     var selected = {
       user_id: String((initial && (initial.user_id || initial.assignee_user_id)) || "") || fallback.user_id,
@@ -15643,7 +15644,7 @@
     add.appendChild(suggest);
     host.appendChild(chips);
     host.appendChild(add);
-    floatSuggestMenu(suggest, input);
+    floatSuggestMenu(suggest, opts && opts.anchorHost ? host : input);
 
     function paint() {
       chips.innerHTML = "";
@@ -21022,6 +21023,13 @@
     host.addEventListener("click", function (e) {
       if (e.target === host) closeFocusStack();
     });
+    host.addEventListener("pointerdown", function (e) {
+      var cur = fstack && fstack.view === "stack" ? fstack.items[fstack.idx] : null;
+      var ui = cur ? focusUiFor(fstackAid(cur)) : null;
+      if (!ui || !ui.menu || e.target.closest(".fstack-pop, .tinbox-act")) return;
+      ui.menu = "";
+      renderFocusStack();
+    });
     document.body.appendChild(host);
     document.body.classList.add("tinbox-open");
     var s = { it: it, host: host, panel: panel, items: [], idx: 0, view: view === "list" ? "list" : "stack", busy: false, last: null, changed: false };
@@ -21177,8 +21185,6 @@
     else if (ui.mode === "task") form = focusTaskForm(aid, f);
     else if (ui.mode === "link") form = focusLinkForm(aid, f);
     else if (ui.mode === "snooze_date" || ui.mode === "remind_date") form = focusDatePicker(aid, f, ui.mode === "remind_date" ? "remind" : "snooze");
-    else if (ui.menu === "more") form = focusMenu(focusMoreMenuItems(aid, f));
-    else if (ui.menu === "snooze") form = focusMenu(focusSnoozeMenuItems(aid, f));
     if (form) {
       var wrap = tinboxEl("div", "tinbox-form fstack-form");
       wrap.appendChild(form);
@@ -21248,7 +21254,8 @@
     var contact = d.assignee || focusAssigneeContact(f.assignee);
     var assApi = mountTaskAssignee(
       assHost,
-      contact ? { user_id: contact.user_id || contact.telegram_user_id || "", email: contact.email || "", name: contact.name || "" } : null
+      contact ? { user_id: contact.user_id || contact.telegram_user_id || "", email: contact.email || "", name: contact.name || "" } : null,
+      { anchorHost: true }
     );
     var assInput = assHost.querySelector("input");
     if (assInput) assInput.placeholder = "Сменить…";
@@ -21299,6 +21306,14 @@
       });
       row.appendChild(b);
     });
+    // «Позже» / «Не задача»: варианты — всплывающим окном над своей кнопкой.
+    if (ui.menu === "snooze" || ui.menu === "more") {
+      var aid = fstackAid(f);
+      var pop = tinboxEl("div", "fstack-pop is-" + (ui.menu === "more" ? "right" : "left"));
+      pop.setAttribute("role", "menu");
+      pop.appendChild(focusMenu(ui.menu === "more" ? focusMoreMenuItems(aid, f) : focusSnoozeMenuItems(aid, f)));
+      row.appendChild(pop);
+    }
     return row;
   }
 
