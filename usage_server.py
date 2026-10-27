@@ -10180,6 +10180,139 @@ async def miniapp_proactive_dismiss(
     return {"ok": True}
 
 
+class _MiniappTopicBody(BaseModel):
+    op: str  # confirm | reject | undo
+    key: str = ""
+    name: str = ""
+    topic_id: Optional[int] = None
+    items: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    undo: Optional[dict[str, Any]] = None
+
+
+class _MiniappTopicItemBody(BaseModel):
+    kind: str
+    value: str
+    on: bool
+    scope: str = "me"  # me | all
+
+
+def _topic_payload(uid: int, view: dict[str, Any]) -> dict[str, Any]:
+    from assistant.stores import meeting_topics as topics
+
+    out = dict(view)
+    out["history"] = topics.history(int(view["id"]), limit=20)
+    return out
+
+
+@miniapp_router.post("/proactive/topic")
+async def miniapp_proactive_topic(
+    body: _MiniappTopicBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Карточка «связать тему?»: Связать (отмеченное — у всех), Не то (мне больше не предлагать), Вернуть."""
+    from assistant.services import proactive
+    from assistant.stores import meeting_topics as topics
+
+    uid = int(principal.telegram_user_id)
+    who = _principal_display_name(principal)
+    op = str(body.op or "")
+
+    def _run() -> dict[str, Any]:
+        if body.topic_id and int(body.topic_id) not in topics.visible_topic_ids(uid):
+            raise HTTPException(status_code=404, detail="Тема не найдена")
+        if op == "confirm":
+            if not body.items:
+                raise HTTPException(status_code=400, detail="Отметьте, что связать")
+            res = topics.confirm(uid, body.items, name=body.name, topic_id=body.topic_id, by_name=who)
+            if body.rejected:
+                topics.reject(uid, body.rejected)
+            return {"undo": res}
+        if op == "reject":
+            topics.reject(uid, body.items)
+            return {"undo": {}}
+        if op == "undo":
+            tok = body.undo or {}
+            if tok.get("topic_id") and int(tok["topic_id"]) not in topics.visible_topic_ids(uid):
+                raise HTTPException(status_code=404, detail="Тема не найдена")
+            topics.undo(uid, tok, body.rejected or body.items, by_name=who)
+            if body.key:
+                proactive.undismiss(uid, body.key)
+            return {}
+        raise HTTPException(status_code=400, detail="Неизвестное действие")
+
+    res = await run_in_threadpool(_run)
+    if body.key and op in ("confirm", "reject"):
+        await run_in_threadpool(proactive.dismiss, uid, body.key)
+    _FOCUS_CACHE.pop(uid, None)
+    return {"ok": True, **res}
+
+
+@miniapp_router.get("/topics")
+async def miniapp_topics_list(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Темы встреч, которые видит пользователь (свои и из чатов, где он состоит)."""
+    from assistant.stores import meeting_topics as topics
+
+    uid = int(principal.telegram_user_id)
+    items = await run_in_threadpool(topics.topics_for_user, uid)
+    return {"ok": True, "topics": items}
+
+
+@miniapp_router.get("/topics/for-event")
+async def miniapp_topic_for_event(
+    title: str = "",
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Чип «Тема …» в карточке встречи."""
+    from assistant.stores import meeting_topics as topics
+
+    uid = int(principal.telegram_user_id)
+    t = await run_in_threadpool(topics.topic_for_title, uid, title)
+    return {"ok": True, "topic": t}
+
+
+@miniapp_router.get("/topics/{topic_id}")
+async def miniapp_topic_get(topic_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.stores import meeting_topics as topics
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        if int(topic_id) not in topics.visible_topic_ids(uid):
+            raise HTTPException(status_code=404, detail="Тема не найдена")
+        return _topic_payload(uid, topics.topic_view(uid, int(topic_id)))
+
+    return {"ok": True, "topic": await run_in_threadpool(_run)}
+
+
+@miniapp_router.post("/topics/{topic_id}/item")
+async def miniapp_topic_item(
+    topic_id: int,
+    body: _MiniappTopicItemBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Переключатель пункта темы: у меня / у всех."""
+    from assistant.stores import meeting_topics as topics
+
+    uid = int(principal.telegram_user_id)
+    who = _principal_display_name(principal)
+    if body.kind not in ("title", "chat") or body.scope not in ("me", "all"):
+        raise HTTPException(status_code=400, detail="Неверный пункт")
+
+    def _run() -> dict[str, Any]:
+        if int(topic_id) not in topics.visible_topic_ids(uid):
+            raise HTTPException(status_code=404, detail="Тема не найдена")
+        try:
+            topics.set_item(uid, int(topic_id), body.kind, body.value, on=bool(body.on), scope=body.scope, by_name=who)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Пункт не найден")
+        return _topic_payload(uid, topics.topic_view(uid, int(topic_id)))
+
+    res = await run_in_threadpool(_run)
+    _FOCUS_CACHE.pop(uid, None)
+    return {"ok": True, "topic": res}
+
+
 @miniapp_router.post("/proactive/done")
 async def miniapp_proactive_done(
     body: _MiniappFocusDoneBody,

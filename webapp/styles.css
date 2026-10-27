@@ -23218,3 +23218,15 @@ ol.note-discuss-md-list { list-style: decimal; }
 
 /* — карточки — */
 .tinbox-card, .fstack-row, .focus-card, #panel-actual .focus-card, .pt-card { border-radius: var(--ui-card-r); }
+
+/* Темы встреч: экран темы и чип в карточке встречи */
+.topic-scope { display: flex; gap: 4px; padding: 3px; border-radius: 10px; background: var(--surface-muted); }
+.topic-scope-btn { flex: 1; padding: 6px 10px; border: none; border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: 0.84rem; cursor: pointer; }
+.topic-scope-btn.is-on { background: var(--surface-elevated, #232326); color: var(--text-primary); }
+.topic-row { align-items: center; cursor: default; }
+.topic-row .focus-done-text { flex: 1; min-width: 0; }
+.topic-row.is-off .focus-done-text { color: var(--text-tertiary); }
+.topic-history { display: flex; flex-direction: column; gap: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
+.topic-history p { margin: 0; font-size: 0.76rem; color: var(--text-tertiary); }
+.ev-topic-chip { align-self: flex-start; margin: 0 0 8px; padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--radius-full); background: transparent; color: var(--text-secondary); font-size: 0.8rem; cursor: pointer; }
+.ev-topic-chip:hover { color: var(--text-primary); border-color: var(--text-tertiary); }

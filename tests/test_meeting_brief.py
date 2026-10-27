@@ -1,7 +1,18 @@
 import json
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from assistant.services import meeting_brief as mb
+
+
+@pytest.fixture(autouse=True)
+def _no_topics(monkeypatch):
+    """Бриф без базы тем: тема — только сама встреча, чатов нет."""
+    from assistant.services import meeting_topics
+
+    monkeypatch.setattr(meeting_topics, "resolve", lambda uid, title, **k: {
+        "topic": None, "titles": {title}, "meetings": [], "chats": [], "candidates": {"titles": [], "chats": []}})
 
 
 def _ev(start, attendees=None):
@@ -32,7 +43,6 @@ def test_attendees_skip_self_and_resources():
 
 
 def test_collect_facts_and_message(monkeypatch):
-    from assistant.lib import meeting_context
     from assistant.services import gpt_calendar_tools as gct
     from assistant.nlu import llm
 
@@ -47,7 +57,10 @@ def test_collect_facts_and_message(monkeypatch):
         ], "tasks_given": [{"title": "Договор", "status": "выполнена"}, {"title": "Смета"}]}, ensure_ascii=False)
 
     monkeypatch.setattr(gct, "tool_person_history", fake_history)
-    monkeypatch.setattr(meeting_context, "_previous_brief", lambda uid, title, before, nid: "15 окт: решили пилот")
+    series = [{"date": "2026-10-15", "title": "Синк по пилоту", "note_id": 5, "topic": "пилот",
+               "decisions": ["решили пилот"], "open_questions": [], "tasks": []}]
+    monkeypatch.setattr(mb, "_series", lambda uid, meetings: series)
+    monkeypatch.setattr(mb, "related_items", lambda *a, **k: [])
     facts = mb.collect_facts(1, _ev(start))
     assert calls["args"]["person"] == "sasha@x.ru"
     assert calls["args"]["end_date"] == "2026-10-22"
@@ -56,7 +69,7 @@ def test_collect_facts_and_message(monkeypatch):
     assert p["meetings"] == [{"title": "Синк по пилоту", "start": "15 окт"},
                              {"title": "Старое", "start": "1 окт"}, {"title": "Ещё", "start": "2 сен"}]
     assert "open_tasks_given" not in p
-    assert facts["series"] == "15 окт: решили пилот"
+    assert facts["series"][0]["decisions"] == ["решили пилот"]
     assert "бюджет" in facts["meeting"]["description"] and "<b>" not in facts["meeting"]["description"]
 
     monkeypatch.setattr(llm, "_chat", lambda *a, **k: "```html\n<b>👥 Кто</b>\n<ul><li>Саша — 15 окт</li></ul><script>x</script> 5 < 6\n```")
@@ -67,12 +80,41 @@ def test_collect_facts_and_message(monkeypatch):
 
 
 def test_no_history_no_brief(monkeypatch):
-    from assistant.lib import meeting_context
     from assistant.services import gpt_calendar_tools as gct
 
     monkeypatch.setattr(gct, "tool_person_history", lambda ctx, args: json.dumps({"error": "нет"}))
-    monkeypatch.setattr(meeting_context, "_previous_brief", lambda *a: "")
+    monkeypatch.setattr(mb, "related_items", lambda *a, **k: [])
     assert mb.build_brief_message(1, _ev(datetime.now(timezone.utc))) is None
+
+
+def test_people_only_is_not_a_brief(monkeypatch):
+    """Одни «кто и когда виделись» + ссылки созвона — не бриф."""
+    from assistant.services import gpt_calendar_tools as gct
+
+    monkeypatch.setattr(gct, "tool_person_history", lambda ctx, args: json.dumps(
+        {"person": "Саша", "meetings": [{"title": "Демо", "start": "2026-09-25 12:00"}]}, ensure_ascii=False))
+    monkeypatch.setattr(mb, "related_items", lambda *a, **k: [])
+    ev = _ev(datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc))
+    ev["raw"]["description"] = (
+        "Zoom: https://us04web.zoom.us/j/78438719306?pwd=abc\nИдентификатор конференции: 784 3871 9306\n"
+        "Код доступа: 1\nТелемост: https://telemost.yandex.ru/j/74677864151616")
+    facts = mb.collect_facts(1, ev)
+    assert facts["people"] and facts["meeting"]["description"] == ""
+    assert facts["join_url"].startswith("https://us04web.zoom.us/j/")
+    assert not mb.has_substance(facts)
+    assert mb.build_brief_message(1, ev) is None
+
+
+def test_today_meetings_not_in_people(monkeypatch):
+    from assistant.services import gpt_calendar_tools as gct
+
+    monkeypatch.setattr(gct, "_tz", lambda uid: timezone.utc)
+    monkeypatch.setattr(gct, "tool_person_history", lambda ctx, args: json.dumps({"person": "Саша", "meetings": [
+        {"title": "Синк по пилоту", "start": "2026-10-22 12:00"}, {"title": "Позже", "start": "2026-10-22 15:00"},
+        {"title": "Утро", "start": "2026-10-22 09:00"}]}, ensure_ascii=False))
+    monkeypatch.setattr(mb, "related_items", lambda *a, **k: [])
+    facts = mb.collect_facts(1, _ev(datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)))
+    assert facts["people"][0]["meetings"] == [{"title": "Утро", "start": "2026-10-22 09:00"}]
 
 
 def test_events_due_for_brief(monkeypatch):

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261027-speakers2">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261027-topics">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -98,8 +98,8 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261027-speakers2" />
-  <link rel="stylesheet" href="/webapp/board.css?v=20261027-speakers2" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261027-topics" />
+  <link rel="stylesheet" href="/webapp/board.css?v=20261027-topics" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -1009,6 +1009,11 @@
                 <p class="pf-group-title">Чаты с Лео</p>
                 <div id="profile-chats-list" class="pf-list pf-skel-list"><div class="pf-row"><span class="pf-row-body"></span></div><div class="pf-row"><span class="pf-row-body"></span></div><div class="pf-row"><span class="pf-row-body"></span></div></div>
                 <p class="pf-hint">Чат появляется здесь после первого сообщения в нём. Чтобы добавить чат — пригласите бота Orbita в группу.</p>
+              </div>
+              <div class="pf-group hidden" id="profile-topics-group">
+                <p class="pf-group-title">Темы встреч</p>
+                <div id="profile-topics-list" class="pf-list"></div>
+                <p class="pf-hint">Встречи и чаты одной темы попадают в бриф перед встречей. Тема общая для участников связанных чатов.</p>
               </div>
               <div id="profile-chats-empty" class="pf-empty hidden">
                 <span class="pf-empty-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" /></svg></span>
@@ -2307,12 +2312,12 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261027-speakers2" defer></script>
-  <script src="/webapp/realtime.js?v=20261027-speakers2" defer></script>
-  <script src="/webapp/note-yjs.js?v=20261027-speakers2" defer></script>
-  <script src="/webapp/board-geom.js?v=20261027-speakers2" defer></script>
-  <script src="/webapp/board.js?v=20261027-speakers2" defer></script>
-  <script src="/webapp/app.js?v=20261027-speakers2" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261027-topics" defer></script>
+  <script src="/webapp/realtime.js?v=20261027-topics" defer></script>
+  <script src="/webapp/note-yjs.js?v=20261027-topics" defer></script>
+  <script src="/webapp/board-geom.js?v=20261027-topics" defer></script>
+  <script src="/webapp/board.js?v=20261027-topics" defer></script>
+  <script src="/webapp/app.js?v=20261027-topics" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261023-reply1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261025-mobfix" defer></script>

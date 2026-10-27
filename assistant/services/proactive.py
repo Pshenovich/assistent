@@ -85,6 +85,15 @@ def dismiss(owner_user_id: Any, key: str, *, until: Optional[datetime] = None) -
         conn.commit()
 
 
+def undismiss(owner_user_id: Any, key: str) -> None:
+    """«Вернуть»: карточка снова может показаться."""
+    with _LOCK:
+        conn = _conn()
+        conn.execute("DELETE FROM proactive_dismissed WHERE owner_user_id = ? AND item_key = ?",
+                     (str(owner_user_id), str(key)[:300]))
+        conn.commit()
+
+
 def dismissed_keys(owner_user_id: Any) -> set[str]:
     now = _now().isoformat()
     with _LOCK:
@@ -642,6 +651,14 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
         kinds = {}
     if prefs.get("before_meetings"):
         items += rule_prep([{**e, "_owner_uid": uid} for e in evs], kinds, now, tz)
+        try:
+            from assistant.services import meeting_topics
+
+            card = meeting_topics.link_card(uid, evs, now)  # «связать в одну тему?» — для брифа
+            if card:
+                items.append(card)
+        except Exception as e:
+            print(f"[proactive] topic link failed uid={uid} err={e!r}")
     if prefs.get("after_meetings"):
         items += rule_no_results(evs, kinds, now, tz)
     try:

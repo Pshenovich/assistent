@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261027-speakers2";
+  var WEBAPP_BUILD = "20261027-topics";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -8516,6 +8516,7 @@
         if (list) list.appendChild(row);
       });
       syncDigestChatsListOff(enabled);
+      loadProfileTopics();
       if (demoBtn) {
         setHidden(demoBtn, !(data && data.miniapp_dev));
       }
@@ -19113,6 +19114,7 @@
       items = (data && data.items) || [];
     } catch (_) {}
     renderEventMaterials(box, ev, items);
+    renderEventTopicChip(ev, box);
   }
 
   function renderEventMaterials(box, ev, items) {
@@ -20273,6 +20275,7 @@
 
   function focusCard(it, inPanel) {
     if (it && it.type === "task_inbox") return focusInboxCard(it, inPanel);
+    if (it && it.type === "topic_link") return focusTopicCard(it, inPanel);
     var card = document.createElement("div");
     card.className = "focus-card" + (it.urgency >= 3 ? " is-urgent" : "") + (inPanel ? " is-wide" : "");
     var all = it.actions || [];
@@ -22387,6 +22390,393 @@
     syncAppOverlay();
   }
 
+
+  // ---- Темы встреч: «связать в одну тему?» в Фокусе и экран темы ----
+  // Тема — правило «эти встречи и этот чат — одно» для брифа к встрече. Общая для участников связанного чата;
+  // у каждого — свои «у меня выкл.» и «не то».
+
+  function topicItemMeta(i) {
+    if (i.kind === "chat") {
+      if (i.access === false) return "чат · вы в нём не состоите";
+      return "чат" + (i.last_message_at ? " · последнее сообщение " + topicDay(i.last_message_at) : "");
+    }
+    return "встреча" + (i.date ? " · " + topicDay(i.date) : "");
+  }
+
+  function topicDay(iso) {
+    var d = new Date(String(iso || "").length <= 10 ? String(iso) + "T12:00:00" : String(iso));
+    if (isNaN(d.getTime())) return "";
+    var today = new Date();
+    if (d.toDateString() === today.toDateString()) return "сегодня";
+    return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }).replace(".", "");
+  }
+
+  function topicCardItems(it) {
+    return ((it.topic && it.topic.items) || []).map(function (i) {
+      return { kind: i.kind, value: i.value, label: i.label };
+    });
+  }
+
+  function topicDropCard(it) {
+    focusItems = focusItems.filter(function (x) {
+      return x.key !== it.key;
+    });
+    renderFocusRow();
+    renderFocusPanel();
+  }
+
+  function topicUndoToast(text, undoBody) {
+    var node = document.createElement("span");
+    node.appendChild(tinboxEl("span", "note-toast-copy", text));
+    var b = tinboxEl("button", "note-toast-link", "Вернуть");
+    b.type = "button";
+    b.addEventListener("click", async function () {
+      try {
+        await apiFetch("/proactive/topic", { method: "POST", body: JSON.stringify(Object.assign({ op: "undo" }, undoBody)) });
+        showNoteToast("Вернул как было");
+        await loadFocus(true);
+      } catch (e) {
+        showNoteToast((e && e.message) || "Не получилось вернуть");
+      }
+    });
+    node.appendChild(b);
+    showNoteToast("", { node: node, actionable: true, duration: 6000 });
+  }
+
+  async function topicLink(it, picked, rest) {
+    var t = it.topic || {};
+    // Сама встреча, к которой карточка, — всегда в теме: иначе бриф к ней тему не найдёт.
+    if (t.anchor) picked = [t.anchor].concat(picked);
+    try {
+      var res = await apiFetch("/proactive/topic", {
+        method: "POST",
+        body: JSON.stringify({ op: "confirm", key: it.key, name: t.name || "", topic_id: t.topic_id || null, items: picked, rejected: rest }),
+      });
+      topicDropCard(it);
+      topicUndoToast(
+        "Связал " + (picked.length - (t.anchor ? 1 : 0)) + " — учту в брифе к «" + (t.name || "встрече") + "»",
+        { key: it.key, undo: res.undo || {}, rejected: rest }
+      );
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не получилось связать");
+    }
+  }
+
+  async function topicReject(it) {
+    var all = topicCardItems(it);
+    try {
+      await apiFetch("/proactive/topic", { method: "POST", body: JSON.stringify({ op: "reject", key: it.key, items: all }) });
+      topicDropCard(it);
+      topicUndoToast("Не связываю. Больше не предложу", { key: it.key, rejected: all });
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не получилось");
+    }
+  }
+
+  function topicSplit(it) {
+    var picked = [];
+    var rest = [];
+    ((it.topic && it.topic.items) || []).forEach(function (i) {
+      (i.checked ? picked : rest).push({ kind: i.kind, value: i.value, label: i.label });
+    });
+    return [picked, rest];
+  }
+
+  function focusTopicCard(it, inPanel) {
+    var card = document.createElement("div");
+    card.className = "focus-card focus-card--topic" + (it.urgency >= 3 ? " is-urgent" : "") + (inPanel ? " is-wide" : "");
+    var head = document.createElement("div");
+    head.className = "focus-card-head";
+    var ico = document.createElement("span");
+    ico.className = "focus-card-ico is-blue";
+    ico.innerHTML = DISCUSS_ICONS.link || DISCUSS_ICONS.spark;
+    head.appendChild(ico);
+    var kind = document.createElement("span");
+    kind.className = "focus-card-kind";
+    kind.innerHTML = '<span class="focus-card-kind-label">Связать тему</span>';
+    head.appendChild(kind);
+    var x = document.createElement("button");
+    x.type = "button";
+    x.className = "focus-card-x";
+    x.setAttribute("aria-label", "Не то");
+    x.title = "Не то — больше не предлагать";
+    x.innerHTML = DISCUSS_ICONS.x;
+    x.addEventListener("click", function (e) {
+      e.preventDefault();
+      topicReject(it);
+    });
+    head.appendChild(x);
+    card.appendChild(head);
+    var t = document.createElement("b");
+    t.className = "focus-card-title";
+    t.textContent = it.title || "";
+    card.appendChild(t);
+    var acts = document.createElement("div");
+    acts.className = "focus-card-acts";
+    var ok = document.createElement("button");
+    ok.type = "button";
+    ok.className = "focus-card-btn is-primary";
+    ok.textContent = "Связать";
+    ok.addEventListener("click", function (e) {
+      e.preventDefault();
+      var sp = topicSplit(it);
+      ok.disabled = true;
+      topicLink(it, sp[0], sp[1]).finally(function () {
+        ok.disabled = false;
+      });
+    });
+    var pick = document.createElement("button");
+    pick.type = "button";
+    pick.className = "focus-card-btn is-quiet";
+    pick.textContent = "Выбрать";
+    pick.addEventListener("click", function (e) {
+      e.preventDefault();
+      openTopicPick(it);
+    });
+    acts.appendChild(ok);
+    acts.appendChild(pick);
+    card.appendChild(acts);
+    if (it.source) {
+      var f = document.createElement("div");
+      f.className = "focus-card-foot";
+      var ft = document.createElement("span");
+      ft.className = "focus-card-foot-text";
+      ft.textContent = it.source;
+      f.appendChild(ft);
+      card.appendChild(f);
+    } else {
+      card.classList.add("no-foot");
+    }
+    return card;
+  }
+
+  // «Выбрать»: список с галочками — что связать в тему.
+  function openTopicPick(it) {
+    var t = it.topic || {};
+    var items = t.items || [];
+    var ov = focusDoneOverlay("Тема «" + (t.name || "встреча") + "»");
+    var body = ov.querySelector(".focus-done-body");
+    body.innerHTML = "";
+    var sub = document.createElement("p");
+    sub.className = "focus-done-sub";
+    sub.textContent = "Отмеченное попадёт в бриф к встрече: итоги прошлых встреч и переписка из чатов. Тема станет общей для участников этих чатов.";
+    body.appendChild(sub);
+    var list = document.createElement("div");
+    list.className = "focus-done-list";
+    var boxes = items.map(function (i) {
+      var row = document.createElement("label");
+      row.className = "focus-done-row";
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!i.checked;
+      var tx = document.createElement("span");
+      tx.className = "focus-done-text";
+      tx.textContent = i.label || "";
+      var meta = document.createElement("small");
+      meta.textContent = topicItemMeta(i) + (i.checked ? "" : " · совпало одно слово");
+      tx.appendChild(meta);
+      row.appendChild(cb);
+      row.appendChild(tx);
+      list.appendChild(row);
+      return cb;
+    });
+    body.appendChild(list);
+    var save = document.createElement("button");
+    save.type = "button";
+    save.className = "focus-card-btn is-primary focus-done-save";
+    body.appendChild(save);
+    var no = document.createElement("button");
+    no.type = "button";
+    no.className = "focus-card-btn focus-done-save";
+    no.textContent = "Не то — больше не предлагать";
+    body.appendChild(no);
+    function split() {
+      var picked = [];
+      var rest = [];
+      items.forEach(function (i, k) {
+        (boxes[k].checked ? picked : rest).push({ kind: i.kind, value: i.value, label: i.label });
+      });
+      return [picked, rest];
+    }
+    function sync() {
+      var n = split()[0].length;
+      save.textContent = n ? "Связать · " + n : "Отметьте, что связать";
+      save.disabled = !n;
+    }
+    boxes.forEach(function (cb) {
+      cb.addEventListener("change", sync);
+    });
+    sync();
+    save.addEventListener("click", async function () {
+      var sp = split();
+      if (!sp[0].length) return;
+      save.disabled = true;
+      closeFocusDonePicker();
+      await topicLink(it, sp[0], sp[1]);
+    });
+    no.addEventListener("click", async function () {
+      closeFocusDonePicker();
+      await topicReject(it);
+    });
+    showFocusDoneOverlay(ov);
+  }
+
+  var TOPIC_OP_TEXT = { link: "связал(а)", on: "включил(а)", off: "убрал(а)", undo: "отменил(а) связь" };
+
+  // Экран темы: что в неё входит, переключатели «у меня» / «у всех», история.
+  async function openTopicSheet(topicId) {
+    var data;
+    try {
+      data = await apiFetch("/topics/" + encodeURIComponent(String(topicId)), { method: "GET" });
+    } catch (e) {
+      showNoteToast((e && e.message) || "Тема недоступна");
+      return;
+    }
+    var topic = data.topic;
+    var ov = focusDoneOverlay("Тема «" + (topic.name || "встречи") + "»");
+    var scope = topic.is_owner ? "all" : "me";
+    function render() {
+      var body = ov.querySelector(".focus-done-body");
+      body.innerHTML = "";
+      var sub = document.createElement("p");
+      sub.className = "focus-done-sub";
+      sub.textContent = "Встречи и чаты темы попадают в бриф к встрече. Тема общая для участников связанных чатов — каждый видит только свои заметки и свои чаты.";
+      body.appendChild(sub);
+      var seg = document.createElement("div");
+      seg.className = "topic-scope";
+      [["me", "Только у меня"], ["all", "У всех"]].forEach(function (s) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "topic-scope-btn" + (scope === s[0] ? " is-on" : "");
+        b.textContent = s[1];
+        b.addEventListener("click", function () {
+          scope = s[0];
+          render();
+        });
+        seg.appendChild(b);
+      });
+      body.appendChild(seg);
+      var list = document.createElement("div");
+      list.className = "focus-done-list";
+      topic.items.forEach(function (i) {
+        var row = document.createElement("div");
+        row.className = "focus-done-row topic-row" + (i.access === false ? " is-off" : "");
+        var tx = document.createElement("span");
+        tx.className = "focus-done-text";
+        tx.textContent = i.label || i.value;
+        var meta = document.createElement("small");
+        var state = i.status !== "on" ? " · убрано у всех" : i.mine_off ? " · убрано у вас" : "";
+        meta.textContent = topicItemMeta(i) + state;
+        tx.appendChild(meta);
+        row.appendChild(tx);
+        if (i.access !== false) {
+          var on = scope === "all" ? i.status === "on" : i.status === "on" && !i.mine_off;
+          var tg = document.createElement("button");
+          tg.type = "button";
+          tg.className = "svc-toggle" + (on ? " svc-toggle--on" : "");
+          tg.setAttribute("aria-pressed", on ? "true" : "false");
+          tg.setAttribute("aria-label", (i.label || "") + (scope === "all" ? " — у всех" : " — у меня"));
+          tg.innerHTML = '<span class="svc-toggle-knob"></span>';
+          tg.addEventListener("click", async function () {
+            tg.disabled = true;
+            try {
+              var r = await apiFetch("/topics/" + encodeURIComponent(String(topic.id)) + "/item", {
+                method: "POST",
+                body: JSON.stringify({ kind: i.kind, value: String(i.value), on: !on, scope: scope }),
+              });
+              topic = r.topic;
+              render();
+            } catch (e) {
+              tg.disabled = false;
+              showNoteToast((e && e.message) || "Не получилось");
+            }
+          });
+          row.appendChild(tg);
+        }
+        list.appendChild(row);
+      });
+      body.appendChild(list);
+      var hist = (topic.history || []).slice(0, 8);
+      if (hist.length) {
+        var h = document.createElement("div");
+        h.className = "topic-history";
+        hist.forEach(function (x) {
+          var p = document.createElement("p");
+          p.textContent =
+            (x.by_name || "Кто-то") + " " + (TOPIC_OP_TEXT[x.op] || x.op) + " «" + (x.label || x.value) + "»" +
+            (x.op === "off" || x.op === "on" ? (x.scope === "all" ? " у всех" : " у себя") : "") +
+            " · " + topicDay(x.created_at);
+          h.appendChild(p);
+        });
+        body.appendChild(h);
+      }
+    }
+    render();
+    showFocusDoneOverlay(ov);
+  }
+
+  // Чип «Тема …» в карточке встречи.
+  async function renderEventTopicChip(ev, box) {
+    var title = String((ev && (ev.summary || ev.title)) || "").trim();
+    if (!title || !box) return;
+    var data;
+    try {
+      data = await apiFetch("/topics/for-event?title=" + encodeURIComponent(title), { method: "GET" });
+    } catch (_) {
+      return;
+    }
+    var old = box.querySelector(".ev-topic-chip");
+    if (old) old.remove();
+    var t = data && data.topic;
+    if (!t || box._ev !== ev) return;
+    var n = (t.items || []).filter(function (i) {
+      return i.active;
+    }).length;
+    var chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "ev-topic-chip";
+    chip.textContent = "Тема «" + (t.name || title) + "» · " + n + " " + pluralRu(n, "пункт", "пункта", "пунктов");
+    chip.addEventListener("click", function (e) {
+      e.preventDefault();
+      openTopicSheet(t.id);
+    });
+    var list = box.querySelector(".ev-materials-list");
+    box.insertBefore(chip, list || box.firstChild);
+  }
+
+  // Профиль → Чаты → «Темы встреч».
+  async function loadProfileTopics() {
+    var group = document.getElementById("profile-topics-group");
+    var list = document.getElementById("profile-topics-list");
+    if (!group || !list) return;
+    var data;
+    try {
+      data = await apiFetch("/topics", { method: "GET" });
+    } catch (_) {
+      return;
+    }
+    var topics = (data && data.topics) || [];
+    setHidden(group, !topics.length);
+    list.innerHTML = "";
+    topics.forEach(function (t) {
+      var active = (t.items || []).filter(function (i) {
+        return i.active;
+      });
+      var nm = active.filter(function (i) { return i.kind === "title"; }).length;
+      var nc = active.filter(function (i) { return i.kind === "chat"; }).length;
+      var row = document.createElement("button");
+      row.type = "button";
+      row.className = "pf-row";
+      row.innerHTML = '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title"></span><span class="pf-row-sub"></span></span></span>';
+      row.querySelector(".pf-row-title").textContent = t.name || "Тема";
+      row.querySelector(".pf-row-sub").textContent =
+        nm + " " + pluralRu(nm, "встреча", "встречи", "встреч") + " · " + nc + " " + pluralRu(nc, "чат", "чата", "чатов");
+      row.addEventListener("click", function () {
+        openTopicSheet(t.id);
+      });
+      list.appendChild(row);
+    });
+  }
 
   // ---- Профиль → «Подсказки ассистента» ----
   var PROACTIVE_ROWS = [
