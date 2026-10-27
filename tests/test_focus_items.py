@@ -121,6 +121,34 @@ class FocusItemsTests(unittest.TestCase):
                "link": {"task_id": 7}, "fields": {}}
         self.assertEqual(fi.place_mark(md, row), (md, False))
 
+    def test_summary_task_chip_goes_to_task_line_not_decision(self) -> None:
+        # Те же слова в «Решениях» и в «Задачах»: у пункта нет ID строки — ID берём из meta.tasks.
+        body = (
+            "<h2>✅ Принятые решения</h2><ul><li><p>Создать задачи по BGPT и передать их на оценку.</p></li></ul>"
+            '<h2>📋 Задачи</h2><ul class="note-task-list">'
+            '<li data-leo-item="iebb2efaf59"><p>Спикер 1 — Создать задачи по BGPT и передать на оценку</p></li>'
+            '<li data-leo-item="i7fa62c0fbc"><p>Спикер 1 — Отчитаться по задачам BGPT — Сегодня</p></li></ul>'
+        )
+        tasks = [
+            {"id": "iebb2efaf59", "assignee": "Спикер 1", "task": "Создать задачи по BGPT и передать на оценку"},
+            {"id": "i7fa62c0fbc", "assignee": "Спикер 1", "task": "Отчитаться по задачам BGPT", "deadline": "Сегодня"},
+        ]
+        row = {"item_key": "sumtask:1:x", "text": "Создать задачи по BGPT и передать на оценку", "who": "Спикер 1",
+               "status": "converted", "link": {"task_id": 227, "title": "Создать задачи по BGPT"}, "fields": {},
+               "source": {"kind": "note", "id": 1}}
+        out, changed = fi.place_mark(body, row, tasks)
+        self.assertTrue(changed)
+        mark = out.index("note-focus-mark")
+        self.assertGreater(mark, out.index("iebb2efaf59"))
+        self.assertLess(mark, out.index("i7fa62c0fbc"))
+
+    def test_mark_never_lands_on_heading(self) -> None:
+        body = "<h2>📋 Задачи</h2><ul><li><p>Ира — отправить договор</p></li></ul>"
+        row = {"item_key": "ins:1:h", "text": "Оценить задачи по почте", "who": "", "status": "dismissed",
+               "reason": "not_relevant", "link": {}, "fields": {}}
+        out, _ = fi.place_mark(body, row)
+        self.assertNotIn("note-focus-mark", out)
+
     def test_quote_finds_line_for_paraphrase(self) -> None:
         row = {"item_key": "ins:1:q", "text": "Сделать интеграционный API", "who": "", "quote": "подготовить API для интеграции до пятницы",
                "status": "converted", "link": {"task_id": 7}, "fields": {}}

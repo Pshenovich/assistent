@@ -1565,7 +1565,9 @@ function repairOrphanTaskText(root) {
     taskUl.setAttribute("data-type", "taskList");
 
     taskUl.querySelectorAll(":scope > li").forEach(function (li) {
-      if (li.querySelector(".note-task-chip, [data-leo-task-id]")) return;
+      // Чип задачи и значок Фокуса («неактуально», чип поставленной задачи) — не текст:
+      // пересборка строки текстом превращала значок в слова и теряла чип.
+      if (li.querySelector(".note-task-chip, [data-leo-task-id], .note-focus-mark")) return;
       const text = extractTaskText(li);
       const checked =
         li.hasAttribute("checked") || li.getAttribute("data-checked") === "true";
@@ -5010,7 +5012,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261027-widetable",
+  assetVersion: "20261027-taskmarks",
   Y: Y,
   mount: mount,
   importBody: importBody,

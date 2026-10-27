@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261027-widetable";
+  var WEBAPP_BUILD = "20261027-taskmarks";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261027-widetable"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261027-taskmarks"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -25316,13 +25316,54 @@
     return box;
   }
 
+  // Лента карточки: события поручения и переносы срока (они живут в schedule_log задачи) — по времени.
+  function postedFeedItems(state) {
+    var sched = ((state.task && state.task.schedule_log) || []).map(function (it) {
+      return Object.assign({ kind: "rescheduled" }, it);
+    });
+    var all = (state.events || []).concat(sched);
+    var ms = function (e) {
+      var t = new Date(e.at).getTime();
+      return isNaN(t) ? 0 : t;
+    };
+    return all
+      .map(function (e, i) {
+        return { e: e, i: i, t: ms(e) };
+      })
+      .sort(function (a, b) {
+        return a.t - b.t || a.i - b.i;
+      })
+      .map(function (x) {
+        return x.e;
+      });
+  }
+
+  // «28 окт» / «завтра, 17:30» — срок до и после переноса.
+  function postedSchedWhen(iso, allDay) {
+    var d = new Date(iso);
+    if (!iso || isNaN(d.getTime())) return "—";
+    var day = localDateIsoFromMs(d.getTime());
+    var diff = postedDayDiff(day);
+    var label = diff === 0 ? "сегодня" : diff === 1 ? "завтра" : diff === -1 ? "вчера" : postedShortDate(day);
+    return allDay ? label : label + ", " + d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  }
+
   function renderPostedFeed(state) {
     var feed = document.createElement("div");
     feed.className = "pt-feed";
     var me = postedMeUid();
     var task = state.task;
     var assigneeName = postedTaskAssigneeLabel(task);
-    state.events.forEach(function (e) {
+    postedFeedItems(state).forEach(function (e) {
+      if (e.kind === "rescheduled") {
+        var rs = document.createElement("p");
+        rs.className = "pt-sys";
+        rs.textContent =
+          "Срок перенесён: " + postedSchedWhen(e.from_start, e.from_all_day) + " → " + postedSchedWhen(e.to_start, e.to_all_day) +
+          (e.by_name ? " · " + postedFirstName(e.by_name) : "") + " · " + postedTimeShort(e.at);
+        feed.appendChild(rs);
+        return;
+      }
       if (e.kind === "message" || (e.kind === "returned" && e.text) || (e.kind === "done" && e.text)) {
         var mine = String(e.actor_user_id) === me;
         var msg = document.createElement("div");
@@ -25367,7 +25408,7 @@
       sys.textContent = label + " · " + postedTimeShort(e.at);
       feed.appendChild(sys);
     });
-    if (!state.events.length) {
+    if (!feed.childNodes.length) {
       var empty = document.createElement("p");
       empty.className = "pt-sys";
       empty.textContent = "Пока тихо";

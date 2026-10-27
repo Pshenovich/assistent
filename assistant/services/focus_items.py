@@ -687,12 +687,15 @@ def _norm_line(s: str) -> str:
     return " ".join(re.findall(r"[a-zа-яё0-9]+", str(s or "").lower().replace("ё", "е")))
 
 
-def place_mark(html_text: str, row: dict[str, Any]) -> tuple[str, bool]:
+def place_mark(html_text: str, row: dict[str, Any], tasks: Optional[list[Any]] = None) -> tuple[str, bool]:
     """Снять старый значок пункта и поставить новый в конец самой похожей строки.
 
-    Строку ищем по цитате из исходника и по тексту пункта. Не нашлась (ИИ пересказал мысль
-    своими словами), а пункт стал задачей — чип задачи встаёт отдельной строкой в конце:
-    иначе из заметки не видно, что по ней уже поставлена задача."""
+    Сначала — строка по ID пункта; нет его (или строки с ним) — ID задачи саммари из tasks
+    (meta.tasks), к которой относится пункт: в саммари те же слова бывают и в «Решениях», и в
+    «Задачах», чип должен встать на строку задачи. Дальше строку ищем по цитате и тексту пункта
+    (заголовки — не кандидаты). Не нашлась (ИИ пересказал мысль своими словами), а пункт стал
+    задачей — чип задачи встаёт отдельной строкой в конце: иначе из заметки не видно, что по ней
+    уже поставлена задача."""
     mid = mark_id(row["item_key"])
     one = r'<span[^>]*class="note-focus-mark"[^>]*data-leo-mark-item="%s"[^>]*>.*?</span>' % mid
     src = re.sub(r"<p>\s*" + one + r"\s*</p>", "", str(html_text or ""), flags=re.S)
@@ -706,6 +709,10 @@ def place_mark(html_text: str, row: dict[str, Any]) -> tuple[str, bool]:
     from assistant.lib import note_items
 
     line = note_items.find_line(src, str((row.get("source") or {}).get("item") or ""))
+    if not line and tasks:
+        i = _meta_task_index(tasks, row)
+        if i >= 0:
+            line = note_items.find_line(src, str(tasks[i].get("id") or ""))
     if line:  # строка пункта по её ID — как бы её ни правили
         at = int(line["at"])
         return src[:at].rstrip() + " " + mark + src[at:], True
@@ -724,6 +731,8 @@ def place_mark(html_text: str, row: dict[str, Any]) -> tuple[str, bool]:
         return src, src != html_text
     best, best_score = None, 0.0
     for b in parser.blocks:
+        if b["tag"].startswith("h"):
+            continue  # «📋 Задачи» — одно слово, «совпадает» с любым пунктом
         if len(quote) >= 12 and quote in _norm_line(b["text"]):
             best, best_score = b, 1.0
             break
@@ -790,8 +799,9 @@ def sync_source(owner_user_id: Any, row: dict[str, Any]) -> None:
     if not note:
         return
     body = str(note.get("body") or "")
-    new_body, changed = place_mark(body, row)
     meta = dict(note.get("meta") or {}) if isinstance(note.get("meta"), dict) else {}
+    tasks = meta.get("tasks") if isinstance(meta.get("tasks"), list) else None
+    new_body, changed = place_mark(body, row, tasks)
     meta_changed = _sync_meta_task(meta, row)
     if changed or meta_changed:
         notes_store.update_note(
@@ -815,11 +825,8 @@ def _notify_participants(note_owner: str, note_id: int) -> None:
         print(f"[focus_items] focus notify failed note={note_id} err={e!r}")
 
 
-def _sync_meta_task(meta: dict[str, Any], row: dict[str, Any]) -> bool:
-    tasks = meta.get("tasks")
-    if not isinstance(tasks, list) or not tasks:
-        return False
-    p = public(row)
+def _meta_task_index(tasks: list[Any], row: dict[str, Any]) -> int:
+    """Задача саммари (индекс в meta.tasks), к которой относится пункт; -1 — не нашлась."""
     want = " ".join(x for x in (row.get("who"), row.get("text")) if x)
     item_id = str((row.get("source") or {}).get("item") or "")
     best_i, best_s = -1, 0.0
@@ -827,12 +834,20 @@ def _sync_meta_task(meta: dict[str, Any], row: dict[str, Any]) -> bool:
         if not isinstance(t, dict):
             continue
         if item_id and str(t.get("id") or "") == item_id:
-            best_i, best_s = i, 1.0  # задача саммари с тем же ID — как бы её ни переформулировали
-            break
+            return i  # задача саммари с тем же ID — как бы её ни переформулировали
         s = _score(want, f"{t.get('assignee') or ''} {t.get('task') or ''}")
         if s > best_s:
             best_i, best_s = i, s
-    if best_i < 0 or best_s < 0.5:
+    return best_i if best_s >= 0.5 else -1
+
+
+def _sync_meta_task(meta: dict[str, Any], row: dict[str, Any]) -> bool:
+    tasks = meta.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        return False
+    p = public(row)
+    best_i = _meta_task_index(tasks, row)
+    if best_i < 0:
         return False
     t = dict(tasks[best_i])
     before = json.dumps(t, ensure_ascii=False, sort_keys=True)
