@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261027-speakers";
+  var WEBAPP_BUILD = "20261027-sheet-menu";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -38999,11 +38999,8 @@
     head.className = "note-speaker-map-hint";
     head.textContent = "Загружаю спикеров…";
     menu.appendChild(head);
-    var host =
-      (anchor && anchor.closest && anchor.closest("#note-editor-overlay")) ||
-      document.getElementById("note-editor-overlay") ||
-      document.body;
-    host.appendChild(menu);
+    // В body: панель обсуждения — отдельный слой поверх окна заметки, внутри окна меню уходило под неё.
+    document.body.appendChild(menu);
     placeSpeakerMapMenu(menu, anchor);
     setTimeout(function () {
       document.addEventListener("click", onSpeakerMapMenuDocClick, true);
@@ -39225,12 +39222,9 @@
     addItem("Лист", "Текст и правки", "doc");
     addItem("Доска", "Схемы, блоки и стрелки", "board");
     addItem("Презентация", "Слайды по заметке", "web");
-    // Append into the note editor overlay so we stay above its stacking context
-    var host =
-      (anchor && anchor.closest && anchor.closest("#note-editor-overlay")) ||
-      document.getElementById("note-editor-overlay") ||
-      document.body;
-    host.appendChild(menu);
+    // В body: панель обсуждения — отдельный слой (z-index 220) поверх окна заметки (100),
+    // внутри окна заметки меню уходило под неё.
+    document.body.appendChild(menu);
 
     var rect = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
     var mw = menu.offsetWidth || 180;
