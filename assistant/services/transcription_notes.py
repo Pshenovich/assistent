@@ -515,11 +515,14 @@ def generate_summary_for_note(user_id: int | str, note_id: int) -> dict[str, Any
         return None
 
 
-def confirm_speaker(user_id: int | str, note_id: int, label: str, name: str) -> dict[str, Any]:
-    """«Спикер 2 — это Саша»: имя в транскрипте и у исполнителей без нового STT/LLM.
+def confirm_speaker(
+    user_id: int | str, note_id: int, label: str, name: str, *, is_me: bool = False
+) -> dict[str, Any]:
+    """«Спикер 2 — это Саша»: имя в транскрипте, у исполнителей и в тексте саммари без нового STT/LLM.
 
     Работает и до саммари. Транскрипт перерисовывается, если его не правили руками;
-    тело саммари — если не правили его (хэш совпадает).
+    саммари v2 — целиком, если его не правили (хэш совпадает), иначе (и в v1) —
+    заменой «Спикер N» / прежнего имени в тексте. is_me — это смотрящий (вид «Диалог»).
     """
     from assistant.lib import summary_normalize as sn
 
@@ -537,10 +540,17 @@ def confirm_speaker(user_id: int | str, note_id: int, label: str, name: str) -> 
     if lab not in known:
         raise TranscriptionNoteError("Нет такого спикера")
     prev = smap.get(lab) if isinstance(smap.get(lab), dict) else {}
+    old_name = str(prev.get("name") or "").strip() if prev.get("confirmed") else ""
     if nm:
         smap[lab] = {**prev, "name": nm, "confidence": 1.0, "evidence": "подтверждено пользователем", "confirmed": True}
     else:
         smap[lab] = {"name": "", "confidence": 0.0, "evidence": "", "confirmed": True}
+    smap[lab].pop("user_id", None)
+    if is_me:
+        for v in smap.values():  # «я» в записи один
+            if isinstance(v, dict) and str(v.get("user_id") or "") == uid:
+                v.pop("user_id", None)
+        smap[lab]["user_id"] = uid
     meta["speaker_map"] = smap
     if segs:
         _set_transcript_html(owner, note, _render_transcript(segs, smap), actor=uid)
@@ -549,14 +559,66 @@ def confirm_speaker(user_id: int | str, note_id: int, label: str, name: str) -> 
     data = sn.summary_data_from_meta(meta)
     if data:
         body_kwargs = _reassign_tasks(owner, note, meta, data, smap)
+    elif nm:
+        _rename_tasks(meta, lab, old_name, nm)
+    rerendered = bool(body_kwargs)
+    renamed = False
+    if has_summary(note) and nm and not body_kwargs:
+        cur = str(note.get("body") or "")
+        new_body = _rename_in_summary(cur, lab, old_name, nm, meta)
+        if new_body != cur:
+            if meta.get("summary_body_hash") and _body_hash(cur) == meta.get("summary_body_hash"):
+                meta["summary_body_hash"] = _body_hash(new_body)
+            body_kwargs = {"body": new_body, "primary_sheet_title": SUMMARY_SHEET_TITLE}
+            renamed = True
     updated = notes_store.update_note(
         owner, int(note["id"]), meta=meta, actor_user_id=uid, **body_kwargs
     )
     if not updated:
         raise TranscriptionNoteError("Не удалось сохранить")
     out = enrich(updated)
-    out["summary_rerendered"] = bool(body_kwargs)
+    out["summary_rerendered"] = rerendered
+    out["summary_renamed"] = renamed
     out["transcript_rerendered"] = bool(segs)
+    return out
+
+
+def _label_re(label: str) -> "re.Pattern[str]":
+    """«Спикер 2» как отдельное слово (не «Спикер 20»); и «SPEAKER_2» из старых текстов."""
+    m = re.match(r"^Спикер (\d+)$", label)
+    if m:
+        return re.compile(rf"(?:Спикер|SPEAKER)[ _]?{m.group(1)}(?!\d)", re.IGNORECASE)
+    return re.compile(rf"(?<!\w){re.escape(label)}(?!\w)")
+
+
+def _rename_tasks(meta: dict[str, Any], label: str, old_name: str, name: str) -> None:
+    """Исполнитель «Спикер N» (или прежнее подтверждённое имя) → новое имя в meta.tasks (v1)."""
+    lab_re = _label_re(label)
+    for t in meta.get("tasks") or []:
+        if not isinstance(t, dict):
+            continue
+        who = str(t.get("assignee") or "").strip()
+        if (who and lab_re.fullmatch(who)) or (old_name and who == old_name):
+            t["assignee"] = name
+        elif not who and lab_re.fullmatch(str(t.get("speaker") or "").strip()):
+            t["assignee"] = name
+
+
+def _rename_in_summary(body: str, label: str, old_name: str, name: str, meta: dict[str, Any]) -> str:
+    """Замена в тексте саммари. «Спикер N» — везде (в тексте, не в разметке);
+    прежнее имя — только в строках задач этого исполнителя (имя могло встречаться и по другому поводу)."""
+    lab_re = _label_re(label)
+    out = re.sub(r">([^<]+)<", lambda m: ">" + lab_re.sub(name, m.group(1)) + "<", ">" + body + "<")[1:-1]
+    if old_name and old_name != name:
+        ids = {str(t.get("id")) for t in meta.get("tasks") or [] if isinstance(t, dict) and t.get("id") and str(t.get("assignee") or "") == name}
+        old_re = re.compile(rf"(?<!\w){re.escape(old_name)}(?!\w)")
+
+        def fix_li(m: "re.Match[str]") -> str:
+            if m.group(2) not in ids:
+                return m.group(1)
+            return re.sub(r">([^<]+)<", lambda x: ">" + old_re.sub(name, x.group(1)) + "<", m.group(1))
+
+        out = re.sub(r'(<li[^>]*data-leo-item="([^"]+)"[^>]*>.*?</li>)', fix_li, out, flags=re.S)
     return out
 
 
@@ -637,28 +699,70 @@ def speakers_view(user_id: int | str, note_id: int) -> dict[str, Any]:
             "evidence": str(info.get("evidence") or ""),
             "confirmed": bool(info.get("confirmed")),
             "talk_sec": round(talk.get(lab, 0.0)),
+            "is_me": _is_me(info, uid),
             "samples": [{"t": tr.fmt_time(q.get("start")), "text": q["text"]} for q in quotes.get(lab, [])],
         })
-    candidates: list[str] = []
+    # кандидаты: участники встречи, контакты, уже названные в этой записи
+    candidates: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     try:
         ctx = context_for_note(int(owner), note)
-        names = list(ctx.attendees) + [str(p.get("name") or "") for p in ctx.people]
+        att_low = {a.lower() for a in ctx.attendees}
+        for p in ctx.people:
+            if p.get("owner"):
+                continue
+            nm = str(p.get("name") or "")
+            em = str(p.get("email") or "")
+            rows.append({"name": nm, "email": em, "attendee": nm.lower() in att_low or em.lower() in att_low})
+        known = {r["name"].lower() for r in rows} | {r["email"].lower() for r in rows if r["email"]}
+        for a in ctx.attendees:  # приглашённые без контакта
+            if a.lower() not in known:
+                rows.append({"name": a.split("@")[0] if "@" in a else a, "email": a if "@" in a else "", "attendee": True})
     except Exception as e:
         print(f"[transcription_notes] speakers ctx failed note={note_id} err={e!r}")
-        names = []
-    names += [str(v.get("name") or "") for v in smap.values() if isinstance(v, dict)]
+    rows += [{"name": str(v.get("name") or ""), "email": "", "attendee": False} for v in smap.values() if isinstance(v, dict)]
     seen: set[str] = set()
-    for n in names:
-        n = n.strip()
-        if n and "@" not in n and n.lower() not in seen:
+    for r in sorted(rows, key=lambda r: not r["attendee"]):
+        n = r["name"].strip()
+        if n and n.lower() not in seen:
             seen.add(n.lower())
-            candidates.append(n)
+            candidates.append({**r, "name": n})
     return {
         "speakers": speakers,
         "candidates": candidates[:60],
         "can_merge": bool(segs),
         "guessing": bool(segs) and _multi_speaker(segs) and not (note.get("meta") or {}).get("speaker_guess_done"),
     }
+
+
+def _is_me(info: Any, uid: str) -> bool:
+    return isinstance(info, dict) and str(info.get("user_id") or "") == uid
+
+
+def transcript_dialog(user_id: int | str, note_id: int) -> dict[str, Any]:
+    """Реплики для вида «Диалог»: свои (спикер с пометкой «это я») — справа."""
+    from assistant.lib import transcript_render as tr
+
+    uid = str(int(user_id))
+    note = notes_store.get_accessible_note(uid, int(note_id), with_sharing=False)
+    if not note or not is_transcription_note(note):
+        raise TranscriptionNoteError("Это не файл транскрипции")
+    segs = _segments(note)
+    if not segs:
+        return {"turns": [], "has_me": False}
+    smap = _speaker_map(note.get("meta"))
+    names = tr.speaker_names(smap)
+    turns = []
+    for t in tr.turns(segs):
+        lab = t["speaker"]
+        turns.append({
+            "label": lab,
+            "name": names.get(lab, lab),
+            "t": tr.fmt_time(t["start"]),
+            "paras": t["paras"],
+            "me": _is_me(smap.get(lab), uid),
+        })
+    return {"turns": turns, "has_me": any(t["me"] for t in turns), "edited": _unedited_segments(note) is None}
 
 
 def merge_speakers(user_id: int | str, note_id: int, src: str, dst: str) -> dict[str, Any]:

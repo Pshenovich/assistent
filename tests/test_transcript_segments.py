@@ -150,6 +150,43 @@ class NoteTests(unittest.TestCase):
         self.assertEqual(first["samples"][0]["t"], "0:00")
         self.assertTrue(view["can_merge"])
 
+    def _v1_note(self):
+        tasks = [
+            {"id": "i0000000001", "assignee": "Спикер 2", "task": "Подготовить отчёт", "deadline": "пятница"},
+            {"id": "i0000000002", "assignee": "Аня", "task": "Прислать цифры", "deadline": ""},
+        ]
+        summary = "## Итог\nСпикер 2 обещал отчёт, Спикер 20 молчал.\n\n## Задачи\n- Спикер 2 — Подготовить отчёт — пятница\n- Аня — Прислать цифры"
+        return tnotes.create_with_summary(1, title="W", transcript="x", summary=summary, meta={"tasks": tasks}, segments=self.segs)
+
+    def test_rename_in_v1_summary_and_tasks(self) -> None:
+        note = self._v1_note()
+        out = tnotes.confirm_speaker(1, int(note["id"]), "Спикер 2", "Дима")
+        self.assertTrue(out["summary_renamed"])
+        fresh = notes_store.get_note(1, int(note["id"]))
+        self.assertIn("Дима обещал отчёт", fresh["body"])
+        self.assertIn("Спикер 20 молчал", fresh["body"])
+        self.assertNotIn("Спикер 2 ", fresh["body"])
+        self.assertEqual(fresh["meta"]["tasks"][0]["assignee"], "Дима")
+        self.assertEqual(fresh["meta"]["tasks"][0]["id"], "i0000000001")
+        # переименование: прежнее имя меняется в задаче, но не в остальном тексте
+        tnotes.confirm_speaker(1, int(note["id"]), "Спикер 2", "Дмитрий")
+        fresh = notes_store.get_note(1, int(note["id"]))
+        self.assertEqual(fresh["meta"]["tasks"][0]["assignee"], "Дмитрий")
+        self.assertIn("Дима обещал отчёт", fresh["body"])
+        self.assertRegex(fresh["body"], r"Дмитрий — Подготовить отчёт")
+
+    def test_is_me_and_dialog(self) -> None:
+        note = self._note()
+        tnotes.confirm_speaker(1, int(note["id"]), "Спикер 1", "Вова", is_me=True)
+        dlg = tnotes.transcript_dialog(1, int(note["id"]))
+        self.assertTrue(dlg["has_me"])
+        self.assertEqual([(t["name"], t["me"]) for t in dlg["turns"]][:2], [("Вова", True), ("Спикер 2", False)])
+        self.assertTrue(tnotes.speakers_view(1, int(note["id"]))["speakers"][0]["is_me"])
+        tnotes.confirm_speaker(1, int(note["id"]), "Спикер 2", "Я же", is_me=True)
+        smap = notes_store.get_note(1, int(note["id"]))["meta"]["speaker_map"]
+        self.assertNotIn("user_id", smap["Спикер 1"])
+        self.assertEqual(smap["Спикер 2"]["user_id"], "1")
+
     def test_delete_note_drops_segments(self) -> None:
         note = self._note()
         notes_store.delete_note(1, int(note["id"]))

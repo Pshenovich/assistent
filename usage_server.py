@@ -11260,6 +11260,7 @@ async def miniapp_memory_status(
 class _SpeakerConfirmBody(BaseModel):
     label: str
     name: str = ""
+    is_me: bool = False
 
 
 @miniapp_router.post("/notes/local/{note_id}/speakers")
@@ -11274,7 +11275,7 @@ async def miniapp_note_confirm_speaker(
     uid = int(principal.telegram_user_id)
     try:
         item = await run_in_threadpool(
-            tnotes.confirm_speaker, uid, note_id, body.label, body.name
+            tnotes.confirm_speaker, uid, note_id, body.label, body.name, is_me=body.is_me
         )
     except tnotes.TranscriptionNoteError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -11292,6 +11293,21 @@ async def miniapp_note_speakers(
     uid = int(principal.telegram_user_id)
     try:
         return await run_in_threadpool(tnotes.speakers_view, uid, note_id)
+    except tnotes.TranscriptionNoteError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@miniapp_router.get("/notes/local/{note_id}/transcript/dialog")
+async def miniapp_note_transcript_dialog(
+    note_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Транскрипт как переписка: реплики по спикерам, свои — справа."""
+    from assistant.services import transcription_notes as tnotes
+
+    uid = int(principal.telegram_user_id)
+    try:
+        return await run_in_threadpool(tnotes.transcript_dialog, uid, note_id)
     except tnotes.TranscriptionNoteError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 

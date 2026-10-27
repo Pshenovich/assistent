@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261027-sheet-menu";
+  var WEBAPP_BUILD = "20261027-speakers2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -38440,9 +38440,17 @@
     });
   }
 
+  function scheduleTranscriptSheetSync() {
+    // лист переключается асинхронно: сверяемся сразу и после монтирования редактора
+    [0, 120, 600].forEach(function (ms) {
+      setTimeout(syncTranscriptSheetView, ms);
+    });
+  }
+
   function renderNoteSheetChips() {
     var host = document.getElementById("note-editor-sheets");
     if (!host) return;
+    scheduleTranscriptSheetSync();
     host.innerHTML = "";
     if (!noteSheetsEnabled()) {
       host.classList.add("hidden");
@@ -38500,6 +38508,26 @@
           openSpeakerMapMenu(spBtn, noteSheetsNoteId());
         });
         host.appendChild(spBtn);
+      }
+      if (transcriptSheetActive(transNote) && transcriptHasSpeakers(transNote)) {
+        var seg = document.createElement("div");
+        seg.className = "note-transcript-view-switch";
+        seg.setAttribute("role", "group");
+        seg.setAttribute("aria-label", "Вид транскрипта");
+        [["text", "Текст"], ["dialog", "Диалог"]].forEach(function (pair) {
+          var b = document.createElement("button");
+          b.type = "button";
+          b.className = "note-sheet-chip" + (transcriptViewMode() === pair[0] ? " is-active" : "");
+          b.setAttribute("aria-pressed", transcriptViewMode() === pair[0] ? "true" : "false");
+          b.textContent = pair[1];
+          b.addEventListener("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (transcriptViewMode() !== pair[0]) setTranscriptViewMode(pair[0]);
+          });
+          seg.appendChild(b);
+        });
+        host.appendChild(seg);
       }
       return;
     }
@@ -38944,7 +38972,7 @@
     var menu = document.getElementById("note-speaker-map-menu");
     if (!menu) return;
     if (e.target && menu.contains(e.target)) return;
-    if (e.target && e.target.closest && e.target.closest(".note-sheet-chip--speakers")) return;
+    if (e.target && e.target.closest && e.target.closest(".note-sheet-chip--speakers, .ntd-name, .is-transcript-sheet p > strong:first-child")) return;
     closeSpeakerMapMenu();
   }
 
@@ -38961,9 +38989,85 @@
     return Math.round(n / 60) + " мин";
   }
 
+  // Имя, которым спикер подписан в транскрипте: подтверждённое имя или «Спикер N».
+  function speakerShownName(sp) {
+    return sp && sp.confirmed && sp.name ? sp.name : (sp && sp.label) || "";
+  }
+
+  function speakerInitials(name, label) {
+    var parts = String(name || "").replace(/^@/, "").split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+    if (parts[0] && !/^Спикер$/i.test(parts[0])) return parts[0].slice(0, 2).toUpperCase();
+    var m = /(\d+)\s*$/.exec(String(label || name || ""));
+    return m ? m[1] : "?";
+  }
+
+  function speakerAvatarNode(name, email, label) {
+    if (email) return meetingAttendeeAvatarNode({ name: name, email: email });
+    var el = document.createElement("span");
+    el.className = "note-member-avatar";
+    var fb = document.createElement("span");
+    fb.className = "note-member-avatar-fallback";
+    fb.textContent = speakerInitials(name, label);
+    el.appendChild(fb);
+    return el;
+  }
+
+  // Строка «человек» в едином стиле подсказок участников (аватар, имя, пояснение).
+  function speakerPersonRow(opts) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className =
+      "meeting-attendee-suggest-item meeting-attendee-suggest-item--with-avatar note-speaker-person" +
+      (opts.cls ? " " + opts.cls : "");
+    if (opts.icon) {
+      var ic = document.createElement("span");
+      ic.className = "note-member-avatar note-speaker-icon";
+      ic.textContent = opts.icon;
+      btn.appendChild(ic);
+    } else {
+      btn.appendChild(speakerAvatarNode(opts.name, opts.email, opts.label));
+    }
+    var copy = document.createElement("span");
+    copy.className = "meeting-attendee-suggest-copy";
+    var nm = document.createElement("span");
+    nm.className = "meeting-attendee-suggest-name";
+    nm.textContent = opts.title;
+    copy.appendChild(nm);
+    if (opts.meta) {
+      var meta = document.createElement("span");
+      meta.className = "meeting-attendee-suggest-meta";
+      meta.textContent = opts.meta;
+      copy.appendChild(meta);
+    }
+    btn.appendChild(copy);
+    if (opts.trail) {
+      var tr = document.createElement("span");
+      tr.className = "note-speaker-trail";
+      tr.textContent = opts.trail;
+      btn.appendChild(tr);
+    }
+    btn.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+    });
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      opts.onPick();
+    });
+    return btn;
+  }
+
   function placeSpeakerMapMenu(menu, anchor) {
+    if (window.innerWidth < 600) {
+      menu.classList.add("is-sheet");
+      menu.style.left = "";
+      menu.style.top = "";
+      return;
+    }
+    menu.classList.remove("is-sheet");
     var rect = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
-    var mw = menu.offsetWidth || 320;
+    var mw = menu.offsetWidth || 360;
     var left = rect ? rect.left : 16;
     var top = rect ? rect.bottom + 6 : 16;
     if (left + mw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - mw - 8);
@@ -38983,184 +39087,532 @@
     if (toast) showNoteToast(toast);
   }
 
-  function openSpeakerMapMenu(anchor, noteId) {
+  // «Кто есть кто»: список спикеров → выбор человека для одного из них.
+  // focus — сразу выбор для спикера с таким label или подписью в транскрипте.
+  function openSpeakerMapMenu(anchor, noteId, focus) {
     if (document.getElementById("note-speaker-map-menu")) {
       closeSpeakerMapMenu();
-      return;
+      if (!focus) return;
     }
     if (!noteId) return;
     var base = "/notes/local/" + encodeURIComponent(String(noteId)) + "/speakers";
     var menu = document.createElement("div");
     menu.id = "note-speaker-map-menu";
-    menu.className = "note-sheet-kind-menu note-speaker-map-menu";
+    menu.className = "note-speaker-pop";
     menu.setAttribute("role", "dialog");
     menu.setAttribute("aria-label", "Кто есть кто");
-    var head = document.createElement("div");
-    head.className = "note-speaker-map-hint";
-    head.textContent = "Загружаю спикеров…";
-    menu.appendChild(head);
-    // В body: панель обсуждения — отдельный слой поверх окна заметки, внутри окна меню уходило под неё.
-    document.body.appendChild(menu);
+    var body = document.createElement("div");
+    body.className = "note-speaker-pop-body";
+    var loading = document.createElement("div");
+    loading.className = "note-speaker-pop-hint";
+    loading.textContent = "Загружаю спикеров…";
+    body.appendChild(loading);
+    menu.appendChild(body);
+    var host =
+      (anchor && anchor.closest && anchor.closest("#note-editor-overlay")) ||
+      document.getElementById("note-editor-overlay") ||
+      document.body;
+    host.appendChild(menu);
     placeSpeakerMapMenu(menu, anchor);
     setTimeout(function () {
       document.addEventListener("click", onSpeakerMapMenuDocClick, true);
       document.addEventListener("keydown", onSpeakerMapMenuKey, true);
     }, 0);
 
-    apiFetch(base)
-      .then(function (view) {
-        if (!menu.parentNode) return;
-        var speakers = (view && view.speakers) || [];
-        if (!speakers.length) {
-          head.textContent = "В этой записи один спикер";
-          return;
-        }
-        head.textContent =
-          "Кто есть кто — имя появится в транскрипте и у исполнителей задач" +
-          (view.guessing ? ". Лео ещё угадывает имена…" : "");
-        var dl = document.createElement("datalist");
-        dl.id = "note-speaker-candidates";
-        (view.candidates || []).forEach(function (n) {
-          var o = document.createElement("option");
-          o.value = n;
-          dl.appendChild(o);
-        });
-        menu.appendChild(dl);
-        speakers.forEach(function (sp) {
-          menu.appendChild(speakerMapPerson(sp, speakers, view, base));
-        });
-        placeSpeakerMapMenu(menu, anchor);
-      })
-      .catch(function (e) {
-        head.textContent = (e && e.message) || "Не удалось загрузить спикеров";
-      });
-  }
+    var view = null;
 
-  function speakerMapPerson(sp, all, view, base) {
-    var label = sp.label;
-    var box = document.createElement("div");
-    box.className = "note-speaker-map-person";
-    var top = document.createElement("div");
-    top.className = "note-speaker-map-top";
-    var lab = document.createElement("span");
-    lab.className = "note-speaker-map-label";
-    lab.textContent = label + (sp.talk_sec ? " · " + speakerTalkLabel(sp.talk_sec) : "");
-    top.appendChild(lab);
-    if (view.can_merge && all.length > 1) {
-      var merge = document.createElement("select");
-      merge.className = "note-speaker-map-merge";
-      merge.setAttribute("aria-label", "Объединить " + label + " с другим спикером");
-      var first = document.createElement("option");
-      first.value = "";
-      first.textContent = "Тот же, что…";
-      merge.appendChild(first);
-      all.forEach(function (other) {
-        if (other.label === label) return;
-        var o = document.createElement("option");
-        o.value = other.label;
-        o.textContent = other.label + (other.confirmed && other.name ? " (" + other.name + ")" : "");
-        merge.appendChild(o);
-      });
-      merge.addEventListener("change", function () {
-        var target = merge.value;
-        if (!target) return;
-        if (!window.confirm("Реплики «" + label + "» станут репликами «" + target + "»?")) {
-          merge.value = "";
-          return;
-        }
-        merge.disabled = true;
-        apiFetch(base + "/merge", {
-          method: "POST",
-          body: JSON.stringify({ source: label, target: target }),
-        })
-          .then(function (res) {
-            speakerMapReopen(res && res.item, "Спикеры объединены");
-          })
-          .catch(function (e) {
-            merge.disabled = false;
-            merge.value = "";
-            showNoteToast((e && e.message) || "Не удалось объединить");
-          });
-      });
-      top.appendChild(merge);
-    }
-    box.appendChild(top);
-
-    if (sp.samples && sp.samples.length) {
-      var ul = document.createElement("ul");
-      ul.className = "note-speaker-map-samples";
-      sp.samples.forEach(function (q) {
-        var li = document.createElement("li");
-        if (q.t) {
-          var t = document.createElement("span");
-          t.className = "note-speaker-map-t";
-          t.textContent = q.t;
-          li.appendChild(t);
-        }
-        li.appendChild(document.createTextNode("«" + q.text + "»"));
-        ul.appendChild(li);
-      });
-      box.appendChild(ul);
-    }
-
-    var row = document.createElement("div");
-    row.className = "note-speaker-map-row";
-    var input = document.createElement("input");
-    input.type = "text";
-    input.maxLength = 80;
-    input.className = "note-speaker-map-input";
-    input.placeholder = "Имя — из списка или новое";
-    input.setAttribute("list", "note-speaker-candidates");
-    input.setAttribute("aria-label", "Имя для " + label);
-    input.value = sp.name || "";
-    if (sp.name && !sp.confirmed) row.classList.add("is-guess");
-    var ok = document.createElement("button");
-    ok.type = "button";
-    ok.className = "note-speaker-map-ok";
-    ok.textContent = sp.confirmed ? "✓" : "Да";
-    ok.setAttribute("aria-label", "Подтвердить имя для " + label);
-    function save() {
-      ok.disabled = true;
+    function save(sp, name, isMe) {
+      body.classList.add("is-busy");
       apiFetch(base, {
         method: "POST",
-        body: JSON.stringify({ label: label, name: String(input.value || "").trim() }),
+        body: JSON.stringify({ label: sp.label, name: String(name || "").trim(), is_me: !!isMe }),
       })
         .then(function (res) {
           var item = res && res.item;
           var parts = [];
-          if (item && item.transcript_rerendered) parts.push("имя в транскрипте");
-          if (item && item.summary_rerendered) parts.push("исполнители в саммари");
+          if (item && item.transcript_rerendered) parts.push("транскрипте");
+          if (item && (item.summary_rerendered || item.summary_renamed)) parts.push("саммари");
           speakerMapReopen(
             item,
-            parts.length ? "Обновлено: " + parts.join(", ") : "Сохранено; текст правили вручную — его не трогаем"
+            !name
+              ? "Имя убрано"
+              : parts.length
+              ? "«" + name + "» — в " + parts.join(" и ")
+              : "Сохранено; текст правили вручную — его не трогаем"
           );
         })
         .catch(function (e) {
-          ok.disabled = false;
+          body.classList.remove("is-busy");
           showNoteToast((e && e.message) || "Не удалось сохранить");
         });
     }
-    ok.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      save();
-    });
-    input.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        save();
-      }
-    });
-    row.appendChild(input);
-    row.appendChild(ok);
-    box.appendChild(row);
-    if (sp.name && !sp.confirmed && sp.evidence) {
-      var why = document.createElement("div");
-      why.className = "note-speaker-map-why";
-      why.textContent = "Догадка Лео: " + sp.evidence;
-      box.appendChild(why);
+
+    function merge(sp, other) {
+      body.classList.add("is-busy");
+      apiFetch(base + "/merge", {
+        method: "POST",
+        body: JSON.stringify({ source: sp.label, target: other.label }),
+      })
+        .then(function (res) {
+          speakerMapReopen(res && res.item, "Реплики «" + speakerShownName(sp) + "» теперь у «" + speakerShownName(other) + "»");
+        })
+        .catch(function (e) {
+          body.classList.remove("is-busy");
+          showNoteToast((e && e.message) || "Не удалось объединить");
+        });
     }
-    return box;
+
+    function head(title, onBack) {
+      var bar = document.createElement("div");
+      bar.className = "note-speaker-pop-head";
+      if (onBack) {
+        var back = document.createElement("button");
+        back.type = "button";
+        back.className = "focus-card-btn is-icon";
+        back.setAttribute("aria-label", "Ко всем спикерам");
+        back.textContent = "‹";
+        back.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          onBack();
+        });
+        bar.appendChild(back);
+      }
+      var t = document.createElement("div");
+      t.className = "note-speaker-pop-title";
+      t.textContent = title;
+      bar.appendChild(t);
+      var close = document.createElement("button");
+      close.type = "button";
+      close.className = "focus-card-btn is-icon";
+      close.setAttribute("aria-label", "Закрыть");
+      close.textContent = "×";
+      close.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeSpeakerMapMenu();
+      });
+      bar.appendChild(close);
+      return bar;
+    }
+
+    function renderList() {
+      body.innerHTML = "";
+      body.appendChild(head("Кто есть кто"));
+      var hint = document.createElement("div");
+      hint.className = "note-speaker-pop-hint";
+      hint.textContent =
+        "Имя появится в транскрипте, в саммари и у исполнителей задач" +
+        (view.guessing ? ". Лео ещё угадывает имена…" : "");
+      body.appendChild(hint);
+      var list = document.createElement("div");
+      list.className = "note-speaker-list";
+      view.speakers.forEach(function (sp) {
+        var shown = speakerShownName(sp);
+        var meta = [];
+        if (sp.confirmed && sp.name) meta.push(sp.label);
+        if (sp.talk_sec) meta.push(speakerTalkLabel(sp.talk_sec));
+        if (sp.is_me) meta.push("это вы");
+        else if (!sp.confirmed && sp.name) meta.push("Лео думает: " + sp.name);
+        else if (!sp.confirmed) meta.push("не указан");
+        var row = speakerPersonRow({
+          name: sp.confirmed ? sp.name : "",
+          label: sp.label,
+          title: shown,
+          meta: meta.join(" · "),
+          trail: "›",
+          cls: sp.confirmed ? "is-done" : "is-open",
+          onPick: function () {
+            renderPicker(sp, true);
+          },
+        });
+        list.appendChild(row);
+      });
+      body.appendChild(list);
+      placeSpeakerMapMenu(menu, anchor);
+    }
+
+    function renderPicker(sp, fromList) {
+      body.innerHTML = "";
+      var title = speakerShownName(sp) + (sp.talk_sec ? " · " + speakerTalkLabel(sp.talk_sec) : "");
+      body.appendChild(head(title, fromList && view.speakers.length > 1 ? renderList : null));
+
+      if (sp.samples && sp.samples.length) {
+        var ul = document.createElement("ul");
+        ul.className = "note-speaker-samples";
+        sp.samples.forEach(function (q) {
+          var li = document.createElement("li");
+          if (q.t) {
+            var t = document.createElement("span");
+            t.className = "note-speaker-t";
+            t.textContent = q.t;
+            li.appendChild(t);
+          }
+          li.appendChild(document.createTextNode("«" + q.text + "»"));
+          ul.appendChild(li);
+        });
+        body.appendChild(ul);
+      }
+
+      var form = document.createElement("div");
+      form.className = "tinbox-form note-speaker-search";
+      var input = document.createElement("input");
+      input.type = "text";
+      input.className = "field-input";
+      input.maxLength = 80;
+      input.autocomplete = "off";
+      input.placeholder = "Найти участника или вписать имя";
+      input.setAttribute("aria-label", "Кто это");
+      form.appendChild(input);
+      body.appendChild(form);
+
+      var opts = document.createElement("div");
+      opts.className = "note-speaker-list";
+      body.appendChild(opts);
+
+      var me = defaultTaskAssignee() || {};
+      var others = view.speakers.filter(function (o) {
+        return o.label !== sp.label;
+      });
+
+      function paint() {
+        var q = String(input.value || "").trim();
+        var ql = q.toLowerCase();
+        opts.innerHTML = "";
+        var shown = {};
+        function add(row, key) {
+          if (key) shown[key.toLowerCase()] = 1;
+          opts.appendChild(row);
+        }
+        if (!q && sp.name && !sp.confirmed) {
+          add(
+            speakerPersonRow({
+              name: sp.name,
+              title: sp.name,
+              meta: "Догадка Лео" + (sp.evidence ? ": " + sp.evidence : ""),
+              trail: "Да",
+              cls: "is-guess",
+              onPick: function () {
+                save(sp, sp.name, false);
+              },
+            }),
+            sp.name
+          );
+        }
+        if (me.name && (!ql || String(me.name).toLowerCase().indexOf(ql) >= 0 || "это я".indexOf(ql) >= 0)) {
+          add(
+            speakerPersonRow({
+              name: me.name,
+              email: me.email,
+              title: "Это я",
+              meta: sp.is_me ? "отмечено · ваши реплики справа в «Диалоге»" : "ваши реплики будут справа в «Диалоге»",
+              cls: sp.is_me ? "is-active" : "",
+              onPick: function () {
+                save(sp, me.name, true);
+              },
+            }),
+            me.name
+          );
+        }
+        var n = 0;
+        (view.candidates || []).forEach(function (c) {
+          var nm = typeof c === "string" ? c : c.name;
+          if (!nm || shown[nm.toLowerCase()] || n >= 8) return;
+          var hay = (nm + " " + ((c && c.email) || "")).toLowerCase();
+          if (ql && hay.indexOf(ql) < 0) return;
+          n++;
+          add(
+            speakerPersonRow({
+              name: nm,
+              email: c && c.email,
+              title: nm,
+              meta: c && c.attendee ? "участник встречи" : sp.confirmed && sp.name === nm ? "сейчас" : "",
+              cls: sp.confirmed && sp.name === nm ? "is-active" : "",
+              onPick: function () {
+                save(sp, nm, false);
+              },
+            }),
+            nm
+          );
+        });
+        if (q && !shown[ql]) {
+          add(
+            speakerPersonRow({
+              icon: "+",
+              title: "Добавить «" + q + "»",
+              meta: "нового участника — нет в календаре и контактах",
+              onPick: function () {
+                save(sp, q, false);
+              },
+            })
+          );
+        }
+        if (!q && sp.confirmed && sp.name) {
+          add(
+            speakerPersonRow({
+              icon: "×",
+              title: "Убрать имя",
+              meta: "снова «" + sp.label + "»",
+              cls: "is-quiet",
+              onPick: function () {
+                save(sp, "", false);
+              },
+            })
+          );
+        }
+        if (!q && view.can_merge && others.length) {
+          var mh = document.createElement("div");
+          mh.className = "note-speaker-pop-section";
+          mh.textContent = "Это тот же человек, что…";
+          opts.appendChild(mh);
+          others.forEach(function (o) {
+            opts.appendChild(
+              speakerPersonRow({
+                name: o.confirmed ? o.name : "",
+                label: o.label,
+                title: speakerShownName(o),
+                meta: (o.confirmed && o.name ? o.label + " · " : "") + "объединить реплики",
+                cls: "is-merge",
+                onPick: function () {
+                  confirmMerge(o);
+                },
+              })
+            );
+          });
+        }
+        placeSpeakerMapMenu(menu, anchor);
+      }
+
+      function confirmMerge(o) {
+        opts.innerHTML = "";
+        var box = document.createElement("div");
+        box.className = "note-speaker-confirm";
+        var txt = document.createElement("div");
+        txt.textContent =
+          "Реплики «" + speakerShownName(sp) + "» станут репликами «" + speakerShownName(o) + "». Отменить будет нельзя.";
+        box.appendChild(txt);
+        var acts = document.createElement("div");
+        acts.className = "note-speaker-confirm-actions";
+        var no = document.createElement("button");
+        no.type = "button";
+        no.className = "focus-card-btn";
+        no.textContent = "Отмена";
+        no.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          paint();
+        });
+        var yes = document.createElement("button");
+        yes.type = "button";
+        yes.className = "focus-card-btn is-primary";
+        yes.textContent = "Объединить";
+        yes.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          merge(sp, o);
+        });
+        acts.appendChild(no);
+        acts.appendChild(yes);
+        box.appendChild(acts);
+        opts.appendChild(box);
+      }
+
+      input.addEventListener("input", paint);
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          var q = String(input.value || "").trim();
+          if (q) save(sp, q, false);
+        }
+      });
+      paint();
+      if (window.matchMedia && window.matchMedia("(hover: hover)").matches) input.focus();
+    }
+
+    refreshCalendarContacts()
+      .catch(function () {})
+      .then(function () {
+        return apiFetch(base);
+      })
+      .then(function (v) {
+        if (!menu.parentNode) return;
+        view = v || {};
+        view.speakers = view.speakers || [];
+        if (!view.speakers.length) {
+          body.innerHTML = "";
+          body.appendChild(head("Кто есть кто"));
+          var one = document.createElement("div");
+          one.className = "note-speaker-pop-hint";
+          one.textContent = "В этой записи один спикер";
+          body.appendChild(one);
+          return;
+        }
+        var target = null;
+        if (focus) {
+          view.speakers.forEach(function (sp) {
+            if (!target && (sp.label === focus || speakerShownName(sp) === focus)) target = sp;
+          });
+        }
+        if (target) renderPicker(target, true);
+        else renderList();
+      })
+      .catch(function (e) {
+        body.innerHTML = "";
+        body.appendChild(head("Кто есть кто"));
+        var err = document.createElement("div");
+        err.className = "note-speaker-pop-hint";
+        err.textContent = (e && e.message) || "Не удалось загрузить спикеров";
+        body.appendChild(err);
+      });
+  }
+
+  // ---- лист «Транскрипции»: клик по имени спикера и вид «Диалог» ----
+
+  var TRANSCRIPT_VIEW_KEY = "leo.transcriptView";
+
+  function transcriptViewMode() {
+    try {
+      return localStorage.getItem(TRANSCRIPT_VIEW_KEY) === "dialog" ? "dialog" : "text";
+    } catch (e) {
+      return "text";
+    }
+  }
+
+  function setTranscriptViewMode(mode) {
+    try {
+      localStorage.setItem(TRANSCRIPT_VIEW_KEY, mode);
+    } catch (e) {}
+    renderNoteSheetChips();
+  }
+
+  function transcriptSheetActive(transNote) {
+    if (!isTranscriptionNoteItem(transNote)) return false;
+    var s = findNoteSheet(noteSheetState.leftId);
+    if (!s) return false;
+    var title = isPrimarySheetId(s.id) ? transNote.primary_sheet_title || s.title : s.title;
+    return String(title || "").trim() === "Транскрипции";
+  }
+
+  function transcriptHasSpeakers(transNote) {
+    var meta = (transNote && transNote.meta) || {};
+    return !!(meta.speakers_detected || transcriptionSpeakerMap(transNote));
+  }
+
+  var transcriptSpeakerClicksBound = false;
+
+  function bindTranscriptSpeakerClicks() {
+    if (transcriptSpeakerClicksBound) return;
+    transcriptSpeakerClicksBound = true;
+    document.addEventListener("click", function (e) {
+      var strong = e.target && e.target.closest && e.target.closest("#note-editor-overlay .is-transcript-sheet p > strong:first-child");
+      if (!strong) return;
+      var sel = window.getSelection && window.getSelection();
+      if (sel && !sel.isCollapsed) return;
+      var name = String(strong.textContent || "").trim();
+      if (!name) return;
+      openSpeakerMapMenu(strong, noteSheetsNoteId(), name);
+    });
+  }
+
+  function syncTranscriptSheetView() {
+    var pad = document.querySelector("#note-editor-overlay .note-editor-pad--body");
+    if (!pad) return;
+    var noteId = noteSheetsNoteId();
+    var transNote = noteId ? resolveLocalNoteFromCache({ id: noteId }) : null;
+    var active = !!noteId && transcriptSheetActive(transNote) && transcriptHasSpeakers(transNote);
+    pad.classList.toggle("is-transcript-sheet", active);
+    if (active) bindTranscriptSpeakerClicks();
+    var dialog = active && transcriptViewMode() === "dialog";
+    pad.classList.toggle("is-transcript-dialog", dialog);
+    var box = pad.querySelector(":scope > .note-transcript-dialog");
+    if (!dialog) {
+      if (box) box.remove();
+      return;
+    }
+    var stamp = String(noteId) + ":" + String((transNote && transNote.updated_at) || "");
+    if (box && box.getAttribute("data-stamp") === stamp) return;
+    if (box) box.remove();
+    box = document.createElement("div");
+    box.className = "note-transcript-dialog";
+    box.setAttribute("data-stamp", stamp);
+    var wait = document.createElement("div");
+    wait.className = "note-speaker-pop-hint";
+    wait.textContent = "Собираю диалог…";
+    box.appendChild(wait);
+    pad.insertBefore(box, pad.firstChild);
+    apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/transcript/dialog")
+      .then(function (d) {
+        if (!box.parentNode) return;
+        renderTranscriptDialog(box, d || {}, noteId);
+      })
+      .catch(function (e) {
+        wait.textContent = (e && e.message) || "Не удалось собрать диалог";
+      });
+  }
+
+  function renderTranscriptDialog(box, d, noteId) {
+    box.innerHTML = "";
+    var turns = d.turns || [];
+    if (!turns.length) {
+      var empty = document.createElement("div");
+      empty.className = "note-speaker-pop-hint";
+      empty.textContent = "Для этой записи нет реплик по спикерам — она сделана до разбивки на реплики.";
+      box.appendChild(empty);
+      return;
+    }
+    if (!d.has_me || d.edited) {
+      var tip = document.createElement("div");
+      tip.className = "note-transcript-dialog-tip";
+      tip.textContent = !d.has_me
+        ? "Отметьте себя: нажмите на своё имя → «Это я», и ваши реплики будут справа."
+        : "Текст транскрипта правили вручную — здесь исходные реплики.";
+      box.appendChild(tip);
+    }
+    var order = [];
+    turns.forEach(function (t) {
+      if (order.indexOf(t.label) < 0) order.push(t.label);
+    });
+    var prevLabel = null;
+    turns.forEach(function (t) {
+      var row = document.createElement("div");
+      row.className = "ntd-row" + (t.me ? " is-me" : "") + (t.label === prevLabel ? " is-cont" : "");
+      row.setAttribute("data-spk", String(order.indexOf(t.label) % 6));
+      if (!t.me) {
+        var av = speakerAvatarNode(t.name !== t.label ? t.name : "", "", t.label);
+        av.classList.add("ntd-avatar");
+        row.appendChild(av);
+      }
+      var bubble = document.createElement("div");
+      bubble.className = "ntd-bubble";
+      var meta = document.createElement("div");
+      meta.className = "ntd-meta";
+      var who = document.createElement("button");
+      who.type = "button";
+      who.className = "ntd-name";
+      who.textContent = t.me ? "Вы" : t.name;
+      who.title = "Кто это?";
+      who.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openSpeakerMapMenu(who, noteId, t.label);
+      });
+      meta.appendChild(who);
+      if (t.t) {
+        var ts = document.createElement("span");
+        ts.className = "ntd-time";
+        ts.textContent = t.t;
+        meta.appendChild(ts);
+      }
+      bubble.appendChild(meta);
+      (t.paras || []).forEach(function (p) {
+        var para = document.createElement("p");
+        para.textContent = p;
+        bubble.appendChild(para);
+      });
+      row.appendChild(bubble);
+      box.appendChild(row);
+      prevLabel = t.label;
+    });
   }
 
   function closeNewSheetKindMenu() {
