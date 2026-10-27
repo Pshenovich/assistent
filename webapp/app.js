@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261027-ui-kit";
+  var WEBAPP_BUILD = "20261027-focus-task2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -20231,6 +20231,11 @@
     "Открыть встречу": "Встреча",
   };
 
+  // «Поставить задачу» / «Себе на пт» / «Задача себе» / «Напомнить себе» — это «В задачу».
+  function focusIsTaskAct(a) {
+    return !!a && a.act === "assistant" && /^(Поставить задачу|Себе|Задача себе|Напомнить себе)(\s|$)/.test(String(a.label || ""));
+  }
+
   function focusKindLabel(tag) {
     var s = String(tag || "").replace(/^[^0-9A-Za-zА-Яа-яЁё]+/, "").trim();
     return s ? s.charAt(0).toUpperCase() + s.slice(1) : "";
@@ -20352,10 +20357,12 @@
       var b = document.createElement("button");
       b.type = "button";
       b.className = "focus-card-btn " + (idx === 0 ? "is-primary" : "is-quiet");
-      b.textContent = FOCUS_SHORT_LABEL[a.label] || a.label;
+      var taskAct = focusIsTaskAct(a) && (focusHasItems(it) || (it.commitment_keys && it.commitment_keys.length));
+      b.textContent = taskAct ? "В задачу" : FOCUS_SHORT_LABEL[a.label] || a.label;
       b.addEventListener("click", function (e) {
         e.preventDefault();
         if (a.act === "__stack") openFocusStack(it, "stack");
+        else if (taskAct) openFocusStack(it, "stack", { task: true });
         else runFocusAction(it, a, b);
       });
       acts.appendChild(b);
@@ -21012,7 +21019,9 @@
     return !!fstack && String(aid || "").indexOf("fstack|") === 0;
   }
 
-  async function openFocusStack(it, view) {
+  // opts.task — сразу форма «В задачу» у первого пункта (кнопка «В задачу» на карточке Фокуса).
+  async function openFocusStack(it, view, opts) {
+    opts = opts || {};
     if (tinbox) closeTaskInbox();
     if (fstack) closeFocusStack();
     var host = tinboxEl("div", "tinbox fstack");
@@ -21038,11 +21047,15 @@
     document.addEventListener("keydown", s.onKey, true);
     panel.appendChild(tinboxEl("div", "tinbox-loading", "Загружаем пункты…"));
     try {
-      var res = await apiFetch("/proactive/items", { method: "POST", body: JSON.stringify({ key: it.key }) });
+      // opts.items — пункт уже на руках (карточка в чате): без запроса к Фокусу.
+      var res = opts.items ? { items: opts.items } : await apiFetch("/proactive/items", { method: "POST", body: JSON.stringify({ key: it.key }) });
       if (fstack !== s) return;
       s.items = ((res && res.items) || []).filter(function (f) {
         return f.status === "new";
       });
+      s.single = s.items.length === 1;
+      s.partial = !!opts.items; // только часть пунктов карточки — саму карточку Фокуса не трогаем
+      if (opts.task && s.items.length) Object.assign(focusUiFor(fstackAid(s.items[0])), { mode: "task", menu: "", draft: {} });
     } catch (e) {
       showNoteToast((e && e.message) || "Не удалось загрузить пункты");
       closeFocusStack();
@@ -21064,7 +21077,7 @@
     fstack = null;
     if (!s.changed) return;
     // Всё разобрано — карточка уходит сразу, не дожидаясь ленты (загрузка могла уже идти со старыми данными).
-    if (!s.items.some(function (f) { return f.status === "new"; })) {
+    if (!s.partial && !s.items.some(function (f) { return f.status === "new"; })) {
       focusItems = focusItems.filter(function (x) {
         return x.key !== s.it.key;
       });
@@ -21094,10 +21107,10 @@
       bar.appendChild(fill);
       top.appendChild(bar);
     } else {
-      top.appendChild(tinboxEl("span", "tinbox-count", s.view === "list" ? "Отметить списком" : "Разбор"));
+      top.appendChild(tinboxEl("span", "tinbox-count", s.view === "list" ? "Отметить списком" : s.single ? "Новая задача" : "Разбор"));
       top.appendChild(tinboxEl("span", "tinbox-sp", ""));
     }
-    if (total) {
+    if (total && !s.single) {
       var toList = s.view === "stack";
       var sw = tinboxEl("button", "fstack-view");
       sw.type = "button";
@@ -21124,6 +21137,10 @@
       return;
     }
     if (s.idx >= total) {
+      if (s.single && total) {
+        closeFocusStack(); // один пункт разобран — окно больше не нужно
+        return;
+      }
       host.appendChild(fstackFinish());
       return;
     }
@@ -21348,7 +21365,7 @@
       var item = (res && res.item) || f;
       if (i >= 0) s.items[i] = item;
       delete focusChatUi[fstackAid(f)];
-      s.last = fstackUndoable(body) ? { idx: i, prev: f, item: item } : null;
+      s.last = fstackUndoable(body) && !s.single ? { idx: i, prev: f, item: item } : null;
       s.changed = true;
       focusSyncChatCaches(item);
       if (s.view === "stack" && i === s.idx) s.idx++;
@@ -42162,7 +42179,7 @@
     opts = opts || {};
     var ui = focusUiFor(aid);
     var card = focusEl("div", "focus-card is-wide focus-chat-card");
-    var who = [f.assignee, f.deadline ? "до " + f.deadline : ""].filter(Boolean).join(" · ");
+    var who = [f.assignee, f.deadline ? "до " + fstackDue(f.deadline) : ""].filter(Boolean).join(" · ");
     var line = focusStatusLine(f);
     if (line) {
       var tone = FOCUS_STATUS_TONE[f.status] || ["check", "green"];
@@ -42231,7 +42248,8 @@
       // «В задачу» — форма постановки; шеврон — «Отложить» (завтра, понедельник, через неделю, дата).
       var split = focusEl("span", "focus-card-split");
       split.appendChild(focusCardBtn("В задачу", "is-soft", function () {
-        focusSetUi(aid, { mode: "task", menu: "", draft: {} });
+        // «В задачу» везде одно и то же — карточка задачи с правкой (как в «Разобрать»).
+        openFocusStack({ key: f.card_key || f.key }, "stack", { task: true, items: [f] });
       }));
       var chev = focusCardBtn("", "is-soft focus-card-chev" + (ui.menu === "snooze" ? " is-open" : ""), function () {
         focusSetUi(aid, { menu: ui.menu === "snooze" ? "" : "snooze" });
