@@ -674,3 +674,65 @@
     bottom: 8px;
   }
 }
+
+/* Переход по ссылке на блок: блок мигает. */
+.lb-el.is-flash {
+  animation: lb-flash 1.5s ease-out;
+}
+
+@keyframes lb-flash {
+  0%,
+  40% {
+    filter: drop-shadow(0 0 0 var(--lb-accent)) drop-shadow(0 0 10px var(--lb-accent));
+  }
+  100% {
+    filter: none;
+  }
+}
+
+/* Действия с блоками — как плашка выделения в заметке (styles.css .note-comment-bubble-wrap):
+   ✨ ИИ фиолетовым, остальное — цветом текста, иконка 15px и подпись. */
+.lb-pbtn.lb-nact-trigger {
+  color: #c4b5fd;
+  background: rgba(139, 92, 246, 0.16);
+  border-radius: 9px;
+}
+
+.lb-nacts {
+  display: flex;
+  gap: 2px;
+}
+
+.lb-nact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--lb-text);
+  font: 600 13px/1 var(--lb-font);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lb-nact:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.lb-nact svg {
+  display: block;
+  flex: none;
+  pointer-events: none;
+}
+
+.lb-nact span {
+  pointer-events: none;
+}
+
+.lb-nact--ai {
+  color: #c4b5fd;
+  background: rgba(139, 92, 246, 0.16);
+}

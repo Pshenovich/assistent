@@ -31,6 +31,31 @@
   var BOXED = { text: 1, rect: 1, diamond: 1, ellipse: 1, sticky: 1, image: 1 };
   var ALIGN_ICON = { left: "alignLeft", center: "alignCenter", right: "alignRight" };
 
+  // Действия с выделенными блоками — те же иконки и подписи, что у плашки выделения в заметке
+  // (webapp/note-comments.js showBubble), чтобы везде было одинаково.
+  var NOTE_ACTS = [
+    {
+      id: "ai", label: "ИИ", cls: " lb-nact--ai",
+      svg: '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+        '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>',
+    },
+    {
+      id: "discuss", label: "Обсудить", cls: "",
+      svg: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>',
+    },
+    {
+      id: "task", label: "Задача", cls: "",
+      svg: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
+    },
+    {
+      id: "link", label: "Ссылка", cls: "",
+      svg: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">' +
+        '<path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16"/></svg>',
+    },
+  ];
+
   /** Выравнивание текста: у текста по умолчанию влево, в фигурах и стикерах — по центру. */
   function alignOf(el) {
     var a = el.style && el.style.align;
@@ -1318,6 +1343,98 @@
       return v;
     }
 
+    /** Какие действия заметки доступны для выделения: ИИ и «Обсудить» — только с текстом, ссылка — на один блок. */
+    function blockActsFor(list) {
+      var acts = o.blockActions;
+      if (!acts || readOnly) return [];
+      var hasText = list.some(function (e) {
+        return String(e.text || "").trim();
+      });
+      return NOTE_ACTS.filter(function (a) {
+        if (!acts[a.id]) return false;
+        if (a.id === "ai" || a.id === "discuss") return hasText;
+        if (a.id === "link") return list.length === 1;
+        return true;
+      });
+    }
+
+    /** Выделенные элементы для действий заметки: id, вид и текст (сверху вниз, слева направо). */
+    function selectionInfo() {
+      return selList().filter(function (el) {
+        return el.type !== "pen";
+      }).sort(function (a, b) {
+        return a.y - b.y || a.x - b.x;
+      }).map(function (el) {
+        var label = el.type === "line" ? labelOfLine(el) : "";
+        return { id: el.id, type: el.type, text: String(el.text || "").trim(), label: label };
+      });
+    }
+
+    function labelOfLine(ln) {
+      var a = ln.start && getEl(ln.start.el);
+      var b = ln.end && getEl(ln.end.el);
+      if (!a || !b) return "";
+      return oneLine(a.text || "…") + " → " + oneLine(b.text || "…");
+    }
+
+    /** По ссылке: показать элемент — в центр экрана, выделить и мигнуть. */
+    function revealElement(id) {
+      var el = getEl(id);
+      if (!el) return false;
+      autoFit = false;
+      var r = stage.getBoundingClientRect();
+      var b = G.elBounds(el, getEl);
+      if (b && r.width && r.height) {
+        var pad = 80;
+        var z = clamp(Math.min((r.width - pad * 2) / Math.max(1, b.w), (r.height - pad * 2) / Math.max(1, b.h), Math.max(view.z, 0.8)), MIN_Z, 1.5);
+        view.z = z;
+        view.x = r.width / 2 - (b.x + b.w / 2) * z;
+        view.y = r.height / 2 - (b.y + b.h / 2) * z;
+        applyView();
+      }
+      setSelection([id]);
+      flushNow();
+      var node = nodes.get(id);
+      if (node) {
+        node.classList.remove("is-flash");
+        void node.offsetWidth;
+        node.classList.add("is-flash");
+        setTimeout(function () {
+          node.classList.remove("is-flash");
+        }, 1600);
+      }
+      return true;
+    }
+
+    /** Новые тексты блоков (ИИ) — одним шагом отмены. */
+    function setTexts(map) {
+      if (readOnly) return 0;
+      var n = 0;
+      begin();
+      Object.keys(map || {}).forEach(function (id) {
+        var el = getEl(id);
+        var t = String(map[id] == null ? "" : map[id]);
+        if (!el || !TEXTUAL[el.type] || (el.text || "") === t) return;
+        var f = { text: t };
+        if (el.type !== "line" && el.type !== "text") {
+          // Блок растёт под длинный текст — как при ручном вводе.
+          var node = nodes.get(id);
+          var tEl = node && node.querySelector(":scope > .lb-text");
+          if (tEl) {
+            var old = tEl.textContent;
+            tEl.textContent = t;
+            var need = growToText(el, tEl);
+            tEl.textContent = old;
+            if (need) f.h = need;
+          }
+        }
+        patch(id, f);
+        n++;
+      });
+      commit();
+      return n;
+    }
+
     function renderProps() {
       var list = selList();
       if (readOnly || !list.length || (gesture && gesture.kind !== "none")) {
@@ -1332,8 +1449,20 @@
       var anyStroke = anyShape || types.line || types.pen;
       var anyText = types.text || anyShape || types.sticky || types.line;
       var h = [];
+      // Действия заметки с выделенными блоками: ИИ, обсудить с Лео, задача, ссылка (как у выделенного текста).
+      var acts = o.blockActions;
+      // Голые стрелки и штрихи без подписи — не блоки: им эти действия не нужны.
+      if (acts && list.some(function (e) {
+        return (e.type !== "line" && e.type !== "pen") || String(e.text || "").trim();
+      })) {
+        // Одна кнопка (✨ как «ИИ» в заметке) — по нажатию меню: ИИ · Обсудить · Задача · Ссылка.
+        if (blockActsFor(list).length) {
+          h.push('<button type="button" class="lb-btn lb-pbtn lb-nact-trigger" data-p="noteacts" title="ИИ, обсудить, задача, ссылка">' + NOTE_ACTS[0].svg + "</button>");
+          h.push('<span class="lb-sep"></span>');
+        }
+      }
       var key = JSON.stringify([Object.keys(types).sort(), list.map(function (e) {
-        return [e.style, e.route, e.arrowStart, e.arrowEnd, e.group, e.type, !!(e.bend || (e.waypoints && e.waypoints.length))];
+        return [e.style, e.route, e.arrowStart, e.arrowEnd, e.group, e.type, !!(e.bend || (e.waypoints && e.waypoints.length)), !!String(e.text || "").trim(), acts ? e.id : ""];
       }), list.length]);
       if (types.sticky) h.push(swatchBtn("sticky", stickyVar(commonStyle(list.filter(isType("sticky")), "fill") || "yellow"), "Цвет стикера"));
       if (anyStroke) h.push(swatchBtn("stroke", inkVar(commonStyle(list.filter(isStroked), "stroke") || "ink"), "Цвет линии", true));
@@ -1574,6 +1703,22 @@
           var f = {};
           f[p] = on || undefined;
           return f;
+        });
+      } else if (p === "noteacts") {
+        var avail = blockActsFor(selList());
+        openPop(b, function (box) {
+          box.innerHTML = '<div class="lb-nacts">' + avail.map(function (a) {
+            return '<button type="button" class="lb-nact' + a.cls + '" data-act="' + a.id + '" title="' + (a.id === "link" ? "Скопировать ссылку на блок" : a.label) + '">' +
+              a.svg + "<span>" + a.label + "</span></button>";
+          }).join("") + "</div>";
+          box.onclick = function (ev) {
+            var btn = ev.target.closest("[data-act]");
+            if (!btn) return;
+            var fn = o.blockActions && o.blockActions[btn.getAttribute("data-act")];
+            closePop();
+            if (editing) finishEdit();
+            if (fn) fn(selectionInfo());
+          };
         });
       } else if (p === "unbend") {
         applyFields(isType("line"), function () {
@@ -3488,6 +3633,12 @@
         return !!yjs;
       },
       setRemoteCursors: setRemoteCursors,
+      hasElement: function (id) {
+        return !!getEl(id);
+      },
+      revealElement: revealElement,
+      setTexts: setTexts,
+      getSelection: selectionInfo,
       isEditing: function () {
         return !!editing || !!gesture;
       },

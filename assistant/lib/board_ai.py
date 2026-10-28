@@ -862,3 +862,56 @@ def apply_action(note: dict[str, Any], action: dict[str, Any], note_sheets_mod: 
         return None
     body = build_board(action)
     return note_sheets_mod.create_sheet(note, title or "Доска", body=body, kind=note_sheets_mod.SHEET_KIND_BOARD)
+
+
+# ---- Кнопка «ИИ» у выделенных блоков: переписать их текст по просьбе ----
+
+MAX_TEXT_BLOCKS = 40
+BLOCK_TEXT_MAX = 2000
+
+BLOCK_TEXT_SYSTEM = (
+    "You edit the text of selected blocks on a whiteboard (flowchart / mind map / sticky notes). "
+    "Apply the user's request to each block's text. Keep the block's role: a flowchart step stays a short step, "
+    "a decision stays a question. Keep the language unless asked to translate. Plain text only, no Markdown; "
+    "line breaks are allowed. Answer with ONE JSON object and nothing else: "
+    '{"blocks": [{"id": "<block id>", "text": "<new text>"}]} — only blocks whose text changes, ids exactly as given.'
+)
+
+
+def block_text_prompt(instruction: str, blocks: list[dict[str, Any]], board_text: str = "") -> str:
+    """Запрос модели: просьба, выделенные блоки (id и текст) и, для контекста, вся доска."""
+    items = []
+    for b in blocks[:MAX_TEXT_BLOCKS]:
+        bid = str(b.get("id") or "").strip()[:64]
+        if not bid:
+            continue
+        items.append({"id": bid, "text": str(b.get("text") or "")[:BLOCK_TEXT_MAX]})
+    parts = [f"Просьба пользователя: {instruction.strip()}", "Выделенные блоки:", json.dumps(items, ensure_ascii=False)]
+    if board_text.strip():
+        parts += ["Вся доска (только для контекста, меняй лишь выделенные блоки):", board_text.strip()[:6000]]
+    return "\n".join(parts)
+
+
+def parse_block_texts(answer: str, allowed_ids: list[str]) -> dict[str, str]:
+    """Ответ модели → {id: новый текст}; чужие id и пустые тексты отбрасываем."""
+    allowed = set(allowed_ids)
+    raw = str(answer or "")
+    m = re.search(r"\{.*\}", raw, re.DOTALL)
+    if not m:
+        return {}
+    try:
+        data = json.loads(m.group(0))
+    except (ValueError, TypeError):
+        return {}
+    out: dict[str, str] = {}
+    items = data.get("blocks") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return {}
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        bid = str(it.get("id") or "")
+        text = str(it.get("text") or "").strip()
+        if bid in allowed and text:
+            out[bid] = text[:BLOCK_TEXT_MAX]
+    return out

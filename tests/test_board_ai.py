@@ -167,3 +167,18 @@ class BoardInsertTests(unittest.TestCase):
         for i, a in enumerate(boxes):
             for b in boxes[i + 1:]:
                 self.assertFalse(_overlap(a, b))
+
+
+class BoardBlockTextTests(unittest.TestCase):
+    def test_prompt_lists_blocks(self):
+        p = board_ai.block_text_prompt("короче", [{"id": "a1", "text": "Длинный шаг"}, {"id": "", "text": "x"}], "Доска")
+        self.assertIn('"id": "a1"', p)
+        self.assertIn("короче", p)
+        self.assertIn("Доска", p)
+        self.assertNotIn('"text": "x"', p)
+
+    def test_parse_keeps_only_known_ids(self):
+        ans = 'Вот:\n{"blocks": [{"id": "a1", "text": " Шаг "}, {"id": "zz", "text": "чужой"}, {"id": "a2", "text": ""}]}'
+        self.assertEqual(board_ai.parse_block_texts(ans, ["a1", "a2"]), {"a1": "Шаг"})
+        self.assertEqual(board_ai.parse_block_texts("нет json", ["a1"]), {})
+        self.assertEqual(board_ai.parse_block_texts('{"blocks": "x"}', ["a1"]), {})

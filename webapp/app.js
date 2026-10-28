@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261028-align";
+  var WEBAPP_BUILD = "20261028-blockacts";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261028-align"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261028-blockacts"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -29631,7 +29631,106 @@
         sendBoardCursor(sid, x, y);
       },
       onNotify: showNoteToast,
+      blockActions: boardBlockActions(sid),
     };
+  }
+
+  // ---- Выделенные блоки доски: ИИ, обсудить с Лео, задача, ссылка — как у выделенного текста ----
+  function boardSelectionQuote(items) {
+    return (items || [])
+      .map(function (it) {
+        return String(it.text || it.label || "").trim();
+      })
+      .filter(Boolean)
+      .join("\n")
+      .slice(0, 2000);
+  }
+
+  function boardInstance(sid) {
+    if (String(noteSheetState.leftId) === String(sid) && noteSheetState.leftBoard) return noteSheetState.leftBoard;
+    if (String(noteSheetState.rightId) === String(sid) && noteSheetState.rightBoard) return noteSheetState.rightBoard;
+    return noteSheetState.leftBoard || noteSheetState.rightBoard || null;
+  }
+
+  // Ссылка на блок: …/webapp/?note=N&sheet=S&el=<id> — блок ищется по id, цитата не нужна.
+  function boardElementUrl(sid, elId) {
+    var u = new URL("/webapp/", location.origin);
+    u.searchParams.set("note", String(noteSheetsNoteId()));
+    if (sid && !isPrimarySheetId(sid)) u.searchParams.set("sheet", String(sid));
+    u.searchParams.set("el", String(elId));
+    return u.href;
+  }
+
+  function boardBlockActions(sid) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var local = !wrap || !wrap._shareKind || wrap._shareKind === "local";
+    return {
+      ai: local
+        ? function (items) {
+            var withText = (items || []).filter(function (it) {
+              return it.text && it.type !== "line";
+            });
+            if (!withText.length) return;
+            openNoteAiSheet({ selection: boardSelectionQuote(withText), board: { sid: sid, items: withText } });
+          }
+        : null,
+      discuss: function (items) {
+        var quote = boardSelectionQuote(items);
+        if (!quote) return;
+        var current = noteAskMode();
+        var mode = noteAskUsesChips(current) ? current : current === "comment" ? "comment" : "gpt";
+        openNoteDiscussion({ mode: mode, draft: { quote: quote, prefix: "", suffix: "" }, focus: true });
+      },
+      task: function (items) {
+        var quote = boardSelectionQuote(items);
+        var first = (items || [])[0];
+        var url = local && first ? boardElementUrl(sid, first.id) : "";
+        var lines = quote.split("\n");
+        openTaskModal({
+          summary: lines[0].slice(0, 200),
+          description: [lines.length > 1 ? quote : "", url ? "На доске: " + url : ""].filter(Boolean).join("\n\n"),
+          note_id: currentOpenNoteId(),
+        });
+      },
+      link: local
+        ? function (items) {
+            var it = (items || [])[0];
+            if (!it || !noteSheetsNoteId()) return;
+            var label = String(it.text || it.label || "Блок на доске").split("\n")[0];
+            var url = boardElementUrl(sid, it.id);
+            copyTextWithOptionalHtml(url, '<a href="' + escapeHtml(url) + '">' + escapeHtml(label.slice(0, 120)) + "</a>")
+              .then(function () {
+                shareHaptic();
+                showNoteToast("Ссылка на блок скопирована");
+              })
+              .catch(function () {
+                showNoteToast("Не удалось скопировать ссылку");
+              });
+          }
+        : null,
+    };
+  }
+
+  async function runBoardAiSheet(state, instruction, go) {
+    var noteId = noteSheetsNoteId();
+    var board = boardInstance(state.board.sid);
+    if (!noteId || !board) return;
+    var res = await apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/board-ai", {
+      method: "POST",
+      timeout: 180000,
+      body: JSON.stringify({
+        instruction: instruction,
+        blocks: state.board.items.map(function (it) {
+          return { id: it.id, text: it.text };
+        }),
+        board_text: window.LeoBoard && window.LeoBoard.describe ? window.LeoBoard.describe(board.getJson(), "") : "",
+        sheet_id: String(state.board.sid),
+        note_title: getNoteEditorTitle ? getNoteEditorTitle() : "",
+      }),
+    });
+    closeNoteAiSheet();
+    var n = board.setTexts((res && res.texts) || {});
+    showNoteToast(n ? "ИИ изменил " + n + " " + pluralRu(n, "блок", "блока", "блоков") + " — ⌘Z или ↶ отменит" : "ИИ ничего не поменял");
   }
 
   function destroyLeftBoard() {
@@ -29883,9 +29982,13 @@
     opts = opts || {};
     var ov = document.getElementById("note-ai-overlay");
     if (!ov) return;
-    noteAiSheetState = { selection: String(opts.selection || "").trim() };
+    noteAiSheetState = { selection: String(opts.selection || "").trim(), board: opts.board || null };
     var scope = document.getElementById("note-ai-scope");
-    if (scope) scope.textContent = noteAiSheetState.selection ? "Выделенное" : "Весь лист";
+    if (scope) {
+      scope.textContent = opts.board
+        ? opts.board.items.length > 1 ? "Выделенные блоки" : "Выделенный блок"
+        : noteAiSheetState.selection ? "Выделенное" : "Весь лист";
+    }
     var ta = document.getElementById("note-ai-input");
     if (ta) ta.value = "";
     ov.querySelectorAll(".note-ai-chips button").forEach(function (b) {
@@ -29922,6 +30025,24 @@
     var go = document.getElementById("note-ai-go");
     var instruction = ta ? ta.value.trim() : "";
     var state = noteAiSheetState || {};
+    if (state.board) {
+      if (!instruction) return;
+      if (go) {
+        go.classList.add("is-busy");
+        go.textContent = "Думаю…";
+      }
+      try {
+        await runBoardAiSheet(state, instruction, go);
+      } catch (e) {
+        showNoteToast((e && e.message) || "ИИ не ответил, попробуйте ещё раз");
+      } finally {
+        if (go) {
+          go.classList.remove("is-busy");
+          go.textContent = "Сделать";
+        }
+      }
+      return;
+    }
     var view = buildOpenDocView();
     var noteId = noteSheetsNoteId();
     if (!instruction || !view || !noteId) return;
@@ -44438,12 +44559,15 @@
     if (!/^\d+$/.test(note)) return null;
     var at = params.get("at") || "";
     if (!/^i[0-9a-f]{10}$/.test(at)) at = "";
+    var el = params.get("el") || "";
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(el)) el = "";
     var q = params.get("q") || "";
-    if (!at && !q) return null;
+    if (!at && !q && !el) return null;
     return {
       note: note,
       sheet: params.get("sheet") || "",
       at: at,
+      el: el,
       q: q,
       qp: params.get("qp") || "",
       qs: params.get("qs") || "",
@@ -44492,6 +44616,14 @@
   }
 
   function findNoteFragment(frag) {
+    if (frag.el) {
+      // Ссылка на блок доски: ищем его в открытых досках (слева и справа).
+      var boards = [noteSheetState.leftBoard, noteSheetState.rightBoard];
+      for (var k = 0; k < boards.length; k++) {
+        if (boards[k] && boards[k].hasElement && boards[k].hasElement(frag.el)) return { board: boards[k] };
+      }
+      return null;
+    }
     var api = window.NoteComments;
     var roots = Array.prototype.slice.call(
       document.querySelectorAll("#note-editor-overlay .note-rich-editor-body")
@@ -44520,8 +44652,12 @@
   function jumpToNoteFragment(frag) {
     var hit = findNoteFragment(frag);
     if (!hit) {
-      showNoteToast("Этого фрагмента в заметке уже нет");
+      showNoteToast(frag.el ? "Этого блока на доске уже нет" : "Этого фрагмента в заметке уже нет");
       return false;
+    }
+    if (hit.board) {
+      hit.board.revealElement(frag.el);
+      return true;
     }
     var node = hit.range ? hit.range.startContainer : hit.block;
     var el = node && (node.nodeType === 1 ? node : node.parentElement);
@@ -49676,7 +49812,7 @@
         var u = new URL(location.href);
         u.searchParams.delete("note");
         u.searchParams.delete("n");
-        ["sheet", "at", "q", "qp", "qs"].forEach(function (k) {
+        ["sheet", "at", "el", "q", "qp", "qs"].forEach(function (k) {
           u.searchParams.delete(k);
         });
         if (/note=/.test(u.hash)) u.hash = "";

@@ -2793,6 +2793,15 @@ class _MiniappNoteAiEdit(BaseModel):
     note_title: Optional[str] = None
 
 
+class _MiniappBoardAiText(BaseModel):
+    # Кнопка «ИИ» у выделенных блоков доски: новые тексты блоков по просьбе.
+    instruction: str
+    blocks: list[dict[str, Any]]
+    board_text: Optional[str] = None
+    sheet_id: Optional[str] = None
+    note_title: Optional[str] = None
+
+
 class _MiniappCanvasImageBody(BaseModel):
     prompt: str = ""
     # Лист презентации — чтобы взять её стиль для арт-дирекшена картинки.
@@ -13365,6 +13374,55 @@ async def miniapp_note_ai_edit(
     if not res["edits"]:
         raise HTTPException(status_code=422, detail=res["message"] or "ИИ не нашёл, что поменять — уточните просьбу")
     return {"ok": True, "sheet_id": str(body.sheet_id or ""), **res}
+
+
+@miniapp_router.post("/notes/local/{note_id}/board-ai")
+async def miniapp_note_board_ai(
+    note_id: int,
+    body: _MiniappBoardAiText,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Доска: «ИИ» у выделенных блоков — переписать их текст. Применяет клиент (одним шагом отмены)."""
+    from assistant.lib import board_ai as board_ai_lib
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    tg_uname: str | None = None
+    if isinstance(principal.user, dict) and principal.user.get("username"):
+        tg_uname = str(principal.user.get("username")).strip() or None
+    instruction = re.sub(r"\s+", " ", str(body.instruction or "")).strip()[:1500]
+    blocks = [b for b in (body.blocks or []) if isinstance(b, dict) and str(b.get("id") or "").strip()]
+    if not instruction or not blocks:
+        raise HTTPException(status_code=400, detail="Напишите, что сделать с текстом")
+    ids = [str(b.get("id")).strip()[:64] for b in blocks]
+
+    def _run() -> dict[str, Any]:
+        from assistant.compat.miniapp_shims import gpt_openrouter_answer_with_context
+        from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
+
+        note = notes_store.get_accessible_note(uid, note_id)
+        if not note:
+            raise HTTPException(status_code=404, detail="Заметка не найдена")
+        set_openrouter_usage_telegram_user(telegram_user_id=uid, telegram_username=tg_uname)
+        prompt = board_ai_lib.block_text_prompt(instruction, blocks, str(body.board_text or ""))
+        out = gpt_openrouter_answer_with_context(
+            prompt, "", note_title=str(body.note_title or note.get("title") or ""), note_text="",
+            system=board_ai_lib.BLOCK_TEXT_SYSTEM, max_tokens=8192,
+        )
+        texts = board_ai_lib.parse_block_texts(str((out or {}).get("answer") or ""), ids)
+        print(f"[board_ai_text] note={note_id} sheet={body.sheet_id} blocks={len(ids)} changed={len(texts)}")
+        return {"texts": texts}
+
+    try:
+        res = await run_in_threadpool(_run)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001 — сеть/модель
+        print(f"[board_ai_text] failed note={note_id} err={e!r}")
+        raise HTTPException(status_code=502, detail="ИИ не ответил, попробуйте ещё раз") from e
+    if not res["texts"]:
+        raise HTTPException(status_code=422, detail="ИИ не нашёл, что поменять — уточните просьбу")
+    return {"ok": True, **res}
 
 
 @miniapp_router.post("/notes/local/{note_id}/suggest-title")
