@@ -74,3 +74,30 @@ def test_note_edits_long_insert_not_truncated():
     clean, edits = note_edits.parse_blocks(answer)
     assert clean == "Добавил."
     assert edits[0]["text"] == text
+
+
+def test_note_edits_insert_table_and_add_rows():
+    from assistant.lib import note_edits
+
+    answer = (
+        "```leo-note\n"
+        + json.dumps(
+            {
+                "edits": [
+                    {"op": "insert_table", "anchor": "", "rows": [["Клиент", "Тем", "Встреч"], ["Альфа", 3, 5], ["Бета", "2"], [None, ""]]},
+                    {"op": "add_rows", "table": 1, "rows": [["Гамма", "1", "4"]]},
+                    {"op": "insert_table", "rows": []},
+                    {"op": "add_rows", "table": 0, "rows": [["x"]]},
+                ]
+            },
+            ensure_ascii=False,
+        )
+        + "\n```\nСобрал таблицу."
+    )
+    clean, edits = note_edits.parse_blocks(answer)
+    assert clean == "Собрал таблицу."
+    assert [e["op"] for e in edits] == ["insert_table", "add_rows"]
+    # строки выровнены по ширине, числа — строками, пустая строка отброшена
+    assert edits[0]["rows"] == [["Клиент", "Тем", "Встреч"], ["Альфа", "3", "5"], ["Бета", "2", ""]]
+    assert edits[1] == {"op": "add_rows", "table": 1, "rows": [["Гамма", "1", "4"]]}
+    assert "insert_table" in note_edits.system_addon()

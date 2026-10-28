@@ -17,6 +17,9 @@ MAX_EDITS = 300
 # Текст одной правки — не меньше, чем видит модель: длинные вставки резались на 4000 символов.
 MAX_TEXT = MAX_VIEW_CHARS
 _FNS = ("sum", "avg", "min", "max", "diff", "product")
+MAX_TABLE_ROWS = 300
+MAX_TABLE_COLS = 20
+MAX_CELL = 2000
 
 _BLOCK_RE = re.compile(r"```leo-note\s*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
 
@@ -46,6 +49,15 @@ Operations:
   row 1 and the target row. ALWAYS use compute for arithmetic over table cells — never calculate yourself.
 - {"op":"insert_after","anchor":"exact text of a paragraph","text":"new paragraph"}
   Inserts after the paragraph that contains anchor; "anchor":"" appends to the end. Use \\n for several paragraphs.
+- {"op":"insert_table","anchor":"exact text of a paragraph","rows":[["Клиент","Тем","Встреч"],["Альфа","3","5"]]}
+  Creates a NEW table after the paragraph that contains anchor ("anchor":"" — at the end of the note).
+  rows[0] is the header row; every row has the same number of cells (up to 20 columns, 300 rows).
+  Use it whenever the user asks to make / build / collect a table — you CAN create tables.
+  Fill the cells from the note, the chat and the data the user gave; leave a cell "" if unknown.
+  For a totals row, add it with empty cells and then "compute" into it (the new table's number is
+  the count of tables above it + 1).
+- {"op":"add_rows","table":1,"rows":[["Гамма","2","4"]]} — append rows to the end of an existing table
+  (when it has fewer rows than the data). Cells as in insert_table.
 
 Rules: change only what the user asked; never re-type the whole note; at most 300 edits;
 keep the language and formatting of the note.
@@ -82,6 +94,23 @@ def _text(v: Any) -> str:
     return str(v if v is not None else "")[:MAX_TEXT]
 
 
+def _rows(v: Any) -> Optional[list[list[str]]]:
+    """Строки таблицы: список списков ячеек, выровненный по самой широкой строке."""
+    if not isinstance(v, list):
+        return None
+    rows = [r for r in v[:MAX_TABLE_ROWS] if isinstance(r, list) and r]
+    if not rows:
+        return None
+    width = min(MAX_TABLE_COLS, max(len(r) for r in rows))
+    out = []
+    for r in rows:
+        cells = ["" if c is None else str(c)[:MAX_CELL] for c in r[:width]]
+        out.append(cells + [""] * (width - len(cells)))
+    # Пустые строки (кроме первой) не нужны.
+    out = out[:1] + [r for r in out[1:] if any(c.strip() for c in r)]
+    return out
+
+
 def clean_edit(raw: Any) -> Optional[dict[str, Any]]:
     if not isinstance(raw, dict):
         return None
@@ -105,6 +134,16 @@ def clean_edit(raw: Any) -> Optional[dict[str, Any]]:
         if not t or fn not in _FNS or bool(tcol) == bool(trow) or rows is None or cols is None:
             return None
         return {"op": "compute", "table": t, "fn": fn, "target": {"col": tcol} if tcol else {"row": trow}, "rows": rows, "cols": cols}
+    if op in ("insert_table", "add_rows"):
+        rows = _rows(raw.get("rows"))
+        if not rows:
+            return None
+        if op == "add_rows":
+            t = _int(raw.get("table"))
+            return {"op": "add_rows", "table": t, "rows": rows} if t else None
+        if len(rows) < 1 or not any(c.strip() for c in rows[0]):
+            return None
+        return {"op": "insert_table", "anchor": _text(raw.get("anchor")), "rows": rows}
     if op in ("insert_after", "append"):
         text = _text(raw.get("text"))
         if not text.strip():

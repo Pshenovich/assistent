@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261028-pastev";
+  var WEBAPP_BUILD = "20261028-aitable";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -30204,7 +30204,8 @@
       if (text) lines.push(text);
     });
     var view = lines.join("\n");
-    if (!view.trim()) return null;
+    // Пустой лист — тоже можно править (например, создать в нём таблицу).
+    if (!view.trim()) view = "(лист пуст)";
     return { sheet_id: String(noteSheetState.leftId || NOTE_SHEET_MAIN), view: view };
   }
 
@@ -30274,6 +30275,23 @@
       return row ? row.cells[c - 1] || null : null;
     }
 
+    // Строка новой таблицы в разметке редактора: <tr><td><p>текст</p></td>…</tr>.
+    function aiTableRow(cells, width, tag) {
+      var tr = doc.createElement("tr");
+      for (var k = 0; k < width; k++) {
+        var cell = doc.createElement(tag);
+        var p = doc.createElement("p");
+        var text = String(cells[k] == null ? "" : cells[k]);
+        if (text) {
+          p.textContent = text;
+          touched.push({ node: p.firstChild, start: 0, len: text.length });
+        }
+        cell.appendChild(p);
+        tr.appendChild(cell);
+      }
+      return tr;
+    }
+
     edits.forEach(function (e) {
       if (e.op === "replace") {
         var hits = 0;
@@ -30338,6 +30356,31 @@
           setCellText(target, formatCellNumber(v, raw));
           applied++;
         });
+        return;
+      }
+      if (e.op === "add_rows") {
+        var ta = tables[e.table - 1];
+        var body = ta && (ta.tBodies[0] || ta);
+        if (!body) { failed++; return; }
+        var width = Array.prototype.reduce.call(ta.rows, function (m, r) { return Math.max(m, r.cells.length); }, 0) || e.rows[0].length;
+        e.rows.forEach(function (cells) { body.appendChild(aiTableRow(cells, width, "td")); });
+        applied++;
+        return;
+      }
+      if (e.op === "insert_table") {
+        var tblocks = Array.prototype.slice.call(root.children);
+        var tanchor = null;
+        if (e.anchor) {
+          tanchor = tblocks.filter(function (b) { return String(b.textContent || "").indexOf(e.anchor) >= 0; })[0] || null;
+          if (!tanchor) { failed++; return; }
+        }
+        var w = e.rows[0].length;
+        var table = doc.createElement("table");
+        var tbody = doc.createElement("tbody");
+        e.rows.forEach(function (cells, i) { tbody.appendChild(aiTableRow(cells, w, i === 0 ? "th" : "td")); });
+        table.appendChild(tbody);
+        root.insertBefore(table, tanchor ? tanchor.nextSibling : null);
+        applied++;
         return;
       }
       if (e.op === "insert_after") {
