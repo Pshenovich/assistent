@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261028-light3";
+  var WEBAPP_BUILD = "20261028-pastev";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -19605,8 +19605,9 @@
     bindEventRecordingDrop(modal);
     // Прошедшая встреча — материалы сразу после времени; будущая — в конце.
     // На десктопе блок стоит отдельной колонкой справа (CSS), порядок там не важен.
-    var startPill = sheet.querySelector("#m-ev-start-date");
-    var timeGroup = startPill ? startPill.closest(".event-sheet-group") : null;
+    // «Когда» лежит внутри общей группы свойств — вставляем после её прямого потомка окна.
+    var timeGroup = sheet.querySelector("#m-ev-start-date");
+    while (timeGroup && timeGroup.parentNode !== sheet) timeGroup = timeGroup.parentNode;
     if (eventIsPast(ev) && timeGroup && timeGroup.nextSibling) sheet.insertBefore(box, timeGroup.nextSibling);
     else sheet.appendChild(box);
     sheet.classList.add("event-sheet--materials");
