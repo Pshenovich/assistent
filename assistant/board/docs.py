@@ -167,7 +167,8 @@ def _xlsx_serial_to_text(raw: str) -> str:
 
 
 _XLSX_MAX_DISTINCT = 5000
-_ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4}")
+_ID_COLUMN_RE = re.compile(r"(?:^|[^a-zа-яё])(?:id|ид)(?:$|[^a-zа-яё])|^№|телефон", re.I)
 
 
 def _xlsx_number(val: str) -> float | None:
@@ -178,6 +179,13 @@ def _xlsx_number(val: str) -> float | None:
         return float(raw)
     except ValueError:
         return None
+
+
+def _date_key(val: str) -> str:
+    """«05.10.2026 …» → «2026-10-05 …», чтобы даты сравнивались по времени, а не по строке."""
+    if len(val) >= 10 and val[2] == "." and val[5] == ".":
+        return f"{val[6:10]}-{val[3:5]}-{val[0:2]}{val[10:]}"
+    return val
 
 
 def _fmt_num(x: float) -> str:
@@ -207,9 +215,9 @@ class _XlsxColumn:
         self.filled += 1
         if _ISO_DATE_RE.match(val):
             self.dates += 1
-            if not self.first_date or val < self.first_date:
+            if not self.first_date or _date_key(val) < _date_key(self.first_date):
                 self.first_date = val
-            if val > self.last_date:
+            if not self.last_date or _date_key(val) > _date_key(self.last_date):
                 self.last_date = val
         else:
             num = _xlsx_number(val)
@@ -226,12 +234,14 @@ class _XlsxColumn:
         else:
             self.overflow = True
 
-    def describe(self, rows: int) -> str:
+    def describe(self, rows: int, name: str = "") -> str:
         if not self.filled:
             return ""
         out = f"заполнено {self.filled} из {rows}"
         if self.dates >= 0.9 * self.filled:
             return f"{out}; даты с {self.first_date} по {self.last_date}"
+        if _ID_COLUMN_RE.search(name):
+            return f"{out}; идентификаторы"
         if self.nums >= 0.9 * self.filled and self.nums:
             avg = self.total / self.nums
             return (
@@ -239,13 +249,14 @@ class _XlsxColumn:
                 f"мин {_fmt_num(self.lo or 0)}, макс {_fmt_num(self.hi or 0)}"
             )
         top = sorted(self.counts.items(), key=lambda kv: -kv[1])
-        if not self.overflow and len(top) <= 30:
-            return out + "; значения: " + ", ".join(f"{k} — {n}" for k, n in top)
+        if not self.overflow and len(top) <= 40:
+            return out + "; значения: " + ", ".join(f"{k[:60]} — {n}" for k, n in top)
         many = f"больше {_XLSX_MAX_DISTINCT}" if self.overflow else str(len(top))
-        if top[0][1] == 1:
-            return f"{out}; {many} разных значений, повторов нет"
+        # Почти все разные (комментарии, рекомендации) — частые значения ничего не говорят.
+        if self.overflow or len(top) > 0.5 * self.filled:
+            return f"{out}; свободный текст, {many} разных значений"
         return f"{out}; {many} разных значений, чаще всего: " + ", ".join(
-            f"{k} — {n}" for k, n in top[:10]
+            f"{k[:60]} — {n}" for k, n in top[:10]
         )
 
 
@@ -342,11 +353,11 @@ def extract_xlsx(data: bytes, *, limit: int = MAX_DOC_CHARS) -> str:
             data_rows = total - (1 if header else 0)
             items = []
             for j, col in enumerate(cols):
-                desc = col.describe(data_rows)
+                name = header[j] if j < len(header) and header[j] else f"столбец {j + 1}"
+                desc = col.describe(data_rows, name)
                 if desc:
-                    name = header[j] if j < len(header) and header[j] else f"столбец {j + 1}"
-                    items.append(f"- {name}: {desc}")
-            summary = "\n".join(items)[:4000]
+                    items.append(f"- {name}: {desc}"[:700])
+            summary = "\n".join(items)[:12000]
         parsed.append([title, lines, total, header, summary])
 
     # Сначала сводки, остаток строк — поровну, маленьким листам сколько им нужно.

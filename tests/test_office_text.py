@@ -78,6 +78,22 @@ class OfficeTextTests(unittest.TestCase):
                 )
         self.assertEqual(extract_pptx(buf.getvalue()), "Слайд 1:\nПлан\n\nСлайд 2:\nИтоги")
 
+    def test_column_summary_kinds(self) -> None:
+        from assistant.board.docs import _XlsxColumn
+
+        dates = _XlsxColumn()
+        for v in ("05.10.2026", "28.09.2026", "27.10.2026"):
+            dates.add(v)
+        self.assertIn("даты с 28.09.2026 по 27.10.2026", dates.describe(3))
+        ids = _XlsxColumn()
+        ids.add("1786669")
+        self.assertTrue(ids.describe(1, "id звонка").endswith("идентификаторы"))
+        self.assertIn("числа", ids.describe(1, "Видео"))
+        notes = _XlsxColumn()
+        for i in range(60):
+            notes.add(f"рекомендация {i}")
+        self.assertIn("свободный текст, 60 разных значений", notes.describe(60))
+
 
 if __name__ == "__main__":
     unittest.main()
