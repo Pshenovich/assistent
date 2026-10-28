@@ -67,6 +67,8 @@ html.vkui--vkIOS--dark {
   --overlay-7: rgba(255, 255, 255, 0.24);
   /* Цвет теней: на тёмном — чёрный, на светлом — мягче (тени в стилях берут от него долю). */
   --shadow-color: #000000;
+  /* Выбранный сегмент на серой подложке переключателя. */
+  --seg-active: var(--surface-hover);
 
   --radius-xs: var(--vkui--size_border_radius--regular, 10px);
   --radius-sm: var(--vkui--size_border_radius--regular, 10px);
@@ -205,7 +207,7 @@ html[data-theme="light"] {
 
   --text-strong: #000000;
   --text-soft: #3c4047;
-  --text-subtle: #6d7885;
+  --text-subtle: #535b66;
   --surface-raised: #e9ebee;
   --surface-hover: #dfe2e6;
   --accent-soft: #1f6fc4;
@@ -223,6 +225,7 @@ html[data-theme="light"] {
   --overlay-6: rgba(0, 0, 0, 0.12);
   --overlay-7: rgba(0, 0, 0, 0.18);
   --shadow-color: rgba(15, 23, 42, 0.35);
+  --seg-active: var(--surface);
 }
 
 /* Плавная смена темы по выбору пользователя (класс держится ~0.25 с). */
@@ -13714,6 +13717,10 @@ html.modal-sheet-open body {
     font-weight: 600;
   }
 
+  .tabbar-btn:not(.active) {
+    color: var(--text-secondary);
+  }
+
   .tabbar-btn[data-tab="profile"] {
     margin-top: auto;
   }
@@ -13838,7 +13845,7 @@ html.modal-sheet-open body {
     padding: 0.2rem 0.35rem 0.2rem 0;
     border: none;
     border-radius: 8px;
-    color: var(--text-secondary);
+    color: var(--text-subtle);
     background: transparent;
     font: inherit;
     font-size: 0.9375rem;
@@ -17948,7 +17955,7 @@ html.actual-voice-open #actual-voice-btn { visibility: hidden; }
 
 /* Переключатель типа: неактивные пункты читаемы */
 #modal-fields .event-sheet-kind-btn { color: var(--text-subtle); font-size: 0.8125rem; min-height: 32px; }
-#modal-fields .event-sheet-kind-btn.is-active { color: var(--text); background: var(--surface-hover); }
+#modal-fields .event-sheet-kind-btn.is-active { color: var(--text); background: var(--seg-active); box-shadow: 0 1px 2px color-mix(in srgb, var(--shadow-color) 18%, transparent); }
 #modal-fields .event-sheet-title { font-size: 1.1875rem; font-weight: 600; }
 
 .sheet-glabel { margin: 0; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--text-subtle); }
