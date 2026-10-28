@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261027-meetingtasks";
+  var WEBAPP_BUILD = "20261028-headings";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261027-meetingtasks"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261028-headings"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 

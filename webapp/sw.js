@@ -1,6 +1,6 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261027-meetingtasks";
+var CACHE_VERSION = "miniapp-v1-20261028-headings";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 var CANONICAL_ORIGIN = "https://assistent.networ.ru";
 var OBSOLETE_HOSTS = {
@@ -11,18 +11,18 @@ var OBSOLETE_HOSTS = {
 var PRECACHE_URLS = [
   "./",
   "./index.html",
-  "./styles.css?v=20261027-meetingtasks",
-  "./board.css?v=20261027-meetingtasks",
-  "./board-geom.js?v=20261027-meetingtasks",
-  "./board.js?v=20261027-meetingtasks",
-  "./realtime.js?v=20261027-meetingtasks",
-  "./note-yjs.js?v=20261027-meetingtasks",
-  "./app.js?v=20261027-meetingtasks",
+  "./styles.css?v=20261028-headings",
+  "./board.css?v=20261028-headings",
+  "./board-geom.js?v=20261028-headings",
+  "./board.js?v=20261028-headings",
+  "./realtime.js?v=20261028-headings",
+  "./note-yjs.js?v=20261028-headings",
+  "./app.js?v=20261028-headings",
   "./mail.js?v=20261023-mail6",
   "./mail-inbox.js?v=20261023-reply1",
   "./digest-chats.js?v=20261025-mobfix",
   "./digest-market.js?v=20261025-mobfix",
-  "./web-canvas.js?v=20261027-meetingtasks",
+  "./web-canvas.js?v=20261028-headings",
   "./launch.html",
   "./manifest.webmanifest",
   "./note-drafts.js?v=20261005-heading-pdf",

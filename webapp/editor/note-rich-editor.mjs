@@ -2149,8 +2149,8 @@ var NOTE_FONTS = [
   { id: "mono", label: "Моноширинный", css: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' },
 ];
 var NOTE_FONT_SIZES = ["12px", "14px", "16px", "18px", "20px", "24px", "30px"];
-// Заголовки при смене кегля всей заметки — пропорционально (как h1 1.3em / h2 1.12em в CSS).
-var NOTE_HEADING_SCALE = { 1: 1.3, 2: 1.12, 3: 1, 4: 1, 5: 1, 6: 1 };
+// Заголовки при смене кегля всей заметки — пропорционально (как h1 1.5em / h2 1.3em / h3 1.15em в CSS).
+var NOTE_HEADING_SCALE = { 1: 1.5, 2: 1.3, 3: 1.15, 4: 1, 5: 1, 6: 1 };
 
 // Кегль из меню — всегда; посчитанный для заголовка (data-note-fs) — любой 10–60px.
 function noteFontSizeFrom(el) {
@@ -2517,6 +2517,7 @@ function mountToolbar(toolbarEl, editor) {
     '<div class="note-tg-page hidden" data-page="heading">' +
     '<button type="button" class="note-tg-menu-item note-tg-menu-page note-tg-menu-back" data-go="main">' +
     svgIcon("chevronLeft") + "<span>Назад</span></button>" +
+    item("heading-1", "heading-1", "", "Заголовок 1", "note-tg-h note-tg-h1") +
     item("heading-2", "heading-2", "", "Заголовок 2", "note-tg-h note-tg-h2") +
     item("heading-3", "heading-3", "", "Заголовок 3", "note-tg-h note-tg-h3") +
     item("heading-4", "heading-4", "", "Заголовок 4", "note-tg-h note-tg-h4") +
@@ -2702,7 +2703,7 @@ function mountToolbar(toolbarEl, editor) {
     else if (sel.empty && Date.now() - toolbarTouchAt > 1000) fontMenuRange = null;
   });
   // Ничего не выделено — шрифт / кегль всей заметки: по каждому текстовому блоку.
-  // Кегль заголовков — пропорционально (H1 ×1.3, H2 ×1.12), шрифт — у всех.
+  // Кегль заголовков — пропорционально (H1 ×1.5, H2 ×1.3, H3 ×1.15), шрифт — у всех.
   function applyFontStyleToDoc(attrs) {
     var sizeOnly = attrs.fontSize !== undefined && attrs.fontFamily === undefined;
     var state = editor.state;
@@ -5201,7 +5202,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261027-meetingtasks",
+  assetVersion: "20261028-headings",
   Y: Y,
   mount: mount,
   importBody: importBody,

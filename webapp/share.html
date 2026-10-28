@@ -9,7 +9,7 @@
   <meta property="og:title" content="{{TITLE}}" />
   <meta property="og:description" content="{{LABEL}}" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/board.css?v=20261027-meetingtasks" />
+  <link rel="stylesheet" href="/webapp/board.css?v=20261028-headings" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
@@ -292,10 +292,15 @@
     #share-body h5,
     #share-body h6 {
       margin: 0.75rem 0 0.375rem;
-      font-size: inherit;
+      font-size: 1em;
       font-weight: 700;
       line-height: 1.3;
     }
+    /* Та же шкала, что в приложении (styles.css). */
+    #share-body h1 { font-size: 1.5em; }
+    #share-body h2 { font-size: 1.3em; }
+    #share-body h3 { font-size: 1.15em; font-weight: 500; }
+    #share-body :is(h4, h5, h6) { font-weight: 500; }
     #share-body p { margin: 0.375rem 0; }
     #share-body ul,
     #share-body ol {
@@ -868,8 +873,8 @@ details.note-toggle[open] > summary::after { transform: rotate(180deg); }
   </main>
   <script src="/webapp/note-html.js?v=20260908-stable2"></script>
   <script src="/webapp/note-comments.js?v=20260908-stable2"></script>
-  <script src="/webapp/board-geom.js?v=20261027-meetingtasks"></script>
-  <script src="/webapp/board.js?v=20261027-meetingtasks"></script>
-  <script src="/webapp/share.js?v=20261027-meetingtasks"></script>
+  <script src="/webapp/board-geom.js?v=20261028-headings"></script>
+  <script src="/webapp/board.js?v=20261028-headings"></script>
+  <script src="/webapp/share.js?v=20261028-headings"></script>
 </body>
 </html>
