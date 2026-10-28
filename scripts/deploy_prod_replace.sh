@@ -203,6 +203,8 @@ if [[ -f .env ]]; then
   grep -q '^BITRIX_MCP_URL=' .env || echo 'BITRIX_MCP_URL=https://mcp.bitrix24.tech/mcp/' >> .env
   grep -q '^OPENROUTER_MODEL_BOARD=' .env || echo 'OPENROUTER_MODEL_BOARD=google/gemini-2.5-flash' >> .env
   grep -q '^USAGE_DASHBOARD_URL_PREFIX=' .env || echo 'USAGE_DASHBOARD_URL_PREFIX=/dashboard' >> .env
+  # Ошибки бота и веба в Sentry (проект orbita). DSN не секрет — это адрес приёма событий.
+  grep -q '^SENTRY_DSN=' .env || echo 'SENTRY_DSN=https://8701c2c70e3ddadcb106150aac9c264e@o4512332678430720.ingest.de.sentry.io/4512332863570000' >> .env
   if grep -q '^USAGE_DASHBOARD_URL_PREFIX=' .env; then
     sed -i 's|^USAGE_DASHBOARD_URL_PREFIX=.*|USAGE_DASHBOARD_URL_PREFIX=/dashboard|' .env
   fi
