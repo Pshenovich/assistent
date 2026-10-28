@@ -7,8 +7,8 @@
 
   var STORE_KEY = "orbitaTheme";
   var PREFS = ["system", "light", "dark"];
-  // Пока выбор темы в пробном режиме, без сохранённого выбора — тёмная, как раньше.
-  var DEFAULT_PREF = "dark";
+  // Без сохранённого выбора — как у Telegram / устройства.
+  var DEFAULT_PREF = "system";
   // Цвета фона до загрузки стилей (совпадают с --bg каждой темы).
   var BG = { dark: "#0a0a0a", light: "#ebedf0" };
 

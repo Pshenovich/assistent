@@ -5336,23 +5336,9 @@ async def miniapp_me(principal: _MiniappPrincipal = Depends(require_miniapp_user
     }
 
 
-def _ui_theme_enabled(principal: _MiniappPrincipal) -> bool:
-    """Выбор темы пока в пробном режиме: UI_THEME_USERS — id или @username через запятую, «*» — всем."""
-    raw = os.getenv("UI_THEME_USERS", "").strip()
-    if not raw:
-        return False
-    allowed = {x.strip().lstrip("@").lower() for x in raw.split(",") if x.strip()}
-    if "*" in allowed:
-        return True
-    username = str(principal.user.get("username") or "").strip().lower()
-    return str(int(principal.telegram_user_id)) in allowed or (bool(username) and username in allowed)
-
-
 def _ui_theme_state(principal: _MiniappPrincipal) -> dict[str, Any]:
     from assistant.stores import user_prefs
 
-    if not _ui_theme_enabled(principal):
-        return {"enabled": False, "pref": "dark"}
     return {"enabled": True, "pref": user_prefs.get_ui_theme(int(principal.telegram_user_id))}
 
 
@@ -5365,8 +5351,6 @@ async def miniapp_profile_theme_put(
     from assistant.realtime import notify as rt_notify
     from assistant.stores import user_prefs
 
-    if not _ui_theme_enabled(principal):
-        raise HTTPException(status_code=403, detail="Выбор темы пока недоступен")
     uid = int(principal.telegram_user_id)
     try:
         pref = await run_in_threadpool(user_prefs.set_ui_theme, uid, body.theme)
