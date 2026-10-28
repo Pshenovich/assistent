@@ -5787,6 +5787,14 @@ def _inbox_item_api(task: dict[str, Any], *, tz: Any, viewer_id: int) -> dict[st
                     "title": str(note.get("title") or "") or "Без названия",
                     "kind": "transcription" if note.get("role") == "transcription" else "note",
                 }
+                # Строка встречи, из которой поставлена задача: «Открыть источник» мигнёт ею.
+                meta = note.get("meta") if isinstance(note.get("meta"), dict) else {}
+                for t in meta.get("tasks") or []:
+                    link = t.get("link") if isinstance(t, dict) and isinstance(t.get("link"), dict) else {}
+                    if t.get("id") and str(link.get("task_id") or "") == str(task.get("id")):
+                        item["source"]["item"] = str(t["id"])
+                        item["source"]["quote"] = str(t.get("task") or "")[:300]
+                        break
         except Exception as e:
             print(f"[inbox] source task={task.get('id')} err={e!r}")
     return item

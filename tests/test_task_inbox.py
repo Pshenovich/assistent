@@ -152,6 +152,13 @@ def test_inbox_source_only_when_accessible(client, store, tmp_path, monkeypatch)
     by_id = {t["id"]: t for t in r.json()["items"]}
     assert by_id[seen["id"]]["source"] == {"id": meeting["id"], "title": "Планёрка продукта", "kind": "transcription"}
     assert "source" not in by_id[hidden["id"]]
+
+    # Задача поставлена из пункта встречи — источник ведёт на его строку (мигнуть при открытии).
+    meta = {"tasks": [{"id": "i0123456789", "task": "Собрать список фич", "link": {"task_id": seen["id"]}}]}
+    notes_store.update_note(ASSIGNEE, meeting["id"], meta=meta)
+    r = client.get("/api/miniapp/calendar/tasks/inbox", headers=_headers(ASSIGNEE))
+    src = {t["id"]: t for t in r.json()["items"]}[seen["id"]]["source"]
+    assert src["item"] == "i0123456789" and src["quote"] == "Собрать список фич"
     notes_store._CONN = None
 
 

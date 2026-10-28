@@ -537,6 +537,8 @@ def public(row: dict[str, Any], now: Optional[datetime] = None) -> dict[str, Any
         "comment": f.get("comment") or "",
         "link": row.get("link") or {},
         "source": {k: src.get(k) for k in ("kind", "note_kind", "id", "item", "title", "label", "date", "url") if src.get(k) is not None},
+        # Цитата из источника — по ней «Открыть источник» находит фрагмент, если у строки нет ID.
+        "quote": str(row.get("quote") or "")[:300],
         "by": row.get("by_name") or "",
         "updated_at": row.get("updated_at") or "",
     }

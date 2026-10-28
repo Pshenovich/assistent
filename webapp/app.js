@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261028-orbit";
+  var WEBAPP_BUILD = "20261028-srcjump";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -19940,6 +19940,17 @@
     if (opts.dictate) startDictationWhenEditorReady(String(it.id));
   }
 
+  // Источник пункта (Фокус, разбор задач): открыть документ на строке, из которой пункт взят, и мигнуть ею.
+  // at — data-leo-item строки; quote — цитата (найти точный фрагмент или строку без ID).
+  function openSourceFragment(note, at, quote) {
+    openMeetingMaterial(note);
+    at = /^i[0-9a-f]{10}$/.test(String(at || "")) ? String(at) : "";
+    quote = String(quote || "").replace(/\s+/g, " ").trim().slice(0, FRAGMENT_QUOTE_MAX);
+    if (!at && !quote) return;
+    // Только цитата (без ID): её может не быть в тексте дословно — тогда просто открываем документ, без тоста.
+    jumpToNoteFragmentWhenReady({ note: String(note.id), sheet: "", at: at, el: "", q: quote, qp: "", qs: "" }, { quiet: !at });
+  }
+
   // «Надиктовать»: как только редактор новой заметки готов — включаем диктовку.
   function startDictationWhenEditorReady(noteId, tries) {
     tries = tries || 0;
@@ -21260,7 +21271,7 @@
     back.addEventListener("click", tinboxReturn);
     document.body.appendChild(back);
     s.back = back;
-    openMeetingMaterial({ id: src.id, kind: src.kind, title: src.title || "" });
+    openSourceFragment({ id: src.id, kind: src.kind, title: src.title || "" }, src.item, src.quote);
   }
 
   function tinboxReturn() {
@@ -21855,7 +21866,7 @@
     if (note) card.appendChild(tinboxEl("p", "tinbox-desc", note));
     var src = f.source || {};
     if (src.kind === "note" && src.id) {
-      card.appendChild(tinboxSourceRow({ id: src.id, kind: src.note_kind === "transcription" ? "transcription" : "note", title: src.title || src.label || "" }));
+      card.appendChild(tinboxSourceRow({ id: src.id, kind: src.note_kind === "transcription" ? "transcription" : "note", title: src.title || src.label || "", item: src.item || "", quote: f.quote || "" }));
     } else if (src.title || src.label) {
       var row = tinboxEl("div", "tinbox-src is-static");
       var sic = tinboxEl("span", "tinbox-src-ico");
@@ -22926,7 +22937,8 @@
       } else if (act === "open_note") {
         // «Задачи встречи»: заметка открывается на таблице задач
         if (it.note && it.note.anchor === "tasks") meetingTasksScrollTo = String(it.note.id);
-        if (it.note) openMeetingMaterial({ id: it.note.id, kind: it.note.kind, title: it.note.title });
+        var itMeta = it._item || {};
+        if (it.note) openSourceFragment({ id: it.note.id, kind: it.note.kind, title: it.note.title }, itMeta.item, itMeta.quote);
       } else if (act === "url") {
         if (p.url) openExternal(p.url);
       } else if (act === "mark_done") {
@@ -43724,10 +43736,10 @@
     return !!(src && ((src.kind === "note" && src.id) || src.url));
   }
 
-  function focusOpenSource(src) {
+  function focusOpenSource(src, quote) {
     if (!src) return;
     if (src.kind === "note" && src.id) {
-      openMeetingMaterial({ id: src.id, kind: src.note_kind || "note", title: src.title || "" });
+      openSourceFragment({ id: src.id, kind: src.note_kind || "note", title: src.title || "" }, src.item, quote);
     } else if (src.url) {
       openExternal(src.url);
     }
@@ -44280,7 +44292,7 @@
       foot.addEventListener("click", function (e) {
         e.preventDefault();
         e.stopPropagation();
-        focusOpenSource(src);
+        focusOpenSource(src, f.quote);
       });
     }
     return foot;
@@ -44736,7 +44748,8 @@
       }
     }
     if (api && api.rangeForAnchor && frag.q) {
-      var where = block ? [block].concat(roots) : roots;
+      // Строка найдена по ID — цитату ищем только в ней (иначе мигнёт совпадение в другом месте).
+      var where = block ? [block] : roots;
       for (var j = 0; j < where.length && !range; j++) {
         try {
           range = api.rangeForAnchor(where[j], frag.q, frag.qp, frag.qs);
@@ -44776,7 +44789,8 @@
   }
 
   // Заметка/лист ещё открываются — ждём, пока фрагмент появится в тексте (или выйдет время).
-  function jumpToNoteFragmentWhenReady(frag) {
+  function jumpToNoteFragmentWhenReady(frag, opts) {
+    opts = opts || {};
     var started = Date.now();
     clearTimeout(jumpToNoteFragmentWhenReady._t);
     function tick() {
@@ -44788,7 +44802,7 @@
         return;
       }
       if (Date.now() - started > 8000) {
-        if (ready) jumpToNoteFragment(frag);
+        if (ready && !opts.quiet) jumpToNoteFragment(frag);
         return;
       }
       jumpToNoteFragmentWhenReady._t = setTimeout(tick, 150);

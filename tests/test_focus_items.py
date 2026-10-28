@@ -290,6 +290,10 @@ class PublicStatusTests(unittest.TestCase):
         row["snooze_until"] = "2026-10-21T09:00:00+00:00"
         self.assertEqual(fi.public(row, now)["status"], "snoozed")
         self.assertEqual(fi.public({"item_key": "k", "status": "converted"}, now)["status"], "converted")
+        # Источник ведёт на строку (item) и цитату — по ним «Открыть источник» мигает фрагментом.
+        pub = fi.public({"item_key": "k", "quote": "сделаю отчёт к пятнице", "source": {"kind": "note", "id": 5, "item": "i0123456789"}}, now)
+        self.assertEqual(pub["source"]["item"], "i0123456789")
+        self.assertEqual(pub["quote"], "сделаю отчёт к пятнице")
 
 
 if __name__ == "__main__":
