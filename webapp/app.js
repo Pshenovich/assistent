@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261028-srcjump";
+  var WEBAPP_BUILD = "20261029-flashvis";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -44782,10 +44782,67 @@
       }, 1200);
     }
     if (el && el.scrollIntoView) el.scrollIntoView({ block: "center", behavior: "smooth" });
-    setTimeout(function () {
-      flashTextRange(hit.range, hit.block || el);
-    }, 350);
+    flashNoteFragmentWhenVisible(frag);
     return true;
+  }
+
+  // Верх элемента, если он сейчас реально виден (в окне и в прокручиваемых предках, заметка не скрыта
+  // и не в анимации прозрачности), иначе null.
+  function fragmentScreenTop(el) {
+    if (!el || !el.isConnected || document.hidden) return null;
+    var r = el.getBoundingClientRect();
+    if (!r.width && !r.height) return null;
+    var top = 0;
+    var bottom = window.innerHeight || document.documentElement.clientHeight;
+    for (var p = el.parentElement; p && p !== document.documentElement; p = p.parentElement) {
+      var cs = getComputedStyle(p);
+      if (cs.display === "none" || cs.visibility === "hidden" || Number(cs.opacity) < 0.9) return null;
+      if (/(auto|scroll|hidden)/.test(cs.overflowY) && p.clientHeight) {
+        var pr = p.getBoundingClientRect();
+        top = Math.max(top, pr.top);
+        bottom = Math.min(bottom, pr.bottom);
+      }
+    }
+    return r.top >= top - 2 && r.top <= bottom - Math.min(r.height, 24) ? r.top : null;
+  }
+
+  // Мигнуть фрагментом, только когда пользователь его видит: документ открыт, лист показан, прокрутка
+  // и анимация открытия закончились (позиция строки не меняется). Фрагмент ищем заново на каждом шаге —
+  // редактор мог перерисовать текст. Не виден за 1,5 с — прокручиваем ещё раз; через 6 с мигаем как есть.
+  function flashNoteFragmentWhenVisible(frag) {
+    var started = Date.now();
+    var lastTop = null;
+    var stable = 0;
+    var rescrolled = false;
+    clearTimeout(flashNoteFragmentWhenVisible._t);
+    function tick() {
+      var hit = findNoteFragment(frag);
+      var node = hit && (hit.range ? hit.range.startContainer : hit.block);
+      var el = node && (node.nodeType === 1 ? node : node.parentElement);
+      var top = el ? fragmentScreenTop(el) : null;
+      if (top != null && lastTop != null && Math.abs(top - lastTop) < 1) stable++;
+      else stable = 0;
+      lastTop = top;
+      var waited = Date.now() - started;
+      if (el && (stable >= 2 || waited > 6000)) {
+        var range = hit.range;
+        if (!range && hit.block) {
+          // Вся строка — тоже подсветкой диапазона: класс на узле редактора ProseMirror сразу откатывает.
+          range = document.createRange();
+          range.selectNodeContents(hit.block);
+        }
+        flashTextRange(range, hit.block || el);
+        return;
+      }
+      if (el && top == null && !rescrolled && waited > 1500 && el.scrollIntoView) {
+        rescrolled = true;
+        // Плавную прокрутку могли прервать (фокус редактора, перерисовка) — теперь сразу.
+        el.scrollIntoView({ block: "center" });
+      }
+      if (waited > 6000) return;
+      flashNoteFragmentWhenVisible._t = setTimeout(tick, 120);
+    }
+    flashNoteFragmentWhenVisible._t = setTimeout(tick, 120);
   }
 
   // Заметка/лист ещё открываются — ждём, пока фрагмент появится в тексте (или выйдет время).
