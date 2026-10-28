@@ -393,6 +393,69 @@ if subprocess.run(["nginx", "-t"]).returncode != 0:
 else:
     print(f"nginx realtime: inserted x{n}")
 PY
+
+# nginx: ограничение частоты запросов с одного IP. Пока «пробный» режим
+# (limit_req_dry_run): nginx никого не режет, только пишет в error.log
+# «limiting requests, dry run» — по нему подбираем пороги, потом включаем.
+python3 - <<'PY'
+import re
+import shutil
+import subprocess
+from pathlib import Path
+p = Path("/etc/nginx/sites-available/assistent.networ.ru")
+if not p.is_file():
+    raise SystemExit(0)
+t = p.read_text()
+if "zone=leo_rl_all" in t:
+    print("nginx rate limit: already on")
+    raise SystemExit(0)
+zones = (
+    "# Ограничение частоты с одного IP (leo_rl_*): общее щедрое — в офисе много людей за одним IP.\n"
+    "limit_req_zone $binary_remote_addr zone=leo_rl_all:10m rate=30r/s;\n"
+    "limit_req_zone $binary_remote_addr zone=leo_rl_login:10m rate=10r/m;\n\n"
+)
+login = (
+    "    # Вход по коду: перебор кодов.\n"
+    "    location ^~ /api/miniapp/auth/login-code {\n"
+    "        limit_req zone=leo_rl_login burst=5 nodelay;\n"
+    "        limit_req_dry_run on;\n"
+    "        limit_req_status 429;\n"
+    "        proxy_pass http://127.0.0.1:8080;\n"
+    "        proxy_http_version 1.1;\n"
+    "        proxy_set_header Host $host;\n"
+    "        proxy_set_header X-Real-IP $remote_addr;\n"
+    "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+    "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+    "        proxy_set_header X-Forwarded-Host $host;\n"
+    "    }\n\n"
+)
+pat = re.compile(r"^(\s*)location / \{\s*\n(\s*)proxy_pass http://127\.0\.0\.1:8080;", re.M)
+
+
+def add_limits(m):
+    ind = m.group(2)
+    return (
+        login + m.group(0).lstrip("\n") + "\n"
+        f"{ind}limit_req zone=leo_rl_all burst=100 nodelay;\n"
+        f"{ind}limit_req_dry_run on;\n"
+        f"{ind}limit_req_status 429;"
+    )
+
+
+new, n = pat.subn(add_limits, t)
+if not n or "server {" not in new:
+    print("nginx rate limit: skip (no location / → :8080)")
+    raise SystemExit(0)
+new = new.replace("server {", zones + "server {", 1)
+backup = p.with_name(p.name + ".bak-ratelimit")
+shutil.copyfile(p, backup)
+p.write_text(new)
+if subprocess.run(["nginx", "-t"]).returncode != 0:
+    shutil.copyfile(backup, p)
+    print("nginx rate limit: nginx -t failed, restored")
+else:
+    print(f"nginx rate limit: inserted x{n} (dry run)")
+PY
 nginx -t && systemctl reload nginx
 
 # Дайджест генерирует assistant-news-sync; rsync репозитория его затирал.
