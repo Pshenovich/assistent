@@ -149,7 +149,7 @@ html[data-theme="light"] .leo-board {
 }
 
 .lb-t-sticky .lb-shape {
-  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.22));
+  filter: drop-shadow(0 2px 5px color-mix(in srgb, var(--shadow-color, #000) 22%, transparent));
 }
 
 .lb-text {
@@ -415,7 +415,7 @@ html[data-theme="light"] .leo-board {
   border: 1px solid var(--lb-panel-border);
   border-radius: 12px;
   background: var(--lb-panel);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 6px 24px color-mix(in srgb, var(--shadow-color, #000) 28%, transparent);
   color: var(--lb-text);
 }
 
@@ -447,7 +447,7 @@ html[data-theme="light"] .leo-board {
   border: 1px solid var(--lb-panel-border);
   border-radius: 10px;
   background: var(--lb-panel);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
+  box-shadow: 0 6px 24px color-mix(in srgb, var(--shadow-color, #000) 22%, transparent);
   cursor: pointer;
   touch-action: none;
 }
@@ -700,8 +700,8 @@ html[data-theme="light"] .leo-board {
 /* Действия с блоками — как плашка выделения в заметке (styles.css .note-comment-bubble-wrap):
    ✨ ИИ фиолетовым, остальное — цветом текста, иконка 15px и подпись. */
 .lb-pbtn.lb-nact-trigger {
-  color: var(--violet-soft);
-  background: color-mix(in srgb, var(--violet) 16%, transparent);
+  color: var(--violet-soft, #c4b5fd);
+  background: color-mix(in srgb, var(--violet, #8b5cf6) 16%, transparent);
   border-radius: 9px;
 }
 
@@ -726,7 +726,7 @@ html[data-theme="light"] .leo-board {
 }
 
 .lb-nact:hover {
-  background: var(--overlay-3);
+  background: var(--overlay-3, rgba(255, 255, 255, 0.08));
 }
 
 .lb-nact svg {
@@ -740,6 +740,6 @@ html[data-theme="light"] .leo-board {
 }
 
 .lb-nact--ai {
-  color: var(--violet-soft);
-  background: color-mix(in srgb, var(--violet) 16%, transparent);
+  color: var(--violet-soft, #c4b5fd);
+  background: color-mix(in srgb, var(--violet, #8b5cf6) 16%, transparent);
 }

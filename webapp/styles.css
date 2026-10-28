@@ -65,6 +65,8 @@ html.vkui--vkIOS--dark {
   --overlay-5: rgba(255, 255, 255, 0.12);
   --overlay-6: rgba(255, 255, 255, 0.16);
   --overlay-7: rgba(255, 255, 255, 0.24);
+  /* Цвет теней: на тёмном — чёрный, на светлом — мягче (тени в стилях берут от него долю). */
+  --shadow-color: #000000;
 
   --radius-xs: var(--vkui--size_border_radius--regular, 10px);
   --radius-sm: var(--vkui--size_border_radius--regular, 10px);
@@ -220,6 +222,7 @@ html[data-theme="light"] {
   --overlay-5: rgba(0, 0, 0, 0.09);
   --overlay-6: rgba(0, 0, 0, 0.12);
   --overlay-7: rgba(0, 0, 0, 0.18);
+  --shadow-color: rgba(15, 23, 42, 0.35);
 }
 
 /* Плавная смена темы по выбору пользователя (класс держится ~0.25 с). */
@@ -2089,7 +2092,7 @@ html.cal-gesture-active .meetings-week-scroll {
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 12px);
   background: var(--surface);
-  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.28));
+  box-shadow: var(--shadow-md, 0 8px 24px color-mix(in srgb, var(--shadow-color) 28%, transparent));
 }
 
 .meetings-view-menu.hidden {
@@ -2635,7 +2638,7 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
   border-radius: var(--radius-full);
   color: var(--on-accent);
   background: var(--accent);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28), 0 2px 6px color-mix(in srgb, var(--accent) 35%, transparent);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--shadow-color) 28%, transparent), 0 2px 6px color-mix(in srgb, var(--accent) 35%, transparent);
   cursor: pointer;
   transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
 }
@@ -2649,7 +2652,7 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
 
 .notes-fab:hover {
   transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.32), 0 3px 8px color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--shadow-color) 32%, transparent), 0 3px 8px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 .notes-fab:active {
@@ -3001,7 +3004,7 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 12px);
   background: var(--surface);
-  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.2));
+  box-shadow: var(--shadow-md, 0 8px 24px color-mix(in srgb, var(--shadow-color) 20%, transparent));
 }
 
 .notes-tag-filter-menu.hidden {
@@ -3139,7 +3142,7 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 12px);
   background: var(--surface);
-  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.2));
+  box-shadow: var(--shadow-md, 0 8px 24px color-mix(in srgb, var(--shadow-color) 20%, transparent));
 }
 
 /* «+» в заметке: поле поиска с чипом типа + пункты (типы, затем найденное). */
@@ -3464,7 +3467,7 @@ html.tg-miniapp-fullscreen #panel-knowledge:not(.hidden) .knowledge-list-head {
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 12px);
   background: var(--surface);
-  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.2));
+  box-shadow: var(--shadow-md, 0 8px 24px color-mix(in srgb, var(--shadow-color) 20%, transparent));
 }
 
 .tag-picker-menu.hidden {
@@ -3806,7 +3809,7 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   padding: 6px;
   border-radius: 16px;
   background: var(--surface-raised);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 12px 40px color-mix(in srgb, var(--shadow-color) 45%, transparent);
 }
 
 .note-tg-menu[data-menu-panel="list"],
@@ -3911,7 +3914,7 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   border-radius: 999px;
   background: var(--accent);
   border: 2px solid #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--shadow-color) 25%, transparent);
   cursor: ew-resize;
   touch-action: none;
   opacity: 0;
@@ -3994,7 +3997,7 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   border-radius: 999px;
   color: var(--text-secondary);
   background: var(--vkui--color_background_secondary, var(--surface));
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 1px 6px color-mix(in srgb, var(--shadow-color) 28%, transparent);
   cursor: pointer;
   touch-action: none;
   user-select: none;
@@ -4067,7 +4070,7 @@ html.note-editor-kb-open .note-editor-toolbar-wrap--bottom {
   padding: 1.25rem 1.1rem 1rem;
   border-radius: var(--radius-lg, 16px);
   background: var(--surface);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 12px 40px color-mix(in srgb, var(--shadow-color) 28%, transparent);
 }
 
 .note-table-confirm-title {
@@ -4459,7 +4462,7 @@ html.note-editor-open #note-editor-overlay {
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 12px);
   background: var(--surface);
-  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.28));
+  box-shadow: var(--shadow-md, 0 8px 24px color-mix(in srgb, var(--shadow-color) 28%, transparent));
 }
 
 .note-card-menu.hidden {
@@ -5111,7 +5114,7 @@ html.note-editor-open #note-editor-overlay {
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 12px);
   background: var(--surface);
-  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.2));
+  box-shadow: var(--shadow-md, 0 8px 24px color-mix(in srgb, var(--shadow-color) 20%, transparent));
 }
 
 .note-more-menu.hidden {
@@ -5209,7 +5212,7 @@ html.note-editor-open #note-editor-overlay {
   border: 1px solid var(--border);
   border-radius: 18px;
   background: var(--surface);
-  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.28));
+  box-shadow: var(--shadow-md, 0 8px 24px color-mix(in srgb, var(--shadow-color) 28%, transparent));
 }
 
 .note-share-sheet-title {
@@ -5564,7 +5567,7 @@ html.note-editor-open #note-editor-overlay {
   border-radius: 50%;
   color: var(--on-accent);
   background: var(--accent);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--shadow-color) 35%, transparent);
   cursor: pointer;
   touch-action: manipulation;
   -webkit-user-select: none;
@@ -5722,7 +5725,7 @@ html.note-editor-open #note-editor-overlay {
   padding: 0.5rem 1rem calc(1.25rem + env(safe-area-inset-bottom, 0px));
   border-radius: 16px 16px 0 0;
   background: var(--vkui--color_background_content);
-  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 -12px 40px color-mix(in srgb, var(--shadow-color) 40%, transparent);
 }
 
 .note-comment-sheet-handle {
@@ -5999,7 +6002,7 @@ html.note-editor-open #note-editor-overlay {
   border: 1px solid var(--note-composer-border);
   border-radius: 32px;
   background: var(--vkui--color_background_content);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--shadow-color) 6%, transparent);
 }
 
 .note-paie-reply-form .note-paie-reply-quote {
@@ -6773,7 +6776,7 @@ html.note-editor-open #note-editor-overlay {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--vkui--color_background_content);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--shadow-color) 35%, transparent);
 }
 
 .note-discuss-mention-menu.hidden {
@@ -6864,7 +6867,7 @@ html.note-editor-open #note-editor-overlay {
   border: 1px solid var(--note-composer-border);
   border-radius: 16px;
   background: var(--vkui--color_background_content);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow-color) 28%, transparent);
 }
 
 .note-paie-menu.hidden {
@@ -7334,7 +7337,7 @@ html.note-editor-open #note-editor-overlay {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--shadow-color) 35%, transparent);
   transform: translateX(-50%);
 }
 
@@ -7542,7 +7545,7 @@ html.note-editor-open #note-editor-overlay {
   overscroll-behavior: contain;
   border-width: 0 0 0 1px;
   border-radius: 16px 0 0 16px;
-  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.4);
+  box-shadow: -12px 0 32px color-mix(in srgb, var(--shadow-color) 40%, transparent);
   transform: translateX(100%);
   transition: transform 0.24s ease;
 }
@@ -8303,7 +8306,7 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--vkui--color_background_content);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow-color) 32%, transparent);
 }
 
 .note-discuss-menu.is-placed {
@@ -8374,7 +8377,7 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   border-radius: 999px;
   color: var(--on-accent);
   background: var(--accent);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--shadow-color) 35%, transparent);
   touch-action: manipulation;
   -webkit-user-select: none;
   user-select: none;
@@ -8482,7 +8485,7 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   border-radius: 12px;
   color: var(--text-strong);
   background: color-mix(in srgb, var(--surface) 94%, transparent);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow-color) 28%, transparent);
   font-size: 0.875rem;
   line-height: 1.35;
   text-align: center;
@@ -9066,7 +9069,7 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 12px);
   background: var(--surface);
-  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.2));
+  box-shadow: var(--shadow-md, 0 8px 24px color-mix(in srgb, var(--shadow-color) 20%, transparent));
 }
 
 .note-sheet-kind-menu-item {
@@ -9111,7 +9114,7 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   border: 1px solid var(--border-strong, var(--border));
   border-radius: 14px;
   background: var(--surface-elevated);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--shadow-color) 45%, transparent);
 }
 .note-speaker-pop.is-sheet {
   left: 8px;
@@ -10032,7 +10035,7 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   margin-left: 0;
   border-radius: var(--radius-full);
   background: var(--on-accent);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow-color) 35%, transparent);
   transition: margin-left 0.15s ease;
 }
 
@@ -10901,7 +10904,7 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--surface);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--shadow-color) 28%, transparent);
 }
 
 .meeting-attendee-suggest.hidden {
@@ -11301,7 +11304,7 @@ textarea.event-sheet-title--area {
   border-color: #fff;
   box-shadow:
     0 0 0 2px color-mix(in srgb, var(--swatch-color, var(--accent)) 70%, #fff),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+    inset 0 0 0 1px color-mix(in srgb, var(--shadow-color) 20%, transparent);
 }
 
 .event-sheet-color-swatch--default.is-selected {
@@ -11417,7 +11420,7 @@ textarea.event-sheet-title--area {
 .event-sheet-kind-btn.is-active {
   color: var(--text);
   background: var(--surface);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--shadow-color) 18%, transparent);
 }
 
 .event-sheet-kind-btn:active:not(.is-active) {
@@ -11923,7 +11926,7 @@ textarea.event-sheet-title--area {
   border: none;
   border-radius: var(--radius-lg, 16px) var(--radius-lg, 16px) 0 0;
   background: var(--surface);
-  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 -8px 32px color-mix(in srgb, var(--shadow-color) 18%, transparent);
 }
 
 .modal--sheet {
@@ -12299,7 +12302,7 @@ html.note-editor-kb-open
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow-color) 12%, transparent);
 }
 
 .note-link-popover--bottom {
@@ -12307,7 +12310,7 @@ html.note-editor-kb-open
   bottom: calc(100% + 10px);
   border-color: var(--overlay-5);
   background: var(--surface-raised);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 12px 40px color-mix(in srgb, var(--shadow-color) 45%, transparent);
 }
 
 .note-link-popover-hint {
@@ -12797,7 +12800,7 @@ html.modal-sheet-open body {
     padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
     border-right: 1px solid var(--overlay-4);
     background: var(--vkui--color_background_secondary);
-    box-shadow: 18px 0 40px rgba(0, 0, 0, 0.4);
+    box-shadow: 18px 0 40px color-mix(in srgb, var(--shadow-color) 40%, transparent);
     transform: none;
     pointer-events: auto;
   }
@@ -13005,7 +13008,7 @@ html.modal-sheet-open body {
     pointer-events: none;
     overflow: hidden;
     background: var(--surface);
-    box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.2));
+    box-shadow: var(--shadow-md, 0 8px 24px color-mix(in srgb, var(--shadow-color) 20%, transparent));
   }
 
   .note-editor-page--toc-open .note-editor-toc-panel {
@@ -14314,7 +14317,7 @@ html.modal-sheet-open body {
     right: auto;
     width: var(--note-pane-w);
     border-right: 1px solid var(--border);
-    box-shadow: 12px 0 32px rgba(0, 0, 0, 0.22);
+    box-shadow: 12px 0 32px color-mix(in srgb, var(--shadow-color) 22%, transparent);
   }
 
   html.note-discussion-open #note-editor-overlay {
@@ -14487,7 +14490,7 @@ html.modal-sheet-open body {
   color: var(--text);
   font: 600 13px/1.3 "VK Sans Display", "Segoe UI", sans-serif;
   letter-spacing: 0.01em;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow-color) 35%, transparent);
   pointer-events: none;
 }
 .offline-sync-banner.hidden {
@@ -14894,7 +14897,7 @@ html.modal-sheet-open body {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--vkui--color_background_content);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--shadow-color) 40%, transparent);
 }
 
 .chat-thread-menu.hidden {
@@ -15128,7 +15131,7 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--vkui--color_background_content);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 16px 40px color-mix(in srgb, var(--shadow-color) 45%, transparent);
 }
 
 .leo-prompt-message {
@@ -15166,7 +15169,7 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--vkui--color_background_content);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 16px 40px color-mix(in srgb, var(--shadow-color) 45%, transparent);
 }
 
 .note-draft-conflict-sheet p {
@@ -16018,7 +16021,7 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 12px);
   background: var(--surface);
-  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.2));
+  box-shadow: var(--shadow-md, 0 8px 24px color-mix(in srgb, var(--shadow-color) 20%, transparent));
 }
 .note-web-canvas-theme-menu[hidden] { display: none; }
 .note-web-canvas-theme-item {
@@ -16062,7 +16065,7 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   border: 1px solid color-mix(in srgb, var(--violet-text) 55%, transparent);
   border-radius: 999px;
   background: var(--surface);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--shadow-color) 35%, transparent);
   font-size: 14px;
 }
 .note-ai-edit-bar.hidden { display: none; }
@@ -16110,7 +16113,7 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   color: var(--text);
   background: var(--surface-muted);
   border-radius: 8px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--shadow-color) 35%, transparent);
   transform: translateY(-2px) scale(1.04);
   transition: transform 0.12s ease;
 }
@@ -16133,7 +16136,7 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 .note-share-sheet.is-v2 .ns-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; border-radius: 10px; background: var(--surface-muted); }
 .note-share-sheet.is-v2 .ns-tabs.hidden { display: none; }
 .note-share-sheet.is-v2 .ns-tab { appearance: none; border: 0; border-radius: 8px; padding: 7px 10px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
-.note-share-sheet.is-v2 .ns-tab.is-active { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
+.note-share-sheet.is-v2 .ns-tab.is-active { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow-color) 25%, transparent); }
 .note-share-sheet.is-v2 .ns-count { font-weight: 500; opacity: 0.7; }
 .note-share-sheet.is-v2 .ns-pane { display: flex; flex-direction: column; gap: 10px; }
 .note-share-sheet.is-v2 .ns-pane.hidden { display: none; }
@@ -16152,7 +16155,7 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 .note-share-sheet.is-v2 .ns-seg label { position: relative; cursor: pointer; }
 .note-share-sheet.is-v2 .ns-seg input { position: absolute; opacity: 0; pointer-events: none; }
 .note-share-sheet.is-v2 .ns-seg span { display: block; padding: 7px 10px; border-radius: 8px; text-align: center; font-size: 14px; font-weight: 600; color: var(--text-secondary); }
-.note-share-sheet.is-v2 .ns-seg input:checked + span { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
+.note-share-sheet.is-v2 .ns-seg input:checked + span { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow-color) 25%, transparent); }
 .note-share-sheet.is-v2 .ns-seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
 .note-share-sheet.is-v2 .ns-primary { width: 100%; margin-top: 2px; }
 .note-share-sheet.is-v2 .note-share-links-block { display: flex; flex-direction: column; gap: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
@@ -16300,7 +16303,7 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--shadow-color) 45%, transparent);
 }
 .note-chats-actions-item { appearance: none; text-align: left; padding: 10px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 0.9375rem; cursor: pointer; }
 .note-chats-actions-item:hover { background: var(--surface-muted); }
@@ -16354,7 +16357,7 @@ mark.note-highlight { background: color-mix(in srgb, var(--warning) 32%, transpa
 .note-ai-go.is-busy { opacity: 0.7; pointer-events: none; }
 
 /* ---- Плашка над выделением: ✨ ИИ · Обсудить · Задача (вместо двух цветных кругов) ---- */
-.note-comment-bubble-wrap { gap: 2px; padding: 3px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45); }
+.note-comment-bubble-wrap { gap: 2px; padding: 3px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); box-shadow: 0 10px 26px color-mix(in srgb, var(--shadow-color) 45%, transparent); }
 .note-comment-bubble-wrap .note-comment-bubble {
   width: auto; height: 32px; min-width: 0; min-height: 32px; padding: 0 10px; gap: 6px;
   border-radius: 9px; background: transparent; color: var(--text); box-shadow: none;
@@ -16402,7 +16405,7 @@ mark.note-highlight { background: color-mix(in srgb, var(--warning) 32%, transpa
   padding: 6px;
   min-width: 200px;
   max-height: 18rem;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px var(--overlay-3);
+  box-shadow: 0 12px 40px color-mix(in srgb, var(--shadow-color) 50%, transparent), 0 0 0 0.5px var(--overlay-3);
 }
 #note-editor-overlay .note-editor-meta .tag-picker-menu-item { border-radius: 10px; }
 #note-editor-overlay .note-editor-meta .tag-picker-menu-item:hover { background: var(--overlay-3); }
@@ -16466,7 +16469,7 @@ html.note-discussion-open .note-discussion-overlay { background: var(--surface);
   background: var(--surface-raised);
   border: 0;
   border-radius: 14px;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px var(--overlay-3);
+  box-shadow: 0 14px 40px color-mix(in srgb, var(--shadow-color) 50%, transparent), 0 0 0 0.5px var(--overlay-3);
 }
 .note-menu-label { margin: 6px 10px 4px; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-subtle); }
 .note-menu-hint { margin: 6px 10px 2px; font-size: 0.75rem; color: var(--text-subtle); }
@@ -16497,7 +16500,7 @@ html.note-discussion-open .note-discussion-overlay { background: var(--surface);
 .note-discuss-msg.is-pressed .note-discuss-bubble { box-shadow: 0 0 0 2px var(--overlay-7); }
 
 /* Действия: при наведении (десктоп), на телефоне — долгое нажатие */
-.note-discuss-actions { position: absolute; top: -6px; right: -4px; margin: 0; display: none; gap: 2px; padding: 2px; border-radius: 10px; background: var(--surface-raised); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4), 0 0 0 0.5px var(--overlay-3); z-index: 5; }
+.note-discuss-actions { position: absolute; top: -6px; right: -4px; margin: 0; display: none; gap: 2px; padding: 2px; border-radius: 10px; background: var(--surface-raised); box-shadow: 0 6px 16px color-mix(in srgb, var(--shadow-color) 40%, transparent), 0 0 0 0.5px var(--overlay-3); z-index: 5; }
 .note-discuss-msg.is-user .note-discuss-actions { right: auto; left: -4px; }
 .note-discuss-quick,
 .note-discuss-actions .note-discuss-more { width: 28px; height: 26px; border-radius: 7px; border: 0; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; color: var(--text); cursor: pointer; }
@@ -16509,7 +16512,7 @@ html.note-discussion-open .note-discussion-overlay { background: var(--surface);
   .note-discuss-msg:not(.is-pending):not(.is-optimistic):hover .note-discuss-actions,
   .note-discuss-actions:has(.note-discuss-more[aria-expanded="true"]) { display: flex; }
 }
-.note-discuss-menu.is-sheet { position: fixed !important; left: 8px !important; right: 8px !important; top: auto !important; bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important; min-width: 0; padding: 6px; z-index: 400; border-radius: 16px; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45), 0 14px 40px rgba(0, 0, 0, 0.5); }
+.note-discuss-menu.is-sheet { position: fixed !important; left: 8px !important; right: 8px !important; top: auto !important; bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important; min-width: 0; padding: 6px; z-index: 400; border-radius: 16px; box-shadow: 0 0 0 100vmax color-mix(in srgb, var(--shadow-color) 45%, transparent), 0 14px 40px color-mix(in srgb, var(--shadow-color) 50%, transparent); }
 .note-discuss-menu.is-sheet .note-discuss-menu-item { padding: 12px; font-size: 0.9375rem; }
 
 /* Правки ИИ — внутри ответа, под разделителем */
@@ -16644,7 +16647,7 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 .note-discuss-msg.is-cont .note-discuss-meta { margin-top: 1px; }
 
 /* 6. Кнопки над выделенным текстом ответа — та же тёмная плашка с иконками */
-.note-discuss-selection { height: 32px; padding: 2px; gap: 2px; border-radius: 10px; background: var(--surface-raised); color: var(--text); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45), 0 0 0 0.5px var(--overlay-3); }
+.note-discuss-selection { height: 32px; padding: 2px; gap: 2px; border-radius: 10px; background: var(--surface-raised); color: var(--text); box-shadow: 0 6px 16px color-mix(in srgb, var(--shadow-color) 45%, transparent), 0 0 0 0.5px var(--overlay-3); }
 .note-discuss-selection-btn { width: 30px; height: 28px; border-radius: 7px; color: var(--text); }
 .note-discuss-selection-btn:hover,
 .note-discuss-selection-btn:active { background: var(--overlay-4); }
@@ -16661,7 +16664,7 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 /* Список чатов: подложка под меню, а не над ним (иначе клики уходили в неё) */
 #note-chats-backdrop.is-dropdown { z-index: 399 !important; }
 #note-chats-menu.is-dropdown { z-index: 401 !important; }
-.note-chats-actions[style*="fixed"] { background: var(--surface-raised); border: 0; border-radius: 12px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px var(--overlay-3); }
+.note-chats-actions[style*="fixed"] { background: var(--surface-raised); border: 0; border-radius: 12px; box-shadow: 0 14px 40px color-mix(in srgb, var(--shadow-color) 50%, transparent), 0 0 0 0.5px var(--overlay-3); }
 #note-discussion-new-ctx.is-open { background: var(--overlay-6); }
 /* Реплай: мигаем цитируемым фрагментом */
 ::highlight(leo-flash) { background-color: color-mix(in srgb, var(--warning) 45%, transparent); color: inherit; }
@@ -16677,7 +16680,7 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 
 /* Вкладки «Заметки / Чаты / Транскрипции» всплывают при прокрутке вверх */
 #panel-notes .notes-subtabs-row.is-floating { position: fixed; top: 0; z-index: 60; margin: 0; padding-top: calc(var(--safe-top, 0px) + 8px); padding-bottom: 8px; background: var(--bg); box-sizing: border-box; transform: translateY(-110%); transition: transform 0.22s ease; pointer-events: none; }
-#panel-notes .notes-subtabs-row.is-floating.is-shown { transform: none; pointer-events: auto; box-shadow: 0 10px 18px -12px rgba(0, 0, 0, 0.6); }
+#panel-notes .notes-subtabs-row.is-floating.is-shown { transform: none; pointer-events: auto; box-shadow: 0 10px 18px -12px color-mix(in srgb, var(--shadow-color) 60%, transparent); }
 @media (prefers-reduced-motion: reduce) { #panel-notes .notes-subtabs-row.is-floating { transition: none; } }
 
 /* Цитата в поле ввода переносится, а не уходит за правый край */
@@ -16685,7 +16688,7 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 #note-paie-reply-form .note-paie-reply-target-quote { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 
 /* Меню проекта — как остальные меню: подпись, иконки, галочка, «Новый проект…» */
-.tag-picker-menu { background: var(--surface-raised); border: 0; border-radius: 14px; padding: 6px; min-width: 220px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px var(--overlay-3); }
+.tag-picker-menu { background: var(--surface-raised); border: 0; border-radius: 14px; padding: 6px; min-width: 220px; box-shadow: 0 14px 40px color-mix(in srgb, var(--shadow-color) 50%, transparent), 0 0 0 0.5px var(--overlay-3); }
 .tag-picker-menu .tag-picker-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 9px; background: transparent; color: var(--text); font: inherit; font-size: 0.875rem; text-align: left; cursor: pointer; }
 .tag-picker-menu .tag-picker-menu-item:hover { background: var(--overlay-3); }
 .tag-picker-menu .tag-picker-menu-item--selected { background: var(--overlay-2); }
@@ -16745,7 +16748,7 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 .note-discuss-cal:has(.note-cal-card, .note-cal-slot) { gap: 6px; }
 
 /* «+» на «Актуальном»: меню в общем стиле, первым — Ассистент */
-#actual-create-menu.actual-create-menu { gap: 2px; width: min(16rem, calc(100vw - 2rem)); padding: 6px; border: 0; border-radius: 16px; background: var(--surface-raised); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px var(--overlay-3); backdrop-filter: none; }
+#actual-create-menu.actual-create-menu { gap: 2px; width: min(16rem, calc(100vw - 2rem)); padding: 6px; border: 0; border-radius: 16px; background: var(--surface-raised); box-shadow: 0 14px 40px color-mix(in srgb, var(--shadow-color) 50%, transparent), 0 0 0 0.5px var(--overlay-3); backdrop-filter: none; }
 #actual-create-menu .actual-create-menu-btn { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: transparent; font-weight: 500; }
 #actual-create-menu .actual-create-menu-btn:hover,
 #actual-create-menu .actual-create-menu-btn:active { background: var(--overlay-3); transform: none; }
@@ -16769,7 +16772,7 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 }
 
 /* «+» в «Заметках»: меню Заметка / Надиктовать в общем стиле */
-#notes-create-menu.actual-create-menu { gap: 2px; width: min(17rem, calc(100vw - 2rem)); padding: 6px; border: 0; border-radius: 16px; background: var(--surface-raised); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px var(--overlay-3); backdrop-filter: none; }
+#notes-create-menu.actual-create-menu { gap: 2px; width: min(17rem, calc(100vw - 2rem)); padding: 6px; border: 0; border-radius: 16px; background: var(--surface-raised); box-shadow: 0 14px 40px color-mix(in srgb, var(--shadow-color) 50%, transparent), 0 0 0 0.5px var(--overlay-3); backdrop-filter: none; }
 #notes-create-menu .actual-create-menu-btn { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: transparent; font-weight: 500; }
 #notes-create-menu .actual-create-menu-btn:hover,
 #notes-create-menu .actual-create-menu-btn:active { background: var(--overlay-3); transform: none; }
@@ -16802,7 +16805,7 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 /* Шторка действий карточки (долгое нажатие / правый клик) */
 .nl-sheet-overlay { position: fixed; inset: 0; z-index: 420; display: flex; align-items: flex-end; justify-content: center; padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px)); background: rgba(0, 0, 0, 0); transition: background 0.18s ease; }
 .nl-sheet-overlay.is-open { background: rgba(0, 0, 0, 0.45); }
-.nl-sheet { width: 100%; max-width: 420px; max-height: 80vh; overflow-y: auto; padding: 6px; border-radius: 18px; background: var(--surface-raised); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px var(--overlay-3); transform: translateY(16px); opacity: 0; transition: transform 0.2s ease, opacity 0.2s ease; }
+.nl-sheet { width: 100%; max-width: 420px; max-height: 80vh; overflow-y: auto; padding: 6px; border-radius: 18px; background: var(--surface-raised); box-shadow: 0 14px 40px color-mix(in srgb, var(--shadow-color) 50%, transparent), 0 0 0 0.5px var(--overlay-3); transform: translateY(16px); opacity: 0; transition: transform 0.2s ease, opacity 0.2s ease; }
 .nl-sheet-overlay.is-open .nl-sheet { transform: none; opacity: 1; }
 .nl-sheet-title { padding: 10px 12px 8px; font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nl-sheet-item { width: 100%; display: flex; align-items: center; gap: 12px; padding: 11px 12px; border: 0; border-radius: 12px; background: transparent; color: var(--text); font: inherit; font-size: 0.9375rem; text-align: left; cursor: pointer; }
@@ -16826,11 +16829,11 @@ html.notes-select-on .nl-card .note-card-actions { display: none; }
 .nl-card.is-selected { box-shadow: inset 0 0 0 1.5px var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .nl-card.is-selected .nl-check { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 html.notes-select-on #notes-create-btn, html.notes-select-on #notes-create-menu { display: none !important; }
-.notes-select-top { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 8px); left: 8px; right: 8px; z-index: 60; display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 8px 0 16px; border-radius: 16px; background: var(--surface-raised); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); }
+.notes-select-top { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 8px); left: 8px; right: 8px; z-index: 60; display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 8px 0 16px; border-radius: 16px; background: var(--surface-raised); box-shadow: 0 10px 30px color-mix(in srgb, var(--shadow-color) 45%, transparent); }
 .notes-select-count { flex: 1; font-weight: 600; font-size: 0.9375rem; }
 .notes-select-all, .notes-select-done { height: 34px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; color: var(--accent); font: inherit; font-size: 0.875rem; font-weight: 600; cursor: pointer; }
 .notes-select-done { background: color-mix(in srgb, var(--accent) 16%, transparent); }
-.notes-select-bar { position: fixed; left: 8px; right: 8px; bottom: calc(var(--tabbar-stack, 72px) + 8px); z-index: 60; display: flex; justify-content: space-around; gap: 4px; padding: 6px; border-radius: 18px; background: var(--surface-raised); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); }
+.notes-select-bar { position: fixed; left: 8px; right: 8px; bottom: calc(var(--tabbar-stack, 72px) + 8px); z-index: 60; display: flex; justify-content: space-around; gap: 4px; padding: 6px; border-radius: 18px; background: var(--surface-raised); box-shadow: 0 10px 30px color-mix(in srgb, var(--shadow-color) 45%, transparent); }
 .notes-select-act { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px; border: 0; border-radius: 12px; background: transparent; color: var(--text); font: inherit; font-size: 0.6875rem; font-weight: 500; cursor: pointer; }
 .notes-select-act:hover:not(:disabled) { background: var(--overlay-3); }
 .notes-select-act:disabled { opacity: 0.4; cursor: default; }
@@ -16915,7 +16918,7 @@ html.notes-chats-tab .notes-project-btn { display: none; }
 
 /* Десктоп: нижняя панель редактора — один общий блок, как в макете */
 @media (min-width: 960px) {
-  #note-editor-toolbar-wrap .note-editor-toolbar-row { gap: 4px; padding: 6px; border-radius: 16px; background: var(--surface); border: 1px solid var(--overlay-3); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); }
+  #note-editor-toolbar-wrap .note-editor-toolbar-row { gap: 4px; padding: 6px; border-radius: 16px; background: var(--surface); border: 1px solid var(--overlay-3); box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow-color) 35%, transparent); }
   #note-editor-toolbar-wrap .note-tg-toolbar { gap: 0; }
   #note-editor-toolbar-wrap .note-tg-capsule { background: transparent; box-shadow: none; padding: 0 6px; border-radius: 0; border-left: 1px solid var(--overlay-4); }
   #note-editor-toolbar-wrap .note-tg-btn { width: 36px; height: 36px; border-radius: 10px; }
@@ -17213,7 +17216,7 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
 .nmp-add.hidden, .nmp-add-box.hidden, .nmp-suggest.hidden { display: none; }
 .nmp-add-box { position: relative; }
 .nmp-input { width: 200px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--accent-border); background: var(--surface); color: var(--text); font: inherit; font-size: 0.8rem; outline: none; }
-.nmp-suggest { position: absolute; left: 0; top: calc(100% + 4px); z-index: 30; min-width: 240px; display: flex; flex-direction: column; padding: 4px; border-radius: 12px; background: var(--surface-elevated); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4); }
+.nmp-suggest { position: absolute; left: 0; top: calc(100% + 4px); z-index: 30; min-width: 240px; display: flex; flex-direction: column; padding: 4px; border-radius: 12px; background: var(--surface-elevated); box-shadow: 0 12px 30px color-mix(in srgb, var(--shadow-color) 40%, transparent); }
 .nmp-suggest button { border: none; background: transparent; color: var(--text); font: inherit; font-size: 0.85rem; text-align: left; padding: 7px 9px; border-radius: 8px; cursor: pointer; }
 .nmp-suggest button:hover { background: var(--accent-subtle); }
 
@@ -17262,7 +17265,7 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
 .chats-new-btn { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: auto; height: 36px; padding: 0 12px; border: none; border-radius: 10px; background: var(--accent-subtle); color: var(--accent); font: inherit; font-size: 0.875rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
 .chats-new-btn:hover { background: var(--accent-muted); }
 .chats-new-btn.hidden { display: none !important; }
-.discuss-scroll-down { position: absolute; left: 50%; transform: translateX(-50%); z-index: 45; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface-elevated); color: var(--text); display: flex; align-items: center; justify-content: center; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); cursor: pointer; }
+.discuss-scroll-down { position: absolute; left: 50%; transform: translateX(-50%); z-index: 45; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface-elevated); color: var(--text); display: flex; align-items: center; justify-content: center; box-shadow: 0 6px 18px color-mix(in srgb, var(--shadow-color) 35%, transparent); cursor: pointer; }
 .discuss-scroll-down:hover { background: var(--accent-subtle); }
 .discuss-scroll-down.hidden { display: none; }
 
@@ -17435,7 +17438,7 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
   padding: 6px;
   border-radius: 999px;
   background: var(--surface-raised);
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px var(--overlay-3);
+  box-shadow: 0 14px 40px color-mix(in srgb, var(--shadow-color) 50%, transparent), 0 0 0 0.5px var(--overlay-3);
 }
 .actual-voice-wrap .note-dictation-bar { display: flex; }
 html.actual-voice-open #actual-create-btn { visibility: hidden; }
@@ -17523,7 +17526,7 @@ html.actual-voice-open #actual-create-btn { visibility: hidden; }
   gap: 10px;
   padding: 14px;
   border-radius: 16px;
-  background: #141e30;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
   border: 1px solid var(--accent-border);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
@@ -17734,7 +17737,7 @@ html.actual-voice-open #actual-create-btn { visibility: hidden; }
 }
 #panel-actual .day-timeline-label { font-weight: 400; color: var(--text-tertiary); }
 #panel-actual .day-timeline-now-time { font-weight: 700; }
-#panel-actual .day-timeline-hour-line { background: var(--surface-elevated); }
+#panel-actual .day-timeline-hour-line { background: var(--overlay-5); }
 #panel-actual .meeting-card--timeline {
   border: none;
   border-radius: 10px;
@@ -17841,10 +17844,10 @@ html.actual-voice-open #actual-create-btn { visibility: hidden; }
   border: 1px solid var(--surface-raised);
   background: var(--surface-elevated);
   color: var(--text);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--shadow-color) 50%, transparent);
 }
 .notes-fab.actual-fab-mic svg { width: 1.25rem; height: 1.25rem; }
-.notes-fab.actual-fab-mic:hover { background: var(--surface-raised); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5); }
+.notes-fab.actual-fab-mic:hover { background: var(--surface-raised); box-shadow: 0 6px 20px color-mix(in srgb, var(--shadow-color) 50%, transparent); }
 html.actual-voice-open #actual-voice-btn { visibility: hidden; }
 @media (min-width: 960px) {
   .notes-fab.actual-fab-mic { right: calc(2rem + 3.25rem + 10px); bottom: calc(2rem + 0.25rem); }
@@ -17923,7 +17926,7 @@ html.actual-voice-open #actual-voice-btn { visibility: hidden; }
   padding: 4px;
   border-radius: 12px;
   background: var(--surface-elevated);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5), 0 0 0 0.5px var(--overlay-3);
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--shadow-color) 50%, transparent), 0 0 0 0.5px var(--overlay-3);
   display: flex;
   flex-direction: column;
 }
@@ -19578,7 +19581,7 @@ textarea.pf-input {
   height: 1.28rem;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow-color) 35%, transparent);
   transition: transform 0.15s ease;
 }
 
@@ -19872,7 +19875,7 @@ form.pf-list .pf-add-row .pf-row-body {
   white-space: nowrap;
   color: var(--text);
   background: var(--surface-elevated);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--shadow-color) 35%, transparent);
   transform: translate(-50%, calc(-100% - 6px));
   pointer-events: none;
   font-variant-numeric: tabular-nums;
@@ -20493,7 +20496,7 @@ form.pf-list .pf-add-row .pf-row-body {
   .mail-composer {
     max-height: 88%;
     border-radius: 16px 16px 0 0;
-    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 -8px 24px color-mix(in srgb, var(--shadow-color) 35%, transparent);
     padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
   }
 
@@ -20616,7 +20619,7 @@ form.pf-list .pf-add-row .pf-row-body {
 .mail-seg-btn.is-on {
   color: var(--text);
   background: var(--surface-elevated, var(--surface));
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--shadow-color) 25%, transparent);
 }
 
 .mail-empty {
@@ -21250,7 +21253,7 @@ form.pf-list .pf-add-row .pf-row-body {
   border: 1px solid var(--mail-composer-border);
   border-radius: 26px;
   background: var(--vkui--color_background_content, var(--surface));
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--shadow-color) 6%, transparent);
 }
 
 .mail-compose:focus-within {
@@ -22575,7 +22578,7 @@ textarea.tracker-desc {
   border-radius: 12px;
   background: var(--surface-raised);
   border: 1px solid var(--overlay-4);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 12px 36px color-mix(in srgb, var(--shadow-color) 50%, transparent);
   color: var(--text);
   font-family: var(--font);
   user-select: none;
@@ -22674,7 +22677,7 @@ textarea.tracker-desc {
 .pt-assist .note-paie-menu, .pt-assist .note-paie-plus-menu { background: var(--surface-raised);
   border: 0;
   border-radius: 14px;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 0.5px var(--overlay-3); }
+  box-shadow: 0 14px 40px color-mix(in srgb, var(--shadow-color) 50%, transparent), 0 0 0 0.5px var(--overlay-3); }
 .pt-assist { gap: 6px; padding: 8px 8px 8px 12px; border-radius: 22px; border: 1px solid var(--overlay-5); background: var(--overlay-2); box-shadow: none; }
 .pt-assist .note-paie-composer-bar { display: none; }
 .pt-assist .note-paie-attach { width: 30px; height: 30px; background: var(--overlay-4); color: var(--text); }
@@ -22776,7 +22779,7 @@ textarea.tracker-desc {
   border: 1px solid var(--overlay-5);
   border-radius: 26px;
   background: var(--surface-elevated);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 18px 50px color-mix(in srgb, var(--shadow-color) 50%, transparent);
 }
 .note-tg-menu-item,
 .note-table-menu-item {
@@ -22993,7 +22996,7 @@ html.note-editor-open .offline-sync-banner { top: calc(8px + env(safe-area-inset
 .note-table-grip::before { content: ""; position: absolute; background: var(--accent); border-radius: 1px; }
 .note-table-grip--col::before { top: 0; bottom: 0; left: 13px; width: 2px; }
 .note-table-grip--row::before { left: 0; right: 0; top: 13px; height: 2px; }
-.note-table-grip-knob { position: absolute; left: 50%; top: 50%; border-radius: 999px; background: var(--accent); box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.35); }
+.note-table-grip-knob { position: absolute; left: 50%; top: 50%; border-radius: 999px; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--shadow-color) 35%, transparent); }
 .note-table-grip--col .note-table-grip-knob { width: 10px; height: 30px; margin: -15px 0 0 -5px; }
 .note-table-grip--row .note-table-grip-knob { width: 30px; height: 10px; margin: -5px 0 0 -15px; }
 .note-table-grip.is-dragging .note-table-grip-knob { transform: scale(1.15); }
@@ -23096,7 +23099,7 @@ body.tinbox-open { overflow: hidden; }
 .tinbox-src-chev { flex: none; color: var(--text-tertiary); display: inline-flex; }
 .tinbox-src-chev svg { width: 14px; height: 14px; }
 .tinbox.is-away { display: none; }
-.tinbox-back { position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 310; display: inline-flex; align-items: center; gap: 8px; padding: 11px 16px; border: none; border-radius: 22px; background: var(--accent); color: var(--on-accent); font: inherit; font-size: 0.88rem; font-weight: 600; cursor: pointer; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); white-space: nowrap; }
+.tinbox-back { position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 310; display: inline-flex; align-items: center; gap: 8px; padding: 11px 16px; border: none; border-radius: 22px; background: var(--accent); color: var(--on-accent); font: inherit; font-size: 0.88rem; font-weight: 600; cursor: pointer; box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow-color) 30%, transparent); white-space: nowrap; }
 .tinbox-back svg { width: 16px; height: 16px; }
 .tinbox-due { display: inline-block; font-size: 0.82rem; padding: 4px 10px; border-radius: 8px; background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning); }
 .tinbox-badge { position: absolute; top: 14px; padding: 3px 10px; border-radius: 8px; border: 2px solid; font-weight: 700; font-size: 0.85rem; opacity: 0; pointer-events: none; }
@@ -23180,7 +23183,7 @@ body.tinbox-open { overflow: hidden; }
 .fstack-form .focus-chat-hint { font-size: 0.85rem; }
 .fstack-form .focus-chat-date { display: flex; flex-wrap: wrap; gap: 8px; }
 .fstack-form .focus-chat-date input { flex: 1 1 100%; }
-.fstack-pop { position: absolute; bottom: calc(100% + 6px); z-index: 4; width: min(300px, 100%); max-height: min(60vh, 440px); overflow-y: auto; padding: 6px; box-sizing: border-box; border: 1px solid var(--border-strong, var(--border)); border-radius: 14px; background: var(--surface-elevated); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); }
+.fstack-pop { position: absolute; bottom: calc(100% + 6px); z-index: 4; width: min(300px, 100%); max-height: min(60vh, 440px); overflow-y: auto; padding: 6px; box-sizing: border-box; border: 1px solid var(--border-strong, var(--border)); border-radius: 14px; background: var(--surface-elevated); box-shadow: 0 12px 32px color-mix(in srgb, var(--shadow-color) 45%, transparent); }
 .fstack-pop.is-left { left: 0; }
 .fstack-pop.is-right { right: 0; }
 .fstack-pop .focus-chat-menu { padding: 0; border: none; background: transparent; gap: 2px; }
@@ -23223,7 +23226,7 @@ body.tinbox-open { overflow: hidden; }
 /* Компьютер: разбор — окном по центру, как открытая поставленная задача. */
 @media (min-width: 960px) {
   .tinbox { justify-content: center; background: rgba(0, 0, 0, 0.55); padding: 32px; }
-  .tinbox-panel { flex: none; max-width: 600px; max-height: calc(100vh - 64px); overflow-y: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 16px; padding: 14px 20px 20px; box-shadow: var(--shadow-md, 0 12px 40px rgba(0, 0, 0, 0.4)); box-sizing: border-box; }
+  .tinbox-panel { flex: none; max-width: 600px; max-height: calc(100vh - 64px); overflow-y: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 16px; padding: 14px 20px 20px; box-shadow: var(--shadow-md, 0 12px 40px color-mix(in srgb, var(--shadow-color) 40%, transparent)); box-sizing: border-box; }
   .tinbox-acts { margin-top: 18px; bottom: -20px; margin-bottom: -20px; padding-bottom: 20px; }
   .tinbox-finish { margin: 0; }
 }
@@ -23376,7 +23379,7 @@ ol.note-discuss-md-list { list-style: decimal; }
 #note-discussion-share:active { opacity: 0.85; transform: scale(0.98); }
 
 /* «Надиктовать» к прошедшей встрече: плашка записи внизу экрана → транскрипция встречи. */
-.ev-rec { position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 400; display: flex; align-items: center; gap: 12px; width: min(520px, calc(100vw - 32px)); box-sizing: border-box; padding: 10px 10px 10px 16px; border: 1px solid var(--border-strong, var(--border)); border-radius: 16px; background: var(--surface-elevated); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35); color: var(--text); }
+.ev-rec { position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 400; display: flex; align-items: center; gap: 12px; width: min(520px, calc(100vw - 32px)); box-sizing: border-box; padding: 10px 10px 10px 16px; border: 1px solid var(--border-strong, var(--border)); border-radius: 16px; background: var(--surface-elevated); box-shadow: 0 12px 32px color-mix(in srgb, var(--shadow-color) 35%, transparent); color: var(--text); }
 .ev-rec-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--danger); animation: ev-rec-pulse 1.2s ease-in-out infinite; }
 @keyframes ev-rec-pulse { 50% { opacity: 0.35; } }
 .ev-rec-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
@@ -23508,7 +23511,7 @@ ol.note-discuss-md-list { list-style: decimal; }
 @media (max-width: 959px) {
   .meeting-avail .meeting-avail-grid { min-width: calc(78px + var(--avail-hours, 9) * 56px); }
   .meeting-avail .meeting-avail-label,
-  .meeting-avail .meeting-avail-row > span:first-child { position: sticky; left: 0; z-index: 2; align-self: stretch; display: flex; align-items: center; background: var(--surface-elevated); box-shadow: 6px 0 6px -4px rgba(0, 0, 0, 0.5); }
+  .meeting-avail .meeting-avail-row > span:first-child { position: sticky; left: 0; z-index: 2; align-self: stretch; display: flex; align-items: center; background: var(--surface-elevated); box-shadow: 6px 0 6px -4px color-mix(in srgb, var(--shadow-color) 50%, transparent); }
   .meeting-avail .meeting-avail-row--hours > span:first-child { box-shadow: none; }
 }
 
