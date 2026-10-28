@@ -75,7 +75,7 @@
           return (
             '<div class="share-chat-msg' + (gpt ? " share-chat-msg--gpt" : "") + '">' +
             '<div class="share-chat-meta"><span class="share-chat-author">' +
-            escapeHtml(String((m && m.author) || (gpt ? "Ассистент" : "Участник"))) +
+            escapeHtml(String((m && m.author) || (gpt ? "Лео" : "Участник"))) +
             "</span>" +
             (when ? '<span class="share-chat-time">' + escapeHtml(when) + "</span>" : "") +
             "</div>" +

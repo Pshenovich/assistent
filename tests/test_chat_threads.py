@@ -182,7 +182,7 @@ def test_chat_share_link_is_view_only_and_payload(threads_db, monkeypatch):
     assert payload["title"] == "План запуска"
     assert payload["access"] == "view"
     msgs = payload["messages"]
-    assert [m["author"] for m in msgs] == ["Вова", "Ассистент"]
+    assert [m["author"] for m in msgs] == ["Вова", "Лео"]
     assert [m["is_gpt"] for m in msgs] == [False, True]
     assert "vova" not in str(payload)
 

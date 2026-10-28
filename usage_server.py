@@ -3559,7 +3559,7 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
             # Наружу — только имя и текст: без telegram id и username.
             messages.append(
                 {
-                    "author": "Ассистент" if is_assistant else (str(row.get("author_name") or "").strip() or "Участник"),
+                    "author": "Лео" if is_assistant else (str(row.get("author_name") or "").strip() or "Участник"),
                     "is_gpt": is_assistant,
                     "body": body,
                     "created_at": row.get("created_at"),

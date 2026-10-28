@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261028-bulk";
+  var WEBAPP_BUILD = "20261028-leoname";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -8724,7 +8724,7 @@
     return d.getDate() + "." + String(d.getMonth() + 1).padStart(2, "0") + " " + hm;
   }
 
-  var VOICE_HISTORY_SOURCE = { note: "Заметка", assistant: "Ассистент", telegram: "Telegram" };
+  var VOICE_HISTORY_SOURCE = { note: "Заметка", assistant: "Лео", telegram: "Telegram" };
 
   function renderVoiceHistory(items) {
     var list = document.getElementById("voice-history-list");
@@ -32459,7 +32459,7 @@
       var actual = document.documentElement.classList.contains("actual-assistant-open");
       btn.disabled = !actual;
       btn.classList.toggle("note-pane-switch--plain", !actual);
-      btn.title = actual ? "Чаты с Ассистентом" : t;
+      btn.title = actual ? "Чаты с Лео" : t;
       btn.setAttribute("aria-expanded", "false");
     }
     var sub = document.getElementById("note-discussion-subtitle");
@@ -34517,7 +34517,7 @@
   }
 
   function nhAuthor(v) {
-    if (String(v.source || "") === "ai") return { name: "Ассистент", ai: true };
+    if (String(v.source || "") === "ai") return { name: "Лео", ai: true };
     var a = (noteHistory && noteHistory.authors && noteHistory.authors[String(v.author_user_id || "")]) || null;
     return { name: a ? a.name : "", photo: a ? a.photo_url : null };
   }
@@ -35482,7 +35482,7 @@
   }
 
   function noteAskModeLabel(mode) {
-    if (mode === "gpt") return "Ассистент";
+    if (mode === "gpt") return "Лео";
     if (mode === "research") return "Исследование";
     if (mode === "comment") return "Комментарий";
     if (mode === "paie") return "Совет PAIE";
@@ -36481,17 +36481,17 @@
       '<div class="note-paie-composer-left">' +
       '<div class="note-paie-mode-switch" role="tablist" aria-label="Режим">' +
       '<button type="button" class="note-paie-mode" data-mode="paie">Совет PAIE</button>' +
-      '<button type="button" class="note-paie-mode is-active" data-mode="gpt">Ассистент</button>' +
+      '<button type="button" class="note-paie-mode is-active" data-mode="gpt">Лео</button>' +
       '<button type="button" class="note-paie-mode" data-mode="research">Исследование</button>' +
       "</div>" +
       '<button type="button" class="note-paie-mode-compact" aria-haspopup="listbox" aria-expanded="false">' +
       '<span class="note-paie-mode-compact-ico">' + DISCUSS_ICONS.spark + "</span>" +
-      '<span class="note-paie-mode-compact-label">Ассистент</span>' +
+      '<span class="note-paie-mode-compact-label">Лео</span>' +
       '<span class="note-paie-mode-compact-chev">' + DISCUSS_ICONS.down + "</span>" +
       "</button>" +
       '<div class="note-paie-menu note-paie-mode-menu hidden" role="listbox">' +
       '<button type="button" class="note-paie-menu-item" data-mode="paie">Совет PAIE</button>' +
-      '<button type="button" class="note-paie-menu-item is-active" data-mode="gpt">Ассистент</button>' +
+      '<button type="button" class="note-paie-menu-item is-active" data-mode="gpt">Лео</button>' +
       '<button type="button" class="note-paie-menu-item" data-mode="research">Исследование</button>' +
       "</div>" +
       '<button type="button" class="note-paie-model-btn" aria-haspopup="listbox" aria-expanded="false">' +
@@ -41733,7 +41733,7 @@
     head.className = "note-chats-head";
     var headTitle = document.createElement("h2");
     headTitle.className = "note-chats-head-title";
-    headTitle.textContent = "Чаты с Ассистентом";
+    headTitle.textContent = "Чаты с Лео";
     var closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.className = "modal-header-btn note-chats-close";
@@ -41805,7 +41805,7 @@
       else await createAndOpenChatThread({ origin: "actual" });
     } catch (e) {
       document.documentElement.classList.remove("actual-assistant-open");
-      showNoteToast((e && e.message) || "Не удалось открыть Ассистента");
+      showNoteToast((e && e.message) || "Не удалось открыть чат с Лео");
       return;
     }
     if (!isNoteDiscussionOpen()) {
@@ -44889,7 +44889,7 @@
     var authorLabel = discussionAuthorLabel(c);
     if (isGpt) {
       var em = document.createElement("em");
-      em.textContent = "Ассистент";
+      em.textContent = "Лео";
       role.appendChild(em);
       if (authorLabel && !/^gpt$/i.test(authorLabel)) role.appendChild(document.createTextNode(" · " + authorLabel));
     } else if (isResearch) {
@@ -44976,7 +44976,7 @@
       var headText = document.createElement("span");
       headText.className = "note-discuss-bubble-who";
       var headName = document.createElement("b");
-      headName.textContent = isGpt ? "Ассистент" : isResearch ? "Исследование" : authorLabel || "Ассистент";
+      headName.textContent = isGpt ? "Лео" : isResearch ? "Исследование" : authorLabel || "Лео";
       headText.appendChild(headName);
       var headModel = isGpt && authorLabel && !/^gpt$/i.test(authorLabel) ? authorLabel : "";
       if (headModel) {
@@ -45179,7 +45179,7 @@
       // Отдельный чат с Ассистентом (из «Сохранённое → Чаты» или «+» на «Актуальном»).
       title.textContent = "Чем помочь?";
       var hintChat = document.createElement("p");
-      hintChat.textContent = "Ассистент видит ваш календарь, задачи и контакты — может найти время, поставить встречу или задачу.";
+      hintChat.textContent = "Лео видит ваш календарь, задачи и контакты — может найти время, поставить встречу или задачу.";
       box.appendChild(title);
       box.appendChild(hintChat);
       if (
