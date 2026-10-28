@@ -14,7 +14,8 @@ from typing import Any, Optional
 
 MAX_VIEW_CHARS = 60000
 MAX_EDITS = 300
-MAX_TEXT = 4000
+# Текст одной правки — не меньше, чем видит модель: длинные вставки резались на 4000 символов.
+MAX_TEXT = MAX_VIEW_CHARS
 _FNS = ("sum", "avg", "min", "max", "diff", "product")
 
 _BLOCK_RE = re.compile(r"```leo-note\s*\n?(.*?)```", re.DOTALL | re.IGNORECASE)

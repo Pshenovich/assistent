@@ -63,3 +63,14 @@ def test_note_edits_parse_and_validate():
     assert clean == "Готово."
     assert [e["op"] for e in edits] == ["replace", "compute", "insert_after"]
     assert edits[0]["all"] is True and edits[1]["rows"] == "all"
+
+
+def test_note_edits_long_insert_not_truncated():
+    from assistant.lib import note_edits
+
+    text = "\n".join(f"Абзац {i}: " + "длинный текст вставки " * 20 for i in range(40))
+    assert len(text) > 4000
+    answer = "```leo-note\n" + json.dumps({"edits": [{"op": "insert_after", "anchor": "", "text": text}]}, ensure_ascii=False) + "\n```\nДобавил."
+    clean, edits = note_edits.parse_blocks(answer)
+    assert clean == "Добавил."
+    assert edits[0]["text"] == text
