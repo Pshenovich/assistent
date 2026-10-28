@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261028-aitable";
+  var WEBAPP_BUILD = "20261028-bulk";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -46944,6 +46944,7 @@
   }
 
   function gptPhaseLabel(phase) {
+    if (String(phase || "").indexOf("text:") === 0) return String(phase).slice(5);
     if (phase === "sending") return "Отправляю…";
     if (phase === "saving") return "Сохраняю ответ…";
     return "Думает…";
@@ -47003,6 +47004,34 @@
     setTimeout(go, 50);
     setTimeout(go, 180);
     setTimeout(go, 400);
+  }
+
+  function gptBulkJobLabel(j) {
+    var s = "Читаю данные по ссылке частями: " + (j.done || 0) + " из " + (j.total || 0);
+    var cur = String(j.current || "").replace(/^Google (Таблица|Документ),\s*/, "");
+    if (cur) s += " · " + cur;
+    return s + "…";
+  }
+
+  // Ждёт фоновую обработку больших данных по ссылке, показывая прогресс в строке статуса Лео.
+  async function waitGptBulkJob(job, req) {
+    var j = job;
+    setGptDiscussPhase("text:" + gptBulkJobLabel(j));
+    while (!req.stopped) {
+      await sleepMs(2000);
+      if (req.stopped) break;
+      try {
+        j = await apiFetch("/gpt/bulk/" + encodeURIComponent(job.id), { method: "GET" });
+      } catch (e) {
+        if (e && e.status === 404) throw new Error("Обработка данных прервалась — попробуйте ещё раз");
+        continue;
+      }
+      if (j.status === "done") return j;
+      if (j.status !== "running") throw new Error(j.error || "Обработка данных прервалась");
+      setGptDiscussPhase("text:" + gptBulkJobLabel(j));
+    }
+    apiFetch("/gpt/bulk/" + encodeURIComponent(job.id) + "/cancel", { method: "POST" }).catch(function () {});
+    return null;
   }
 
   function setGptDiscussPhase(phase) {
@@ -47313,9 +47342,7 @@
         (canvasSelections[0] && canvasSelections[0].sheet_id) ||
         "";
       var docView = kind === "local" && isDiscussionTargetActive(kind, itemId) ? buildOpenDocView() : null;
-      var res = await apiFetch("/gpt/chat", {
-        method: "POST",
-        body: JSON.stringify({
+      var chatPayload = {
           message: body,
           note_title: noteCtx.title,
           note_text: noteCtx.text,
@@ -47337,8 +47364,18 @@
           board_sheet_id: openBoard ? openBoard.sheetId : undefined,
           doc_view: docView ? docView.view : undefined,
           doc_sheet_id: docView ? docView.sheet_id : undefined,
-        }),
-      });
+      };
+      var res = await apiFetch("/gpt/chat", { method: "POST", body: JSON.stringify(chatPayload) });
+      // Большие данные по ссылке: сервер обрабатывает их частями в фоне — ждём с прогрессом
+      // и повторяем запрос, модель получит итоги всех частей.
+      if (res && res.bulk_job && !gptReq.stopped) {
+        await waitGptBulkJob(res.bulk_job, gptReq);
+        if (!gptReq.stopped) {
+          chatPayload.bulk_job_id = res.bulk_job.id;
+          setGptDiscussPhase("thinking");
+          res = await apiFetch("/gpt/chat", { method: "POST", body: JSON.stringify(chatPayload) });
+        }
+      }
       if (gptReq.stopped) {
         var stopErr = new Error("stopped");
         stopErr.leoStopped = true;

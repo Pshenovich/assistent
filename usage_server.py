@@ -2997,6 +2997,8 @@ class _MiniappGptChatBody(BaseModel):
     canvas_theme: Optional[str] = None
     # Открытая доска (лист kind=board): модель видит её узлы и может её дорисовать.
     board_sheet_id: Optional[str] = None
+    # Второй шаг после обработки больших данных по ссылке частями (assistant/services/bulk_links.py).
+    bulk_job_id: Optional[str] = None
 
 
 class _MiniappAgentCreate(BaseModel):
@@ -8140,6 +8142,28 @@ async def _start_chat_url_transcription(
     }
 
 
+@miniapp_router.get("/gpt/bulk/{job_id}")
+async def miniapp_gpt_bulk_status(
+    job_id: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """Прогресс обработки больших данных по ссылке частями."""
+    from assistant.services import bulk_links
+
+    job = bulk_links.get_job(job_id, int(principal.telegram_user_id))
+    if not job:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    return job.public()
+
+
+@miniapp_router.post("/gpt/bulk/{job_id}/cancel")
+async def miniapp_gpt_bulk_cancel(
+    job_id: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.services import bulk_links
+
+    return {"ok": bulk_links.cancel_job(job_id, int(principal.telegram_user_id))}
+
+
 @miniapp_router.post("/gpt/chat")
 async def miniapp_gpt_chat(
     body: _MiniappGptChatBody,
@@ -8377,6 +8401,31 @@ async def miniapp_gpt_chat(
     if url_job is not None:
         return url_job
 
+    # Большие таблицы/документы по ссылке: не влезают в один запрос — обрабатываем частями в фоне,
+    # клиент показывает прогресс и повторяет запрос с bulk_job_id.
+    from assistant.lib import chat_links
+
+    if not body.bulk_job_id and chat_links.find_links(q):
+        link_sources = await run_in_threadpool(chat_links.load_sources, q)
+        if chat_links.total_size(link_sources) > chat_links.INLINE_LIMIT:
+            from assistant.integrations.openrouter_client import gpt_display_label
+            from assistant.services import bulk_links
+
+            job = await run_in_threadpool(bulk_links.start_job, uid, q, link_sources, username=tg_uname)
+            return {
+                "answer": "",
+                "calendar_actions": [],
+                "bullets": [],
+                "kb_version": "",
+                "files": [],
+                "canvas": [],
+                "canvas_error": None,
+                "note_edits": None,
+                "model": run_model or "",
+                "model_label": gpt_display_label(run_model),
+                "bulk_job": job.public(),
+            }
+
     def _run() -> dict[str, Any] | None:
         from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
         from assistant.nlu.ask_context import pack_attached_notes, pack_knowledge_brief
@@ -8424,9 +8473,22 @@ async def miniapp_gpt_chat(
                     if images and not file_notes:
                         file_notes = "Изображение из предыдущего сообщения в обсуждении."
         # Ссылки на Google Документы/Таблицы: скачиваем и кладём текстом — сама модель по ссылкам не ходит.
+        # После обработки частями (bulk_job_id) вместо сырых данных — итоги всех частей.
         from assistant.lib import chat_links
 
-        link_notes = chat_links.prompt_notes(q)
+        if body.bulk_job_id:
+            from assistant.services import bulk_links
+
+            bjob = bulk_links.get_job(str(body.bulk_job_id), int(principal.telegram_user_id))
+            if bjob and bjob.status == "done":
+                link_notes = bulk_links.result_notes(bjob)
+            else:
+                link_notes = (
+                    "Обработка данных по ссылке частями не завершилась (ошибка или отмена). "
+                    "Скажи об этом пользователю и предложи повторить. Не придумывай содержимое."
+                )
+        else:
+            link_notes = chat_links.prompt_notes(q)
         if link_notes:
             file_notes = (file_notes + "\n\n" + link_notes).strip()
         kb_ids = body.knowledge_note_ids

@@ -315,13 +315,8 @@ def _xlsx_sheet(
     return lines, total, header, cols
 
 
-def extract_xlsx(data: bytes, *, limit: int = MAX_DOC_CHARS) -> str:
-    """Листы .xlsx текстом: строка — значения через табуляцию.
-
-    Лимит делится между листами, чтобы большой лист не вытеснил маленькие. Если строки
-    не влезли, в заголовке листа сказано, сколько показано, и добавлена сводка столбцов
-    по всем строкам — чтобы модель считала по всей таблице, а не по её началу.
-    """
+def _xlsx_open(data: bytes) -> tuple[zipfile.ZipFile, list[str], set[int], list[tuple[str, str]]]:
+    """Книга .xlsx: (архив, общие строки, стили дат, [(название листа, путь)])."""
     zf = zipfile.ZipFile(io.BytesIO(data))
     names = set(zf.namelist())
     shared: list[str] = []
@@ -342,6 +337,30 @@ def extract_xlsx(data: bytes, *, limit: int = MAX_DOC_CHARS) -> str:
         path = rels.get(sh.get(f"{_REL_NS}id") or "", "")
         if path in names:
             sheets.append((sh.get("name") or "Лист", path))
+    return zf, shared, date_styles, sheets
+
+
+def xlsx_sheet_rows(data: bytes, *, max_chars: int = 20_000_000) -> list[tuple[str, list[str]]]:
+    """Все непустые строки каждого листа текстом (значения через табуляцию) — для обработки частями."""
+    zf, shared, date_styles, sheets = _xlsx_open(data)
+    out: list[tuple[str, list[str]]] = []
+    budget = max_chars
+    for title, path in sheets:
+        lines, total, _header, _cols = _xlsx_sheet(zf, path, shared, date_styles, max(budget, 0))
+        if lines:
+            out.append((title, lines))
+            budget -= sum(len(x) + 1 for x in lines)
+    return out
+
+
+def extract_xlsx(data: bytes, *, limit: int = MAX_DOC_CHARS) -> str:
+    """Листы .xlsx текстом: строка — значения через табуляцию.
+
+    Лимит делится между листами, чтобы большой лист не вытеснил маленькие. Если строки
+    не влезли, в заголовке листа сказано, сколько показано, и добавлена сводка столбцов
+    по всем строкам — чтобы модель считала по всей таблице, а не по её началу.
+    """
+    zf, shared, date_styles, sheets = _xlsx_open(data)
 
     parsed = []
     for title, path in sheets:

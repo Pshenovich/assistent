@@ -85,3 +85,31 @@ def fetch_google_doc(url: str, *, timeout: float = 60) -> KbFetchedDocument:
 
 def fetch_documents(url: str) -> list[KbFetchedDocument]:
     return [fetch_google_doc(url)]
+
+
+MAX_XLSX_BYTES = 30 * 1024 * 1024
+
+
+def fetch_google_sheet_xlsx(url: str, *, timeout: float = 60) -> bytes:
+    """Google Таблица целиком (все листы) файлом .xlsx; закрытая — GoogleDocNoAccess."""
+    doc_id = parse_google_doc_id(url)
+    if not doc_id or "/spreadsheets/" not in (url or "").lower():
+        raise ValueError("Не удалось распознать ссылку Google Таблицы")
+    r = requests.get(
+        f"https://docs.google.com/spreadsheets/d/{doc_id}/export?format=xlsx",
+        timeout=timeout,
+        allow_redirects=True,
+    )
+    if r.status_code in (401, 403, 404):
+        raise GoogleDocNoAccess(f"Google Таблица: HTTP {r.status_code} — не открыта по ссылке")
+    if not r.ok:
+        raise RuntimeError(f"Google Таблица: HTTP {r.status_code}")
+    ctype = str(r.headers.get("Content-Type") or "").lower()
+    if "text/html" in ctype or "accounts.google.com" in str(getattr(r, "url", "") or ""):
+        raise GoogleDocNoAccess("Google Таблица не открыта по ссылке")
+    data = r.content or b""
+    if not data:
+        raise RuntimeError("Google Таблица: пустой ответ")
+    if len(data) > MAX_XLSX_BYTES:
+        raise RuntimeError("Google Таблица больше 30 МБ")
+    return data
