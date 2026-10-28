@@ -145,4 +145,14 @@ assert.equal(mat.length, ap.poly.length - 2);
 const fixedLine = { ...auto, waypoints: mat.map((q) => [q.x, q.y]) };
 assert.equal(G.linePath(fixedLine, G.resolveLine(fixedLine, wget)).d, ap.d);
 
+// Подпись стрелки: доля длины пути ↔ точка на нём.
+const lpoly = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }];
+nearPt(G.polyPointAt(lpoly, 0.25), 50, 0);
+nearPt(G.polyPointAt(lpoly, 0.75), 100, 50);
+near(G.polyProjectT(lpoly, { x: 130, y: 50 }), 0.75);
+near(G.polyProjectT(lpoly, { x: -20, y: 5 }), 0);
+const lpath = { poly: lpoly, mid: { x: 100, y: 0 } };
+nearPt(G.labelPoint({}, lpath), 100, 0);
+nearPt(G.labelPoint({ labelT: 0.25 }, lpath), 50, 0);
+
 console.log("board geometry ok");

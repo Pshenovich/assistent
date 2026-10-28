@@ -222,6 +222,12 @@
   font-size: 14px;
 }
 
+/* Подпись стрелки можно тащить вдоль линии (кроме режима правки текста). */
+.lb-el:not(.is-editing) > .lb-line-label:not(.is-empty) {
+  pointer-events: auto;
+  cursor: grab;
+}
+
 .lb-line-label.is-empty {
   display: none;
 }

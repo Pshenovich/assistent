@@ -118,6 +118,8 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
         el["route"] = route if route in ("straight", "curve", "elbow") else "straight"
         if raw.get("bend"):
             el["bend"] = _num(raw.get("bend"), 0, -1e5, 1e5)
+        if raw.get("labelT") is not None:
+            el["labelT"] = _num(raw.get("labelT"), 0.5, 0, 1)  # где подпись: доля длины стрелки
         wps = _points(raw.get("waypoints"), MAX_WAYPOINTS)
         if wps:
             el["waypoints"] = wps

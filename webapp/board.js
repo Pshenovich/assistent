@@ -209,6 +209,7 @@
       if (el.arrowEnd) o.arrowEnd = true;
       o.route = el.route || "straight";
       if (el.bend) o.bend = r2(el.bend);
+      if (el.labelT != null && isFinite(el.labelT)) o.labelT = Math.round(el.labelT * 1000) / 1000;
       if (el.waypoints && el.waypoints.length) {
         o.waypoints = el.waypoints.map(function (q) {
           return [r2(q[0]), r2(q[1])];
@@ -710,7 +711,7 @@
           '<path d="' + path.d + '" fill="none" stroke="' + stroke + '" stroke-width="' + sw + '"' +
           (dash ? ' stroke-dasharray="' + dash + '"' : "") + ' stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>' +
           heads + "</svg>",
-        mid: path.mid,
+        mid: G.labelPoint(el, path),
       };
     }
 
@@ -2088,6 +2089,16 @@
         drawPenPreview();
         return;
       }
+      // Подпись стрелки тянется вдоль линии; щелчок — как по самой стрелке (двойной — правка текста).
+      var lbl = tool === "select" && e.target.closest ? e.target.closest(".lb-line-label") : null;
+      var lblId = lbl ? hitId(lbl) : "";
+      if (lblId && !(e.shiftKey || e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        if (!selected.has(lblId) || selected.size !== 1) setSelection([lblId]);
+        begin();
+        startGesture(Object.assign(base, { kind: "label", id: lblId }));
+        return;
+      }
       var id = hitId(e.target);
       if (id) {
         e.preventDefault();
@@ -2283,6 +2294,15 @@
       patch(g.id, { waypoints: arr });
     }
 
+    function doLabel(g, p) {
+      var ln = getEl(g.id);
+      if (!ln) return;
+      var t = G.polyProjectT(linePathOf(ln).poly, p);
+      t = Math.max(0.03, Math.min(0.97, t));
+      // Около середины прилипает к ней — вернуть подпись на место легко.
+      patch(g.id, { labelT: Math.abs(t - 0.5) < 0.03 ? undefined : Math.round(t * 1000) / 1000 });
+    }
+
     function doSegment(g, p) {
       var ln = getEl(g.id);
       if (!ln) return;
@@ -2375,6 +2395,8 @@
         doCreate(g, p, e.shiftKey);
       } else if (g.kind === "end") {
         doEnd(g, p, e.altKey, e.shiftKey);
+      } else if (g.kind === "label") {
+        doLabel(g, p);
       } else if (g.kind === "wp") {
         doWaypoint(g, p, e.shiftKey);
       } else if (g.kind === "seg") {
@@ -2773,6 +2795,9 @@
         }
       } else if (g.kind === "connect") {
         if (!g.moved && !cancelled) quickAdd(g.from, g.side);
+      } else if (g.kind === "label") {
+        commit();
+        if (!g.moved && e && !cancelled) onTap(g.id, p, e);
       } else if (g.kind === "wp" || g.kind === "seg") {
         // Нажали, но не потянули — изломы как были.
         if (!g.moved && g.inserted) patch(g.id, { waypoints: g.before, bend: g.bend0 });
@@ -3168,9 +3193,10 @@
       var align;
       if (el.type === "line") {
         var lp = linePathOf(el);
+        var lm = G.labelPoint(el, lp);
         maxW = 220;
         var lines0 = wrapLines(ctx, el.text, maxW);
-        return { lines: lines0, x: lp.mid.x, y: lp.mid.y - ((lines0.length - 1) * lh) / 2, lh: lh, align: "center", fs: fs, label: true };
+        return { lines: lines0, x: lm.x, y: lm.y - ((lines0.length - 1) * lh) / 2, lh: lh, align: "center", fs: fs, label: true };
       }
       maxW = Math.max(10, el.w - padX * 2);
       var lines = wrapLines(ctx, el.text, maxW);

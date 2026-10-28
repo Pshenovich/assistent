@@ -30,6 +30,9 @@ class BoardDocTests(unittest.TestCase):
         self.assertEqual(wps[0], [200, 30])
         self.assertEqual(wps[2], [200.12, 40])
         self.assertNotIn("waypoints", board_doc._clean_element("l", dict(L, waypoints="bad")))
+        self.assertEqual(board_doc._clean_element("l", dict(L, labelT=0.3))["labelT"], 0.3)
+        self.assertEqual(board_doc._clean_element("l", dict(L, labelT=7))["labelT"], 1)
+        self.assertNotIn("labelT", board_doc._clean_element("l", L))
 
     def test_plain_text_order_and_links(self) -> None:
         text = board_doc.board_plain_text(_board(C, B, A, L))

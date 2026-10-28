@@ -702,6 +702,48 @@
     return base;
   }
 
+  /** Точка на ломаной на доле t её длины (0 — начало, 1 — конец). */
+  function polyPointAt(poly, t) {
+    var total = 0;
+    var i;
+    for (i = 1; i < poly.length; i++) total += dist(poly[i - 1], poly[i]);
+    var want = Math.max(0, Math.min(1, t)) * total;
+    for (i = 1; i < poly.length; i++) {
+      var l = dist(poly[i - 1], poly[i]);
+      if (want <= l && l > 0) return add(poly[i - 1], mul(sub(poly[i], poly[i - 1]), want / l));
+      want -= l;
+    }
+    return poly[poly.length - 1];
+  }
+
+  /** Доля длины ломаной до ближайшей к p точки на ней. */
+  function polyProjectT(poly, p) {
+    var total = 0;
+    var best = Infinity;
+    var bestAt = 0;
+    for (var i = 1; i < poly.length; i++) {
+      var a = poly[i - 1];
+      var ab = sub(poly[i], a);
+      var l2 = dot(ab, ab);
+      var k = l2 > 0 ? Math.max(0, Math.min(1, dot(sub(p, a), ab) / l2)) : 0;
+      var d = dist(p, add(a, mul(ab, k)));
+      var l = Math.sqrt(l2);
+      if (d < best) {
+        best = d;
+        bestAt = total + l * k;
+      }
+      total += l;
+    }
+    return total > 0 ? bestAt / total : 0.5;
+  }
+
+  /** Где стоит подпись линии: line.labelT — доля длины пути, по умолчанию середина. */
+  function labelPoint(line, path) {
+    var t = Number(line.labelT);
+    if (line.labelT == null || !isFinite(t)) return path.mid;
+    return polyPointAt(path.poly, t);
+  }
+
   /** Текущий путь как явные точки излома (для первой ручной правки). */
   function materializeWaypoints(line, res, opts) {
     var route = line.route || "straight";
@@ -852,6 +894,9 @@
     resolveLine: resolveLine,
     linePath: linePath,
     waypointsOf: waypointsOf,
+    polyPointAt: polyPointAt,
+    polyProjectT: polyProjectT,
+    labelPoint: labelPoint,
     orthoNormalize: orthoNormalize,
     routeOrthogonal: routeOrthogonal,
     materializeWaypoints: materializeWaypoints,
