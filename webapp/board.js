@@ -2305,10 +2305,14 @@
       guides = [];
       if (g.bounds && !free) {
         var b = g.bounds;
-        if (showGrid) {
-          if (lock !== "y") dx = Math.round((b.x + dx) / GRID) * GRID - b.x;
-          if (lock !== "x") dy = Math.round((b.y + dy) / GRID) * GRID - b.y;
-        }
+        // Направляющие важнее сетки: иначе блоки разной ширины не встают центр к центру
+        // (сетка двигает край с шагом 20, центры всегда расходятся на несколько пикселей).
+        var pre = alignGuides(g, b, dx, dy);
+        guides = [];
+        if (pre.snapX && lock !== "y") dx = pre.dx;
+        else if (showGrid && lock !== "y") dx = Math.round((b.x + dx) / GRID) * GRID - b.x;
+        if (pre.snapY && lock !== "x") dy = pre.dy;
+        else if (showGrid && lock !== "x") dy = Math.round((b.y + dy) / GRID) * GRID - b.y;
         var adj = alignGuides(g, b, dx, dy);
         if (lock !== "y") dx = adj.dx;
         if (lock !== "x") dy = adj.dy;
@@ -2341,22 +2345,32 @@
       var ys = [b.y + dy, b.y + dy + b.h / 2, b.y + dy + b.h];
       var bestX = null;
       var bestY = null;
+      // Блоки, связанные стрелкой с переносимыми: центр к центру тянет сильнее и в первую очередь —
+      // тогда стрелка между ними встаёт ровно.
+      var linked = g.linked || (g.linked = linkedTo(g.moving));
+      var thL = 14 / view.z;
+      function better(cur, d, prio) {
+        return !cur || prio > cur.prio || (prio === cur.prio && Math.abs(d) < Math.abs(cur.d));
+      }
       els.forEach(function (el) {
         if (g.moving[el.id] || !BOXED[el.type]) return;
         var ob = G.elBounds(el, getEl);
         if (!ob) return;
         var oxs = [ob.x, ob.x + ob.w / 2, ob.x + ob.w];
         var oys = [ob.y, ob.y + ob.h / 2, ob.y + ob.h];
-        xs.forEach(function (x) {
-          oxs.forEach(function (ox) {
+        var isLinked = !!linked[el.id];
+        xs.forEach(function (x, i) {
+          oxs.forEach(function (ox, j) {
             var d = ox - x;
-            if (Math.abs(d) <= th && (!bestX || Math.abs(d) < Math.abs(bestX.d))) bestX = { d: d, x: ox, ob: ob };
+            var prio = isLinked && i === 1 && j === 1 ? 1 : 0;
+            if (Math.abs(d) <= (prio ? thL : th) && better(bestX, d, prio)) bestX = { d: d, x: ox, ob: ob, prio: prio };
           });
         });
-        ys.forEach(function (y) {
-          oys.forEach(function (oy) {
+        ys.forEach(function (y, i) {
+          oys.forEach(function (oy, j) {
             var d = oy - y;
-            if (Math.abs(d) <= th && (!bestY || Math.abs(d) < Math.abs(bestY.d))) bestY = { d: d, y: oy, ob: ob };
+            var prio = isLinked && i === 1 && j === 1 ? 1 : 0;
+            if (Math.abs(d) <= (prio ? thL : th) && better(bestY, d, prio)) bestY = { d: d, y: oy, ob: ob, prio: prio };
           });
         });
       });
@@ -2372,7 +2386,20 @@
         var x1 = Math.max(bestY.ob.x + bestY.ob.w, b.x + dx + b.w);
         guides.push({ a: G.pt(x0, bestY.y), b: G.pt(x1, bestY.y) });
       }
-      return { dx: dx, dy: dy };
+      return { dx: dx, dy: dy, snapX: !!bestX, snapY: !!bestY };
+    }
+
+    /** Блоки на другом конце стрелок от переносимых (сами переносимые не в счёт). */
+    function linkedTo(moving) {
+      var out = {};
+      els.forEach(function (el) {
+        if (el.type !== "line") return;
+        var a = el.start && el.start.el;
+        var b = el.end && el.end.el;
+        if (a && b && moving[a] && !moving[b]) out[b] = 1;
+        if (a && b && moving[b] && !moving[a]) out[a] = 1;
+      });
+      return out;
     }
 
     function doCreate(g, p, square) {
