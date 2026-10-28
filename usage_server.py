@@ -43,6 +43,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
+from assistant.lib.sentry_init import init_sentry  # noqa: E402
+
+init_sentry("web")
+
 from assistant.stores import reminders_store  # noqa: E402
 from assistant.services.task_google_sync import (  # noqa: E402
     clear_task_google_ids as _clear_task_google_ids,
@@ -205,6 +209,48 @@ def _log_slow_request(request: Request, response: Any, dur: float) -> None:
 
 
 app.add_middleware(_OwaspSecurityHeadersMiddleware)
+
+# Пульс бота старше этого — бот считается вставшим (он пишет раз в 60 с).
+_HEALTH_BOT_STALE_SEC = 300.0
+
+
+def _health_snapshot() -> dict[str, Any]:
+    import sqlite3
+
+    from assistant.lib import heartbeat
+    from assistant.stores import notes as notes_store
+
+    db_ok = False
+    try:
+        # Своё короткое соединение: общий _CONN хранилища занят под его замком.
+        # mode=rw — не создавать пустой файл, если базы нет.
+        conn = sqlite3.connect(f"file:{notes_store._db_path()}?mode=rw", uri=True, timeout=5)
+        try:
+            conn.execute("SELECT 1").fetchone()
+            db_ok = True
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[healthz] db failed err={e!r}", flush=True)
+    bot_age = heartbeat.age_sec("bot")
+    # Нет пульса вообще — бот здесь не запущен (локальная разработка), это не авария.
+    bot_ok = bot_age is None or bot_age < _HEALTH_BOT_STALE_SEC
+    return {
+        "ok": db_ok and bot_ok,
+        "web": True,
+        "db": db_ok,
+        "bot_heartbeat_age_sec": None if bot_age is None else round(bot_age, 1),
+    }
+
+
+@app.get("/healthz", include_in_schema=False)
+async def healthz() -> JSONResponse:
+    snap = await run_in_threadpool(_health_snapshot)
+    return JSONResponse(
+        snap,
+        status_code=200 if snap["ok"] else 503,
+        headers={"Cache-Control": "no-store"},
+    )
 
 # Префикс URL для HTML/API дашборда. Корень сайта отдан публичному лендингу.
 _usage_dashboard_prefix_env = (os.getenv("USAGE_DASHBOARD_URL_PREFIX", "") or "").strip().rstrip("/")

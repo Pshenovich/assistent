@@ -34,11 +34,16 @@ def backup_one(src: Path, dst_dir: Path) -> Path:
     with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
         tmp_path = Path(tmp.name)
     try:
-        s = sqlite3.connect(f"file:{src}?mode=ro", uri=True, timeout=30)
+        # mode=rw, а не ro: базу в WAL без -shm (сервисы остановлены) ro-соединение
+        # может не открыть. rw не создаёт файл, если его нет.
+        s = sqlite3.connect(f"file:{src}?mode=rw", uri=True, timeout=30)
         d = sqlite3.connect(str(tmp_path))
         s.backup(d)
-        d.close()
         s.close()
+        check = d.execute("PRAGMA quick_check").fetchone()
+        d.close()
+        if not check or check[0] != "ok":
+            raise RuntimeError(f"quick_check копии: {check!r}")
         out = dst_dir / f"{rel}.gz"
         with open(tmp_path, "rb") as fi, gzip.open(out, "wb", compresslevel=6) as fo:
             shutil.copyfileobj(fi, fo)

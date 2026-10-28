@@ -24,6 +24,7 @@ from assistant.bot.knowledge_sync_job import register_knowledge_sync_jobs
 from assistant.bot.proactive_brief_job import register_proactive_brief_jobs
 from assistant.bot.chat_alert_job import register_chat_alert_jobs
 from assistant.bot.digest_auto_job import register_digest_auto_jobs
+from assistant.bot.heartbeat_job import register_heartbeat_jobs
 
 
 def build_application() -> Application:
@@ -67,11 +68,15 @@ def build_application() -> Application:
     register_proactive_brief_jobs(app)
     register_digest_auto_jobs(app)
     register_chat_alert_jobs(app)
+    register_heartbeat_jobs(app)
     return app
 
 
 def main() -> None:
     from assistant.realtime import notify as realtime_notify
+    from assistant.lib.sentry_init import init_sentry
+
+    init_sentry("bot")
 
     # Правки заметок из бота — открытым экранам мини-приложения через веб-сервер.
     realtime_notify.enable_remote()

@@ -70,6 +70,7 @@ _DIR_ENV = {
     "TODOIST_USER_TOKENS_DIR": "tokens/todoist",
     "TODOIST_OAUTH_PENDING_DIR": "pending/todoist",
     "TELEGRAM_BOT_API_DATA_DIR": "telegram-bot-api",
+    "HEARTBEAT_DIR": "data/heartbeat",
 }
 
 _SANDBOX_ENV: dict[str, str] = {}
