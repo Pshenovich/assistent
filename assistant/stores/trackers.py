@@ -11,6 +11,8 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from assistant.lib import sqlite_conn
+
 _LOCK = threading.RLock()
 _CONN: Optional[sqlite3.Connection] = None
 _CONN_PATH: Optional[str] = None
@@ -24,7 +26,7 @@ def _conn() -> sqlite3.Connection:
     if _CONN is not None and _CONN_PATH == path:
         return _CONN
     notes_store._conn()
-    _CONN = sqlite3.connect(path, check_same_thread=False, timeout=30)
+    _CONN = sqlite_conn.connect(path)
     _CONN_PATH = path
     _CONN.row_factory = sqlite3.Row
     _CONN.executescript(

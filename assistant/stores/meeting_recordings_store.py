@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from assistant.lib import sqlite_conn
+
 _lock = threading.RLock()
 
 _STATUS_SCHEDULED = "scheduled"
@@ -47,7 +49,7 @@ def _db_path() -> Path:
 def _connect() -> sqlite3.Connection:
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), check_same_thread=False)
+    conn = sqlite_conn.connect(str(path))
     conn.row_factory = sqlite3.Row
     return conn
 

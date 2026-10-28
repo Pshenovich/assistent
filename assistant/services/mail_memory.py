@@ -16,6 +16,8 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from assistant.lib import sqlite_conn
+
 BACKFILL_DAYS = 365
 BACKFILL_WINDOW_DAYS = 30
 BACKFILL_MAX = 150  # писем за проход на папку — сервер слабый
@@ -35,7 +37,7 @@ def _conn() -> sqlite3.Connection:
     if _CONN is not None and _CONN_PATH == path:
         return _CONN
     notes_store._conn()
-    _CONN = sqlite3.connect(path, check_same_thread=False, timeout=30)
+    _CONN = sqlite_conn.connect(path)
     _CONN_PATH = path
     _CONN.row_factory = sqlite3.Row
     _CONN.executescript(

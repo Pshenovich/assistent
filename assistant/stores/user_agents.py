@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from assistant.lib import sqlite_conn
+
 _LOCK = threading.Lock()
 _CONN: sqlite3.Connection | None = None
 
@@ -59,7 +61,7 @@ def _conn() -> sqlite3.Connection:
         return _CONN
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    _CONN = sqlite3.connect(str(path), check_same_thread=False)
+    _CONN = sqlite_conn.connect(str(path))
     _CONN.row_factory = sqlite3.Row
     _CONN.executescript(
         """

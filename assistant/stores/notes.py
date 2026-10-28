@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from assistant.realtime import notify as realtime_notify
+from assistant.lib import sqlite_conn
 
 _LOCK = threading.Lock()
 _CONN: Optional[sqlite3.Connection] = None
@@ -37,7 +38,7 @@ def _conn() -> sqlite3.Connection:
         return _CONN
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    _CONN = sqlite3.connect(str(path), check_same_thread=False)
+    _CONN = sqlite_conn.connect(str(path))
     _CONN.row_factory = sqlite3.Row
     _CONN.execute(
         """

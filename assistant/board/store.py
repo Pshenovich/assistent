@@ -14,6 +14,7 @@ from typing import Any
 
 from assistant.board.models import ACTIVE_STATUSES
 from assistant.board.numbers import safe_float
+from assistant.lib import sqlite_conn
 
 _lock = threading.RLock()
 _CONN: sqlite3.Connection | None = None
@@ -51,7 +52,7 @@ def _connect() -> sqlite3.Connection:
         return _CONN
     path = db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), check_same_thread=False)
+    conn = sqlite_conn.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     _CONN = conn

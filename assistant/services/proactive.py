@@ -17,6 +17,8 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from assistant.lib import sqlite_conn
+
 MAX_ITEMS = 7
 PREP_WINDOW = timedelta(minutes=90)
 NO_RESULTS_WINDOW = timedelta(hours=36)
@@ -39,7 +41,7 @@ def _conn() -> sqlite3.Connection:
     if _CONN is not None and _CONN_PATH == path:
         return _CONN
     notes_store._conn()
-    _CONN = sqlite3.connect(path, check_same_thread=False, timeout=30)
+    _CONN = sqlite_conn.connect(path)
     _CONN_PATH = path
     _CONN.row_factory = sqlite3.Row
     _CONN.execute(

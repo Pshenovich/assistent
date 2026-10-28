@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from assistant.lib import sqlite_conn
+
 PRIMARY_SHEET = 0  # «Основная» вкладка заметки
 THROTTLE = timedelta(minutes=10)
 KEEP_PER_ITEM = 60
@@ -67,7 +69,7 @@ def _conn() -> sqlite3.Connection:
     if _CONN is not None and _CONN_PATH == path:
         return _CONN
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    _CONN = sqlite3.connect(path, check_same_thread=False)
+    _CONN = sqlite_conn.connect(path)
     _CONN_PATH = path
     _CONN.row_factory = sqlite3.Row
     _CONN.execute(
