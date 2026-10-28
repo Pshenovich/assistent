@@ -1,4 +1,4 @@
-/* Холст (webapp/board.js). Цвета элементов — ключи палитры, здесь они под тему приложения (тёмная). */
+/* Холст (webapp/board.js). Цвета элементов — ключи палитры, здесь они под тему приложения: тёмная по умолчанию, светлая — .is-light (экспорт) и светлая тема. */
 .leo-board {
   --lb-bg: #1b1c1f;
   --lb-dot: rgba(255, 255, 255, 0.09);
@@ -52,7 +52,8 @@
   -webkit-touch-callout: none;
 }
 
-.leo-board.is-light {
+.leo-board.is-light,
+html[data-theme="light"] .leo-board {
   --lb-bg: #f7f7f8;
   --lb-dot: rgba(0, 0, 0, 0.12);
   --lb-panel: #ffffff;
@@ -516,7 +517,7 @@
 }
 
 .lb-danger:hover {
-  color: #ff6b6b;
+  color: var(--lb-ink-red);
 }
 
 .lb-sep {
@@ -543,7 +544,7 @@
 
 .lb-swatch.is-none,
 .lb-sw.is-none {
-  background: linear-gradient(135deg, transparent 45%, #ff6b6b 45%, #ff6b6b 55%, transparent 55%);
+  background: linear-gradient(135deg, transparent 45%, var(--lb-ink-red) 45%, var(--lb-ink-red) 55%, transparent 55%);
 }
 
 .lb-swatch-a {
@@ -699,8 +700,8 @@
 /* Действия с блоками — как плашка выделения в заметке (styles.css .note-comment-bubble-wrap):
    ✨ ИИ фиолетовым, остальное — цветом текста, иконка 15px и подпись. */
 .lb-pbtn.lb-nact-trigger {
-  color: #c4b5fd;
-  background: rgba(139, 92, 246, 0.16);
+  color: var(--violet-soft);
+  background: color-mix(in srgb, var(--violet) 16%, transparent);
   border-radius: 9px;
 }
 
@@ -725,7 +726,7 @@
 }
 
 .lb-nact:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--overlay-3);
 }
 
 .lb-nact svg {
@@ -739,6 +740,6 @@
 }
 
 .lb-nact--ai {
-  color: #c4b5fd;
-  background: rgba(139, 92, 246, 0.16);
+  color: var(--violet-soft);
+  background: color-mix(in srgb, var(--violet) 16%, transparent);
 }

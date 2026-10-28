@@ -59,3 +59,23 @@ def test_ui_theme_state_and_put(tmp_path, monkeypatch):
     with pytest.raises(us.HTTPException) as e:
         asyncio.run(us.miniapp_profile_theme_put(us._MiniappThemeBody(theme="sepia"), p))
     assert e.value.status_code == 400
+
+
+def _css_literals_outside_tokens(css: str) -> list[str]:
+    import re
+
+    css = re.sub(r'^(:root|html\[data-theme="light"\])\s*\{.*?^\}', "", css, flags=re.S | re.M)
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    cols = re.findall(r"#[0-9a-fA-F]{3,8}\b|rgba?\([^()]*\)", css)
+    black = re.compile(r"^(#000(000)?|rgba?\(\s*0\s*,\s*0\s*,\s*0\b.*)$", re.I)
+    return [c for c in cols if not black.match(c)]
+
+
+def test_styles_use_theme_tokens_not_literal_colors():
+    """Цвета экранов — через токены темы (светлая/тёмная). Чёрные тени не считаем; остальное — осознанные исключения
+    (белый лист письма, бегунки переключателей, цветные метки). Новый литерал — заведите токен в :root и в светлой теме."""
+    from pathlib import Path
+
+    css = (Path(__file__).resolve().parents[1] / "webapp" / "styles.css").read_text(encoding="utf-8")
+    left = _css_literals_outside_tokens(css)
+    assert len(left) <= 50, f"{len(left)} литеральных цветов вне токенов, например: {left[-10:]}"

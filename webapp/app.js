@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261028-theme2";
+  var WEBAPP_BUILD = "20261028-palette";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -13790,7 +13790,8 @@
       g.clearRect(0, 0, w, h);
       var step = w / bars;
       var bw = Math.max(2, step * 0.5);
-      g.fillStyle = "rgba(255,255,255,0.85)";
+      g.fillStyle = getComputedStyle(cv).color || "#fff"; // цвет текста темы (.note-dict-wave)
+      g.globalAlpha = 0.85;
       for (var k = 0; k < bars; k++) {
         var bh = Math.max(4, hist[k] * h);
         var x = k * step + (step - bw) / 2;
