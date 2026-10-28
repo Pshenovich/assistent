@@ -488,7 +488,7 @@ def is_pdf(item: dict[str, Any]) -> bool:
     return mime == "application/pdf" or name.endswith(".pdf")
 
 
-def extract_text_preview(item: dict[str, Any], *, limit: int = 8000) -> str:
+def extract_text_preview(item: dict[str, Any], *, limit: int = 60000) -> str:
     if str(item.get("kind") or "") == "image":
         return ""
     mime = str(item.get("mime") or "").split(";")[0].strip().lower()
@@ -503,6 +503,25 @@ def extract_text_preview(item: dict[str, Any], *, limit: int = 8000) -> str:
         try:
             text = extract_docx(path.read_bytes())
         except Exception:
+            return ""
+        if len(text) > limit:
+            text = text[:limit] + f"\n…(документ обрезан: показано {limit} из {len(text)} символов)"
+        return text.strip()
+    if ext == ".xlsx" or "spreadsheetml.sheet" in mime:
+        from assistant.board.docs import extract_xlsx
+
+        try:
+            return extract_xlsx(path.read_bytes(), limit=limit)
+        except Exception as e:
+            print(f"[comment_files] xlsx parse failed id={item.get('id')} err={e!r}")
+            return ""
+    if ext == ".pptx" or "presentationml.presentation" in mime:
+        from assistant.board.docs import extract_pptx
+
+        try:
+            text = extract_pptx(path.read_bytes())
+        except Exception as e:
+            print(f"[comment_files] pptx parse failed id={item.get('id')} err={e!r}")
             return ""
         return text[:limit].strip()
     if mime not in TEXT_MIMES and ext not in {".txt", ".md", ".csv", ".json", ".xml"}:

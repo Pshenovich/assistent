@@ -8227,7 +8227,12 @@ async def miniapp_gpt_chat(
             if preview:
                 notes.append(f"Файл «{label}»:\n{preview}")
             else:
-                notes.append(f"Прикреплён файл «{label}» ({item.get('mime') or 'file'}).")
+                notes.append(
+                    f"Прикреплён файл «{label}» ({item.get('mime') or 'file'}), но его содержимое "
+                    "прочитать не удалось (формат не поддерживается или файл пустой). Ты его не видишь: "
+                    "скажи об этом прямо и предложи прислать PDF, .xlsx, .docx или CSV. "
+                    "Не придумывай содержимое по названию."
+                )
         return images, files, "\n\n".join(notes).strip()
 
     def _save_generated(out: dict[str, Any]) -> list[dict[str, Any]]:
