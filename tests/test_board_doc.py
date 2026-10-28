@@ -22,6 +22,15 @@ L = {
 
 
 class BoardDocTests(unittest.TestCase):
+    def test_line_waypoints_cleaned(self) -> None:
+        raw = dict(L, waypoints=[[200, 30], ["x", 1], [200.123, "40"], *([[1, 1]] * 50)])
+        el = board_doc._clean_element("l", raw)
+        wps = el["waypoints"]
+        self.assertEqual(len(wps), board_doc.MAX_WAYPOINTS)
+        self.assertEqual(wps[0], [200, 30])
+        self.assertEqual(wps[2], [200.12, 40])
+        self.assertNotIn("waypoints", board_doc._clean_element("l", dict(L, waypoints="bad")))
+
     def test_plain_text_order_and_links(self) -> None:
         text = board_doc.board_plain_text(_board(C, B, A, L))
         lines = text.split("\n")
@@ -55,6 +64,13 @@ class BoardDocTests(unittest.TestCase):
         self.assertTrue(svg.startswith("<svg"))
         self.assertIn("Идея &lt;b&gt;", svg)
         self.assertIn("marker-end", svg)
+
+    def test_svg_text_align(self) -> None:
+        right = dict(A, style={"align": "right"})
+        self.assertIn('text-anchor="end"', board_doc.render_board_svg(_board(right)))
+        self.assertIn('text-anchor="middle"', board_doc.render_board_svg(_board(A)))
+        text = {"id": "t", "type": "text", "x": 0, "y": 0, "w": 100, "h": 20, "text": "x"}
+        self.assertIn('text-anchor="start"', board_doc.render_board_svg(_board(text)))
 
 
 class BoardSheetTests(unittest.TestCase):

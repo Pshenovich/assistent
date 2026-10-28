@@ -48,6 +48,9 @@ def _str(raw: Any, limit: int = 64) -> str:
     return str(raw if raw is not None else "")[:limit]
 
 
+MAX_WAYPOINTS = 32  # точки излома стрелки
+
+
 def _end(raw: Any) -> Optional[dict[str, Any]]:
     if not isinstance(raw, dict) or not raw.get("el"):
         return None
@@ -115,6 +118,9 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
         el["route"] = route if route in ("straight", "curve", "elbow") else "straight"
         if raw.get("bend"):
             el["bend"] = _num(raw.get("bend"), 0, -1e5, 1e5)
+        wps = _points(raw.get("waypoints"), MAX_WAYPOINTS)
+        if wps:
+            el["waypoints"] = wps
         d = str(raw.get("d") or "")
         if d and _PATH_RE.match(d):
             el["d"] = d  # путь, посчитанный клиентом (изгиб, излом) — для SVG без клиента
@@ -403,8 +409,13 @@ def render_board_svg(body: Any) -> str:
             lines = text.split("\n")
             lh = fs * 1.3
             cy = y + eh / 2 - (len(lines) - 1) * lh / 2
-            anchor = "start" if t == "text" and st.get("align") != "center" else "middle"
-            tx = x if anchor == "start" else x + ew / 2
+            align = st.get("align")
+            if align not in ("left", "center", "right"):
+                align = "left" if t == "text" else "center"
+            anchor = {"left": "start", "center": "middle", "right": "end"}[align]
+            # Поля как в редакторе: у текста без отступа, у ромба — 22% ширины, у остальных 10px.
+            pad = 0 if t == "text" else ew * 0.22 if t == "diamond" else 10
+            tx = x + pad if align == "left" else x + ew - pad if align == "right" else x + ew / 2
             spans = "".join(
                 f'<tspan x="{tx}" y="{cy + i * lh:.1f}">{html.escape(line)}</tspan>' for i, line in enumerate(lines)
             )

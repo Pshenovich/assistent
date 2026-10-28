@@ -5202,7 +5202,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261028-headings",
+  assetVersion: "20261028-arrows",
   Y: Y,
   mount: mount,
   importBody: importBody,

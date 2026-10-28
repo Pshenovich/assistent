@@ -768,6 +768,9 @@ def update_board(body: Any, action: dict[str, Any]) -> str:
                 el["end"] = {"el": b["id"], **({"side": s2} if s2 else {})}
                 el["route"] = route
                 el.pop("bend", None)
+                # Ручные изломы привязаны к старым местам блоков — после перестройки они мешают.
+                el.pop("waypoints", None)
+                el.pop("d", None)
         layout = lay
     elif prepared:
         # Новый блок, связанный со старым, — рядом с ним (под ним в блок-схеме), без наездов.

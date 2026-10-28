@@ -29,6 +29,20 @@
   var GRID = 20;
   var SHAPES = { rect: 1, diamond: 1, ellipse: 1 };
   var BOXED = { text: 1, rect: 1, diamond: 1, ellipse: 1, sticky: 1, image: 1 };
+  var ALIGN_ICON = { left: "alignLeft", center: "alignCenter", right: "alignRight" };
+
+  /** Выравнивание текста: у текста по умолчанию влево, в фигурах и стикерах — по центру. */
+  function alignOf(el) {
+    var a = el.style && el.style.align;
+    if (a === "left" || a === "center" || a === "right") return a;
+    return el.type === "text" ? "left" : "center";
+  }
+
+  function isAlignable(el) {
+    return el.type === "text" || el.type === "rect" || el.type === "diamond" || el.type === "ellipse" || el.type === "sticky";
+  }
+  // Палец вместо мыши — ручки крупнее.
+  var COARSE = typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(pointer: coarse)").matches : false;
   var TEXTUAL = { text: 1, rect: 1, diamond: 1, ellipse: 1, sticky: 1, line: 1 };
   var STROKED = { rect: 1, diamond: 1, ellipse: 1, line: 1, pen: 1 };
   var IMAGE_MAX_SIDE = 1400;
@@ -89,8 +103,10 @@
     straight: '<path d="M3 16L17 4"/>',
     curve: '<path d="M3 16C3 6 17 14 17 4"/>',
     elbow: '<path d="M3 16h7V4h7"/>',
+    unbend: '<path d="M3 15h4l3-7 3 7h4" stroke-dasharray="2 2.2"/><path d="M3 15h14"/>',
     alignLeft: '<path d="M3 5h14M3 10h9M3 15h12"/>',
     alignCenter: '<path d="M3 5h14M5.5 10h9M4 15h12"/>',
+    alignRight: '<path d="M3 5h14M8 10h9M5 15h12"/>',
     more: '<circle cx="5" cy="10" r="1.2"/><circle cx="10" cy="10" r="1.2"/><circle cx="15" cy="10" r="1.2"/>',
   };
 
@@ -147,7 +163,7 @@
   }
 
   /** Элемент в порядке полей, как его пишет сервер (board_doc._clean_element). */
-  function serializeEl(el, getEl) {
+  function serializeEl(el, getEl, pathOpts) {
     var o = { id: el.id, type: el.type, x: r2(el.x), y: r2(el.y), w: r2(el.w), h: r2(el.h), z: r2(el.z) };
     if (el.rot) o.rot = r2(el.rot);
     if (el.group) o.group = el.group;
@@ -168,7 +184,12 @@
       if (el.arrowEnd) o.arrowEnd = true;
       o.route = el.route || "straight";
       if (el.bend) o.bend = r2(el.bend);
-      o.d = G.linePath(el, res).d;
+      if (el.waypoints && el.waypoints.length) {
+        o.waypoints = el.waypoints.map(function (q) {
+          return [r2(q[0]), r2(q[1])];
+        });
+      }
+      o.d = G.linePath(el, res, pathOpts ? pathOpts(el) : null).d;
     } else if (el.type === "pen") {
       o.points = (el.points || []).map(function (p) {
         return [r2(p[0]), r2(p[1])];
@@ -312,6 +333,7 @@
     var snapTarget = null; // {el, side}
     var marquee = null;
     var lastTap = { id: "", t: 0, x: 0, y: 0 };
+    var lastWpTap = { h: "", id: "", t: 0 };
     var lastStyle = {};
     var changeTimer = 0;
     var destroyed = false;
@@ -512,11 +534,17 @@
       // Линии, прилипшие к изменённым блокам, тоже перерисовываем.
       if (dirty.size) {
         var extra = [];
+        // Сдвинули или удалили блок — ломаные с обходом могут проложиться иначе.
+        var blockDirty = false;
+        dirty.forEach(function (id) {
+          var d = els.get(id);
+          if (!d || BOXED[d.type]) blockDirty = true;
+        });
         els.forEach(function (el) {
           if (el.type !== "line") return;
           var a = el.start && el.start.el;
           var b = el.end && el.end.el;
-          if ((a && dirty.has(a)) || (b && dirty.has(b))) extra.push(el.id);
+          if ((a && dirty.has(a)) || (b && dirty.has(b)) || (blockDirty && autoRouted(el))) extra.push(el.id);
         });
         extra.forEach(function (id) {
           dirty.add(id);
@@ -584,7 +612,7 @@
       div.style.fontWeight = st.bold ? "600" : "";
       var color = st.textColor ? inkVar(st.textColor) : "";
       div.style.color = color;
-      div.style.textAlign = el.type === "text" ? st.align || "left" : st.align || "center";
+      div.style.textAlign = alignOf(el);
     }
 
     function shapeSvg(el) {
@@ -616,12 +644,35 @@
       return '<svg class="lb-shape" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + " " + h + '" overflow="visible">' + inner + "</svg>";
     }
 
+    /** Ломаная без ручных изломов обходит блоки — им нужны рамки препятствий. */
+    function autoRouted(ln) {
+      return ln.type === "line" && ln.route === "elbow" && !ln.bend && !(ln.waypoints && ln.waypoints.length);
+    }
+
+    function pathOptsOf(ln) {
+      if (!autoRouted(ln)) return null;
+      var own = {};
+      if (ln.start && ln.start.el) own[ln.start.el] = 1;
+      if (ln.end && ln.end.el) own[ln.end.el] = 1;
+      var obstacles = [];
+      els.forEach(function (el) {
+        if (!BOXED[el.type]) return;
+        var b = G.elBounds(el, getEl);
+        if (b) obstacles.push({ x: b.x, y: b.y, w: b.w, h: b.h, own: !!own[el.id] });
+      });
+      return { obstacles: obstacles };
+    }
+
+    function linePathOf(ln, res) {
+      return G.linePath(ln, res || G.resolveLine(ln, getEl), pathOptsOf(ln));
+    }
+
     function lineSvg(el) {
       var st = el.style || {};
       var sw = Number(st.strokeWidth) || 2;
       var stroke = inkVar(st.stroke || "ink");
       var res = G.resolveLine(el, getEl);
-      var path = G.linePath(el, res);
+      var path = linePathOf(el, res);
       var dash = dashArray(st.dash, sw);
       var size = 8 + sw * 2.5;
       var heads = "";
@@ -799,7 +850,7 @@
       var hs = 8;
       list.forEach(function (el) {
         if (el.type === "line") {
-          var lp = G.linePath(el, G.resolveLine(el, getEl));
+          var lp = linePathOf(el);
           h.push('<path ' + tr + ' d="' + lp.d + '" class="lb-sel-line" vector-effect="non-scaling-stroke"/>');
         } else if (el.type === "pen") {
           var b = G.elBounds(el, getEl);
@@ -841,13 +892,37 @@
           }
         } else if (single && single.type === "line") {
           var res = G.resolveLine(single, getEl);
-          var lp2 = G.linePath(single, res);
+          var lp2 = linePathOf(single, res);
+          var wps = G.waypointsOf(single);
+          var hr = COARSE ? 1.6 : 1;
+          if ((single.route || "straight") === "elbow") {
+            // Ломаная: ручка на каждом отрезке, тянется поперёк.
+            (lp2.segs || []).forEach(function (sg) {
+              if (sg.len * z < 18) return;
+              var s = toScreen(sg.p);
+              var lw = (sg.horiz ? 16 : 6) * hr;
+              var lh = (sg.horiz ? 6 : 16) * hr;
+              h.push('<rect class="lb-handle lb-seg' + (sg.horiz ? " is-h" : " is-v") + '" data-h="seg:' + sg.i + '" x="' + (s.x - lw / 2) + '" y="' + (s.y - lh / 2) + '" width="' + lw + '" height="' + lh + '" rx="3"/>');
+            });
+          } else {
+            wps.forEach(function (q, i) {
+              var s = toScreen(q);
+              h.push('<circle class="lb-handle lb-wp" data-h="wp:' + i + '" cx="' + s.x + '" cy="' + s.y + '" r="' + 5 * hr + '"/>');
+            });
+            if (wps.length) {
+              (lp2.segs || []).forEach(function (sg) {
+                var s = toScreen(sg.p);
+                h.push('<circle class="lb-handle lb-ins" data-h="ins:' + sg.i + '" cx="' + s.x + '" cy="' + s.y + '" r="' + 4 * hr + '"/>');
+              });
+            } else {
+              var m = toScreen(lp2.mid);
+              h.push('<rect class="lb-handle lb-bend" data-h="ins:0" x="' + (m.x - 5 * hr) + '" y="' + (m.y - 5 * hr) + '" width="' + 10 * hr + '" height="' + 10 * hr + '" rx="' + 5 * hr + '"/>');
+            }
+          }
           [["p0", res.p0], ["p1", res.p1]].forEach(function (n) {
             var s = toScreen(n[1]);
-            h.push('<circle class="lb-handle lb-end" data-h="' + n[0] + '" cx="' + s.x + '" cy="' + s.y + '" r="6"/>');
+            h.push('<circle class="lb-handle lb-end" data-h="' + n[0] + '" cx="' + s.x + '" cy="' + s.y + '" r="' + 6 * hr + '"/>');
           });
-          var m = toScreen(lp2.mid);
-          h.push('<rect class="lb-handle lb-bend" data-h="mid" x="' + (m.x - 5) + '" y="' + (m.y - 5) + '" width="10" height="10" rx="5"/>');
         } else if (list.length > 1) {
           var sb = selBounds();
           if (sb) {
@@ -1031,7 +1106,7 @@
       if (el.type === "text" && !text.trim()) {
         remove(ed.id);
       } else {
-        var fields = { text: text };
+        var fields = (el.text || "") === text ? {} : { text: text };
         if (el.type === "text") {
           var th = textHeight(ed.text);
           if (th != null && !el.rot) fields.h = Math.max(20, Math.ceil(th));
@@ -1258,7 +1333,7 @@
       var anyText = types.text || anyShape || types.sticky || types.line;
       var h = [];
       var key = JSON.stringify([Object.keys(types).sort(), list.map(function (e) {
-        return [e.style, e.route, e.arrowStart, e.arrowEnd, e.group, e.type];
+        return [e.style, e.route, e.arrowStart, e.arrowEnd, e.group, e.type, !!(e.bend || (e.waypoints && e.waypoints.length))];
       }), list.length]);
       if (types.sticky) h.push(swatchBtn("sticky", stickyVar(commonStyle(list.filter(isType("sticky")), "fill") || "yellow"), "Цвет стикера"));
       if (anyStroke) h.push(swatchBtn("stroke", inkVar(commonStyle(list.filter(isStroked), "stroke") || "ink"), "Цвет линии", true));
@@ -1272,9 +1347,12 @@
         }) || { t: fs ? String(fs) : "Aa" }).t;
         h.push('<button type="button" class="lb-btn lb-pbtn lb-font" data-p="font" title="Размер текста">' + esc(lbl) + "</button>");
       }
-      if (types.text && Object.keys(types).length === 1) {
-        var al = commonStyle(list, "align") || "left";
-        h.push('<button type="button" class="lb-btn lb-pbtn" data-p="align" title="Выравнивание">' + icon(al === "center" ? "alignCenter" : "alignLeft") + "</button>");
+      if (list.every(isAlignable)) {
+        var al = alignOf(list[0]);
+        if (!list.every(function (e) {
+          return alignOf(e) === al;
+        })) al = "left";
+        h.push('<button type="button" class="lb-btn lb-pbtn" data-p="align" title="Выравнивание">' + icon(ALIGN_ICON[al]) + "</button>");
       }
       if (anyShape && !types.line && !types.pen && !types.text && !types.sticky && !types.image) {
         h.push('<button type="button" class="lb-btn lb-pbtn" data-p="shape" title="Фигура">' + icon(list[0].type) + "</button>");
@@ -1294,6 +1372,11 @@
         h.push('<button type="button" class="lb-btn lb-pbtn' + (as ? " is-on" : "") + '" data-p="arrowStart" title="Наконечник в начале">' + icon("arrowStart") + "</button>");
         h.push('<button type="button" class="lb-btn lb-pbtn' + (ae ? " is-on" : "") + '" data-p="arrowEnd" title="Наконечник в конце">' + icon("arrowEnd") + "</button>");
         h.push('<button type="button" class="lb-btn lb-pbtn" data-p="route" title="Вид линии">' + icon(route) + "</button>");
+        if (lines.some(function (l) {
+          return l.bend || (l.waypoints && l.waypoints.length);
+        })) {
+          h.push('<button type="button" class="lb-btn lb-pbtn" data-p="unbend" title="Сбросить изломы">' + icon("unbend") + "</button>");
+        }
       }
       h.push('<span class="lb-sep"></span>');
       if (list.length > 1) {
@@ -1459,8 +1542,17 @@
           };
         });
       } else if (p === "align") {
-        var cur = commonStyle(selList(), "align") || "left";
-        applyStyle(isType("text"), { align: cur === "center" ? "left" : "center" });
+        openPop(b, function (box) {
+          box.innerHTML = '<div class="lb-row">' + [["left", "По левому краю"], ["center", "По центру"], ["right", "По правому краю"]].map(function (a) {
+            return '<button type="button" class="lb-btn" data-a="' + a[0] + '" title="' + a[1] + '">' + icon(ALIGN_ICON[a[0]]) + "</button>";
+          }).join("") + "</div>";
+          box.onclick = function (ev) {
+            var a = ev.target.closest("[data-a]");
+            if (!a) return;
+            applyStyle(isAlignable, { align: a.getAttribute("data-a") });
+            closePop();
+          };
+        });
       } else if (p === "shape") {
         openPop(b, function (box) {
           box.innerHTML = '<div class="lb-row">' + ["rect", "diamond", "ellipse"].map(function (t) {
@@ -1482,6 +1574,10 @@
           var f = {};
           f[p] = on || undefined;
           return f;
+        });
+      } else if (p === "unbend") {
+        applyFields(isType("line"), function () {
+          return { waypoints: undefined, bend: undefined };
         });
       } else if (p === "route") {
         openPop(b, function (box) {
@@ -1593,6 +1689,7 @@
             return getEl(id) || null;
           });
           c.points = [[res.p0.x + dx, res.p0.y + dy], [res.p1.x + dx, res.p1.y + dy]];
+          if (c.waypoints) c.waypoints = shiftWaypoints(c.waypoints, dx, dy);
           ["start", "end"].forEach(function (k) {
             if (c[k] && !map[c[k].el]) delete c[k];
             else if (c[k]) c[k] = Object.assign({}, c[k], { el: map[c[k].el] });
@@ -1657,6 +1754,12 @@
       commit();
     }
 
+    function shiftWaypoints(wps, dx, dy) {
+      return (wps || []).map(function (q) {
+        return [Math.round((q[0] + dx) * 10) / 10, Math.round((q[1] + dy) * 10) / 10];
+      });
+    }
+
     /** Сдвиг элемента; у линии сдвигаются свободные концы, прилипшие к неподвижным блокам — отлипают. */
     function moved(el0, dx, dy, movingIds) {
       if (el0.type === "line") {
@@ -1665,6 +1768,7 @@
         ["start", "end"].forEach(function (k) {
           if (el0[k] && !(movingIds && movingIds[el0[k].el])) f[k] = undefined;
         });
+        if (el0.waypoints && el0.waypoints.length) f.waypoints = shiftWaypoints(el0.waypoints, dx, dy);
         return f;
       }
       return { x: el0.x + dx, y: el0.y + dy };
@@ -1675,7 +1779,7 @@
       if (editing || !selected.size) return;
       var list = selList();
       var payload = JSON.stringify({ leoBoard: 1, elements: list.map(function (el) {
-        return serializeEl(el, getEl);
+        return serializeEl(el, getEl, pathOptsOf);
       }) });
       var text = list.map(function (el) {
         return el.text || "";
@@ -1883,8 +1987,14 @@
       list.forEach(function (el) {
         moving[el.id] = 1;
       });
+      // Стрелки с изломами между двумя переносимыми блоками едут целиком.
+      var carry = [];
+      els.forEach(function (el) {
+        if (el.type !== "line" || moving[el.id] || !(el.waypoints && el.waypoints.length)) return;
+        if (el.start && moving[el.start.el] && el.end && moving[el.end.el]) carry.push(clone(el));
+      });
       startGesture(Object.assign(base, {
-        kind: "move", hit: hit, items: list.map(clone), moving: moving,
+        kind: "move", hit: hit, items: list.map(clone), moving: moving, carry: carry,
         bounds: G.unionBounds(list.map(function (el) {
           return G.elBounds(el, getEl);
         })),
@@ -1896,6 +2006,10 @@
       if (h.indexOf("c-") === 0 && single) {
         var side = h.slice(2);
         startGesture(Object.assign(base, { kind: "connect", from: single.id, side: side }));
+        return;
+      }
+      if (/^(wp|ins|seg):\d+$/.test(h) && single && single.type === "line") {
+        startBendHandle(h, base, single);
         return;
       }
       if ((h === "p0" || h === "p1" || h === "mid") && single && single.type === "line") {
@@ -1923,6 +2037,143 @@
         begin();
         startGesture(Object.assign(base, { kind: "resize", id: single.id, h: h, el0: clone(single), shift: e.shiftKey }));
       }
+    }
+
+    function wpArr(q) {
+      return [Math.round(q.x * 10) / 10, Math.round(q.y * 10) / 10];
+    }
+
+    /** Ручки изломов: точка (wp), вставка новой точки (ins), отрезок ломаной (seg). */
+    function startBendHandle(h, base, ln) {
+      var kind = h.split(":")[0];
+      var n = Number(h.split(":")[1]);
+      var res = G.resolveLine(ln, getEl);
+      var before = ln.waypoints;
+      if (kind === "wp") {
+        var now = Date.now();
+        if (lastWpTap.h === h && lastWpTap.id === ln.id && now - lastWpTap.t < 380) {
+          // Двойное нажатие по точке — убрать её.
+          lastWpTap = { h: "", id: "", t: 0 };
+          var rest = G.waypointsOf(ln).filter(function (_, i) {
+            return i !== n;
+          }).map(wpArr);
+          begin();
+          patch(ln.id, { waypoints: rest.length ? rest : undefined });
+          commit();
+          return;
+        }
+        lastWpTap = { h: h, id: ln.id, t: now };
+        begin();
+        startGesture(Object.assign(base, { kind: "wp", id: ln.id, idx: n, before: before }));
+        return;
+      }
+      if (kind === "ins") {
+        var had = G.waypointsOf(ln).length;
+        var wps = G.materializeWaypoints(ln, res, pathOptsOf(ln)).map(wpArr);
+        // Изгиб старого вида превращается в одну точку — её и тянем.
+        var fromBend = !had && wps.length === 1;
+        if (!fromBend) wps.splice(n, 0, wpArr(base.p0));
+        begin();
+        patch(ln.id, { waypoints: wps, bend: undefined });
+        startGesture(Object.assign(base, { kind: "wp", id: ln.id, idx: fromBend ? 0 : n, before: before, inserted: true, bend0: ln.bend }));
+        return;
+      }
+      // seg: отрезок ломаной двигается поперёк себя, соседние углы — за ним.
+      var Q = linePathOf(ln, res).poly.map(function (q) {
+        return G.pt(q.x, q.y);
+      });
+      var i = n;
+      if (i < 0 || i > Q.length - 2) return;
+      if (i === 0) {
+        // Крайний отрезок прилип к концу: оставляем у конца короткий отросток и тянем остальное.
+        var l0 = G.dist(Q[0], Q[1]);
+        var st = G.add(Q[0], G.mul(G.norm(G.sub(Q[1], Q[0])), Math.min(G.STUB, l0 / 2)));
+        Q.splice(1, 0, st, G.pt(st.x, st.y));
+        i = 2;
+      }
+      if (i === Q.length - 2) {
+        var m = Q.length - 1;
+        var l1 = G.dist(Q[m - 1], Q[m]);
+        var et = G.sub(Q[m], G.mul(G.norm(G.sub(Q[m], Q[m - 1])), Math.min(G.STUB, l1 / 2)));
+        Q.splice(m, 0, et, G.pt(et.x, et.y));
+      }
+      var horiz = Math.abs(Q[i + 1].x - Q[i].x) >= Math.abs(Q[i + 1].y - Q[i].y);
+      begin();
+      startGesture(Object.assign(base, {
+        kind: "seg", id: ln.id, idx: i, poly: Q, horiz: horiz, before: before, bend0: ln.bend,
+        c0: horiz ? Q[i].y : Q[i].x,
+      }));
+    }
+
+    function doWaypoint(g, p, shift) {
+      var ln = getEl(g.id);
+      if (!ln) return;
+      var res = G.resolveLine(ln, getEl);
+      var wps = G.waypointsOf(ln);
+      var pass = [res.p0].concat(wps, [res.p1]);
+      var prev = pass[g.idx];
+      var next = pass[g.idx + 2];
+      if (shift && prev) {
+        // Shift — угол от предыдущей точки с шагом 15°.
+        var v = G.sub(p, prev);
+        var step = Math.PI / 12;
+        var ang = Math.round(Math.atan2(v.y, v.x) / step) * step;
+        p = G.add(prev, G.pt(Math.cos(ang) * G.len(v), Math.sin(ang) * G.len(v)));
+      } else {
+        // Прилипание к соседним точкам по осям — чтобы легко поставить ровно.
+        var th = 6 / view.z;
+        var x = p.x;
+        var y = p.y;
+        [prev, next].forEach(function (q) {
+          if (!q) return;
+          if (Math.abs(p.x - q.x) < th) x = q.x;
+          if (Math.abs(p.y - q.y) < th) y = q.y;
+        });
+        if (showGrid && x === p.x) x = Math.abs(p.x - Math.round(p.x / GRID) * GRID) < th ? Math.round(p.x / GRID) * GRID : x;
+        if (showGrid && y === p.y) y = Math.abs(p.y - Math.round(p.y / GRID) * GRID) < th ? Math.round(p.y / GRID) * GRID : y;
+        p = G.pt(x, y);
+      }
+      var arr = wps.map(wpArr);
+      arr[g.idx] = wpArr(p);
+      patch(g.id, { waypoints: arr });
+    }
+
+    function doSegment(g, p) {
+      var ln = getEl(g.id);
+      if (!ln) return;
+      var c = g.horiz ? p.y : p.x;
+      var th = 6 / view.z;
+      var res = G.resolveLine(ln, getEl);
+      // Прилипание к концам — чтобы вытянуть ломаную в прямую.
+      [res.p0, res.p1].forEach(function (q) {
+        var qc = g.horiz ? q.y : q.x;
+        if (Math.abs(c - qc) < th) c = qc;
+      });
+      if (showGrid) {
+        var gc = Math.round(c / GRID) * GRID;
+        if (Math.abs(gc - c) < th) c = gc;
+      }
+      var Q = g.poly.map(function (q) {
+        return G.pt(q.x, q.y);
+      });
+      [g.idx, g.idx + 1].forEach(function (k) {
+        if (g.horiz) Q[k].y = c;
+        else Q[k].x = c;
+      });
+      patch(g.id, { waypoints: Q.slice(1, -1).map(wpArr), bend: undefined });
+    }
+
+    /** После правки изломов: лишние точки на прямых участках убираем. */
+    function tidyWaypoints(id) {
+      var ln = getEl(id);
+      if (!ln) return;
+      var wps = G.waypointsOf(ln);
+      if (!wps.length) return;
+      if ((ln.route || "straight") === "curve") return;
+      var res = G.resolveLine(ln, getEl);
+      var clean = G.cleanPoly([res.p0].concat(wps, [res.p1])).slice(1, -1);
+      if (clean.length === wps.length) return;
+      patch(id, { waypoints: clean.length ? clean.map(wpArr) : undefined });
     }
 
     function onPointerMove(e) {
@@ -1979,6 +2230,10 @@
         doCreate(g, p, e.shiftKey);
       } else if (g.kind === "end") {
         doEnd(g, p, e.altKey, e.shiftKey);
+      } else if (g.kind === "wp") {
+        doWaypoint(g, p, e.shiftKey);
+      } else if (g.kind === "seg") {
+        doSegment(g, p);
       } else if (g.kind === "bend") {
         var ln = getEl(g.id);
         if (ln) patch(g.id, { bend: Math.round(G.bendFromPoint(ln, G.resolveLine(ln, getEl), p)) });
@@ -2073,6 +2328,9 @@
         }
         var cur = getEl(el0.id);
         if (cur) put(Object.assign({}, cur, f, el0.type === "line" ? {} : { x: el0.x + dx, y: el0.y + dy }));
+      });
+      (g.carry || []).forEach(function (ln0) {
+        if (getEl(ln0.id)) patch(ln0.id, { waypoints: shiftWaypoints(ln0.waypoints, dx, dy) });
       });
     }
 
@@ -2227,6 +2485,11 @@
         if (el0.type === "line") {
           var res = G.resolveLine(el0, getEl);
           f = { points: [[sx(res.p0.x), sy(res.p0.y)], [sx(res.p1.x), sy(res.p1.y)]], bend: (el0.bend || 0) * k || undefined };
+          if (el0.waypoints && el0.waypoints.length) {
+            f.waypoints = el0.waypoints.map(function (q) {
+              return [Math.round(sx(q[0]) * 10) / 10, Math.round(sy(q[1]) * 10) / 10];
+            });
+          }
         } else if (el0.type === "pen") {
           f = {
             x: sx(el0.x), y: sy(el0.y),
@@ -2304,7 +2567,8 @@
         if (el) {
           setSelection([g.id]);
           if (!cancelled && (g.type === "text" || g.type === "sticky" || SHAPES[g.type])) {
-            if (g.type === "text" || g.type === "sticky") startEdit(g.id, { isNew: g.type === "text" });
+            // Новый блок сразу готов к вводу текста — без лишнего нажатия.
+            startEdit(g.id, { isNew: true });
           }
         }
       } else if (g.kind === "end") {
@@ -2337,6 +2601,11 @@
         }
       } else if (g.kind === "connect") {
         if (!g.moved && !cancelled) quickAdd(g.from, g.side);
+      } else if (g.kind === "wp" || g.kind === "seg") {
+        // Нажали, но не потянули — изломы как были.
+        if (!g.moved && g.inserted) patch(g.id, { waypoints: g.before, bend: g.bend0 });
+        else tidyWaypoints(g.id);
+        commit();
       } else if (g.kind === "move" || g.kind === "resize" || g.kind === "rotate" || g.kind === "bend" || g.kind === "gscale") {
         commit();
         if (g.kind === "move" && !g.moved && e && !cancelled) {
@@ -2416,6 +2685,7 @@
         view.y += r.height / 2 - s.y;
         applyView();
       }
+      startEdit(copy.id);
     }
 
     // ---- колесо и клавиши ----
@@ -2725,15 +2995,15 @@
       var top;
       var align;
       if (el.type === "line") {
-        var lp = G.linePath(el, G.resolveLine(el, getEl));
+        var lp = linePathOf(el);
         maxW = 220;
         var lines0 = wrapLines(ctx, el.text, maxW);
         return { lines: lines0, x: lp.mid.x, y: lp.mid.y - ((lines0.length - 1) * lh) / 2, lh: lh, align: "center", fs: fs, label: true };
       }
       maxW = Math.max(10, el.w - padX * 2);
       var lines = wrapLines(ctx, el.text, maxW);
-      align = el.type === "text" ? st.align || "left" : st.align || "center";
-      cx = align === "center" ? el.x + el.w / 2 : el.x + padX;
+      align = alignOf(el);
+      cx = align === "center" ? el.x + el.w / 2 : align === "right" ? el.x + el.w - padX : el.x + padX;
       if (el.type === "text") top = el.y + lh / 2;
       else top = el.y + el.h / 2 - ((lines.length - 1) * lh) / 2;
       return { lines: lines, x: cx, y: top, lh: lh, align: align, fs: fs };
@@ -2760,7 +3030,7 @@
           var lp = null;
           if (el.type === "line") {
             res = G.resolveLine(el, getEl);
-            lp = G.linePath(el, res);
+            lp = linePathOf(el, res);
             d = lp.d;
           } else {
             d = G.smoothPath((el.points || []).map(function (q) {
@@ -2825,7 +3095,7 @@
         var tl = textLayout(ctx, el, colors);
         if (tl) {
           ctx.fillStyle = el.type === "sticky" ? "#1f2328" : colors.ink(st.textColor || "ink");
-          ctx.textAlign = tl.align === "center" ? "center" : "left";
+          ctx.textAlign = tl.align === "center" || tl.align === "right" ? tl.align : "left";
           ctx.textBaseline = "middle";
           if (tl.label) {
             var wmax = 0;
@@ -2918,7 +3188,7 @@
         out.push(g);
         if (el.type === "line") {
           var res = G.resolveLine(el, getEl);
-          var lp = G.linePath(el, res);
+          var lp = linePathOf(el, res);
           out.push('<path d="' + lp.d + '" fill="none" stroke="' + stroke + '" stroke-width="' + sw + '"' + da + ' stroke-linecap="round" stroke-linejoin="round"/>');
           var size = 8 + sw * 2.5;
           if (el.arrowEnd) out.push(headPoly(G.arrowHead(res.p1, lp.endDir, size), stroke));
@@ -2948,7 +3218,7 @@
             out.push('<rect x="' + (tl.x - wmax / 2 - 4) + '" y="' + (tl.y - tl.lh / 2) + '" width="' + (wmax + 8) + '" height="' + tl.lh * tl.lines.length + '" fill="' + colors.bg + '"/>');
           }
           out.push(
-            '<text font-size="' + tl.fs + '"' + (st.bold ? ' font-weight="600"' : "") + ' fill="' + color + '" text-anchor="' + (tl.align === "center" ? "middle" : "start") + '" dominant-baseline="central">' +
+            '<text font-size="' + tl.fs + '"' + (st.bold ? ' font-weight="600"' : "") + ' fill="' + color + '" text-anchor="' + (tl.align === "center" ? "middle" : tl.align === "right" ? "end" : "start") + '" dominant-baseline="central">' +
             tl.lines.map(function (l, i) {
               return '<tspan x="' + tl.x + '" y="' + (tl.y + i * tl.lh) + '">' + esc(l) + "</tspan>";
             }).join("") + "</text>"
@@ -2964,7 +3234,7 @@
     function getJson() {
       var elements = {};
       sortedEls().forEach(function (el) {
-        elements[el.id] = serializeEl(el, getEl);
+        elements[el.id] = serializeEl(el, getEl, pathOptsOf);
       });
       return JSON.stringify({ v: 1, elements: elements });
     }
@@ -3093,7 +3363,7 @@
             if (map.has(id)) map.delete(id);
             return;
           }
-          var ser = serializeEl(el, getEl);
+          var ser = serializeEl(el, getEl, pathOptsOf);
           delete ser.id;
           delete ser.d;
           if (el.type === "line") ser.points = el.points;

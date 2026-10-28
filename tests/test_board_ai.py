@@ -98,7 +98,14 @@ class BoardAiTests(unittest.TestCase):
         for ln in (e for e in after.values() if e["type"] == "line"):
             self.assertIn(ln["start"]["el"], ids)
             self.assertIn(ln["end"]["el"], ids)
+        # Ручные изломы после перестройки устарели — их нет.
+        doc = json.loads(upd)
+        for e in doc["elements"].values():
+            if e["type"] == "line":
+                e["waypoints"] = [[1, 2], [3, 4]]
+        upd = json.dumps(doc, ensure_ascii=False)
         relaid = _els(board_ai.update_board(upd, {"action": "update", "relayout": True, "layout": "flow-right"}))
+        self.assertFalse([e for e in relaid.values() if e.get("waypoints")])
         boxes = [e for e in relaid.values() if e["type"] != "line"]
         for i, a in enumerate(boxes):
             for b in boxes[i + 1:]:

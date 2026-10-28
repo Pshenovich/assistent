@@ -300,6 +300,37 @@
   stroke: #fff;
 }
 
+/* Изломы стрелки: точка излома, вставка новой точки, отрезок ломаной. */
+.lb-handle.lb-wp {
+  fill: var(--lb-accent);
+  stroke: #fff;
+  cursor: move;
+}
+
+.lb-handle.lb-ins {
+  fill: #fff;
+  stroke: var(--lb-accent);
+  opacity: 0.75;
+  cursor: copy;
+}
+
+.lb-handle.lb-ins:hover {
+  opacity: 1;
+}
+
+.lb-handle.lb-seg {
+  fill: var(--lb-accent);
+  stroke: #fff;
+}
+
+.lb-handle.lb-seg.is-h {
+  cursor: ns-resize;
+}
+
+.lb-handle.lb-seg.is-v {
+  cursor: ew-resize;
+}
+
 .lb-rot-stem {
   stroke: var(--lb-accent);
   stroke-width: 1;
