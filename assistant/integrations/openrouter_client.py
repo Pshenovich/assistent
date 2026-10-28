@@ -5,7 +5,9 @@ from __future__ import annotations
 import base64
 import os
 import re
+import threading
 import time
+from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
@@ -59,9 +61,10 @@ def is_llm_configured() -> bool:
     return bool(os.getenv("OPENROUTER_KEY", "").strip() or comet_api_key())
 
 
-# Если OpenRouter (прокси) не отвечает по сети — какое-то время сразу идём в Comet,
-# а не ждём таймаут на каждом запросе.
-_OR_DOWN_UNTIL = 0.0
+# Если прокси OpenRouter не отвечает по сети — какое-то время сразу идём к
+# следующему (запасному прокси или Comet), а не ждём таймаут на каждом запросе.
+# Ключ — адрес прокси, значение — time.monotonic(), до которого он пропускается.
+_OR_DOWN: dict[str, float] = {}
 
 
 def _or_connect_timeout() -> float:
@@ -87,10 +90,71 @@ def _openrouter_unreachable(e: BaseException) -> bool:
     return False
 
 
+def _openrouter_chat_urls() -> list[str]:
+    """Адреса chat/completions по порядку: основной прокси, затем запасные.
+
+    OPENROUTER_API_URLS — список через запятую; если не задан — один OPENROUTER_API_URL.
+    """
+    raw = os.getenv("OPENROUTER_API_URLS", "").strip()
+    urls = [u.strip() for u in raw.split(",") if u.strip()] if raw else []
+    if not urls:
+        urls = [
+            os.getenv(
+                "OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions"
+            ).strip()
+        ]
+    return list(dict.fromkeys(urls))
+
+
 def _openrouter_chat_url() -> str:
-    return os.getenv(
-        "OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions"
-    ).strip()
+    return _openrouter_chat_urls()[0]
+
+
+# Фоновые разборы (алерты, Фокус, почта, брифы) не должны занимать прокси
+# целиком, пока человек ждёт ответа Лео: одновременно их не больше N на процесс.
+# chat_digest и market_insight сюда не входят — их запускают и кнопкой в Орбите.
+_BACKGROUND_OPERATIONS = frozenset(
+    {
+        "chat_alerts",
+        "proactive_insights",
+        "proactive_chat_insights",
+        "mail_insights",
+        "meeting_brief",
+        "meeting_brief_related",
+    }
+)
+_BG_SEM: threading.BoundedSemaphore | None = None
+_BG_SEM_LOCK = threading.Lock()
+# Дольше не ждём: лучше лишний параллельный вызов, чем вставший фон.
+_BG_WAIT_MAX_SEC = 300.0
+
+
+def _background_semaphore() -> threading.BoundedSemaphore:
+    global _BG_SEM
+    with _BG_SEM_LOCK:
+        if _BG_SEM is None:
+            try:
+                n = max(1, int(os.getenv("LLM_BACKGROUND_MAX_CONCURRENCY", "3") or "3"))
+            except ValueError:
+                n = 3
+            _BG_SEM = threading.BoundedSemaphore(n)
+        return _BG_SEM
+
+
+@contextmanager
+def _llm_slot(operation: str):
+    if operation not in _BACKGROUND_OPERATIONS:
+        yield
+        return
+    sem = _background_semaphore()
+    got = sem.acquire(timeout=_BG_WAIT_MAX_SEC)
+    if not got:
+        print(f"[openrouter_client] background slot wait timeout op={operation!r} -> run anyway")
+    try:
+        yield
+    finally:
+        if got:
+            sem.release()
 
 
 _MODEL_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.+:/-]{0,127}$")
@@ -668,27 +732,44 @@ def openrouter_chat_completion(
     operation: str,
     timeout: float = 120,
 ) -> dict[str, Any]:
-    """POST chat/completions; при успехе логирует usage. Сначала OpenRouter, при ошибке — CometAPI."""
-    global _OR_DOWN_UNTIL
+    """POST chat/completions; при успехе логирует usage.
+
+    Прокси OpenRouter по очереди (основной, запасные), при сбое — CometAPI.
+    """
+    with _llm_slot(operation):
+        return _chat_completion(payload, operation=operation, timeout=timeout)
+
+
+def _chat_completion(
+    payload: dict[str, Any],
+    *,
+    operation: str,
+    timeout: float,
+) -> dict[str, Any]:
     or_key = os.getenv("OPENROUTER_KEY", "").strip()
     comet_key = comet_api_key()
     if not or_key and not comet_key:
         raise RuntimeError("Не заданы OPENROUTER_KEY или COMET_API_KEY в .env")
 
     primary_err: BaseException | None = None
-    or_down = bool(comet_key) and time.monotonic() < _OR_DOWN_UNTIL
+    urls = _openrouter_chat_urls() if or_key else []
+    now = time.monotonic()
+    live = [u for u in urls if now >= _OR_DOWN.get(u, 0.0)]
+    # Все прокси помечены упавшими и идти больше некуда — пробуем их всё равно.
+    if not live and not comet_key:
+        live = urls
 
-    if or_key and not or_down:
-        extra: dict[str, str] = {}
-        ref = os.getenv("OPENROUTER_HTTP_REFERER", "").strip()
-        if ref:
-            extra["HTTP-Referer"] = ref
-        title_hdr = os.getenv("OPENROUTER_X_TITLE", "").strip()
-        if title_hdr:
-            extra["X-Title"] = title_hdr
+    extra: dict[str, str] = {}
+    ref = os.getenv("OPENROUTER_HTTP_REFERER", "").strip()
+    if ref:
+        extra["HTTP-Referer"] = ref
+    title_hdr = os.getenv("OPENROUTER_X_TITLE", "").strip()
+    if title_hdr:
+        extra["X-Title"] = title_hdr
+    for i, url in enumerate(live):
         try:
             data = _post_json(
-                _openrouter_chat_url(),
+                url,
                 or_key,
                 payload,
                 extra_headers=extra,
@@ -699,12 +780,18 @@ def openrouter_chat_completion(
             return data
         except BaseException as e:
             primary_err = e
+            unreachable = _openrouter_unreachable(e)
+            has_next = i + 1 < len(live)
+            if unreachable and (has_next or comet_key):
+                _OR_DOWN[url] = time.monotonic() + _or_down_sec()
+            # Плохой запрос — не вина прокси, другой прокси ответит так же.
+            if unreachable and has_next:
+                print(f"[openrouter_client] openrouter_failed op={operation!r} url#{i} err={e!r} -> next proxy")
+                continue
             if comet_key:
-                if _openrouter_unreachable(e):
-                    _OR_DOWN_UNTIL = time.monotonic() + _or_down_sec()
                 print(f"[openrouter_client] openrouter_failed op={operation!r} err={e!r} -> comet")
-            else:
-                raise
+                break
+            raise
 
     if not comet_key:
         assert primary_err is not None
