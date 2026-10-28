@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261028-leoname";
+  var WEBAPP_BUILD = "20261028-orbit";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -46944,10 +46944,98 @@
   }
 
   function gptPhaseLabel(phase) {
-    if (String(phase || "").indexOf("text:") === 0) return String(phase).slice(5);
     if (phase === "sending") return "Отправляю…";
     if (phase === "saving") return "Сохраняю ответ…";
-    return "Думает…";
+    return "Лео думает…";
+  }
+
+  function formatLeoElapsed(ms) {
+    var sec = Math.max(0, Math.floor(ms / 1000));
+    return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
+  }
+
+  // Таймер во всех панелях статуса Лео — одним интервалом; сам выключается, когда панелей нет.
+  var leoStatusTicker = null;
+  function ensureLeoStatusTicker() {
+    if (leoStatusTicker) return;
+    leoStatusTicker = setInterval(function () {
+      var els = document.querySelectorAll(".leo-status-time[data-started]");
+      if (!els.length) {
+        clearInterval(leoStatusTicker);
+        leoStatusTicker = null;
+        return;
+      }
+      Array.prototype.forEach.call(els, function (el) {
+        el.textContent = formatLeoElapsed(Date.now() - Number(el.getAttribute("data-started")));
+      });
+    }, 1000);
+  }
+
+  // Панель статуса: обычный ответ — одна строка «Лео думает…» с таймером; обработка больших данных
+  // по ссылке — карточка с шагами (скачал → читаю частями → собираю ответ) и «Стоп».
+  function fillGptPendingStatus(item) {
+    var wrap = document.getElementById("note-editor-more-wrap");
+    var phase = (wrap && wrap._gptPhase) || "thinking";
+    var bulk = wrap && wrap._gptBulk;
+    var bubble = item.querySelector(".leo-status");
+    if (!bubble) return;
+    bubble.classList.toggle("is-long", !!bulk);
+    var label = bubble.querySelector(".note-discuss-pending-label");
+    if (label) label.textContent = bulk ? "Лео работает" : gptPhaseLabel(phase);
+    var time = bubble.querySelector(".leo-status-time");
+    if (time) {
+      var started = Number((wrap && wrap._gptStartedAt) || Date.now());
+      time.setAttribute("data-started", String(started));
+      time.textContent = formatLeoElapsed(Date.now() - started);
+      ensureLeoStatusTicker();
+    }
+    var steps = bubble.querySelector(".leo-status-steps");
+    if (!steps) return;
+    steps.innerHTML = "";
+    if (!bulk) return;
+    var reading = phase === "bulk";
+    function step(state, text, extra) {
+      var row = document.createElement("div");
+      row.className = "leo-status-step is-" + state;
+      var mark = document.createElement("span");
+      mark.className = "leo-status-mark";
+      if (state === "done") mark.textContent = "✓";
+      if (state === "active") mark.innerHTML = '<span class="leo-orbit leo-orbit--sm" aria-hidden="true"><i></i><i></i><i></i></span>';
+      var body = document.createElement("div");
+      body.className = "leo-status-step-body";
+      var t = document.createElement("span");
+      t.textContent = text;
+      body.appendChild(t);
+      if (extra) body.appendChild(extra);
+      row.appendChild(mark);
+      row.appendChild(body);
+      steps.appendChild(row);
+    }
+    var total = Number(bulk.total) || 0;
+    var done = Number(bulk.done) || 0;
+    var got = "Скачал данные · " + (bulk.sheets > 1 ? bulk.sheets + " листов, " : "") + (bulk.rows || 0) + " строк";
+    step("done", got);
+    if (reading) {
+      var extra = document.createElement("div");
+      var bar = document.createElement("div");
+      bar.className = "leo-status-bar";
+      var fill = document.createElement("i");
+      fill.style.width = (total ? Math.round((done / total) * 100) : 0) + "%";
+      bar.appendChild(fill);
+      extra.appendChild(bar);
+      var cur = String(bulk.current || "").replace(/^Google (Таблица|Документ),\s*/, "");
+      if (cur) {
+        var meta = document.createElement("div");
+        meta.className = "leo-status-meta";
+        meta.textContent = cur;
+        extra.appendChild(meta);
+      }
+      step("active", "Читаю частями · " + done + " из " + total, extra);
+      step("wait", "Собираю ответ");
+    } else {
+      step("done", "Прочитал все части · " + total + (bulk.failed ? " (не удалось: " + bulk.failed + ")" : ""));
+      step("active", phase === "saving" ? "Сохраняю ответ" : "Собираю ответ");
+    }
   }
 
   function renderGptPendingStatus(phase) {
@@ -46965,15 +47053,21 @@
       role.textContent = (agent && agent.title) || "Агент";
     }
     var bubble = document.createElement("div");
-    bubble.className = "note-discuss-bubble note-discuss-bubble--pending";
+    bubble.className = "note-discuss-bubble note-discuss-bubble--pending leo-status";
     bubble.innerHTML =
-      '<span class="note-discuss-pending-dots" aria-hidden="true"><i></i><i></i><i></i></span>';
-    var label = document.createElement("span");
-    label.className = "note-discuss-pending-label";
-    label.textContent = gptPhaseLabel(phase);
-    bubble.appendChild(label);
+      '<div class="leo-status-head">' +
+      '<span class="leo-orbit" aria-hidden="true"><i></i><i></i><i></i></span>' +
+      '<span class="note-discuss-pending-label"></span>' +
+      '<span class="leo-status-time"></span>' +
+      '<button type="button" class="leo-status-stop">Стоп</button>' +
+      "</div>" +
+      '<div class="leo-status-steps"></div>';
+    bubble.querySelector(".leo-status-stop").addEventListener("click", function () {
+      stopNoteGptAnswer();
+    });
     item.appendChild(role);
     item.appendChild(bubble);
+    fillGptPendingStatus(item);
     return item;
   }
 
@@ -47006,17 +47100,12 @@
     setTimeout(go, 400);
   }
 
-  function gptBulkJobLabel(j) {
-    var s = "Читаю данные по ссылке частями: " + (j.done || 0) + " из " + (j.total || 0);
-    var cur = String(j.current || "").replace(/^Google (Таблица|Документ),\s*/, "");
-    if (cur) s += " · " + cur;
-    return s + "…";
-  }
-
   // Ждёт фоновую обработку больших данных по ссылке, показывая прогресс в строке статуса Лео.
   async function waitGptBulkJob(job, req) {
     var j = job;
-    setGptDiscussPhase("text:" + gptBulkJobLabel(j));
+    var wrap = document.getElementById("note-editor-more-wrap");
+    if (wrap) wrap._gptBulk = j;
+    setGptDiscussPhase("bulk");
     while (!req.stopped) {
       await sleepMs(2000);
       if (req.stopped) break;
@@ -47026,9 +47115,10 @@
         if (e && e.status === 404) throw new Error("Обработка данных прервалась — попробуйте ещё раз");
         continue;
       }
+      if (wrap && wrap._gptReq === req) wrap._gptBulk = j;
       if (j.status === "done") return j;
       if (j.status !== "running") throw new Error(j.error || "Обработка данных прервалась");
-      setGptDiscussPhase("text:" + gptBulkJobLabel(j));
+      setGptDiscussPhase("bulk");
     }
     apiFetch("/gpt/bulk/" + encodeURIComponent(job.id) + "/cancel", { method: "POST" }).catch(function () {});
     return null;
@@ -47037,9 +47127,9 @@
   function setGptDiscussPhase(phase) {
     var wrap = document.getElementById("note-editor-more-wrap");
     if (wrap) wrap._gptPhase = phase || "thinking";
-    var label = document.querySelector("#note-discuss-pending .note-discuss-pending-label");
-    if (label) {
-      label.textContent = gptPhaseLabel(wrap && wrap._gptPhase);
+    var pending = document.getElementById("note-discuss-pending");
+    if (pending) {
+      fillGptPendingStatus(pending);
       return;
     }
     var list = document.getElementById("note-discussion-messages");
@@ -47257,6 +47347,8 @@
     var kbEarly = discussionKnowledgeFields();
     wrap._gptBusy = true;
     wrap._gptPhase = "sending";
+    wrap._gptStartedAt = Date.now();
+    wrap._gptBulk = null;
     var gptReq = { stopped: false };
     wrap._gptReq = gptReq;
     function releaseGptBusy() {
