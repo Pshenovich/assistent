@@ -8423,6 +8423,12 @@ async def miniapp_gpt_chat(
                         )
                     if images and not file_notes:
                         file_notes = "Изображение из предыдущего сообщения в обсуждении."
+        # Ссылки на Google Документы/Таблицы: скачиваем и кладём текстом — сама модель по ссылкам не ходит.
+        from assistant.lib import chat_links
+
+        link_notes = chat_links.prompt_notes(q)
+        if link_notes:
+            file_notes = (file_notes + "\n\n" + link_notes).strip()
         kb_ids = body.knowledge_note_ids
         if kb_ids is not None:
             kb_ids = [str(x).strip() for x in kb_ids if str(x).strip()]
