@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261028-theme";
+  var WEBAPP_BUILD = "20261028-theme2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -8827,26 +8827,26 @@
     renderThemeSeg();
   }
 
+  var THEME_LABELS = { system: "Системная", light: "Светлая", dark: "Тёмная" };
+
   function renderThemeSeg() {
-    var group = document.getElementById("profile-theme-group");
-    if (group) group.classList.toggle("hidden", !themeChoiceEnabled);
+    var row = document.getElementById("profile-theme-row");
+    if (row) row.classList.toggle("hidden", !themeChoiceEnabled);
     var api = window.OrbitaTheme;
     var cur = api ? api.pref() : "dark";
-    document.querySelectorAll("#profile-theme-seg button").forEach(function (b) {
-      var on = b.getAttribute("data-theme-pref") === cur;
-      b.classList.toggle("is-on", on);
-      b.setAttribute("aria-selected", on ? "true" : "false");
-    });
+    var sel = document.getElementById("profile-theme-select");
+    if (sel) sel.value = cur;
+    var val = document.getElementById("profile-theme-value");
+    if (val) val.textContent = THEME_LABELS[cur] || "";
   }
 
   function bindThemeSeg() {
-    var seg = document.getElementById("profile-theme-seg");
-    if (!seg) return;
-    seg.addEventListener("click", function (e) {
-      var btn = e.target && e.target.closest ? e.target.closest("button[data-theme-pref]") : null;
+    var sel = document.getElementById("profile-theme-select");
+    if (!sel) return;
+    sel.addEventListener("change", function () {
       var api = window.OrbitaTheme;
-      if (!btn || !api || !themeChoiceEnabled) return;
-      var next = btn.getAttribute("data-theme-pref");
+      if (!api || !themeChoiceEnabled) return;
+      var next = sel.value;
       var prev = api.pref();
       if (next === prev) return;
       api.set(next);
