@@ -83,7 +83,7 @@ html.vkui--vkIOS--dark {
   --page-x: 1rem;
   --tabbar-h: 3.5rem;
   --tabbar-pad: 0.5rem;
-  --tabbar-surface: #19191a;
+  --tabbar-surface: var(--surface);
   /* On Android, system navigation can overlay the webview bottom.
      Telegram exposes safe/content insets via JS → CSS vars. */
   --tabbar-safe: max(
@@ -130,6 +130,62 @@ html.vkui--vkIOS--dark {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* Светлая тема (theme.js ставит html[data-theme]). Те же токены, другие значения:
+   цвета VKUI, которые использует приложение, и свои токены из :root. */
+html[data-theme="light"] {
+  color-scheme: light;
+
+  --vkui--color_background: #ebedf0;
+  --vkui--color_background_content: #ffffff;
+  --vkui--color_background_content_alpha: rgba(255, 255, 255, 0.8);
+  --vkui--color_background_secondary: #f2f3f5;
+  --vkui--color_background_secondary_alpha: rgba(0, 28, 61, 0.05);
+  --vkui--color_background_accent: #2688eb;
+  --vkui--color_background_accent--active: #1f74c9;
+  --vkui--color_background_positive: #4bb34b;
+  --vkui--color_background_negative: #e64646;
+  --vkui--color_background_negative_tint: #faebeb;
+  --vkui--color_text_primary: #000000;
+  --vkui--color_text_secondary: #6d7885;
+  --vkui--color_text_tertiary: #99a2ad;
+  --vkui--color_text_accent: #2688eb;
+  --vkui--color_text_negative: #e64646;
+  --vkui--color_text_contrast: #ffffff;
+  --vkui--color_icon_accent: #2688eb;
+  --vkui--color_icon_negative: #e64646;
+  --vkui--color_separator_primary: #dce1e6;
+  --vkui--color_stroke_primary: #b8c1cc;
+  --vkui--elevation1: 0 0 2px rgba(0, 0, 0, 0.06), 0 2px 2px rgba(0, 0, 0, 0.06);
+  --vkui--elevation2: 0 4px 8px rgba(0, 0, 0, 0.06), 0 0 4px rgba(0, 0, 0, 0.06);
+  --vkui--elevation3: 0 0 2px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.1);
+
+  --surface-muted: rgba(0, 0, 0, 0.03);
+  --accent-pressed: #1f74c9;
+  --accent-muted: rgba(38, 136, 235, 0.12);
+  --accent-subtle: rgba(38, 136, 235, 0.08);
+  --accent-border: rgba(38, 136, 235, 0.3);
+  --quote-text: #1f6fc4;
+  --quote-border: rgba(38, 136, 235, 0.6);
+  --danger-muted: #faebeb;
+  --success-muted: rgba(75, 179, 75, 0.14);
+  --violet-muted: rgba(139, 92, 246, 0.12);
+  --violet-text: #6d4ad8;
+  --emerald-muted: rgba(75, 179, 75, 0.14);
+  --emerald-text: #13865c;
+  --ui-btn-bg-hover: #e4e7eb;
+  --ui-due-bg: rgba(245, 158, 11, 0.14);
+  --ui-due-fg: #b45309;
+  --ui-due-border: rgba(245, 158, 11, 0.4);
+}
+
+/* Плавная смена темы по выбору пользователя (класс держится ~0.25 с). */
+html.theme-switching,
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, fill 0.2s ease !important;
 }
 
 html.tg-miniapp-fullscreen {

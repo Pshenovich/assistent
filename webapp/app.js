@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261028-blockacts";
+  var WEBAPP_BUILD = "20261028-theme";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -8814,6 +8814,52 @@
     }
   }
 
+  // Тема: выбор хранится на сервере и общий для веба, PWA и миниаппа (см. theme.js).
+  var themeChoiceEnabled = false;
+
+  function applyServerTheme(me) {
+    var api = window.OrbitaTheme;
+    var t = me && me.ui_theme;
+    if (!api || !t) return;
+    themeChoiceEnabled = !!t.enabled;
+    if (themeChoiceEnabled) api.set(t.pref || "system");
+    else api.set("dark", { remember: false, animate: false });
+    renderThemeSeg();
+  }
+
+  function renderThemeSeg() {
+    var group = document.getElementById("profile-theme-group");
+    if (group) group.classList.toggle("hidden", !themeChoiceEnabled);
+    var api = window.OrbitaTheme;
+    var cur = api ? api.pref() : "dark";
+    document.querySelectorAll("#profile-theme-seg button").forEach(function (b) {
+      var on = b.getAttribute("data-theme-pref") === cur;
+      b.classList.toggle("is-on", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+    });
+  }
+
+  function bindThemeSeg() {
+    var seg = document.getElementById("profile-theme-seg");
+    if (!seg) return;
+    seg.addEventListener("click", function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest("button[data-theme-pref]") : null;
+      var api = window.OrbitaTheme;
+      if (!btn || !api || !themeChoiceEnabled) return;
+      var next = btn.getAttribute("data-theme-pref");
+      var prev = api.pref();
+      if (next === prev) return;
+      api.set(next);
+      renderThemeSeg();
+      apiFetch("/profile/theme", { method: "PUT", body: JSON.stringify({ theme: next }) }).catch(function (err) {
+        api.set(prev);
+        renderThemeSeg();
+        showNoteToast("Не удалось сохранить тему: " + (err && err.message ? err.message : String(err)));
+      });
+    });
+    if (window.OrbitaTheme) window.OrbitaTheme.onChange(renderThemeSeg);
+  }
+
   function bindVoiceSettingsScreen() {
     var open = document.getElementById("profile-voice-open");
     if (open) {
@@ -9652,6 +9698,7 @@
     try {
       const me = await apiFetch("/me", { method: "GET" });
       cachedMe = me;
+      applyServerTheme(me);
       if (me.bot_username) cachedBotUsername = me.bot_username;
 
       renderProfileHead(me);
@@ -34118,6 +34165,14 @@
       kickPostedLiveUpdate(ev.task_id != null ? String(ev.task_id) : "");
       return;
     }
+    if (type === "prefs.changed") {
+      // Тему сменили на другом устройстве — применить здесь.
+      if (ev.ui_theme && themeChoiceEnabled && window.OrbitaTheme) {
+        window.OrbitaTheme.set(ev.ui_theme);
+        renderThemeSeg();
+      }
+      return;
+    }
     if (type === "notes.changed") {
       // Новая заметка из бота (транскрибация и т.п.) — обновить открытый список.
       if (realtimeNotesTimer) clearTimeout(realtimeNotesTimer);
@@ -53634,6 +53689,7 @@
     return apiFetch("/me", { method: "GET" })
       .then(function (me) {
         cachedMe = me;
+        applyServerTheme(me);
         if (me.bot_username) cachedBotUsername = me.bot_username;
         setSessionHint(true);
         persistBrowserSessionFromCurrentAuth();
@@ -53798,6 +53854,7 @@
       apiFetch("/me", { method: "GET" })
         .then(function (me) {
           cachedMe = me;
+          applyServerTheme(me);
           if (me.bot_username) cachedBotUsername = me.bot_username;
           setSessionHint(true);
           persistBrowserSessionFromCurrentAuth();
@@ -53816,63 +53873,8 @@
     startRealtime();
 
     const root = document.documentElement;
-    root.classList.remove("tg-light");
-    root.classList.add("tg-dark");
-    function vkuiCssVar(name, fallback) {
-      var v = getComputedStyle(root).getPropertyValue(name).trim();
-      return v || fallback;
-    }
-    var pageBg = vkuiCssVar("--vkui--color_background", "#0a0a0a");
-    var headerBg = vkuiCssVar("--vkui--color_background", "#0a0a0a");
-    var surfaceBg = vkuiCssVar("--vkui--color_background_content", "#19191a");
-    root.style.setProperty("--page-bg", pageBg);
-    root.style.setProperty("--app-bg", pageBg);
-    root.style.setProperty("--app-surface", surfaceBg);
-    root.style.setProperty("--app-section", surfaceBg);
-    root.style.setProperty("--tabbar-surface", surfaceBg);
-    if (tg) {
-      try {
-        if (typeof tg.setBackgroundColor === "function") {
-          tg.setBackgroundColor(pageBg);
-        }
-      } catch (_) {}
-      try {
-        if (typeof tg.setHeaderColor === "function") {
-          tg.setHeaderColor(headerBg);
-        }
-      } catch (_) {}
-      try {
-        if (typeof tg.setBottomBarColor === "function") {
-          tg.setBottomBarColor(surfaceBg);
-        }
-      } catch (_) {}
-      try {
-        if (typeof tg.onEvent === "function") {
-          tg.onEvent("themeChanged", function () {
-            try {
-              if (typeof tg.setBackgroundColor === "function") {
-                tg.setBackgroundColor(pageBg);
-              }
-            } catch (_) {}
-            try {
-              if (typeof tg.setHeaderColor === "function") {
-                tg.setHeaderColor(headerBg);
-              }
-            } catch (_) {}
-            try {
-              if (typeof tg.setBottomBarColor === "function") {
-                tg.setBottomBarColor(surfaceBg);
-              }
-            } catch (_) {}
-            root.style.setProperty("--page-bg", pageBg);
-            root.style.setProperty("--app-bg", pageBg);
-            root.style.setProperty("--app-surface", surfaceBg);
-            root.style.setProperty("--app-section", surfaceBg);
-            root.style.setProperty("--tabbar-surface", surfaceBg);
-          });
-        }
-      } catch (_) {}
-    }
+    // Тема и цвета шапки Telegram — в theme.js (светлая / тёмная / системная).
+    if (window.OrbitaTheme) window.OrbitaTheme.syncTelegram();
 
     document.querySelectorAll(".tabbar-btn").forEach(function (btn) {
       btn.addEventListener("click", function (e) {
@@ -54450,6 +54452,7 @@
       });
     }
     bindVoiceSettingsScreen();
+    bindThemeSeg();
     var digestToggle = document.getElementById("digest-enabled-toggle");
     if (digestToggle) {
       digestToggle.addEventListener("click", function () {
@@ -54989,6 +54992,7 @@
     apiFetch("/me", { method: "GET" })
       .then(function (me) {
         cachedMe = me;
+        applyServerTheme(me);
         if (me.bot_username) cachedBotUsername = me.bot_username;
         setSessionHint(true);
         persistBrowserSessionFromCurrentAuth();
@@ -55051,6 +55055,7 @@
           apiFetch("/me", { method: "GET" })
             .then(function (me) {
               cachedMe = me;
+              applyServerTheme(me);
               if (me.bot_username) cachedBotUsername = me.bot_username;
               setSessionHint(true);
               persistBrowserSessionFromCurrentAuth();
@@ -55075,6 +55080,7 @@
       apiFetch("/me", { method: "GET" })
         .then(function (me) {
           cachedMe = me;
+          applyServerTheme(me);
           if (me.bot_username) cachedBotUsername = me.bot_username;
           setSessionHint(true);
           persistBrowserSessionFromCurrentAuth();

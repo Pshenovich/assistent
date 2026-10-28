@@ -91,6 +91,26 @@ def set_calendar_excluded_ids(user_id: int, excluded_ids: list[str]) -> None:
     save_prefs(user_id, prefs)
 
 
+UI_THEMES = ("system", "light", "dark")
+
+
+def get_ui_theme(user_id: int) -> str:
+    """Тема веб-приложения: system (по Telegram / системе устройства), light или dark."""
+    raw = str(load_prefs(user_id).get("ui_theme") or "").strip().lower()
+    return raw if raw in UI_THEMES else "system"
+
+
+def set_ui_theme(user_id: int, theme: str) -> str:
+    value = str(theme or "").strip().lower()
+    if value not in UI_THEMES:
+        raise ValueError(f"unknown theme: {theme!r}")
+    with _lock:
+        prefs = load_prefs(user_id)
+        prefs["ui_theme"] = value
+        save_prefs(user_id, prefs)
+    return value
+
+
 def meeting_reminders_enabled(user_id: int) -> bool:
     """По умолчанию напоминания о встречах включены."""
     prefs = load_prefs(user_id)

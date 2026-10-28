@@ -227,3 +227,12 @@ def task_changed(task_id: int | str, user_ids: list[Any], *, actor_user_id: Any 
             publish(user_topic(uid), ev)
         except (TypeError, ValueError):
             continue
+
+
+def prefs_changed(user_id: int | str, **fields: Any) -> None:
+    """Настройка пользователя поменялась (например, тема) — его другие устройства применяют сразу."""
+    try:
+        topic = user_topic(user_id)
+    except (TypeError, ValueError):
+        return
+    publish(topic, {"type": "prefs.changed", **fields})
