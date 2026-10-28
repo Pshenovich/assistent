@@ -95,7 +95,7 @@ def main() -> None:
         merged.append(row)
 
     reminders_store.save_reminders(merged)
-    path = reminders_store.store_path()
+    path = reminders_store.db_path()
     print(f"ok uid={uid} path={path} reminders={len(merged)}")
     print(json.dumps(fixtures, ensure_ascii=False, indent=2))
 

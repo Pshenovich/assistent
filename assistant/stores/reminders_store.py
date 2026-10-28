@@ -1,16 +1,35 @@
-"""Хранение напоминаний бота (reminders.json). Общий модуль для bot.py и usage_server (мини-приложение)."""
+"""Хранение напоминаний бота. Общий модуль для bot.py и usage_server (мини-приложение).
+
+Напоминания лежат в SQLite (data/reminders.sqlite), каждое — отдельной строкой.
+Раньше это был один reminders.json, который бот и веб переписывали целиком и
+могли затереть правки друг друга. Теперь каждая правка — своя транзакция
+BEGIN IMMEDIATE, поэтому два процесса не теряют изменения.
+
+При первом открытии старый reminders.json один раз переносится в базу (флаг в
+meta), сам файл не трогается. Откат на старый код:
+scripts/reminders_export_json.py выгружает базу обратно в JSON.
+"""
 
 from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import threading
+import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterator
 from zoneinfo import ZoneInfo
 
+from assistant.lib import sqlite_conn
+
 _lock = threading.Lock()
+_CONN: sqlite3.Connection | None = None
+_CONN_PATH: Path | None = None
+
+_IMPORT_FLAG = "imported_from_json"
 
 
 def parse_when_iso(
@@ -31,6 +50,7 @@ def parse_when_iso(
         when = when.replace(tzinfo=tz or ZoneInfo(CALENDAR_TZ))
     return when
 def store_path() -> Path:
+    """Старый reminders.json: источник однократного переноса в базу."""
     from assistant.config import ROOT
 
     raw = os.getenv("REMINDERS_STORE_PATH", "").strip()
@@ -42,35 +62,175 @@ def store_path() -> Path:
     return ROOT / "reminders.json"
 
 
-def load_reminders() -> list[dict[str, Any]]:
-    path = store_path()
+def db_path() -> Path:
+    from assistant.config import ROOT
+
+    raw = os.getenv("REMINDERS_DB_PATH", "").strip()
+    if raw:
+        p = Path(raw).expanduser()
+        return p if p.is_absolute() else (ROOT / p).resolve()
+    legacy = store_path()
+    # JSON не на штатном месте (тесты, временный каталог) — база рядом с ним.
+    # Штатный ./reminders.json → data/: корень сайта деплой перезаписывает,
+    # а data/ не трогает и бэкапит.
+    if legacy.resolve() != (ROOT / "reminders.json").resolve():
+        return legacy.with_suffix(".sqlite")
+    return ROOT / "data" / "reminders.sqlite"
+
+
+def _uid(item: dict[str, Any]) -> int:
     try:
-        if not path.is_file():
-            return []
-        raw = path.read_text(encoding="utf-8")
-        data = json.loads(raw) if raw.strip() else []
-        return data if isinstance(data, list) else []
+        return int(item.get("user_id") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _rid(item: dict[str, Any]) -> str:
+    return str(item.get("id") or "").strip()
+
+
+def _load_legacy_json(path: Path) -> list[Any]:
+    if not path.is_file():
+        return []
+    raw = path.read_text(encoding="utf-8")
+    data = json.loads(raw) if raw.strip() else []
+    return data if isinstance(data, list) else []
+
+
+def _insert_rows(conn: sqlite3.Connection, items: list[Any], *, start_seq: int) -> int:
+    """Вставляет записи по порядку. Запись без id получает служебный ключ, сама не меняется."""
+    n = 0
+    for i, it in enumerate(items):
+        if not isinstance(it, dict):
+            continue
+        seq = start_seq + i
+        key = _rid(it) or f"_noid_{seq}"
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO reminders(id, user_id, seq, data) VALUES (?, ?, ?, ?)",
+            (key, _uid(it), seq, json.dumps(it, ensure_ascii=False)),
+        )
+        if cur.rowcount:
+            n += 1
+        else:
+            print(f"[reminders_store] duplicate id skipped id={key!r}")
+    return n
+
+
+def _import_legacy_once(conn: sqlite3.Connection) -> None:
+    done = conn.execute("SELECT value FROM meta WHERE key = ?", (_IMPORT_FLAG,)).fetchone()
+    if done:
+        return
+    src = store_path()
+    try:
+        items = _load_legacy_json(src)
+    except Exception as e:
+        # Флаг не ставим: перенос повторится при следующем открытии, хранилище работает.
+        print(f"[reminders_store] legacy json unreadable path={src} err={e!r}")
+        return
+    n = _insert_rows(conn, items, start_seq=1)
+    conn.execute(
+        "INSERT INTO meta(key, value) VALUES (?, ?)",
+        (_IMPORT_FLAG, json.dumps({"from": str(src), "in_json": len(items), "imported": n, "ts": time.time()})),
+    )
+    print(f"[reminders_store] imported from {src}: json={len(items)} imported={n}")
+
+
+def _conn() -> sqlite3.Connection:
+    """Соединение с базой текущего пути; вызывать под _lock."""
+    global _CONN, _CONN_PATH
+    path = db_path()
+    if _CONN is not None and _CONN_PATH == path:
+        return _CONN
+    if _CONN is not None:
+        _CONN.close()
+        _CONN = None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite_conn.connect(path)
+    # Транзакции ведём сами (BEGIN IMMEDIATE), без неявных BEGIN модуля sqlite3.
+    conn.isolation_level = None
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS reminders (
+                id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL DEFAULT 0,
+                seq INTEGER NOT NULL,
+                data TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_user ON reminders(user_id)")
+        conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        _import_legacy_once(conn)
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        conn.close()
+        raise
+    _CONN, _CONN_PATH = conn, path
+    return conn
+
+
+@contextmanager
+def _tx() -> Iterator[sqlite3.Connection]:
+    """Транзакция записи: другой процесс ждёт её конца, а не затирает её."""
+    with _lock:
+        conn = _conn()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        conn.execute("COMMIT")
+
+
+def _rows(sql: str, args: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+    with _lock:
+        rows = _conn().execute(sql, args).fetchall()
+    return [json.loads(r[0]) for r in rows]
+
+
+def load_reminders() -> list[dict[str, Any]]:
+    try:
+        return _rows("SELECT data FROM reminders ORDER BY seq")
     except Exception as e:
         print(f"[reminders_store] load_failed err={e!r}")
         return []
 
 
 def save_reminders(items: list[dict[str, Any]]) -> None:
-    path = store_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    text = json.dumps(items, ensure_ascii=False, indent=2)
-    with _lock:
-        path.write_text(text, encoding="utf-8")
+    """Заменяет весь список (только для локальных фикстур)."""
+    with _tx() as conn:
+        conn.execute("DELETE FROM reminders")
+        _insert_rows(conn, list(items), start_seq=1)
+
+
+def _update(reminder_id: str, fn: Callable[[dict[str, Any]], None]) -> dict[str, Any] | None:
+    """Читает запись, правит её fn и сохраняет — в одной транзакции."""
+    rid = (reminder_id or "").strip()
+    if not rid:
+        return None
+    with _tx() as conn:
+        row = conn.execute("SELECT data FROM reminders WHERE id = ?", (rid,)).fetchone()
+        if row is None:
+            return None
+        item = json.loads(row[0])
+        fn(item)
+        conn.execute(
+            "UPDATE reminders SET data = ?, user_id = ? WHERE id = ?",
+            (json.dumps(item, ensure_ascii=False), _uid(item), rid),
+        )
+    return item
 
 
 def get_reminder_by_id(reminder_id: str) -> dict[str, Any] | None:
     rid = (reminder_id or "").strip()
     if not rid:
         return None
-    for it in load_reminders():
-        if isinstance(it, dict) and str(it.get("id") or "").strip() == rid:
-            return it
-    return None
+    rows = _rows("SELECT data FROM reminders WHERE id = ?", (rid,))
+    return rows[0] if rows else None
 
 
 def find_reminder_by_message(chat_id: int, message_id: int) -> dict[str, Any] | None:
@@ -88,40 +248,22 @@ def remove_reminder(reminder_id: str) -> None:
     rid = (reminder_id or "").strip()
     if not rid:
         return
-    items = load_reminders()
-    kept = [x for x in items if str((x or {}).get("id") or "").strip() != rid]
-    if len(kept) != len(items):
-        save_reminders(kept)
+    with _tx() as conn:
+        conn.execute("DELETE FROM reminders WHERE id = ?", (rid,))
 
 
 def set_reminder_message_id(reminder_id: str, message_id: int) -> None:
-    rid = (reminder_id or "").strip()
-    if not rid:
-        return
-    items = load_reminders()
-    for it in items:
-        if isinstance(it, dict) and str(it.get("id") or "").strip() == rid:
-            it["reminder_message_id"] = int(message_id)
-            save_reminders(items)
-            return
+    def fn(it: dict[str, Any]) -> None:
+        it["reminder_message_id"] = int(message_id)
+
+    _update(reminder_id, fn)
 
 
 def update_reminder_when(reminder_id: str, new_when_iso: str) -> dict[str, Any] | None:
-    rid = (reminder_id or "").strip()
-    if not rid:
-        return None
-    items = load_reminders()
-    updated: dict[str, Any] | None = None
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        if str(it.get("id") or "").strip() == rid:
-            it["when_iso"] = new_when_iso
-            updated = it
-            break
-    if updated is not None:
-        save_reminders(items)
-    return updated
+    def fn(it: dict[str, Any]) -> None:
+        it["when_iso"] = new_when_iso
+
+    return _update(reminder_id, fn)
 
 
 def _normalize_checklist(raw: Any) -> list[dict[str, Any]]:
@@ -162,16 +304,8 @@ def patch_reminder(
 
     recurrence: None — не трогать, "" — убрать повтор, иначе RRULE.
     """
-    rid = (reminder_id or "").strip()
-    if not rid:
-        return None
-    items = load_reminders()
-    out: dict[str, Any] | None = None
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        if str(it.get("id") or "").strip() != rid:
-            continue
+
+    def fn(it: dict[str, Any]) -> None:
         if task is not None:
             it["task"] = str(task).strip()
         if when_iso is not None:
@@ -189,11 +323,8 @@ def patch_reminder(
                 it["recurrence"] = rule if rule.upper().startswith("RRULE:") else "RRULE:" + rule
             else:
                 it.pop("recurrence", None)
-        out = it
-        break
-    if out is not None:
-        save_reminders(items)
-    return out
+
+    return _update(reminder_id, fn)
 
 
 def add_reminder(
@@ -208,7 +339,6 @@ def add_reminder(
     import uuid
 
     rid = uuid.uuid4().hex[:12]
-    items = load_reminders()
     row = {
         "id": rid,
         "user_id": int(user_id),
@@ -225,34 +355,24 @@ def add_reminder(
     normalized_checklist = _normalize_checklist(checklist)
     if normalized_checklist:
         row["checklist"] = normalized_checklist
-    items.append(row)
-    save_reminders(items)
+    with _tx() as conn:
+        seq = conn.execute("SELECT COALESCE(MAX(seq), 0) + 1 FROM reminders").fetchone()[0]
+        conn.execute(
+            "INSERT INTO reminders(id, user_id, seq, data) VALUES (?, ?, ?, ?)",
+            (rid, int(user_id), seq, json.dumps(row, ensure_ascii=False)),
+        )
     return rid
 
 
 def clear_reminder_message_id(reminder_id: str) -> None:
-    rid = (reminder_id or "").strip()
-    if not rid:
-        return
-    items = load_reminders()
-    for it in items:
-        if isinstance(it, dict) and str(it.get("id") or "").strip() == rid:
-            it.pop("reminder_message_id", None)
-            save_reminders(items)
-            return
+    def fn(it: dict[str, Any]) -> None:
+        it.pop("reminder_message_id", None)
+
+    _update(reminder_id, fn)
 
 
 def reminders_for_user(telegram_user_id: int) -> list[dict[str, Any]]:
     """Все напоминания пользователя (включая выполненные)."""
-    uid = int(telegram_user_id)
-    rows: list[dict[str, Any]] = []
-    for it in load_reminders():
-        if not isinstance(it, dict):
-            continue
-        try:
-            if int(it.get("user_id") or 0) != uid:
-                continue
-        except (TypeError, ValueError):
-            continue
-        rows.append(it)
-    return rows
+    return _rows(
+        "SELECT data FROM reminders WHERE user_id = ? ORDER BY seq", (int(telegram_user_id),)
+    )

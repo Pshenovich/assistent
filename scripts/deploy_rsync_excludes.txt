@@ -20,6 +20,8 @@ contacts.json
 assistant/stores/contacts_user/
 assistant/stores/contacts.json
 reminders.json
+reminders.json.*
+reminders.sqlite
 reminder_preferences.json
 calendar_pending.json
 usage.sqlite
