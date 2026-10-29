@@ -7,12 +7,27 @@
 <meta name="robots" content="noindex">
 <title>Orbita — рабочее ИИ-пространство</title>
 <meta name="description" content="Orbita — рабочее ИИ-пространство с ассистентом Лео: заметки, доски, презентации, встречи, задачи и дайджест чатов. Лео помнит договорённости и подсказывает, что сделать.">
-<!-- Unbounded пока из Google Fonts, без блокировки отрисовки (как в приложении): не загрузится — останется системный шрифт.
-     TODO: свой woff2 в docs/fonts/ (лицензия OFL). -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'">
+<!-- Unbounded со своего сервера (OFL, Fontsource 5.2.8, вариативный 200–900): Google Fonts из РФ грузится не всегда. -->
+<link rel="preload" href="/docs/fonts/unbounded-cyrillic-wght.woff2" as="font" type="font/woff2" crossorigin>
+<script>
+  // Тема до отрисовки, чтобы не мигало: по умолчанию тёмная, выбор посетителя — в localStorage.
+  (function () {
+    var t = "dark";
+    try { t = localStorage.getItem("orbita-theme") === "light" ? "light" : "dark"; } catch (e) {}
+    document.documentElement.setAttribute("data-theme", t);
+  })();
+</script>
 <style>
+@font-face {
+  font-family: "Unbounded"; font-style: normal; font-weight: 200 900; font-display: swap;
+  src: url("/docs/fonts/unbounded-cyrillic-wght.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "Unbounded"; font-style: normal; font-weight: 200 900; font-display: swap;
+  src: url("/docs/fonts/unbounded-latin-wght.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
 :root {
   --font: -apple-system, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --font-heading: "Unbounded", var(--font);
@@ -127,7 +142,11 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .nav-links a:hover { color: var(--text); }
 @media (min-width: 860px) { .nav-links { display: flex; } }
 .nav-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-.theme-btn { border: 1px solid var(--border); background: var(--surface); color: var(--text-2); border-radius: 10px; height: 36px; padding: 0 10px; font: 13px var(--font); cursor: pointer; }
+.theme-btn { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); border-radius: 10px; cursor: pointer; }
+.theme-btn:hover { color: var(--text); border-color: var(--text-3); }
+.theme-btn svg { width: 18px; height: 18px; }
+/* В тёмной теме показываем солнце (переключить на светлую), в светлой — луну. */
+:root[data-theme="dark"] .theme-btn .ic-moon, :root[data-theme="light"] .theme-btn .ic-sun { display: none; }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 48px; padding: 0 22px; border-radius: 14px; font: 600 16px var(--font); text-decoration: none; border: 1px solid transparent; cursor: pointer; white-space: nowrap; }
 .btn-sm { height: 36px; padding: 0 14px; border-radius: 10px; font-size: 14px; }
 .btn-primary { background: var(--accent); color: #fff; box-shadow: 0 6px 20px -6px var(--accent); }
@@ -776,6 +795,52 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 
 .final .mini-orbit .moon { transform-origin: 256px 256px; animation: moon 3.2s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .final .mini-orbit .moon { animation: none; } }
+
+/* ---------- Чат с Лео на сайте ---------- */
+.lc-fab { position: fixed; right: 20px; bottom: 20px; z-index: 60; display: inline-flex; align-items: center; gap: 10px; height: 52px; padding: 0 20px 0 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: 600 15px var(--font); cursor: pointer; box-shadow: var(--shadow), 0 18px 40px -18px rgba(0, 0, 0, .45); transition: transform .2s, opacity .2s; }
+.lc-fab:hover { transform: translateY(-2px); }
+.lc-fab .lc-av { width: 38px; height: 38px; }
+.lc-open .lc-fab { opacity: 0; pointer-events: none; transform: scale(.9); }
+.lc-av { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); color: var(--text); flex: none; }
+.lc-av svg { width: 22px; height: 22px; }
+.lc-av .moon { transform-origin: 256px 256px; animation: moon 3.2s linear infinite; }
+.lc-panel { position: fixed; right: 20px; bottom: 20px; z-index: 61; width: min(400px, calc(100vw - 40px)); height: min(620px, calc(100vh - 40px)); display: flex; flex-direction: column; border-radius: 22px; overflow: hidden; background: var(--bg); border: 1px solid var(--border); box-shadow: var(--shadow), 0 30px 80px -20px rgba(0, 0, 0, .5); opacity: 0; transform: translateY(16px) scale(.98); pointer-events: none; transition: opacity .22s ease, transform .22s ease; }
+.lc-open .lc-panel { opacity: 1; transform: none; pointer-events: auto; }
+@media (max-width: 599px) {
+  .lc-fab { right: 16px; bottom: 16px; }
+  .lc-panel { right: 0; bottom: 0; width: 100vw; height: 100dvh; border-radius: 0; border: 0; }
+}
+.lc-head { display: flex; align-items: center; gap: 10px; padding: 12px 12px 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.lc-head b { display: block; font: 600 15px var(--font-heading); }
+.lc-head small { color: var(--text-3); font-size: 12.5px; }
+.lc-head .lc-sp { flex: 1; min-width: 0; }
+.lc-ibtn { display: grid; place-items: center; height: 34px; min-width: 34px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--border); background: transparent; color: var(--text-2); font: 600 12.5px var(--font); cursor: pointer; }
+.lc-ibtn:hover { color: var(--text); border-color: var(--text-3); }
+.lc-ibtn svg { width: 16px; height: 16px; }
+.lc-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; overscroll-behavior: contain; }
+.lc-msg { max-width: 88%; padding: 10px 14px; border-radius: 18px; font-size: 15px; line-height: 1.45; white-space: pre-line; overflow-wrap: anywhere; }
+.lc-msg.me { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 6px; }
+.lc-msg.leo { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 6px; }
+.lc-msg.err { align-self: center; max-width: 100%; font-size: 13.5px; color: var(--text-2); background: color-mix(in srgb, var(--warning) 12%, transparent); border-radius: 12px; }
+.lc-sugg { display: flex; flex-wrap: wrap; gap: 6px; }
+.lc-sugg button { font: 500 13.5px var(--font); color: var(--accent); background: var(--accent-muted); border: 0; border-radius: 999px; padding: 7px 12px; cursor: pointer; text-align: left; }
+.lc-sugg button:hover { filter: brightness(1.1); }
+.lc-sugg button.lead { color: #fff; background: var(--violet); }
+.lc-lead { align-self: stretch; display: grid; gap: 8px; padding: 14px; border-radius: 16px; background: var(--surface); border: 1px solid var(--orbit-line); }
+.lc-lead b { font-size: 14.5px; }
+.lc-lead input { font: 15px var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; width: 100%; }
+.lc-lead input:focus, .lc-input textarea:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px var(--orbit-line); }
+.lc-lead .btn { height: 42px; }
+.lc-lead small { color: var(--text-3); font-size: 12px; }
+.lc-lead .lc-lerr { color: var(--danger); }
+.lc-input { display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--border); background: var(--surface); }
+.lc-input textarea { flex: 1; resize: none; max-height: 120px; min-height: 42px; font: 15px/1.4 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; padding: 10px 12px; }
+.lc-send { width: 42px; height: 42px; flex: none; border-radius: 12px; border: 0; background: var(--accent); color: #fff; display: grid; place-items: center; cursor: pointer; }
+.lc-send:disabled { opacity: .5; cursor: default; }
+.lc-send svg { width: 18px; height: 18px; stroke-width: 2.2; }
+.lc-note { padding: 0 14px 10px; background: var(--surface); color: var(--text-3); font-size: 11.5px; text-align: center; }
+.lc-trap { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .lc-av .moon { animation: none; } .lc-panel, .lc-fab { transition: none; } }
 </style>
 </head>
 <body>
@@ -792,6 +857,10 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
     <a href="#changelog">Что нового</a>
   </nav>
   <div class="nav-right">
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="Светлая тема" title="Светлая тема">
+      <svg class="i ic-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      <svg class="i ic-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>
+    </button>
     <a class="btn btn-ghost btn-sm" href="/webapp/">Войти</a>
   </div>
 </header>
@@ -1322,8 +1391,8 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
     <div class="card onprem" id="onprem">
       <div><p class="kicker">On-premise</p><h3>Orbita в вашем контуре</h3><p>Развёртывание на серверах компании, свои или локальные модели, SSO, SLA и подключение вашей CRM. Цена — по запросу.</p></div>
       <div class="onprem-cta">
-        <a class="btn btn-primary js-tg" data-start="orbita_onprem" href="/webapp/">Обсудить внедрение</a>
-        <span class="form-note">Напишите Лео в Telegram — передадим команде, ответим в течение рабочего дня.</span>
+        <button class="btn btn-primary" type="button" data-chat-lead="onprem">Обсудить внедрение</button>
+        <span class="form-note">Оставьте контакты — команда ответит в течение рабочего дня.</span>
       </div>
     </div>
     <p class="price-note">Неизрасходованные кредиты сгорают в конце месяца. Цены с НДС ⚠︎ уточнить.</p>
@@ -1350,7 +1419,20 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
   </div>
 </section>
 
-<!-- ========== 14. Отзывы — вернуть, когда будут реальные отзывы и цифры. ========== -->
+<!-- ========== 14. Orbita в цифрах. Цитаты пользователей — добавить, когда будут реальные. ========== -->
+<section class="section" id="reviews">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="kicker">Orbita в цифрах</p>
+      <h2>Уже работает каждый день</h2>
+    </div>
+    <div class="stats">
+      <div class="stat reveal"><b>12 000+</b><span>встреч расшифровано</span></div>
+      <div class="stat reveal"><b>6</b><span>топовых ИИ-моделей внутри</span></div>
+      <div class="stat reveal"><b>1</b><span>пространство вместо десятка сервисов</span></div>
+    </div>
+  </div>
+</section>
 
 <!-- ========== 15. FAQ ========== -->
 <section class="section band" id="faq">
@@ -1403,6 +1485,26 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
     </nav>
   </div>
 </footer>
+
+<!-- ========== Чат с Лео (assistant/services/site_chat.py) ========== -->
+<div class="lc" id="lc">
+  <button class="lc-fab" id="lcFab" type="button" aria-haspopup="dialog" aria-controls="lcPanel"><span class="lc-av"><svg viewBox="0 0 512 512" aria-hidden="true"><circle cx="256" cy="256" r="180" fill="none" stroke="currentColor" stroke-width="64"/><g class="moon"><circle cx="268.6" cy="76.4" r="32" fill="var(--orbit-dot)" opacity=".7"/><circle cx="346" cy="100.1" r="46" fill="var(--orbit-dot)" stroke="var(--surface-2)" stroke-width="16"/></g></svg></span>Спросить Лео</button>
+  <div class="lc-panel" id="lcPanel" role="dialog" aria-label="Чат с Лео" aria-modal="false">
+    <div class="lc-head">
+      <span class="lc-av"><svg viewBox="0 0 512 512" aria-hidden="true"><circle cx="256" cy="256" r="180" fill="none" stroke="currentColor" stroke-width="64"/><g class="moon"><circle cx="268.6" cy="76.4" r="32" fill="var(--orbit-dot)" opacity=".7"/><circle cx="346" cy="100.1" r="46" fill="var(--orbit-dot)" stroke="var(--surface-2)" stroke-width="16"/></g></svg></span>
+      <div class="lc-sp"><b>Лео</b><small>ИИ-ассистент Orbita</small></div>
+      <button class="lc-ibtn" id="lcLeadBtn" type="button">Заявка</button>
+      <button class="lc-ibtn" id="lcClose" type="button" aria-label="Закрыть"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+    <div class="lc-body" id="lcBody" aria-live="polite"></div>
+    <form class="lc-input" id="lcForm" autocomplete="off">
+      <input class="lc-trap" name="website" tabindex="-1" aria-hidden="true" autocomplete="off">
+      <textarea id="lcText" rows="1" maxlength="600" placeholder="Спросите про Orbita…" aria-label="Сообщение Лео"></textarea>
+      <button class="lc-send" id="lcSend" type="submit" aria-label="Отправить"><svg class="i" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+    </form>
+    <div class="lc-note">Отвечает ИИ, переписка сохраняется, чтобы команда могла ответить.</div>
+  </div>
+</div>
 
 <div class="pop" id="pop" role="tooltip"></div>
 
@@ -1473,6 +1575,22 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
   }
   window.addEventListener("resize", fitStages);
   fitStages();
+
+  /* ---------- Тема: иконка в шапке ---------- */
+  var themeBtn = document.getElementById("themeBtn");
+  function syncThemeBtn() {
+    var dark = document.documentElement.getAttribute("data-theme") !== "light";
+    var label = dark ? "Светлая тема" : "Тёмная тема";
+    themeBtn.setAttribute("aria-label", label);
+    themeBtn.title = label;
+  }
+  themeBtn.addEventListener("click", function () {
+    var next = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("orbita-theme", next); } catch (e) {}
+    syncThemeBtn();
+  });
+  syncThemeBtn();
 
   /* ---------- 1. Орбита в герое ---------- */
   // Эллипсы совпадают с SVG: путь в системе 560×560, поворот — у обёртки, планета крутится обратно.
@@ -2164,6 +2282,140 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
       })
       .catch(function () {});
   }
+  /* ---------- Чат с Лео на сайте ---------- */
+  (function () {
+    var root = $("#lc"), body = $("#lcBody"), form = $("#lcForm"), text = $("#lcText"), send = $("#lcSend");
+    var trap = form.querySelector(".lc-trap");
+    var KEY = "orbita-chat";
+    var STARTERS = ["Что умеет Orbita?", "Сколько стоит?", "Как Лео работает со встречами?", "Хочу внедрить в компании"];
+    var state = { session: "", messages: [] };
+    try { var saved = JSON.parse(sessionStorage.getItem(KEY) || "null"); if (saved && saved.session) state = saved; } catch (e) {}
+    if (!state.session) {
+      var rnd = (window.crypto && crypto.getRandomValues) ? Array.prototype.map.call(crypto.getRandomValues(new Uint8Array(12)), function (b) { return ("0" + b.toString(16)).slice(-2); }).join("") : String(Date.now()) + Math.random().toString(16).slice(2);
+      state.session = "s-" + rnd;
+    }
+    function persist() { try { sessionStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+    var busy = false, rendered = false;
+
+    function el(tag, cls, txt) { var n = document.createElement(tag); if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n; }
+    function scrollDown() { body.scrollTop = body.scrollHeight; }
+    function clearSugg() { $$("#lcBody .lc-sugg").forEach(function (n) { n.remove(); }); }
+    function addMsg(role, txt) { var n = el("div", "lc-msg " + (role === "user" ? "me" : role === "error" ? "err" : "leo"), txt); body.appendChild(n); scrollDown(); return n; }
+    function addSugg(list, withLead) {
+      clearSugg();
+      var box = el("div", "lc-sugg");
+      (list || []).forEach(function (q) { var b = el("button", "", q); b.type = "button"; b.addEventListener("click", function () { ask(q); }); box.appendChild(b); });
+      if (withLead) { var l = el("button", "lead", "Оставить заявку"); l.type = "button"; l.addEventListener("click", function () { showLead("chat"); }); box.appendChild(l); }
+      if (box.children.length) { body.appendChild(box); scrollDown(); }
+    }
+    function render() {
+      body.innerHTML = "";
+      addMsg("assistant", "Привет! Я Лео, ИИ-ассистент Orbita. Расскажу, как Орбита поможет именно вам: встречи, задачи, документы, тарифы, внедрение. О чём спросите?");
+      state.messages.forEach(function (m) { addMsg(m.role, m.content); });
+      var last = state.messages[state.messages.length - 1];
+      if (!last) addSugg(STARTERS, false);
+      rendered = true;
+    }
+
+    function open(leadSource) {
+      if (!rendered) render();
+      document.documentElement.classList.add("lc-open");
+      if (leadSource) showLead(leadSource); else setTimeout(function () { text.focus(); }, 60);
+    }
+    function close() { document.documentElement.classList.remove("lc-open"); $("#lcFab").focus(); }
+    $("#lcFab").addEventListener("click", function () { open(); });
+    $("#lcClose").addEventListener("click", close);
+    $("#lcLeadBtn").addEventListener("click", function () { showLead("chat_header"); });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape" && document.documentElement.classList.contains("lc-open")) close(); });
+    $$("[data-chat-lead]").forEach(function (b) { b.addEventListener("click", function () { open(b.dataset.chatLead); }); });
+
+    function typing() { var n = el("div", "lc-msg leo"); n.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>'; body.appendChild(n); scrollDown(); return n; }
+
+    function ask(q) {
+      q = String(q || "").trim();
+      if (!q || busy) return;
+      busy = true; send.disabled = true;
+      clearSugg();
+      state.messages.push({ role: "user", content: q.slice(0, 600) });
+      persist();
+      addMsg("user", q);
+      text.value = ""; autosize();
+      var t = typing();
+      fetch("/api/orbita/chat", {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+        body: JSON.stringify({ session: state.session, messages: state.messages.slice(-12), website: trap.value })
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (d) { return { ok: r.ok, d: d }; });
+      }).then(function (res) {
+        t.remove();
+        if (!res.ok) {
+          state.messages.pop(); persist();
+          addMsg("error", (res.d && res.d.detail) || "Не получилось ответить. Попробуйте ещё раз.");
+          return;
+        }
+        state.messages.push({ role: "assistant", content: res.d.reply });
+        persist();
+        addMsg("assistant", res.d.reply);
+        addSugg(res.d.suggestions, !!res.d.lead);
+        if (res.d.lead) showLead("chat");
+      }).catch(function () {
+        t.remove(); state.messages.pop(); persist();
+        addMsg("error", "Нет связи. Проверьте интернет и попробуйте ещё раз.");
+      }).then(function () { busy = false; send.disabled = false; });
+    }
+
+    var leadCard = null;
+    function showLead(source) {
+      if (!rendered) render();
+      if (leadCard && document.body.contains(leadCard)) { leadCard.querySelector("input[name=name]").focus(); return; }
+      leadCard = el("form", "lc-lead");
+      leadCard.setAttribute("autocomplete", "on");
+      leadCard.innerHTML =
+        "<b>Оставьте контакты — команда свяжется в течение рабочего дня</b>" +
+        '<input name="name" placeholder="Как вас зовут" autocomplete="name" maxlength="120" required>' +
+        '<input name="contact" placeholder="Телефон, почта или @ник в Telegram" maxlength="120" required>' +
+        '<input name="company" placeholder="Компания (необязательно)" autocomplete="organization" maxlength="160">' +
+        '<input class="lc-trap" name="website" tabindex="-1" aria-hidden="true" autocomplete="off">' +
+        '<button class="btn btn-primary" type="submit">Отправить заявку</button>' +
+        "<small>Нажимая «Отправить», вы соглашаетесь с <a href=\"/webapp/legal/privacy.html\" target=\"_blank\" rel=\"noopener\">политикой конфиденциальности</a>.</small>";
+      leadCard.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var f = leadCard, btn = f.querySelector("button");
+        // f.name — это имя самой формы, поэтому поля берём по селектору.
+        function val(n) { return f.querySelector('input[name="' + n + '"]').value; }
+        var old = f.querySelector(".lc-lerr"); if (old) old.remove();
+        btn.disabled = true;
+        fetch("/api/orbita/lead", {
+          method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+          body: JSON.stringify({ session: state.session, name: val("name"), contact: val("contact"), company: val("company"), website: val("website"), source: source || "chat" })
+        }).then(function (r) {
+          return r.json().catch(function () { return {}; }).then(function (d) { return { ok: r.ok, d: d }; });
+        }).then(function (res) {
+          if (!res.ok) {
+            btn.disabled = false;
+            var er = el("small", "lc-lerr", (res.d && res.d.detail) || "Не получилось отправить. Попробуйте ещё раз.");
+            f.appendChild(er);
+            return;
+          }
+          f.remove(); leadCard = null;
+          var thanks = "Спасибо! Заявка у команды — свяжемся в течение рабочего дня. А пока можно начать бесплатно или спросить меня что-нибудь ещё.";
+          state.messages.push({ role: "assistant", content: thanks }); persist();
+          addMsg("assistant", thanks);
+        }).catch(function () {
+          btn.disabled = false;
+          f.appendChild(el("small", "lc-lerr", "Нет связи. Попробуйте ещё раз."));
+        });
+      });
+      clearSugg();
+      body.appendChild(leadCard); scrollDown();
+      setTimeout(function () { leadCard && leadCard.querySelector("input[name=name]").focus(); }, 60);
+    }
+
+    function autosize() { text.style.height = "auto"; text.style.height = Math.min(120, text.scrollHeight) + "px"; }
+    text.addEventListener("input", autosize);
+    text.addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); ask(text.value); } });
+    form.addEventListener("submit", function (e) { e.preventDefault(); ask(text.value); });
+  })();
 })();
 </script>
 </body>

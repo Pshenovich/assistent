@@ -16080,6 +16080,12 @@ async def orbita_landing_route() -> FileResponse:
     return FileResponse(_orbita_page_path, media_type="text/html", headers={"Cache-Control": "public, max-age=300"})
 
 
+# Чат с Лео на лендинге: ответы о продукте и заявки (assistant/services/site_chat.py).
+from assistant.services.site_chat import make_router as _make_site_chat_router  # noqa: E402
+
+app.include_router(_make_site_chat_router())
+
+
 from assistant.admin.routes import make_router as _make_admin_router  # noqa: E402
 
 # Админка поверх старого дашборда: её страницы (/, /users, /user/{id}, /orgs, /spend…) идут раньше,

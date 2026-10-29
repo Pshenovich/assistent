@@ -39,6 +39,7 @@ _FILE_ENV = {
     "NOTES_DB_PATH": "notes.sqlite",
     "CALENDAR_TASKS_DB_PATH": "data/calendar_tasks.sqlite",
     "CHAT_THREADS_DB_PATH": "data/chat_threads.sqlite",
+    "SITE_CHAT_DB_PATH": "data/site_chat.sqlite",
     "USER_AGENTS_DB_PATH": "data/user_agents.sqlite",
     "USAGE_DB_PATH": "usage.sqlite",
     "TELEGRAM_REGISTRY_PATH": "data/telegram_registry.json",
