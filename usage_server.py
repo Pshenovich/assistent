@@ -7935,6 +7935,34 @@ def _is_orbita_event_request(uid: int, event_id: str = "", calendar_id: Optional
     return orbita_calendar.uses_orbita(uid)
 
 
+def _orbita_after_change(uid: int, event_id: str, prev: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """После изменения встречи Орбиты: письма внешним гостям и сообщения бота участникам."""
+    from assistant.services import orbita_invite_mail
+    from assistant.stores import orbita_events
+
+    ev = orbita_events.get(orbita_events.parse_id(event_id))
+    if not ev:
+        return {}
+    try:
+        orbita_invite_mail.notify_members(uid, prev, ev)
+    except Exception as e:
+        print(f"[orbita_calendar] notify members err={e!r}")
+    try:
+        return orbita_invite_mail.after_change(uid, prev, ev)
+    except Exception as e:
+        print(f"[orbita_calendar] invite mail err={e!r}")
+        return {"failed": [a["email"] for a in orbita_invite_mail.external(ev)]}
+
+
+def _orbita_prev(event_id: str) -> Optional[dict[str, Any]]:
+    from assistant.stores import orbita_events
+
+    try:
+        return orbita_events.get(orbita_events.parse_id(event_id))
+    except ValueError:
+        return None
+
+
 async def _orbita_notify_invitees(principal: "_MiniappPrincipal", result: dict[str, Any],
                                   only_emails: Optional[list[str]] = None) -> None:
     try:
@@ -7989,7 +8017,8 @@ async def miniapp_calendar_event_create(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         await _orbita_notify_invitees(principal, created)
-        return {"event": await run_in_threadpool(_orbita_event_ser, uid, created["event_id"])}
+        mail = await run_in_threadpool(_orbita_after_change, uid, created["event_id"], None)
+        return {"event": await run_in_threadpool(_orbita_event_ser, uid, created["event_id"]), "invite_mail": mail}
     uname = (
         principal.user.get("username")
         if isinstance(principal.user, dict)
@@ -8076,6 +8105,7 @@ async def miniapp_calendar_event_update(
         from assistant.services import orbita_calendar
 
         uid = int(principal.telegram_user_id)
+        prev = await run_in_threadpool(_orbita_prev, eid)
         try:
             res = await run_in_threadpool(orbita_calendar.update, uid, eid, parsed)
         except ValueError as e:
@@ -8083,7 +8113,8 @@ async def miniapp_calendar_event_update(
         added = inv.added_invitees(res)
         if added:
             await _orbita_notify_invitees(principal, res, only_emails=added)
-        return {"event": await run_in_threadpool(_orbita_event_ser, uid, eid)}
+        mail = await run_in_threadpool(_orbita_after_change, uid, eid, prev)
+        return {"event": await run_in_threadpool(_orbita_event_ser, uid, eid), "invite_mail": mail}
     if _is_local_dev_event_id(eid) and _miniapp_dev_mode_on():
         from assistant.services.calendar import _tz_for
 
@@ -8189,11 +8220,13 @@ async def miniapp_calendar_event_delete(
     if _is_orbita_event_request(int(principal.telegram_user_id), event_id=str(event_id or "")):
         from assistant.services import orbita_calendar
 
+        prev = await run_in_threadpool(_orbita_prev, str(event_id))
         try:
             await run_in_threadpool(orbita_calendar.cancel, int(principal.telegram_user_id), str(event_id))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        return {"ok": True}
+        mail = await run_in_threadpool(_orbita_after_change, int(principal.telegram_user_id), str(event_id), prev)
+        return {"ok": True, "invite_mail": mail}
 
     def _run() -> None:
         calendar_delete_event(
@@ -16337,6 +16370,37 @@ async def public_book_slot(token: str, body: _PublicBookBody) -> dict[str, Any]:
         except Exception as e:
             print(f"[public_book] announce err={e!r}")
     return result
+
+
+@app.get("/rsvp/{token}")
+async def public_rsvp_page(token: str, done: str = Query("")) -> HTMLResponse:
+    """Гость встречи Орбиты отвечает «Приду / Возможно / Не приду» (ссылка из письма-приглашения)."""
+    from assistant.services import orbita_rsvp_page
+
+    content, code = await run_in_threadpool(orbita_rsvp_page.render, token, done=done)
+    return HTMLResponse(content, status_code=code, headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+
+
+@app.post("/rsvp/{token}")
+async def public_rsvp_answer(token: str, r: str = Form("")) -> Response:
+    from assistant.services import orbita_rsvp_page
+
+    res = await run_in_threadpool(orbita_rsvp_page.answer, token, r)
+    if res is None:
+        content, code = await run_in_threadpool(orbita_rsvp_page.render, token)
+        return HTMLResponse(content, status_code=code if code != 200 else 400)
+    return RedirectResponse(f"/rsvp/{token}?done=1", status_code=303)
+
+
+@app.get("/rsvp/{token}/invite.ics")
+async def public_rsvp_ics(token: str) -> Response:
+    from assistant.services import orbita_rsvp_page
+
+    text = await run_in_threadpool(orbita_rsvp_page.ics_file, token)
+    if text is None:
+        raise HTTPException(status_code=404, detail="Приглашение не найдено")
+    return Response(text, media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="invite.ics"', "Cache-Control": "no-store"})
 
 
 @app.get("/book/{token}")

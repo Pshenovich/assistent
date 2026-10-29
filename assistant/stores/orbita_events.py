@@ -122,6 +122,17 @@ def get_by_ical_uid(uid: str) -> Optional[dict[str, Any]]:
     return get(int(row["id"])) if row else None
 
 
+def owner_has_guests(owner_user_id: int | str) -> bool:
+    """Есть ли у организатора встречи с внешними гостями — тогда ищем их ответы в его почте."""
+    with _LOCK:
+        row = _conn().execute(
+            "SELECT 1 FROM orbita_events e JOIN orbita_event_attendees a ON a.event_id = e.id "
+            "WHERE e.owner_user_id = ? AND a.user_id IS NULL LIMIT 1",
+            (str(int(owner_user_id)),),
+        ).fetchone()
+    return bool(row)
+
+
 def can_view(ev: dict[str, Any], user_id: int | str) -> bool:
     uid = str(int(user_id))
     return ev["owner_user_id"] == uid or any(a.get("user_id") == uid for a in ev["attendees"])

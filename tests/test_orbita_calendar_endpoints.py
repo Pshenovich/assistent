@@ -46,8 +46,10 @@ def env(monkeypatch):
         return 1
 
     monkeypatch.setattr(meeting_invites, "notify_invitees_for_miniapp", fake_notify)
+    bot_msgs: list = []
+    monkeypatch.setattr(access_gate, "notify_user_sync", lambda uid, text, **kw: bot_msgs.append((uid, text)) or True)
     return {"c": TestClient(usage_server.app), "owner": owner, "guest": guest, "guest_email": f"g{guest}@acme.io",
-            "sent": sent}
+            "sent": sent, "bot": bot_msgs}
 
 
 def _day(offset_days: int = 3) -> datetime:
@@ -92,6 +94,35 @@ def test_orbita_meeting_flow(env):
     rng = c.get("/api/miniapp/calendar/range", params={"start": day, "end": day}, headers=_headers(owner)).json()
     assert any(e["id"] == ev["id"] for e in rng["events"])
 
-    assert c.delete(f"/api/miniapp/calendar/events/{ev['id']}", headers=_headers(owner)).json()["ok"]
+    assert any("перенесена" in t for _, t in env["bot"])  # гостю из Орбиты — о переносе
+    r = c.delete(f"/api/miniapp/calendar/events/{ev['id']}", headers=_headers(owner)).json()
+    assert r["ok"] and r["invite_mail"]["reason"] == "no_mail"  # внешнему гостю — некому отправить
+    assert any("отменена" in t for _, t in env["bot"])
     feed = c.get("/api/miniapp/calendar/today", params={"date": day}, headers=_headers(guest)).json()
     assert not any(e["id"] == ev["id"] for e in feed["events"])
+
+
+def test_public_rsvp_page(env):
+    from assistant.stores import orbita_events
+
+    c, owner = env["c"], env["owner"]
+    start = _day(4)
+    ev = c.post("/api/miniapp/calendar/events", headers=_headers(owner), json={
+        "title": "Демо для клиента", "start": start.isoformat(), "attendees": ["client@partner.ru"]}).json()["event"]
+    rec = orbita_events.get(orbita_events.parse_id(ev["id"]))
+    token = rec["attendees"][0]["token"]
+    page = c.get(f"/rsvp/{token}")
+    assert page.status_code == 200 and "Демо для клиента" in page.text and "client@partner.ru" in page.text
+    r = c.post(f"/rsvp/{token}", data={"r": "accepted"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert orbita_events.get(rec["id"])["attendees"][0]["response"] == "accepted"
+    assert any("ответил" in t for uid, t in env["bot"] if uid == owner)
+    assert "Ответ сохранён" in c.get(f"/rsvp/{token}?done=1").text
+    ics_resp = c.get(f"/rsvp/{token}/invite.ics")
+    assert ics_resp.status_code == 200 and "BEGIN:VCALENDAR" in ics_resp.text
+    assert c.get("/rsvp/nope").status_code == 404
+    assert c.post(f"/rsvp/{token}", data={"r": "hack"}).status_code == 400
+    # организатор видит ответ гостя в своей встрече
+    owner_ev = c.get("/api/miniapp/calendar/today", params={"date": start.date().isoformat()}, headers=_headers(owner)).json()
+    att = next(e for e in owner_ev["events"] if e["id"] == ev["id"])["attendees"]
+    assert any(a.get("email") == "client@partner.ru" and a.get("response_status", a.get("responseStatus")) == "accepted" for a in att), att

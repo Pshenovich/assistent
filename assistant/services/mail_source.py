@@ -119,6 +119,23 @@ def is_filtered(msg, from_addr: str, *, mine: set[str], rules: Optional[dict[str
     return mail_filters.is_bulk(msg) or mail_filters.is_robot(from_addr)
 
 
+def _orbita_replies(uid: int, mail, cal_uids: list[int]) -> None:
+    """Ответы гостей на встречи Орбиты («Да / Нет» в их почтовике) — письма-приглашения в индекс не идут,
+    поэтому их текст берём отдельно и только у тех, у кого есть встречи Орбиты с внешними гостями."""
+    if not cal_uids:
+        return
+    try:
+        from assistant.services import orbita_invite_mail
+        from assistant.stores import orbita_events
+
+        if not orbita_events.owner_has_guests(uid):
+            return
+        raw = mail_imap.fetch(mail, cal_uids[-50:], "BODY.PEEK[]")
+        orbita_invite_mail.apply_replies(uid, [mail_imap.parse(v[1]) for v in raw.values()])
+    except Exception as e:
+        print(f"[mail] orbita replies uid={uid} err={e!r}")
+
+
 def _row_from(acc: dict[str, Any], folder: str, uid: int, msg, *, mine: set[str], body: Optional[str],
               rules: Optional[dict[str, str]] = None, known: Optional[set[str]] = None) -> dict[str, Any]:
     mid = (mail_imap.msg_ids(msg.get("Message-ID")) or [""])[0]
@@ -179,6 +196,8 @@ def _sync_folder(uid: int, acc: dict[str, Any], mail, folder: str, *, days: int,
         if size <= MAX_BODY_SIZE and (dt is None or dt >= bodies_since):
             want_body.append(u)
     full = mail_imap.fetch(mail, want_body, "BODY.PEEK[]") if want_body else {}
+    if folder == "INBOX":
+        _orbita_replies(uid, mail, [u for u, m in parsed.items() if mail_filters.is_calendar(m)])
     for u, msg in parsed.items():
         body = None
         if u in full:

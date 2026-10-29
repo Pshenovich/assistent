@@ -1601,6 +1601,23 @@
     loadActual();
   }
 
+  // Встречи Орбиты: внешним гостям письмо уходит с почты организатора — сказать, если не ушло.
+  function noteOrbitaInviteMail(m) {
+    if (!m) return;
+    var skipped = m.skipped || [];
+    var failed = m.failed || [];
+    var sent = m.sent || [];
+    if (skipped.length && m.reason === "no_mail") {
+      showCalendarToast(
+        "Внешним гостям (" + skipped.join(", ") + ") приглашение не ушло: подключите почту в Профиле → Почта и включите «Отвечать из Orbita»"
+      );
+    } else if (failed.length) {
+      showCalendarToast("Не удалось отправить приглашение: " + failed.join(", "));
+    } else if (sent.length) {
+      showCalendarToast("Приглашение отправлено на почту: " + sent.join(", "));
+    }
+  }
+
   function meetingsEmptyMessage(calData) {
     if (calData && calData.load_error) {
       return String(calData.load_error);
@@ -19319,6 +19336,7 @@
               body: JSON.stringify(body),
             });
         var savedEvent = savedEv && savedEv.event;
+        noteOrbitaInviteMail(savedEv && savedEv.invite_mail);
         var colorTarget = {
           id: (savedEvent && savedEvent.id) || id,
           calendar_id: (savedEvent && savedEvent.calendar_id) || calId,
@@ -19490,9 +19508,10 @@
       if (!confirm("Удалить встречу из календаря?")) return;
       try {
         const q = calId && calId !== "primary" ? "?calendar_id=" + encodeURIComponent(calId) : "";
-        await apiFetch("/calendar/events/" + encodeURIComponent(id) + q, {
+        var delRes = await apiFetch("/calendar/events/" + encodeURIComponent(id) + q, {
           method: "DELETE",
         });
+        noteOrbitaInviteMail(delRes && delRes.invite_mail);
         closeModal();
         await loadActual();
       } catch (e) {
