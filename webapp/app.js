@@ -14202,6 +14202,10 @@
       var a = document.activeElement;
       editorFocused = !!(a && a.closest && a.closest(".ProseMirror"));
     });
+    // Не уводим фокус из текста: клавиатура и курсор остаются, диктовка встанет к курсору.
+    btn.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+    });
     btn.addEventListener("click", function (e) {
       e.preventDefault();
       e.stopPropagation();
@@ -14437,7 +14441,9 @@
         if (!modalSheetOpen || !isNoteEditorModalOpen() || !isMobileNoteLayout()) return;
         var t = e.target;
         if (!t || !t.closest || !t.closest("#note-editor-overlay")) return;
-        if (t.closest("#note-editor-gpt-btn, .note-discussion-card")) return;
+        // Микрофон и полоса диктовки — тоже не «тап мимо текста»: иначе панель перестраивается до клика,
+        // нажатие промахивается, правка заметки заканчивается, а текст потом встаёт в конец, не к курсору.
+        if (t.closest("#note-editor-gpt-btn, #note-editor-mic-btn, #note-dictation-bar, .note-discussion-card")) return;
         var wrap = document.getElementById("note-editor-toolbar-wrap");
         if (!wrap || wrap.classList.contains("hidden")) return;
         wrap.classList.remove("is-composer-hidden");
@@ -25547,7 +25553,31 @@
       if (e.target === ov) closePostedCard();
     });
     document.body.appendChild(ov);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", pinPostedSheetToViewport);
+      window.visualViewport.addEventListener("scroll", pinPostedSheetToViewport);
+    }
     return ov;
+  }
+
+  // Телефон: клавиатура уменьшает видимую область, а лист во весь экран остаётся под ней —
+  // iOS прокручивает страницу к полю, и между полем и клавиатурой виден экран под карточкой.
+  // Держим лист ровно в видимой области.
+  function pinPostedSheetToViewport() {
+    var ov = document.getElementById("posted-card-overlay");
+    if (!ov) return;
+    var vv = window.visualViewport;
+    if (!vv || ov.classList.contains("hidden") || isDesktopLayout()) {
+      ov.style.top = "";
+      ov.style.height = "";
+      ov.style.bottom = "";
+      ov.classList.remove("is-kb");
+      return;
+    }
+    ov.style.top = Math.round(vv.offsetTop || 0) + "px";
+    ov.style.height = Math.round(vv.height) + "px";
+    ov.style.bottom = "auto";
+    ov.classList.toggle("is-kb", window.innerHeight - vv.height > 120); // клавиатура: отступ под «домой» не нужен
   }
 
   function isPostedCardOpen() {
@@ -25560,6 +25590,7 @@
     if (ov) {
       ov.classList.add("hidden");
       ov.querySelector(".pt-sheet").innerHTML = "";
+      pinPostedSheetToViewport();
     }
     postedCardHosts.sheet = null;
     document.documentElement.classList.remove("pt-sheet-open");
@@ -25582,6 +25613,7 @@
     document.documentElement.classList.add("pt-sheet-open");
     syncAppOverlay();
     mountPostedCard(ov.querySelector(".pt-sheet"), id, opts);
+    pinPostedSheetToViewport();
   }
 
   function isDelegatedTaskEvent(ev) {
@@ -26825,9 +26857,19 @@
       m.appendChild(b);
     });
     document.body.appendChild(m);
+    // Под якорем, правым краем к нему; не выходим за экран (на телефоне значок у левого края —
+    // меню уезжало влево, у нижнего края — под клавиатуру / тулбар).
     var r = anchor.getBoundingClientRect();
-    m.style.top = Math.round(r.bottom + 6) + "px";
-    m.style.right = Math.max(8, Math.round(window.innerWidth - r.right)) + "px";
+    var vw = window.innerWidth;
+    var vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    var w = m.offsetWidth;
+    var h = m.offsetHeight;
+    var left = Math.min(Math.max(8, Math.round(r.right - w)), Math.max(8, vw - w - 8));
+    var top = Math.round(r.bottom + 6);
+    if (top + h > vh - 8 && r.top - 6 - h >= 8) top = Math.round(r.top - 6 - h);
+    m.style.left = left + "px";
+    m.style.right = "auto";
+    m.style.top = Math.max(8, top) + "px";
     window.setTimeout(function () {
       document.addEventListener("click", function close(e) {
         if (!m.contains(e.target)) {
@@ -42353,7 +42395,7 @@
         renderNoteKnowledgeMenu();
         var pending = String(noteSheetState.pendingOpenSheetId || "");
         noteSheetState.pendingOpenSheetId = "";
-        if (pending && findNoteSheet(pending)) switchLeftSheet(pending);
+        if (pending && findNoteSheet(pending)) switchLeftSheetWhenEditorReady(String(noteId), pending, hydratedAt);
         else if (
           rows.length &&
           !isPrimarySheetId(rows[0].id) &&
@@ -42362,13 +42404,30 @@
           !(noteCollabState.lastTypedAt > hydratedAt)
         ) {
           // Вкладки переставлены — открываем ту, что пользователь поставил первой.
-          switchLeftSheet(String(rows[0].id));
+          switchLeftSheetWhenEditorReady(String(noteId), String(rows[0].id), hydratedAt);
         }
         loadNoteShareLinks(); // иконки шеринга на вкладках
       })
       .catch(function () {
         noteSheetState.pendingOpenSheetId = "";
       });
+  }
+
+  // Список листов приходит раньше, чем смонтирован редактор (телефон, холодный кэш): переключение
+  // без редактора делало вкладку активной, а редактор потом вставал с текстом «Основной» — и при уходе
+  // с вкладки этот текст сохранялся в лист. Ждём редактор; ушли из заметки или начали печатать — не трогаем.
+  function switchLeftSheetWhenEditorReady(noteId, sheetId, since, tries) {
+    tries = tries || 0;
+    if (noteSheetsNoteId() !== String(noteId) || !isPrimarySheetId(noteSheetState.leftId)) return;
+    if (noteCollabState.lastTypedAt > since) return;
+    if (getLeftNoteRichEditor()) {
+      switchLeftSheet(sheetId);
+      return;
+    }
+    if (tries >= 100) return;
+    setTimeout(function () {
+      switchLeftSheetWhenEditorReady(noteId, sheetId, since, tries + 1);
+    }, 100);
   }
 
   function bindNotePaneSwitchOnce() {
@@ -43542,6 +43601,17 @@
       return;
     }
     setDiscussUnread(kind, itemId, true);
+    // Звук — один раз на сообщение. Прочитанное хранится на устройстве: прочитанное на компе телефон
+    // считает новым, и без этой отметки пищал при каждой перезагрузке комментариев и списка заметок.
+    var soundKey = "discuss_sounded:" + kind + ":" + itemId;
+    var sounded = 0;
+    try {
+      sounded = parseInt(localStorage.getItem(soundKey) || "0", 10) || 0;
+    } catch (_) {}
+    if (latestId <= sounded) return;
+    try {
+      localStorage.setItem(soundKey, String(latestId));
+    } catch (_) {}
     playDiscussNotifySound();
   }
 
