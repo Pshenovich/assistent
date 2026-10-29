@@ -109,7 +109,9 @@ def _speaker_map(meta: Any) -> dict[str, Any]:
 
 
 def _same_text(a: str, b: str) -> bool:
-    return " ".join(_plain(a).split()) == " ".join(_plain(b).split())
+    # Без пробелов вовсе: редактор пересохраняет лист по-своему (<br> без «\n», абзацы
+    # без перевода строки, &nbsp;) — html_to_plain склеивает строки, а текст тот же.
+    return "".join(_plain(a).split()) == "".join(_plain(b).split())
 
 
 def _render_transcript(segments: list[dict[str, Any]], speaker_map: dict[str, Any]) -> str:

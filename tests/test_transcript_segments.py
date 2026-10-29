@@ -119,6 +119,15 @@ class NoteTests(unittest.TestCase):
         self.assertEqual(fresh["body"], "<p>Исправил руками</p>")
         self.assertEqual(tnotes.transcript_for_llm(fresh), "Исправил руками")
 
+    def test_confirm_speaker_after_editor_resave(self) -> None:
+        # Редактор пересохраняет лист: <br> без перевода строки, абзацы подряд, id строк.
+        note = self._note()
+        resaved = note["body"].replace("<br>\n", "<br>").replace("</p>\n<p>", '</p><p data-leo-item="x">')
+        notes_store.update_note(1, int(note["id"]), body=resaved)
+        tnotes.confirm_speaker(1, int(note["id"]), "Спикер 2", "Дима")
+        fresh = notes_store.get_note(1, int(note["id"]))
+        self.assertIn("<strong>Дима</strong>", fresh["body"])
+
     def test_confirm_unknown_speaker(self) -> None:
         note = self._note()
         with self.assertRaises(tnotes.TranscriptionNoteError):

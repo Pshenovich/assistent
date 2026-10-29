@@ -40678,6 +40678,11 @@
   function speakerMapReopen(item, toast) {
     closeSpeakerMapMenu();
     if (item) {
+      // Остаёмся на том же листе («Транскрипции»), а не на основном «Саммари».
+      var sid = String(noteSheetState.leftId || "");
+      if (sid && !isPrimarySheetId(sid) && String(noteSheetsNoteId() || "") === String(item.id)) {
+        noteSheetState.pendingOpenSheetId = sid;
+      }
       prependTranscriptionInCache(item);
       openNoteDetail(item, { isLocal: true });
     }
