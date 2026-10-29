@@ -9284,27 +9284,37 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   border-radius: var(--ui-card-r, 16px);
 }
 .note-speaker-pop-body.is-busy { opacity: 0.55; pointer-events: none; }
-.note-speaker-pop-head { display: flex; align-items: center; gap: 6px; padding: 2px 2px 4px; }
-.note-speaker-pop-title { flex: 1 1 auto; min-width: 0; padding: 0 4px; font-size: var(--ui-font, 0.9rem); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.note-speaker-pop .focus-card-btn.is-icon { font-size: 1.15rem; }
-.note-speaker-pop-hint { padding: 2px 10px 8px; font-size: 0.75rem; color: var(--text-tertiary, var(--text-secondary)); }
-.note-speaker-pop-section { padding: 10px 10px 4px; font-size: 0.75rem; color: var(--text-tertiary, var(--text-secondary)); }
-.note-speaker-list { display: grid; gap: 2px; }
-.note-speaker-person { padding: 9px 10px; border-radius: 9px; }
-.note-speaker-person .meeting-attendee-suggest-copy { flex: 1 1 auto; }
+/* «Кто есть кто» в стиле окна задачи: шапка с круглыми кнопками, подписи групп, строки в сером блоке */
+.note-speaker-pop { padding: 12px; }
+.note-speaker-pop-head { display: flex; align-items: center; gap: 8px; padding: 0 0 6px; }
+.note-speaker-pop-title { flex: 1 1 auto; min-width: 0; font-size: 1.0625rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-speaker-pop-x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: none; border-radius: 50%; background: var(--overlay-3, var(--surface-muted)); color: var(--text-secondary); font: inherit; font-size: 1.1rem; line-height: 1; cursor: pointer; }
+.note-speaker-pop-x:hover { color: var(--text); }
+.note-speaker-pop-hint { padding: 0 2px 4px; font-size: 0.8125rem; line-height: 1.35; color: var(--text-tertiary, var(--text-secondary)); }
+.note-speaker-pop-section { margin: 12px 0 6px; padding: 0 4px; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--text-subtle, var(--text-tertiary)); }
+.note-speaker-group { display: flex; flex-direction: column; margin-top: 8px; border-radius: 12px; background: var(--overlay-2, var(--surface-muted)); overflow: hidden; }
+.note-speaker-pop-section + .note-speaker-group, .note-speaker-pop-section + .note-speaker-search { margin-top: 0; }
+.note-speaker-opts > .note-speaker-group:first-child { margin-top: 0; }
+.note-speaker-group > * + * { border-top: 1px solid var(--border); }
+.note-speaker-person { align-items: center; padding: 10px 12px; border-radius: 0; background: transparent; }
+.note-speaker-person:hover { background: var(--overlay-1, var(--surface-hover)); }
+.note-speaker-person .meeting-attendee-suggest-copy { flex: 1 1 auto; min-width: 0; }
 .note-speaker-person .meeting-attendee-suggest-meta { white-space: normal; }
-.note-speaker-person.is-open .meeting-attendee-suggest-name { color: var(--text-secondary); }
+.note-speaker-quote { display: block; margin-top: 2px; font-size: 0.8125rem; line-height: 1.35; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-speaker-guess { display: block; margin-top: 2px; font-size: 0.8125rem; color: var(--accent); }
+.note-speaker-person.is-open .meeting-attendee-suggest-name { color: var(--text); }
 .note-speaker-person.is-active { background: var(--accent-subtle); }
 .note-speaker-person.is-quiet .meeting-attendee-suggest-name { color: var(--text-secondary); font-weight: 500; }
-.note-speaker-trail { flex: 0 0 auto; color: var(--text-tertiary, var(--text-secondary)); font-size: 0.95rem; }
-.note-speaker-person.is-guess .note-speaker-trail { min-height: var(--ui-chip-h, 28px); display: inline-flex; align-items: center; padding: 0 12px; border-radius: 999px; background: var(--accent); color: var(--on-accent); font-size: 0.8125rem; font-weight: 600; }
+.note-speaker-trail { flex: 0 0 auto; color: var(--text-tertiary, var(--text-secondary)); font-size: 1.1rem; }
+.note-speaker-trail.is-action, .note-speaker-person.is-guess .note-speaker-trail { min-height: 28px; display: inline-flex; align-items: center; padding: 0 12px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font-size: 0.8125rem; font-weight: 600; cursor: pointer; }
 .note-speaker-icon { display: inline-flex; align-items: center; justify-content: center; background: var(--ui-btn-bg); color: var(--text-secondary); font-size: 1rem !important; }
-.note-speaker-samples { margin: 0 4px 8px; padding: 8px 10px; list-style: none; border-radius: var(--ui-r, 10px); background: var(--surface); font-size: 0.8125rem; line-height: 1.4; color: var(--text); }
-.note-speaker-samples li + li { margin-top: 4px; }
-.note-speaker-t { margin-right: 6px; font-variant-numeric: tabular-nums; color: var(--text-tertiary, var(--text-secondary)); }
-.note-speaker-search { padding: 0 4px 6px; }
-.note-speaker-search input.field-input { width: 100%; }
-.note-speaker-confirm { display: grid; gap: 10px; padding: 10px; font-size: 0.875rem; line-height: 1.4; }
+.note-speaker-samples { margin-top: 0; }
+.note-speaker-sample { display: flex; gap: 10px; align-items: baseline; padding: 9px 12px; font-size: 0.875rem; line-height: 1.45; color: var(--text); }
+.note-speaker-t { flex: none; min-width: 38px; padding: 0; border: none; background: none; font: inherit; font-size: 0.8125rem; font-variant-numeric: tabular-nums; text-align: left; color: var(--accent); cursor: pointer; }
+.note-speaker-t:hover { text-decoration: underline; }
+.note-speaker-search { margin-bottom: 8px; }
+.note-speaker-search input.field-input { width: 100%; box-sizing: border-box; }
+.note-speaker-confirm { display: grid; gap: 10px; padding: 12px; font-size: 0.875rem; line-height: 1.4; }
 .note-speaker-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 @media (max-width: 959px) {
   .note-speaker-search input.field-input { font-size: 16px; }
@@ -9315,11 +9325,14 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   color: var(--accent);
 }
 
-/* «Текст / Диалог» на листе «Транскрипции» */
-.note-transcript-view-switch { display: inline-flex; gap: 0; margin-left: auto; }
-.note-transcript-view-switch .note-sheet-chip { border-radius: 0; }
-.note-transcript-view-switch .note-sheet-chip:first-child { border-radius: 999px 0 0 999px; }
-.note-transcript-view-switch .note-sheet-chip:last-child { border-radius: 0 999px 999px 0; }
+/* Строка над текстом транскрипта: «Кто есть кто» и «Текст / Диалог» (сегменты как «Задача / Встреча») */
+.note-transcript-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; user-select: none; }
+.note-transcript-speakers { display: inline-flex; align-items: center; min-height: 32px; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 0.8125rem; font-weight: 600; cursor: pointer; }
+.note-transcript-speakers:hover { color: var(--text); }
+.note-transcript-speakers.is-todo { border-color: var(--accent); color: var(--accent); }
+.note-transcript-bar .note-transcript-view-switch { flex: 0 0 auto; margin: 0 0 0 auto; }
+.note-transcript-bar .event-sheet-kind-btn { flex: 0 0 auto; min-height: 28px; padding: 0 14px; font-size: 0.8125rem; color: var(--text-subtle, var(--text-tertiary)); }
+.note-transcript-bar .event-sheet-kind-btn.is-active { color: var(--text); background: var(--seg-active, var(--surface)); }
 
 /* имя спикера в тексте транскрипта — нажимается */
 .is-transcript-sheet .ProseMirror p > strong:first-child {
