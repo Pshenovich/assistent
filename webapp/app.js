@@ -13621,6 +13621,10 @@
       if (noteEditorHasRangeSelection() || noteCheckboxJustToggled()) return;
       var scrollEl = getNoteEditorScrollEl();
       if (!scrollEl) return;
+      // Курсор не в заметке (окно задачи, меню, чат): сервер переписал таблицу задач встречи —
+      // курсор редактора стоит в начале документа, и прокрутка к нему уносила заметку вверх.
+      var focused = document.activeElement;
+      if (!focused || (focused.id !== "note-editor-title-input" && !scrollEl.contains(focused))) return;
       syncNoteEditorEndPad();
       var editor = getActiveNoteRichEditor();
       if (editor && typeof editor.scrollCaretIntoView === "function") {
