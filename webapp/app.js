@@ -8512,14 +8512,22 @@
       btn.classList.add("is-spinning");
     }
     try {
-      var res = await fetch("/news/", {
-        method: "GET",
-        credentials: "same-origin",
-        cache: "no-store",
-        headers: { Accept: "text/html" },
-      });
-      if (!res.ok) throw new Error("Не удалось загрузить дайджест рынка (" + res.status + ")");
-      var html = await res.text();
+      // свой выпуск организации (если она настроила «Рынок»), иначе — общий /news/
+      var own = null;
+      try {
+        own = await apiFetch("/digest/market/page", { method: "GET" });
+      } catch (_) {}
+      var html = own && own.personal && own.html ? own.html : "";
+      if (!html) {
+        var res = await fetch("/news/", {
+          method: "GET",
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: { Accept: "text/html" },
+        });
+        if (!res.ok) throw new Error("Не удалось загрузить дайджест рынка (" + res.status + ")");
+        html = await res.text();
+      }
       var doc = new DOMParser().parseFromString(html, "text/html");
       var main = doc.querySelector("main");
       if (window.LeoMarket && main) {

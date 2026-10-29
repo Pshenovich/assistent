@@ -28,6 +28,13 @@ async def market_digest_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
     from assistant.services import market_settings
     from assistant.stores import user_prefs
 
+    from assistant.services import market_news
+
+    try:  # свои выпуски организаций — по одной, без параллели (сервер маленький)
+        for oid in await asyncio.to_thread(market_news.due_orgs):
+            await asyncio.to_thread(market_news.build_for_org, oid)
+    except Exception as e:
+        print(f"[market_news] build err={e!r}")
     try:
         uids = await asyncio.to_thread(market_settings.telegram_user_ids)
     except Exception as e:
@@ -35,11 +42,13 @@ async def market_digest_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if not uids:
         return
-    html = await asyncio.to_thread(_issue_html)
+    shared = await asyncio.to_thread(_issue_html)
     for uid in uids:
         if not is_user_allowed(uid, None):
             continue
         try:
+            own = await asyncio.to_thread(market_news.page_for_user, uid)
+            html = own["html"] if own else shared
             text = await asyncio.to_thread(market_settings.due_message, uid, issue_html=html)
         except Exception as e:
             print(f"[market_tg] uid={uid} err={e!r}")

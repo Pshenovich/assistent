@@ -1,0 +1,226 @@
+{
+  "product_context": {
+    "company": "Обучат",
+    "description": "AI-платформа для анализа звонков и переписок с клиентами, поиска потерь в продажах и подсказок менеджерам и руководителям.",
+    "strategic_focus": [
+      "conversation intelligence",
+      "speech analytics",
+      "AI sales agents",
+      "CRM automation",
+      "contact center AI",
+      "quality assurance",
+      "agent assist",
+      "customer communications"
+    ]
+  },
+  "scoring_keywords": {
+    "high": [
+      "conversation intelligence",
+      "speech analytics",
+      "agent assist",
+      "sales AI",
+      "AI agents",
+      "contact center AI",
+      "CRM",
+      "Gong",
+      "Chorus",
+      "ZoomInfo",
+      "Clari",
+      "Salesloft",
+      "Outreach",
+      "CallMiner",
+      "Observe.AI",
+      "Cresta",
+      "Genesys",
+      "NICE",
+      "Five9",
+      "Salesforce Agentforce",
+      "HubSpot",
+      "Microsoft Dynamics",
+      "Bitrix24",
+      "amoCRM",
+      "речевая аналитика",
+      "ИИ-агент",
+      "ИИ агент",
+      "контакт-центр",
+      "продажи",
+      "возражения",
+      "качество звонков",
+      "CRM"
+    ],
+    "medium": [
+      "customer service",
+      "CX",
+      "CCaaS",
+      "voice AI",
+      "omnichannel",
+      "sales enablement",
+      "lead scoring",
+      "forecasting",
+      "coaching",
+      "chatbot",
+      "бот",
+      "мессенджер",
+      "телефония",
+      "152-ФЗ"
+    ]
+  },
+  "rss_sources": [
+    {
+      "name": "TechCrunch AI",
+      "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
+      "language": "en",
+      "category": "global_ai"
+    },
+    {
+      "name": "VentureBeat AI",
+      "url": "https://venturebeat.com/category/ai/feed",
+      "language": "en",
+      "category": "global_ai"
+    },
+    {
+      "name": "SaaStr",
+      "url": "https://www.saastr.com/feed/",
+      "language": "en",
+      "category": "saas_strategy"
+    },
+    {
+      "name": "CX Today",
+      "url": "https://www.cxtoday.com/feed/",
+      "language": "en",
+      "category": "contact_center"
+    },
+    {
+      "name": "No Jitter",
+      "url": "https://www.nojitter.com/rss.xml",
+      "language": "en",
+      "category": "contact_center"
+    },
+    {
+      "name": "Salesforce Blog",
+      "url": "https://www.salesforce.com/blog/feed/",
+      "language": "en",
+      "category": "crm_ai"
+    },
+    {
+      "name": "HubSpot Sales Blog",
+      "url": "https://blog.hubspot.com/sales/rss.xml",
+      "language": "en",
+      "category": "sales"
+    },
+    {
+      "name": "Microsoft Dynamics 365 Blog",
+      "url": "https://cloudblogs.microsoft.com/dynamics365/feed/",
+      "language": "en",
+      "category": "crm_ai"
+    },
+    {
+      "name": "Zoom Blog",
+      "url": "https://www.zoom.com/en/blog/feed/",
+      "language": "en",
+      "category": "contact_center"
+    },
+    {
+      "name": "CNews",
+      "url": "https://www.cnews.ru/inc/rss/news.xml",
+      "language": "ru",
+      "category": "russian_market"
+    },
+    {
+      "name": "Habr AI",
+      "url": "https://habr.com/ru/rss/hubs/artificial_intelligence/articles/?fl=ru",
+      "language": "ru",
+      "category": "russian_ai"
+    },
+    {
+      "name": "VC.ru",
+      "url": "https://vc.ru/rss",
+      "language": "ru",
+      "category": "russian_ai"
+    }
+  ],
+  "google_news_queries": [
+    {
+      "query": "conversation intelligence OR speech analytics OR sales AI",
+      "language": "en",
+      "category": "conversation_intelligence"
+    },
+    {
+      "query": "Gong OR Chorus.ai OR Clari OR Salesloft OR Outreach AI sales",
+      "language": "en",
+      "category": "competitors"
+    },
+    {
+      "query": "contact center AI OR agent assist OR CCaaS AI",
+      "language": "en",
+      "category": "contact_center"
+    },
+    {
+      "query": "Salesforce Agentforce OR HubSpot AI OR Microsoft Dynamics AI CRM",
+      "language": "en",
+      "category": "crm_ai"
+    },
+    {
+      "query": "речевая аналитика OR анализ звонков OR ИИ продажи",
+      "language": "ru",
+      "category": "russian_speech_analytics"
+    },
+    {
+      "query": "Bitrix24 AI OR Битрикс24 ИИ OR amoCRM AI OR amoCRM ИИ",
+      "language": "ru",
+      "category": "russian_crm"
+    },
+    {
+      "query": "контакт центр ИИ OR голосовой бот OR ИИ агент клиентский сервис",
+      "language": "ru",
+      "category": "russian_contact_center"
+    },
+    {
+      "query": "TAdviser CRM ИИ речевая аналитика контакт центр",
+      "language": "ru",
+      "category": "russian_market"
+    }
+  ],
+  "watchlist_urls": [
+    {
+      "name": "Gong",
+      "url": "https://www.gong.io/blog/",
+      "category": "competitors"
+    },
+    {
+      "name": "Clari",
+      "url": "https://www.clari.com/blog/",
+      "category": "competitors"
+    },
+    {
+      "name": "CallMiner",
+      "url": "https://callminer.com/blog",
+      "category": "competitors"
+    },
+    {
+      "name": "Observe.AI",
+      "url": "https://www.observe.ai/blog",
+      "category": "competitors"
+    },
+    {
+      "name": "Cresta",
+      "url": "https://cresta.com/blog/",
+      "category": "competitors"
+    },
+    {
+      "name": "Rechka",
+      "url": "https://rechka.ai/blog/",
+      "category": "russian_competitors"
+    },
+    {
+      "name": "Bitrix24",
+      "url": "https://www.bitrix24.ru/about/blogs/",
+      "category": "russian_crm"
+    },
+    {
+      "name": "amoCRM",
+      "url": "https://www.amocrm.ru/blog/",
+      "category": "russian_crm"
+    }
+  ]
+}

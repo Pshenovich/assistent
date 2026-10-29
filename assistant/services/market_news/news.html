@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>$title</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-soft: #1f2937;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --border: rgba(148, 163, 184, 0.22);
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f8fafc;
+        --panel: #ffffff;
+        --panel-soft: #f1f5f9;
+        --text: #0f172a;
+        --muted: #475569;
+        --accent: #0369a1;
+        --border: rgba(15, 23, 42, 0.12);
+      }
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 40px 0 64px;
+    }
+    header {
+      margin-bottom: 28px;
+    }
+    .eyebrow {
+      color: var(--accent);
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-size: 13px;
+    }
+    h1 {
+      margin: 8px 0 10px;
+      font-size: clamp(32px, 5vw, 56px);
+      line-height: 1.05;
+    }
+    h2 {
+      margin: 0 0 16px;
+      font-size: 26px;
+    }
+    h3 {
+      margin: 8px 0;
+      font-size: 19px;
+      line-height: 1.25;
+    }
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    .lead {
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 18px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+      gap: 22px;
+      align-items: start;
+    }
+    .section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 24px;
+      margin-bottom: 22px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.12);
+    }
+    .card {
+      padding: 18px 0;
+      border-top: 1px solid var(--border);
+    }
+    .card:first-of-type {
+      border-top: 0;
+      padding-top: 0;
+    }
+    .meta,
+    .why,
+    .footer {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .why {
+      margin-bottom: 0;
+    }
+    ul {
+      padding-left: 22px;
+      margin: 0;
+    }
+    li + li {
+      margin-top: 10px;
+    }
+    .pill {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--panel-soft);
+      color: var(--muted);
+      font-size: 13px;
+      margin: 3px 6px 3px 0;
+    }
+    .strategy-list {
+      display: grid;
+      gap: 12px;
+    }
+    .strategy-item {
+      position: relative;
+    }
+    .strategy-trigger {
+      width: 100%;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      justify-content: space-between;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px 16px;
+      background: var(--panel-soft);
+      color: var(--text);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .strategy-trigger:hover,
+    .strategy-trigger[aria-expanded="true"] {
+      border-color: var(--accent);
+    }
+    .strategy-hint {
+      flex: 0 0 auto;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .strategy-tooltip {
+      position: absolute;
+      z-index: 10;
+      left: 16px;
+      right: 16px;
+      top: calc(100% + 8px);
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--panel);
+      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.28);
+    }
+    .strategy-tooltip p {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .strategy-tooltip ul {
+      list-style: none;
+      padding: 0;
+    }
+    .strategy-tooltip li + li {
+      margin-top: 12px;
+    }
+    .strategy-tooltip span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+    @media (max-width: 860px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      .strategy-tooltip {
+        position: static;
+        margin-top: 8px;
+      }
+      .strategy-trigger {
+        display: block;
+      }
+      .strategy-hint {
+        display: block;
+        margin-top: 8px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">$org_name · ежедневный отраслевой дайджест</div>
+      <h1>$title</h1>
+      <p class="lead">$lead</p>
+      <p class="meta">Обновлено: $generated_at · релевантных материалов: $article_count</p>
+    </header>
+
+    <div class="grid">
+      <section>
+        <div class="section">
+          <h2>Главное для стратегии</h2>
+          <div class="strategy-list">$summary_items</div>
+        </div>
+
+        <div class="section">
+          <h2>Топ материалов дня</h2>
+          $top_articles
+        </div>
+
+        <div class="section">
+          <h2>Конкуренты и рынок</h2>
+          $competitor_articles
+        </div>
+      </section>
+
+      <aside>
+        <div class="section">
+          <h2>Идеи для $org_name</h2>
+          <ul>$product_ideas</ul>
+        </div>
+
+        <div class="section">
+          <h2>Сигналы к проверке</h2>
+          <ul>$signals</ul>
+        </div>
+
+        <div class="section">
+          <h2>Watchlist</h2>
+          <p>$watchlist</p>
+        </div>
+      </aside>
+    </div>
+
+    <footer class="footer">
+      <p>Проверенные источники: $checked_sources</p>
+      <p>Архив выпусков хранится в <code>/news/archive/YYYY-MM-DD.html</code>.</p>
+    </footer>
+  </main>
+  <script>
+    const triggers = document.querySelectorAll(".strategy-trigger");
+
+    function closeAll(except) {
+      triggers.forEach((trigger) => {
+        if (trigger === except) return;
+        trigger.setAttribute("aria-expanded", "false");
+        const tooltip = document.getElementById(trigger.getAttribute("aria-controls"));
+        if (tooltip) tooltip.hidden = true;
+      });
+    }
+
+    triggers.forEach((trigger) => {
+      trigger.addEventListener("click", () => {
+        const tooltip = document.getElementById(trigger.getAttribute("aria-controls"));
+        const shouldOpen = trigger.getAttribute("aria-expanded") !== "true";
+        closeAll(trigger);
+        trigger.setAttribute("aria-expanded", String(shouldOpen));
+        if (tooltip) tooltip.hidden = !shouldOpen;
+      });
+    });
+
+    document.addEventListener("click", (event) => {
+      if (!event.target.closest(".strategy-item")) closeAll();
+    });
+  </script>
+</body>
+</html>

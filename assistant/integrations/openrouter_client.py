@@ -121,6 +121,7 @@ _BACKGROUND_OPERATIONS = frozenset(
         "mail_insights",
         "meeting_brief",
         "meeting_brief_related",
+        "market_digest",
     }
 )
 _BG_SEM: threading.BoundedSemaphore | None = None

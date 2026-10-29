@@ -6951,6 +6951,52 @@ async def miniapp_orgs_market_patch(
     return await _org_call(_market_settings_payload, uid, org_id)
 
 
+_MARKET_BUILDING: dict[int, float] = {}
+
+
+@miniapp_router.post("/orgs/{org_id}/market/build")
+async def miniapp_orgs_market_build(org_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Собрать выпуск «Рынок» организации сейчас (админ). Не чаще раза в 10 минут — один вызов модели."""
+    import threading
+    import time as _time
+
+    from assistant.services import market_news, market_settings
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    if not await run_in_threadpool(orgs_store.can, uid, org_id, "edit_digest"):
+        raise HTTPException(status_code=400, detail="Собирать выпуск может админ или владелец")
+    if not market_news.is_personal(await run_in_threadpool(market_settings.get, org_id)):
+        raise HTTPException(status_code=400, detail="Укажите конкурентов или темы — по ним Лео отбирает новости")
+    last = _MARKET_BUILDING.get(org_id, 0.0)
+    if _time.time() - last < 600:
+        raise HTTPException(status_code=400, detail="Выпуск уже собирается или собран недавно — попробуйте через несколько минут")
+    _MARKET_BUILDING[org_id] = _time.time()
+
+    def _run() -> None:
+        try:
+            market_news.build_for_org(org_id)
+        except Exception as e:
+            print(f"[market_news] manual build org={org_id} err={e!r}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"ok": True, "started": True}
+
+
+@miniapp_router.get("/digest/market/page")
+async def miniapp_digest_market_page(
+    date: str = Query(""), principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """Свой выпуск «Рынок» организации пользователя (HTML). personal=false — показывать общий /news/."""
+    from assistant.services import market_news
+
+    day = date.strip()[:10] or None
+    page = await run_in_threadpool(market_news.page_for_user, int(principal.telegram_user_id), day)
+    if not page:
+        return {"ok": True, "personal": False}
+    return {"ok": True, "personal": True, "date": page["day"], "html": page["html"], "org_name": page["org_name"]}
+
+
 @miniapp_router.post("/orgs/{org_id}/current")
 async def miniapp_orgs_set_current(
     org_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)

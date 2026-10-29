@@ -199,9 +199,22 @@
     var body = current.body;
     if (!body) return;
     try {
-      var res = await fetch("/news/archive/" + date + ".html", { credentials: "same-origin", cache: "no-store" });
-      if (!res.ok) throw new Error("Выпуска за " + fmt(date) + " нет");
-      var doc = new DOMParser().parseFromString(await res.text(), "text/html");
+      var text = "";
+      try {
+        var own = await app().apiFetch("/digest/market/page?date=" + encodeURIComponent(date), { method: "GET" });
+        if (own && own.personal) {
+          if (!own.html) throw new Error("Выпуска за " + fmt(date) + " нет");
+          text = own.html;
+        }
+      } catch (e2) {
+        if (e2 && /Выпуска за/.test(e2.message || "")) throw e2;
+      }
+      if (!text) {
+        var res = await fetch("/news/archive/" + date + ".html", { credentials: "same-origin", cache: "no-store" });
+        if (!res.ok) throw new Error("Выпуска за " + fmt(date) + " нет");
+        text = await res.text();
+      }
+      var doc = new DOMParser().parseFromString(text, "text/html");
       var main = doc.querySelector("main");
       if (!main) throw new Error("Выпуск пустой");
       render(main, body, { archive: true });

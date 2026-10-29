@@ -243,7 +243,7 @@
     if (!m || !m.settings) return "";
     var st = m.settings;
     var html = '<div class="pf-group"><p class="pf-group-title">Выпуск «Рынок»' + saveMark("market") + "</p>";
-    html += '<p class="pf-hint">По этим настройкам Лео пишет в «Дайджест → Рынок» блок «Что это значит для вас». Сам выпуск под вашу компанию (свои источники и отбор новостей) — в следующем обновлении, пока он общий.</p>';
+    html += '<p class="pf-hint">Укажите конкурентов или темы — и каждое утро Лео будет собирать в «Дайджест → Рынок» выпуск для вашей компании: свежие новости по ним, выводы и идеи. Без них выпуск общий.</p>';
     html += '<div class="pf-list">';
     if (m.can_edit) {
       html +=
@@ -252,6 +252,11 @@
         '<label class="pf-field"><span class="pf-field-label">Темы</span><input type="text" class="pf-input" id="org-mkt-topics" value="' + esc((st.topics || []).join(", ")) + '" placeholder="Через запятую: речевая аналитика, ИИ в продажах" /></label>' +
         '<label class="pf-field"><span class="pf-field-label">Свои источники</span><textarea class="pf-input org-mkt-area" id="org-mkt-sources" rows="2" placeholder="Ссылки на RSS, по одной в строке">' + esc((st.sources || []).join("\n")) + "</textarea></label>" +
         '<label class="pf-field"><span class="pf-field-label">Время выпуска</span><input type="time" class="pf-input" id="org-mkt-time" value="' + esc(st.time) + '" /></label>';
+      if ((st.competitors || []).length || (st.topics || []).length) {
+        html += '<button type="button" class="pf-row" data-org="mkt-build"><span class="pf-row-body"><span class="pf-row-text">' +
+          '<span class="pf-row-title">Собрать выпуск сейчас</span><span class="pf-row-sub">Займёт пару минут — потом откройте «Дайджест → Рынок»</span>' +
+          "</span></span></button>";
+      }
     } else {
       var rows = [["Конкуренты", (st.competitors || []).join(", ")], ["Темы", (st.topics || []).join(", ")], ["Время выпуска", st.time]];
       rows.forEach(function (r) {
@@ -509,6 +514,20 @@
         await api("", json("POST", { name: name.trim(), domain: domEl ? domEl.value : "" }));
         toast("Организация создана");
         await reload();
+      });
+    }
+    if (kind === "mkt-build") {
+      return act(async function () {
+        setSaved("market", "busy", "Собираю выпуск…");
+        try {
+          await api("/" + id + "/market/build", { method: "POST" });
+          setSaved("market", "ok", "Собираю — через пару минут выпуск будет в «Рынке»");
+          setTimeout(function () {
+            if (app().reloadMarket) app().reloadMarket();
+          }, 120000);
+        } catch (e) {
+          setSaved("market", "err", errText(e));
+        }
       });
     }
     if (kind === "show-create") {
