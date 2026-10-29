@@ -516,9 +516,12 @@ def insight_cards(uid: int, *, now: Optional[datetime] = None, task_titles: Opti
         src = f"из «{title}»"
         meta = note.get("meta") if isinstance(note.get("meta"), dict) else {}
         has_summary_tasks = kind_note == "transcription" and bool(meta.get("tasks"))
+        tasks_skipped = kind_note == "transcription" and isinstance(meta.get("tasks_skip"), dict)
         for it in items:
             if has_summary_tasks and it.get("kind") == "agreement":
                 continue  # задачи из саммари уже предложены отдельной карточкой
+            if tasks_skipped and it.get("kind") in ("agreement", "followup"):
+                continue  # «Не разбирать»: задачи встречи ведут в другом трекере
             card = card_for(
                 it, src=src, note={"id": nid, "kind": kind_note, "title": title}, today=today,
                 task_titles=task_titles or [], handled_titles=handled,

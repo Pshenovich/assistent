@@ -20,6 +20,10 @@ from typing import Any, Optional
 EXCLUDED = ("not_task", "duplicate", "doubtful")
 # Ещё ждут решения: в счётчике «Разобрано N из M» не считаются разобранными.
 UNDECIDED = ("open", "declined")
+# «Не разбирать» у всей встречи (задачи ведут в другом трекере): неразобранные пункты — «Не разбираем»,
+# в Фокус и в счётчик не идут; взять пункт можно и так.
+SKIPPED = "skipped"
+CLAIMABLE = UNDECIDED + ("doubtful", SKIPPED)
 
 LABELS = {
     "open": "Не разобрано",
@@ -34,6 +38,7 @@ LABELS = {
     "not_task": "Не задача",
     "duplicate": "Дубль",
     "doubtful": "Возможно, не задача",
+    "skipped": "Не разбираем",
 }
 
 _DOUBT_KIND = {"decision": "это решение", "question": "это вопрос", "not_task": "не похоже на задачу", "duplicate": "похоже на дубль"}
@@ -295,15 +300,27 @@ def rows(note: dict[str, Any], posted: Optional[list[dict[str, Any]]] = None) ->
     linked = _task_rows_for(tasks, posted)
     parts = participants(note) if tasks and note.get("id") is not None else []
     items = []
+    skip = skipped_info(meta)
     for i, t in enumerate(tasks):
         s = status_of(t, linked.get(i))
+        if skip and s["code"] in UNDECIDED:
+            s.update(code=SKIPPED, label=LABELS[SKIPPED], note="")
         dec = decider(note, t, parts) if parts else ""
         if s["code"] == "declined":  # исполнитель отказался — пункт снова у владельца записи
             dec = str(note.get("owner_user_id") or note.get("user_id") or dec)
         items.append({"id": str(t.get("id") or ""), "task": str(t.get("task") or "").strip(), "decider": dec, **s})
     live = [x for x in items if x["code"] not in EXCLUDED]
     decided = sum(1 for x in live if x["code"] not in UNDECIDED)
-    return {"items": items, "decided": decided, "total": len(live)}
+    out = {"items": items, "decided": decided, "total": len(live)}
+    if skip:
+        out["skipped"] = skip
+    return out
+
+
+def skipped_info(meta: Any) -> Optional[dict[str, Any]]:
+    """{by, at}, если задачи встречи решили не разбирать."""
+    v = meta.get("tasks_skip") if isinstance(meta, dict) else None
+    return dict(v) if isinstance(v, dict) else None
 
 
 # ---------------------------------------------------------------- таблица в тексте саммари
@@ -448,7 +465,7 @@ def claim(viewer_uid: Any, note_id: int, item_id: str, create: Any, *, by: str) 
     Проверка и запись связи — под одним замком: второй одновременный «Беру» получит «Уже взял»."""
     with _CLAIM_LOCK:
         s = state_for(viewer_uid, note_id, item_id)
-        if s["code"] not in UNDECIDED and s["code"] != "doubtful":
+        if s["code"] not in CLAIMABLE:
             raise Taken(s)
         task = create()
         if not task or task.get("id") is None:
@@ -463,7 +480,7 @@ def claim_tracker(viewer_uid: Any, note_id: int, item_id: str, create: Any, *, b
     Как claim: пункт должен быть ничей; после — у пункта ссылка, статус «В трекере»."""
     with _CLAIM_LOCK:
         s = state_for(viewer_uid, note_id, item_id)
-        if s["code"] not in UNDECIDED and s["code"] != "doubtful":
+        if s["code"] not in CLAIMABLE:
             raise Taken(s)
         result, link = create()
         if link and link.get("url"):
@@ -548,6 +565,18 @@ def apply(viewer_uid: Any, note_id: int, item_id: str, op: str, *, by: str, **kw
     meta["tasks"] = tasks
     _save(owner, note, meta)
     return state_for(viewer_uid, note_id, item_id)
+
+
+def set_skip(viewer_uid: Any, note_id: int, skip: bool, *, by: str) -> dict[str, Any]:
+    """«Не разбирать» / «Разбирать» для всех задач встречи — для всех участников."""
+    owner, note = _owner_note(viewer_uid, note_id)
+    meta = dict(note.get("meta") or {})
+    if skip:
+        meta["tasks_skip"] = {"by": by, "at": datetime.now().astimezone().isoformat(timespec="seconds")}
+    else:
+        meta.pop("tasks_skip", None)
+    _save(owner, note, meta)
+    return rows({**note, "meta": meta})
 
 
 def not_me(viewer_uid: Any, note_id: int, item_id: str) -> None:

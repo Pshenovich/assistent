@@ -12386,6 +12386,29 @@ async def miniapp_note_meeting_tasks(
     return {"ok": True, **(await run_in_threadpool(_run))}
 
 
+class _MeetingTasksSkipBody(BaseModel):
+    skip: bool = True
+
+
+@miniapp_router.post("/notes/local/{note_id}/meeting-tasks-skip")
+async def miniapp_note_meeting_tasks_skip(
+    note_id: int,
+    body: _MeetingTasksSkipBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """«Не разбирать» задачи встречи (ведут в другом трекере) / «Разбирать» снова — для всех участников."""
+    from assistant.services import meeting_tasks
+
+    uid = int(principal.telegram_user_id)
+    try:
+        state = await run_in_threadpool(
+            partial(meeting_tasks.set_skip, uid, note_id, body.skip, by=_principal_display_name(principal))
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {"ok": True, **state}
+
+
 @miniapp_router.post("/notes/local/{note_id}/meeting-tasks/{item_id}")
 async def miniapp_note_meeting_task_op(
     note_id: int,

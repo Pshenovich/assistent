@@ -22654,10 +22654,28 @@
     });
   }
 
+  // «Не разбирать» над таблицей: задачи встречи ведут в другом трекере — Фокус их не предлагает. Для всех участников.
+  function onMeetingTasksSkip(skip) {
+    var nid = meetingTasksBound.noteId;
+    if (!nid) return;
+    apiFetch("/notes/local/" + encodeURIComponent(nid) + "/meeting-tasks-skip", {
+      method: "POST",
+      body: JSON.stringify({ skip: !!skip }),
+    })
+      .then(function () {
+        showNoteToast(skip ? "Задачи встречи не разбираем — в Фокусе их не будет" : "Задачи встречи снова в разборе");
+        return meetingTasksRefresh(); // Фокус перечитается сам: сервер шлёт focus.changed участникам
+      })
+      .catch(function (e) {
+        showNoteToast((e && e.message) || "Не получилось");
+      });
+  }
+
   function onMeetingTaskClick(d) {
     var st = (d && d.state) || {};
     if (!st.id || !d.anchor) return;
-    var open = st.code === "open" || st.code === "declined";
+    // «Не разбираем» (вся встреча) — пункт всё равно можно взять, поручить или закрыть
+    var open = st.code === "open" || st.code === "declined" || st.code === "skipped";
     if (d.col === 3 && open) {
       promptDialog("Срок для «" + st.task + "»", st.due || "").then(function (v) {
         if (v != null) meetingTaskOp(st.id, { op: "update", fields: { deadline: v } });
@@ -29328,6 +29346,7 @@
             onTaskChipRemoved: deleteTaskFromChip,
             onFocusMarkClick: onFocusMarkClick,
             onMeetingTaskClick: onMeetingTaskClick,
+            onMeetingTasksSkip: onMeetingTasksSkip,
             onSearchNoteRefs: searchNoteRefItems,
             onNoteRefChipClick: openNoteRefFromChip,
             onEntityRefChipClick: openEntityRefFromChip,

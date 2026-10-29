@@ -190,6 +190,27 @@ class MeetingTasksTests(unittest.TestCase):
         self.assertIsNone(self._card("2"))
         self.assertIn("iaaaaaaaaa1", [i["item"] for i in self._card("1")["items"]])
 
+    def test_skip_meeting_tasks(self) -> None:
+        # «Не разбирать»: задачи ведут в Битриксе — в Фокусе карточки нет, статусы «Не разбираем»
+        mt.claim(1, self.nid, "iaaaaaaaaa3", lambda: self._new_task(title="Демо"), by="Вова")
+        state = mt.set_skip(1, self.nid, True, by="Вова")
+        items = {x["id"]: x for x in state["items"]}
+        self.assertEqual(state["skipped"]["by"], "Вова")
+        self.assertEqual(items["iaaaaaaaaa1"]["code"], "skipped")
+        self.assertEqual(items["iaaaaaaaaa1"]["label"], "Не разбираем")
+        self.assertEqual(items["iaaaaaaaaa3"]["code"], "taken")  # разобранное — как было
+        self.assertIsNone(self._card("1"))
+        self.assertIn("<p>Не разбираем</p>", notes_store.get_note(1, self.nid)["body"])
+        # взять один пункт можно и так
+        mt.claim(1, self.nid, "iaaaaaaaaa2", lambda: self._new_task(title="Юр. тексты"), by="Вова")
+        _, items = self._items()
+        self.assertEqual(items["iaaaaaaaaa2"]["code"], "taken")
+        mt.set_skip(1, self.nid, False, by="Вова")
+        state, items = self._items()
+        self.assertNotIn("skipped", state)
+        self.assertEqual(items["iaaaaaaaaa1"]["code"], "open")
+        self.assertEqual([i["item"] for i in self._card("1")["items"]], ["iaaaaaaaaa1"])
+
     def test_declined_returns_to_owner(self) -> None:
         note_members.upsert_profile(user_id=2, username="a", first_name="Анна", last_name="К", photo_url=None)
         note_members.add_member(1, self.nid, 2)

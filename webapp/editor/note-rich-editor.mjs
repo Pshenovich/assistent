@@ -4222,21 +4222,44 @@ function createMeetingTasksExtension(ctx) {
       return el;
     };
   }
-  function counterWidget(decided, total) {
+  // skipped — {by, at}: задачи встречи решили не разбирать (ведут в другом трекере).
+  function counterWidget(decided, total, open, skipped) {
     return function () {
       var el = document.createElement("div");
-      el.className = "mt-summary";
+      el.className = "mt-summary" + (skipped ? " is-skipped" : "");
       el.setAttribute("contenteditable", "false");
-      var bar = document.createElement("span");
-      bar.className = "mt-summary-bar";
-      var fill = document.createElement("span");
-      fill.style.width = (total ? Math.round((100 * decided) / total) : 100) + "%";
-      bar.appendChild(fill);
       var txt = document.createElement("span");
       txt.className = "mt-summary-text";
-      txt.textContent = total && decided >= total ? "Всё разобрано · " + total : "Разобрано " + decided + " из " + total;
-      el.appendChild(bar);
+      if (skipped) {
+        txt.textContent = "Не разбираем" + (skipped.by ? " · решил " + skipped.by : "") + " — Лео не предлагает эти задачи";
+      } else {
+        var bar = document.createElement("span");
+        bar.className = "mt-summary-bar";
+        var fill = document.createElement("span");
+        fill.style.width = (total ? Math.round((100 * decided) / total) : 100) + "%";
+        bar.appendChild(fill);
+        el.appendChild(bar);
+        txt.textContent = total && decided >= total ? "Всё разобрано · " + total : "Разобрано " + decided + " из " + total;
+      }
       el.appendChild(txt);
+      if (typeof ctx.onMeetingTasksSkip === "function" && (skipped || open)) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "mt-summary-skip";
+        btn.textContent = skipped ? "Разбирать" : "Не разбирать";
+        btn.title = skipped
+          ? "Снова предлагать задачи встречи в Фокусе"
+          : "Задачи ведут в другом трекере: не предлагать их в Фокусе и не ждать статусов";
+        btn.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+        });
+        btn.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          ctx.onMeetingTasksSkip(!skipped);
+        });
+        el.appendChild(btn);
+      }
       return el;
     };
   }
@@ -4292,6 +4315,7 @@ function createMeetingTasksExtension(ctx) {
                 var decided = 0;
                 var total = 0;
                 var excluded = 0;
+                var undecided = 0;
                 rows.forEach(function (r) {
                   if (!r.item) {
                     if (r.head) decos.push(Decoration.node(r.pos, r.pos + r.node.nodeSize, { class: "mt-head" }));
@@ -4303,6 +4327,7 @@ function createMeetingTasksExtension(ctx) {
                   else {
                     total++;
                     if (!MT_UNDECIDED[it.code]) decided++;
+                    else undecided++;
                   }
                   decos.push(
                     Decoration.node(r.pos, r.pos + r.node.nodeSize, {
@@ -4323,7 +4348,14 @@ function createMeetingTasksExtension(ctx) {
                     );
                   });
                 });
-                decos.push(Decoration.widget(pos, counterWidget(decided, total), { key: "mt-sum|" + decided + "/" + total, side: -1, stopEvent: stop }));
+                var sk = st.skipped || null;
+                decos.push(
+                  Decoration.widget(pos, counterWidget(decided, total, undecided, sk), {
+                    key: "mt-sum|" + decided + "/" + total + "|" + undecided + "|" + (sk ? "s" + (sk.by || "") : ""),
+                    side: -1,
+                    stopEvent: stop,
+                  })
+                );
                 if (excluded) {
                   decos.push(
                     Decoration.widget(pos + node.nodeSize, tailWidget(excluded, !!st.open), {
@@ -4543,7 +4575,7 @@ function mount(container, options) {
     onTaskChipRemoved: options.onTaskChipRemoved,
     onFocusMarkClick: options.onFocusMarkClick,
   };
-  var meetingTasksCtx = { onMeetingTaskClick: options.onMeetingTaskClick };
+  var meetingTasksCtx = { onMeetingTaskClick: options.onMeetingTaskClick, onMeetingTasksSkip: options.onMeetingTasksSkip };
   var noteRefCtx = {
     editor: null,
     onSearchNoteRefs: options.onSearchNoteRefs,
@@ -4813,13 +4845,14 @@ function mount(container, options) {
     // Таблица задач встречи: { items: [{ id, code, label, who, due, note, … }] } с сервера; null — снять.
     setMeetingTasks: function (state) {
       var map = null;
+      var skipped = (state && state.skipped) || null;
       if (state && Array.isArray(state.items)) {
         map = {};
         state.items.forEach(function (x) {
           if (x && x.id) map[x.id] = x;
         });
       }
-      editor.view.dispatch(editor.state.tr.setMeta(meetingTasksKey, { items: map }).setMeta("addToHistory", false));
+      editor.view.dispatch(editor.state.tr.setMeta(meetingTasksKey, { items: map, skipped: skipped }).setMeta("addToHistory", false));
     },
     beginDictation: function (atEnd) {
       var id = "d" + ++dictationSeq;

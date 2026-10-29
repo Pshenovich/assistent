@@ -23684,6 +23684,10 @@ ol.note-discuss-md-list { list-style: decimal; }
 .mt-summary-bar { flex: 1; max-width: 240px; height: 6px; border-radius: 3px; background: var(--surface-elevated); overflow: hidden; }
 .mt-summary-bar > span { display: block; height: 100%; border-radius: 3px; background: var(--success); }
 .mt-summary-text { font-size: var(--ui-font-sm); color: var(--text-secondary); white-space: nowrap; }
+.mt-summary.is-skipped .mt-summary-text { white-space: normal; color: var(--text-tertiary); }
+.mt-summary-skip { margin-left: auto; flex: none; border: none; background: transparent; color: var(--text-tertiary); font: inherit; font-size: var(--ui-font-sm); padding: 4px 0; cursor: pointer; }
+.mt-summary-skip:hover { color: var(--text-secondary); }
+.mt-chip--skipped { background: var(--surface-muted); color: var(--text-tertiary); }
 .ProseMirror table:has(tr.mt-row) col:nth-child(1) { width: 46%; }
 .ProseMirror table:has(tr.mt-row) col:nth-child(2) { width: 20%; }
 .ProseMirror table:has(tr.mt-row) col:nth-child(3) { width: 20%; }
