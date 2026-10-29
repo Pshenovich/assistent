@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261029-mtskip";
+  var WEBAPP_BUILD = "20261029-mytasks2";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -25532,6 +25532,7 @@
       state.task = Object.assign({}, state.task || {}, both[0].task);
       state.events = (both[1] && both[1].events) || [];
       if (postedCardIsOwner(state.task)) upsertPostedTask(state.task);
+      if (state.opts.myTasks) syncMyTask(state.task);
       paintPostedCard(state);
     } catch (err) {
       if (!state.task) state.host.innerHTML = '<div class="pt-card-loading"></div>';
@@ -26846,6 +26847,8 @@
   var myTasksInbox = 0;
   var myTasksTab = "open"; // open | done («Выполненные»)
   var myTasksFrom = ""; // фильтр: "" — все, "self" — свои, иначе id постановщика
+  var myTasksSelectedId = ""; // открытая справа задача (десктоп)
+  var myTasksSideOpts = null; // как открыть поручение справа (например, сразу «Сдать результат»)
 
   function myTaskFromKey(task) {
     return isDelegatedTaskEvent(task) ? String(task.owner_user_id || "") : "self";
@@ -26871,6 +26874,8 @@
       myTasksTab = "open";
       myTasksFrom = "";
       myTasksDoneLoaded = false;
+      myTasksSelectedId = "";
+      postedCardHosts.side = null;
       renderMyTasksScreen();
       loadMyTasksList();
       var scroller = document.querySelector(".main-scroll");
@@ -26886,6 +26891,8 @@
   function setMyTasksTab(tab) {
     myTasksTab = tab === "done" ? "done" : "open";
     myTasksFrom = "";
+    myTasksSelectedId = "";
+    postedCardHosts.side = null;
     renderMyTasksScreen();
     if (myTasksTab === "done") loadMyTasksDone();
     var scroller = document.querySelector(".main-scroll");
@@ -26924,7 +26931,20 @@
     });
   }
 
-  function openMyTask(task) {
+  function openMyTask(task, opts) {
+    opts = opts || {};
+    // Компьютер: задача открывается справа, как в «Поставленных».
+    if (isDesktopLayout()) {
+      myTasksSelectedId = String(task.id);
+      postedCardHosts.side = null;
+      myTasksSideOpts = opts.focus ? { focus: opts.focus } : null;
+      renderMyTasksScreen();
+      return;
+    }
+    if (isDelegatedTaskEvent(task) && opts.focus) {
+      openPostedCard(task.id, { focus: opts.focus });
+      return;
+    }
     // Поручение мне — карточка с обсуждением (как из календаря); своя — редактор.
     openTaskModal(myTaskEvent(task), {
       onSaved: function () {
@@ -27023,45 +27043,15 @@
       }
       setHidden(emptyEl, !showEmpty);
     }
-    if (done) {
-      if (items.length) {
-        var dbox = document.createElement("div");
-        dbox.className = "pt-rows";
-        items.forEach(function (t) {
-          dbox.appendChild(renderMyTaskRow(t));
-        });
-        listEl.appendChild(dbox);
-      }
-    } else {
-      var lateRows = sortByDue(items.filter(function (t) {
-        return postedTaskIsOverdue(t);
-      }));
-      var rest = sortByDue(items.filter(function (t) {
-        return !postedTaskIsOverdue(t);
-      }));
-      if (lateRows.length) {
-        listEl.appendChild(postedSection("Просрочено", lateRows.length, true));
-        var lbox = document.createElement("div");
-        lbox.className = "pt-rows";
-        lateRows.forEach(function (t) {
-          lbox.appendChild(renderMyTaskRow(t, { late: true }));
-        });
-        listEl.appendChild(lbox);
-      }
-      POSTED_WORK_BUCKETS.forEach(function (b) {
-        var rows = rest.filter(function (t) {
-          return postedWorkBucket(t) === b[0];
-        });
-        if (!rows.length) return;
-        listEl.appendChild(postedSection(b[1], rows.length, false));
-        var box = document.createElement("div");
-        box.className = "pt-rows";
-        rows.forEach(function (t) {
-          box.appendChild(renderMyTaskRow(t));
-        });
-        listEl.appendChild(box);
+    myTasksGroups(items).forEach(function (g) {
+      if (g.label) listEl.appendChild(postedSection(g.label, g.rows.length, !!g.late));
+      var box = document.createElement("div");
+      box.className = "pt-rows";
+      g.rows.forEach(function (t) {
+        box.appendChild(renderMyTaskRow(t, { late: !!g.late }));
       });
-    }
+      listEl.appendChild(box);
+    });
     if (!done && !isDesktopLayout() && all.length) {
       var foot = document.createElement("button");
       foot.type = "button";
@@ -27071,6 +27061,243 @@
         setMyTasksTab("done");
       });
       listEl.appendChild(foot);
+    }
+    renderMyTasksSide(myTasksGroups(items));
+  }
+
+  // Группы списка: «Просрочено», потом по сроку; у «Выполненных» — одна группа без заголовка.
+  function myTasksGroups(items) {
+    if (myTasksTab === "done") return items.length ? [{ label: "", rows: items }] : [];
+    var out = [];
+    var late = sortByDue(items.filter(function (t) {
+      return postedTaskIsOverdue(t);
+    }));
+    if (late.length) out.push({ label: "Просрочено", rows: late, late: true });
+    var rest = sortByDue(items.filter(function (t) {
+      return !postedTaskIsOverdue(t);
+    }));
+    POSTED_WORK_BUCKETS.forEach(function (b) {
+      var rows = rest.filter(function (t) {
+        return postedWorkBucket(t) === b[0];
+      });
+      if (rows.length) out.push({ label: b[1], rows: rows });
+    });
+    return out;
+  }
+
+  function myTasksFind(id) {
+    id = String(id || "");
+    return myTasksItems.concat(myTasksDoneItems).filter(function (t) {
+      return String(t.id) === id;
+    })[0];
+  }
+
+  // Ответ сервера по задаче (из карточки, быстрых действий) — в список без перезагрузки.
+  function syncMyTask(task) {
+    if (!task || !task.id) return;
+    var id = String(task.id);
+    [myTasksItems, myTasksDoneItems].forEach(function (list) {
+      for (var i = 0; i < list.length; i++) {
+        if (String(list[i].id) === id) list[i] = Object.assign({}, list[i], task, { owner_name: list[i].owner_name, meeting_title: list[i].meeting_title });
+      }
+    });
+    if (isMyTasksOpen()) renderMyTasksScreen();
+  }
+
+  // Справа (компьютер): поручение мне — карточка с обсуждением, своя — короткая карточка с действиями.
+  function renderMyTasksSide(groups) {
+    var side = document.getElementById("my-tasks-side");
+    if (!side) return;
+    if (!isDesktopLayout()) {
+      side.innerHTML = "";
+      postedCardHosts.side = null;
+      return;
+    }
+    var ids = [];
+    groups.forEach(function (g) {
+      g.rows.forEach(function (t) {
+        ids.push(String(t.id));
+      });
+    });
+    if (!myTasksSelectedId || ids.indexOf(myTasksSelectedId) < 0) {
+      myTasksSelectedId = ids[0] || "";
+      postedCardHosts.side = null;
+    }
+    document.querySelectorAll("#my-tasks-list .pt-row").forEach(function (r) {
+      r.classList.toggle("is-selected", r.dataset.taskId === myTasksSelectedId);
+    });
+    var task = myTasksFind(myTasksSelectedId);
+    if (!task) {
+      postedCardHosts.side = null;
+      side.innerHTML = '<p class="pt-muted-note pt-side-empty">Здесь откроется задача</p>';
+      return;
+    }
+    if (isDelegatedTaskEvent(task)) {
+      if (!postedCardHosts.side || postedCardHosts.side.taskId !== myTasksSelectedId || postedCardHosts.side.host !== side) {
+        mountPostedCard(side, myTasksSelectedId, Object.assign({ inSide: true, myTasks: true }, myTasksSideOpts || {}));
+        myTasksSideOpts = null;
+      }
+      return;
+    }
+    postedCardHosts.side = null;
+    paintMyOwnCard(side, task);
+  }
+
+  function myTaskPill(task) {
+    if (postedTaskIsDone(task)) return { cls: "pt-pill--done", text: "Выполнено" };
+    if (postedTaskIsOverdue(task)) return { cls: "pt-pill--late", text: postedLateLabel(task) };
+    if (postedAssigneeState(task).status === "in_progress") return { cls: "pt-pill--work", text: "В работе" };
+    return { cls: "pt-pill--muted", text: "Своя задача" };
+  }
+
+  function paintMyOwnCard(host, task) {
+    var ev = task.event || {};
+    var done = postedTaskIsDone(task);
+    host.innerHTML = "";
+    var head = document.createElement("div");
+    head.className = "pt-c-head";
+    var pill = document.createElement("span");
+    var pv = myTaskPill(task);
+    pill.className = "pt-pill " + pv.cls;
+    pill.textContent = pv.text;
+    head.appendChild(pill);
+    host.appendChild(head);
+    var body = document.createElement("div");
+    body.className = "pt-c-body";
+    var h = document.createElement("h3");
+    h.className = "pt-c-title";
+    h.textContent = String(task.title || ev.summary || "Задача");
+    body.appendChild(h);
+    var who = document.createElement("div");
+    who.className = "pt-c-who";
+    var due = document.createElement("span");
+    due.className = "pt-c-due" + (postedTaskIsOverdue(task) ? " is-late" : "");
+    due.textContent = postedDueLong(task) + (task.recurrence ? " · повторяется" : "");
+    who.appendChild(due);
+    body.appendChild(who);
+    var descText = String(task.description || "");
+    var srcTitle = "";
+    var srcM = descText.match(/(?:^|\n)Из «([^»\n]+)»\s*$/);
+    if (srcM && task.note_id) {
+      srcTitle = srcM[1];
+      descText = descText.slice(0, srcM.index).trim();
+    }
+    if (descText) {
+      var d = document.createElement("p");
+      d.className = "pt-c-desc";
+      d.textContent = descText;
+      body.appendChild(d);
+    }
+    var srcHost = document.createElement("div");
+    srcHost.className = "pt-c-sources hidden";
+    body.appendChild(srcHost);
+    mountPostedSources(srcHost, task, srcTitle || task.meeting_title || "", { opts: { inSide: true } });
+    var checklist = normalizeReminderChecklist(task.checklist || ev.checklist || []);
+    if (checklist.length) {
+      var ul = document.createElement("ul");
+      ul.className = "pt-c-desc";
+      checklist.forEach(function (it) {
+        var li = document.createElement("li");
+        li.textContent = (it.done ? "✓ " : "") + String(it.text || "");
+        ul.appendChild(li);
+      });
+      body.appendChild(ul);
+    }
+    if (done && task.result) {
+      var res = document.createElement("div");
+      res.className = "pt-c-result";
+      res.innerHTML = "<span>Результат</span><p></p>";
+      res.querySelector("p").textContent = String(task.result);
+      body.appendChild(res);
+    }
+    host.appendChild(body);
+    var foot = document.createElement("div");
+    foot.className = "pt-c-foot";
+    var bar = document.createElement("div");
+    bar.className = "modal-sheet-actions pt-card-actions";
+    if (done) {
+      bar.appendChild(postedActBtn("undo", "Вернуть в работу", false, function (b) {
+        setMyTaskDone(task, false, b);
+      }));
+    } else {
+      bar.appendChild(postedActBtn("check", "Выполнено", true, function (b) {
+        setMyTaskDone(task, true, b);
+      }));
+      var inWork = postedAssigneeState(task).status === "in_progress";
+      bar.appendChild(postedActBtn(inWork ? "undo" : "play", inWork ? "Не в работе" : "Взять в работу", false, function (b) {
+        setMyTaskStatus(task, inWork ? "" : "in_progress", b);
+      }));
+      if (!task.recurrence) {
+        bar.appendChild(postedActBtn("cal", postedTaskIsOverdue(task) ? "На сегодня" : "На завтра", false, function (b) {
+          moveMyTask(task, postedTaskIsOverdue(task) ? 0 : 1, b);
+        }));
+      }
+    }
+    bar.appendChild(postedActBtn("", "Изменить", false, function () {
+      openTaskModal(myTaskEvent(task), {
+        onSaved: function () {
+          loadMyTasksList();
+          loadActual({ silent: true });
+        },
+        onDeleted: function () {
+          myTasksSelectedId = "";
+          loadMyTasksList();
+          loadActual({ silent: true });
+        },
+      });
+    }));
+    foot.appendChild(bar);
+    host.appendChild(foot);
+  }
+
+  async function setMyTaskDone(task, next, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      var r = await patchPostedTask(task.id, { done: next });
+      rememberCalCardUi("task", String(task.id), { done: next, deleted: false });
+      if (next) postedHaptic();
+      syncMyTask((r && r.task) || Object.assign({}, task, { done: next }));
+      myTasksDoneLoaded = false;
+      loadActual({ silent: true, skipCachePaint: true });
+    } catch (err) {
+      showNoteToast((err && err.message) || "Не удалось изменить задачу");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function setMyTaskStatus(task, status, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      var r = await postedApi(task.id, "status", { status: status });
+      if (r && r.task) syncMyTask(r.task);
+      if (status) showNoteToast("В работе");
+    } catch (err) {
+      showNoteToast((err && err.message) || "Не получилось");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  // «На сегодня» / «На завтра»: то же время, та же длительность (повторяющиеся не двигаем — сдвинется вся серия).
+  async function moveMyTask(task, dayOffset, btn) {
+    var ev = task.event || {};
+    var st = new Date(String((ev.start && ev.start.dateTime) || task.start_at || ""));
+    var en = new Date(String((ev.end && ev.end.dateTime) || task.end_at || ""));
+    var dur = !isNaN(st.getTime()) && !isNaN(en.getTime()) ? Math.max(15, Math.round((en - st) / 60000)) : 30;
+    var now = new Date();
+    var ns = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset, isNaN(st.getTime()) ? 10 : st.getHours(), isNaN(st.getTime()) ? 0 : st.getMinutes());
+    var ne = new Date(ns.getTime() + dur * 60000);
+    if (btn) btn.disabled = true;
+    try {
+      var r = await patchPostedTask(task.id, { start: focusLocalIso(ns), end: focusLocalIso(ne) });
+      if (r && r.task) syncMyTask(r.task);
+      showNoteToast(dayOffset ? "Перенесено на завтра" : "Перенесено на сегодня");
+      loadActual({ silent: true, skipCachePaint: true });
+    } catch (err) {
+      showNoteToast((err && err.message) || "Не удалось перенести задачу");
+    } finally {
+      if (btn) btn.disabled = false;
     }
   }
 
@@ -27132,6 +27359,8 @@
       b.appendChild(l);
       b.addEventListener("click", function () {
         myTasksFrom = myTasksFrom === key ? "" : key;
+        myTasksSelectedId = "";
+        postedCardHosts.side = null;
         renderMyTasksScreen();
       });
       host.appendChild(b);
@@ -27150,11 +27379,49 @@
     });
   }
 
+  // Быстрые действия в строке: у просроченных видны сразу, у остальных — при наведении (компьютер).
+  function renderMyTaskActs(task, late) {
+    var acts = document.createElement("div");
+    acts.className = "pt-row-acts";
+    function act(label, primary, fn) {
+      acts.appendChild(postedBtn(label, primary ? "pt-btn--primary" : "", fn));
+    }
+    if (isDelegatedTaskEvent(task)) {
+      act("Сдать", late, function () {
+        openMyTask(task, { focus: "result" });
+      });
+      if (late) {
+        act("Попросить перенос", false, function () {
+          openMyTask(task, { focus: "reply" });
+        });
+      }
+      return acts;
+    }
+    if (late && !task.recurrence) {
+      act("На сегодня", true, function (b) {
+        moveMyTask(task, 0, b);
+      });
+    }
+    var diff = postedDayDiff(postedTaskDayIso(task));
+    if (!task.recurrence && !(diff >= 1)) {
+      act("На завтра", false, function (b) {
+        moveMyTask(task, 1, b);
+      });
+    }
+    if (!late && postedAssigneeState(task).status !== "in_progress") {
+      act("В работу", false, function (b) {
+        setMyTaskStatus(task, "in_progress", b);
+      });
+    }
+    return acts;
+  }
+
   function renderMyTaskRow(task, opts) {
     opts = opts || {};
     var done = postedTaskIsDone(task);
     var row = document.createElement("div");
-    row.className = "pt-row" + (done ? " is-done" : "");
+    row.className = "pt-row" + (done ? " is-done" : "") + (opts.late && !done ? " pt-row--late" : "") + (String(task.id) === myTasksSelectedId ? " is-selected" : "");
+    row.dataset.taskId = String(task.id);
     row.setAttribute("role", "button");
     row.tabIndex = 0;
     var check = document.createElement("button");
@@ -27205,6 +27472,7 @@
     if (task.meeting_title) part("из «" + task.meeting_title + "»", "pt-meeting");
     main.appendChild(line);
     row.appendChild(main);
+    if (!done) row.appendChild(renderMyTaskActs(task, !!opts.late));
     row.addEventListener("click", function () {
       openMyTask(task);
     });

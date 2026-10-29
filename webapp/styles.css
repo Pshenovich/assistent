@@ -15984,7 +15984,7 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 /* Десктоп: список слева, поручение или сводка «Команда сейчас» справа */
 @media (min-width: 960px) {
   #actual-posted-tasks.actual-subscreen { width: 100%; max-width: 1180px; margin: 0 auto; }
-  #actual-my-tasks.actual-subscreen { width: 100%; max-width: 820px; margin: 0 auto; }
+  #actual-my-tasks.actual-subscreen { width: 100%; max-width: 1180px; margin: 0 auto; }
   .pt-only-desktop { display: inline; }
   .pt-head .pt-btn--primary { width: auto; padding: 0 14px; border-radius: 10px; }
   .pt-team { margin-left: 0; margin-right: 0; padding-left: 0; padding-right: 0; flex-wrap: wrap; }
