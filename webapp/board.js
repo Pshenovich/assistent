@@ -1281,10 +1281,16 @@
         '<button type="button" class="lb-btn" data-act="redo" title="Повторить (⇧⌘Z)"' + (redoStack.length ? "" : " disabled") + ">" + icon("redo") + "</button>";
     }
 
+    // Чат с Лео (кнопка «Обсуждение», как в нижней панели заметки): бейдж — число непрочитанных или точка.
+    var chatBadge = "";
+    var CHAT_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>';
+
     function renderZoomBar() {
       var pct = Math.round(view.z * 100) + "%";
-      if (zoomBar.getAttribute("data-pct") === pct + showGrid + showMap) return;
-      zoomBar.setAttribute("data-pct", pct + showGrid + showMap);
+      var stateKey = pct + showGrid + showMap + "|" + chatBadge;
+      if (zoomBar.getAttribute("data-pct") === stateKey) return;
+      zoomBar.setAttribute("data-pct", stateKey);
       zoomBar.innerHTML =
         '<button type="button" class="lb-btn" data-act="zoom-out" title="Отдалить (−)">' + icon("minus") + "</button>" +
         '<button type="button" class="lb-btn lb-pct" data-act="zoom-100" title="Масштаб 100%">' + pct + "</button>" +
@@ -1294,7 +1300,12 @@
         (readOnly
           ? ""
           : '<button type="button" class="lb-btn' + (showGrid ? " is-on" : "") + '" data-act="grid" title="Сетка и привязка">' + icon("grid") + "</button>" +
-            '<button type="button" class="lb-btn" data-act="export" title="Экспорт">' + icon("download") + "</button>");
+            '<button type="button" class="lb-btn" data-act="export" title="Экспорт">' + icon("download") + "</button>") +
+        (o.onOpenChat
+          ? '<span class="lb-sep"></span><button type="button" class="lb-btn lb-chat-btn" data-act="chat" title="Обсуждение с Лео" aria-label="Обсуждение">' + CHAT_SVG +
+            (chatBadge ? '<span class="lb-chat-badge' + (chatBadge === "•" ? " is-dot" : "") + '">' + (chatBadge === "•" ? "" : esc(chatBadge)) + "</span>" : "") +
+            "</button>"
+          : "");
       minimap.classList.toggle("hidden", !showMap);
     }
 
@@ -1303,6 +1314,11 @@
       if (!b || b.disabled) return;
       var act = b.getAttribute("data-act");
       if (/^zoom|^fit$/.test(act)) autoFit = false;
+      if (act === "chat") {
+        if (editing) finishEdit();
+        if (o.onOpenChat) o.onOpenChat();
+        return;
+      }
       if (act === "undo") undo();
       else if (act === "redo") redo();
       else if (act === "zoom-in") zoomBy(1.25);
@@ -3663,6 +3679,10 @@
         return !!getEl(id);
       },
       revealElement: revealElement,
+      setChatBadge: function (v) {
+        chatBadge = String(v || "");
+        renderZoomBar();
+      },
       setTexts: setTexts,
       getSelection: selectionInfo,
       isEditing: function () {

@@ -743,3 +743,33 @@ html[data-theme="light"] .leo-board {
   color: var(--violet-soft, #c4b5fd);
   background: color-mix(in srgb, var(--violet, #8b5cf6) 16%, transparent);
 }
+
+/* Кнопка чата с Лео в правом нижнем тулбаре и её бейдж (как у «Обсуждения» в заметке). */
+.lb-chat-btn {
+  position: relative;
+}
+
+.lb-chat-badge {
+  position: absolute;
+  top: 2px;
+  right: 1px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--lb-accent);
+  color: #fff;
+  font: 600 10px/16px var(--lb-font);
+  text-align: center;
+  pointer-events: none;
+}
+
+.lb-chat-badge.is-dot {
+  min-width: 10px;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  top: 4px;
+  right: 4px;
+}

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261029-flashvis";
+  var WEBAPP_BUILD = "20261029-boardchat";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -13700,6 +13700,14 @@
     badge.textContent = n > 0 ? (n > 99 ? "99+" : String(n)) : "";
     badge.classList.toggle("is-dot", show && !(n > 0));
     badge.classList.toggle("hidden", !show);
+    // Тот же бейдж — на кнопке чата в тулбаре открытых досок.
+    var boardBadge = show ? (n > 0 ? badge.textContent : "•") : "";
+    var nss = typeof noteSheetState !== "undefined" ? noteSheetState : null;
+    if (nss) {
+      [nss.leftBoard, nss.rightBoard].forEach(function (b) {
+        if (b && b.setChatBadge) b.setChatBadge(boardBadge);
+      });
+    }
   }
 
   function openNoteDiscussionFromToolbar() {
@@ -29693,6 +29701,8 @@
       },
       onNotify: showNoteToast,
       blockActions: boardBlockActions(sid),
+      // Панель заметки с «Обсуждением» на доске скрыта — кнопка чата в тулбаре доски.
+      onOpenChat: openNoteDiscussionFromToolbar,
     };
   }
 
@@ -29831,6 +29841,7 @@
     var toolbarWrap = document.getElementById("note-editor-toolbar-wrap");
     if (toolbarWrap) setHidden(toolbarWrap, true);
     noteSheetState.leftBoard = LeoBoard.create(Object.assign({ host: host }, boardSheetOptions(sheet)));
+    syncNoteDiscussBadge();
     startBoardYjs();
   }
 
@@ -29843,6 +29854,7 @@
     host.innerHTML = "";
     if (bar) bar.innerHTML = "";
     noteSheetState.rightBoard = LeoBoard.create(Object.assign({ host: host }, boardSheetOptions(sheet)));
+    syncNoteDiscussBadge();
     noteSheetState.rightEditor = null;
     startBoardYjs();
   }
