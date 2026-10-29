@@ -223,6 +223,7 @@
     } else if (el.type === "image") {
       o.src = el.src;
     }
+    if (el.type === "sticky" && el.author && (el.author.id || el.author.name)) o.author = el.author;
     return o;
   }
 
@@ -788,10 +789,62 @@
         replaceShape(node, shapeSvg(el));
         if (el.type === "image") return;
         textEl = ensureText(node);
+        if (el.type === "sticky") renderAuthor(node, el.author);
       }
       textStyle(el, textEl);
       if (!isEditing && textEl.textContent !== String(el.text || "")) textEl.textContent = String(el.text || "");
       if (el.type === "text" && !isEditing) fitTextHeight(el, textEl);
+    }
+
+    /** Подпись автора внизу стикера: аватар (фото или инициалы) и имя; у Лео — ✨. */
+    function renderAuthor(node, author) {
+      var has = !!(author && (author.name || author.id));
+      var key = has ? JSON.stringify(author) : "";
+      var box = node.querySelector(":scope > .lb-author");
+      node.classList.toggle("has-author", has);
+      if (!has) {
+        if (box) box.remove();
+        return;
+      }
+      if (box && box.getAttribute("data-key") === key) return;
+      if (!box) {
+        box = document.createElement("div");
+        box.className = "lb-author";
+        node.appendChild(box);
+      }
+      box.setAttribute("data-key", key);
+      var name = String(author.name || "Участник");
+      box.title = author.ai ? "Добавил Лео" : "Автор: " + name;
+      var av;
+      if (author.ai) {
+        av = '<span class="lb-av is-ai"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+          '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></span>';
+      } else {
+        av = '<span class="lb-av lb-av--t' + toneOf(author.id || name) + '"><span class="lb-av-txt">' + esc(initialsOf(name)) + "</span></span>";
+      }
+      box.innerHTML = av + '<span class="lb-author-name">' + esc(name) + "</span>";
+      if (!author.ai && author.id && o.decorateAvatar) {
+        var img = document.createElement("img");
+        img.alt = "";
+        img.className = "lb-av-img";
+        box.querySelector(".lb-av").appendChild(img);
+        try {
+          o.decorateAvatar(img, author);
+        } catch (_) {}
+      }
+    }
+
+    function initialsOf(name) {
+      var parts = String(name || "").replace(/^@/, "").trim().split(/\s+/).filter(Boolean);
+      if (!parts.length) return "?";
+      return (parts[0].charAt(0) + (parts[1] ? parts[1].charAt(0) : "")).toUpperCase();
+    }
+
+    function toneOf(key) {
+      var h = 0;
+      var str = String(key || "");
+      for (var i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
+      return Math.abs(h) % 6;
     }
 
     function replaceShape(node, html) {
@@ -1174,7 +1227,18 @@
         { id: uid(), type: type, x: p.x, y: p.y, w: d.w || 0, h: d.h || 0, z: topZ(), style: styleFor(type) },
         extra || {}
       );
+      if (type === "sticky" && !el.author && meAuthor()) el.author = meAuthor();
       return el;
+    }
+
+    /** Кто я — автор новых стикеров (подпись внизу стикера, как у комментариев). */
+    function meAuthor() {
+      var me = o.me;
+      if (!me || !(me.id || me.name)) return null;
+      var a = {};
+      if (me.id) a.id = String(me.id);
+      if (me.name) a.name = String(me.name);
+      return a;
     }
 
     function createAtCenter(type, extra) {
@@ -2874,6 +2938,7 @@
         style: clone(from.style || styleFor("rect")),
       };
       if (from.rot) copy.rot = from.rot;
+      if (copy.type === "sticky" && meAuthor()) copy.author = meAuthor();
       if (from.type === "text" || from.type === "image") {
         copy.w = DEFAULTS.rect.w;
         copy.h = DEFAULTS.rect.h;
@@ -3820,6 +3885,7 @@
       var color = el.type === "sticky" ? st.fill : st.fill && st.fill !== "none" ? st.fill : st.stroke;
       var kind = SHAPE_RU[el.type] || el.type;
       if (COLOR_RU[color]) kind += ", " + COLOR_RU[color];
+      if (el.type === "sticky" && el.author && el.author.name) kind += ", автор " + el.author.name;
       out.push(("- #" + num[el.id] + " [" + kind + "] " + oneLine(el.text)).replace(/\s+$/, ""));
     });
     var links = [];

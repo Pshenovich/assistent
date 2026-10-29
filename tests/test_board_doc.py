@@ -68,6 +68,14 @@ class BoardDocTests(unittest.TestCase):
         self.assertIn("Идея &lt;b&gt;", svg)
         self.assertIn("marker-end", svg)
 
+    def test_sticky_author_kept_and_described(self) -> None:
+        raw = dict(C, author={"id": 123456789, "name": "Вова П", "x": "мусор"})
+        el = board_doc._clean_element("c", raw)
+        self.assertEqual(el["author"], {"id": "123456789", "name": "Вова П"})
+        self.assertNotIn("author", board_doc._clean_element("a", dict(A, author={"name": "Вова"})))
+        self.assertNotIn("author", board_doc._clean_element("c", dict(C, author={"name": " "})))
+        self.assertIn("автор Вова П", board_doc.board_describe(_board(raw)))
+
     def test_svg_text_align(self) -> None:
         right = dict(A, style={"align": "right"})
         self.assertIn('text-anchor="end"', board_doc.render_board_svg(_board(right)))

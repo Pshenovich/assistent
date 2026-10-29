@@ -182,3 +182,10 @@ class BoardBlockTextTests(unittest.TestCase):
         self.assertEqual(board_ai.parse_block_texts(ans, ["a1", "a2"]), {"a1": "Шаг"})
         self.assertEqual(board_ai.parse_block_texts("нет json", ["a1"]), {})
         self.assertEqual(board_ai.parse_block_texts('{"blocks": "x"}', ["a1"]), {})
+
+
+class BoardStickyAuthorTests(unittest.TestCase):
+    def test_leo_stickies_signed(self):
+        els = json.loads(board_ai.build_board({"layout": "grid", "nodes": [{"id": "n1", "text": "Идея", "shape": "sticky"}]}))["elements"]
+        sticky = next(e for e in els.values() if e["type"] == "sticky")
+        self.assertEqual(sticky["author"], {"name": "Лео", "ai": True})

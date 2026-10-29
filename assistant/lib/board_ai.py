@@ -594,6 +594,8 @@ def _shape_el(node: dict[str, Any], pos: tuple[float, float], z: float) -> dict[
     }
     if node.get("text"):
         el["text"] = node["text"]
+    if shape == "sticky":
+        el["author"] = {"name": "Лео", "ai": True}  # подпись внизу стикера, как у людей
     return el
 
 

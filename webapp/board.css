@@ -773,3 +773,69 @@ html[data-theme="light"] .leo-board {
   top: 4px;
   right: 4px;
 }
+
+/* Автор стикера — внизу, как подпись у комментария: аватар 16px и имя. Стикер всегда светлый,
+   поэтому цвета тёмные в обеих темах. */
+.lb-t-sticky.has-author > .lb-text {
+  padding-bottom: 30px;
+}
+
+.lb-author {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: rgba(31, 35, 40, 0.62);
+  font: 500 11px/16px var(--lb-font);
+  pointer-events: none;
+}
+
+.lb-author-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.lb-av {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: rgba(31, 35, 40, 0.14);
+  color: #1f2328;
+  font: 700 7.5px/1 var(--lb-font);
+}
+
+.lb-av--t0 { background: rgba(124, 92, 255, 0.28); }
+.lb-av--t1 { background: rgba(240, 120, 80, 0.3); }
+.lb-av--t2 { background: rgba(40, 170, 130, 0.3); }
+.lb-av--t3 { background: rgba(60, 130, 240, 0.28); }
+.lb-av--t4 { background: rgba(220, 90, 150, 0.28); }
+.lb-av--t5 { background: rgba(230, 160, 30, 0.32); }
+
+.lb-av.is-ai {
+  color: #7c3aed;
+  background: rgba(139, 92, 246, 0.2);
+}
+
+.lb-av-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: none;
+}
+
+.lb-av-img.has-photo {
+  display: block;
+}

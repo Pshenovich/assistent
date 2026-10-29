@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261029-boardchat";
+  var WEBAPP_BUILD = "20261029-stickyauthor";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -29703,7 +29703,18 @@
       blockActions: boardBlockActions(sid),
       // Панель заметки с «Обсуждением» на доске скрыта — кнопка чата в тулбаре доски.
       onOpenChat: openNoteDiscussionFromToolbar,
+      // Автор новых стикеров (подпись внизу стикера) и его фото — как в комментариях.
+      me: boardAuthorMe(),
+      decorateAvatar: function (img, author) {
+        applyTelegramAvatar(img, { userId: author && author.id });
+      },
     };
+  }
+
+  function boardAuthorMe() {
+    var a = defaultTaskAssignee();
+    if (!a.user_id && (!a.name || a.name === "Я")) return null;
+    return { id: a.user_id, name: a.name === "Я" ? "" : a.name };
   }
 
   // ---- Выделенные блоки доски: ИИ, обсудить с Лео, задача, ссылка — как у выделенного текста ----

@@ -64,6 +64,22 @@ def _end(raw: Any) -> Optional[dict[str, Any]]:
     return out
 
 
+def _author(raw: Any) -> Optional[dict[str, Any]]:
+    """Автор стикера: id пользователя, имя для подписи; ai — стикер добавил Лео."""
+    if not isinstance(raw, dict):
+        return None
+    out: dict[str, Any] = {}
+    uid = _str(raw.get("id"), 32).strip()
+    name = _str(raw.get("name"), 64).strip()
+    if uid:
+        out["id"] = uid
+    if name:
+        out["name"] = name
+    if raw.get("ai") is True:
+        out["ai"] = True
+    return out if (uid or name) else None
+
+
 def _points(raw: Any, limit: int = 20000) -> list[list[float]]:
     if not isinstance(raw, list):
         return []
@@ -105,6 +121,10 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
             st[k] = v if isinstance(v, (int, float, bool)) else _str(v, 32)
         if st:
             el["style"] = st
+    if etype == "sticky":
+        author = _author(raw.get("author"))
+        if author:
+            el["author"] = author
     if etype == "line":
         el["points"] = _points(raw.get("points"), 2) or [[el["x"], el["y"]], [el["x"] + 100, el["y"]]]
         for k in ("start", "end"):
@@ -251,6 +271,9 @@ def board_describe(body: Any, title: str = "") -> str:
         if color in _COLOR_RU:
             kind += ", " + _COLOR_RU[str(color)]
         text = _one_line(el.get("text") or "")
+        author = el.get("author") or {}
+        if el["type"] == "sticky" and author.get("name"):
+            kind += ", автор " + str(author["name"])  # кто что предложил — Лео отвечает и на это
         out.append(f"- #{num[el['id']]} [{kind}] {text}".rstrip())
     links = []
     free_lines = 0
