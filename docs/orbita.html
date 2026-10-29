@@ -492,6 +492,33 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .wave i:nth-child(2n) { animation-delay: -.3s; } .wave i:nth-child(3n) { animation-delay: -.6s; }
 @keyframes wave { 0%, 100% { height: 5px; } 50% { height: 18px; } }
 
+
+/* «Один день», 14:00: доска и слайды с настоящим содержимым */
+.ui-board { border-radius: 14px; border: 1px solid var(--border); padding: 10px 12px 12px; display: grid; gap: 10px;
+  background: radial-gradient(circle, color-mix(in srgb, var(--text-3) 35%, transparent) 1px, transparent 1.4px) 0 0 / 14px 14px, var(--surface); }
+.ub-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--text-2); }
+.ub-flow { display: flex; align-items: center; gap: 0; }
+.bn { flex: 1; min-width: 0; text-align: center; font-size: 12.5px; font-weight: 600; padding: 7px 4px; border-radius: 9px; background: var(--surface-2); border: 1.5px solid var(--border); line-height: 1.2; }
+.bn small { display: block; font-size: 10.5px; font-weight: 500; color: var(--text-3); margin-top: 2px; }
+.bn.dec { border-color: var(--warning); color: var(--warning); border-style: dashed; }
+.bn.ok { border-color: var(--success); background: color-mix(in srgb, var(--success) 12%, var(--surface)); }
+.ba { flex: none; width: 16px; height: 2px; background: var(--violet); position: relative; }
+.ba::after { content: ""; position: absolute; right: -1px; top: -4px; border: 5px solid transparent; border-left: 6px solid var(--violet); border-right: 0; }
+.ub-notes { display: flex; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 479px) { .bn { font-size: 11px; padding: 6px 2px; } .bn small { font-size: 9.5px; } .ba { width: 10px; } }
+.sticky { font-size: 11.5px; padding: 6px 9px; border-radius: 4px; background: #ffe58a; color: #3a2f00; transform: rotate(-1.5deg); box-shadow: 0 2px 6px rgba(0,0,0,.18); }
+.sticky.blue { background: #b9dcff; color: #0b2a4a; transform: rotate(1.2deg); }
+.ui-slides { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.sl { aspect-ratio: 16 / 10; border-radius: 8px; padding: 7px 8px; background: #fff; color: #111; border: 1px solid var(--border); display: flex; flex-direction: column; gap: 3px; overflow: hidden; font-size: 9.5px; line-height: 1.25; box-shadow: var(--shadow); }
+.sl small { font-size: 8px; color: #8a8f98; letter-spacing: .04em; }
+.sl b { font: 400 13px/1.05 var(--font-heading); letter-spacing: -0.02em; }
+.sl em { font-style: normal; font-weight: 700; color: #b8f22c; margin-top: auto; }
+.sl.dark { background: #0d0d0d; color: #fff; border-color: #0d0d0d; }
+.sl ol { margin: 2px 0 0; padding-left: 13px; display: grid; gap: 2px; }
+.sl ol li::marker { color: #7fb800; font-weight: 700; }
+.sl p { margin: 0; display: flex; align-items: center; gap: 4px; }
+.sl p i { width: 12px; height: 12px; border-radius: 50%; background: #b8f22c; color: #111; font: 700 7px/12px var(--font); font-style: normal; text-align: center; flex: none; }
+
 /* ---------- Один день с Лео ---------- */
 .day-grid { display: grid; gap: 24px; margin-top: 56px; }
 .day-sticky { display: none; }
@@ -1063,10 +1090,23 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
           <h3>Заметка → доска → презентация</h3>
           <p>Из итогов встречи Лео рисует схему на доске и собирает презентацию. Модель выбираете сами.</p>
           <div class="day-screen"><div class="ui">
-            <div class="ui-h">Итоги «Альфы» <span class="ui-chip violet">Claude Opus 5.5</span></div>
-            <div class="ui-flow"><div class="ui-thumb"><i style="width:70%"></i><i></i><i style="width:85%"></i><i style="width:60%"></i></div><span>→</span><div class="ui-thumb board"><i style="left:8%;top:12%"></i><i style="left:58%;top:40%"></i><i style="left:12%;top:66%"></i></div><span>→</span><div class="ui-thumb slides"><i></i><i style="width:80%"></i><i style="width:65%"></i></div></div>
-            <div class="ui-bubble me">Нарисуй процесс подключения и собери презентацию на 5 слайдов</div>
-            <div class="ui-bubble leo">Готово: схема на доске и 5 слайдов в стиле «Лайм».</div>
+            <div class="ui-bubble me">Нарисуй процесс подключения «Альфы» и собери презентацию на 5 слайдов</div>
+            <div class="ui-board">
+              <div class="ub-head"><span>Доска · Подключение «Альфы»</span><span class="ui-chip violet">Claude Opus 5.5</span></div>
+              <div class="ub-flow">
+                <div class="bn">Заявка<small>до 25.10</small></div><i class="ba"></i>
+                <div class="bn">Пилот<small>3 отдела</small></div><i class="ba"></i>
+                <div class="bn dec">Решение</div><i class="ba"></i>
+                <div class="bn ok">Team<small>с 1 ноября</small></div>
+              </div>
+              <div class="ub-notes"><span class="sticky">Ответственный — Мария</span><span class="sticky blue">Регламент миграции к 25.10</span></div>
+            </div>
+            <div class="ui-slides">
+              <div class="sl dark"><small>01</small><b>Переход<br>на Team</b><em>1 ноября</em></div>
+              <div class="sl"><small>02 · План</small><ol><li>Пилот</li><li>Регламент</li><li>Обучение</li></ol></div>
+              <div class="sl"><small>03 · Команда</small><p><i>М</i>Мария — переход</p><p><i>О</i>Олег — КП</p></div>
+            </div>
+            <div class="ui-bubble leo">Готово: схема на доске и 5 слайдов в стиле «Лайм».<span class="ui-chip">Открыть презентацию ↗</span></div>
           </div></div>
         </li>
         <li class="day-step" data-tab="Актуальное">
