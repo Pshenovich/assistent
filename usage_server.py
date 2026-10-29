@@ -261,6 +261,7 @@ else:
 dash = APIRouter(prefix=_USAGE_DASHBOARD_PREFIX)
 _docs_static_dir = Path(__file__).resolve().parent / "docs"
 _landing_page_path = _docs_static_dir / "landing.html"
+_orbita_page_path = _docs_static_dir / "orbita.html"
 
 # Сколько календарных UTC-дней назад от «сегодня» брать по умолчанию на /users и в карточке пользователя (включительно).
 _DASH_DEFAULT_USER_RANGE_DAYS = 29
@@ -15973,6 +15974,13 @@ app.include_router(miniapp_router)
 @app.get("/", include_in_schema=False)
 async def landing_index_route() -> FileResponse:
     return FileResponse(_landing_page_path, media_type="text/html")
+
+
+# Новый лендинг Orbita. Короткий кэш: страницу часто правим, а ассеты у неё встроены.
+@app.get("/orbita", include_in_schema=False)
+@app.get("/orbita/", include_in_schema=False)
+async def orbita_landing_route() -> FileResponse:
+    return FileResponse(_orbita_page_path, media_type="text/html", headers={"Cache-Control": "public, max-age=300"})
 
 
 from assistant.admin.routes import make_router as _make_admin_router  # noqa: E402
