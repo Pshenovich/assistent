@@ -757,7 +757,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 @keyframes qbar { to { transform: scaleX(1); } }
 
 /* ---------- Свободные слоты ---------- */
-.slots-demo { padding: 22px; display: grid; gap: 16px; }
+.slots-demo { padding: 22px; display: grid; gap: 16px; position: relative; overflow: hidden; }
 .sd-step { display: grid; gap: 10px; opacity: .35; transition: opacity .4s; }
 .sd-step.on { opacity: 1; }
 .sd-step > small { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); }
@@ -767,7 +767,19 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .sd-person.on { border-color: var(--accent); background: var(--accent-muted); }
 .sd-link { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px; background: var(--surface-2); font-size: 14px; color: var(--text-2); }
 .sd-link b { margin-left: auto; font-size: 12.5px; color: var(--success); opacity: 0; transition: opacity .3s; }
-.sd-step.on .sd-link b { opacity: 1; }
+.sd-link.copied b { opacity: 1; }
+.sd-link { transition: background .2s; }
+.sd-link.hover { background: var(--accent-muted); }
+.sd-person.hover, .sd-grid .ui-slots span.hover { box-shadow: 0 0 0 3px var(--orbit-line); }
+/* Курсор, который «нажимает» на шаги: двигается через transform, щелчок — сжатие и волна. */
+.sd-cursor { position: absolute; left: 0; top: 0; width: 22px; height: 22px; z-index: 3; pointer-events: none; opacity: 0;
+  transition: transform .65s cubic-bezier(.45, .05, .25, 1), opacity .3s; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .45)); }
+.sd-cursor.show { opacity: 1; }
+.sd-cursor svg { width: 22px; height: 22px; display: block; transition: transform .12s; transform-origin: 3px 2px; }
+.sd-cursor.press svg { transform: scale(.82); }
+.sd-cursor::before { content: ""; position: absolute; left: -11px; top: -12px; width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--violet); opacity: 0; transform: scale(.3); }
+.sd-cursor.press::before { animation: sd-ripple .5s ease-out; }
+@keyframes sd-ripple { 0% { opacity: .9; transform: scale(.3); } 100% { opacity: 0; transform: scale(1.5); } }
 .sd-grid .ui-slots span { transition: all .3s; font-size: 13px; padding: 7px 0; }
 .sd-toast { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 12px; background: color-mix(in srgb, var(--success) 12%, transparent); color: var(--text); font-size: 14px; opacity: 0; transform: translateY(6px); transition: opacity .4s, transform .4s; }
 .sd-toast svg { color: var(--success); width: 20px; height: 20px; stroke-width: 2.2; }
@@ -1416,6 +1428,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
       <div class="sd-step sd-grid" data-s="3"><small>3 · Партнёр выбирает время</small>
         <div class="ui-slots"><div><small>Пн, 3 ноя</small><span>10:00</span><span>15:30</span></div><div><small>Вт, 4 ноя</small><span data-pick>11:00</span><span>16:00</span></div><div><small>Ср, 5 ноя</small><span>09:30</span><span>14:00</span></div></div>
       </div>
+      <span class="sd-cursor" id="sdCursor" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 2l7.5 19 2.6-7.9L21 10.5z" fill="#fff" stroke="#111" stroke-width="1.4" stroke-linejoin="round"/></svg></span>
       <div class="sd-toast" id="sdToast"><svg class="i" viewBox="0 0 24 24" data-i="tick"></svg>Встреча во вторник в 11:00 — в календаре у всех троих</div>
     </div>
   </div>
@@ -2434,33 +2447,72 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
   }
   once($("#askChat"), function () { ask(0); }, { threshold: 0.5 });
 
-  /* ---------- 8. Свободные слоты: сценарий по кругу ---------- */
+  /* ---------- 8. Свободные слоты: курсор по шагам, по кругу ---------- */
+  var sdDemo = $("#slotsDemo"), sdCursor = $("#sdCursor"), sdLink = $("#slotsDemo .sd-link");
   var sdSteps = $$("#slotsDemo .sd-step"), sdPeople = $$("#slotsDemo .sd-person");
   var sdPick = $("#slotsDemo [data-pick]"), sdToast = $("#sdToast"), sdTimers = [];
   function sdReset() {
     sdSteps.forEach(function (s) { s.classList.remove("on"); });
-    sdPeople.forEach(function (p) { p.classList.remove("on"); });
-    sdPick.classList.remove("pick"); sdToast.classList.remove("on");
+    sdPeople.forEach(function (p) { p.classList.remove("on", "hover"); });
+    sdPick.classList.remove("pick", "hover"); sdToast.classList.remove("on");
+    sdLink.classList.remove("copied", "hover");
+    sdCursor.classList.remove("show", "press");
   }
   function sdAt(ms, fn) { sdTimers.push(setTimeout(fn, ms)); }
+  // Курсор едет к элементу (чуть правее и ниже центра — как наводят мышью).
+  function sdMove(el, instant) {
+    var d = sdDemo.getBoundingClientRect(), r = el.getBoundingClientRect();
+    var x = r.left - d.left + r.width * 0.62, y = r.top - d.top + r.height * 0.58;
+    if (instant) sdCursor.style.transition = "none";
+    sdCursor.style.transform = "translate(" + x.toFixed(0) + "px," + y.toFixed(0) + "px)";
+    if (instant) { void sdCursor.offsetWidth; sdCursor.style.transition = ""; }
+  }
+  function sdClick(el, done) {
+    el.classList.add("hover");
+    sdAt(180, function () {
+      sdCursor.classList.remove("press"); void sdCursor.offsetWidth; sdCursor.classList.add("press");
+      el.classList.remove("hover");
+      done();
+    });
+    sdAt(700, function () { sdCursor.classList.remove("press"); });
+  }
   function sdPlay() {
     sdReset();
-    sdAt(200, function () { sdSteps[0].classList.add("on"); });
-    sdPeople.forEach(function (p, i) { sdAt(500 + i * 400, function () { p.classList.add("on"); }); });
-    sdAt(2000, function () { sdSteps[1].classList.add("on"); });
-    sdAt(3100, function () { sdSteps[2].classList.add("on"); });
-    sdAt(4200, function () { sdPick.classList.add("pick"); });
-    sdAt(4800, function () { sdToast.classList.add("on"); });
-    sdAt(8500, sdPlay);
+    var t = 300;
+    sdAt(t, function () {
+      var d = sdDemo.getBoundingClientRect();
+      sdCursor.style.transition = "none";
+      sdCursor.style.transform = "translate(" + Math.round(d.width * 0.85) + "px," + Math.round(d.height * 0.15) + "px)";
+      void sdCursor.offsetWidth; sdCursor.style.transition = "";
+      sdCursor.classList.add("show");
+      sdSteps[0].classList.add("on");
+    });
+    t += 250;
+    sdPeople.forEach(function (p) {
+      sdAt(t, function () { sdMove(p); });
+      sdAt(t + 700, function () { sdClick(p, function () { p.classList.add("on"); }); });
+      t += 1100;
+    });
+    sdAt(t, function () { sdSteps[1].classList.add("on"); sdMove(sdLink); });
+    sdAt(t + 750, function () { sdClick(sdLink, function () { sdLink.classList.add("copied"); }); });
+    t += 1500;
+    sdAt(t, function () { sdSteps[2].classList.add("on"); });
+    sdAt(t + 300, function () { sdMove(sdPick); });
+    sdAt(t + 1050, function () { sdClick(sdPick, function () { sdPick.classList.add("pick"); }); });
+    t += 1700;
+    sdAt(t, function () { sdToast.classList.add("on"); });
+    sdAt(t + 600, function () { sdCursor.classList.remove("show"); });
+    sdAt(t + 4000, sdPlay);
   }
   function sdStop() { sdTimers.forEach(clearTimeout); sdTimers = []; }
   if (reduce) {
     sdSteps.forEach(function (s) { s.classList.add("on"); });
     sdPeople.forEach(function (p) { p.classList.add("on"); });
+    sdLink.classList.add("copied");
     sdPick.classList.add("pick"); sdToast.classList.add("on");
   } else {
     var sdOn = false;
-    whileVisible($("#slotsDemo"), function () { if (!sdOn) { sdOn = true; sdPlay(); } }, function () { sdOn = false; sdStop(); });
+    whileVisible(sdDemo, function () { if (!sdOn) { sdOn = true; sdPlay(); } }, function () { sdOn = false; sdStop(); sdReset(); });
   }
 
   /* ---------- 9. Роли ---------- */
