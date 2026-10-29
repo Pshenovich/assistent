@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261029-spkpop";
+  var WEBAPP_BUILD = "20261029-spktools";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -30002,6 +30002,7 @@
       '<div class="note-editor-sheets-bar">' +
       tocInSheetsBar +
       '<div id="note-editor-sheets" class="note-editor-sheets hidden"></div>' +
+      '<div id="note-editor-sheet-tools" class="note-editor-sheet-tools"></div>' +
       "</div>" +
       "</div>" +
       '<div class="note-editor-pad note-editor-pad--body"></div>' +
@@ -30145,6 +30146,7 @@
     skipCaretScroll: false,
     enabled: false,
     pendingOpenSheetId: "",
+    note: null, // открытая заметка целиком — см. openSheetsNote()
     // Сервер только что переписал листы этой заметки («Кто есть кто»): старые листы из редактора
     // не досохраняем — иначе PATCH после 409 вернёт «Спикер N» поверх имён. Снимается, когда листы перечитаны.
     staleSheetsNoteId: "",
@@ -40537,7 +40539,7 @@
       }
     }
     noteSheetState.leftId = String(next.id);
-    var transNote = resolveLocalNoteFromCache({ id: noteSheetsNoteId() });
+    var transNote = openSheetsNote();
     var pad = document.querySelector("#note-editor-overlay .note-editor-pad--body");
     if (
       isTranscriptionNoteItem(transNote) &&
@@ -40814,11 +40816,14 @@
     bindSheetChipsWheel(host);
     scheduleTranscriptSheetSync();
     host.innerHTML = "";
+    // Справа от ряда листов, вне прокрутки: «Кто есть кто» и «Текст / Диалог» у встречи — всегда на виду.
+    var tools = document.getElementById("note-editor-sheet-tools");
+    if (tools) tools.innerHTML = "";
     if (!noteSheetsEnabled()) {
       host.classList.add("hidden");
       return;
     }
-    var transNote = resolveLocalNoteFromCache({ id: noteSheetsNoteId() });
+    var transNote = openSheetsNote();
     var isTrans = isTranscriptionNoteItem(transNote);
     if (isTrans) {
       host.classList.remove("hidden");
@@ -40852,11 +40857,11 @@
         });
         host.appendChild(makeBtn);
       }
-      // На листе транскрипта «Кто есть кто» и «Текст / Диалог» — в строке над текстом (syncTranscriptSheetView).
-      if (!(transcriptSheetActive(transNote) && transcriptHasSpeakers(transNote))) {
-        var spBtn = speakerMapButton(transNote, "note-sheet-chip note-sheet-chip--speakers");
-        if (spBtn) host.appendChild(spBtn);
-      }
+      // «Кто есть кто» — на любом листе встречи; на транскрипте рядом ещё «Текст / Диалог».
+      var toolsHost = tools || host;
+      var spBtn = speakerMapButton(transNote, "note-sheet-chip note-sheet-chip--speakers");
+      if (spBtn) toolsHost.appendChild(spBtn);
+      if (transcriptSheetActive(transNote) && transcriptHasSpeakers(transNote)) toolsHost.appendChild(transcriptViewSwitch());
       return;
     }
     var extras = extraNoteSheets();
@@ -41980,13 +41985,8 @@
     return btn;
   }
 
-  // Строка над текстом транскрипта: «Кто есть кто» слева, переключатель «Текст / Диалог» справа.
-  function transcriptBar(transNote) {
-    var bar = document.createElement("div");
-    bar.className = "note-transcript-bar";
-    bar.setAttribute("contenteditable", "false");
-    var sp = speakerMapButton(transNote, "note-transcript-speakers");
-    if (sp) bar.appendChild(sp);
+  // «Текст / Диалог» — сегменты, как «Задача / Встреча», чтобы не путать с вкладками листов.
+  function transcriptViewSwitch() {
     var seg = document.createElement("div");
     seg.className = "event-sheet-kind-switch note-transcript-view-switch";
     seg.setAttribute("role", "radiogroup");
@@ -42006,31 +42006,19 @@
       });
       seg.appendChild(b);
     });
-    bar.appendChild(seg);
-    return bar;
+    return seg;
   }
 
   function syncTranscriptSheetView() {
     var pad = document.querySelector("#note-editor-overlay .note-editor-pad--body");
     if (!pad) return;
     var noteId = noteSheetsNoteId();
-    var transNote = noteId ? resolveLocalNoteFromCache({ id: noteId }) : null;
+    var transNote = noteId ? openSheetsNote() : null;
     var active = !!noteId && transcriptSheetActive(transNote) && transcriptHasSpeakers(transNote);
     pad.classList.toggle("is-transcript-sheet", active);
     if (active) bindTranscriptSpeakerClicks();
     var dialog = active && transcriptViewMode() === "dialog";
     pad.classList.toggle("is-transcript-dialog", dialog);
-    var oldBar = pad.querySelector(":scope > .note-transcript-bar");
-    var fresh = active ? transcriptBar(transNote) : null;
-    var barKey = fresh ? fresh.textContent + "|" + transcriptViewMode() + "|" + fresh.querySelectorAll(".is-todo").length : "";
-    if (oldBar && (!fresh || oldBar.getAttribute("data-key") !== barKey)) {
-      oldBar.remove();
-      oldBar = null;
-    }
-    if (fresh && !oldBar) {
-      fresh.setAttribute("data-key", barKey);
-      pad.insertBefore(fresh, pad.firstChild);
-    }
     var box = pad.querySelector(":scope > .note-transcript-dialog");
     if (!dialog) {
       if (box) box.remove();
@@ -42046,8 +42034,7 @@
     wait.className = "note-speaker-pop-hint";
     wait.textContent = "Собираю диалог…";
     box.appendChild(wait);
-    var barEl = pad.querySelector(":scope > .note-transcript-bar");
-    pad.insertBefore(box, barEl ? barEl.nextSibling : pad.firstChild);
+    pad.insertBefore(box, pad.firstChild);
     apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/transcript/dialog")
       .then(function (d) {
         if (!box.parentNode) return;
@@ -42263,7 +42250,25 @@
     }
   }
 
+  // Открытая заметка как есть (с meta). Кэш списков может её не содержать (общая заметка) или держать
+  // урезанной — тогда кнопки транскрипции то пропадали, то появлялись.
+  function openSheetsNote() {
+    var id = noteSheetsNoteId();
+    if (!id) return null;
+    var cached = resolveLocalNoteFromCache({ id: id });
+    var own = noteSheetState.note && String(noteSheetState.note.id) === String(id) ? noteSheetState.note : null;
+    if (cached && cached.meta && isTranscriptionNoteItem(cached)) {
+      if (own && own !== cached) noteSheetState.note = cached;
+      return cached;
+    }
+    return own || cached;
+  }
+
   function hydrateNoteSheets(note, primaryBody) {
+    var prevOpen = noteSheetState.note;
+    var sameNote = !!(note && prevOpen && String(prevOpen.id) === String(note.id));
+    // Без meta (вызов из кэша после ошибки) — оставляем прежний полный объект той же заметки.
+    if (!(sameNote && !(note && note.meta))) noteSheetState.note = note || null;
     destroyLeftBoard();
     destroyRightBoard();
     destroyLeftWebCanvas();

@@ -9325,14 +9325,12 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   color: var(--accent);
 }
 
-/* Строка над текстом транскрипта: «Кто есть кто» и «Текст / Диалог» (сегменты как «Задача / Встреча») */
-.note-transcript-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; user-select: none; }
-.note-transcript-speakers { display: inline-flex; align-items: center; min-height: 32px; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 0.8125rem; font-weight: 600; cursor: pointer; }
-.note-transcript-speakers:hover { color: var(--text); }
-.note-transcript-speakers.is-todo { border-color: var(--accent); color: var(--accent); }
-.note-transcript-bar .note-transcript-view-switch { flex: 0 0 auto; margin: 0 0 0 auto; }
-.note-transcript-bar .event-sheet-kind-btn { flex: 0 0 auto; min-height: 28px; padding: 0 14px; font-size: 0.8125rem; color: var(--text-subtle, var(--text-tertiary)); }
-.note-transcript-bar .event-sheet-kind-btn.is-active { color: var(--text); background: var(--seg-active, var(--surface)); }
+/* Справа от ряда листов, вне его прокрутки: «Кто есть кто» и «Текст / Диалог» (сегменты, как «Задача / Встреча») */
+.note-editor-sheet-tools { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+.note-editor-sheet-tools:empty { display: none; }
+.note-editor-sheet-tools .note-transcript-view-switch { flex: 0 0 auto; display: inline-flex; margin: 0; padding: 2px; gap: 2px; }
+.note-editor-sheet-tools .event-sheet-kind-btn { flex: 0 0 auto; min-height: 26px; padding: 0 10px; font-size: 0.8125rem; color: var(--text-subtle, var(--text-tertiary)); }
+.note-editor-sheet-tools .event-sheet-kind-btn.is-active { color: var(--text); background: var(--seg-active, var(--surface)); }
 
 /* имя спикера в тексте транскрипта — нажимается */
 .is-transcript-sheet .ProseMirror p > strong:first-child {
