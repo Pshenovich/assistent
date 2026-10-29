@@ -1187,10 +1187,12 @@ def get_event(
     from assistant.stores import orbita_events
 
     if orbita_events.is_orbita_id(event_id):
-        rec = orbita_events.get(orbita_events.parse_id(event_id))
-        if not rec or not orbita_events.can_view(rec, user_id):
+        from assistant.services import orbita_calendar
+
+        gev = orbita_calendar.view(int(user_id), event_id)
+        if not gev:
             raise RuntimeError("Встреча не найдена")
-        return orbita_events.as_gcal(rec, user_id)
+        return gev
     cal_id = cal_sources.resolve_calendar_id(
         user_id, (calendar_id or GOOGLE_CALENDAR_ID).strip() or GOOGLE_CALENDAR_ID
     )

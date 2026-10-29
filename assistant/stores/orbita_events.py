@@ -8,9 +8,11 @@
 
 from __future__ import annotations
 
+import json
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from assistant.stores import notes as notes_store
 
@@ -19,22 +21,33 @@ _LOCK = notes_store._LOCK  # type: ignore[attr-defined]
 CALENDAR_ID = "orbita"
 ID_PREFIX = "orb-"
 RESPONSES = ("needsAction", "accepted", "tentative", "declined")
-
-
-_MIGRATED: set[str] = set()
+_OCC_FMT = "%Y%m%dT%H%M%SZ"  # ключ вхождения серии: исходное начало в UTC (как у экземпляров Google)
+MAX_OCCURRENCES = 500
 
 
 def _migrate(conn) -> None:
-    """Колонки, добавленные после первой выкатки (видеосвязь)."""
-    key = f"{notes_store._db_path()}:{id(conn)}"  # type: ignore[attr-defined]
-    if key in _MIGRATED:
+    """Колонки и таблицы, добавленные после первой выкатки (видеосвязь, повторы).
+
+    Признак, что всё на месте, — таблица сдвигов серий: она создаётся последней."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'orbita_event_overrides'").fetchone():
         return
     cols = {r[1] for r in conn.execute("PRAGMA table_info(orbita_events)").fetchall()}
-    for col in ("video_url", "video_provider", "video_ref"):
+    for col, default in (("video_url", "''"), ("video_provider", "''"), ("video_ref", "''"),
+                         ("recurrence", "''"), ("exdates", "'[]'")):
         if col not in cols:
-            conn.execute(f"ALTER TABLE orbita_events ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+            conn.execute(f"ALTER TABLE orbita_events ADD COLUMN {col} TEXT NOT NULL DEFAULT {default}")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS orbita_event_overrides (
+            event_id INTEGER NOT NULL,
+            occ TEXT NOT NULL,
+            start_utc TEXT NOT NULL,
+            end_utc TEXT NOT NULL,
+            PRIMARY KEY (event_id, occ)
+        )
+        """
+    )
     conn.commit()
-    _MIGRATED.add(key)
 
 
 def _conn():
@@ -60,6 +73,8 @@ def _conn():
             video_url TEXT NOT NULL DEFAULT '',
             video_provider TEXT NOT NULL DEFAULT '',
             video_ref TEXT NOT NULL DEFAULT '',
+            recurrence TEXT NOT NULL DEFAULT '',
+            exdates TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -96,15 +111,41 @@ def is_orbita_id(event_id: str) -> bool:
     return str(event_id or "").startswith(ID_PREFIX)
 
 
-def parse_id(event_id: str) -> int:
+def parse_instance(event_id: str) -> tuple[int, Optional[str]]:
+    """``orb-7`` → (7, None); вхождение серии ``orb-7_20261103T070000Z`` → (7, ключ вхождения)."""
     raw = str(event_id or "")
-    if not raw.startswith(ID_PREFIX) or not raw[len(ID_PREFIX):].isdigit():
+    if not raw.startswith(ID_PREFIX):
         raise ValueError("Встреча не найдена")
-    return int(raw[len(ID_PREFIX):])
+    num, _, occ = raw[len(ID_PREFIX):].partition("_")
+    if not num.isdigit():
+        raise ValueError("Встреча не найдена")
+    if occ:
+        try:
+            datetime.strptime(occ, _OCC_FMT)
+        except ValueError:
+            raise ValueError("Встреча не найдена") from None
+    return int(num), (occ or None)
+
+
+def parse_id(event_id: str) -> int:
+    """Номер встречи (серии) — и для вхождения серии."""
+    return parse_instance(event_id)[0]
 
 
 def public_id(n: int) -> str:
     return f"{ID_PREFIX}{int(n)}"
+
+
+def occ_key(start: datetime) -> str:
+    return start.astimezone(timezone.utc).strftime(_OCC_FMT)
+
+
+def instance_id(n: int, occ: str) -> str:
+    return f"{public_id(n)}_{occ}"
+
+
+def occ_start(occ: str) -> datetime:
+    return datetime.strptime(occ, _OCC_FMT).replace(tzinfo=timezone.utc)
 
 
 # ---------- чтение ----------
@@ -124,7 +165,61 @@ def get(event_id: int) -> Optional[dict[str, Any]]:
             return None
         ev = dict(row)
         ev["attendees"] = _attendees(int(row["id"]))
+        try:
+            ev["exdates"] = list(json.loads(row["exdates"] or "[]"))
+        except (TypeError, ValueError):
+            ev["exdates"] = []
+        ev["overrides"] = {
+            r["occ"]: {"start_utc": r["start_utc"], "end_utc": r["end_utc"]}
+            for r in _conn().execute("SELECT * FROM orbita_event_overrides WHERE event_id = ?", (int(row["id"]),))
+        }
     return ev
+
+
+def occurrences(ev: dict[str, Any], start: datetime, end: datetime) -> list[dict[str, Any]]:
+    """Вхождения встречи в окне: [{occ, start, end}] (occ — None у разовой встречи).
+
+    Серия разворачивается по правилу в часовом поясе организатора (время на часах сохраняется при
+    переходе на летнее время); убранные вхождения (exdates) пропускаются, сдвинутые — на новом месте.
+    """
+    base_s = datetime.fromisoformat(ev["start_utc"])
+    base_e = datetime.fromisoformat(ev["end_utc"])
+    rule = str(ev.get("recurrence") or "").strip()
+    if not rule:
+        return [{"occ": None, "start": base_s, "end": base_e}] if base_s < end and base_e > start else []
+    from dateutil.rrule import rrulestr
+
+    try:
+        tz = ZoneInfo(ev.get("tz") or "UTC")
+    except Exception:
+        tz = ZoneInfo("UTC")
+    dur = base_e - base_s
+    local = base_s.astimezone(tz)
+    line = rule if rule.upper().startswith("RRULE:") else "RRULE:" + rule
+    try:
+        r = rrulestr(line, dtstart=local)
+        starts = r.between(start.astimezone(tz) - dur, end.astimezone(tz), inc=True)[:MAX_OCCURRENCES]
+    except Exception as e:
+        print(f"[orbita_events] bad rrule ev={ev.get('id')} rule={rule!r} err={e!r}")
+        starts = [local]
+    skip = set(ev.get("exdates") or [])
+    moved = ev.get("overrides") or {}
+    out = []
+    for st in starts:
+        key = occ_key(st)
+        if key in skip or key in moved:
+            continue
+        s0, e0 = st.astimezone(timezone.utc), (st + dur).astimezone(timezone.utc)
+        if s0 < end and e0 > start:
+            out.append({"occ": key, "start": s0, "end": e0})
+    for key, ov in moved.items():
+        if key in skip:
+            continue
+        s0, e0 = datetime.fromisoformat(ov["start_utc"]), datetime.fromisoformat(ov["end_utc"])
+        if s0 < end and e0 > start:
+            out.append({"occ": key, "start": s0, "end": e0})
+    out.sort(key=lambda o: o["start"])
+    return out
 
 
 def get_by_token(token: str) -> Optional[tuple[dict[str, Any], dict[str, Any]]]:
@@ -167,16 +262,18 @@ def list_for_user(user_id: int | str, start: datetime, end: datetime) -> list[di
             """
             SELECT DISTINCT e.id FROM orbita_events e
             LEFT JOIN orbita_event_attendees a ON a.event_id = e.id
-            WHERE e.status = 'confirmed' AND e.start_utc < ? AND e.end_utc > ?
+            WHERE e.status = 'confirmed' AND e.start_utc < ?
+              AND (e.end_utc > ? OR e.recurrence != ''
+                   OR e.id IN (SELECT event_id FROM orbita_event_overrides WHERE end_utc > ?))
               AND (e.owner_user_id = ? OR a.user_id = ?)
             ORDER BY e.start_utc
             """,
-            (_utc(end), _utc(start), uid, uid),
+            (_utc(end), _utc(start), _utc(start), uid, uid),
         ).fetchall()
     out = []
     for r in rows:
         ev = get(int(r["id"]))
-        if ev:
+        if ev and occurrences(ev, start, end):
             out.append(ev)
     return out
 
@@ -189,7 +286,7 @@ def busy_for_user(user_id: int | str, start: datetime, end: datetime) -> list[tu
         me = next((a for a in ev["attendees"] if a.get("user_id") == uid), None)
         if me and me.get("response") == "declined":
             continue
-        out.append((datetime.fromisoformat(ev["start_utc"]), datetime.fromisoformat(ev["end_utc"])))
+        out += [(o["start"], o["end"]) for o in occurrences(ev, start, end)]
     return out
 
 
@@ -215,7 +312,7 @@ def _write_attendees(conn, event_id: int, attendees: list[dict[str, Any]], *, ke
 
 def create(owner_user_id: int, *, title: str, start: datetime, end: datetime, tz: str = "",
            description: str = "", location: str = "", organizer_email: str = "",
-           attendees: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+           attendees: list[dict[str, Any]] | None = None, recurrence: str = "") -> dict[str, Any]:
     """attendees: [{email, user_id?, name?}] — организатора туда не класть."""
     if end <= start:
         raise ValueError("Конец встречи раньше начала")
@@ -225,9 +322,9 @@ def create(owner_user_id: int, *, title: str, start: datetime, end: datetime, tz
         conn = _conn()
         cur = conn.execute(
             "INSERT INTO orbita_events (ical_uid, owner_user_id, organizer_email, title, description, location, "
-            "start_utc, end_utc, tz, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "start_utc, end_utc, tz, recurrence, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (uid_ical, str(int(owner_user_id)), organizer_email.strip().lower(), title.strip() or "Встреча",
-             description, location.strip(), _utc(start), _utc(end), tz, now, now),
+             description, location.strip(), _utc(start), _utc(end), tz, str(recurrence or "").strip(), now, now),
         )
         eid = int(cur.lastrowid)
         _write_attendees(conn, eid, attendees or [], keep={})
@@ -237,8 +334,11 @@ def create(owner_user_id: int, *, title: str, start: datetime, end: datetime, tz
 
 def update(event_id: int, *, title: str | None = None, start: datetime | None = None, end: datetime | None = None,
            description: str | None = None, location: str | None = None,
-           attendees: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    """Правка встречи. Меняется время/место — ответы гостей сбрасываются (их надо спросить заново)."""
+           attendees: list[dict[str, Any]] | None = None, recurrence: str | None = None) -> dict[str, Any]:
+    """Правка встречи (у серии — всей серии). Меняется время/место/повтор — ответы гостей сбрасываются.
+
+    recurrence: None — не трогать, "" — убрать повтор, "RRULE:…" — новое правило (сдвиги и пропуски серии
+    сбрасываются: под новое правило они не подходят)."""
     ev = get(event_id)
     if not ev:
         raise ValueError("Встреча не найдена")
@@ -253,9 +353,14 @@ def update(event_id: int, *, title: str | None = None, start: datetime | None = 
     new_end = _utc(end) if end else ev["end_utc"]
     if new_end <= new_start:
         raise ValueError("Конец встречи раньше начала")
-    moved = new_start != ev["start_utc"] or new_end != ev["end_utc"] or (
+    new_rule = (ev.get("recurrence") or "") if recurrence is None else str(recurrence).strip()
+    rule_changed = new_rule != (ev.get("recurrence") or "")
+    moved = new_start != ev["start_utc"] or new_end != ev["end_utc"] or rule_changed or (
         location is not None and location.strip() != ev["location"])
     sets["start_utc"], sets["end_utc"] = new_start, new_end
+    if rule_changed or (moved and new_rule):
+        sets["recurrence"] = new_rule
+        sets["exdates"] = "[]"
     sets["sequence"] = int(ev["sequence"]) + 1
     sets["updated_at"] = _now()
     with _LOCK:
@@ -266,6 +371,8 @@ def update(event_id: int, *, title: str | None = None, start: datetime | None = 
         if moved:
             keep = {k: {**v, "response": "needsAction"} for k, v in keep.items()}
             conn.execute("UPDATE orbita_event_attendees SET response = 'needsAction' WHERE event_id = ?", (int(event_id),))
+        if "exdates" in sets:
+            conn.execute("DELETE FROM orbita_event_overrides WHERE event_id = ?", (int(event_id),))
         if attendees is not None:
             _write_attendees(conn, int(event_id), attendees, keep=keep)
         conn.commit()
@@ -280,6 +387,37 @@ def cancel(event_id: int) -> dict[str, Any]:
         conn = _conn()
         conn.execute("UPDATE orbita_events SET status = 'cancelled', sequence = sequence + 1, updated_at = ? WHERE id = ?",
                      (_now(), int(event_id)))
+        conn.commit()
+    return get(event_id) or {}
+
+
+def move_occurrence(event_id: int, occ: str, *, start: datetime, end: datetime) -> dict[str, Any]:
+    """Сдвинуть одно вхождение серии (остальные — на месте)."""
+    if end <= start:
+        raise ValueError("Конец встречи раньше начала")
+    with _LOCK:
+        conn = _conn()
+        conn.execute(
+            "INSERT INTO orbita_event_overrides (event_id, occ, start_utc, end_utc) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(event_id, occ) DO UPDATE SET start_utc = excluded.start_utc, end_utc = excluded.end_utc",
+            (int(event_id), occ, _utc(start), _utc(end)),
+        )
+        conn.execute("UPDATE orbita_events SET sequence = sequence + 1, updated_at = ? WHERE id = ?", (_now(), int(event_id)))
+        conn.commit()
+    return get(event_id) or {}
+
+
+def skip_occurrence(event_id: int, occ: str) -> dict[str, Any]:
+    """Убрать одно вхождение серии."""
+    ev = get(event_id)
+    if not ev:
+        raise ValueError("Встреча не найдена")
+    ex = sorted(set(ev.get("exdates") or []) | {occ})
+    with _LOCK:
+        conn = _conn()
+        conn.execute("UPDATE orbita_events SET exdates = ?, sequence = sequence + 1, updated_at = ? WHERE id = ?",
+                     (json.dumps(ex), _now(), int(event_id)))
+        conn.execute("DELETE FROM orbita_event_overrides WHERE event_id = ? AND occ = ?", (int(event_id), occ))
         conn.commit()
     return get(event_id) or {}
 
@@ -316,8 +454,11 @@ def set_response(event_id: int, *, email: str | None = None, user_id: int | str 
 # ---------- как событие Google ----------
 
 
-def as_gcal(ev: dict[str, Any], viewer_id: int | str) -> dict[str, Any]:
-    """Встреча в форме события Google глазами viewer: self у его строки, organizer — у владельца."""
+def as_gcal(ev: dict[str, Any], viewer_id: int | str, occurrence: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """Встреча в форме события Google глазами viewer: self у его строки, organizer — у владельца.
+
+    occurrence — вхождение серии ({occ, start, end}): как экземпляр Google (id …_<время>, recurringEventId).
+    """
     viewer = str(int(viewer_id))
     is_owner = ev["owner_user_id"] == viewer
     tz = ev.get("tz") or "UTC"
@@ -332,20 +473,27 @@ def as_gcal(ev: dict[str, Any], viewer_id: int | str) -> dict[str, Any]:
         if a.get("user_id") == viewer and not is_owner:
             row["self"] = True
         atts.append(row)
+    st, en = ev["start_utc"], ev["end_utc"]
+    if occurrence and occurrence.get("occ"):
+        st, en = occurrence["start"].isoformat(), occurrence["end"].isoformat()
     out = {
-        "id": public_id(ev["id"]),
+        "id": instance_id(ev["id"], occurrence["occ"]) if occurrence and occurrence.get("occ") else public_id(ev["id"]),
         "iCalUID": ev["ical_uid"],
         "_calendarId": CALENDAR_ID,
         "summary": ev["title"],
         "description": ev.get("description") or "",
         "location": ev.get("location") or "",
-        "start": {"dateTime": ev["start_utc"], "timeZone": tz},
-        "end": {"dateTime": ev["end_utc"], "timeZone": tz},
+        "start": {"dateTime": st, "timeZone": tz},
+        "end": {"dateTime": en, "timeZone": tz},
         "status": ev["status"],
         "attendees": atts,
         "organizer": {"email": ev.get("organizer_email") or "", **({"self": True} if is_owner else {})},
         "_orbita": True,
     }
+    if occurrence and occurrence.get("occ"):
+        out["recurringEventId"] = public_id(ev["id"])
+    elif ev.get("recurrence"):
+        out["recurrence"] = [ev["recurrence"]]
     if ev.get("video_url"):
         out["hangoutLink"] = ev["video_url"]
         out["_video_provider"] = ev.get("video_provider") or ""

@@ -1609,7 +1609,7 @@
     var sent = m.sent || [];
     if (skipped.length && m.reason === "no_mail") {
       showCalendarToast(
-        "Внешним гостям (" + skipped.join(", ") + ") приглашение не ушло: подключите почту в Профиле → Почта и включите «Отвечать из Orbita»"
+        "Внешним гостям (" + skipped.join(", ") + ") приглашение не ушло: подключите ящик в Профиль → Сервисы → Почта и включите под ним «Отвечать из Orbita»"
       );
     } else if (failed.length) {
       showCalendarToast("Не удалось отправить приглашение: " + failed.join(", "));

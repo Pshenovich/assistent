@@ -31,3 +31,12 @@ def test_parse_reply_gmail_style():
              " Person:mailto:Guest@Partner.ru\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
     assert ics.parse_reply(reply) == {"uid": "orbita-abc@orbita", "email": "guest@partner.ru", "response": "accepted"}
     assert ics.parse_reply(ics.build(EV)) is None
+
+
+def test_build_series_with_skip_and_move():
+    ev = {**EV, "recurrence": "RRULE:FREQ=WEEKLY;COUNT=4", "exdates": ["20261109T080000Z"],
+          "overrides": {"20261116T080000Z": {"start_utc": "2026-11-16T11:00:00+00:00", "end_utc": "2026-11-16T11:45:00+00:00"}}}
+    lines = ics._unfold(ics.build(ev))
+    assert "RRULE:FREQ=WEEKLY;COUNT=4" in lines and "EXDATE:20261109T080000Z" in lines
+    assert lines.count("BEGIN:VEVENT") == 2
+    assert "RECURRENCE-ID:20261116T080000Z" in lines and "DTSTART:20261116T110000Z" in lines

@@ -84,9 +84,49 @@ class OrbitaCalendarTests(unittest.TestCase):
         win = (self.day - timedelta(hours=1), self.day + timedelta(hours=2))
         self.assertEqual(orbita_calendar.events_for(2, *win), [])
 
-    def test_recurrence_not_supported_yet(self) -> None:
-        with self.assertRaises(ValueError):
-            self._create(recurrence=["RRULE:FREQ=WEEKLY"])
+    def test_weekly_series_occurrences_and_edits(self) -> None:
+        res = self._create(recurrence=["RRULE:FREQ=WEEKLY;COUNT=4"])
+        n = store.parse_id(res["event_id"])
+        win = (self.day - timedelta(hours=1), self.day + timedelta(days=30))
+        evs = orbita_calendar.events_for(2, *win)  # Анна приглашена — видит все 4
+        self.assertEqual(len(evs), 4)
+        self.assertTrue(all(e["recurringEventId"] == res["event_id"] for e in evs))
+        second = evs[1]["id"]
+        self.assertTrue(second.startswith(res["event_id"] + "_"))
+        # сдвинули только второе вхождение
+        moved_to = self.day + timedelta(days=7, hours=3)
+        orbita_calendar.update(1, second, {"start": moved_to.isoformat()})
+        starts = [datetime.fromisoformat(e["start"]["dateTime"]) for e in orbita_calendar.events_for(1, *win)]
+        self.assertIn(moved_to, starts)
+        self.assertIn(self.day + timedelta(days=14), starts)
+        self.assertNotIn(self.day + timedelta(days=7), starts)
+        # название из вхождения — у всей серии
+        orbita_calendar.update(1, evs[2]["id"], {"title": "Ретро"})
+        self.assertEqual({e["summary"] for e in orbita_calendar.events_for(1, *win)}, {"Ретро"})
+        # удалили третье — остальные на месте
+        orbita_calendar.cancel(1, evs[2]["id"])
+        self.assertEqual(len(orbita_calendar.events_for(1, *win)), 3)
+        self.assertEqual(len(store.busy_for_user(2, *win)), 3)
+        # открыть вхождение по id
+        self.assertEqual(orbita_calendar.view(2, evs[3]["id"])["recurringEventId"], res["event_id"])
+        self.assertIsNone(orbita_calendar.view(3, evs[3]["id"]))  # Петра не звали
+        # новое правило — сдвиги/пропуски сбрасываются
+        orbita_calendar.update(1, res["event_id"], {"recurrence": ["RRULE:FREQ=DAILY;COUNT=2"]})
+        self.assertEqual(len(orbita_calendar.events_for(1, *win)), 2)
+        orbita_calendar.update(1, res["event_id"], {"recurrence": []})
+        self.assertEqual(len(orbita_calendar.events_for(1, *win)), 1)
+        self.assertEqual(store.get(n)["recurrence"], "")
+
+    def test_series_keeps_wall_clock_across_dst(self) -> None:
+        start = datetime(2026, 10, 19, 8, 0, tzinfo=timezone.utc)  # 10:00 по Берлину (летнее время)
+        ev = store.create(1, title="Планёрка", start=start, end=start + timedelta(minutes=30), tz="Europe/Berlin",
+                          recurrence="RRULE:FREQ=WEEKLY;COUNT=3")
+        occ = store.occurrences(ev, start - timedelta(days=1), start + timedelta(days=20))
+        from zoneinfo import ZoneInfo
+
+        local = [o["start"].astimezone(ZoneInfo("Europe/Berlin")).hour for o in occ]
+        self.assertEqual(local, [10, 10, 10])  # 25 октября перешли на зимнее, а встреча всё равно в 10:00
+        self.assertEqual(occ[2]["start"].hour, 9)  # в UTC — уже 09:00
 
     def test_busy_without_google(self) -> None:
         """Занятость для свободных слотов: встречи Орбиты + задачи, без Google."""

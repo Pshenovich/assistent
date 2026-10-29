@@ -16,7 +16,8 @@ from assistant.lib import ics
 
 REASON_NO_MAIL = "no_mail"
 # Поля, правка которых — повод разослать обновлённое приглашение.
-_MATERIAL = ("title", "start_utc", "end_utc", "location", "description", "video_url")
+_MATERIAL = ("title", "start_utc", "end_utc", "location", "description", "video_url",
+             "recurrence", "exdates", "overrides")
 
 
 def send_account(user_id: int) -> Optional[dict[str, Any]]:
@@ -51,9 +52,22 @@ def _organizer_name(user_id: int) -> str:
 
 
 def _when(ev: dict[str, Any], user_id: int) -> str:
+    """Когда: дата и время первой встречи; у серии — ещё и как повторяется."""
+    from assistant.lib.recurrence import human_recurrence
     from assistant.services.calendar import format_event_when
 
-    return format_event_when(datetime.fromisoformat(ev["start_utc"]), datetime.fromisoformat(ev["end_utc"]), user_id)
+    text = format_event_when(datetime.fromisoformat(ev["start_utc"]), datetime.fromisoformat(ev["end_utc"]), user_id)
+    rule = str(ev.get("recurrence") or "")
+    if rule:
+        rep = human_recurrence(rule.split(":", 1)[-1] if rule.upper().startswith("RRULE:") else rule)
+        text += f", {rep}" if rep else ", повторяется"
+    return text
+
+
+def _occ_when(start: datetime, end: datetime, user_id: int) -> str:
+    from assistant.services.calendar import format_event_when
+
+    return format_event_when(start, end, user_id)
 
 
 def _message(acc: dict[str, Any], ev: dict[str, Any], guest: dict[str, Any], *, method: str, owner: int) -> EmailMessage:
@@ -138,9 +152,22 @@ def notify_members(owner: int, prev: Optional[dict[str, Any]], ev: dict[str, Any
     members = [a for a in (prev if ev.get("status") == "cancelled" else ev).get("attendees") or [] if a.get("user_id")]
     if not members:
         return
+    new_skips = sorted(set(ev.get("exdates") or []) - set(prev.get("exdates") or []))
+    new_moves = {k: v for k, v in (ev.get("overrides") or {}).items() if (prev.get("overrides") or {}).get(k) != v}
     if ev.get("status") == "cancelled":
         text = f"Встреча «{ev['title']}» ({_when(prev, owner)}) отменена."
-    elif any(str(prev.get(k)) != str(ev.get(k)) for k in ("start_utc", "end_utc", "location")):
+    elif new_skips and not new_moves:
+        from assistant.stores import orbita_events
+
+        day = _occ_when(orbita_events.occ_start(new_skips[0]),
+                        orbita_events.occ_start(new_skips[0]) + (datetime.fromisoformat(ev["end_utc"])
+                                                                  - datetime.fromisoformat(ev["start_utc"])), owner)
+        text = f"Встреча «{ev['title']}» {day} отменена (остальные встречи серии — как были)."
+    elif new_moves and not any(str(prev.get(k)) != str(ev.get(k)) for k in ("start_utc", "end_utc", "recurrence")):
+        ov = next(iter(new_moves.values()))
+        when = _occ_when(datetime.fromisoformat(ov["start_utc"]), datetime.fromisoformat(ov["end_utc"]), owner)
+        text = f"Встреча «{ev['title']}» перенесена: {when} (только эта, остальные — как были). Ответьте в Орбите, придёте ли."
+    elif any(str(prev.get(k)) != str(ev.get(k)) for k in ("start_utc", "end_utc", "location", "recurrence")):
         where = f", {ev['location']}" if ev.get("location") else ""
         text = f"Встреча «{ev['title']}» перенесена: {_when(ev, owner)}{where}. Ответьте в Орбите, придёте ли."
     else:

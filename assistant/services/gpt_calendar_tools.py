@@ -790,9 +790,6 @@ def tool_calendar_create_event(ctx: GptCalendarContext, args: dict[str, Any]) ->
     dur = max(15, min(8 * 60, int(args.get("duration_min") or 30)))
     people = [str(p).strip() for p in (args.get("attendees") or []) if str(p).strip()]
     rrule = recur.build_rrule_from_args(args)
-    if rrule and not has_google_calendar(ctx.uid):
-        return _err("Повторяющиеся встречи пока можно ставить только с подключённым Google Календарём — "
-                    "предложи поставить одну встречу или подключить Google.")
     if rrule:
         rrule = recur.ensure_until_or_count(rrule, start=start)
     parsed: dict[str, Any] = {

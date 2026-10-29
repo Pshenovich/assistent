@@ -122,6 +122,12 @@ def format_invite_message_html(
     if isinstance(st, datetime) and isinstance(en, datetime):
         when = format_event_when(st, en, organizer_uid)
         if when:
+            rules = [str(x) for x in (result.get("recurrence") or []) if str(x).upper().startswith("RRULE:")]
+            if rules:
+                from assistant.lib.recurrence import human_recurrence
+
+                rep = human_recurrence(rules[0])
+                when += f" ({rep})" if rep else " (повторяется)"
             lines.append(html.escape(when))
     zoom_url = str(result.get("zoom_join_url") or "").strip()
     if zoom_url:
@@ -389,7 +395,7 @@ def apply_invitee_rsvp(
         from assistant.services import orbita_calendar
 
         ev = orbita_calendar.respond(int(invitee_user_id), str(event_id), response_status)
-        return orbita_events.as_gcal(ev, invitee_user_id)
+        return orbita_calendar.view(int(invitee_user_id), str(event_id)) or orbita_events.as_gcal(ev, invitee_user_id)
     last_err: Exception | None = None
     try:
         return patch_self_rsvp(

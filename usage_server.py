@@ -7909,17 +7909,20 @@ async def miniapp_calendar_booking_link_create(
 
 
 def _orbita_event_ser(uid: int, event_id: str) -> dict[str, Any]:
-    """Встреча Орбиты глазами пользователя — в том же виде, что события Google."""
-    from assistant.stores import orbita_events
+    """Встреча Орбиты (или вхождение серии) глазами пользователя — в том же виде, что события Google."""
+    from assistant.services import orbita_calendar
 
-    ev = orbita_events.get(orbita_events.parse_id(event_id))
-    if not ev:
+    try:
+        gev = orbita_calendar.view(uid, event_id)
+    except ValueError:
+        gev = None
+    if not gev:
         raise HTTPException(status_code=404, detail="Встреча не найдена")
     try:
         contacts_by_email = _miniapp_contacts_by_email(uid)
     except Exception:
         contacts_by_email = {}
-    ser = _serialize_calendar_event(orbita_events.as_gcal(ev, uid), contacts_by_email=contacts_by_email)
+    ser = _serialize_calendar_event(gev, contacts_by_email=contacts_by_email)
     ser["orbita"] = True
     return ser
 
@@ -8188,8 +8191,15 @@ async def miniapp_calendar_event_recurrence(
 
     uid = int(principal.telegram_user_id)
     eid = str(event_id or "").strip()
-    if _is_local_dev_event_id(eid) or _is_orbita_event_request(uid, event_id=eid):
+    if _is_local_dev_event_id(eid):
         return {"recurrence": [], "series_id": ""}
+    if _is_orbita_event_request(uid, event_id=eid):
+        from assistant.stores import orbita_events
+
+        n, occ = orbita_events.parse_instance(eid)
+        ev = orbita_events.get(n)
+        rule = (ev or {}).get("recurrence") or ""
+        return {"recurrence": [rule] if rule else [], "series_id": orbita_events.public_id(n) if occ else ""}
 
     def _run() -> dict[str, Any]:
         ev = cal_svc.get_event(uid, eid, calendar_id=calendar_id)

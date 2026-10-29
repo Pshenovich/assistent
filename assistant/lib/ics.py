@@ -53,6 +53,7 @@ def build(event: dict[str, Any], *, method: str = "REQUEST", attendees: Optional
     """event — запись orbita_events (ical_uid, title, start_utc, end_utc, sequence, organizer_email…).
 
     attendees — кого перечислить в приглашении (по умолчанию все); для CANCEL — те, кому отменяем.
+    Серия: RRULE + EXDATE (убранные вхождения) + отдельные VEVENT с RECURRENCE-ID для сдвинутых.
     """
     method = method.upper()
     atts = attendees if attendees is not None else event.get("attendees") or []
@@ -61,36 +62,49 @@ def build(event: dict[str, Any], *, method: str = "REQUEST", attendees: Optional
         desc = "Подключиться: " + str(event["video_url"]) + ("\n\n" + desc if desc else "")
     if rsvp_url:
         desc = (desc + "\n\n" if desc else "") + "Ответить: " + rsvp_url
-    lines = [
-        "BEGIN:VCALENDAR",
-        f"PRODID:{PRODID}",
-        "VERSION:2.0",
-        "CALSCALE:GREGORIAN",
-        f"METHOD:{method}",
-        "BEGIN:VEVENT",
-        f"UID:{event['ical_uid']}",
-        f"SEQUENCE:{int(event.get('sequence') or 0)}",
-        f"DTSTAMP:{_dt(datetime.now(timezone.utc))}",
-        f"DTSTART:{_dt(event['start_utc'])}",
-        f"DTEND:{_dt(event['end_utc'])}",
-        f"SUMMARY:{_esc(event.get('title') or 'Встреча')}",
-    ]
-    if desc:
-        lines.append(f"DESCRIPTION:{_esc(desc)}")
-    if event.get("location") or event.get("video_url"):
-        lines.append(f"LOCATION:{_esc(event.get('location') or event.get('video_url'))}")
-    if event.get("video_url"):
-        lines.append(f"URL:{event['video_url']}")
-    if event.get("organizer_email"):
-        cn = f";CN={_param(organizer_name)}" if organizer_name else ""
-        lines.append(f"ORGANIZER{cn}:mailto:{event['organizer_email']}")
-    for a in atts:
-        cn = f";CN={_param(a['name'])}" if a.get("name") else ""
-        partstat = {"accepted": "ACCEPTED", "declined": "DECLINED", "tentative": "TENTATIVE"}.get(
-            str(a.get("response") or ""), "NEEDS-ACTION")
-        lines.append(f"ATTENDEE{cn};ROLE=REQ-PARTICIPANT;PARTSTAT={partstat};RSVP=TRUE:mailto:{a['email']}")
-    lines.append("STATUS:CANCELLED" if method == "CANCEL" or event.get("status") == "cancelled" else "STATUS:CONFIRMED")
-    lines += ["TRANSP:OPAQUE", "END:VEVENT", "END:VCALENDAR"]
+    status = "STATUS:CANCELLED" if method == "CANCEL" or event.get("status") == "cancelled" else "STATUS:CONFIRMED"
+
+    def vevent(start: str, end: str, extra: list[str]) -> list[str]:
+        out = [
+            "BEGIN:VEVENT",
+            f"UID:{event['ical_uid']}",
+            f"SEQUENCE:{int(event.get('sequence') or 0)}",
+            f"DTSTAMP:{_dt(datetime.now(timezone.utc))}",
+            f"DTSTART:{_dt(start)}",
+            f"DTEND:{_dt(end)}",
+            *extra,
+            f"SUMMARY:{_esc(event.get('title') or 'Встреча')}",
+        ]
+        if desc:
+            out.append(f"DESCRIPTION:{_esc(desc)}")
+        if event.get("location") or event.get("video_url"):
+            out.append(f"LOCATION:{_esc(event.get('location') or event.get('video_url'))}")
+        if event.get("video_url"):
+            out.append(f"URL:{event['video_url']}")
+        if event.get("organizer_email"):
+            cn = f";CN={_param(organizer_name)}" if organizer_name else ""
+            out.append(f"ORGANIZER{cn}:mailto:{event['organizer_email']}")
+        for a in atts:
+            cn = f";CN={_param(a['name'])}" if a.get("name") else ""
+            partstat = {"accepted": "ACCEPTED", "declined": "DECLINED", "tentative": "TENTATIVE"}.get(
+                str(a.get("response") or ""), "NEEDS-ACTION")
+            out.append(f"ATTENDEE{cn};ROLE=REQ-PARTICIPANT;PARTSTAT={partstat};RSVP=TRUE:mailto:{a['email']}")
+        out += [status, "TRANSP:OPAQUE", "END:VEVENT"]
+        return out
+
+    rule = str(event.get("recurrence") or "").strip()
+    master_extra: list[str] = []
+    if rule:
+        master_extra.append(rule if rule.upper().startswith("RRULE:") else "RRULE:" + rule)
+        master_extra += [f"EXDATE:{x}" for x in sorted(event.get("exdates") or [])]
+    lines = ["BEGIN:VCALENDAR", f"PRODID:{PRODID}", "VERSION:2.0", "CALSCALE:GREGORIAN", f"METHOD:{method}"]
+    lines += vevent(event["start_utc"], event["end_utc"], master_extra)
+    if rule:
+        for occ, ov in sorted((event.get("overrides") or {}).items()):
+            if occ in (event.get("exdates") or []):
+                continue
+            lines += vevent(ov["start_utc"], ov["end_utc"], [f"RECURRENCE-ID:{occ}"])
+    lines.append("END:VCALENDAR")
     return "\r\n".join(_fold(ln) for ln in lines) + "\r\n"
 
 

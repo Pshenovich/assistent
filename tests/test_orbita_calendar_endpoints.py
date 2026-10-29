@@ -149,3 +149,29 @@ def test_video_link_for_orbita_meeting(env, monkeypatch):
     assert again["already"] is True
     feed = c.get("/api/miniapp/calendar/today", params={"date": start.date().isoformat()}, headers=_headers(owner)).json()
     assert next(e for e in feed["events"] if e["id"] == ev["id"])["meet_url"] == "https://zoom.us/j/77"
+
+
+def test_recurring_orbita_meeting_via_form(env):
+    c, owner, guest = env["c"], env["owner"], env["guest"]
+    start = _day(2)
+    r = c.post("/api/miniapp/calendar/events", headers=_headers(owner), json={
+        "title": "Еженедельный синк", "start": start.isoformat(), "end": (start + timedelta(minutes=30)).isoformat(),
+        "attendees": [env["guest_email"]], "recurrence": ["RRULE:FREQ=WEEKLY;COUNT=3"]})
+    assert r.status_code == 200, r.text
+    series = r.json()["event"]["id"]
+    rng = c.get("/api/miniapp/calendar/range", params={
+        "start": start.date().isoformat(), "end": (start + timedelta(days=15)).date().isoformat()},
+        headers=_headers(guest)).json()
+    inst = [e for e in rng["events"] if e.get("recurringEventId") == series]
+    assert len(inst) == 3 and inst[0]["id"].startswith(series + "_")
+    rec = c.get(f"/api/miniapp/calendar/events/{inst[1]['id']}/recurrence", headers=_headers(owner)).json()
+    assert rec == {"recurrence": ["RRULE:FREQ=WEEKLY;COUNT=3"], "series_id": series}
+    r = c.post(f"/api/miniapp/calendar/events/{inst[1]['id']}/rsvp", headers=_headers(guest),
+               json={"status": "accepted", "calendar_id": "orbita"})
+    assert r.status_code == 200 and r.json()["event"]["id"] == inst[1]["id"]
+    assert c.delete(f"/api/miniapp/calendar/events/{inst[1]['id']}?calendar_id=orbita", headers=_headers(owner)).json()["ok"]
+    assert any("отменена (остальные" in t for _, t in env["bot"])
+    rng = c.get("/api/miniapp/calendar/range", params={
+        "start": start.date().isoformat(), "end": (start + timedelta(days=15)).date().isoformat()},
+        headers=_headers(owner)).json()
+    assert len([e for e in rng["events"] if e.get("recurringEventId") == series]) == 2
