@@ -499,7 +499,7 @@ if tok:
         with urllib.request.urlopen(req, timeout=10) as r:
             body = r.read().decode("utf-8", "replace")
             print(f"dashboard_auth:{r.status}")
-            print("dashboard_users:" + ("yes" if "по пользователям" in body else "no"))
+            print("dashboard_admin:" + ("yes" if "Админка Орбиты" in body else "no"))
     except urllib.error.HTTPError as e:
         print(f"dashboard_auth:{e.code}")
     except Exception as e:
