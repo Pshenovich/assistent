@@ -582,8 +582,9 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 /* Телефон и планшет: карточки дня листаются вбок прокруткой страницы (блок закреплён),
    после последней — обычная вертикальная прокрутка. Высоту .day-pin задаёт JS. */
 @media (max-width: 979px) {
-  .day-grid { position: sticky; top: 0; height: 100vh; height: 100svh; margin-top: 0; display: flex; flex-direction: column; justify-content: center; overflow: hidden; gap: 14px; }
-  .day-steps { display: flex; gap: 12px; width: max-content; will-change: transform; }
+  /* Высота — по карточкам, отступ сверху (центр экрана) ставит JS: так блок отпускается ровно после последней карточки. */
+  .day-grid { position: sticky; top: 0; margin-top: 0; display: flex; flex-direction: column; overflow: hidden; gap: 14px; padding: 8px 0; }
+  .day-steps { display: flex; align-items: flex-start; gap: 12px; width: max-content; will-change: transform; }
   .day-step { flex: 0 0 min(84vw, 380px); background: var(--surface); border: 1px solid var(--border); border-radius: 22px; padding: 18px; box-shadow: var(--shadow); }
   .day-step h3 { font-size: 19px; margin-top: 10px; }
   .day-step p { font-size: 14.5px; margin-top: 6px; }
@@ -2214,19 +2215,22 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
     dots.className = "day-dots";
     cards.forEach(function () { dots.appendChild(document.createElement("i")); });
     grid.appendChild(dots);
-    var travel = 0;
+    var travel = 0, stickyTop = 0;
     function layout() {
-      if (!mq.matches) { pin.style.height = ""; track.style.transform = ""; return; }
+      if (!mq.matches) { pin.style.height = ""; grid.style.top = ""; track.style.transform = ""; return; }
       travel = Math.max(0, track.scrollWidth - grid.clientWidth);
-      // Сдвиг на пиксель — пиксель прокрутки страницы; плюс экран, пока блок закреплён.
-      pin.style.height = (window.innerHeight + travel) + "px";
+      // Закреплённая часть — высотой с карточки и по центру экрана. Прокрутка внутри блока —
+      // ровно на сдвиг карточек: после последней блок сразу отпускает страницу, без пустого хвоста.
+      var gh = grid.offsetHeight;
+      stickyTop = Math.max(0, Math.round((window.innerHeight - gh) / 2));
+      grid.style.top = stickyTop + "px";
+      pin.style.height = (gh + travel) + "px";
       update();
     }
     function update() {
       if (!mq.matches) return;
       var r = pin.getBoundingClientRect();
-      var span = r.height - window.innerHeight;
-      var p = span > 0 ? Math.min(1, Math.max(0, -r.top / span)) : 0;
+      var p = travel > 0 ? Math.min(1, Math.max(0, (stickyTop - r.top) / travel)) : 0;
       track.style.transform = "translateX(" + (-p * travel).toFixed(1) + "px)";
       var idx = Math.round(p * (cards.length - 1));
       [].forEach.call(dots.children, function (d, i) { d.classList.toggle("on", i === idx); });
