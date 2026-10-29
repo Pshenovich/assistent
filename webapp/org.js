@@ -4,7 +4,7 @@
   "use strict";
 
   var ROLE_LABEL = { owner: "Владелец", admin: "Админ", member: "Участник" };
-  var state = { overview: null, detail: null, contacts: null, queue: Promise.resolve(), saved: {}, slugTimer: null };
+  var state = { overview: null, detail: null, market: null, contacts: null, queue: Promise.resolve(), saved: {}, slugTimer: null };
 
   function app() {
     return window.LeoApp || {};
@@ -89,8 +89,10 @@
     try {
       state.overview = await api("");
       var cur = state.overview.current_id;
+      if (app().setMarketAvailable) app().setMarketAvailable(!!cur);
       state.detail = cur ? await api("/" + cur) : null;
       if (state.detail && state.detail.can && state.detail.can.invite) await loadContacts();
+      state.market = cur ? await api("/" + cur + "/market").catch(function () { return null; }) : null;
     } catch (e) {
       var el = root();
       if (el) el.innerHTML = '<p class="error">' + esc(errText(e)) + "</p>";
@@ -196,6 +198,7 @@
         '</div><p class="pf-hint" id="org-slug-hint">Латиница, цифры и дефис. Пригодится для публичной страницы выпуска и поддомена.</p></div>';
     }
 
+    html += marketHtml(state.market);
     html += billingHtml(d);
     html += membersHtml(d);
 
@@ -233,6 +236,49 @@
       html += '<button type="button" class="pf-link org-new-link" data-org="show-create">+ Создать ещё одну организацию</button>';
     }
     return html;
+  }
+
+  // Выпуск «Рынок» организации: о компании, конкуренты, темы, свои источники, время + личное «в Telegram».
+  function marketHtml(m) {
+    if (!m || !m.settings) return "";
+    var st = m.settings;
+    var html = '<div class="pf-group"><p class="pf-group-title">Выпуск «Рынок»' + saveMark("market") + "</p>";
+    html += '<p class="pf-hint">По этим настройкам Лео пишет в «Дайджест → Рынок» блок «Что это значит для вас». Сам выпуск под вашу компанию (свои источники и отбор новостей) — в следующем обновлении, пока он общий.</p>';
+    html += '<div class="pf-list">';
+    if (m.can_edit) {
+      html +=
+        '<label class="pf-field"><span class="pf-field-label">О компании</span><textarea class="pf-input org-mkt-area" id="org-mkt-about" rows="3" maxlength="1500" placeholder="Чем занимаетесь, для кого, что важно отслеживать">' + esc(st.about) + "</textarea></label>" +
+        '<label class="pf-field"><span class="pf-field-label">Конкуренты</span><input type="text" class="pf-input" id="org-mkt-competitors" value="' + esc((st.competitors || []).join(", ")) + '" placeholder="Через запятую: Gong, Clari, amoCRM" /></label>' +
+        '<label class="pf-field"><span class="pf-field-label">Темы</span><input type="text" class="pf-input" id="org-mkt-topics" value="' + esc((st.topics || []).join(", ")) + '" placeholder="Через запятую: речевая аналитика, ИИ в продажах" /></label>' +
+        '<label class="pf-field"><span class="pf-field-label">Свои источники</span><textarea class="pf-input org-mkt-area" id="org-mkt-sources" rows="2" placeholder="Ссылки на RSS, по одной в строке">' + esc((st.sources || []).join("\n")) + "</textarea></label>" +
+        '<label class="pf-field"><span class="pf-field-label">Время выпуска</span><input type="time" class="pf-input" id="org-mkt-time" value="' + esc(st.time) + '" /></label>';
+    } else {
+      var rows = [["Конкуренты", (st.competitors || []).join(", ")], ["Темы", (st.topics || []).join(", ")], ["Время выпуска", st.time]];
+      rows.forEach(function (r) {
+        if (!r[1]) return;
+        html += '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(r[0]) +
+          '</span><span class="pf-row-sub">' + esc(r[1]) + "</span></span></span></div>";
+      });
+    }
+    html += '<label class="pf-row"><input type="checkbox" class="pf-check-input" id="org-mkt-telegram"' + (m.telegram ? " checked" : "") + " />" +
+      '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Присылать мне выпуск в Telegram</span>' +
+      '<span class="pf-row-sub">Коротко главное и ссылка на выпуск</span></span><span class="pf-check" aria-hidden="true"></span></span></label>';
+    html += "</div></div>";
+    return html;
+  }
+
+  function saveMarket(patch) {
+    var id = currentId();
+    setSaved("market", "busy", "Сохраняю…");
+    return act(async function () {
+      try {
+        state.market = await api("/" + id + "/market", json("PATCH", patch));
+        setSaved("market", "ok", "Сохранено ✓");
+      } catch (e) {
+        setSaved("market", "err", errText(e));
+      }
+      await reload();
+    });
   }
 
   function planLabel(d, id) {
@@ -610,6 +656,18 @@
       autosave("billing", function () { return api("/" + id + "/billing", json("PATCH", { plan: plan })); });
       return true;
     }
+    var mk = { "org-mkt-about": "about", "org-mkt-competitors": "competitors", "org-mkt-topics": "topics",
+      "org-mkt-sources": "sources", "org-mkt-time": "time" }[t.id];
+    if (mk) {
+      var patch = {};
+      patch[mk] = mk === "sources" ? t.value.split(/\n+/).map(function (x) { return x.trim(); }).filter(Boolean) : t.value;
+      saveMarket(patch);
+      return true;
+    }
+    if (t.id === "org-mkt-telegram") {
+      saveMarket({ telegram: !!t.checked });
+      return true;
+    }
     if (t.id === "org-seats") {
       var seats = Number(t.value || 0);
       if (seats !== Number(state.detail.org.seats || 0)) {
@@ -720,6 +778,7 @@
     setTimeout(function () {
       api("").then(function (ov) {
         state.overview = ov;
+        if (app().setMarketAvailable) app().setMarketAvailable(!!ov.current_id);
         var cur = (ov.orgs || []).filter(function (o) { return o.id === ov.current_id; })[0];
         state.detail = cur ? { org: cur } : null;
         syncHint();

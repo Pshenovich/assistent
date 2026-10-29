@@ -99,3 +99,25 @@ def test_org_billing(env):
     assert d["org"]["seats_used"] == 1
     assert c.patch(f"{base}/{oid}/billing", headers=_headers(guest), json={"seats": 9}).status_code == 400
 
+
+
+def test_market_settings(env):
+    c, owner, guest = env["c"], env["owner"], env["guest"]
+    base = "/api/miniapp/orgs"
+    oid = c.post(base, headers=_headers(owner), json={"name": "Рынок-тест"}).json()["org"]["id"]
+    token = c.post(f"{base}/{oid}/invites", headers=_headers(owner)).json()["invite"]["token"]
+    c.post(f"{base}/invite/{token}/accept", headers=_headers(guest))
+    r = c.get(f"{base}/{oid}/market", headers=_headers(owner)).json()
+    assert r["can_edit"] and r["settings"]["time"] == "07:20"
+    r = c.patch(f"{base}/{oid}/market", headers=_headers(owner), json={
+        "about": "Речевая аналитика продаж", "competitors": "Gong, Clari, gong", "sources": ["https://example.com/rss"],
+        "time": "08:30"})
+    assert r.status_code == 200, r.text
+    assert r.json()["settings"]["competitors"] == ["Gong", "Clari"]
+    assert c.patch(f"{base}/{oid}/market", headers=_headers(owner), json={"time": "25:00"}).status_code == 400
+    assert c.patch(f"{base}/{oid}/market", headers=_headers(owner), json={"sources": "не ссылка"}).status_code == 400
+    # участник не меняет настройки организации, но включает себе Telegram
+    assert c.patch(f"{base}/{oid}/market", headers=_headers(guest), json={"topics": "x"}).status_code == 400
+    g = c.patch(f"{base}/{oid}/market", headers=_headers(guest), json={"telegram": True}).json()
+    assert g["telegram"] is True and g["can_edit"] is False and g["settings"]["about"] == "Речевая аналитика продаж"
+    assert c.get(f"{base}/{oid}/market", headers=_headers(next(_ids))).status_code == 404

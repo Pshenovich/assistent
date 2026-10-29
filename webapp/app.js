@@ -1273,6 +1273,7 @@
   var digestTabEnabled = false;
   var digestChatsEnabled = false; // дайджест чатов включён в профиле
   var mailAvailable = false; // подключена почта — «Почта» во вкладке «Дайджест»
+  var marketAvailable = false; // состоит в организации — «Рынок» во вкладке «Дайджест»
   var digestRefreshing = false;
   var digestSubTab = "chats";
   var sidebarTreeState = {
@@ -7699,7 +7700,7 @@
 
   function setDigestTabVisible(enabled) {
     digestChatsEnabled = !!enabled;
-    digestTabEnabled = digestChatsEnabled || mailAvailable;
+    digestTabEnabled = digestChatsEnabled || mailAvailable || marketAvailable;
     try {
       localStorage.setItem("leo_digest_enabled", digestTabEnabled ? "1" : "0");
     } catch (_) {}
@@ -56507,6 +56508,14 @@
       if (b) setHidden(b, !on);
       if (!on && digestSubTab === "mail") digestSubTab = "chats";
       if (on && !digestChatsEnabled && digestSubTab !== "market") digestSubTab = "mail";
+      setDigestTabVisible(digestChatsEnabled);
+    },
+    // Организация есть → «Рынок» во вкладке «Дайджест» (даже без дайджеста чатов и почты).
+    setMarketAvailable: function (on) {
+      on = !!on;
+      if (on === marketAvailable) return;
+      marketAvailable = on;
+      if (on && !digestChatsEnabled && !mailAvailable) digestSubTab = "market";
       setDigestTabVisible(digestChatsEnabled);
     },
     reloadMarket: function () {

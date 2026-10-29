@@ -77,3 +77,5 @@
 .org-save--err { color: var(--danger-text); }
 /* «Поделиться контактом»: получатели, которых ещё нет в Орбите */
 .contact-share-off { opacity: 0.5; cursor: default; }
+/* Настройки выпуска «Рынок» */
+.org-mkt-area.pf-input { min-height: 64px; resize: vertical; line-height: 1.4; padding-top: 8px; }

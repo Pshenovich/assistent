@@ -6900,6 +6900,57 @@ async def miniapp_orgs_delete(org_id: int, principal: _MiniappPrincipal = Depend
     return {"ok": True}
 
 
+class _MiniappMarketSettings(BaseModel):
+    about: Optional[str] = None
+    competitors: Optional[Any] = None
+    topics: Optional[Any] = None
+    sources: Optional[Any] = None
+    time: Optional[str] = None
+    telegram: Optional[bool] = None
+
+
+def _market_settings_payload(uid: int, org_id: int) -> dict[str, Any]:
+    from assistant.services import market_settings
+    from assistant.stores import orgs_store
+
+    if not orgs_store.role_of(org_id, uid):
+        raise orgs_store.OrgError("Организация не найдена", 404)
+    return {
+        "ok": True,
+        "settings": market_settings.get(org_id),
+        "can_edit": orgs_store.can(uid, org_id, "edit_digest"),
+        "telegram": market_settings.telegram_enabled(uid),
+    }
+
+
+@miniapp_router.get("/orgs/{org_id}/market")
+async def miniapp_orgs_market_get(org_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Настройки выпуска «Рынок» организации + личное «присылать в Telegram»."""
+    return await _org_call(_market_settings_payload, int(principal.telegram_user_id), org_id)
+
+
+@miniapp_router.patch("/orgs/{org_id}/market")
+async def miniapp_orgs_market_patch(
+    org_id: int, body: _MiniappMarketSettings, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.services import market_settings
+    from assistant.stores.orgs_store import OrgError
+
+    uid = int(principal.telegram_user_id)
+    patch = {k: v for k, v in body.model_dump().items() if v is not None and k != "telegram"}
+    try:
+        if patch:
+            await run_in_threadpool(market_settings.save, uid, org_id, patch)
+        if body.telegram is not None:
+            await _org_call(_market_settings_payload, uid, org_id)  # участник ли
+            await run_in_threadpool(market_settings.set_telegram, uid, body.telegram)
+    except OrgError as e:
+        raise HTTPException(status_code=e.code, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return await _org_call(_market_settings_payload, uid, org_id)
+
+
 @miniapp_router.post("/orgs/{org_id}/current")
 async def miniapp_orgs_set_current(
     org_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)

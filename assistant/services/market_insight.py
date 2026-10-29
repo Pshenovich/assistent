@@ -16,7 +16,8 @@ _CONN: Optional[sqlite3.Connection] = None
 _CONN_PATH: Optional[str] = None
 
 SYSTEM = """Ты — помощник руководителя. Тебе дают отраслевой дайджест за день и контекст пользователя:
-его ближайшие встречи (у каждой пометка: внутренняя или с внешними участниками и их компании) и открытые обязательства.
+его компанию (чем занимается, конкуренты, темы — если указаны), ближайшие встречи (у каждой пометка: внутренняя
+или с внешними участниками и их компании) и открытые обязательства. Новости про названных конкурентов и темы — в приоритете.
 Напиши блок «Что это значит для вас»: 1–3 коротких пункта — какие новости касаются его продукта и рынка и что с этим сделать
 (проверить гипотезу, посмотреть на конкурента, учесть в продукте или цене).
 Встречу упоминай, только если связь прямая и очевидная:
@@ -49,11 +50,17 @@ def _conn() -> sqlite3.Connection:
     return _CONN
 
 
+def _key(uid: int, issue: str) -> str:
+    """Ключ разбора: выпуск + версия логики + отпечаток компании (поменяли настройки — разбор новый)."""
+    base = (str(issue or "").strip().split(":", 1)[0][:40]) or datetime.now(timezone.utc).date().isoformat()
+    fp = _org_fingerprint(uid)
+    return f"{base}:{CACHE_VERSION}" + (f":{fp}" if fp else "")
+
+
 def cached(uid: int, issue: str) -> Optional[str]:
-    if not issue.endswith(":" + CACHE_VERSION):
-        issue = ((issue or "").strip()[:40] or datetime.now(timezone.utc).date().isoformat()) + ":" + CACHE_VERSION
+    key = _key(uid, issue)
     with _LOCK:
-        r = _conn().execute("SELECT text FROM market_insights WHERE owner_user_id = ? AND issue = ?", (str(uid), issue)).fetchone()
+        r = _conn().execute("SELECT text FROM market_insights WHERE owner_user_id = ? AND issue = ?", (str(uid), key)).fetchone()
     return str(r["text"]) if r else None
 
 
@@ -91,25 +98,58 @@ def _own_domains(uid: int, events: list[dict[str, Any]]) -> set[str]:
     return {d for d in own if d not in _PUBLIC_DOMAINS} or own
 
 
-def _context(uid: int) -> str:
-    lines: list[str] = []
+def _org_lines(uid: int) -> list[str]:
+    """Компания пользователя из настроек выпуска «Рынок» его организации."""
     try:
-        from assistant.services import calendar_sources
+        from assistant.services import market_settings
+        from assistant.stores import orgs_store
+
+        org = orgs_store.current_org(uid)
+        if not org:
+            return []
+        st = market_settings.get(org["id"])
+    except Exception as e:
+        print(f"[market_insight] org uid={uid} err={e!r}")
+        return []
+    out = [f"компания: {org['name']}" + (f" — {st['about']}" if st.get("about") else "")]
+    if st.get("competitors"):
+        out.append("конкуренты: " + ", ".join(st["competitors"]))
+    if st.get("topics"):
+        out.append("важные темы: " + ", ".join(st["topics"]))
+    return out
+
+
+def _org_fingerprint(uid: int) -> str:
+    import hashlib
+
+    lines = _org_lines(uid)
+    return hashlib.md5("\n".join(lines).encode("utf-8")).hexdigest()[:8] if lines else ""
+
+
+def _context(uid: int) -> str:
+    lines: list[str] = _org_lines(uid)
+    try:
+        from assistant.services import calendar_sources, orbita_calendar
         from assistant.services.calendar import _tz_for
         from assistant.services.gpt_calendar_tools import has_google_calendar
 
+        tz = _tz_for(uid)
+        now = datetime.now(timezone.utc)
+        days = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+        events: list[dict[str, Any]] = []
         if has_google_calendar(uid):
-            tz = _tz_for(uid)
-            now = datetime.now(timezone.utc)
-            days = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
-            events = calendar_sources.list_events_in_window(uid, now, now + timedelta(days=7))[:20]
-            own = _own_domains(uid, events)
-            for ev in events:
-                st = ev.get("start")
-                if isinstance(st, datetime):
-                    st = st.astimezone(tz)
-                    kind = meeting_kind((ev.get("raw") or {}).get("attendees") or [], own)
-                    lines.append(f"встреча «{ev.get('summary')}» — {days[st.weekday()]} {st.strftime('%d.%m %H:%M')} ({kind})")
+            events = list(calendar_sources.list_events_in_window(uid, now, now + timedelta(days=7)))
+        for ev in orbita_calendar.events_for(uid, now, now + timedelta(days=7)):  # встречи Орбиты
+            events.append({"summary": ev.get("summary"), "start": datetime.fromisoformat(ev["start"]["dateTime"]), "raw": ev})
+        events.sort(key=lambda e: e["start"] if isinstance(e.get("start"), datetime) else now)
+        events = events[:20]
+        own = _own_domains(uid, events) if events else set()
+        for ev in events:
+            st = ev.get("start")
+            if isinstance(st, datetime):
+                st = st.astimezone(tz)
+                kind = meeting_kind((ev.get("raw") or {}).get("attendees") or [], own)
+                lines.append(f"встреча «{ev.get('summary')}» — {days[st.weekday()]} {st.strftime('%d.%m %H:%M')} ({kind})")
     except Exception as e:
         print(f"[market_insight] calendar uid={uid} err={e!r}")
     try:
@@ -123,7 +163,7 @@ def _context(uid: int) -> str:
 
 
 def insight(uid: int, issue: str, issue_text: str, *, force: bool = False) -> str:
-    issue = ((issue or "").strip()[:40] or datetime.now(timezone.utc).date().isoformat()) + ":" + CACHE_VERSION
+    key = _key(uid, issue)
     if not force:
         hit = cached(uid, issue)
         if hit:
@@ -148,6 +188,6 @@ def insight(uid: int, issue: str, issue_text: str, *, force: bool = False) -> st
         conn.execute(
             "INSERT INTO market_insights (owner_user_id, issue, text, created_at) VALUES (?, ?, ?, ?)"
             " ON CONFLICT(owner_user_id, issue) DO UPDATE SET text = excluded.text, created_at = excluded.created_at",
-            (str(uid), issue, out, datetime.now(timezone.utc).isoformat()))
+            (str(uid), key, out, datetime.now(timezone.utc).isoformat()))
         conn.commit()
     return out
