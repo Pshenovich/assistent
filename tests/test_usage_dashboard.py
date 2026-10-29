@@ -89,7 +89,7 @@ def test_require_token_rejects_wrong_query(monkeypatch):
         raise AssertionError("expected 401")
 
 
-def test_dashboard_home_is_users(monkeypatch, tmp_path):
+def test_dashboard_home_is_overview(monkeypatch, tmp_path):
     monkeypatch.setenv("USAGE_DB_PATH", str(tmp_path / "usage.sqlite"))
     monkeypatch.setenv("USAGE_DASHBOARD_TOKEN", "dash-secret")
     monkeypatch.setenv("USAGE_DASHBOARD_FORCE_AUTH", "1")
@@ -101,8 +101,7 @@ def test_dashboard_home_is_users(monkeypatch, tmp_path):
     assert denied.status_code == 401
     ok = client.get("/dashboard/", params={"access_token": "dash-secret"})
     assert ok.status_code == 200
-    assert "Расход OpenRouter по пользователям" in ok.text
-    assert "Кэш prompt" in ok.text
-    days = client.get("/dashboard/days", params={"access_token": "dash-secret"})
-    assert days.status_code == 200
-    assert "по дням" in days.text.lower()
+    assert "Обзор" in ok.text and "Только просмотр" in ok.text
+    spend = client.get("/dashboard/days", params={"access_token": "dash-secret"})
+    assert spend.status_code == 200
+    assert "Расход" in spend.text

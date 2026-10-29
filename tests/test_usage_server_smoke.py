@@ -244,7 +244,10 @@ def test_dashboard_without_configured_token_is_closed(client: TestClient, monkey
     monkeypatch.delenv("USAGE_DASHBOARD_TOKEN", raising=False)
     monkeypatch.setenv("USAGE_DASHBOARD_FORCE_AUTH", "1")
 
-    assert client.get("/dashboard/").status_code == 503
+    # без токена — только вход оператора через сессию Орбиты
+    resp = client.get("/dashboard/")
+    assert resp.status_code == 401
+    assert "Админка Орбиты" in resp.text
 
 
 @pytest.mark.parametrize("token", ["nonexistent-token-xyz", "../../etc/passwd"])

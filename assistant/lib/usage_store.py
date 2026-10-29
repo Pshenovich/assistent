@@ -276,6 +276,19 @@ OPERATION_LABELS_RU: dict[str, str] = {
     "mail_draft": "Черновик ответа на письмо",
     "mail_summary": "Саммари переписки",
     "market_insight": "Рынок: что это значит для вас",
+    "ask_image": "Вопрос с картинкой",
+    "parse_voice_command": "Голосовая команда",
+    "chat_alerts": "Срочное из чатов",
+    "chat_thread_title": "Название чата",
+    "meeting_followup": "Письмо после встречи",
+    "model_probe": "Проверка модели",
+    "proactive_insights": "Подсказки Фокуса",
+    "speaker_guess": "Угадывание спикеров",
+    "summarize_tasks_consolidate": "Задачи из саммари: сведение",
+    "summarize_tasks_llm": "Задачи из саммари",
+    "summary_task_verify": "Проверка задач из саммари",
+    "market_digest": "Рынок: выпуск",
+    "bulk_map": "Большие данные по ссылке",
 }
 
 
@@ -472,6 +485,36 @@ def period_totals(
             "total_tokens": 0,
             "cost_usd": 0.0,
         }
+
+
+def daily_totals(from_date_utc: str, to_date_utc: str) -> list[dict[str, Any]]:
+    """Расход по дням за период (UTC, включительно), по возрастанию даты — для графика в админке."""
+    init_db()
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            SELECT date_utc, COUNT(*) AS n_calls,
+                   COUNT(DISTINCT telegram_user_id) AS n_users,
+                   COALESCE(SUM(COALESCE(total_tokens, prompt_tokens + completion_tokens)), 0) AS total_tokens,
+                   COALESCE(SUM(cost_usd), 0) AS cost_usd
+            FROM usage_events
+            WHERE date_utc >= ? AND date_utc <= ?
+            GROUP BY date_utc ORDER BY date_utc ASC
+            """,
+            (from_date_utc.strip(), to_date_utc.strip()),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def last_usage_by_user() -> dict[str, str]:
+    """telegram_user_id → время последнего вызова модели (ISO, UTC)."""
+    init_db()
+    with _connect() as conn:
+        cur = conn.execute(
+            "SELECT telegram_user_id, MAX(ts_utc) AS ts FROM usage_events "
+            "WHERE telegram_user_id IS NOT NULL GROUP BY telegram_user_id"
+        )
+        return {str(r["telegram_user_id"]): str(r["ts"] or "") for r in cur.fetchall()}
 
 
 def events_for_user_date(telegram_user_id: str, date_utc: str) -> list[dict[str, Any]]:

@@ -155,6 +155,25 @@ def _notify_approvers_sync(
             print(f"[access_gate] notify approver={approver_id} err={e!r}")
 
 
+def notify_user_sync(user_id: int, text: str, *, scope: str | None = None) -> bool:
+    """Сообщение пользователю от бота (например, «доступ открыт» из админки)."""
+    api = _telegram_api_base(bot_token=_bot_token_for_scope(scope))
+    if not api:
+        return False
+    proxy = os.getenv("TELEGRAM_PROXY_URL", "").strip() or None
+    try:
+        r = requests.post(
+            f"{api}/sendMessage",
+            json={"chat_id": int(user_id), "text": text},
+            timeout=15,
+            proxies={"http": proxy, "https": proxy} if proxy else None,
+        )
+        return bool(r.ok)
+    except Exception as e:
+        print(f"[access_gate] notify user={user_id} err={e!r}")
+        return False
+
+
 async def ensure_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """True — пользователь может пользоваться ботом."""
     user = update.effective_user

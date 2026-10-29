@@ -1,0 +1,72 @@
+/* Профиль → «Организация». Цвета только из токенов темы (светлая/тёмная). */
+.org-screen .pf-group { margin-top: 18px; }
+.org-screen > .pf-btn { width: 100%; margin-top: 12px; }
+.org-logo {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  margin-right: 12px;
+  border-radius: var(--ui-r);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--accent-muted);
+  color: var(--accent-soft);
+  font-weight: 600;
+}
+.org-logo img { width: 100%; height: 100%; object-fit: cover; }
+.org-head .pf-row-title { font-size: 1.05rem; font-weight: 600; }
+.org-actions { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; flex: 0 0 auto; }
+.org-btn-sm { height: var(--ui-h-sm); padding: 0 14px; font-size: var(--ui-font-sm); width: auto; }
+.org-role.pf-input { height: var(--ui-h-sm); width: auto; min-width: 120px; padding: 0 8px; font-size: var(--ui-font-sm); }
+.org-x {
+  border: 0;
+  background: transparent;
+  color: var(--text-subtle);
+  font-size: 1.3rem;
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+.org-x:hover { background: var(--surface-hover); color: var(--danger-text); }
+.org-link { font-size: var(--ui-font-sm); word-break: break-all; }
+.org-hint-bad { color: var(--danger-text); }
+.org-suggest { margin-bottom: 12px; border: 1px solid var(--accent-border); border-radius: var(--ui-card-r); }
+.org-danger { margin-top: 24px; }
+.org-new-link { display: block; margin: 16px auto 0; }
+.org-empty { margin-bottom: 8px; }
+.org-member .pf-row-body, .org-suggest .pf-row-body { gap: 8px; }
+@media (max-width: 420px) {
+  .org-member .pf-row-body { flex-wrap: wrap; }
+  .org-member .org-actions { margin-left: 0; }
+}
+.org-actions .pf-row-val { max-width: none; overflow: visible; white-space: nowrap; }
+.org-screen .pf-row-sub { white-space: normal; overflow: visible; text-overflow: clip; }
+.org-screen .pf-row-text { min-width: 0; flex: 1 1 auto; }
+.org-demo {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border-radius: var(--ui-r);
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--text);
+  font-size: var(--ui-font-sm);
+}
+.org-plan.pf-input { height: var(--ui-h-sm); width: auto; min-width: 110px; padding: 0 8px; font-size: var(--ui-font-sm); }
+.org-plan-chip {
+  display: inline-flex;
+  align-items: center;
+  height: var(--ui-chip-h);
+  padding: 0 10px;
+  border-radius: var(--radius-full);
+  background: var(--overlay-2);
+  color: var(--text-subtle);
+  font-size: var(--ui-font-sm);
+  white-space: nowrap;
+}
+.org-plan-chip--paid { background: var(--accent-muted); color: var(--accent-soft); }
+@media (max-width: 420px) {
+  .org-member .org-actions { flex-wrap: wrap; }
+}

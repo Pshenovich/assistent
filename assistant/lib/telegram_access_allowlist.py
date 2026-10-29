@@ -294,6 +294,38 @@ def deny_user(user_id: int, *, scope: str | None = None) -> None:
     _save_requests(data, scope=scope)
 
 
+def remove_approved_user(user_id: int, *, username: str | None = None, scope: str | None = None) -> None:
+    """Закрыть доступ, выданный раньше (из админки)."""
+    unames, uids = load_allowlist(scope=scope)
+    ids = {int(x) for x in uids if int(x) != int(user_id)}
+    names = set(unames)
+    un = (username or "").strip().lstrip("@").lower()
+    if un:
+        names.discard(un)
+    save_allowlist(names, ids, scope=scope)
+
+
+def list_pending(scope: str | None = None) -> dict[int, dict[str, Any]]:
+    """Ожидающие заявки: id → {username, first_name, last_name, requested_at}."""
+    out: dict[int, dict[str, Any]] = {}
+    for uid, rec in (_load_requests(scope).get("pending") or {}).items():
+        try:
+            out[int(uid)] = dict(rec) if isinstance(rec, dict) else {}
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def denied_ids(scope: str | None = None) -> frozenset[int]:
+    out: set[int] = set()
+    for x in _load_requests(scope).get("denied_ids") or []:
+        try:
+            out.add(int(x))
+        except (TypeError, ValueError):
+            pass
+    return frozenset(out)
+
+
 def format_user_brief(
     *,
     user_id: int,

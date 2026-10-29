@@ -62,7 +62,6 @@ from assistant.lib.usage_store import (
     period_totals,
     summary_by_operation,
     usage_journal_meta,
-    user_daily_summary,
     user_daily_usage_no_cost,
     user_expenses_by_day,
     user_journal_entries,
@@ -72,7 +71,6 @@ from assistant.lib.usage_store import (
     get_user_usage_event,
     journal_text_from_raw,
     user_lifetime_stats,
-    user_summary_by_operation,
     users_summary,
 )  # noqa: E402
 from assistant.lib.telegram_webapp_auth import user_payload_from_init_data  # noqa: E402
@@ -304,9 +302,11 @@ def _fmt_int(n: Any) -> str:
 
 def _dash_nav(request: Request, active: str) -> str:
     qs = _access_qs(request)
+    # Подробные старые страницы (день, операции дня, день пользователя) — ссылки обратно в админку.
     items = (
-        ("users", "Пользователи", "/"),
-        ("days", "По дням", "/days"),
+        ("overview", "← Админка", "/"),
+        ("users", "Пользователи", "/users"),
+        ("days", "Расход", "/spend"),
         ("board", "PAIE", "/board"),
     )
     links: list[str] = []
@@ -1170,8 +1170,57 @@ def _is_local_dashboard_request(request: Request) -> bool:
     return all(_is_loopback_addr(ip) for ip in _forwarded_client_ips(request))
 
 
+def _dashboard_operator(request: Request) -> tuple[int, str] | None:
+    """Оператор Орбиты, вошедший в веб-приложение в этом браузере: (id, подпись)."""
+    from assistant.stores import note_members, orgs_store
+
+    principal = _principal_from_browser_session_request(request)
+    if principal is None or not orgs_store.is_operator(int(principal.telegram_user_id)):
+        return None
+    uid = int(principal.telegram_user_id)
+    name = note_members.profile_display_name(note_members.get_profile(uid), fallback="")
+    if not name or name == "Участник":
+        u = principal.user or {}
+        name = " ".join(x for x in (u.get("first_name"), u.get("last_name")) if x) or (
+            "@" + str(u["username"]) if u.get("username") else f"ID {uid}"
+        )
+    return uid, name
+
+
+def _dashboard_token_ok(request: Request) -> bool:
+    expected = os.getenv("USAGE_DASHBOARD_TOKEN", "").strip()
+    if not expected:
+        return False
+    auth = (request.headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer ") and auth[7:].strip() == expected:
+        return True
+    return (request.query_params.get("access_token") or "").strip() == expected
+
+
+def _admin_authenticate(request: Request) -> Any:
+    """Кто открыл админку: оператор по сессии Орбиты (может менять), локально (может менять), по токену (смотрит)."""
+    from assistant.admin.routes import Actor, NeedLogin
+
+    op = _dashboard_operator(request)
+    if op:
+        return Actor(id=str(op[0]), label=op[1], can_write=True)
+    if _is_local_dashboard_request(request):
+        return Actor(id="local", label="Локальный доступ", can_write=True)
+    if _dashboard_token_ok(request):
+        return Actor(id="token", label="Вход по токену", can_write=False,
+                     token=(request.query_params.get("access_token") or "").strip())
+    if _principal_from_browser_session_request(request) is not None:
+        raise NeedLogin(
+            "Вы вошли в Орбиту, но ваш аккаунт не оператор. Операторы — те, чей Telegram id указан "
+            "в TELEGRAM_ACCESS_APPROVER_IDS на сервере."
+        )
+    raise NeedLogin()
+
+
 def _require_token(request: Request) -> None:
     if _is_local_dashboard_request(request):
+        return
+    if _dashboard_operator(request):
         return
     expected = os.getenv("USAGE_DASHBOARD_TOKEN", "").strip()
     if not expected:
@@ -1560,72 +1609,6 @@ def _html_page_end(footer_html: str = "") -> str:
 """
 
 
-@dash.get("/days", response_class=HTMLResponse)
-async def days_page(request: Request) -> HTMLResponse:
-    _require_token(request)
-    rate = _usd_to_rub()
-    rows = daily_summary()
-    qs = _access_qs(request)
-    total_usd = sum(float(r.get("cost_usd") or 0) for r in rows)
-    total_calls = sum(int(r.get("n_calls") or 0) for r in rows)
-    total_tok = sum(int(r.get("total_tokens") or 0) for r in rows)
-    total_cached = sum(int(r.get("cached_tokens") or 0) for r in rows)
-    total_rub = total_usd * rate
-
-    parts: list[str] = [
-        _html_page_start("OpenRouter — по дням", request, "days"),
-        '<header class="header">',
-        "<h1>Расход OpenRouter по дням</h1>",
-        '<p class="subtitle">Агрегаты по календарным дням в UTC. Стоимость в рублях: '
-        f"<strong>{html_lib.escape(str(rate))}</strong> ₽ за 1 USD (<code>USD_TO_RUB</code>).</p>",
-        '<span class="pill">Локальный журнал бота</span>',
-        "</header>",
-        '<section class="metrics">',
-        f'<div class="metric"><div class="label">Всего вызовов</div><div class="value">{total_calls}</div></div>',
-        f'<div class="metric"><div class="label">Токенов всего</div><div class="value">{_fmt_int(total_tok)}</div></div>',
-        f'<div class="metric"><div class="label">Кэш prompt</div><div class="value">{_fmt_int(total_cached)}</div></div>',
-        f'<div class="metric"><div class="label">Сумма USD</div><div class="value">{total_usd:.4f}</div></div>',
-        f'<div class="metric"><div class="label">Сумма ₽</div><div class="value">{total_rub:.2f} <small>≈</small></div></div>',
-        "</section>",
-        '<section class="card">',
-        '<div class="table-wrap">',
-        "<table><thead><tr>",
-        "<th>Дата (UTC)</th>",
-        '<th class="num">Вызовов</th>',
-        '<th class="num">Prompt</th>',
-        '<th class="num">Кэш</th>',
-        '<th class="num">Completion</th>',
-        '<th class="num">Всего</th>',
-        '<th class="num">USD</th>',
-        '<th class="num">₽</th>',
-        "</tr></thead><tbody>",
-    ]
-    for r in rows:
-        d = html_lib.escape(str(r.get("date_utc") or ""))
-        usd = float(r.get("cost_usd") or 0)
-        rub = usd * rate
-        parts.append(
-            "<tr>"
-            f'<td><a href="{_dash_url("/day/" + d)}{qs}">{d}</a></td>'
-            f'<td class="num">{int(r.get("n_calls") or 0)}</td>'
-            f'<td class="num">{_fmt_int(r.get("prompt_tokens"))}</td>'
-            f'<td class="num">{_fmt_int(r.get("cached_tokens"))}</td>'
-            f'<td class="num">{_fmt_int(r.get("completion_tokens"))}</td>'
-            f'<td class="num">{_fmt_int(r.get("total_tokens"))}</td>'
-            f'<td class="num">{usd:.6f}</td>'
-            f'<td class="num">{rub:.2f}</td>'
-            "</tr>"
-        )
-    if not rows:
-        parts.append(
-            '</tbody></table></div><div class="empty">Пока нет записей — сделайте вызовы GPT из бота.</div></section>'
-        )
-    else:
-        parts.append("</tbody></table></div></section>")
-    parts.append(_html_page_end())
-    return _dash_html("".join(parts))
-
-
 @dash.get("/day/{date}", response_class=HTMLResponse)
 async def day_users_page(date: str, request: Request) -> HTMLResponse:
     """Пользователи с расходом за один UTC-день (клик с главной «сводка по дням»)."""
@@ -1917,281 +1900,6 @@ def _dash_ops_summary_table(rows: list[dict[str, Any]], rate: float) -> str:
         )
     lines.append("</tbody></table></div></section>")
     return "".join(lines)
-
-
-@dash.get("/", response_class=HTMLResponse)
-@dash.get("/users", response_class=HTMLResponse)
-async def users_page(request: Request) -> HTMLResponse:
-    _require_token(request)
-    rate = _usd_to_rub()
-    access_token = (request.query_params.get("access_token") or "").strip()
-
-    today = datetime.now(timezone.utc).date()
-    to_raw = request.query_params.get("to") or today.isoformat()
-    from_raw = request.query_params.get("from") or (
-        today - timedelta(days=_DASH_DEFAULT_USER_RANGE_DAYS)
-    ).isoformat()
-    try:
-        to_d = _parse_utc_date(to_raw)
-        from_d = _parse_utc_date(from_raw)
-    except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail="Неверный формат from/to. Ожидается YYYY-MM-DD.",
-        )
-
-    if from_d > to_d:
-        from_d, to_d = to_d, from_d
-
-    filter_op = _dash_filter_operation(request)
-    totals = period_totals(from_d, to_d, operation=filter_op)
-    total_usd = float(totals.get("cost_usd") or 0)
-    total_rub = total_usd * rate
-    total_tok = int(totals.get("total_tokens") or 0)
-    total_cached = int(totals.get("cached_tokens") or 0)
-    total_calls = int(totals.get("n_calls") or 0)
-
-    users = users_summary(from_d, to_d, operation=filter_op)
-    ops_in_period = distinct_operations(from_d, to_d)
-    ops_summary = summary_by_operation(from_d, to_d)
-
-    acc_hidden = (
-        f'<input type="hidden" name="access_token" value="{_html_escape(access_token)}"/>'
-        if access_token
-        else ""
-    )
-    range_q = _dash_range_qs(
-        from_d, to_d, access_token=access_token, operation=filter_op
-    )
-    range_link_q = "?" + range_q
-
-    filter_note = ""
-    if filter_op:
-        filter_note = (
-            f' <span class="pill">Фильтр: {_html_escape(operation_label_ru(filter_op))}</span>'
-        )
-
-    op_options = ['<option value="">Все операции</option>']
-    for op_code in ops_in_period:
-        sel = ' selected="selected"' if op_code == filter_op else ""
-        op_options.append(
-            f'<option value="{_html_escape(op_code)}"{sel}>'
-            f"{_html_escape(operation_label_ru(op_code))}</option>"
-        )
-
-    parts: list[str] = [
-        _html_page_start("Пользователи — расход OpenRouter", request, "users"),
-        '<header class="header">',
-        "<h1>Расход OpenRouter по пользователям</h1>",
-        '<p class="subtitle">Период в UTC (по умолчанию последние '
-        f"{_DASH_DEFAULT_USER_RANGE_DAYS + 1} дней). В таблице только те, кто дал хотя бы один вызов "
-        "GPT/транскрипции (задачи в Битрикс без ИИ сюда не попадают). Расход в ₽ через "
-        "<code>USD_TO_RUB</code>. Колонка «Кэш» — prompt tokens, прочитанные из prompt cache.</p>",
-        '<span class="pill">Сводка</span>',
-        filter_note,
-        "</header>",
-        '<section class="metrics">',
-        f'<div class="metric"><div class="label">Всего вызовов</div><div class="value">{total_calls}</div></div>',
-        f'<div class="metric"><div class="label">Токенов всего</div><div class="value">{_fmt_int(total_tok)}</div></div>',
-        f'<div class="metric"><div class="label">Кэш prompt</div><div class="value">{_fmt_int(total_cached)}</div></div>',
-        f'<div class="metric"><div class="label">Сумма USD</div><div class="value">{total_usd:.4f}</div></div>',
-        f'<div class="metric"><div class="label">Сумма ₽</div><div class="value">{total_rub:.2f} <small>≈</small></div></div>',
-        "</section>",
-        '<section class="card">',
-        '<form method="get">',
-        acc_hidden,
-        '<div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:flex-end;">',
-        '<div>',
-        '<div style="font-size:0.8rem;color:var(--muted2);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:0.35rem;">С даты</div>',
-        f'<input type="date" name="from" value="{_html_escape(from_d)}"/>',
-        "</div>",
-        '<div>',
-        '<div style="font-size:0.8rem;color:var(--muted2);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:0.35rem;">По дату</div>',
-        f'<input type="date" name="to" value="{_html_escape(to_d)}"/>',
-        "</div>",
-        '<div>',
-        '<div style="font-size:0.8rem;color:var(--muted2);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:0.35rem;">Операция</div>',
-        f'<select name="operation" style="min-width:12rem;">{"".join(op_options)}</select>',
-        "</div>",
-        '<button type="submit" style="cursor:pointer;background:var(--accent);border:none;color:#061218;padding:0.55rem 0.85rem;border-radius:10px;font-weight:700;">Применить</button>',
-        "</div>",
-        "</form>",
-        "</section>",
-        _dash_ops_summary_table(ops_summary, rate),
-        '<section class="card" style="margin-top:1rem;">',
-        "<h2 style=\"margin:0 0 0.75rem;font-size:1.05rem;\">По пользователям</h2>",
-        '<div class="table-wrap">',
-        "<table><thead><tr>",
-        "<th>Пользователь</th>",
-        '<th class="num">Всего вызовов</th>',
-        '<th class="num">Токенов всего</th>',
-        '<th class="num">Кэш prompt</th>',
-        '<th class="num">Сумма USD</th>',
-        '<th class="num">Сумма ₽</th>',
-        "</tr></thead><tbody>",
-    ]
-
-    if not users:
-        parts.append(
-            '</tbody></table></div><div class="empty">Нет данных за выбранный период.</div></section>'
-        )
-        parts.append(_html_page_end(""))
-        return _dash_html("".join(parts))
-
-    for u in users:
-        uid = str(u.get("telegram_user_id") or "").strip()
-        uname = str(u.get("telegram_username") or "").strip()
-        label = _user_label(uid, uname)
-        cost_usd = float(u.get("cost_usd") or 0)
-        cost_rub = cost_usd * rate
-        parts.append(
-            "<tr>"
-            f'<td><a href="{_dash_url("/user/" + quote(uid))}{range_link_q}">{_html_escape(label)}</a></td>'
-            f'<td class="num">{int(u.get("n_calls") or 0)}</td>'
-            f'<td class="num">{_fmt_int(u.get("total_tokens"))}</td>'
-            f'<td class="num">{_fmt_int(u.get("cached_tokens"))}</td>'
-            f'<td class="num">{cost_usd:.6f}</td>'
-            f'<td class="num">{cost_rub:.2f}</td>'
-            "</tr>"
-        )
-
-    parts.append("</tbody></table></div></section>")
-    parts.append(_html_page_end(""))
-    return _dash_html("".join(parts))
-
-
-@dash.get("/user/{telegram_user_id}", response_class=HTMLResponse)
-async def user_page(telegram_user_id: str, request: Request) -> HTMLResponse:
-    _require_token(request)
-    rate = _usd_to_rub()
-    access_token = (request.query_params.get("access_token") or "").strip()
-
-    today = datetime.now(timezone.utc).date()
-    to_raw = request.query_params.get("to") or today.isoformat()
-    from_raw = request.query_params.get("from") or (
-        today - timedelta(days=_DASH_DEFAULT_USER_RANGE_DAYS)
-    ).isoformat()
-    try:
-        to_d = _parse_utc_date(to_raw)
-        from_d = _parse_utc_date(from_raw)
-    except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail="Неверный формат from/to. Ожидается YYYY-MM-DD.",
-        )
-
-    if from_d > to_d:
-        from_d, to_d = to_d, from_d
-
-    uid = str(telegram_user_id or "").strip()
-    display_label = _user_label(uid, "")
-    filter_op = _dash_filter_operation(request)
-    days = user_daily_summary(uid, from_d, to_d)
-    by_op = user_summary_by_operation(uid, from_d, to_d)
-
-    total_calls = sum(int(d.get("n_calls") or 0) for d in days)
-    total_tok = sum(int(d.get("total_tokens") or 0) for d in days)
-    total_cached = sum(int(d.get("cached_tokens") or 0) for d in days)
-    total_usd = sum(float(d.get("cost_usd") or 0) for d in days)
-    total_rub = total_usd * rate
-
-    acc_hidden = (
-        f'<input type="hidden" name="access_token" value="{_html_escape(access_token)}"/>'
-        if access_token
-        else ""
-    )
-    qs = _dash_range_qs(
-        from_d, to_d, access_token=access_token, operation=filter_op
-    )
-    back_link = f"{_dash_url('/users')}?{qs}" if qs else _dash_url("/users")
-    op_hidden = (
-        f'<input type="hidden" name="operation" value="{_html_escape(filter_op)}"/>'
-        if filter_op
-        else ""
-    )
-
-    parts: list[str] = [
-        _html_page_start(f"Пользователь {display_label} — расход OpenRouter", request, "users"),
-        f'<a class="back" href="{back_link}">← К пользователям</a>',
-        '<header class="header">',
-        f"<h1>Клиент { _html_escape(display_label) }</h1>",
-        f'<p class="subtitle">Период в UTC: <code>{_html_escape(from_d)}</code>…<code>{_html_escape(to_d)}</code>.</p>',
-        f'<span class="pill">Итого: {total_rub:.2f} ₽</span>',
-        "</header>",
-        '<section class="metrics">',
-        f'<div class="metric"><div class="label">Всего вызовов</div><div class="value">{total_calls}</div></div>',
-        f'<div class="metric"><div class="label">Токенов всего</div><div class="value">{_fmt_int(total_tok)}</div></div>',
-        f'<div class="metric"><div class="label">Кэш prompt</div><div class="value">{_fmt_int(total_cached)}</div></div>',
-        f'<div class="metric"><div class="label">Сумма USD</div><div class="value">{total_usd:.4f}</div></div>',
-        f'<div class="metric"><div class="label">Сумма ₽</div><div class="value">{total_rub:.2f} <small>≈</small></div></div>',
-        "</section>",
-        '<section class="card">',
-        '<form method="get">',
-        acc_hidden,
-        op_hidden,
-        '<div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:flex-end;">',
-        '<div>',
-        '<div style="font-size:0.8rem;color:var(--muted2);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:0.35rem;">С даты</div>',
-        f'<input type="date" name="from" value="{_html_escape(from_d)}"/>',
-        "</div>",
-        '<div>',
-        '<div style="font-size:0.8rem;color:var(--muted2);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:0.35rem;">По дату</div>',
-        f'<input type="date" name="to" value="{_html_escape(to_d)}"/>',
-        "</div>",
-        '<button type="submit" style="cursor:pointer;background:var(--accent);border:none;color:#061218;padding:0.55rem 0.85rem;border-radius:10px;font-weight:700;">Применить</button>',
-        "</div>",
-        "</form>",
-        "</section>",
-        _dash_ops_summary_table(by_op, rate),
-        '<section class="card" style="margin-top:1rem;">',
-        "<h2 style=\"margin:0 0 0.75rem;font-size:1.05rem;\">По дням</h2>",
-        '<div class="table-wrap">',
-        "<table><thead><tr>",
-        "<th>Дата (UTC)</th>",
-        '<th class="num">Вызовов</th>',
-        '<th class="num">Prompt</th>',
-        '<th class="num">Кэш</th>',
-        '<th class="num">Completion</th>',
-        '<th class="num">Всего</th>',
-        '<th class="num">USD</th>',
-        '<th class="num">₽</th>',
-        "</tr></thead><tbody>",
-    ]
-
-    if not days:
-        parts.append(
-            '</tbody></table></div><div class="empty">Нет событий по дням за выбранный период.</div></section>'
-        )
-        parts.append(_html_page_end(""))
-        return _dash_html("".join(parts))
-
-    day_qs = qs
-    for d in days:
-        date_utc = str(d.get("date_utc") or "").strip()
-        n_calls = int(d.get("n_calls") or 0)
-        usd = float(d.get("cost_usd") or 0)
-        rub = usd * rate
-
-        day_link = (
-            f"{_dash_url('/user/' + quote(uid) + '/day/' + quote(date_utc))}?{day_qs}"
-        )
-
-        parts.append(
-            "<tr>"
-            f'<td><a href="{day_link}">{_html_escape(date_utc)}</a></td>'
-            f'<td class="num">{n_calls}</td>'
-            f'<td class="num">{_fmt_int(d.get("prompt_tokens"))}</td>'
-            f'<td class="num">{_fmt_int(d.get("cached_tokens"))}</td>'
-            f'<td class="num">{_fmt_int(d.get("completion_tokens"))}</td>'
-            f'<td class="num">{_fmt_int(d.get("total_tokens"))}</td>'
-            f'<td class="num">{usd:.6f}</td>'
-            f'<td class="num">{rub:.2f}</td>'
-            "</tr>"
-        )
-
-    parts.append("</tbody></table></div></section>")
-    parts.append(_html_page_end(""))
-    return _dash_html("".join(parts))
 
 
 @dash.get("/user/{telegram_user_id}/day/{date}", response_class=HTMLResponse)
@@ -6908,6 +6616,342 @@ async def miniapp_teams_delete(
     if not ok:
         raise HTTPException(status_code=404, detail="Команда не найдена")
     return {"ok": True}
+
+
+# ---------- Организации ----------
+
+
+class _MiniappOrgCreate(BaseModel):
+    name: str = ""
+    slug: str = ""
+    domain: str = ""
+
+
+class _MiniappOrgPatch(BaseModel):
+    name: Optional[str] = None
+    slug: Optional[str] = None
+    logo_url: Optional[str] = None
+    join_mode: Optional[str] = None
+
+
+class _MiniappOrgMemberAdd(BaseModel):
+    key: str = ""
+    role: str = "member"
+
+
+class _MiniappOrgRole(BaseModel):
+    role: str = "member"
+
+
+class _MiniappOrgApprove(BaseModel):
+    user_id: int
+    allow: bool = True
+
+
+class _MiniappOrgDomain(BaseModel):
+    domain: str = ""
+
+
+class _MiniappOrgBilling(BaseModel):
+    plan: Optional[str] = None
+    seats: Optional[int] = None
+
+
+class _MiniappOrgMemberPlan(BaseModel):
+    plan: str = "free"
+
+
+async def _org_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    """Вызов orgs_store в потоке; OrgError → HTTP с текстом для пользователя."""
+    from assistant.stores.orgs_store import OrgError
+
+    try:
+        return await run_in_threadpool(partial(fn, *args, **kwargs))
+    except OrgError as e:
+        raise HTTPException(status_code=e.code, detail=str(e)) from e
+
+
+def _org_invite_urls(token: str) -> dict[str, str]:
+    from assistant.lib.webapp_public import webapp_entry_url
+
+    base = webapp_entry_url()
+    out = {"web": f"{base}{'&' if '?' in base else '?'}join={token}"}
+    bot = _miniapp_resolve_bot_username()
+    if bot:
+        out["telegram"] = f"https://t.me/{bot}?startapp=join_{token}"
+    return out
+
+
+def _org_overview(uid: int) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    orgs_store.claim_pending(uid)
+    cur = orgs_store.current_org(uid)
+    return {
+        "ok": True,
+        "orgs": orgs_store.orgs_for_user(uid),
+        "current_id": cur["id"] if cur else None,
+        "suggestions": orgs_store.suggestions(uid),
+        "my_domains": orgs_store.user_domains(uid),
+    }
+
+
+def _org_detail(uid: int, org_id: int) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    org = orgs_store.get_org(org_id)
+    role = orgs_store.role_of(org_id, uid)
+    if not org or not role:
+        raise orgs_store.OrgError("Организация не найдена", 404)
+    can = {a: orgs_store.can(uid, org_id, a) for a in ("invite", "remove_member", "approve", "edit_digest",
+                                                        "edit_org", "set_role", "delete_org", "billing")}
+    invites = []
+    if can["invite"]:
+        invites = [{**i, "urls": _org_invite_urls(i["token"])} for i in orgs_store.list_invites(uid, org_id)]
+    members = orgs_store.list_members(org_id)
+    if not can["invite"]:
+        members = [m for m in members if m["status"] == "active"]
+    return {
+        "ok": True,
+        "org": {**org, "my_role": role},
+        "can": can,
+        "members": members,
+        "invites": invites,
+        "my_domains": orgs_store.user_domains(uid),
+        "my_user_id": str(uid),
+        # оплата не подключена: тарифы видны и меняются, но ни на что не влияют
+        "billing_enabled": False,
+        "plans": [{"id": k, "label": v} for k, v in orgs_store.PLANS.items()],
+    }
+
+
+@miniapp_router.get("/orgs")
+async def miniapp_orgs_list(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    return await _org_call(_org_overview, int(principal.telegram_user_id))
+
+
+@miniapp_router.post("/orgs")
+async def miniapp_orgs_create(
+    body: _MiniappOrgCreate, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    org = await _org_call(orgs_store.create_org, uid, body.name, slug=body.slug, domain=body.domain)
+    await _org_call(orgs_store.set_current_org, uid, org["id"])
+    return await _org_call(_org_detail, uid, org["id"])
+
+
+@miniapp_router.get("/orgs/slug-check")
+async def miniapp_orgs_slug_check(
+    slug: str = Query(""),
+    org_id: int = Query(0),
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    err = await run_in_threadpool(orgs_store.check_slug, slug, exclude_org_id=org_id or None)
+    return {"ok": not err, "error": err}
+
+
+@miniapp_router.get("/orgs/invite/{token}")
+async def miniapp_orgs_invite_preview(
+    token: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    inv = await run_in_threadpool(orgs_store.resolve_invite, token)
+    if not inv:
+        raise HTTPException(status_code=404, detail="Ссылка недействительна или истекла")
+    org = inv["org"]
+    member = bool(await run_in_threadpool(orgs_store.role_of, org["id"], int(principal.telegram_user_id)))
+    return {"ok": True, "org": {k: org[k] for k in ("id", "name", "slug", "logo_url", "member_count")},
+            "already_member": member}
+
+
+@miniapp_router.post("/orgs/invite/{token}/accept")
+async def miniapp_orgs_invite_accept(
+    token: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    org = await _org_call(orgs_store.accept_invite, uid, token)
+    await _org_call(orgs_store.set_current_org, uid, org["id"])
+    return await _org_call(_org_detail, uid, org["id"])
+
+
+@miniapp_router.get("/orgs/{org_id}")
+async def miniapp_orgs_get(org_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    return await _org_call(_org_detail, int(principal.telegram_user_id), org_id)
+
+
+@miniapp_router.patch("/orgs/{org_id}")
+async def miniapp_orgs_patch(
+    org_id: int, body: _MiniappOrgPatch, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    await _org_call(orgs_store.update_org, uid, org_id, patch)
+    return await _org_call(_org_detail, uid, org_id)
+
+
+@miniapp_router.delete("/orgs/{org_id}")
+async def miniapp_orgs_delete(org_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    await _org_call(orgs_store.delete_org, int(principal.telegram_user_id), org_id)
+    return {"ok": True}
+
+
+@miniapp_router.post("/orgs/{org_id}/current")
+async def miniapp_orgs_set_current(
+    org_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    await _org_call(orgs_store.set_current_org, int(principal.telegram_user_id), org_id)
+    return {"ok": True}
+
+
+@miniapp_router.post("/orgs/{org_id}/domains")
+async def miniapp_orgs_domain_add(
+    org_id: int, body: _MiniappOrgDomain, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(orgs_store.add_domain, uid, org_id, body.domain)
+    return await _org_call(_org_detail, uid, org_id)
+
+
+@miniapp_router.delete("/orgs/{org_id}/domains/{domain}")
+async def miniapp_orgs_domain_remove(
+    org_id: int, domain: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(orgs_store.remove_domain, uid, org_id, domain)
+    return await _org_call(_org_detail, uid, org_id)
+
+
+@miniapp_router.post("/orgs/{org_id}/members")
+async def miniapp_orgs_member_add(
+    org_id: int, body: _MiniappOrgMemberAdd, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    added = await _org_call(orgs_store.add_member, uid, org_id, body.key, role=body.role)
+    return {**(await _org_call(_org_detail, uid, org_id)), "added": added}
+
+
+@miniapp_router.patch("/orgs/{org_id}/members/{user_id}")
+async def miniapp_orgs_member_role(
+    org_id: int, user_id: int, body: _MiniappOrgRole, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(orgs_store.set_role, uid, org_id, user_id, body.role)
+    return await _org_call(_org_detail, uid, org_id)
+
+
+@miniapp_router.delete("/orgs/{org_id}/members/{member_id}")
+async def miniapp_orgs_member_remove(
+    org_id: int, member_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(orgs_store.remove_member, uid, org_id, member_id)
+    return await _org_call(_org_detail, uid, org_id)
+
+
+@miniapp_router.patch("/orgs/{org_id}/billing")
+async def miniapp_orgs_billing(
+    org_id: int, body: _MiniappOrgBilling, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(orgs_store.set_billing, uid, org_id, plan=body.plan, seats=body.seats)
+    return await _org_call(_org_detail, uid, org_id)
+
+
+@miniapp_router.patch("/orgs/{org_id}/members/{member_id}/plan")
+async def miniapp_orgs_member_plan(
+    org_id: int, member_id: int, body: _MiniappOrgMemberPlan,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(orgs_store.set_member_plan, uid, org_id, member_id, body.plan)
+    return await _org_call(_org_detail, uid, org_id)
+
+
+@miniapp_router.post("/orgs/{org_id}/approve")
+async def miniapp_orgs_approve(
+    org_id: int, body: _MiniappOrgApprove, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(orgs_store.approve, uid, org_id, body.user_id, allow=body.allow)
+    return await _org_call(_org_detail, uid, org_id)
+
+
+@miniapp_router.post("/orgs/{org_id}/join")
+async def miniapp_orgs_join(org_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    status = await _org_call(orgs_store.join_by_domain, uid, org_id)
+    if status == "active":
+        await _org_call(orgs_store.set_current_org, uid, org_id)
+    return {**(await _org_call(_org_overview, uid)), "status": status}
+
+
+@miniapp_router.post("/orgs/{org_id}/dismiss")
+async def miniapp_orgs_dismiss(org_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    await _org_call(orgs_store.dismiss_suggestion, int(principal.telegram_user_id), org_id)
+    return {"ok": True}
+
+
+@miniapp_router.post("/orgs/{org_id}/leave")
+async def miniapp_orgs_leave(org_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(orgs_store.leave, uid, org_id)
+    return await _org_call(_org_overview, uid)
+
+
+@miniapp_router.post("/orgs/{org_id}/invites")
+async def miniapp_orgs_invite_create(
+    org_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    inv = await _org_call(orgs_store.create_invite, int(principal.telegram_user_id), org_id)
+    return {"ok": True, "invite": {**inv, "urls": _org_invite_urls(inv["token"])}}
+
+
+@miniapp_router.delete("/orgs/{org_id}/invites/{token}")
+async def miniapp_orgs_invite_revoke(
+    org_id: int, token: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(orgs_store.revoke_invite, uid, org_id, token)
+    return await _org_call(_org_detail, uid, org_id)
 
 
 def _contact_exists_for_principal(principal: _MiniappPrincipal, email: str) -> bool:
@@ -15712,6 +15756,12 @@ async def landing_index_route() -> FileResponse:
     return FileResponse(_landing_page_path, media_type="text/html")
 
 
+from assistant.admin.routes import make_router as _make_admin_router  # noqa: E402
+
+# Админка поверх старого дашборда: её страницы (/, /users, /user/{id}, /orgs, /spend…) идут раньше,
+# подробные старые страницы (/day/…, /user/{id}/day/…, /board, /api/…) остаются в ``dash``.
+app.include_router(_make_admin_router(_USAGE_DASHBOARD_PREFIX, authenticate=_admin_authenticate,
+                                      webapp_url=webapp_entry_url))
 app.include_router(dash)
 
 
