@@ -366,6 +366,14 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .btile .m-line { font-size: 12.5px; color: var(--text-2); }
 .ftile.lit::after { content: none; }
 
+
+/* Большие плитки: иконка → заголовок → превью, всё по центру по вертикали. */
+.btile { justify-content: center; align-items: center; text-align: center; gap: 18px; }
+.btile .name { order: -1; flex-direction: column; gap: 12px; text-align: center; }
+.btile .name .ic { width: 44px; height: 44px; border-radius: 13px; }
+.btile .name .ic svg { width: 24px; height: 24px; }
+.btile .mini { flex: none; width: 100%; }
+
 /* Мини-интерфейсы в больших плитках */
 .m-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); font-size: 12.5px; line-height: 1.35; }
 .m-ask { justify-self: end; background: var(--surface-2); border-radius: 12px 12px 4px 12px; padding: 7px 11px; font-size: 13px; margin-bottom: 10px; }
@@ -548,6 +556,34 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .sl p { margin: 0; display: flex; align-items: center; gap: 4px; }
 .sl p i { width: 12px; height: 12px; border-radius: 50%; background: #b8f22c; color: #111; font: 700 7px/12px var(--font); font-style: normal; text-align: center; flex: none; }
 
+
+/* Экраны «Одного дня» — дополнительные элементы */
+.ui-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.ui-stats span { display: grid; padding: 9px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); color: var(--text-3); font-size: 12px; }
+.ui-stats b { font: 600 20px/1.1 var(--font-heading); color: var(--text); }
+.ui-stats span:last-child b { color: var(--danger); }
+.ui-card.tone-danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }
+.ui-card.tone-danger .ui-sub { color: var(--danger); }
+.ui-card.tone-danger .ui-li::before { background: var(--danger); }
+.ui-card.tone-warn { border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); background: color-mix(in srgb, var(--warning) 8%, var(--surface)); }
+.ui-card.tone-warn .ui-sub { color: var(--warning); }
+.ui-card.tone-warn .ui-li::before { background: var(--warning); }
+.tone-danger .ui-btn:not(.ghost) { background: var(--danger); }
+.tone-warn .ui-btn:not(.ghost) { background: var(--warning); color: #241a00; }
+.ui-audio { display: flex; align-items: center; gap: 10px; padding: 8px 12px 8px 8px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); }
+.ui-audio .mic { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--tint-leo); color: var(--violet); flex: none; }
+.ui-audio .mic svg { width: 15px; height: 15px; }
+.ui-audio .wave { flex: 1; justify-content: space-between; }
+.ui-audio small { color: var(--text-3); font-size: 11.5px; flex: none; }
+.sp3 { background: var(--tint-tasks); color: var(--warning); }
+.ui-file { display: inline-block; margin-top: 6px; padding: 3px 8px; border-radius: 8px; background: rgba(255, 255, 255, .18); font-size: 12px; }
+.ui-prog { display: grid; gap: 6px; }
+.ui-prog i { display: block; height: 4px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
+.ui-prog i b { display: block; height: 100%; background: var(--violet); }
+.ui .sd-link { padding: 9px 12px; font-size: 13px; }
+.ui .sd-link svg { width: 16px; height: 16px; }
+.ui-slots span { padding: 8px 0; }
+
 /* ---------- Один день с Лео ---------- */
 .day-grid { display: grid; gap: 24px; margin-top: 56px; }
 .day-sticky { display: none; }
@@ -558,21 +594,23 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .day-step .day-screen { margin-top: 18px; padding: 16px; border-radius: 20px; background: var(--surface-2); border: 1px solid var(--border); }
 @media (min-width: 980px) {
   .day-grid { grid-template-columns: 1.05fr 1fr; gap: 72px; }
-  .day-sticky { display: block; position: sticky; top: 12vh; align-self: start; height: 76vh; }
+  /* Высота окна = самый высокий экран (считает JS), по центру экрана — так содержимое заполняет окно на каждом шаге. */
+  .day-sticky { display: block; position: sticky; top: 12vh; align-self: start; }
   .day-steps { gap: 0; }
   .day-step { min-height: 62vh; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; opacity: .3; transition: opacity .35s; }
   .day-step.on { opacity: 1; }
   .day-step .day-screen { display: none; }
 }
-.device { height: 100%; display: flex; flex-direction: column; border-radius: 24px; overflow: hidden; background: var(--surface-2); border: 1px solid var(--border); box-shadow: var(--shadow), 0 40px 80px -40px rgba(15, 23, 42, .3); }
+.device { display: flex; flex-direction: column; border-radius: 24px; overflow: hidden; background: var(--surface-2); border: 1px solid var(--border); box-shadow: var(--shadow), 0 40px 80px -40px rgba(15, 23, 42, .3); }
 .device-bar { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border); font: 600 13px var(--font-heading); }
 .device-bar .dots { display: flex; gap: 6px; }
 .device-bar .dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--border); }
 .device-bar .dtabs { display: flex; gap: 14px; margin-left: 8px; font: 500 12.5px var(--font); color: var(--text-3); }
 .device-bar .dtabs b { color: var(--text); font-weight: 600; }
-.device-body { flex: 1; padding: 32px 26px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; transition: opacity .25s ease, transform .25s ease; }
+.device-body { flex: 1 0 auto; padding: 32px 26px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; transition: opacity .25s ease, transform .25s ease; }
 .device-body.swap { opacity: 0; transform: translateY(8px); }
-.device-body .ui { max-width: 480px; margin: 0 auto; font-size: 14.5px; gap: 12px; }
+.device-body .ui { width: 100%; max-width: 500px; margin: 0 auto; font-size: 15px; gap: 12px; }
+.device-body .ui-btn { font-size: 12.5px; padding: 5px 11px; }
 .device-body .ui-card { padding: 13px 15px; }
 .day-progress { display: flex; gap: 6px; padding: 0 22px 18px; }
 .day-progress i { flex: 1; height: 3px; border-radius: 2px; background: var(--border); transition: background .3s; }
@@ -594,6 +632,8 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
   .day-dots i.on { width: 18px; background: var(--violet); }
 }
 @media (min-width: 980px) { .day-dots { display: none; } }
+/* Дополнительные элементы экранов — только в окне на десктопе: на телефоне карточка должна влезать в экран. */
+@media (max-width: 979px) { .day-step .ui-x { display: none !important; } }
 
 /* ---------- Модели ---------- */
 .models-demo { padding: 22px; display: grid; gap: 18px; }
@@ -710,6 +750,12 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
   .ask-app { min-height: 420px; }
 }
 
+
+.ask-qs button { position: relative; overflow: hidden; }
+.qbar { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: var(--violet); transform-origin: 0 50%; transform: scaleX(0); animation: qbar 4s linear forwards; }
+.ask-qs.paused .qbar { animation-play-state: paused; }
+@keyframes qbar { to { transform: scaleX(1); } }
+
 /* ---------- Свободные слоты ---------- */
 .slots-demo { padding: 22px; display: grid; gap: 16px; }
 .sd-step { display: grid; gap: 10px; opacity: .35; transition: opacity .4s; }
@@ -726,6 +772,14 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .sd-toast { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 12px; background: color-mix(in srgb, var(--success) 12%, transparent); color: var(--text); font-size: 14px; opacity: 0; transform: translateY(6px); transition: opacity .4s, transform .4s; }
 .sd-toast svg { color: var(--success); width: 20px; height: 20px; stroke-width: 2.2; }
 .sd-toast.on { opacity: 1; transform: none; }
+
+
+/* Десктоп: карточка слотов — во всю высоту текста справа, шаги распределены по высоте. */
+@media (min-width: 980px) {
+  #slots .split { align-items: stretch; }
+  .slots-demo { align-content: space-between; padding: 28px; }
+  .slots-demo .sd-grid .ui-slots span { padding: 10px 0; font-size: 14px; }
+}
 
 /* ---------- Роли ---------- */
 .tabs { display: flex; gap: 6px; padding: 5px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border); margin: 40px auto 0; width: max-content; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
@@ -1092,9 +1146,10 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
           <h3>Фокус: что важно сегодня</h3>
           <p>Лео собрал за ночь просрочки, ваши обещания и важное из чатов. Разбираете карточки свайпом: в задачу, напомнить или «не мне».</p>
           <div class="day-screen"><div class="ui">
-            <div class="ui-h">Фокус · сегодня <span class="ui-chip">Разобрать 5</span></div>
+            <div class="ui-h">Фокус · четверг <span class="ui-chip">Разобрать 5</span></div>
+            <div class="ui-x ui-stats"><span><b>4</b>встречи</span><span><b>6</b>задач</span><span><b>2</b>просрочено</span></div>
             <div class="ui-card"><span class="ui-tag danger">Просрочено</span><b>Договор с «Бетой»</b><small>срок был вчера · Олег</small><div class="ui-acts"><span class="ui-btn">Напомнить Олегу</span><span class="ui-btn ghost">Перенести</span></div></div>
-            <div class="ui-card"><span class="ui-tag info">Вы обещали</span><b>Прислать КП «Альфе»</b><small>со встречи 12.10 · до пятницы</small><div class="ui-acts"><span class="ui-btn">В задачу</span></div></div>
+            <div class="ui-card"><span class="ui-tag info">Вы обещали</span><b>Прислать КП «Альфе»</b><small>со встречи 12.10 · до пятницы</small><div class="ui-acts"><span class="ui-btn">В задачу</span><span class="ui-btn ghost">Уточнить</span></div></div>
             <div class="ui-card"><span class="ui-tag warn">Из чата</span><b>Клиент спросил про счёт</b><small>чат «Продажи» · 2 часа без ответа</small><div class="ui-acts"><span class="ui-btn">Ответить</span><span class="ui-btn ghost">Не мне</span></div></div>
           </div></div>
         </li>
@@ -1103,10 +1158,11 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
           <h3>Бриф перед встречей</h3>
           <p>За 10 минут до созвона — прошлые встречи по теме, открытые обещания с обеих сторон и повестка. Не нужно листать переписку.</p>
           <div class="day-screen"><div class="ui">
-            <div class="ui-h">Бриф · «Альфа», 11:00</div>
+            <div class="ui-h">Бриф · «Альфа», 11:00 <span class="avatars"><i style="background:#7b68ee">М</i><i style="background:#10a37f">О</i><i style="background:#f08c1e">А</i></span></div>
             <div class="ui-card"><span class="ui-sub">Прошлые встречи по теме</span><div class="ui-li">12.10 — тарифы: решили Team с ноября</div><div class="ui-li">03.10 — пилот на три отдела</div></div>
             <div class="ui-card"><span class="ui-sub">Открытые обещания</span><div class="ui-li"><span class="ui-tag info">Вы</span>прислать КП до пятницы</div><div class="ui-li"><span class="ui-tag warn">Они</span>список пользователей — нет ответа</div></div>
-            <div class="ui-card"><span class="ui-sub">Повестка</span><div class="ui-li">Итоги пилота</div><div class="ui-li">Переход на Team</div><div class="ui-li">Сроки подключения</div></div>
+            <div class="ui-x ui-card"><span class="ui-sub">Из чата «Альфа · проект»</span><div class="ui-li">Анна: «Отдел продаж готов начать первым»</div></div>
+            <div class="ui-card"><span class="ui-sub">Повестка</span><div class="ui-li">Итоги пилота</div><div class="ui-li">Переход на Team</div><div class="ui-li">Сроки подключения</div><div class="ui-acts"><span class="ui-btn">Открыть заметку встречи</span></div></div>
           </div></div>
         </li>
         <li class="day-step" data-tab="Заметки">
@@ -1115,10 +1171,12 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
           <p>Автоконспект Телемоста, запись Zoom или просто файл. Лео расшифровывает со спикерами и собирает решения и таблицу задач с ответственными и сроками.</p>
           <div class="day-screen"><div class="ui">
             <div class="ui-h">Созвон с «Альфой» · 42 мин <span class="ui-chip violet">Кто есть кто</span></div>
+            <div class="ui-x ui-audio"><span class="mic"><svg class="i" viewBox="0 0 24 24" data-i="wave"></svg></span><span class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><small>12:40 / 42:15</small></div>
             <div class="ui-tr"><b class="sp1">Мария</b><span>12:40</span><p>Давайте переходить на Team с первого ноября.</p></div>
             <div class="ui-tr"><b class="sp2">Олег</b><span>13:05</span><p>Хорошо, КП пришлю в пятницу.</p></div>
+            <div class="ui-x ui-tr"><b class="sp3">Анна</b><span>13:30</span><p>Список пользователей соберём к среде.</p></div>
             <div class="ui-card"><span class="ui-sub">Задачи встречи</span>
-              <table class="m-table"><tr><th>Задача</th><th>Кто</th><th>Срок</th></tr><tr><td>Перевести на Team</td><td>Мария</td><td>1.11</td></tr><tr><td>КП «Альфе»</td><td>Олег</td><td>пт</td></tr><tr><td>Список пользователей</td><td>«Альфа»</td><td>ср</td></tr></table>
+              <table class="m-table"><tr><th>Задача</th><th>Кто</th><th>Срок</th></tr><tr><td>Перевести на Team</td><td>Мария</td><td>1.11</td></tr><tr><td>КП «Альфе»</td><td>Олег</td><td>пт</td></tr><tr><td>Список пользователей</td><td>Анна</td><td>ср</td></tr></table>
             </div>
           </div></div>
         </li>
@@ -1127,9 +1185,10 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
           <h3>Фоллоу-ап и задачи — ответственным</h3>
           <p>Черновик письма участникам готов — вы проверяете и отправляете, сам Лео ничего не шлёт. Задачи уходят исполнителям: «Беру» или «Отказ с причиной», и при желании — в Bitrix24.</p>
           <div class="day-screen"><div class="ui">
-            <div class="ui-card"><span class="ui-sub">Черновик письма участникам</span><p class="ui-p">Коллеги, спасибо за встречу! Договорились: переход на Team с 1 ноября, КП — в пятницу, список пользователей — до среды.</p><div class="ui-acts"><span class="ui-btn">Проверить и отправить</span></div></div>
-            <div class="ui-card"><span class="ui-tag info">Входящая задача · у Олега</span><b>КП «Альфе»</b><small>со встречи 12:00 · до пятницы</small><div class="ui-acts"><span class="ui-btn">Беру →</span><span class="ui-btn ghost">← Отказ с причиной</span></div></div>
-            <span class="ui-chip ok">✓ Задача создана в Bitrix24</span>
+            <div class="ui-card"><span class="ui-sub">Черновик письма участникам</span><small>Кому: Мария, Анна · копия: Олег</small><p class="ui-p">Коллеги, спасибо за встречу! Договорились: переход на Team с 1 ноября, КП — в пятницу, список пользователей — до среды.</p><div class="ui-acts"><span class="ui-btn">Проверить и отправить</span><span class="ui-btn ghost">Изменить</span></div></div>
+            <div class="ui-card"><span class="ui-tag info">Входящая задача · у Олега</span><b>КП «Альфе»</b><small>со встречи 12.10 · до пятницы</small><div class="ui-acts"><span class="ui-btn">Беру →</span><span class="ui-btn ghost">← Отказ с причиной</span></div></div>
+            <div class="ui-x ui-card"><span class="ui-tag info">Входящая задача · у Анны</span><b>Список пользователей</b><small>со встречи 12.10 · до среды</small><div class="ui-acts"><span class="ui-btn">Беру →</span><span class="ui-btn ghost">← Отказ с причиной</span></div></div>
+            <span class="ui-chip ok">✓ Задачи созданы в Bitrix24</span>
           </div></div>
         </li>
         <li class="day-step" data-tab="Актуальное">
@@ -1138,7 +1197,10 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
           <p>Ссылка со свободными слотами сразу трёх участников. Партнёр выбирает время сам, встреча появляется в календаре у всех.</p>
           <div class="day-screen"><div class="ui">
             <div class="ui-h">Общие свободные слоты <span class="avatars"><i style="background:#7b68ee">В</i><i style="background:#10a37f">О</i><i style="background:#f08c1e">М</i></span></div>
-            <div class="ui-slots"><div><small>Пн</small><span>10:00</span><span>15:30</span></div><div><small>Вт</small><span class="pick">11:00</span><span>16:00</span></div><div><small>Ср</small><span>09:30</span><span>14:00</span></div></div>
+            <div class="ui-x ui-card"><span class="ui-sub">Встреча с партнёром · 45 минут</span><small>Владимир, Олег, Мария — Orbita свела три календаря</small></div>
+            <div class="ui-slots"><div><small>Пн, 3 ноя</small><span>10:00</span><span>12:30</span><span>15:30</span></div><div><small>Вт, 4 ноя</small><span class="pick">11:00</span><span>14:00</span><span>16:00</span></div><div><small>Ср, 5 ноя</small><span>09:30</span><span>13:00</span><span>14:00</span></div></div>
+            <div class="sd-link"><svg class="i" viewBox="0 0 24 24" data-i="link"></svg>Ссылка для партнёра<b style="opacity:1">Скопировано</b></div>
+            <div class="ui-x ui-card"><span class="ui-tag info">Встреча создана</span><b>«Гамма» × Orbita · вт, 4 ноя, 11:00</b><small>Владимир, Олег, Мария и партнёр · ссылка на Телемост · напоминание за 15 минут</small><div class="ui-acts"><span class="ui-btn">Открыть в календаре</span><span class="ui-btn ghost">Бриф к встрече</span></div></div>
             <span class="ui-chip ok">✓ Партнёр выбрал вторник, 11:00 — встреча у всех троих</span>
           </div></div>
         </li>
@@ -1172,9 +1234,11 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
           <p>Лео отвечает по всем встречам, заметкам и чатам и открывает фрагмент, откуда взял ответ. Большую Google Таблицу по ссылке читает целиком.</p>
           <div class="day-screen"><div class="ui">
             <div class="ui-bubble me">Что решили по тарифам с Марией?</div>
-            <div class="ui-bubble leo">Перейти на Team с 1 ноября; бюджет Мария согласует до 25.10.<span class="ui-chip">Источник: встреча 12.10 ↗</span></div>
-            <div class="ui-bubble me">Разбери таблицу — где мы теряем клиентов?</div>
-            <div class="ui-bubble leo"><span class="typing"><i></i><i></i><i></i></span>Читаю частями: лист «Воронка», 18 из 79</div>
+            <div class="ui-bubble leo">Перейти на Team с 1 ноября; бюджет Мария согласует до 25.10, начинаем с отдела продаж.<span class="ui-chip">Источник: встреча 12.10 · 00:12:40 ↗</span></div>
+            <div class="ui-bubble me ui-x">Кто ждёт моего ответа?</div>
+            <div class="ui-bubble leo ui-x">Мария — с пятницы в Telegram, про бюджет. Бухгалтерия — 3 часа в почте, про счёт «Беты».<span class="ui-chip">Источник: Telegram · почта ↗</span></div>
+            <div class="ui-bubble me">Разбери таблицу — где мы теряем клиентов? <span class="ui-file">📊 Воронка 2026.xlsx</span></div>
+            <div class="ui-bubble leo"><span class="ui-prog"><span>Читаю частями: лист «Воронка», 18 из 79</span><i><b style="width:23%"></b></i></span></div>
           </div></div>
         </li>
         <li class="day-step" data-tab="Дайджест">
@@ -1183,9 +1247,9 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
           <p>Двадцать рабочих групп — в одной сводке: важное, риски и кто ждёт вашего ответа. Плюс новости вашей отрасли и что они значат для вас.</p>
           <div class="day-screen"><div class="ui">
             <div class="ui-h">Дайджест · 18:00 <span class="ui-chip">20 чатов · почта · рынок</span></div>
-            <div class="ui-card"><span class="ui-sub">Важное и риски</span><div class="ui-li">«Продажи»: «Бета» просит отсрочку платежа</div><div class="ui-li">«Склад»: поставка сдвигается на 2 дня</div></div>
-            <div class="ui-card"><span class="ui-sub">Ждут вашего ответа</span><div class="ui-li">Мария · Telegram · с пятницы</div><div class="ui-li">Бухгалтерия · почта · 3 часа</div></div>
-            <div class="ui-card"><span class="ui-sub">Рынок</span><div class="ui-li">Новые требования к маркировке → что это значит для вас</div></div>
+            <div class="ui-card tone-danger"><span class="ui-sub">Важное и риски</span><div class="ui-li">«Продажи»: «Бета» просит отсрочку платежа</div><div class="ui-li">«Склад»: поставка сдвигается на 2 дня</div><div class="ui-acts"><span class="ui-btn">Взять в работу</span><span class="ui-btn ghost">Назначить</span></div></div>
+            <div class="ui-card tone-warn"><span class="ui-sub">Ждут вашего ответа</span><div class="ui-li">Мария · Telegram · с пятницы</div><div class="ui-li">Бухгалтерия · почта · 3 часа</div><div class="ui-acts"><span class="ui-btn">Ответить</span></div></div>
+            <div class="ui-card"><span class="ui-sub">Рынок</span><div class="ui-li">Новые требования к маркировке → что это значит для вас</div><div class="ui-acts"><span class="ui-btn ghost">Смотреть</span></div></div>
           </div></div>
         </li>
         <li class="day-step" data-tab="Актуальное">
@@ -1193,7 +1257,8 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
           <h3>«Задача буксует» и задачи голосом</h3>
           <p>Лео замечает, что тему обсуждают третью встречу подряд, а срока и ответственного нет. Задачу себе или коллеге ставите голосом — в Орбите или в Telegram.</p>
           <div class="day-screen"><div class="ui">
-            <div class="ui-card"><span class="ui-tag warn">Буксует</span><b>«Лендинг» обсуждали 3 встречи подряд</b><small>нет срока и ответственного</small><div class="ui-acts"><span class="ui-btn">Назначить</span></div></div>
+            <div class="ui-card"><span class="ui-tag warn">Буксует</span><b>«Лендинг» обсуждали 3 встречи подряд</b><small>нет срока и ответственного</small><div class="ui-acts"><span class="ui-btn">Назначить</span><span class="ui-btn ghost">Поставить срок</span></div></div>
+            <div class="ui-x ui-card"><span class="ui-tag danger">Без ответственного</span><b>«Переход на Team»: регламент</b><small>срок 25.10 · владельца нет</small><div class="ui-acts"><span class="ui-btn">Назначить Марию</span></div></div>
             <div class="ui-voice"><span class="mic"><svg class="i" viewBox="0 0 24 24" data-i="mic"></svg></span><span class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></div>
             <div class="ui-bubble me">Напомни Олегу про КП в пятницу</div>
             <span class="ui-chip ok">✓ Напоминание Олегу · пт, 10:00</span>
@@ -2206,6 +2271,28 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
   steps.forEach(function (s) { dayIO.observe(s); });
   showStep(0);
 
+  // Окно на десктопе — высотой с самый высокий экран: меряем все экраны в невидимой копии окна.
+  var daySticky = $(".day-sticky");
+  function fitDevice() {
+    if (window.innerWidth < 980) { dayScreen.style.height = ""; daySticky.style.top = ""; return; }
+    var probe = dayScreen.cloneNode(false);
+    probe.removeAttribute("id");
+    probe.style.cssText = "position:absolute;visibility:hidden;left:-9999px;top:0;height:auto;width:" + dayScreen.clientWidth + "px";
+    dayScreen.parentNode.appendChild(probe);
+    var max = 0;
+    steps.forEach(function (st) {
+      probe.innerHTML = st.querySelector(".day-screen").innerHTML;
+      max = Math.max(max, probe.offsetHeight);
+    });
+    probe.remove();
+    dayScreen.style.height = max + "px";
+    var dev = daySticky.querySelector(".device").offsetHeight;
+    daySticky.style.top = Math.max(16, Math.round((window.innerHeight - dev) / 2)) + "px";
+  }
+  window.addEventListener("resize", fitDevice);
+  fitDevice();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitDevice);
+
   /* ---------- «Один день» на телефоне: вертикальная прокрутка листает карточки вбок ---------- */
   (function () {
     var pin = $("#dayPin"), track = $("#daySteps"), grid = pin.querySelector(".day-grid");
@@ -2298,9 +2385,29 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
     b.addEventListener("click", function () { ask(i); });
     askQs.appendChild(b);
   });
+  // Автопоказ: после ответа по нижнему краю активного вопроса бежит полоска (4 с), потом — следующий вопрос.
+  // Пока блок не на экране, полоска на паузе (класс paused).
+  function startBar(i, run) {
+    if (reduce) return;
+    var btn = askQs.children[i];
+    var bar = document.createElement("span");
+    bar.className = "qbar";
+    btn.appendChild(bar);
+    bar.addEventListener("animationend", function () {
+      if (run === askRun) ask((i + 1) % ASK.length);
+    });
+  }
+  new IntersectionObserver(function (es) {
+    es.forEach(function (e) { askQs.classList.toggle("paused", !e.isIntersecting); });
+  }, { threshold: 0.3 }).observe($("#ask"));
+
   function ask(i) {
     var run = ++askRun, item = ASK[i];
+    $$("#askQs .qbar").forEach(function (b) { b.remove(); });
     [].forEach.call(askQs.children, function (b, j) { b.classList.toggle("on", j === i); });
+    // На телефоне вопросы в строке с прокруткой — подкручиваем активный в видимую часть (без прыжка страницы).
+    var btn = askQs.children[i];
+    if (askQs.scrollWidth > askQs.clientWidth) askQs.scrollTo({ left: btn.offsetLeft - askQs.offsetLeft - 16, behavior: reduce ? "auto" : "smooth" });
     askChat.innerHTML = '<div class="ui-bubble me"></div><div class="ui-bubble leo"><span class="typing"><i></i><i></i><i></i></span></div>';
     askChat.firstChild.textContent = item.q;
     var leo = askChat.lastChild;
@@ -2310,6 +2417,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
       src.className = "ask-src";
       src.textContent = "↗ Источник: " + item.src;
       askChat.appendChild(src);
+      startBar(i, run);
     }
     if (reduce) { leo.textContent = item.a; finish(); return; }
     setTimeout(function () {
