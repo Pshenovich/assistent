@@ -290,15 +290,16 @@ def notify_lead(lead_id: int, lead: dict[str, str], tail: list[dict[str, str]]) 
     from assistant.lib.telegram_access_allowlist import approver_user_ids
 
     e = html.escape
+    feature = lead.get("source") == "feature"
     lines = [
-        "🛰 <b>Заявка с сайта Orbita</b>",
+        "💡 <b>Пожелание функции с сайта Orbita</b>" if feature else "🛰 <b>Заявка с сайта Orbita</b>",
         f"<b>Имя:</b> {e(lead['name'])}",
-        f"<b>Контакт:</b> {e(lead['contact'])}",
+        f"<b>Контакт:</b> {e(lead['contact'] or '—')}",
     ]
     if lead.get("company"):
         lines.append(f"<b>Компания:</b> {e(lead['company'])}")
     if lead.get("note"):
-        lines.append(f"<b>Комментарий:</b> {e(lead['note'])}")
+        lines.append(f"<b>{'Что добавить' if feature else 'Комментарий'}:</b> {e(lead['note'])}")
     if lead.get("source"):
         lines.append(f"<i>Откуда: {e(lead['source'])}</i>")
     if tail:
@@ -404,14 +405,23 @@ def make_router() -> APIRouter:
         if body.website:
             return {"ok": True}
         name, contact = body.name.strip(), body.contact.strip()
-        if not name or not contact:
-            raise HTTPException(status_code=400, detail="Укажите имя и контакт.")
-        if not valid_contact(contact):
-            raise HTTPException(status_code=400, detail="Контакт — телефон, почта или ник в Telegram.")
+        is_feature = body.source.strip() == "feature"
+        if is_feature:
+            # Пожелание функции: важен текст, контакт — по желанию.
+            if len(body.note.strip()) < 5:
+                raise HTTPException(status_code=400, detail="Опишите функцию хотя бы парой слов.")
+            name = name or "Посетитель сайта"
+            if contact and not valid_contact(contact):
+                raise HTTPException(status_code=400, detail="Контакт — телефон, почта или ник в Telegram.")
+        else:
+            if not name or not contact:
+                raise HTTPException(status_code=400, detail="Укажите имя и контакт.")
+            if not valid_contact(contact):
+                raise HTTPException(status_code=400, detail="Контакт — телефон, почта или ник в Telegram.")
         ip = client_ip(request)
         if not hit(f"lead:{ip}", (LEAD_IP_LIMIT,)):
             raise HTTPException(status_code=429, detail="Заявка уже отправлена — мы скоро свяжемся.")
-        if await run_in_threadpool(recent_lead_exists, contact):
+        if contact and await run_in_threadpool(recent_lead_exists, contact):
             return {"ok": True}
         session = body.session if _SESSION_RE.match(body.session or "") else ""
         lead = {

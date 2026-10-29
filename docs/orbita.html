@@ -149,7 +149,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 :root[data-theme="dark"] .theme-btn .ic-moon, :root[data-theme="light"] .theme-btn .ic-sun { display: none; }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 48px; padding: 0 22px; border-radius: 14px; font: 600 16px var(--font); text-decoration: none; border: 1px solid transparent; cursor: pointer; white-space: nowrap; }
 .btn-sm { height: 36px; padding: 0 14px; border-radius: 10px; font-size: 14px; }
-.btn-primary { background: var(--accent); color: #fff; box-shadow: 0 6px 20px -6px var(--accent); }
+.btn-primary { background: linear-gradient(135deg, #8b7cf8 0%, #5b5ee8 100%); color: #fff; box-shadow: 0 8px 24px -8px rgba(91, 94, 232, .7), inset 0 1px 0 rgba(255, 255, 255, .18); }
 .btn-primary:hover { filter: brightness(1.06); }
 .btn-ghost { background: var(--surface); color: var(--text); border-color: var(--border); }
 .btn-ghost:hover { border-color: var(--text-3); }
@@ -158,6 +158,17 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .hero { position: relative; padding: 24px 0 64px; overflow-x: clip; }
 .hero::before { content: ""; position: absolute; inset: -10% -20% auto auto; width: 70vw; height: 70vw; max-width: 900px; max-height: 900px; background: radial-gradient(circle, var(--glow), transparent 62%); pointer-events: none; }
 .hero-grid { position: relative; display: grid; gap: 24px; align-items: center; }
+@media (max-width: 979px) {
+  /* Телефон и планшет: орбита сразу под заголовком, подзаголовок и кнопки — после неё. */
+  .hero-text { display: contents; }
+  .hero-text .eyebrow { order: 1; justify-self: start; }
+  .hero-text h1 { order: 2; margin: 0; }
+  .hero .stage-box { order: 3; }
+  .hero-text .lead { order: 4; margin: 0; }
+  .hero-text .cta-row { order: 5; }
+  .hero-text .badges { order: 6; margin: 0; }
+  .hero-grid { gap: 20px; }
+}
 @media (min-width: 980px) { .hero-grid { grid-template-columns: 1fr 1.05fr; gap: 40px; padding-top: 32px; } }
 .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-2); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px 6px 8px; }
 .eyebrow b { color: var(--violet); font-weight: 600; }
@@ -270,9 +281,27 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .resolve em { font-style: normal; color: var(--violet); }
 .problem-foot { position: relative; min-height: 120px; }
 .problem-foot > * { position: absolute; left: 0; right: 0; top: 0; }
-@media (max-width: 899px), (max-height: 679px) {
+@media (min-width: 900px) and (max-height: 679px), (max-width: 899px) and (max-height: 559px) {
   .problem-foot { min-height: 0; display: grid; gap: 28px; }
   .problem-foot > * { position: static; }
+}
+/* Телефон: блок тоже закреплён на экране, и нить распутывается за полторы высоты экрана прокрутки,
+   а не проскакивает за полэкрана. Тексты узлов — компактнее, вывод встаёт на их место. */
+@media (max-width: 899px) and (min-height: 560px) {
+  .problem { height: 260vh; }
+  .problem-sticky { position: sticky; top: 0; height: 100vh; height: 100svh; display: flex; flex-direction: column; justify-content: center; padding: 12px 0; }
+  .problem-sticky > .wrap { width: 100%; }
+  .problem .sec-head h2 { font-size: 23px; }
+  .problem .sec-head p { font-size: 14.5px; margin-top: 8px; }
+  .thread-box { margin: 14px auto 6px; }
+  .problem-foot { display: grid; min-height: 0; }
+  .problem-foot > * { position: static; grid-area: 1 / 1; }
+  .knots { gap: 10px; align-self: start; margin-top: 4px; }
+  .knot { padding: 2px 0 0 12px; }
+  .knot h3 { font-size: 17px; }
+  .knot p { font-size: 13.5px; margin-top: 3px; }
+  .knot .src { display: none; }
+  .resolve { align-self: center; font-size: 19px; }
 }
 
 /* ---------- Сетка инструментов ---------- */
@@ -502,10 +531,10 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .bn small { display: block; font-size: 10.5px; font-weight: 500; color: var(--text-3); margin-top: 2px; }
 .bn.dec { border-color: var(--warning); color: var(--warning); border-style: dashed; }
 .bn.ok { border-color: var(--success); background: color-mix(in srgb, var(--success) 12%, var(--surface)); }
-.ba { flex: none; width: 16px; height: 2px; background: var(--violet); position: relative; }
-.ba::after { content: ""; position: absolute; right: -1px; top: -4px; border: 5px solid transparent; border-left: 6px solid var(--violet); border-right: 0; }
+.b-arr { flex: none; width: 16px; height: 2px; background: var(--violet); position: relative; }
+.b-arr::after { content: ""; position: absolute; right: -1px; top: -4px; border: 5px solid transparent; border-left: 6px solid var(--violet); border-right: 0; }
 .ub-notes { display: flex; gap: 8px; flex-wrap: wrap; }
-@media (max-width: 479px) { .bn { font-size: 11px; padding: 6px 2px; } .bn small { font-size: 9.5px; } .ba { width: 10px; } }
+@media (max-width: 479px) { .bn { font-size: 11px; padding: 6px 2px; } .bn small { font-size: 9.5px; } .b-arr { width: 10px; } }
 .sticky { font-size: 11.5px; padding: 6px 9px; border-radius: 4px; background: #ffe58a; color: #3a2f00; transform: rotate(-1.5deg); box-shadow: 0 2px 6px rgba(0,0,0,.18); }
 .sticky.blue { background: #b9dcff; color: #0b2a4a; transform: rotate(1.2deg); }
 .ui-slides { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
@@ -548,6 +577,22 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .day-progress { display: flex; gap: 6px; padding: 0 22px 18px; }
 .day-progress i { flex: 1; height: 3px; border-radius: 2px; background: var(--border); transition: background .3s; }
 .day-progress i.on { background: var(--violet); }
+
+
+/* Телефон и планшет: карточки дня листаются вбок прокруткой страницы (блок закреплён),
+   после последней — обычная вертикальная прокрутка. Высоту .day-pin задаёт JS. */
+@media (max-width: 979px) {
+  .day-grid { position: sticky; top: 0; height: 100vh; height: 100svh; margin-top: 0; display: flex; flex-direction: column; justify-content: center; overflow: hidden; gap: 14px; }
+  .day-steps { display: flex; gap: 12px; width: max-content; will-change: transform; }
+  .day-step { flex: 0 0 min(84vw, 380px); background: var(--surface); border: 1px solid var(--border); border-radius: 22px; padding: 18px; box-shadow: var(--shadow); }
+  .day-step h3 { font-size: 19px; margin-top: 10px; }
+  .day-step p { font-size: 14.5px; margin-top: 6px; }
+  .day-step .day-screen { margin-top: 14px; padding: 12px; }
+  .day-dots { display: flex; gap: 6px; justify-content: center; }
+  .day-dots i { width: 6px; height: 6px; border-radius: 3px; background: var(--border); transition: width .25s, background .25s; }
+  .day-dots i.on { width: 18px; background: var(--violet); }
+}
+@media (min-width: 980px) { .day-dots { display: none; } }
 
 /* ---------- Модели ---------- */
 .models-demo { padding: 22px; display: grid; gap: 18px; }
@@ -653,6 +698,16 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .ask-hint { font-size: 16px; }
 .ask-input { display: flex; align-items: center; justify-content: space-between; margin: 0 18px 18px; padding: 8px 8px 8px 18px; border-radius: 16px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-3); font-size: 15.5px; }
 .ask-input b { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; background: var(--accent); color: #fff; font-size: 18px; }
+
+
+/* Телефон и планшет: вопросы — одной строкой с прокруткой вбок. */
+@media (max-width: 979px) {
+  .ask-qs { display: flex; gap: 8px; overflow-x: auto; margin: 0 -16px; padding: 2px 16px 8px; scroll-snap-type: x proximity; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .ask-qs::-webkit-scrollbar { display: none; }
+  .ask-qs button { flex: none; white-space: nowrap; font-size: 15px; padding: 10px 14px; border-radius: 999px; gap: 8px; scroll-snap-align: start; box-shadow: none; }
+  .ask-qs button svg { width: 16px; height: 16px; padding: 0; background: none; }
+  .ask-app { min-height: 420px; }
+}
 
 /* ---------- Свободные слоты ---------- */
 .slots-demo { padding: 22px; display: grid; gap: 16px; }
@@ -780,7 +835,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 @media (min-width: 720px) { .stats { grid-template-columns: repeat(3, 1fr); } }
 .stat { text-align: center; padding: 8px; }
 .stat b { display: block; font: 600 clamp(32px, 4vw, 44px)/1 var(--font-heading); letter-spacing: -0.02em; }
-.stat span { color: var(--text-2); font-size: 15px; }
+.stat span { color: var(--text-2); font-size: 15px; display: block; max-width: 22em; margin: 6px auto 0; }
 .quotes { display: grid; gap: 16px; margin-top: 40px; }
 @media (min-width: 720px) { .quotes { grid-template-columns: repeat(2, 1fr); } }
 .quote { padding: 24px; display: grid; gap: 16px; align-content: space-between; }
@@ -846,7 +901,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .lc-ibtn svg { width: 16px; height: 16px; }
 .lc-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; overscroll-behavior: contain; }
 .lc-msg { max-width: 88%; padding: 10px 14px; border-radius: 18px; font-size: 15px; line-height: 1.45; white-space: pre-line; overflow-wrap: anywhere; }
-.lc-msg.me { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 6px; }
+.lc-msg.me { align-self: flex-end; background: #5b5ee8; color: #fff; border-bottom-right-radius: 6px; }
 .lc-msg.leo { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 6px; }
 .lc-msg.err { align-self: center; max-width: 100%; font-size: 13.5px; color: var(--text-2); background: color-mix(in srgb, var(--warning) 12%, transparent); border-radius: 12px; }
 .lc-sugg { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -855,14 +910,14 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .lc-sugg button.lead { color: #fff; background: var(--violet); }
 .lc-lead { align-self: stretch; display: grid; gap: 8px; padding: 14px; border-radius: 16px; background: var(--surface); border: 1px solid var(--orbit-line); }
 .lc-lead b { font-size: 14.5px; }
-.lc-lead input { font: 15px var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; width: 100%; }
-.lc-lead input:focus, .lc-input textarea:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px var(--orbit-line); }
+.lc-lead input, .lc-lead textarea { font: 15px var(--font); resize: vertical; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; width: 100%; }
+.lc-lead input:focus, .lc-lead textarea:focus, .lc-input textarea:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px var(--orbit-line); }
 .lc-lead .btn { height: 42px; }
 .lc-lead small { color: var(--text-3); font-size: 12px; }
 .lc-lead .lc-lerr { color: var(--danger); }
 .lc-input { display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--border); background: var(--surface); }
 .lc-input textarea { flex: 1; resize: none; max-height: 120px; min-height: 42px; font: 15px/1.4 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; padding: 10px 12px; }
-.lc-send { width: 42px; height: 42px; flex: none; border-radius: 12px; border: 0; background: var(--accent); color: #fff; display: grid; place-items: center; cursor: pointer; }
+.lc-send { width: 42px; height: 42px; flex: none; border-radius: 12px; border: 0; background: linear-gradient(135deg, #8b7cf8 0%, #5b5ee8 100%); color: #fff; display: grid; place-items: center; cursor: pointer; }
 .lc-send:disabled { opacity: .5; cursor: default; }
 .lc-send svg { width: 18px; height: 18px; stroke-width: 2.2; }
 .lc-note { padding: 0 14px 10px; background: var(--surface); color: var(--text-3); font-size: 11.5px; text-align: center; }
@@ -895,7 +950,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 <!-- ========== 1. Герой ========== -->
 <section class="hero">
   <div class="wrap hero-grid">
-    <div>
+    <div class="hero-text">
       <span class="eyebrow"><span class="dot"></span>Orbita&nbsp;<b>с ИИ-ассистентом Лео</b></span>
       <h1>Рабочее <em class="nw">ИИ-пространство</em>, которое помнит всё за&nbsp;вас</h1>
       <p class="lead">Заметки, доски, презентации, встречи, задачи и рабочие чаты — в одном месте. <b>ИИ-ассистент Лео</b> помнит договорённости и подсвечивает, что не забыть.</p>
@@ -1021,6 +1076,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
       <h2>От утреннего плана до вечернего дайджеста</h2>
       <p>Как это выглядит у руководителя небольшой компании. Данные вымышленные, интерфейс — настоящий.</p>
     </div>
+    <div class="day-pin" id="dayPin">
     <div class="day-grid">
       <div class="day-sticky" aria-hidden="true">
         <div class="device">
@@ -1094,9 +1150,9 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
             <div class="ui-board">
               <div class="ub-head"><span>Доска · Подключение «Альфы»</span><span class="ui-chip violet">Claude Opus 5.5</span></div>
               <div class="ub-flow">
-                <div class="bn">Заявка<small>до 25.10</small></div><i class="ba"></i>
-                <div class="bn">Пилот<small>3 отдела</small></div><i class="ba"></i>
-                <div class="bn dec">Решение</div><i class="ba"></i>
+                <div class="bn">Заявка<small>до 25.10</small></div><i class="b-arr"></i>
+                <div class="bn">Пилот<small>3 отдела</small></div><i class="b-arr"></i>
+                <div class="bn dec">Решение</div><i class="b-arr"></i>
                 <div class="bn ok">Team<small>с 1 ноября</small></div>
               </div>
               <div class="ub-notes"><span class="sticky">Ответственный — Мария</span><span class="sticky blue">Регламент миграции к 25.10</span></div>
@@ -1143,6 +1199,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
           </div></div>
         </li>
       </ol>
+    </div>
     </div>
   </div>
 </section>
@@ -1455,7 +1512,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
       <div class="rel reveal"><div><time>26 октября</time><h3>Свободные слайды и стиль «Лайм»</h3><p>Презентации можно править как угодно, а Лео подбирает иконки по смыслу.</p></div></div>
       <div class="rel reveal"><div><time>25 октября</time><h3>Доски</h3><p>Схемы в духе Miro прямо в заметке — и Лео рисует их из обсуждения.</p></div></div>
     </div>
-    <div class="rel-cta"><!-- До доски пожеланий ведёт к Лео в Telegram. --><a class="btn btn-ghost js-tg" data-start="orbita_feature" href="/webapp/">Предложить функцию и проголосовать</a></div>
+    <div class="rel-cta"><!-- Пожелание уходит команде через чат с Лео; доска с голосованием — позже. --><button class="btn btn-ghost" type="button" data-chat-lead="feature">Предложить функцию</button></div>
   </div>
 </section>
 
@@ -1469,7 +1526,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
     <div class="stats">
       <div class="stat reveal"><b>12 000+</b><span>встреч расшифровано</span></div>
       <div class="stat reveal"><b>6</b><span>топовых ИИ-моделей внутри</span></div>
-      <div class="stat reveal"><b>1</b><span>пространство вместо десятка сервисов</span></div>
+      <div class="stat reveal"><b>10 в 1</b><span>заметки, доски, презентации, встречи, задачи, календарь, база знаний, почта, дайджест и ИИ-чат</span></div>
     </div>
   </div>
 </section>
@@ -1798,7 +1855,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
   var resolve = document.getElementById("resolve");
   var problem = document.getElementById("problem");
   var threadStage = document.getElementById("threadStage");
-  var stickyMq = window.matchMedia("(min-width: 900px) and (min-height: 680px)");
+  var stickyMq = window.matchMedia("(min-width: 900px) and (min-height: 680px), (max-width: 899px) and (min-height: 560px)");
 
   function clamp(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
   function range(p, a, b) { return clamp((p - a) / (b - a)); }
@@ -2148,6 +2205,44 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
   steps.forEach(function (s) { dayIO.observe(s); });
   showStep(0);
 
+  /* ---------- «Один день» на телефоне: вертикальная прокрутка листает карточки вбок ---------- */
+  (function () {
+    var pin = $("#dayPin"), track = $("#daySteps"), grid = pin.querySelector(".day-grid");
+    var mq = window.matchMedia("(max-width: 979px)");
+    var cards = $$("#daySteps .day-step");
+    var dots = document.createElement("div");
+    dots.className = "day-dots";
+    cards.forEach(function () { dots.appendChild(document.createElement("i")); });
+    grid.appendChild(dots);
+    var travel = 0;
+    function layout() {
+      if (!mq.matches) { pin.style.height = ""; track.style.transform = ""; return; }
+      travel = Math.max(0, track.scrollWidth - grid.clientWidth);
+      // Сдвиг на пиксель — пиксель прокрутки страницы; плюс экран, пока блок закреплён.
+      pin.style.height = (window.innerHeight + travel) + "px";
+      update();
+    }
+    function update() {
+      if (!mq.matches) return;
+      var r = pin.getBoundingClientRect();
+      var span = r.height - window.innerHeight;
+      var p = span > 0 ? Math.min(1, Math.max(0, -r.top / span)) : 0;
+      track.style.transform = "translateX(" + (-p * travel).toFixed(1) + "px)";
+      var idx = Math.round(p * (cards.length - 1));
+      [].forEach.call(dots.children, function (d, i) { d.classList.toggle("on", i === idx); });
+    }
+    var ticking = false;
+    window.addEventListener("scroll", function () {
+      if (ticking || !mq.matches) return;
+      ticking = true;
+      requestAnimationFrame(function () { ticking = false; update(); });
+    }, { passive: true });
+    window.addEventListener("resize", layout);
+    if (mq.addEventListener) mq.addEventListener("change", layout);
+    layout();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
+  })();
+
   /* ---------- 6. Модели: переключатель и Совет PAIE ---------- */
   var modelChips = $$("#modelChips span"), mi = 0;
   modelChips[0].classList.add("on");
@@ -2407,10 +2502,20 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
     var leadCard = null;
     function showLead(source) {
       if (!rendered) render();
-      if (leadCard && document.body.contains(leadCard)) { leadCard.querySelector("input[name=name]").focus(); return; }
+      if (leadCard && document.body.contains(leadCard)) {
+        if ((leadCard.dataset.kind === "feature") === (source === "feature")) { leadCard.querySelector("textarea, input:not(.lc-trap)").focus(); return; }
+        leadCard.remove();
+      }
+      var feature = source === "feature";
       leadCard = el("form", "lc-lead");
+      leadCard.dataset.kind = feature ? "feature" : "lead";
       leadCard.setAttribute("autocomplete", "on");
-      leadCard.innerHTML =
+      leadCard.innerHTML = feature ?
+        "<b>Какую функцию добавить в Орбиту?</b>" +
+        '<textarea name="note" rows="3" maxlength="1000" placeholder="Например: интеграция с amoCRM" required></textarea>' +
+        '<input name="contact" placeholder="Контакт, если хотите ответ (необязательно)" maxlength="120">' +
+        '<input class="lc-trap" name="website" tabindex="-1" aria-hidden="true" autocomplete="off">' +
+        '<button class="btn btn-primary" type="submit">Отправить команде</button>' :
         "<b>Оставьте контакты — команда свяжется в течение рабочего дня</b>" +
         '<input name="name" placeholder="Как вас зовут" autocomplete="name" maxlength="120" required>' +
         '<input name="contact" placeholder="Телефон, почта или @ник в Telegram" maxlength="120" required>' +
@@ -2422,12 +2527,12 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
         e.preventDefault();
         var f = leadCard, btn = f.querySelector("button");
         // f.name — это имя самой формы, поэтому поля берём по селектору.
-        function val(n) { return f.querySelector('input[name="' + n + '"]').value; }
+        function val(n) { var x = f.querySelector('[name="' + n + '"]'); return x ? x.value : ""; }
         var old = f.querySelector(".lc-lerr"); if (old) old.remove();
         btn.disabled = true;
         fetch("/api/orbita/lead", {
           method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
-          body: JSON.stringify({ session: state.session, name: val("name"), contact: val("contact"), company: val("company"), website: val("website"), source: source || "chat" })
+          body: JSON.stringify({ session: state.session, name: val("name"), contact: val("contact"), company: val("company"), note: val("note"), website: val("website"), source: source || "chat" })
         }).then(function (r) {
           return r.json().catch(function () { return {}; }).then(function (d) { return { ok: r.ok, d: d }; });
         }).then(function (res) {
@@ -2438,7 +2543,9 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
             return;
           }
           f.remove(); leadCard = null;
-          var thanks = "Спасибо! Заявка у команды — свяжемся в течение рабочего дня. А пока можно начать бесплатно или спросить меня что-нибудь ещё.";
+          var thanks = feature
+            ? "Спасибо! Передал идею команде — такие пожелания мы разбираем каждую неделю."
+            : "Спасибо! Заявка у команды — свяжемся в течение рабочего дня. А пока можно начать бесплатно или спросить меня что-нибудь ещё.";
           state.messages.push({ role: "assistant", content: thanks }); persist();
           addMsg("assistant", thanks);
         }).catch(function () {
@@ -2448,7 +2555,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
       });
       clearSugg();
       body.appendChild(leadCard); scrollDown();
-      setTimeout(function () { leadCard && leadCard.querySelector("input[name=name]").focus(); }, 60);
+      setTimeout(function () { var first = leadCard && leadCard.querySelector("textarea, input:not(.lc-trap)"); if (first) first.focus(); }, 60);
     }
 
     function autosize() { text.style.height = "auto"; text.style.height = Math.min(120, text.scrollHeight) + "px"; }

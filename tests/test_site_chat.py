@@ -120,3 +120,14 @@ def test_valid_contact():
         assert site_chat.valid_contact(ok), ok
     for bad in ("12", "+7 999", "a b c", "<script>"):
         assert not site_chat.valid_contact(bad), bad
+
+
+def test_feature_request_needs_text_not_contact(client, monkeypatch):
+    sent: list[tuple] = []
+    monkeypatch.setenv("TELEGRAM_ACCESS_APPROVER_IDS", "111")
+    monkeypatch.setattr("assistant.lib.telegram_notify.send_message", lambda uid, text, **kw: sent.append((uid, text)) or True)
+    short = client.post("/api/orbita/lead", json={"source": "feature", "note": "да"}, headers={"X-Real-IP": "10.5.0.1"})
+    assert short.status_code == 400
+    ok = client.post("/api/orbita/lead", json={"source": "feature", "note": "Интеграция с amoCRM"}, headers={"X-Real-IP": "10.5.0.2"})
+    assert ok.status_code == 200
+    assert len(sent) == 1 and "Пожелание функции" in sent[0][1] and "amoCRM" in sent[0][1]
