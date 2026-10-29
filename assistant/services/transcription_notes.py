@@ -108,10 +108,18 @@ def _speaker_map(meta: Any) -> dict[str, Any]:
     return dict(smap) if isinstance(smap, dict) else {}
 
 
+_SPEAKER_HEAD_RE = re.compile(r"<p([^>]*)>\s*<strong>[^<]*</strong>")
+
+
 def _same_text(a: str, b: str) -> bool:
     # Без пробелов вовсе: редактор пересохраняет лист по-своему (<br> без «\n», абзацы
     # без перевода строки, &nbsp;) — html_to_plain склеивает строки, а текст тот же.
-    return "".join(_plain(a).split()) == "".join(_plain(b).split())
+    # И без имён в начале реплик: их ведёт «Кто есть кто», а старая вкладка могла вернуть
+    # «Спикер N» поверх имён — это не ручная правка.
+    def norm(h: str) -> str:
+        return "".join(_plain(_SPEAKER_HEAD_RE.sub(r"<p\1>", h or "")).split())
+
+    return norm(a) == norm(b)
 
 
 def _render_transcript(segments: list[dict[str, Any]], speaker_map: dict[str, Any]) -> str:

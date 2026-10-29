@@ -128,6 +128,17 @@ class NoteTests(unittest.TestCase):
         fresh = notes_store.get_note(1, int(note["id"]))
         self.assertIn("<strong>Дима</strong>", fresh["body"])
 
+    def test_confirm_speaker_after_stale_overwrite(self) -> None:
+        # Вкладка досохранила старый транскрипт со «Спикер 2» поверх «Димы» — это не ручная правка.
+        note = self._note()
+        stale = note["body"]
+        tnotes.confirm_speaker(1, int(note["id"]), "Спикер 2", "Дима")
+        notes_store.update_note(1, int(note["id"]), body=stale)
+        tnotes.confirm_speaker(1, int(note["id"]), "Спикер 1", "Петя")
+        fresh = notes_store.get_note(1, int(note["id"]))
+        self.assertIn("<strong>Дима</strong>", fresh["body"])
+        self.assertIn("<strong>Петя</strong>", fresh["body"])
+
     def test_confirm_unknown_speaker(self) -> None:
         note = self._note()
         with self.assertRaises(tnotes.TranscriptionNoteError):

@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261029-mytasks";
+  var WEBAPP_BUILD = "20261029-mtskip";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261028-blockacts"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261029-mtskip"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -29817,6 +29817,9 @@
     skipCaretScroll: false,
     enabled: false,
     pendingOpenSheetId: "",
+    // Сервер только что переписал листы этой заметки («Кто есть кто»): старые листы из редактора
+    // не досохраняем — иначе PATCH после 409 вернёт «Спикер N» поверх имён. Снимается, когда листы перечитаны.
+    staleSheetsNoteId: "",
     leftWebCanvas: null,
     rightWebCanvas: null,
     leftBoard: null,
@@ -39989,6 +39992,7 @@
     var noteId = noteSheetsNoteId();
     var sheet = findNoteSheet(id);
     if (!id || !noteId || !sheet || isPrimarySheetId(id)) return;
+    if (noteSheetState.staleSheetsNoteId && noteSheetState.staleSheetsNoteId === String(noteId)) return;
     var html = "";
     if (String(noteSheetState.leftId) === id) html = readSheetEditorHtml("left");
     else if (String(noteSheetState.rightId) === id) html = readSheetEditorHtml("right");
@@ -41089,6 +41093,12 @@
   function speakerMapReopen(item, toast) {
     closeSpeakerMapMenu();
     if (item) {
+      // Сервер переписал транскрипт — версию из редактора обратно не шлём, ждём свежие листы.
+      noteSheetState.staleSheetsNoteId = String(item.id);
+      Object.keys(noteSheetState.sheetTimers).forEach(function (k) {
+        clearTimeout(noteSheetState.sheetTimers[k]);
+        delete noteSheetState.sheetTimers[k];
+      });
       // Остаёмся на том же листе («Транскрипции»), а не на основном «Саммари».
       var sid = String(noteSheetState.leftId || "");
       if (sid && !isPrimarySheetId(sid) && String(noteSheetsNoteId() || "") === String(item.id)) {
@@ -41134,12 +41144,20 @@
 
     var view = null;
 
+    // Правки листов — на сервер до имени: он сверяет транскрипт с ними, а после ответа старое уже не шлём.
+    function flushSheets() {
+      return Promise.all([flushSheetEditor("left").catch(function () {}), flushSheetEditor("right").catch(function () {})]);
+    }
+
     function save(sp, name, isMe) {
       body.classList.add("is-busy");
-      apiFetch(base, {
-        method: "POST",
-        body: JSON.stringify({ label: sp.label, name: String(name || "").trim(), is_me: !!isMe }),
-      })
+      flushSheets()
+        .then(function () {
+          return apiFetch(base, {
+            method: "POST",
+            body: JSON.stringify({ label: sp.label, name: String(name || "").trim(), is_me: !!isMe }),
+          });
+        })
         .then(function (res) {
           var item = res && res.item;
           var parts = [];
@@ -41162,10 +41180,13 @@
 
     function merge(sp, other) {
       body.classList.add("is-busy");
-      apiFetch(base + "/merge", {
-        method: "POST",
-        body: JSON.stringify({ source: sp.label, target: other.label }),
-      })
+      flushSheets()
+        .then(function () {
+          return apiFetch(base + "/merge", {
+            method: "POST",
+            body: JSON.stringify({ source: sp.label, target: other.label }),
+          });
+        })
         .then(function (res) {
           speakerMapReopen(res && res.item, "Реплики «" + speakerShownName(sp) + "» теперь у «" + speakerShownName(other) + "»");
         })
@@ -41808,6 +41829,7 @@
         if (noteSheetsNoteId() !== String(noteId)) return;
         var rows = (data && data.sheets) || [];
         if (rows.length) noteSheetState.sheets = rows;
+        if (noteSheetState.staleSheetsNoteId === String(noteId)) noteSheetState.staleSheetsNoteId = "";
         var main = findNoteSheet(NOTE_SHEET_MAIN);
         if (main) noteSheetState.primaryBody = main.body || main.description || noteSheetState.primaryBody;
         renderNoteSheetChips();

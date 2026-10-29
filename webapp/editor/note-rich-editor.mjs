@@ -5235,7 +5235,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261028-blockacts",
+  assetVersion: "20261029-mtskip",
   Y: Y,
   mount: mount,
   importBody: importBody,
