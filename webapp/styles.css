@@ -15366,15 +15366,22 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 #panel-actual.panel-actual--posted > #actual-focus,
 #panel-actual.panel-actual--posted > .section,
 #panel-actual.panel-actual--posted > .actual-fab,
-#panel-actual.panel-actual--posted > #actual-create-menu {
+#panel-actual.panel-actual--posted > #actual-create-menu,
+#panel-actual.panel-actual--mytasks > #actual-hero,
+#panel-actual.panel-actual--mytasks > #actual-focus,
+#panel-actual.panel-actual--mytasks > .section,
+#panel-actual.panel-actual--mytasks > .actual-fab,
+#panel-actual.panel-actual--mytasks > #actual-create-menu {
   display: none !important;
 }
-#panel-actual.panel-actual--posted > #actual-posted-tasks {
+#panel-actual.panel-actual--posted > #actual-posted-tasks,
+#panel-actual.panel-actual--mytasks > #actual-my-tasks {
   display: flex !important;
   flex-direction: column;
   min-height: 60vh;
 }
 #actual-posted-tasks.actual-subscreen,
+#actual-my-tasks.actual-subscreen,
 .pt-sheet-overlay {
   margin: 0;
   --pt-late: #ff6b5e;
@@ -15382,7 +15389,8 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   --pt-ok: #5fd08a;
   --pt-card: var(--surface);
 }
-#actual-posted-tasks .subscreen-body.posted-body {
+#actual-posted-tasks .subscreen-body.posted-body,
+#actual-my-tasks .subscreen-body.posted-body {
   padding-left: 0;
   padding-right: 0;
   /* Своя прокрутка не нужна (листает общий контейнер); с ней лента команды выходила за край и экран ездил вбок. */
@@ -15625,6 +15633,47 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 .pt-row.is-selected { background: var(--accent-subtle); }
 @media (hover: hover) { .pt-row:hover { background: var(--surface-elevated); } .pt-row.is-selected:hover { background: var(--accent-subtle); } }
 .pt-row > .pt-av { margin-top: 2px; }
+/* «Задачи»: кружок «выполнено» вместо аватара исполнителя */
+.mt-check {
+  flex: none;
+  position: relative;
+  width: 22px;
+  height: 22px;
+  margin: 2px 5px 0;
+  padding: 0;
+  border: 2px solid var(--text-tertiary);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.mt-check::after { content: ""; position: absolute; inset: -10px; }
+.mt-check svg { opacity: 0; color: var(--on-accent); }
+.mt-check.is-done { background: var(--accent); border-color: var(--accent); }
+.mt-check.is-done svg { opacity: 1; }
+.mt-check:disabled { opacity: 0.6; }
+.pt-row.is-done .pt-row-title { text-decoration: line-through; color: var(--text-secondary); }
+.pt-row-line .mt-from { color: var(--text-secondary); }
+.mt-inbox {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-card);
+  background: var(--accent-subtle);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
 .pt-row-main { flex: 1; min-width: 0; }
 .pt-row-title {
   margin: 0;
@@ -15935,6 +15984,7 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 /* Десктоп: список слева, поручение или сводка «Команда сейчас» справа */
 @media (min-width: 960px) {
   #actual-posted-tasks.actual-subscreen { width: 100%; max-width: 1180px; margin: 0 auto; }
+  #actual-my-tasks.actual-subscreen { width: 100%; max-width: 820px; margin: 0 auto; }
   .pt-only-desktop { display: inline; }
   .pt-head .pt-btn--primary { width: auto; padding: 0 14px; border-radius: 10px; }
   .pt-team { margin-left: 0; margin-right: 0; padding-left: 0; padding-right: 0; flex-wrap: wrap; }
@@ -17605,7 +17655,8 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
 }
 .actual-voice-wrap .note-dictation-bar { display: flex; }
 html.actual-voice-open #actual-create-btn { visibility: hidden; }
-#panel-actual.panel-actual--posted > .actual-voice-wrap { display: none !important; }
+#panel-actual.panel-actual--posted > .actual-voice-wrap,
+#panel-actual.panel-actual--mytasks > .actual-voice-wrap { display: none !important; }
 #actual-create-menu .actual-create-menu-btn.is-voice .actual-create-ico { color: var(--danger); }
 @media (min-width: 960px) {
   .actual-voice-wrap { left: auto; right: 2rem; bottom: 2rem; width: 26rem; }

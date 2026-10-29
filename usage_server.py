@@ -5736,6 +5736,51 @@ async def miniapp_calendar_tasks_posted(
     return {"ok": True, "items": items, "count": active_count, "archived": want_archived}
 
 
+@miniapp_router.get("/calendar/tasks/mine")
+async def miniapp_calendar_tasks_mine(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    done: int = Query(0, ge=0, le=1),
+) -> dict[str, Any]:
+    """Экран «Задачи» на «Актуальном»: свои и поставленные мне (взятые); плюс сколько ждёт разбора."""
+    from assistant.lib.task_notify import owner_display_name
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    tz = _tz_for(uid)
+
+    def _run() -> dict[str, Any]:
+        rows = calendar_tasks_store.list_my_tasks(uid, done=bool(done), now=datetime.now(tz), limit=300 if done else 500)
+        names: dict[str, str] = {}
+        titles: dict[str, str] = {}
+        items = []
+        for r in rows:
+            it = _task_api(r, tz=tz, viewer_id=uid)
+            owner = str(r.get("owner_user_id") or "")
+            if calendar_tasks_store.task_is_delegated(r):  # поставлено мне — «от Ивана»
+                if owner not in names:
+                    names[owner] = owner_display_name(owner)
+                it["owner_name"] = names[owner]
+            nid = str(r.get("note_id") or "")
+            if nid.isdigit():  # задача из встречи — «из «Синк по запуску»»
+                if nid not in titles:
+                    try:
+                        n = notes_store.get_accessible_note(uid, int(nid), with_sharing=False)
+                    except Exception as e:
+                        print(f"[mine] note title task={r.get('id')} err={e!r}")
+                        n = None
+                    titles[nid] = str(n.get("title") or "") if n and str(n.get("role") or "") == "transcription" else ""
+                if titles[nid]:
+                    it["meeting_title"] = titles[nid]
+            items.append(it)
+        inbox = calendar_tasks_store.list_inbox(uid) if not done else {"items": []}
+        return {"items": items, "inbox": len(inbox["items"])}
+
+    res = await run_in_threadpool(_run)
+    return {"ok": True, "done": bool(done), **res}
+
+
 class _MiniappTaskStatusBody(BaseModel):
     status: str = ""
     note: str = ""

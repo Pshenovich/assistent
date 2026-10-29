@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261029-segdark">
+<html lang="ru" class="tg-dark vkui--vkIOS--dark" data-build="20261029-mytasks">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -92,7 +92,7 @@
     })();
   </script>
   <!-- Тема (светлая/тёмная) ставится до стилей — без мигания при запуске. -->
-  <script src="/webapp/theme.js?v=20261029-segdark"></script>
+  <script src="/webapp/theme.js?v=20261029-mytasks"></script>
   <!-- Unbounded — названия и заголовки заметок, транскрипций и саммари -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -100,8 +100,8 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261029-segdark" />
-  <link rel="stylesheet" href="/webapp/board.css?v=20261029-segdark" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261029-mytasks" />
+  <link rel="stylesheet" href="/webapp/board.css?v=20261029-mytasks" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -183,6 +183,34 @@
               </div>
               <aside id="posted-tasks-side" class="pt-side" aria-label="Задача"></aside>
             </div>
+          </div>
+        </div>
+        <div id="actual-my-tasks" class="actual-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="my-tasks-back">← Назад</button>
+            <h2 class="detail-title pt-bar-title" id="my-tasks-bar-title">Задачи</h2>
+            <div class="pt-bar-actions">
+              <button type="button" class="pt-btn pt-btn--primary pt-bar-new" id="my-tasks-new-bar" aria-label="Новая задача" title="Новая задача">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="subscreen-body posted-body">
+            <div class="pt-head">
+              <div class="pt-head-text">
+                <h2 class="pt-title" id="my-tasks-title">Мои задачи</h2>
+                <p class="pt-sub" id="my-tasks-sub"></p>
+              </div>
+              <div class="pt-head-actions">
+                <button type="button" class="pt-btn pt-only-desktop" id="my-tasks-done-tab">Выполненные</button>
+                <button type="button" class="pt-btn pt-btn--primary" id="my-tasks-new" aria-label="Новая задача" title="Новая задача">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="pt-only-desktop">Новая задача</span>
+                </button>
+              </div>
+            </div>
+            <div id="my-tasks-team" class="pt-team" role="toolbar" aria-label="От кого"></div>
+            <div id="my-tasks-list" class="pt-list"></div>
+            <div id="my-tasks-empty" class="pt-empty hidden"></div>
           </div>
         </div>
         <div class="section">
@@ -2337,12 +2365,12 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261029-segdark" defer></script>
-  <script src="/webapp/realtime.js?v=20261029-segdark" defer></script>
-  <script src="/webapp/note-yjs.js?v=20261029-segdark" defer></script>
-  <script src="/webapp/board-geom.js?v=20261029-segdark" defer></script>
-  <script src="/webapp/board.js?v=20261029-segdark" defer></script>
-  <script src="/webapp/app.js?v=20261029-segdark" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261029-mytasks" defer></script>
+  <script src="/webapp/realtime.js?v=20261029-mytasks" defer></script>
+  <script src="/webapp/note-yjs.js?v=20261029-mytasks" defer></script>
+  <script src="/webapp/board-geom.js?v=20261029-mytasks" defer></script>
+  <script src="/webapp/board.js?v=20261029-mytasks" defer></script>
+  <script src="/webapp/app.js?v=20261029-mytasks" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261023-reply1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261025-mobfix" defer></script>

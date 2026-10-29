@@ -941,6 +941,53 @@ def list_involved_tasks(user_id: int | str, *, limit: int = 2000) -> list[dict[s
         return [_row_to_dict(r) for r in cur.fetchall()]
 
 
+def list_my_tasks(
+    user_id: int | str,
+    *,
+    done: bool = False,
+    now: datetime | None = None,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    """Экран «Задачи»: свои (поставил себе) и поставленные мне, которые я взял.
+
+    Входящие (ещё не разобранные), «не моё» и отменённые постановщиком — не здесь.
+    done=False — открытые; повторяющаяся задача — ближайшим вхождением с сегодняшнего дня.
+    done=True — выполненные, последние сверху.
+    """
+    uid = _uid(user_id)
+    lim = max(1, min(int(limit or 500), 2000))
+    with _LOCK:
+        rows = _conn().execute(
+            f"""
+            SELECT * FROM calendar_tasks
+            WHERE (
+                (owner_user_id = ? AND (assignee_user_id = '' OR assignee_user_id = owner_user_id))
+                OR (
+                  assignee_user_id = ? AND owner_user_id != assignee_user_id
+                  AND IFNULL(outcome, '') != 'cancelled'
+                  AND IFNULL(assignee_triage, '') NOT IN ({",".join("?" * len(TRIAGE_HIDDEN))})
+                )
+              )
+              AND done = ?
+            ORDER BY {"done_at DESC, id DESC" if done else "start_at ASC, id ASC"}
+            LIMIT ?
+            """,
+            (uid, uid, *TRIAGE_HIDDEN, 1 if done else 0, lim),
+        ).fetchall()
+    out = [_row_to_dict(r) for r in rows]
+    if done:
+        return out
+    now_dt = now or datetime.now(timezone.utc)
+    day_start = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    for i, t in enumerate(out):
+        if str(t.get("recurrence") or "").strip():
+            nxt = _expand_recurring_task(t, day_start, day_start + timedelta(days=400))
+            if nxt:
+                out[i] = nxt[0]
+    out.sort(key=lambda t: (str(t.get("start_at") or ""), int(t.get("id") or 0)))
+    return out
+
+
 def list_tasks(owner_user_id: int | str, *, limit: int = 200) -> list[dict[str, Any]]:
     uid = _uid(owner_user_id)
     lim = max(1, min(int(limit or 200), 500))

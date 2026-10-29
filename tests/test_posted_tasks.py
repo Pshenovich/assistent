@@ -287,3 +287,50 @@ def test_message_with_file_ref_and_mention(client, store, sent):
     assert OWNER in to and 33 in to  # постановщику — сообщение, Артёму — упоминание
     g = client.get(f"/api/miniapp/notes/task/{t['id']}/discuss-files/{fid}", headers=_headers(OWNER))
     assert g.status_code == 200 and g.content == b"hello"
+
+
+def test_my_tasks_own_and_taken(store):
+    # «Задачи» на «Актуальном»: свои и взятые поручения; входящие, «не моё», отменённые и чужие — нет.
+    own = store.create_task(ASSIGNEE, title="Себе", start_at=datetime(2026, 10, 20, 9, 0, tzinfo=TZ), tz=TZ)
+    taken = _delegated(store, title="Взятое")
+    store.triage_accept(ASSIGNEE, taken["id"])
+    inbox = _delegated(store, title="Во входящих")
+    declined = _delegated(store, title="Не моё")
+    store.triage_decline(ASSIGNEE, declined["id"], "не ко мне")
+    cancelled = _delegated(store, title="Отменённое")
+    store.triage_accept(ASSIGNEE, cancelled["id"])
+    store.cancel_task(OWNER, cancelled["id"])
+    store.create_task(OWNER, title="Чужое", start_at=datetime(2026, 10, 20, 9, 0, tzinfo=TZ), tz=TZ)
+
+    ids = {t["id"] for t in store.list_my_tasks(ASSIGNEE, now=datetime(2026, 10, 21, 10, 0, tzinfo=TZ))}
+    assert ids == {own["id"], taken["id"]}
+    assert inbox["id"] not in ids
+    # У постановщика поручение — в «Поставленных», не в его «Задачах».
+    assert {t["title"] for t in store.list_my_tasks(OWNER)} == {"Чужое"}
+
+    store.update_task(ASSIGNEE, own["id"], done=True, tz=TZ)
+    assert [t["id"] for t in store.list_my_tasks(ASSIGNEE, done=True)] == [own["id"]]
+    assert own["id"] not in {t["id"] for t in store.list_my_tasks(ASSIGNEE)}
+
+
+def test_my_tasks_recurring_next_occurrence(store):
+    store.create_task(
+        OWNER, title="Планёрка", start_at=datetime(2026, 10, 1, 10, 0, tzinfo=TZ), tz=TZ, recurrence="FREQ=DAILY"
+    )
+    [t] = store.list_my_tasks(OWNER, now=datetime(2026, 10, 21, 8, 0, tzinfo=TZ))
+    assert t["start_at"].startswith("2026-10-21")
+
+
+def test_my_tasks_endpoint(client, store):
+    own = store.create_task(ASSIGNEE, title="Себе", start_at=datetime.now(TZ), tz=TZ)
+    taken = _delegated(store, title="Взятое")
+    store.triage_accept(ASSIGNEE, taken["id"])
+    _delegated(store, title="Во входящих")
+    r = client.get("/api/miniapp/calendar/tasks/mine", headers=_headers(ASSIGNEE))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert {t["id"] for t in body["items"]} == {own["id"], taken["id"]}
+    assert body["inbox"] == 1
+    got = {t["id"]: t for t in body["items"]}
+    assert got[taken["id"]]["owner_name"]
+    assert "owner_name" not in got[own["id"]]
