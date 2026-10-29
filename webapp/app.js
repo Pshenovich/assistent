@@ -5252,6 +5252,63 @@
     chat.scrollTop = chat.scrollHeight;
   }
 
+  // Пока идёт запись голоса, экран не гаснет (Screen Wake Lock: Chrome/Android, Safari 16.4+).
+  // Нет API (Telegram WebView и др.) — молча ничего. Замок снимается системой, когда вкладка скрыта,
+  // поэтому при возврате берём его снова, если запись ещё идёт.
+  var voiceWake = { n: 0, lock: null, bound: false };
+
+  function voiceWakeSync() {
+    var api = navigator.wakeLock;
+    if (!api || typeof api.request !== "function") return;
+    if (voiceWake.n > 0 && !voiceWake.lock && document.visibilityState === "visible") {
+      voiceWake.lock = "pending";
+      api
+        .request("screen")
+        .then(function (lock) {
+          if (voiceWake.n > 0 && voiceWake.lock === "pending") {
+            voiceWake.lock = lock;
+            lock.addEventListener("release", function () {
+              if (voiceWake.lock === lock) voiceWake.lock = null;
+            });
+          } else {
+            lock.release().catch(function () {});
+            if (voiceWake.lock === "pending") voiceWake.lock = null;
+          }
+        })
+        .catch(function () {
+          if (voiceWake.lock === "pending") voiceWake.lock = null;
+        });
+    } else if (voiceWake.n <= 0 && voiceWake.lock) {
+      var held = voiceWake.lock;
+      voiceWake.lock = null;
+      if (held !== "pending") held.release().catch(function () {});
+    }
+  }
+
+  function keepScreenAwakeWhileRecording(rec) {
+    if (!rec || !rec.addEventListener) return;
+    if (!voiceWake.bound) {
+      voiceWake.bound = true;
+      document.addEventListener("visibilitychange", voiceWakeSync);
+    }
+    var on = false;
+    function start() {
+      if (on) return;
+      on = true;
+      voiceWake.n++;
+      voiceWakeSync();
+    }
+    function stop() {
+      if (!on) return;
+      on = false;
+      voiceWake.n = Math.max(0, voiceWake.n - 1);
+      voiceWakeSync();
+    }
+    rec.addEventListener("start", start);
+    rec.addEventListener("stop", stop);
+    rec.addEventListener("error", stop);
+  }
+
   function preferredVoiceMimeType() {
     if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return "";
     var candidates = [
@@ -5340,6 +5397,7 @@
       }
       var recorder = new MediaRecorder(voiceMediaStream, opts);
       voiceMediaRecorder = recorder;
+      keepScreenAwakeWhileRecording(recorder);
       recorder.addEventListener("dataavailable", function (e) {
         if (e.data && e.data.size) voiceChunks.push(e.data);
       });
@@ -13868,6 +13926,7 @@
       showNoteToast("Запись звука недоступна в этом браузере");
       return;
     }
+    keepScreenAwakeWhileRecording(d.rec);
     d.rec.addEventListener("dataavailable", function (e) {
       if (e.data && e.data.size) d.chunks.push(e.data);
     });
@@ -19864,6 +19923,7 @@
         return;
       }
     }
+    keepScreenAwakeWhileRecording(d.rec);
     d.rec.addEventListener("dataavailable", function (e) {
       if (e.data && e.data.size) d.chunks.push(e.data);
     });
@@ -40727,9 +40787,31 @@
     });
   }
 
+  // Ряд листов прокручивается вбок, полоса прокрутки скрыта: колесо мыши (вертикальное) — тоже вбок.
+  // Тачпад шлёт горизонтальную прокрутку сам — её не трогаем. На краю ряда страница листается как обычно.
+  function bindSheetChipsWheel(host) {
+    if (host._wheelBound) return;
+    host._wheelBound = true;
+    host.addEventListener(
+      "wheel",
+      function (e) {
+        if (e.ctrlKey || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+        var max = host.scrollWidth - host.clientWidth;
+        if (max <= 0) return;
+        var dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? host.clientWidth : 1);
+        var next = Math.max(0, Math.min(max, host.scrollLeft + dy));
+        if (next === host.scrollLeft) return;
+        e.preventDefault();
+        host.scrollLeft = next;
+      },
+      { passive: false }
+    );
+  }
+
   function renderNoteSheetChips() {
     var host = document.getElementById("note-editor-sheets");
     if (!host) return;
+    bindSheetChipsWheel(host);
     scheduleTranscriptSheetSync();
     host.innerHTML = "";
     if (!noteSheetsEnabled()) {
