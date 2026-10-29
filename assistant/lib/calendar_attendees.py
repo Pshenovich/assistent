@@ -373,12 +373,9 @@ def _append_calendar_user(
     uid: int | None,
     label: str,
 ) -> None:
-    from assistant.integrations import google_calendar_oauth
-
     if not uid or int(uid) == int(owner_id) or int(uid) in seen:
         return
-    if not google_calendar_oauth.user_token_path(int(uid)).is_file():
-        return
+    # занятость есть у любого пользователя Орбиты (встречи и задачи Орбиты), Google — дополнительно
     seen.add(int(uid))
     out.append((int(uid), (label or "Участник").strip() or "Участник"))
 

@@ -88,6 +88,71 @@ class OrbitaCalendarTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._create(recurrence=["RRULE:FREQ=WEEKLY"])
 
+    def test_busy_without_google(self) -> None:
+        """Занятость для свободных слотов: встречи Орбиты + задачи, без Google."""
+        from assistant.services import calendar as cal
+
+        self._create()  # 10:00–10:30 UTC, Анна приглашена
+        day = self.day.date().isoformat()
+        ws, we = self.day.replace(hour=0), self.day.replace(hour=23)
+        with mock.patch.object(cal, "has_google", lambda uid: False):
+            owner = cal.busy_intervals_day(1, day, work_start=ws, work_end=we)
+            anna = cal.busy_intervals_day(2, day, work_start=ws, work_end=we)
+            petr = cal.busy_intervals_day(3, day, work_start=ws, work_end=we)
+        self.assertEqual([(s.hour, e.minute) for s, e in owner], [(10, 30)])
+        self.assertEqual(len(anna), 1)
+        self.assertEqual(petr, [])
+
+
+class LeoToolsWithoutGoogleTests(unittest.TestCase):
+    """Лео без Google: свободные окна, встреча Орбиты, список встреч."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["NOTES_DB_PATH"] = os.path.join(self._tmp.name, "notes.sqlite")
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        from assistant.services import calendar as cal
+        from assistant.services import gpt_calendar_tools as tools
+
+        self._p = [
+            mock.patch.object(tools, "has_google_calendar", lambda uid: False),
+            mock.patch.object(cal, "has_google", lambda uid: False),
+            mock.patch.object(meeting_invites, "telegram_id_for_attendee_email", lambda o, em, **kw: None),
+            mock.patch.object(orbita_calendar, "organizer_email", lambda uid: ""),
+        ]
+        for p in self._p:
+            p.start()
+
+    def tearDown(self) -> None:
+        for p in self._p:
+            p.stop()
+        self._tmp.cleanup()
+        notes_store._CONN = None  # type: ignore[attr-defined]
+
+    def test_leo_creates_orbita_meeting(self) -> None:
+        import json
+
+        from assistant.services import gpt_calendar_tools as tools
+
+        day = datetime.now(timezone.utc) + timedelta(days=7)
+        while day.weekday() >= 5:
+            day += timedelta(days=1)
+        ctx = tools.GptCalendarContext(uid=1)
+        slots = json.loads(tools.tool_calendar_free_slots(ctx, {"date": day.date().isoformat()}))
+        self.assertNotIn("error", slots)
+        self.assertTrue(slots["slots"])
+        start = slots["slots"][0]["start"][:16]
+        res = json.loads(tools.tool_calendar_create_event(ctx, {"title": "Синк по проекту Альфа", "start": start, "duration_min": 30}))
+        self.assertTrue(res.get("created"), res)
+        self.assertTrue(res["event_id"].startswith("orb-"))
+        self.assertEqual(ctx.created_events[0]["calendar_id"], "orbita")
+        listed = json.loads(tools.tool_calendar_events(ctx, {"start_date": day.date().isoformat(), "end_date": day.date().isoformat()}))
+        self.assertIn("Синк по проекту Альфа", [i["title"] for i in listed["items"]])
+        again = json.loads(tools.tool_calendar_free_slots(ctx, {"date": day.date().isoformat()}))
+        self.assertNotIn(slots["slots"][0]["start"], [s["start"] for s in again["slots"]])  # слот занят
+        clash = json.loads(tools.tool_calendar_create_event(ctx, {"title": "Ещё", "start": start, "duration_min": 30}))
+        self.assertTrue(clash.get("conflict"), clash)
+
 
 if __name__ == "__main__":
     unittest.main()

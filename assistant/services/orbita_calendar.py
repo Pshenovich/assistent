@@ -174,3 +174,43 @@ def respond(user_id: int, event_id: str, response: str) -> dict[str, Any]:
 def events_for(user_id: int, start: datetime, end: datetime) -> list[dict[str, Any]]:
     """Встречи Орбиты пользователя в окне — в форме событий Google."""
     return [store.as_gcal(ev, user_id) for ev in store.list_for_user(user_id, start, end)]
+
+
+def attach_video(user_id: int, event_id: str, provider: str) -> str:
+    """Zoom или Телемост для встречи Орбиты: создать комнату и сохранить ссылку во встрече.
+
+    Как и для Google: Zoom — запланированная встреча (с записью ботом, если включена), Телемост — комната.
+    """
+    from assistant.lib import telemost_gcal, zoom_gcal
+    from assistant.lib.user_timezone import resolve_user_tz_name
+
+    ev = _own(user_id, event_id)
+    if ev.get("video_url") and ev.get("video_provider") == provider:
+        return ev["video_url"]
+    start = datetime.fromisoformat(ev["start_utc"])
+    end = datetime.fromisoformat(ev["end_utc"])
+    if provider == "zoom":
+        token = zoom_gcal._zoom_access_token(int(user_id))
+        auto_record = zoom_gcal.user_prefs.zoom_auto_record_enabled(int(user_id)) and \
+            zoom_gcal.meeting_sched.service_available()
+        zm = zoom_gcal.zoom_api.create_scheduled_meeting(
+            token, topic=ev["title"], start_utc=start, end_utc=end,
+            timezone_str=resolve_user_tz_name(int(user_id)), auto_record=auto_record,
+        )
+        join, ref = str(zm.get("join_url") or "").strip(), str(zm.get("id") or "")
+        if not join:
+            raise RuntimeError("Zoom не вернул ссылку на встречу.")
+        zoom_gcal.zrm.register_meeting(int(user_id), zm, source="orbita_zoom")
+        zoom_gcal.meeting_sched.maybe_schedule_for_zoom_create(
+            int(user_id), join_url=join, topic=ev["title"], start_at=start, source="orbita_zoom")
+    elif provider == "telemost":
+        token = telemost_gcal._telemost_access_token(int(user_id))
+        conf = telemost_gcal.telemost_api.create_conference(
+            token, auto_summarization=telemost_gcal.user_prefs.telemost_auto_record_enabled(int(user_id)))
+        join, ref = str(conf.get("join_url") or "").strip(), str(conf.get("id") or "")
+        if not join:
+            raise RuntimeError("Телемост не вернул ссылку на встречу.")
+    else:
+        raise ValueError("Неизвестная видеосвязь")
+    store.set_video(ev["id"], url=join, provider=provider, ref=ref)
+    return join

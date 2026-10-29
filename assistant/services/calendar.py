@@ -201,6 +201,35 @@ def format_event_when(start: datetime, end: datetime, user_id: int) -> str:
     return f"{date_part}, {s.strftime('%H:%M')}–{e.strftime('%H:%M')}"
 
 
+def _orbita_after_change(user_id: int, event_id: str, prev: dict[str, Any] | None) -> None:
+    """Письма внешним гостям и сообщения бота участникам после изменения встречи Орбиты."""
+    from assistant.services import orbita_invite_mail
+    from assistant.stores import orbita_events
+
+    try:
+        ev = orbita_events.get(orbita_events.parse_id(event_id))
+        if ev:
+            orbita_invite_mail.notify_members(int(user_id), prev, ev)
+            orbita_invite_mail.after_change(int(user_id), prev, ev)
+    except Exception as e:
+        print(f"[calendar] orbita after_change uid={user_id} ev={event_id} err={e!r}")
+
+
+def _create_orbita_event(user_id: int, parsed: dict[str, Any], *, telegram_username: str | None = None,
+                         skip_attendee_names: set[str] | None = None) -> dict[str, Any]:
+    """Встреча Орбиты (Google не подключён): участники из почты и имён контактов."""
+    from assistant.services import orbita_calendar
+
+    atts = _resolve_attendees(parsed, user_id, telegram_username=telegram_username, skip_names=skip_attendee_names)
+    p2 = {**parsed, "attendees": [a["email"] for a in atts]}
+    try:
+        res = orbita_calendar.create(int(user_id), p2)
+    except ValueError as e:
+        raise RuntimeError(str(e)) from e
+    _orbita_after_change(user_id, res["event_id"], None)
+    return res
+
+
 def create_event(
     user_id: int,
     parsed: dict[str, Any],
@@ -209,6 +238,9 @@ def create_event(
     skip_attendee_names: set[str] | None = None,
     calendar_id: str | None = None,
 ) -> dict[str, Any]:
+    if not has_google(user_id) or str(calendar_id or "") == "orbita":
+        return _create_orbita_event(user_id, parsed, telegram_username=telegram_username,
+                                    skip_attendee_names=skip_attendee_names)
     svc = _service(user_id)
     start = _parse_dt(str(parsed.get("start") or ""), user_id)
     end_s = str(parsed.get("end") or "").strip()
@@ -473,6 +505,37 @@ def busy_intervals_via_viewer_email(
     return busy
 
 
+def has_google(user_id: int) -> bool:
+    try:
+        return google_calendar_oauth.user_token_path(int(user_id)).is_file()
+    except Exception:
+        return False
+
+
+def orbita_busy(user_id: int, start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+    """Занятость из Орбиты: встречи Орбиты (кроме отклонённых) и задачи со временем (не на весь день, не сделанные)."""
+    from assistant.stores import calendar_tasks, orbita_events
+
+    out: list[tuple[datetime, datetime]] = []
+    try:
+        out += orbita_events.busy_for_user(int(user_id), start, end)
+    except Exception as e:
+        print(f"[calendar] orbita busy uid={user_id} err={e!r}")
+    try:
+        for t in calendar_tasks.list_tasks_in_window(int(user_id), start, end):
+            if t.get("all_day") or t.get("done") or not t.get("start_at") or not t.get("end_at"):
+                continue
+            bs = datetime.fromisoformat(str(t["start_at"]).replace("Z", "+00:00"))
+            be = datetime.fromisoformat(str(t["end_at"]).replace("Z", "+00:00"))
+            if be > bs:
+                out.append((bs, be))
+    except Exception as e:
+        print(f"[calendar] task busy uid={user_id} err={e!r}")
+    tz = start.tzinfo or timezone.utc
+    clipped = [(max(bs.astimezone(tz), start), min(be.astimezone(tz), end)) for bs, be in out]
+    return [(bs, be) for bs, be in clipped if be > bs]
+
+
 def busy_intervals_day(
     user_id: int,
     day_iso: str,
@@ -481,24 +544,35 @@ def busy_intervals_day(
     work_start: datetime | None = None,
     work_end: datetime | None = None,
 ) -> list[tuple[datetime, datetime]]:
-    """Занятые интервалы дня без названий событий."""
+    """Занятые интервалы дня без названий событий: Google (если подключён) + встречи и задачи Орбиты."""
     try:
         if work_start is None or work_end is None:
             work_start, work_end = _work_window(user_id, day_iso)
         if tz is None:
             tz = work_start.tzinfo or _tz_for(user_id)
-        busy = busy_intervals_via_freebusy(
-            int(user_id), work_start, work_end
-        )
-        if busy:
-            return busy
-        events = _raw_events_for_day(user_id, day_iso)
-        return calendar_busy_from_events(
-            events, tz=tz, work_start=work_start, work_end=work_end
-        )
+        google: list[tuple[datetime, datetime]] = []
+        if has_google(user_id):
+            google = busy_intervals_via_freebusy(int(user_id), work_start, work_end)
+            if not google:
+                events = _raw_events_for_day(user_id, day_iso)
+                google = calendar_busy_from_events(events, tz=tz, work_start=work_start, work_end=work_end)
+        return calendar_merge_busy_intervals(list(google) + orbita_busy(int(user_id), work_start, work_end))
     except Exception as e:
         print(f"[calendar] busy_intervals uid={user_id} day={day_iso} err={e!r}")
         return []
+
+
+def _orbita_user_for(owner_id: int, contact: dict[str, Any] | None, email: str) -> int | None:
+    """Пользователь Орбиты за контактом/почтой, даже без Google: его занятость видна тем,
+    у кого он в контактах (встречи и задачи Орбиты, без названий)."""
+    try:
+        from assistant.lib.calendar_attendees import contact_telegram_user_id
+        from assistant.services import meeting_invites
+
+        uid = contact_telegram_user_id(contact) if contact else None
+        return int(uid or 0) or meeting_invites.telegram_id_for_attendee_email(int(owner_id), email) or None
+    except Exception:
+        return None
 
 
 def availability_for_attendees(
@@ -521,17 +595,13 @@ def availability_for_attendees(
     datetime.strptime(day, "%Y-%m-%d")
     work_start, work_end = _work_window(int(owner_id), day)
     tz = work_start.tzinfo or _tz_for(int(owner_id))
-    owner_has_cal = google_calendar_oauth.user_token_path(int(owner_id)).is_file()
-    owner_busy = (
-        busy_intervals_day(
-            int(owner_id),
-            day,
-            tz=tz,
-            work_start=work_start,
-            work_end=work_end,
-        )
-        if owner_has_cal
-        else []
+    owner_has_cal = True  # календарь Орбиты есть у всех; Google — дополнительный источник
+    owner_busy = busy_intervals_day(
+        int(owner_id),
+        day,
+        tz=tz,
+        work_start=work_start,
+        work_end=work_end,
     )
     people: list[dict[str, Any]] = [
         {
@@ -566,7 +636,8 @@ def availability_for_attendees(
         uname = normalize_telegram_username(
             str((raw or {}).get("telegram_username") or "")
         )
-        uid = leo_calendar_user_id(hit, em, telegram_username=uname or None)
+        uid = leo_calendar_user_id(hit, em, telegram_username=uname or None) or _orbita_user_for(
+            int(owner_id), hit, em)
         if uid and int(uid) == int(owner_id):
             continue
         label = ""
@@ -662,10 +733,11 @@ def free_slots_day(
 ) -> list[tuple[datetime, datetime]]:
     work_start, work_end = _work_window(user_id, day_iso)
     tz = _tz_for(user_id)
-    events = _raw_events_for_day(user_id, day_iso, calendar_ids=calendar_ids)
+    events = _raw_events_for_day(user_id, day_iso, calendar_ids=calendar_ids) if has_google(user_id) else []
     busy = calendar_busy_from_events(
         events, tz=tz, work_start=work_start, work_end=work_end
     )
+    busy = calendar_merge_busy_intervals(list(busy) + orbita_busy(int(user_id), work_start, work_end))
     cursor = max(work_start, earliest_bookable_start(user_id, day_iso))
     return _gaps_from_busy(
         busy, work_start=work_start, work_end=work_end, cursor=cursor
@@ -883,6 +955,21 @@ def update_event(
     *,
     calendar_id: str | None = None,
 ) -> dict[str, Any]:
+    from assistant.stores import orbita_events
+
+    if orbita_events.is_orbita_id(event_id):
+        from assistant.services import orbita_calendar
+
+        prev = orbita_events.get(orbita_events.parse_id(event_id))
+        p2 = dict(parsed)
+        if "attendees" in parsed or "attendee_names" in parsed:
+            p2["attendees"] = [a["email"] for a in _resolve_attendees(parsed, user_id)]
+        try:
+            res = orbita_calendar.update(int(user_id), event_id, p2)
+        except ValueError as e:
+            raise RuntimeError(str(e)) from e
+        _orbita_after_change(user_id, event_id, prev)
+        return res
     cal_id = (calendar_id or GOOGLE_CALENDAR_ID).strip() or GOOGLE_CALENDAR_ID
     cal_sources.assert_calendar_writable(user_id, cal_id)
     svc = _service(user_id)
@@ -978,6 +1065,18 @@ def delete_event(
 ) -> None:
     """Удалить событие GCal; если к нему привязаны Zoom/Telemost — удалить и их."""
     from assistant.lib import telemost_gcal, zoom_gcal
+    from assistant.stores import orbita_events
+
+    if orbita_events.is_orbita_id(event_id):
+        from assistant.services import orbita_calendar
+
+        prev = orbita_events.get(orbita_events.parse_id(event_id))
+        try:
+            orbita_calendar.cancel(int(user_id), event_id)
+        except ValueError as e:
+            raise RuntimeError(str(e)) from e
+        _orbita_after_change(user_id, event_id, prev)
+        return
 
     try:
         zoom_gcal.delete_zoom_for_event(
@@ -1085,6 +1184,13 @@ def get_event(
     *,
     calendar_id: str | None = None,
 ) -> dict[str, Any]:
+    from assistant.stores import orbita_events
+
+    if orbita_events.is_orbita_id(event_id):
+        rec = orbita_events.get(orbita_events.parse_id(event_id))
+        if not rec or not orbita_events.can_view(rec, user_id):
+            raise RuntimeError("Встреча не найдена")
+        return orbita_events.as_gcal(rec, user_id)
     cal_id = cal_sources.resolve_calendar_id(
         user_id, (calendar_id or GOOGLE_CALENDAR_ID).strip() or GOOGLE_CALENDAR_ID
     )
@@ -1395,6 +1501,10 @@ def owner_conflict_at(
 ) -> str | None:
     tz = _tz_for(user_id)
     work_start, work_end = _work_window(user_id, day_iso)
+    if any(_intervals_overlap(start, end, bs, be) for bs, be in orbita_busy(int(user_id), start, end)):
+        return "Встреча или задача в Орбите"
+    if not has_google(user_id):
+        return None
     try:
         _service(user_id)
     except Exception:
@@ -1415,6 +1525,10 @@ def owner_conflict_at(
 def _freebusy_has_overlap(
     user_id: int, start: datetime, end: datetime
 ) -> bool:
+    if any(_intervals_overlap(start, end, bs, be) for bs, be in orbita_busy(int(user_id), start, end)):
+        return True
+    if not has_google(user_id):
+        return False
     try:
         svc = _service(user_id)
     except Exception:
@@ -1644,7 +1758,7 @@ def _attendee_busy_day(
     em = str(email or "").strip().lower()
     if not em or "@" not in em:
         return []
-    uid = lookup_user_id_by_calendar_email(em)
+    uid = lookup_user_id_by_calendar_email(em) or _orbita_user_for(int(owner_id), None, em)
     if uid and int(uid) != int(owner_id):
         return busy_intervals_day(
             int(uid),

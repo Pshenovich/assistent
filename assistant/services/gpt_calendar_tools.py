@@ -541,9 +541,31 @@ def _ok(obj: Any) -> str:
 # ---------------------------------------------------------------- чтение
 
 def _events_in_window(ctx: GptCalendarContext, t0: datetime, t1: datetime, query: str = "") -> list[dict[str, Any]]:
-    from assistant.services import calendar_sources
+    """Встречи в окне: Google (если подключён) + встречи Орбиты — в одном виде."""
+    from assistant.services import calendar_sources, orbita_calendar
 
-    return calendar_sources.list_events_in_window(ctx.uid, t0, t1, query=query or None)
+    out: list[dict[str, Any]] = []
+    if has_google_calendar(ctx.uid):
+        out = list(calendar_sources.list_events_in_window(ctx.uid, t0, t1, query=query or None))
+    q = str(query or "").strip().lower()
+    try:
+        for ev in orbita_calendar.events_for(ctx.uid, t0, t1):
+            hay = " ".join([str(ev.get("summary") or ""), str(ev.get("description") or "")]
+                           + [str(a.get("email") or "") for a in ev.get("attendees") or []]).lower()
+            if q and q not in hay:
+                continue
+            out.append({
+                "event_id": ev["id"],
+                "calendar_id": ev["_calendarId"],
+                "summary": ev.get("summary") or "",
+                "start": datetime.fromisoformat(ev["start"]["dateTime"]).astimezone(_tz(ctx.uid)),
+                "end": datetime.fromisoformat(ev["end"]["dateTime"]).astimezone(_tz(ctx.uid)),
+                "raw": ev,
+            })
+    except Exception as e:
+        print(f"[gpt_calendar] orbita events err={e!r}")
+    out.sort(key=lambda e: e["start"] if isinstance(e.get("start"), datetime) else datetime.max.replace(tzinfo=_tz(ctx.uid)))
+    return out
 
 
 def tool_calendar_events(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
@@ -551,30 +573,30 @@ def tool_calendar_events(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     names = _email_names(ctx)
     out: list[dict[str, Any]] = []
     meeting_keys: list[tuple[dict[str, Any], str]] = []
-    if has_google_calendar(ctx.uid):
-        for ev in _events_in_window(ctx, t0, t1, str(args.get("query") or "")):
-            raw = ev.get("raw") if isinstance(ev.get("raw"), dict) else {}
-            atts = []
-            for a in raw.get("attendees") or []:
-                if not isinstance(a, dict) or a.get("self"):
-                    continue
-                em = str(a.get("email") or "").strip().lower()
-                atts.append(names.get(em) or str(a.get("displayName") or em))
-            item = {
-                "type": "meeting",
-                "id": ev.get("event_id"),
-                "calendar_id": ev.get("calendar_id"),
-                "title": ev.get("summary"),
-                "start": _fmt_dt(ev.get("start"), ctx.uid),
-                "end": _fmt_dt(ev.get("end"), ctx.uid),
-            }
-            if atts:
-                item["attendees"] = atts[:12]
-            if raw.get("location"):
-                item["location"] = str(raw.get("location"))[:120]
-            out.append(item)
-            meeting_keys.append((item, f"{item['calendar_id'] or 'primary'}:{item['id']}"))
-            ctx.seen_items.append({"type": "event", "id": item["id"], "calendar_id": item["calendar_id"], "title": item["title"]})
+    # встречи: Google (если подключён) + Орбиты
+    for ev in _events_in_window(ctx, t0, t1, str(args.get("query") or "")):
+        raw = ev.get("raw") if isinstance(ev.get("raw"), dict) else {}
+        atts = []
+        for a in raw.get("attendees") or []:
+            if not isinstance(a, dict) or a.get("self"):
+                continue
+            em = str(a.get("email") or "").strip().lower()
+            atts.append(names.get(em) or str(a.get("displayName") or em))
+        item = {
+            "type": "meeting",
+            "id": ev.get("event_id"),
+            "calendar_id": ev.get("calendar_id"),
+            "title": ev.get("summary"),
+            "start": _fmt_dt(ev.get("start"), ctx.uid),
+            "end": _fmt_dt(ev.get("end"), ctx.uid),
+        }
+        if atts:
+            item["attendees"] = atts[:12]
+        if raw.get("location"):
+            item["location"] = str(raw.get("location"))[:120]
+        out.append(item)
+        meeting_keys.append((item, f"{item['calendar_id'] or 'primary'}:{item['id']}"))
+        ctx.seen_items.append({"type": "event", "id": item["id"], "calendar_id": item["calendar_id"], "title": item["title"]})
     try:
         from assistant.stores import calendar_tasks
 
@@ -595,7 +617,7 @@ def tool_calendar_events(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
         print(f"[gpt_calendar] tasks_list err={e!r}")
     _mark_materials(ctx, meeting_keys)
     out.sort(key=lambda x: str(x.get("start") or ""))
-    note = None if has_google_calendar(ctx.uid) else "Google Календарь не подключён — показаны только задачи Leo."
+    note = None if has_google_calendar(ctx.uid) else "Google Календарь не подключён — показаны встречи и задачи Орбиты."
     res: dict[str, Any] = {"items": out[:MAX_EVENTS_OUT], "total": len(out)}
     if note:
         res["note"] = note
@@ -605,8 +627,6 @@ def tool_calendar_events(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
 def tool_calendar_free_slots(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     from assistant.services import calendar as cal
 
-    if not has_google_calendar(ctx.uid):
-        return _err("Google Календарь не подключён (Профиль → Календарь).")
     day = _parse_day(args.get("date")).isoformat()
     emails, missing = _resolve_people(ctx, args.get("with_people") or [])
     dur = int(args.get("duration_min") or 30)
@@ -627,8 +647,6 @@ def tool_calendar_free_slots(ctx: GptCalendarContext, args: dict[str, Any]) -> s
 def tool_calendar_availability(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     from assistant.services import calendar as cal
 
-    if not has_google_calendar(ctx.uid):
-        return _err("Google Календарь не подключён (Профиль → Календарь).")
     day = _parse_day(args.get("date")).isoformat()
     emails, missing = _resolve_people(ctx, args.get("people") or [])
     data = cal.availability_for_attendees(ctx.uid, day, emails, telegram_username=ctx.telegram_username)
@@ -638,8 +656,6 @@ def tool_calendar_availability(ctx: GptCalendarContext, args: dict[str, Any]) ->
 
 
 def tool_calendar_time_stats(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
-    if not has_google_calendar(ctx.uid):
-        return _err("Google Календарь не подключён (Профиль → Календарь).")
     t0, t1 = _window(ctx.uid, args.get("start_date"), args.get("end_date"))
     names = _email_names(ctx)
     total_min = 0
@@ -766,8 +782,6 @@ def tool_calendar_create_event(ctx: GptCalendarContext, args: dict[str, Any]) ->
     from assistant.lib import recurrence as recur
     from assistant.services import calendar as cal
 
-    if not has_google_calendar(ctx.uid):
-        return _err("Google Календарь не подключён (Профиль → Календарь) — создать встречу нельзя.")
     title = str(args.get("title") or "").strip() or "Встреча"
     try:
         start = _parse_start(ctx, args.get("start"))
@@ -776,6 +790,9 @@ def tool_calendar_create_event(ctx: GptCalendarContext, args: dict[str, Any]) ->
     dur = max(15, min(8 * 60, int(args.get("duration_min") or 30)))
     people = [str(p).strip() for p in (args.get("attendees") or []) if str(p).strip()]
     rrule = recur.build_rrule_from_args(args)
+    if rrule and not has_google_calendar(ctx.uid):
+        return _err("Повторяющиеся встречи пока можно ставить только с подключённым Google Календарём — "
+                    "предложи поставить одну встречу или подключить Google.")
     if rrule:
         rrule = recur.ensure_until_or_count(rrule, start=start)
     parsed: dict[str, Any] = {
@@ -811,7 +828,10 @@ def tool_calendar_create_event(ctx: GptCalendarContext, args: dict[str, Any]) ->
                     "hint": "Предложи пользователю другое время из alternatives или спроси, ставить ли поверх (force=true).",
                 }
             )
-    created = cal.create_event(ctx.uid, parsed, telegram_username=ctx.telegram_username)
+    try:
+        created = cal.create_event(ctx.uid, parsed, telegram_username=ctx.telegram_username)
+    except RuntimeError as e:
+        return _err(str(e))
     online = _attach_online(ctx, created, str(args.get("online") or "auto"))
     when = human_when(created.get("start"), created.get("end"), ctx.uid)
     who = ", ".join(people)
@@ -862,9 +882,9 @@ def tool_calendar_update_event(ctx: GptCalendarContext, args: dict[str, Any]) ->
     from assistant.lib import zoom_gcal
     from assistant.services import calendar as cal
 
-    if not has_google_calendar(ctx.uid):
-        return _err("Google Календарь не подключён.")
     eid = str(args.get("event_id") or "").strip()
+    if not has_google_calendar(ctx.uid) and not eid.startswith("orb-"):
+        return _err("Google Календарь не подключён — менять можно только встречи Орбиты (id orb-…).")
     cal_id = str(args.get("calendar_id") or "").strip() or None
     if not eid:
         return _err("Нужен event_id — найди встречу через calendar_events.")
@@ -1066,7 +1086,7 @@ def _find_target_by_title(ctx: GptCalendarContext, kind: str, title: str) -> tup
         for t in calendar_tasks.list_tasks_in_window(ctx.uid, t0, t1):
             if q in str(t.get("title") or "").lower():
                 return str(t.get("id")), None
-    elif kind == "event" and has_google_calendar(ctx.uid):
+    elif kind == "event":
         for ev in _events_in_window(ctx, t0, t1):
             if q in str(ev.get("summary") or "").lower():
                 return str(ev.get("event_id")), str(ev.get("calendar_id") or "") or None
@@ -1606,7 +1626,7 @@ def tool_meeting_materials(ctx: GptCalendarContext, args: dict[str, Any]) -> str
         day = args.get("date")
         t0, t1 = _window(ctx.uid, day or (datetime.now(_tz(ctx.uid)) - timedelta(days=30)).date().isoformat(),
                          day or datetime.now(_tz(ctx.uid)).date().isoformat())
-        cands = [ev for ev in _events_in_window(ctx, t0, t1) if title in str(ev.get("summary") or "").lower()] if has_google_calendar(ctx.uid) else []
+        cands = [ev for ev in _events_in_window(ctx, t0, t1) if title in str(ev.get("summary") or "").lower()]
         if not cands:
             return _err("Встреча не найдена — уточни дату или посмотри calendar_events")
         ev = cands[-1]
@@ -1657,7 +1677,7 @@ def tool_person_history(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     )
     meetings: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
-    if email and has_google_calendar(ctx.uid):
+    if email:
         evs = []
         for ev in _events_in_window(ctx, t0, t1, email):
             raw = ev.get("raw") if isinstance(ev.get("raw"), dict) else {}
@@ -1723,7 +1743,7 @@ def tool_person_history(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     if not email:
         res["note"] = "У контакта нет почты — встречи из календаря не найти, показаны только материалы, куда он добавлен вручную."
     elif not has_google_calendar(ctx.uid):
-        res["note"] = "Google Календарь не подключён."
+        res["note"] = "Google Календарь не подключён — показаны встречи Орбиты."
     return _ok(res)
 
 

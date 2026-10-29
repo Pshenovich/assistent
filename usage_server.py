@@ -8328,9 +8328,6 @@ async def miniapp_calendar_event_zoom_link(
 ) -> dict[str, Any]:
     from assistant.compat.miniapp_shims import calendar_attach_zoom_link
 
-    if _is_orbita_event_request(int(principal.telegram_user_id), event_id=str(event_id or "")):
-        raise HTTPException(status_code=400, detail="Видеосвязь во встречах без Google Calendar появится скоро — "
-                                                    "пока добавьте ссылку в поле «Место»")
 
     def _run() -> dict[str, Any]:
         return calendar_attach_zoom_link(
@@ -8359,9 +8356,6 @@ async def miniapp_calendar_event_telemost_link(
 ) -> dict[str, Any]:
     from assistant.compat.miniapp_shims import calendar_attach_telemost_link
 
-    if _is_orbita_event_request(int(principal.telegram_user_id), event_id=str(event_id or "")):
-        raise HTTPException(status_code=400, detail="Видеосвязь во встречах без Google Calendar появится скоро — "
-                                                    "пока добавьте ссылку в поле «Место»")
 
     def _run() -> dict[str, Any]:
         return calendar_attach_telemost_link(

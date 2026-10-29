@@ -16,7 +16,7 @@ from assistant.lib import ics
 
 REASON_NO_MAIL = "no_mail"
 # Поля, правка которых — повод разослать обновлённое приглашение.
-_MATERIAL = ("title", "start_utc", "end_utc", "location", "description")
+_MATERIAL = ("title", "start_utc", "end_utc", "location", "description", "video_url")
 
 
 def send_account(user_id: int) -> Optional[dict[str, Any]]:
@@ -72,6 +72,8 @@ def _message(acc: dict[str, Any], ev: dict[str, Any], guest: dict[str, Any], *, 
     lines = [f"{head} «{ev['title']}»", when]
     if ev.get("location"):
         lines.append(f"Где: {ev['location']}")
+    if ev.get("video_url") and not cancelled:
+        lines.append(f"Подключиться: {ev['video_url']}")
     if name:
         lines.append(f"Организатор: {name} <{acc['email']}>")
     if ev.get("description") and not cancelled:

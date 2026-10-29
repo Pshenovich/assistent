@@ -126,3 +126,26 @@ def test_public_rsvp_page(env):
     owner_ev = c.get("/api/miniapp/calendar/today", params={"date": start.date().isoformat()}, headers=_headers(owner)).json()
     att = next(e for e in owner_ev["events"] if e["id"] == ev["id"])["attendees"]
     assert any(a.get("email") == "client@partner.ru" and a.get("response_status", a.get("responseStatus")) == "accepted" for a in att), att
+
+
+def test_video_link_for_orbita_meeting(env, monkeypatch):
+    from assistant.lib import zoom_gcal
+
+    c, owner = env["c"], env["owner"]
+    start = _day(5)
+    ev = c.post("/api/miniapp/calendar/events", headers=_headers(owner), json={
+        "title": "Звонок с подрядчиком", "start": start.isoformat()}).json()["event"]
+    monkeypatch.setattr(zoom_gcal, "_zoom_access_token", lambda uid: "tok")
+    monkeypatch.setattr(zoom_gcal, "user_has_zoom", lambda uid: True)
+    monkeypatch.setattr(zoom_gcal.zoom_api, "create_scheduled_meeting",
+                        lambda token, **kw: {"id": 77, "join_url": "https://zoom.us/j/77"})
+    monkeypatch.setattr(zoom_gcal.zrm, "register_meeting", lambda *a, **kw: None)
+    monkeypatch.setattr(zoom_gcal.meeting_sched, "maybe_schedule_for_zoom_create", lambda *a, **kw: None)
+    monkeypatch.setattr(zoom_gcal.meeting_sched, "service_available", lambda: False)
+    r = c.post(f"/api/miniapp/calendar/events/{ev['id']}/zoom-link", headers=_headers(owner))
+    assert r.status_code == 200, r.text
+    assert r.json()["join_url"] == "https://zoom.us/j/77"
+    again = c.post(f"/api/miniapp/calendar/events/{ev['id']}/zoom-link", headers=_headers(owner)).json()
+    assert again["already"] is True
+    feed = c.get("/api/miniapp/calendar/today", params={"date": start.date().isoformat()}, headers=_headers(owner)).json()
+    assert next(e for e in feed["events"] if e["id"] == ev["id"])["meet_url"] == "https://zoom.us/j/77"

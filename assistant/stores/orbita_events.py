@@ -21,9 +21,26 @@ ID_PREFIX = "orb-"
 RESPONSES = ("needsAction", "accepted", "tentative", "declined")
 
 
+_MIGRATED: set[str] = set()
+
+
+def _migrate(conn) -> None:
+    """Колонки, добавленные после первой выкатки (видеосвязь)."""
+    key = f"{notes_store._db_path()}:{id(conn)}"  # type: ignore[attr-defined]
+    if key in _MIGRATED:
+        return
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(orbita_events)").fetchall()}
+    for col in ("video_url", "video_provider", "video_ref"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE orbita_events ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+    conn.commit()
+    _MIGRATED.add(key)
+
+
 def _conn():
     conn = notes_store._conn()  # type: ignore[attr-defined]
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'orbita_event_attendees'").fetchone():
+        _migrate(conn)
         return conn
     conn.executescript(
         """
@@ -40,6 +57,9 @@ def _conn():
             tz TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'confirmed',
             sequence INTEGER NOT NULL DEFAULT 0,
+            video_url TEXT NOT NULL DEFAULT '',
+            video_provider TEXT NOT NULL DEFAULT '',
+            video_ref TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -58,6 +78,7 @@ def _conn():
         CREATE UNIQUE INDEX IF NOT EXISTS idx_orbita_att_token ON orbita_event_attendees(token);
         """
     )
+    _migrate(conn)
     return conn
 
 
@@ -263,6 +284,19 @@ def cancel(event_id: int) -> dict[str, Any]:
     return get(event_id) or {}
 
 
+def set_video(event_id: int, *, url: str, provider: str, ref: str = "") -> dict[str, Any]:
+    """Ссылка Zoom/Телемоста; новая версия приглашения (гостям уйдёт обновление)."""
+    with _LOCK:
+        conn = _conn()
+        conn.execute(
+            "UPDATE orbita_events SET video_url = ?, video_provider = ?, video_ref = ?, sequence = sequence + 1, "
+            "updated_at = ? WHERE id = ?",
+            (url, provider, ref, _now(), int(event_id)),
+        )
+        conn.commit()
+    return get(event_id) or {}
+
+
 def set_response(event_id: int, *, email: str | None = None, user_id: int | str | None = None,
                  response: str) -> bool:
     if response not in RESPONSES:
@@ -312,4 +346,7 @@ def as_gcal(ev: dict[str, Any], viewer_id: int | str) -> dict[str, Any]:
         "organizer": {"email": ev.get("organizer_email") or "", **({"self": True} if is_owner else {})},
         "_orbita": True,
     }
+    if ev.get("video_url"):
+        out["hangoutLink"] = ev["video_url"]
+        out["_video_provider"] = ev.get("video_provider") or ""
     return out

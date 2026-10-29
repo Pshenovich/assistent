@@ -108,6 +108,10 @@ def attach_telemost_to_event(
     calendar_id: str | None = None,
 ) -> str:
     """Создать комнату Телемоста и записать ссылку в событие GCal."""
+    from assistant.stores import orbita_events
+
+    if orbita_events.is_orbita_id(event_id):  # встреча Орбиты (без Google): ссылку храним у себя
+        return _attach_to_orbita(user_id, event_id, "telemost")
     del topic
     ev = cal_svc.get_event(user_id, event_id, calendar_id=calendar_id)
     existing = extract_online_meeting_url(ev)
@@ -224,3 +228,14 @@ def try_auto_attach_after_create(
     except Exception as e:
         print(f"[telemost_gcal] auto_attach user={user_id} err={e!r}")
     return result
+
+
+def _attach_to_orbita(user_id: int, event_id: str, provider: str) -> str:
+    from assistant.services import orbita_calendar
+    from assistant.stores import orbita_events
+
+    prev = orbita_events.get(orbita_events.parse_id(event_id))
+    join = orbita_calendar.attach_video(int(user_id), event_id, provider)
+    if not prev or prev.get("video_url") != join:
+        cal_svc._orbita_after_change(int(user_id), event_id, prev)  # гостям — приглашение со ссылкой
+    return join

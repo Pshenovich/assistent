@@ -1,3 +1,4 @@
+import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
@@ -5,6 +6,13 @@ from zoneinfo import ZoneInfo
 from assistant.services import calendar as cal
 
 
+
+@pytest.fixture(autouse=True)
+def _google_connected(monkeypatch):
+    """Эти тесты — про создание в Google: без токена create_event ушёл бы во встречи Орбиты."""
+    from assistant.services import calendar as cal
+
+    monkeypatch.setattr(cal, "has_google", lambda uid: True)
 def test_create_event_uses_selected_calendar_id():
     tz = ZoneInfo("Europe/Moscow")
     start = datetime(2026, 9, 3, 10, 0, tzinfo=tz)

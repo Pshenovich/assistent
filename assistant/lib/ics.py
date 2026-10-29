@@ -57,6 +57,8 @@ def build(event: dict[str, Any], *, method: str = "REQUEST", attendees: Optional
     method = method.upper()
     atts = attendees if attendees is not None else event.get("attendees") or []
     desc = str(event.get("description") or "").strip()
+    if event.get("video_url"):
+        desc = "Подключиться: " + str(event["video_url"]) + ("\n\n" + desc if desc else "")
     if rsvp_url:
         desc = (desc + "\n\n" if desc else "") + "Ответить: " + rsvp_url
     lines = [
@@ -75,8 +77,10 @@ def build(event: dict[str, Any], *, method: str = "REQUEST", attendees: Optional
     ]
     if desc:
         lines.append(f"DESCRIPTION:{_esc(desc)}")
-    if event.get("location"):
-        lines.append(f"LOCATION:{_esc(event['location'])}")
+    if event.get("location") or event.get("video_url"):
+        lines.append(f"LOCATION:{_esc(event.get('location') or event.get('video_url'))}")
+    if event.get("video_url"):
+        lines.append(f"URL:{event['video_url']}")
     if event.get("organizer_email"):
         cn = f";CN={_param(organizer_name)}" if organizer_name else ""
         lines.append(f"ORGANIZER{cn}:mailto:{event['organizer_email']}")

@@ -35,8 +35,9 @@ def calendar_addon(uid: int) -> str:
     cal_addon = gcal_tools.now_prompt_line(uid) + "\n" + gcal_tools.SYSTEM_ADDON
     if not gcal_tools.has_google_calendar(uid):
         cal_addon += (
-            "\nGoogle Календарь у пользователя не подключён: встречи не видны, доступны задачи "
-            "и напоминания Leo. Если спрашивают про встречи — предложи подключить календарь в Профиле."
+            "\nGoogle Календарь у пользователя не подключён — его календарь в Орбите: встречи Орбиты (id orb-…), "
+            "задачи и напоминания Leo. Ставить, переносить и отменять встречи, искать свободное время можно как обычно. "
+            "Повторяющиеся встречи — только с Google; если нужны, предложи подключить его в Профиле."
         )
     if mail_tools.has_mail(uid):
         cal_addon += "\n" + mail_tools.MAIL_ADDON
