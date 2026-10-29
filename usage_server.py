@@ -4082,6 +4082,42 @@ def _local_dev_calendar_events(day_iso: str, timezone_name: str) -> list[dict[st
     return out
 
 
+def _attach_orbita_events(
+    payload: dict[str, Any], uid: int, win_start: datetime, win_end: datetime, *, has_google: bool
+) -> dict[str, Any]:
+    """Встречи Орбиты (организатор без Google) — в ленту владельцу и приглашённым.
+
+    Без Google календарь Орбиты и есть календарь пользователя: «подключите Google» не показываем.
+    """
+    from assistant.services import orbita_calendar
+
+    out = dict(payload)
+    if not has_google and out.get("connected") is False and not out.get("load_error"):
+        out["connected"] = True
+        out.pop("error", None)
+    out["google_connected"] = bool(has_google)
+    try:
+        raw = orbita_calendar.events_for(uid, win_start, win_end)
+    except Exception as e:
+        print(f"[orbita_calendar] feed uid={uid} err={e!r}")
+        return out
+    if not raw:
+        return out
+    try:
+        contacts_by_email = _miniapp_contacts_by_email(uid)
+    except Exception:
+        contacts_by_email = {}
+    extra = []
+    for ev in raw:
+        ser = _serialize_calendar_event(ev, contacts_by_email=contacts_by_email)
+        ser["orbita"] = True
+        extra.append(ser)
+    events = list(out.get("events") or []) + extra
+    events.sort(key=lambda e: str((e.get("start") or {}).get("dateTime") or (e.get("start") or {}).get("date") or ""))
+    out["events"] = events
+    return out
+
+
 def _calendar_today_payload(
     telegram_user_id: int, date_iso: Optional[str] = None
 ) -> dict[str, Any]:
@@ -4106,6 +4142,7 @@ def _calendar_today_payload(
     win_end = win_start + timedelta(days=1)
 
     def _finish(payload: dict[str, Any]) -> dict[str, Any]:
+        payload = _attach_orbita_events(payload, uid, win_start, win_end, has_google=has_token)
         return _attach_meeting_material_kinds(_attach_leo_tasks(payload, uid, win_start, win_end, tz), uid)
 
     if not has_token:
@@ -4702,6 +4739,7 @@ def _calendar_range_payload(
     win_end = datetime.combine(end_d + timedelta(days=1), datetime.min.time(), tzinfo=tz)
 
     def _finish(payload: dict[str, Any]) -> dict[str, Any]:
+        payload = _attach_orbita_events(payload, uid, win_start, win_end, has_google=has_token)
         return _attach_meeting_material_kinds(_attach_leo_tasks(payload, uid, win_start, win_end, tz), uid)
 
     has_token = google_calendar_oauth.user_token_path(uid).is_file()
@@ -7870,6 +7908,48 @@ async def miniapp_calendar_booking_link_create(
         _raise_calendar_http(e)
 
 
+def _orbita_event_ser(uid: int, event_id: str) -> dict[str, Any]:
+    """Встреча Орбиты глазами пользователя — в том же виде, что события Google."""
+    from assistant.stores import orbita_events
+
+    ev = orbita_events.get(orbita_events.parse_id(event_id))
+    if not ev:
+        raise HTTPException(status_code=404, detail="Встреча не найдена")
+    try:
+        contacts_by_email = _miniapp_contacts_by_email(uid)
+    except Exception:
+        contacts_by_email = {}
+    ser = _serialize_calendar_event(orbita_events.as_gcal(ev, uid), contacts_by_email=contacts_by_email)
+    ser["orbita"] = True
+    return ser
+
+
+def _is_orbita_event_request(uid: int, event_id: str = "", calendar_id: Optional[str] = None) -> bool:
+    from assistant.services import orbita_calendar
+    from assistant.stores import orbita_events
+
+    if event_id:
+        return orbita_events.is_orbita_id(event_id)
+    if str(calendar_id or "").strip() == orbita_events.CALENDAR_ID:
+        return True
+    return orbita_calendar.uses_orbita(uid)
+
+
+async def _orbita_notify_invitees(principal: "_MiniappPrincipal", result: dict[str, Any],
+                                  only_emails: Optional[list[str]] = None) -> None:
+    try:
+        from assistant.services import meeting_invites as inv
+
+        await inv.notify_invitees_for_miniapp(
+            organizer_uid=int(principal.telegram_user_id),
+            organizer_user=principal.user if isinstance(principal.user, dict) else {},
+            result=result,
+            only_emails=only_emails,
+        )
+    except Exception as e:
+        print(f"[orbita_calendar] invite_notify err={e!r}")
+
+
 @miniapp_router.post("/calendar/events")
 async def miniapp_calendar_event_create(
     body: _MiniappCalendarEventUpdate,
@@ -7900,6 +7980,16 @@ async def miniapp_calendar_event_create(
     rules = _miniapp_event_recurrence(body)
     if rules:
         parsed["recurrence"] = rules
+    uid = int(principal.telegram_user_id)
+    if _is_orbita_event_request(uid, calendar_id=calendar_id):
+        from assistant.services import orbita_calendar
+
+        try:
+            created = await run_in_threadpool(orbita_calendar.create, uid, parsed)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        await _orbita_notify_invitees(principal, created)
+        return {"event": await run_in_threadpool(_orbita_event_ser, uid, created["event_id"])}
     uname = (
         principal.user.get("username")
         if isinstance(principal.user, dict)
@@ -7981,6 +8071,19 @@ async def miniapp_calendar_event_update(
 
     eid = str(event_id or "").strip()
     cal_id = str(body.calendar_id or "").strip() or "primary"
+    if _is_orbita_event_request(int(principal.telegram_user_id), event_id=eid):
+        from assistant.services import meeting_invites as inv
+        from assistant.services import orbita_calendar
+
+        uid = int(principal.telegram_user_id)
+        try:
+            res = await run_in_threadpool(orbita_calendar.update, uid, eid, parsed)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        added = inv.added_invitees(res)
+        if added:
+            await _orbita_notify_invitees(principal, res, only_emails=added)
+        return {"event": await run_in_threadpool(_orbita_event_ser, uid, eid)}
     if _is_local_dev_event_id(eid) and _miniapp_dev_mode_on():
         from assistant.services.calendar import _tz_for
 
@@ -8054,7 +8157,7 @@ async def miniapp_calendar_event_recurrence(
 
     uid = int(principal.telegram_user_id)
     eid = str(event_id or "").strip()
-    if _is_local_dev_event_id(eid):
+    if _is_local_dev_event_id(eid) or _is_orbita_event_request(uid, event_id=eid):
         return {"recurrence": [], "series_id": ""}
 
     def _run() -> dict[str, Any]:
@@ -8082,6 +8185,15 @@ async def miniapp_calendar_event_delete(
     calendar_id: Optional[str] = Query(None),
 ) -> dict[str, Any]:
     from assistant.compat.miniapp_shims import calendar_delete_event
+
+    if _is_orbita_event_request(int(principal.telegram_user_id), event_id=str(event_id or "")):
+        from assistant.services import orbita_calendar
+
+        try:
+            await run_in_threadpool(orbita_calendar.cancel, int(principal.telegram_user_id), str(event_id))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {"ok": True}
 
     def _run() -> None:
         calendar_delete_event(
@@ -8183,6 +8295,10 @@ async def miniapp_calendar_event_zoom_link(
 ) -> dict[str, Any]:
     from assistant.compat.miniapp_shims import calendar_attach_zoom_link
 
+    if _is_orbita_event_request(int(principal.telegram_user_id), event_id=str(event_id or "")):
+        raise HTTPException(status_code=400, detail="Видеосвязь во встречах без Google Calendar появится скоро — "
+                                                    "пока добавьте ссылку в поле «Место»")
+
     def _run() -> dict[str, Any]:
         return calendar_attach_zoom_link(
             event_id,
@@ -8209,6 +8325,10 @@ async def miniapp_calendar_event_telemost_link(
     calendar_id: Optional[str] = Query(None),
 ) -> dict[str, Any]:
     from assistant.compat.miniapp_shims import calendar_attach_telemost_link
+
+    if _is_orbita_event_request(int(principal.telegram_user_id), event_id=str(event_id or "")):
+        raise HTTPException(status_code=400, detail="Видеосвязь во встречах без Google Calendar появится скоро — "
+                                                    "пока добавьте ссылку в поле «Место»")
 
     def _run() -> dict[str, Any]:
         return calendar_attach_telemost_link(

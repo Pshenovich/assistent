@@ -382,6 +382,14 @@ def apply_invitee_rsvp(
     invitee_email: str = "",
     organizer_user_id: int = 0,
 ) -> dict[str, Any]:
+    from assistant.stores import orbita_events
+
+    if str(calendar_id or "") == orbita_events.CALENDAR_ID or orbita_events.is_orbita_id(event_id):
+        # встреча Орбиты (у организатора нет Google) — ответ хранится у нас
+        from assistant.services import orbita_calendar
+
+        ev = orbita_calendar.respond(int(invitee_user_id), str(event_id), response_status)
+        return orbita_events.as_gcal(ev, invitee_user_id)
     last_err: Exception | None = None
     try:
         return patch_self_rsvp(

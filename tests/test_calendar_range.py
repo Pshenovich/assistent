@@ -43,7 +43,9 @@ class TestCalendarRangeHelpers(TestCase):
                 payload = _calendar_range_payload(1, "2026-12-31", "2026-01-01")
                 self.assertEqual(payload["from"], "2026-01-01")
                 self.assertEqual(payload["to"], "2026-03-04")
-                self.assertFalse(payload["connected"])
+                # без Google календарь — Орбита: лента «подключена», Google — нет
+                self.assertTrue(payload["connected"])
+                self.assertFalse(payload["google_connected"])
                 self.assertEqual(payload["events"], [])
         finally:
             calendar_tasks_store._CONN = None  # type: ignore[attr-defined]
