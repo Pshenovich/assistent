@@ -258,7 +258,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 
 /* ---------- Сетка инструментов ---------- */
 .tools { padding: 96px 0 120px; }
-.fgrid { margin-top: 48px; display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--border); border-left: 1px solid var(--border); }
+.fgrid { margin-top: 48px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--border); border-left: 1px solid var(--border); }
 .ftile, .btile { border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .ftile {
   position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
@@ -368,7 +368,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 
 /* Поповер «Сами / С Лео» */
 .pop {
-  position: absolute; z-index: 20; width: 300px; padding: 14px 16px; border-radius: 16px;
+  position: absolute; z-index: 20; width: min(300px, calc(100vw - 32px)); padding: 14px 16px; border-radius: 16px;
   background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow), 0 20px 50px -20px rgba(0,0,0,.25);
   font-size: 14px; line-height: 1.4; opacity: 0; transform: translateY(6px); pointer-events: none; transition: opacity .18s, transform .18s;
 }
@@ -523,7 +523,22 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .agent-tabs { display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: var(--surface-2); }
 .agent-tabs button { flex: 1; min-width: 0; font: 600 clamp(13px, 3.4vw, 14.5px) var(--font); color: var(--text-2); padding: 9px 10px; border: 0; border-radius: 9px; background: transparent; cursor: pointer; white-space: nowrap; }
 .agent-tabs button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
-.split > *, .ask > * { min-width: 0; }
+.split > *, .ask > *, .hero-grid > *, .day-grid > * { min-width: 0; }
+/* «ИИ-пространство» не рвём по дефису — но на очень узких экранах (до 400px) иначе слово не влезает. */
+@media (min-width: 400px) { .nw { white-space: nowrap; } }
+/* Узкие телефоны: элементы сеток не растут шире экрана, длинные кнопки переносят текст. */
+.plans > *, .platforms > *, .sec-grid > *, .pillars > *, .day-steps > *, .ba > *, .faq > *, .releases > *, .ask-qs > *, .fgrid > *, .rel > * { min-width: 0; }
+@media (max-width: 479px) {
+  .btn { white-space: normal; height: auto; min-height: 48px; padding: 12px 18px; text-align: center; }
+  .fgrid .ftile { font-size: 12.5px; padding: 12px 4px; overflow-wrap: anywhere; }
+}
+@media (max-width: 339px) { .fgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 719px) {
+  .day-grid, .day-steps, .ui, .plans, .platforms, .sec-grid, .pillars, .ba, .ask, .split, .ask-qs, .quotes, .stats, .models-demo, .agent-panel, .calc, .paie { grid-template-columns: minmax(0, 1fr); }
+  .models-demo { padding: 16px; }
+}
+/* На узком экране значение может переноситься — держим место под две строки, чтобы блок не прыгал. */
+@media (max-width: 479px) { .calc-top { grid-template-columns: minmax(0, 1fr); } .calc-top b { font-size: 16px; white-space: normal; min-height: 2.6em; } .calc { padding: 16px; } }
 .model-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .model-row .model-chips { min-width: 0; }
 .model-row small { color: var(--text-3); font-size: 12.5px; flex: none; }
@@ -742,7 +757,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
 .final { text-align: center; padding: 104px 0; overflow: hidden; }
 .final .mini-orbit { width: 120px; height: 120px; margin: 0 auto 28px; position: relative; }
 .final .mini-orbit svg { width: 100%; height: 100%; color: var(--text); }
-.final h2 { font-size: clamp(30px, 5vw, 52px); line-height: 1.08; max-width: 14em; margin: 0 auto; }
+.final h2 { font-size: clamp(24px, 5vw, 52px); line-height: 1.08; max-width: 14em; margin: 0 auto; }
 .final p { color: var(--text-2); font-size: 18px; margin: 16px auto 32px; max-width: 32em; }
 .final .cta-row { justify-content: center; }
 .foot { border-top: 1px solid var(--border); padding: 32px 0 48px; color: var(--text-3); font-size: 14px; }
@@ -786,7 +801,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
   <div class="wrap hero-grid">
     <div>
       <span class="eyebrow"><span class="dot"></span>Orbita&nbsp;<b>с ИИ-ассистентом Лео</b></span>
-      <h1>Рабочее <em style="white-space:nowrap">ИИ-пространство</em>, которое помнит всё за&nbsp;вас</h1>
+      <h1>Рабочее <em class="nw">ИИ-пространство</em>, которое помнит всё за&nbsp;вас</h1>
       <p class="lead">Заметки, доски, презентации, встречи, задачи и рабочие чаты — в одном месте. <b>ИИ-ассистент Лео</b> помнит договорённости и подсвечивает, что не забыть.</p>
       <div class="cta-row">
         <a class="btn btn-primary" href="/webapp/">Начать бесплатно</a>
@@ -1364,7 +1379,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
     <div class="mini-orbit" aria-hidden="true">
       <svg viewBox="0 0 512 512"><circle cx="256" cy="256" r="180" fill="none" stroke="currentColor" stroke-width="64"/><g class="moon"><circle cx="188.6" cy="89.1" r="24" fill="var(--orbit-dot)" opacity=".4"/><circle cx="268.6" cy="76.4" r="32" fill="var(--orbit-dot)" opacity=".7"/><circle cx="346" cy="100.1" r="46" fill="var(--orbit-dot)" stroke="var(--bg)" stroke-width="16"/></g></svg>
     </div>
-    <h2>Рабочее <span style="white-space:nowrap">ИИ-пространство</span>, которое помнит всё за&nbsp;вас</h2>
+    <h2>Рабочее <span class="nw">ИИ-пространство</span>, которое помнит всё за&nbsp;вас</h2>
     <p>500 кредитов бесплатно, без карты. Начните в браузере или напишите Лео в Telegram.</p>
     <div class="cta-row">
       <a class="btn btn-primary" href="/webapp/">Начать бесплатно</a>
