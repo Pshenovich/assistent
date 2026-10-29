@@ -102,7 +102,7 @@
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
   <link rel="stylesheet" href="/webapp/styles.css?v=20261029-spktools" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261029-spktools" />
-  <link rel="stylesheet" href="/webapp/org.css?v=20261029-org" />
+  <link rel="stylesheet" href="/webapp/org.css?v=20261029-org3" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -2072,6 +2072,36 @@
     </div>
   </div>
 
+  <div id="contact-share-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal--sheet contacts-form-sheet" role="dialog" aria-modal="true" aria-labelledby="contact-share-title">
+      <div class="modal-form">
+        <div class="modal-header">
+          <button type="button" class="modal-header-btn modal-header-btn--close" id="contact-share-close" aria-label="Закрыть" title="Закрыть">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+          <h2 id="contact-share-title" class="modal-title">Поделиться контактом</h2>
+          <button type="button" class="modal-header-btn modal-header-btn--save" id="contact-share-send" aria-label="Отправить" title="Отправить" disabled>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body contacts-form-body pf-screen-body">
+          <p class="pf-hint" id="contact-share-who"></p>
+          <label class="pf-search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+            <input type="search" id="contact-share-search" placeholder="Кому отправить" autocomplete="off" aria-label="Поиск получателя" />
+          </label>
+          <div id="contact-share-list" class="pf-list"></div>
+          <p class="pf-hint" id="contact-share-hint">Контакт сразу появится у получателя, бот напишет ему, от кого он. Отправить можно тем, кто уже в Орбите.</p>
+          <p id="contact-share-err" class="pf-field-error hidden"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="contacts-bulk-overlay" class="modal-overlay hidden" aria-hidden="true">
     <div class="modal modal--sheet contacts-form-sheet" role="dialog" aria-modal="true" aria-labelledby="contacts-bulk-title">
       <div class="modal-form">
@@ -2396,11 +2426,12 @@
   <script src="/webapp/note-yjs.js?v=20261029-spktools" defer></script>
   <script src="/webapp/board-geom.js?v=20261029-spktools" defer></script>
   <script src="/webapp/board.js?v=20261029-spktools" defer></script>
-  <script src="/webapp/app.js?v=20261029-spktools" defer></script>
+  <script src="/webapp/app.js?v=20261029-orgshare" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261023-reply1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261025-mobfix" defer></script>
   <script src="/webapp/digest-market.js?v=20261025-mobfix" defer></script>
-  <script src="/webapp/org.js?v=20261029-org" defer></script>
+  <script src="/webapp/org.js?v=20261029-org2" defer></script>
+  <script src="/webapp/contact-share.js?v=20261029-share" defer></script>
 </body>
 </html>

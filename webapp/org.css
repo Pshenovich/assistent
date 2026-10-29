@@ -70,3 +70,10 @@
 @media (max-width: 420px) {
   .org-member .org-actions { flex-wrap: wrap; }
 }
+/* Автосохранение: метка рядом с заголовком раздела */
+.org-screen .pf-group-title { display: flex; align-items: baseline; gap: 8px; }
+.org-save { margin-left: auto; font-size: var(--ui-font-sm); font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text-subtle); }
+.org-save--ok { color: var(--success); }
+.org-save--err { color: var(--danger-text); }
+/* «Поделиться контактом»: получатели, которых ещё нет в Орбите */
+.contact-share-off { opacity: 0.5; cursor: default; }

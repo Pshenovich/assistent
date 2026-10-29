@@ -207,7 +207,10 @@ def make_router(
             return _back(f"/org/{org_id}", err="Такого пользователя в Орбите нет — пусть сначала откроет приложение")
 
         def run() -> None:
+            from assistant.stores import org_contacts
+
             orgs_store.admin_set_owner(org_id, target, by=actor.label)
+            org_contacts.sync(org_id)
             audit.log(actor.label, "org.owner", f"org:{org_id}", user_id=str(target), key=key)
 
         return await _org_action(org_id, run, ok="Владелец назначен")

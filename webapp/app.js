@@ -20588,6 +20588,11 @@
       closeContactDetail();
       contactsFillForm(c);
     });
+    if (window.LeoContactShare) {
+      act("Поделиться", '<path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7" /><path d="m16 6-4-4-4 4" /><path d="M12 2v13" />', null, function () {
+        window.LeoContactShare.open(c);
+      });
+    }
     frag.appendChild(acts);
     var fields = [];
     if (c.email) fields.push(["почта", c.email]);
@@ -56397,6 +56402,7 @@
   // Мост для webapp/mail.js (почта: подключение, разбор писем, окно письма).
   window.LeoApp = {
     apiFetch: apiFetch,
+    syncAppOverlay: syncAppOverlay,
     setHidden: setHidden,
     toast: showNoteToast,
     confirm: confirmDialog,

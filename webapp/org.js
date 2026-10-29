@@ -4,7 +4,7 @@
   "use strict";
 
   var ROLE_LABEL = { owner: "Владелец", admin: "Админ", member: "Участник" };
-  var state = { overview: null, detail: null, busy: false, slugTimer: null };
+  var state = { overview: null, detail: null, contacts: null, queue: Promise.resolve(), saved: {}, slugTimer: null };
 
   function app() {
     return window.LeoApp || {};
@@ -36,16 +36,44 @@
     return { method: method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) };
   }
 
-  async function act(fn) {
-    if (state.busy) return;
-    state.busy = true;
-    try {
-      await fn();
-    } catch (e) {
+  // Действия идут по очереди: раньше второе изменение, пока шло первое, молча терялось.
+  function act(fn) {
+    state.queue = state.queue.then(fn).catch(function (e) {
       toast(errText(e));
-    } finally {
-      state.busy = false;
+    });
+    return state.queue;
+  }
+
+  // Автосохранение: рядом с заголовком раздела — «Сохраняю…», «Сохранено ✓» или ошибка.
+  function saveMark(key) {
+    var s = state.saved[key];
+    return '<span class="org-save' + (s ? " org-save--" + s.kind : "") + '" data-save="' + key + '">' + esc(s ? s.text : "") + "</span>";
+  }
+  function setSaved(key, kind, text) {
+    state.saved[key] = kind ? { kind: kind, text: text } : null;
+    var el = root() && root().querySelector('[data-save="' + key + '"]');
+    if (el) {
+      el.className = "org-save" + (kind ? " org-save--" + kind : "");
+      el.textContent = text || "";
     }
+    if (kind === "ok") {
+      setTimeout(function () {
+        if (state.saved[key] && state.saved[key].kind === "ok") setSaved(key, null, "");
+      }, 2500);
+    }
+  }
+  // Сохранить одно поле: метка «Сохраняю…» → ответ сервера → «Сохранено ✓»; при ошибке — текст ошибки и откат.
+  function autosave(key, request) {
+    setSaved(key, "busy", "Сохраняю…");
+    return act(async function () {
+      try {
+        state.detail = await request();
+        setSaved(key, "ok", "Сохранено ✓");
+      } catch (e) {
+        setSaved(key, "err", errText(e));
+      }
+      await reload();
+    });
   }
 
   // ---------- загрузка ----------
@@ -62,6 +90,7 @@
       state.overview = await api("");
       var cur = state.overview.current_id;
       state.detail = cur ? await api("/" + cur) : null;
+      if (state.detail && state.detail.can && state.detail.can.invite) await loadContacts();
     } catch (e) {
       var el = root();
       if (el) el.innerHTML = '<p class="error">' + esc(errText(e)) + "</p>";
@@ -114,7 +143,7 @@
           : '<span class="pf-row-sub">Коллеги с вашего домена уже здесь</span>';
         var btns = s.pending
           ? ""
-          : '<button type="button" class="pf-btn org-btn-sm" data-org="join" data-id="' + s.id + '">Вступить</button>' +
+          : '<button type="button" class="pf-link" data-org="join" data-id="' + s.id + '">Вступить</button>' +
             '<button type="button" class="pf-link" data-org="dismiss" data-id="' + s.id + '">Не сейчас</button>';
         return (
           '<div class="pf-list org-suggest"><div class="pf-row pf-row--static">' + logoHtml(s) +
@@ -161,18 +190,17 @@
       "</span></span></span></div></div>";
 
     if (can.edit_org) {
-      html += '<div class="pf-group"><p class="pf-group-title">Название и адрес</p><div class="pf-list">' +
+      html += '<div class="pf-group"><p class="pf-group-title">Название и адрес' + saveMark("org") + '</p><div class="pf-list">' +
         '<label class="pf-field"><span class="pf-field-label">Название</span><input type="text" class="pf-input" id="org-name" maxlength="80" value="' + esc(org.name) + '" /></label>' +
         '<label class="pf-field"><span class="pf-field-label">Короткий адрес</span><input type="text" class="pf-input" id="org-slug" maxlength="40" value="' + esc(org.slug) + '" autocapitalize="off" spellcheck="false" /></label>' +
-        '</div><p class="pf-hint" id="org-slug-hint">Латиница, цифры и дефис. Пригодится для публичной страницы выпуска и поддомена.</p>' +
-        '<button type="button" class="pf-btn org-btn-sm" data-org="save-org">Сохранить</button></div>';
+        '</div><p class="pf-hint" id="org-slug-hint">Латиница, цифры и дефис. Пригодится для публичной страницы выпуска и поддомена.</p></div>';
     }
 
     html += billingHtml(d);
     html += membersHtml(d);
 
     if (can.invite) {
-      html += '<div class="pf-group"><p class="pf-group-title">Как вступают</p><div class="pf-list">';
+      html += '<div class="pf-group"><p class="pf-group-title">Как вступают' + saveMark("join") + '</p><div class="pf-list">';
       (org.domains || []).forEach(function (dom) {
         html += '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">@' + esc(dom) + "</span>" +
           '<span class="pf-row-sub">Коллеги с этим доменом почты видят организацию</span></span>' +
@@ -224,7 +252,7 @@
     var can = d.can || {};
     var used = org.seats_used || 0;
     var seats = org.seats || 0;
-    var html = '<div class="pf-group"><p class="pf-group-title">Тариф</p>';
+    var html = '<div class="pf-group"><p class="pf-group-title">Тариф' + saveMark("billing") + "</p>";
     if (!d.billing_enabled) {
       html += '<p class="org-demo">Оплата ещё не подключена — тарифы можно менять, но они пока ни на что не влияют.</p>';
     }
@@ -241,10 +269,7 @@
     html += '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Занято мест</span>' +
       '<span class="pf-row-sub">Место занимает участник с платным тарифом</span></span>' +
       '<span class="pf-row-val' + (used > seats ? " org-hint-bad" : "") + '">' + used + " из " + seats + "</span></span></div></div>";
-    if (can.billing) {
-      html += '<p class="pf-hint">Тариф каждому участнику выдаётся в списке ниже.</p>' +
-        '<button type="button" class="pf-btn org-btn-sm" data-org="save-billing">Сохранить тариф</button>';
-    }
+    if (can.billing) html += '<p class="pf-hint">Тариф каждому участнику выдаётся в списке ниже.</p>';
     return html + "</div>";
   }
 
@@ -258,7 +283,7 @@
         if (m.status === "invited") sub = "Приглашён — появится после первого входа в Орбиту";
         var right = "";
         if (m.status === "pending" && can.approve) {
-          right = '<button type="button" class="pf-btn org-btn-sm" data-org="approve" data-uid="' + esc(m.user_id) + '">Принять</button>' +
+          right = '<button type="button" class="pf-link" data-org="approve" data-uid="' + esc(m.user_id) + '">Принять</button>' +
             '<button type="button" class="pf-link" data-org="reject" data-uid="' + esc(m.user_id) + '">Отклонить</button>';
         } else if (m.status === "active" && can.set_role && m.user_id !== d.my_user_id) {
           right = '<select class="pf-input org-role" data-org="role" data-uid="' + esc(m.user_id) + '" aria-label="Роль">' +
@@ -286,13 +311,75 @@
       .join("");
     var add = "";
     if (can.invite) {
-      add = '<div class="pf-row pf-row--static pf-add-select"><span class="pf-ico pf-add-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg></span>' +
+      var opts = contactOptions(d);
+      if (opts) {
+        add += '<div class="pf-row pf-row--static pf-add-select"><span class="pf-ico pf-add-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg></span>' +
+          '<span class="pf-row-body"><select class="pf-input" data-org="add-contact" aria-label="Добавить из контактов">' +
+          '<option value="">Добавить из контактов…</option>' + opts + "</select></span></div>";
+      }
+      add += '<div class="pf-row pf-row--static pf-add-select"><span class="pf-ico pf-add-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg></span>' +
         '<span class="pf-row-body"><input type="text" class="pf-input" id="org-add-key" placeholder="Почта или @ник в Telegram" autocapitalize="off" spellcheck="false" />' +
         '<button type="button" class="pf-link" data-org="add">Добавить</button></span></div>';
     }
-    return '<div class="pf-group"><p class="pf-group-title">Участники</p><div class="pf-list">' + rows + add + "</div>" +
+    return '<div class="pf-group"><p class="pf-group-title">Участники' + saveMark("members") + '</p><div class="pf-list">' + rows + add + "</div>" +
       (can.set_role ? '<p class="pf-hint">Админ приглашает и исключает участников и настраивает выпуск «Рынок». Владелец ещё меняет название и адрес, назначает админов. Назначить другого владельцем — передать владение.</p>' : "") +
       "</div>";
+  }
+
+  // Ключ контакта для добавления: почта (по ней находим Telegram через контакты) или @ник.
+  function contactKey(c) {
+    var email = String(c.email || "").trim().toLowerCase();
+    if (email && email.indexOf("@") > 0) return email;
+    var nick = String(c.telegram_username || "").trim().replace(/^@/, "").toLowerCase();
+    if (nick) return "@" + nick;
+    var key = String(c.key || "");
+    return key.indexOf("tg:") === 0 ? "@" + key.slice(3) : "";
+  }
+
+  function contactOptions(d) {
+    var taken = {};
+    (d.members || []).forEach(function (m) {
+      if (m.invited_key) taken[String(m.invited_key).replace(/^tg:/, "@").toLowerCase()] = 1;
+      if (m.username) taken["@" + String(m.username).toLowerCase()] = 1;
+    });
+    return (state.contacts || [])
+      .map(function (c) {
+        var key = contactKey(c);
+        var nick = String(c.telegram_username || "").replace(/^@/, "").toLowerCase();
+        if (!key || taken[key] || (nick && taken["@" + nick])) return "";
+        var label = String(c.name || "").trim() || key;
+        var extra = key !== label ? " · " + key : "";
+        return '<option value="' + esc(key) + '">' + esc(label + extra) + "</option>";
+      })
+      .filter(Boolean)
+      .join("");
+  }
+
+  async function loadContacts() {
+    if (state.contacts) return;
+    try {
+      var r = await app().apiFetch("/contacts", { method: "GET" });
+      state.contacts = (r && r.items) || [];
+    } catch (_) {
+      state.contacts = [];
+    }
+  }
+
+  function addMember(key) {
+    key = String(key || "").trim();
+    if (!key) return Promise.resolve();
+    var id = currentId();
+    setSaved("members", "busy", "Добавляю…");
+    return act(async function () {
+      try {
+        var r = await api("/" + id + "/members", json("POST", { key: key }));
+        state.detail = r;
+        setSaved("members", "ok", r.added && r.added.status === "invited" ? "Приглашён — появится после первого входа" : "Добавлен ✓");
+      } catch (e) {
+        setSaved("members", "err", errText(e));
+      }
+      await reload();
+    });
   }
 
   function invitesHtml(d) {
@@ -378,16 +465,6 @@
         await reload();
       });
     }
-    if (kind === "save-billing") {
-      return act(async function () {
-        var d = await api("/" + id + "/billing", json("PATCH", {
-          plan: document.getElementById("org-plan").value,
-          seats: Number(document.getElementById("org-seats").value || 0),
-        }));
-        toast("Тариф сохранён");
-        await applyDetail(d);
-      });
-    }
     if (kind === "show-create") {
       state.detail = null;
       render();
@@ -406,23 +483,9 @@
         await reload();
       });
     }
-    if (kind === "save-org") {
-      return act(async function () {
-        var d = await api("/" + id, json("PATCH", {
-          name: document.getElementById("org-name").value.trim(),
-          slug: document.getElementById("org-slug").value.trim().toLowerCase(),
-        }));
-        toast("Сохранено");
-        await applyDetail(d);
-      });
-    }
     if (kind === "add") {
-      return act(async function () {
-        var inp = document.getElementById("org-add-key");
-        var r = await api("/" + id + "/members", json("POST", { key: (inp && inp.value) || "" }));
-        toast(r.added && r.added.status === "invited" ? "Приглашён — появится после первого входа" : "Добавлен в организацию");
-        await applyDetail(r);
-      });
+      var inp = document.getElementById("org-add-key");
+      return addMember(inp && inp.value);
     }
     if (kind === "approve" || kind === "reject") {
       return act(async function () {
@@ -479,6 +542,7 @@
   }
 
   function onChange(e) {
+    if (onFieldChange(e)) return;
     var el = e.target.closest("[data-org]");
     if (!el) return;
     var kind = el.getAttribute("data-org");
@@ -490,37 +554,70 @@
       });
     }
     if (kind === "member-plan") {
-      return act(async function () {
-        try {
-          await applyDetail(await api("/" + id + "/members/" + el.getAttribute("data-mid") + "/plan", json("PATCH", { plan: el.value })));
-        } catch (err) {
-          await reload();
-          throw err;
-        }
+      var mid = el.getAttribute("data-mid");
+      var plan = el.value;
+      return autosave("members", function () {
+        return api("/" + id + "/members/" + mid + "/plan", json("PATCH", { plan: plan }));
       });
     }
+    if (kind === "add-contact") {
+      return addMember(el.value);
+    }
     if (kind === "join-mode") {
-      return act(async function () {
-        await applyDetail(await api("/" + id, json("PATCH", { join_mode: el.value })));
+      var mode = el.value;
+      return autosave("join", function () {
+        return api("/" + id, json("PATCH", { join_mode: mode }));
       });
     }
     if (kind === "role") {
       var uid = el.getAttribute("data-uid");
-      return act(async function () {
-        var ownerId = String((state.detail.members || []).filter(function (m) { return m.role === "owner"; }).map(function (m) { return m.user_id; })[0] || "");
-        if (el.value === "owner" && uid !== ownerId &&
-            !(await confirm("Передать владение? Вы станете админом."))) {
-          await reload();
-          return;
-        }
-        try {
-          await applyDetail(await api("/" + id + "/members/" + uid, json("PATCH", { role: el.value })));
-        } catch (err) {
-          await reload();
-          throw err;
-        }
+      var role = el.value;
+      if (role === "owner") {
+        return confirm("Передать владение? Вы станете админом.").then(function (ok) {
+          if (!ok) return reload();
+          return autosave("members", function () {
+            return api("/" + id + "/members/" + uid, json("PATCH", { role: role }));
+          });
+        });
+      }
+      return autosave("members", function () {
+        return api("/" + id + "/members/" + uid, json("PATCH", { role: role }));
       });
     }
+  }
+
+  // Поля текста и чисел сохраняются, когда уходишь из поля или жмёшь Enter (событие change).
+  function onFieldChange(e) {
+    var t = e.target;
+    var id = currentId();
+    if (!id || !t.id) return false;
+    if (t.id === "org-name") {
+      var name = t.value.trim();
+      if (name && name !== state.detail.org.name) {
+        autosave("org", function () { return api("/" + id, json("PATCH", { name: name })); });
+      }
+      return true;
+    }
+    if (t.id === "org-slug") {
+      var slug = t.value.trim().toLowerCase();
+      if (slug && slug !== state.detail.org.slug) {
+        autosave("org", function () { return api("/" + id, json("PATCH", { slug: slug })); });
+      }
+      return true;
+    }
+    if (t.id === "org-plan") {
+      var plan = t.value;
+      autosave("billing", function () { return api("/" + id + "/billing", json("PATCH", { plan: plan })); });
+      return true;
+    }
+    if (t.id === "org-seats") {
+      var seats = Number(t.value || 0);
+      if (seats !== Number(state.detail.org.seats || 0)) {
+        autosave("billing", function () { return api("/" + id + "/billing", json("PATCH", { seats: seats })); });
+      }
+      return true;
+    }
+    return false;
   }
 
   function onInput(e) {
@@ -606,6 +703,16 @@
       el.addEventListener("click", onClick);
       el.addEventListener("change", onChange);
       el.addEventListener("input", onInput);
+      el.addEventListener("keydown", function (e) {
+        if (e.key !== "Enter") return;
+        if (e.target.id === "org-add-key") {
+          e.preventDefault();
+          addMember(e.target.value);
+        } else if (e.target.tagName === "INPUT") {
+          e.preventDefault();
+          e.target.blur(); // blur → change → сохранение
+        }
+      });
     }
     var token = pendingJoinToken();
     if (token) setTimeout(function () { handleJoin(token, 0); }, 800);

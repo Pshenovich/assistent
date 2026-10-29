@@ -6550,6 +6550,48 @@ async def miniapp_contacts_delete(
     return {"ok": True}
 
 
+class _MiniappContactShare(BaseModel):
+    key: str = ""
+    to: list[str] = Field(default_factory=list)
+
+
+@miniapp_router.get("/contact-share/targets")
+async def miniapp_contact_share_targets(
+    key: str = Query(""),
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Кому из своих контактов можно отправить контакт (получатель должен быть в Орбите)."""
+    from assistant.services import contact_share
+
+    try:
+        items = await run_in_threadpool(contact_share.targets, int(principal.telegram_user_id), key)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {"ok": True, "items": items}
+
+
+@miniapp_router.post("/contact-share")
+async def miniapp_contact_share(
+    body: _MiniappContactShare,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import note_members
+    from assistant.services import contact_share
+
+    uid = int(principal.telegram_user_id)
+    if not body.to:
+        raise HTTPException(status_code=400, detail="Выберите, кому отправить")
+    u = principal.user or {}
+    sender = note_members.profile_display_name(note_members.get_profile(uid), fallback="") or " ".join(
+        x for x in (u.get("first_name"), u.get("last_name")) if x
+    ) or "Коллега"
+    try:
+        results = await run_in_threadpool(contact_share.share, uid, sender, body.key, list(body.to))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {"ok": True, "results": results}
+
+
 @miniapp_router.get("/teams")
 async def miniapp_teams_list(
     detailed: bool = Query(False),
@@ -6671,6 +6713,16 @@ async def _org_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
         raise HTTPException(status_code=e.code, detail=str(e)) from e
 
 
+def _org_sync_contacts(org_id: int) -> None:
+    """Члены организации — в контактах друг у друга (см. org_contacts). Ошибка не ломает ответ."""
+    from assistant.stores import org_contacts
+
+    try:
+        org_contacts.sync(int(org_id))
+    except Exception as e:
+        print(f"[orgs] contacts sync org={org_id} err={e!r}")
+
+
 def _org_invite_urls(token: str) -> dict[str, str]:
     from assistant.lib.webapp_public import webapp_entry_url
 
@@ -6685,7 +6737,8 @@ def _org_invite_urls(token: str) -> dict[str, str]:
 def _org_overview(uid: int) -> dict[str, Any]:
     from assistant.stores import orgs_store
 
-    orgs_store.claim_pending(uid)
+    for joined in orgs_store.claim_pending(uid):
+        _org_sync_contacts(joined)
     cur = orgs_store.current_org(uid)
     return {
         "ok": True,
@@ -6778,6 +6831,7 @@ async def miniapp_orgs_invite_accept(
     uid = int(principal.telegram_user_id)
     org = await _org_call(orgs_store.accept_invite, uid, token)
     await _org_call(orgs_store.set_current_org, uid, org["id"])
+    await run_in_threadpool(_org_sync_contacts, org["id"])
     return await _org_call(_org_detail, uid, org["id"])
 
 
@@ -6803,6 +6857,7 @@ async def miniapp_orgs_delete(org_id: int, principal: _MiniappPrincipal = Depend
     from assistant.stores import orgs_store
 
     await _org_call(orgs_store.delete_org, int(principal.telegram_user_id), org_id)
+    await run_in_threadpool(_org_sync_contacts, org_id)
     return {"ok": True}
 
 
@@ -6846,6 +6901,8 @@ async def miniapp_orgs_member_add(
 
     uid = int(principal.telegram_user_id)
     added = await _org_call(orgs_store.add_member, uid, org_id, body.key, role=body.role)
+    if added.get("status") == "active":
+        await run_in_threadpool(_org_sync_contacts, org_id)
     return {**(await _org_call(_org_detail, uid, org_id)), "added": added}
 
 
@@ -6868,6 +6925,7 @@ async def miniapp_orgs_member_remove(
 
     uid = int(principal.telegram_user_id)
     await _org_call(orgs_store.remove_member, uid, org_id, member_id)
+    await run_in_threadpool(_org_sync_contacts, org_id)
     return await _org_call(_org_detail, uid, org_id)
 
 
@@ -6902,6 +6960,8 @@ async def miniapp_orgs_approve(
 
     uid = int(principal.telegram_user_id)
     await _org_call(orgs_store.approve, uid, org_id, body.user_id, allow=body.allow)
+    if body.allow:
+        await run_in_threadpool(_org_sync_contacts, org_id)
     return await _org_call(_org_detail, uid, org_id)
 
 
@@ -6913,6 +6973,7 @@ async def miniapp_orgs_join(org_id: int, principal: _MiniappPrincipal = Depends(
     status = await _org_call(orgs_store.join_by_domain, uid, org_id)
     if status == "active":
         await _org_call(orgs_store.set_current_org, uid, org_id)
+        await run_in_threadpool(_org_sync_contacts, org_id)
     return {**(await _org_call(_org_overview, uid)), "status": status}
 
 
@@ -6930,6 +6991,7 @@ async def miniapp_orgs_leave(org_id: int, principal: _MiniappPrincipal = Depends
 
     uid = int(principal.telegram_user_id)
     await _org_call(orgs_store.leave, uid, org_id)
+    await run_in_threadpool(_org_sync_contacts, org_id)
     return await _org_call(_org_overview, uid)
 
 
