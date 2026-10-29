@@ -43,7 +43,7 @@ class MarketNewsTests(unittest.TestCase):
 
         self._p = [
             mock.patch.object(generator, "fetch_url", fake_fetch),
-            mock.patch.object(generator, "editorial", lambda name, st, top: {
+            mock.patch.object(generator, "editorial", lambda name, st, top, **kw: {
                 "summary": [f"{top[0].title} — главное для {name}"], "ideas": ["Идея"], "signals": ["Сигнал"]}),
             mock.patch.object(orgs_store, "verified_emails", lambda uid: []),
         ]
@@ -87,6 +87,27 @@ class MarketNewsTests(unittest.TestCase):
         ]
         generator.score(arts, high=["Gong", "речевая аналитика"], medium=[], competitors=["Gong"], now=NOW)
         self.assertEqual([a.score > 0 for a in arts], [False, True, False])
+
+    def test_editorial_billed_to_owner(self) -> None:
+        from assistant.integrations import openrouter_client
+        from assistant.nlu import llm
+
+        seen = []
+
+        def fake_chat(system, user, **kw):
+            seen.append((openrouter_client._current_tg_user_id.get(), kw.get("operation")))
+            return '{"summary": ["a"], "ideas": ["b"], "signals": ["c"]}'
+
+        self._p[1].stop()  # настоящая editorial
+        try:
+            with mock.patch.object(llm, "_chat", fake_chat):
+                art = generator.Article("Gong AI", "https://a/1", "x", "competitors", "en")
+                out = generator.editorial("Акме", {}, [art], bill_to=42)
+        finally:
+            self._p[1].start()
+        self.assertEqual(out["summary"], ["a"])
+        self.assertEqual(seen, [("42", "market_digest")])
+        self.assertIsNone(openrouter_client._current_tg_user_id.get())  # после вызова — сброшено
 
     def test_store_due_and_page_for_user(self) -> None:
         org = orgs_store.create_org(1, "Акме")

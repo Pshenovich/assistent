@@ -74,15 +74,23 @@ def page_for_user(user_id: int, day: Optional[str] = None) -> Optional[dict[str,
     return {**issue, "org_name": org["name"]} if issue else None
 
 
+def owner_id(org_id: int) -> Optional[int]:
+    """Владелец организации — на него записывается расход на сборку выпуска."""
+    from assistant.stores import orgs_store
+
+    owner = next((m for m in orgs_store.list_members(org_id) if m["role"] == "owner" and m["user_id"]), None)
+    return int(owner["user_id"]) if owner else None
+
+
 def _org_tz(org_id: int):
     """Часовой пояс выпуска — по владельцу организации."""
     from zoneinfo import ZoneInfo
 
-    from assistant.stores import orgs_store, user_prefs
+    from assistant.stores import user_prefs
 
-    owner = next((m for m in orgs_store.list_members(org_id) if m["role"] == "owner" and m["user_id"]), None)
+    oid = owner_id(org_id)
     try:
-        return user_prefs.get_user_tz(int(owner["user_id"])) if owner else ZoneInfo("Europe/Moscow")
+        return user_prefs.get_user_tz(oid) if oid else ZoneInfo("Europe/Moscow")
     except Exception:
         return ZoneInfo("Europe/Moscow")
 
@@ -116,7 +124,7 @@ def build_for_org(org_id: int, *, now: Optional[datetime] = None) -> Optional[di
     if not org:
         return None
     st = market_settings.get(org_id)
-    res = generator.build_issue(org, st, now=now, tz=_org_tz(org_id))
+    res = generator.build_issue(org, st, now=now, tz=_org_tz(org_id), bill_to=owner_id(org_id))
     save_issue(org_id, res["date"], res["html"], res["articles"])
     print(f"[market_news] built org={org_id} day={res['date']} articles={res['articles']}")
     return res

@@ -286,9 +286,12 @@ signals — 2–4 гипотезы или сигнала, которые сто�
 Пропускай материалы, которые явно не про её рынок (совпадение названий, спорт, погода и т. п.)."""
 
 
-def editorial(org_name: str, settings: dict[str, Any], top: list[Article]) -> Optional[dict[str, list[str]]]:
+def editorial(org_name: str, settings: dict[str, Any], top: list[Article], *,
+              bill_to: Optional[int] = None) -> Optional[dict[str, list[str]]]:
+    """bill_to — на кого записать расход (владелец организации): виден в его «Расходах» как «Рынок: выпуск»."""
     if not top:
         return None
+    from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
     from assistant.nlu import llm
 
     company = [f"Компания: {org_name}"]
@@ -299,6 +302,7 @@ def editorial(org_name: str, settings: dict[str, Any], top: list[Article]) -> Op
     if settings.get("topics"):
         company.append("Темы: " + ", ".join(settings["topics"]))
     items = [{"title": a.title, "source": a.source, "summary": short_summary(a)} for a in top[:12]]
+    set_openrouter_usage_telegram_user(telegram_user_id=bill_to)
     try:
         raw = llm._chat(EDITOR_SYSTEM, "\n".join(company) + "\n\nМатериалы:\n" + json.dumps(items, ensure_ascii=False),
                         operation="market_digest", timeout=120, temperature=0.2, max_tokens=1200)
@@ -309,6 +313,8 @@ def editorial(org_name: str, settings: dict[str, Any], top: list[Article]) -> Op
             return {k: [str(x).strip() for x in data[k] if str(x).strip()][:6] for k in ("summary", "ideas", "signals")}
     except Exception as e:
         print(f"[market_news] editorial org={org_name!r} err={e!r}")
+    finally:
+        set_openrouter_usage_telegram_user(telegram_user_id=None)
     return None
 
 
@@ -362,7 +368,7 @@ def _lead(org_name: str, settings: dict[str, Any]) -> str:
 
 
 def build_issue(org: dict[str, Any], settings: dict[str, Any], *, now: Optional[datetime] = None,
-                tz=None) -> dict[str, Any]:
+                tz=None, bill_to: Optional[int] = None) -> dict[str, Any]:
     """Собрать выпуск организации: {date, html, articles}."""
     from zoneinfo import ZoneInfo
 
@@ -387,7 +393,7 @@ def build_issue(org: dict[str, Any], settings: dict[str, Any], *, now: Optional[
     top = sorted(relevant, key=lambda a: (a.score, a.published or datetime.min.replace(tzinfo=timezone.utc)), reverse=True)[:20]
     must = top[:10]
     comp = [a for a in top if a.category in {"competitors", "own"}][:6] or top[:4]
-    ed = editorial(org["name"], settings, must) or FALLBACK
+    ed = editorial(org["name"], settings, must, bill_to=bill_to) or FALLBACK
     title = f"{org['name']}: отраслевой дайджест за {now.astimezone(tz).strftime('%d.%m.%Y')}"
     page = Template(TEMPLATE_FILE.read_text(encoding="utf-8")).safe_substitute(
         title=html.escape(title),
