@@ -4299,6 +4299,24 @@ function createMeetingTasksExtension(ctx) {
             },
           },
           props: {
+            // Клик по ячейке мимо значения: без этого браузер фокусирует редактор с курсором в начале
+            // документа (ячейка не редактируется) и прокручивает заметку вверх. Ведём себя как клик по значению.
+            handleDOMEvents: {
+              mousedown: function (view, e) {
+                var cell = e.target && e.target.closest && e.target.closest("td.mt-cell");
+                if (!cell || !view.dom.contains(cell)) return false;
+                e.preventDefault();
+                return true;
+              },
+              click: function (view, e) {
+                var cell = e.target && e.target.closest && e.target.closest("td.mt-cell");
+                if (!cell || !view.dom.contains(cell)) return false;
+                var val = cell.querySelector(".mt-val");
+                if (val && !val.contains(e.target)) val.click();
+                e.preventDefault();
+                return true;
+              },
+            },
             decorations: function (state) {
               var st = meetingTasksKey.getState(state);
               if (!st || !st.items) return null;
@@ -5235,7 +5253,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261029-mtskip",
+  assetVersion: "20261029-mtclick",
   Y: Y,
   mount: mount,
   importBody: importBody,
