@@ -41334,10 +41334,15 @@
     }
     menu.classList.remove("is-sheet");
     var rect = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
+    // Не заходить под чат справа: границы — окно заметки, а не всё окно браузера.
+    var host = menu.parentElement && menu.parentElement !== document.body ? menu.parentElement.getBoundingClientRect() : null;
+    var minX = host ? Math.max(8, host.left + 8) : 8;
+    var maxX = host ? Math.min(window.innerWidth, host.right) - 8 : window.innerWidth - 8;
+    menu.style.width = maxX - minX < 360 ? Math.max(260, Math.round(maxX - minX)) + "px" : "";
     var mw = menu.offsetWidth || 360;
-    var left = rect ? rect.left : 16;
+    var left = rect ? rect.left : minX;
     var top = rect ? rect.bottom + 6 : 16;
-    if (left + mw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - mw - 8);
+    if (left + mw > maxX) left = Math.max(minX, maxX - mw);
     if (top + menu.offsetHeight > window.innerHeight - 8) {
       top = Math.max(8, window.innerHeight - menu.offsetHeight - 8);
     }
@@ -41593,7 +41598,7 @@
           });
           row.appendChild(t);
           var tx = document.createElement("span");
-          tx.textContent = "«" + q.text + "»";
+          tx.textContent = "«" + q.text + (q.text.length >= 158 ? "…" : "") + "»"; // сервер режет реплику на 160 символах
           row.appendChild(tx);
           said.appendChild(row);
         });
