@@ -102,6 +102,7 @@
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
   <link rel="stylesheet" href="/webapp/styles.css?v=20261030-sub7" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261029-spktools" />
+  <link rel="stylesheet" href="/webapp/onboarding.css?v=20261030-onb1" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261029-mkt" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
@@ -150,7 +151,7 @@
       <!-- Актуальное -->
       <section id="panel-actual" class="panel" role="tabpanel">
         <div id="actual-hero" class="hero-card"></div>
-        <div id="actual-focus" class="actual-focus hidden" aria-label="Фокус"></div>
+        <div id="actual-focus" data-tour="focus" class="actual-focus hidden" aria-label="Фокус"></div>
         <p id="posted-tasks-error" class="error hidden"></p>
         <div id="actual-posted-tasks" class="actual-subscreen hidden">
           <div class="detail-toolbar detail-toolbar--subscreen">
@@ -220,7 +221,7 @@
           </div>
         </div>
         <div class="section">
-          <div class="meetings-head">
+          <div class="meetings-head" data-tour="calendar">
             <div class="meetings-head-titles">
               <h2 class="section-head-inline" id="meetings-head-title"></h2>
               <span class="meetings-head-sub" id="meetings-head-sub"></span>
@@ -228,7 +229,7 @@
             </div>
             <div class="meetings-head-tools">
               <button type="button" class="meetings-today-btn hidden" id="meetings-today">Сегодня</button>
-              <button type="button" class="cal-nav-btn meetings-posted-toggle" id="meetings-posted-toggle" aria-pressed="false" aria-label="Задачи, поставленные другим" title="Показать в календаре задачи, поставленные другим">
+              <button type="button" class="cal-nav-btn meetings-posted-toggle" id="meetings-posted-toggle" data-tour="posted-toggle" aria-pressed="false" aria-label="Задачи, поставленные другим" title="Показать в календаре задачи, поставленные другим">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6 1.4 0 2.6.4 3.6 1.2"/><path d="M15 17h6M18.5 14.5 21 17l-2.5 2.5"/></svg>
               </button>
               <button type="button" class="cal-nav-btn" id="meetings-prev" aria-label="Предыдущий день">
@@ -238,7 +239,7 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
               </button>
               <div class="meetings-view-wrap">
-                <button type="button" class="meetings-view-btn" id="meetings-view-btn" aria-label="Вид календаря" aria-haspopup="menu" aria-expanded="false" title="Вид">
+                <button type="button" class="meetings-view-btn" id="meetings-view-btn" data-tour="calendar-view" aria-label="Вид календаря" aria-haspopup="menu" aria-expanded="false" title="Вид">
                   <span id="meetings-view-label">День</span>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
                 </button>
@@ -248,7 +249,7 @@
                   <button type="button" class="meetings-view-menu-item" role="menuitem" data-meetings-view="month">Месяц</button>
                 </div>
               </div>
-              <div class="meetings-view-seg" id="meetings-view-seg" role="group" aria-label="Вид календаря">
+              <div class="meetings-view-seg" id="meetings-view-seg" data-tour="calendar-view" role="group" aria-label="Вид календаря">
                 <button type="button" class="meetings-view-seg-btn is-active" data-meetings-view="day" aria-pressed="true">День</button>
                 <button type="button" class="meetings-view-seg-btn" data-meetings-view="week" aria-pressed="false">Неделя</button>
                 <button type="button" class="meetings-view-seg-btn" data-meetings-view="month" aria-pressed="false">Месяц</button>
@@ -273,7 +274,7 @@
         </div>
         <button
           type="button"
-          id="actual-create-btn"
+          id="actual-create-btn" data-tour="create"
           class="notes-fab actual-fab"
           aria-label="Добавить"
           aria-haspopup="menu"
@@ -284,11 +285,11 @@
             <path d="M12 5v14M5 12h14" />
           </svg>
         </button>
-        <button type="button" id="actual-voice-btn" class="notes-fab actual-fab actual-fab-mic" aria-label="Наговорить" title="Наговорить: задача, встреча или вопрос">
+        <button type="button" id="actual-voice-btn" data-tour="voice" class="notes-fab actual-fab actual-fab-mic" aria-label="Наговорить" title="Наговорить: задача, встреча или вопрос">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>
         </button>
         <div id="actual-create-menu" class="actual-create-menu hidden" role="menu" aria-label="Добавить">
-          <button type="button" class="actual-create-menu-btn is-ai" data-actual-action="assistant" role="menuitem">
+          <button type="button" class="actual-create-menu-btn is-ai" data-actual-action="assistant" data-tour="create-leo" role="menuitem">
             <span class="actual-create-ico"><svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></span>
             <span class="actual-create-copy"><b>Лео</b><small>Спросить или поручить ИИ</small></span>
           </button>
@@ -297,15 +298,15 @@
             <span class="actual-create-copy"><b>Наговорить</b><small>Задача, встреча или вопрос</small></span>
           </button>
           <div class="actual-create-sep" aria-hidden="true"></div>
-          <button type="button" class="actual-create-menu-btn" data-actual-action="meeting" role="menuitem">
+          <button type="button" class="actual-create-menu-btn" data-actual-action="meeting" data-tour="create-meeting" role="menuitem">
             <span class="actual-create-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/></svg></span>
             <span class="actual-create-copy"><b>Встреча</b></span>
           </button>
-          <button type="button" class="actual-create-menu-btn" data-actual-action="task" role="menuitem">
+          <button type="button" class="actual-create-menu-btn" data-actual-action="task" data-tour="create-task" role="menuitem">
             <span class="actual-create-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg></span>
             <span class="actual-create-copy"><b>Задача</b></span>
           </button>
-          <button type="button" class="actual-create-menu-btn" data-actual-action="reminder" role="menuitem">
+          <button type="button" class="actual-create-menu-btn" data-actual-action="reminder" data-tour="create-reminder" role="menuitem">
             <span class="actual-create-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20h4"/></svg></span>
             <span class="actual-create-copy"><b>Напоминание</b></span>
           </button>
@@ -335,15 +336,15 @@
           <div class="notes-subtabs-row">
             <div class="subtab-bar" role="tablist" aria-label="Тип записей">
               <button type="button" class="subtab-btn active" data-subtab="notes">Заметки</button>
-              <button type="button" class="subtab-btn" data-subtab="chats">Чаты</button>
-              <button type="button" class="subtab-btn" data-subtab="transcriptions">Транскрипции</button>
+              <button type="button" class="subtab-btn" data-subtab="chats" data-tour="subtab-chats">Чаты</button>
+              <button type="button" class="subtab-btn" data-subtab="transcriptions" data-tour="subtab-transcriptions">Транскрипции</button>
             </div>
           </div>
           <div class="notes-filter-bar">
             <div class="notes-search-wrap" id="notes-search-wrap">
               <button
                 type="button"
-                id="notes-search-toggle"
+                id="notes-search-toggle" data-tour="notes-search"
                 class="notes-search-toggle"
                 aria-label="Поиск"
                 aria-expanded="false"
@@ -428,7 +429,7 @@
         </div>
         <button
           type="button"
-          id="notes-create-btn"
+          id="notes-create-btn" data-tour="notes-create"
           class="notes-fab hidden"
           aria-label="Создать заметку"
           title="Новая заметка"
@@ -442,7 +443,7 @@
             <span class="actual-create-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6"/></svg></span>
             <span class="actual-create-copy"><b>Заметка</b></span>
           </button>
-          <button type="button" class="actual-create-menu-btn" data-notes-create="dictate" role="menuitem">
+          <button type="button" class="actual-create-menu-btn" data-notes-create="dictate" data-tour="notes-dictate" role="menuitem">
             <span class="actual-create-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span>
             <span class="actual-create-copy"><b>Надиктовать</b><small>Новая заметка с включённым микрофоном</small></span>
           </button>
@@ -487,9 +488,9 @@
           </div>
           <div class="digest-subtabs-row">
             <div class="subtab-bar" role="tablist" aria-label="Тип дайджеста">
-              <button type="button" class="subtab-btn active" data-digest-subtab="chats" role="tab" aria-selected="true">Чаты</button>
-              <button type="button" class="subtab-btn hidden" data-digest-subtab="mail" role="tab" aria-selected="false">Почта</button>
-              <button type="button" class="subtab-btn" data-digest-subtab="market" role="tab" aria-selected="false">Рынок</button>
+              <button type="button" class="subtab-btn active" data-digest-subtab="chats" data-tour="digest-chats" role="tab" aria-selected="true">Чаты</button>
+              <button type="button" class="subtab-btn hidden" data-digest-subtab="mail" data-tour="digest-mail" role="tab" aria-selected="false">Почта</button>
+              <button type="button" class="subtab-btn" data-digest-subtab="market" data-tour="digest-market" role="tab" aria-selected="false">Рынок</button>
             </div>
           </div>
           </div>
@@ -613,7 +614,7 @@
         </div>
         <button
           type="button"
-          id="knowledge-create-btn"
+          id="knowledge-create-btn" data-tour="knowledge-create"
           class="notes-fab hidden"
           aria-label="Создать документ"
           title="Новый документ"
@@ -632,7 +633,7 @@
               <div class="avatar pf-skel-circle" aria-hidden="true"></div>
               <div class="profile-names"><span class="pf-skel pf-skel--name"></span><span class="pf-skel pf-skel--nick"></span></div>
             </div>
-            <section class="pf-wallet" id="profile-tariff-card" aria-label="Баланс и расходы">
+            <section class="pf-wallet" id="profile-tariff-card" data-tour="profile-balance" aria-label="Баланс и расходы">
               <div class="pf-wallet-top">
                 <div>
                   <p class="pf-wallet-label">Баланс</p>
@@ -660,7 +661,7 @@
             <div class="pf-group">
               <p class="pf-group-title">Лео</p>
               <div class="pf-list">
-                <div class="pf-row pf-row--select" id="profile-tg-leo">
+                <div class="pf-row pf-row--select" id="profile-tg-leo" data-tour="profile-telegram">
                   <span class="pf-ico pf-ico--blue" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg>
                   </span>
@@ -680,7 +681,7 @@
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </button>
-                <button type="button" class="pf-row" id="profile-proactive-open">
+                <button type="button" class="pf-row" id="profile-proactive-open" data-tour="profile-proactive">
                   <span class="pf-ico pf-ico--violet" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" /></svg>
                   </span>
@@ -690,7 +691,7 @@
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </button>
-                <button type="button" class="pf-row" id="profile-voice-open">
+                <button type="button" class="pf-row" id="profile-voice-open" data-tour="profile-voice">
                   <span class="pf-ico pf-ico--red" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0" /><path d="M12 17v4" /></svg>
                   </span>
@@ -699,7 +700,7 @@
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </button>
-                <button type="button" class="pf-row" id="profile-agents-open">
+                <button type="button" class="pf-row" id="profile-agents-open" data-tour="profile-agents">
                   <span class="pf-ico pf-ico--gray" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2M20 14h2M15 13v2M9 13v2" /></svg>
                   </span>
@@ -714,7 +715,7 @@
             <div class="pf-group">
               <p class="pf-group-title">Мои данные</p>
               <div class="pf-list">
-                <button type="button" class="pf-row" id="profile-contacts-open">
+                <button type="button" class="pf-row" id="profile-contacts-open" data-tour="profile-contacts">
                   <span class="pf-ico pf-ico--orange" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>
                   </span>
@@ -724,7 +725,7 @@
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </button>
-                <button type="button" class="pf-row" id="profile-org-open">
+                <button type="button" class="pf-row" id="profile-org-open" data-tour="profile-org">
                   <span class="pf-ico pf-ico--blue" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="M3 21h18" /><path d="M5 21V7l7-4 7 4v14" /><path d="M9 9h1M14 9h1M9 13h1M14 13h1M10 21v-4h4v4" /></svg>
                   </span>
@@ -733,7 +734,7 @@
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </button>
-                <button type="button" class="pf-row" id="profile-calendars-open">
+                <button type="button" class="pf-row" id="profile-calendars-open" data-tour="profile-calendars">
                   <span class="pf-ico pf-ico--green" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>
                   </span>
@@ -742,7 +743,7 @@
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </button>
-                <button type="button" class="pf-row" id="profile-notifications-open">
+                <button type="button" class="pf-row" id="profile-notifications-open" data-tour="profile-notifications">
                   <span class="pf-ico" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
                   </span>
@@ -751,7 +752,7 @@
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </button>
-                <div class="pf-row pf-row--select hidden" id="profile-theme-row">
+                <div class="pf-row pf-row--select hidden" id="profile-theme-row" data-tour="profile-theme">
                   <span class="pf-ico pf-ico--gray" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 0 0 18Z" fill="currentColor" /></svg>
                   </span>
@@ -790,7 +791,7 @@
             <div class="pf-group">
               <p class="pf-group-title">Сервисы</p>
               <div class="pf-list pf-svc-list" id="profile-svc-list">
-                <div class="pf-row pf-svc pf-svc--setup" data-svc="google">
+                <div class="pf-row pf-svc pf-svc--setup" data-svc="google" data-tour="svc-google">
                   <span class="pf-ico pf-ico--blue" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>
                   </span>
@@ -803,7 +804,7 @@
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </div>
-                <div class="pf-row pf-svc pf-svc--setup" data-svc="mail">
+                <div class="pf-row pf-svc pf-svc--setup" data-svc="mail" data-tour="svc-mail">
                   <span class="pf-ico pf-ico--blue" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></svg>
                   </span>
@@ -816,7 +817,7 @@
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </div>
-                <div class="pf-row pf-svc pf-svc--setup" data-svc="zoom">
+                <div class="pf-row pf-svc pf-svc--setup" data-svc="zoom" data-tour="svc-zoom">
                   <span class="pf-ico pf-ico--sky" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="M15 10l4-3v10l-4-3M5 7h8a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z" /></svg>
                   </span>
@@ -855,7 +856,7 @@
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </div>
-                <div class="pf-row pf-svc pf-svc--setup pf-svc--extra" data-svc="bitrix">
+                <div class="pf-row pf-svc pf-svc--setup pf-svc--extra" data-svc="bitrix" data-tour="svc-bitrix">
                   <span class="pf-ico pf-ico--sky" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="m8 12 3 3 5-6" /></svg>
                   </span>
@@ -870,6 +871,12 @@
                 </div>
                 <button type="button" class="pf-more" id="profile-svc-more">Ещё сервисы · Яндекс Диск, Битрикс24</button>
               </div>
+            </div>
+
+            <div class="pf-list hidden" id="profile-onboarding-reset-wrap">
+              <button type="button" class="pf-row pf-row--danger" id="profile-onboarding-reset">
+                <span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Пройти онбординг заново</span><span class="pf-row-sub">Сбросить всё: интро, команду, тур и подсказки</span></span></span>
+              </button>
             </div>
 
             <div class="pf-list hidden" id="profile-logout-wrap">
@@ -1600,7 +1607,7 @@
           </svg>
         </button>
       </div>
-      <nav class="tabbar" role="tablist" aria-label="Разделы">
+      <nav class="tabbar" data-tour="nav" role="tablist" aria-label="Разделы">
         <button type="button" class="tabbar-btn active" data-tab="actual" role="tab" aria-selected="true">
           <span class="tabbar-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2264,7 +2271,7 @@
             </button>
           </div>
           <div class="note-editor-toolbar-row">
-            <button type="button" id="note-editor-gpt-btn" class="note-tg-btn note-tg-btn--ai hidden" aria-label="ИИ: что сделать с текстом" title="ИИ">
+            <button type="button" id="note-editor-gpt-btn" data-tour="note-ai" class="note-tg-btn note-tg-btn--ai hidden" aria-label="ИИ: что сделать с текстом" title="ИИ">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>
               </svg>
@@ -2275,7 +2282,7 @@
                 <rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>
               </svg>
             </button>
-            <button type="button" id="note-editor-discuss-btn" class="note-tg-btn note-tg-btn--discuss hidden" aria-label="Обсуждение" title="Обсуждение">
+            <button type="button" id="note-editor-discuss-btn" data-tour="note-discuss" class="note-tg-btn note-tg-btn--discuss hidden" aria-label="Обсуждение" title="Обсуждение">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true">
                 <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>
               </svg>
@@ -2415,7 +2422,7 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20261025-mobfix"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20261030-onb1"><\/script>'
         );
       }
     })();
@@ -2426,12 +2433,13 @@
   <script src="/webapp/note-yjs.js?v=20261029-spktools" defer></script>
   <script src="/webapp/board-geom.js?v=20261029-spktools" defer></script>
   <script src="/webapp/board.js?v=20261029-spktools" defer></script>
-  <script src="/webapp/app.js?v=20261030-sub7" defer></script>
+  <script src="/webapp/app.js?v=20261030-onb1" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261023-reply1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261025-mobfix" defer></script>
   <script src="/webapp/digest-market.js?v=20261029-mktgen" defer></script>
-  <script src="/webapp/org.js?v=20261029-mktgen" defer></script>
+  <script src="/webapp/org.js?v=20261030-onb1" defer></script>
+  <script src="/webapp/onboarding.js?v=20261030-onb1" defer></script>
   <script src="/webapp/contact-share.js?v=20261029-share" defer></script>
 </body>
 </html>

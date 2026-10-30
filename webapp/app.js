@@ -22955,6 +22955,7 @@
     var acts = tinboxEl("div", "focus-card-acts");
     var go = tinboxEl("button", "focus-card-btn is-primary", "Разобрать");
     go.type = "button";
+    go.setAttribute("data-tour", "task-inbox");
     go.addEventListener("click", function (e) {
       e.preventDefault();
       openTaskInbox();
@@ -25154,6 +25155,7 @@
         })
       );
       chips.lastChild.title = "Мои задачи и поставленные мне";
+      chips.lastChild.setAttribute("data-tour", "my-tasks");
     }
     chips.appendChild(
       heroChip(
@@ -25168,6 +25170,7 @@
     );
     chips.lastChild.setAttribute("aria-label", "Поставленные задачи");
     chips.lastChild.title = "Задачи, которые вы поставили другим";
+    chips.lastChild.setAttribute("data-tour", "posted-tasks");
     syncPostedHeroLate(chips.lastChild, postedOverdueCountFromItems(lastPostedTasksItems));
     left.appendChild(chips);
     inner.appendChild(left);
@@ -35847,6 +35850,7 @@
         window.OrbitaTheme.set(ev.ui_theme);
         renderThemeSeg();
       }
+      if (ev.onboarding && window.LeoOnboarding) window.LeoOnboarding.applyState(ev.onboarding);
       return;
     }
     if (type === "notes.changed") {
@@ -41779,6 +41783,7 @@
     add.className = "note-sheet-chip note-sheet-chip--add";
     add.textContent = "+";
     add.setAttribute("aria-label", "Новый лист, доска или презентация");
+    add.setAttribute("data-tour", "sheet-add");
     add.setAttribute("aria-haspopup", "menu");
     add.addEventListener("click", function (e) {
       e.preventDefault();
@@ -51577,6 +51582,7 @@
     shareBtn.type = "button";
     shareBtn.id = "note-editor-share-head-btn";
     shareBtn.className = "note-more-btn note-share-head-btn";
+    shareBtn.setAttribute("data-tour", "note-share");
     shareBtn.setAttribute("aria-label", "Поделиться");
     shareBtn.title = "Поделиться";
     shareBtn.innerHTML =
@@ -57060,6 +57066,11 @@
         persistBrowserSessionFromCurrentAuth();
         // Трекеры заранее: переключатель «Орбита / Битрикс24» и «Дубль в …» нужны сразу при открытии задачи.
         loadTrackers();
+        // Новичку — интро, команда и тур; пришёл по ссылке — онбординг в следующий запуск.
+        // onboarding.js грузится после app.js: если ещё не готов — он заберёт /me сам.
+        var obOpts = { deepLink: locationHasDeepLink() };
+        if (window.LeoOnboarding) window.LeoOnboarding.boot(me, obOpts);
+        else window.__leoOnboardingPending = { me: me, opts: obOpts };
       })
       .catch(function () {});
 
@@ -57267,6 +57278,7 @@
     confirm: confirmDialog,
     escapeHtml: escapeHtml,
     profileScreen: profileScreen,
+    setTab: setTab,
     loadIntegrations: loadIntegrations,
     openLink: function (url) {
       var tg = window.Telegram && window.Telegram.WebApp;

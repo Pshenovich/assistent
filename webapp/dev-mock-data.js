@@ -1024,7 +1024,7 @@
       var mailRes = mailMockResponse(basePath, method, opts);
       if (mailRes) return mailRes;
     }
-    if (basePath === "/me" && method === "GET") return mockProfile.me;
+    if (basePath === "/me" && method === "GET") return Object.assign({}, mockProfile.me, { onboarding: JSON.parse(JSON.stringify(mockOnboarding)) });
     if (basePath === "/billing" && method === "GET") return mockProfile.billing;
     if (basePath === "/usage/expenses" && method === "GET") {
       var m = /days=(\d+)/.exec(String((opts && opts._path) || ""));
@@ -1144,11 +1144,57 @@
     return undefined;
   }
 
+  // Онбординг: состояние в памяти (новичок — интро, команда, тур), каталог — тот же файл, что у сервера.
+  var mockOnboarding = { used: {}, hint_shown: {}, snoozed: {}, can_reset: true };
+  var mockOrg = null;
+  function onboardingMock(basePath, method, opts) {
+    if (basePath === "/onboarding/catalog") {
+      return fetch("/assistant/onboarding/catalog.json", { cache: "no-store" }).then(function (r) {
+        return r.json();
+      });
+    }
+    if (basePath === "/onboarding/reset" && method === "POST") {
+      mockOnboarding = { used: {}, hint_shown: {}, snoozed: {}, can_reset: true, reset_at: Date.now() / 1000 };
+      return { ok: true, onboarding: mockOnboarding };
+    }
+    if (basePath === "/onboarding/event" && method === "POST") {
+      var b = JSON.parse((opts && opts.body) || "{}");
+      var now = Date.now() / 1000;
+      var flags = { intro_done: "intro_done_at", team_done: "team_step_done_at", tour_done: "tour_done_at" };
+      if (flags[b.kind]) mockOnboarding[flags[b.kind]] = mockOnboarding[flags[b.kind]] || now;
+      if (b.kind === "used") mockOnboarding.used[b.feature] = mockOnboarding.used[b.feature] || now;
+      if (b.kind === "hint_shown") mockOnboarding.hint_shown[b.feature] = (mockOnboarding.hint_shown[b.feature] || 0) + 1;
+      if (b.kind === "snooze") mockOnboarding.snoozed[b.feature] = now;
+      return { ok: true, onboarding: JSON.parse(JSON.stringify(mockOnboarding)) };
+    }
+    if (basePath === "/orgs" && method === "GET") {
+      return { ok: true, orgs: mockOrg ? [mockOrg] : [], current_id: mockOrg ? mockOrg.id : null, suggestions: [], my_domains: ["obuchat.me"] };
+    }
+    if (basePath === "/orgs" && method === "POST") {
+      var ob = JSON.parse((opts && opts.body) || "{}");
+      mockOrg = { id: 1, name: ob.name || "Команда", members: [{ name: "Вова", status: "active" }] };
+      return { ok: true, org: mockOrg, members: mockOrg.members, can: { invite: true } };
+    }
+    var om = /^\/orgs\/(\d+)(\/members|\/invites)?$/.exec(basePath);
+    if (om && mockOrg) {
+      if (om[2] === "/members") {
+        var key = JSON.parse((opts && opts.body) || "{}").key;
+        mockOrg.members.push({ name: key, status: "invited" });
+        return { ok: true, org: mockOrg, members: mockOrg.members, added: { status: "invited" } };
+      }
+      if (om[2] === "/invites") return { ok: true, invite: { token: "t", urls: { web: location.origin + "/webapp/?join=t" } } };
+      return { ok: true, org: mockOrg, members: mockOrg.members, can: { invite: true } };
+    }
+    return undefined;
+  }
+
   async function handle(path, opts, realFetch) {
     initMocks();
     var method = String((opts && opts.method) || "GET").toUpperCase();
     var basePath = String(path || "").split("?")[0];
     opts = Object.assign({}, opts || {}, { _path: path });
+    var obRes = onboardingMock(basePath, method, opts);
+    if (obRes !== undefined) return obRes;
 
     if (basePath === "/voice/settings") {
       if (method === "PATCH") {

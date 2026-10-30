@@ -2391,6 +2391,11 @@ class _MiniappThemeBody(BaseModel):
     theme: str
 
 
+class _MiniappOnboardingEventBody(BaseModel):
+    kind: str
+    feature: str = ""
+
+
 class _MiniappCalendarExcludedBody(BaseModel):
     excluded_ids: list[str] = []
 
@@ -5091,7 +5096,60 @@ async def miniapp_me(principal: _MiniappPrincipal = Depends(require_miniapp_user
         "bot_username": _miniapp_resolve_bot_username(),
         "has_custom_avatar": await run_in_threadpool(_user_has_custom_avatar, int(principal.telegram_user_id)),
         "ui_theme": await run_in_threadpool(_ui_theme_state, principal),
+        "onboarding": await run_in_threadpool(_onboarding_state, principal),
     }
+
+
+def _onboarding_state(principal: _MiniappPrincipal) -> dict[str, Any] | None:
+    from assistant.onboarding import state as ob_state
+
+    try:
+        return ob_state.public_state(int(principal.telegram_user_id), principal.user.get("username"))
+    except Exception as e:
+        print(f"[onboarding] state failed uid={principal.telegram_user_id} err={e!r}")
+        return None
+
+
+@miniapp_router.get("/onboarding/catalog")
+async def miniapp_onboarding_catalog(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Каталог функций для тура и подсказок (общий с Лео)."""
+    from assistant import onboarding
+
+    return onboarding.catalog()
+
+
+@miniapp_router.post("/onboarding/event")
+async def miniapp_onboarding_event(
+    body: _MiniappOnboardingEventBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Шаг онбординга пройден / подсказка показана / функцией воспользовались."""
+    from assistant.onboarding import state as ob_state
+    from assistant.realtime import notify as rt_notify
+
+    uid = int(principal.telegram_user_id)
+    try:
+        st = await run_in_threadpool(ob_state.apply_event, uid, body.kind, body.feature)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Неизвестное событие онбординга") from e
+    st["can_reset"] = ob_state.can_reset(principal.user.get("username"))
+    rt_notify.prefs_changed(uid, onboarding=st)
+    return {"ok": True, "onboarding": st}
+
+
+@miniapp_router.post("/onboarding/reset")
+async def miniapp_onboarding_reset(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Пройти онбординг заново с нуля — только для тех, кто в ONBOARDING_RESET_USERNAMES."""
+    from assistant.onboarding import state as ob_state
+    from assistant.realtime import notify as rt_notify
+
+    if not ob_state.can_reset(principal.user.get("username")):
+        raise HTTPException(status_code=400, detail="Сброс онбординга недоступен")
+    uid = int(principal.telegram_user_id)
+    st = await run_in_threadpool(ob_state.reset, uid)
+    st["can_reset"] = True
+    rt_notify.prefs_changed(uid, onboarding=st)
+    return {"ok": True, "onboarding": st}
 
 
 def _ui_theme_state(principal: _MiniappPrincipal) -> dict[str, Any]:

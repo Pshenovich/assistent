@@ -1,0 +1,371 @@
+/* Онбординг: Лео-комета, интро, экран команды, тур с подсветкой, подсказки.
+ * Цвета — только токены: свои (--leo-*, --ob-*) в обеих темах + общие из styles.css. */
+
+:root {
+  --leo-body: #7f77dd;
+  --leo-rim: #534ab7;
+  --leo-eye: #ffffff;
+  --ob-intro-bg: #0b0b10;
+  --ob-intro-text: #ffffff;
+  --ob-ring: #7f77dd;
+  --ob-scrim: rgba(0, 0, 0, 0.58);
+  --ob-chip-bg: rgba(127, 119, 221, 0.22);
+  --ob-chip-text: #cecbf6;
+}
+html[data-theme="light"] {
+  --ob-scrim: rgba(20, 18, 40, 0.5);
+  --ob-chip-bg: #eeedfe;
+  --ob-chip-text: #3c3489;
+}
+
+/* ---------- Лео ---------- */
+
+.leo {
+  display: inline-block;
+  flex: none;
+  line-height: 0;
+  vertical-align: middle;
+}
+.leo-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.leo-body { fill: var(--leo-body); }
+.leo-rim { fill: var(--leo-rim); }
+.leo-eye { fill: var(--leo-eye); transform-box: fill-box; transform-origin: center; animation: leo-blink 5s infinite; }
+.leo-eyes { transition: transform 0.3s ease; animation: leo-look 8s ease-in-out infinite; }
+.leo-bd { animation: leo-bob 2.4s ease-in-out infinite; }
+.leo-c { transform-origin: 100px 118px; animation: leo-fc 0.42s ease-in-out infinite alternate; }
+.leo-l { transform-origin: 60px 105px; animation: leo-fl 0.55s ease-in-out infinite alternate; }
+.leo-r { transform-origin: 140px 105px; animation: leo-fr 0.5s ease-in-out infinite alternate; }
+
+@keyframes leo-fc { from { transform: scale(1.05, 0.85); } to { transform: scale(0.96, 1.06); } }
+@keyframes leo-fl { from { transform: rotate(4deg) scaleY(0.9); } to { transform: rotate(-2deg) scaleY(1.05); } }
+@keyframes leo-fr { from { transform: rotate(-4deg) scaleY(0.9); } to { transform: rotate(2deg) scaleY(1.05); } }
+@keyframes leo-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+@keyframes leo-blink { 0%, 93%, 100% { transform: scaleY(1); } 96% { transform: scaleY(0.12); } }
+@keyframes leo-look { 0%, 40%, 100% { transform: translateX(0); } 48%, 60% { transform: translateX(-4px); } 70%, 84% { transform: translateX(4px); } }
+
+/* машет */
+.leo--wave .leo-r { animation: leo-wave 0.45s ease-in-out infinite alternate; }
+.leo--wave .leo-eyes { animation: none; }
+@keyframes leo-wave { from { transform: rotate(-140deg) scaleY(0.85); } to { transform: rotate(-175deg) scaleY(0.85); } }
+
+/* показывает: лицом к нам, рукой и взглядом */
+.leo--point-right .leo-r { animation: leo-pr 0.8s ease-in-out infinite alternate; }
+.leo--point-right .leo-eyes { animation: none; transform: translateX(6px); }
+@keyframes leo-pr { from { transform: rotate(-102deg) scaleY(1.05); } to { transform: rotate(-106deg) scaleY(1.18); } }
+.leo--point-left .leo-l { animation: leo-pl 0.8s ease-in-out infinite alternate; }
+.leo--point-left .leo-eyes { animation: none; transform: translateX(-6px); }
+@keyframes leo-pl { from { transform: rotate(102deg) scaleY(1.05); } to { transform: rotate(106deg) scaleY(1.18); } }
+.leo--point-down .leo-r { animation: leo-pd 0.8s ease-in-out infinite alternate; }
+.leo--point-down .leo-eyes { animation: none; transform: translateY(6px); }
+@keyframes leo-pd { from { transform: rotate(-24deg) scaleY(1.1); } to { transform: rotate(-28deg) scaleY(1.25); } }
+/* вверх — сидя: иначе поднятая рука прячется за головой */
+.leo--point-up .leo-bd { animation: none; transform: translateY(22px); }
+.leo--point-up .leo-c { animation: none; transform: scale(1.1, 0.42); }
+.leo--point-up .leo-l { animation: none; transform: rotate(34deg) scaleY(0.66); }
+.leo--point-up .leo-r { animation: leo-pu 0.7s ease-in-out infinite alternate; }
+.leo--point-up .leo-eyes { animation: none; transform: translate(3px, -7px); }
+@keyframes leo-pu { from { transform: rotate(-160deg) scaleY(1.25); } to { transform: rotate(-168deg) scaleY(1.36); } }
+
+/* стоит (метка на кнопке) */
+.leo--stand .leo-bd { animation: none; transform: translateY(14px); }
+.leo--stand .leo-c { animation: none; transform: scale(1.1, 0.45); }
+.leo--stand .leo-l { animation: none; transform: rotate(32deg) scaleY(0.72); }
+.leo--stand .leo-r { animation: none; transform: rotate(-32deg) scaleY(0.72); }
+
+@media (prefers-reduced-motion: reduce) {
+  .leo-svg *,
+  .ob-root * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ---------- общий слой ---------- */
+
+.ob-root {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  -webkit-tap-highlight-color: transparent;
+}
+.ob-btn {
+  border: none;
+  border-radius: 12px;
+  padding: 12px 18px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  background: var(--leo-body);
+  color: var(--on-accent);
+  cursor: pointer;
+}
+.ob-btn--small {
+  padding: 8px 16px;
+  font-size: 14px;
+  border-radius: 10px;
+}
+.ob-btn--wide {
+  width: 100%;
+}
+.ob-link {
+  border: none;
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 6px;
+  cursor: pointer;
+}
+
+/* ---------- интро ---------- */
+
+.ob-intro {
+  background: var(--ob-intro-bg);
+  color: var(--ob-intro-text);
+  overflow: hidden;
+  transition: opacity 0.35s ease;
+}
+.ob-intro-leo {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 128px;
+  height: 128px;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+.ob-intro-text {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  text-align: center;
+  font-size: 22px;
+  line-height: 1.4;
+  font-weight: 600;
+  min-height: 62px;
+}
+.ob-intro-cta {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+  max-width: 360px;
+  margin: 0 auto;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+.ob-intro-cta.is-on {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ---------- команда ---------- */
+
+.ob-team {
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  justify-content: center;
+  overflow-y: auto;
+}
+.ob-team-inner {
+  width: 100%;
+  max-width: 420px;
+  padding: calc(36px + env(safe-area-inset-top, 0px)) 20px calc(24px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  box-sizing: border-box;
+}
+.ob-team-leo {
+  align-self: center;
+  width: 72px;
+  height: 72px;
+}
+.ob-team h2 {
+  margin: 10px 0 6px;
+  text-align: center;
+  font-size: 22px;
+}
+.ob-team-sub {
+  margin: 0 0 22px;
+  text-align: center;
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.ob-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-subtle);
+  margin: 14px 0 6px;
+}
+.ob-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--overlay-3);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font: inherit;
+  font-size: 15px;
+  background: var(--surface);
+  color: var(--text);
+}
+.ob-input:focus {
+  outline: 2px solid var(--ob-ring);
+  outline-offset: 1px;
+}
+.ob-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  border: 1px solid var(--overlay-3);
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: var(--surface);
+}
+.ob-chips:focus-within {
+  outline: 2px solid var(--ob-ring);
+  outline-offset: 1px;
+}
+.ob-chips input {
+  flex: 1;
+  min-width: 140px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  padding: 4px 2px;
+  outline: none;
+}
+.ob-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 10px;
+  border-radius: 999px;
+  background: var(--ob-chip-bg);
+  color: var(--ob-chip-text);
+  font-size: 13px;
+}
+.ob-chip button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+}
+.ob-invite {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  border: none;
+  background: transparent;
+  padding: 4px 0;
+  color: var(--violet-text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.ob-team-err {
+  min-height: 18px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--danger-text);
+}
+.ob-team-members {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+  color: var(--text-soft);
+  line-height: 1.8;
+}
+.ob-team-foot {
+  margin-top: auto;
+  padding-top: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ---------- тур и подсказки ---------- */
+
+.ob-tour {
+  pointer-events: auto;
+}
+.ob-hole {
+  position: fixed;
+  border-radius: 12px;
+  box-shadow: 0 0 0 100vmax var(--ob-scrim);
+  outline: 2px solid var(--ob-ring);
+  outline-offset: 3px;
+  pointer-events: none;
+  transition: left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease;
+}
+.ob-card {
+  position: fixed;
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 20px));
+  background: var(--surface-elevated);
+  color: var(--text);
+  border: 1px solid var(--overlay-2);
+  border-radius: 16px;
+  padding: 14px 16px 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--shadow-color) 35%, transparent);
+}
+.ob-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  min-height: 20px;
+}
+.ob-card-title {
+  flex: 1;
+  font-weight: 600;
+}
+.ob-card-step {
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+.ob-card-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+}
+/* Лео сидит на верхнем крае карточки, со стороны элемента */
+.ob-card-leo {
+  position: absolute;
+  top: -44px;
+  width: 48px;
+  height: 48px;
+}
+.ob-card-leo.is-left {
+  left: 14px;
+}
+.ob-card-leo.is-right {
+  right: 14px;
+}
+.ob-card-leo.is-bottom {
+  top: auto;
+  bottom: -46px;
+}
+.ob-card.has-leo .ob-card-head {
+  padding-left: 0;
+}

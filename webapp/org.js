@@ -806,7 +806,28 @@
     }, 2500);
   }
 
-  window.LeoOrg = { open: open, reload: reload };
+  // Для онбординга (экран «С кем вы работаете?»): те же вызовы, что и в Профиле → «Организация».
+  window.LeoOrg = {
+    open: open,
+    reload: reload,
+    overview: function () {
+      return api("");
+    },
+    detail: function (id) {
+      return api("/" + id);
+    },
+    create: function (name, domain) {
+      return api("", json("POST", { name: String(name || "").trim(), domain: domain || "" }));
+    },
+    addMember: function (id, key) {
+      return api("/" + id + "/members", json("POST", { key: String(key || "").trim() }));
+    },
+    createInvite: async function (id) {
+      var r = await api("/" + id + "/invites", { method: "POST" });
+      var urls = (r && r.invite && r.invite.urls) || {};
+      return (inTelegram() && urls.telegram) || urls.web || "";
+    },
+  };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
 })();
