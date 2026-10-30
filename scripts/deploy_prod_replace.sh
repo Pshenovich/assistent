@@ -458,6 +458,30 @@ if subprocess.run(["nginx", "-t"]).returncode != 0:
 else:
     print(f"nginx rate limit: inserted x{n} (dry run)")
 PY
+
+# nginx: пробный режим отработал (28–30.10 — ни одного срабатывания), ограничение включено.
+python3 - <<'PY'
+import shutil
+import subprocess
+from pathlib import Path
+p = Path("/etc/nginx/sites-available/assistent.networ.ru")
+if not p.is_file():
+    raise SystemExit(0)
+t = p.read_text()
+lines = t.splitlines(keepends=True)
+kept = [ln for ln in lines if ln.strip() != "limit_req_dry_run on;"]
+if len(kept) == len(lines):
+    print("nginx rate limit: enforced already")
+    raise SystemExit(0)
+backup = p.with_name(p.name + ".bak-ratelimit-enforce")
+shutil.copyfile(p, backup)
+p.write_text("".join(kept))
+if subprocess.run(["nginx", "-t"]).returncode != 0:
+    shutil.copyfile(backup, p)
+    print("nginx rate limit: nginx -t failed, restored dry run")
+else:
+    print(f"nginx rate limit: enforced (dry run off x{len(lines) - len(kept)})")
+PY
 nginx -t && systemctl reload nginx
 
 # Дайджест генерирует assistant-news-sync; rsync репозитория его затирал.

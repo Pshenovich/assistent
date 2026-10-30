@@ -40,3 +40,15 @@ def init_sentry(service: str) -> bool:
     _DONE = True
     print(f"[sentry] on service={service}")
     return True
+
+
+def capture_exception(err: BaseException | None) -> None:
+    """Ошибку, которую код перехватил сам (например, обработчик ошибок бота), — в Sentry."""
+    if not _DONE or err is None:
+        return
+    try:
+        import sentry_sdk
+
+        sentry_sdk.capture_exception(err)
+    except Exception as e:
+        print(f"[sentry] capture failed err={e!r}")

@@ -4,6 +4,7 @@
 .env.*
 .venv/
 .git/
+.claude/
 google_user_tokens/
 google_oauth_pending/
 zoom_user_tokens/

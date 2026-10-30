@@ -418,6 +418,9 @@ async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> No
     tb = "".join(traceback.format_exception(type(err), err, err.__traceback__)) if err else ""
     uid = getattr(getattr(update, "effective_user", None), "id", None)
     print(f"[bot] handler_error user={uid} err={err!r}\n{tb}".rstrip())
+    from assistant.lib.sentry_init import capture_exception
+
+    capture_exception(err)
     chat = getattr(update, "effective_chat", None)
     msg = getattr(update, "effective_message", None)
     if msg is None or chat is None or chat.type != "private":
