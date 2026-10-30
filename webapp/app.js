@@ -16177,6 +16177,11 @@
     if (!task) return;
     var delegated = String(task.owner_user_id || "") !== String(task.assignee_user_id || "") && !!task.assignee_user_id;
     var card = ctx.card;
+    if (ctx.modal) {
+      // Из окна задачи — в нём же, и поручение тоже: окно не закрывается и не уезжает в «Поставленные».
+      openTaskModal(taskEvFromApi(task), { forceEdit: true });
+      return;
+    }
     if (delegated) {
       if (card && document.body.contains(card.host)) {
         mountPostedCard(card.host, task.id, { inSide: card.opts.inSide, myTasks: card.opts.myTasks });
