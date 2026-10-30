@@ -40,6 +40,15 @@ def build_application() -> Application:
     builder = attach_local_bot_api(builder, log_prefix="bot")
     # Параллельная обработка апдейтов (напоминания не блокируют голос/текст).
     builder = builder.concurrent_updates(8)
+    # Лимиты Telegram (~30 сообщений/с на бота, 20 в минуту в группу): массовые рассылки
+    # (брифы, напоминания сотням людей) ждут очереди и повторяются после RetryAfter, а не теряются.
+    if os.getenv("TELEGRAM_RATE_LIMITER", "1").strip().lower() not in ("0", "false", "no", "off"):
+        try:
+            from telegram.ext import AIORateLimiter
+
+            builder = builder.rate_limiter(AIORateLimiter(max_retries=3))
+        except (ImportError, RuntimeError) as e:
+            print(f"[bot] rate limiter unavailable: {e!r}")
 
     async def _post_init(application: Application) -> None:
         # Фоновые задачи обходят людей пачкой (assistant/lib/fanout.py) и ходят в Google/ИИ

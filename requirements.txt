@@ -2,7 +2,7 @@
 # Требуется Python 3.10+ (для Bitrix24 MCP SDK).
 # Установка: python3.10 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
 python-dotenv>=1.0.0,<2.0.0
-python-telegram-bot[socks,job-queue]>=21.0,<23.0
+python-telegram-bot[socks,job-queue,rate-limiter]>=21.0,<23.0
 requests>=2.28.0,<3.0.0
 google-api-python-client>=2.140.0
 google-auth>=2.30.0
