@@ -23847,7 +23847,6 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
 .st-acts { display: flex; flex-wrap: wrap; gap: 6px; }
 .st-acts .btn { padding: 5px 10px; font-size: 0.82rem; }
 .st-ghost { background: none; }
-.st-add { align-self: flex-start; margin-top: 2px; padding: 4px 0; border: 0; background: none; font: inherit; font-size: 0.86rem; color: var(--accent); cursor: pointer; }
 .st-add-form { padding: 6px 0 4px calc(var(--st-depth, 0) * 22px); }
 .st-add-input { width: 100%; box-sizing: border-box; }
 .tinbox-parent { margin: 0 0 6px; font-size: 0.8rem; color: var(--text-secondary); }
@@ -23869,3 +23868,19 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
 .mt-group-btn:disabled { opacity: 0.6; cursor: default; }
 .ProseMirror tr.mt-row.mt-group-hl td { background: var(--accent-soft); }
 .fstack-group .tinbox-bundle li.is-lead { font-weight: 600; }
+
+/* Подзадачи в окне задачи — как остальные группы листа: подпись группы, строки с разделителями, «+» как у чек-листа */
+.event-sheet-group.st-box { gap: 0; }
+.event-sheet-group.st-box > .st-crumb { margin: 0; padding: 10px 0.9rem 0; }
+.event-sheet-group.st-box > .st-head { padding: 10px 0.9rem 2px; }
+.event-sheet-group.st-box .st-head-title { font-weight: 400; font-size: 0.75rem; }
+.event-sheet-group.st-box .st-head-count { font-size: 0.75rem; color: var(--text-secondary); }
+.event-sheet-group.st-box .st-row { min-height: 40px; box-sizing: border-box; padding: 0.45rem 0.9rem 0.45rem calc(0.9rem + var(--st-depth, 0) * 22px); border-bottom: none; border-top: 0.5px solid var(--border); }
+.event-sheet-group.st-box .st-list > .st-row:first-child { border-top: none; }
+.event-sheet-group.st-box .st-title { font-size: 0.9375rem; }
+.event-sheet-group.st-box .st-meta { font-size: 0.75rem; }
+.event-sheet-group.st-box .st-edit { margin: 0 0.9rem 10px calc(0.9rem + var(--st-depth, 0) * 22px + 28px); }
+.event-sheet-group.st-box .st-add-form { padding: 0.45rem 0.9rem 0.45rem calc(0.9rem + var(--st-depth, 0) * 22px); border-top: 0.5px solid var(--border); }
+.event-sheet-group.st-box > .st-add { width: 100%; box-sizing: border-box; min-height: 40px; padding: 0.45rem 0.9rem; border-top: 0.5px solid var(--border) !important; }
+.event-sheet-group.st-box > .st-preview-note { margin: 0; padding: 0.45rem 0.9rem 10px; border-top: 0.5px solid var(--border); font-size: 0.75rem; }
+.pt-subtasks .st-add { margin-top: 6px; }

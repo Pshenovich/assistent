@@ -16160,6 +16160,21 @@
     return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }).replace(".", "");
   }
 
+  // «+» как у чек-листа: синий круг и подпись.
+  function subtaskAddInner(label) {
+    return (
+      '<span class="rem-checklist-add-icon" aria-hidden="true">' +
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round">' +
+      '<path d="M12 5v14M5 12h14"/></svg></span><span class="rem-checklist-add-label">' + escapeHtml(label) + "</span>"
+    );
+  }
+
+  // «Спикер 2» / SPEAKER_1 — метка из транскрипта, а не человек: исполнителем её не показываем.
+  function subtaskWho(name) {
+    var n = String(name || "").trim();
+    return /^(спикер|speaker)[\s_]*\d+$/i.test(n) ? "" : n;
+  }
+
   function subtaskEl(tag, cls, text) {
     var el = document.createElement(tag);
     if (cls) el.className = cls;
@@ -16340,7 +16355,7 @@
       var main = subtaskEl("button", "st-main");
       main.type = "button";
       main.appendChild(subtaskEl("span", "st-title", st.title || "Задача"));
-      var meta = [st.assignee_name || "", subtaskDueLabel(st)].filter(Boolean);
+      var meta = [subtaskWho(st.assignee_name), subtaskDueLabel(st)].filter(Boolean);
       var kids = st.subtasks || [];
       if (kids.length) {
         meta.push(kids.filter(function (k) { return k.done; }).length + " из " + kids.length);
@@ -16394,8 +16409,9 @@
       if (!canAdd) return;
       if (state.adding === "root") host.appendChild(addInput(t, 0));
       else {
-        var add = subtaskEl("button", "st-add", "+ Добавить подзадачу");
+        var add = subtaskEl("button", "rem-checklist-add st-add");
         add.type = "button";
+        add.innerHTML = subtaskAddInner("Подзадача");
         add.addEventListener("click", function () {
           state.adding = "root";
           state.open = "";
@@ -16617,15 +16633,17 @@
       var ph = subtaskEl("div", "st-head");
       ph.appendChild(subtaskEl("span", "st-head-title", "Подзадачи из таблицы · " + opts.subtaskPreview.length));
       previewHost.appendChild(ph);
+      var plist = subtaskEl("div", "st-list");
       opts.subtaskPreview.forEach(function (p) {
         var line = subtaskEl("div", "st-row");
         line.style.setProperty("--st-depth", Math.max(0, (p.depth || 1) - 1));
         var main = subtaskEl("div", "st-main");
         main.appendChild(subtaskEl("span", "st-title", p.title || "Задача"));
-        main.appendChild(subtaskEl("span", "st-meta", p.who ? p.who : "исполнитель — как у задачи"));
+        main.appendChild(subtaskEl("span", "st-meta", subtaskWho(p.who) || "Исполнитель — как у задачи"));
         line.appendChild(main);
-        previewHost.appendChild(line);
+        plist.appendChild(line);
       });
+      previewHost.appendChild(plist);
       previewHost.appendChild(
         subtaskEl("p", "st-preview-note", "Создадутся вместе с задачей. Исполнителя, срок и комментарий каждой можно поменять потом в задаче.")
       );
