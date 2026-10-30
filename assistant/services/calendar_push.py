@@ -152,6 +152,19 @@ def _webhook_url() -> str | None:
     return base + WEBHOOK_PATH
 
 
+def _mark_no_push(uid: str, cal_id: str) -> None:
+    """Запись-заглушка «подписка невозможна» — раз в неделю проверим снова."""
+    with _lock:
+        conn = _conn()
+        conn.execute("DELETE FROM gcal_channels WHERE user_id = ? AND calendar_id = ?", (uid, cal_id))
+        conn.execute(
+            "INSERT INTO gcal_channels(channel_id, user_id, calendar_id, resource_id, expiration, created) "
+            "VALUES (?, ?, ?, '', ?, ?)",
+            (f"nopush:{uid}:{cal_id}", uid, cal_id, time.time() + CHANNEL_TTL_SEC, time.time()),
+        )
+        conn.commit()
+
+
 def ensure_channels(user_id: int) -> dict[str, Any]:
     """Подписки на все активные календари человека; продлевает истекающие. Возвращает счётчики."""
     from assistant.services import calendar_sources as cal_sources
@@ -182,6 +195,12 @@ def ensure_channels(user_id: int) -> dict[str, Any]:
                 },
             ).execute()
         except Exception as e:
+            if "pushNotSupportedForRequestedResource" in repr(e):
+                # Праздники и другие календари Google без подписок: почти не меняются —
+                # считаем покрытыми, их хватает страховочного перечитывания копии.
+                _mark_no_push(uid, cal_id)
+                out["kept"] += 1
+                continue
             out["failed"] += 1
             print(f"[gcal_push] watch failed uid={uid} cal={cal_id} err={e!r}")
             continue
@@ -200,6 +219,8 @@ def ensure_channels(user_id: int) -> dict[str, Any]:
             conn.commit()
         out["created"] += 1
         for o in old:  # старая подписка больше не нужна — снимаем, чтобы не приходили дубли
+            if str(o["channel_id"]).startswith("nopush:"):
+                continue
             try:
                 svc.channels().stop(body={"id": o["channel_id"], "resourceId": o["resource_id"]}).execute()
             except Exception as e:

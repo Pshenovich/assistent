@@ -152,3 +152,25 @@ def test_reminder_fetch_uses_cache(env, monkeypatch):
     again = mr.fetch_upcoming_timed_events(7, horizon_min=27)
     assert [e["event_id"] for e in first] == [e["event_id"] for e in again] == ["e1"]
     assert len(env["calls"]) == n
+
+
+def test_holiday_calendar_without_push_counts_as_covered(env, monkeypatch):
+    monkeypatch.setattr(cs, "get_active_calendar_ids", lambda uid: ["primary", "ru.russian#holiday@group.v.calendar.google.com"])
+    svc = env["svc"]
+    real_events = svc.events
+
+    def events():
+        e = real_events()
+        orig = e.watch
+
+        def watch(calendarId, body):
+            if "holiday" in calendarId:
+                raise RuntimeError("HttpError 400 pushNotSupportedForRequestedResource")
+            return orig(calendarId=calendarId, body=body)
+        e.watch = watch
+        return e
+
+    svc.events = events
+    res = cp.ensure_channels(7)
+    assert res["created"] == 1 and res["kept"] == 1 and res["failed"] == 0
+    assert cp.cached_events(7, env["now"], env["now"] + timedelta(minutes=27)) is not None
