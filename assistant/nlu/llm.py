@@ -262,6 +262,29 @@ def _chat(
     )[0]
 
 
+def _mark_prompt_cache(messages: list[dict[str, Any]], model: str) -> None:
+    """Claude кэширует начало запроса только по явной метке (OpenAI и Gemini — сами).
+
+    Метки: на системной части (инструкции + контекст заметки) и на последней реплике
+    истории — следующий вопрос в том же диалоге читает это из кэша, ~в 10 раз дешевле.
+    """
+    if not (model or "").startswith("anthropic/"):
+        return
+    marked = 0
+    last_history = len(messages) - 2  # перед текущим вопросом пользователя
+    for i in (0, last_history):
+        if i < 0 or marked >= 2:
+            continue
+        msg = messages[i]
+        content = msg.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        if i > 0 and msg.get("role") not in ("user", "assistant"):
+            continue
+        msg["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+        marked += 1
+
+
 def _chat_result(
     system: str,
     user: str,
@@ -298,6 +321,7 @@ def _chat_result(
     from assistant.integrations.openrouter_client import model_emits_images
 
     run_model = model or _model()
+    _mark_prompt_cache(messages, run_model)
     if files or web or model_emits_images(run_model):
         timeout = max(float(timeout), 180.0)
     payload: dict[str, Any] = {
