@@ -450,10 +450,11 @@
    * Возвращает {close, reposition}.
    */
   function spotlight(el, opts) {
-    var root = mount("ob-tour");
+    var root = mount("ob-tour" + (opts.cls ? " " + opts.cls : ""));
     if (!opts.modal) root.style.pointerEvents = "none";
     var hole = document.createElement("div");
-    hole.className = "ob-hole";
+    // подсказка — только рамка, без затемнения: человек продолжает работать
+    hole.className = "ob-hole" + (opts.dim === false ? " is-ring" : "");
     var card = document.createElement("div");
     card.className = "ob-card has-leo";
     card.style.pointerEvents = "auto";
@@ -484,6 +485,11 @@
     function reposition() {
       if (!alive) return;
       var r = el.getBoundingClientRect();
+      // Элемент пропал (сменили экран) — подсказка уходит вместе с ним.
+      if (!opts.modal && (!document.body.contains(el) || !(r.width > 0 && r.height > 0))) {
+        if (opts.onLost) opts.onLost();
+        return;
+      }
       var pad = 6;
       hole.style.left = r.left - pad + "px";
       hole.style.top = r.top - pad + "px";
@@ -514,7 +520,7 @@
     var raf = 0;
     function loop() {
       reposition();
-      raf = requestAnimationFrame(loop);
+      if (alive) raf = requestAnimationFrame(loop);
     }
     try {
       el.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -577,9 +583,395 @@
     await send("tour_done");
   }
 
+  // ---------- «воспользовался» ----------
+
+  function isUsed(id) {
+    return !!(state && state.used && state.used[id]);
+  }
+
+  /** Функцией воспользовались: подсказка к ней больше не нужна. */
+  function used(id) {
+    if (!state || !id || isUsed(id)) return;
+    state.used = state.used || {};
+    state.used[id] = Date.now() / 1000;
+    if (hint && hint.id === id) closeHint();
+    dropMarker(id);
+    send("used", id);
+  }
+
+  // Успешный запрос к серверу → какая функция освоена. body — то, что ушло на сервер.
+  var API_USES = [
+    ["POST", /^\/calendar\/tasks$/, "create_task"],
+    ["POST", /^\/calendar\/events$/, "create_meeting"],
+    ["POST", /^\/reminders$/, "create_reminder"],
+    ["POST", /^\/voice\/command$/, "voice_command"],
+    ["POST", /^\/gpt\/chat$/, "leo_chat"],
+    ["POST", /^\/notes\/local$/, "notes"],
+    ["POST", /\/ai-edit$/, "note_ai"],
+    ["POST", /\/comments$/, "discussion"],
+    ["POST", /\/(share|members|team-shares)$/, "share"],
+    ["POST", /^\/chats$/, "chats"],
+    ["POST", /^\/notes\/transcriptions\/upload$/, "transcriptions"],
+    ["GET", /^\/notes\/search$/, "search"],
+    ["POST", /^\/proactive\/(item|items|dismiss)$/, "focus_card"],
+    ["POST", /^\/(notes\/knowledge|knowledge-bases)/, "knowledge"],
+    ["POST", /^\/agents$/, "agents"],
+    ["POST", /^\/trackers\/bitrix24\/webhook$/, "bitrix"],
+  ];
+
+  function onApi(path, opts, res) {
+    if (!state) return;
+    var method = String((opts && opts.method) || "GET").toUpperCase();
+    var p = String(path || "").split("?")[0];
+    if (method === "GET" && p === "/integrations" && res) {
+      if (res.google) used("google");
+      if (res.zoom || res.telemost) used("recordings");
+      if (res.bitrix) used("bitrix");
+      if (res.mail) used("mail");
+      return;
+    }
+    if (method === "POST" && /\/sheets$/.test(p)) {
+      var kind = "";
+      try {
+        kind = JSON.parse((opts && opts.body) || "{}").kind || "";
+      } catch (_) {}
+      if (kind === "board") used("board");
+      if (kind === "web") used("presentation");
+      return;
+    }
+    for (var i = 0; i < API_USES.length; i++) {
+      var u = API_USES[i];
+      if (u[0] === method && u[1].test(p)) used(u[2]);
+    }
+  }
+
+  // Открыли экран/вкладку — этого достаточно, чтобы считать функцию освоенной.
+  var CLICK_USES = {
+    "my-tasks": "my_tasks",
+    "posted-tasks": "posted_tasks",
+    "task-inbox": "task_inbox",
+    "posted-toggle": "posted_in_calendar",
+    "calendar-view": "calendar_view",
+    "notes-dictate": "dictate_note",
+    "digest-chats": "digest_chats",
+    "digest-mail": "digest_mail",
+    "digest-market": "digest_market",
+    "profile-proactive": "proactive",
+    "profile-voice": "voice_settings",
+    "profile-agents": "agents",
+    "profile-org": "org",
+  };
+
+  // ---------- подсказки к функциям ----------
+
+  var SESSION_CARDS = 2; // карточек подсказок за сессию — не больше
+  var MAX_MARKERS = 2; // и тихих меток с Лео на кнопках
+  var cardsShown = 0;
+  var sessionSnoozed = {};
+  var hint = null; // {id, spot}
+  var markers = {}; // id → {el, target}
+  var scanTimer = 0;
+
+  var guiding = false; // идёт «Показать» — обычные подсказки молчат
+  var quietUntil = 0; // сразу после тура — дать осмотреться, без новых подсказок
+
+  function hintsEnabled() {
+    return !!(state && state.tour_done_at && !running && !guiding && Date.now() >= quietUntil);
+  }
+  // Что-то открыто поверх (окно, меню, лист) — подсказки не показываем.
+  function busy() {
+    if (document.querySelector(".ob-root:not(.ob-hint)")) return true;
+    if (document.querySelector('.modal-overlay:not(.hidden), .nl-sheet-overlay, .leo-prompt-overlay')) return true;
+    if (document.querySelector('[aria-expanded="true"][aria-haspopup="menu"]')) return true;
+    if (document.documentElement.classList.contains("actual-assistant-open")) return true;
+    return false;
+  }
+  function hintCandidates() {
+    var cat = catalogCache;
+    if (!cat) return [];
+    var seenAnchor = {};
+    return (cat.features || []).filter(function (f) {
+      if (!f.hint || isUsed(f.id) || sessionSnoozed[f.id]) return false;
+      if (seenAnchor[f.anchor]) return false; // у «+» три функции — по одной за раз
+      if (!visibleTarget(f.anchor)) return false;
+      seenAnchor[f.anchor] = 1;
+      return true;
+    });
+  }
+  function shownCount(id) {
+    return Number((state && state.hint_shown && state.hint_shown[id]) || 0);
+  }
+
+  function scheduleScan(ms) {
+    clearTimeout(scanTimer);
+    scanTimer = setTimeout(scan, ms == null ? 1200 : ms);
+  }
+
+  async function scan() {
+    if (!hintsEnabled()) return;
+    try {
+      await loadCatalog();
+    } catch (_) {
+      return;
+    }
+    Object.keys(markers).forEach(function (id) {
+      if (isUsed(id) || !document.body.contains(markers[id].target) || !visibleTarget(markers[id].anchor)) dropMarker(id);
+    });
+    if (hint || busy()) return;
+    var list = hintCandidates();
+    var fresh = list.filter(function (f) {
+      return shownCount(f.id) < 3;
+    });
+    if (fresh.length && cardsShown < SESSION_CARDS) return showHint(fresh[0]);
+    // Подсказку уже видели трижды — вместо карточки маленький Лео на кнопке.
+    list
+      .filter(function (f) {
+        return shownCount(f.id) >= 3 && !markers[f.id];
+      })
+      .slice(0, Math.max(0, MAX_MARKERS - Object.keys(markers).length))
+      .forEach(addMarker);
+  }
+
+  function showHint(f, opts) {
+    var el = visibleTarget(f.anchor);
+    if (!el) return;
+    closeHint();
+    if (!(opts && opts.fromMarker)) {
+      cardsShown++;
+      state.hint_shown = state.hint_shown || {};
+      state.hint_shown[f.id] = shownCount(f.id) + 1;
+      send("hint_shown", f.id);
+    }
+    dropMarker(f.id);
+    var spot = spotlight(el, {
+      dim: false,
+      cls: "ob-hint",
+      onLost: closeHint,
+      title: f.title,
+      text: f.hint,
+      actions: [
+        {
+          label: "Позже",
+          kind: "link",
+          onClick: function () {
+            sessionSnoozed[f.id] = 1;
+            send("snooze", f.id);
+            closeHint();
+          },
+        },
+        {
+          label: "Попробовать",
+          kind: "primary",
+          onClick: function () {
+            closeHint();
+            tryFeature(f);
+          },
+        },
+      ],
+    });
+    hint = { id: f.id, spot: spot };
+  }
+  function closeHint() {
+    if (hint) hint.spot.close();
+    hint = null;
+  }
+
+  // «Попробовать»: нажать подсвеченную кнопку; у пунктов меню «+» — открыть меню и подсветить пункт.
+  async function tryFeature(f) {
+    var el = visibleTarget(f.anchor);
+    if (!el) return;
+    el.click();
+    if (f.menu_anchor) {
+      var item = await waitFor(f.menu_anchor, 1200);
+      if (item) item.focus();
+    }
+  }
+
+  function addMarker(f) {
+    var target = visibleTarget(f.anchor);
+    if (!target) return;
+    var m = document.createElement("button");
+    m.type = "button";
+    m.className = "ob-marker";
+    m.setAttribute("aria-label", "Подсказка: " + f.title);
+    m.innerHTML = leoAvatar("stand", 22);
+    m.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      showHint(f, { fromMarker: true });
+    });
+    document.body.appendChild(m);
+    markers[f.id] = { el: m, target: target, anchor: f.anchor };
+    placeMarkers();
+  }
+  function dropMarker(id) {
+    var m = markers[id];
+    if (!m) return;
+    unmount(m.el);
+    delete markers[id];
+  }
+  function placeMarkers() {
+    Object.keys(markers).forEach(function (id) {
+      var m = markers[id];
+      var r = m.target.getBoundingClientRect();
+      var hidden = !(r.width > 0 && r.height > 0) || busy();
+      m.el.style.display = hidden ? "none" : "";
+      m.el.style.left = Math.min(window.innerWidth - 26, r.right - 12) + "px";
+      m.el.style.top = Math.max(2, r.top - 16) + "px";
+    });
+    if (Object.keys(markers).length) requestAnimationFrame(placeMarkers);
+  }
+
+  document.addEventListener(
+    "click",
+    function (e) {
+      var t = e.target && e.target.closest && e.target.closest("[data-tour]");
+      if (t && CLICK_USES[t.getAttribute("data-tour")]) used(CLICK_USES[t.getAttribute("data-tour")]);
+      // Сменился экран, открылась заметка, закрылось окно — посмотреть, что подсказать.
+      if (!(e.target && e.target.closest && e.target.closest(".ob-root, .ob-marker"))) scheduleScan();
+    },
+    true
+  );
+
+  // ---------- «Показать» (из Лео, из Профиля, по ссылке ?guide=) ----------
+
+  async function openRoute(f) {
+    var r = f.route || {};
+    if (r.tab && app().setTab) app().setTab(r.tab, { noAnim: true });
+    if (r.tab === "profile" && app().profileScreen) app().profileScreen("main");
+    if (r.subtab) {
+      var sub = document.querySelector('#panel-notes .subtab-btn[data-subtab="' + r.subtab + '"]');
+      if (sub) sub.click();
+    }
+    await new Promise(function (res) {
+      setTimeout(res, 350);
+    });
+  }
+
+  async function show(id) {
+    var cat = await loadCatalog();
+    var f = (cat.features || []).filter(function (x) {
+      return x.id === id;
+    })[0];
+    if (!f) return;
+    closeHint();
+    guiding = true;
+    var el = visibleTarget(f.anchor);
+    if (!el) {
+      await openRoute(f);
+      el = await waitFor(f.anchor, 1500);
+    }
+    var text = f.hint || f.summary;
+    if (!el && f.route && f.route.needs === "note") {
+      // Кнопка живёт внутри заметки: показать, где её создать или открыть.
+      el = await waitFor("notes-create", 800);
+      text = "Откройте любую заметку — " + f.where.split("→").slice(-2).join("→").trim() + ". Или создайте новую здесь.";
+    }
+    if (!el) {
+      guiding = false;
+      if (app().toast) app().toast(f.title + ": " + f.where);
+      return;
+    }
+    closeHint();
+    if (f.open_menu && f.menu_anchor) {
+      setMenuOpen(f.open_menu, true);
+      el = (await waitFor(f.menu_anchor, 1200)) || el;
+    }
+    var spot = spotlight(el, {
+      modal: true,
+      title: f.title,
+      text: text,
+      actions: [
+        {
+          label: "Понятно",
+          kind: "primary",
+          onClick: function () {
+            spot.close();
+            guiding = false;
+            if (f.open_menu) setMenuOpen(f.open_menu, false);
+          },
+        },
+      ],
+    });
+  }
+
+  // ---------- Профиль → «Как пользоваться Орбитой» ----------
+
+  async function renderHowto() {
+    var root = document.getElementById("howto-root");
+    if (!root) return;
+    var cat;
+    try {
+      cat = await loadCatalog();
+    } catch (_) {
+      root.innerHTML = '<p class="pf-hint">Не получилось загрузить список</p>';
+      return;
+    }
+    var feats = (cat.features || []).filter(function (f) {
+      return f.hint;
+    });
+    var done = feats.filter(function (f) {
+      return isUsed(f.id);
+    }).length;
+    var html =
+      '<div class="pf-list"><div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text">' +
+      '<span class="pf-row-title">Освоено ' + done + " из " + feats.length + "</span>" +
+      '<span class="pf-row-sub">Спросите Лео «где…» или «как…» — он объяснит и покажет</span></span>' +
+      '<button type="button" class="pf-link" data-howto-tour>Пройти тур</button></span></div></div>';
+    var sections = [];
+    feats.forEach(function (f) {
+      if (sections.indexOf(f.section) < 0) sections.push(f.section);
+    });
+    sections.forEach(function (sec) {
+      html += '<div class="pf-group"><p class="pf-group-title">' + esc(sec) + '</p><div class="pf-list">';
+      feats
+        .filter(function (f) {
+          return f.section === sec;
+        })
+        .forEach(function (f) {
+          var ok = isUsed(f.id);
+          html +=
+            '<div class="pf-row pf-row--static ob-howto-row' + (ok ? " is-done" : "") + '">' +
+            '<span class="ob-howto-mark" aria-label="' + (ok ? "Освоено" : "Ещё не пробовали") + '">' + (ok ? "✓" : "") + "</span>" +
+            '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(f.title) + "</span>" +
+            '<span class="pf-row-sub">' + esc(f.summary) + "</span></span>" +
+            '<button type="button" class="pf-link" data-howto-show="' + esc(f.id) + '">Показать</button></span></div>';
+        });
+      html += "</div></div>";
+    });
+    root.innerHTML = html;
+    var hintEl = document.getElementById("profile-howto-hint");
+    if (hintEl) hintEl.textContent = "Освоено " + done + " из " + feats.length + " · Лео покажет каждую";
+  }
+
+  function bindHowto() {
+    var open = document.getElementById("profile-howto-open");
+    if (!open || open.dataset.bound) return;
+    open.dataset.bound = "1";
+    open.addEventListener("click", function () {
+      if (app().profileScreen) app().profileScreen("howto");
+      renderHowto();
+    });
+    var back = document.getElementById("profile-howto-back");
+    if (back)
+      back.addEventListener("click", function () {
+        if (app().profileScreen) app().profileScreen("main");
+      });
+    var root = document.getElementById("howto-root");
+    if (root)
+      root.addEventListener("click", function (e) {
+        var b = e.target.closest("[data-howto-show]");
+        if (b) return show(b.getAttribute("data-howto-show"));
+        if (e.target.closest("[data-howto-tour]")) {
+          state.tour_done_at = null;
+          start();
+        }
+      });
+  }
+
   // ---------- запуск ----------
 
-  async function start(opts) {
+  async function start() {
     if (running || !state) return;
     running = true;
     try {
@@ -589,12 +981,16 @@
         await send("intro_done");
       }
       if (!state.team_step_done_at) await runTeam(cat);
-      if (!state.tour_done_at) await runTour(cat);
+      if (!state.tour_done_at) {
+        await runTour(cat);
+        quietUntil = Date.now() + 45000;
+      }
     } catch (e) {
       console.error("onboarding", e);
     } finally {
       running = false;
     }
+    scheduleScan(2000);
   }
 
   /** Из app.js после /me. Новый пользователь проходит интро → команда → тур; по диплинку — в следующий раз. */
@@ -602,8 +998,31 @@
     if (!me || !me.onboarding) return;
     state = me.onboarding;
     bindReset();
+    bindHowto();
+    // ?guide=<id> — «Показать в приложении» из ответа Лео в Telegram.
+    var guide = takeGuideParam();
+    if (guide) {
+      setTimeout(function () {
+        show(guide);
+      }, 900);
+      return;
+    }
     if (opts && opts.deepLink) return;
     if (!state.tour_done_at) start();
+    else scheduleScan(2500);
+  }
+
+  function takeGuideParam() {
+    try {
+      var u = new URL(location.href);
+      var g = u.searchParams.get("guide");
+      if (!g) return "";
+      u.searchParams.delete("guide");
+      history.replaceState(history.state, "", u.pathname + u.search + u.hash);
+      return g;
+    } catch (_) {
+      return "";
+    }
   }
 
   /** Состояние пришло с другого устройства (prefs.changed). */
@@ -646,6 +1065,10 @@
     leoAvatar: leoAvatar,
     pointDir: pointDir,
     spotlight: spotlight,
+    onApi: onApi,
+    used: used,
+    show: show,
+    scan: scan,
   };
   var pending = window.__leoOnboardingPending;
   if (pending) {

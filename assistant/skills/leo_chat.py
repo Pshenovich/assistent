@@ -97,6 +97,10 @@ def _save_turn(
     body = text.strip()
     if not body:
         return
+    if not gpt:
+        from assistant.onboarding import state as ob_state
+
+        ob_state.mark_used(uid, "telegram")  # подсказка «Лео в Telegram» в приложении больше не нужна
     try:
         if gpt:
             share_comments.add_comment(
@@ -170,6 +174,8 @@ def action_keyboard(actions: list[dict[str, Any]]) -> InlineKeyboardMarkup | Non
             if a.get("link"):
                 row.append(InlineKeyboardButton("Открыть", url=str(a["link"])))
             rows.append(row)
+        elif kind == "guide" and a.get("link"):
+            rows.append([InlineKeyboardButton(_btn_label("👀 Показать в приложении:", a), url=str(a["link"]))])
         elif a.get("link"):
             rows.append([InlineKeyboardButton(_btn_label("📅", a), url=str(a["link"]))])
     return InlineKeyboardMarkup(rows) if rows else None

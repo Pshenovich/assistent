@@ -6127,10 +6127,18 @@
       window.__miniappDevMock &&
       typeof window.__miniappDevMock.handle === "function"
     ) {
-      return window.__miniappDevMock.handle(path, opts, apiFetchReal);
+      return noteOnboardingUse(path, opts, await window.__miniappDevMock.handle(path, opts, apiFetchReal));
     }
     var res = await apiFetchReal(path, opts);
     noteFocusSourceChanged(path, opts);
+    return noteOnboardingUse(path, opts, res);
+  }
+
+  // Онбординг: успешный запрос = функцией воспользовались (подсказка к ней больше не нужна).
+  function noteOnboardingUse(path, opts, res) {
+    try {
+      if (window.LeoOnboarding) window.LeoOnboarding.onApi(path, opts, res);
+    } catch (_) {}
     return res;
   }
 
@@ -32560,6 +32568,12 @@
   async function openCalendarRef(ref) {
     if (!ref || !ref.id) return;
     try {
+      if (ref.type === "guide") {
+        // «Показать» из ответа Лео: закрыть чат, открыть экран функции и подсветить кнопку.
+        closeChatsForGuide();
+        if (window.LeoOnboarding) window.LeoOnboarding.show(String(ref.id));
+        return;
+      }
       if (ref.type === "task") {
         openTaskFromChip(String(ref.id).replace(/^task-/, ""));
         return;
@@ -32705,6 +32719,42 @@
       });
   }
 
+  // На телефоне чат с Лео закрывает весь экран — убрать, чтобы было видно подсветку; на компьютере он сбоку.
+  function closeChatsForGuide() {
+    var ov = document.getElementById("note-discussion-overlay");
+    if (!isDesktopLayout() && ov && !ov.classList.contains("hidden")) closeNoteDiscussion(true);
+  }
+
+  // Лео ответил «где это» (app_help) — карточка функции с кнопкой «Показать»: экран + подсветка кнопки.
+  function renderGuideCard(a) {
+    var row = document.createElement("div");
+    row.className = "note-discuss-cal-item ob-guide-card";
+    var info = document.createElement("div");
+    info.className = "note-discuss-cal-info";
+    if (window.LeoOnboarding) info.innerHTML = window.LeoOnboarding.leoAvatar("point-right", 28);
+    var t = document.createElement("span");
+    var b = document.createElement("b");
+    b.textContent = a.title || "Функция";
+    t.appendChild(b);
+    if (a.detail) t.appendChild(document.createTextNode(" · " + a.detail));
+    info.appendChild(t);
+    row.appendChild(info);
+    var acts = document.createElement("div");
+    acts.className = "note-discuss-edits-actions";
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "note-discuss-edits-btn";
+    btn.textContent = "Показать";
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      openCalendarRef(a.open);
+    });
+    acts.appendChild(btn);
+    row.appendChild(acts);
+    return row;
+  }
+
   function appendCalendarActions(bubble, ids) {
     if (!ids || !ids.length) return;
     var missing = ids.filter(function (id) {
@@ -32728,6 +32778,10 @@
         var cardState = calCardUiFor(a.open);
         if (cardState && cardState.deleted) return;
         box.appendChild(renderCalInfoCard(a));
+        return;
+      }
+      if (a.kind === "guide") {
+        box.appendChild(renderGuideCard(a));
         return;
       }
       if (a.kind === "slot" && a.status === "dismissed") return;

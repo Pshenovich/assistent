@@ -349,6 +349,48 @@ html[data-theme="light"] {
   align-items: center;
   margin-top: 10px;
 }
+.ob-card-foot > :only-child {
+  margin-left: auto;
+}
+.ob-hole.is-ring {
+  box-shadow: none;
+}
+.ob-hint .ob-card {
+  width: min(320px, calc(100vw - 20px));
+}
+/* метка «Лео стоит на кнопке» — подсказку видели трижды */
+.ob-marker {
+  position: fixed;
+  z-index: 880;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+/* Профиль → «Как пользоваться Орбитой» */
+.ob-howto-mark {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-right: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--overlay-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--on-accent);
+}
+.ob-howto-row.is-done .ob-howto-mark {
+  background: var(--leo-body);
+  border-color: var(--leo-body);
+}
+.ob-howto-row .pf-row-body {
+  align-items: center;
+}
+
 /* Лео сидит на верхнем крае карточки, со стороны элемента */
 .ob-card-leo {
   position: absolute;

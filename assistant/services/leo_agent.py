@@ -41,6 +41,9 @@ def calendar_addon(uid: int) -> str:
         )
     if mail_tools.has_mail(uid):
         cal_addon += "\n" + mail_tools.MAIL_ADDON
+    from assistant.onboarding import leo_help
+
+    cal_addon += "\n\n" + leo_help.system_addon()
     return cal_addon
 
 

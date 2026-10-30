@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import sys
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
@@ -144,6 +145,10 @@ def public_action(a: dict[str, Any], *, viewer_uid: int | None = None) -> dict[s
         open_ref = {"type": "event", "id": res.get("event_id"), "date": res.get("date"), "calendar_id": res.get("calendar_id")}
     elif res.get("task_id") and a.get("status") == "done":
         open_ref = {"type": "task", "id": res.get("task_id")}
+    elif kind == "guide":
+        from assistant.onboarding import leo_help
+
+        open_ref = leo_help.guide_open_ref(p)
     link = ""
     ev_id = str((open_ref or {}).get("id") or res.get("event_id") or "").strip()
     if (open_ref or {}).get("type") == "event" and ev_id:
@@ -152,6 +157,10 @@ def public_action(a: dict[str, Any], *, viewer_uid: int | None = None) -> dict[s
             calendar_id=str((open_ref or {}).get("calendar_id") or res.get("calendar_id") or "primary"),
             day=str((open_ref or {}).get("date") or res.get("date") or "")[:10] or None,
         )
+    if kind == "guide":
+        from assistant.onboarding import leo_help
+
+        link = leo_help.guide_link(str(p.get("feature") or ""))
     out = {
         "id": a["id"],
         "kind": kind,
@@ -2056,3 +2065,6 @@ def active_tools(uid: Optional[int] = None) -> list[dict[str, Any]]:
 
 
 from assistant.services import mail_tools as _mail_tools  # noqa: E402,F401 — регистрирует mail_* в TOOLS/EXECUTORS
+from assistant.onboarding import leo_help as _leo_help  # noqa: E402
+
+_leo_help.register(sys.modules[__name__])  # app_help — справка по Орбите с кнопкой «Показать»

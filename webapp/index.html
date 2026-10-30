@@ -725,6 +725,15 @@
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </button>
+                <button type="button" class="pf-row" id="profile-howto-open" data-tour="profile-howto">
+                  <span class="pf-ico pf-ico--violet" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6" /><path d="M12 17h.01" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Как пользоваться Орбитой</span><span class="pf-row-sub" id="profile-howto-hint">Все функции — Лео покажет каждую</span></span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </button>
                 <button type="button" class="pf-row" id="profile-org-open" data-tour="profile-org">
                   <span class="pf-ico pf-ico--blue" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="M3 21h18" /><path d="M5 21V7l7-4 7 4v14" /><path d="M9 9h1M14 9h1M9 13h1M14 13h1M10 21v-4h4v4" /></svg>
@@ -967,6 +976,17 @@
               </div>
               <p class="error hidden" id="expenses-err"></p>
             </div>
+          </div>
+        </div>
+
+        <div id="profile-howto" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-howto-back">← Назад</button>
+            <span class="detail-title">Как пользоваться Орбитой</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body">
+            <div class="pf-screen-body" id="howto-root"></div>
           </div>
         </div>
 
@@ -2426,7 +2446,7 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20261030-onb1"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20261030-onb2"><\/script>'
         );
       }
     })();

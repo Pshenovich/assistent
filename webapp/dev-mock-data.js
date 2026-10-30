@@ -1167,6 +1167,16 @@
       if (b.kind === "snooze") mockOnboarding.snoozed[b.feature] = now;
       return { ok: true, onboarding: JSON.parse(JSON.stringify(mockOnboarding)) };
     }
+    // Лео-гид: «где доска?» → ответ и карточка «Показать» (как app_help на сервере).
+    if (basePath === "/gpt/chat" && method === "POST") {
+      var q = String(JSON.parse((opts && opts.body) || "{}").message || "");
+      if (/где|как /i.test(q)) {
+        var ga = { id: "g" + Date.now().toString(16).slice(-8), kind: "guide", status: "done", title: "Доска", mine: true,
+          detail: "Сохранённое → заметка → «+» рядом с листами → «Доска»", open: { type: "guide", id: "board" }, link: "" };
+        mockMail.actions[ga.id] = ga;
+        return { answer: "Доска живёт внутри заметки: откройте заметку, нажмите «+» рядом с листами и выберите «Доска». Нажмите «Показать» — подсвечу, где это.", calendar_actions: [ga], model: "mock", model_label: "Мок" };
+      }
+    }
     if (basePath === "/orgs" && method === "GET") {
       return { ok: true, orgs: mockOrg ? [mockOrg] : [], current_id: mockOrg ? mockOrg.id : null, suggestions: [], my_domains: ["obuchat.me"] };
     }

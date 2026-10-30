@@ -5110,6 +5110,12 @@ def _onboarding_state(principal: _MiniappPrincipal) -> dict[str, Any] | None:
         return None
 
 
+def _onboarding_used(uid: int, feature: str) -> None:
+    from assistant.onboarding import state as ob_state
+
+    ob_state.mark_used(uid, feature)
+
+
 @miniapp_router.get("/onboarding/catalog")
 async def miniapp_onboarding_catalog(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
     """Каталог функций для тура и подсказок (общий с Лео)."""
@@ -7010,6 +7016,7 @@ async def miniapp_orgs_create(
     uid = int(principal.telegram_user_id)
     org = await _org_call(orgs_store.create_org, uid, body.name, slug=body.slug, domain=body.domain)
     await _org_call(orgs_store.set_current_org, uid, org["id"])
+    await run_in_threadpool(_onboarding_used, uid, "org")
     return await _org_call(_org_detail, uid, org["id"])
 
 
@@ -7049,6 +7056,7 @@ async def miniapp_orgs_invite_accept(
     uid = int(principal.telegram_user_id)
     org = await _org_call(orgs_store.accept_invite, uid, token)
     await _org_call(orgs_store.set_current_org, uid, org["id"])
+    await run_in_threadpool(_onboarding_used, uid, "org")
     await run_in_threadpool(_org_sync_contacts, org["id"])
     return await _org_call(_org_detail, uid, org["id"])
 
@@ -7341,6 +7349,7 @@ async def miniapp_orgs_join(org_id: int, principal: _MiniappPrincipal = Depends(
     if status == "active":
         await _org_call(orgs_store.set_current_org, uid, org_id)
         await run_in_threadpool(_org_sync_contacts, org_id)
+        await run_in_threadpool(_onboarding_used, uid, "org")
     return {**(await _org_call(_org_overview, uid)), "status": status}
 
 
