@@ -49,6 +49,21 @@ critical — только то, что требует внимания руко�
 Не больше 3. Если ничего срочного — {"alerts":[]}."""
 
 
+# Вариант «один разбор на чат» (пока только на стенде scripts/eval_chat_alerts.py):
+# модель смотрит чат без «Я», а «моё ли это сообщение» и «отвечал ли я после» код
+# проверяет в verify отдельно для каждого участника.
+SYSTEM_SHARED = SYSTEM.replace(
+    "Ты следишь за рабочими чатами руководителя и решаешь, надо ли СРОЧНО его побеспокоить.",
+    "Ты следишь за рабочим чатом и решаешь, надо ли СРОЧНО побеспокоить руководителей, которые в нём состоят.",
+).replace(
+    "сообщения самого руководителя помечены «Я»,\n",
+    "",
+).replace(
+    "требует внимания руководителя",
+    "требует внимания руководителей",
+)
+
+
 def enabled() -> bool:
     return os.getenv("CHAT_ALERTS_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
 
@@ -186,8 +201,8 @@ def message_url(chat_id: int, thread_id: Optional[int], msg: int) -> str:
     return f"https://t.me/c/{s[4:]}/{int(msg)}"
 
 
-def _who(uid: int, m: dict[str, Any]) -> str:
-    if m.get("user_id") is not None and int(m["user_id"]) == int(uid):
+def _who(uid: Optional[int], m: dict[str, Any]) -> str:
+    if uid is not None and m.get("user_id") is not None and int(m["user_id"]) == int(uid):
         return "Я"
     name = str(m.get("display_name") or "").strip() or (f"@{m['username']}" if m.get("username") else "кто-то")
     return name + " (бот)" if _is_auto(m) else name
@@ -208,7 +223,7 @@ def _humans_in_topic(chat_id: int, tid: int, new: list[dict[str, Any]]) -> set[i
     return {int(m["user_id"]) for m in ctx + mine if m.get("user_id") is not None and not _is_auto(m)}
 
 
-def _line(uid: int, m: dict[str, Any], *, new: bool) -> str:
+def _line(uid: Optional[int], m: dict[str, Any], *, new: bool) -> str:
     text = str(m.get("text") or "").strip()
     if not text:
         return ""
@@ -217,8 +232,11 @@ def _line(uid: int, m: dict[str, Any], *, new: bool) -> str:
     return f"{mark}#{m.get('message_id')} [{ts[11:16]}] {_who(uid, m)}: {text[:700]}"
 
 
-def build_transcript(uid: int, chat_id: int, new: list[dict[str, Any]], *, budget: int = MAX_TEXT) -> str:
-    """Новые сообщения по топикам, перед каждыми — хвост этого топика для контекста."""
+def build_transcript(uid: Optional[int], chat_id: int, new: list[dict[str, Any]], *, budget: int = MAX_TEXT) -> str:
+    """Новые сообщения по топикам, перед каждыми — хвост этого топика для контекста.
+
+    uid=None — общий разбор чата на всех: никто не помечен «Я», у всех настоящие имена.
+    """
     names = digest_store.topic_names(int(chat_id))
     order: list[Optional[int]] = []
     by: dict[Optional[int], list[dict[str, Any]]] = {}
