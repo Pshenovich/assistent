@@ -9206,7 +9206,25 @@ async def miniapp_gpt_chat(
                 uid, query, note_ids=kb_ids if body.knowledge_note_ids is not None else None
             )
         attached_notes = pack_attached_notes(uid, body.context_note_ids)
+        from assistant.integrations.openrouter_client import model_emits_images as _emits_images
+        from assistant.nlu import auto_model
+
+        # «Авто»: модель под вопрос (простой общий — дешёвая, остальное — сильная).
+        call_model, auto_hint = auto_model.resolve(
+            run_model,
+            q,
+            user_id=uid,
+            in_note=kind == "local",
+            history=hist,
+            quote=(body.quote or "").strip(),
+            has_attachments=bool(images or files or link_notes),
+        )
+        calendar_tools_on = not _emits_images(call_model or "")
+        # Порядок ради кэша подсказки: сначала то, что не меняется от вопроса к вопросу (инструкции Лео,
+        # правила календаря), потом то, что зависит от заметки и вопроса; время — в конце вопроса.
         system_text = leo_agent.gpt_system_text(agent)
+        if calendar_tools_on:
+            system_text = leo_agent.append_system(system_text, leo_agent.calendar_addon(uid))
         if kind in ("local", "chat") and iid:
             owner_for_hint = _resolve_item_owner(str(uid), kind, iid)
             if owner_for_hint:
@@ -9283,7 +9301,6 @@ async def miniapp_gpt_chat(
                             open_board_id, str(board_sheet.get("title") or ""), board_sheet.get("body") or ""
                         )
                     ).strip()
-        from assistant.integrations.openrouter_client import model_emits_images as _emits_images
 
         def board_intent_text(text: str) -> str:
             # Просьба нарисовать доску — не повод генерировать картинку.
@@ -9291,22 +9308,7 @@ async def miniapp_gpt_chat(
 
             return "" if board_ai_lib.looks_like_board_request(text) else text
 
-        from assistant.nlu import auto_model
-
-        # «Авто»: модель под вопрос (простой общий — дешёвая, остальное — сильная).
-        call_model, auto_hint = auto_model.resolve(
-            run_model,
-            q,
-            user_id=uid,
-            in_note=kind == "local",
-            history=hist,
-            quote=(body.quote or "").strip(),
-            has_attachments=bool(images or files or link_notes),
-        )
         system_text = leo_agent.append_system(system_text, auto_hint)
-        calendar_tools_on = not _emits_images(call_model or "")
-        if calendar_tools_on:
-            system_text = leo_agent.append_system(system_text, leo_agent.calendar_addon(uid))
         meeting_line = _note_meeting_prompt_line(uid, kind, iid)
         if meeting_line:
             system_text = (str(system_text or "").rstrip() + "\n\n" + meeting_line).strip()
@@ -9317,7 +9319,7 @@ async def miniapp_gpt_chat(
                 telegram_username=tg_uname,
             )
             out = gpt_openrouter_answer_with_context(
-                prompt,
+                leo_agent.with_now(prompt, uid),
                 (body.context or "").strip(),
                 history=hist or None,
                 model=call_model,

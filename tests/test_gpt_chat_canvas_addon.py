@@ -126,3 +126,33 @@ def test_auto_model_picks_cheap_for_simple_and_strong_in_note(monkeypatch):
     post("local", str(note["id"]))
     assert seen[-1][0] == auto_model.strong_model()
     assert auto_model.CHEAP_HINT not in seen[-1][1]
+
+
+def test_time_goes_to_question_not_system(monkeypatch):
+    """Время меняется каждую минуту: в системной части оно ломало кэш подсказки — теперь в конце вопроса."""
+    from assistant.stores import chat_threads
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+    monkeypatch.setenv("CREDITS_ENFORCE", "0")
+    monkeypatch.delenv("MINIAPP_DEV_MODE", raising=False)
+    monkeypatch.setattr(access_gate, "miniapp_access_message", lambda **_: (True, ""))
+    seen: list[tuple[str, str]] = []
+
+    def fake_answer(question, context="", **kw):
+        seen.append((question, str(kw.get("system") or "")))
+        return {"answer": "Ок", "images": [], "model": "m"}
+
+    monkeypatch.setattr(miniapp_shims, "gpt_openrouter_answer_with_context", fake_answer)
+    uid = next(_ids)
+    thread = chat_threads.create_thread(uid, title="Ассистент")
+    client = TestClient(usage_server.app, raise_server_exceptions=False)
+    r = client.post(
+        "/api/miniapp/gpt/chat",
+        headers=_headers(uid),
+        json={"message": "что у меня завтра?", "model": "openai/gpt-5.5", "item_kind": "chat", "item_id": str(thread["id"])},
+    )
+    assert r.status_code == 200, r.text
+    question, system = seen[-1]
+    assert "Сейчас 20" not in system
+    assert question.startswith("что у меня завтра?") and "[Сейчас 20" in question
+    assert system.index("доступ к календарю") < len(system) // 2  # правила календаря — в начале, до переменных частей

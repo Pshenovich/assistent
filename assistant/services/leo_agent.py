@@ -30,9 +30,11 @@ def gpt_system_text(agent: dict[str, Any]) -> str:
 
 
 def calendar_addon(uid: int) -> str:
+    """Правила календаря, почты и справки — без текущего времени: оно меняется каждую минуту и ломало бы
+    кэш подсказки у моделей. Время идёт в конце вопроса — now_note()."""
     from assistant.services import mail_tools
 
-    cal_addon = gcal_tools.now_prompt_line(uid) + "\n" + gcal_tools.SYSTEM_ADDON
+    cal_addon = gcal_tools.SYSTEM_ADDON
     if not gcal_tools.has_google_calendar(uid):
         cal_addon += (
             "\nGoogle Календарь у пользователя не подключён — его календарь в Орбите: встречи Орбиты (id orb-…), "
@@ -45,6 +47,15 @@ def calendar_addon(uid: int) -> str:
 
     cal_addon += "\n\n" + leo_help.system_addon()
     return cal_addon
+
+
+def now_note(uid: int) -> str:
+    """Текущие дата и время пользователя — в конец сообщения (не в системную часть, см. calendar_addon)."""
+    return "[" + gcal_tools.now_prompt_line(uid) + "]"
+
+
+def with_now(prompt: str, uid: int) -> str:
+    return (str(prompt or "").rstrip() + "\n\n" + now_note(uid)).strip()
 
 
 def append_system(system_text: str, block: str) -> str:
@@ -256,20 +267,21 @@ def run_turn(
     from assistant.nlu import auto_model
 
     agent = user_agents.runtime_config(uid, "gpt")
-    system_text = append_system(gpt_system_text(agent), channel_hint)
+    system_text = gpt_system_text(agent)
     # «Авто»: простой общий вопрос — дешёвая модель, остальное — сильная.
     model, auto_hint = auto_model.resolve(
         model, text, user_id=uid, history=history, quote=context, has_attachments=bool(images)
     )
-    system_text = append_system(system_text, auto_hint)
     gcal_ctx = make_calendar_context(
         uid, telegram_username=telegram_username, display_name=display_name
     )
     kwargs: dict[str, Any] = {}
+    # Порядок ради кэша подсказки: сначала то, что не меняется от вопроса к вопросу, потом переменное.
     if not model_emits_images(model or ""):
         system_text = append_system(system_text, calendar_addon(uid))
         kwargs = tool_kwargs(gcal_ctx, text)
-    prompt = text.strip() or "Опиши вложение и ответь по нему."
+    system_text = append_system(append_system(system_text, channel_hint), auto_hint)
+    prompt = with_now(text.strip() or "Опиши вложение и ответь по нему.", uid)
     try:
         set_openrouter_usage_telegram_user(telegram_user_id=uid, telegram_username=telegram_username)
         out = gpt_openrouter_answer_with_context(

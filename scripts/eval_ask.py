@@ -410,14 +410,34 @@ def trim_history(history: list[dict[str, str]], question: str) -> list[dict[str,
 # ------------------------------------------------------------------ сборка запроса (как /gpt/chat и run_turn)
 
 
-def build_request(case: dict[str, Any], *, trim: bool | str) -> tuple[dict[str, Any], dict[str, int]]:
-    """trim: False — как сейчас; True/"full" — всё урезание; "canvas" — только инструкции презентаций и доски."""
+def _calendar_parts(uid: int) -> tuple[str, str]:
+    """(правила календаря без времени, строка «Сейчас …») — и для старого кода на сервере, где время внутри."""
+    from assistant.services import gpt_calendar_tools as g, leo_agent
+
+    now = g.now_prompt_line(uid)
+    cal = leo_agent.calendar_addon(uid)
+    if cal.startswith(now):
+        cal = cal[len(now):].lstrip("\n")
+    return cal, now
+
+
+def build_request(
+    case: dict[str, Any], *, trim: bool | str, order: str = "old"
+) -> tuple[dict[str, Any], dict[str, int]]:
+    """trim: False — как сейчас; True/"full" — всё урезание; "canvas" — только инструкции презентаций и доски.
+    order: "old" — время в начале правил календаря, они после добавок заметки; "cache" — как с 2026-10-30:
+    правила календаря сразу после инструкций Лео, время — в конце вопроса."""
     from assistant.lib import board_ai, note_edits, web_canvas
     from assistant.services import leo_agent
 
     uid = int(case["uid"])
     q = case["question"]
-    system = leo_agent.append_system(case["system_base"], case.get("channel_hint") or "")
+    cal, now = _calendar_parts(uid)
+    if order == "cache":
+        system = leo_agent.append_system(case["system_base"], cal)
+        system = leo_agent.append_system(system, case.get("channel_hint") or "")
+    else:
+        system = leo_agent.append_system(case["system_base"], case.get("channel_hint") or "")
     prompt = q
     parts: dict[str, int] = {}
     local = case["kind"] == "local"
@@ -440,9 +460,11 @@ def build_request(case: dict[str, Any], *, trim: bool | str) -> tuple[dict[str, 
             add = board_ai.system_addon()
             system = (system.rstrip() + "\n\n" + add).strip()
             parts["board_addon"] = len(add)
-    cal = leo_agent.calendar_addon(uid)
-    system = leo_agent.append_system(system, cal)
-    parts["calendar_addon"] = len(cal)
+    if order == "cache":
+        prompt = (prompt.rstrip() + "\n\n[" + now + "]").strip()
+    else:
+        system = leo_agent.append_system(system, now + "\n" + cal)
+    parts["calendar_addon"] = len(cal) + len(now)
     history = trim_history(case["history"], q) if full else list(case["history"])
     parts["history"] = sum(len(m["content"]) for m in history)
     parts["history_turns"] = len(history)
@@ -563,7 +585,7 @@ def run_arm(case: dict[str, Any], arm: str, model: str, *, trim: bool | str, cac
     _FROZEN.set(_parse_ts(case["asked_at"]))
     bucket: list[dict[str, Any]] = []
     _USAGE.set(bucket)
-    kw, parts = build_request(case, trim=trim)
+    kw, parts = build_request(case, trim=trim, order="cache" if arm.startswith("m2:") else "old")
     if arm.startswith("auto2"):
         kw["system"] = kw["system"].rstrip() + "\n\n" + CHEAP_HINT
     runner, calls = make_recorder(case, cache, cache_lock)
@@ -667,6 +689,8 @@ def cmd_run(a: argparse.Namespace) -> None:
                 jobs.append((c, arm, arm[6:], False))
             elif arm.startswith("m:"):  # та же полная подсказка, другая модель, на всех вопросах набора
                 jobs.append((c, arm, arm[2:], False))
+            elif arm.startswith("m2:") and (not a.only_actions or c["orig_actions"]):  # порядок ради кэша
+                jobs.append((c, arm, arm[3:], False))
             elif arm == "trimc" and c["kind"] == "local" and c.get("orig_model") and tg_leo_model_allowed(c["orig_model"]):
                 jobs.append((c, arm, c["orig_model"], "canvas"))
             elif arm == "probe" and c["id"] in probe_ids:
@@ -1006,6 +1030,7 @@ def main() -> None:
     r.add_argument("--probe", type=int, default=10, help="сколько «сложных» вопросов тоже дать дешёвой модели")
     r.add_argument("--trim-max", type=int, default=20)
     r.add_argument("--only", type=int, default=0)
+    r.add_argument("--only-actions", action="store_true", help="m2: только вопросы, где Лео тогда что-то сделал")
     r.add_argument("--workers", type=int, default=3)
     j = sub.add_parser("judge")
     j.add_argument("--judge-model", default=JUDGE_MODEL)
