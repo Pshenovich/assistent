@@ -81,6 +81,17 @@ def test_events_used_hint_snooze_and_steps():
     assert st["team_step_done_at"] and st["tour_done_at"]
 
 
+def test_screen_seen_and_existing_users_know_screens():
+    uid = next(_ids)
+    st = ob.apply_event(uid, "screen_seen", "saved")
+    assert "saved" in st["screens_seen"] and "note" not in st["screens_seen"]
+    with pytest.raises(ValueError):
+        ob.apply_event(uid, "screen_seen", "nope")
+    old = next(_ids)
+    notes_store.create_note(old, "Было", "")
+    assert {"saved", "note", "leo_chat", "profile"} <= set(ob.get_state(old)["screens_seen"])
+
+
 def test_unknown_event_or_feature_rejected():
     uid = next(_ids)
     with pytest.raises(ValueError):

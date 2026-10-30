@@ -38228,7 +38228,7 @@
 
   function notePaieReplyFormHtml() {
     return (
-      '<form id="note-paie-reply-form" class="note-paie-reply-form is-gpt-mode">' +
+      '<form id="note-paie-reply-form" class="note-paie-reply-form is-gpt-mode" data-tour="chat-compose">' +
       '<div class="note-paie-reply-target hidden">' +
       '<span class="note-paie-reply-target-bar" aria-hidden="true"></span>' +
       '<div class="note-paie-reply-target-copy">' +
@@ -38259,7 +38259,7 @@
       '<div id="note-paie-attach-preview" class="note-paie-attach-preview hidden"></div>' +
       // Верхняя строка: «+», кто отвечает, контекст — не сдвигают микрофон и отправку.
       '<div class="note-paie-toprow">' +
-      '<button type="button" class="note-paie-attach" id="note-paie-attach" aria-label="Добавить" title="Добавить" aria-haspopup="true" aria-expanded="false">' +
+      '<button type="button" class="note-paie-attach" id="note-paie-attach" data-tour="chat-attach" aria-label="Добавить" title="Добавить" aria-haspopup="true" aria-expanded="false">' +
       DISCUSS_ICONS.plus +
       "</button>" +
       '<div class="note-paie-composer-left">' +
@@ -38278,7 +38278,7 @@
       '<button type="button" class="note-paie-menu-item is-active" data-mode="gpt">Лео</button>' +
       '<button type="button" class="note-paie-menu-item" data-mode="research">Исследование</button>' +
       "</div>" +
-      '<button type="button" class="note-paie-model-btn" aria-haspopup="listbox" aria-expanded="false">' +
+      '<button type="button" class="note-paie-model-btn" data-tour="chat-model" aria-haspopup="listbox" aria-expanded="false">' +
       '<span class="note-paie-model-label">GPT-4.1</span>' +
       "</button>" +
       '<div class="note-paie-menu note-paie-menu--models hidden">' +
@@ -38304,7 +38304,7 @@
       '<div id="note-paie-reply-editor" class="note-paie-composer-input note-paie-composer-editor is-empty" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="' +
       noteAskPlaceholder("gpt") +
       '"></div>' +
-      '<button type="button" class="note-paie-mic" id="note-paie-mic" aria-label="Диктовать сообщение" title="Диктовка">' +
+      '<button type="button" class="note-paie-mic" id="note-paie-mic" data-tour="chat-mic" aria-label="Диктовать сообщение" title="Диктовка">' +
       DISCUSS_ICONS.mic +
       "</button>" +
       '<button type="submit" class="note-paie-send" id="note-paie-reply-submit" disabled aria-label="Отправить">' +

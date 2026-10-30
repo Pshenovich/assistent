@@ -1145,7 +1145,7 @@
   }
 
   // Онбординг: состояние в памяти (новичок — интро, команда, тур), каталог — тот же файл, что у сервера.
-  var mockOnboarding = { used: {}, hint_shown: {}, snoozed: {}, can_reset: true };
+  var mockOnboarding = { used: {}, hint_shown: {}, snoozed: {}, screens_seen: {}, can_reset: true };
   var mockOrg = null;
   function onboardingMock(basePath, method, opts) {
     if (basePath === "/onboarding/catalog") {
@@ -1154,7 +1154,7 @@
       });
     }
     if (basePath === "/onboarding/reset" && method === "POST") {
-      mockOnboarding = { used: {}, hint_shown: {}, snoozed: {}, can_reset: true, reset_at: Date.now() / 1000 };
+      mockOnboarding = { used: {}, hint_shown: {}, snoozed: {}, screens_seen: {}, can_reset: true, reset_at: Date.now() / 1000 };
       return { ok: true, onboarding: mockOnboarding };
     }
     if (basePath === "/onboarding/event" && method === "POST") {
@@ -1165,6 +1165,7 @@
       if (b.kind === "used") mockOnboarding.used[b.feature] = mockOnboarding.used[b.feature] || now;
       if (b.kind === "hint_shown") mockOnboarding.hint_shown[b.feature] = (mockOnboarding.hint_shown[b.feature] || 0) + 1;
       if (b.kind === "snooze") mockOnboarding.snoozed[b.feature] = now;
+      if (b.kind === "screen_seen") mockOnboarding.screens_seen[b.feature] = now;
       return { ok: true, onboarding: JSON.parse(JSON.stringify(mockOnboarding)) };
     }
     // Лео-гид: «где доска?» → ответ и карточка «Показать» (как app_help на сервере).
@@ -1203,6 +1204,11 @@
     var method = String((opts && opts.method) || "GET").toUpperCase();
     var basePath = String(path || "").split("?")[0];
     opts = Object.assign({}, opts || {}, { _path: path });
+    // app.localhost — живой локальный сервер: онбординг, /me и организации берём с него.
+    var liveHost = !/^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+    if (liveHost && (basePath === "/me" || basePath.indexOf("/onboarding/") === 0 || /^\/orgs/.test(basePath))) {
+      return realFetch(path, opts);
+    }
     var obRes = onboardingMock(basePath, method, opts);
     if (obRes !== undefined) return obRes;
 

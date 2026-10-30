@@ -16,6 +16,7 @@ def _anchors() -> set[str]:
     js = (WEB / "app.js").read_text(encoding="utf-8")
     found = set(re.findall(r'data-tour="([a-z0-9-]+)"', html))
     found |= set(re.findall(r'setAttribute\("data-tour", "([a-z0-9-]+)"\)', js))
+    found |= set(re.findall(r'data-tour="([a-z0-9-]+)"', js))  # в html-строках app.js
     return found
 
 
@@ -47,6 +48,16 @@ def test_every_anchor_exists_in_ui():
         assert f["anchor"] in anchors, f["id"]
         if f.get("menu_anchor"):
             assert f["menu_anchor"] in anchors, f["id"]
+
+
+def test_screen_intros_have_text_and_real_anchors():
+    anchors = _anchors()
+    screens = onboarding.catalog()["screens"]
+    assert {s["id"] for s in screens} >= {"saved", "note", "leo_chat", "digest", "knowledge", "profile"}
+    for sc in screens:
+        assert sc["title"] and sc["text"] and sc["anchors"], sc["id"]
+        for a in sc["anchors"]:
+            assert a in anchors, (sc["id"], a)
 
 
 def test_routes_point_to_real_tabs():

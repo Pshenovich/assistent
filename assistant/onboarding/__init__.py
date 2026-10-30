@@ -31,3 +31,8 @@ def get_feature(feature_id: str) -> dict[str, Any] | None:
 def hinted_ids() -> set[str]:
     """Функции с подсказкой в интерфейсе (остальные — только в знаниях Лео)."""
     return {str(f["id"]) for f in features() if f.get("hint")}
+
+
+def screen_ids() -> set[str]:
+    """Разделы со «знакомством» при первом открытии."""
+    return {str(s["id"]) for s in catalog().get("screens") or []}

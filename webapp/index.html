@@ -102,7 +102,7 @@
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
   <link rel="stylesheet" href="/webapp/styles.css?v=20261030-cred1" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261029-spktools" />
-  <link rel="stylesheet" href="/webapp/onboarding.css?v=20261030-onb2" />
+  <link rel="stylesheet" href="/webapp/onboarding.css?v=20261030-onb4" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261030-cred1" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
@@ -334,7 +334,7 @@
       <section id="panel-notes" class="panel hidden" role="tabpanel" hidden>
         <div id="notes-root">
           <div class="notes-subtabs-row">
-            <div class="subtab-bar" role="tablist" aria-label="Тип записей">
+            <div class="subtab-bar" role="tablist" aria-label="Тип записей" data-tour="saved-tabs">
               <button type="button" class="subtab-btn active" data-subtab="notes">Заметки</button>
               <button type="button" class="subtab-btn" data-subtab="chats" data-tour="subtab-chats">Чаты</button>
               <button type="button" class="subtab-btn" data-subtab="transcriptions" data-tour="subtab-transcriptions">Транскрипции</button>
@@ -487,7 +487,7 @@
             </button>
           </div>
           <div class="digest-subtabs-row">
-            <div class="subtab-bar" role="tablist" aria-label="Тип дайджеста">
+            <div class="subtab-bar" role="tablist" aria-label="Тип дайджеста" data-tour="digest-tabs">
               <button type="button" class="subtab-btn active" data-digest-subtab="chats" data-tour="digest-chats" role="tab" aria-selected="true">Чаты</button>
               <button type="button" class="subtab-btn hidden" data-digest-subtab="mail" data-tour="digest-mail" role="tab" aria-selected="false">Почта</button>
               <button type="button" class="subtab-btn" data-digest-subtab="market" data-tour="digest-market" role="tab" aria-selected="false">Рынок</button>
@@ -532,7 +532,7 @@
             <p class="muted lead lead-tight">Документы компании для ответов PAIE и Donatello</p>
           </div>
           <div class="pf-list knowledge-sources-entry">
-            <button type="button" class="pf-row" id="knowledge-sources-open">
+            <button type="button" class="pf-row" id="knowledge-sources-open" data-tour="knowledge-sources">
               <span class="pf-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></svg></span>
               <span class="pf-row-body">
                 <span class="pf-row-text"><span class="pf-row-title">Источники</span><span class="pf-row-sub">Google Docs, Notion, Яндекс Диск, Битрикс24</span></span>
@@ -1650,7 +1650,7 @@
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
             </span>
           </button>
-          <div class="sidebar-tree hidden" id="sidebar-tree-notes" role="group" aria-label="Сохранённое"></div>
+          <div class="sidebar-tree hidden" id="sidebar-tree-notes" data-tour="saved-tree" role="group" aria-label="Сохранённое"></div>
         </div>
         <div class="sidebar-nav-group sidebar-nav-group--digest hidden" data-sidebar-group="digest" hidden>
           <button type="button" class="tabbar-btn tabbar-btn--digest" data-tab="digest" role="tab" aria-selected="false">
@@ -1666,7 +1666,7 @@
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
             </span>
           </button>
-          <div class="sidebar-tree hidden" id="sidebar-tree-digest" role="group" aria-label="Дайджест"></div>
+          <div class="sidebar-tree hidden" id="sidebar-tree-digest" data-tour="digest-tree" role="group" aria-label="Дайджест"></div>
         </div>
         <button type="button" class="tabbar-btn tabbar-btn--knowledge" data-tab="knowledge" role="tab" aria-selected="false">
           <span class="tabbar-icon" aria-hidden="true">
@@ -2389,7 +2389,7 @@
               <path d="M12 2v13" />
             </svg>
           </button>
-          <button type="button" class="modal-header-btn" id="note-discussion-new-ctx" aria-label="Новый контекст GPT" title="Новый контекст GPT" aria-haspopup="menu" aria-expanded="false" aria-controls="note-chats-menu">
+          <button type="button" class="modal-header-btn" id="note-discussion-new-ctx" data-tour="chat-new" aria-label="Новый контекст GPT" title="Новый контекст GPT" aria-haspopup="menu" aria-expanded="false" aria-controls="note-chats-menu">
             <svg class="note-chats-icon-reset" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
               <path d="M3 3v5h5" />
@@ -2446,7 +2446,7 @@
           localStorage.setItem("miniapp_dev", "1");
         } catch (_) {}
         document.write(
-          '<script src="/webapp/dev-mock-data.js?v=20261030-onb2"><\/script>'
+          '<script src="/webapp/dev-mock-data.js?v=20261030-onb4"><\/script>'
         );
       }
     })();
@@ -2457,13 +2457,13 @@
   <script src="/webapp/note-yjs.js?v=20261029-spktools" defer></script>
   <script src="/webapp/board-geom.js?v=20261029-spktools" defer></script>
   <script src="/webapp/board.js?v=20261029-spktools" defer></script>
-  <script src="/webapp/app.js?v=20261030-gcal1" defer></script>
+  <script src="/webapp/app.js?v=20261030-onb4" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261023-reply1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261025-mobfix" defer></script>
   <script src="/webapp/digest-market.js?v=20261029-mktgen" defer></script>
   <script src="/webapp/org.js?v=20261030-cred1" defer></script>
-  <script src="/webapp/onboarding.js?v=20261030-onb3" defer></script>
+  <script src="/webapp/onboarding.js?v=20261030-onb4" defer></script>
   <script src="/webapp/contact-share.js?v=20261029-share" defer></script>
 </body>
 </html>

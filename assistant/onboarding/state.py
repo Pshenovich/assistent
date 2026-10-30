@@ -1,6 +1,7 @@
 """Состояние онбординга пользователя в user_prefs (ключ «onboarding»).
 
-{intro_done_at, team_step_done_at, tour_done_at, used: {feat: ts}, hint_shown: {feat: n}, snoozed: {feat: ts}, reset_at}
+{intro_done_at, team_step_done_at, tour_done_at, used: {feat: ts}, hint_shown: {feat: n}, snoozed: {feat: ts},
+ screens_seen: {screen: ts}, reset_at}
 """
 
 from __future__ import annotations
@@ -9,16 +10,17 @@ import os
 import time
 from typing import Any
 
-from assistant.onboarding import feature_ids
+from assistant.onboarding import feature_ids, screen_ids
 from assistant.stores import user_prefs
 
 KEY = "onboarding"
 STEP_FLAGS = ("intro_done_at", "team_step_done_at", "tour_done_at")
-EVENT_KINDS = ("used", "hint_shown", "snooze", "intro_done", "team_done", "tour_done")
+EVENT_KINDS = ("used", "hint_shown", "snooze", "screen_seen", "intro_done", "team_done", "tour_done")
+MAPS = ("used", "hint_shown", "snoozed", "screens_seen")
 
 
 def _blank() -> dict[str, Any]:
-    return {"used": {}, "hint_shown": {}, "snoozed": {}}
+    return {k: {} for k in MAPS}
 
 
 def _norm(raw: Any) -> dict[str, Any]:
@@ -27,7 +29,7 @@ def _norm(raw: Any) -> dict[str, Any]:
         for k in STEP_FLAGS + ("reset_at",):
             if raw.get(k):
                 st[k] = raw[k]
-        for k in ("used", "hint_shown", "snoozed"):
+        for k in MAPS:
             if isinstance(raw.get(k), dict):
                 st[k] = dict(raw[k])
     return st
@@ -75,6 +77,11 @@ def apply_event(user_id: int, kind: str, feature: str = "") -> dict[str, Any]:
             st["team_step_done_at"] = st.get("team_step_done_at") or now
         return _save(user_id, st)
     fid = str(feature or "").strip()
+    if kind == "screen_seen":
+        if fid not in screen_ids():
+            raise ValueError("unknown screen")
+        st["screens_seen"][fid] = st["screens_seen"].get(fid) or now
+        return _save(user_id, st)
     if fid not in feature_ids():
         raise ValueError("unknown feature")
     if kind == "used":

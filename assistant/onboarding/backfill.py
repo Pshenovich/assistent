@@ -141,8 +141,12 @@ def initial_state(user_id: int) -> dict[str, Any]:
     existing = bool(note_list or has_threads or has_tasks or calls > 0 or _try(_bot_onboarded, False))
 
     now = time.time()
-    st: dict[str, Any] = {"used": {f: now for f in sorted(used)}, "hint_shown": {}, "snoozed": {}}
+    st: dict[str, Any] = {"used": {f: now for f in sorted(used)}, "hint_shown": {}, "snoozed": {}, "screens_seen": {}}
     if existing:
+        from assistant.onboarding import screen_ids
+
         st["intro_done_at"] = st["team_step_done_at"] = st["tour_done_at"] = now
+        # Разделы им знакомы — знакомство не показываем, только подсказки к неосвоенному.
+        st["screens_seen"] = {s: now for s in sorted(screen_ids())}
         st["backfilled"] = True
     return st

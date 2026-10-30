@@ -660,13 +660,22 @@
     "profile-voice": "voice_settings",
     "profile-agents": "agents",
     "profile-org": "org",
+    "chat-model": "chat_model",
+    "chat-attach": "chat_attach",
+    "chat-mic": "chat_mic",
+    "chat-new": "chat_new",
+    "knowledge-sources": "knowledge",
   };
 
   // ---------- подсказки к функциям ----------
 
-  var SESSION_CARDS = 2; // карточек подсказок за сессию — не больше
+  // Не больше одной карточки на заход в раздел (знакомство или подсказка) и не больше SESSION_CARDS за сессию.
+  var SESSION_CARDS = 8;
   var MAX_MARKERS = 2; // и тихих меток с Лео на кнопках
   var cardsShown = 0;
+  var screenNow = "";
+  var screenCards = 0;
+  var introWaits = 0;
   var sessionSnoozed = {};
   var hint = null; // {id, spot}
   var markers = {}; // id → {el, target}
@@ -676,24 +685,71 @@
   var quietUntil = 0; // сразу после тура — дать осмотреться, без новых подсказок
 
   function hintsEnabled() {
-    return !!(state && state.tour_done_at && !running && !guiding && Date.now() >= quietUntil);
+    return !!(state && state.tour_done_at && !running && !guiding);
   }
-  // Что-то открыто поверх (окно, меню, лист) — подсказки не показываем.
+  // Что-то открыто поверх (окно, меню, лист) — подсказки не показываем. Заметка и чат с Лео — не помеха:
+  // это обычные экраны, подсказки показываются прямо в них.
   function busy() {
     if (document.querySelector(".ob-root:not(.ob-hint)")) return true;
-    if (document.querySelector('.modal-overlay:not(.hidden), .nl-sheet-overlay, .leo-prompt-overlay')) return true;
-    if (document.querySelector('[aria-expanded="true"][aria-haspopup="menu"]')) return true;
-    if (document.documentElement.classList.contains("actual-assistant-open")) return true;
+    if (document.querySelector(".modal-overlay:not(.hidden):not(#note-editor-overlay), .nl-sheet-overlay, .leo-prompt-overlay")) return true;
+    if (document.querySelector('[aria-expanded="true"][aria-haspopup="menu"], [aria-expanded="true"][aria-haspopup="listbox"]')) return true;
     return false;
   }
-  function hintCandidates() {
+  function shown(id) {
+    var el = document.getElementById(id);
+    return !!(el && !el.classList.contains("hidden") && el.getBoundingClientRect().width > 0);
+  }
+  // Какие разделы сейчас перед глазами. На компьютере рядом могут быть открыты список, заметка и чат —
+  // знакомства тогда идут по очереди: раздел → заметка → чат.
+  function visibleScreens() {
+    var out = [];
+    var tab = document.querySelector(".tabbar-btn.active[data-tab]");
+    var name = tab ? tab.getAttribute("data-tab") : "";
+    var note = shown("note-editor-overlay");
+    var chat = shown("note-discussion-overlay");
+    var tabUnder = !(note || chat) || isDesktop(); // на телефоне заметка и чат закрывают раздел целиком
+    if (tabUnder) {
+      if (name === "notes") out.push("saved");
+      else if (name === "profile") out.push(shown("profile-main") ? "profile" : "profile-sub");
+      else if (name) out.push(name);
+    }
+    if (note) out.push("note");
+    if (chat) out.push("leo_chat");
+    return out;
+  }
+  // Ключ «захода» для лимита подсказок: самый верхний слой.
+  function currentScreen() {
+    var list = visibleScreens();
+    return list[list.length - 1] || "";
+  }
+  // Элемент не закрыт другим слоем (у кнопки под открытой заметкой размер есть, но её не видно).
+  function onTop(el) {
+    var r = el.getBoundingClientRect();
+    var x = Math.min(window.innerWidth - 1, Math.max(0, r.left + r.width / 2));
+    var y = Math.min(window.innerHeight - 1, Math.max(0, r.top + Math.min(r.height / 2, 20)));
+    var top = document.elementFromPoint(x, y);
+    return !!top && (top === el || el.contains(top) || !!(top.closest && top.closest(".ob-root, .ob-marker")));
+  }
+  // Подсказки — только к кнопкам текущего раздела: в заметке — её кнопки, в чате — кнопки чата.
+  var SCREEN_SCOPE = { note: "note-editor-overlay", leo_chat: "note-discussion-overlay" };
+  function inScope(el, scr) {
+    var scopeId = SCREEN_SCOPE[scr];
+    if (scopeId) return !!el.closest("#" + scopeId);
+    return !el.closest("#note-editor-overlay, #note-discussion-overlay");
+  }
+  function visibleOnTop(anchor, scr) {
+    var el = visibleTarget(anchor);
+    if (!el || !onTop(el)) return null;
+    return scr && !inScope(el, scr) ? null : el;
+  }
+  function hintCandidates(scr) {
     var cat = catalogCache;
     if (!cat) return [];
     var seenAnchor = {};
     return (cat.features || []).filter(function (f) {
       if (!f.hint || isUsed(f.id) || sessionSnoozed[f.id]) return false;
       if (seenAnchor[f.anchor]) return false; // у «+» три функции — по одной за раз
-      if (!visibleTarget(f.anchor)) return false;
+      if (!visibleOnTop(f.anchor, scr)) return false;
       seenAnchor[f.anchor] = 1;
       return true;
     });
@@ -718,11 +774,30 @@
       if (isUsed(id) || !document.body.contains(markers[id].target) || !visibleTarget(markers[id].anchor)) dropMarker(id);
     });
     if (hint || busy()) return;
-    var list = hintCandidates();
+    var scr = currentScreen();
+    if (scr !== screenNow) {
+      screenNow = scr;
+      screenCards = 0;
+      introWaits = 0;
+    }
+    if (cardsShown >= SESSION_CARDS) return;
+    // Первый заход в раздел — знакомство (без паузы после тура и без учёта освоенного).
+    var intro = null;
+    var shownScreens = visibleScreens();
+    for (var k = 0; k < shownScreens.length && !(intro && intro.el); k++) intro = screenIntro(shownScreens[k]) || intro;
+    if (intro && intro.el) return showScreenIntro(intro);
+    if (intro) {
+      // раздел открыт впервые, но его кнопки ещё грузятся — подождать их, а не подсказывать соседнее
+      if (introWaits++ < 15) scheduleScan(700);
+      return;
+    }
+    introWaits = 0;
+    if (screenCards > 0 || Date.now() < quietUntil) return;
+    var list = hintCandidates(scr);
     var fresh = list.filter(function (f) {
       return shownCount(f.id) < 3;
     });
-    if (fresh.length && cardsShown < SESSION_CARDS) return showHint(fresh[0]);
+    if (fresh.length) return showHint(fresh[0]);
     // Подсказку уже видели трижды — вместо карточки маленький Лео на кнопке.
     list
       .filter(function (f) {
@@ -738,6 +813,7 @@
     closeHint();
     if (!(opts && opts.fromMarker)) {
       cardsShown++;
+      screenCards++;
       state.hint_shown = state.hint_shown || {};
       state.hint_shown[f.id] = shownCount(f.id) + 1;
       send("hint_shown", f.id);
@@ -771,6 +847,38 @@
     });
     hint = { id: f.id, spot: spot };
   }
+  function screenIntro(scr) {
+    var seen = (state && state.screens_seen) || {};
+    var list = (catalogCache && catalogCache.screens) || [];
+    for (var i = 0; i < list.length; i++) {
+      var sc = list[i];
+      if (sc.id !== scr || seen[sc.id]) continue;
+      for (var j = 0; j < sc.anchors.length; j++) {
+        var el = visibleOnTop(sc.anchors[j], scr);
+        if (el) return { sc: sc, el: el };
+      }
+      return { sc: sc, el: null };
+    }
+    return null;
+  }
+
+  function showScreenIntro(it) {
+    closeHint();
+    cardsShown++;
+    state.screens_seen = state.screens_seen || {};
+    state.screens_seen[it.sc.id] = Date.now() / 1000;
+    send("screen_seen", it.sc.id);
+    var spot = spotlight(it.el, {
+      dim: false,
+      cls: "ob-hint",
+      onLost: closeHint,
+      title: it.sc.title,
+      text: it.sc.text,
+      actions: [{ label: "Понятно", kind: "primary", onClick: closeHint }],
+    });
+    hint = { id: "screen:" + it.sc.id, spot: spot };
+  }
+
   function closeHint() {
     if (hint) hint.spot.close();
     hint = null;
@@ -822,6 +930,11 @@
     if (Object.keys(markers).length) requestAnimationFrame(placeMarkers);
   }
 
+  // Экран мог смениться и без клика (диплинк, медленная загрузка заметки) — тихая проверка раз в пару секунд.
+  setInterval(function () {
+    if (!document.hidden && !hint && hintsEnabled()) scan();
+  }, 2500);
+
   document.addEventListener(
     "click",
     function (e) {
@@ -837,6 +950,17 @@
 
   async function openRoute(f) {
     var r = f.route || {};
+    if (r.needs === "chat") {
+      // чат с Лео: «+» на Актуальном → «Лео»
+      if (app().setTab) app().setTab("actual", { noAnim: true });
+      setMenuOpen("create", true);
+      var item = await waitFor("create-leo", 1200);
+      if (item) item.click();
+      await new Promise(function (res) {
+        setTimeout(res, 700);
+      });
+      return;
+    }
     if (r.tab && app().setTab) app().setTab(r.tab, { noAnim: true });
     if (r.tab === "profile" && app().profileScreen) app().profileScreen("main");
     if (r.subtab) {
@@ -1067,6 +1191,11 @@
     spotlight: spotlight,
     onApi: onApi,
     used: used,
+    // для отладки в консоли: почему подсказка не показалась
+    debug: function () {
+      return { running: running, guiding: guiding, hint: hint && hint.id, screen: currentScreen(), screenNow: screenNow,
+        screenCards: screenCards, cardsShown: cardsShown, quietLeftMs: Math.max(0, quietUntil - Date.now()), busy: busy() };
+    },
     show: show,
     scan: scan,
   };
