@@ -87,6 +87,7 @@ def _conn() -> sqlite3.Connection:
     _ensure_assignee_state_columns(_CONN)
     _ensure_outcome_columns(_CONN)
     _ensure_parent_column(_CONN)
+    _migrate_checklists(_CONN)
     _CONN.execute(
         """
         CREATE TABLE IF NOT EXISTS task_events (
@@ -163,6 +164,12 @@ def _ensure_outcome_columns(conn: sqlite3.Connection) -> None:
 
 # Подзадачи: задача → подзадача → под-подзадача. Глубже не вкладываем.
 MAX_SUBTASK_DEPTH = 2
+# Подзадача на того же исполнителя, что и общая задача, — пункт внутри неё (бывший чек-лист):
+# отдельно в календаре, «Входящих», «Задачах» и напоминаниях её нет.
+NOT_INLINE_SQL = (
+    "NOT (calendar_tasks.parent_id IS NOT NULL AND calendar_tasks.assignee_user_id = IFNULL("
+    "(SELECT p.assignee_user_id FROM calendar_tasks p WHERE p.id = calendar_tasks.parent_id), ''))"
+)
 
 
 def _ensure_parent_column(conn: sqlite3.Connection) -> None:
@@ -170,6 +177,64 @@ def _ensure_parent_column(conn: sqlite3.Connection) -> None:
     if "parent_id" not in cols:
         conn.execute("ALTER TABLE calendar_tasks ADD COLUMN parent_id INTEGER")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_calendar_tasks_parent ON calendar_tasks(parent_id)")
+
+
+def _checklist_rows(conn: sqlite3.Connection, parent: sqlite3.Row | dict[str, Any], items: list[dict[str, Any]]) -> int:
+    """Пункты чек-листа → подзадачи на того же исполнителя (внутри задачи, не в календаре)."""
+    now = _now_iso()
+    n = 0
+    for it in items:
+        text = _clip(str(it.get("text") or ""), 400)
+        if not text:
+            continue
+        done = bool(it.get("done"))
+        conn.execute(
+            """
+            INSERT INTO calendar_tasks (
+                owner_user_id, title, description, start_at, end_at,
+                assignee_user_id, assignee_email, assignee_name, checklist_json, note_id, done,
+                all_day, assignee_triage, done_at, parent_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                parent["owner_user_id"], text[:MAX_TITLE_LEN], text if len(text) > MAX_TITLE_LEN else "",
+                parent["start_at"], parent["end_at"], parent["assignee_user_id"], parent["assignee_email"],
+                parent["assignee_name"], parent["note_id"], 1 if done else 0, int(parent["all_day"] or 0),
+                str(parent["assignee_triage"] or ""), now if done else "", int(parent["id"]), now, now,
+            ),
+        )
+        n += 1
+    return n
+
+
+def _migrate_checklists(conn: sqlite3.Connection) -> None:
+    """Разово: чек-листы задач → подзадачи. Задача уже на втором уровне — чек-лист остаётся (глубже нельзя).
+
+    Бот и веб-сервер открывают базу одновременно: перенос под BEGIN IMMEDIATE, второй ждёт и уже
+    ничего не находит — пункты не задваиваются."""
+    if not conn.execute("SELECT 1 FROM calendar_tasks WHERE checklist_json NOT IN ('', '[]') LIMIT 1").fetchone():
+        return
+    conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    rows = conn.execute(
+        "SELECT * FROM calendar_tasks WHERE checklist_json NOT IN ('', '[]')"
+    ).fetchall()
+    moved = 0
+    for r in rows:
+        depth, pid = 0, r["parent_id"]
+        while pid and depth <= MAX_SUBTASK_DEPTH:
+            depth += 1
+            up = conn.execute("SELECT parent_id FROM calendar_tasks WHERE id = ?", (pid,)).fetchone()
+            pid = up["parent_id"] if up else None
+        if depth >= MAX_SUBTASK_DEPTH:
+            continue
+        items = _normalize_checklist(r["checklist_json"])
+        _checklist_rows(conn, r, items)
+        conn.execute("UPDATE calendar_tasks SET checklist_json = '[]' WHERE id = ?", (int(r["id"]),))
+        moved += 1
+    conn.commit()
+    if moved:
+        print(f"[calendar_tasks] checklists → subtasks: {moved} tasks")
 
 
 def _ensure_google_event_columns(conn: sqlite3.Connection) -> None:
@@ -398,6 +463,8 @@ def task_visible_in_calendar(task: dict[str, Any] | None, viewer_id: int | str) 
     assignee = str(task.get("assignee_user_id") or "")
     if not viewer:
         return False
+    if is_inline(task):
+        return False  # пункт внутри общей задачи
     if task_is_delegated(task) and viewer == owner:
         return False
     if task_is_delegated(task) and str(task.get("outcome") or "") == "cancelled":
@@ -697,8 +764,14 @@ def create_task(
                 now,
             ),
         )
-        _conn().commit()
         tid = int(cur.lastrowid)
+        if checklist:  # чек-листа у задач больше нет: пункты — подзадачами
+            row = _conn().execute("SELECT * FROM calendar_tasks WHERE id = ?", (tid,)).fetchone()
+            if _checklist_rows(_conn(), row, _normalize_checklist(checklist)):
+                _conn().execute("UPDATE calendar_tasks SET checklist_json = '[]' WHERE id = ?", (tid,))
+        _conn().commit()
+    if parent_id is not None:
+        _sync_inline_triage(tid)
     item = get_task(uid, tid)
     assert item is not None
     if parent_id is not None:
@@ -770,10 +843,35 @@ def subtask_tree(task_id: int | str, *, depth: int = MAX_SUBTASK_DEPTH) -> list[
     return out
 
 
+def is_inline(task: dict[str, Any] | None) -> bool:
+    """Подзадача на того же исполнителя, что и общая задача, — пункт внутри неё."""
+    if not task or not task.get("parent_id"):
+        return False
+    parent = _get_task_row(int(task["parent_id"]))
+    return bool(parent) and str(parent.get("assignee_user_id") or "") == str(task.get("assignee_user_id") or "")
+
+
+def _sync_inline_triage(task_id: int) -> None:
+    """Пункт внутри задачи разбирается вместе с ней: «Беру» по общей — взяты и её пункты."""
+    row = _get_task_row(int(task_id))
+    if not row or not is_inline(row):
+        return
+    parent = _get_task_row(int(row["parent_id"]))
+    want = str((parent or {}).get("assignee_triage") or "")
+    if str(row.get("assignee_triage") or "") != want:
+        with _LOCK:
+            _conn().execute("UPDATE calendar_tasks SET assignee_triage = ? WHERE id = ?", (want, int(row["id"])))
+            _conn().commit()
+    for k in list_subtasks(row["id"]):
+        _sync_inline_triage(int(k["id"]))
+
+
 def subtask_state(t: dict[str, Any]) -> str:
     """Короткий статус подзадачи для списка в общей задаче."""
     if t.get("done"):
         return "done"
+    if is_inline(t):  # пункт внутри задачи: разбор у общей
+        return "in_progress" if str(t.get("assignee_status") or "") == "in_progress" else "open"
     if task_is_delegated(t):
         triage = str(t.get("assignee_triage") or "")
         if triage == "declined":
@@ -848,6 +946,7 @@ def set_parent(
         _conn().commit()
     for pid in {old_pid, new_pid} - {None}:
         _parent_changed(int(pid), actor_user_id=user_id)
+    _sync_inline_triage(int(existing["id"]))
     if str(existing.get("note_id") or "").isdigit():
         _meeting_task_changed(int(existing["note_id"]))
     return _get_task_row(int(existing["id"]))
@@ -879,6 +978,7 @@ def link_parent(task_id: int | str, parent_id: int | str | None, *, actor_user_i
         _conn().commit()
     for pid in {old_pid, new_pid} - {None}:
         _parent_changed(int(pid), actor_user_id=actor_user_id)
+    _sync_inline_triage(int(row["id"]))
     return True
 
 
@@ -1024,6 +1124,7 @@ def list_tasks_in_window(
                 (IFNULL(recurrence, '') = '' AND start_at < ? AND end_at > ?)
                 OR (IFNULL(recurrence, '') != '' AND start_at < ? AND done = 0)
               )
+              AND """ + NOT_INLINE_SQL + """
             ORDER BY start_at ASC, id ASC
             """,
             (uid, uid, uid, _iso(end), _iso(start), _iso(end)),
@@ -1081,6 +1182,7 @@ def list_posted_tasks(
               AND assignee_user_id != owner_user_id
               AND (? = 1 OR done = 0)
               AND (? IS NULL OR IFNULL(owner_archived, 0) = ?)
+              AND """ + NOT_INLINE_SQL + """
             ORDER BY start_at ASC, id ASC
             """,
             (uid, 1 if include_done else 0, archived_flag, archived_flag),
@@ -1100,6 +1202,7 @@ def count_active_posted_tasks(owner_user_id: int | str) -> int:
               AND assignee_user_id != owner_user_id
               AND done = 0
               AND IFNULL(owner_archived, 0) = 0
+              AND """ + NOT_INLINE_SQL + """
             """,
             (uid,),
         )
@@ -1152,6 +1255,7 @@ def list_my_tasks(
                 )
               )
               AND done = ?
+              AND {NOT_INLINE_SQL}
             ORDER BY {"done_at DESC, id DESC" if done else "start_at ASC, id ASC"}
             LIMIT ?
             """,
@@ -1294,8 +1398,9 @@ def update_task(
         "assignee_name": _clip(assignee_name, 120)
         if assignee_name is not None
         else existing["assignee_name"],
+        # Новые пункты чек-листа (старое приложение из кэша) — подзадачами; сам чек-лист пуст.
         "checklist_json": json.dumps(
-            _normalize_checklist(checklist if checklist is not None else existing["checklist"]),
+            _normalize_checklist(existing["checklist"] if checklist is None or existing.get("parent_id") else []),
             ensure_ascii=False,
         ),
         "note_id": _clip(note_id, 40) if note_id is not None else existing["note_id"],
@@ -1391,6 +1496,18 @@ def update_task(
             ),
         )
         _conn().commit()
+    if checklist and not existing.get("parent_id"):
+        known = {str(c.get("text") or "").strip() for c in existing.get("checklist") or []}
+        known |= {str(t.get("title") or "").strip() for t in list_subtasks(existing["id"])}
+        fresh = [c for c in _normalize_checklist(checklist) if c["text"] not in known]
+        if fresh or existing.get("checklist"):
+            with _LOCK:
+                row = _conn().execute("SELECT * FROM calendar_tasks WHERE id = ?", (int(existing["id"]),)).fetchone()
+                _checklist_rows(_conn(), row, list(existing.get("checklist") or []) + fresh)
+                _conn().commit()
+            _parent_changed(int(existing["id"]), actor_user_id=uid)
+    if reassigned and existing.get("parent_id"):
+        _sync_inline_triage(int(existing["id"]))
     if fields["done"] and not existing["done"] and not reassigned:
         mark_triaged(existing)  # сдал из обхода разбора — значит, взял
     if bool(fields["done"]) != bool(existing["done"]):
@@ -1763,7 +1880,10 @@ def _set_triage(task: dict[str, Any], state: str, **extra: str) -> Optional[dict
         "assignee_seen_at": task.get("assignee_seen_at") or now,
         **extra,
     }
-    return _set_columns(int(task["id"]), values)
+    row = _set_columns(int(task["id"]), values)
+    for k in list_subtasks(task["id"]):  # пункты внутри задачи — тем же решением
+        _sync_inline_triage(int(k["id"]))
+    return row
 
 
 def triage_accept(
@@ -1855,7 +1975,7 @@ def list_inbox_user_ids() -> list[int]:
             for r in _conn().execute(
                 "SELECT DISTINCT assignee_user_id FROM calendar_tasks"
                 " WHERE assignee_user_id != owner_user_id AND done = 0"
-                " AND IFNULL(assignee_triage, '') IN ('inbox', 'snoozed')"
+                " AND IFNULL(assignee_triage, '') IN ('inbox', 'snoozed') AND " + NOT_INLINE_SQL
             ).fetchall()
         ]
     return _int_user_ids(raw)
@@ -1874,6 +1994,7 @@ def list_inbox(user_id: int | str, *, now: datetime | None = None) -> dict[str, 
             WHERE assignee_user_id = ? AND owner_user_id != assignee_user_id
               AND done = 0 AND IFNULL(outcome, '') != 'cancelled'
               AND IFNULL(assignee_triage, '') IN ('inbox', 'snoozed')
+              AND """ + NOT_INLINE_SQL + """
             ORDER BY created_at ASC, id ASC
             """,
             (uid,),

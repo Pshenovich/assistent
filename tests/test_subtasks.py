@@ -83,7 +83,8 @@ def test_inbox_bundles_siblings_and_children(store):
     assert uly[0]["bundle_ids"] == [b["id"]]
     art = store.list_inbox(LEAD)["items"]
     assert [t["id"] for t in art] == [top["id"]]
-    assert art[0]["bundle_ids"] == [mine["id"]]
+    assert art[0]["bundle_ids"] == []  # «Домен» у самого Артёма — пункт внутри задачи, не отдельная карточка
+    assert store.is_inline(mine)
 
 
 def test_decline_of_subtask_goes_to_lead(store, sent):
@@ -122,3 +123,36 @@ def test_api_parent_and_bundle_triage(client, store):
     assert r.json()["task"]["parent_id"] is None
     r = client.patch(f"/api/miniapp/calendar/tasks/{top['id']}", json={"parent_id": a["id"]}, headers=_headers(OWNER))
     assert r.status_code == 400
+
+
+def test_inline_items_follow_parent_and_stay_out_of_calendar(store):
+    from datetime import timedelta
+
+    top = _task(store, "Запустить лендинг", LEAD)
+    item = _task(store, "Домен", LEAD, top["id"])
+    other = _task(store, "Тексты", ASSIGNEE, top["id"])
+    win = (START - timedelta(days=1), START + timedelta(days=1))
+    store.triage_accept(LEAD, top["id"])
+    assert store._get_task_row(item["id"])["assignee_triage"] == "accepted"  # взял общую — взял и пункты
+    assert [t["id"] for t in store.list_tasks_in_window(LEAD, *win)] == [top["id"]]
+    assert store.subtasks_brief(top["id"])[0]["state"] == "open"
+    assert other["id"] not in [t["id"] for t in store.list_posted_tasks(OWNER) if t["id"] == item["id"]]
+    store.update_task(OWNER, item["id"], assignee_user_id=ASSIGNEE, assignee_name="Ульяна")
+    assert not store.is_inline(store._get_task_row(item["id"]))  # поручили другому — отдельная задача
+    assert store._get_task_row(item["id"])["assignee_triage"] == "inbox"
+
+
+def test_checklist_becomes_subtasks_and_old_ones_migrate(store, tmp_path):
+    t = store.create_task(OWNER, title="Список", start_at=START, tz=TZ, checklist=[{"text": "раз", "done": True}, {"text": "два"}])
+    assert t["checklist"] == []
+    kids = store.list_subtasks(t["id"])
+    assert [(k["title"], k["done"]) for k in kids] == [("раз", True), ("два", False)]
+    # старая задача с чек-листом в базе — переносится при следующем открытии базы
+    with store._LOCK:
+        store._conn().execute(
+            "UPDATE calendar_tasks SET checklist_json = ? WHERE id = ?", ('[{"id":"c1","text":"три","done":false}]', t["id"])
+        )
+        store._conn().commit()
+    store._CONN = None
+    assert [k["title"] for k in store.list_subtasks(t["id"])] == ["раз", "два", "три"]
+    assert store._get_task_row(t["id"])["checklist"] == []

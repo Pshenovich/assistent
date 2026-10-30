@@ -229,7 +229,7 @@ def push_task(user_id: int, task: dict[str, Any]) -> dict[str, Any] | None:
         remote = svc.tasks().insert(tasklist=list_id, body=body).execute()
         gid = str((remote or {}).get("id") or "")
         print(f"[google_tasks] inserted uid={user_id} title={body['title']!r} gid={gid}")
-    _sync_subtasks(svc, list_id, gid, task.get("checklist") or [])
+    _sync_subtasks(svc, list_id, gid, _subtask_items(task))
     if gid and (
         gid != str(task.get("google_task_id") or "")
         or list_id != str(task.get("google_tasklist_id") or "")
@@ -242,6 +242,18 @@ def push_task(user_id: int, task: dict[str, Any]) -> dict[str, Any] | None:
         )
         return updated or task
     return task
+
+
+def _subtask_items(task: dict[str, Any]) -> list[dict[str, Any]]:
+    """Подзадачи Google — пункты внутри задачи (подзадачи на того же исполнителя; раньше — чек-лист)."""
+    items = list(task.get("checklist") or [])
+    try:
+        for k in calendar_tasks_store.list_subtasks(task["id"]):
+            if str(k.get("assignee_user_id") or "") == str(task.get("assignee_user_id") or ""):
+                items.append({"id": f"s{k['id']}", "text": k.get("title") or "", "done": bool(k.get("done"))})
+    except Exception as e:
+        print(f"[google_tasks] subtasks lookup failed task={task.get('id')} err={e!r}")
+    return items
 
 
 def _sync_subtasks(svc: Any, list_id: str, parent_id: str, checklist: list[dict[str, Any]]) -> None:

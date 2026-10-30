@@ -72,7 +72,8 @@ def test_list_window_and_update(tasks_db):
     updated = store.update_task(5, a["id"], title="A2", checklist=[{"text": "шаг"}])
     assert updated is not None
     assert updated["title"] == "A2"
-    assert updated["checklist"][0]["text"] == "шаг"
+    assert updated["checklist"] == []  # пункт чек-листа — теперь подзадача внутри задачи
+    assert [t["title"] for t in store.list_subtasks(a["id"])] == ["шаг"]
     assert store.delete_task(5, a["id"]) is True
     assert store.get_task(5, a["id"]) is None
 

@@ -16449,7 +16449,7 @@
       end: endIso || null,
       // «Весь день» — переключатель в блоке «Срок»; иначе с часами.
       all_day: false,
-      checklist: reminderChecklistApi ? reminderChecklistApi.getItems() : [],
+      checklist: reminderChecklistApi ? reminderChecklistApi.getItems() : undefined,
       note_id: noteEl ? String(noteEl.value || "") : "",
     };
     if (taskModalMeetingItem) body.meeting_item = taskModalMeetingItem;
@@ -16544,7 +16544,9 @@
       "</div>" +
       '<div class="event-sheet-group sheet-desc-group">' +
       '<textarea id="m-task-desc" class="field-textarea event-sheet-desc" rows="2" placeholder="Описание"></textarea>' +
-      '<div id="m-task-checklist-host" class="rem-checklist-host"></div>' +
+      // Новая задача: подзадачи набираются списком (Enter — следующая), при сохранении станут подзадачами.
+      // У созданной — блок «Подзадачи» ниже; чек-листа у задач больше нет.
+      (existing ? "" : '<div id="m-task-checklist-host" class="rem-checklist-host"></div>') +
       "</div>" +
       (existing
         ? '<div id="m-task-subtasks" class="event-sheet-group"></div>'
@@ -16629,11 +16631,8 @@
       document.getElementById("m-ev-color-host"),
       ev.display_color || ""
     );
-    reminderChecklistApi = mountReminderChecklist(
-      document.getElementById("m-task-checklist-host"),
-      ev.checklist,
-      { addLabel: "Пункт чек-листа" }
-    );
+    var draftHost = document.getElementById("m-task-checklist-host");
+    reminderChecklistApi = draftHost ? mountReminderChecklist(draftHost, [], { addLabel: "Подзадача" }) : null;
     var subHost = document.getElementById("m-task-subtasks");
     if (subHost) mountSubtasks(subHost, taskId);
     var previewHost = document.getElementById("m-task-subtasks-preview");
