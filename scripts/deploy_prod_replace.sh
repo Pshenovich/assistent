@@ -516,6 +516,11 @@ if [[ -d /opt/obuchat-news/public/news ]]; then
   echo "republished /news from /opt/obuchat-news/public/news"
 fi
 
+# Новый сервер (scripts/provision_server.sh, LEO_NONROOT=1): сервисы от пользователя leo —
+# файлы после копирования и pip снова его. На сервере без leo ничего не меняется.
+if id leo >/dev/null 2>&1; then
+  chown -R leo:leo /opt/assistant
+fi
 systemctl enable assistant-bot assistant-worker assistant-usage executive-board-bot
 systemctl restart assistant-bot assistant-worker assistant-usage executive-board-bot
 sleep 2
