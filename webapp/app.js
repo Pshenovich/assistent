@@ -16399,7 +16399,15 @@
       if (!subs.length && !canAdd) return;
       var head = subtaskEl("div", "st-head");
       head.appendChild(subtaskEl("span", "st-head-title", "Подзадачи"));
-      if (subs.length) head.appendChild(subtaskEl("span", "st-head-count", (t.subtasks_done || 0) + " из " + subs.length));
+      if (subs.length) {
+        head.appendChild(subtaskEl("span", "st-head-count", (t.subtasks_done || 0) + " из " + subs.length));
+        // Полоска — как у «Чек-лист N из M» в карточке поручения.
+        var bar = subtaskEl("span", "pt-bar st-bar");
+        var fill = subtaskEl("i");
+        fill.style.width = Math.round(((t.subtasks_done || 0) / subs.length) * 100) + "%";
+        bar.appendChild(fill);
+        head.appendChild(bar);
+      }
       host.appendChild(head);
       var list = subtaskEl("div", "st-list");
       subs.forEach(function (st) {

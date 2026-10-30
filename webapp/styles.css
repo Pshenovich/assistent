@@ -23823,8 +23823,9 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
 .st-box { display: flex; flex-direction: column; gap: 4px; }
 .pt-subtasks { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: var(--surface-elevated); }
 .st-crumb { align-self: flex-start; margin: 0 0 6px; padding: 0; border: 0; background: none; font: inherit; font-size: 0.8rem; color: var(--accent); cursor: pointer; text-align: left; }
-.st-head { display: flex; align-items: baseline; gap: 8px; font-size: 0.8rem; color: var(--text-secondary); }
-.st-head-title { font-weight: 600; }
+.st-head { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-secondary); }
+.st-head .st-bar { margin-left: 4px; }
+.event-sheet-group .st-head .st-bar { display: none; }
 .st-list { display: flex; flex-direction: column; }
 .st-row { display: flex; align-items: flex-start; gap: 10px; padding: 7px 0 7px calc(var(--st-depth, 0) * 22px); border-bottom: 1px solid var(--border); }
 .st-row:last-child { border-bottom: 0; }
@@ -23833,9 +23834,10 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
 .st-title { font-size: 0.92rem; line-height: 1.35; overflow-wrap: anywhere; }
 .st-row.is-done .st-title { color: var(--text-tertiary); text-decoration: line-through; }
 .st-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--text-secondary); }
-.st-state { padding: 1px 7px; border-radius: 9px; font-size: 0.72rem; background: var(--accent-soft); color: var(--accent); }
-.st-state.is-declined { background: color-mix(in srgb, var(--danger-text) 14%, transparent); color: var(--danger-text); }
-.st-state.is-question { background: color-mix(in srgb, var(--warning-text) 16%, transparent); color: var(--warning-text); }
+/* Статусы подзадач — те же цвета, что у статусов в таблице задач встречи */
+.st-state { display: inline-block; line-height: 20px; height: 20px; padding: 0 8px; border-radius: var(--radius-full); font-size: 0.72rem; background: var(--accent-muted); color: var(--quote-text); }
+.st-state.is-assigned, .st-state.is-question { background: var(--violet-muted); color: var(--violet-text); }
+.st-state.is-declined { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger-text); }
 .st-edit { display: flex; flex-direction: column; gap: 8px; margin: 2px 0 8px calc(var(--st-depth, 0) * 22px + 28px); padding: 10px; border-radius: 10px; background: var(--surface-hover); }
 .st-field { display: flex; align-items: center; gap: 10px; }
 .st-label { flex: none; width: 92px; font-size: 0.8rem; color: var(--text-secondary); }
@@ -23883,4 +23885,11 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
 .event-sheet-group.st-box .st-add-form { padding: 0.45rem 0.9rem 0.45rem calc(0.9rem + var(--st-depth, 0) * 22px); border-top: 0.5px solid var(--border); }
 .event-sheet-group.st-box > .st-add { width: 100%; box-sizing: border-box; min-height: 40px; padding: 0.45rem 0.9rem; border-top: 0.5px solid var(--border) !important; }
 .event-sheet-group.st-box > .st-preview-note { margin: 0; padding: 0.45rem 0.9rem 10px; border-top: 0.5px solid var(--border); font-size: 0.75rem; }
-.pt-subtasks .st-add { margin-top: 6px; }
+/* В карточке поручения — как блок «Чек-лист»: без разделителей, пункты через отступ */
+.pt-subtasks .st-list { gap: 8px; margin-top: 8px; }
+.pt-subtasks .st-row { padding: 0 0 0 calc(var(--st-depth, 0) * 22px); border: none; }
+.pt-subtasks .st-cb { margin-top: 2px; }
+.pt-subtasks .st-title { font-size: 0.9rem; }
+.pt-subtasks .st-crumb { margin-bottom: 8px; }
+.pt-subtasks .st-add { margin-top: 10px; font-size: 0.9rem; }
+.pt-subtasks .st-add .rem-checklist-add-icon { width: 1.5rem; height: 1.5rem; }
