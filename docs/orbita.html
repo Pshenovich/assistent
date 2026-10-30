@@ -624,7 +624,9 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
   .day-grid { position: sticky; top: 0; margin-top: 0; display: flex; flex-direction: column; overflow: hidden; gap: 14px; padding: 8px 0; }
   /* Без width: max-content: Safari считает его по тексту карточек в одну строку, и лента выходила в разы шире.
      Карточки одной высоты (stretch), экран внутри тянется до низа карточки. */
-  .day-steps { display: flex; align-items: stretch; gap: 12px; will-change: transform; }
+  .day-steps { display: flex; align-items: stretch; gap: 12px; will-change: transform; padding: 0 16px; }
+  /* Лента — на всю ширину экрана, без полей контейнера: карточки уезжают за самый край. */
+  .day-grid { margin-left: calc(50% - 50vw); margin-right: calc(50% - 50vw); }
   .day-step { flex: 0 0 min(84vw, 380px); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 22px; padding: 18px; box-shadow: var(--shadow); }
   .day-step h3 { font-size: 19px; margin-top: 10px; }
   .day-step p { font-size: 14.5px; margin-top: 6px; }
@@ -2323,7 +2325,7 @@ svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-widt
       if (!mq.matches) { pin.style.height = ""; grid.style.top = ""; track.style.transform = ""; return; }
       // Сдвиг — до правого края последней карточки (scrollWidth в Safari завышен).
       var last = cards[cards.length - 1];
-      travel = Math.max(0, Math.round(last.offsetLeft + last.offsetWidth - grid.clientWidth));
+      travel = Math.max(0, Math.round(last.offsetLeft + last.offsetWidth + 16 - grid.clientWidth));
       // Закреплённая часть — высотой с карточки и по центру экрана. Прокрутка внутри блока —
       // ровно на сдвиг карточек: после последней блок сразу отпускает страницу, без пустого хвоста.
       var gh = grid.offsetHeight;
