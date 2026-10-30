@@ -89,6 +89,8 @@ for _key, _rel in _DIR_ENV.items():
 
 # Фоновый ИИ-разбор заметок (Фокус) в тестах не стартует сам: тесты зовут его явно.
 _SANDBOX_ENV["PROACTIVE_AI_AUTOSTART"] = "0"
+# Кредиты в тестах — с блокировкой, как будет в проде после выкатки экранов.
+_SANDBOX_ENV["CREDITS_ENFORCE"] = "1"
 
 os.environ.update(_SANDBOX_ENV)
 

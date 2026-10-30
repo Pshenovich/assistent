@@ -98,6 +98,13 @@ MSG_OVER_LIMIT = (
 LOCKED_LABEL = "Закрыто руководителем организации"
 
 
+def enforce() -> bool:
+    """Блокировать ответы при пустом балансе / счёте (CREDITS_ENFORCE=1); иначе только учёт."""
+    import os
+
+    return os.getenv("CREDITS_ENFORCE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def allowed_models_for(telegram_user_id: int | str) -> list[str] | None:
     """Модели, которые руководитель открыл участнику; None — без ограничений."""
     org_id = org_id_for_user(telegram_user_id)
@@ -134,6 +141,9 @@ def chat_gate(telegram_user_id: int | str, model: str | None) -> dict[str, Any]:
         allowed = credits_store.member_settings(org_id, telegram_user_id)["allowed_models"]
         if allowed is not None and model not in allowed:
             run_model = allowed[0] if allowed else model
+    if not enforce():
+        # Пока не выкачены экраны (пополнение, настройки руководителя) — только учёт, без блокировки.
+        st = {**st, "can_answer": True}
     message = ""
     if not st["can_answer"]:
         message = MSG_PERSONAL_EMPTY if st["mode"] == "personal" else MSG_ORG_EMPTY

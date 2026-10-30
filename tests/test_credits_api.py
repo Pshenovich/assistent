@@ -108,3 +108,12 @@ def test_usage_event_charges_credits(env):
     uid = env["outsider"]
     usage_store.insert_usage_event(operation="ask", model="m", generation_id="g", usage={"cost": 1.0}, telegram_user_id=str(uid))
     assert credits_store.balance("user", uid) == pytest.approx(2500 - 230)
+
+
+def test_without_enforce_only_accounting(env, monkeypatch):
+    monkeypatch.setenv("CREDITS_ENFORCE", "0")
+    uid = env["outsider"]
+    credits_store.charge(uid, 3000, org_id=None)
+    g = billing_store.chat_gate(uid, "openai/gpt-5.5")
+    assert g["can_answer"] and g["message"] == ""
+    assert credits_store.balance("user", uid) == pytest.approx(-500)  # учёт идёт
