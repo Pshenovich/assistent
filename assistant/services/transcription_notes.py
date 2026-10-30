@@ -521,6 +521,7 @@ def generate_summary_for_note(user_id: int | str, note_id: int) -> dict[str, Any
             "open_questions": summary_result.get("open_questions") or [],
             "risks": summary_result.get("risks") or [],
             "tasks_dropped": summary_result.get("tasks_dropped") or [],
+            "task_groups": summary_result.get("task_groups") or [],
             "speakers_detected": speakers,
             **v2_meta(summary_result),
         }

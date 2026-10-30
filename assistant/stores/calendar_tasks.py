@@ -86,6 +86,7 @@ def _conn() -> sqlite3.Connection:
     _ensure_result_column(_CONN)
     _ensure_assignee_state_columns(_CONN)
     _ensure_outcome_columns(_CONN)
+    _ensure_parent_column(_CONN)
     _CONN.execute(
         """
         CREATE TABLE IF NOT EXISTS task_events (
@@ -158,6 +159,17 @@ def _ensure_outcome_columns(conn: sqlite3.Connection) -> None:
     for col in OUTCOME_COLUMNS:
         if col not in cols:
             conn.execute(f"ALTER TABLE calendar_tasks ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+
+
+# Подзадачи: задача → подзадача → под-подзадача. Глубже не вкладываем.
+MAX_SUBTASK_DEPTH = 2
+
+
+def _ensure_parent_column(conn: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(calendar_tasks)")}
+    if "parent_id" not in cols:
+        conn.execute("ALTER TABLE calendar_tasks ADD COLUMN parent_id INTEGER")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_calendar_tasks_parent ON calendar_tasks(parent_id)")
 
 
 def _ensure_google_event_columns(conn: sqlite3.Connection) -> None:
@@ -358,6 +370,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         if "owner_archived" in keys
         else False,
         "recurrence": str(row["recurrence"] or "") if "recurrence" in keys else "",
+        "parent_id": int(row["parent_id"]) if "parent_id" in keys and row["parent_id"] else None,
         **{c: str(row[c] or "") if c in keys else "" for c in ASSIGNEE_STATE_COLUMNS + OUTCOME_COLUMNS},
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -630,8 +643,11 @@ def create_task(
     all_day: bool = False,
     tz: ZoneInfo | None = None,
     recurrence: str = "",
+    parent_id: int | None = None,
 ) -> dict[str, Any]:
     uid = _uid(owner_user_id)
+    if parent_id is not None:
+        check_parent(uid, None, parent_id)
     start = start_at if isinstance(start_at, datetime) else _parse_dt(start_at, tz)
     if start is None:
         raise ValueError("Укажите начало задачи")
@@ -658,8 +674,8 @@ def create_task(
                 owner_user_id, title, description, result, start_at, end_at,
                 assignee_user_id, assignee_email, assignee_name,
                 checklist_json, note_id, all_day, recurrence, assignee_triage,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                parent_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 uid,
@@ -676,6 +692,7 @@ def create_task(
                 1 if all_day else 0,
                 _clip(rrule, 500),
                 "inbox" if assignee and assignee != uid else "",
+                int(parent_id) if parent_id is not None else None,
                 now,
                 now,
             ),
@@ -684,6 +701,8 @@ def create_task(
         tid = int(cur.lastrowid)
     item = get_task(uid, tid)
     assert item is not None
+    if parent_id is not None:
+        _parent_changed(int(parent_id), actor_user_id=uid)
     return item
 
 
@@ -705,12 +724,176 @@ def _get_task_row(task_id: int) -> Optional[dict[str, Any]]:
 
 
 def user_can_access_task(user_id: int | str, task: dict[str, Any] | None) -> bool:
+    """Постановщик и исполнитель задачи — и те же роли у общих задач выше по цепочке:
+    Артём отвечает за «Запуск лендинга», значит, видит и правит подзадачу Ульяны."""
     if not task:
         return False
     uid = _uid(user_id)
-    return uid == str(task.get("owner_user_id") or "") or uid == str(
-        task.get("assignee_user_id") or ""
+    return any(
+        uid in (str(t.get("owner_user_id") or ""), str(t.get("assignee_user_id") or ""))
+        for t in [task, *ancestors(task)]
     )
+
+
+def ancestors(task: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Общие задачи над этой — от ближней к верхней."""
+    out: list[dict[str, Any]] = []
+    seen = {int(task["id"])} if task and task.get("id") else set()
+    pid = (task or {}).get("parent_id")
+    while pid and int(pid) not in seen and len(out) <= MAX_SUBTASK_DEPTH:
+        row = _get_task_row(int(pid))
+        if not row:
+            break
+        out.append(row)
+        seen.add(int(pid))
+        pid = row.get("parent_id")
+    return out
+
+
+def list_subtasks(task_id: int | str) -> list[dict[str, Any]]:
+    """Прямые подзадачи — в порядке добавления."""
+    tid = _parse_task_id(task_id)
+    if tid is None:
+        return []
+    with _LOCK:
+        rows = _conn().execute(
+            "SELECT * FROM calendar_tasks WHERE parent_id = ? ORDER BY id ASC", (tid,)
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def subtask_tree(task_id: int | str, *, depth: int = MAX_SUBTASK_DEPTH) -> list[dict[str, Any]]:
+    out = []
+    for row in list_subtasks(task_id):
+        row["subtasks"] = subtask_tree(row["id"], depth=depth - 1) if depth > 1 else []
+        out.append(row)
+    return out
+
+
+def subtask_state(t: dict[str, Any]) -> str:
+    """Короткий статус подзадачи для списка в общей задаче."""
+    if t.get("done"):
+        return "done"
+    if task_is_delegated(t):
+        triage = str(t.get("assignee_triage") or "")
+        if triage == "declined":
+            return "declined"
+        if str(t.get("assignee_status") or "") in ("in_progress", "question"):
+            return str(t["assignee_status"])
+        if triage in ("inbox", "snoozed"):
+            return "assigned"
+    elif str(t.get("assignee_status") or "") == "in_progress":
+        return "in_progress"
+    return "open"
+
+
+def subtasks_brief(task_id: int | str, *, depth: int = MAX_SUBTASK_DEPTH) -> list[dict[str, Any]]:
+    """Дерево подзадач для окна задачи: только то, что нужно строке списка."""
+    keys = ("id", "title", "description", "result", "start_at", "all_day", "done",
+            "assignee_user_id", "assignee_name", "owner_user_id", "note_id")
+    out = []
+    for row in list_subtasks(task_id):
+        item = {k: row.get(k) for k in keys}
+        item["state"] = subtask_state(row)
+        item["subtasks"] = subtasks_brief(row["id"], depth=depth - 1) if depth > 1 else []
+        out.append(item)
+    return out
+
+
+def _subtree_height(task_id: int, *, guard: int = MAX_SUBTASK_DEPTH + 1) -> int:
+    if guard <= 0:
+        return MAX_SUBTASK_DEPTH + 1  # петля в данных — считаем «слишком глубоко»
+    kids = list_subtasks(task_id)
+    return 1 + max(_subtree_height(int(k["id"]), guard=guard - 1) for k in kids) if kids else 0
+
+
+def check_parent(user_id: int | str, task_id: int | str | None, parent_id: int | str) -> dict[str, Any]:
+    """Можно ли сделать task_id (None — новую задачу) подзадачей parent_id. Иначе ValueError."""
+    pid = _parse_task_id(parent_id)
+    parent = _get_task_row(pid) if pid is not None else None
+    if not parent or not user_can_access_task(user_id, parent):
+        raise ValueError("Общая задача не найдена")
+    return _check_tree(task_id, parent)
+
+
+def _check_tree(task_id: int | str | None, parent: dict[str, Any]) -> dict[str, Any]:
+    tid = _parse_task_id(task_id) if task_id is not None else None
+    chain = [parent, *ancestors(parent)]
+    if tid is not None and any(int(t["id"]) == tid for t in chain):
+        raise ValueError("Задачу нельзя вложить в её же подзадачу")
+    height = _subtree_height(tid) if tid is not None else 0
+    if len(chain) + height > MAX_SUBTASK_DEPTH:
+        raise ValueError("Глубже двух уровней подзадачи не вкладываются")
+    return parent
+
+
+def set_parent(
+    user_id: int | str, task_id: int | str, parent_id: int | str | None
+) -> Optional[dict[str, Any]]:
+    """Вложить задачу в другую (parent_id) или сделать самостоятельной (None)."""
+    existing = get_task_for_user(user_id, task_id)
+    if not existing:
+        return None
+    new_pid = None
+    if parent_id not in (None, "", 0):
+        new_pid = int(check_parent(user_id, existing["id"], parent_id)["id"])
+    old_pid = existing.get("parent_id")
+    if new_pid == old_pid:
+        return existing
+    with _LOCK:
+        _conn().execute(
+            "UPDATE calendar_tasks SET parent_id = ?, updated_at = ? WHERE id = ?",
+            (new_pid, _now_iso(), int(existing["id"])),
+        )
+        _conn().commit()
+    for pid in {old_pid, new_pid} - {None}:
+        _parent_changed(int(pid), actor_user_id=user_id)
+    if str(existing.get("note_id") or "").isdigit():
+        _meeting_task_changed(int(existing["note_id"]))
+    return _get_task_row(int(existing["id"]))
+
+
+def link_parent(task_id: int | str, parent_id: int | str | None, *, actor_user_id: int | str = "") -> bool:
+    """Связь «общая задача → подзадача» от таблицы задач встречи: решают участники встречи,
+    поэтому без проверки прав на сами задачи — только форма дерева. Нельзя — False."""
+    row = _get_task_row(int(task_id))
+    if not row:
+        return False
+    new_pid = None
+    if parent_id not in (None, "", 0):
+        parent = _get_task_row(int(parent_id))
+        if not parent:
+            return False
+        try:
+            _check_tree(row["id"], parent)
+        except ValueError:
+            return False
+        new_pid = int(parent["id"])
+    old_pid = row.get("parent_id")
+    if new_pid == old_pid:
+        return True
+    with _LOCK:
+        _conn().execute(
+            "UPDATE calendar_tasks SET parent_id = ?, updated_at = ? WHERE id = ?", (new_pid, _now_iso(), int(row["id"]))
+        )
+        _conn().commit()
+    for pid in {old_pid, new_pid} - {None}:
+        _parent_changed(int(pid), actor_user_id=actor_user_id)
+    return True
+
+
+def _parent_changed(parent_id: int, *, actor_user_id: int | str = "") -> None:
+    """Состав или статус подзадач поменялся — общей задаче и тем, кто над ней, обновить счётчик."""
+    try:
+        from assistant.realtime import notify as realtime_notify
+
+        row = _get_task_row(parent_id)
+        for t in [row, *ancestors(row)] if row else []:
+            realtime_notify.task_changed(
+                int(t["id"]), [t["owner_user_id"], t["assignee_user_id"]], actor_user_id=actor_user_id
+            )
+    except Exception as e:
+        print(f"[calendar_tasks] parent notify failed parent={parent_id} err={e!r}")
 
 
 def get_task(owner_user_id: int | str, task_id: int | str) -> Optional[dict[str, Any]]:
@@ -1164,7 +1347,7 @@ def update_task(
         elif (
             assignee_user_id not in (None, "")
             and existing.get("assignee_triage") == "declined"
-            and uid == str(existing["owner_user_id"])
+            and uid != str(existing["assignee_user_id"])
         ):
             # Исполнитель сказал «не моё», а постановщик снова выбрал его — задача снова у него во входящих.
             _conn().execute(
@@ -1224,6 +1407,12 @@ def update_task(
         or fields["assignee_user_id"] != existing["assignee_user_id"]
     ):
         _meeting_task_changed(int(existing["note_id"]))
+    if existing.get("parent_id") and (
+        bool(fields["done"]) != bool(existing["done"])
+        or fields["title"] != existing["title"]
+        or fields["assignee_user_id"] != existing["assignee_user_id"]
+    ):
+        _parent_changed(int(existing["parent_id"]), actor_user_id=uid)
     if fields["title"] != existing["title"]:
         try:
             from assistant.services import focus_items
@@ -1699,7 +1888,35 @@ def list_inbox(user_id: int | str, *, now: datetime | None = None) -> dict[str, 
         items.append(t)
     # Сначала новые, потом вернувшиеся из «Позже».
     items.sort(key=lambda t: (t["assignee_triage"] == "snoozed", str(t.get("created_at") or ""), t["id"]))
-    return {"items": items, "snoozed": snoozed}
+    return {"items": _bundle_inbox(items), "snoozed": snoozed}
+
+
+def _bundle_inbox(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Подзадачи одной общей задачи — одной карточкой.
+
+    Общая задача тоже во входящих этого человека → её подзадачи внутри неё (bundle_ids).
+    Нет → подзадачи-соседки собираются под первой из них."""
+    by_id = {int(t["id"]): t for t in items}
+    lead_of: dict[int, int] = {}
+    for t in items:
+        top = next((int(a["id"]) for a in reversed(ancestors(t)) if int(a["id"]) in by_id), None)
+        if top is not None:
+            lead_of[int(t["id"])] = top
+    first_sibling: dict[int, int] = {}
+    for t in items:
+        tid, pid = int(t["id"]), t.get("parent_id")
+        if tid in lead_of or not pid:
+            continue
+        lead = first_sibling.setdefault(int(pid), tid)
+        if lead != tid:
+            lead_of[tid] = lead
+    out = []
+    for t in items:
+        if int(t["id"]) in lead_of:
+            continue
+        t["bundle_ids"] = [int(x["id"]) for x in items if lead_of.get(int(x["id"])) == int(t["id"])]
+        out.append(t)
+    return out
 
 
 def mark_nudged(task_id: int | str, *, actor_user_id: int | str = "", actor_name: str = "") -> Optional[dict[str, Any]]:
@@ -1734,12 +1951,19 @@ def delete_task(owner_user_id: int | str, task_id: int | str) -> bool:
     if not existing:
         return False
     with _LOCK:
+        # Подзадачи удалённой задачи встают на её место, а не пропадают.
+        _conn().execute(
+            "UPDATE calendar_tasks SET parent_id = ? WHERE parent_id = ?",
+            (existing.get("parent_id"), int(existing["id"])),
+        )
         cur = _conn().execute(
             "DELETE FROM calendar_tasks WHERE id = ?",
             (int(existing["id"]),),
         )
         _conn().commit()
         deleted = cur.rowcount > 0
+    if deleted and existing.get("parent_id"):
+        _parent_changed(int(existing["parent_id"]), actor_user_id=owner_user_id)
     if deleted and _deleted_by_assignee(existing, owner_user_id):
         # Исполнитель удалил поручение — постановщик иначе узнал бы об этом, только не найдя его в «Поставленных».
         try:

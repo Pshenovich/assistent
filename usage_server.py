@@ -2371,6 +2371,8 @@ class _MiniappCalendarTaskBody(BaseModel):
     text: Optional[str] = None
     # ID пункта задач встречи (data-leo-item) в заметке note_id: задача ставится, только если пункт ничей
     meeting_item: Optional[str] = None
+    # Общая задача: при создании — вложить в неё; в PATCH — null делает задачу самостоятельной.
+    parent_id: Optional[int] = None
 
 
 class _MiniappCalendarAvailabilityBody(BaseModel):
@@ -5377,6 +5379,16 @@ def _task_api(task: dict[str, Any], *, tz: Any, viewer_id: int | str | None = No
     item["schedule_log_lines"] = list(item["event"].get("schedule_log_lines") or [])
     if item.get("id"):
         item["url"] = task_webapp_url(item["id"])
+        subs = calendar_tasks_store.subtasks_brief(item["id"])
+        item["subtasks"] = subs
+        item["subtasks_total"] = len(subs)
+        item["subtasks_done"] = sum(1 for s in subs if s.get("done"))
+    if item.get("parent_id"):
+        chain = calendar_tasks_store.ancestors(task)
+        item["parents"] = [
+            {"id": t["id"], "title": t.get("title") or "", "assignee_name": t.get("assignee_name") or ""}
+            for t in chain
+        ]
     return item
 
 
@@ -5560,14 +5572,23 @@ class _MiniappTaskTriageBody(BaseModel):
     # undo: вернуть прежнее состояние разбора
     state: Optional[str] = None
     snoozed_until: str = ""
+    # Подзадачи из той же карточки входящих (bundle_ids) — то же действие
+    with_ids: list[int] = Field(default_factory=list)
 
 
 def _inbox_item_api(task: dict[str, Any], *, tz: Any, viewer_id: int) -> dict[str, Any]:
     from assistant.lib.task_notify import owner_display_name
     from assistant.stores import notes as notes_store
 
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
     item = _task_api(task, tz=tz, viewer_id=viewer_id)
     item["owner_name"] = owner_display_name(task.get("owner_user_id"))
+    bundle = [calendar_tasks_store._get_task_row(i) for i in task.get("bundle_ids") or []]
+    item["bundle_items"] = [
+        {k: b.get(k) for k in ("id", "title", "description", "start_at", "all_day", "parent_id")}
+        for b in bundle if b
+    ]
     nid = str(task.get("note_id") or "").strip()
     if nid.isdigit():
         # Документ, из которого поставлена задача, — только если исполнитель может его открыть.
@@ -5612,6 +5633,34 @@ async def miniapp_calendar_tasks_inbox(
 
     res = await run_in_threadpool(_run)
     return {"ok": True, **res}
+
+
+def _triage_bundle(uid: int, ids: list[int], body: "_MiniappTaskTriageBody", *, name: str, tz: Any) -> None:
+    """Остальные подзадачи карточки: то же решение без своих пушей — постановщик получил одно, по главной."""
+    from assistant.stores import calendar_tasks as store
+
+    action = str(body.action or "").strip()
+    for tid in ids[:50]:
+        task = store._assignee_task(uid, tid)
+        if not task:
+            continue
+        if action in ("accept", "edit"):
+            row = store.triage_accept(uid, tid, actor_name=name)
+        elif action == "snooze":
+            row = store.triage_snooze(uid, tid, tz=tz)
+        elif action == "decline":
+            row = store.triage_decline(uid, tid, body.note, actor_name=name)
+        elif action == "done":
+            store.triage_accept(uid, tid, actor_name=name)
+            row = store.update_task(uid, tid, done=True, tz=tz)
+        elif action == "undo":
+            if task.get("done"):
+                store.update_task(uid, tid, done=False, tz=tz)
+            row = store.triage_restore(uid, tid, str(body.state or "inbox"), body.snoozed_until)
+        else:
+            continue
+        if row and action in ("accept", "edit", "done", "undo"):
+            _sync_task_google(uid, row, "update")
 
 
 @miniapp_router.post("/calendar/tasks/{task_id}/triage")
@@ -5676,6 +5725,10 @@ async def miniapp_calendar_tasks_triage(
         raise HTTPException(status_code=400, detail=str(e)) from e
     if not row:
         raise HTTPException(status_code=404, detail="Задача не найдена")
+    if body.with_ids:
+        await run_in_threadpool(
+            partial(_triage_bundle, uid, [i for i in body.with_ids if i != task_id], body, name=name, tz=tz)
+        )
     if action in ("accept", "edit", "done", "undo"):
         synced = await run_in_threadpool(_sync_task_google, uid, row, "update")
         row = synced or row
@@ -6109,6 +6162,7 @@ async def miniapp_calendar_tasks_create(
         note_id=body.note_id or "",
         all_day=bool(body.all_day),
         tz=tz,
+        parent_id=body.parent_id or None,
     )
     from assistant.services import meeting_tasks
 
@@ -6179,6 +6233,11 @@ async def miniapp_calendar_tasks_patch(
         assignee_uid = _resolve_calendar_task_assignee(principal, body) or None
     start_raw = (body.start or "").strip() or None
     end_raw = (body.end or "").strip() or None
+    if "parent_id" in body.model_fields_set and body.parent_id:
+        try:  # проверить до правки, чтобы не применить половину
+            await run_in_threadpool(calendar_tasks_store.check_parent, uid, task_id, body.parent_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
     try:
         row = await run_in_threadpool(
             partial(
@@ -6209,6 +6268,13 @@ async def miniapp_calendar_tasks_patch(
         raise HTTPException(status_code=400, detail=str(e)) from e
     if not row:
         raise HTTPException(status_code=404, detail="Задача не найдена")
+    if "parent_id" in body.model_fields_set and body.parent_id != row.get("parent_id"):
+        try:
+            row = await run_in_threadpool(
+                calendar_tasks_store.set_parent, uid, task_id, body.parent_id or None
+            ) or row
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
     if not is_owner:
         # Исполнитель что-то поменял в поручении — значит, видел его.
         row = await run_in_threadpool(calendar_tasks_store.mark_seen, uid, task_id) or row
@@ -11130,6 +11196,37 @@ async def miniapp_proactive_refine(
     return {"ok": True, **(await run_in_threadpool(_run))}
 
 
+def _focus_group_items(items: list[dict[str, Any]], groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Пункты одной группы от Лео — одной карточкой «4 задачи → «Запуск лендинга»» на месте первого."""
+    from assistant.services.proactive import _plural
+
+    for g in groups:
+        members = set(g.get("items") or []) | ({g["parent"]} if g.get("parent") else set())
+        hit = [
+            i for i, f in enumerate(items)
+            if f.get("status") == "new" and str(((f.get("source") or {}).get("item")) or "") in members
+        ]
+        if len(hit) < 2:
+            continue
+        n = len(members)
+        card = {
+            "key": f"grp:{g.get('note_id')}:{g['id']}",
+            "status": "new",
+            "type": "task",
+            "text": f"{n} {_plural(n, 'задача', 'задачи', 'задач')} → «{g.get('title') or ''}»",
+            "source": dict(items[hit[0]].get("source") or {}),
+            "group": {
+                "key": g["id"], "title": g.get("title") or "", "parent": g.get("parent") or "",
+                "note_id": g.get("note_id"),
+                "items": [{"item": (items[i].get("source") or {}).get("item"), "text": items[i].get("text") or "",
+                           "key": items[i].get("key")} for i in hit],
+                "members": [items[i] for i in hit],  # «По одной» — обратно в стопку как есть
+            },
+        }
+        items = [card if i == hit[0] else f for i, f in enumerate(items) if i == hit[0] or i not in hit]
+    return items
+
+
 @miniapp_router.post("/proactive/items")
 async def miniapp_proactive_items(
     body: _MiniappFocusRefineBody,
@@ -11157,7 +11254,7 @@ async def miniapp_proactive_items(
             out = meeting_share.overlay(uid, out)
         except Exception as e:
             print(f"[focus] shared overlay failed key={key} err={e!r}")
-        return out
+        return _focus_group_items(out, (card or {}).get("groups") or [])
 
     items = await run_in_threadpool(_run)
     return {"ok": True, "items": items}
@@ -12812,6 +12909,84 @@ async def miniapp_note_meeting_tasks_skip(
         )
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    return {"ok": True, **state}
+
+
+class _MeetingTaskNestBody(BaseModel):
+    items: list[str] = Field(default_factory=list)
+    parent: Optional[str] = None  # None — сделать самостоятельными
+    anchor: Optional[str] = None  # перетащили: поставить до/после этой строки
+    pos: str = "after"
+
+
+@miniapp_router.post("/notes/local/{note_id}/meeting-tasks-nest")
+async def miniapp_note_meeting_tasks_nest(
+    note_id: int,
+    body: _MeetingTaskNestBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Вложить пункты задач встречи в другой пункт (подзадачи) или вынуть — для всех участников."""
+    from assistant.services import meeting_tasks
+
+    uid = int(principal.telegram_user_id)
+    items = [str(i).strip() for i in body.items if str(i).strip()][:100]
+    if not items:
+        raise HTTPException(status_code=400, detail="Не выбраны пункты")
+    try:
+        state = await run_in_threadpool(
+            partial(
+                meeting_tasks.nest, uid, note_id, items, (body.parent or "").strip() or None,
+                by=_principal_display_name(principal), anchor=(body.anchor or "").strip() or None,
+                pos="before" if body.pos == "before" else "after",
+            )
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    providers = await run_in_threadpool(meeting_tasks.tracker_providers, uid, note_id)
+    for prov in providers:  # пункты в трекере — там тоже подзадачами
+        try:
+            await run_in_threadpool(partial(_tracker_sync_meeting, uid, note_id, prov, by=_principal_display_name(principal)))
+        except HTTPException:
+            pass
+    if providers:
+        state = await run_in_threadpool(meeting_tasks.state_rows, uid, note_id)
+    _FOCUS_CACHE.pop(uid, None)
+    return {"ok": True, **state}
+
+
+class _MeetingTaskGroupBody(BaseModel):
+    op: str = ""  # accept | reject | suggest
+    group: str = ""
+
+
+@miniapp_router.post("/notes/local/{note_id}/meeting-tasks-groups")
+async def miniapp_note_meeting_tasks_groups(
+    note_id: int,
+    body: _MeetingTaskGroupBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Группы задач от Лео: «Объединить» / «Не надо» / «Лео, сгруппируй» (для старых саммари)."""
+    from assistant.services import meeting_tasks
+
+    uid = int(principal.telegram_user_id)
+    by = _principal_display_name(principal)
+    op = str(body.op or "").strip()
+    try:
+        if op == "suggest":
+            state = await run_in_threadpool(partial(meeting_tasks.suggest_groups, uid, note_id, by=by))
+        elif op in ("accept", "reject"):
+            state = await run_in_threadpool(
+                partial(meeting_tasks.group_op, uid, note_id, str(body.group or "").strip(), op, by=by)
+            )
+        else:
+            raise HTTPException(status_code=400, detail="Неизвестное действие")
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    _FOCUS_CACHE.pop(uid, None)
     return {"ok": True, **state}
 
 
@@ -15622,6 +15797,7 @@ class _MiniappTrackerTaskBody(BaseModel):
     calendar_task_id: str = ""
     focus_key: str = ""
     meeting_item: str = ""  # пункт задач встречи в note_id: в трекер — только если пункт ничей
+    parent_external_id: str = ""  # задача трекера, подзадачей которой будет эта
 
 
 class _MiniappWwaBody(BaseModel):
@@ -15721,6 +15897,60 @@ async def miniapp_tracker_settings(
     return {"ok": True, "defaults": saved}
 
 
+def _tracker_sync_meeting(
+    uid: int, note_id: int, provider: str, *, by: str,
+    board_id: str = "", board_name: str = "", stage_id: str = "", stage_name: str = "",
+) -> int:
+    """Вложенность пунктов встречи → подзадачи в трекере: неразобранные пункты под пунктом в трекере
+    создаются там подзадачами, перенесённые — получают нового родителя. Шаги по одному: у под-подзадачи
+    родитель появляется только после создания подзадачи. Ошибка — пропускаем пункт, остальное делаем."""
+    from assistant.services import meeting_tasks
+    from assistant.stores import trackers as trackers_store
+    from assistant.trackers.base import TaskDraft, TrackerError
+
+    p = _tracker_or_404(provider)
+    if not p.is_connected(uid):
+        return 0
+    if not board_id:
+        defaults = trackers_store.get_settings(uid, p.id)
+        board_id, board_name = str((defaults or {}).get("board_id") or ""), str((defaults or {}).get("board_name") or "")
+        stage_id, stage_name = str((defaults or {}).get("stage_id") or ""), str((defaults or {}).get("stage_name") or "")
+    done, skip = 0, set()
+    for _ in range(40):
+        step = meeting_tasks.tracker_step(uid, note_id, p.id)
+        if not step or step["item"] in skip:
+            break
+        try:
+            if step["op"] == "reparent":
+                if hasattr(p, "set_parent"):
+                    p.set_parent(uid, step["ext"], step["parent"])
+                meeting_tasks.set_tracker_parent(uid, note_id, step["item"], step["parent"])
+                continue
+            draft = TaskDraft(title=step["title"], board_id=board_id, stage_id=stage_id,
+                              responsible=step["who"], parent_id=step["parent"])
+
+            def _create(draft: TaskDraft = draft) -> tuple[Any, dict[str, Any]]:
+                try:
+                    created = p.create_task(uid, draft)
+                except TrackerError:
+                    if not draft.responsible:
+                        raise
+                    draft.responsible = ""  # исполнителя нет в трекере — на того, кто ставит
+                    created = p.create_task(uid, draft)
+                trackers_store.add_task(uid, p.id, external_id=created.external_id, url=created.url,
+                                        title=created.title, board_id=board_id, board_name=board_name,
+                                        stage_id=stage_id, stage_name=stage_name, note_id=str(note_id))
+                return created, {"url": created.url, "title": created.title, "provider": p.id, "stage": stage_name,
+                                 "external_id": created.external_id, "parent_external": draft.parent_id}
+
+            meeting_tasks.claim_tracker(uid, note_id, step["item"], _create, by=by)
+            done += 1
+        except Exception as e:  # noqa: BLE001 — один пункт не должен ломать остальные
+            print(f"[trackers] meeting sync note={note_id} item={step.get('item')} err={e!r}")
+            skip.add(step["item"])
+    return done
+
+
 @miniapp_router.post("/trackers/{provider}/tasks")
 async def miniapp_tracker_create_task(
     provider: str,
@@ -15742,7 +15972,16 @@ async def miniapp_tracker_create_task(
         responsible=body.responsible,
         responsible_id=body.responsible_id,
         deadline=body.deadline,
+        parent_id=body.parent_external_id,
     )
+    if body.meeting_item and str(body.note_id or "").isdigit() and not draft.parent_id:
+        # пункт вложен в пункт, который уже в этом трекере, — подзадачей той задачи
+        from assistant.services import meeting_tasks as _mt
+
+        step = await run_in_threadpool(_mt.tracker_step, uid, int(body.note_id), p.id)
+        if step and step["op"] == "create" and step["item"] == body.meeting_item:
+            draft.parent_id = step["parent"]
+
     def _create() -> tuple[Any, dict[str, Any]]:
         created = _tracker_call(p.create_task, uid, draft)
         row = trackers_store.add_task(
@@ -15759,7 +15998,8 @@ async def miniapp_tracker_create_task(
             calendar_task_id=body.calendar_task_id,
             focus_key=body.focus_key,
         )
-        link = {"url": created.url, "title": created.title, "provider": p.id, "stage": body.stage_name}
+        link = {"url": created.url, "title": created.title, "provider": p.id, "stage": body.stage_name,
+                "external_id": created.external_id, "parent_external": draft.parent_id}
         return (created, row), link
 
     from assistant.services import meeting_tasks
@@ -15778,6 +16018,14 @@ async def miniapp_tracker_create_task(
         raise HTTPException(status_code=409, detail=str(e)) from e
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    if body.meeting_item and str(body.note_id or "").isdigit():
+        # вложенные пункты — подзадачами в трекере, с той же доской и стадией
+        await run_in_threadpool(
+            partial(
+                _tracker_sync_meeting, uid, int(body.note_id), p.id, by=_principal_display_name(principal),
+                board_id=body.board_id, board_name=body.board_name, stage_id=body.stage_id, stage_name=body.stage_name,
+            )
+        )
     return {
         "ok": True,
         "task": row,

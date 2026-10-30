@@ -77,6 +77,7 @@ def _build_meta(
         "open_questions": result.get("open_questions") or [],
         "risks": result.get("risks") or [],
         "tasks_dropped": result.get("tasks_dropped") or [],
+        "task_groups": result.get("task_groups") or [],
         **v2_meta(result),
     }
 

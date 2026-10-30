@@ -490,6 +490,17 @@ def summary_task_id(note_id: int, line: str, item_id: str = "") -> str:
     return _key("sumtask", note_id, hashlib.sha1(line.encode("utf-8")).hexdigest()[:10])
 
 
+def card_groups(nid: int, state: dict[str, Any], items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Группы от Лео, у которых в карточке ≥2 пункта: в стопке «Разобрать» они — одна карточка."""
+    mine = {it.get("item") for it in items if it.get("item")}
+    out = []
+    for g in state.get("groups") or []:
+        members = list(g["items"]) + ([g["parent"]] if g.get("parent") else [])
+        if sum(1 for m in members if m in mine) >= 2:
+            out.append({**g, "note_id": nid})
+    return out
+
+
 def _plural(n: int, one: str, few: str, many: str) -> str:
     return one if n % 10 == 1 and n % 100 != 11 else (few if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else many)
 
@@ -591,6 +602,7 @@ def rule_summary_tasks(
                 "ask": f"Задачи из встречи «{title}»: " + "; ".join(lines),
                 "note": {"id": nid, "kind": "transcription", "title": title, "anchor": "tasks"},
                 "items": items,
+                "groups": card_groups(nid, state, items),
                 "closed_items": closed,
                 "decided": state["decided"],
                 "total": state["total"],

@@ -220,7 +220,19 @@ def notify_task_declined(*, task: dict[str, Any], assignee_name: str, note: str)
     text = f"{who}: задача {link} — не ко мне. Переназначьте или отмените."
     if (note or "").strip():
         text += f"\n{html.escape(note.strip()[:600])}"
-    _send_task_push(task.get("owner_user_id"), text, "notify_declined")
+    _send_task_push(_decline_recipient(task), text, "notify_declined")
+
+
+def _decline_recipient(task: dict[str, Any]) -> Any:
+    """«Не моё» по подзадаче — ответственному за общую задачу: раздаёт пункты он, а не постановщик встречи."""
+    if task.get("parent_id"):
+        from assistant.stores import calendar_tasks
+
+        parent = calendar_tasks._get_task_row(int(task["parent_id"]))
+        lead = str((parent or {}).get("assignee_user_id") or "")
+        if lead and lead != str(task.get("assignee_user_id") or ""):
+            return lead
+    return task.get("owner_user_id")
 
 
 def notify_task_deleted_by_assignee(*, task: dict[str, Any]) -> None:

@@ -23,7 +23,11 @@ UNDECIDED = ("open", "declined")
 # «Не разбирать» у всей встречи (задачи ведут в другом трекере): неразобранные пункты — «Не разбираем»,
 # в Фокус и в счётчик не идут; взять пункт можно и так.
 SKIPPED = "skipped"
-CLAIMABLE = UNDECIDED + ("doubtful", SKIPPED)
+# Неразобранный пункт, вложенный в другой: решается вместе с основным — в счётчике разобран.
+NESTED = "nested"
+CLAIMABLE = UNDECIDED + ("doubtful", SKIPPED, NESTED)
+# Пункт → подпункт → под-подпункт, как у задач Орбиты.
+MAX_DEPTH = 2
 
 LABELS = {
     "open": "Не разобрано",
@@ -39,6 +43,7 @@ LABELS = {
     "duplicate": "Дубль",
     "doubtful": "Возможно, не задача",
     "skipped": "Не разбираем",
+    "nested": "Подзадача",
 }
 
 _DOUBT_KIND = {"decision": "это решение", "question": "это вопрос", "not_task": "не похоже на задачу", "duplicate": "похоже на дубль"}
@@ -301,20 +306,171 @@ def rows(note: dict[str, Any], posted: Optional[list[dict[str, Any]]] = None) ->
     parts = participants(note) if tasks and note.get("id") is not None else []
     items = []
     skip = skipped_info(meta)
+    par = _parent_map(tasks)
     for i, t in enumerate(tasks):
         s = status_of(t, linked.get(i))
-        if skip and s["code"] in UNDECIDED:
+        iid = str(t.get("id") or "")
+        parent = par.get(iid, "")
+        if parent and s["code"] == "open":
+            s.update(code=NESTED, label=LABELS[NESTED])
+        elif skip and s["code"] in UNDECIDED:
             s.update(code=SKIPPED, label=LABELS[SKIPPED], note="")
         dec = decider(note, t, parts) if parts else ""
         if s["code"] == "declined":  # исполнитель отказался — пункт снова у владельца записи
             dec = str(note.get("owner_user_id") or note.get("user_id") or dec)
-        items.append({"id": str(t.get("id") or ""), "task": str(t.get("task") or "").strip(), "decider": dec, **s})
+        items.append({"id": iid, "task": str(t.get("task") or "").strip(), "decider": dec,
+                      "parent": parent, "depth": len(_chain(par, iid)), **s})
     live = [x for x in items if x["code"] not in EXCLUDED]
     decided = sum(1 for x in live if x["code"] not in UNDECIDED)
-    out = {"items": items, "decided": decided, "total": len(live)}
+    out = {"items": items, "decided": decided, "total": len(live), "groups": suggested_groups(meta, items)}
+    if meta.get("task_groups_asked"):
+        out["groups_asked"] = True
     if skip:
         out["skipped"] = skip
     return out
+
+
+# ---------------------------------------------------------------- группы от Лео
+
+
+def suggested_groups(meta: dict[str, Any], items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Предложения Лео «сложить пункты в одну задачу», ещё актуальные: пункты не вложены и не «Не задачи»."""
+    by_id = {x["id"]: x for x in items}
+    tasks = [t for t in meta.get("tasks") or [] if isinstance(t, dict) and t.get("id")]
+    out = []
+    for g in meta.get("task_groups") or []:
+        if not isinstance(g, dict) or g.get("state") != "suggested":
+            continue
+        key = str(g.get("key") or "")
+        members = [str(t["id"]) for t in tasks if str(t.get("group_key") or "") == key]
+        parent = next((str(t["id"]) for t in tasks if str(t.get("group_key") or "") == key and t.get("group_parent")), "")
+        if parent and (parent not in by_id or by_id[parent]["code"] in EXCLUDED):
+            parent = ""
+        kids = [
+            m for m in members
+            if m != parent and m in by_id and by_id[m]["code"] not in EXCLUDED and not by_id[m].get("parent")
+        ]
+        if len(kids) < (1 if parent else 2):
+            continue
+        out.append({"id": key, "title": str(g.get("title") or ""), "parent": parent, "items": kids})
+    return out
+
+
+def group_op(viewer_uid: Any, note_id: int, key: str, op: str, *, by: str) -> dict[str, Any]:
+    """«Объединить» (accept) / «Не надо» (reject) по предложению Лео. Объединить = вложить пункты
+    в основной; основного пункта нет — он появляется строкой с названием группы."""
+    from assistant.lib import note_items
+
+    with _CLAIM_LOCK:
+        owner, note = _owner_note(viewer_uid, note_id)
+        meta = dict(note.get("meta") or {})
+        groups = [dict(g) for g in meta.get("task_groups") or [] if isinstance(g, dict)]
+        gi = next((i for i, g in enumerate(groups) if str(g.get("key") or "") == key), -1)
+        if gi < 0:
+            raise LookupError("Предложение не найдено — обновите заметку")
+        live = next((g for g in suggested_groups(meta, rows(note)["items"]) if g["id"] == key), None)
+        if op == "reject" or not live:
+            groups[gi]["state"] = "rejected" if op == "reject" else "stale"
+            meta["task_groups"] = groups
+            _save(owner, note, meta)
+            if op != "reject":
+                raise ValueError("Эти задачи уже разобрали")
+            return {**rows({**note, "meta": meta}), "parent": ""}
+        if op != "accept":
+            raise ValueError("Неизвестное действие")
+        parent = live["parent"]
+        body = str(note.get("body") or "")
+        if not parent:
+            tasks = list(meta.get("tasks") or [])
+            first = _find(meta, live["items"][0])
+            who = {str(tasks[_find(meta, k)].get("assignee") or "").strip() for k in live["items"]}
+            new = {"id": note_items.new_item_id(), "task": live["title"] or "Общая задача",
+                   "assignee": who.pop() if len(who) == 1 else "", "deadline": "", "added_by": by}
+            tasks.insert(max(first, 0), new)
+            meta["tasks"] = tasks
+            parent = new["id"]
+            m = next((m for m in _ROW_RE.finditer(body) if f'data-leo-item="{live["items"][0]}"' in m.group(0)), None)
+            row = row_html(parent, new["task"], status_of(new))
+            body = body[:m.start()] + row + body[m.start():] if m else body
+        groups[gi]["state"] = "merged"
+        meta["task_groups"] = groups
+        from assistant.stores import notes as notes_store
+
+        notes_store.update_note(owner, int(note_id), meta=meta, body=body if body != str(note.get("body") or "") else None)
+        state = nest(viewer_uid, note_id, live["items"], parent, by=by)
+        return {**state, "parent": parent}
+
+
+def suggest_groups(viewer_uid: Any, note_id: int, *, by: str) -> dict[str, Any]:
+    """«Лео, сгруппируй» в старом саммари: предложить группы по ещё не вложенным пунктам."""
+    from assistant.nlu import llm
+
+    owner, note = _owner_note(viewer_uid, note_id)
+    state = rows(note)
+    cand = [x for x in state["items"] if x["code"] not in EXCLUDED and not x.get("parent")]
+    found = llm.group_tasks([{"task": x["task"], "assignee": x.get("who") or "", "deadline": x.get("due") or ""} for x in cand])
+    with _CLAIM_LOCK:
+        owner, note = _owner_note(viewer_uid, note_id)
+        meta = dict(note.get("meta") or {})
+        tasks = [dict(t) if isinstance(t, dict) else t for t in meta.get("tasks") or []]
+        groups = [dict(g) for g in meta.get("task_groups") or [] if isinstance(g, dict)]
+        n0 = len(groups)
+        for n, g in enumerate(found, start=1):
+            key = f"g{n0 + n}"
+            for k in g["items"]:
+                i = _find({"tasks": tasks}, cand[k]["id"])
+                if i < 0:
+                    continue
+                tasks[i]["group_key"] = key
+                tasks[i].pop("group_parent", None)
+                if k == g["parent"]:
+                    tasks[i]["group_parent"] = True
+            groups.append({"key": key, "title": g["title"] or cand[g["parent"]]["task"][:120], "state": "suggested", "by": by})
+        meta.update(tasks=tasks, task_groups=groups, task_groups_asked=True)
+        _save(owner, note, meta)
+        return rows({**note, "meta": meta})
+
+
+def _parent_map(tasks: list[dict[str, Any]]) -> dict[str, str]:
+    """id пункта → id основного пункта. Ссылки на исчезнувшие и «Не задачи» не считаются."""
+    alive = {
+        str(t.get("id")): t for t in tasks
+        if isinstance(t, dict) and t.get("id") and status_of(t)["code"] not in EXCLUDED
+    }
+    out = {}
+    for iid, t in alive.items():
+        p = str(t.get("parent_item") or "")
+        if p and p != iid and p in alive:
+            out[iid] = p
+    for iid in list(out):  # петля в данных — разрываем
+        if len(_chain(out, iid)) > MAX_DEPTH + 1:
+            out.pop(iid, None)
+    return out
+
+
+def _chain(par: dict[str, str], iid: str) -> list[str]:
+    """Основные пункты над iid — от ближнего к верхнему."""
+    ups: list[str] = []
+    cur = par.get(iid, "")
+    while cur and cur not in ups and len(ups) <= MAX_DEPTH + 1:
+        ups.append(cur)
+        cur = par.get(cur, "")
+    return ups
+
+
+def tree_order(ids: list[str], par: dict[str, str]) -> list[str]:
+    """Порядок строк: каждый пункт сразу за своим основным, внутри — как в таблице."""
+    known = set(ids)
+    out: list[str] = []
+
+    def walk(pid: str) -> None:
+        for iid in ids:
+            if (par.get(iid, "") if par.get(iid, "") in known else "") == pid and iid not in out:
+                out.append(iid)
+                walk(iid)
+
+    walk("")
+    return out + [i for i in ids if i not in out]
 
 
 def skipped_info(meta: Any) -> Optional[dict[str, Any]]:
@@ -392,7 +548,7 @@ def has_table(html_text: str) -> bool:
     return bool(re.search(r"<td\b[^>]*data-leo-item=", str(html_text or "")))
 
 
-def refresh_body(html_text: str, state: dict[str, Any]) -> str:
+def refresh_body(html_text: str, state: dict[str, Any], order: Optional[list[str]] = None) -> str:
     """Переписать ячейки «Статус / Ответственный / Дедлайн» строк таблицы задач по состоянию.
 
     Первую ячейку (формулировку) не трогаем — её могли поправить руками. «Не задачи» и
@@ -406,10 +562,15 @@ def refresh_body(html_text: str, state: dict[str, Any]) -> str:
     if not rows_found:
         return src
     out: list[str] = []
-    run: list[tuple[str, bool]] = []  # строки одной таблицы подряд: «Не задачи» — в конец
+    run: list[tuple[str, bool, str]] = []  # строки одной таблицы подряд: «Не задачи» — в конец
+    par = {iid: x["parent"] for iid, x in by_id.items() if x.get("parent")}
+
+    rank = {iid: n for n, iid in enumerate(order or [])}
 
     def flush() -> None:
-        out.append("".join([r for r, ex in run if not ex] + [r for r, ex in run if ex]))
+        live = {iid: r for r, ex, iid in run if not ex}
+        ids = sorted(live, key=lambda i: rank.get(i, len(rank))) if rank else list(live)  # перетащили строку
+        out.append("".join([live[i] for i in tree_order(ids, par)] + [r for r, ex, _ in run if ex]))
         run.clear()
 
     pos = 0
@@ -420,7 +581,7 @@ def refresh_body(html_text: str, state: dict[str, Any]) -> str:
         if gap.strip() or not run:
             out.append(gap)
         first = _FIRST_CELL_RE.search(m.group(0))
-        run.append((row_html(iid, "", by_id[iid], first_cell=first.group(0) if first else None), by_id[iid]["code"] in EXCLUDED))
+        run.append((row_html(iid, "", by_id[iid], first_cell=first.group(0) if first else None), by_id[iid]["code"] in EXCLUDED, iid))
         pos = m.end()
     if run:
         flush()
@@ -488,6 +649,72 @@ def claim_tracker(viewer_uid: Any, note_id: int, item_id: str, create: Any, *, b
         return result
 
 
+def tracker_step(viewer_uid: Any, note_id: int, provider: str) -> Optional[dict[str, Any]]:
+    """Следующий шаг, чтобы вложенность пунктов совпала с вложенностью задач в трекере:
+    {"op": "create", item, title, who, parent} — неразобранный пункт под пунктом в трекере;
+    {"op": "reparent", item, ext, parent} — пункт уже в трекере, но основной у него другой.
+    None — всё совпадает. parent — номер задачи в трекере ("" — самостоятельная)."""
+    _, note = _owner_note(viewer_uid, note_id)
+    meta = note.get("meta") if isinstance(note.get("meta"), dict) else {}
+    tasks = [t for t in meta.get("tasks") or [] if isinstance(t, dict) and t.get("id")]
+    by_id = {str(t["id"]): t for t in tasks}
+    par = _parent_map(tasks)
+    state = {x["id"]: x for x in rows(note)["items"]}
+
+    def ext(t: dict[str, Any]) -> str:
+        link = t.get("link") if isinstance(t.get("link"), dict) else {}
+        return str(link.get("external_id") or "") if str(link.get("provider") or "") == provider else ""
+
+    for iid in tree_order(list(by_id), par):
+        t = by_id[iid]
+        up = next((ext(by_id[a]) for a in _chain(par, iid) if ext(by_id[a])), "")
+        mine = ext(t)
+        link = t.get("link") if isinstance(t.get("link"), dict) else {}
+        if mine:
+            had = str(link.get("parent_external") or "")
+            if had != up and (up or had):
+                return {"op": "reparent", "item": iid, "ext": mine, "parent": up}
+            continue
+        if up and state.get(iid, {}).get("code") in UNDECIDED + (NESTED,):
+            return {"op": "create", "item": iid, "title": str(t.get("task") or "").strip(),
+                    "who": str(t.get("assignee") or "").strip(), "parent": up}
+    return None
+
+
+def tracker_providers(viewer_uid: Any, note_id: int) -> set[str]:
+    """Трекеры, в которых уже есть задачи из этой встречи."""
+    _, note = _owner_note(viewer_uid, note_id)
+    meta = note.get("meta") if isinstance(note.get("meta"), dict) else {}
+    out = set()
+    for t in meta.get("tasks") or []:
+        link = t.get("link") if isinstance(t, dict) and isinstance(t.get("link"), dict) else {}
+        if link.get("provider") and link.get("external_id"):
+            out.add(str(link["provider"]))
+    return out
+
+
+def state_rows(viewer_uid: Any, note_id: int) -> dict[str, Any]:
+    return rows(_owner_note(viewer_uid, note_id)[1])
+
+
+def set_tracker_parent(viewer_uid: Any, note_id: int, item_id: str, parent_ext: str) -> None:
+    with _CLAIM_LOCK:
+        owner, note = _owner_note(viewer_uid, note_id)
+        meta = dict(note.get("meta") or {})
+        tasks = list(meta.get("tasks") or [])
+        i = _find(meta, item_id)
+        if i < 0:
+            return
+        link = dict(tasks[i].get("link") or {})
+        if parent_ext:
+            link["parent_external"] = parent_ext
+        else:
+            link.pop("parent_external", None)
+        tasks[i] = {**tasks[i], "link": link}
+        meta["tasks"] = tasks
+        _save(owner, note, meta)
+
+
 def _attach_link(viewer_uid: Any, note_id: int, item_id: str, link: dict[str, Any], *, by: str) -> None:
     owner, note = _owner_note(viewer_uid, note_id)
     meta = dict(note.get("meta") or {})
@@ -515,16 +742,151 @@ def attach_task(viewer_uid: Any, note_id: int, item_id: str, task: dict[str, Any
     i = _find(meta, item_id)
     if i < 0:
         return
-    t = dict(tasks[i])
+    tasks[i] = _linked(tasks[i], task, by)
+    meta["tasks"] = tasks
+    _sync_links(viewer_uid, note, meta, by=by)  # вложенные пункты — подзадачами новой задачи
+    _save(owner, note, meta)
+
+
+def _linked(t: dict[str, Any], task: dict[str, Any], by: str) -> dict[str, Any]:
+    t = dict(t)
     t["link"] = {"task_id": int(task["id"]), "title": str(task.get("title") or "")[:200]}
     t["focus_status"] = "converted"
     t["completed"] = True  # как у «В задачу» из Фокуса: пункт закрыт у всех
     t["completed_by"] = by
     t["completed_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
     t.pop("focus_reason", None)
-    tasks[i] = t
-    meta["tasks"] = tasks
-    _save(owner, note, meta)
+    return t
+
+
+def nest(
+    viewer_uid: Any, note_id: int, item_ids: list[str], parent_item: Optional[str], *, by: str,
+    anchor: Optional[str] = None, pos: str = "after",
+) -> dict[str, Any]:
+    """Вложить пункты в другой (parent_item) или сделать самостоятельными (None).
+
+    Глубже двух уровней не вкладываем: в под-подпункт — значит, рядом с ним. Пункт переезжает
+    со своими подпунктами. Если у основного пункта уже есть задача — вложенный сразу становится
+    её подзадачей (исполнитель из строки, иначе ответственный основной задачи).
+
+    anchor/pos — куда поставить строки: до или после строки anchor (с её подпунктами).
+    Без anchor вложенные встают последними под основным."""
+    with _CLAIM_LOCK:
+        owner, note = _owner_note(viewer_uid, note_id)
+        meta = dict(note.get("meta") or {})
+        tasks = [dict(t) if isinstance(t, dict) else t for t in meta.get("tasks") or []]
+        idx = {str(t.get("id")): i for i, t in enumerate(tasks) if isinstance(t, dict) and t.get("id")}
+        par = _parent_map(tasks)
+        target = str(parent_item or "")
+        if target:
+            if target not in idx:
+                raise LookupError("Пункт не найден — обновите заметку")
+            if len(_chain(par, target)) >= MAX_DEPTH:
+                target = par.get(target, "")
+        for iid in item_ids:
+            if iid not in idx:
+                raise LookupError("Пункт не найден — обновите заметку")
+            if target and (iid == target or iid in _chain(par, target)):
+                raise ValueError("Задачу нельзя вложить в её же подзадачу")
+        for iid in item_ids:
+            if target:
+                par[iid] = target
+            else:
+                par.pop(iid, None)
+        changed = True
+        while changed:  # что оказалось глубже двух уровней — поднимаем
+            changed = False
+            for iid in list(par):
+                if len(_chain(par, iid)) > MAX_DEPTH:
+                    par[iid] = par.get(par[iid], "")
+                    if not par[iid]:
+                        par.pop(iid)
+                    changed = True
+        for iid, i in idx.items():
+            if par.get(iid):
+                tasks[i]["parent_item"] = par[iid]
+            else:
+                tasks[i].pop("parent_item", None)
+        meta["tasks"] = tasks
+        _sync_links(viewer_uid, note, meta, by=by)
+        where = anchor if anchor in idx and anchor not in item_ids else (target or None)
+        order = _moved(_ITEM_IN_RE.findall(str(note.get("body") or "")), item_ids, par, where, pos if anchor else "after")
+        _save(owner, note, meta, order=order)
+        return rows({**note, "meta": meta})
+
+
+def _moved(order: list[str], moving: list[str], par: dict[str, str], anchor: Optional[str], pos: str) -> list[str]:
+    """Порядок строк после переноса: moving со своими подпунктами — до/после anchor с его подпунктами."""
+    def subtree(iid: str) -> set[str]:
+        return {iid} | {x for x in order if iid in _chain(par, x)}
+
+    block_ids = set().union(*(subtree(m) for m in moving)) if moving else set()
+    block = [x for x in order if x in block_ids]
+    rest = [x for x in order if x not in block_ids]
+    if not anchor or anchor not in rest:
+        return rest + block
+    if pos == "before":
+        at = rest.index(anchor)
+    else:
+        inside = subtree(anchor)
+        at = max(i for i, x in enumerate(rest) if x in inside) + 1
+    return rest[:at] + block + rest[at:]
+
+
+def _sync_links(viewer_uid: Any, note: dict[str, Any], meta: dict[str, Any], *, by: str) -> None:
+    """Вложенность пунктов → вложенность задач: задача пункта — подзадача задачи ближайшего
+    основного пункта, у которого задача есть. Неразобранный пункт под взятым — сразу подзадача."""
+    from assistant.stores import calendar_tasks
+
+    tasks = meta.get("tasks") or []
+    par = _parent_map(tasks)
+    ids = [str(t.get("id")) for t in tasks if isinstance(t, dict) and t.get("id")]
+    pos = {str(t.get("id")): i for i, t in enumerate(tasks) if isinstance(t, dict) and t.get("id")}
+    meeting_task_ids = {tid for tid in (_linked_task_id(t) for t in tasks if isinstance(t, dict)) if tid}
+    parts = None
+    for iid in tree_order(ids, par):  # сверху вниз: у основного задача появляется раньше
+        t = tasks[pos[iid]]
+        want = next((_linked_task_id(tasks[pos[a]]) for a in _chain(par, iid) if _linked_task_id(tasks[pos[a]])), None)
+        mine = _linked_task_id(t)
+        if mine:
+            row = _task_row(mine)
+            if not row:
+                continue
+            cur = row.get("parent_id")
+            # Чужую вложенность (сделанную в самой задаче, не из этой встречи) не трогаем.
+            if cur != want and (want or cur in meeting_task_ids):
+                calendar_tasks.link_parent(mine, want, actor_user_id=viewer_uid)
+            continue
+        if not want or status_of(t)["code"] not in UNDECIDED:
+            continue
+        parent = _task_row(want)
+        if not parent:
+            continue
+        if parts is None:
+            parts = participants(note)
+        uid = _who_is(str(t.get("assignee") or ""), parts) if str(t.get("assignee") or "").strip() else ""
+        name = str(t.get("assignee") or "").strip() if uid else ""
+        if not uid:
+            uid, name = str(parent.get("assignee_user_id") or ""), str(parent.get("assignee_name") or "")
+        try:
+            task = calendar_tasks.create_task(
+                # Создаёт тот, кто вложил; нет доступа к основной задаче — от имени её постановщика.
+                viewer_uid if calendar_tasks.user_can_access_task(viewer_uid, parent) else parent["owner_user_id"],
+                title=str(t.get("task") or "").strip()[:200],
+                description=f"Из встречи «{str(note.get('title') or 'встреча').strip()}»",
+                start_at=str(parent.get("start_at") or ""),
+                all_day=bool(parent.get("all_day")),
+                assignee_user_id=uid or None,
+                assignee_name=name,
+                note_id=str(note.get("id") or ""),
+                parent_id=None,
+            )
+        except ValueError as e:
+            print(f"[meeting_tasks] subtask create failed note={note.get('id')} item={iid} err={e!r}")
+            continue
+        calendar_tasks.link_parent(task["id"], want, actor_user_id=viewer_uid)
+        tasks[pos[iid]] = _linked(t, task, by)
+        meeting_task_ids.add(int(task["id"]))
 
 
 def apply(viewer_uid: Any, note_id: int, item_id: str, op: str, *, by: str, **kw: Any) -> dict[str, Any]:
@@ -547,6 +909,10 @@ def apply(viewer_uid: Any, note_id: int, item_id: str, op: str, *, by: str, **kw
         if reason not in ("not_a_task", "duplicate"):
             raise ValueError("Неизвестная причина")
         t.update(completed=False, focus_status="dismissed", focus_reason=reason, completed_by=by, completed_at=now)
+        up = str(t.pop("parent_item", "") or "")
+        for j, o in enumerate(tasks):  # подпункты «Не задачи» встают на её место
+            if isinstance(o, dict) and str(o.get("parent_item") or "") == str(item_id):
+                tasks[j] = {**o, "parent_item": up} if up else {k: v for k, v in o.items() if k != "parent_item"}
     elif op == "undo":
         if _linked_task_id(t):
             raise ValueError("По пункту поставлена задача — измените её саму")
@@ -597,11 +963,11 @@ def not_me(viewer_uid: Any, note_id: int, item_id: str) -> None:
     _save(owner, note, meta)
 
 
-def _save(owner: str, note: dict[str, Any], meta: dict[str, Any]) -> None:
+def _save(owner: str, note: dict[str, Any], meta: dict[str, Any], order: Optional[list[str]] = None) -> None:
     from assistant.stores import notes as notes_store
 
     body = str(note.get("body") or "")
-    new_body = refresh_body(body, rows({**note, "meta": meta}))
+    new_body = refresh_body(body, rows({**note, "meta": meta}), order)
     notes_store.update_note(owner, int(note["id"]), meta=meta, body=new_body if new_body != body else None)
     notify(owner, int(note["id"]))
 

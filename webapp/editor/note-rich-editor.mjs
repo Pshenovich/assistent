@@ -4283,6 +4283,309 @@ function createMeetingTasksExtension(ctx) {
   var stop = function () {
     return true;
   };
+
+  // ——— Ручка ≡ слева от задачи: тянуть — переставить или вложить; клик — меню структуры ———
+  function mtAncestors(items, id) {
+    var out = [];
+    var cur = items[id] && items[id].parent;
+    while (cur && items[cur] && out.indexOf(cur) < 0 && out.length < 4) {
+      out.push(cur);
+      cur = items[cur].parent;
+    }
+    return out;
+  }
+  function mtSubtree(items, id) {
+    var out = [id];
+    Object.keys(items).forEach(function (k) {
+      if (mtAncestors(items, k).indexOf(id) >= 0) out.push(k);
+    });
+    return out;
+  }
+  function mtKids(items, id) {
+    return Object.keys(items).filter(function (k) {
+      return items[k].parent === id && !MT_EXCLUDED[items[k].code];
+    });
+  }
+  // Можно ли выбрать строку в режиме «Добавить подзадачи» / «Куда вложить».
+  function mtCandidate(items, pick, id) {
+    var it = items[id];
+    if (!it || MT_EXCLUDED[it.code] || id === pick.src) return false;
+    if (pick.mode === "add") return mtAncestors(items, pick.src).indexOf(id) < 0;
+    var src = items[pick.src] || {};
+    return (it.depth || 0) < 2 && mtSubtree(items, pick.src).indexOf(id) < 0 && id !== src.parent;
+  }
+  function mtSetMeta(view, meta) {
+    view.dispatch(view.state.tr.setMeta(meetingTasksKey, meta).setMeta("addToHistory", false));
+  }
+  function mtRowEl(view, id) {
+    var cell = view.dom.querySelector('td[data-leo-item="' + id + '"]');
+    return cell ? cell.closest("tr") : null;
+  }
+  function startGripDrag(view, item, e, grip) {
+    if (e.button != null && e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var st = meetingTasksKey.getState(view.state) || {};
+    var items = st.items || {};
+    var moving = mtSubtree(items, item.id);
+    var d = { x: e.clientX, y: e.clientY, on: false, target: null, touch: e.pointerType === "touch", armed: e.pointerType !== "touch" };
+    var timer = d.touch
+      ? setTimeout(function () {
+          d.armed = true; // долгое нажатие на телефоне — начать перетаскивание
+          begin();
+        }, 320)
+      : null;
+    function marks(clear) {
+      view.dom.querySelectorAll(".mt-drop-before, .mt-drop-after, .mt-drop-nest").forEach(function (el) {
+        el.classList.remove("mt-drop-before", "mt-drop-after", "mt-drop-nest");
+      });
+      if (clear) {
+        view.dom.querySelectorAll(".mt-dragging").forEach(function (el) {
+          el.classList.remove("mt-dragging");
+        });
+      }
+    }
+    function begin() {
+      if (d.on) return;
+      d.on = true;
+      document.body.classList.add("mt-drag-active");
+      moving.forEach(function (id) {
+        var tr = mtRowEl(view, id);
+        if (tr) tr.classList.add("mt-dragging");
+      });
+    }
+    function move(ev) {
+      if (!d.on) {
+        var far = Math.abs(ev.clientX - d.x) + Math.abs(ev.clientY - d.y) > 5;
+        if (!far) return;
+        if (!d.armed) {
+          cleanup(); // палец поехал до долгого нажатия — это прокрутка, не перетаскивание
+          return;
+        }
+        begin();
+      }
+      ev.preventDefault();
+      marks(false);
+      d.target = null;
+      var el = document.elementFromPoint(ev.clientX, ev.clientY);
+      var tr = el && el.closest ? el.closest("tr") : null;
+      var cell = tr && view.dom.contains(tr) ? tr.querySelector("td[data-leo-item]") : null;
+      var tid = cell ? cell.getAttribute("data-leo-item") : "";
+      var target = tid && items[tid];
+      if (!target || MT_EXCLUDED[target.code] || moving.indexOf(tid) >= 0) return;
+      var rc = tr.getBoundingClientRect();
+      var y = (ev.clientY - rc.top) / Math.max(1, rc.height);
+      var pos = y < 0.28 ? "before" : y > 0.72 ? "after" : "nest";
+      var into = pos === "nest" ? ((target.depth || 0) >= 2 ? target.parent : tid) : "";
+      if (pos === "nest" && moving.indexOf(into) >= 0) return;
+      var hl = pos === "nest" ? mtRowEl(view, into) : tr;
+      if (hl) hl.classList.add("mt-drop-" + pos);
+      d.target = { id: tid, pos: pos, into: into };
+    }
+    function cleanup() {
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", cancel);
+      document.body.classList.remove("mt-drag-active");
+      marks(true);
+    }
+    function cancel() {
+      cleanup();
+    }
+    function up() {
+      var was = d.on;
+      var t = d.target;
+      cleanup();
+      if (!was) {
+        if (typeof ctx.onMeetingTaskGrip === "function") {
+          ctx.onMeetingTaskGrip({ item: item.id, anchor: grip, state: item, hasKids: mtKids(items, item.id).length > 0 });
+        }
+        return;
+      }
+      if (!t || typeof ctx.onMeetingTaskDrop !== "function") return;
+      var target = items[t.id];
+      ctx.onMeetingTaskDrop({
+        item: item.id,
+        parent: t.pos === "nest" ? t.into : target.parent || "",
+        anchor: t.pos === "nest" ? "" : t.id,
+        pos: t.pos === "before" ? "before" : "after",
+      });
+    }
+    document.addEventListener("pointermove", move, { passive: false });
+    document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", cancel);
+  }
+  function leadWidget(item, info) {
+    return function (view) {
+      var el = document.createElement("span");
+      el.className = "mt-lead";
+      el.setAttribute("contenteditable", "false");
+      var pick = info.pick;
+      if (pick && pick.src !== item.id) {
+        var box = document.createElement("span");
+        if (info.candidate) {
+          var on = pick.mode === "add" && !!(pick.sel && pick.sel[item.id]);
+          box.className = "mt-pick" + (pick.mode === "add" ? " is-check" : " is-radio") + (on ? " is-on" : "");
+          box.setAttribute("role", pick.mode === "add" ? "checkbox" : "radio");
+          box.setAttribute("aria-checked", on ? "true" : "false");
+          box.addEventListener("mousedown", function (e) {
+            e.preventDefault();
+          });
+          box.addEventListener("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (pick.mode === "add") {
+              var sel = Object.assign({}, pick.sel || {});
+              if (sel[item.id]) delete sel[item.id];
+              else sel[item.id] = true;
+              mtSetMeta(view, { pick: Object.assign({}, pick, { sel: sel }) });
+            } else {
+              mtSetMeta(view, { pick: null });
+              if (typeof ctx.onMeetingTasksPicked === "function") ctx.onMeetingTasksPicked(pick, [item.id]);
+            }
+          });
+        } else box.className = "mt-pick is-off";
+        el.appendChild(box);
+      } else {
+        var grip = document.createElement("span");
+        grip.className = "mt-grip";
+        grip.setAttribute("role", "button");
+        grip.setAttribute("aria-label", "Перетащить или открыть меню");
+        grip.title = "Тяните — переставить или вложить. Клик — меню";
+        grip.innerHTML =
+          '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+        grip.addEventListener("pointerdown", function (e) {
+          startGripDrag(view, item, e, grip);
+        });
+        grip.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        });
+        el.appendChild(grip);
+      }
+      if (info.kids) {
+        var fold = document.createElement("span");
+        fold.className = "mt-fold" + (info.folded ? " is-folded" : "");
+        fold.setAttribute("role", "button");
+        fold.setAttribute("aria-label", info.folded ? "Развернуть подзадачи" : "Свернуть подзадачи");
+        fold.innerHTML =
+          '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        fold.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+        });
+        fold.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var folded = Object.assign({}, (meetingTasksKey.getState(view.state) || {}).folded || {});
+          if (folded[item.id]) delete folded[item.id];
+          else folded[item.id] = true;
+          if (typeof ctx.onMeetingTasksFold === "function") ctx.onMeetingTasksFold(folded);
+          mtSetMeta(view, { folded: folded });
+        });
+        el.appendChild(fold);
+      }
+      return el;
+    };
+  }
+  // Над таблицей: «Лео предлагает объединить 4 → «Запуск лендинга»» · Объединить… · Не надо.
+  // Наведение подсвечивает строки группы. Без предложений — «Лео, сгруппируй» (для старых саммари).
+  function groupsWidget(groups, canAsk) {
+    return function (view) {
+      var el = document.createElement("div");
+      el.className = "mt-groups";
+      el.setAttribute("contenteditable", "false");
+      function hl(g, on) {
+        (g.parent ? [g.parent] : []).concat(g.items).forEach(function (id) {
+          var tr = mtRowEl(view, id);
+          if (tr) tr.classList.toggle("mt-group-hl", on);
+        });
+      }
+      function btn(host, label, cls, fn) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "mt-group-btn" + (cls ? " " + cls : "");
+        b.textContent = label;
+        b.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+        });
+        b.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          fn(b);
+        });
+        host.appendChild(b);
+      }
+      groups.forEach(function (g) {
+        var row = document.createElement("div");
+        row.className = "mt-group";
+        var n = g.items.length + (g.parent ? 1 : 0);
+        var txt = document.createElement("span");
+        txt.className = "mt-group-text";
+        txt.textContent = "Лео предлагает объединить " + n + " → «" + (g.title || "общая задача") + "»";
+        row.appendChild(txt);
+        row.addEventListener("mouseenter", function () { hl(g, true); });
+        row.addEventListener("mouseleave", function () { hl(g, false); });
+        btn(row, "Объединить…", "is-primary", function () {
+          hl(g, false);
+          if (typeof ctx.onMeetingTaskGroup === "function") ctx.onMeetingTaskGroup("accept", g);
+        });
+        btn(row, "Не надо", "", function () {
+          hl(g, false);
+          if (typeof ctx.onMeetingTaskGroup === "function") ctx.onMeetingTaskGroup("reject", g);
+        });
+        el.appendChild(row);
+      });
+      if (!groups.length && canAsk) {
+        btn(el, "Лео, сгруппируй связанные задачи", "is-ask", function (b) {
+          b.disabled = true;
+          b.textContent = "Лео ищет связанные задачи…";
+          if (typeof ctx.onMeetingTaskGroup === "function") ctx.onMeetingTaskGroup("suggest", null);
+        });
+      }
+      return el;
+    };
+  }
+  // Режим выбора: «Подзадачи к …: выбрано N · Готово · Отмена» или «Куда вложить …? · Отмена».
+  function pickBarWidget(pick, items) {
+    return function (view) {
+      var el = document.createElement("div");
+      el.className = "mt-pickbar";
+      el.setAttribute("contenteditable", "false");
+      var src = (items[pick.src] && items[pick.src].task) || "задачи";
+      var txt = document.createElement("span");
+      txt.className = "mt-pickbar-text";
+      var n = Object.keys(pick.sel || {}).length;
+      txt.textContent =
+        pick.mode === "add" ? "Подзадачи к «" + src + "»: выбрано " + n : "Куда вложить «" + src + "»? Выберите задачу";
+      el.appendChild(txt);
+      function btn(label, cls, fn) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "mt-pickbar-btn" + (cls ? " " + cls : "");
+        b.textContent = label;
+        b.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+        });
+        b.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          fn();
+        });
+        el.appendChild(b);
+      }
+      if (pick.mode === "add") {
+        btn("Готово", "is-primary", function () {
+          mtSetMeta(view, { pick: null });
+          if (typeof ctx.onMeetingTasksPicked === "function") ctx.onMeetingTasksPicked(pick, Object.keys(pick.sel || {}));
+        });
+      }
+      btn("Отмена", "", function () {
+        mtSetMeta(view, { pick: null });
+      });
+      return el;
+    };
+  }
   return Extension.create({
     name: "leoMeetingTasks",
     addProseMirrorPlugins: function () {
@@ -4291,7 +4594,7 @@ function createMeetingTasksExtension(ctx) {
           key: meetingTasksKey,
           state: {
             init: function () {
-              return { items: null, open: false };
+              return { items: null, open: false, folded: (ctx.getMeetingTasksFolded && ctx.getMeetingTasksFolded()) || {}, pick: null };
             },
             apply: function (tr, v) {
               var m = tr.getMeta(meetingTasksKey);
@@ -4299,6 +4602,12 @@ function createMeetingTasksExtension(ctx) {
             },
           },
           props: {
+            handleKeyDown: function (view, e) {
+              var st = meetingTasksKey.getState(view.state);
+              if (e.key !== "Escape" || !st || !st.pick) return false;
+              mtSetMeta(view, { pick: null });
+              return true;
+            },
             // Клик по ячейке мимо значения: без этого браузер фокусирует редактор с курсором в начале
             // документа (ячейка не редактируется) и прокручивает заметку вверх. Ведём себя как клик по значению.
             handleDOMEvents: {
@@ -4347,11 +4656,41 @@ function createMeetingTasksExtension(ctx) {
                     if (!MT_UNDECIDED[it.code]) decided++;
                     else undecided++;
                   }
+                  var depth = ex ? 0 : Math.min(2, it.depth || 0);
+                  var folded = !ex && mtAncestors(st.items, it.id).some(function (a) { return st.folded && st.folded[a]; });
+                  var pick = st.pick && st.items[st.pick.src] ? st.pick : null;
                   decos.push(
                     Decoration.node(r.pos, r.pos + r.node.nodeSize, {
-                      class: "mt-row mt-row--" + it.code + (ex ? " is-excluded" + (st.open ? "" : " is-collapsed") : ""),
+                      class:
+                        "mt-row mt-row--" + it.code +
+                        (ex ? " is-excluded" + (st.open ? "" : " is-collapsed") : "") +
+                        (folded ? " is-folded" : "") +
+                        (depth ? " is-sub" : "") +
+                        (pick && pick.src === it.id ? " is-pick-src" : ""),
+                      style: "--mt-depth-row:" + depth,
                     })
                   );
+                  var firstCell = r.node.firstChild;
+                  if (!ex && firstCell && firstCell.firstChild && firstCell.firstChild.isTextblock) {
+                    var c0 = r.pos + 1;
+                    decos.push(Decoration.node(c0, c0 + firstCell.nodeSize, { class: "mt-c0", style: "--mt-depth:" + depth }));
+                    var kids = mtKids(st.items, it.id).length;
+                    var info = {
+                      kids: kids,
+                      folded: !!(st.folded && st.folded[it.id]),
+                      pick: pick,
+                      candidate: pick ? mtCandidate(st.items, pick, it.id) : false,
+                    };
+                    var sel = pick && pick.sel && pick.sel[it.id] ? 1 : 0;
+                    decos.push(
+                      Decoration.widget(c0 + 2, leadWidget(it, info), {
+                        key: ["mt-lead", it.id, it.code, kids, info.folded ? 1 : 0, pick ? pick.mode + pick.src : "", info.candidate ? 1 : 0, sel].join("|"),
+                        side: -1,
+                        ignoreSelection: true,
+                        stopEvent: stop,
+                      })
+                    );
+                  }
                   r.node.forEach(function (cell, coff, i) {
                     if (i < 1 || i > 3) return;
                     var at = r.pos + 1 + coff;
@@ -4374,6 +4713,26 @@ function createMeetingTasksExtension(ctx) {
                     stopEvent: stop,
                   })
                 );
+                var groups = st.pick ? [] : st.groups || [];
+                var canAsk = !st.pick && !st.groupsAsked && !sk && undecided >= 3;
+                if (groups.length || canAsk) {
+                  decos.push(
+                    Decoration.widget(pos, groupsWidget(groups, canAsk), {
+                      key: "mt-grp|" + groups.map(function (g) { return g.id + ":" + g.items.join(",") + ":" + g.parent; }).join(";") + "|" + (canAsk ? 1 : 0),
+                      side: -1,
+                      stopEvent: stop,
+                    })
+                  );
+                }
+                if (st.pick && st.items[st.pick.src]) {
+                  decos.push(
+                    Decoration.widget(pos + node.nodeSize, pickBarWidget(st.pick, st.items), {
+                      key: "mt-pick|" + st.pick.mode + st.pick.src + "|" + Object.keys(st.pick.sel || {}).length,
+                      side: 1,
+                      stopEvent: stop,
+                    })
+                  );
+                }
                 if (excluded) {
                   decos.push(
                     Decoration.widget(pos + node.nodeSize, tailWidget(excluded, !!st.open), {
@@ -4593,7 +4952,16 @@ function mount(container, options) {
     onTaskChipRemoved: options.onTaskChipRemoved,
     onFocusMarkClick: options.onFocusMarkClick,
   };
-  var meetingTasksCtx = { onMeetingTaskClick: options.onMeetingTaskClick, onMeetingTasksSkip: options.onMeetingTasksSkip };
+  var meetingTasksCtx = {
+    onMeetingTaskClick: options.onMeetingTaskClick,
+    onMeetingTasksSkip: options.onMeetingTasksSkip,
+    onMeetingTaskGrip: options.onMeetingTaskGrip,
+    onMeetingTaskDrop: options.onMeetingTaskDrop,
+    onMeetingTasksPicked: options.onMeetingTasksPicked,
+    onMeetingTasksFold: options.onMeetingTasksFold,
+    onMeetingTaskGroup: options.onMeetingTaskGroup,
+    getMeetingTasksFolded: options.getMeetingTasksFolded,
+  };
   var noteRefCtx = {
     editor: null,
     onSearchNoteRefs: options.onSearchNoteRefs,
@@ -4861,6 +5229,10 @@ function mount(container, options) {
 
   return {
     // Таблица задач встречи: { items: [{ id, code, label, who, due, note, … }] } с сервера; null — снять.
+    // Режим выбора в таблице задач встречи: { mode: "add" | "nest" | "move", src, sel }; null — выйти.
+    setMeetingTasksPick: function (pick) {
+      editor.view.dispatch(editor.state.tr.setMeta(meetingTasksKey, { pick: pick || null }).setMeta("addToHistory", false));
+    },
     setMeetingTasks: function (state) {
       var map = null;
       var skipped = (state && state.skipped) || null;
@@ -4870,7 +5242,16 @@ function mount(container, options) {
           if (x && x.id) map[x.id] = x;
         });
       }
-      editor.view.dispatch(editor.state.tr.setMeta(meetingTasksKey, { items: map, skipped: skipped }).setMeta("addToHistory", false));
+      editor.view.dispatch(
+        editor.state.tr
+          .setMeta(meetingTasksKey, {
+            items: map,
+            skipped: skipped,
+            groups: (state && state.groups) || [],
+            groupsAsked: !!(state && state.groups_asked),
+          })
+          .setMeta("addToHistory", false)
+      );
     },
     beginDictation: function (atEnd) {
       var id = "d" + ++dictationSeq;
@@ -5253,7 +5634,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261029-mtclick",
+  assetVersion: "20261030-sub1",
   Y: Y,
   mount: mount,
   importBody: importBody,

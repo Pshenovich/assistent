@@ -55,6 +55,7 @@ class TaskDraft:
     responsible: str = ""
     responsible_id: str = ""  # выбран из списка — ищем по ID, не по имени
     deadline: str = ""  # YYYY-MM-DD
+    parent_id: str = ""  # задача трекера, подзадачей которой будет эта
 
 
 @dataclass
@@ -81,3 +82,6 @@ class TrackerProvider(Protocol):
     def search_users(self, uid: int, query: str) -> list[Person]: ...
 
     def create_task(self, uid: int, draft: TaskDraft) -> CreatedTask: ...
+
+    # Сделать задачу подзадачей другой ("" — самостоятельной). Не умеет — нет метода.
+    # def set_parent(self, uid: int, external_id: str, parent_id: str) -> None: ...

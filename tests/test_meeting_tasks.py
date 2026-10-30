@@ -272,6 +272,126 @@ class MeetingTasksTests(unittest.TestCase):
         self.assertEqual(state["items"][1]["code"], "open")
         self.assertEqual(state["total"], 2)
 
+    def _order(self) -> list:
+        import re
+
+        body = notes_store.get_note(1, self.nid)["body"]
+        return re.findall(r'data-leo-item="(i[0-9a-f]{10})"', body)
+
+    def test_nest_rows_counts_and_order(self) -> None:
+        a, b, c = (t["id"] for t in TASKS)
+        mt.nest(1, self.nid, [a], c, by="Вова")  # первый — под третий
+        state, items = self._items()
+        self.assertEqual(items[a]["parent"], c)
+        self.assertEqual(items[a]["code"], "nested")
+        self.assertEqual(items[a]["depth"], 1)
+        self.assertEqual(state["decided"], 1)  # вложенный решается вместе с основным
+        self.assertEqual(self._order(), [b, c, a])  # подзадача сразу под основной
+        mt.nest(1, self.nid, [b], a, by="Вова")  # второй уровень
+        _, items = self._items()
+        self.assertEqual(items[b]["depth"], 2)
+        with self.assertRaises(ValueError):
+            mt.nest(1, self.nid, [c], b, by="Вова")  # в свою же подзадачу
+        mt.nest(1, self.nid, [a], None, by="Вова")  # вынуть: b едет вместе с a
+        _, items = self._items()
+        self.assertEqual(items[a]["parent"], "")
+        self.assertEqual(items[b]["parent"], a)
+
+    def test_drag_reorder_without_nesting(self) -> None:
+        a, b, c = (t["id"] for t in TASKS)
+        mt.nest(1, self.nid, [c], None, by="Вова", anchor=a, pos="before")
+        self.assertEqual(self._order(), [c, a, b])
+        mt.nest(1, self.nid, [c], a, by="Вова")  # вложили — встал последним под основным
+        mt.nest(1, self.nid, [b], None, by="Вова", anchor=a, pos="after")  # после a вместе с его c
+        self.assertEqual(self._order(), [a, c, b])
+
+    def test_nest_into_third_level_goes_beside(self) -> None:
+        a, b, c = (t["id"] for t in TASKS)
+        note = notes_store.get_note(1, self.nid)
+        d = "iaaaaaaaaa4"
+        meta = dict(note["meta"], tasks=note["meta"]["tasks"] + [{"id": d, "task": "Купить домен", "assignee": ""}])
+        notes_store.update_note(1, self.nid, meta=meta)
+        mt.nest(1, self.nid, [b], a, by="Вова")
+        mt.nest(1, self.nid, [c], b, by="Вова")
+        mt.nest(1, self.nid, [d], c, by="Вова")  # c — уже второй уровень: d встаёт рядом с ним
+        _, items = self._items()
+        self.assertEqual(items[d]["parent"], b)
+        self.assertEqual(items[d]["depth"], 2)
+
+    def test_nest_under_taken_row_creates_subtask(self) -> None:
+        a, b, c = (t["id"] for t in TASKS)
+        top = mt.claim(1, self.nid, c, lambda: self._new_task(title="Посмотреть цены"), by="Вова")
+        mt.nest(1, self.nid, [b], c, by="Вова")
+        _, items = self._items()
+        self.assertTrue(items[b]["task_id"])
+        sub = tasks_store._get_task_row(items[b]["task_id"])
+        self.assertEqual(sub["parent_id"], top["id"])
+        mt.nest(1, self.nid, [b], None, by="Вова")  # вынуть — задача становится самостоятельной
+        self.assertIsNone(tasks_store._get_task_row(items[b]["task_id"])["parent_id"])
+
+    def test_claim_parent_adopts_nested_rows(self) -> None:
+        a, b, c = (t["id"] for t in TASKS)
+        mt.nest(1, self.nid, [a, b], c, by="Вова")
+        top = mt.claim(1, self.nid, c, lambda: self._new_task(title="Посмотреть цены"), by="Вова")
+        kids = tasks_store.list_subtasks(top["id"])
+        self.assertEqual(sorted(k["title"] for k in kids), ["Проверить юр. тексты", "Согласовать бюджет"])
+        state, _ = self._items()
+        self.assertEqual(state["decided"], 3)
+
+    def test_dismiss_lifts_children(self) -> None:
+        a, b, c = (t["id"] for t in TASKS)
+        mt.nest(1, self.nid, [b], a, by="Вова")
+        mt.nest(1, self.nid, [a], c, by="Вова")
+        mt.apply(1, self.nid, a, "dismiss", by="Вова", reason="not_a_task")
+        _, items = self._items()
+        self.assertEqual(items[b]["parent"], c)
+
+    def _with_groups(self, groups, marks) -> None:
+        note = notes_store.get_note(1, self.nid)
+        tasks = [dict(t) for t in note["meta"]["tasks"]]
+        for i, (key, lead) in marks.items():
+            tasks[i]["group_key"] = key
+            if lead:
+                tasks[i]["group_parent"] = True
+        notes_store.update_note(1, self.nid, meta=dict(note["meta"], tasks=tasks, task_groups=groups))
+
+    def test_group_with_lead_row_merges_by_nesting(self) -> None:
+        a, b, c = (t["id"] for t in TASKS)
+        self._with_groups([{"key": "g1", "title": "Цены и бюджет", "state": "suggested"}], {0: ("g1", False), 2: ("g1", True)})
+        state, _ = self._items()
+        self.assertEqual(state["groups"], [{"id": "g1", "title": "Цены и бюджет", "parent": c, "items": [a]}])
+        out = mt.group_op(1, self.nid, "g1", "accept", by="Вова")
+        self.assertEqual(out["parent"], c)
+        _, items = self._items()
+        self.assertEqual(items[a]["parent"], c)
+        self.assertEqual(mt.rows(notes_store.get_note(1, self.nid))["groups"], [])
+
+    def test_group_without_lead_adds_row(self) -> None:
+        a, b, c = (t["id"] for t in TASKS)
+        self._with_groups([{"key": "g1", "title": "Запуск", "state": "suggested"}], {0: ("g1", False), 1: ("g1", False)})
+        out = mt.group_op(1, self.nid, "g1", "accept", by="Вова")
+        new = out["parent"]
+        _, items = self._items()
+        self.assertEqual(items[new]["task"], "Запуск")
+        self.assertEqual({items[a]["parent"], items[b]["parent"]}, {new})
+        self.assertEqual(self._order()[:3], [new, a, b])
+
+    def test_group_reject_and_stale(self) -> None:
+        self._with_groups([{"key": "g1", "title": "x", "state": "suggested"}], {0: ("g1", False), 1: ("g1", False)})
+        mt.group_op(1, self.nid, "g1", "reject", by="Вова")
+        self.assertEqual(mt.rows(notes_store.get_note(1, self.nid))["groups"], [])
+        with self.assertRaises(ValueError):
+            mt.group_op(1, self.nid, "g1", "accept", by="Вова")
+
+    def test_suggest_groups_on_demand(self) -> None:
+        from assistant.nlu import llm
+
+        a, b, c = (t["id"] for t in TASKS)
+        with mock.patch.object(llm, "group_tasks", return_value=[{"title": "Бюджет", "parent": None, "items": [0, 2]}]):
+            state = mt.suggest_groups(1, self.nid, by="Вова")
+        self.assertTrue(state["groups_asked"])
+        self.assertEqual(state["groups"][0]["items"], [a, c])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -249,6 +249,12 @@ class Bitrix24Tracker:
                 return str(picked["ID"]), _user_name(picked)
         raise TrackerError(f"Не нашёл «{query}» среди пользователей Битрикс24 — уточните имя или фамилию")
 
+    def set_parent(self, uid: int, external_id: str, parent_id: str) -> None:
+        """Задачу — подзадачей другой (PARENT_ID); "" — снова самостоятельная."""
+        base = self._creds(uid)["secret"]
+        pid = int(parent_id) if str(parent_id or "").strip().isdigit() else 0
+        call(base, "tasks.task.update", {"taskId": int(external_id), "fields": {"PARENT_ID": pid}})
+
     def create_task(self, uid: int, draft: TaskDraft) -> CreatedTask:
         creds = self._creds(uid)
         base = creds["secret"]
@@ -275,6 +281,8 @@ class Bitrix24Tracker:
                 fields["STAGE_ID"] = int(stage_id)
         if draft.deadline:
             fields["DEADLINE"] = f"{str(draft.deadline)[:10]}T19:00:00"
+        if str(draft.parent_id or "").strip().isdigit():
+            fields["PARENT_ID"] = int(str(draft.parent_id).strip())  # подзадача в Битриксе
         result = call(base, "tasks.task.add", {"fields": fields})
         task = (result or {}).get("task") if isinstance(result, dict) else None
         task_id = str((task or {}).get("id") or (task or {}).get("ID") or "").strip()

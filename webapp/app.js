@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261029-mtclick"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261030-sub1"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -16025,7 +16025,7 @@
       text.textContent = selected.name || selected.email || "Я";
       chip.appendChild(text);
       chips.appendChild(chip);
-      var sum = document.getElementById("m-task-assignee-summary");
+      var sum = opts && "summaryEl" in opts ? opts.summaryEl : document.getElementById("m-task-assignee-summary");
       if (sum) sum.textContent = selected.name || selected.email || "Я";
     }
 
@@ -16042,6 +16042,7 @@
       input.value = "";
       suggest.classList.add("hidden");
       paint();
+      if (opts && opts.onPick) opts.onPick(selected);
     }
 
     function paintSuggest() {
@@ -16112,6 +16113,300 @@
         return selected;
       },
     };
+  }
+
+  // ——— Подзадачи: задача → подзадача → под-подзадача; у каждой свой исполнитель, срок, комментарий ———
+  var SUBTASK_MAX_DEPTH = 2;
+  var SUBTASK_STATE_LABEL = {
+    done: "Сделано",
+    declined: "Отказ",
+    in_progress: "В работе",
+    question: "Вопрос",
+    assigned: "Ждёт ответа",
+    open: "",
+  };
+
+  function taskEvFromApi(task) {
+    var ev = (task && task.event) || {};
+    return Object.assign({}, ev, {
+      task_id: task.id,
+      id: "task-" + task.id,
+      summary: task.title || ev.summary,
+      checklist: task.checklist || ev.checklist,
+      assignee: { user_id: task.assignee_user_id, email: task.assignee_email, name: task.assignee_name },
+      all_day: !!task.all_day,
+      schedule_log_lines: task.schedule_log_lines || ev.schedule_log_lines || [],
+    });
+  }
+
+  async function openTaskById(taskId) {
+    try {
+      var data = await apiFetch("/calendar/tasks/" + encodeURIComponent(taskId), { method: "GET" });
+      if (data && data.task) openTaskModal(taskEvFromApi(data.task));
+    } catch (err) {
+      showNoteToast((err && err.message) || "Не удалось открыть задачу");
+    }
+  }
+
+  function subtaskDayIso(st) {
+    var d = st && st.start_at ? new Date(st.start_at) : null;
+    if (!d || isNaN(d.getTime())) return "";
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+
+  function subtaskDueLabel(st) {
+    var d = st && st.start_at ? new Date(st.start_at) : null;
+    if (!d || isNaN(d.getTime())) return "";
+    return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }).replace(".", "");
+  }
+
+  function subtaskEl(tag, cls, text) {
+    var el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text != null) el.textContent = text;
+    return el;
+  }
+
+  // Блок «Подзадачи» в окне и карточке задачи. Сам загружает задачу: в календарном событии подзадач нет.
+  function mountSubtasks(host, taskId, opts) {
+    opts = opts || {};
+    var state = { task: null, open: "", adding: "", busy: false };
+    host.classList.add("st-box");
+    host.innerHTML = "";
+
+    function load() {
+      return apiFetch("/calendar/tasks/" + encodeURIComponent(taskId), { method: "GET" })
+        .then(function (r) {
+          if (!document.body.contains(host) || !r || !r.task) return;
+          state.task = r.task;
+          paint();
+          if (opts.onLoad) opts.onLoad(r.task);
+        })
+        .catch(function () {});
+    }
+
+    function api(path, method, body) {
+      state.busy = true;
+      return apiFetch(path, { method: method, body: body ? JSON.stringify(body) : undefined })
+        .then(function (r) {
+          state.busy = false;
+          return load().then(function () {
+            if (opts.onChange) opts.onChange();
+            return r;
+          });
+        })
+        .catch(function (err) {
+          state.busy = false;
+          showNoteToast((err && err.message) || "Не получилось");
+          paint();
+        });
+    }
+
+    function depthOfRoot() {
+      return ((state.task && state.task.parents) || []).length;
+    }
+
+    function addInput(parent, depth) {
+      var wrap = subtaskEl("div", "st-add-form");
+      wrap.style.setProperty("--st-depth", depth);
+      var inp = subtaskEl("input", "field-input st-add-input");
+      inp.type = "text";
+      inp.placeholder = "Что сделать — Enter, чтобы добавить";
+      inp.maxLength = 200;
+      wrap.appendChild(inp);
+      function submit() {
+        var title = String(inp.value || "").trim();
+        if (!title || state.busy) return;
+        inp.value = "";
+        api("/calendar/tasks", "POST", {
+          title: title,
+          parent_id: Number(parent.id),
+          start: parent.start_at || null,
+          all_day: !!parent.all_day,
+          // По умолчанию — ответственный за общую задачу; поменять можно в строке подзадачи.
+          assignee_user_id: String(parent.assignee_user_id || ""),
+          assignee_name: String(parent.assignee_name || ""),
+          note_id: String(parent.note_id || ""),
+        }).then(function () {
+          var again = host.querySelector(".st-add-input");
+          if (again) again.focus();
+        });
+      }
+      inp.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && !e.isComposing) {
+          e.preventDefault();
+          submit();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          state.adding = "";
+          paint();
+        }
+      });
+      setTimeout(function () {
+        inp.focus();
+      }, 0);
+      return wrap;
+    }
+
+    function editor(st, depth) {
+      var box = subtaskEl("div", "st-edit");
+      box.style.setProperty("--st-depth", depth);
+      var assRow = subtaskEl("div", "st-field");
+      assRow.appendChild(subtaskEl("span", "st-label", "Исполнитель"));
+      var assHost = subtaskEl("div", "st-assignee");
+      assRow.appendChild(assHost);
+      box.appendChild(assRow);
+      var picked = null;
+      mountTaskAssignee(
+        assHost,
+        { user_id: st.assignee_user_id, name: st.assignee_name },
+        { summaryEl: null, anchorHost: true, onPick: function (a) { picked = a; } }
+      );
+      var dueRow = subtaskEl("label", "st-field");
+      dueRow.appendChild(subtaskEl("span", "st-label", "Срок"));
+      var due = subtaskEl("input", "field-input st-due");
+      due.type = "date";
+      due.value = subtaskDayIso(st);
+      dueRow.appendChild(due);
+      box.appendChild(dueRow);
+      var note = subtaskEl("textarea", "field-textarea st-note");
+      note.rows = 2;
+      note.placeholder = "Комментарий исполнителю";
+      note.value = st.description || "";
+      box.appendChild(note);
+      if (st.result) {
+        var res = subtaskEl("div", "st-result");
+        res.appendChild(subtaskEl("span", "", "Результат"));
+        res.appendChild(subtaskEl("p", "", st.result));
+        box.appendChild(res);
+      }
+      var acts = subtaskEl("div", "st-acts");
+      var save = subtaskEl("button", "btn btn-primary st-save", "Сохранить");
+      save.type = "button";
+      save.addEventListener("click", function () {
+        var body = { description: note.value };
+        if (picked) {
+          body.assignee_user_id = picked.user_id || "";
+          body.assignee_email = picked.email || "";
+          body.assignee_name = picked.name || "";
+        }
+        if (due.value && due.value !== subtaskDayIso(st)) {
+          body.all_day = true;
+          body.start = due.value + "T12:00:00";
+          body.end = due.value + "T13:00:00";
+        }
+        state.open = "";
+        api("/calendar/tasks/" + encodeURIComponent(st.id), "PATCH", body);
+      });
+      acts.appendChild(save);
+      if (depth + depthOfRoot() < SUBTASK_MAX_DEPTH) {
+        var sub = subtaskEl("button", "btn st-ghost", "+ Подзадача");
+        sub.type = "button";
+        sub.addEventListener("click", function () {
+          state.adding = String(st.id);
+          paint();
+        });
+        acts.appendChild(sub);
+      }
+      var openBtn = subtaskEl("button", "btn st-ghost", "Открыть");
+      openBtn.type = "button";
+      openBtn.addEventListener("click", function () {
+        openTaskById(st.id);
+      });
+      acts.appendChild(openBtn);
+      var out = subtaskEl("button", "btn st-ghost", "Сделать самостоятельной");
+      out.type = "button";
+      out.addEventListener("click", function () {
+        state.open = "";
+        api("/calendar/tasks/" + encodeURIComponent(st.id), "PATCH", { parent_id: null });
+      });
+      acts.appendChild(out);
+      box.appendChild(acts);
+      return box;
+    }
+
+    function row(st, depth, list) {
+      var line = subtaskEl("div", "st-row" + (st.done ? " is-done" : "") + (state.open === String(st.id) ? " is-open" : ""));
+      line.style.setProperty("--st-depth", depth);
+      var cb = subtaskEl("input", "st-cb");
+      cb.type = "checkbox";
+      cb.checked = !!st.done;
+      cb.setAttribute("aria-label", "Выполнено");
+      cb.addEventListener("change", function () {
+        api("/calendar/tasks/" + encodeURIComponent(st.id), "PATCH", { done: cb.checked });
+      });
+      line.appendChild(cb);
+      var main = subtaskEl("button", "st-main");
+      main.type = "button";
+      main.appendChild(subtaskEl("span", "st-title", st.title || "Задача"));
+      var meta = [st.assignee_name || "", subtaskDueLabel(st)].filter(Boolean);
+      var kids = st.subtasks || [];
+      if (kids.length) {
+        meta.push(kids.filter(function (k) { return k.done; }).length + " из " + kids.length);
+      }
+      var metaEl = subtaskEl("span", "st-meta", meta.join(" · "));
+      var label = SUBTASK_STATE_LABEL[st.state] || "";
+      if (label && !st.done) metaEl.appendChild(subtaskEl("span", "st-state is-" + st.state, label));
+      main.appendChild(metaEl);
+      main.addEventListener("click", function () {
+        state.open = state.open === String(st.id) ? "" : String(st.id);
+        state.adding = "";
+        paint();
+      });
+      line.appendChild(main);
+      list.appendChild(line);
+      if (state.open === String(st.id)) list.appendChild(editor(st, depth));
+      kids.forEach(function (k) {
+        row(k, depth + 1, list);
+      });
+      if (state.adding === String(st.id)) list.appendChild(addInput(st, depth + 1));
+    }
+
+    function paint() {
+      var t = state.task;
+      host.innerHTML = "";
+      if (!t) return;
+      var parents = t.parents || [];
+      if (parents.length) {
+        var crumb = subtaskEl("button", "st-crumb");
+        crumb.type = "button";
+        crumb.textContent =
+          "Подзадача в «" + (parents[0].title || "Задача") + "»" +
+          (parents[0].assignee_name ? " · отв. " + parents[0].assignee_name : "");
+        crumb.addEventListener("click", function () {
+          openTaskById(parents[0].id);
+        });
+        host.appendChild(crumb);
+      }
+      var subs = t.subtasks || [];
+      var canAdd = parents.length < SUBTASK_MAX_DEPTH;
+      if (!subs.length && !canAdd) return;
+      var head = subtaskEl("div", "st-head");
+      head.appendChild(subtaskEl("span", "st-head-title", "Подзадачи"));
+      if (subs.length) head.appendChild(subtaskEl("span", "st-head-count", (t.subtasks_done || 0) + " из " + subs.length));
+      host.appendChild(head);
+      var list = subtaskEl("div", "st-list");
+      subs.forEach(function (st) {
+        row(st, 0, list);
+      });
+      host.appendChild(list);
+      if (!canAdd) return;
+      if (state.adding === "root") host.appendChild(addInput(t, 0));
+      else {
+        var add = subtaskEl("button", "st-add", "+ Добавить подзадачу");
+        add.type = "button";
+        add.addEventListener("click", function () {
+          state.adding = "root";
+          state.open = "";
+          paint();
+        });
+        host.appendChild(add);
+      }
+    }
+
+    load();
+    return { reload: load };
   }
 
   function taskPayloadFromModal(opts) {
@@ -16228,6 +16523,9 @@
       '<div id="m-task-checklist-host" class="rem-checklist-host"></div>' +
       "</div>" +
       (existing
+        ? '<div id="m-task-subtasks" class="event-sheet-group"></div>'
+        : '<div id="m-task-subtasks-preview" class="event-sheet-group st-box hidden"></div>') +
+      (existing
         ? '<div class="event-sheet-group sheet-result-group">' +
           '<p class="sheet-sublabel">Результат</p>' +
           '<textarea id="m-task-result" class="field-textarea event-sheet-desc" rows="2" placeholder="Что получилось (необязательно)"></textarea>' +
@@ -16309,8 +16607,30 @@
     );
     reminderChecklistApi = mountReminderChecklist(
       document.getElementById("m-task-checklist-host"),
-      ev.checklist
+      ev.checklist,
+      { addLabel: "Пункт чек-листа" }
     );
+    var subHost = document.getElementById("m-task-subtasks");
+    if (subHost) mountSubtasks(subHost, taskId);
+    var previewHost = document.getElementById("m-task-subtasks-preview");
+    if (previewHost && opts.subtaskPreview && opts.subtaskPreview.length) {
+      var ph = subtaskEl("div", "st-head");
+      ph.appendChild(subtaskEl("span", "st-head-title", "Подзадачи из таблицы · " + opts.subtaskPreview.length));
+      previewHost.appendChild(ph);
+      opts.subtaskPreview.forEach(function (p) {
+        var line = subtaskEl("div", "st-row");
+        line.style.setProperty("--st-depth", Math.max(0, (p.depth || 1) - 1));
+        var main = subtaskEl("div", "st-main");
+        main.appendChild(subtaskEl("span", "st-title", p.title || "Задача"));
+        main.appendChild(subtaskEl("span", "st-meta", p.who ? p.who : "исполнитель — как у задачи"));
+        line.appendChild(main);
+        previewHost.appendChild(line);
+      });
+      previewHost.appendChild(
+        subtaskEl("p", "st-preview-note", "Создадутся вместе с задачей. Исполнителя, срок и комментарий каждой можно поменять потом в задаче.")
+      );
+      previewHost.classList.remove("hidden");
+    }
     var meUid = String(
       (cachedMe && (cachedMe.telegram_user_id || cachedMe.id)) || ""
     );
@@ -21317,8 +21637,48 @@
     who.appendChild(postedAvatar(task.owner_user_id, task.owner_name, "s"));
     who.appendChild(tinboxEl("span", "tinbox-who-name", task.owner_name || "Постановщик"));
     card.appendChild(who);
-    card.appendChild(tinboxEl("h2", "tinbox-title", task.title || "Задача"));
-    if (task.description) card.appendChild(tinboxEl("p", "tinbox-desc", task.description));
+    var parents = task.parents || [];
+    if (parents.length) {
+      card.appendChild(
+        tinboxEl(
+          "p",
+          "tinbox-parent",
+          "Подзадача в «" + (parents[0].title || "Задача") + "»" + (parents[0].assignee_name ? " · отв. " + parents[0].assignee_name : "")
+        )
+      );
+    }
+    var bundle = task.bundle_items || [];
+    var siblings = bundle.filter(function (b) { return String(b.parent_id || "") === String(task.parent_id || ""); });
+    if (task.parent_id && siblings.length === bundle.length && bundle.length) {
+      // Несколько подзадач одной общей задачи — одной карточкой, решение сразу по всем.
+      var n = bundle.length + 1;
+      card.appendChild(tinboxEl("h2", "tinbox-title", n + " " + pluralRu(n, "подзадача", "подзадачи", "подзадач") + " для вас"));
+      var ul0 = tinboxEl("ul", "tinbox-bundle");
+      [task].concat(bundle).forEach(function (b) {
+        var li = tinboxEl("li", "", b.title || "Задача");
+        var dueB = subtaskDueLabel(b);
+        if (dueB) li.appendChild(tinboxEl("span", "tinbox-bundle-due", dueB));
+        if (b.description) li.appendChild(tinboxEl("span", "tinbox-bundle-note", b.description));
+        ul0.appendChild(li);
+      });
+      card.appendChild(ul0);
+    } else {
+      card.appendChild(tinboxEl("h2", "tinbox-title", task.title || "Задача"));
+      if (task.description) card.appendChild(tinboxEl("p", "tinbox-desc", task.description));
+    }
+    var subs = task.subtasks || [];
+    if (subs.length) {
+      var mine = {};
+      bundle.forEach(function (b) { mine[String(b.id)] = 1; });
+      var ulS = tinboxEl("ul", "tinbox-bundle");
+      subs.slice(0, 8).forEach(function (st) {
+        var li = tinboxEl("li", st.done ? "is-done" : "", st.title || "Задача");
+        li.appendChild(tinboxEl("span", "tinbox-bundle-due", mine[String(st.id)] ? "вам" : st.assignee_name || ""));
+        ulS.appendChild(li);
+      });
+      card.appendChild(tinboxEl("p", "tinbox-sub-head", "Подзадачи · " + subs.length));
+      card.appendChild(ulS);
+    }
     var checklist = task.checklist || [];
     if (checklist.length) {
       var ul = tinboxEl("ul", "tinbox-check");
@@ -21602,11 +21962,18 @@
     try {
       var res = await apiFetch("/calendar/tasks/" + encodeURIComponent(task.id) + "/triage", {
         method: "POST",
-        body: JSON.stringify(Object.assign({ action: action }, payload || {})),
+        body: JSON.stringify(Object.assign({ action: action, with_ids: task.bundle_ids || [] }, payload || {})),
       });
       if (!tinbox) return;
       s.last = { idx: s.idx, task: task, action: action };
-      if (res && res.task) s.items[s.idx] = Object.assign({}, task, res.task, { owner_name: task.owner_name, source: task.source });
+      if (res && res.task) {
+        s.items[s.idx] = Object.assign({}, task, res.task, {
+          owner_name: task.owner_name,
+          source: task.source,
+          bundle_ids: task.bundle_ids,
+          bundle_items: task.bundle_items,
+        });
+      }
       s.stats[action === "edit" ? "accept" : action]++;
       s.idx++;
       s.mode = "";
@@ -21644,6 +22011,7 @@
           action: "undo",
           state: last.task.assignee_triage || "inbox",
           snoozed_until: last.task.assignee_snoozed_until || "",
+          with_ids: last.task.bundle_ids || [],
         }),
       });
       if (!tinbox) return;
@@ -21932,6 +22300,10 @@
     host.appendChild(top);
 
     if (s.view === "list") {
+      // Списком — каждый пункт отдельно: группа от Лео раскрывается в свои пункты.
+      s.items = [].concat.apply([], s.items.map(function (x) {
+        return x.group && x.status === "new" ? x.group.members || [] : [x];
+      }));
       host.appendChild(fstackList());
       return;
     }
@@ -21944,6 +22316,15 @@
       return;
     }
     var f = s.items[s.idx];
+    if (f.group) {
+      var gstage = tinboxEl("div", "tinbox-stage");
+      var gcard = fstackGroupCard(f);
+      gstage.appendChild(gcard);
+      host.appendChild(gstage);
+      host.appendChild(fstackGroupActions(f));
+      s.card = gcard;
+      return;
+    }
     var stage = tinboxEl("div", "tinbox-stage");
     var more = s.items.slice(s.idx + 1).some(function (x) {
       return x.status === "new";
@@ -21954,6 +22335,107 @@
     host.appendChild(stage);
     host.appendChild(fstackActions(f));
     s.card = card;
+  }
+
+  // Группа от Лео в стопке: «4 задачи → «Запуск лендинга»». → — объединить и поручить основную
+  // (через окно), ← — «По одной»: группа распадается на обычные карточки.
+  function fstackGroupCard(f) {
+    var g = f.group || {};
+    var card = tinboxEl("div", "tinbox-card fstack-card fstack-group");
+    var head = tinboxEl("div", "tinbox-who");
+    head.appendChild(tinboxEl("span", "tinbox-who-name", "Задачи встречи · группа от Лео"));
+    card.appendChild(head);
+    card.appendChild(tinboxEl("h2", "tinbox-title", f.text || "Группа задач"));
+    var ul = tinboxEl("ul", "tinbox-bundle");
+    (g.items || []).forEach(function (x) {
+      ul.appendChild(tinboxEl("li", x.item === g.parent ? "is-lead" : "", x.text || ""));
+    });
+    card.appendChild(ul);
+    var src = f.source || {};
+    if (src.id) card.appendChild(tinboxSourceRow({ id: src.id, kind: "transcription", title: src.title || src.label || "" }));
+    var badgeL = tinboxEl("span", "tinbox-badge is-left", "По одной");
+    var badgeR = tinboxEl("span", "tinbox-badge is-right", "Объединить");
+    card.appendChild(badgeL);
+    card.appendChild(badgeR);
+    tinboxSwipe(card, badgeL, badgeR, function (dir) {
+      fstackGroupRun(dir === "left" ? "split" : "merge");
+    });
+    return card;
+  }
+
+  function fstackGroupActions(f) {
+    var row = tinboxEl("div", "tinbox-acts");
+    [
+      { id: "split", label: "По одной", icon: "x", tone: "danger", key: "←" },
+      { id: "later", label: "Позже", icon: "clock", key: "P" },
+      { id: "merge", label: "Объединить", icon: "check", tone: "accent", key: "→" },
+    ].forEach(function (a) {
+      var b = tinboxEl("button", "tinbox-act" + (a.tone ? " is-" + a.tone : ""));
+      b.type = "button";
+      var ico = tinboxEl("span", "tinbox-act-ico");
+      ico.innerHTML = DISCUSS_ICONS[a.icon] || "";
+      b.appendChild(ico);
+      b.appendChild(tinboxEl("span", "tinbox-act-label", a.label));
+      b.dataset.tip = a.label + " · клавиша " + a.key;
+      b.addEventListener("click", function () {
+        fstackGroupRun(a.id);
+      });
+      row.appendChild(b);
+    });
+    return row;
+  }
+
+  async function fstackGroupRun(id) {
+    var s = fstack;
+    if (!s || s.busy || s.idx >= s.items.length) return;
+    var f = s.items[s.idx];
+    var g = f.group || {};
+    if (id === "later") {
+      s.idx++;
+      renderFocusStack();
+      return;
+    }
+    s.busy = true;
+    if (s.card) s.card.classList.add("is-fly-" + (id === "split" ? "left" : "right"));
+    try {
+      var r = await meetingTasksGroupCall(g.note_id, id === "split" ? "reject" : "accept", g.key);
+      if (fstack !== s) return;
+      s.changed = true;
+      s.busy = false;
+      if (id === "split") {
+        // Пункты группы — обратно в стопку обычными карточками, на её место.
+        s.items.splice.apply(s.items, [s.idx, 1].concat(g.members || []));
+        renderFocusStack();
+        return;
+      }
+      f.status = "done";
+      s.idx++;
+      renderFocusStack();
+      fstackAway();
+      openMergedTaskModal(g.note_id, r, (f.source && (f.source.title || f.source.label)) || "", function () {
+        meetingTasksRefresh(g.note_id);
+      });
+    } catch (e) {
+      s.busy = false;
+      if (s.card) s.card.classList.remove("is-fly-left", "is-fly-right");
+      showNoteToast((e && e.message) || "Не получилось — попробуйте ещё раз");
+    }
+  }
+
+  // Стопку прячем на время окна задачи; внизу — «К разбору».
+  function fstackAway() {
+    var s = fstack;
+    if (!s || s.away) return;
+    s.away = true;
+    s.host.classList.add("is-away");
+    document.body.classList.remove("tinbox-open");
+    var back = tinboxEl("button", "tinbox-back");
+    back.type = "button";
+    back.innerHTML = DISCUSS_ICONS.taskBox;
+    back.appendChild(tinboxEl("span", "", "К разбору · " + Math.min(s.idx + 1, s.items.length) + " из " + s.items.length));
+    back.addEventListener("click", tinboxReturn);
+    document.body.appendChild(back);
+    s.back = back;
   }
 
   function fstackCard(f) {
@@ -22422,6 +22904,14 @@
       fstackRun("edit");
       return;
     }
+    if (f.group) {
+      var gk = { ArrowLeft: "split", ArrowRight: "merge", KeyP: "later" }[e.code];
+      if (!gk) return;
+      e.preventDefault();
+      e.stopPropagation();
+      fstackGroupRun(gk);
+      return;
+    }
     var a = FSTACK_ACTS.filter(function (x) {
       return x.code === e.code;
     })[0];
@@ -22733,10 +23223,13 @@
       body: JSON.stringify(body),
     })
       .then(function () {
-        return meetingTasksRefresh();
+        return meetingTasksRefresh().then(function () {
+          return true;
+        });
       })
       .catch(function (e) {
         showNoteToast((e && e.message) || "Не получилось");
+        return false;
       });
   }
 
@@ -22749,9 +23242,19 @@
       note_id: nid,
     };
     if (!delegate) ev.assignee = defaultTaskAssignee();
+    // Вложенные строки станут подзадачами новой задачи — показать в окне, что именно.
+    var items = meetingTasksItems();
+    var preview = Object.keys(items)
+      .filter(function (k) {
+        return meetingTasksTop(items, k) === st.id && k !== st.id && !items[k].task_id && items[k].code === "nested";
+      })
+      .map(function (k) {
+        return { title: items[k].task, who: items[k].who || "", depth: items[k].depth || 1 };
+      });
     openTaskModal(ev, {
       focusAssignee: !!delegate,
       meetingItem: st.id,
+      subtaskPreview: preview,
       onSaved: function () {
         meetingTasksRefresh();
         showNoteToast(delegate ? "Поручено" : "Задача ваша");
@@ -22776,11 +23279,205 @@
       });
   }
 
+  // ——— Структура таблицы задач встречи: ручка ≡ (перетащить / вложить / меню), режимы выбора ———
+  function meetingTasksItems() {
+    var map = {};
+    var st = meetingTasksBound.state;
+    ((st && st.items) || []).forEach(function (x) {
+      if (x && x.id) map[x.id] = x;
+    });
+    return map;
+  }
+
+  function meetingTasksFoldKey() {
+    return "leo_mt_folded:" + String(meetingTasksBound.noteId || currentOpenNoteId() || "");
+  }
+
+  function readMeetingTasksFolded() {
+    try {
+      var v = JSON.parse(localStorage.getItem(meetingTasksFoldKey()) || "{}");
+      return v && typeof v === "object" ? v : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  // Свёрнутые подзадачи — личное: у других участников таблица остаётся как была.
+  function saveMeetingTasksFolded(folded) {
+    try {
+      localStorage.setItem(meetingTasksFoldKey(), JSON.stringify(folded || {}));
+    } catch (_) {}
+  }
+
+  function meetingTasksNest(items, parent, anchor, pos) {
+    var nid = meetingTasksBound.noteId;
+    if (!nid || !items || !items.length) return Promise.resolve();
+    return apiFetch("/notes/local/" + encodeURIComponent(nid) + "/meeting-tasks-nest", {
+      method: "POST",
+      body: JSON.stringify({ items: items, parent: parent || null, anchor: anchor || null, pos: pos || "after" }),
+    })
+      .then(function () {
+        kickNoteCollab(60); // сервер переставил строки в тексте — подтянуть сразу
+        return meetingTasksRefresh();
+      })
+      .catch(function (e) {
+        showNoteToast((e && e.message) || "Не получилось");
+      });
+  }
+
+  function meetingTasksPick(mode, src, sel) {
+    var b = meetingTasksBound;
+    if (b.editor && typeof b.editor.setMeetingTasksPick === "function") {
+      b.editor.setMeetingTasksPick({ mode: mode, src: src, sel: sel || {} });
+    }
+  }
+
+  function meetingTasksTop(items, id) {
+    var cur = id;
+    var guard = 0;
+    while (items[cur] && items[cur].parent && items[items[cur].parent] && guard++ < 4) cur = items[cur].parent;
+    return cur;
+  }
+
+  function onMeetingTaskGrip(d) {
+    var items = meetingTasksItems();
+    var it = items[d.item];
+    if (!it || !d.anchor) return;
+    var depth = it.depth || 0;
+    var menu = [];
+    if (depth < 2) {
+      menu.push({
+        label: "Добавить подзадачи",
+        fn: function () {
+          var sel = {};
+          Object.keys(items).forEach(function (k) {
+            if (items[k].parent === it.id) sel[k] = true;
+          });
+          meetingTasksPick("add", it.id, sel);
+        },
+      });
+    }
+    if (depth === 0) {
+      menu.push({ label: "Сделать подзадачей", fn: function () { meetingTasksPick("nest", it.id); } });
+    }
+    if (depth === 2) {
+      menu.push({
+        label: "Поднять на уровень выше",
+        fn: function () {
+          var up = items[it.parent] || {};
+          meetingTasksNest([it.id], up.parent || null, it.parent, "after");
+        },
+      });
+    }
+    if (depth > 0) {
+      menu.push({
+        label: "Сделать самостоятельной задачей",
+        fn: function () { meetingTasksNest([it.id], null, meetingTasksTop(items, it.id), "after"); },
+      });
+      menu.push({ label: "Переместить в другую задачу", fn: function () { meetingTasksPick("move", it.id); } });
+    }
+    menu.push({
+      label: "Удалить",
+      danger: true,
+      fn: function () {
+        // Не стираем: строка уходит в «Не задачи» у всех, вернуть — одним нажатием.
+        meetingTaskOp(it.id, { op: "dismiss", reason: "not_a_task" }).then(function (ok) {
+          if (!ok) return;
+          kickNoteCollab(60);
+          showNoteToast("Убрано в «Не задачи» — вернуть можно под таблицей");
+        });
+      },
+    });
+    showPostedMenu(d.anchor, menu);
+  }
+
+  // Группа от Лео: «Объединить…» — пункты вкладываются в основной и сразу окно «Поручить» основной
+  // (вложенные станут её подзадачами); «Не надо» — предложение уходит у всех; «Лео, сгруппируй».
+  function meetingTasksGroupCall(noteId, op, groupId) {
+    return apiFetch("/notes/local/" + encodeURIComponent(noteId) + "/meeting-tasks-groups", {
+      method: "POST",
+      body: JSON.stringify({ op: op, group: groupId || "" }),
+    });
+  }
+
+  // Окно «Поручить» общей задачи после объединения: подзадачи — из ответа сервера.
+  function openMergedTaskModal(noteId, state, noteTitle, onDone) {
+    var items = {};
+    ((state && state.items) || []).forEach(function (x) {
+      items[x.id] = x;
+    });
+    var parent = items[state && state.parent];
+    if (!parent) return;
+    var preview = Object.keys(items)
+      .filter(function (k) {
+        return k !== parent.id && meetingTasksTop(items, k) === parent.id && !items[k].task_id && items[k].code === "nested";
+      })
+      .map(function (k) {
+        return { title: items[k].task, who: items[k].who || "", depth: items[k].depth || 1 };
+      });
+    openTaskModal(
+      { summary: parent.task || "", description: "Из встречи «" + (noteTitle || "встреча") + "»", note_id: String(noteId) },
+      {
+        focusAssignee: true,
+        meetingItem: parent.id,
+        subtaskPreview: preview,
+        onSaved: function () {
+          showNoteToast("Поручено — подзадачи созданы");
+          if (onDone) onDone();
+        },
+      }
+    );
+  }
+
+  function onMeetingTaskGroup(op, g) {
+    var nid = meetingTasksBound.noteId;
+    if (!nid) return;
+    meetingTasksGroupCall(nid, op, g && g.id)
+      .then(function (r) {
+        kickNoteCollab(60);
+        return meetingTasksRefresh().then(function () {
+          if (op === "accept") openMergedTaskModal(nid, r, getNoteEditorTitle(), meetingTasksRefresh);
+          else if (op === "suggest" && !(r && r.groups && r.groups.length)) showNoteToast("Лео не нашёл задач, которые стоит объединить");
+        });
+      })
+      .catch(function (e) {
+        showNoteToast((e && e.message) || "Не получилось");
+        meetingTasksRefresh();
+      });
+  }
+
+  function onMeetingTaskDrop(d) {
+    meetingTasksNest([d.item], d.parent || null, d.anchor || null, d.pos);
+  }
+
+  function onMeetingTasksPicked(pick, ids) {
+    var items = meetingTasksItems();
+    var src = items[pick.src];
+    if (!src) return;
+    if (pick.mode !== "add") {
+      if (ids[0]) meetingTasksNest([src.id], ids[0], null, "after");
+      return;
+    }
+    var had = Object.keys(items).filter(function (k) {
+      return items[k].parent === src.id;
+    });
+    var add = ids.filter(function (k) {
+      return had.indexOf(k) < 0;
+    });
+    var drop = had.filter(function (k) {
+      return ids.indexOf(k) < 0;
+    });
+    var chain = Promise.resolve();
+    if (add.length) chain = chain.then(function () { return meetingTasksNest(add, src.id, null, "after"); });
+    if (drop.length) chain = chain.then(function () { return meetingTasksNest(drop, src.parent || null, src.id, "after"); });
+    return chain;
+  }
+
   function onMeetingTaskClick(d) {
     var st = (d && d.state) || {};
     if (!st.id || !d.anchor) return;
     // «Не разбираем» (вся встреча) — пункт всё равно можно взять, поручить или закрыть
-    var open = st.code === "open" || st.code === "declined" || st.code === "skipped";
+    var open = st.code === "open" || st.code === "declined" || st.code === "skipped" || st.code === "nested";
     if (d.col === 3 && open) {
       promptDialog("Срок для «" + st.task + "»", st.due || "").then(function (v) {
         if (v != null) meetingTaskOp(st.id, { op: "update", fields: { deadline: v } });
@@ -25867,6 +26564,16 @@
     mountPostedSources(srcHost, task, srcTitle, state);
     var checklist = normalizeReminderChecklist(task.checklist || ev.checklist || []);
     if (checklist.length) body.appendChild(renderPostedChecklist(state, checklist, !archived));
+    if ((task.subtasks && task.subtasks.length) || (task.parents && task.parents.length) || !archived) {
+      // Перерисовка карточки не должна сбрасывать раскрытую подзадачу — блок живёт между отрисовками.
+      if (!state.subtasksHost || state.subtasksHost._taskId !== state.taskId) {
+        state.subtasksHost = document.createElement("div");
+        state.subtasksHost.className = "pt-subtasks";
+        state.subtasksHost._taskId = state.taskId;
+        mountSubtasks(state.subtasksHost, state.taskId, { onChange: function () { refreshPostedCard(state); } });
+      }
+      body.appendChild(state.subtasksHost);
+    }
     (task.tracker_links || []).forEach(function (l) {
       var a = document.createElement("button");
       a.type = "button";
@@ -30147,6 +30854,12 @@
             onFocusMarkClick: onFocusMarkClick,
             onMeetingTaskClick: onMeetingTaskClick,
             onMeetingTasksSkip: onMeetingTasksSkip,
+            onMeetingTaskGrip: onMeetingTaskGrip,
+            onMeetingTaskDrop: onMeetingTaskDrop,
+            onMeetingTasksPicked: onMeetingTasksPicked,
+            onMeetingTasksFold: saveMeetingTasksFolded,
+            onMeetingTaskGroup: onMeetingTaskGroup,
+            getMeetingTasksFolded: readMeetingTasksFolded,
             onSearchNoteRefs: searchNoteRefItems,
             onNoteRefChipClick: openNoteRefFromChip,
             onEntityRefChipClick: openEntityRefFromChip,
@@ -51107,25 +51820,9 @@
         { method: "GET" }
       );
       var task = data && data.task;
-      var ev = (task && task.event) || {};
       if (task) {
         setTab("actual");
-        openTaskModal(
-          Object.assign({}, ev, {
-            task_id: task.id,
-            id: "task-" + task.id,
-            summary: task.title || ev.summary,
-            checklist: task.checklist || ev.checklist,
-            assignee: {
-              user_id: task.assignee_user_id,
-              email: task.assignee_email,
-              name: task.assignee_name,
-            },
-            all_day: !!task.all_day,
-            schedule_log_lines:
-              task.schedule_log_lines || ev.schedule_log_lines || [],
-          })
-        );
+        openTaskModal(taskEvFromApi(task));
       }
     } catch (_) {}
     try {

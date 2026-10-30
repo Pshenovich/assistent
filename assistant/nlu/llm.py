@@ -29,6 +29,7 @@ from assistant.nlu.prompts import (
     REMINDER_PARSE_SYSTEM,
     SUMMARY_SEARCH_PARSE_SYSTEM,
     SUMMARY_SYSTEM,
+    TASK_GROUPS_SYSTEM,
     TASK_VERIFY_SYSTEM,
     TELEMOST_PARSE_SYSTEM,
     VOICE_COMMAND_SYSTEM,
@@ -1173,6 +1174,84 @@ def _verify_v1_tasks(tasks: list[dict[str, Any]], transcript: str) -> dict[str, 
     return out
 
 
+def summary_task_groups_enabled() -> bool:
+    return (os.getenv("SUMMARY_TASK_GROUPS", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+MAX_TASK_GROUPS = 5
+
+
+def group_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Связанные задачи встречи → группы [{title, parent, items}] (индексы с 0 в tasks).
+
+    LLM предлагает, код проверяет: в группе ≥2 задач, задача — в одной группе, номера верные,
+    групп не больше пяти. Сбой — групп нет."""
+    items = [t for t in tasks if isinstance(t, dict) and str(t.get("task") or "").strip()]
+    if len(items) < 3:
+        return []
+    cands = [
+        {"id": i + 1, "task": str(t.get("task") or ""), "assignee": str(t.get("assignee") or ""),
+         "deadline": str(t.get("deadline") or "")}
+        for i, t in enumerate(items)
+    ]
+    raw = _chat(
+        TASK_GROUPS_SYSTEM,
+        json.dumps({"tasks": cands}, ensure_ascii=False),
+        operation="summary_task_groups",
+        model=_model_summary(),
+        timeout=120,
+        temperature=0.0,
+        max_tokens=2048,
+    )
+    return clean_task_groups((_json_obj(raw or "") or {}).get("groups"), len(items))
+
+
+def clean_task_groups(groups: Any, n: int) -> list[dict[str, Any]]:
+    """Ответ модели → только осмысленные группы (номера 1..n → индексы 0..n-1)."""
+    used: set[int] = set()
+    out: list[dict[str, Any]] = []
+    for g in groups if isinstance(groups, list) else []:
+        if not isinstance(g, dict) or len(out) >= MAX_TASK_GROUPS:
+            continue
+        idx: list[int] = []
+        for x in g.get("items") or []:
+            try:
+                k = int(x) - 1
+            except (TypeError, ValueError):
+                continue
+            if 0 <= k < n and k not in used and k not in idx:
+                idx.append(k)
+        parent = None
+        try:
+            p = int(g.get("parent")) - 1 if g.get("parent") is not None else None
+        except (TypeError, ValueError):
+            p = None
+        if p is not None and 0 <= p < n and p not in used:
+            parent = p
+            if p not in idx:
+                idx.insert(0, p)
+        title = " ".join(str(g.get("title") or "").split())[:120]
+        if len(idx) < 2 or (not title and parent is None):
+            continue
+        used.update(idx)
+        out.append({"title": title, "parent": parent, "items": idx})
+    return out
+
+
+def mark_task_groups(tasks: list[dict[str, Any]], groups: list[dict[str, Any]], *, prefix: str = "g") -> list[dict[str, Any]]:
+    """Группы — пометками на самих задачах: номера сдвинутся (сомнительные, ID), пометки — нет."""
+    meta = []
+    for n, g in enumerate(groups, start=1):
+        key = f"{prefix}{n}"
+        for k in g["items"]:
+            tasks[k]["group_key"] = key
+            if k == g["parent"]:
+                tasks[k]["group_parent"] = True
+        meta.append({"key": key, "title": g["title"] or str(tasks[g["parent"]].get("task") or "")[:120],
+                     "state": "suggested"})
+    return meta
+
+
 def _summarize_recording_v1(
     transcript: str, *, speakers_detected: bool = False, dedupe: bool | None = None, verify: bool | None = None
 ) -> dict[str, Any] | None:
@@ -1235,8 +1314,16 @@ def _summarize_recording_v1(
             dropped = checked["dropped"]
         except Exception as e:
             print(f"[summary_v1] verify failed: {e!r}")
+    task_groups: list[dict[str, Any]] = []
+    if summary_task_groups_enabled():
+        try:
+            merged_tasks = [dict(t) for t in merged_tasks]
+            task_groups = mark_task_groups(merged_tasks, group_tasks(merged_tasks))
+        except Exception as e:
+            print(f"[summary_v1] groups failed: {e!r}")
     summary = inject_tasks_into_summary(summary, merged_tasks)
     return {
+        "task_groups": task_groups,
         "content_type": content_type,
         "confidence": confidence,
         "main_topic": str(obj.get("main_topic") or "").strip(),

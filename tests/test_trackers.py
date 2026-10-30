@@ -330,3 +330,43 @@ def test_users_endpoint(client):
     r = client.get("/api/miniapp/trackers/bitrix24/users?q=Иван", headers=h)
     assert r.status_code == 200, r.text
     assert r.json()["users"] == [{"id": "42", "name": "Иван Петров", "position": "Разработчик", "photo": ""}]
+
+
+def test_subtask_parent_in_bitrix(fake):
+    t = b24.Bitrix24Tracker()
+    t.connect_webhook(UID, HOOK)
+    t.create_task(UID, TaskDraft(title="Тексты", parent_id="100"))
+    assert fake.last("tasks.task.add")["fields"]["PARENT_ID"] == 100
+
+
+def test_meeting_nesting_goes_to_tracker(fake, monkeypatch):
+    from assistant.services import meeting_tasks as mt
+
+    monkeypatch.setattr(mt, "notify", lambda *a, **k: None)
+    orig = fake.__call__
+    updates = []
+
+    def call(base, method, params=None):
+        if method == "tasks.task.update":
+            updates.append(params)
+            return True
+        return orig(base, method, params)
+
+    monkeypatch.setattr(b24, "call", call)
+    b24.Bitrix24Tracker().connect_webhook(UID, HOOK)
+    tasks = [
+        {"id": "ibbbbbbbbb1", "task": "Запустить лендинг", "assignee": ""},
+        {"id": "ibbbbbbbbb2", "task": "Тексты", "assignee": ""},
+        {"id": "ibbbbbbbbb3", "task": "Домен", "assignee": ""},
+    ]
+    note = notes_store.create_note(UID, "Планёрка", mt.table_html(tasks), role="transcription", meta={"tasks": tasks})
+    nid = int(note["id"])
+    mt.claim_tracker(UID, nid, "ibbbbbbbbb1", lambda: (None, {"url": "u", "provider": "bitrix24", "external_id": "100"}), by="Вова")
+    mt.nest(UID, nid, ["ibbbbbbbbb2"], "ibbbbbbbbb1", by="Вова")
+    assert usage_server._tracker_sync_meeting(UID, nid, "bitrix24", by="Вова") == 1
+    assert fake.last("tasks.task.add")["fields"]["PARENT_ID"] == 100
+    items = {x["id"]: x for x in mt.state_rows(UID, nid)["items"]}
+    assert items["ibbbbbbbbb2"]["code"] == "tracker"
+    mt.nest(UID, nid, ["ibbbbbbbbb2"], None, by="Вова")  # вынули — в Битриксе снова самостоятельная
+    usage_server._tracker_sync_meeting(UID, nid, "bitrix24", by="Вова")
+    assert updates == [{"taskId": 4812, "fields": {"PARENT_ID": 0}}]
