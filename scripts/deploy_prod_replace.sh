@@ -291,6 +291,7 @@ if [[ -x scripts/setup_telegram_bot_api.sh ]]; then
 fi
 
 cp -f deploy/assistant-bot.service /etc/systemd/system/assistant-bot.service
+cp -f deploy/assistant-worker.service /etc/systemd/system/assistant-worker.service
 cp -f deploy/assistant-usage.service /etc/systemd/system/assistant-usage.service
 cp -f deploy/executive-board-bot.service /etc/systemd/system/executive-board-bot.service
 systemctl daemon-reload
@@ -515,10 +516,10 @@ if [[ -d /opt/obuchat-news/public/news ]]; then
   echo "republished /news from /opt/obuchat-news/public/news"
 fi
 
-systemctl enable assistant-bot assistant-usage executive-board-bot
-systemctl restart assistant-bot assistant-usage executive-board-bot
+systemctl enable assistant-bot assistant-worker assistant-usage executive-board-bot
+systemctl restart assistant-bot assistant-worker assistant-usage executive-board-bot
 sleep 2
-systemctl is-active assistant-bot assistant-usage executive-board-bot
+systemctl is-active assistant-bot assistant-worker assistant-usage executive-board-bot
 
 python3 - <<'PY'
 from pathlib import Path
@@ -562,7 +563,7 @@ elif [[ -x scripts/setup_vexa_meeting_bot.sh ]]; then
   bash scripts/setup_vexa_meeting_bot.sh || {
     echo "WARN: setup_vexa_meeting_bot.sh не завершился — проверьте docker logs vexa" >&2
   }
-  systemctl restart assistant-bot assistant-usage executive-board-bot 2>/dev/null || true
+  systemctl restart assistant-bot assistant-worker assistant-usage executive-board-bot 2>/dev/null || true
 fi
 REMOTE_SETUP
 )
@@ -588,7 +589,7 @@ _on_exit() {
   rc=$?
   if [[ "$rc" -ne 0 ]]; then
     echo "==> Сбой выкатки (код $rc) — поднимаю сервисы"
-    systemctl start assistant-bot assistant-usage executive-board-bot 2>/dev/null || true
+    systemctl start assistant-bot assistant-worker assistant-usage executive-board-bot 2>/dev/null || true
   fi
   echo "DEPLOY_EXIT=$rc"
 }
@@ -596,7 +597,7 @@ trap _on_exit EXIT
 set -euo pipefail
 
 echo "==> Остановка сервисов"
-systemctl stop assistant-bot assistant-usage executive-board-bot assistant-whatsapp-bridge 2>/dev/null || true
+systemctl stop assistant-bot assistant-worker assistant-usage executive-board-bot assistant-whatsapp-bridge 2>/dev/null || true
 systemctl disable assistant-whatsapp-bridge 2>/dev/null || true
 
 echo "==> Резервная копия баз перед выкаткой (/root/leo-backups/predeploy)"

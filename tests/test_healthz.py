@@ -51,3 +51,14 @@ def test_healthz_missing_db_does_not_create_file(monkeypatch, tmp_path):
     assert r.status_code == 503
     assert r.json()["db"] is False
     assert not missing.exists()
+
+
+def test_healthz_requires_worker_when_jobs_moved(monkeypatch, tmp_path):
+    monkeypatch.setenv("HEARTBEAT_DIR", str(tmp_path))
+    monkeypatch.setenv("JOBS_IN_WORKER", "1")
+    heartbeat.beat("bot")
+    r = _client().get("/healthz")
+    assert r.status_code == 503 and r.json()["worker_heartbeat_age_sec"] is None
+    heartbeat.beat("worker")
+    r = _client().get("/healthz")
+    assert r.status_code == 200 and r.json()["worker_heartbeat_age_sec"] < 5

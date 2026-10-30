@@ -233,12 +233,19 @@ def _health_snapshot() -> dict[str, Any]:
     bot_age = heartbeat.age_sec("bot")
     # Нет пульса вообще — бот здесь не запущен (локальная разработка), это не авария.
     bot_ok = bot_age is None or bot_age < _HEALTH_BOT_STALE_SEC
-    return {
+    out = {
         "ok": db_ok and bot_ok,
         "web": True,
         "db": db_ok,
         "bot_heartbeat_age_sec": None if bot_age is None else round(bot_age, 1),
     }
+    if os.getenv("JOBS_IN_WORKER", "").strip().lower() in ("1", "true", "yes", "on"):
+        # Фоновые задачи в воркере — без его пульса напоминания и брифы не уходят.
+        worker_age = heartbeat.age_sec("worker")
+        worker_ok = worker_age is not None and worker_age < _HEALTH_BOT_STALE_SEC
+        out["worker_heartbeat_age_sec"] = None if worker_age is None else round(worker_age, 1)
+        out["ok"] = out["ok"] and worker_ok
+    return out
 
 
 @app.get("/healthz", include_in_schema=False)

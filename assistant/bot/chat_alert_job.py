@@ -72,8 +72,12 @@ async def on_alert_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         pass
 
 
-def register_chat_alert_jobs(app) -> None:
+def register_chat_alert_handlers(app) -> None:
+    """Кнопка «Не критично» под алертом — в боте (алерты может слать воркер)."""
     app.add_handler(CallbackQueryHandler(on_alert_callback, pattern=r"^calert:mute:"))
+
+
+def register_chat_alert_jobs(app) -> None:
     if not chat_alerts.enabled() or app.job_queue is None:
         return
     interval = chat_alerts.poll_interval_sec()
