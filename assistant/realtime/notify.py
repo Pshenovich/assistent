@@ -229,6 +229,17 @@ def task_changed(task_id: int | str, user_ids: list[Any], *, actor_user_id: Any 
             continue
 
 
+def calendar_changed(user_id: int | str) -> None:
+    """В Google Календаре человека что-то изменилось — открытое «Актуальное» перечитывает календарь."""
+    uid = str(user_id or "").strip()
+    if not uid:
+        return
+    try:
+        publish(user_topic(uid), {"type": "calendar.changed"})
+    except (TypeError, ValueError):
+        return
+
+
 def prefs_changed(user_id: int | str, **fields: Any) -> None:
     """Настройка пользователя поменялась (например, тема) — его другие устройства применяют сразу."""
     try:

@@ -35977,6 +35977,16 @@
       }, 700);
       return;
     }
+    if (type === "calendar.changed") {
+      // Встречу добавили или передвинули в Google Календаре — открытое «Актуальное» перечитывает календарь.
+      // Google часто шлёт несколько уведомлений подряд — склеиваем их в одно обновление.
+      if (realtimeCalendarTimer) clearTimeout(realtimeCalendarTimer);
+      realtimeCalendarTimer = setTimeout(function () {
+        realtimeCalendarTimer = null;
+        if (currentTab === "actual" && !document.hidden) loadActual({ silent: true, skipCachePaint: true });
+      }, 2000);
+      return;
+    }
     if (type === "task.changed") {
       // Сообщение / статус в задаче (в т.ч. ответ из Telegram) — открытой карточке и списку «Поручено другим».
       kickPostedLiveUpdate(ev.task_id != null ? String(ev.task_id) : "");
@@ -36005,6 +36015,7 @@
   // перечитывается, но оптимистичное сообщение tickDiscussionLiveUpdates не трогает.
   var realtimeChatsTimer = null;
   var realtimeFocusTimer = null;
+  var realtimeCalendarTimer = null;
   function onRealtimeChatChanged(ev) {
     var chatId = ev && ev.chat_id != null ? String(ev.chat_id) : "";
     if (!chatId) return;

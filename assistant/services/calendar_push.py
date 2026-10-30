@@ -322,4 +322,10 @@ def handle_notification(headers: dict[str, str]) -> int:
         return 200  # старая или снятая подписка — Google перестанет слать после stop/истечения
     if state != "sync":  # sync — проверка при оформлении подписки, событий ещё нет
         mark_dirty(row["user_id"])
+        try:
+            from assistant.realtime import notify as realtime_notify
+
+            realtime_notify.calendar_changed(row["user_id"])  # открытый экран обновится сам
+        except Exception as e:
+            print(f"[gcal_push] realtime notify failed uid={row['user_id']} err={e!r}")
     return 200

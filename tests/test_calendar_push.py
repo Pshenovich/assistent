@@ -174,3 +174,17 @@ def test_holiday_calendar_without_push_counts_as_covered(env, monkeypatch):
     res = cp.ensure_channels(7)
     assert res["created"] == 1 and res["kept"] == 1 and res["failed"] == 0
     assert cp.cached_events(7, env["now"], env["now"] + timedelta(minutes=27)) is not None
+
+
+def test_change_notifies_open_screens(env, monkeypatch):
+    from assistant.realtime import notify
+
+    sent = []
+    monkeypatch.setattr(notify, "publish", lambda topic, ev: sent.append((topic, ev)))
+    cp.ensure_channels(7)
+    body = env["svc"].watched[0][1]
+    h = {"X-Goog-Channel-ID": body["id"], "X-Goog-Channel-Token": body["token"]}
+    cp.handle_notification({**h, "X-Goog-Resource-State": "sync"})
+    assert sent == []  # проверка подписки — экран не дёргаем
+    cp.handle_notification({**h, "X-Goog-Resource-State": "exists"})
+    assert sent and sent[-1][1] == {"type": "calendar.changed"} and sent[-1][0].endswith("7")
