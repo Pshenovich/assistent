@@ -23893,3 +23893,14 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
 .pt-subtasks .st-crumb { margin-bottom: 8px; }
 .pt-subtasks .st-add { margin-top: 10px; font-size: 0.9rem; }
 .pt-subtasks .st-add .rem-checklist-add-icon { width: 1.5rem; height: 1.5rem; }
+/* Подзадача открыта своей карточкой: наверху — общая задача и шаг назад к ней */
+.st-crumb-host.hidden { display: none; }
+.st-back { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; margin: 0 0 10px; padding: 8px 12px 8px 8px; border: none; border-radius: 12px; background: var(--surface-elevated); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.st-back:hover { background: var(--surface-hover); }
+.st-back-ico { display: inline-flex; flex: none; color: var(--accent); }
+.st-back-text { display: flex; flex-direction: column; min-width: 0; }
+.st-back-kind { font-size: 0.72rem; color: var(--text-secondary); }
+.st-back-title { font-size: 0.9rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.event-sheet > .st-crumb-host .st-back { margin: 0; }
+.st-go { display: inline-flex; flex: none; align-self: center; color: var(--text-tertiary); }
+.st-row .st-main:hover .st-title { color: var(--accent); }

@@ -16136,7 +16136,59 @@
       assignee: { user_id: task.assignee_user_id, email: task.assignee_email, name: task.assignee_name },
       all_day: !!task.all_day,
       schedule_log_lines: task.schedule_log_lines || ev.schedule_log_lines || [],
+      parent_id: task.parent_id || null,
     });
+  }
+
+  // «‹ Запустить лендинг» над подзадачей: заголовок общей задачи и шаг назад к ней.
+  function paintSubtaskCrumb(host, parents, ctx) {
+    host.innerHTML = "";
+    host.classList.toggle("hidden", !(parents && parents.length));
+    if (!parents || !parents.length) return;
+    var p = parents[0];
+    var b = subtaskEl("button", "st-back");
+    b.type = "button";
+    var ico = subtaskEl("span", "st-back-ico");
+    ico.innerHTML =
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 7l-5 5 5 5"/></svg>';
+    b.appendChild(ico);
+    var txt = subtaskEl("span", "st-back-text");
+    txt.appendChild(subtaskEl("span", "st-back-kind", "Подзадача"));
+    txt.appendChild(subtaskEl("span", "st-back-title", p.title || "Задача"));
+    b.appendChild(txt);
+    b.title = "К общей задаче";
+    b.addEventListener("click", function () {
+      openSubtaskCard(p.id, ctx);
+    });
+    host.appendChild(b);
+  }
+
+  // Открыть задачу на месте текущего окна: поручение — карточкой (в той же карточке, если мы в ней),
+  // своя — окном задачи. Так ходят вниз по подзадачам и обратно.
+  async function openSubtaskCard(taskId, ctx) {
+    ctx = ctx || {};
+    var task;
+    try {
+      task = ((await apiFetch("/calendar/tasks/" + encodeURIComponent(taskId), { method: "GET" })) || {}).task;
+    } catch (err) {
+      showNoteToast((err && err.message) || "Не удалось открыть задачу");
+      return;
+    }
+    if (!task) return;
+    var delegated = String(task.owner_user_id || "") !== String(task.assignee_user_id || "") && !!task.assignee_user_id;
+    var card = ctx.card;
+    if (delegated) {
+      if (card && document.body.contains(card.host)) {
+        mountPostedCard(card.host, task.id, { inSide: card.opts.inSide, myTasks: card.opts.myTasks });
+        if (card.opts.inSide) postedSelectedId = String(task.id);
+        return;
+      }
+      if (ctx.modal) closeModal();
+      openPostedCard(task.id);
+      return;
+    }
+    if (card && !card.opts.inSide) closePostedCard();
+    openTaskModal(taskEvFromApi(task), { forceEdit: true });
   }
 
   async function openTaskById(taskId) {
@@ -16185,7 +16237,7 @@
   // Блок «Подзадачи» в окне и карточке задачи. Сам загружает задачу: в календарном событии подзадач нет.
   function mountSubtasks(host, taskId, opts) {
     opts = opts || {};
-    var state = { task: null, open: "", adding: "", busy: false };
+    var state = { task: null, adding: "", busy: false };
     host.classList.add("st-box");
     host.innerHTML = "";
 
@@ -16264,85 +16316,8 @@
       return wrap;
     }
 
-    function editor(st, depth) {
-      var box = subtaskEl("div", "st-edit");
-      box.style.setProperty("--st-depth", depth);
-      var assRow = subtaskEl("div", "st-field");
-      assRow.appendChild(subtaskEl("span", "st-label", "Исполнитель"));
-      var assHost = subtaskEl("div", "st-assignee");
-      assRow.appendChild(assHost);
-      box.appendChild(assRow);
-      var picked = null;
-      mountTaskAssignee(
-        assHost,
-        { user_id: st.assignee_user_id, name: st.assignee_name },
-        { summaryEl: null, anchorHost: true, onPick: function (a) { picked = a; } }
-      );
-      var dueRow = subtaskEl("label", "st-field");
-      dueRow.appendChild(subtaskEl("span", "st-label", "Срок"));
-      var due = subtaskEl("input", "field-input st-due");
-      due.type = "date";
-      due.value = subtaskDayIso(st);
-      dueRow.appendChild(due);
-      box.appendChild(dueRow);
-      var note = subtaskEl("textarea", "field-textarea st-note");
-      note.rows = 2;
-      note.placeholder = "Комментарий исполнителю";
-      note.value = st.description || "";
-      box.appendChild(note);
-      if (st.result) {
-        var res = subtaskEl("div", "st-result");
-        res.appendChild(subtaskEl("span", "", "Результат"));
-        res.appendChild(subtaskEl("p", "", st.result));
-        box.appendChild(res);
-      }
-      var acts = subtaskEl("div", "st-acts");
-      var save = subtaskEl("button", "btn btn-primary st-save", "Сохранить");
-      save.type = "button";
-      save.addEventListener("click", function () {
-        var body = { description: note.value };
-        if (picked) {
-          body.assignee_user_id = picked.user_id || "";
-          body.assignee_email = picked.email || "";
-          body.assignee_name = picked.name || "";
-        }
-        if (due.value && due.value !== subtaskDayIso(st)) {
-          body.all_day = true;
-          body.start = due.value + "T12:00:00";
-          body.end = due.value + "T13:00:00";
-        }
-        state.open = "";
-        api("/calendar/tasks/" + encodeURIComponent(st.id), "PATCH", body);
-      });
-      acts.appendChild(save);
-      if (depth + depthOfRoot() < SUBTASK_MAX_DEPTH) {
-        var sub = subtaskEl("button", "btn st-ghost", "+ Подзадача");
-        sub.type = "button";
-        sub.addEventListener("click", function () {
-          state.adding = String(st.id);
-          paint();
-        });
-        acts.appendChild(sub);
-      }
-      var openBtn = subtaskEl("button", "btn st-ghost", "Открыть");
-      openBtn.type = "button";
-      openBtn.addEventListener("click", function () {
-        openTaskById(st.id);
-      });
-      acts.appendChild(openBtn);
-      var out = subtaskEl("button", "btn st-ghost", "Сделать самостоятельной");
-      out.type = "button";
-      out.addEventListener("click", function () {
-        state.open = "";
-        api("/calendar/tasks/" + encodeURIComponent(st.id), "PATCH", { parent_id: null });
-      });
-      acts.appendChild(out);
-      box.appendChild(acts);
-      return box;
-    }
-
     function row(st, depth, list) {
-      var line = subtaskEl("div", "st-row" + (st.done ? " is-done" : "") + (state.open === String(st.id) ? " is-open" : ""));
+      var line = subtaskEl("div", "st-row" + (st.done ? " is-done" : ""));
       line.style.setProperty("--st-depth", depth);
       var cb = subtaskEl("input", "st-cb");
       cb.type = "checkbox";
@@ -16364,18 +16339,18 @@
       var label = SUBTASK_STATE_LABEL[st.state] || "";
       if (label && !st.done) metaEl.appendChild(subtaskEl("span", "st-state is-" + st.state, label));
       main.appendChild(metaEl);
+      // Подзадача открывается своей полной карточкой на месте этой; наверху — «‹ общая задача».
       main.addEventListener("click", function () {
-        state.open = state.open === String(st.id) ? "" : String(st.id);
-        state.adding = "";
-        paint();
+        openSubtaskCard(st.id, opts.ctx);
       });
+      var chev = subtaskEl("span", "st-go");
+      chev.innerHTML = DISCUSS_ICONS.right || "›";
       line.appendChild(main);
+      line.appendChild(chev);
       list.appendChild(line);
-      if (state.open === String(st.id)) list.appendChild(editor(st, depth));
       kids.forEach(function (k) {
         row(k, depth + 1, list);
       });
-      if (state.adding === String(st.id)) list.appendChild(addInput(st, depth + 1));
     }
 
     function paint() {
@@ -16383,17 +16358,7 @@
       host.innerHTML = "";
       if (!t) return;
       var parents = t.parents || [];
-      if (parents.length) {
-        var crumb = subtaskEl("button", "st-crumb");
-        crumb.type = "button";
-        crumb.textContent =
-          "Подзадача в «" + (parents[0].title || "Задача") + "»" +
-          (parents[0].assignee_name ? " · отв. " + parents[0].assignee_name : "");
-        crumb.addEventListener("click", function () {
-          openTaskById(parents[0].id);
-        });
-        host.appendChild(crumb);
-      }
+      if (opts.crumbHost) paintSubtaskCrumb(opts.crumbHost, parents, opts.ctx);
       var subs = t.subtasks || [];
       var canAdd = parents.length < SUBTASK_MAX_DEPTH;
       if (!subs.length && !canAdd) return;
@@ -16422,7 +16387,6 @@
         add.innerHTML = subtaskAddInner("Подзадача");
         add.addEventListener("click", function () {
           state.adding = "root";
-          state.open = "";
           paint();
         });
         host.appendChild(add);
@@ -16531,7 +16495,7 @@
     var fields = document.getElementById("modal-fields");
     fields.innerHTML =
       '<div class="event-sheet">' +
-      (existing ? "" : eventSheetKindSwitcherHtml("task")) +
+      (existing ? '<div id="m-task-crumb" class="st-crumb-host hidden"></div>' : eventSheetKindSwitcherHtml("task")) +
       '<textarea id="m-ev-sum" class="event-sheet-title event-sheet-title--area" rows="1" enterkeyhint="done" placeholder="Название" autocomplete="off"></textarea>' +
       (existing ? '<div id="m-task-tracker-links" class="tracker-links hidden"></div>' : "") +
       '<input type="hidden" id="modal-task-note-id" />' +
@@ -16634,7 +16598,9 @@
     var draftHost = document.getElementById("m-task-checklist-host");
     reminderChecklistApi = draftHost ? mountReminderChecklist(draftHost, [], { addLabel: "Подзадача" }) : null;
     var subHost = document.getElementById("m-task-subtasks");
-    if (subHost) mountSubtasks(subHost, taskId);
+    if (subHost) {
+      mountSubtasks(subHost, taskId, { ctx: { modal: true }, crumbHost: document.getElementById("m-task-crumb") });
+    }
     var previewHost = document.getElementById("m-task-subtasks-preview");
     if (previewHost && opts.subtaskPreview && opts.subtaskPreview.length) {
       var ph = subtaskEl("div", "st-head");
@@ -16747,6 +16713,21 @@
       taskMenu.unshift({ label: "Скопировать ссылку", fn: function () { copyModalTaskLink(linkUrl); } });
       if (isTaskOwner && isDelegated) {
         taskMenu.push({ label: isOwnerArchived ? "Вернуть из архива" : "В архив", fn: modalToggleTaskArchive });
+      }
+      if (ev.parent_id) {
+        taskMenu.push({
+          label: "Сделать самостоятельной",
+          fn: function () {
+            apiFetch("/calendar/tasks/" + encodeURIComponent(taskId), { method: "PATCH", body: JSON.stringify({ parent_id: null }) })
+              .then(function () {
+                showNoteToast("Теперь это самостоятельная задача");
+                openSubtaskCard(taskId, { modal: true });
+              })
+              .catch(function (e) {
+                showNoteToast((e && e.message) || "Не получилось");
+              });
+          },
+        });
       }
       taskMenu.push({ label: "Удалить задачу", danger: true, fn: modalDelete });
       return taskMenu;
@@ -26543,6 +26524,12 @@
 
     var body = document.createElement("div");
     body.className = "pt-c-body";
+    if (task.parents && task.parents.length) {
+      var crumbHost = document.createElement("div");
+      crumbHost.className = "st-crumb-host";
+      paintSubtaskCrumb(crumbHost, task.parents, { card: state });
+      body.appendChild(crumbHost);
+    }
     var h = document.createElement("h3");
     h.className = "pt-c-title";
     h.textContent = String(task.title || ev.summary || "Задача");
@@ -26595,7 +26582,7 @@
         state.subtasksHost = document.createElement("div");
         state.subtasksHost.className = "pt-subtasks";
         state.subtasksHost._taskId = state.taskId;
-        mountSubtasks(state.subtasksHost, state.taskId, { onChange: function () { refreshPostedCard(state); } });
+        mountSubtasks(state.subtasksHost, state.taskId, { ctx: { card: state }, onChange: function () { refreshPostedCard(state); } });
       }
       body.appendChild(state.subtasksHost);
     }
@@ -27539,6 +27526,20 @@
         },
       },
     ];
+    if (task.parent_id) {
+      items.push({
+        label: "Сделать самостоятельной",
+        fn: async function () {
+          try {
+            await patchPostedTask(state.taskId, { parent_id: null });
+            showNoteToast("Теперь это самостоятельная задача");
+            refreshPostedCard(state);
+          } catch (err) {
+            showNoteToast((err && err.message) || "Не получилось");
+          }
+        },
+      });
+    }
     if (isOwner && !postedTaskIsArchived(task)) {
       items.push({
         label: "Отменить задачу",
