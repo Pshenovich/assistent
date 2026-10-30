@@ -780,6 +780,7 @@ def answer_with_context_result(
     tool_runner: Any = None,
     tool_choice_first: str = "auto",
     intent_text: str | None = None,
+    open_note: str = "",
 ) -> dict[str, Any]:
     """intent_text — собственное сообщение пользователя: по нему (а не по question, куда приклеены лист
     заметки и канвас) решаем, просил ли он картинку."""
@@ -794,6 +795,7 @@ def answer_with_context_result(
         quotes=quotes,
         knowledge_brief=knowledge_brief,
         attached_notes=attached_notes,
+        open_note=open_note,
     )
     notes = (file_notes or "").strip()
     if notes:

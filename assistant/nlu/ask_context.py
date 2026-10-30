@@ -15,6 +15,17 @@ _EMPTY_BRIEFS = {
 }
 
 
+def same_note_text(note_text: str, view: str) -> bool:
+    """Текст заметки уже целиком есть в открытом листе (слова совпадают на 90%) — второй раз не нужен."""
+    import re
+
+    words = re.findall(r"\w{3,}", (note_text or "").lower())
+    if not words:
+        return True
+    have = set(re.findall(r"\w{3,}", (view or "").lower()))
+    return sum(1 for w in words if w in have) >= 0.9 * len(words)
+
+
 def clip_text(text: str, limit: int) -> str:
     raw = (text or "").strip()
     if len(raw) <= limit:
@@ -217,7 +228,9 @@ def build_context_prefix(
     quote: str = "",
     knowledge_brief: str = "",
     attached_notes: str = "",
+    open_note: str = "",
 ) -> str:
+    """open_note — открытый лист целиком (<open-note>, для правок): в кэшируемой части, а не в вопросе."""
     del quote  # цитата волатильна — в user, не в кэшируемый префикс
     parts: list[str] = []
     kb = (knowledge_brief or "").strip()
@@ -228,6 +241,9 @@ def build_context_prefix(
     note = "\n\n".join(p for p in (title, body) if p)
     if note:
         parts.append(f"ЗАМЕТКА:\n{note}")
+    opened = (open_note or "").strip()
+    if opened:
+        parts.append(f"ОТКРЫТЫЙ ЛИСТ ЗАМЕТКИ:\n{opened}")
     extra = (attached_notes or "").strip()
     if extra:
         parts.append(f"ПРИКРЕПЛЁННЫЕ ЗАМЕТКИ:\n{extra}")
@@ -258,6 +274,7 @@ def assemble_ask_messages(
     quotes: list[str] | None = None,
     knowledge_brief: str = "",
     attached_notes: str = "",
+    open_note: str = "",
 ) -> tuple[str, str]:
     """Стабильный system-префикс (БЗ+заметка) и user (цитата + вопрос)."""
     prefix = build_context_prefix(
@@ -265,6 +282,7 @@ def assemble_ask_messages(
         note_text=note_text,
         knowledge_brief=knowledge_brief,
         attached_notes=attached_notes,
+        open_note=open_note,
     )
     q = (question or "").strip()
     items = _quote_fragments(quote, quotes)

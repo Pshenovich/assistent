@@ -67,6 +67,7 @@ def gpt_openrouter_answer_with_context(
     tool_runner=None,
     tool_choice_first: str = "auto",
     intent_text: str | None = None,
+    open_note: str = "",
 ) -> dict:
     out = nlu_llm.answer_with_context_result(
         question,
@@ -90,6 +91,7 @@ def gpt_openrouter_answer_with_context(
         tool_runner=tool_runner,
         tool_choice_first=tool_choice_first,
         intent_text=intent_text,
+        open_note=open_note,
     )
     return {
         "answer": str(out.get("answer") or ""),

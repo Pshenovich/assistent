@@ -9233,6 +9233,19 @@ async def miniapp_gpt_chat(
                     system_text = (system_text.rstrip() + "\n\n" + hint).strip() if system_text else hint
         canvas_enabled = kind == "local" and bool(iid)
         note_text_for_model = (body.note_text or "").strip()
+        doc_view = str(body.doc_view or "").strip()
+        note_edit_enabled = kind == "local" and bool(iid) and bool(doc_view)
+        open_note = ""
+        if note_edit_enabled:
+            from assistant.lib import note_edits as note_edits_lib
+            from assistant.nlu.ask_context import same_note_text
+
+            system_text = (system_text.rstrip() + "\n\n" + note_edits_lib.system_addon()).strip()
+            # Открытый лист — один раз и в кэшируемой части подсказки (раньше: целиком в вопросе
+            # и ещё начало заметки в системной части).
+            open_note = note_edits_lib.prompt_block(doc_view)
+            if same_note_text(note_text_for_model, doc_view):
+                note_text_for_model = ""
         if kind == "local" and iid:
             try:
                 facts = _note_table_facts(_notes_store_mod().get_accessible_note(uid, int(iid)))
@@ -9240,13 +9253,6 @@ async def miniapp_gpt_chat(
                 facts = ""
             if facts:
                 note_text_for_model = (note_text_for_model + "\n\n" + facts).strip()
-        doc_view = str(body.doc_view or "").strip()
-        note_edit_enabled = kind == "local" and bool(iid) and bool(doc_view)
-        if note_edit_enabled:
-            from assistant.lib import note_edits as note_edits_lib
-
-            system_text = (system_text.rstrip() + "\n\n" + note_edits_lib.system_addon()).strip()
-            prompt = (prompt.rstrip() + "\n\n" + note_edits_lib.prompt_block(doc_view)).strip()
         open_canvas_sheet_id = str(body.canvas_sheet_id or "").strip()
         canvas_sel_dumps = [s.model_dump() for s in (body.canvas_selections or [])]
         if canvas_enabled:
@@ -9325,6 +9331,7 @@ async def miniapp_gpt_chat(
                 model=call_model,
                 note_title=(body.note_title or "").strip(),
                 note_text=note_text_for_model,
+                open_note=open_note,
                 quote=(body.quote or "").strip(),
                 quotes=[str(x).strip() for x in (body.quotes or []) if str(x).strip()],
                 knowledge_brief=kb_brief,

@@ -156,3 +156,42 @@ def test_time_goes_to_question_not_system(monkeypatch):
     assert "Сейчас 20" not in system
     assert question.startswith("что у меня завтра?") and "[Сейчас 20" in question
     assert system.index("доступ к календарю") < len(system) // 2  # правила календаря — в начале, до переменных частей
+
+
+def test_open_note_sent_once_in_cached_part(monkeypatch):
+    """Открытый лист — один раз, в кэшируемой части (open_note), а не в вопросе; дубль note_text убран."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+    monkeypatch.setenv("CREDITS_ENFORCE", "0")
+    monkeypatch.delenv("MINIAPP_DEV_MODE", raising=False)
+    monkeypatch.setattr(access_gate, "miniapp_access_message", lambda **_: (True, ""))
+    seen: list[tuple[str, dict]] = []
+
+    def fake_answer(question, context="", **kw):
+        seen.append((question, kw))
+        return {"answer": "Ок", "images": [], "model": "m"}
+
+    monkeypatch.setattr(miniapp_shims, "gpt_openrouter_answer_with_context", fake_answer)
+    uid = next(_ids)
+    note = notes_store.create_note(uid, "План", "Первый пункт плана запуска\nВторой пункт про бюджет")
+    client = TestClient(usage_server.app, raise_server_exceptions=False)
+    view = "Первый пункт плана запуска\nВторой пункт про бюджет"
+    r = client.post(
+        "/api/miniapp/gpt/chat",
+        headers=_headers(uid),
+        json={"message": "сократи второй пункт", "model": "openai/gpt-5.5", "item_kind": "local",
+              "item_id": str(note["id"]), "note_text": view, "doc_view": view, "doc_sheet_id": "main"},
+    )
+    assert r.status_code == 200, r.text
+    question, kw = seen[-1]
+    assert "<open-note>" not in question
+    assert "<open-note>" in kw["open_note"] and "про бюджет" in kw["open_note"]
+    assert "про бюджет" not in kw["note_text"]
+
+
+def test_context_prefix_puts_open_note_after_note():
+    from assistant.nlu.ask_context import build_context_prefix, same_note_text
+
+    out = build_context_prefix(note_title="План", note_text="", open_note="<open-note>\nтекст\n</open-note>")
+    assert out.index("ЗАМЕТКА") < out.index("<open-note>")
+    assert same_note_text("Первый пункт плана", "1: Первый пункт плана | x")
+    assert not same_note_text("Совсем другой лист с цифрами выручки", "Первый пункт плана")

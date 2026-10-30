@@ -433,7 +433,7 @@ def build_request(
     uid = int(case["uid"])
     q = case["question"]
     cal, now = _calendar_parts(uid)
-    if order == "cache":
+    if order in ("cache", "note1"):
         system = leo_agent.append_system(case["system_base"], cal)
         system = leo_agent.append_system(system, case.get("channel_hint") or "")
     else:
@@ -449,7 +449,8 @@ def build_request(
             add = note_edits.system_addon()
             system = (system.rstrip() + "\n\n" + add).strip()
             block = note_edits.prompt_block(case["note_text"] or "(лист пуст)")
-            prompt = (prompt.rstrip() + "\n\n" + block).strip()
+            if order != "note1":
+                prompt = (prompt.rstrip() + "\n\n" + block).strip()
             parts["note_edits_addon"] = len(add)
             parts["doc_view"] = len(block)
         if not addons_off or _CANVAS_RE.search(q):
@@ -460,7 +461,7 @@ def build_request(
             add = board_ai.system_addon()
             system = (system.rstrip() + "\n\n" + add).strip()
             parts["board_addon"] = len(add)
-    if order == "cache":
+    if order in ("cache", "note1"):
         prompt = (prompt.rstrip() + "\n\n[" + now + "]").strip()
     else:
         system = leo_agent.append_system(system, now + "\n" + cal)
@@ -476,6 +477,14 @@ def build_request(
         "history": history or None,
         "note_title": case["note_title"] if local else "",
         "note_text": case["note_text"] if local else "",
+    }
+    if order == "note1" and local and "doc_view" in parts:
+        # Как прод с 2026-10-30: лист один раз, после заголовка, в кэшируемой части (open_note);
+        # старый код на сервере не знает open_note — кладём тем же текстом через заголовок.
+        kw["note_title"] = (case["note_title"] + "\n\nОТКРЫТЫЙ ЛИСТ ЗАМЕТКИ:\n"
+                            + note_edits.prompt_block(case["note_text"] or "(лист пуст)")).strip()
+        kw["note_text"] = ""
+    kw |= {
         "quote": case.get("quote") or "",
         "system": system,
         "temperature": case.get("temperature"),
@@ -585,7 +594,8 @@ def run_arm(case: dict[str, Any], arm: str, model: str, *, trim: bool | str, cac
     _FROZEN.set(_parse_ts(case["asked_at"]))
     bucket: list[dict[str, Any]] = []
     _USAGE.set(bucket)
-    kw, parts = build_request(case, trim=trim, order="cache" if arm.startswith("m2:") else "old")
+    order = "cache" if arm.startswith("m2:") else "note1" if arm == "note1" else "old"
+    kw, parts = build_request(case, trim=trim, order=order)
     if arm.startswith("auto2"):
         kw["system"] = kw["system"].rstrip() + "\n\n" + CHEAP_HINT
     runner, calls = make_recorder(case, cache, cache_lock)
@@ -691,6 +701,8 @@ def cmd_run(a: argparse.Namespace) -> None:
                 jobs.append((c, arm, arm[2:], False))
             elif arm.startswith("m2:") and (not a.only_actions or c["orig_actions"]):  # порядок ради кэша
                 jobs.append((c, arm, arm[3:], False))
+            elif arm == "note1" and c["kind"] == "local" and c.get("orig_model") and tg_leo_model_allowed(c["orig_model"]):
+                jobs.append((c, arm, c["orig_model"], "canvas"))  # как прод: презентации по запросу + лист один раз
             elif arm == "trimc" and c["kind"] == "local" and c.get("orig_model") and tg_leo_model_allowed(c["orig_model"]):
                 jobs.append((c, arm, c["orig_model"], "canvas"))
             elif arm == "probe" and c["id"] in probe_ids:
@@ -761,8 +773,8 @@ def _context_block(case: dict[str, Any], note_chars: int = 3000) -> str:
 def _judge_prompt(case: dict[str, Any], ra: dict[str, Any], rb: dict[str, Any]) -> str:
     return (
         _context_block(case)
-        + f"\n\n=== ОТВЕТ A ===\nДействия:\n{_tools_brief(_writes(ra))}\nТекст:\n{ra['answer'][:4000]}"
-        + f"\n\n=== ОТВЕТ B ===\nДействия:\n{_tools_brief(_writes(rb))}\nТекст:\n{rb['answer'][:4000]}"
+        + f"\n\n=== ОТВЕТ A ===\nДействия:\n{_tools_brief(_writes(ra))}\nТекст:\n{ra['answer'][:12000]}"
+        + f"\n\n=== ОТВЕТ B ===\nДействия:\n{_tools_brief(_writes(rb))}\nТекст:\n{rb['answer'][:12000]}"
     )
 
 
