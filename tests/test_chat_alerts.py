@@ -99,6 +99,8 @@ def test_verify_gates(store):
 def test_scan_user_cursor(store, monkeypatch):
     from assistant.stores import user_prefs
 
+    monkeypatch.setenv("CHAT_ALERTS_SHARED", "0")  # прежний разбор «для каждого» — за выключателем
+
     monkeypatch.setattr(user_prefs, "digest_chat_ids", lambda uid: [FORUM])
     _msg(store, 1, 201, "старое", 60 * 5)      # до окна LOOKBACK_H — не смотрим
     _msg(store, 2, 201, "Всё упало", 30, thread=10)
@@ -166,3 +168,33 @@ def test_ingest_marks_automated(store):
     assert chat_ingest.is_automated(NS(from_user=human, sender_chat=NS(id=-100))) is True
     assert chat_ingest.is_automated(NS(from_user=human, via_bot=NS(id=5))) is True
     assert chat_ingest.is_automated(NS(from_user=human, forward_origin=NS(type="user"))) is True
+
+
+def test_shared_analysis_once_per_chat_verify_per_user(store, monkeypatch):
+    """Двое следят за чатом: модель зовётся один раз, а «моё ли сообщение» решает код для каждого."""
+    from assistant.nlu import llm
+    from assistant.stores import user_prefs
+
+    OTHER = 300
+    monkeypatch.setenv("CHAT_ALERTS_SHARED", "1")
+    monkeypatch.setattr(user_prefs, "digest_chat_ids", lambda uid: [FORUM])
+    monkeypatch.setattr(ca, "_SHARED_MEMO", {})
+    _msg(store, 2, 201, "Всё упало, клиенты не могут оплатить", 30, thread=10)
+    _msg(store, 3, OTHER, "Подтверждаю, касса лежит", 29, thread=10)
+    calls = []
+
+    def fake_chat(system, user, **kw):
+        calls.append(system)
+        assert "«Я»" not in user  # общий разбор — без «Я»
+        return '{"alerts":[{"msg":3,"severity":"critical","title":"Касса лежит","why":"оплаты не проходят"}]}'
+
+    monkeypatch.setattr(llm, "_chat", fake_chat)
+    upto = {FORUM: store.max_rowid(FORUM)}
+    mine = ca.scan_user(ME, upto=upto)
+    theirs = ca.scan_user(OTHER, upto=upto)
+    assert len(calls) == 1 and calls[0] == ca.SYSTEM_SHARED
+    assert [a["message_id"] for a in mine] == [3]  # для ME — сообщение коллеги, алерт
+    assert theirs == []  # для автора сообщения #3 — своё сообщение, не алерт
+    # следующий тик без новых сообщений — модель не зовётся
+    ca.scan_user(ME, upto={FORUM: store.max_rowid(FORUM)})
+    assert len(calls) == 1

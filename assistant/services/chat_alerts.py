@@ -369,14 +369,63 @@ def detect(uid: int, chat_id: int, new: list[dict[str, Any]]) -> list[dict[str, 
     return verify(uid, chat_id, new, parse_alerts(raw))
 
 
+def shared_enabled() -> bool:
+    return os.getenv("CHAT_ALERTS_SHARED", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+# Общий разбор: ответ модели по пачке сообщений чата — один на всех, кто за чатом следит.
+# Ключ — (чат, первый rowid, последний rowid): курсоры людей после первого прохода совпадают,
+# граница пачки общая на тик (scan_user(upto=…)), поэтому второй и следующие берут готовое.
+_SHARED_MEMO: dict[tuple[int, int, int], tuple[float, list[dict[str, Any]]]] = {}
+_SHARED_TTL_SEC = 3600.0
+
+
+def detect_shared(chat_id: int, new: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Предложения модели по пачке без «Я» (проверка «моё ли, отвечал ли я» — в verify для каждого)."""
+    import time
+
+    from assistant.nlu import llm
+
+    key = (int(chat_id), int(new[0]["rid"]), int(new[-1]["rid"]))
+    now = time.time()
+    for k in [k for k, (ts, _) in _SHARED_MEMO.items() if now - ts > _SHARED_TTL_SEC]:
+        _SHARED_MEMO.pop(k, None)
+    hit = _SHARED_MEMO.get(key)
+    if hit is not None:
+        return hit[1]
+    chat = digest_store.get_chat(int(chat_id)) or {}
+    payload = {
+        "chat": str(chat.get("title") or f"Чат {chat_id}"),
+        "now_utc": _iso(_now()),
+        "messages": build_transcript(None, chat_id, new),
+    }
+    raw = llm._chat(
+        SYSTEM_SHARED,
+        json.dumps(payload, ensure_ascii=False),
+        operation="chat_alerts",
+        model=llm._model_chat_digest(),
+        timeout=60,
+        temperature=0.0,
+        max_tokens=600,
+    )
+    proposals = parse_alerts(raw)
+    _SHARED_MEMO[key] = (now, proposals)
+    return proposals
+
+
 def user_enabled(uid: int) -> bool:
     from assistant.stores import user_prefs
 
     return bool(user_prefs.digest_enabled(uid) and user_prefs.proactive_prefs(uid).get("chat_alerts"))
 
 
-def scan_user(uid: int) -> list[dict[str, Any]]:
-    """Новые сообщения выбранных чатов → проверенные алерты (курсор сдвигается после разбора)."""
+def scan_user(uid: int, *, upto: Optional[dict[int, int]] = None) -> list[dict[str, Any]]:
+    """Новые сообщения выбранных чатов → проверенные алерты (курсор сдвигается после разбора).
+
+    upto — общая на тик граница «до какого rowid читать» по чатам: пачки у всех одинаковые,
+    и общий разбор (detect_shared) делается один раз на чат.
+    """
+    from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
     from assistant.stores import user_prefs
 
     out: list[dict[str, Any]] = []
@@ -386,10 +435,20 @@ def scan_user(uid: int) -> list[dict[str, Any]]:
             cursor = digest_store.max_rowid(chat_id, since_utc=_iso(_now() - timedelta(hours=LOOKBACK_H)))
             set_cursor(uid, chat_id, cursor)
         new = digest_store.messages_after_rowid(chat_id, cursor)
+        if upto is not None and int(chat_id) in upto:
+            new = [m for m in new if int(m["rid"]) <= upto[int(chat_id)]]
         if not new:
             continue
         try:
-            found = detect(uid, chat_id, new)
+            if shared_enabled():
+                found = []
+                if any(
+                    m.get("user_id") is not None and int(m["user_id"]) != int(uid) and not _is_auto(m) for m in new
+                ):  # писали только сам пользователь и боты — модель не зовём
+                    set_openrouter_usage_telegram_user(telegram_user_id=uid)
+                    found = verify(uid, chat_id, new, detect_shared(chat_id, new))
+            else:
+                found = detect(uid, chat_id, new)
         except Exception as e:
             print(f"[chat_alerts] uid={uid} chat={chat_id} err={e!r}")
             continue  # курсор не сдвигаем — попробуем в следующий тик

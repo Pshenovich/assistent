@@ -20,14 +20,26 @@ def _keyboard(alert_id: int, url: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([row])
 
 
+def _tick_bounds(uids: list[int]) -> dict[int, int]:
+    """Общая граница пачки на этот тик по каждому чату — у всех, кто следит за чатом, одна пачка."""
+    from assistant.stores import chat_digest as digest_store
+    from assistant.stores import user_prefs
+
+    chats = {int(c) for u in uids for c in user_prefs.digest_chat_ids(u)}
+    return {c: digest_store.max_rowid(c) for c in chats}
+
+
 async def chat_alert_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
     from assistant.stores import user_prefs
 
-    for uid in await asyncio.to_thread(user_prefs.iter_user_ids_with_digest):
-        if not is_user_allowed(uid, None) or not chat_alerts.user_enabled(uid):
-            continue
+    uids = [
+        u for u in await asyncio.to_thread(user_prefs.iter_user_ids_with_digest)
+        if is_user_allowed(u, None) and chat_alerts.user_enabled(u)
+    ]
+    upto = await asyncio.to_thread(_tick_bounds, uids) if uids else {}
+    for uid in uids:
         try:
-            found = await asyncio.to_thread(chat_alerts.scan_user, uid)
+            found = await asyncio.to_thread(chat_alerts.scan_user, uid, upto=upto)
         except Exception as e:
             print(f"[chat_alerts] uid={uid} scan err={e!r}")
             continue
