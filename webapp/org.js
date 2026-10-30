@@ -4,7 +4,7 @@
   "use strict";
 
   var ROLE_LABEL = { owner: "Владелец", admin: "Админ", member: "Участник" };
-  var state = { overview: null, detail: null, market: null, contacts: null, queue: Promise.resolve(), saved: {}, slugTimer: null };
+  var state = { overview: null, detail: null, market: null, contacts: null, queue: Promise.resolve(), saved: {}, slugTimer: null, openMember: null };
 
   function app() {
     return window.LeoApp || {};
@@ -113,52 +113,88 @@
   }
 
   // ---------- отрисовка ----------
+  // Только компоненты Профиля (pf-*): шапка как у интеграций, строки списков, pf-select справа,
+  // pf-switch, pf-chips, pf-del, pf-wallet. Своих классов — минимум, только раскладка.
+
+  var ICO = {
+    plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>',
+    link: '<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></svg>',
+    mail: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></svg>',
+    refresh: '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4" /><path d="M21 3v6h-6" /></svg>',
+    copy: '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></svg>',
+    x: '<svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" /></svg>',
+  };
+
+  function textHtml(title, sub, titleCls) {
+    return '<span class="pf-row-text"><span class="pf-row-title' + (titleCls ? " " + titleCls : "") + '">' + esc(title) + "</span>" +
+      (sub ? '<span class="pf-row-sub pf-row-sub--wrap">' + esc(sub) + "</span>" : "") + "</span>";
+  }
+  // Строка «подпись слева — значение/поле справа».
+  function staticRow(title, sub, right, tag) {
+    tag = tag || "div";
+    return "<" + tag + ' class="pf-row pf-row--static"><span class="pf-row-body">' + textHtml(title, sub) + (right || "") + "</span></" + tag + ">";
+  }
+  function selectHtml(options, value, attrs) {
+    return '<select class="pf-select" ' + attrs + ">" +
+      options.map(function (o) {
+        return '<option value="' + esc(o[0]) + '"' + (o[0] === value ? " selected" : "") + ">" + esc(o[1]) + "</option>";
+      }).join("") + "</select>";
+  }
+  function delBtn(attrs, label, accent, icon) {
+    return '<button type="button" class="pf-del' + (accent ? " pf-del--accent" : "") + '" ' + attrs + ' aria-label="' + esc(label) + '" title="' + esc(label) + '">' +
+      (icon || ICO.x).replace("<svg ", '<svg aria-hidden="true" ') + "</button>";
+  }
+  function addRow(attrs, title, icon) {
+    return '<button type="button" class="pf-row pf-add-row" ' + attrs + '><span class="pf-ico" aria-hidden="true">' + (icon || ICO.plus) + "</span>" +
+      '<span class="pf-row-body">' + textHtml(title) + "</span></button>";
+  }
+  function initials(name) {
+    var words = String(name || "").replace(/^@/, "").replace(/@.*$/, "").replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean);
+    return ((words[0] || "?").charAt(0) + (words[1] || "").charAt(0)).toUpperCase();
+  }
+  function group(title, saveKey, inner) {
+    return '<div class="pf-group"><p class="pf-group-title">' + esc(title) + (saveKey ? saveMark(saveKey) : "") + "</p>" + inner + "</div>";
+  }
 
   function render() {
     var el = root();
     if (!el) return;
     var ov = state.overview || {};
-    var html = "";
+    var html = state.detail ? heroHtml(state.detail.org) : "";
     if ((ov.orgs || []).length > 1) html += switcherHtml(ov);
     html += suggestionsHtml(ov);
     html += state.detail ? detailHtml(state.detail) : createHtml(ov);
     el.innerHTML = html;
   }
 
+  function heroHtml(org) {
+    var pic = org.logo_url ? '<img src="' + esc(org.logo_url) + '" alt="" />' : esc(initials(org.name));
+    return '<div class="pf-hero"><span class="pf-hero-ico org-hero-ico" aria-hidden="true">' + pic + "</span>" +
+      '<p class="pf-hero-title">' + esc(org.name) + "</p>" +
+      '<p class="pf-hero-text">' + esc(ROLE_LABEL[org.my_role] || "") + " · " + org.member_count + " " +
+      plural(org.member_count, "участник", "участника", "участников") + "</p></div>";
+  }
+
   function switcherHtml(ov) {
-    var opts = ov.orgs
-      .map(function (o) {
-        return '<option value="' + o.id + '"' + (o.id === ov.current_id ? " selected" : "") + ">" + esc(o.name) + "</option>";
-      })
-      .join("");
-    return (
-      '<div class="pf-list"><label class="pf-field"><span class="pf-field-label">Текущая организация</span>' +
-      '<select class="pf-input" data-org="switch">' + opts + "</select></label></div>"
-    );
+    var opts = ov.orgs.map(function (o) { return [o.id, o.name]; });
+    return '<div class="pf-list">' +
+      staticRow("Текущая организация", "", selectHtml(opts, ov.current_id, 'data-org="switch" aria-label="Текущая организация"'), "label") + "</div>";
   }
 
   function suggestionsHtml(ov) {
-    return (ov.suggestions || [])
+    var rows = (ov.suggestions || [])
       .map(function (s) {
-        var body = s.pending
-          ? '<span class="pf-row-sub">Заявка отправлена — ждём одобрения админа</span>'
-          : '<span class="pf-row-sub">Коллеги с вашего домена уже здесь</span>';
+        var sub = s.pending ? "Заявка отправлена — ждём одобрения админа" : "Коллеги с вашего домена уже здесь";
         var btns = s.pending
           ? ""
-          : '<button type="button" class="pf-link" data-org="join" data-id="' + s.id + '">Вступить</button>' +
-            '<button type="button" class="pf-link" data-org="dismiss" data-id="' + s.id + '">Не сейчас</button>';
-        return (
-          '<div class="pf-list org-suggest"><div class="pf-row pf-row--static">' + logoHtml(s) +
-          '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(s.name) + "</span>" + body +
-          '</span><span class="org-actions">' + btns + "</span></span></div></div>"
-        );
+          : '<span class="org-actions"><button type="button" class="pf-link pf-link--muted" data-org="dismiss" data-id="' + s.id + '">Не сейчас</button>' +
+            '<button type="button" class="pf-link" data-org="join" data-id="' + s.id + '">Вступить</button></span>';
+        var pic = s.logo_url ? '<img src="' + esc(s.logo_url) + '" alt="" />' : esc(initials(s.name));
+        return '<div class="pf-row pf-row--static"><span class="pf-avatar" aria-hidden="true">' + pic + "</span>" +
+          '<span class="pf-row-body">' + textHtml(s.name, sub) + btns + "</span></div>";
       })
       .join("");
-  }
-
-  function logoHtml(org) {
-    if (org.logo_url) return '<span class="org-logo"><img src="' + esc(org.logo_url) + '" alt="" /></span>';
-    return '<span class="org-logo" aria-hidden="true">' + esc(String(org.name || "?").trim().charAt(0).toUpperCase()) + "</span>";
+    return rows ? group("Можно вступить", "", '<div class="pf-list">' + rows + "</div>") : "";
   }
 
   function createHtml(ov) {
@@ -175,10 +211,11 @@
       '<div class="pf-empty org-empty"><span class="pf-empty-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 21h18" /><path d="M5 21V7l7-4 7 4v14" /><path d="M10 21v-4h4v4" /></svg></span>' +
       '<p class="pf-empty-title">Организации пока нет</p>' +
       '<p class="pf-empty-text">Организация — общее пространство команды: участники, роли и общие настройки, например выпуск «Рынок».</p></div>' +
+      "<div>" +
       '<div class="pf-list">' +
       '<label class="pf-field"><span class="pf-field-label">Название</span><input type="text" class="pf-input" id="org-new-name" maxlength="80" placeholder="Например, Обучат" /></label>' +
       domSel + "</div>" +
-      '<p class="pf-hint">' + esc(domHint) + "</p>" +
+      '<p class="pf-hint">' + esc(domHint) + "</p></div>" +
       '<button type="button" class="pf-btn" data-org="create">Создать организацию</button>'
     );
   }
@@ -186,55 +223,31 @@
   function detailHtml(d) {
     var org = d.org;
     var can = d.can || {};
-    var html = '<div class="pf-list"><div class="pf-row pf-row--static org-head">' + logoHtml(org) +
-      '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(org.name) + "</span>" +
-      '<span class="pf-row-sub">' + esc(ROLE_LABEL[org.my_role] || "") + " · " + org.member_count + " " + plural(org.member_count, "участник", "участника", "участников") +
-      "</span></span></span></div></div>";
+    var html = "";
 
     if (can.edit_org) {
-      html += '<div class="pf-group"><p class="pf-group-title">Название и адрес' + saveMark("org") + '</p><div class="pf-list">' +
+      html += group("Название и адрес", "org", '<div class="pf-list">' +
         '<label class="pf-field"><span class="pf-field-label">Название</span><input type="text" class="pf-input" id="org-name" maxlength="80" value="' + esc(org.name) + '" /></label>' +
         '<label class="pf-field"><span class="pf-field-label">Короткий адрес</span><input type="text" class="pf-input" id="org-slug" maxlength="40" value="' + esc(org.slug) + '" autocapitalize="off" spellcheck="false" /></label>' +
-        '</div><p class="pf-hint" id="org-slug-hint">Латиница, цифры и дефис. Пригодится для публичной страницы выпуска и поддомена.</p></div>';
+        '</div><p class="pf-hint" id="org-slug-hint">Латиница, цифры и дефис. Пригодится для публичной страницы выпуска и поддомена.</p>');
     }
 
-    html += marketHtml(state.market);
-    html += billingHtml(d);
-    html += creditsHtml(d);
     html += membersHtml(d);
+    if (can.invite) html += joinHtml(d) + invitesHtml(d);
+    html += creditsHtml(d);
+    html += billingHtml(d);
+    html += marketHtml(state.market);
 
-    if (can.invite) {
-      html += '<div class="pf-group"><p class="pf-group-title">Как вступают' + saveMark("join") + '</p><div class="pf-list">';
-      (org.domains || []).forEach(function (dom) {
-        html += '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">@' + esc(dom) + "</span>" +
-          '<span class="pf-row-sub">Коллеги с этим доменом почты видят организацию</span></span>' +
-          (can.edit_org ? '<button type="button" class="pf-link" data-org="domain-del" data-domain="' + esc(dom) + '">Убрать</button>' : "") +
-          "</span></div>";
-      });
-      var free = (d.my_domains || []).filter(function (x) { return (org.domains || []).indexOf(x) < 0; });
-      if (can.edit_org && free.length) {
-        html += '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Добавить @' + esc(free[0]) + "</span></span>" +
-          '<button type="button" class="pf-link" data-org="domain-add" data-domain="' + esc(free[0]) + '">Добавить</button></span></div>';
-      }
-      if ((org.domains || []).length) {
-        html += '<label class="pf-field"><span class="pf-field-label">Коллеги с домена</span><select class="pf-input" data-org="join-mode">' +
-          '<option value="request"' + (org.join_mode === "request" ? " selected" : "") + ">Вступают по заявке — я одобряю</option>" +
-          '<option value="auto"' + (org.join_mode === "auto" ? " selected" : "") + ">Вступают сами</option></select></label>";
-      }
-      html += "</div>";
-      html += invitesHtml(d) + "</div>";
-    }
-
-    html += '<div class="pf-list org-danger">';
+    var danger = "";
     if ((state.overview.orgs || []).length) {
-      html += '<button type="button" class="pf-row pf-row--danger" data-org="leave"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Выйти из организации</span></span></span></button>';
+      danger += '<button type="button" class="pf-row pf-row--danger" data-org="leave"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Выйти из организации</span></span></span></button>';
     }
     if (can.delete_org) {
-      html += '<button type="button" class="pf-row pf-row--danger" data-org="delete"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Удалить организацию</span></span></span></button>';
+      danger += '<button type="button" class="pf-row pf-row--danger" data-org="delete"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Удалить организацию</span></span></span></button>';
     }
-    html += "</div>";
+    if (danger) html += '<div class="pf-list">' + danger + "</div>";
     if ((state.overview.orgs || []).length) {
-      html += '<button type="button" class="pf-link org-new-link" data-org="show-create">+ Создать ещё одну организацию</button>';
+      html += '<button type="button" class="pf-btn pf-btn--ghost" data-org="show-create">Создать ещё одну организацию</button>';
     }
     return html;
   }
@@ -243,34 +256,27 @@
   function marketHtml(m) {
     if (!m || !m.settings) return "";
     var st = m.settings;
-    var html = '<div class="pf-group"><p class="pf-group-title">Выпуск «Рынок»' + saveMark("market") + "</p>";
-    html += '<p class="pf-hint">Укажите конкурентов или темы — и каждое утро Лео будет собирать в «Дайджест → Рынок» выпуск для вашей компании: свежие новости по ним, выводы и идеи. Без них выпуск общий.</p>';
-    html += '<div class="pf-list">';
+    var list = "";
     if (m.can_edit) {
-      html +=
+      list +=
         '<label class="pf-field"><span class="pf-field-label">О компании</span><textarea class="pf-input org-mkt-area" id="org-mkt-about" rows="3" maxlength="1500" placeholder="Чем занимаетесь, для кого, что важно отслеживать">' + esc(st.about) + "</textarea></label>" +
         '<label class="pf-field"><span class="pf-field-label">Конкуренты</span><input type="text" class="pf-input" id="org-mkt-competitors" value="' + esc((st.competitors || []).join(", ")) + '" placeholder="Через запятую: Gong, Clari, amoCRM" /></label>' +
         '<label class="pf-field"><span class="pf-field-label">Темы</span><input type="text" class="pf-input" id="org-mkt-topics" value="' + esc((st.topics || []).join(", ")) + '" placeholder="Через запятую: речевая аналитика, ИИ в продажах" /></label>' +
         '<label class="pf-field"><span class="pf-field-label">Свои источники</span><textarea class="pf-input org-mkt-area" id="org-mkt-sources" rows="2" placeholder="Ссылки на RSS, по одной в строке">' + esc((st.sources || []).join("\n")) + "</textarea></label>" +
-        '<label class="pf-field"><span class="pf-field-label">Время выпуска</span><input type="time" class="pf-input" id="org-mkt-time" value="' + esc(st.time) + '" /></label>';
-      if ((st.competitors || []).length || (st.topics || []).length) {
-        html += '<button type="button" class="pf-row" data-org="mkt-build"><span class="pf-row-body"><span class="pf-row-text">' +
-          '<span class="pf-row-title">Собрать выпуск сейчас</span><span class="pf-row-sub">Займёт пару минут — потом откройте «Дайджест → Рынок»</span>' +
-          "</span></span></button>";
-      }
+        staticRow("Время выпуска", "", '<input type="time" class="pf-num-input org-time" id="org-mkt-time" value="' + esc(st.time) + '" aria-label="Время выпуска" />', "label");
     } else {
-      var rows = [["Конкуренты", (st.competitors || []).join(", ")], ["Темы", (st.topics || []).join(", ")], ["Время выпуска", st.time]];
-      rows.forEach(function (r) {
-        if (!r[1]) return;
-        html += '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(r[0]) +
-          '</span><span class="pf-row-sub">' + esc(r[1]) + "</span></span></span></div>";
+      [["Конкуренты", (st.competitors || []).join(", ")], ["Темы", (st.topics || []).join(", ")], ["Время выпуска", st.time]].forEach(function (r) {
+        if (r[1]) list += staticRow(r[0], r[1]);
       });
     }
-    html += '<label class="pf-row"><input type="checkbox" class="pf-check-input" id="org-mkt-telegram"' + (m.telegram ? " checked" : "") + " />" +
-      '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Присылать мне выпуск в Telegram</span>' +
-      '<span class="pf-row-sub">Коротко главное и ссылка на выпуск</span></span><span class="pf-check" aria-hidden="true"></span></span></label>';
-    html += "</div></div>";
-    return html;
+    list += staticRow("Присылать мне выпуск в Telegram", "Коротко главное и ссылка на выпуск",
+      '<input type="checkbox" class="pf-switch" id="org-mkt-telegram"' + (m.telegram ? " checked" : "") + " />", "label");
+    if (m.can_edit && ((st.competitors || []).length || (st.topics || []).length)) {
+      list += addRow('data-org="mkt-build"', "Собрать выпуск сейчас", ICO.refresh);
+    }
+    return group("Выпуск «Рынок»", "market",
+      '<div><div class="pf-list">' + list + "</div>" +
+      '<p class="pf-hint">Укажите конкурентов или темы — и каждое утро Лео будет собирать в «Дайджест → Рынок» выпуск для вашей компании: свежие новости по ним, выводы и идеи. Без них выпуск общий. Сборка вручную занимает пару минут.</p></div>');
   }
 
   function saveMarket(patch) {
@@ -293,10 +299,7 @@
   }
 
   function planSelect(d, value, attrs) {
-    return '<select class="pf-input org-plan" ' + attrs + ">" +
-      (d.plans || []).map(function (p) {
-        return '<option value="' + esc(p.id) + '"' + (p.id === value ? " selected" : "") + ">" + esc(p.label) + "</option>";
-      }).join("") + "</select>";
+    return selectHtml((d.plans || []).map(function (p) { return [p.id, p.label]; }), value, attrs);
   }
 
   function billingHtml(d) {
@@ -304,25 +307,20 @@
     var can = d.can || {};
     var used = org.seats_used || 0;
     var seats = org.seats || 0;
-    var html = '<div class="pf-group"><p class="pf-group-title">Тариф' + saveMark("billing") + "</p>";
-    if (!d.billing_enabled) {
-      html += '<p class="org-demo">Оплата ещё не подключена — тарифы можно менять, но они пока ни на что не влияют.</p>';
-    }
-    html += '<div class="pf-list">';
+    var inner = d.billing_enabled ? "" : '<p class="pf-note pf-note--warn">Оплата ещё не подключена — тарифы можно менять, но они пока ни на что не влияют.</p>';
+    var list = "";
     if (can.billing) {
-      html += '<label class="pf-field"><span class="pf-field-label">Тариф организации</span>' +
-        planSelect(d, org.plan, 'id="org-plan" aria-label="Тариф организации"') + "</label>" +
-        '<label class="pf-field"><span class="pf-field-label">Мест с платным тарифом</span>' +
-        '<input type="number" class="pf-input" id="org-seats" min="0" max="10000" inputmode="numeric" value="' + seats + '" /></label>';
+      list += staticRow("Тариф организации", "", planSelect(d, org.plan, 'id="org-plan" aria-label="Тариф организации"'), "label") +
+        staticRow("Мест с платным тарифом", "",
+          '<input type="number" class="pf-num-input org-num" id="org-seats" min="0" max="10000" inputmode="numeric" value="' + seats + '" aria-label="Мест с платным тарифом" />', "label");
     } else {
-      html += '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' +
-        esc(planLabel(d, org.plan)) + "</span></span></span></div>";
+      list += staticRow("Тариф организации", "", '<span class="pf-row-val">' + esc(planLabel(d, org.plan)) + "</span>");
     }
-    html += '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Занято мест</span>' +
-      '<span class="pf-row-sub">Место занимает участник с платным тарифом</span></span>' +
-      '<span class="pf-row-val' + (used > seats ? " org-hint-bad" : "") + '">' + used + " из " + seats + "</span></span></div></div>";
-    if (can.billing) html += '<p class="pf-hint">Тариф каждому участнику выдаётся в списке ниже.</p>';
-    return html + "</div>";
+    list += staticRow("Занято мест", "Место занимает участник с платным тарифом",
+      '<span class="pf-row-val' + (used > seats ? " pf-status--err" : "") + '">' + used + " из " + seats + "</span>");
+    inner += "<div>" + '<div class="pf-list">' + list + "</div>" +
+      (can.billing ? '<p class="pf-hint">Тариф каждому участнику — в его строке в списке участников.</p>' : "") + "</div>";
+    return group("Тариф", "billing", inner);
   }
 
   // ---------- кредиты ИИ: счёт организации, лимиты и модели участников ----------
@@ -331,45 +329,45 @@
     return Math.round(Number(n) || 0).toLocaleString("ru-RU");
   }
 
+  // Счёт — тем же блоком, что баланс в Профиле (pf-wallet).
   function creditsHtml(d) {
     var c = d.credits;
     if (!c) return "";
-    var html = '<div class="pf-group"><p class="pf-group-title">Кредиты ИИ' + saveMark("credits") + '</p><div class="pf-list">' +
-      '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Счёт организации</span>' +
-      '<span class="pf-row-sub">≈ ' + fmtNum(c.balance_rub) + " ₽ по тарифу Solo (" + String(c.rub_per_credit).replace(".", ",") + " ₽ за кредит)</span></span>" +
-      '<span class="org-actions"><span class="pf-row-val">' + fmtNum(c.balance) + " кр</span>" +
-      (c.can_manage ? '<button type="button" class="pf-link" data-org="credits-topup">Пополнить</button>' : "") +
-      "</span></span></div></div>";
-    if (c.can_manage) {
-      html += '<p class="pf-hint">У каждого участника дневной лимит (по умолчанию ' + fmtNum(c.default_daily_limit) +
-        " кр). Сверх лимита Лео продолжает работать, кредиты списываются со счёта организации. Лимит и доступные модели — в строке участника ниже.</p>";
-    }
-    return html + "</div>";
+    var wallet = '<section class="pf-wallet" aria-label="Счёт организации"><div class="pf-wallet-top"><div>' +
+      '<p class="pf-wallet-label">Счёт организации</p><p class="pf-wallet-balance">' + fmtNum(c.balance) + " кр</p></div></div>" +
+      '<div class="pf-wallet-foot"><span class="org-wallet-sub">≈ ' + fmtNum(c.balance_rub) + " ₽ по тарифу Solo · " +
+      String(c.rub_per_credit).replace(".", ",") + " ₽ за кредит</span>" +
+      (c.can_manage ? '<button type="button" class="pf-pay" data-org="credits-topup">Пополнить</button>' : "") + "</div></section>";
+    var hint = c.can_manage
+      ? '<p class="pf-hint">У каждого участника дневной лимит (по умолчанию ' + fmtNum(c.default_daily_limit) +
+        " кр). Сверх лимита Лео продолжает работать, кредиты списываются со счёта организации. Лимит и модели — в строке участника.</p>"
+      : "";
+    return group("Кредиты ИИ", "credits", "<div>" + wallet + hint + "</div>");
   }
 
-  function memberAiHtml(d, m) {
+  function memberAi(d, m) {
     var c = d.credits;
     var ai = c && c.members && c.members[String(m.user_id)];
-    if (!ai || m.status !== "active") return "";
-    var models = c.models || [];
+    return ai && m.status === "active" ? ai : null;
+  }
+
+  // Настройки ИИ участника внутри раскрытой строки: дневной лимит и модели чипами.
+  function memberAiHtml(d, m, ai) {
+    var models = d.credits.models || [];
     var allowed = ai.allowed_models;  // null — доступны все
     var all = !allowed;
-    var summary = "Лимит " + fmtNum(ai.daily_limit) + " кр/день · " +
-      (all ? "все модели" : allowed.length + " " + plural(allowed.length, "модель", "модели", "моделей")) +
-      " · сегодня " + fmtNum(ai.spent_today) + (ai.over_today > 0 ? ", сверх лимита " + fmtNum(ai.over_today) : "");
     var uid = esc(m.user_id);
-    var boxes = models.map(function (x) {
-      var on = all || allowed.indexOf(x.id) >= 0;
-      return '<label class="org-ai-model"><input type="checkbox" data-org-ai="model" data-uid="' + uid + '" value="' + esc(x.id) + '"' +
-        (on ? " checked" : "") + (all ? " disabled" : "") + " /> " + esc(x.name) + "</label>";
-    }).join("");
-    return '<details class="org-ai"' + (state.openAi === String(m.user_id) ? " open" : "") + "><summary>" + esc(summary) + "</summary>" +
-      '<label class="pf-field"><span class="pf-field-label">Дневной лимит, кредитов</span>' +
-      '<input type="number" class="pf-input" data-org-ai="limit" data-uid="' + uid + '" min="0" max="1000000" step="50" inputmode="numeric" value="' +
-      Math.round(ai.daily_limit) + '" /></label>' +
-      '<label class="org-ai-model org-ai-all"><input type="checkbox" data-org-ai="all" data-uid="' + uid + '"' + (all ? " checked" : "") +
-      " /> Все модели</label>" +
-      '<div class="org-ai-models">' + boxes + "</div></details>";
+    var spent = "Сегодня " + fmtNum(ai.spent_today) + " кр" + (ai.over_today > 0 ? ", сверх лимита " + fmtNum(ai.over_today) : "");
+    var chips = '<button type="button" class="pf-chip' + (all ? " is-on" : "") + '" data-org-ai="all" data-uid="' + uid + '" aria-pressed="' + all + '">Все модели</button>' +
+      models.map(function (x) {
+        var on = all || allowed.indexOf(x.id) >= 0;
+        return '<button type="button" class="pf-chip' + (on ? " is-on" : "") + '" data-org-ai="model" data-uid="' + uid + '" data-model="' + esc(x.id) +
+          '" aria-pressed="' + on + '">' + esc(x.name) + "</button>";
+      }).join("");
+    return staticRow("Дневной лимит, кр", spent,
+        '<input type="number" class="pf-num-input org-num" data-org-ai="limit" data-uid="' + uid + '" min="0" max="1000000" step="50" inputmode="numeric" value="' +
+        Math.round(ai.daily_limit) + '" aria-label="Дневной лимит, кредитов" />', "label") +
+      '<div class="pf-field"><span class="pf-field-label">Доступные модели</span><div class="pf-chips org-chips">' + chips + "</div></div>";
   }
 
   function saveMemberAi(uid, body) {
@@ -379,98 +377,121 @@
     });
   }
 
-  function onAiChange(e) {
-    var el = e.target.closest("[data-org-ai]");
-    if (!el) return false;
+  function aiAllowed(uid) {
+    var ai = memberAi(state.detail, { user_id: uid, status: "active" });
+    var all = ((state.detail.credits || {}).models || []).map(function (x) { return x.id; });
+    return { all: all, allowed: ai && ai.allowed_models ? ai.allowed_models.slice() : null };
+  }
+
+  // Чипы моделей: «Все модели» снимает ограничения; снять галочку с модели при «Все» — разрешить все, кроме неё.
+  function onAiClick(el) {
     var uid = el.getAttribute("data-uid");
     var kind = el.getAttribute("data-org-ai");
-    state.openAi = String(uid);  // после сохранения список перерисуется — оставляем блок раскрытым
-    if (kind === "limit") {
-      var v = Number(el.value);
-      if (!isFinite(v) || v < 0) {
-        toast("Лимит — число от 0");
-        return true;
-      }
-      saveMemberAi(uid, { daily_limit: v });
-      return true;
-    }
-    var box = el.closest(".org-ai");
+    var cur = aiAllowed(uid);
     if (kind === "all") {
-      if (el.checked) {
-        saveMemberAi(uid, { all_models: true });
-      } else {
-        // Снимаем «Все модели» — сразу разрешаем все по отдельности, дальше руководитель снимает лишние.
-        var ids = Array.prototype.map.call(box.querySelectorAll('[data-org-ai="model"]'), function (x) { return x.value; });
-        saveMemberAi(uid, { allowed_models: ids });
-      }
+      if (cur.allowed) saveMemberAi(uid, { all_models: true });
+      return;
+    }
+    var model = el.getAttribute("data-model");
+    var picked = cur.allowed || cur.all.slice();
+    var i = picked.indexOf(model);
+    if (i >= 0) picked.splice(i, 1);
+    else picked.push(model);
+    if (!picked.length) {
+      toast("Оставьте участнику хотя бы одну модель");
+      return;
+    }
+    if (picked.length === cur.all.length) saveMemberAi(uid, { all_models: true });
+    else saveMemberAi(uid, { allowed_models: picked });
+  }
+
+  function onAiChange(e) {
+    var el = e.target.closest('[data-org-ai="limit"]');
+    if (!el) return false;
+    var v = Number(el.value);
+    if (!isFinite(v) || v < 0) {
+      toast("Лимит — число от 0");
       return true;
     }
-    if (kind === "model") {
-      var picked = Array.prototype.filter.call(box.querySelectorAll('[data-org-ai="model"]'), function (x) { return x.checked; })
-        .map(function (x) { return x.value; });
-      if (!picked.length) {
-        el.checked = true;
-        toast("Оставьте участнику хотя бы одну модель");
-        return true;
-      }
-      saveMemberAi(uid, { allowed_models: picked });
-      return true;
+    saveMemberAi(el.getAttribute("data-uid"), { daily_limit: v });
+    return true;
+  }
+
+  function memberName(d, m) {
+    var name = m.user_id ? m.name : String(m.name || "").replace(/^tg:/, "@");
+    return m.user_id === d.my_user_id ? name + " (вы)" : name;
+  }
+
+  function memberSub(d, m, ai) {
+    if (m.status === "pending") return "Просится в организацию";
+    if (m.status === "invited") return "Приглашён — появится после первого входа в Орбиту · " + planLabel(d, m.plan);
+    var parts = [];
+    if (m.username) parts.push("@" + m.username);
+    parts.push(ROLE_LABEL[m.role] || "");
+    parts.push(planLabel(d, m.plan));
+    if (ai) parts.push("лимит " + fmtNum(ai.daily_limit) + " кр");
+    return parts.filter(Boolean).join(" · ");
+  }
+
+  // Участник — строка с аватаром; у руководителя строка раскрывается: роль, тариф, лимит, модели, исключить.
+  function memberHtml(d, m) {
+    var can = d.can || {};
+    var me = d.org.my_role;
+    var ai = memberAi(d, m);
+    var name = memberName(d, m);
+    var avatar = '<span class="pf-avatar" aria-hidden="true">' + esc(initials(name.replace(/ \(вы\)$/, ""))) + "</span>";
+    var sub = memberSub(d, m, ai);
+    if (m.status === "pending") {
+      var acts = can.approve
+        ? '<span class="org-actions"><button type="button" class="pf-link pf-link--muted" data-org="reject" data-uid="' + esc(m.user_id) + '">Отклонить</button>' +
+          '<button type="button" class="pf-link" data-org="approve" data-uid="' + esc(m.user_id) + '">Принять</button></span>'
+        : "";
+      return '<div class="pf-row pf-row--static">' + avatar + '<span class="pf-row-body">' + textHtml(name, sub) + acts + "</span></div>";
     }
-    return false;
+    var canRole = m.status === "active" && can.set_role && m.user_id !== d.my_user_id;
+    var canRemove = can.remove_member && m.role !== "owner" && (m.role !== "admin" || me === "owner");
+    var aiEdit = ai && d.credits.can_manage;
+    if (!(canRole || can.billing || canRemove || aiEdit)) {
+      return '<div class="pf-row pf-row--static">' + avatar + '<span class="pf-row-body">' + textHtml(name, sub) + "</span></div>";
+    }
+    var open = state.openMember === String(m.id);
+    var html = '<button type="button" class="pf-row" data-org="member-toggle" data-mid="' + m.id + '" aria-expanded="' + open + '">' + avatar +
+      '<span class="pf-row-body">' + textHtml(name, sub) + '<span class="pf-chev' + (open ? " pf-chev--open" : "") + '" aria-hidden="true">›</span></span></button>';
+    if (!open) return html;
+    var edit = "";
+    if (canRole) {
+      edit += staticRow("Роль", "", selectHtml(["owner", "admin", "member"].map(function (r) { return [r, ROLE_LABEL[r]]; }), m.role,
+        'data-org="role" data-uid="' + esc(m.user_id) + '" aria-label="Роль"'), "label");
+    }
+    if (can.billing) {
+      edit += staticRow("Тариф", "", planSelect(d, m.plan, 'data-org="member-plan" data-mid="' + m.id + '" aria-label="Тариф участника"'), "label");
+    }
+    if (aiEdit) edit += memberAiHtml(d, m, ai);
+    if (canRemove) {
+      edit += '<button type="button" class="pf-row" data-org="remove" data-mid="' + m.id + '"><span class="pf-row-body">' +
+        textHtml(m.status === "invited" ? "Отозвать приглашение" : "Исключить из организации", "", "pf-link--danger") + "</span></button>";
+    }
+    return html + '<div class="org-member-edit">' + edit + "</div>";
   }
 
   function membersHtml(d) {
     var can = d.can || {};
-    var me = d.org.my_role;
-    var rows = (d.members || [])
-      .map(function (m) {
-        var sub = m.username ? "@" + m.username : "";
-        if (m.status === "pending") sub = "Просится в организацию";
-        if (m.status === "invited") sub = "Приглашён — появится после первого входа в Орбиту";
-        var right = "";
-        if (m.status === "pending" && can.approve) {
-          right = '<button type="button" class="pf-link" data-org="approve" data-uid="' + esc(m.user_id) + '">Принять</button>' +
-            '<button type="button" class="pf-link" data-org="reject" data-uid="' + esc(m.user_id) + '">Отклонить</button>';
-        } else if (m.status === "active" && can.set_role && m.user_id !== d.my_user_id) {
-          right = '<select class="pf-input org-role" data-org="role" data-uid="' + esc(m.user_id) + '" aria-label="Роль">' +
-            ["owner", "admin", "member"].map(function (r) {
-              return '<option value="' + r + '"' + (m.role === r ? " selected" : "") + ">" + ROLE_LABEL[r] + "</option>";
-            }).join("") + "</select>";
-        } else if (m.status === "active") {
-          right = '<span class="pf-row-val">' + esc(ROLE_LABEL[m.role] || "") + "</span>";
-        }
-        var canRemove = can.remove_member && m.role !== "owner" && (m.role !== "admin" || me === "owner");
-        if (canRemove && m.status !== "pending") {
-          right += '<button type="button" class="org-x" data-org="remove" data-mid="' + m.id + '" aria-label="Исключить" title="' +
-            (m.status === "invited" ? "Отозвать приглашение" : "Исключить") + '">×</button>';
-        }
-        if (m.status !== "pending") {
-          right = (can.billing
-            ? planSelect(d, m.plan, 'data-org="member-plan" data-mid="' + m.id + '" aria-label="Тариф участника"')
-            : '<span class="org-plan-chip' + (m.plan !== "free" ? " org-plan-chip--paid" : "") + '">' + esc(planLabel(d, m.plan)) + "</span>") + right;
-        }
-        var name = m.user_id ? m.name : String(m.name || "").replace(/^tg:/, "@");
-        if (m.user_id === d.my_user_id) name += " (вы)";
-        return '<div class="pf-row pf-row--static org-member"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(name) +
-          "</span>" + (sub ? '<span class="pf-row-sub">' + esc(sub) + "</span>" : "") + '</span><span class="org-actions">' + right + "</span></span></div>" +
-          memberAiHtml(d, m);
-      })
-      .join("");
+    var rows = (d.members || []).map(function (m) { return memberHtml(d, m); }).join("");
     var add = "";
     if (can.invite) {
       var opts = contactOptions(d);
       if (opts) {
-        add += '<div class="pf-row pf-row--static pf-add-select"><span class="pf-ico pf-add-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg></span>' +
+        add += '<div class="pf-row pf-row--static pf-add-select"><span class="pf-ico pf-add-ico" aria-hidden="true">' + ICO.plus + "</span>" +
           '<span class="pf-row-body"><select class="pf-input" data-org="add-contact" aria-label="Добавить из контактов">' +
           '<option value="">Добавить из контактов…</option>' + opts + "</select></span></div>";
       }
-      add += '<div class="pf-row pf-row--static pf-add-select"><span class="pf-ico pf-add-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg></span>' +
-        '<span class="pf-row-body"><input type="text" class="pf-input" id="org-add-key" placeholder="Почта или @ник в Telegram" autocapitalize="off" spellcheck="false" />' +
+      add += '<div class="pf-row pf-row--static"><span class="pf-ico pf-add-ico" aria-hidden="true">' + ICO.mail + "</span>" +
+        '<span class="pf-row-body"><input type="text" class="pf-input" id="org-add-key" placeholder="Почта или @ник в Telegram" autocapitalize="off" spellcheck="false" aria-label="Почта или @ник в Telegram" />' +
         '<button type="button" class="pf-link" data-org="add">Добавить</button></span></div>';
     }
-    return '<div class="pf-group"><p class="pf-group-title">Участники' + saveMark("members") + '</p><div class="pf-list">' + rows + add + "</div>" +
+    return group("Участники", "members", "<div>" + '<div class="pf-list">' + rows + add + "</div>" +
       (can.set_role ? '<p class="pf-hint">Админ приглашает и исключает участников и настраивает выпуск «Рынок». Владелец ещё меняет название и адрес, назначает админов. Назначить другого владельцем — передать владение.</p>' : "") +
-      "</div>";
+      "</div>");
   }
 
   // Ключ контакта для добавления: почта (по ней находим Telegram через контакты) или @ник.
@@ -529,20 +550,41 @@
     });
   }
 
+
+  function joinHtml(d) {
+    var org = d.org;
+    var can = d.can || {};
+    var list = "";
+    (org.domains || []).forEach(function (dom) {
+      list += '<div class="pf-row pf-row--static"><span class="pf-ico" aria-hidden="true">' + ICO.mail + '</span><span class="pf-row-body">' +
+        textHtml("@" + dom, "Коллеги с этим доменом почты видят организацию") +
+        (can.edit_org ? '<button type="button" class="pf-link pf-link--muted" data-org="domain-del" data-domain="' + esc(dom) + '">Убрать</button>' : "") +
+        "</span></div>";
+    });
+    if ((org.domains || []).length) {
+      list += staticRow("Коллеги с домена", org.join_mode === "auto" ? "Вступают без одобрения" : "Вы одобряете каждую заявку",
+        selectHtml([["request", "По заявке"], ["auto", "Сразу"]], org.join_mode, 'data-org="join-mode" aria-label="Как вступают коллеги с домена"'), "label");
+    }
+    var free = (d.my_domains || []).filter(function (x) { return (org.domains || []).indexOf(x) < 0; });
+    if (can.edit_org && free.length) list += addRow('data-org="domain-add" data-domain="' + esc(free[0]) + '"', "Добавить @" + free[0]);
+    if (!list) return "";
+    return group("Вход по домену почты", "join", '<div class="pf-list">' + list + "</div>");
+  }
+
   function invitesHtml(d) {
     var tg = inTelegram();
     var list = (d.invites || [])
       .map(function (i) {
         var url = (tg && i.urls.telegram) || i.urls.web;
-        return '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title org-link">' + esc(url) + "</span>" +
-          '<span class="pf-row-sub">Действует до ' + esc(fmtDate(i.expires_at)) + "</span></span>" +
-          '<span class="org-actions"><button type="button" class="pf-link" data-org="copy" data-url="' + esc(url) + '">Копировать</button>' +
-          '<button type="button" class="org-x" data-org="revoke" data-token="' + esc(i.token) + '" aria-label="Отозвать" title="Отозвать">×</button></span></span></div>';
+        return '<div class="pf-row pf-row--static"><span class="pf-ico" aria-hidden="true">' + ICO.link + '</span><span class="pf-row-body">' +
+          '<span class="pf-row-text"><span class="pf-row-title">До ' + esc(fmtDate(i.expires_at)) + "</span>" +
+          '<span class="pf-row-sub">' + esc(url.replace(/^https?:\/\//, "")) + "</span></span>" +
+          '<span class="org-actions">' + delBtn('data-org="copy" data-url="' + esc(url) + '"', "Копировать", true, ICO.copy) +
+          delBtn('data-org="revoke" data-token="' + esc(i.token) + '"', "Отозвать") + "</span></span></div>";
       })
       .join("");
-    return '<div class="pf-list">' + list +
-      '<button type="button" class="pf-row" data-org="invite"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Создать ссылку-приглашение</span>' +
-      '<span class="pf-row-sub">Для тех, у кого почта не на домене, — подрядчиков, партнёров</span></span></span></button></div>';
+    return group("Ссылки-приглашения", "", "<div>" + '<div class="pf-list">' + list + addRow('data-org="invite"', "Создать ссылку-приглашение") + "</div>" +
+      '<p class="pf-hint">Для тех, у кого почта не на домене, — подрядчиков, партнёров. Новая ссылка сразу копируется.</p></div>');
   }
 
   function plural(n, one, few, many) {
@@ -599,10 +641,18 @@
   }
 
   function onClick(e) {
+    var chip = e.target.closest("button[data-org-ai]");
+    if (chip) return onAiClick(chip);
     var btn = e.target.closest("[data-org]");
     if (!btn || btn.tagName === "SELECT") return;
     var kind = btn.getAttribute("data-org");
     var id = currentId();
+    if (kind === "member-toggle") {
+      var mid = btn.getAttribute("data-mid");
+      state.openMember = state.openMember === mid ? null : mid;
+      render();
+      return;
+    }
     if (kind === "create") {
       return act(async function () {
         var name = (document.getElementById("org-new-name") || {}).value || "";
@@ -809,7 +859,7 @@
       try {
         var r = await api("/slug-check?slug=" + encodeURIComponent(val) + "&org_id=" + (currentId() || 0));
         hint.textContent = r.ok ? "Адрес свободен" : r.error;
-        hint.classList.toggle("org-hint-bad", !r.ok);
+        hint.classList.toggle("pf-status--err", !r.ok);
       } catch (_) {}
     }, 350);
   }

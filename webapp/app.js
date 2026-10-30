@@ -21520,7 +21520,14 @@
         else runFocusAction(it, a, b);
       });
       acts.appendChild(b);
-      if (idx === 0) acts.appendChild(ask);
+      if (idx === 0) {
+        // Главная кнопка — своей строкой, «Уточнить» и остальное — под ней: одинаково на всех карточках.
+        var br = document.createElement("span");
+        br.className = "focus-card-br";
+        br.setAttribute("aria-hidden", "true");
+        acts.appendChild(br);
+        acts.appendChild(ask);
+      }
     });
     if (doneAct) {
       var d = document.createElement("button");
@@ -23123,6 +23130,22 @@
       '<button type="button" class="focus-plan">План дня</button>' +
       '<button type="button" class="focus-all">Все<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>';
     head.insertBefore(focusAnalyzeButton(), head.querySelector(".focus-plan"));
+    // Компьютер: стрелки листают ленту карточек (тачпад листает и сам).
+    var nav = document.createElement("span");
+    nav.className = "focus-nav";
+    [[-1, "Предыдущие подсказки", "M15 6l-6 6 6 6"], [1, "Следующие подсказки", "M9 6l6 6-6 6"]].forEach(function (d) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "cal-nav-btn focus-nav-btn";
+      b.dataset.dir = String(d[0]);
+      b.setAttribute("aria-label", d[1]);
+      b.title = d[1];
+      b.innerHTML =
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' +
+        d[2] + '"/></svg>';
+      nav.appendChild(b);
+    });
+    head.insertBefore(nav, head.querySelector(".focus-plan"));
     var fcount = head.querySelector(".focus-count");
     fcount.textContent = String(focusItems.length);
     fcount.setAttribute("aria-label", focusItems.length + " " + pluralRu(focusItems.length, "подсказка", "подсказки", "подсказок"));
@@ -23134,9 +23157,27 @@
     head.addEventListener("click", function (e) {
       if (e.target.closest(".focus-all")) openFocusAll();
       if (e.target.closest(".focus-plan")) openFocusReport("day", e.target.closest(".focus-plan"));
+      var nb = e.target.closest(".focus-nav-btn");
+      if (nb) {
+        var card0 = row.firstElementChild;
+        var step = card0 ? card0.getBoundingClientRect().width + 12 : 292;
+        // Листаем на целое число карточек, сколько видно (минимум одну).
+        var n = Math.max(1, Math.floor((row.clientWidth + 12) / step));
+        row.scrollBy({ left: Number(nb.dataset.dir) * n * step, behavior: "smooth" });
+      }
     });
+    var syncNav = function () {
+      var max = row.scrollWidth - row.clientWidth;
+      nav.classList.toggle("hidden", max <= 4);
+      nav.firstChild.disabled = row.scrollLeft <= 4;
+      nav.lastChild.disabled = row.scrollLeft >= max - 4;
+    };
+    row.addEventListener("scroll", syncNav, { passive: true });
+    // Ширина ленты меняется и без resize окна (открыли ассистента) — следим за самой лентой.
+    if (window.ResizeObserver) new ResizeObserver(syncNav).observe(row);
     host.appendChild(head);
     host.appendChild(row);
+    syncNav();
     if (focusItems.length > 1) {
       var dots = document.createElement("div");
       dots.className = "focus-dots";
@@ -28023,8 +28064,25 @@
       }
       setHidden(emptyEl, !showEmpty);
     }
-    myTasksGroups(items).forEach(function (g) {
-      if (g.label) listEl.appendChild(postedSection(g.label, g.rows.length, !!g.late));
+    // Как в «Поставленных»: «Просрочено» и «Предстоящие» — заголовки групп, сроки — подзаголовки внутри.
+    var groups = myTasksGroups(items);
+    var hasLate = groups.some(function (g) { return g.late; });
+    var upcoming = 0;
+    groups.forEach(function (g) { if (g.sub) upcoming += g.rows.length; });
+    var upcomingShown = false;
+    groups.forEach(function (g) {
+      if (g.sub) {
+        if (!upcomingShown) {
+          upcomingShown = true;
+          var gh = postedSection("Предстоящие", upcoming, !hasLate);
+          gh.classList.add("pt-sec--group");
+          listEl.appendChild(gh);
+        }
+        var sub = document.createElement("div");
+        sub.className = "pt-subsec";
+        sub.textContent = g.label;
+        listEl.appendChild(sub);
+      } else if (g.label) listEl.appendChild(postedSection(g.label, g.rows.length, !!g.late));
       var box = document.createElement("div");
       box.className = "pt-rows";
       g.rows.forEach(function (t) {
@@ -28060,7 +28118,7 @@
       var rows = rest.filter(function (t) {
         return postedWorkBucket(t) === b[0];
       });
-      if (rows.length) out.push({ label: b[1], rows: rows });
+      if (rows.length) out.push({ label: b[1], rows: rows, sub: true });
     });
     return out;
   }

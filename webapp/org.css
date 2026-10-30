@@ -1,89 +1,55 @@
-/* Профиль → «Организация». Цвета только из токенов темы (светлая/тёмная). */
-.org-screen .pf-group { margin-top: 18px; }
-.org-screen > .pf-btn { width: 100%; margin-top: 12px; }
-.org-logo {
-  flex: 0 0 auto;
-  width: 36px;
-  height: 36px;
-  margin-right: 12px;
-  border-radius: var(--ui-r);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  background: var(--accent-muted);
-  color: var(--accent-soft);
-  font-weight: 600;
+/* Профиль → «Организация». Экран собран из компонентов Профиля (pf-*, styles.css);
+   здесь только раскладка, которой у них нет. Цвета только из токенов темы. */
+
+/* Шапка: логотип или инициалы в плитке pf-hero-ico */
+.org-hero-ico { overflow: hidden; font-size: 1.25rem; font-weight: 700; }
+.org-hero-ico img,
+.org-screen .pf-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+/* Несколько кнопок/ссылок справа в строке */
+.org-actions { display: inline-flex; flex: none; align-items: center; gap: 0.75rem; }
+.org-actions .pf-del + .pf-del { margin-left: -0.35rem; }
+
+/* Подписи в строках организации переносятся, а не обрезаются */
+.org-screen .pf-row-text { min-width: 0; }
+
+/* Числовые поля чуть шире стандартных (лимит в кредитах, места, время) */
+.pf-num-input.org-num { width: 5.5rem; }
+.pf-num-input.org-time { width: auto; }
+
+/* Раскрытая строка участника: настройки под ней, со сдвигом под аватар */
+.org-member-edit {
+  border-top: 1px solid var(--border);
+  background: var(--surface-muted);
 }
-.org-logo img { width: 100%; height: 100%; object-fit: cover; }
-.org-head .pf-row-title { font-size: 1.05rem; font-weight: 600; }
-.org-actions { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; flex: 0 0 auto; }
-.org-btn-sm { height: var(--ui-h-sm); padding: 0 14px; font-size: var(--ui-font-sm); width: auto; }
-.org-role.pf-input { height: var(--ui-h-sm); width: auto; min-width: 120px; padding: 0 8px; font-size: var(--ui-font-sm); }
-.org-x {
-  border: 0;
-  background: transparent;
-  color: var(--text-subtle);
-  font-size: 1.3rem;
-  line-height: 1;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-full);
-  cursor: pointer;
-}
-.org-x:hover { background: var(--surface-hover); color: var(--danger-text); }
-.org-link { font-size: var(--ui-font-sm); word-break: break-all; }
-.org-hint-bad { color: var(--danger-text); }
-.org-suggest { margin-bottom: 12px; border: 1px solid var(--accent-border); border-radius: var(--ui-card-r); }
-.org-danger { margin-top: 24px; }
-.org-new-link { display: block; margin: 16px auto 0; }
-.org-empty { margin-bottom: 8px; }
-.org-member .pf-row-body, .org-suggest .pf-row-body { gap: 8px; }
-@media (max-width: 420px) {
-  .org-member .pf-row-body { flex-wrap: wrap; }
-  .org-member .org-actions { margin-left: 0; }
-}
-.org-actions .pf-row-val { max-width: none; overflow: visible; white-space: nowrap; }
-.org-screen .pf-row-sub { white-space: normal; overflow: visible; text-overflow: clip; }
-.org-screen .pf-row-text { min-width: 0; flex: 1 1 auto; }
-.org-demo {
-  margin: 0 0 8px;
-  padding: 10px 12px;
-  border-radius: var(--ui-r);
-  background: color-mix(in srgb, var(--warning) 14%, transparent);
-  color: var(--text);
-  font-size: var(--ui-font-sm);
-}
-.org-plan.pf-input { height: var(--ui-h-sm); width: auto; min-width: 110px; padding: 0 8px; font-size: var(--ui-font-sm); }
-.org-plan-chip {
-  display: inline-flex;
-  align-items: center;
-  height: var(--ui-chip-h);
-  padding: 0 10px;
-  border-radius: var(--radius-full);
-  background: var(--overlay-2);
-  color: var(--text-subtle);
-  font-size: var(--ui-font-sm);
-  white-space: nowrap;
-}
-.org-plan-chip--paid { background: var(--accent-muted); color: var(--accent-soft); }
-@media (max-width: 420px) {
-  .org-member .org-actions { flex-wrap: wrap; }
-}
+.org-member-edit .pf-row,
+.org-member-edit .pf-field { padding-left: calc(1rem + 2.1rem + 0.75rem); }
+.org-member-edit + .pf-row .pf-row-body { border-top: 1px solid var(--border); }
+.org-member-edit > .pf-row:first-child .pf-row-body { border-top: 0; }
+.org-member-edit .pf-field { border-top: 1px solid var(--border); }
+.org-member-edit button.pf-row:hover { background: var(--surface); }
+.org-chips { margin-top: 0.35rem; }
+.org-chips .pf-chip { padding: 0.3rem 0.7rem; font-size: 0.8125rem; }
+
+/* Счёт организации в pf-wallet */
+.org-wallet-sub { flex: 1; min-width: 0; font-size: 0.8125rem; color: var(--text-secondary); }
+
 /* Автосохранение: метка рядом с заголовком раздела */
 .org-screen .pf-group-title { display: flex; align-items: baseline; gap: 8px; }
-.org-save { margin-left: auto; font-size: var(--ui-font-sm); font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text-subtle); }
-.org-save--ok { color: var(--success); }
+.org-save { margin-left: auto; font-size: 0.75rem; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text-secondary); }
+.org-save--ok { color: var(--emerald-text); }
 .org-save--err { color: var(--danger-text); }
+
+/* Настройки выпуска «Рынок» */
+.org-mkt-area.pf-input { min-height: 4rem; }
+
+/* Экран без организации */
+.org-empty { margin-bottom: 0.25rem; }
+
+@media (max-width: 420px) {
+  .org-member-edit .pf-row,
+  .org-member-edit .pf-field { padding-left: 1rem; }
+}
+
 /* «Поделиться контактом»: получатели, которых ещё нет в Орбите */
 .contact-share-off { opacity: 0.5; cursor: default; }
-/* Настройки выпуска «Рынок» */
-.org-mkt-area.pf-input { min-height: 64px; resize: vertical; line-height: 1.4; padding-top: 8px; }
-/* Кредиты ИИ: лимит и модели участника (раскрывается под строкой участника) */
-.org-ai { margin: 0 12px 8px 12px; padding: 6px 10px; border-radius: 10px; background: var(--overlay-3); font-size: 0.8125rem; }
-.org-ai > summary { cursor: pointer; color: var(--text-secondary); list-style-position: inside; padding: 2px 0; }
-.org-ai[open] > summary { margin-bottom: 8px; }
-.org-ai .pf-field { margin-bottom: 8px; }
-.org-ai-models { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 12px; margin-top: 4px; }
-.org-ai-model { display: flex; align-items: center; gap: 6px; color: var(--text); cursor: pointer; }
-.org-ai-all { font-weight: 600; }

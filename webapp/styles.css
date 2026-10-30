@@ -16002,10 +16002,15 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   .pt-head .pt-btn--primary { width: auto; padding: 0 14px; border-radius: 10px; }
   .pt-team { margin-left: 0; margin-right: 0; padding-left: 0; padding-right: 0; flex-wrap: wrap; }
   .pt-tc { width: 168px; }
-  .pt-row { flex-wrap: nowrap; align-items: center; }
-  .pt-row-acts { width: auto; padding-left: 0; flex: none; }
-  .pt-row:not([class*="pt-row--"]) .pt-row-acts { display: flex; opacity: 0; transition: opacity 0.12s ease; }
-  .pt-row:not([class*="pt-row--"]):hover .pt-row-acts, .pt-row:not([class*="pt-row--"]).is-selected .pt-row-acts { opacity: 1; }
+  /* Кнопки справа — только если список достаточно широкий (с открытым ассистентом он узкий:
+     тогда кнопки под текстом, как на телефоне, а не сжимают название в столбик). */
+  .pt-main { container: ptlist / inline-size; }
+  @container ptlist (min-width: 500px) {
+    .pt-row { flex-wrap: nowrap; align-items: center; }
+    .pt-row-acts { width: auto; padding-left: 0; flex: none; }
+    .pt-row:not([class*="pt-row--"]) .pt-row-acts { display: flex; opacity: 0; transition: opacity 0.12s ease; }
+    .pt-row:not([class*="pt-row--"]):hover .pt-row-acts, .pt-row:not([class*="pt-row--"]).is-selected .pt-row-acts { opacity: 1; }
+  }
   .pt-side-empty { margin: 3rem 1rem; }
   .pt-layout {
     display: grid;
@@ -17860,6 +17865,9 @@ html.actual-voice-open #actual-create-btn { visibility: hidden; }
 #panel-actual .focus-card-btn { height: 36px; padding: 0 12px; font-size: 0.8125rem; white-space: nowrap; }
 #panel-actual .focus-card-btn.is-primary { padding: 0 14px; }
 #panel-actual .focus-card-btn.is-icon { width: 36px; padding: 0; margin-left: auto; border: 1px solid var(--border); background: transparent; }
+.focus-card-br { display: none; }
+#panel-actual .focus-card-br { display: block; flex-basis: 100%; height: 0; margin-top: -8px; }
+.focus-nav { display: none; }
 #panel-actual .focus-card-foot { margin: 0 -14px; padding: 0 14px; height: 40px; font-size: 0.8125rem; border-radius: 0 0 16px 16px; }
 .focus-card-btn.is-quiet { background: var(--surface-elevated); color: var(--text); font-weight: 500; }
 .focus-card-btn.is-quiet:hover { background: var(--surface-raised); }
@@ -17870,11 +17878,14 @@ html.actual-voice-open #actual-create-btn { visibility: hidden; }
   #panel-actual .focus-row { margin-right: calc(-1 * var(--page-x)); padding-right: var(--page-x); scroll-padding-left: 0; }
 }
 @media (min-width: 960px) {
-  /* На десктопе — сетка до 4 карточек вместо ленты с обрезанной; остальные в «Все». */
-  #panel-actual .focus-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; overflow: visible; }
-  #panel-actual .focus-row > .focus-card { width: auto; min-width: 0; }
-  #panel-actual .focus-row > .focus-card:nth-child(n + 5) { display: none; }
+  /* На десктопе — лента всех карточек: листается тачпадом и стрелками в заголовке. */
+  #panel-actual .focus-row { gap: 12px; scroll-snap-type: x mandatory; scroll-behavior: smooth; }
+  #panel-actual .focus-row > .focus-card { width: 280px; }
   #panel-actual .focus-dots { display: none; }
+  #panel-actual .focus-nav { display: inline-flex; gap: 4px; }
+  #panel-actual .focus-nav.hidden { display: none; }
+  #panel-actual .focus-nav .cal-nav-btn { width: 32px; height: 32px; border-radius: 10px; font-size: 1rem; }
+  #panel-actual .focus-nav .cal-nav-btn:disabled { opacity: 0.35; cursor: default; background: transparent; }
 }
 
 /* Заголовок календаря: «Сегодня · вт, 20 окт» слева, навигация и вид справа */
@@ -23920,3 +23931,48 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
 .credits-bar-tip b { font-weight: 600; }
 .credits-bar-tip .credits-tip-muted { color: var(--text-secondary); }
 
+
+/* ——— Таблицы со скруглёнными углами (заметки, саммари, история версий) ———
+   border-collapse: collapse не умеет радиус, поэтому рамка — у таблицы, а ячейки делят линии справа и снизу. */
+.note-editor-table,
+.journal-summary-html table,
+.nh-doc table {
+  --tbl-line: var(--border);
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--tbl-line);
+  border-radius: 10px;
+}
+.note-editor-table { --tbl-line: var(--overlay-6); }
+:is(.note-editor-table, .journal-summary-html table, .nh-doc table) :is(td, th) {
+  border: 0;
+  border-right: 1px solid var(--tbl-line);
+  border-bottom: 1px solid var(--tbl-line);
+}
+:is(.note-editor-table, .journal-summary-html table, .nh-doc table) tr > :last-child { border-right: 0; }
+:is(.note-editor-table, .journal-summary-html table, .nh-doc table) > tbody:last-of-type > tr:last-child > * { border-bottom: 0; }
+:is(.note-editor-table, .journal-summary-html table, .nh-doc table) > :is(thead, tbody:not(thead ~ tbody)) > tr:first-child > :first-child { border-top-left-radius: 9px; }
+:is(.note-editor-table, .journal-summary-html table, .nh-doc table) > :is(thead, tbody:not(thead ~ tbody)) > tr:first-child > :last-child { border-top-right-radius: 9px; }
+:is(.note-editor-table, .journal-summary-html table, .nh-doc table) > tbody:last-of-type > tr:last-child > :first-child { border-bottom-left-radius: 9px; }
+:is(.note-editor-table, .journal-summary-html table, .nh-doc table) > tbody:last-of-type > tr:last-child > :last-child { border-bottom-right-radius: 9px; }
+
+/* ——— Таблица задач встречи: ручка ≡ и шеврон — слева за рамкой таблицы, а не в ячейке ———
+   Место под них — отступ слева у прокрутки таблицы: у края панели заметки своего поля почти нет (16px). */
+@media (min-width: 641px) {
+  .note-table-manage-scroll:has(tr.mt-row) { padding-left: 34px; }
+  .ProseMirror td.mt-c0 > p { position: relative; }
+  /* Правый край ручки — у рамки: ширина p + отступ ячейки + зазор; по вертикали — по первой строке названия. */
+  .ProseMirror td.mt-c0 .mt-lead {
+    position: absolute;
+    top: 0.75em;
+    right: calc(100% + var(--mt-cell-pad, 0.5rem) + 6px);
+    margin: 0;
+    transform: translateY(-50%);
+  }
+}
+@media (min-width: 641px) and (hover: hover) {
+  .ProseMirror tr.mt-row .mt-grip { opacity: 0; transition: opacity 0.12s ease; }
+  .ProseMirror tr.mt-row:hover .mt-grip,
+  .ProseMirror tr.mt-row .mt-grip:focus-visible,
+  body.mt-drag-active .ProseMirror tr.mt-row .mt-grip { opacity: 1; }
+}
