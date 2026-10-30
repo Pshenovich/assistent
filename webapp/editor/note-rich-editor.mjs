@@ -4335,24 +4335,65 @@ function createMeetingTasksExtension(ctx) {
           begin();
         }, 320)
       : null;
-    function marks(clear) {
-      view.dom.querySelectorAll(".mt-drop-before, .mt-drop-after, .mt-drop-nest").forEach(function (el) {
-        el.classList.remove("mt-drop-before", "mt-drop-after", "mt-drop-nest");
+    // Подсветка — декорациями плагина (st.drag): классы, навешанные руками, ProseMirror снимает при перерисовке.
+    var movingMap = {};
+    moving.forEach(function (id) {
+      movingMap[id] = true;
+    });
+    function setDrop(id, pos) {
+      var key = id ? id + "|" + pos : "";
+      if (key === d.dropKey) return;
+      d.dropKey = key;
+      mtSetMeta(view, { drag: { moving: movingMap, drop: id ? { id: id, pos: pos } : null } });
+    }
+    // «Поднятая» строка: копия строки (с подзадачами — с подписью) едет за курсором.
+    function makeGhost() {
+      var src = mtRowEl(view, item.id);
+      if (!src) return null;
+      var rc = src.getBoundingClientRect();
+      var wrap = document.createElement("div");
+      wrap.className = "mt-drag-ghost";
+      wrap.setAttribute("aria-hidden", "true");
+      var table = document.createElement("table");
+      table.className = "note-editor-table";
+      var body = document.createElement("tbody");
+      var row = src.cloneNode(true);
+      row.classList.remove("mt-dragging", "mt-drop-before", "mt-drop-after", "mt-drop-nest");
+      Array.prototype.forEach.call(src.children, function (td, i) {
+        var c = row.children[i];
+        if (c) c.style.width = td.getBoundingClientRect().width + "px";
       });
-      if (clear) {
-        view.dom.querySelectorAll(".mt-dragging").forEach(function (el) {
-          el.classList.remove("mt-dragging");
-        });
+      row.querySelectorAll("[contenteditable]").forEach(function (el) {
+        el.removeAttribute("contenteditable");
+      });
+      body.appendChild(row);
+      table.appendChild(body);
+      wrap.appendChild(table);
+      if (moving.length > 1) {
+        var more = document.createElement("span");
+        more.className = "mt-drag-ghost-more";
+        var n = moving.length - 1;
+        more.textContent = "+ " + n + " " + (n % 10 === 1 && n % 100 !== 11 ? "подзадача" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "подзадачи" : "подзадач");
+        wrap.appendChild(more);
       }
+      wrap.style.width = rc.width + "px";
+      d.dx = d.x - rc.left;
+      d.dy = d.y - rc.top;
+      document.body.appendChild(wrap);
+      return wrap;
+    }
+    function placeGhost(x, y) {
+      if (!d.ghost) return;
+      d.ghost.style.transform = "translate(" + Math.round(x - d.dx) + "px," + Math.round(y - d.dy) + "px) rotate(-0.6deg)";
     }
     function begin() {
       if (d.on) return;
       d.on = true;
       document.body.classList.add("mt-drag-active");
-      moving.forEach(function (id) {
-        var tr = mtRowEl(view, id);
-        if (tr) tr.classList.add("mt-dragging");
-      });
+      d.ghost = makeGhost();
+      d.dropKey = null;
+      setDrop("", "");
+      placeGhost(d.x, d.y);
     }
     function move(ev) {
       if (!d.on) {
@@ -4365,21 +4406,20 @@ function createMeetingTasksExtension(ctx) {
         begin();
       }
       ev.preventDefault();
-      marks(false);
+      placeGhost(ev.clientX, ev.clientY);
       d.target = null;
       var el = document.elementFromPoint(ev.clientX, ev.clientY);
       var tr = el && el.closest ? el.closest("tr") : null;
       var cell = tr && view.dom.contains(tr) ? tr.querySelector("td[data-leo-item]") : null;
       var tid = cell ? cell.getAttribute("data-leo-item") : "";
       var target = tid && items[tid];
-      if (!target || MT_EXCLUDED[target.code] || moving.indexOf(tid) >= 0) return;
+      if (!target || MT_EXCLUDED[target.code] || moving.indexOf(tid) >= 0) return setDrop("", "");
       var rc = tr.getBoundingClientRect();
       var y = (ev.clientY - rc.top) / Math.max(1, rc.height);
       var pos = y < 0.28 ? "before" : y > 0.72 ? "after" : "nest";
       var into = pos === "nest" ? ((target.depth || 0) >= 2 ? target.parent : tid) : "";
-      if (pos === "nest" && moving.indexOf(into) >= 0) return;
-      var hl = pos === "nest" ? mtRowEl(view, into) : tr;
-      if (hl) hl.classList.add("mt-drop-" + pos);
+      if (pos === "nest" && moving.indexOf(into) >= 0) return setDrop("", "");
+      setDrop(pos === "nest" ? into : tid, pos);
       d.target = { id: tid, pos: pos, into: into };
     }
     function cleanup() {
@@ -4388,7 +4428,9 @@ function createMeetingTasksExtension(ctx) {
       document.removeEventListener("pointerup", up);
       document.removeEventListener("pointercancel", cancel);
       document.body.classList.remove("mt-drag-active");
-      marks(true);
+      if (d.ghost) d.ghost.remove();
+      d.ghost = null;
+      if (d.on) mtSetMeta(view, { drag: null });
     }
     function cancel() {
       cleanup();
@@ -4666,7 +4708,9 @@ function createMeetingTasksExtension(ctx) {
                         (ex ? " is-excluded" + (st.open ? "" : " is-collapsed") : "") +
                         (folded ? " is-folded" : "") +
                         (depth ? " is-sub" : "") +
-                        (pick && pick.src === it.id ? " is-pick-src" : ""),
+                        (pick && pick.src === it.id ? " is-pick-src" : "") +
+                        (st.drag && st.drag.moving[it.id] ? " mt-dragging" : "") +
+                        (st.drag && st.drag.drop && st.drag.drop.id === it.id ? " mt-drop-" + st.drag.drop.pos : ""),
                       style: "--mt-depth-row:" + depth,
                     })
                   );
@@ -5634,7 +5678,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261030-sub1",
+  assetVersion: "20261030-drag1",
   Y: Y,
   mount: mount,
   importBody: importBody,

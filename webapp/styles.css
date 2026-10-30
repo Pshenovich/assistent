@@ -23801,13 +23801,30 @@ ol.note-discuss-md-list { list-style: decimal; }
 .mt-pick.is-check.is-on::before { background: var(--accent); box-shadow: inset 0 0 0 2px var(--surface); }
 .mt-pick.is-off { cursor: default; }
 .mt-pick.is-off::before { border-color: transparent; }
-.ProseMirror tr.mt-row.is-sub td:first-child { color: var(--text-secondary); }
 .ProseMirror tr.mt-row.is-folded { display: none; }
 .ProseMirror tr.mt-row.is-pick-src td { background: var(--accent-soft); }
-.ProseMirror tr.mt-row.mt-dragging td { opacity: 0.4; }
-.ProseMirror tr.mt-row.mt-drop-nest td { background: var(--accent-soft); }
-.ProseMirror tr.mt-row.mt-drop-before td { box-shadow: inset 0 2px 0 var(--accent); }
-.ProseMirror tr.mt-row.mt-drop-after td { box-shadow: inset 0 -2px 0 var(--accent); }
+.ProseMirror tr.mt-row.mt-dragging td { opacity: 0.35; }
+.ProseMirror tr.mt-row.mt-drop-nest td { background: var(--accent-muted); }
+.ProseMirror tr.mt-row.mt-drop-before td { box-shadow: inset 0 3px 0 var(--accent); }
+.ProseMirror tr.mt-row.mt-drop-after td { box-shadow: inset 0 -3px 0 var(--accent); }
+/* «Поднятая» строка под курсором при перетаскивании */
+.mt-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 10000;
+  pointer-events: none;
+  border-radius: 10px;
+  background: var(--surface-elevated);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--shadow-color) 45%, transparent), 0 0 0 1px var(--accent-border);
+  opacity: 0.96;
+}
+.mt-drag-ghost table.note-editor-table { width: 100%; margin: 0; table-layout: fixed; border: 0; background: transparent; }
+.mt-drag-ghost tr.mt-row > td { border: 0 !important; background: transparent !important; opacity: 1 !important; vertical-align: middle; }
+.mt-drag-ghost .mt-grip { opacity: 1 !important; color: var(--accent); }
+.mt-drag-ghost .mt-lead,
+.mt-drag-ghost td.mt-cell > p { display: none; }
+.mt-drag-ghost-more { display: block; padding: 0 12px 8px; font-size: var(--ui-font-sm); color: var(--text-secondary); }
 body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-select: none; }
 .mt-chip--nested { background: var(--surface-muted); color: var(--text-secondary); }
 .mt-pickbar { display: flex; align-items: center; gap: 10px; margin: 8px 0; padding: 8px 12px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--accent); background: var(--surface-elevated); user-select: none; }
@@ -23974,5 +23991,5 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
   .ProseMirror tr.mt-row .mt-grip { opacity: 0; transition: opacity 0.12s ease; }
   .ProseMirror tr.mt-row:hover .mt-grip,
   .ProseMirror tr.mt-row .mt-grip:focus-visible,
-  body.mt-drag-active .ProseMirror tr.mt-row .mt-grip { opacity: 1; }
+  .ProseMirror tr.mt-row.mt-dragging .mt-grip { opacity: 1; }
 }
