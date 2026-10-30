@@ -79,3 +79,11 @@
 .contact-share-off { opacity: 0.5; cursor: default; }
 /* Настройки выпуска «Рынок» */
 .org-mkt-area.pf-input { min-height: 64px; resize: vertical; line-height: 1.4; padding-top: 8px; }
+/* Кредиты ИИ: лимит и модели участника (раскрывается под строкой участника) */
+.org-ai { margin: 0 12px 8px 12px; padding: 6px 10px; border-radius: 10px; background: var(--overlay-3); font-size: 0.8125rem; }
+.org-ai > summary { cursor: pointer; color: var(--text-secondary); list-style-position: inside; padding: 2px 0; }
+.org-ai[open] > summary { margin-bottom: 8px; }
+.org-ai .pf-field { margin-bottom: 8px; }
+.org-ai-models { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 12px; margin-top: 4px; }
+.org-ai-model { display: flex; align-items: center; gap: 6px; color: var(--text); cursor: pointer; }
+.org-ai-all { font-weight: 600; }

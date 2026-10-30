@@ -200,6 +200,7 @@
 
     html += marketHtml(state.market);
     html += billingHtml(d);
+    html += creditsHtml(d);
     html += membersHtml(d);
 
     if (can.invite) {
@@ -324,6 +325,100 @@
     return html + "</div>";
   }
 
+  // ---------- кредиты ИИ: счёт организации, лимиты и модели участников ----------
+
+  function fmtNum(n) {
+    return Math.round(Number(n) || 0).toLocaleString("ru-RU");
+  }
+
+  function creditsHtml(d) {
+    var c = d.credits;
+    if (!c) return "";
+    var html = '<div class="pf-group"><p class="pf-group-title">Кредиты ИИ' + saveMark("credits") + '</p><div class="pf-list">' +
+      '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Счёт организации</span>' +
+      '<span class="pf-row-sub">≈ ' + fmtNum(c.balance_rub) + " ₽ по тарифу Solo (" + String(c.rub_per_credit).replace(".", ",") + " ₽ за кредит)</span></span>" +
+      '<span class="org-actions"><span class="pf-row-val">' + fmtNum(c.balance) + " кр</span>" +
+      (c.can_manage ? '<button type="button" class="pf-link" data-org="credits-topup">Пополнить</button>' : "") +
+      "</span></span></div></div>";
+    if (c.can_manage) {
+      html += '<p class="pf-hint">У каждого участника дневной лимит (по умолчанию ' + fmtNum(c.default_daily_limit) +
+        " кр). Сверх лимита Лео продолжает работать, кредиты списываются со счёта организации. Лимит и доступные модели — в строке участника ниже.</p>";
+    }
+    return html + "</div>";
+  }
+
+  function memberAiHtml(d, m) {
+    var c = d.credits;
+    var ai = c && c.members && c.members[String(m.user_id)];
+    if (!ai || m.status !== "active") return "";
+    var models = c.models || [];
+    var allowed = ai.allowed_models;  // null — доступны все
+    var all = !allowed;
+    var summary = "Лимит " + fmtNum(ai.daily_limit) + " кр/день · " +
+      (all ? "все модели" : allowed.length + " " + plural(allowed.length, "модель", "модели", "моделей")) +
+      " · сегодня " + fmtNum(ai.spent_today) + (ai.over_today > 0 ? ", сверх лимита " + fmtNum(ai.over_today) : "");
+    var uid = esc(m.user_id);
+    var boxes = models.map(function (x) {
+      var on = all || allowed.indexOf(x.id) >= 0;
+      return '<label class="org-ai-model"><input type="checkbox" data-org-ai="model" data-uid="' + uid + '" value="' + esc(x.id) + '"' +
+        (on ? " checked" : "") + (all ? " disabled" : "") + " /> " + esc(x.name) + "</label>";
+    }).join("");
+    return '<details class="org-ai"' + (state.openAi === String(m.user_id) ? " open" : "") + "><summary>" + esc(summary) + "</summary>" +
+      '<label class="pf-field"><span class="pf-field-label">Дневной лимит, кредитов</span>' +
+      '<input type="number" class="pf-input" data-org-ai="limit" data-uid="' + uid + '" min="0" max="1000000" step="50" inputmode="numeric" value="' +
+      Math.round(ai.daily_limit) + '" /></label>' +
+      '<label class="org-ai-model org-ai-all"><input type="checkbox" data-org-ai="all" data-uid="' + uid + '"' + (all ? " checked" : "") +
+      " /> Все модели</label>" +
+      '<div class="org-ai-models">' + boxes + "</div></details>";
+  }
+
+  function saveMemberAi(uid, body) {
+    var id = currentId();
+    return autosave("members", function () {
+      return api("/" + id + "/members/" + uid + "/ai", json("PATCH", body));
+    });
+  }
+
+  function onAiChange(e) {
+    var el = e.target.closest("[data-org-ai]");
+    if (!el) return false;
+    var uid = el.getAttribute("data-uid");
+    var kind = el.getAttribute("data-org-ai");
+    state.openAi = String(uid);  // после сохранения список перерисуется — оставляем блок раскрытым
+    if (kind === "limit") {
+      var v = Number(el.value);
+      if (!isFinite(v) || v < 0) {
+        toast("Лимит — число от 0");
+        return true;
+      }
+      saveMemberAi(uid, { daily_limit: v });
+      return true;
+    }
+    var box = el.closest(".org-ai");
+    if (kind === "all") {
+      if (el.checked) {
+        saveMemberAi(uid, { all_models: true });
+      } else {
+        // Снимаем «Все модели» — сразу разрешаем все по отдельности, дальше руководитель снимает лишние.
+        var ids = Array.prototype.map.call(box.querySelectorAll('[data-org-ai="model"]'), function (x) { return x.value; });
+        saveMemberAi(uid, { allowed_models: ids });
+      }
+      return true;
+    }
+    if (kind === "model") {
+      var picked = Array.prototype.filter.call(box.querySelectorAll('[data-org-ai="model"]'), function (x) { return x.checked; })
+        .map(function (x) { return x.value; });
+      if (!picked.length) {
+        el.checked = true;
+        toast("Оставьте участнику хотя бы одну модель");
+        return true;
+      }
+      saveMemberAi(uid, { allowed_models: picked });
+      return true;
+    }
+    return false;
+  }
+
   function membersHtml(d) {
     var can = d.can || {};
     var me = d.org.my_role;
@@ -357,7 +452,8 @@
         var name = m.user_id ? m.name : String(m.name || "").replace(/^tg:/, "@");
         if (m.user_id === d.my_user_id) name += " (вы)";
         return '<div class="pf-row pf-row--static org-member"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(name) +
-          "</span>" + (sub ? '<span class="pf-row-sub">' + esc(sub) + "</span>" : "") + '</span><span class="org-actions">' + right + "</span></span></div>";
+          "</span>" + (sub ? '<span class="pf-row-sub">' + esc(sub) + "</span>" : "") + '</span><span class="org-actions">' + right + "</span></span></div>" +
+          memberAiHtml(d, m);
       })
       .join("");
     var add = "";
@@ -548,6 +644,11 @@
         await reload();
       });
     }
+    if (kind === "credits-topup") {
+      return autosave("credits", function () {
+        return api("/" + id + "/credits/topup", { method: "POST" });
+      });
+    }
     if (kind === "add") {
       var inp = document.getElementById("org-add-key");
       return addMember(inp && inp.value);
@@ -607,6 +708,7 @@
   }
 
   function onChange(e) {
+    if (onAiChange(e)) return;
     if (onFieldChange(e)) return;
     var el = e.target.closest("[data-org]");
     if (!el) return;

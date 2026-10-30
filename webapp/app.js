@@ -9718,7 +9718,8 @@
     (tgLeoState.models || []).forEach(function (m) {
       var opt = document.createElement("option");
       opt.value = m.id;
-      opt.textContent = m.label || m.id;
+      opt.textContent = (m.label || m.id) + (m.locked ? " — " + (m.locked_reason || "Закрыто руководителем организации") : "");
+      if (m.locked) opt.disabled = true;
       if (m.id === tgLeoState.model) opt.selected = true;
       sel.appendChild(opt);
     });
@@ -10049,18 +10050,101 @@
     return label.charAt(0).toUpperCase() + label.slice(1) + " · " + (sum > 0 ? rub(sum) : "без расходов");
   }
 
+  // ── Кредиты ИИ: полоска под шапкой окна диалога ─────────────────────────
+  var CREDITS_TOPUP_PERSONAL = 2500;
+
+  function fmtCredits(n) {
+    return Math.round(Number(n) || 0).toLocaleString("ru-RU");
+  }
+
+  function fmtRub(n) {
+    return (Number(n) || 0).toLocaleString("ru-RU", { maximumFractionDigits: 0 }) + " ₽";
+  }
+
+  function renderCreditsBar(st) {
+    var bar = document.getElementById("credits-bar");
+    var fill = document.getElementById("credits-bar-fill");
+    var tip = document.getElementById("credits-bar-tip");
+    if (!bar || !fill || !tip) return;
+    if (!st || !st.mode) {
+      setHidden(bar, true);
+      return;
+    }
+    var share;
+    var html;
+    var warn = false;
+    var over = false;
+    if (st.mode === "org") {
+      share = Math.max(0, Math.min(1, Number(st.share) || 0));
+      over = st.state !== "ok";
+      warn = !over && share >= 0.8;
+      html =
+        "<b>Дневной лимит: " + fmtCredits(st.spent_today) + " из " + fmtCredits(st.daily_limit) + " кредитов</b><br>" +
+        "≈ " + fmtRub(st.spent_today_rub) + " из " + fmtRub(st.daily_limit_rub) + " по тарифу Solo<br>" +
+        (st.state === "over_limit"
+          ? "Лимит исчерпан — Лео работает, кредиты списываются со счёта организации.<br>"
+          : st.state === "org_empty"
+            ? "Лимит исчерпан, на счёте организации нет кредитов — обратитесь к руководителю.<br>"
+            : "") +
+        '<span class="credits-tip-muted">Лимит обновляется в полночь (UTC)</span>';
+    } else {
+      var bal = Number(st.balance) || 0;
+      share = Math.max(0, Math.min(1, bal / CREDITS_TOPUP_PERSONAL));
+      over = bal <= 0;
+      warn = !over && bal < CREDITS_TOPUP_PERSONAL * 0.1;
+      html =
+        "<b>Баланс: " + fmtCredits(bal) + " кредитов</b> ≈ " + fmtRub(st.balance_rub) + "<br>" +
+        "Сегодня потрачено: " + fmtCredits(st.spent_today) + "<br>" +
+        '<span class="credits-tip-muted">' + (over ? "Пополните баланс в Профиле" : "Пополнить — в Профиле → Баланс") + "</span>";
+    }
+    fill.style.width = (share * 100).toFixed(1) + "%";
+    bar.classList.toggle("is-warn", warn);
+    bar.classList.toggle("is-over", over);
+    bar.setAttribute("aria-valuenow", String(Math.round(share * 100)));
+    tip.innerHTML = html;
+    setHidden(bar, false);
+  }
+
+  async function loadCreditsStatus() {
+    try {
+      renderCreditsBar(await apiFetch("/credits/status", { method: "GET" }));
+    } catch (_) {
+      renderCreditsBar(null);
+    }
+  }
+
+  function watchCreditsBar() {
+    var ov = document.getElementById("note-discussion-overlay");
+    var bar = document.getElementById("credits-bar");
+    if (!ov || !bar || ov.__creditsWatch) return;
+    ov.__creditsWatch = true;
+    // Окно диалога открывается из многих мест — обновляем полоску, когда оно стало видимым.
+    new MutationObserver(function () {
+      if (!ov.classList.contains("hidden")) loadCreditsStatus();
+    }).observe(ov, { attributes: true, attributeFilter: ["class"] });
+    // На телефоне наведения нет — подсказка по нажатию.
+    bar.addEventListener("click", function () {
+      bar.classList.toggle("is-open");
+    });
+  }
+
   function renderProfileWallet(b) {
     var balEl = document.getElementById("profile-balance");
     var planEl = document.getElementById("profile-plan");
     var payBtn = document.getElementById("profile-open-pay");
     var limited = !!(b && b.show_balance && typeof b.balance_rub === "number");
     if (balEl) {
-      balEl.textContent = limited
-        ? b.balance_rub.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + " ₽"
-        : "Безлимит";
+      if (limited) {
+        // Кредиты и рубли по цене тарифа Solo (1,3 ₽ за кредит).
+        balEl.textContent = fmtCredits(b.balance_credits) + " кр · ≈ " + fmtRub(b.balance_rub);
+      } else if (b && b.mode === "org") {
+        balEl.textContent = "Лимит сегодня: " + fmtCredits(b.spent_today) + " из " + fmtCredits(b.daily_limit) + " кр";
+      } else {
+        balEl.textContent = "Безлимит";
+      }
     }
     if (planEl) planEl.textContent = (b && b.tariff_label) || "";
-    if (payBtn) setHidden(payBtn, !limited);
+    if (payBtn) setHidden(payBtn, !(b && b.can_top_up));
   }
 
   async function refreshProfileExpenses() {
@@ -38276,10 +38360,22 @@
     rows.forEach(function (m) {
       var btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "note-paie-menu-item" + (m.id === selected ? " is-active" : "");
+      btn.className =
+        "note-paie-menu-item" + (m.id === selected ? " is-active" : "") + (m.locked ? " is-locked" : "");
       btn.setAttribute("data-model-id", m.id);
       btn.textContent = (m.name || m.id) + (m.reasoning ? " · рассуждение" : "");
       btn.title = m.id;
+      if (m.locked) {
+        // Модель закрыл руководитель организации: видна, но не выбирается.
+        btn.disabled = true;
+        btn.setAttribute("aria-disabled", "true");
+        var why = document.createElement("span");
+        why.className = "note-paie-menu-item-sub";
+        why.textContent = m.locked_reason || "Закрыто руководителем организации";
+        btn.appendChild(why);
+        list.appendChild(btn);
+        return;
+      }
       btn.addEventListener("click", function () {
         if (paie) applyPaieModel(m.id, true);
         else if (research) applyResearchModel(m.id, true);
@@ -38389,16 +38485,22 @@
       gptModelsState.defaultId = String((res && res.default) || "").trim() || GPT_MODEL_DEFAULT;
       gptModelsState.loaded = true;
       var allowed = {};
+      var firstOpen = "";
       gptModelsState.models.forEach(function (m) {
-        if (m && m.id) allowed[m.id] = true;
+        // Закрытые руководителем организации видны в списке, но выбрать их нельзя.
+        if (m && m.id && !m.locked) {
+          allowed[m.id] = true;
+          if (!firstOpen) firstOpen = m.id;
+        }
       });
       var pickingGpt = noteAskMode() !== "research" && noteAskMode() !== "paie";
       var current = pickingGpt ? selectedGptModelId() : "";
       if (pickingGpt && (!current || !allowed[current])) {
         setSelectedGptModelId(
           (allowed[GPT_MODEL_DEFAULT] && GPT_MODEL_DEFAULT) ||
+            (allowed[gptModelsState.defaultId] && gptModelsState.defaultId) ||
+            firstOpen ||
             gptModelsState.defaultId ||
-            (gptModelsState.models[0] && gptModelsState.models[0].id) ||
             GPT_MODEL_DEFAULT
         );
       }
@@ -49354,6 +49456,7 @@
           doc_sheet_id: docView ? docView.sheet_id : undefined,
       };
       var res = await apiFetch("/gpt/chat", { method: "POST", body: JSON.stringify(chatPayload) });
+      if (res && res.credits) renderCreditsBar(res.credits);
       // Большие данные по ссылке: сервер обрабатывает их частями в фоне — ждём с прогрессом
       // и повторяем запрос, модель получит итоги всех частей.
       if (res && res.bulk_job && !gptReq.stopped) {
@@ -56431,11 +56534,22 @@
       });
     });
 
-    onId("profile-open-pay", "click", function () {
-      profileScreen("payment");
-      renderPaymentMethods();
-      syncPaymentSummary();
+    onId("profile-open-pay", "click", async function () {
+      // Оплаты пока нет: тестовое пополнение +2 500 кредитов.
+      var btn = document.getElementById("profile-open-pay");
+      if (btn) btn.disabled = true;
+      try {
+        var snap = await apiFetch("/billing/topup", { method: "POST" });
+        renderProfileWallet(snap);
+        renderCreditsBar(snap);
+        showNoteToast("Баланс пополнен на 2 500 кредитов");
+      } catch (err) {
+        showNoteToast((err && err.message) || "Не удалось пополнить");
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     });
+    watchCreditsBar();
     onId("profile-retry", "click", function () {
       clearProfileError();
       loadProfile();
