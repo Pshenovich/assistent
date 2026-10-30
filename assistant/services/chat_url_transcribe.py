@@ -125,6 +125,9 @@ def transcribe_url_to_note(
     transcript = (result.formatted_text or result.plain_text or "").strip()
     if not transcript:
         raise ValueError("В файле не нашлось речи — транскрипция пустая.")
+    from assistant.lib import billing_store
+
+    billing_store.charge_transcription(uid, getattr(result, "segments", ()), operation="obuchat_transcribe")
     insert_usage_event(
         operation="obuchat_transcribe",
         model=None,

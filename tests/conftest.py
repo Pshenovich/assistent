@@ -46,6 +46,7 @@ _FILE_ENV = {
     "MEETING_INVITES_NOTIFIED_PATH": "data/meeting_invites_notified.json",
     "MEETING_REMINDERS_SENT_PATH": "data/meeting_reminders_sent.json",
     "REMINDERS_STORE_PATH": "reminders.json",
+    "CREDITS_DB_PATH": "data/credits.sqlite",
     "RESEARCH_JOBS_PATH": "data/research_jobs.json",
     "PAEI_JOBS_PATH": "data/paei_jobs.json",
     "CALENDAR_PENDING_STORE_PATH": "calendar_pending.json",

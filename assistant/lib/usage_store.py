@@ -214,7 +214,7 @@ def insert_usage_event(
             try:
                 from assistant.lib import billing_store
 
-                billing_store.charge_cost_usd(int(uid_s), cost_usd)
+                billing_store.charge_cost_usd(int(uid_s), cost_usd, operation=operation)
             except Exception as e:
                 print(f"[billing_store] charge_failed uid={uid_s!r} err={e!r}")
 
@@ -787,7 +787,7 @@ def get_user_usage_event(telegram_user_id: str, event_id: int) -> dict[str, Any]
 def user_expenses_by_day(
     telegram_user_id: str, *, last_n_days: int = 7
 ) -> list[dict[str, Any]]:
-    """Расходы по UTC-дням: события с cost_usd, суммы в «отображаемых» ₽ = USD * курс * 5."""
+    """Расходы по UTC-дням: события с cost_usd, суммы в ₽ по цене Solo (кредиты × 1,3 ₽)."""
     init_db()
     uid = (telegram_user_id or "").strip()
     n = max(1, min(int(last_n_days or 7), 366))

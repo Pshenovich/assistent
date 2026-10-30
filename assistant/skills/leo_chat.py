@@ -202,7 +202,14 @@ async def handle(
         await asyncio.to_thread(
             _save_turn, uid, tid, text=question or "📎", name=name, username=username
         )
-        model = user_prefs.get_tg_leo_model(uid)
+        from assistant.lib import billing_store
+
+        gate = await asyncio.to_thread(billing_store.chat_gate, uid, user_prefs.get_tg_leo_model(uid))
+        if not gate["can_answer"]:
+            typing.cancel()
+            await msg.reply_text(gate["message"])
+            return
+        model = gate["model"]
         out, gcal_ctx = await asyncio.to_thread(
             leo_agent.run_turn,
             uid,
@@ -220,6 +227,8 @@ async def handle(
             await msg.reply_text("Не удалось ответить — попробуйте ещё раз.")
             return
         answer = str(out.get("answer") or "").strip() or "—"
+        if gate["notice"]:
+            await msg.reply_text(gate["notice"])
         actions = out.get("calendar_actions") if isinstance(out.get("calendar_actions"), list) else []
         await asyncio.to_thread(
             _save_turn,

@@ -5273,10 +5273,8 @@ async def miniapp_usage_expenses(
 ) -> dict[str, Any]:
     uid_str = str(principal.telegram_user_id)
     n = min(max(int(days), 1), 366)
-    try:
-        rate = float(os.getenv("MINIAPP_USD_TO_RUB", "100").strip())
-    except (TypeError, ValueError):
-        rate = 100.0
+    from assistant.stores import credits_store
+
     rows = await run_in_threadpool(
         partial(user_expenses_by_day, uid_str, last_n_days=n)
     )
@@ -5285,9 +5283,9 @@ async def miniapp_usage_expenses(
         "days_window": n,
         "total_rub": total,
         "days": rows,
-        "usd_to_rub": rate,
-        "rub_multiplier": 5,
-        "formula": "cost_rub = cost_usd * MINIAPP_USD_TO_RUB * 5",
+        "usd_to_rub": credits_store.usd_to_rub(),
+        "rub_per_credit": credits_store.SOLO_RUB_PER_CREDIT,
+        "formula": "кредиты = cost_usd × USD_TO_RUB × 2 / 0,8; ₽ = кредиты × 1,3 (Solo)",
     }
 
 
@@ -6880,7 +6878,57 @@ def _org_detail(uid: int, org_id: int) -> dict[str, Any]:
         # оплата не подключена: тарифы видны и меняются, но ни на что не влияют
         "billing_enabled": False,
         "plans": [{"id": k, "label": v} for k, v in orgs_store.PLANS.items()],
+        **_org_credits_detail(org_id, members, manage=_org_can_manage_ai(uid, org_id)),
     }
+
+
+def _org_can_manage_ai(uid: int, org_id: int) -> bool:
+    """Лимиты и модели участников настраивает руководитель — владелец или админ."""
+    from assistant.stores import orgs_store
+
+    return orgs_store.role_of(org_id, uid) in ("owner", "admin")
+
+
+def _org_credits_detail(org_id: int, members: list[dict[str, Any]], *, manage: bool) -> dict[str, Any]:
+    from assistant.integrations.openrouter_client import list_gpt_picker_models
+    from assistant.stores import credits_store
+
+    today = credits_store.today_utc()
+    bal = credits_store.balance("org", str(org_id))
+    out: dict[str, Any] = {
+        "credits": {
+            "balance": bal,
+            "balance_rub": credits_store.credits_to_rub(bal),
+            "rub_per_credit": credits_store.SOLO_RUB_PER_CREDIT,
+            "default_daily_limit": credits_store.DEFAULT_DAILY_LIMIT,
+            "can_manage": manage,
+        }
+    }
+    if not manage:
+        return out
+    overage = credits_store.overage_by_member(org_id, today, today)
+    ai = {}
+    for m in members:
+        mid = str(m.get("user_id") or "")
+        if not mid:
+            continue
+        st = credits_store.member_settings(org_id, mid)
+        ai[mid] = {**st, "spent_today": credits_store.spent_today(mid), "over_today": overage.get(mid, 0.0)}
+    try:
+        models = list_gpt_picker_models().get("models") or []
+    except Exception as e:
+        print(f"[orgs] models list failed err={e!r}")
+        models = []
+    from assistant.integrations.openrouter_client import tg_leo_models
+
+    seen: dict[str, str] = {}
+    for m in [*models, *tg_leo_models()]:
+        mid = str(m.get("id") or "")
+        if mid and mid not in seen:
+            seen[mid] = str(m.get("name") or m.get("label") or mid)
+    out["credits"]["members"] = ai
+    out["credits"]["models"] = [{"id": k, "name": v} for k, v in seen.items()]
+    return out
 
 
 @miniapp_router.get("/orgs")
@@ -7154,6 +7202,58 @@ async def miniapp_orgs_member_plan(
     return await _org_call(_org_detail, uid, org_id)
 
 
+class _MiniappOrgMemberAi(BaseModel):
+    daily_limit: Optional[float] = None
+    allowed_models: Optional[list[str]] = None
+    all_models: bool = False
+
+
+def _org_set_member_ai(uid: int, org_id: int, member_user_id: str, body: "_MiniappOrgMemberAi") -> None:
+    from assistant.stores import credits_store, orgs_store
+
+    if not _org_can_manage_ai(uid, org_id):
+        raise orgs_store.OrgError("Лимиты и модели настраивает руководитель организации", 400)
+    if not orgs_store.role_of(org_id, member_user_id):
+        raise orgs_store.OrgError("Это не участник организации", 400)
+    if body.daily_limit is not None and not (0 <= float(body.daily_limit) <= 1_000_000):
+        raise orgs_store.OrgError("Лимит — от 0 до 1 000 000 кредитов", 400)
+    models = None
+    if body.allowed_models is not None and not body.all_models:
+        models = [str(m).strip() for m in body.allowed_models if str(m).strip()]
+        if not models:
+            raise orgs_store.OrgError("Оставьте участнику хотя бы одну модель", 400)
+    credits_store.set_member_settings(
+        org_id, member_user_id, daily_limit=body.daily_limit, allowed_models=models, clear_models=body.all_models
+    )
+
+
+@miniapp_router.patch("/orgs/{org_id}/members/{member_user_id}/ai")
+async def miniapp_orgs_member_ai(
+    org_id: int, member_user_id: str, body: _MiniappOrgMemberAi,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    uid = int(principal.telegram_user_id)
+    await _org_call(_org_set_member_ai, uid, org_id, member_user_id, body)
+    return await _org_call(_org_detail, uid, org_id)
+
+
+def _org_top_up(uid: int, org_id: int) -> None:
+    from assistant.stores import credits_store, orgs_store
+
+    if not _org_can_manage_ai(uid, org_id):
+        raise orgs_store.OrgError("Пополнять счёт может руководитель организации", 400)
+    credits_store.top_up("org", str(org_id), by_user=uid)
+
+
+@miniapp_router.post("/orgs/{org_id}/credits/topup")
+async def miniapp_orgs_credits_topup(
+    org_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    uid = int(principal.telegram_user_id)
+    await _org_call(_org_top_up, uid, org_id)
+    return await _org_call(_org_detail, uid, org_id)
+
+
 @miniapp_router.post("/orgs/{org_id}/approve")
 async def miniapp_orgs_approve(
     org_id: int, body: _MiniappOrgApprove, principal: _MiniappPrincipal = Depends(require_miniapp_user)
@@ -7338,9 +7438,11 @@ def _tg_leo_payload(uid: int) -> dict[str, Any]:
     from assistant.stores import chat_threads as chat_threads_store
     from assistant.stores import user_prefs
 
+    from assistant.lib import billing_store
+
     return {
         "model": user_prefs.get_tg_leo_model(uid),
-        "models": tg_leo_models(),
+        "models": billing_store.mark_locked(uid, list(tg_leo_models())),
         "thread": chat_threads_store.telegram_thread(uid),
     }
 
@@ -8554,11 +8656,15 @@ async def miniapp_calendar_event_telemost_link(
 async def miniapp_gpt_models(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
-    del principal
     from assistant.integrations.openrouter_client import list_gpt_picker_models
+    from assistant.lib import billing_store
+
+    uid = int(principal.telegram_user_id)
 
     def _run() -> dict[str, Any]:
-        return list_gpt_picker_models()
+        out = dict(list_gpt_picker_models())
+        out["models"] = billing_store.mark_locked(uid, list(out.get("models") or []))
+        return out
 
     return await run_in_threadpool(_run)
 
@@ -8874,6 +8980,28 @@ async def miniapp_gpt_chat(
             user_agents.patch_agent(uid, str(agent["id"]), {"model": model})
         except user_agents.AgentError as e:
             print(f"[agents] save model failed uid={uid} agent={agent['id']} err={e!r}")
+
+    from assistant.lib import billing_store
+
+    gate = await run_in_threadpool(billing_store.chat_gate, uid, run_model)
+    run_model = gate["model"]
+    if not gate["can_answer"]:
+        from assistant.integrations.openrouter_client import gpt_display_label
+
+        return {
+            "answer": gate["message"],
+            "calendar_actions": [],
+            "bullets": [],
+            "kb_version": "",
+            "files": [],
+            "canvas": [],
+            "canvas_error": None,
+            "note_edits": None,
+            "model": run_model or "",
+            "model_label": gpt_display_label(run_model),
+            "credits": gate["status"],
+            "credits_blocked": True,
+        }
 
     url_job = await _start_chat_url_transcription(
         background_tasks, body, uid=uid, model=run_model, username=tg_uname
@@ -9257,8 +9385,13 @@ async def miniapp_gpt_chat(
     await leo_agent.notify_invitees(
         gcal_ctx, uid=uid, organizer_user=principal.user if isinstance(principal.user, dict) else None
     )
+    answer_text = str(out.get("answer") or "")
+    if gate["notice"]:
+        answer_text = f"_{gate['notice']}_\n\n{answer_text}" if answer_text else gate["notice"]
+    credits_now = await run_in_threadpool(billing_store.credits_status, uid)
     return {
-        "answer": str(out.get("answer") or ""),
+        "answer": answer_text,
+        "credits": credits_now,
         "calendar_actions": (
             out.get("calendar_actions") if isinstance(out.get("calendar_actions"), list) else []
         ),
@@ -9472,6 +9605,11 @@ async def miniapp_voice_transcribe(
             )
         except Exception as e:
             print(f"[miniapp_voice_transcribe] postprocess_failed uid={uid} err={e!r}")
+        from assistant.lib import billing_store
+
+        billing_store.charge_transcription(
+            uid, getattr(result, "segments", ()), operation="obuchat_dictation" if dictation else "obuchat_transcribe"
+        )
         event_id = insert_usage_event(
             operation="obuchat_dictation" if dictation else "obuchat_transcribe",
             model=None,
@@ -12332,6 +12470,9 @@ async def miniapp_transcription_upload(
         transcript = (result.formatted_text or result.plain_text or "").strip()
         if not transcript:
             raise RuntimeError("(пустая транскрипция)")
+        from assistant.lib import billing_store
+
+        billing_store.charge_transcription(uid, getattr(result, "segments", ()), operation="obuchat_transcribe")
         insert_usage_event(
             operation="obuchat_transcribe",
             model=None,
@@ -15091,6 +15232,30 @@ async def miniapp_billing(
         ).billing_snapshot_for_api,
         int(principal.telegram_user_id),
     )
+
+
+@miniapp_router.post("/billing/topup")
+async def miniapp_billing_topup(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Тестовое пополнение личного баланса (+2 500 кредитов), оплаты пока нет."""
+    from assistant.lib import billing_store
+
+    uid = int(principal.telegram_user_id)
+    snap = await run_in_threadpool(billing_store.billing_snapshot_for_api, uid)
+    if snap.get("mode") != "personal":
+        raise HTTPException(status_code=400, detail="В организации расход идёт со счёта организации")
+    return await run_in_threadpool(billing_store.top_up_personal, uid)
+
+
+@miniapp_router.get("/credits/status")
+async def miniapp_credits_status(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Для полоски в окне диалога: доля дневного лимита или остаток баланса."""
+    from assistant.lib import billing_store
+
+    return await run_in_threadpool(billing_store.credits_status, int(principal.telegram_user_id))
 
 
 @miniapp_router.post("/billing/redeem-promo")
