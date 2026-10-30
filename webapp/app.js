@@ -16192,7 +16192,13 @@
       openPostedCard(task.id);
       return;
     }
-    if (card && !card.opts.inSide) closePostedCard();
+    if (card && document.body.contains(card.host)) {
+      // своя задача — карточкой своей задачи в той же панели или листе
+      if (card.opts.inSide) postedCardHosts.side = null;
+      else postedCardHosts.sheet = null;
+      paintMyOwnCard(card.host, task, { sheet: !card.opts.inSide });
+      return;
+    }
     openTaskModal(taskEvFromApi(task), { forceEdit: true });
   }
 
@@ -28027,12 +28033,24 @@
     return { cls: "pt-pill--muted", text: "Своя задача" };
   }
 
-  function paintMyOwnCard(host, task) {
+  function paintMyOwnCard(host, task, opts) {
+    opts = opts || {};
     var ev = task.event || {};
     var done = postedTaskIsDone(task);
+    var cardCtx = { card: { host: host, opts: { inSide: !opts.sheet, myTasks: true } } };
     host.innerHTML = "";
     var head = document.createElement("div");
     head.className = "pt-c-head";
+    if (opts.sheet) {
+      // открыта из карточки поручения на телефоне — в листе, ему нужен свой «закрыть»
+      var x = document.createElement("button");
+      x.type = "button";
+      x.className = "pt-icon-btn";
+      x.setAttribute("aria-label", "Закрыть");
+      x.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+      x.addEventListener("click", closePostedCard);
+      head.appendChild(x);
+    }
     var pill = document.createElement("span");
     var pv = myTaskPill(task);
     pill.className = "pt-pill " + pv.cls;
@@ -28041,6 +28059,12 @@
     host.appendChild(head);
     var body = document.createElement("div");
     body.className = "pt-c-body";
+    if (task.parents && task.parents.length) {
+      var crumbHost = document.createElement("div");
+      crumbHost.className = "st-crumb-host";
+      paintSubtaskCrumb(crumbHost, task.parents, cardCtx);
+      body.appendChild(crumbHost);
+    }
     var h = document.createElement("h3");
     h.className = "pt-c-title";
     h.textContent = String(task.title || ev.summary || "Задача");
@@ -28080,6 +28104,11 @@
       });
       body.appendChild(ul);
     }
+    // Подзадачи — как в карточке поручения; переход в подзадачу — в этой же карточке.
+    var subHost = document.createElement("div");
+    subHost.className = "pt-subtasks";
+    mountSubtasks(subHost, task.id, { ctx: cardCtx });
+    body.appendChild(subHost);
     if (done && task.result) {
       var res = document.createElement("div");
       res.className = "pt-c-result";
