@@ -264,12 +264,14 @@ def _chat(
 
 
 def _mark_prompt_cache(messages: list[dict[str, Any]], model: str) -> None:
-    """Claude кэширует начало запроса только по явной метке (OpenAI и Gemini — сами).
+    """Метки кэша для Claude и Gemini (OpenAI кэширует начало запроса сам).
 
+    Claude без метки не кэширует вовсе; Gemini кэширует сам только целиком одинаковые
+    запросы, с меткой — всю общую часть (проверено: 4517 токенов из кэша вместо 4085).
     Метки: на системной части (инструкции + контекст заметки) и на последней реплике
-    истории — следующий вопрос в том же диалоге читает это из кэша, ~в 10 раз дешевле.
+    истории — следующий вопрос в том же диалоге читает это из кэша в разы дешевле.
     """
-    if not (model or "").startswith("anthropic/"):
+    if not (model or "").startswith(("anthropic/", "google/gemini")):
         return
     marked = 0
     last_history = len(messages) - 2  # перед текущим вопросом пользователя
@@ -284,6 +286,19 @@ def _mark_prompt_cache(messages: list[dict[str, Any]], model: str) -> None:
             continue
         msg["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
         marked += 1
+
+
+def _openai_cache_key(model: str, operation: str) -> str:
+    """Ключ кэша OpenAI: запросы одного человека одного вида идут на один «прогретый» сервер.
+
+    Текст запроса не меняется — только маршрутизация у OpenAI, поэтому на ответ не влияет.
+    """
+    if not (model or "").startswith("openai/"):
+        return ""
+    from assistant.integrations.openrouter_client import get_openrouter_usage_telegram_user
+
+    uid = get_openrouter_usage_telegram_user()[0] or "anon"
+    return f"leo:{uid}:{operation}"[:64]
 
 
 def _chat_result(
@@ -332,6 +347,9 @@ def _chat_result(
     }
     if max_tokens is not None:
         payload["max_tokens"] = int(max_tokens)
+    cache_key = _openai_cache_key(run_model, operation)
+    if cache_key:
+        payload["prompt_cache_key"] = cache_key
     from assistant.board.llm import reasoning_request_fields
 
     reason = reasoning_request_fields(run_model, payload.get("max_tokens"))

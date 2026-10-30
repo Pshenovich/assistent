@@ -33,8 +33,31 @@ def test_claude_without_history(monkeypatch):
     assert msgs[1]["content"] == "вопрос"
 
 
+def test_gemini_marked_like_claude(monkeypatch):
+    msgs = _run(monkeypatch, "google/gemini-2.5-flash", [{"role": "user", "content": "q1"}, {"role": "assistant", "content": "a1"}])
+    assert msgs[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+    assert msgs[2]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+
 def test_other_models_unchanged(monkeypatch):
     hist = [{"role": "user", "content": "q1"}, {"role": "assistant", "content": "a1"}]
     msgs = _run(monkeypatch, "openai/gpt-5.5", hist)
     assert msgs[0]["content"] == "SYS\n\nЗАМЕТКА"
     assert msgs[2]["content"] == "a1"
+
+
+def test_openai_gets_cache_key_others_not(monkeypatch):
+    from assistant.integrations import openrouter_client as oc
+
+    seen = {}
+
+    def fake(payload, *, operation, timeout):
+        seen[payload["model"]] = payload.get("prompt_cache_key")
+        return {"choices": [{"message": {"content": "ок"}}], "model": payload["model"]}
+
+    monkeypatch.setattr(llm, "openrouter_chat_completion", fake)
+    with oc.usage_user(106):
+        for m in ("openai/gpt-5.5", "anthropic/claude-opus-5.5", "google/gemini-2.5-flash"):
+            llm._chat_result("SYS", "q", operation="ask", model=m)
+    assert seen == {"openai/gpt-5.5": "leo:106:ask", "anthropic/claude-opus-5.5": None, "google/gemini-2.5-flash": None}
+    assert "prompt_cache_key" not in oc._payload_for_comet({"model": "x", "messages": [], "prompt_cache_key": "k"})

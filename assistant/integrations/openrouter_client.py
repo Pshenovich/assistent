@@ -593,6 +593,7 @@ def _payload_for_comet(payload: dict[str, Any]) -> dict[str, Any]:
     out = dict(payload)
     out.pop("plugins", None)
     out.pop("modalities", None)
+    out.pop("prompt_cache_key", None)  # параметр OpenAI через OpenRouter; Comet его не знает
     messages: list[Any] = []
     for msg in out.get("messages") or []:
         if not isinstance(msg, dict):
