@@ -157,9 +157,12 @@ def process_recording_bytes(
         meeting_url=source_url or "",
         native_meeting_id=(native_meeting_id or "").strip(),
     )
-    summary_result = llm_mod.summarize_recording(
-        transcript, speakers_detected=speakers, context=meeting_ctx
-    )
+    from assistant.integrations.openrouter_client import usage_user
+
+    with usage_user(user_id):
+        summary_result = llm_mod.summarize_recording(
+            transcript, speakers_detected=speakers, context=meeting_ctx
+        )
     if not summary_result:
         raise RuntimeError("Не удалось сделать саммари.")
     summary_text = str(summary_result.get("summary") or "").strip()

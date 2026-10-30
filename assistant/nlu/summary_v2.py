@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import json
-from concurrent.futures import ThreadPoolExecutor
+from assistant.lib.ctx_pool import ContextThreadPoolExecutor as ThreadPoolExecutor
 from typing import Any, Callable, Optional
 
 from assistant.lib import summary_normalize as sn

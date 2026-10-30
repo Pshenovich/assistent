@@ -1176,7 +1176,7 @@ def _verify_v1_tasks(tasks: list[dict[str, Any]], transcript: str) -> dict[str, 
 def _summarize_recording_v1(
     transcript: str, *, speakers_detected: bool = False, dedupe: bool | None = None, verify: bool | None = None
 ) -> dict[str, Any] | None:
-    from concurrent.futures import ThreadPoolExecutor
+    from assistant.lib.ctx_pool import ContextThreadPoolExecutor as ThreadPoolExecutor
 
     text = (transcript or "").strip()
     if not text:

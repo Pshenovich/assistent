@@ -26,6 +26,7 @@ from assistant.bot.chat_alert_job import register_chat_alert_jobs
 from assistant.bot.digest_auto_job import register_digest_auto_jobs
 from assistant.bot.market_digest_job import register_market_digest_jobs
 from assistant.bot.heartbeat_job import register_heartbeat_jobs
+from assistant.bot.spend_alert_job import register_spend_alert_jobs
 
 
 def build_application() -> Application:
@@ -71,6 +72,7 @@ def build_application() -> Application:
     register_market_digest_jobs(app)
     register_chat_alert_jobs(app)
     register_heartbeat_jobs(app)
+    register_spend_alert_jobs(app)
     return app
 
 

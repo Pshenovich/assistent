@@ -215,9 +215,12 @@ def _process_message(telegram_user_id: int, msg: Message, *, subject: str) -> bo
         except Exception as e:
             print(f"[telemost_mail] context failed uid={telegram_user_id} err={e!r}")
             meeting_ctx = None
-        summary_result = llm_mod.summarize_recording(
-            transcript_part, speakers_detected=False, context=meeting_ctx
-        )
+        from assistant.integrations.openrouter_client import usage_user
+
+        with usage_user(telegram_user_id):
+            summary_result = llm_mod.summarize_recording(
+                transcript_part, speakers_detected=False, context=meeting_ctx
+            )
         if summary_result:
             from assistant.lib.summary_normalize import tasks_for_inject
             from assistant.lib.telegram_markdown import prepare_summary_markdown

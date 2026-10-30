@@ -489,9 +489,12 @@ def generate_summary_for_note(user_id: int | str, note_id: int) -> dict[str, Any
         except Exception as e:
             print(f"[transcription_notes] context failed note={note_id} err={e!r}")
             meeting_ctx = None
-        summary_result = llm_mod.summarize_recording(
-            transcript, speakers_detected=speakers, context=meeting_ctx
-        )
+        from assistant.integrations.openrouter_client import usage_user
+
+        with usage_user(uid):
+            summary_result = llm_mod.summarize_recording(
+                transcript, speakers_detected=speakers, context=meeting_ctx
+            )
         if not summary_result:
             raise RuntimeError("Не удалось сделать саммари")
         summary_text = str(summary_result.get("summary") or "").strip()

@@ -42,6 +42,20 @@ def set_openrouter_usage_telegram_user(
     )
 
 
+@contextmanager
+def usage_user(telegram_user_id: int | str | None):
+    """Расход ИИ внутри блока записывается на этого пользователя (фон, саммари, задания)."""
+    tok_id = _current_tg_user_id.set(
+        None if telegram_user_id in (None, "") else str(telegram_user_id).strip()
+    )
+    tok_name = _current_tg_user_username.set(None)
+    try:
+        yield
+    finally:
+        _current_tg_user_id.reset(tok_id)
+        _current_tg_user_username.reset(tok_name)
+
+
 def get_openrouter_usage_telegram_user() -> tuple[str | None, str | None]:
     """Текущий Telegram-пользователь для записи usage (в т.ч. из worker-thread после copy_context)."""
     return _current_tg_user_id.get(), _current_tg_user_username.get()
