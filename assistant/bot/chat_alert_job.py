@@ -20,13 +20,16 @@ def _keyboard(alert_id: int, url: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([row])
 
 
-def _tick_bounds(uids: list[int]) -> dict[int, int]:
-    """Общая граница пачки на этот тик по каждому чату — у всех, кто следит за чатом, одна пачка."""
+def _tick_bounds(uids: list[int]) -> tuple[dict[int, int], dict[int, list[int]]]:
+    """На этот тик: общая граница пачки по каждому чату и кто за чатом следит (делят расход разбора)."""
     from assistant.stores import chat_digest as digest_store
     from assistant.stores import user_prefs
 
-    chats = {int(c) for u in uids for c in user_prefs.digest_chat_ids(u)}
-    return {c: digest_store.max_rowid(c) for c in chats}
+    followers: dict[int, list[int]] = {}
+    for u in uids:
+        for c in user_prefs.digest_chat_ids(u):
+            followers.setdefault(int(c), []).append(int(u))
+    return {c: digest_store.max_rowid(c) for c in followers}, followers
 
 
 async def chat_alert_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -36,10 +39,10 @@ async def chat_alert_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
         u for u in await asyncio.to_thread(user_prefs.iter_user_ids_with_digest)
         if is_user_allowed(u, None) and chat_alerts.user_enabled(u)
     ]
-    upto = await asyncio.to_thread(_tick_bounds, uids) if uids else {}
+    upto, followers = await asyncio.to_thread(_tick_bounds, uids) if uids else ({}, {})
     for uid in uids:
         try:
-            found = await asyncio.to_thread(chat_alerts.scan_user, uid, upto=upto)
+            found = await asyncio.to_thread(chat_alerts.scan_user, uid, upto=upto, followers=followers)
         except Exception as e:
             print(f"[chat_alerts] uid={uid} scan err={e!r}")
             continue

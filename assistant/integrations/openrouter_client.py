@@ -42,6 +42,20 @@ def set_openrouter_usage_telegram_user(
     )
 
 
+_usage_split: ContextVar[tuple[str, ...]] = ContextVar("usage_split", default=())
+
+
+@contextmanager
+def usage_split(user_ids: list[int | str]):
+    """Расход ИИ внутри блока делится поровну между этими людьми (общий разбор чата и т.п.)."""
+    ids = tuple(dict.fromkeys(str(u).strip() for u in user_ids if str(u or "").strip()))
+    tok = _usage_split.set(ids)
+    try:
+        yield
+    finally:
+        _usage_split.reset(tok)
+
+
 @contextmanager
 def usage_user(telegram_user_id: int | str | None):
     """Расход ИИ внутри блока записывается на этого пользователя (фон, саммари, задания)."""
@@ -590,6 +604,25 @@ def _log_usage(
     if cached is not None and usage.get("cached_tokens") is None:
         usage = {**usage, "cached_tokens": cached}
     gid = data.get("id")
+    split = _usage_split.get()
+    if split:
+        # Один вызов на нескольких (общий разбор чата): каждому — равная доля токенов и стоимости.
+        n = len(split)
+        share = {
+            k: (v / n if isinstance(v, (int, float)) and not isinstance(v, bool) else v)
+            for k, v in usage.items()
+        }
+        share["split_of"] = n
+        for i, suid in enumerate(split):
+            insert_usage_event(
+                operation=operation,
+                model=(data.get("model") or payload.get("model")),
+                generation_id=(f"{str(gid).strip()}#{i}" if gid else None),
+                usage=share,
+                telegram_user_id=str(suid),
+                telegram_username=None,
+            )
+        return
     uid = _current_tg_user_id.get()
     uname = _current_tg_user_username.get()
     insert_usage_event(

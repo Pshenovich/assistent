@@ -39,3 +39,19 @@ def test_summary_v2_calls_logged_with_user(monkeypatch):
             for _ in range(3):
                 pool.submit(probe)
     assert seen == ["106"] * 3
+
+
+def test_usage_split_equal_shares(monkeypatch):
+    rows = []
+    monkeypatch.setattr(oc, "insert_usage_event", lambda **kw: rows.append(kw) or 1)
+    data = {"id": "gen1", "model": "google/gemini-2.5-flash", "usage": {"prompt_tokens": 900, "completion_tokens": 30, "cost": 0.003}}
+    with oc.usage_user(1):
+        with oc.usage_split([1, 2, 3]):
+            oc._log_usage(data, {"model": "x"}, operation="chat_alerts", provider="openrouter")
+    assert [r["telegram_user_id"] for r in rows] == ["1", "2", "3"]
+    assert all(abs(r["usage"]["cost"] - 0.001) < 1e-12 and r["usage"]["prompt_tokens"] == 300 for r in rows)
+    assert len({r["generation_id"] for r in rows}) == 3
+    rows.clear()
+    with oc.usage_user(1):
+        oc._log_usage(data, {"model": "x"}, operation="ask", provider="openrouter")  # без деления — как раньше
+    assert len(rows) == 1 and rows[0]["telegram_user_id"] == "1" and rows[0]["usage"]["cost"] == 0.003

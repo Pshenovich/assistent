@@ -380,10 +380,16 @@ _SHARED_MEMO: dict[tuple[int, int, int], tuple[float, list[dict[str, Any]]]] = {
 _SHARED_TTL_SEC = 3600.0
 
 
-def detect_shared(chat_id: int, new: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Предложения модели по пачке без «Я» (проверка «моё ли, отвечал ли я» — в verify для каждого)."""
+def detect_shared(
+    chat_id: int, new: list[dict[str, Any]], *, followers: Optional[list[int]] = None
+) -> list[dict[str, Any]]:
+    """Предложения модели по пачке без «Я» (проверка «моё ли, отвечал ли я» — в verify для каждого).
+
+    followers — кто следит за чатом: расход разбора делится между ними поровну.
+    """
     import time
 
+    from assistant.integrations.openrouter_client import usage_split
     from assistant.nlu import llm
 
     key = (int(chat_id), int(new[0]["rid"]), int(new[-1]["rid"]))
@@ -399,15 +405,16 @@ def detect_shared(chat_id: int, new: list[dict[str, Any]]) -> list[dict[str, Any
         "now_utc": _iso(_now()),
         "messages": build_transcript(None, chat_id, new),
     }
-    raw = llm._chat(
-        SYSTEM_SHARED,
-        json.dumps(payload, ensure_ascii=False),
-        operation="chat_alerts",
-        model=llm._model_chat_digest(),
-        timeout=60,
-        temperature=0.0,
-        max_tokens=600,
-    )
+    with usage_split(followers or []):
+        raw = llm._chat(
+            SYSTEM_SHARED,
+            json.dumps(payload, ensure_ascii=False),
+            operation="chat_alerts",
+            model=llm._model_chat_digest(),
+            timeout=60,
+            temperature=0.0,
+            max_tokens=600,
+        )
     proposals = parse_alerts(raw)
     _SHARED_MEMO[key] = (now, proposals)
     return proposals
@@ -419,7 +426,12 @@ def user_enabled(uid: int) -> bool:
     return bool(user_prefs.digest_enabled(uid) and user_prefs.proactive_prefs(uid).get("chat_alerts"))
 
 
-def scan_user(uid: int, *, upto: Optional[dict[int, int]] = None) -> list[dict[str, Any]]:
+def scan_user(
+    uid: int,
+    *,
+    upto: Optional[dict[int, int]] = None,
+    followers: Optional[dict[int, list[int]]] = None,
+) -> list[dict[str, Any]]:
     """Новые сообщения выбранных чатов → проверенные алерты (курсор сдвигается после разбора).
 
     upto — общая на тик граница «до какого rowid читать» по чатам: пачки у всех одинаковые,
@@ -446,7 +458,8 @@ def scan_user(uid: int, *, upto: Optional[dict[int, int]] = None) -> list[dict[s
                     m.get("user_id") is not None and int(m["user_id"]) != int(uid) and not _is_auto(m) for m in new
                 ):  # писали только сам пользователь и боты — модель не зовём
                     set_openrouter_usage_telegram_user(telegram_user_id=uid)
-                    found = verify(uid, chat_id, new, detect_shared(chat_id, new))
+                    shared = detect_shared(chat_id, new, followers=(followers or {}).get(int(chat_id)))
+                    found = verify(uid, chat_id, new, shared)
             else:
                 found = detect(uid, chat_id, new)
         except Exception as e:
