@@ -354,6 +354,20 @@ def route_auto(case: dict[str, Any]) -> tuple[str, str]:
     return "cheap", "простой вопрос"
 
 
+def route_auto2(case: dict[str, Any]) -> tuple[str, str]:
+    """route_auto + любой вопрос в заметке — сильной модели (там обсуждают продукт и правят документ)."""
+    if case["kind"] == "local":
+        return "strong", "вопрос в заметке"
+    return route_auto(case)
+
+
+CHEAP_HINT = (
+    "Общие вопросы (что такое термин, как сделать что-то в сервисе, приложении, у врача, в банке) отвечай "
+    "сразу из общих знаний. В заметках и памяти ищи, только если вопрос явно про проект, продукт, встречу "
+    "или людей пользователя. Не отказывайся отвечать на обычные вопросы."
+)
+
+
 def _stems(text: str) -> set[str]:
     return {w[:5] for w in re.findall(r"[a-zа-яё0-9]{4,}", str(text or "").lower())}
 
@@ -391,7 +405,8 @@ def trim_history(history: list[dict[str, str]], question: str) -> list[dict[str,
 # ------------------------------------------------------------------ сборка запроса (как /gpt/chat и run_turn)
 
 
-def build_request(case: dict[str, Any], *, trim: bool) -> tuple[dict[str, Any], dict[str, int]]:
+def build_request(case: dict[str, Any], *, trim: bool | str) -> tuple[dict[str, Any], dict[str, int]]:
+    """trim: False — как сейчас; True/"full" — всё урезание; "canvas" — только инструкции презентаций и доски."""
     from assistant.lib import board_ai, note_edits, web_canvas
     from assistant.services import leo_agent
 
@@ -402,26 +417,28 @@ def build_request(case: dict[str, Any], *, trim: bool) -> tuple[dict[str, Any], 
     parts: dict[str, int] = {}
     local = case["kind"] == "local"
     edit = bool(_EDIT_RE.search(q))
+    full = trim is True or trim == "full"
+    addons_off = full or trim == "canvas"
     if local:
-        if not trim or edit:
+        if not full or edit:
             add = note_edits.system_addon()
             system = (system.rstrip() + "\n\n" + add).strip()
             block = note_edits.prompt_block(case["note_text"] or "(лист пуст)")
             prompt = (prompt.rstrip() + "\n\n" + block).strip()
             parts["note_edits_addon"] = len(add)
             parts["doc_view"] = len(block)
-        if not trim or _CANVAS_RE.search(q):
+        if not addons_off or _CANVAS_RE.search(q):
             add = web_canvas.canvas_system_addon()
             system = (system.rstrip() + "\n\n" + add).strip()
             parts["canvas_addon"] = len(add)
-        if not trim or board_ai.looks_like_board_request(q):
+        if not addons_off or board_ai.looks_like_board_request(q):
             add = board_ai.system_addon()
             system = (system.rstrip() + "\n\n" + add).strip()
             parts["board_addon"] = len(add)
     cal = leo_agent.calendar_addon(uid)
     system = leo_agent.append_system(system, cal)
     parts["calendar_addon"] = len(cal)
-    history = trim_history(case["history"], q) if trim else list(case["history"])
+    history = trim_history(case["history"], q) if full else list(case["history"])
     parts["history"] = sum(len(m["content"]) for m in history)
     parts["history_turns"] = len(history)
     parts["note_text"] = min(len(case["note_text"]), 8000) if local else 0
@@ -533,7 +550,7 @@ def make_recorder(case: dict[str, Any], cache: dict[str, str], cache_lock: threa
     return run, calls
 
 
-def run_arm(case: dict[str, Any], arm: str, model: str, *, trim: bool, cache: dict[str, str],
+def run_arm(case: dict[str, Any], arm: str, model: str, *, trim: bool | str, cache: dict[str, str],
             cache_lock: threading.Lock) -> dict[str, Any]:
     from assistant.nlu import llm
     from assistant.services import leo_agent
@@ -542,6 +559,8 @@ def run_arm(case: dict[str, Any], arm: str, model: str, *, trim: bool, cache: di
     bucket: list[dict[str, Any]] = []
     _USAGE.set(bucket)
     kw, parts = build_request(case, trim=trim)
+    if arm.startswith("auto2"):
+        kw["system"] = kw["system"].rstrip() + "\n\n" + CHEAP_HINT
     runner, calls = make_recorder(case, cache, cache_lock)
     tk = leo_agent.tool_kwargs(leo_agent.make_calendar_context(int(case["uid"]), telegram_username=None,
                                                                display_name="Пользователь"), case["question"])
@@ -631,7 +650,7 @@ def cmd_run(a: argparse.Namespace) -> None:
     )
     trim_ids = {c["id"] for c in trim_pool[: a.trim_max]}
 
-    jobs: list[tuple[dict[str, Any], str, str, bool]] = []
+    jobs: list[tuple[dict[str, Any], str, str, bool | str]] = []
     for c in cases:
         route = route_auto(c)[0]
         for arm in arms:
@@ -639,6 +658,10 @@ def cmd_run(a: argparse.Namespace) -> None:
                 jobs.append((c, arm, a.cheap_model, False))
             elif arm.startswith("auto:") and route == "cheap":
                 jobs.append((c, arm, arm[5:], False))
+            elif arm.startswith("auto2:") and route_auto2(c)[0] == "cheap":
+                jobs.append((c, arm, arm[6:], False))
+            elif arm == "trimc" and c["kind"] == "local" and c.get("orig_model") and tg_leo_model_allowed(c["orig_model"]):
+                jobs.append((c, arm, c["orig_model"], "canvas"))
             elif arm == "probe" and c["id"] in probe_ids:
                 jobs.append((c, arm, a.cheap_model, False))
             elif arm == "trim" and c["id"] in trim_ids:
@@ -647,7 +670,7 @@ def cmd_run(a: argparse.Namespace) -> None:
     print(f"[eval_ask] cases={len(cases)} cheap={len(cases) - len(strong)} probe={len(probe_ids)} "
           f"trim={len(trim_ids)} jobs={len(jobs)}", flush=True)
 
-    def work(job: tuple[dict[str, Any], str, str, bool]) -> None:
+    def work(job: tuple[dict[str, Any], str, str, bool | str]) -> None:
         c, arm, model, trim = job
         row = run_arm(c, arm, model, trim=trim, cache=caches[c["id"]], cache_lock=cache_locks[c["id"]])
         if trim:
@@ -872,10 +895,11 @@ def cmd_report(a: argparse.Namespace) -> None:
     cheap_ids = [cid for cid, r in routes.items() if r[0] == "cheap"]
     total_est = sum(base_est(cid) for cid in cases)
     for arm in arm_names:
-        if not (arm == "auto" or arm.startswith("auto:")) or arm not in rep:
+        if not arm.startswith("auto") or arm not in rep:
             continue
-        saved = sum(base_est(cid) - runs[(cid, arm)]["cost"] for cid in cheap_ids if (cid, arm) in runs)
-        rep[arm]["cheap_share_questions"] = round(len(cheap_ids) / max(1, len(cases)), 3)
+        ids = [cid for cid, c in cases.items() if route_auto2(c)[0] == "cheap"] if arm.startswith("auto2") else cheap_ids
+        saved = sum(base_est(cid) - runs[(cid, arm)]["cost"] for cid in ids if (cid, arm) in runs)
+        rep[arm]["cheap_share_questions"] = round(len(ids) / max(1, len(cases)), 3)
         rep[arm]["saving_share_of_ask"] = round(saved / total_est, 3) if total_est else None
         rep[arm]["saving_usd_month_user"] = round(ask_user_14d * (saved / total_est) * 30 / 14, 2) if total_est else None
 
@@ -896,17 +920,18 @@ def cmd_report(a: argparse.Namespace) -> None:
         "mismatches": miss,
     }
 
-    if "trim" in rep:
-        ids = [cid for (cid, ar) in pairs if ar == "trim" and (cid, "trim") in runs]
+    for tarm in ("trim", "trimc"):
+        if tarm not in rep:
+            continue
+        ids = [cid for (cid, ar) in pairs if ar == tarm and (cid, tarm) in runs]
 
         def size(p: dict[str, int]) -> int:
             return p["system_total"] + p["history"] + p.get("doc_view", 0)
 
-        full = sum(size(runs[(cid, "trim")]["parts_full"]) for cid in ids)
-        cut = sum(size(runs[(cid, "trim")]["parts"]) for cid in ids)
-        rep["trim"]["prompt_chars_cut_share"] = round(1 - cut / max(1, full), 3)
-        rep["trim"]["applies_to_share"] = round(sum(1 for c in cases.values() if trim_cut(c) >= 0.2) / max(1, len(cases)), 3)
-        rep["trim"]["avg_prompt_tokens_after"] = int(sum(runs[(cid, "trim")]["prompt_tokens"] for cid in ids) / max(1, len(ids)))
+        full = sum(size(runs[(cid, tarm)]["parts_full"]) for cid in ids)
+        cut = sum(size(runs[(cid, tarm)]["parts"]) for cid in ids)
+        rep[tarm]["prompt_chars_cut_share"] = round(1 - cut / max(1, full), 3)
+        rep[tarm]["avg_prompt_tokens_after"] = int(sum(runs[(cid, tarm)]["prompt_tokens"] for cid in ids) / max(1, len(ids)))
 
     parts: Counter = Counter()
     for c in cases.values():
