@@ -62,3 +62,12 @@ def test_healthz_requires_worker_when_jobs_moved(monkeypatch, tmp_path):
     heartbeat.beat("worker")
     r = _client().get("/healthz")
     assert r.status_code == 200 and r.json()["worker_heartbeat_age_sec"] < 5
+
+
+def test_privacy_and_terms_short_urls():
+    c = TestClient(usage_server.app)
+    for short, target in (("/privacy", "orbita-privacy.html"), ("/terms", "orbita-terms.html")):
+        r = c.get(short, follow_redirects=False)
+        assert r.status_code == 301 and r.headers["location"].endswith(target)
+        page = c.get(r.headers["location"])
+        assert page.status_code == 200 and "Orbita" in page.text and "Google" in page.text or short == "/terms"

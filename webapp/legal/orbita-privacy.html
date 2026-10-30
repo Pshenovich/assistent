@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Политика конфиденциальности — Orbita</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    .legal-page { max-width: 42rem; margin: 0 auto; padding: 1.25rem 1rem 2.5rem; color: var(--text); }
+    .legal-page h1 { font-size: 1.25rem; margin: 0 0 1rem; }
+    .legal-page h2 { font-size: 1rem; margin: 1.25rem 0 0.5rem; }
+    .legal-page p, .legal-page li { font-size: 0.875rem; line-height: 1.55; color: var(--text-secondary); }
+    .legal-page ul { padding-left: 1.25rem; }
+    .legal-lang { display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 0.875rem; }
+    .legal-lang a, .legal-back { color: var(--accent); text-decoration: none; }
+    .legal-todo { background: color-mix(in srgb, var(--accent) 12%, transparent); padding: 0 .25rem; border-radius: .25rem; }
+    .legal-sep { margin: 2.5rem 0 1.5rem; border: 0; border-top: 1px solid var(--border, rgba(127,127,127,.25)); }
+  </style>
+</head>
+<body>
+  <main class="legal-page">
+    <a class="legal-back" href="../index.html">← Orbita</a>
+    <nav class="legal-lang"><a href="#ru">Русский</a><a href="#en">English</a></nav>
+
+    <!-- ЧЕРНОВИК: реквизиты оператора (в квадратных скобках) заполняет владелец/юрист; текст проверить на 152-ФЗ. -->
+    <section id="ru" lang="ru">
+      <h1>Политика конфиденциальности Orbita</h1>
+      <p>Дата публикации: <span class="legal-todo">[дата]</span>. Orbita — ИИ-ассистент для встреч, задач и заметок: веб-приложение на orbita.me и мини-приложение и бот в Telegram (ассистент «Лео»).</p>
+      <p>Оператор персональных данных: <span class="legal-todo">[наименование, ИНН, ОГРН, адрес]</span>. Связь по вопросам данных: <span class="legal-todo">privacy@orbita.me</span>.</p>
+
+      <h2>1. Какие данные мы обрабатываем</h2>
+      <ul>
+        <li>Профиль Telegram (идентификатор, имя пользователя, имя) и почта — для входа и работы сервиса.</li>
+        <li>Ваши заметки, сообщения Лео, задачи, напоминания, файлы и записи встреч, которые вы загружаете или создаёте.</li>
+        <li>Данные подключённых вами сервисов (Google Календарь и Google Задачи, Zoom, Яндекс Диск, Телемост, Битрикс24, почта) — только в объёме, нужном для выбранных вами функций.</li>
+        <li>Технические журналы: время запросов, ошибки, расход ИИ — для надёжности, безопасности и учёта кредитов.</li>
+      </ul>
+
+      <h2>2. Данные Google</h2>
+      <p>Если вы подключаете Google, Orbita получает доступ к:</p>
+      <ul>
+        <li><b>Google Календарю</b> (<code>calendar</code>) — чтобы показывать ваше расписание, готовить брифы к встречам, находить свободное время, создавать, переносить и отменять встречи по вашей просьбе и рассылать приглашения выбранным вами участникам;</li>
+        <li><b>Google Задачам</b> (<code>tasks</code>) — чтобы синхронизировать задачи Orbita с вашими списками Google Tasks, если вы включили синхронизацию.</li>
+      </ul>
+      <p>Использование и передача Orbita информации, полученной от API Google, соответствует <a href="https://developers.google.com/terms/api-services-user-data-policy">Политике Google в отношении пользовательских данных API-сервисов</a>, включая требования ограниченного использования (Limited Use). В частности, мы:</p>
+      <ul>
+        <li>используем данные Google только для функций, которые вы видите в Orbita и которые вы запросили;</li>
+        <li>не продаём данные Google и не передаём их для рекламы, оценки кредитоспособности или брокерам данных;</li>
+        <li>не используем данные Google для обучения общих моделей ИИ;</li>
+        <li>не даём людям читать данные Google, кроме случаев с вашего явного согласия (например, обращение в поддержку), для безопасности или по требованию закона.</li>
+      </ul>
+      <p>Отозвать доступ можно в Orbita (Профиль → Интеграции → Отключить Google) или на странице <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. После отключения токены доступа удаляются.</p>
+
+      <h2>3. ИИ-обработка</h2>
+      <p>Для ответов Лео, саммари и разбора встреч фрагменты ваших данных отправляются поставщикам языковых моделей через OpenRouter и только для выполнения вашего запроса. Перед отправкой персональные данные обезличиваются <span class="legal-todo">[после подключения сервиса обезличивания]</span>. Распознавание речи выполняется сервисом Obuchat.</p>
+
+      <h2>4. Кому мы передаём данные</h2>
+      <ul>
+        <li>Сервисам, которые вы подключили сами, — чтобы выполнить ваши действия.</li>
+        <li>Поставщикам инфраструктуры (хостинг в России — Beget; отчёты об ошибках — Sentry, без текстов пользователей) по договорам о конфиденциальности.</li>
+        <li>Участникам вашей организации и людям, с которыми вы сами поделились заметкой или встречей.</li>
+      </ul>
+      <p>Мы не продаём персональные данные.</p>
+
+      <h2>5. Хранение и удаление</h2>
+      <p>Данные хранятся на серверах в России и в резервных копиях до 30 дней. Вы можете удалить заметки и отключить интеграции в приложении, а также запросить полное удаление аккаунта по адресу <span class="legal-todo">privacy@orbita.me</span> — мы удалим данные в течение 30 дней.</p>
+
+      <h2>6. Ваши права</h2>
+      <p>Вы можете получить сведения об обработке ваших данных, потребовать их уточнения, блокирования или удаления и отозвать согласие, написав на <span class="legal-todo">privacy@orbita.me</span>.</p>
+    </section>
+
+    <hr class="legal-sep" />
+
+    <section id="en" lang="en">
+      <h1>Orbita Privacy Policy</h1>
+      <p>Effective date: <span class="legal-todo">[date]</span>. Orbita is an AI assistant for meetings, tasks and notes: a web app at orbita.me and a Telegram mini app and bot (the “Leo” assistant).</p>
+      <p>Data controller: <span class="legal-todo">[legal name, registration number, address]</span>. Contact: <span class="legal-todo">privacy@orbita.me</span>.</p>
+
+      <h2>1. Information we process</h2>
+      <ul>
+        <li>Telegram profile (user ID, username, display name) and email — to sign you in and run the service.</li>
+        <li>Your notes, messages to Leo, tasks, reminders, files and meeting recordings you upload or create.</li>
+        <li>Data from services you connect (Google Calendar and Google Tasks, Zoom, Yandex Disk, Telemost, Bitrix24, email) — only as needed for the features you use.</li>
+        <li>Technical logs: request times, errors and AI usage — for reliability, security and credit accounting.</li>
+      </ul>
+
+      <h2>2. Google user data</h2>
+      <p>If you connect your Google account, Orbita accesses:</p>
+      <ul>
+        <li><b>Google Calendar</b> (<code>calendar</code>) — to show your schedule, prepare meeting briefs, find free time, create, move and cancel events at your request, and send invitations to attendees you choose;</li>
+        <li><b>Google Tasks</b> (<code>tasks</code>) — to keep Orbita tasks in sync with your Google Tasks lists when you enable sync.</li>
+      </ul>
+      <p>Orbita’s use and transfer of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements. In particular, we:</p>
+      <ul>
+        <li>use Google user data only to provide or improve user-facing features that you requested;</li>
+        <li>do not sell Google user data or transfer it for advertising, credit-worthiness or to data brokers;</li>
+        <li>do not use Google user data to train generalized AI or machine-learning models;</li>
+        <li>do not allow humans to read Google user data unless you give explicit consent (e.g. a support request), it is needed for security, or required by law.</li>
+      </ul>
+      <p>You can revoke access in Orbita (Profile → Integrations → Disconnect Google) or at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. Access tokens are deleted when you disconnect.</p>
+
+      <h2>3. AI processing</h2>
+      <p>To answer your questions and summarize meetings, parts of your data are sent to large-language-model providers via OpenRouter, solely to fulfil your request. Personal data is anonymized before sending <span class="legal-todo">[once the anonymization service is live]</span>. Speech recognition is performed by Obuchat.</p>
+
+      <h2>4. Sharing</h2>
+      <ul>
+        <li>Services you connect yourself — to perform the actions you request.</li>
+        <li>Infrastructure providers (hosting in Russia — Beget; error reports — Sentry, without user content) under confidentiality agreements.</li>
+        <li>Members of your organization and people you explicitly share a note or meeting with.</li>
+      </ul>
+      <p>We do not sell personal information.</p>
+
+      <h2>5. Retention and deletion</h2>
+      <p>Data is stored on servers in Russia and kept in backups for up to 30 days. You can delete notes and disconnect integrations in the app, or request full account deletion at <span class="legal-todo">privacy@orbita.me</span>; we delete your data within 30 days.</p>
+
+      <h2>6. Your rights</h2>
+      <p>You may request information about the processing of your data, ask us to correct, block or delete it, and withdraw consent by writing to <span class="legal-todo">privacy@orbita.me</span>.</p>
+    </section>
+  </main>
+</body>
+</html>

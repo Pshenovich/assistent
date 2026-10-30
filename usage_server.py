@@ -16551,6 +16551,17 @@ async def landing_index_route() -> FileResponse:
     return FileResponse(_landing_page_path, media_type="text/html")
 
 
+# Короткие адреса политики и условий — их указываем в Google (проверка OAuth) и на лендинге.
+@app.get("/privacy", include_in_schema=False)
+async def privacy_route() -> RedirectResponse:
+    return RedirectResponse("/webapp/legal/orbita-privacy.html", status_code=301)
+
+
+@app.get("/terms", include_in_schema=False)
+async def terms_route() -> RedirectResponse:
+    return RedirectResponse("/webapp/legal/orbita-terms.html", status_code=301)
+
+
 # Новый лендинг Orbita. Короткий кэш: страницу часто правим, а ассеты у неё встроены.
 @app.get("/orbita", include_in_schema=False)
 @app.get("/orbita/", include_in_schema=False)
