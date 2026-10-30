@@ -30,6 +30,7 @@ from assistant.bot.proactive_brief_job import register_proactive_brief_jobs
 from assistant.bot.chat_alert_job import register_chat_alert_handlers, register_chat_alert_jobs
 from assistant.bot.digest_auto_job import register_digest_auto_jobs
 from assistant.bot.market_digest_job import register_market_digest_jobs
+from assistant.bot.gcal_push_job import register_gcal_push_jobs
 from assistant.bot.heartbeat_job import register_heartbeat_jobs
 from assistant.bot.spend_alert_job import register_spend_alert_jobs
 
@@ -89,6 +90,7 @@ def register_background_jobs(app: Application) -> None:
     register_market_digest_jobs(app)
     register_chat_alert_jobs(app)
     register_spend_alert_jobs(app)
+    register_gcal_push_jobs(app)
 
 
 def build_application() -> Application:

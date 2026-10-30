@@ -700,7 +700,12 @@ def collect_pending_incoming_invites(user_id: int) -> list[dict[str, Any]]:
     now = datetime.now(tz)
     end = now + timedelta(days=incoming_invite_horizon_days())
     pending: list[dict[str, Any]] = []
-    for norm in cal_sources.list_events_in_window(int(user_id), now, end):
+    from assistant.services import calendar_push
+
+    events = calendar_push.cached_events(int(user_id), now, end)  # подписка на изменения — без запроса к Google
+    if events is None:
+        events = cal_sources.list_events_in_window(int(user_id), now, end)
+    for norm in events:
         raw = norm.get("raw") if isinstance(norm.get("raw"), dict) else {}
         if not event_is_invitation(raw) or not event_needs_rsvp(raw):
             continue

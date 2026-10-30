@@ -50,6 +50,11 @@ def fetch_upcoming_timed_events(user_id: int, *, horizon_min: int = 25) -> list[
     tz = _tz_for(user_id)
     now = datetime.now(tz)
     end = now + timedelta(minutes=horizon_min)
+    from assistant.services import calendar_push
+
+    cached = calendar_push.cached_events(user_id, now, end)  # подписка на изменения — без запроса к Google
+    if cached is not None:
+        return cached
     return cal_sources.list_events_in_window(user_id, now, end)
 
 

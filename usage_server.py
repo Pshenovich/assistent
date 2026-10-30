@@ -728,6 +728,16 @@ async def vexa_webhook_endpoint(request: Request) -> JSONResponse:
     return await _vexa_webhook_dispatch(request)
 
 
+@app.post("/webhook/google-calendar")
+@app.post("/webhook/google-calendar/")
+async def google_calendar_webhook_endpoint(request: Request) -> Response:
+    """Google Календарь: «в календаре что-то изменилось» (без тела, всё в X-Goog-*)."""
+    from assistant.services import calendar_push
+
+    status = await run_in_threadpool(calendar_push.handle_notification, dict(request.headers))
+    return Response(status_code=status)
+
+
 def _apple_reminders_page_html(
     *,
     page_title: str,
