@@ -43,7 +43,7 @@ ROOT = Path(os.environ.get("ASSISTANT_ROOT") or Path(__file__).resolve().parent.
 sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)
 
-OUT = ROOT / "data" / "eval" / "ask"
+OUT = ROOT / "data" / "eval" / "ask" / os.environ.get("EVAL_ASK_SET", "")  # EVAL_ASK_SET=cal — отдельный набор
 CASES = OUT / "cases.jsonl"
 RUNS = OUT / "runs.jsonl"
 JUDGE = OUT / "judge.jsonl"
@@ -276,6 +276,11 @@ def cmd_export(a: argparse.Namespace) -> None:
             per_item += 1
             if per_item >= a.per_item:
                 break
+    if a.only_calendar:
+        from assistant.services import gpt_calendar_tools as g
+
+        cases = [c for c in cases if c["orig_actions"] or g.looks_like_calendar_question(c["question"])
+                 or _TOOLISH_RE.search(c["question"])]
     cases.sort(key=lambda c: c["asked_at"], reverse=True)
     cases = cases[: a.limit]
     OUT.mkdir(parents=True, exist_ok=True)
@@ -660,6 +665,8 @@ def cmd_run(a: argparse.Namespace) -> None:
                 jobs.append((c, arm, arm[5:], False))
             elif arm.startswith("auto2:") and route_auto2(c)[0] == "cheap":
                 jobs.append((c, arm, arm[6:], False))
+            elif arm.startswith("m:"):  # та же полная подсказка, другая модель, на всех вопросах набора
+                jobs.append((c, arm, arm[2:], False))
             elif arm == "trimc" and c["kind"] == "local" and c.get("orig_model") and tg_leo_model_allowed(c["orig_model"]):
                 jobs.append((c, arm, c["orig_model"], "canvas"))
             elif arm == "probe" and c["id"] in probe_ids:
@@ -991,6 +998,7 @@ def main() -> None:
     e.add_argument("--limit", type=int, default=50)
     e.add_argument("--days", type=int, default=60)
     e.add_argument("--per-item", type=int, default=5)
+    e.add_argument("--only-calendar", action="store_true", help="только вопросы про встречи/задачи/напоминания")
     r = sub.add_parser("run")
     r.add_argument("--uid", default="106278723")
     r.add_argument("--arms", default="auto,probe,trim")

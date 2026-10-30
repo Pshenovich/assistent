@@ -244,6 +244,17 @@ def load_kit_css() -> str:
     return _KIT_CSS_CACHE
 
 
+_CANVAS_ASK_RE = re.compile(
+    r"(презентац|слайд|\bдек\b|питч|канвас|canvas|deck|slides?\b|pitch)",
+    re.IGNORECASE,
+)
+
+
+def looks_like_canvas_request(text: str) -> bool:
+    """Просьба про презентацию — только тогда в подсказку идёт каталог шаблонов (~15 тыс. знаков)."""
+    return bool(_CANVAS_ASK_RE.search(str(text or "")))
+
+
 def canvas_system_addon() -> str:
     schema = canvas_templates.schema_prompt()
     return f"""

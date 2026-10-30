@@ -9228,13 +9228,21 @@ async def miniapp_gpt_chat(
         open_canvas_sheet_id = str(body.canvas_sheet_id or "").strip()
         canvas_sel_dumps = [s.model_dump() for s in (body.canvas_selections or [])]
         if canvas_enabled:
+            from assistant.lib import board_ai as board_ai_lib
             from assistant.lib import web_canvas as web_canvas_lib
 
-            system_text = (
-                (system_text.rstrip() + "\n\n" + web_canvas_lib.canvas_system_addon()).strip()
-                if system_text
-                else web_canvas_lib.canvas_system_addon()
-            )
+            # Инструкции презентаций и доски — только по просьбе или при открытом листе:
+            # иначе ~18 тыс. знаков уходили с каждым вопросом в заметке (eval_ask: качество то же).
+            if (
+                open_canvas_sheet_id
+                or canvas_sel_dumps
+                or web_canvas_lib.looks_like_canvas_request(q)
+            ):
+                system_text = (
+                    (system_text.rstrip() + "\n\n" + web_canvas_lib.canvas_system_addon()).strip()
+                    if system_text
+                    else web_canvas_lib.canvas_system_addon()
+                )
             ctx_sheet_id = open_canvas_sheet_id or next(
                 iter(web_canvas_lib.selection_sheet_ids(canvas_sel_dumps)), ""
             )
@@ -9255,10 +9263,9 @@ async def miniapp_gpt_chat(
             sel_block = web_canvas_lib.selections_prompt_block(canvas_sel_dumps)
             if sel_block:
                 prompt = (prompt.rstrip() + "\n\n" + sel_block).strip()
-            from assistant.lib import board_ai as board_ai_lib
-
-            system_text = (system_text.rstrip() + "\n\n" + board_ai_lib.system_addon()).strip()
             open_board_id = str(body.board_sheet_id or "").strip()
+            if open_board_id or board_ai_lib.looks_like_board_request(q):
+                system_text = (system_text.rstrip() + "\n\n" + board_ai_lib.system_addon()).strip()
             if open_board_id.isdigit():
                 try:
                     from assistant.stores import note_sheets as note_sheets_store
