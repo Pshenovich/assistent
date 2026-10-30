@@ -7003,8 +7003,12 @@ def _org_credits_detail(org_id: int, members: list[dict[str, Any]], *, manage: b
     from assistant.integrations.openrouter_client import tg_leo_models
 
     seen: dict[str, str] = {}
+    from assistant.nlu.auto_model import is_auto
+
     for m in [*models, *tg_leo_models()]:
         mid = str(m.get("id") or "")
+        if is_auto(mid):
+            continue  # «Авто» доступен всегда и сам выбирает только из разрешённых
         if mid and mid not in seen:
             seen[mid] = str(m.get("name") or m.get("label") or mid)
     out["credits"]["members"] = ai
@@ -9293,6 +9297,7 @@ async def miniapp_gpt_chat(
         call_model, auto_hint = auto_model.resolve(
             run_model,
             q,
+            user_id=uid,
             in_note=kind == "local",
             history=hist,
             quote=(body.quote or "").strip(),

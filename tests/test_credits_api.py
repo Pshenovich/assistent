@@ -117,3 +117,26 @@ def test_without_enforce_only_accounting(env, monkeypatch):
     g = billing_store.chat_gate(uid, "openai/gpt-5.5")
     assert g["can_answer"] and g["message"] == ""
     assert credits_store.balance("user", uid) == pytest.approx(-500)  # учёт идёт
+
+
+def test_auto_respects_org_restrictions(env, monkeypatch):
+    from assistant.nlu import auto_model
+
+    oid, member = env["org"], env["member"]
+    orgs_store.set_current_org(member, oid)
+    cheap, strong = auto_model.cheap_model(), auto_model.strong_model()
+    # без ограничений — как раньше
+    assert auto_model.resolve("leo/auto", "что такое ROI?", user_id=member)[0] == cheap
+    # дешёвая закрыта — простой вопрос идёт сильной
+    credits_store.set_member_settings(oid, member, allowed_models=[strong])
+    assert auto_model.resolve("leo/auto", "что такое ROI?", user_id=member)[0] == strong
+    # обе закрыты — первая разрешённая
+    credits_store.set_member_settings(oid, member, allowed_models=["openai/gpt-4.1"])
+    assert auto_model.resolve("leo/auto", "поставь встречу завтра в 10", user_id=member)[0] == "openai/gpt-4.1"
+    # «Авто» не помечается закрытым и проверка его не подменяет
+    marked = billing_store.mark_locked(member, [{"id": "leo/auto"}, {"id": strong}])
+    assert not marked[0].get("locked") and marked[1].get("locked")
+    assert billing_store.chat_gate(member, "leo/auto")["model"] == "leo/auto"
+    # в галочках руководителя «Авто» нет
+    r = env["c"].get(f"/api/miniapp/orgs/{oid}", headers=_h(env["owner"]))
+    assert "leo/auto" not in [m["id"] for m in r.json()["credits"]["models"]]

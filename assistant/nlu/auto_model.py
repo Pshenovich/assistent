@@ -102,11 +102,34 @@ def route(
     return "cheap", "простой вопрос"
 
 
-def resolve(model: str | None, question: str, **kw: Any) -> tuple[str, str]:
-    """Выбранная модель → модель для запроса и добавка к системной подсказке («Авто» → дешёвая/сильная)."""
+def _pick_allowed(kind: str, allowed: list[str] | None) -> tuple[str, str]:
+    """Модель для вида вопроса среди разрешённых руководителем организации (None — без ограничений)."""
+    want, other = (cheap_model(), strong_model()) if kind == "cheap" else (strong_model(), cheap_model())
+    if allowed is None or want in allowed:
+        return want, kind
+    if other in allowed:  # нужная закрыта — другая из пары
+        return other, ("strong" if kind == "cheap" else "cheap")
+    return (allowed[0], "strong") if allowed else (want, kind)
+
+
+def resolve(
+    model: str | None, question: str, *, user_id: int | str | None = None, **kw: Any
+) -> tuple[str, str]:
+    """Выбранная модель → модель для запроса и добавка к системной подсказке («Авто» → дешёвая/сильная).
+
+    user_id — чтобы «Авто» выбирал только из моделей, открытых руководителем организации.
+    """
     if not is_auto(model):
         return str(model or ""), ""
     kind, why = route(question, **kw)
-    picked = cheap_model() if kind == "cheap" else strong_model()
+    allowed = None
+    if user_id is not None:
+        try:
+            from assistant.lib import billing_store
+
+            allowed = billing_store.allowed_models_for(user_id)
+        except Exception as e:
+            print(f"[auto_model] allowed models failed uid={user_id} err={e!r}")
+    picked, kind = _pick_allowed(kind, allowed)
     print(f"[auto_model] {kind} ({why}) → {picked}")
     return picked, (CHEAP_HINT if kind == "cheap" else "")

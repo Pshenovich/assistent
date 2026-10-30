@@ -259,7 +259,7 @@ def run_turn(
     system_text = append_system(gpt_system_text(agent), channel_hint)
     # «Авто»: простой общий вопрос — дешёвая модель, остальное — сильная.
     model, auto_hint = auto_model.resolve(
-        model, text, history=history, quote=context, has_attachments=bool(images)
+        model, text, user_id=uid, history=history, quote=context, has_attachments=bool(images)
     )
     system_text = append_system(system_text, auto_hint)
     gcal_ctx = make_calendar_context(

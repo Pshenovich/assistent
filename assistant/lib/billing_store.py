@@ -118,10 +118,12 @@ def mark_locked(telegram_user_id: int | str, models: list[dict[str, Any]]) -> li
     allowed = allowed_models_for(telegram_user_id)
     if allowed is None:
         return models
+    from assistant.nlu.auto_model import is_auto
+
     out = []
     for m in models:
         mid = str((m or {}).get("id") or "")
-        if mid and mid not in allowed:
+        if mid and mid not in allowed and not is_auto(mid):  # «Авто» сам выбирает из разрешённых
             out.append({**m, "locked": True, "locked_reason": LOCKED_LABEL})
         else:
             out.append(m)
@@ -137,7 +139,9 @@ def chat_gate(telegram_user_id: int | str, model: str | None) -> dict[str, Any]:
     org_id = org_id_for_user(telegram_user_id)
     st = credits_store.status(telegram_user_id, org_id=org_id)
     run_model = model
-    if org_id is not None and model:
+    from assistant.nlu.auto_model import is_auto
+
+    if org_id is not None and model and not is_auto(model):  # «Авто» учтёт ограничения сам (auto_model.resolve)
         allowed = credits_store.member_settings(org_id, telegram_user_id)["allowed_models"]
         if allowed is not None and model not in allowed:
             run_model = allowed[0] if allowed else model
