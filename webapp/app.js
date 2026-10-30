@@ -9726,7 +9726,9 @@
     (tgLeoState.models || []).forEach(function (m) {
       var opt = document.createElement("option");
       opt.value = m.id;
-      opt.textContent = (m.label || m.id) + (m.locked ? " — " + (m.locked_reason || "Закрыто руководителем организации") : "");
+      opt.textContent =
+        (m.label || m.id) +
+        (m.locked ? " — " + (m.locked_reason || "Закрыто руководителем организации") : m.note ? " — " + m.note : "");
       if (m.locked) opt.disabled = true;
       if (m.id === tgLeoState.model) opt.selected = true;
       sel.appendChild(opt);
@@ -37252,7 +37254,8 @@
   }
 
   var GPT_MODEL_LS = "leo_gpt_model";
-  var GPT_MODEL_DEFAULT = "openai/gpt-4.1";
+  // «Авто»: сервер сам выбирает модель под вопрос (assistant/nlu/auto_model.py).
+  var GPT_MODEL_DEFAULT = "leo/auto";
   var RESEARCH_MODEL_LS = "leo_research_model";
   var PAIE_MODEL_LS = "leo_paie_model";
   var PAIE_MODEL_DEFAULT = "google/gemini-2.5-flash";
@@ -38430,6 +38433,12 @@
       btn.setAttribute("data-model-id", m.id);
       btn.textContent = (m.name || m.id) + (m.reasoning ? " · рассуждение" : "");
       btn.title = m.id;
+      if (m.note && !m.locked) {
+        var note = document.createElement("span");
+        note.className = "note-paie-menu-item-sub";
+        note.textContent = m.note;
+        btn.appendChild(note);
+      }
       if (m.locked) {
         // Модель закрыл руководитель организации: видна, но не выбирается.
         btn.disabled = true;
@@ -38571,6 +38580,7 @@
       }
     } catch (_) {
       gptModelsState.models = [
+        { id: "leo/auto", name: "Авто", note: "Сам выбирает модель под вопрос — помогает экономить" },
         { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol" },
         { id: "openai/gpt-5.5", name: "GPT-5.5" },
         { id: "openai/gpt-5.4", name: "GPT-5.4" },
@@ -38812,6 +38822,7 @@
     models = (models || gptModelsState.models || []).slice();
     if (!models.length) {
       models = [
+        { id: "leo/auto", name: "Авто", note: "Сам выбирает модель под вопрос — помогает экономить" },
         { id: "openai/gpt-4.1", name: "GPT-4.1" },
         { id: "openai/gpt-4o", name: "GPT-4o" },
         { id: "openai/gpt-4o-mini", name: "GPT-4o mini" },
@@ -38824,7 +38835,7 @@
     models.forEach(function (m) {
       var opt = document.createElement("option");
       opt.value = m.id;
-      opt.textContent = (m.name || m.id) + (m.reasoning ? " · рассуждение" : "");
+      opt.textContent = (m.name || m.id) + (m.reasoning ? " · рассуждение" : "") + (m.note ? " — " + m.note : "");
       if (m.id === selected) opt.selected = true;
       sel.appendChild(opt);
     });

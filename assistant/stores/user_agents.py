@@ -131,7 +131,7 @@ def builtin_model(kind: str) -> str:
             os.getenv("OPENROUTER_MODEL_ASK", "").strip()
             or os.getenv("OPENROUTER_MODEL_CHAT", "").strip()
             or os.getenv("OPENROUTER_MODEL", "").strip()
-            or "openai/gpt-4.1"
+            or "leo/auto"  # «Авто» по умолчанию (assistant.nlu.auto_model)
         )
     if kind == "research":
         return os.getenv("OPENROUTER_MODEL", "").strip() or "openai/gpt-4o-mini"
@@ -160,7 +160,9 @@ def builtin_max_rounds() -> int:
 def allowed_model_ids() -> set[str]:
     from assistant.integrations.openrouter_client import GPT_PICKER_MODELS, PAIE_REASONING_MODELS
 
-    return {mid for mid, _name in GPT_PICKER_MODELS} | {mid for mid, _name in PAIE_REASONING_MODELS}
+    from assistant.nlu.auto_model import AUTO_MODEL_ID
+
+    return {AUTO_MODEL_ID} | {mid for mid, _name in GPT_PICKER_MODELS} | {mid for mid, _name in PAIE_REASONING_MODELS}
 
 
 def paie_allowed_model_ids() -> set[str]:

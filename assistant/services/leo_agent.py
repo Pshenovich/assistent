@@ -253,8 +253,15 @@ def run_turn(
     )
     from assistant.stores import user_agents
 
+    from assistant.nlu import auto_model
+
     agent = user_agents.runtime_config(uid, "gpt")
     system_text = append_system(gpt_system_text(agent), channel_hint)
+    # «Авто»: простой общий вопрос — дешёвая модель, остальное — сильная.
+    model, auto_hint = auto_model.resolve(
+        model, text, history=history, quote=context, has_attachments=bool(images)
+    )
+    system_text = append_system(system_text, auto_hint)
     gcal_ctx = make_calendar_context(
         uid, telegram_username=telegram_username, display_name=display_name
     )

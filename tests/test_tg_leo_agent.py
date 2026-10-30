@@ -98,7 +98,7 @@ def test_tg_leo_model_default_and_validation(tmp_path, monkeypatch):
     monkeypatch.setenv("USER_PREFS_DIR", str(tmp_path))
     from assistant.stores import user_prefs
 
-    assert user_prefs.get_tg_leo_model(5) == "openai/gpt-5.5"
+    assert user_prefs.get_tg_leo_model(5) == "leo/auto"
     user_prefs.set_tg_leo_model(5, "openai/gpt-4.1")
     assert user_prefs.get_tg_leo_model(5) == "openai/gpt-4.1"
     with pytest.raises(ValueError):
@@ -107,7 +107,7 @@ def test_tg_leo_model_default_and_validation(tmp_path, monkeypatch):
     prefs = user_prefs.load_prefs(5)
     prefs[user_prefs.TG_LEO_MODEL_KEY] = "openai/removed"
     user_prefs.save_prefs(5, prefs)
-    assert user_prefs.get_tg_leo_model(5) == "openai/gpt-5.5"
+    assert user_prefs.get_tg_leo_model(5) == "leo/auto"
 
 
 def test_goes_to_agent():

@@ -204,9 +204,19 @@ PAIE_REASONING_MODELS: tuple[tuple[str, str], ...] = (
 )
 
 
+# Модели, которые «Авто» выбирает сам, — только для подписи ответа, в списке выбора их нет.
+AUTO_INTERNAL_LABELS: dict[str, str] = {"anthropic/claude-haiku-5.5": "Claude Haiku 5.5"}
+
+
+def _auto_row(label_key: str) -> dict[str, Any]:
+    from assistant.nlu.auto_model import AUTO_LABEL, AUTO_MODEL_ID, AUTO_NOTE
+
+    return {"id": AUTO_MODEL_ID, label_key: AUTO_LABEL, "note": AUTO_NOTE}
+
+
 def tg_leo_models() -> list[dict[str, str]]:
-    """Модели, которые можно выбрать для Лео в Telegram (Профиль → «Лео в Telegram»)."""
-    return [{"id": mid, "label": label} for mid, label in (*GPT_PICKER_MODELS, *PAIE_REASONING_MODELS)]
+    """Модели, которые можно выбрать для Лео в Telegram (Профиль → «Лео в Telegram»). «Авто» — первым."""
+    return [_auto_row("label"), *({"id": mid, "label": label} for mid, label in (*GPT_PICKER_MODELS, *PAIE_REASONING_MODELS))]
 
 
 def tg_leo_model_allowed(model_id: str | None) -> bool:
@@ -219,7 +229,11 @@ def gpt_display_label(model_id: str | None) -> str:
     mid = sanitize_openrouter_model_id(model_id) or ""
     if not mid:
         return "GPT"
-    for pid, pname in (*GPT_PICKER_MODELS, *PAIE_REASONING_MODELS):
+    from assistant.nlu.auto_model import AUTO_LABEL, is_auto
+
+    if is_auto(mid):
+        return AUTO_LABEL
+    for pid, pname in (*GPT_PICKER_MODELS, *PAIE_REASONING_MODELS, *AUTO_INTERNAL_LABELS.items()):
         if pid == mid:
             return pname
     short = mid.split("/")[-1].strip()
@@ -752,6 +766,11 @@ def openrouter_chat_completion(
 
     Прокси OpenRouter по очереди (основной, запасные), при сбое — CometAPI.
     """
+    from assistant.nlu.auto_model import is_auto, strong_model
+
+    if is_auto(payload.get("model")):
+        # «Авто» выбирается до запроса (auto_model.resolve); сюда дошёл без выбора — сильная модель.
+        payload = {**payload, "model": strong_model()}
     with _llm_slot(operation):
         return _chat_completion(payload, operation=operation, timeout=timeout)
 
@@ -897,11 +916,11 @@ def build_gpt_picker_models(
         if any(row["id"] == mid for row in models):
             continue
         models.append({"id": mid, "name": name, "reasoning": True})
+    from assistant.nlu.auto_model import AUTO_MODEL_ID
+
     ask_id = sanitize_openrouter_model_id(ask)
-    preferred = ask_id or "openai/gpt-4.1"
-    default = models[0]["id"]
-    if any(row["id"] == preferred for row in models):
-        default = preferred
+    preferred = ask_id or AUTO_MODEL_ID
+    default = preferred if any(row["id"] == preferred for row in models) or preferred == AUTO_MODEL_ID else models[0]["id"]
     models.sort(
         key=lambda row: (
             0 if row["id"] == default else 1,
@@ -909,7 +928,8 @@ def build_gpt_picker_models(
             str(row["name"]).lower(),
         )
     )
-    return {"models": models, "default": default}
+    # «Авто» — всегда первым, с подписью про экономию.
+    return {"models": [{**_auto_row("name"), "reasoning": False}, *models], "default": default}
 
 
 def paie_static_model_ids() -> set[str]:

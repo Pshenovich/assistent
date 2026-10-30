@@ -85,3 +85,44 @@ def test_looks_like_canvas_request():
     assert web_canvas.looks_like_canvas_request("Сделай слайды для инвесторов")
     assert web_canvas.looks_like_canvas_request("нужен питч-дек")
     assert not web_canvas.looks_like_canvas_request("какая погода в Москве?")
+
+
+def test_auto_model_picks_cheap_for_simple_and_strong_in_note(monkeypatch):
+    """«Авто» в /gpt/chat: простой вопрос в чате — дешёвая модель с подсказкой, вопрос в заметке — сильная."""
+    from assistant.nlu import auto_model
+    from assistant.stores import chat_threads
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+    monkeypatch.setenv("CREDITS_ENFORCE", "0")
+    monkeypatch.delenv("MINIAPP_DEV_MODE", raising=False)
+    monkeypatch.delenv("OPENROUTER_MODEL_AUTO_CHEAP", raising=False)
+    monkeypatch.delenv("OPENROUTER_MODEL_AUTO_STRONG", raising=False)
+    monkeypatch.setattr(access_gate, "miniapp_access_message", lambda **_: (True, ""))
+    seen: list[tuple[str, str]] = []
+
+    def fake_answer(question, context="", **kw):
+        seen.append((kw.get("model"), str(kw.get("system") or "")))
+        return {"answer": "Ок", "images": [], "model": kw.get("model")}
+
+    monkeypatch.setattr(miniapp_shims, "gpt_openrouter_answer_with_context", fake_answer)
+    uid = next(_ids)
+    thread = chat_threads.create_thread(uid, title="Ассистент")
+    note = notes_store.create_note(uid, "План", "текст")
+    client = TestClient(usage_server.app, raise_server_exceptions=False)
+
+    def post(kind: str, iid: str) -> dict:
+        r = client.post(
+            "/api/miniapp/gpt/chat",
+            headers=_headers(uid),
+            json={"message": "что такое NPS?", "model": auto_model.AUTO_MODEL_ID, "item_kind": kind, "item_id": iid},
+        )
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    out = post("chat", str(thread["id"]))
+    assert seen[-1][0] == auto_model.cheap_model()
+    assert auto_model.CHEAP_HINT in seen[-1][1]
+    assert out["model_label"] == "Авто · Claude Haiku 5.5"
+    post("local", str(note["id"]))
+    assert seen[-1][0] == auto_model.strong_model()
+    assert auto_model.CHEAP_HINT not in seen[-1][1]

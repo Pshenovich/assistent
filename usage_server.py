@@ -9287,7 +9287,19 @@ async def miniapp_gpt_chat(
 
             return "" if board_ai_lib.looks_like_board_request(text) else text
 
-        calendar_tools_on = not _emits_images(run_model or "")
+        from assistant.nlu import auto_model
+
+        # «Авто»: модель под вопрос (простой общий — дешёвая, остальное — сильная).
+        call_model, auto_hint = auto_model.resolve(
+            run_model,
+            q,
+            in_note=kind == "local",
+            history=hist,
+            quote=(body.quote or "").strip(),
+            has_attachments=bool(images or files or link_notes),
+        )
+        system_text = leo_agent.append_system(system_text, auto_hint)
+        calendar_tools_on = not _emits_images(call_model or "")
         if calendar_tools_on:
             system_text = leo_agent.append_system(system_text, leo_agent.calendar_addon(uid))
         meeting_line = _note_meeting_prompt_line(uid, kind, iid)
@@ -9303,7 +9315,7 @@ async def miniapp_gpt_chat(
                 prompt,
                 (body.context or "").strip(),
                 history=hist or None,
-                model=run_model,
+                model=call_model,
                 note_title=(body.note_title or "").strip(),
                 note_text=note_text_for_model,
                 quote=(body.quote or "").strip(),
@@ -9471,6 +9483,9 @@ async def miniapp_gpt_chat(
     from assistant.integrations.openrouter_client import gpt_display_label
 
     files = out.get("files") if isinstance(out.get("files"), list) else []
+    from assistant.nlu.auto_model import is_auto
+
+    auto_model_chosen = is_auto(run_model)
     used_model = str(out.get("model") or run_model or "").strip()
     canvas = out.get("canvas") if isinstance(out.get("canvas"), list) else []
     await leo_agent.notify_invitees(
@@ -9493,7 +9508,9 @@ async def miniapp_gpt_chat(
         "canvas_error": str(out.get("canvas_error") or "") or None,
         "note_edits": out.get("note_edits") if isinstance(out.get("note_edits"), dict) else None,
         "model": used_model,
-        "model_label": gpt_display_label(used_model),
+        "model_label": (
+            f"Авто · {gpt_display_label(used_model)}" if auto_model_chosen else gpt_display_label(used_model)
+        ),
     }
 
 

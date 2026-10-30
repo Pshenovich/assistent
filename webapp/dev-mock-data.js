@@ -684,8 +684,9 @@
       { id: 902, name: "Продажи", members: [{ email: "d.morozov@obuchat.me", name: "Дмитрий Морозов" }], shares: [] },
     ],
     tgLeo: {
-      model: "claude-sonnet",
+      model: "leo/auto",
       models: [
+        { id: "leo/auto", label: "Авто", note: "Сам выбирает модель под вопрос — помогает экономить" },
         { id: "claude-sonnet", label: "Claude Sonnet" },
         { id: "claude-opus", label: "Claude Opus" },
         { id: "gpt-5", label: "GPT-5" },
@@ -1108,7 +1109,9 @@
     }
     if (basePath === "/gpt/models" && method === "GET") {
       return {
+        default: "leo/auto",
         models: [
+          { id: "leo/auto", name: "Авто", note: "Сам выбирает модель под вопрос — помогает экономить" },
           { id: "anthropic/claude-sonnet", name: "Claude Sonnet" },
           { id: "anthropic/claude-opus", name: "Claude Opus", reasoning: true },
           { id: "anthropic/claude-haiku", name: "Claude Haiku" },

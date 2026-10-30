@@ -63,13 +63,17 @@ class OpenRouterModelsTests(unittest.TestCase):
     def test_gpt_picker_ignores_gemini_fallback_catalog(self) -> None:
         out = build_gpt_picker_models({"google/gemini-2.5-flash"})
         ids = [m["id"] for m in out["models"]]
-        self.assertEqual(out["default"], "openai/gpt-4.1")
+        self.assertEqual(out["default"], "leo/auto")
+        self.assertEqual(ids[0], "leo/auto")
         self.assertIn("openai/gpt-5.6-sol", ids)
         self.assertIn("openai/gpt-4o", ids)
         self.assertNotIn("google/gemini-2.5-flash", ids)
 
-    def test_gpt_picker_defaults_to_gpt_41_from_catalog(self) -> None:
+    def test_gpt_picker_defaults_to_auto(self) -> None:
         out = build_gpt_picker_models({"openai/gpt-5.4", "openai/gpt-4.1", "openai/gpt-4o"})
+        self.assertEqual(out["default"], "leo/auto")
+        # Модель из OPENROUTER_MODEL_ASK — по-прежнему по умолчанию.
+        out = build_gpt_picker_models({"openai/gpt-5.4", "openai/gpt-4.1"}, ask="openai/gpt-4.1")
         self.assertEqual(out["default"], "openai/gpt-4.1")
 
     def test_comet_payload_strips_pdf_file_parts(self) -> None:
