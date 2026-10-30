@@ -19,7 +19,7 @@ from assistant.lib import web_canvas
 from assistant.stores import notes as notes_store
 
 BOT_TOKEN = "123456:CANVAS-ADDON"
-_ids = itertools.count(970_000, 10)
+_ids = itertools.count(4_731_000, 10)
 CANVAS_MARK = "SLOT TEMPLATES"
 BOARD_MARK = "leo-board"
 
