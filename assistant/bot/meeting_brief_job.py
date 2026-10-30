@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes
 
 from assistant.bot.access_gate import is_user_allowed
 from assistant.bot.meeting_reminder_job import poll_interval_sec
+from assistant.lib import fanout
 from assistant.services import meeting_brief as mb
 from assistant.services import meeting_reminders as mr
 from assistant.stores import meeting_reminders_sent as sent_store
@@ -16,16 +17,16 @@ from assistant.stores import user_prefs
 
 
 async def meeting_brief_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
-    for user_id in await asyncio.to_thread(mr.iter_calendar_user_ids):
+    async def one(user_id) -> None:
         if not mb.briefs_enabled_for(user_id) or not is_user_allowed(user_id, None):
-            continue
+            return
         if not user_prefs.meeting_reminders_enabled(user_id):
-            continue
+            return
         try:
             due = await asyncio.to_thread(mb.events_due_for_brief, user_id)
         except Exception as e:
             print(f"[meeting_brief] user={user_id} fetch err={e!r}")
-            continue
+            return
         for ev in due:
             cal_id = str(ev.get("calendar_id") or "")
             ev_id = str(ev.get("event_id") or "")
@@ -44,6 +45,9 @@ async def meeting_brief_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
             except Exception as e:
                 print(f"[meeting_brief] send uid={user_id} ev={ev_id} err={e!r}")
 
+
+    users = await asyncio.to_thread(mr.iter_calendar_user_ids)
+    await fanout.for_each_user(users, one, label="meeting_brief")
 
 def register_meeting_brief_jobs(app) -> None:
     if app.job_queue is None:

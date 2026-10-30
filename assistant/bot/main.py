@@ -42,6 +42,16 @@ def build_application() -> Application:
     builder = builder.concurrent_updates(8)
 
     async def _post_init(application: Application) -> None:
+        # Фоновые задачи обходят людей пачкой (assistant/lib/fanout.py) и ходят в Google/ИИ
+        # через to_thread; стандартных потоков (ядра + 4) на это мало.
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+
+        try:
+            workers = max(8, int(os.getenv("BOT_THREADS", "32") or "32"))
+        except ValueError:
+            workers = 32
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=workers))
         url = webapp_entry_url()
         try:
             await application.bot.set_chat_menu_button(

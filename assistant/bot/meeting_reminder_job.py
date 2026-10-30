@@ -9,6 +9,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from assistant.bot.access_gate import is_user_allowed
+from assistant.lib import fanout
 from assistant.services import meeting_reminders as mr
 from assistant.stores import meeting_reminders_sent as sent_store
 from assistant.stores import user_prefs
@@ -32,16 +33,16 @@ async def meeting_reminder_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
     bot = context.bot
     mins = mr.reminder_minutes_before()
 
-    for user_id in await asyncio.to_thread(mr.iter_calendar_user_ids):
+    async def one(user_id) -> None:
         if not is_user_allowed(user_id, None):
-            continue
+            return
         if not user_prefs.meeting_reminders_enabled(user_id):
-            continue
+            return
         try:
             due = await asyncio.to_thread(mr.collect_due_reminders, user_id)
         except Exception as e:
             print(f"[meeting_reminder] user={user_id} fetch err={e!r}")
-            continue
+            return
         for ev in due:
             cal_id = str(ev.get("calendar_id") or "")
             ev_id = str(ev.get("event_id") or "")
@@ -79,6 +80,9 @@ async def meeting_reminder_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
             except Exception as e:
                 print(f"[meeting_reminder] send uid={user_id} ev={ev_id} err={e!r}")
+
+    users = await asyncio.to_thread(mr.iter_calendar_user_ids)
+    await fanout.for_each_user(users, one, label="meeting_reminder")
 
 
 def register_meeting_reminder_jobs(app) -> None:

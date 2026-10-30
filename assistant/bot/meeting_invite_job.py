@@ -9,6 +9,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from assistant.bot.access_gate import is_user_allowed
+from assistant.lib import fanout
 from assistant.services import meeting_invites as inv
 from assistant.services import meeting_reminders as mr
 from assistant.stores import meeting_invites_notified as notified
@@ -25,14 +26,15 @@ async def meeting_invite_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not inv.invites_enabled():
         return
     bot = context.bot
-    for user_id in await asyncio.to_thread(mr.iter_calendar_user_ids):
+
+    async def one(user_id) -> None:
         if not is_user_allowed(user_id, None):
-            continue
+            return
         try:
             pending = await asyncio.to_thread(inv.collect_pending_incoming_invites, user_id)
         except Exception as e:
             print(f"[meeting_invite] user={user_id} fetch err={e!r}")
-            continue
+            return
         for ev in pending:
             ev_id = str(ev.get("event_id") or "")
             if not ev_id or notified.was_notified(user_id, ev_id):
@@ -50,6 +52,9 @@ async def meeting_invite_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
                 print(f"[meeting_invite] incoming uid={user_id} ev={ev_id}")
             except Exception as e:
                 print(f"[meeting_invite] incoming uid={user_id} ev={ev_id} err={e!r}")
+
+    users = await asyncio.to_thread(mr.iter_calendar_user_ids)
+    await fanout.for_each_user(users, one, label="meeting_invite")
 
 
 def register_meeting_invite_jobs(app) -> None:
