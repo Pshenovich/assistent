@@ -5,6 +5,30 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# Выкатываем только закоммиченное и проверенное: скрипт увозит рабочий каталог
+# целиком, и незакоммиченные правки параллельных сессий уезжали на прод без проверки.
+# DEPLOY_ALLOW_DIRTY=1 / DEPLOY_SKIP_TESTS=1 — обход только на крайний случай.
+if [[ "${DEPLOY_ALLOW_DIRTY:-0}" != "1" ]] && git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  _dirty="$(git -C "$ROOT" status --porcelain --untracked-files=normal | grep -v ' \.claude/$' || true)"
+  if [[ -n "$_dirty" ]]; then
+    echo "Выкатка остановлена: в рабочем каталоге есть незакоммиченные изменения:" >&2
+    echo "$_dirty" | head -20 >&2
+    echo "Закоммитьте или уберите их (DEPLOY_ALLOW_DIRTY=1 — обход)." >&2
+    exit 1
+  fi
+fi
+if [[ "${DEPLOY_SKIP_TESTS:-0}" != "1" ]]; then
+  _py="$ROOT/.venv/bin/python"
+  [[ -x "$_py" ]] || _py="python3"
+  echo "==> Тесты перед выкаткой"
+  if ! "$_py" -m pytest "$ROOT/tests" -q -x -p no:cacheprovider >/tmp/leo-deploy-tests.log 2>&1; then
+    tail -30 /tmp/leo-deploy-tests.log >&2
+    echo "Выкатка остановлена: тесты не прошли (DEPLOY_SKIP_TESTS=1 — обход)." >&2
+    exit 1
+  fi
+  tail -1 /tmp/leo-deploy-tests.log
+fi
+
 ASSISTANT_ROOT="/opt/assistant"
 
 _env_get() {
