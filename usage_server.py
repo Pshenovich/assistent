@@ -2732,6 +2732,24 @@ class _MiniappGptChatBody(BaseModel):
     board_sheet_id: Optional[str] = None
     # Второй шаг после обработки больших данных по ссылке частями (assistant/services/bulk_links.py).
     bulk_job_id: Optional[str] = None
+    # Ответ в обсуждение сервер сохраняет сам: человек мог уйти из обсуждения или закрыть приложение.
+    save_reply: Optional["_MiniappGptSaveReply"] = None
+
+
+class _MiniappGptSaveReply(BaseModel):
+    quote: str = ""
+    prefix: str = ""
+    parent_id: Optional[int] = None
+    chat_id: Optional[int] = None
+    # «■ Стоп»: клиент шлёт этот токен в /gpt/chat/cancel — ответ тогда не сохраняется.
+    token: str = ""
+
+
+class _MiniappGptCancelBody(BaseModel):
+    token: str = ""
+
+
+_MiniappGptChatBody.model_rebuild()
 
 
 class _MiniappAgentCreate(BaseModel):
@@ -3559,6 +3577,157 @@ def _discussion_participants_system_hint(owner: str, kind: str, item_id: str) ->
     )
 
 
+_GPT_REPLY_CANCELLED: dict[str, float] = {}
+_GPT_REPLY_CANCEL_TTL = 30 * 60
+
+
+def _gpt_reply_cancel(uid: str, token: str) -> None:
+    now = time.time()
+    for k, ts in list(_GPT_REPLY_CANCELLED.items()):
+        if now - ts > _GPT_REPLY_CANCEL_TTL:
+            _GPT_REPLY_CANCELLED.pop(k, None)
+    if token:
+        _GPT_REPLY_CANCELLED[f"{uid}:{token[:80]}"] = now
+
+
+def _gpt_reply_cancelled(uid: str, token: str) -> bool:
+    return bool(token) and _GPT_REPLY_CANCELLED.pop(f"{uid}:{token[:80]}", None) is not None
+
+
+def _gpt_reply_comment_body(out: dict[str, Any], notice: str = "") -> str:
+    """Текст сообщения ИИ в обсуждении — так же, как его собирал клиент (ответ, пункты, метка календаря)."""
+    from assistant.stores import share_comments as share_comments_store
+
+    ans = str(out.get("answer") or "").strip()
+    if notice:
+        ans = f"_{notice}_\n\n{ans}" if ans else notice
+    bullets = [str(b) for b in (out.get("bullets") or []) if str(b or "").strip()]
+    if bullets:
+        ans += "\n\n" + "\n".join("• " + b for b in bullets)
+    files = [f for f in (out.get("files") or []) if isinstance(f, dict) and f.get("id")]
+    if not ans:
+        ans = "📎" if files else "—"
+    limit = share_comments_store.MAX_GPT_BODY_LEN
+    cal_ids = [str(a.get("id")) for a in (out.get("calendar_actions") or []) if isinstance(a, dict) and a.get("id")]
+    if cal_ids:
+        marker = "\n\n[[leo-cal:" + ",".join(cal_ids) + "]]"
+        return ans[: limit - len(marker) - 2].rstrip() + marker
+    if len(ans) > limit:
+        ans = ans[: limit - 1].rstrip() + "…"
+    return ans
+
+
+def _save_gpt_reply(
+    principal: _MiniappPrincipal,
+    *,
+    kind: str,
+    item_id: str,
+    agent_id: str,
+    model: str,
+    reply: "_MiniappGptSaveReply",
+    out: dict[str, Any],
+    notice: str = "",
+) -> dict[str, Any] | None:
+    """Сохранить ответ ИИ сообщением обсуждения (как POST …/comments с as_role=gpt|agent:…).
+
+    Работает в потоке до конца, даже если клиент уже отключился.
+    """
+    from assistant.stores import note_chats
+    from assistant.stores import share_comments as share_comments_store
+
+    uid = str(int(principal.telegram_user_id))
+    if _gpt_reply_cancelled(uid, reply.token):
+        print(f"[gpt_reply] cancelled kind={kind} item={item_id}")
+        return None
+    owner = _resolve_item_owner(uid, kind, item_id)
+    if not owner:
+        return None
+    if agent_id == "gpt":
+        from assistant.integrations.openrouter_client import gpt_display_label
+
+        author_name = gpt_display_label(model) or share_comments_store.GPT_AUTHOR_NAME
+        author_username = share_comments_store.GPT_AUTHOR_USERNAME
+        prefix = share_comments_store.GPT_PREFIX
+    else:
+        from assistant.stores import user_agents
+
+        agent = user_agents.get_agent(int(principal.telegram_user_id), agent_id)
+        if not agent:
+            return None
+        author_name = str(agent.get("title") or "Агент")
+        author_username = user_agents.AGENT_AUTHOR_USERNAME
+        prefix = user_agents.comment_prefix(agent["id"])
+    text = _gpt_reply_comment_body(out, notice)
+    try:
+        chat_id = _resolve_post_chat(owner, kind, item_id, uid, reply.chat_id, reply.parent_id)
+    except HTTPException:
+        chat_id = None
+    row = share_comments_store.add_comment(
+        owner,
+        kind,
+        item_id,
+        author_user_id=uid,
+        author_name=author_name,
+        author_username=author_username,
+        body=text,
+        quote=reply.quote,
+        prefix=prefix,
+        suffix="",
+        parent_id=reply.parent_id,
+        chat_id=chat_id,
+    )
+    file_ids = [int(f["id"]) for f in (out.get("files") or []) if isinstance(f, dict) and f.get("id")]
+    if file_ids:
+        from assistant.stores import comment_files
+
+        comment_files.link_to_comment(
+            file_ids,
+            comment_id=int(row["id"]),
+            owner_user_id=owner,
+            item_kind=kind,
+            item_id=item_id,
+            author_user_id=uid,
+        )
+        row = share_comments_store.get_comment(int(row["id"])) or row
+    res: dict[str, Any] = {"comment": _comment_api(row, viewer_uid=uid)}
+    if kind == "chat":
+        from assistant.stores import chat_threads as chat_threads_store
+
+        thread = chat_threads_store.after_comment(owner, item_id, text, is_user=False)
+        if thread:
+            res["thread"] = thread
+    if note_chats.comment_visible(row, None):
+        _notify_discussion_comment(
+            owner=owner,
+            kind=kind,
+            item_id=item_id,
+            author_user_id=uid,
+            author_name=author_name,
+            author_username=author_username,
+            body=text,
+            is_assistant=True,
+            chat_id=row.get("chat_id"),
+        )
+    else:
+        # Личный чат: участникам — ничего, но сам спросивший, если ушёл, видит плашку и карточку в Фокусе.
+        from assistant.services import discussion_notify
+        from assistant.stores import discussion_presence
+
+        if uid not in discussion_presence.present_user_ids(owner, kind, item_id):
+            discussion_notify._notify_in_app(
+                uid,
+                owner=owner,
+                kind=kind,
+                item_id=item_id,
+                title=discussion_notify.discussion_item_title(owner, kind, item_id),
+                author=author_name,
+                preview=discussion_notify._preview(text),
+                is_assistant=True,
+                chat_id=row.get("chat_id"),
+            )
+    return res
+
+
 def _notify_discussion_comment(
     *,
     owner: str,
@@ -3569,6 +3738,7 @@ def _notify_discussion_comment(
     author_username: str | None,
     body: str,
     is_assistant: bool,
+    chat_id: int | None = None,
 ) -> None:
     """Пуш участникам, у которых сейчас не открыто это обсуждение."""
     from assistant.services.discussion_notify import notify_discussion_comment_safe
@@ -3582,6 +3752,7 @@ def _notify_discussion_comment(
         author_username=author_username,
         body=body,
         is_assistant=is_assistant,
+        chat_id=chat_id,
     )
 
 
@@ -9486,8 +9657,33 @@ async def miniapp_gpt_chat(
         finally:
             set_openrouter_usage_telegram_user(telegram_user_id=None)
 
+    reply_kind = str(body.item_kind or "").strip()
+    reply_item = str(body.item_id or "").strip()
+    save_reply = body.save_reply if reply_kind in ("local", "chat", "journal") and reply_item else None
+
+    def _run_and_save() -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        # Один поток: ответ сохраняется в обсуждение, даже если клиент ушёл, пока модель думала.
+        res = _run()
+        if not res or save_reply is None:
+            return res, None
+        try:
+            saved = _save_gpt_reply(
+                principal,
+                kind=reply_kind,
+                item_id=reply_item,
+                agent_id=agent_id,
+                model=str(res.get("model") or run_model or ""),
+                reply=save_reply,
+                out=res,
+                notice=str(gate["notice"] or ""),
+            )
+        except Exception as e:
+            print(f"[gpt_reply] save failed kind={reply_kind} item={reply_item} err={e!r}")
+            saved = None
+        return res, saved
+
     try:
-        out = await run_in_threadpool(_run)
+        out, saved_reply = await run_in_threadpool(_run_and_save)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
     except Exception as e:
@@ -9525,7 +9721,20 @@ async def miniapp_gpt_chat(
         "model_label": (
             f"Авто · {gpt_display_label(used_model)}" if auto_model_chosen else gpt_display_label(used_model)
         ),
+        # Ответ уже сохранён в обсуждение — клиент второй раз его не отправляет.
+        "saved_comment": (saved_reply or {}).get("comment"),
+        "thread": (saved_reply or {}).get("thread"),
     }
+
+
+@miniapp_router.post("/gpt/chat/cancel")
+async def miniapp_gpt_chat_cancel(
+    body: _MiniappGptCancelBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """«■ Стоп» в обсуждении: ответ, который ещё считается, в обсуждение не сохранять."""
+    _gpt_reply_cancel(str(int(principal.telegram_user_id)), str(body.token or "").strip())
+    return {"ok": True}
 
 
 class _MiniappCalActionIds(BaseModel):
@@ -11046,8 +11255,13 @@ def _focus_feed_items(uid: int) -> list[dict[str, Any]]:
     from assistant.stores import user_prefs
 
     if not user_prefs.proactive_prefs(uid).get("focus"):
-        # Фокус выключен, но входящие поручения разобрать всё равно надо.
-        return proactive.rule_task_inbox(uid, proactive._now())
+        # Фокус выключен, но входящие поручения и новое в обсуждениях показать всё равно надо.
+        out = proactive.rule_task_inbox(uid, proactive._now())
+        try:
+            out += proactive.rule_discussions(uid)
+        except Exception as e:
+            print(f"[proactive] discussions failed uid={uid} err={e!r}")
+        return out
     today = datetime.now(_tz_for(uid)).date()
     try:
         payload = _calendar_range_payload(uid, (today - timedelta(days=2)).isoformat(), (today + timedelta(days=1)).isoformat())
@@ -11154,6 +11368,16 @@ async def miniapp_proactive_dismiss(
     key = str(body.key or "").strip()
     if not key:
         raise HTTPException(status_code=400, detail="Нет подсказки")
+    if key.startswith("discuss:"):
+        # «Новое в обсуждении»: ✕ = прочитано; следующее сообщение снова поднимет карточку.
+        from assistant.stores import discussion_unread
+
+        _, d_kind, d_item = (key.split(":", 2) + ["", ""])[:3]
+        await run_in_threadpool(discussion_unread.clear, uid, d_kind, d_item)
+        hit = _FOCUS_CACHE.get(uid)
+        if hit:
+            _FOCUS_CACHE[uid] = (hit[0], [i for i in hit[1] if i.get("key") != key])
+        return {"ok": True}
     await run_in_threadpool(proactive.dismiss, uid, key)
 
     def _mark_dismissed() -> None:
@@ -13993,6 +14217,7 @@ async def miniapp_share_comments_create(
                 author_username=author_username,
                 body=text,
                 is_assistant=is_assistant,
+                chat_id=row.get("chat_id"),
             )
         )
     except Exception as e:
@@ -14022,6 +14247,14 @@ async def miniapp_discuss_presence_heartbeat(
         display_name=name,
         username=username,
     )
+    from assistant.stores import discussion_unread
+
+    # Открыл обсуждение — карточка «новое в обсуждении» в Фокусе больше не нужна.
+    if await run_in_threadpool(discussion_unread.clear, uid, kind, str(item_id)):
+        hit = _FOCUS_CACHE.get(int(uid))
+        if hit:
+            card_key = f"discuss:{kind}:{item_id}"
+            _FOCUS_CACHE[int(uid)] = (hit[0], [i for i in hit[1] if i.get("key") != card_key])
     return {"ok": True, "present": present}
 
 

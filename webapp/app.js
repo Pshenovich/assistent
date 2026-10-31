@@ -21373,6 +21373,7 @@
     no_results: ["mic", "violet"],
     summary_tasks: ["taskBox", "green"],
     weekly: ["sum", "violet"],
+    discussion: ["chat", "blue"],
   };
 
   var FOCUS_SHORT_LABEL = {
@@ -21505,6 +21506,8 @@
       doneAct = { act: "__stack_list", label: "Отметить списком" };
     }
     // Главная кнопка — действие из подсказки; «Уточнить» — вторая (если действий нет — главная она).
+    // «Новое в обсуждении» уточнять не о чем — только «Открыть».
+    var withAsk = it.type !== "discussion";
     ask.className = "focus-card-btn " + (shown.length ? "is-quiet" : "is-primary");
     if (!shown.length) acts.appendChild(ask);
     shown.forEach(function (a, idx) {
@@ -21526,7 +21529,7 @@
         br.className = "focus-card-br";
         br.setAttribute("aria-hidden", "true");
         acts.appendChild(br);
-        acts.appendChild(ask);
+        if (withAsk) acts.appendChild(ask);
       }
     });
     if (doneAct) {
@@ -24031,6 +24034,8 @@
         }
       } else if (act === "open_task_inbox") {
         openTaskInbox();
+      } else if (act === "open_discussion") {
+        openDiscussionFromNotice(String(p.kind || ""), String(p.item_id || ""), "", p.chat_id);
       } else if (act === "open_task") {
         var got = await apiFetch("/calendar/tasks/" + encodeURIComponent(String(p.task_id)), { method: "GET" });
         if (got && got.task && got.task.event) openCalendarEntry(got.task.event);
@@ -36170,6 +36175,10 @@
       onRealtimeChatChanged(ev);
       return;
     }
+    if (type === "discussion.message") {
+      onRealtimeDiscussionMessage(ev);
+      return;
+    }
     if (type === "open") {
       // Сокет (пере)подключился — догнать открытый чат: события, пока его не было, потеряны.
       if (activeChatThreadId) kickDiscussionLiveUpdates(activeChatThreadId, "chat");
@@ -44292,6 +44301,8 @@
 
   function startDiscussPresence() {
     if (!isNoteDiscussionOpen() || !discussPresencePath()) return;
+    var pw = document.getElementById("note-editor-more-wrap");
+    if (pw) dropDiscussFocusCard(pw._shareKind, pw._shareId);
     tickDiscussPresence();
     if (discussPresenceTimer) return;
     discussPresenceTimer = setInterval(tickDiscussPresence, 8000);
@@ -44306,6 +44317,17 @@
     if (!path) return;
     apiFetch(path, { method: "DELETE" }).catch(function () {});
   }
+
+  // Закрыли/перезагрузили страницу с открытым обсуждением — сразу снять присутствие, иначе сервер
+  // ещё ~18 с считает, что человек его видит, и новое сообщение приходит без плашки и карточки.
+  window.addEventListener("pagehide", function () {
+    if (!discussPresenceTimer) return;
+    var path = discussPresencePath();
+    if (!path) return;
+    try {
+      fetch(API + path, { method: "DELETE", keepalive: true, credentials: "same-origin", headers: authHeaders() });
+    } catch (_) {}
+  });
 
   function stopDiscussionLiveUpdates() {
     if (discussionLiveTimer) {
@@ -44912,29 +44934,6 @@
     }, 120);
   }
 
-  function showDiscussReplyToast(kind, itemId, mode, title) {
-    var node = document.createElement("span");
-    node.className = "note-toast-copy";
-    node.appendChild(document.createTextNode("Новый ответ в "));
-    var link = document.createElement("button");
-    link.type = "button";
-    link.className = "note-toast-link";
-    link.textContent = "обсуждении";
-    if (title) link.title = String(title);
-    link.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      var el = document.getElementById("note-toast");
-      if (el) {
-        el.classList.add("hidden");
-        if (el._timer) window.clearTimeout(el._timer);
-      }
-      openNoteDiscussionFromNotify(kind, itemId, mode);
-    });
-    node.appendChild(link);
-    showNoteToast("", { node: node, actionable: true, duration: 6500 });
-  }
-
   var discussNotifySoundAt = 0;
 
   function playDiscussNotifySound() {
@@ -44977,11 +44976,119 @@
       refreshNoteCommentsList();
       return;
     }
-    playDiscussNotifySound();
     var label = title || noteTitleForDiscussToast(kind, itemId, "");
     setDiscussUnread(kind, itemId, true);
     refreshDiscussUnreadUi();
-    showDiscussReplyToast(kind, itemId, mode || "gpt", label);
+    showDiscussBanner({ kind: kind, itemId: itemId, mode: mode || "gpt", title: label, text: "Новый ответ", weak: true });
+  }
+
+  // ---- Новое в обсуждении, которое сейчас не открыто: плашка сверху + карточка в Фокусе ----
+  var discussBannerState = null; // { key, timer }
+  var realtimeDiscussFocusTimer = null;
+
+  function discussFocusKey(kind, itemId) {
+    return "discuss:" + String(kind || "") + ":" + String(itemId || "");
+  }
+
+  function hideDiscussBanner() {
+    var el = document.getElementById("discuss-banner");
+    if (el) el.classList.add("is-hidden");
+    if (discussBannerState && discussBannerState.timer) window.clearTimeout(discussBannerState.timer);
+    discussBannerState = null;
+  }
+
+  // Карточку «новое в обсуждении» убираем сразу, как только обсуждение открыли (сервер тоже её стирает).
+  function dropDiscussFocusCard(kind, itemId) {
+    var key = discussFocusKey(kind, itemId);
+    if (!focusItems.some(function (x) { return x.key === key; })) return;
+    focusItems = focusItems.filter(function (x) {
+      return x.key !== key;
+    });
+    renderFocusRow();
+    renderFocusPanel();
+  }
+
+  function openDiscussionFromNotice(kind, itemId, mode, chatId) {
+    hideDiscussBanner();
+    dropDiscussFocusCard(kind, itemId);
+    if (String(kind) === "chat") {
+      if (isNoteDiscussionOpen() && !isDiscussionTargetActive(kind, itemId)) closeNoteDiscussion(true);
+      openChatThreadById(itemId);
+      return;
+    }
+    // Чат заметки, где пришло сообщение: при открытии заметки выбирается запомненный чат.
+    if (chatId != null && chatId !== "") {
+      try {
+        localStorage.setItem("leo_note_chat:" + String(kind) + ":" + String(itemId), String(chatId));
+      } catch (_) {}
+      if (isDiscussionTargetActive(kind, itemId)) setCurrentDiscussChat(Number(chatId));
+      // Сообщение в «Комментариях» — открываем их, а не чат с ИИ (режим gpt увёл бы туда).
+      if (Number(chatId) === COMMENTS_CHAT_ID) mode = "comment";
+    }
+    if (currentTab !== "notes") setTab("notes");
+    openNoteDiscussionFromNotify(kind, itemId, mode);
+  }
+
+  // o: { kind, itemId, mode, title, author, text, chatId, weak }; weak — общий текст «Новый ответ»,
+  // не перетирает уже показанную плашку с самим сообщением (живое событие о нём приходит раньше).
+  function showDiscussBanner(o) {
+    var key = discussFocusKey(o.kind, o.itemId);
+    var same = discussBannerState && discussBannerState.key === key;
+    if (same && o.weak) return;
+    var el = document.getElementById("discuss-banner");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "discuss-banner";
+      el.className = "discuss-banner is-hidden";
+      el.setAttribute("role", "status");
+      el.innerHTML =
+        '<span class="discuss-banner-ico">' + DISCUSS_ICONS.chat + "</span>" +
+        '<span class="discuss-banner-body"><span class="discuss-banner-title"></span><span class="discuss-banner-text"></span></span>' +
+        '<button type="button" class="discuss-banner-x" aria-label="Закрыть">✕</button>';
+      el.addEventListener("click", function (e) {
+        if (e.target.closest(".discuss-banner-x")) {
+          hideDiscussBanner();
+          return;
+        }
+        var d = el._target;
+        if (d) openDiscussionFromNotice(d.kind, d.itemId, d.mode, d.chatId);
+      });
+      document.body.appendChild(el);
+    }
+    el._target = { kind: String(o.kind || ""), itemId: String(o.itemId || ""), mode: o.mode || "gpt", chatId: o.chatId };
+    var title = String(o.title || "").trim() || (o.kind === "chat" ? "Чат" : "Обсуждение");
+    el.querySelector(".discuss-banner-title").textContent = "«" + title + "»";
+    var text = String(o.text || "").trim() || "Новое сообщение";
+    el.querySelector(".discuss-banner-text").textContent = o.author ? o.author + ": " + text : text;
+    if (!same) playDiscussNotifySound(); // ответ ИИ и живое событие о нём — одна плашка, один звук
+    if (discussBannerState && discussBannerState.timer) window.clearTimeout(discussBannerState.timer);
+    discussBannerState = { key: key, timer: window.setTimeout(hideDiscussBanner, 7000) };
+    void el.offsetWidth; // новая плашка въезжает сверху (переход), а не появляется рывком
+    el.classList.remove("is-hidden");
+  }
+
+  function onRealtimeDiscussionMessage(ev) {
+    var kind = String(ev.kind || "");
+    var itemId = String(ev.item_id || "");
+    if (!kind || !itemId) return;
+    if (isViewingNoteDiscussion(kind, itemId)) return; // уже смотрит — сервер сотрёт карточку по присутствию
+    if (kind === "local") setDiscussUnread(kind, itemId, true);
+    if (!document.hidden) {
+      showDiscussBanner({
+        kind: kind,
+        itemId: itemId,
+        title: ev.title || noteTitleForDiscussToast(kind, itemId, ""),
+        author: ev.author || "",
+        text: ev.preview || "",
+        chatId: ev.chat_id,
+      });
+    }
+    // Карточка в Фокусе: «Актуальное» перечитывает ленту (несколько сообщений подряд — одно обновление).
+    if (realtimeDiscussFocusTimer) clearTimeout(realtimeDiscussFocusTimer);
+    realtimeDiscussFocusTimer = setTimeout(function () {
+      realtimeDiscussFocusTimer = null;
+      if (currentTab === "actual" && !document.hidden && !fstack && !tinbox) loadFocus(true);
+    }, 900);
   }
 
   function titleFromAnswerMarkdown(md) {
@@ -49629,7 +49736,8 @@
     wrap._gptPhase = "sending";
     wrap._gptStartedAt = Date.now();
     wrap._gptBulk = null;
-    var gptReq = { stopped: false };
+    // Токен ответа: «■ Стоп» сообщает его серверу — тот не сохранит ответ в обсуждение.
+    var gptReq = { stopped: false, token: String(Date.now()) + "-" + Math.random().toString(36).slice(2, 10) };
     wrap._gptReq = gptReq;
     function releaseGptBusy() {
       var lw = document.getElementById("note-editor-more-wrap");
@@ -49651,6 +49759,8 @@
     setGptDiscussPhase("sending");
     try {
       await ensureDiscussChat();
+      // Чат ответа — тот, где задали вопрос, даже если к ответу человек уже ушёл в другой.
+      var replyChatId = discussChatFields().chat_id;
       var fileIds = await uploadDiscussPendingFiles(kind, itemId);
       clearDiscussPendingFiles();
       clearDiscussPendingContextNotes();
@@ -49736,6 +49846,14 @@
           board_sheet_id: openBoard ? openBoard.sheetId : undefined,
           doc_view: docView ? docView.view : undefined,
           doc_sheet_id: docView ? docView.sheet_id : undefined,
+          // Ответ сервер сам сохранит в обсуждение — не пропадёт, если человек вышел из него или закрыл приложение.
+          save_reply: {
+            quote: quote,
+            prefix: agentPrefix,
+            parent_id: parentId || null,
+            chat_id: replyChatId,
+            token: gptReq.token,
+          },
       };
       var res = await apiFetch("/gpt/chat", { method: "POST", body: JSON.stringify(chatPayload) });
       if (res && res.credits) renderCreditsBar(res.credits);
@@ -49750,6 +49868,14 @@
         }
       }
       if (gptReq.stopped) {
+        // Остановили, но сервер успел сохранить ответ раньше, чем дошла отмена, — убираем его.
+        if (res && res.saved_comment && res.saved_comment.id) {
+          apiFetch(
+            "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments/" +
+              encodeURIComponent(res.saved_comment.id),
+            { method: "DELETE" }
+          ).catch(function () {});
+        }
         var stopErr = new Error("stopped");
         stopErr.leoStopped = true;
         throw stopErr;
@@ -49793,24 +49919,30 @@
           if (typeof loadActual === "function") loadActual({ silent: true });
         } catch (_) {}
       }
-      setGptDiscussPhase("saving");
-      var gptSaved = await apiFetch(
-        "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            body: calActs.length ? ans : clipGptCommentBody(ans),
-            quote: quote,
-            prefix: agentPrefix,
-            suffix: "",
-            parent_id: parentId || null,
-            as_role: agentId === "gpt" ? "gpt" : "agent:" + agentId,
-            model: agentId === "gpt" ? String((res && res.model) || selectedGptModelId() || "") : undefined,
-            file_ids: gptFileIds,
-            chat_id: discussChatFields().chat_id,
-          }),
-        }
-      );
+      var gptSaved = null;
+      if (res && res.saved_comment) {
+        gptSaved = { comment: res.saved_comment, thread: res.thread || null };
+      } else {
+        // Сервер не сохранил (лимит кредитов, транскрипция по ссылке) — сохраняем сами, как раньше.
+        setGptDiscussPhase("saving");
+        gptSaved = await apiFetch(
+          "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/comments",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              body: calActs.length ? ans : clipGptCommentBody(ans),
+              quote: quote,
+              prefix: agentPrefix,
+              suffix: "",
+              parent_id: parentId || null,
+              as_role: agentId === "gpt" ? "gpt" : "agent:" + agentId,
+              model: agentId === "gpt" ? String((res && res.model) || selectedGptModelId() || "") : undefined,
+              file_ids: gptFileIds,
+              chat_id: replyChatId,
+            }),
+          }
+        );
+      }
       if (gptSaved && gptSaved.thread) upsertChatThreadCache(gptSaved.thread);
       if (editRec && gptSaved && gptSaved.comment && gptSaved.comment.id) {
         rememberAiEditRecord(gptSaved.comment.id, editRec);
@@ -49849,7 +49981,14 @@
   function stopNoteGptAnswer() {
     var wrap = document.getElementById("note-editor-more-wrap");
     if (!wrap || !wrap._gptBusy) return;
-    if (wrap._gptReq) wrap._gptReq.stopped = true;
+    if (wrap._gptReq) {
+      wrap._gptReq.stopped = true;
+      if (wrap._gptReq.token) {
+        apiFetch("/gpt/chat/cancel", { method: "POST", body: JSON.stringify({ token: wrap._gptReq.token }) }).catch(
+          function () {}
+        );
+      }
+    }
     wrap._gptBusy = false;
     wrap._gptPhase = "";
     wrap._gptReq = null;
@@ -52368,11 +52507,7 @@
     var pending = pendingChatIdFromLocation();
     if (!pending) return;
     chatDeepLinkConsumed = true;
-    function go(thread) {
-      if (!thread) return;
-      setTab("notes");
-      setNotesSubTab("chats");
-      openChatThread(thread);
+    openChatThreadById(pending, function () {
       try {
         var u = new URL(location.href);
         u.searchParams.delete("chat");
@@ -52380,9 +52515,20 @@
         if (/chat=/.test(u.hash)) u.hash = "";
         history.replaceState(null, "", u.pathname + u.search + u.hash);
       } catch (_) {}
+    });
+  }
+
+  // Чат из «Чатов» по id: вкладка «Чаты», тред открыт (список подгружается, если его ещё нет).
+  function openChatThreadById(chatId, onOpen) {
+    function go(thread) {
+      if (!thread) return;
+      setTab("notes");
+      setNotesSubTab("chats");
+      openChatThread(thread);
+      if (onOpen) onOpen(thread);
     }
     var found = (chatThreadsCache || []).find(function (t) {
-      return String(t.id) === String(pending);
+      return String(t.id) === String(chatId);
     });
     if (found) {
       go(found);
@@ -52391,9 +52537,10 @@
     loadChatThreads()
       .then(function () {
         var t = (chatThreadsCache || []).find(function (x) {
-          return String(x.id) === String(pending);
+          return String(x.id) === String(chatId);
         });
         if (t) go(t);
+        else showNoteToast("Чат не найден");
       })
       .catch(function () {});
   }

@@ -24012,3 +24012,66 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
   }
   .ProseMirror td.mt-c0 .mt-fold.is-folded { transform: translateY(-50%); }
 }
+
+/* Новое сообщение в обсуждении, которое сейчас не открыто: плашка сверху, нажатие — открыть. */
+.discuss-banner {
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  z-index: 330;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(420px, calc(100vw - 32px));
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--text-strong);
+  background: var(--surface-raised);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow-color) 28%, transparent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transform: translate(-50%, 0);
+  transition: transform 0.22s ease, opacity 0.22s ease;
+}
+.discuss-banner.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 16px));
+}
+.discuss-banner-ico {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  color: var(--accent);
+  background: var(--accent-muted);
+}
+.discuss-banner-ico svg { width: 18px; height: 18px; }
+.discuss-banner-body { flex: 1; min-width: 0; }
+.discuss-banner-title,
+.discuss-banner-text {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.discuss-banner-title { font-size: 0.8rem; color: var(--text-secondary); }
+.discuss-banner-text { font-size: 0.9rem; font-weight: 600; }
+.discuss-banner-x {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}

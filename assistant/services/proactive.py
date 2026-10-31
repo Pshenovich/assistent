@@ -385,6 +385,45 @@ def rule_task_inbox(uid: int, now: datetime) -> list[dict[str, Any]]:
     ]
 
 
+def discussion_key(kind: str, item_id: Any) -> str:
+    return f"discuss:{kind}:{item_id}"
+
+
+def rule_discussions(uid: int) -> list[dict[str, Any]]:
+    """Новые сообщения в обсуждениях, которые человек ещё не открыл — по карточке на обсуждение."""
+    from assistant.stores import discussion_unread
+
+    out = []
+    for r in discussion_unread.list_for(uid):
+        kind, iid = str(r["kind"]), str(r["item_id"])
+        n = int(r.get("count") or 1)
+        title = str(r.get("title") or "").strip() or ("Чат" if kind == "chat" else "Обсуждение")
+        author = str(r.get("author") or "").strip()
+        preview = str(r.get("preview") or "").strip()
+        head = f"{author}: {preview}" if author and preview else (preview or author or "Новое сообщение")
+        more = f" · ещё {n - 1}" if n > 1 else ""
+        out.append(
+            {
+                "key": discussion_key(kind, iid),
+                "type": "discussion",
+                "tag": "💬 новое в обсуждении",
+                "urgency": 8,
+                "title": head,
+                "source": f"«{title}»{more}",
+                "discussion": {"kind": kind, "item_id": iid, "title": title, "count": n},
+                "actions": [
+                    {
+                        "label": "Открыть",
+                        "act": "open_discussion",
+                        "primary": True,
+                        "payload": {"kind": kind, "item_id": iid, "chat_id": r.get("chat_id")},
+                    }
+                ],
+            }
+        )
+    return out
+
+
 def _prep_mail(ev: dict[str, Any], now: datetime) -> list[dict[str, Any]]:
     """Последние ветки переписки с участниками встречи (если подключена почта)."""
     uid = ev.get("_owner_uid")
@@ -760,6 +799,13 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
     except Exception as e:
         print(f"[proactive] risks failed uid={uid} err={e!r}")
     out = rank(items, dismissed_keys(uid))
+    try:
+        # Новое в обсуждениях — тоже вне ранжирования: пропадает, когда обсуждение открыли или скрыли.
+        talk = rule_discussions(uid)
+        if talk:
+            out = talk + out[: max(1, MAX_ITEMS - len(talk))]
+    except Exception as e:
+        print(f"[proactive] discussions failed uid={uid} err={e!r}")
     try:
         # Входящие — вне ранжирования и «скрыть»: пропадают, только когда всё разобрано.
         inbox = rule_task_inbox(uid, now)

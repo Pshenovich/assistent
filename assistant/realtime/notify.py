@@ -229,6 +229,37 @@ def task_changed(task_id: int | str, user_ids: list[Any], *, actor_user_id: Any 
             continue
 
 
+def discussion_message(
+    user_id: int | str,
+    *,
+    kind: str,
+    item_id: Any,
+    title: str = "",
+    author: str = "",
+    preview: str = "",
+    is_assistant: bool = False,
+    chat_id: int | None = None,
+) -> None:
+    """Новое сообщение в обсуждении, которое у человека не открыто: плашка сверху и карточка в Фокусе."""
+    try:
+        topic = user_topic(user_id)
+    except (TypeError, ValueError):
+        return
+    publish(
+        topic,
+        {
+            "type": "discussion.message",
+            "kind": str(kind or ""),
+            "item_id": str(item_id or ""),
+            "title": str(title or "")[:200],
+            "author": str(author or "")[:120],
+            "preview": str(preview or "")[:300],
+            "assistant": bool(is_assistant),
+            "chat_id": int(chat_id) if chat_id is not None else None,  # чат заметки, где сообщение
+        },
+    )
+
+
 def calendar_changed(user_id: int | str) -> None:
     """В Google Календаре человека что-то изменилось — открытое «Актуальное» перечитывает календарь."""
     uid = str(user_id or "").strip()

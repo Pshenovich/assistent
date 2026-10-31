@@ -190,6 +190,50 @@ def send_web_push(user_id: int | str, payload: dict[str, Any]) -> int:
     return sent
 
 
+def _notify_in_app(
+    user_id: str,
+    *,
+    owner: str,
+    kind: str,
+    item_id: str,
+    title: str,
+    author: str,
+    preview: str,
+    is_assistant: bool,
+    chat_id: int | None = None,
+) -> None:
+    """В приложении: плашка сверху (живое событие) и карточка в Фокусе, пока не открыл обсуждение.
+
+    Не зависит от настроек Telegram/Web Push — это не внешнее уведомление.
+    """
+    from assistant.realtime import notify as rt_notify
+    from assistant.stores import discussion_unread
+
+    try:
+        discussion_unread.bump(
+            user_id,
+            owner_user_id=owner,
+            kind=kind,
+            item_id=item_id,
+            title=title,
+            author=author,
+            preview=preview,
+            chat_id=chat_id,
+        )
+    except Exception as e:
+        print(f"[discuss_notify] unread_fail uid={user_id} err={e!r}")
+    rt_notify.discussion_message(
+        user_id,
+        kind=kind,
+        item_id=item_id,
+        title=title,
+        author=author,
+        preview=preview,
+        is_assistant=is_assistant,
+        chat_id=chat_id,
+    )
+
+
 def notify_discussion_comment(
     *,
     owner: str,
@@ -200,6 +244,7 @@ def notify_discussion_comment(
     author_username: str | None = None,
     body: str = "",
     is_assistant: bool = False,
+    chat_id: int | None = None,
 ) -> list[str]:
     """Пуш участникам, у которых сейчас не открыто это обсуждение.
 
@@ -240,6 +285,17 @@ def notify_discussion_comment(
             uid = int(mid)
         except (TypeError, ValueError):
             continue
+        _notify_in_app(
+            mid,
+            owner=owner,
+            kind=kind,
+            item_id=item_id,
+            title=title,
+            author=who_plain,
+            preview=preview,
+            is_assistant=is_assistant,
+            chat_id=chat_id,
+        )
         sent = False
         try:
             want_tg = user_prefs.discussion_notify_telegram(uid)
