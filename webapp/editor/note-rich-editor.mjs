@@ -4224,10 +4224,23 @@ function createMeetingTasksExtension(ctx) {
   }
   // skipped — {by, at}: задачи встречи решили не разбирать (ведут в другом трекере).
   function counterWidget(decided, total, open, skipped) {
-    return function () {
+    return function (view) {
       var el = document.createElement("div");
       el.className = "mt-summary" + (skipped ? " is-skipped" : "");
       el.setAttribute("contenteditable", "false");
+      var pickBtn = document.createElement("button");
+      pickBtn.type = "button";
+      pickBtn.className = "mt-summary-select";
+      pickBtn.textContent = "Выбрать";
+      pickBtn.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+      });
+      pickBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var cur = (meetingTasksKey.getState(view.state) || {}).pick;
+        mtSetMeta(view, { pick: cur && cur.mode === "select" ? null : { mode: "select", src: "", sel: {} } });
+      });
       var txt = document.createElement("span");
       txt.className = "mt-summary-text";
       if (skipped) {
@@ -4260,6 +4273,7 @@ function createMeetingTasksExtension(ctx) {
         });
         el.appendChild(btn);
       }
+      el.appendChild(pickBtn);
       return el;
     };
   }
@@ -4310,6 +4324,7 @@ function createMeetingTasksExtension(ctx) {
   function mtCandidate(items, pick, id) {
     var it = items[id];
     if (!it || MT_EXCLUDED[it.code] || id === pick.src) return false;
+    if (pick.mode === "select") return true; // массовое выделение: любая строка, кроме «Не задач»
     if (pick.mode === "add") return mtAncestors(items, pick.src).indexOf(id) < 0;
     var src = items[pick.src] || {};
     return (it.depth || 0) < 2 && mtSubtree(items, pick.src).indexOf(id) < 0 && id !== src.parent;
@@ -4467,9 +4482,10 @@ function createMeetingTasksExtension(ctx) {
       if (pick && pick.src !== item.id) {
         var box = document.createElement("span");
         if (info.candidate) {
-          var on = pick.mode === "add" && !!(pick.sel && pick.sel[item.id]);
-          box.className = "mt-pick" + (pick.mode === "add" ? " is-check" : " is-radio") + (on ? " is-on" : "");
-          box.setAttribute("role", pick.mode === "add" ? "checkbox" : "radio");
+          var multi = pick.mode === "add" || pick.mode === "select";
+          var on = multi && !!(pick.sel && pick.sel[item.id]);
+          box.className = "mt-pick" + (multi ? " is-check" : " is-radio") + (on ? " is-on" : "");
+          box.setAttribute("role", multi ? "checkbox" : "radio");
           box.setAttribute("aria-checked", on ? "true" : "false");
           box.addEventListener("mousedown", function (e) {
             e.preventDefault();
@@ -4477,11 +4493,13 @@ function createMeetingTasksExtension(ctx) {
           box.addEventListener("click", function (e) {
             e.preventDefault();
             e.stopPropagation();
-            if (pick.mode === "add") {
-              var sel = Object.assign({}, pick.sel || {});
+            if (multi) {
+              // Текущий выбор — из состояния: виджет соседней строки не перерисовывается и держит старый.
+              var cur = (meetingTasksKey.getState(view.state) || {}).pick || pick;
+              var sel = Object.assign({}, cur.sel || {});
               if (sel[item.id]) delete sel[item.id];
               else sel[item.id] = true;
-              mtSetMeta(view, { pick: Object.assign({}, pick, { sel: sel }) });
+              mtSetMeta(view, { pick: Object.assign({}, cur, { sel: sel }) });
             } else {
               mtSetMeta(view, { pick: null });
               if (typeof ctx.onMeetingTasksPicked === "function") ctx.onMeetingTasksPicked(pick, [item.id]);
@@ -4589,6 +4607,82 @@ function createMeetingTasksExtension(ctx) {
     };
   }
   // Режим выбора: «Подзадачи к …: выбрано N · Готово · Отмена» или «Куда вложить …? · Отмена».
+  // Массовое выделение (чекбокс в заголовке «Задача»): действия над выбранными строками.
+  var MT_BULK = [
+    ["take", "Взять в работу", "is-primary"],
+    ["assign", "Поручить…", ""],
+    ["merge", "Объединить в одну", ""],
+    ["dismiss", "Удалить", "is-danger"],
+  ];
+  function selectBarWidget(pick, order) {
+    return function (view) {
+      var el = document.createElement("div");
+      el.className = "mt-pickbar mt-pickbar--select";
+      el.setAttribute("contenteditable", "false");
+      var ids = order.filter(function (id) {
+        return pick.sel && pick.sel[id];
+      });
+      var txt = document.createElement("span");
+      txt.className = "mt-pickbar-text";
+      txt.textContent = ids.length ? "Выбрано " + ids.length : "Отметьте задачи";
+      el.appendChild(txt);
+      function btn(label, cls, fn, off) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "mt-pickbar-btn" + (cls ? " " + cls : "");
+        b.textContent = label;
+        b.disabled = !!off;
+        b.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+        });
+        b.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!b.disabled) fn();
+        });
+        el.appendChild(b);
+      }
+      MT_BULK.forEach(function (a) {
+        btn(a[1], a[2], function () {
+          mtSetMeta(view, { pick: null });
+          if (typeof ctx.onMeetingTasksBulk === "function") ctx.onMeetingTasksBulk(a[0], ids);
+        }, !ids.length || (a[0] === "merge" && ids.length < 2));
+      });
+      btn("Отмена", "", function () {
+        mtSetMeta(view, { pick: null });
+      });
+      return el;
+    };
+  }
+  // Чекбокс в заголовке «Задача»: включает выделение строк; в режиме выделения — выбрать все / снять все.
+  function headCheckWidget(pick, cands) {
+    return function (view) {
+      var el = document.createElement("span");
+      el.className = "mt-lead";
+      el.setAttribute("contenteditable", "false");
+      var box = document.createElement("span");
+      var n = pick ? cands.filter(function (id) { return pick.sel && pick.sel[id]; }).length : 0;
+      var all = pick && cands.length && n === cands.length;
+      box.className = "mt-pick is-check mt-head-check" + (all ? " is-on" : n ? " is-some" : "") + (pick ? "" : " is-idle");
+      box.setAttribute("role", "checkbox");
+      box.setAttribute("aria-checked", all ? "true" : n ? "mixed" : "false");
+      box.setAttribute("aria-label", pick ? (all ? "Снять выделение" : "Выбрать все задачи") : "Выбрать задачи");
+      box.title = box.getAttribute("aria-label");
+      box.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+      });
+      box.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!pick) return mtSetMeta(view, { pick: { mode: "select", src: "", sel: {} } });
+        var sel = {};
+        if (!all) cands.forEach(function (id) { sel[id] = true; });
+        mtSetMeta(view, { pick: Object.assign({}, pick, { sel: sel }) });
+      });
+      el.appendChild(box);
+      return el;
+    };
+  }
   function pickBarWidget(pick, items) {
     return function (view) {
       var el = document.createElement("div");
@@ -4681,13 +4775,33 @@ function createMeetingTasksExtension(ctx) {
                   rows.push({ pos: pos + 1 + off, node: row, item: id ? st.items[id] : null, head: !!(first && first.type.name === "tableHeader") });
                 });
                 if (!rows.some(function (r) { return r.item; })) return false;
+                var order = rows
+                  .filter(function (r) { return r.item && !MT_EXCLUDED[r.item.code]; })
+                  .map(function (r) { return r.item.id; });
+                var selPick = st.pick && st.pick.mode === "select" ? st.pick : null;
                 var decided = 0;
                 var total = 0;
                 var excluded = 0;
                 var undecided = 0;
                 rows.forEach(function (r) {
                   if (!r.item) {
-                    if (r.head) decos.push(Decoration.node(r.pos, r.pos + r.node.nodeSize, { class: "mt-head" }));
+                    if (r.head) {
+                      decos.push(Decoration.node(r.pos, r.pos + r.node.nodeSize, { class: "mt-head" }));
+                      var hc = r.node.firstChild;
+                      if ((!st.pick || selPick) && order.length && hc && hc.firstChild && hc.firstChild.isTextblock) {
+                        var h0 = r.pos + 1;
+                        decos.push(Decoration.node(h0, h0 + hc.nodeSize, { class: "mt-c0 mt-c0--head" }));
+                        var hn = selPick ? order.filter(function (id) { return selPick.sel && selPick.sel[id]; }).length : -1;
+                        decos.push(
+                          Decoration.widget(h0 + 2, headCheckWidget(selPick, order), {
+                            key: "mt-headchk|" + hn + "/" + order.length,
+                            side: -1,
+                            ignoreSelection: true,
+                            stopEvent: stop,
+                          })
+                        );
+                      }
+                    }
                     return;
                   }
                   var it = r.item;
@@ -4700,7 +4814,7 @@ function createMeetingTasksExtension(ctx) {
                   }
                   var depth = ex ? 0 : Math.min(2, it.depth || 0);
                   var folded = !ex && mtAncestors(st.items, it.id).some(function (a) { return st.folded && st.folded[a]; });
-                  var pick = st.pick && st.items[st.pick.src] ? st.pick : null;
+                  var pick = st.pick && (st.pick.mode === "select" || st.items[st.pick.src]) ? st.pick : null;
                   decos.push(
                     Decoration.node(r.pos, r.pos + r.node.nodeSize, {
                       class:
@@ -4768,7 +4882,15 @@ function createMeetingTasksExtension(ctx) {
                     })
                   );
                 }
-                if (st.pick && st.items[st.pick.src]) {
+                if (selPick) {
+                  decos.push(
+                    Decoration.widget(pos + node.nodeSize, selectBarWidget(selPick, order), {
+                      key: "mt-selbar|" + order.filter(function (id) { return selPick.sel && selPick.sel[id]; }).join(","),
+                      side: 1,
+                      stopEvent: stop,
+                    })
+                  );
+                } else if (st.pick && st.items[st.pick.src]) {
                   decos.push(
                     Decoration.widget(pos + node.nodeSize, pickBarWidget(st.pick, st.items), {
                       key: "mt-pick|" + st.pick.mode + st.pick.src + "|" + Object.keys(st.pick.sel || {}).length,
@@ -5002,6 +5124,7 @@ function mount(container, options) {
     onMeetingTaskGrip: options.onMeetingTaskGrip,
     onMeetingTaskDrop: options.onMeetingTaskDrop,
     onMeetingTasksPicked: options.onMeetingTasksPicked,
+    onMeetingTasksBulk: options.onMeetingTasksBulk,
     onMeetingTasksFold: options.onMeetingTasksFold,
     onMeetingTaskGroup: options.onMeetingTaskGroup,
     getMeetingTasksFolded: options.getMeetingTasksFolded,
@@ -5273,7 +5396,7 @@ function mount(container, options) {
 
   return {
     // Таблица задач встречи: { items: [{ id, code, label, who, due, note, … }] } с сервера; null — снять.
-    // Режим выбора в таблице задач встречи: { mode: "add" | "nest" | "move", src, sel }; null — выйти.
+    // Режим выбора в таблице задач встречи: { mode: "add" | "nest" | "move" | "select", src, sel }; null — выйти.
     setMeetingTasksPick: function (pick) {
       editor.view.dispatch(editor.state.tr.setMeta(meetingTasksKey, { pick: pick || null }).setMeta("addToHistory", false));
     },
@@ -5678,7 +5801,7 @@ function mount(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261030-drag1",
+  assetVersion: "20261031-bulk1",
   Y: Y,
   mount: mount,
   importBody: importBody,

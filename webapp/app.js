@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261030-drag1"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261031-bulk1"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -23626,6 +23626,153 @@
     return chain;
   }
 
+  // ——— Массовые действия: чекбокс в заголовке «Задача» → выбранные строки → панель под таблицей ———
+  var MT_BULK_OPEN = { open: 1, declined: 1, skipped: 1, nested: 1, doubtful: 1 };
+
+  // Окно «Кому поручить N задач»: тот же выбор исполнителя, что в окне задачи.
+  function pickAssigneeDialog(title) {
+    return new Promise(function (resolve) {
+      var ov = document.createElement("div");
+      ov.className = "leo-prompt-overlay";
+      ov.innerHTML =
+        '<div class="leo-prompt-sheet mt-assign-sheet" role="dialog" aria-modal="true">' +
+        '<p class="leo-prompt-message"></p><div class="mt-assign-host"></div>' +
+        '<div class="leo-prompt-actions">' +
+        '<button type="button" class="btn-text leo-prompt-cancel">Отмена</button>' +
+        '<button type="button" class="btn leo-prompt-ok">Поручить</button>' +
+        "</div></div>";
+      ov.querySelector(".leo-prompt-message").textContent = title;
+      document.body.appendChild(ov);
+      var api = mountTaskAssignee(ov.querySelector(".mt-assign-host"), { user_id: "", email: "", name: "" }, { summaryEl: null });
+      var input = ov.querySelector(".mt-assign-host input");
+      if (input) setTimeout(function () { input.focus(); }, 30);
+      function finish(v) {
+        if (ov.parentNode) ov.parentNode.removeChild(ov);
+        document.removeEventListener("keydown", onKey, true);
+        resolve(v);
+      }
+      function onKey(e) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          finish(null);
+        }
+      }
+      document.addEventListener("keydown", onKey, true);
+      ov.querySelector(".leo-prompt-cancel").addEventListener("click", function () { finish(null); });
+      ov.querySelector(".leo-prompt-ok").addEventListener("click", function () {
+        var a = api.getAssignee();
+        var me = defaultTaskAssignee();
+        if (!a || (!a.email && (!a.user_id || a.user_id === me.user_id))) {
+          showNoteToast("Выберите, кому поручить");
+          return;
+        }
+        finish(a);
+      });
+      ov.addEventListener("click", function (e) {
+        if (e.target === ov) finish(null);
+      });
+    });
+  }
+
+  // Задача из пункта встречи без окна: срок — из колонки «Дедлайн», если его не разобрать — завтра в 10:00.
+  function meetingTaskCreateQuick(st, assignee) {
+    var nid = meetingTasksBound.noteId;
+    var base = {
+      title: st.task || "",
+      description: "Из встречи «" + (getNoteEditorTitle() || "встреча") + "»",
+      note_id: nid,
+      meeting_item: st.id,
+      assignee_user_id: assignee.user_id || "",
+      assignee_email: assignee.email || "",
+      assignee_name: assignee.name || "",
+    };
+    function post(extra) {
+      return apiFetch("/calendar/tasks", { method: "POST", body: JSON.stringify(Object.assign({}, base, extra)) });
+    }
+    var t = new Date();
+    t = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1, 10, 0);
+    var fallback = { start: focusLocalIso(t), end: focusLocalIso(new Date(t.getTime() + 30 * 60000)) };
+    var due = String(st.due || "").trim();
+    if (!due || due === "—") return post(fallback);
+    return post({ text: due }).catch(function (e) {
+      if (e && e.status === 400) return post(fallback);
+      throw e;
+    });
+  }
+
+  async function onMeetingTasksBulk(action, ids) {
+    var items = meetingTasksItems();
+    ids = (ids || []).filter(function (id) { return items[id]; });
+    if (!ids.length) return;
+    var open = ids.filter(function (id) { return MT_BULK_OPEN[items[id].code]; });
+    var skipped = ids.length - open.length;
+    function skippedNote() {
+      return skipped ? " · " + skipped + " уже разобран" + (skipped === 1 ? "а" : "ы") + " — пропущено" : "";
+    }
+    if (action === "merge") {
+      // Первая выбранная (выше в таблице) становится общей задачей, остальные — её подзадачами.
+      var main = ids[0];
+      await meetingTasksNest(ids.slice(1), main, null, "after");
+      showNoteToast("Объединено в «" + (items[main].task || "задачу") + "» — возьмите её или поручите");
+      return;
+    }
+    if (!open.length) {
+      showNoteToast("Выбранные задачи уже разобраны");
+      return;
+    }
+    // Вложенные под выбранной основной станут её подзадачами сами — отдельно их не ставим.
+    var top = open.filter(function (id) {
+      var cur = items[id].parent;
+      var guard = 0;
+      while (cur && items[cur] && guard++ < 4) {
+        if (open.indexOf(cur) >= 0) return false;
+        cur = items[cur].parent;
+      }
+      return true;
+    });
+    if (action === "dismiss") {
+      if (!(await confirmDialog("Убрать " + open.length + " " + pluralRu(open.length, "задачу", "задачи", "задач") + " в «Не задачи»? Вернуть можно под таблицей."))) return;
+      var nid = meetingTasksBound.noteId;
+      var failed = 0;
+      for (var i = 0; i < open.length; i++) {
+        try {
+          await apiFetch("/notes/local/" + encodeURIComponent(nid) + "/meeting-tasks/" + encodeURIComponent(open[i]), {
+            method: "POST",
+            body: JSON.stringify({ op: "dismiss", reason: "not_a_task" }),
+          });
+        } catch (_) {
+          failed++;
+        }
+      }
+      kickNoteCollab(60);
+      await meetingTasksRefresh();
+      showNoteToast((failed ? "Не получилось у " + failed + " · " : "") + "Убрано в «Не задачи»" + skippedNote());
+      return;
+    }
+    var who = defaultTaskAssignee();
+    if (action === "assign") {
+      who = await pickAssigneeDialog("Кому поручить " + top.length + " " + pluralRu(top.length, "задачу", "задачи", "задач") + "?");
+      if (!who) return;
+    }
+    var ok = 0;
+    var errs = [];
+    for (var j = 0; j < top.length; j++) {
+      try {
+        await meetingTaskCreateQuick(items[top[j]], who);
+        ok++;
+      } catch (e) {
+        errs.push((e && e.message) || "ошибка");
+      }
+    }
+    await meetingTasksRefresh();
+    var what = action === "assign" ? "Поручено " + (who.name || who.email || "") : "Взято в работу";
+    showNoteToast(
+      (ok ? what + ": " + ok + " " + pluralRu(ok, "задача", "задачи", "задач") : "Не получилось") +
+        (errs.length ? " · не вышло " + errs.length + ": " + errs[0] : "") +
+        skippedNote()
+    );
+  }
+
   function onMeetingTaskClick(d) {
     var st = (d && d.state) || {};
     if (!st.id || !d.anchor) return;
@@ -31072,6 +31219,7 @@
             onMeetingTaskGrip: onMeetingTaskGrip,
             onMeetingTaskDrop: onMeetingTaskDrop,
             onMeetingTasksPicked: onMeetingTasksPicked,
+            onMeetingTasksBulk: onMeetingTasksBulk,
             onMeetingTasksFold: saveMeetingTasksFolded,
             onMeetingTaskGroup: onMeetingTaskGroup,
             getMeetingTasksFolded: readMeetingTasksFolded,

@@ -23831,11 +23831,24 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
 .mt-pickbar-text { flex: 1; min-width: 0; font-size: var(--ui-font-sm); color: var(--text); }
 .mt-pickbar-btn { flex: none; border: none; border-radius: 8px; padding: 5px 12px; background: var(--surface-hover); color: var(--text); font: inherit; font-size: var(--ui-font-sm); cursor: pointer; }
 .mt-pickbar-btn.is-primary { background: var(--accent); color: var(--on-accent); }
+.mt-pickbar-btn.is-danger { color: var(--danger-text); }
+.mt-pickbar-btn:disabled { opacity: 0.45; cursor: default; }
+/* Массовое выделение: панель действий прилипает к низу экрана, пока таблица выше */
+.mt-pickbar--select { position: sticky; bottom: 12px; z-index: 5; flex-wrap: wrap; box-shadow: inset 0 0 0 1px var(--accent), 0 8px 24px color-mix(in srgb, var(--shadow-color) 35%, transparent); }
+.mt-pickbar--select .mt-pickbar-text { flex: 1 0 auto; font-weight: 600; }
+/* Чекбокс в заголовке «Задача»: пустой — включить выделение; «−» — выбраны не все; ✓ — все */
+.mt-head-check.is-idle::before { border-color: var(--text-tertiary); }
+.mt-head-check.is-idle:hover::before { border-color: var(--accent); }
+.mt-pick.is-check.is-some::before { background: linear-gradient(var(--accent), var(--accent)) center / 8px 2px no-repeat; }
+.mt-summary-select { display: none; flex: none; border: none; background: transparent; color: var(--accent); font: inherit; font-size: var(--ui-font-sm); padding: 4px 0; cursor: pointer; }
+.mt-assign-sheet .mt-assign-host { margin: 4px 0 12px; }
 .mt-excluded-toggle { display: block; border: none; background: transparent; color: var(--text-tertiary); font: inherit; font-size: var(--ui-font-sm); padding: 6px 0; cursor: pointer; }
 .mt-excluded-toggle::after { content: " ▾"; }
 .mt-excluded-toggle.is-open::after { content: " ▴"; }
 .pt-menu-info { padding: 8px 12px 6px; font-size: 0.78rem; color: var(--text-tertiary); }
 @media (max-width: 640px) {
+  .mt-summary-select { display: inline-flex; margin-left: 12px; }
+  .mt-summary:not(:has(.mt-summary-skip)) .mt-summary-select { margin-left: auto; }
   .ProseMirror table:has(tr.mt-row),
   .ProseMirror table:has(tr.mt-row) > tbody { display: block; width: 100% !important; min-width: 0 !important; border: none; }
   .ProseMirror table:has(tr.mt-row) colgroup,
@@ -23973,23 +23986,29 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
 :is(.note-editor-table, .journal-summary-html table, .nh-doc table) > tbody:last-of-type > tr:last-child > :first-child { border-bottom-left-radius: 9px; }
 :is(.note-editor-table, .journal-summary-html table, .nh-doc table) > tbody:last-of-type > tr:last-child > :last-child { border-bottom-right-radius: 9px; }
 
-/* ——— Таблица задач встречи: ручка ≡ и шеврон — слева за рамкой таблицы, а не в ячейке ———
-   Место под них — отступ слева у прокрутки таблицы: у края панели заметки своего поля почти нет (16px). */
+/* ——— Таблица задач встречи: ручка ≡ — своей колонкой слева в ячейке, по центру текста
+   (у подзадачи — под началом текста основной), шеврон «свернуть» — справа в ячейке. ——— */
 @media (min-width: 641px) {
-  .note-table-manage-scroll:has(tr.mt-row) { padding-left: 34px; }
-  .ProseMirror td.mt-c0 > p { position: relative; }
-  /* Правый край ручки — у рамки: ширина p + отступ ячейки + зазор; по вертикали — по первой строке названия. */
-  .ProseMirror td.mt-c0 .mt-lead {
+  .ProseMirror tr.mt-row td.mt-c0 > p {
+    position: relative;
+    padding-left: calc(var(--mt-depth, 0) * 30px + 30px);
+  }
+  .ProseMirror tr.mt-row td.mt-c0 > p:has(.mt-fold) { padding-right: 26px; }
+  .ProseMirror tr.mt-head th.mt-c0 > p { position: relative; padding-left: 30px; }
+  .ProseMirror :is(td, th).mt-c0 .mt-lead { display: contents; }
+  .ProseMirror th.mt-c0 .mt-pick { position: absolute; top: 50%; left: 0; transform: translateY(-50%); }
+  .ProseMirror td.mt-c0 .mt-grip,
+  .ProseMirror td.mt-c0 .mt-pick {
     position: absolute;
-    top: 0.75em;
-    right: calc(100% + var(--mt-cell-pad, 0.5rem) + 6px);
-    margin: 0;
+    top: 50%;
+    left: calc(var(--mt-depth, 0) * 30px);
     transform: translateY(-50%);
   }
-}
-@media (min-width: 641px) and (hover: hover) {
-  .ProseMirror tr.mt-row .mt-grip { opacity: 0; transition: opacity 0.12s ease; }
-  .ProseMirror tr.mt-row:hover .mt-grip,
-  .ProseMirror tr.mt-row .mt-grip:focus-visible,
-  .ProseMirror tr.mt-row.mt-dragging .mt-grip { opacity: 1; }
+  .ProseMirror td.mt-c0 .mt-fold {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    transform: translateY(-50%) rotate(180deg);
+  }
+  .ProseMirror td.mt-c0 .mt-fold.is-folded { transform: translateY(-50%); }
 }
