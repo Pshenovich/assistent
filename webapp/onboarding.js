@@ -633,7 +633,6 @@
     state.used = state.used || {};
     state.used[id] = Date.now() / 1000;
     if (hint && hint.id === id) closeHint();
-    dropMarker(id);
     send("used", id);
   }
 
@@ -709,14 +708,12 @@
 
   // Не больше одной карточки на заход в раздел (знакомство или подсказка) и не больше SESSION_CARDS за сессию.
   var SESSION_CARDS = 8;
-  var MAX_MARKERS = 2; // и тихих меток с Лео на кнопках
   var cardsShown = 0;
   var screenNow = "";
   var screenCards = 0;
   var introWaits = 0;
   var sessionSnoozed = {};
   var hint = null; // {id, spot}
-  var markers = {}; // id → {el, target}
   var scanTimer = 0;
 
   var guiding = false; // идёт «Показать» — обычные подсказки молчат
@@ -766,7 +763,7 @@
     var x = Math.min(window.innerWidth - 1, Math.max(0, r.left + r.width / 2));
     var y = Math.min(window.innerHeight - 1, Math.max(0, r.top + Math.min(r.height / 2, 20)));
     var top = document.elementFromPoint(x, y);
-    return !!top && (top === el || el.contains(top) || !!(top.closest && top.closest(".ob-root, .ob-marker")));
+    return !!top && (top === el || el.contains(top) || !!(top.closest && top.closest(".ob-root")));
   }
   // Подсказки — только к кнопкам текущего раздела: в заметке — её кнопки, в чате — кнопки чата.
   var SCREEN_SCOPE = { note: "note-editor-overlay", leo_chat: "note-discussion-overlay" };
@@ -808,9 +805,6 @@
     } catch (_) {
       return;
     }
-    Object.keys(markers).forEach(function (id) {
-      if (isUsed(id) || !document.body.contains(markers[id].target) || !visibleTarget(markers[id].anchor)) dropMarker(id);
-    });
     if (hint || busy()) return;
     var scr = currentScreen();
     if (scr !== screenNow) {
@@ -835,28 +829,19 @@
     var fresh = list.filter(function (f) {
       return shownCount(f.id) < 3;
     });
-    if (fresh.length) return showHint(fresh[0]);
-    // Подсказку уже видели трижды — вместо карточки маленький Лео на кнопке.
-    list
-      .filter(function (f) {
-        return shownCount(f.id) >= 3 && !markers[f.id];
-      })
-      .slice(0, Math.max(0, MAX_MARKERS - Object.keys(markers).length))
-      .forEach(addMarker);
+    // Подсказку видели трижды и не воспользовались — больше не надоедаем (есть «Как пользоваться Орбитой» и Лео).
+    if (fresh.length) showHint(fresh[0]);
   }
 
-  function showHint(f, opts) {
+  function showHint(f) {
     var el = visibleTarget(f.anchor);
     if (!el) return;
     closeHint();
-    if (!(opts && opts.fromMarker)) {
-      cardsShown++;
-      screenCards++;
-      state.hint_shown = state.hint_shown || {};
-      state.hint_shown[f.id] = shownCount(f.id) + 1;
-      send("hint_shown", f.id);
-    }
-    dropMarker(f.id);
+    cardsShown++;
+    screenCards++;
+    state.hint_shown = state.hint_shown || {};
+    state.hint_shown[f.id] = shownCount(f.id) + 1;
+    send("hint_shown", f.id);
     var spot = spotlight(el, {
       cls: "ob-hint",
       onLost: closeHint,
@@ -931,41 +916,6 @@
     }
   }
 
-  function addMarker(f) {
-    var target = visibleTarget(f.anchor);
-    if (!target) return;
-    var m = document.createElement("button");
-    m.type = "button";
-    m.className = "ob-marker";
-    m.setAttribute("aria-label", "Подсказка: " + f.title);
-    m.innerHTML = leoAvatar("stand", 22);
-    m.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      showHint(f, { fromMarker: true });
-    });
-    document.body.appendChild(m);
-    markers[f.id] = { el: m, target: target, anchor: f.anchor };
-    placeMarkers();
-  }
-  function dropMarker(id) {
-    var m = markers[id];
-    if (!m) return;
-    unmount(m.el);
-    delete markers[id];
-  }
-  function placeMarkers() {
-    Object.keys(markers).forEach(function (id) {
-      var m = markers[id];
-      var r = m.target.getBoundingClientRect();
-      var hidden = !(r.width > 0 && r.height > 0) || busy();
-      m.el.style.display = hidden ? "none" : "";
-      m.el.style.left = Math.min(window.innerWidth - 26, r.right - 12) + "px";
-      m.el.style.top = Math.max(2, r.top - 16) + "px";
-    });
-    if (Object.keys(markers).length) requestAnimationFrame(placeMarkers);
-  }
-
   // Экран мог смениться и без клика (диплинк, медленная загрузка заметки) — тихая проверка раз в пару секунд.
   setInterval(function () {
     if (!document.hidden && !hint && hintsEnabled()) scan();
@@ -977,7 +927,7 @@
       var t = e.target && e.target.closest && e.target.closest("[data-tour]");
       if (t && CLICK_USES[t.getAttribute("data-tour")]) used(CLICK_USES[t.getAttribute("data-tour")]);
       // Сменился экран, открылась заметка, закрылось окно — посмотреть, что подсказать.
-      if (!(e.target && e.target.closest && e.target.closest(".ob-root, .ob-marker"))) scheduleScan();
+      if (!(e.target && e.target.closest && e.target.closest(".ob-root"))) scheduleScan();
     },
     true
   );
