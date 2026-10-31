@@ -11,11 +11,27 @@
   --ob-scrim: rgba(0, 0, 0, 0.58);
   --ob-chip-bg: rgba(127, 119, 221, 0.22);
   --ob-chip-text: #cecbf6;
+  /* реплика Лео */
+  --ob-hint-scrim: rgba(0, 0, 0, 0.35);
+  --ob-bubble-bg: #24223a;
+  --ob-bubble-text: #f1f0ff;
+  --ob-bubble-title: #cecbf6;
+  --ob-bubble-muted: #a9a6c9;
+  --ob-bubble-glow: rgba(127, 119, 221, 0.18);
+  --ob-bubble-shadow: rgba(0, 0, 0, 0.5);
+  --ob-pulse: rgba(127, 119, 221, 0.7);
+  --ob-pulse-end: rgba(127, 119, 221, 0);
 }
 html[data-theme="light"] {
   --ob-scrim: rgba(20, 18, 40, 0.5);
   --ob-chip-bg: #eeedfe;
   --ob-chip-text: #3c3489;
+  --ob-hint-scrim: rgba(20, 18, 40, 0.18);
+  --ob-bubble-bg: #f4f3ff;
+  --ob-bubble-text: #26215c;
+  --ob-bubble-title: #534ab7;
+  --ob-bubble-muted: #6b6894;
+  --ob-bubble-shadow: rgba(60, 52, 137, 0.22);
 }
 
 /* ---------- Лео ---------- */
@@ -79,7 +95,8 @@ html[data-theme="light"] {
 
 @media (prefers-reduced-motion: reduce) {
   .leo-svg *,
-  .ob-root * {
+  .ob-root *,
+  .ob-hole::after {
     animation: none !important;
     transition: none !important;
   }
@@ -301,47 +318,89 @@ html[data-theme="light"] {
   gap: 4px;
 }
 
-/* ---------- тур и подсказки ---------- */
+/* ---------- тур и подсказки: реплика Лео ---------- */
 
 .ob-tour {
   pointer-events: auto;
 }
+/* Вырез вокруг кнопки: затемнение снаружи (в туре сильнее), фиолетовое кольцо, волна пульса. */
 .ob-hole {
   position: fixed;
   border-radius: 12px;
-  box-shadow: 0 0 0 100vmax var(--ob-scrim);
+  box-shadow: 0 0 0 100vmax var(--ob-hint-scrim);
   outline: 2px solid var(--ob-ring);
   outline-offset: 3px;
   pointer-events: none;
   transition: left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease;
 }
+.ob-tour.is-modal .ob-hole {
+  box-shadow: 0 0 0 100vmax var(--ob-scrim);
+}
+.ob-hole::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  animation: ob-pulse 1.6s ease-out infinite;
+}
+@keyframes ob-pulse {
+  0% { box-shadow: 0 0 0 0 var(--ob-pulse); }
+  100% { box-shadow: 0 0 0 14px var(--ob-pulse-end); }
+}
+/* пунктир от реплики к кнопке */
+.ob-link-line {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: visible;
+  pointer-events: none;
+}
+.ob-link-line path {
+  fill: none;
+  stroke: var(--ob-ring);
+  stroke-width: 2;
+  stroke-dasharray: 4 4;
+  stroke-linecap: round;
+}
+/* пузырь: хвостик (острый угол) — к Лео, который стоит слева снизу */
 .ob-card {
   position: fixed;
   box-sizing: border-box;
-  width: min(360px, calc(100vw - 20px));
-  background: var(--surface-elevated);
-  color: var(--text);
-  border: 1px solid var(--overlay-2);
-  border-radius: 16px;
-  padding: 14px 16px 12px;
+  width: min(340px, calc(100vw - 72px));
+  background: var(--ob-bubble-bg);
+  color: var(--ob-bubble-text);
+  border: 1.5px solid var(--ob-ring);
+  border-radius: 16px 16px 16px 4px;
+  padding: 12px 14px 10px;
   font-size: 14px;
   line-height: 1.5;
-  box-shadow: 0 10px 30px color-mix(in srgb, var(--shadow-color) 35%, transparent);
+  box-shadow: 0 0 0 4px var(--ob-bubble-glow), 0 12px 30px var(--ob-bubble-shadow);
+}
+.ob-hint .ob-card {
+  width: min(310px, calc(100vw - 72px));
+}
+.ob-bubble-leo {
+  position: fixed;
+  width: 46px;
+  height: 46px;
+  pointer-events: none;
 }
 .ob-card-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   min-height: 20px;
 }
 .ob-card-title {
   flex: 1;
   font-weight: 600;
+  color: var(--ob-bubble-title);
 }
 .ob-card-step {
   font-size: 12px;
-  color: var(--text-subtle);
+  color: var(--ob-bubble-muted);
 }
 .ob-card-foot {
   display: flex;
@@ -352,11 +411,8 @@ html[data-theme="light"] {
 .ob-card-foot > :only-child {
   margin-left: auto;
 }
-.ob-hole.is-ring {
-  box-shadow: none;
-}
-.ob-hint .ob-card {
-  width: min(320px, calc(100vw - 20px));
+.ob-card .ob-link {
+  color: var(--ob-bubble-muted);
 }
 /* метка «Лео стоит на кнопке» — подсказку видели трижды */
 .ob-marker {
@@ -389,25 +445,4 @@ html[data-theme="light"] {
 }
 .ob-howto-row .pf-row-body {
   align-items: center;
-}
-
-/* Лео сидит на верхнем крае карточки, со стороны элемента */
-.ob-card-leo {
-  position: absolute;
-  top: -44px;
-  width: 48px;
-  height: 48px;
-}
-.ob-card-leo.is-left {
-  left: 14px;
-}
-.ob-card-leo.is-right {
-  right: 14px;
-}
-.ob-card-leo.is-bottom {
-  top: auto;
-  bottom: -46px;
-}
-.ob-card.has-leo .ob-card-head {
-  padding-left: 0;
 }

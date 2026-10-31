@@ -449,14 +449,31 @@
    * Подсветка элемента с карточкой Лео. opts: {title, text, step, total, modal, actions:[{label, kind:'primary'|'link', onClick}]}
    * Возвращает {close, reposition}.
    */
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  var LEO_SIZE = 46; // Лео рядом с репликой
+  var LEO_GAP = 6;
+
+  /**
+   * Реплика Лео у элемента: Лео слева, пузырь с хвостиком к нему, пунктир от пузыря к кнопке,
+   * вокруг кнопки — пульсирующее кольцо. modal — тур (сильное затемнение, клики только по карточке);
+   * иначе — подсказка: лёгкое затемнение, приложение остаётся рабочим.
+   * opts: {title, text, step, total, modal, cls, onLost, actions:[{label, kind:'primary'|'link', onClick}]}
+   */
   function spotlight(el, opts) {
-    var root = mount("ob-tour" + (opts.cls ? " " + opts.cls : ""));
+    var root = mount("ob-tour" + (opts.cls ? " " + opts.cls : "") + (opts.modal ? " is-modal" : ""));
     if (!opts.modal) root.style.pointerEvents = "none";
     var hole = document.createElement("div");
-    // подсказка — только рамка, без затемнения: человек продолжает работать
-    hole.className = "ob-hole" + (opts.dim === false ? " is-ring" : "");
+    hole.className = "ob-hole";
+    var line = document.createElementNS(SVG_NS, "svg");
+    line.setAttribute("class", "ob-link-line");
+    line.setAttribute("aria-hidden", "true");
+    var path = document.createElementNS(SVG_NS, "path");
+    line.appendChild(path);
+    var leoHost = document.createElement("span");
+    leoHost.className = "ob-bubble-leo";
+    leoHost.innerHTML = leoAvatar("point-right", LEO_SIZE);
     var card = document.createElement("div");
-    card.className = "ob-card has-leo";
+    card.className = "ob-card";
     card.style.pointerEvents = "auto";
     card.setAttribute("role", "dialog");
     card.setAttribute("aria-label", opts.title || "Подсказка");
@@ -466,21 +483,26 @@
       })
       .join("");
     card.innerHTML =
-      '<span class="ob-card-leo is-left">' + leoAvatar("point-up", 48) + "</span>" +
       '<div class="ob-card-head"><span class="ob-card-title">' + esc(opts.title || "") + "</span>" +
       (opts.total ? '<span class="ob-card-step">' + opts.step + " из " + opts.total + "</span>" : "") +
-      "</div><div>" + esc(opts.text || "") + "</div>" +
+      '</div><div class="ob-card-text">' + esc(opts.text || "") + "</div>" +
       '<div class="ob-card-foot">' + acts + "</div>";
     root.appendChild(hole);
+    root.appendChild(line);
     root.appendChild(card);
+    root.appendChild(leoHost);
     card.addEventListener("click", function (e) {
       var b = e.target.closest("[data-i]");
       if (!b) return;
       var a = opts.actions[Number(b.getAttribute("data-i"))];
       if (a && a.onClick) a.onClick();
     });
-    var leoHost = card.querySelector(".ob-card-leo");
     var alive = true;
+    var lastPose = "";
+
+    function clampPoint(px, py, r) {
+      return [Math.max(r.left, Math.min(px, r.right)), Math.max(r.top, Math.min(py, r.bottom))];
+    }
 
     function reposition() {
       if (!alive) return;
@@ -499,23 +521,39 @@
       var vh = window.innerHeight;
       var cw = card.offsetWidth;
       var ch = card.offsetHeight;
-      var gap = 58; // место под Лео между карточкой и элементом
-      var below = r.bottom + gap;
+      var gap = 34; // место под пунктир между репликой и кнопкой
       var top;
-      if (below + ch <= vh - 12) top = below;
+      if (r.bottom + gap + ch <= vh - 12) top = r.bottom + gap;
       else if (r.top - gap - ch >= 12) top = r.top - gap - ch;
-      else top = Math.max(12 + gap, vh - ch - 12);
-      var left = isDesktop() ? r.left + r.width / 2 - cw / 2 : (vw - cw) / 2;
-      left = Math.max(10, Math.min(vw - cw - 10, left));
+      else top = Math.max(12, vh - ch - 12);
+      // слева от пузыря — место под Лео
+      var minLeft = 10 + LEO_SIZE + LEO_GAP;
+      var left = isDesktop() ? r.left + r.width / 2 - cw / 2 : (vw - cw + LEO_SIZE + LEO_GAP) / 2;
+      left = Math.max(minLeft, Math.min(vw - cw - 10, left));
       card.style.left = left + "px";
       card.style.top = top + "px";
-      // Лео — на краю карточки со стороны элемента, рукой к нему
-      var toRight = r.left + r.width / 2 > left + cw / 2 + 20;
-      leoHost.classList.toggle("is-right", toRight);
-      leoHost.classList.toggle("is-left", !toRight);
-      // элемент под карточкой — Лео свешивается с нижнего края, иначе сидит на верхнем
-      leoHost.classList.toggle("is-bottom", r.top >= top + ch);
-      setPose(leoHost, "point-" + pointDir(leoHost.getBoundingClientRect(), r));
+      // Лео стоит у нижнего левого угла пузыря — туда смотрит хвостик
+      var lx = left - LEO_SIZE - LEO_GAP;
+      var ly = top + ch - LEO_SIZE + 4;
+      leoHost.style.left = lx + "px";
+      leoHost.style.top = ly + "px";
+      var pose = "point-" + pointDir({ left: lx, top: ly, width: LEO_SIZE, height: LEO_SIZE, right: lx + LEO_SIZE, bottom: ly + LEO_SIZE }, r);
+      if (pose !== lastPose) {
+        setPose(leoHost, pose);
+        lastPose = pose;
+      }
+      // пунктир: от края пузыря к краю кнопки (если они не вплотную)
+      var cr = { left: left, top: top, right: left + cw, bottom: top + ch };
+      var a = clampPoint(r.left + r.width / 2, r.top + r.height / 2, cr);
+      var b = clampPoint(a[0], a[1], { left: r.left - pad, top: r.top - pad, right: r.right + pad, bottom: r.bottom + pad });
+      var dist = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (dist < 12) {
+        path.setAttribute("d", "");
+      } else {
+        var mx = (a[0] + b[0]) / 2 + (b[1] - a[1]) * 0.18;
+        var my = (a[1] + b[1]) / 2 - (b[0] - a[0]) * 0.18;
+        path.setAttribute("d", "M" + a[0] + " " + a[1] + " Q" + mx + " " + my + " " + b[0] + " " + b[1]);
+      }
     }
     var raf = 0;
     function loop() {
@@ -820,7 +858,6 @@
     }
     dropMarker(f.id);
     var spot = spotlight(el, {
-      dim: false,
       cls: "ob-hint",
       onLost: closeHint,
       title: f.title,
@@ -869,7 +906,6 @@
     state.screens_seen[it.sc.id] = Date.now() / 1000;
     send("screen_seen", it.sc.id);
     var spot = spotlight(it.el, {
-      dim: false,
       cls: "ob-hint",
       onLost: closeHint,
       title: it.sc.title,
