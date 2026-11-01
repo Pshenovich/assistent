@@ -784,7 +784,10 @@
     return (cat.features || []).filter(function (f) {
       if (!f.hint || isUsed(f.id) || sessionSnoozed[f.id]) return false;
       if (seenAnchor[f.anchor]) return false; // у «+» три функции — по одной за раз
-      if (!visibleOnTop(f.anchor, scr)) return false;
+      var el = visibleOnTop(f.anchor, scr);
+      if (!el) return false;
+      // кнопка в другом режиме (в чате заметки «новый контекст» становится меню чатов) — подсказка не про неё
+      if (f.skip_if_class && el.classList.contains(f.skip_if_class)) return false;
       seenAnchor[f.anchor] = 1;
       return true;
     });
@@ -925,7 +928,7 @@
     "click",
     function (e) {
       var t = e.target && e.target.closest && e.target.closest("[data-tour]");
-      if (t && CLICK_USES[t.getAttribute("data-tour")]) used(CLICK_USES[t.getAttribute("data-tour")]);
+      if (t && CLICK_USES[t.getAttribute("data-tour")] && !t.classList.contains("is-chats")) used(CLICK_USES[t.getAttribute("data-tour")]);
       // Сменился экран, открылась заметка, закрылось окно — посмотреть, что подсказать.
       if (!(e.target && e.target.closest && e.target.closest(".ob-root"))) scheduleScan();
     },
