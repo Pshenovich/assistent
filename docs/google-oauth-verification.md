@@ -72,13 +72,13 @@ Google должен убедиться, что `getorbita.me` принадлеж
 | Поле | Что вписать |
 |---|---|
 | App name (Название приложения) | `Orbita` — должно совпадать с названием на лендинге |
-| User support email (Почта поддержки) | `support@getorbita.me` |
+| User support email (Почта поддержки) | Google даёт выбрать только почту своего аккаунта или Google-группы. Либо оставьте почту аккаунта (её увидят все на экране входа), либо сделайте Google-аккаунт на `support@getorbita.me` и добавьте его в проект (IAM → Grant access → роль Owner) — тогда он появится в списке |
 | App logo (Логотип) | загрузить PNG 120×120 от Claude |
 | Application home page (Главная страница) | `https://getorbita.me` |
 | Application privacy policy link (Политика конфиденциальности) | `https://getorbita.me/privacy` |
 | Application terms of service link (Условия использования) | `https://getorbita.me/terms` |
 | Authorized domains (Разрешённые домены) | `getorbita.me`. Старый домен **пока не удаляйте** — на нём работает текущий вход |
-| Developer contact information (Контакт разработчика) | ваша почта, которую вы реально читаете |
+| Developer contact information (Контакт разработчика) | `support@getorbita.me` (сюда можно вписать любую почту) |
 
 6. Нажмите **«Save»** («Сохранить»).
 
