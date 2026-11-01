@@ -509,6 +509,24 @@ else:
 PY
 nginx -t && systemctl reload nginx
 
+# getorbita.me — новый домен (лендинг на главной). Сайт ставится один раз, сертификат — certbot.
+if [[ -f deploy/nginx-getorbita.me.conf && ! -e /etc/nginx/sites-enabled/getorbita.me ]]; then
+  cp deploy/nginx-getorbita.me.conf /etc/nginx/sites-available/getorbita.me
+  ln -s /etc/nginx/sites-available/getorbita.me /etc/nginx/sites-enabled/getorbita.me
+  if nginx -t; then
+    systemctl reload nginx
+    if certbot --nginx --non-interactive --redirect -d getorbita.me -d www.getorbita.me; then
+      echo "getorbita.me: https on"
+    else
+      echo "WARN: certbot не выпустил сертификат getorbita.me — сайт пока только по http" >&2
+    fi
+    nginx -t && systemctl reload nginx
+  else
+    rm -f /etc/nginx/sites-enabled/getorbita.me
+    echo "WARN: nginx getorbita.me: nginx -t failed, сайт снят" >&2
+  fi
+fi
+
 # Дайджест генерирует assistant-news-sync; rsync репозитория его затирал.
 if [[ -d /opt/obuchat-news/public/news ]]; then
   mkdir -p /opt/assistant/news
