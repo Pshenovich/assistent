@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Zoom for Orbita — help</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    html, body { height: auto; overflow: auto; }
+    .legal-page { max-width: 42rem; margin: 0 auto; padding: 1.25rem 1rem 2.5rem; color: var(--text); }
+    .legal-page h1 { font-size: 1.25rem; margin: 0 0 1rem; }
+    .legal-page h2 { font-size: 1rem; margin: 1.25rem 0 0.5rem; }
+    .legal-page p, .legal-page li { font-size: 0.875rem; line-height: 1.55; color: var(--text-secondary); }
+    .legal-page ol, .legal-page ul { padding-left: 1.25rem; }
+    .legal-lang { display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 0.875rem; }
+    .legal-lang a, .legal-back, .legal-page a { color: var(--accent); text-decoration: none; }
+    .legal-sep { margin: 2.5rem 0 1.5rem; border: 0; border-top: 1px solid var(--border, rgba(127,127,127,.25)); }
+  </style>
+</head>
+<body>
+  <main class="legal-page">
+    <a class="legal-back" href="/">← Orbita</a>
+    <nav class="legal-lang"><a href="#en">English</a><a href="#ru">Русский</a></nav>
+
+    <section id="en" lang="en">
+      <h1>Zoom for Orbita</h1>
+      <p>Orbita is an AI workspace for meetings, tasks and notes with the Leo assistant. The Zoom integration lets Orbita create and manage your Zoom meetings and turn cloud recordings into transcripts, summaries and action items.</p>
+
+      <h2>Adding the app</h2>
+      <ol>
+        <li>Sign in to Orbita at <a href="/webapp/">getorbita.me/webapp</a> (or open the Orbita mini app in Telegram).</li>
+        <li>Open the <b>Profile</b> tab and find the <b>Zoom</b> section.</li>
+        <li>Click <b>Connect Zoom</b> («Подключить Zoom»). A Zoom page opens.</li>
+        <li>Sign in to Zoom if asked and click <b>Allow</b>. You return to a page saying “Zoom is connected”; click <b>Back to Orbita</b>.</li>
+      </ol>
+
+      <h2>Using the app</h2>
+      <ul>
+        <li><b>Create a meeting.</b> Create an event in Orbita and choose <b>Zoom</b> in the “Video call” («Видеосвязь») field, or ask Leo: “Create a Zoom meeting tomorrow at 3 pm with Anna”. Orbita creates the Zoom meeting and adds the link to the event.</li>
+        <li><b>Reschedule or cancel.</b> Move or cancel the event in Orbita (or ask Leo) — the Zoom meeting is updated or deleted as well.</li>
+        <li><b>Find a meeting.</b> When you ask Leo to move or cancel a Zoom meeting, Orbita looks it up among your upcoming Zoom meetings.</li>
+        <li><b>Summaries.</b> If you record a meeting to the Zoom cloud, Orbita receives the recording when it is ready and creates a transcript, summary and tasks in your notes.</li>
+      </ul>
+
+      <h2>Removing the app</h2>
+      <ol>
+        <li>In Orbita: <b>Profile → Zoom → Disconnect Zoom</b> («Отключить Zoom»). Orbita deletes your Zoom tokens immediately.</li>
+        <li>Or in Zoom: sign in to the <a href="https://marketplace.zoom.us/user/installed">Zoom App Marketplace</a> → <b>Manage → Added Apps</b> → Orbita → <b>Remove</b>. Zoom notifies Orbita and your tokens are deleted.</li>
+      </ol>
+      <p>Meeting notes and summaries already created stay in your Orbita account until you delete them. To delete your whole account, write to <a href="mailto:support@getorbita.me">support@getorbita.me</a>.</p>
+
+      <h2>Data and privacy</h2>
+      <p>Orbita accesses only your meetings, cloud recordings and basic profile (name, email) to provide the features above. See the <a href="/privacy">Privacy Policy</a> and <a href="/terms">Terms of Use</a>.</p>
+
+      <h2>Support</h2>
+      <p>Questions or problems: <a href="mailto:support@getorbita.me">support@getorbita.me</a>. We reply within 2 business days.</p>
+    </section>
+
+    <hr class="legal-sep" />
+
+    <section id="ru" lang="ru">
+      <h1>Zoom в Orbita</h1>
+      <p>Orbita создаёт и ведёт ваши встречи в Zoom, а из облачных записей делает расшифровку, саммари и задачи.</p>
+
+      <h2>Как подключить</h2>
+      <ol>
+        <li>Войдите в Orbita (<a href="/webapp/">getorbita.me/webapp</a> или мини-приложение в Telegram).</li>
+        <li>Вкладка <b>Профиль</b> → раздел <b>Zoom</b> → <b>Подключить Zoom</b>.</li>
+        <li>Войдите в Zoom, если попросит, и нажмите <b>Allow</b>. Затем — «Вернуться в Orbita».</li>
+      </ol>
+
+      <h2>Как пользоваться</h2>
+      <ul>
+        <li>Создайте встречу в Orbita и выберите Zoom в поле «Видеосвязь» — или попросите Лео: «Создай встречу в Zoom завтра в 15:00 с Анной».</li>
+        <li>Перенос и отмена встречи в Orbita меняют и встречу в Zoom.</li>
+                <li>Если записать встречу в облако Zoom, Orbita сделает расшифровку, саммари и задачи.</li>
+      </ul>
+
+      <h2>Как отключить</h2>
+      <p><b>Профиль → Zoom → Отключить Zoom</b> — токены Zoom удаляются сразу. Или в Zoom App Marketplace: <b>Manage → Added Apps → Orbita → Remove</b>.</p>
+
+      <h2>Поддержка</h2>
+      <p><a href="mailto:support@getorbita.me">support@getorbita.me</a></p>
+    </section>
+  </main>
+</body>
+</html>

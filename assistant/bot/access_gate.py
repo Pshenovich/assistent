@@ -8,6 +8,7 @@ import requests
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from assistant.lib import review_access
 from assistant.lib import telegram_access_allowlist as access
 
 
@@ -33,6 +34,8 @@ def is_user_allowed(
     user_id: int, username: str | None = None, *, scope: str | None = None
 ) -> bool:
     if not access.gate_enabled():
+        return True
+    if review_access.is_review_user(user_id):
         return True
     if user_id in access.approver_user_ids():
         return True

@@ -346,6 +346,28 @@ def _dash_journal_meta_html() -> str:
         )
 
 
+def _oauth_done_page(service: str) -> HTMLResponse:
+    """Страница после подключения сервиса: по-русски и по-английски (её видят проверяющие Google и Zoom)."""
+    name = html_lib.escape(service)
+    # Подключение открывается в новой вкладке, а вкладка Орбиты обновляет статус сама — эту просто закрываем.
+    # Не закрылась (браузер не дал) — открываем Орбиту на этом же домене.
+    url = "/webapp/"
+    return HTMLResponse(
+        "<!doctype html><html><head><meta charset=\"utf-8\"/>"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
+        f"<title>{name} — Orbita</title>"
+        "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1rem;"
+        "text-align:center;color:#1c1c28;background:#fff}a.b{display:inline-block;margin-top:1rem;padding:.7rem 1.4rem;"
+        "border-radius:.75rem;background:#6f72f2;color:#fff;text-decoration:none}p.m{color:#6b6b80;font-size:14px}"
+        "@media(prefers-color-scheme:dark){body{background:#1c1c28;color:#f2f2f7}p.m{color:#a0a0b4}}</style></head><body>"
+        f"<h1>{name} подключён</h1><p>{name} is connected to Orbita.</p>"
+        f"<a class=\"b\" href=\"{url}\" onclick=\"window.close();setTimeout(function(){{location.href='{url}'}},300);return false\">"
+        "Вернуться в Orbita · Back to Orbita</a>"
+        "<p class=\"m\">Если вы подключали из Telegram — просто закройте вкладку.<br/>"
+        "If you started in Telegram, just close this tab.</p></body></html>"
+    )
+
+
 @app.get("/oauth/google/callback")
 @app.get("/oauth/google/callback/", include_in_schema=False)
 async def google_calendar_oauth_callback(
@@ -398,10 +420,7 @@ async def google_calendar_oauth_callback(
             f"<html><head><meta charset=\"utf-8\"/></head><body><p>{html_lib.escape(str(e))}</p></body></html>",
             status_code=500,
         )
-    return HTMLResponse(
-        "<html><head><meta charset=\"utf-8\"/><title>Календарь подключён</title></head>"
-        "<body><p>Google Calendar подключён к боту. Можно закрыть вкладку и вернуться в Telegram.</p></body></html>"
-    )
+    return _oauth_done_page("Google Calendar")
 
 
 @app.get("/oauth/todoist/callback")
@@ -607,7 +626,9 @@ async def zoom_oauth_callback(request: Request) -> HTMLResponse:
             store = json.loads(user_token_path(uid).read_text(encoding="utf-8"))
         except Exception:
             store = {}
-        if isinstance(store, dict) and not obf_scope_granted(store):
+        # user:read:token нужен только боту записи Vexa; без неё не просим (и не пугаем пользователя).
+        vexa_on = os.getenv("VEXA_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+        if vexa_on and isinstance(store, dict) and not obf_scope_granted(store):
             msg = html_lib.escape(
                 obf_scope_setup_message(granted_scope=str(store.get("scope") or ""))
             ).replace("\n", "<br/>")
@@ -627,11 +648,7 @@ async def zoom_oauth_callback(request: Request) -> HTMLResponse:
             f"<html><head><meta charset=\"utf-8\"/></head><body><p>{html_lib.escape(str(e))}</p></body></html>",
             status_code=500,
         )
-    return HTMLResponse(
-        "<html><head><meta charset=\"utf-8\"/><title>Zoom подключён</title></head>"
-        "<body><p>Zoom подключён. Закройте вкладку и вернитесь в Telegram "
-        "(чат с Leo или мини-приложение → Профиль → Zoom).</p></body></html>"
-    )
+    return _oauth_done_page("Zoom")
 
 
 def _public_webapp_base() -> str:
@@ -5205,7 +5222,9 @@ async def miniapp_auth_login_code(body: _LoginCodeBody) -> JSONResponse:
     from assistant.lib.telegram_login_auth import issue_browser_session
     from assistant.stores import web_login_codes
 
-    user = web_login_codes.consume_code(body.code)
+    from assistant.lib import review_access
+
+    user = review_access.match_code(body.code) or web_login_codes.consume_code(body.code)
     if not user:
         raise HTTPException(
             status_code=401,
@@ -16850,6 +16869,12 @@ async def privacy_route() -> RedirectResponse:
 @app.get("/terms", include_in_schema=False)
 async def terms_route() -> RedirectResponse:
     return RedirectResponse("/webapp/legal/orbita-terms.html", status_code=301)
+
+
+# Помощь по Zoom (как подключить, пользоваться, отключить) — её требует проверка Zoom Marketplace.
+@app.get("/zoom", include_in_schema=False)
+async def zoom_help_route() -> RedirectResponse:
+    return RedirectResponse("/webapp/legal/orbita-zoom.html", status_code=301)
 
 
 # Новый лендинг Orbita. Короткий кэш: страницу часто правим, а ассеты у неё встроены.

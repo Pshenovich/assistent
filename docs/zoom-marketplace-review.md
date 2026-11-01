@@ -51,7 +51,7 @@
 | Scope | Объяснение для Zoom |
 |---|---|
 | `meeting:write:meeting` | Orbita creates Zoom meetings when the user schedules a meeting in Orbita or asks the Leo assistant to do it. |
-| `meeting:read:list_meetings` | Orbita shows the user's upcoming Zoom meetings in their schedule and links them to calendar events. |
+| `meeting:read:list_meetings` | When the user asks to reschedule or cancel a Zoom meeting, Orbita looks it up among the user's upcoming meetings; it also reuses an existing link instead of creating a duplicate meeting. |
 | `meeting:update:meeting` | Orbita reschedules a Zoom meeting when the user moves the event in Orbita. |
 | `meeting:delete:meeting` | Orbita cancels the Zoom meeting when the user cancels the event in Orbita. |
 | `user:read:user` | Orbita shows which Zoom account is connected (name and email) on the integrations screen. |
@@ -80,7 +80,6 @@
 > Orbita is an AI workspace for meetings, tasks and notes, with the Leo assistant.
 > With the Zoom integration you can:
 > - create, reschedule and cancel Zoom meetings right from Orbita or by asking Leo;
-> - see your upcoming Zoom meetings in one schedule with your other calendars;
 > - get a transcript, summary and action items after a cloud-recorded meeting.
 > You can disconnect Zoom at any time in Orbita (Profile → Integrations) or in the Zoom App Marketplace; your Zoom tokens are deleted immediately.
 

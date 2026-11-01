@@ -118,7 +118,7 @@ Orbita is a personal productivity assistant. With the user's consent it reads th
 
 **Для `tasks`:**
 ```
-Orbita keeps the user's to-do list in sync with Google Tasks: tasks the user creates in Orbita appear in Google Tasks and tasks completed in Google Tasks are marked done in Orbita. The app only reads and writes the user's own task lists and only after the user enables the sync.
+Orbita keeps the user's to-do list in sync with Google Tasks: tasks the user creates in Orbita appear in Google Tasks and tasks completed in Google Tasks are marked done in Orbita. The app only reads and writes the user's own task lists, and only after the user connects their Google account.
 ```
 
 5. Сохраните.

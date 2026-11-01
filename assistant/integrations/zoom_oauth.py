@@ -182,9 +182,10 @@ def fetch_and_store_user_profile(telegram_user_id: int, access_token: str) -> di
 
 
 def oauth_scope() -> str:
+    # user:read:token — только для бота записи Vexa (выключен); на проверке Zoom лишний scope — лишние вопросы.
     default = (
         "meeting:write:meeting meeting:read:list_meetings meeting:update:meeting "
-        "meeting:delete:meeting user:read:user user:read:token"
+        "meeting:delete:meeting user:read:user"
     )
     return (os.getenv("ZOOM_OAUTH_SCOPE", default).strip() or default)
 

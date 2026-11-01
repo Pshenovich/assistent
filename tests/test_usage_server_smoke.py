@@ -283,3 +283,23 @@ def test_security_headers_present(client: TestClient, path: str):
     resp = client.get(path)
     assert resp.headers.get("x-content-type-options") == "nosniff"
     assert resp.headers.get("x-frame-options")
+
+
+def test_review_login_code_opens_review_account(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("REVIEW_LOGIN_CODE", "ABCD-EFGH-JKLM")
+    monkeypatch.setenv("MINIAPP_SESSION_SECRET", "smoke-secret")
+    resp = client.post("/api/miniapp/auth/login-code", json={"code": "abcd efgh jklm"})
+    assert resp.status_code == 200
+    assert resp.json()["user"]["id"] == 900_000_000_001
+    # Повторный вход тем же кодом работает — код постоянный, не одноразовый.
+    assert client.post("/api/miniapp/auth/login-code", json={"code": "ABCDEFGHJKLM"}).status_code == 200
+
+
+def test_review_login_code_off_without_env(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("REVIEW_LOGIN_CODE", raising=False)
+    from assistant.lib import review_access
+
+    assert review_access.match_code("") is None
+    assert not review_access.is_review_user(900_000_000_001)
+    monkeypatch.setenv("REVIEW_LOGIN_CODE", "SHORT")  # короткий код не принимаем
+    assert review_access.match_code("SHORT") is None
