@@ -6,6 +6,9 @@
   <title>Политика конфиденциальности — Orbita</title>
   <link rel="stylesheet" href="../styles.css" />
   <style>
+    /* Стили приложения на широких экранах запрещают прокрутку страницы (html, body: overflow hidden) —
+       у юридических страниц своя обычная прокрутка. */
+    html, body { height: auto !important; min-height: 100%; overflow: auto !important; }
     .legal-page { max-width: 42rem; margin: 0 auto; padding: 1.25rem 1rem 2.5rem; color: var(--text); }
     .legal-page h1 { font-size: 1.25rem; margin: 0 0 1rem; }
     .legal-page h2 { font-size: 1rem; margin: 1.25rem 0 0.5rem; }
