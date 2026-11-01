@@ -1,120 +1,173 @@
 # Проверка приложения Orbita в Zoom Marketplace — пошагово
 
-Зачем: пока приложение Zoom не прошло проверку, подключить Zoom к Орбите могут только люди из **вашего же аккаунта Zoom**. Остальные увидят ошибку. После проверки — любой пользователь Zoom.
+Зачем: пока приложение не прошло проверку, подключить Zoom к Орбите могут только люди из **вашего аккаунта Zoom**. После проверки — любой пользователь Zoom.
 
-Сколько ждать: обычно 1–4 недели, проверяющие могут вернуть заявку с вопросами — отвечаете и подаёте снова.
+Сколько ждать: обычно 1–4 недели. Проверяющие могут вернуть заявку с вопросами — отвечаете и подаёте снова.
 
-Названия кнопок у Zoom иногда меняются — ищите похожие по смыслу.
+Названия кнопок у Zoom иногда меняются — ищите похожие по смыслу. Непонятно — пришлите Claude скриншот.
 
 ---
 
-## Что должно быть готово до подачи
+## Development и Production — что это и что трогаем
 
-- [x] Домен `getorbita.me` с HTTPS, лендинг, `/privacy`, `/terms`.
+Вверху страницы приложения есть переключатель **Development / Production**. Это два отдельных набора настроек одного приложения:
+
+| | Development | Production |
+|---|---|---|
+| Что это | «Черновик» — то, что работает у вас сейчас | «Чистовик» — то, что увидит проверяющий и все пользователи после проверки |
+| Ключи (Client ID / Secret) | свои | **другие**, свои |
+| Кто может подключить | только люди из вашего аккаунта Zoom | все — после проверки |
+
+**Правило: Development не трогаем.** На нём сейчас работает Zoom у вас и коллег. Всё, что ниже, — заполняем на **Production**.
+
+После одобрения Claude переключит сервер на ключи Production. Тем, кто уже подключил Zoom, нужно будет один раз переподключить его (кнопка в Профиле) — сейчас таких единицы.
+
+**Новое приложение заводить не нужно:** Production этого же приложения — и есть чистый лист. Новое имеет смысл, только если текущее создано в чужом аккаунте Zoom (например, у бывшего сотрудника). Тогда скажите Claude.
+
+---
+
+## Что готово
+
+- [x] Домен `getorbita.me`, HTTPS, лендинг, `/privacy`, `/terms`.
 - [x] Почта `support@getorbita.me`.
-- [ ] **Страница помощи по Zoom** — `https://getorbita.me/zoom`: как подключить, как пользоваться, как отключить. Zoom требует её обязательно. *Делает Claude.*
-- [ ] **Тестовый вход для проверяющего** — проверяющий из Zoom должен зайти в Орбиту и сам подключить Zoom. Нужен вход по почте и паролю/коду без Telegram. *Делает Claude, логин и пароль вы впишете в заявку.*
-- [ ] **Адреса Zoom переведены на getorbita.me** (вход и уведомления). Поменять адрес после проверки = новая проверка, поэтому сразу новый домен. *Делает Claude вместе с вами, см. шаг 2.*
-- [ ] Реквизиты в политике и условиях (юрист) — та же задача, что для Google.
+- [x] Страница помощи `https://getorbita.me/zoom` — как подключить, пользоваться, отключить.
+- [x] Вход для проверяющего: код в поле «Войти по коду» (строка `REVIEW_LOGIN_CODE` в вашем локальном `.env`).
+- [x] Сервер принимает Zoom на `https://getorbita.me/oauth/zoom/callback` и `https://getorbita.me/webhook`.
+- [ ] Реквизиты компании в политике и условиях (юрист).
+- [ ] 2–3 скриншота Орбиты 1200×780 (см. шаг 5).
 
 ---
 
-## Шаг 1. Найти приложение
+## Шаг 1. Открыть приложение на Production
 
-1. Откройте https://marketplace.zoom.us и войдите тем аккаунтом Zoom, в котором создавали приложение.
-2. Вверху справа: **Develop** → **Build App** (или **Manage** → **Created Apps**).
-3. Откройте приложение, через которое Орбита подключает Zoom (тип — *General App*, *User-managed*).
+1. https://marketplace.zoom.us → войдите аккаунтом, где создано приложение.
+2. Вверху справа **Develop** → **Build App** (или **Manage** → **Created Apps**) → откройте приложение Орбиты.
+3. Вверху переключите на **Production**.
 
-## Шаг 2. Basic Information (основное)
+## Шаг 2. Basic Info
 
-| Поле | Что вписать |
+| Поле | Что сделать |
 |---|---|
 | App name | `Orbita` |
-| OAuth Redirect URL | `https://getorbita.me/oauth/zoom/callback` — **меняем только вместе с Claude**: в тот же момент он переключит адрес на сервере, иначе подключение Zoom сломается |
-| OAuth Allow List | `https://getorbita.me/oauth/zoom/callback` и адрес, который там стоит сейчас, — **не удаляйте его** до перехода |
-| Deauthorization Notification Endpoint URL | `https://getorbita.me/webhook/deauthorize` |
+| App type / management | User-managed — не менять |
+| Client ID / Client Secret (Production) | Ничего не делать, Claude попросит их после одобрения |
+| OAuth Redirect URL | `https://getorbita.me/oauth/zoom/callback` |
+| OAuth Allow List | Тот же адрес `https://getorbita.me/oauth/zoom/callback`. Другие адреса здесь удалите (только на Production!) |
+| Use Strict Mode URL, Subdomain check | Выключено |
 
-Когда пользователь удаляет приложение в Zoom, Zoom шлёт уведомление на этот адрес, и Орбита удаляет его токены. Это уже сделано в коде.
+Нажмите **Save** (или **Continue**).
 
-## Шаг 3. Features → Event Subscriptions (уведомления)
+## Шаг 3. Features → Access (уведомления)
 
-1. Подписка должна быть **включена**. Endpoint URL: `https://getorbita.me/webhook`.
-2. Нажмите **Validate** — должно появиться «Validated». Если нет — напишите Claude.
-3. События оставить только:
-   - **Recording Completed** — запись встречи в облаке Zoom готова, Орбита делает расшифровку и саммари;
-   - **Meeting Ended** — встреча закончилась.
+Нам нужно одно уведомление — когда пользователь удаляет приложение в Zoom, Орбита стирает его токены.
 
-## Шаг 4. Scopes (разрешения)
+1. **Event Subscription** — включите (или **+ Add Event Subscription**).
+2. Subscription name: `Orbita`.
+3. Event notification endpoint URL: `https://getorbita.me/webhook`.
+4. **Add Events** → найдите **App Deauthorized** (раздел App / «Приложение») → отметьте → Done.
+5. Нажмите **Validate** рядом с адресом → должно стать «Validated». Не стало — скриншот Claude (у Production может быть свой Secret Token).
+6. Если в подписке есть **Recording Completed**, **Meeting Ended** или другие события — **уберите**: облачные записи Орбита пока не обрабатывает, лишние события = вопросы на проверке.
+7. **Save**.
 
-Должно быть ровно это. Для каждого Zoom просит объяснение — готовые тексты справа.
+Если поле **Deauthorization Notification Endpoint URL** есть отдельно — впишите `https://getorbita.me/webhook/deauthorize`.
 
-| Scope | Объяснение для Zoom |
+Остальное в Features (Surface, Embed, Connect) — не включать.
+
+## Шаг 4. Scopes
+
+Нажмите **+ Add Scopes** / удалите лишнее, чтобы осталось **ровно 5**. Для каждого Zoom просит описание — вставьте текст справа:
+
+| Scope | Scope description |
 |---|---|
-| `meeting:write:meeting` | Orbita creates Zoom meetings when the user schedules a meeting in Orbita or asks the Leo assistant to do it. |
-| `meeting:read:list_meetings` | When the user asks to reschedule or cancel a Zoom meeting, Orbita looks it up among the user's upcoming meetings; it also reuses an existing link instead of creating a duplicate meeting. |
-| `meeting:update:meeting` | Orbita reschedules a Zoom meeting when the user moves the event in Orbita. |
-| `meeting:delete:meeting` | Orbita cancels the Zoom meeting when the user cancels the event in Orbita. |
-| `user:read:user` | Orbita shows which Zoom account is connected (name and email) on the integrations screen. |
-| `cloud_recording:read:...` — **только если есть в списке** | When a cloud recording is completed, Orbita downloads it to create a transcript and meeting summary for the user. |
+| `meeting:write:meeting` | Orbita creates a Zoom meeting when the user schedules a meeting with a Zoom link in Orbita or asks the Leo assistant to do it. |
+| `meeting:read:list_meetings` | When the user asks to reschedule or cancel a Zoom meeting, Orbita looks it up among the user's upcoming meetings; it also reuses an existing link instead of creating a duplicate. |
+| `meeting:update:meeting` | Orbita updates the Zoom meeting time when the user reschedules the event in Orbita. |
+| `meeting:delete:meeting` | Orbita deletes the Zoom meeting when the user cancels the event in Orbita. |
+| `user:read:user` | Orbita shows which Zoom account is connected (name and email) in the user's profile. |
 
-**`user:read:token` — удалить.** Он был нужен боту-записывателю Vexa, который мы не используем. Лишнее разрешение = лишние вопросы на проверке. Если когда-нибудь вернём Vexa — добавим снова.
+**Удалить:** `user:read:token` (был для бота Vexa), любые `cloud_recording:...`, `recording:...` и всё остальное. Сомневаетесь — скриншот Claude.
 
-Если в списке есть что-то ещё — скажите Claude, прежде чем удалять.
+## Шаг 5. App Listing
 
-## Шаг 5. App Listing (карточка в магазине)
+**Basic / Description:**
 
 | Поле | Что вписать |
 |---|---|
-| Short description | `AI assistant for meetings: schedule Zoom calls, get transcripts, summaries and tasks.` |
-| Long description | Текст ниже |
-| Category | Productivity (и, если можно второй, — Collaboration) |
-| Icon / logo | `docs/google-verification/orbita-logo-120.png` (если попросят крупнее — скажите Claude) |
-| Screenshots | 3–4 скриншота Орбиты: расписание с Zoom-встречей, саммари встречи, экран интеграций с подключённым Zoom. Можно сделать с телефона или компьютера |
-| Privacy Policy URL | `https://getorbita.me/privacy` |
-| Terms of Use URL | `https://getorbita.me/terms` |
-| Support URL | `https://getorbita.me/zoom` |
-| Documentation URL | `https://getorbita.me/zoom` |
-| Support email | `support@getorbita.me` |
+| Short description | `Schedule, reschedule and cancel Zoom meetings from your AI workspace.` |
+| Long description | текст ниже |
+| Category | Productivity |
+| Icon | `docs/google-verification/orbita-logo-120.png` (если попросит крупнее — скажите Claude, сделает) |
+| Gallery (скриншоты) | 2–3 картинки **1200×780**: экран новой встречи с выбором Zoom в «Видеосвязь»; встреча со ссылкой Zoom; Профиль → Zoom «подключён». Сделайте скриншоты, Claude подгонит размер |
 
 **Long description:**
 > Orbita is an AI workspace for meetings, tasks and notes, with the Leo assistant.
+>
 > With the Zoom integration you can:
-> - create, reschedule and cancel Zoom meetings right from Orbita or by asking Leo;
-> - get a transcript, summary and action items after a cloud-recorded meeting.
-> You can disconnect Zoom at any time in Orbita (Profile → Integrations) or in the Zoom App Marketplace; your Zoom tokens are deleted immediately.
+> - add a Zoom link when you create a meeting in Orbita, or just ask Leo: "Create a Zoom meeting tomorrow at 3 pm with Anna";
+> - reschedule or cancel the meeting in Orbita — the Zoom meeting is updated or deleted too.
+>
+> Disconnect at any time in Orbita (Profile → Zoom → Disconnect) or in the Zoom App Marketplace; your Zoom tokens are deleted immediately.
 
-## Шаг 6. Technical Design и Security (вопросы о безопасности)
+**Links & Support:**
 
-Zoom задаёт вопросы анкетой. Типичные ответы:
+| Поле | Адрес |
+|---|---|
+| Support URL | `https://getorbita.me/zoom` |
+| Documentation URL | `https://getorbita.me/zoom` |
+| Privacy Policy URL | `https://getorbita.me/privacy` |
+| Terms of Use URL | `https://getorbita.me/terms` |
+| Support email (если есть поле) | `support@getorbita.me` |
+| Configure URL | оставить пустым |
+
+**EU & Discoverability:**
+- **Set my app as "Unlisted"** — включите. Приложение не будет в поиске Marketplace, подключение работает по кнопке из Орбиты. Сделать публичным можно потом в любой момент без новой проверки.
+- Вопросы про EU / trader (DSA) — пришлите Claude скриншот до ответа.
+
+**Save**.
+
+## Шаг 6. Technical Design
+
+Анкета о безопасности. Отвечайте так; где вопрос другой или требует файлов (SSDLC, SAST/DAST) — скриншот Claude.
 
 | Вопрос | Ответ |
 |---|---|
-| Где хранятся данные / хостинг | Servers in Russia (Beget), single region |
-| Шифрование при передаче | Yes, TLS 1.2+ (HTTPS only) |
-| Шифрование хранения токенов | Tokens are stored on the server with access restricted to the service account; disk-level encryption — **уточните у Claude перед ответом** |
-| Удаление данных при отключении | Yes, tokens are deleted on app_deauthorized event and on disconnect in the app |
-| Сколько храним записи | Recordings are processed for transcription and not stored after processing; transcripts and summaries are kept until the user deletes them — **уточните у Claude перед ответом** |
-| Доступ сотрудников к данным | Only on user request (support) or for security |
-| Используете ли ИИ | Yes: transcription (Obuchat) and summaries via LLM providers through OpenRouter; data is not used to train models |
+| Where is data hosted | Dedicated server in Russia (Beget), single region |
+| Encryption in transit | Yes, TLS 1.2+, HTTPS only |
+| What Zoom data do you store | OAuth tokens and the Zoom account name/email; IDs and links of meetings created by Orbita. We do not access recordings, chats or participants |
+| Token storage | **уточните у Claude перед ответом** |
+| Data deletion | Tokens are deleted when the user disconnects in Orbita or removes the app in Zoom (app_deauthorized event) |
+| Employee access | Only on the user's request (support) or for security |
+| Third parties | None for Zoom data |
 
-Если вопрос непонятен — пришлите Claude скриншот вопроса.
+## Шаг 7. Publish / Submit
 
-## Шаг 7. Тестовый доступ для проверяющего
+1. Слева **Publish** (или **Submit**). Zoom покажет список незаполненных полей — дозаполните.
+2. **Domain verification** — домен `getorbita.me`. Выберите **TXT record**: Zoom покажет строку, добавьте её в DNS Beget так же, как для Google (вторая TXT-запись, старые не трогать). Скажите Claude — он проверит, что запись видна. Затем **Verify**.
+3. **Release notes / Test plan** — вставьте (код возьмите из `.env`, строка `REVIEW_LOGIN_CODE`):
 
-В поле для проверяющих (Test credentials / Review notes) — то, что подготовит Claude:
-- адрес входа: `https://getorbita.me/webapp/`;
-- логин и пароль тестового аккаунта;
-- короткая инструкция: «Profile → Integrations → Connect Zoom, then ask Leo: "Create a Zoom meeting tomorrow at 3 pm"».
+```
+Test account: open https://getorbita.me/webapp/ and enter the code <КОД> in the "Войти по коду" (Sign in with code) field. No Telegram needed.
 
-Иногда Zoom просит видео (как у Google): вход → подключение Zoom → создание встречи → саммари после записи → отключение. 2–3 минуты, запись экрана.
+1. Profile tab (bottom right) → Zoom → "Подключить Zoom" (Connect Zoom) → authorize with your Zoom account.
+2. On the "Zoom is connected" page click "Back to Orbita".
+3. Create a meeting: first tab → "+" (Add) → "Встреча" (Meeting) → set a time → "Видеосвязь" (Video call) → Zoom → save. A Zoom link appears in the event.
+   Or "+" → "Лео" (Leo) and type: "Create a Zoom meeting tomorrow at 3 pm".
+4. Move the meeting to another time — the Zoom meeting time changes too.
+5. Delete the meeting — the Zoom meeting is deleted.
+6. Profile → Zoom → "Отключить Zoom" (Disconnect) — tokens are deleted.
 
-## Шаг 8. Отправить
+The interface is in Russian; English labels are given in parentheses.
+Help page: https://getorbita.me/zoom
+```
 
-**Submit** (или **Publish** → **Submit for review**). Ответы придут на почту аккаунта Zoom — проверяйте и её, и `support@getorbita.me`.
+4. **Test account credentials** — если есть отдельные поля: login — `https://getorbita.me/webapp/`, password/code — ваш код.
+5. Отметьте согласие с **Marketplace Developer Agreement** → **Submit**.
+
+Ответы придут на почту аккаунта Zoom — проверяйте её и `support@getorbita.me`, папку «Спам» тоже.
 
 ---
 
 ## Важно
 
-- Zoom с 2022 года не продаёт в России. Сама проверка бесплатная, но если Zoom спросит страну и реквизиты компании — пришлите Claude вопрос до ответа.
-- Пока проверка идёт, у вас и коллег из вашего аккаунта Zoom всё продолжает работать.
+- Пока идёт проверка, у вас и коллег Zoom работает как раньше (на ключах Development).
+- Zoom с 2022 года не продаёт в России. Сама проверка бесплатная; если спросят страну и реквизиты компании — пришлите Claude вопрос до ответа.
